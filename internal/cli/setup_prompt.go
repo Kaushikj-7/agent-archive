@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/config"
 	"strconv"
 	"strings"
 )
@@ -59,18 +60,27 @@ func (p *prompter) setupYesNo(question string, def bool) (bool, error) {
 	return setupAffirmed(answer), err
 }
 
+func parseRetentionAnswer(value string) (int, error) {
+	if strings.EqualFold(strings.TrimSpace(value), "forever") {
+		return 0, nil
+	}
+	n, err := strconv.Atoi(value)
+	if err != nil || n < 1 || n > config.MaxRetentionDays {
+		return 0, fmt.Errorf("enter 1 to 36500 days, or forever")
+	}
+	return n, nil
+}
+
 func (p *prompter) setupRetentionDays(def int) (int, error) {
-	answer, err := p.guidedText(promptModel{Question: "Keep sessions for how many days?", Label: "Days", Default: strconv.Itoa(def), Receipt: "Retention", Validate: func(value string) error {
-		n, e := strconv.Atoi(value)
-		if e != nil || n < 1 || n > 36500 {
-			return fmt.Errorf("enter a number of days between 1 and 36500")
-		}
-		return nil
-	}})
+	value := strconv.Itoa(def)
+	if def == 0 {
+		value = "forever"
+	}
+	answer, err := p.guidedText(promptModel{Question: "Keep sessions for how many days?", Label: "Days or forever", Default: value, Receipt: "Retention", Helpers: []string{"90 days (default), a custom duration, or forever", "Provider lifecycle rules and explicit deletion still apply."}, Validate: func(value string) error { _, err := parseRetentionAnswer(value); return err }})
 	if err != nil {
 		return 0, err
 	}
-	return strconv.Atoi(answer)
+	return parseRetentionAnswer(answer)
 }
 
 // Storage field actions use a reserved prefix so valid bucket/profile names

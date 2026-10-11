@@ -29,7 +29,7 @@ consistent with each other.
 | `hook_files` | Per app, the hook file setup installed into, resolved from `CLAUDE_CONFIG_DIR` and `CODEX_HOME` at setup time. |
 | `installed_executable` | The `agent-archive` path written into the hooks and the background job's definition. |
 | `background_backend` | The scheduler that runs the background collector, as setup recorded it: `systemd` on Linux. Status, uninstall, `setup --refresh` and recovery use this one and never pick another. Setup leaves it out for launchd, and an absent field means launchd on macOS and systemd on Linux, for all time, so a macOS `config.json` is what it always was. A build that predates the field ignores it. |
-| `retention_days` | Whole-session retention in days: 90 by default, 1 to 36,500. There is no "keep forever". |
+| `retention_days` | Whole-session retention in days: 90 by default; 1 to 36,500 for finite retention, or 0 for **Keep forever**. Missing legacy values default to 90. Forever disables whole-session expiry, while superseded-source/privacy cleanup and explicit deletion continue. Provider lifecycle rules can still delete objects. |
 | `require_skill_use` | When `true`, only sessions that used a skill are captured. Default `false`: all sessions. |
 | `codex_name_lookup` | Optional `files` (default) or `native`. Native explicitly permits a bounded Codex app-server startup for admitted ordinary session names. Startup can write Codex databases/system skills; desktop coexistence and real authentication are unverified. See [Codex session names](codex-session-names.md). |
 | `skill_evidence` | `none` omits filesystem skill inventory and snapshots; `metadata` uploads skill names and hashes of filtered skill text but no body; `body` uploads filtered SKILL.md snapshots. Fresh setup saves `metadata`. A schema 1 config without this field retains `body` and setup labels it “kept from previous setup”. Skill use detected in a native transcript can still satisfy `require_skill_use` with `none`. |
@@ -239,3 +239,5 @@ or authorize starts until explicit local setup renews them. Every protected
 save, nested draft and rollback emits `codex-scope-floor-v3`, retaining schema
 version 3 and the stronger `+codex-scope-floor-v3` skill marker. Prior policy writers refuse this new
 identity before they can drop floors; schema 4 remains reserved for future UX.
+
+Choosing Keep forever installs a sticky compatibility fence: older binaries refuse this configuration before writing. Changing back to finite retention retains that fence; upgrade all installed hooks and collectors before using this option. Retention is per machine; pairing copies the current choice but later changes do not propagate. Already deleted sessions are not restored.

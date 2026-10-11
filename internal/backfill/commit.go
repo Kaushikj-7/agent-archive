@@ -79,12 +79,18 @@ var ErrRetentionShortened = errors.New("an import only raises retention; shorten
 // cfg is left as it was when it returns an error.
 func ApplyToConfig(cfg *config.Config, p Plan, admittedAt time.Time) (ConfigChanges, error) {
 	var retention *RetentionChange
-	if p.RetentionDays > 0 && p.RetentionDays != cfg.RetentionDays {
-		if cfg.RetentionDays <= 0 || p.RetentionDays < cfg.RetentionDays {
-			return ConfigChanges{}, fmt.Errorf("%w (from %d to %d days)", ErrRetentionShortened, cfg.RetentionDays, p.RetentionDays)
+	if err := config.ValidateRetentionDays(p.RetentionDays); err != nil {
+		return ConfigChanges{}, err
+	}
+	if p.RetentionDays != cfg.RetentionDays {
+		if config.RetentionShorter(p.RetentionDays, cfg.RetentionDays) {
+			return ConfigChanges{}, fmt.Errorf("%w (from %s to %s)", ErrRetentionShortened, config.RetentionLabel(cfg.RetentionDays), config.RetentionLabel(p.RetentionDays))
 		}
 		retention = &RetentionChange{From: cfg.RetentionDays, To: p.RetentionDays}
 		cfg.RetentionDays = p.RetentionDays
+		if p.RetentionDays == 0 {
+			cfg.RetentionProtection = true
+		}
 	}
 	changes := ConfigChanges{ProjectIDs: []string{}, Apps: []string{}, KeptOut: []string{}, Retention: retention}
 	for _, c := range p.Imported() {

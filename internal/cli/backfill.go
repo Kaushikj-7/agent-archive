@@ -678,10 +678,10 @@ func confirmImport(p *prompter, out io.Writer, plan *backfill.Plan, configured i
 			if err != nil {
 				return false, err
 			}
-			if days < configured {
+			if config.RetentionShorter(days, configured) {
 				// A shorter retention deletes sessions already archived,
 				// hook-captured ones too, which an import never does.
-				terminal.Printf(out, "Retention stays at %d days: a shorter period would delete sessions\nalready in the archive. Shorten it in setup.\n", plan.RetentionDays)
+				terminal.Printf(out, "Retention stays at %s: a shorter period would delete sessions\nalready in the archive. Shorten it in setup.\n", config.RetentionLabel(plan.RetentionDays))
 				continue
 			}
 			plan.RetentionDays = days

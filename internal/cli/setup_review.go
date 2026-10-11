@@ -107,10 +107,7 @@ func reviewRows(cfg config.Config, discoveries map[string]applicationDiscovery, 
 	if machine != "" {
 		rows = append(rows, reviewRow{label: "Machine", values: []string{machine}})
 	}
-	days := fmt.Sprintf("%d days", cfg.RetentionDays)
-	if cfg.RetentionDays == 1 {
-		days = "1 day"
-	}
+	days := config.RetentionLabel(cfg.RetentionDays)
 	return append(rows, reviewRow{label: "Keep for", values: []string{days}})
 }
 
@@ -809,7 +806,11 @@ func editSetupReview(available []string, p *prompter, draft *setupDraft, userHom
 		}
 		config.SetSkillEvidence(&draft.Config, config.SkillEvidence(mode))
 	case "retention":
+		draft.RetentionEdited = true
 		draft.Config.RetentionDays, err = p.setupRetentionDays(draft.Config.RetentionDays)
+		if draft.Config.RetentionDays == 0 {
+			draft.Config.RetentionProtection = true
+		}
 	case "storage":
 		draft.Step = 1
 	case "prefix":

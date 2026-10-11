@@ -81,7 +81,7 @@ Usage: agent-archive setup [--abandon-recovery] [--verbose]
        agent-archive setup --yes [--provider r2|s3 ...] [--project DIR ...]
                [--codex-discovery on|off]
                [--codex-capture-scope included-projects|all-projects]
-               [--prefix PREFIX] [--retention-days DAYS]
+               [--prefix PREFIX] [--retention-days DAYS | --keep-forever]
                [--require-skill-use | --no-require-skill-use]
                [--skill-evidence none|metadata|body] [--no-skills | --skills]
                [--allow-network-home]
@@ -134,6 +134,8 @@ An interrupted setup is recovered on the next run.
                         agent-archive/). May be changed alone with --yes
   --retention-days DAYS Keep sessions for 1 to 36500 days (default: saved,
                         else 90)
+  --keep-forever        Disable automatic whole-session expiry; conflicts with
+                        --retention-days. Provider lifecycle rules still apply.
   --require-skill-use   Capture only sessions that use skills
   --no-require-skill-use
                         Capture sessions with or without skills (default:
@@ -189,6 +191,7 @@ Example: printf '%s\n' "$SECRET" | agent-archive setup --yes --provider r2 \
 | `--bucket` | a value | — |
 | `--codex-capture-scope` | a value | — |
 | `--codex-discovery` | a value | — |
+| `--keep-forever` | no value | — |
 | `--no-require-skill-use` | no value | — |
 | `--no-skills` | no value | — |
 | `--pair` | no value | — |
