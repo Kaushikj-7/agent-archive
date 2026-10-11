@@ -216,12 +216,16 @@ func cleanupSetupKey(p *prompter, home string, s issuance.Slot, saved setupDraft
 
 // refuseUncertainCreation prevents retries across process restarts without ownership evidence.
 func refuseUncertainCreation(home string, candidate setupresources.Receipt) error {
+	return new(prompter).refuseUncertainCreation(home, candidate)
+}
+
+func (p *prompter) refuseUncertainCreation(home string, candidate setupresources.Receipt) error {
 	receipts, err := setupresources.List(home)
 	if err != nil {
 		return err
 	}
 	for _, r := range receipts {
-		if r.State != setupresources.RequestSent || r.Provider != candidate.Provider || r.Bucket != candidate.Bucket {
+		if p.resourceRequestsThisRun[r.ID] || r.State != setupresources.RequestSent || r.Provider != candidate.Provider || r.Bucket != candidate.Bucket {
 			continue
 		}
 		if r.Provider == credentials.ProviderS3 || r.Account == candidate.Account && r.Jurisdiction == candidate.Jurisdiction {
@@ -229,4 +233,11 @@ func refuseUncertainCreation(home string, candidate setupresources.Receipt) erro
 		}
 	}
 	return nil
+}
+
+func (p *prompter) rememberResourceRequest(id string) {
+	if p.resourceRequestsThisRun == nil {
+		p.resourceRequestsThisRun = make(map[string]bool)
+	}
+	p.resourceRequestsThisRun[id] = true
 }

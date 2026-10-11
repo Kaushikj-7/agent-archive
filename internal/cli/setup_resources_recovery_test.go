@@ -102,3 +102,17 @@ func TestReferencedGuidedKeysAreNeverCleanupCandidates(t *testing.T) {
 		t.Fatal("own key eligible")
 	}
 }
+
+func TestUnknownCreationRetryRequiresCurrentProcessContext(t *testing.T) {
+	home := t.TempDir()
+	r := recoveryReceipt(t, home, setupresources.RequestSent)
+	p := newPrompter(strings.NewReader(""), &bytes.Buffer{})
+	p.rememberResourceRequest(r.ID)
+	if err := p.refuseUncertainCreation(home, r); err != nil {
+		t.Fatalf("explicit same-process retry blocked: %v", err)
+	}
+	restarted := newPrompter(strings.NewReader(""), &bytes.Buffer{})
+	if err := restarted.refuseUncertainCreation(home, r); err == nil {
+		t.Fatal("restart forgot uncertain provider request")
+	}
+}

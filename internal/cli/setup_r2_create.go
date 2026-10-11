@@ -758,13 +758,14 @@ func (c *r2Creator) createBucket(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if err = refuseUncertainCreation(home, setupresources.Receipt{Provider: "r2", Account: c.account, Bucket: c.bucket.Name, Jurisdiction: c.bucket.Jurisdiction, CreatedAt: c.env.now()}); err != nil {
+	if err = p.refuseUncertainCreation(home, setupresources.Receipt{Provider: "r2", Account: c.account, Bucket: c.bucket.Name, Jurisdiction: c.bucket.Jurisdiction, CreatedAt: c.env.now()}); err != nil {
 		return err
 	}
 	receipt, err := setupresources.Begin(home, setupresources.Receipt{Provider: "r2", Account: c.account, Bucket: c.bucket.Name, Jurisdiction: c.bucket.Jurisdiction, CreatedAt: c.env.now()})
 	if err != nil {
 		return err
 	}
+	p.rememberResourceRequest(receipt.ID)
 	err = c.api.CreateBucket(ctx, c.account, c.bucket)
 	if err == nil {
 		if receiptErr := setupresources.Finish(home, receipt, setupresources.Created); receiptErr != nil {
