@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -109,6 +110,7 @@ func sequentialNames(t *testing.T) {
 // finder says so. opened records each (profile, region) the creator was
 // opened with.
 func createEnv(t *testing.T, profileRegion string, creator BucketCreator, finder fakeBuckets, opened *[]string) Env {
+	t.Helper()
 	home := t.TempDir()
 	return Env{
 		Home:        func() (string, error) { return home, nil },
@@ -132,12 +134,12 @@ func runCreate(t *testing.T, env Env, cfg *credentials.Config, input string) (st
 	return out.String(), err
 }
 
-func TestCreateS3BucketInProfileRegionRecordsBucketAndPrintsPolicy(t *testing.T) {
+func TestCreateS3BucketInProfileRegionRecordsBucketAndOffersPolicy(t *testing.T) {
 	sequentialNames(t)
 	creator := &fakeCreator{privacy: verifiedPrivate}
 	var opened []string
 	var cfg credentials.Config
-	out, err := runCreate(t, createEnv(t, "eu-west-2", creator, fakeBuckets{}, &opened), &cfg, "\n\n")
+	out, err := runCreate(t, createEnv(t, "eu-west-2", creator, fakeBuckets{}, &opened), &cfg, "\n\nv\n")
 	if err != nil {
 		t.Fatalf("err=%v output:\n%s", err, out)
 	}
@@ -577,7 +579,7 @@ func TestSetupThroughStorageCheckWithACreatedS3Bucket(t *testing.T) {
 	// The storage question's third choice creates the bucket; the profile,
 	// region and name questions take their defaults; then the review is
 	// cancelled.
-	out := f.runSetup(t, strings.Join([]string{"", "", storageMenuNumber(t, storageChoiceS3New), "", "", "", "q"}, "\n")+"\n")
+	out := f.runSetup(t, strings.Join([]string{"", "", storageMenuNumber(t, storageChoiceS3New), "", "", "v", "", "q"}, "\n")+"\n")
 	for _, text := range []string{
 		"Created bucket agent-archive-1 in us-west-2.",
 		"Checked: Block Public Access is on for all four settings.",
@@ -830,7 +832,7 @@ func TestCreateS3BucketAsksWhichProfileArchivingShouldUse(t *testing.T) {
 	var cfg credentials.Config
 	// Create with admin; then archive with archive, whose own region is not
 	// the bucket's.
-	out, err := runCreate(t, env, &cfg, "1\n\nprofile\n2\n")
+	out, err := runCreate(t, env, &cfg, "1\n\nv\nprofile\n2\n")
 	if err != nil {
 		t.Fatalf("err=%v\n%s", err, out)
 	}
@@ -839,9 +841,9 @@ func TestCreateS3BucketAsksWhichProfileArchivingShouldUse(t *testing.T) {
 	}
 	policyAt := strings.Index(out, `"Sid": "ArchiveObjects"`)
 	reminderAt := strings.Index(out, "Setup created bucket agent-archive-1 in us-east-1; it is empty and will stay in your account if you stop now.")
-	askAt := strings.Index(out, "Setup saves the profile you used to create the bucket unless you choose another now.")
-	if policyAt < 0 || reminderAt < policyAt || askAt < reminderAt {
-		t.Errorf("the bucket is named again, then the profile asked, after the policy:\n%s", out)
+	askAt := strings.Index(out, "Setup saves the creation profile unless you choose another now.")
+	if reminderAt < 0 || askAt < reminderAt || policyAt < askAt {
+		t.Errorf("the bucket and default profile are explained before optional permissions:\n%s", out)
 	}
 }
 
@@ -1023,6 +1025,7 @@ func (c *receiptCheckingCreator) CreateBucket(ctx context.Context, bucket, regio
 	}
 	return c.fakeCreator.CreateBucket(ctx, bucket, region)
 }
+
 func TestS3PersistsIntentBeforeProviderAndSecurityAfter(t *testing.T) {
 	sequentialNames(t)
 	home := t.TempDir()
@@ -1036,5 +1039,93 @@ func TestS3PersistsIntentBeforeProviderAndSecurityAfter(t *testing.T) {
 	receipts, err := setupresources.List(home)
 	if err != nil || len(receipts) != 1 || receipts[0].State != setupresources.Secured {
 		t.Fatalf("security outcome not durable: %v %v", receipts, err)
+	}
+}
+
+func (c *receiptCheckingCreator) DeleteBucket(ctx context.Context, bucket string) error {
+	receipts, err := setupresources.List(c.home)
+	if err != nil || len(receipts) != 1 || receipts[0].State != setupresources.CleanupPending || receipts[0].Bucket != bucket {
+		c.t.Fatalf("provider delete called without durable cleanup intent: %v %v", receipts, err)
+	}
+	return c.fakeCreator.DeleteBucket(ctx, bucket)
+}
+
+func TestS3DeletionPersistsCleanupBeforeProvider(t *testing.T) {
+	for _, deleteErr := range []error{nil, errors.New("lost delete answer")} {
+		t.Run(fmt.Sprint(deleteErr), func(t *testing.T) {
+			sequentialNames(t)
+			home := t.TempDir()
+			creator := &receiptCheckingCreator{fakeCreator: &fakeCreator{block: []error{errCreateDenied}, deleted: deleteErr}, t: t, home: home}
+			env := createEnv(t, "us-east-1", creator, fakeBuckets{names: []string{"saved"}, regions: map[string]string{"saved": "us-east-1"}}, nil)
+			env.Home = func() (string, error) { return home, nil }
+			var cfg credentials.Config
+			if out, err := runCreate(t, env, &cfg, "\n\ndelete\nagent-archive-1\n1\n"); err != nil {
+				t.Fatalf("%v: %s", err, out)
+			}
+			receipts, err := setupresources.List(home)
+			want := setupresources.Deleted
+			if deleteErr != nil {
+				want = setupresources.CleanupPending
+			}
+			if err != nil || len(receipts) != 1 || receipts[0].State != want {
+				t.Fatalf("%v %v want %s", receipts, err, want)
+			}
+		})
+	}
+}
+
+func TestS3DeletionStopsWhenCleanupIntentCannotBeSaved(t *testing.T) {
+	home := t.TempDir()
+	r, err := setupresources.Begin(home, setupresources.Receipt{Provider: setupresources.S3, Profile: "work", Bucket: "archive"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = setupresources.Finish(home, r, setupresources.Created); err != nil {
+		t.Fatal(err)
+	}
+	r.Bucket = "other" // Mismatched immutable binding makes the save fail.
+	var out bytes.Buffer
+	p := newPrompter(strings.NewReader(""), &out)
+	p.createdBuckets = []createdS3Bucket{{name: "archive", profile: "work", home: home, receipt: r}}
+	creator := &fakeCreator{}
+	deleteNewBucket(p, creator, "archive", "work")
+	if len(creator.calls) != 0 {
+		t.Fatalf("provider called after failed intent: %v", creator.calls)
+	}
+	receipts, err := setupresources.List(home)
+	if err != nil || receipts[0].State != setupresources.Created {
+		t.Fatalf("%v %v", receipts, err)
+	}
+}
+
+func TestS3CreationReceiptsDistinguishRefusalFromMissingAnswers(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		failure error
+		want    setupresources.State
+	}{
+		{"client refusal", &smithy.GenericAPIError{Code: "AccessDenied", Fault: smithy.FaultClient}, setupresources.Refused},
+		{"account limit", storage.ErrTooManyBuckets, setupresources.Refused},
+		{"lost response", storage.ErrBucketMayExist, setupresources.RequestSent},
+		{"server error", &smithy.GenericAPIError{Code: "InternalError", Fault: smithy.FaultServer}, setupresources.RequestSent},
+		{"unknown error", errors.New("unknown response"), setupresources.RequestSent},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sequentialNames(t)
+			creator := &fakeCreator{create: []error{tc.failure}}
+			env := createEnv(t, "us-east-1", creator, fakeBuckets{names: []string{"saved"}, regions: map[string]string{"saved": "us-east-1"}}, nil)
+			var cfg credentials.Config
+			if out, err := runCreate(t, env, &cfg, "\n\nexisting\n1\n"); err != nil {
+				t.Fatalf("%v: %s", err, out)
+			}
+			home, err := env.readHome()
+			if err != nil {
+				t.Fatal(err)
+			}
+			receipts, err := setupresources.List(home)
+			if err != nil || len(receipts) != 1 || receipts[0].State != tc.want {
+				t.Fatalf("%v %v want %s", receipts, err, tc.want)
+			}
+		})
 	}
 }

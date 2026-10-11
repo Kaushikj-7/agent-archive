@@ -18,10 +18,10 @@ var errResourceRecoveryStopped = errors.New("setup stopped; saved progress and r
 
 // resourceUsed is deliberately conservative for S3: profile names can be rebound.
 func resourceUsed(r setupresources.Receipt, cfg credentials.Config) bool {
-	if r.Provider != cfg.Provider || r.Bucket != cfg.Bucket {
+	if string(r.Provider) != cfg.Provider || r.Bucket != cfg.Bucket {
 		return false
 	}
-	if r.Provider == credentials.ProviderS3 {
+	if r.Provider == setupresources.S3 {
 		return true
 	}
 	account, bucket, err := providerDestination(cfg)
@@ -29,8 +29,8 @@ func resourceUsed(r setupresources.Receipt, cfg credentials.Config) bool {
 }
 
 func resourceStorage(r setupresources.Receipt) credentials.Config {
-	cfg := credentials.Config{Provider: r.Provider, Bucket: r.Bucket, Region: r.Region, AWSProfile: r.Profile, R2AccountID: r.Account}
-	if r.Provider == credentials.ProviderR2 {
+	cfg := credentials.Config{Provider: string(r.Provider), Bucket: r.Bucket, Region: r.Region, AWSProfile: r.Profile, R2AccountID: r.Account}
+	if r.Provider == setupresources.R2 {
 		cfg.Region = "auto"
 		host := r.Account
 		if r.Jurisdiction != "" {
@@ -133,7 +133,7 @@ func cleanupGuidedEligible(s issuance.Slot, saved setupDraft, have bool, active 
 
 func setupResourceDetails(p *prompter, home string, r setupresources.Receipt, slots []issuance.Slot, saved setupDraft, have bool, active config.Config, env Env) error {
 	terminal.Printf(p.out, "Resource receipt %s\nBucket %s\nOutcome %s\n", r.ID, r.Bucket, r.State)
-	if r.Provider == credentials.ProviderS3 {
+	if r.Provider == setupresources.S3 {
 		terminal.Printf(p.out, "Creation profile %s · Region %s\n", r.Profile, r.Region)
 		p.note("A profile name is not proof of the current AWS account. Check the bucket and account in the AWS console before deleting an empty unused bucket.")
 	} else {
@@ -228,7 +228,7 @@ func (p *prompter) refuseUncertainCreation(home string, candidate setupresources
 		if p.resourceRequestsThisRun[r.ID] || r.State != setupresources.RequestSent || r.Provider != candidate.Provider || r.Bucket != candidate.Bucket {
 			continue
 		}
-		if r.Provider == credentials.ProviderS3 || r.Account == candidate.Account && r.Jurisdiction == candidate.Jurisdiction {
+		if r.Provider == setupresources.S3 || r.Account == candidate.Account && r.Jurisdiction == candidate.Jurisdiction {
 			return fmt.Errorf("creation outcome for bucket %s remains unknown; connect it as existing storage or choose a different bucket; check receipt %s in the provider account", r.Bucket, r.ID)
 		}
 	}

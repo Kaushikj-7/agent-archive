@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aws/smithy-go"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/setupresources"
@@ -153,24 +154,32 @@ type newS3Bucket struct {
 // a change of profile cannot clear them.
 func chooseArchiveProfile(p *prompter, cfg *credentials.Config, env Env, bucket newS3Bucket) error {
 	terminal.Println(p.out, "Setup created bucket "+bucket.name+" in "+bucket.region+"; it is empty and will stay in your account if you stop now.")
-	terminal.Println(p.out, p.style.hang("", "Setup saves the profile you used to create the bucket unless you choose another now. To use a narrower one, attach the policy above to it first."))
-	choice, err := p.setupActions("Profile for archiving", "keep", nil, []actionOption{{"keep", "", "Use the selected profile"}, {"profile", "p", "Choose another archive profile"}})
-	if err != nil {
-		return err
-	}
-	if choice == "profile" {
-		if _, _, err := chooseS3Profile(p, cfg, env); err != nil {
+	p.storageStage(storageDetails)
+	terminal.Println(p.out, p.style.hang("", "Setup saves the creation profile unless you choose another now. For a narrower profile, view the archive permissions and attach that policy first."))
+	for {
+		choice, err := p.setupActions("Profile for archiving", "keep", nil, []actionOption{{"keep", "", "Use the selected profile"}, {"profile", "p", "Choose another archive profile"}, {"permissions", "v", "View archive permissions"}})
+		if err != nil {
 			return err
 		}
+		if choice == "permissions" {
+			printRuntimePolicyAdvice(p, bucket.name, firstNonEmpty(cfg.Prefix, defaultPrefix))
+			continue
+		}
+		if choice == "profile" {
+			if _, _, err := chooseS3Profile(p, cfg, env); err != nil {
+				return err
+			}
+		}
+		setArchiveProfile(p, bucket.name, cfg.AWSProfile)
+		return nil
 	}
-	setArchiveProfile(p, bucket.name, cfg.AWSProfile)
-	return nil
 }
 
 // createS3Bucket creates a bucket with the profile in cfg and returns its
 // name and region; it writes neither to cfg. It returns false, having said
 // why, only when the user explicitly chooses an existing bucket.
 func createS3Bucket(p *prompter, cfg *credentials.Config, env Env, profileRegion string, noCredentials bool) (newS3Bucket, bool, error) {
+	p.storageStage(storageDetails)
 	if offered, used, err := offerCreatedBucket(p, cfg.AWSProfile); err != nil || used {
 		return offered, used, err
 	}
@@ -180,6 +189,7 @@ func createS3Bucket(p *prompter, cfg *credentials.Config, env Env, profileRegion
 	automaticName, regenerated := true, false
 	uncertain := map[string]bool{}
 	for {
+		p.storageStage(storageDetails)
 		var creator BucketCreator
 		var err error
 		if noCredentials {
@@ -204,47 +214,13 @@ func createS3Bucket(p *prompter, cfg *credentials.Config, env Env, profileRegion
 			creator = openS3CreationClient(p, cfg, env, region, name, noCredentials, uncertain[name])
 		}
 		if creator != nil {
-			home, receiptErr := env.readHome()
+			created, createErr, receiptErr := requestS3Bucket(p, env, creator, cfg.AWSProfile, name, region)
 			if receiptErr != nil {
 				return newS3Bucket{}, false, receiptErr
 			}
-			if receiptErr = p.refuseUncertainCreation(home, setupresources.Receipt{Provider: "s3", Profile: cfg.AWSProfile, Bucket: name, Region: region, CreatedAt: env.now()}); receiptErr != nil {
-				return newS3Bucket{}, false, receiptErr
-			}
-			receipt, receiptErr := setupresources.Begin(home, setupresources.Receipt{Provider: "s3", Profile: cfg.AWSProfile, Bucket: name, Region: region, CreatedAt: env.now()})
-			if receiptErr != nil {
-				return newS3Bucket{}, false, receiptErr
-			}
-			p.rememberResourceRequest(receipt.ID)
-			ctx, cancel := context.WithTimeout(context.Background(), bucketCreateTimeout)
-			err = creator.CreateBucket(ctx, name, region)
-			cancel()
+			err = createErr
 			if err == nil {
-				if receiptErr = setupresources.Finish(home, receipt, setupresources.Created); receiptErr != nil {
-					return newS3Bucket{}, false, receiptErr
-				}
-			} else if errors.Is(err, storage.ErrBucketNameTaken) || errors.Is(err, storage.ErrInvalidBucketName) {
-				if receiptErr = setupresources.Finish(home, receipt, setupresources.Refused); receiptErr != nil {
-					return newS3Bucket{}, false, receiptErr
-				}
-			}
-			if err == nil {
-				terminal.Printf(p.out, "Created bucket %s in %s.\n", name, region)
-				p.createdBuckets = append(p.createdBuckets, createdS3Bucket{name: name, region: region, profile: cfg.AWSProfile, receipt: receipt, home: home})
-				secured, e := secureNewBucket(p, creator, name, cfg.AWSProfile)
-				if e != nil {
-					return newS3Bucket{}, false, e
-				}
-				if secured {
-					if receiptErr = setupresources.Finish(home, receipt, setupresources.Secured); receiptErr != nil {
-						return newS3Bucket{}, false, receiptErr
-					}
-					rememberSecuredBucket(p, name)
-					printRuntimePolicyAdvice(p, name, firstNonEmpty(cfg.Prefix, defaultPrefix))
-					return newS3Bucket{name: name, region: region, fresh: true}, true, nil
-				}
-				// The delete action explicitly chose existing storage.
-				return newS3Bucket{}, false, nil
+				return finishNewS3Bucket(p, creator, created, firstNonEmpty(cfg.Prefix, defaultPrefix))
 			} else if errors.Is(err, storage.ErrBucketNameTaken) && automaticName && !regenerated {
 				terminal.Printf(p.out, "The name %s is taken; preparing another suggested name.\n", name)
 				name, regenerated = newBucketName(), true
@@ -355,6 +331,7 @@ type s3CreationSettings struct {
 // confirm returns false only for the explicit existing-bucket route.
 func (s *s3CreationSettings) confirm(p *prompter, cfg *credentials.Config, env Env) (bool, error) {
 	for {
+		p.storageStage(storageDetails)
 		if !standardAWSRegion(s.region) {
 			terminal.Println(p.out, "Setup can only create buckets in the standard AWS regions. Customize the region or use an existing bucket.")
 		}
@@ -563,6 +540,7 @@ const (
 // error, when the bucket was deleted and setup asks for an existing one.
 func secureNewBucket(p *prompter, creator BucketCreator, bucket, profile string) (secured bool, err error) {
 	for {
+		p.storageStage(storageVerification)
 		problem := blockPublicAccess(p, creator, bucket)
 		if problem == "" {
 			return true, nil
@@ -701,14 +679,17 @@ func blockPublicAccess(p *prompter, creator BucketCreator, bucket string) string
 func deleteNewBucket(p *prompter, creator BucketCreator, bucket, profile string) {
 	ctx, cancel := context.WithTimeout(context.Background(), bucketCreateTimeout)
 	defer cancel()
-	if err := creator.DeleteBucket(ctx, bucket); err != nil {
-		for _, created := range p.createdBuckets {
-			if created.name == bucket && created.profile == profile && created.receipt.ID != "" {
-				if receiptErr := setupresources.Finish(created.home, created.receipt, setupresources.CleanupPending); receiptErr != nil {
-					p.warn("Cleanup remains pending; its receipt could not be updated.")
-				}
+	// Record the cleanup request before sending it: a crash or lost reply
+	// must leave the bucket eligible for later cleanup, never marked usable.
+	for _, created := range p.createdBuckets {
+		if created.name == bucket && created.profile == profile && created.receipt.ID != "" {
+			if err := setupresources.Finish(created.home, created.receipt, setupresources.CleanupPending); err != nil {
+				p.warn("Bucket was not deleted because its cleanup intent could not be saved.")
+				return
 			}
 		}
+	}
+	if err := creator.DeleteBucket(ctx, bucket); err != nil {
 		terminal.Printf(p.out, "Couldn't delete bucket %s (%s). It is empty; delete it yourself with:\n", bucket, discoveryReason(err))
 		terminal.Printf(p.out, "  aws s3api delete-bucket --bucket %s --profile %s\n", bucket, profile)
 		return
@@ -849,4 +830,63 @@ func printRuntimePolicyAdvice(p *prompter, bucket, prefix string) {
 	terminal.Println(p.out, p.style.dim("This policy hasn't been tested against a real AWS bucket yet. If the storage check fails once you switch to the new profile, see the note in the bucket permissions guide."))
 	terminal.Println(p.out, "More: https://github.com/wangjohn/agent-archive/blob/main/docs/security/bucket-permissions.md")
 	terminal.Println(p.out, "")
+}
+
+// s3CreationRefused distinguishes affirmative refusals from missing answers.
+func s3CreationRefused(err error) bool {
+	if errors.Is(err, storage.ErrBucketMayExist) {
+		return false
+	}
+	if errors.Is(err, storage.ErrBucketNameTaken) || errors.Is(err, storage.ErrInvalidBucketName) || errors.Is(err, storage.ErrTooManyBuckets) {
+		return true
+	}
+	var apiErr smithy.APIError
+	return errors.As(err, &apiErr) && apiErr.ErrorFault() == smithy.FaultClient
+}
+
+// requestS3Bucket keeps persistence failures distinct from provider refusals,
+// which the interactive flow may offer to retry.
+func requestS3Bucket(p *prompter, env Env, creator BucketCreator, profile, name, region string) (created createdS3Bucket, providerErr, receiptErr error) {
+	home, err := env.readHome()
+	if err != nil {
+		return created, nil, err
+	}
+	if err = p.refuseUncertainCreation(home, setupresources.Receipt{Provider: setupresources.S3, Profile: profile, Bucket: name, Region: region, CreatedAt: env.now()}); err != nil {
+		return created, nil, err
+	}
+	receipt, err := setupresources.Begin(home, setupresources.Receipt{Provider: setupresources.S3, Profile: profile, Bucket: name, Region: region, CreatedAt: env.now()})
+	if err != nil {
+		return created, nil, err
+	}
+	p.rememberResourceRequest(receipt.ID)
+	created = createdS3Bucket{name: name, region: region, profile: profile, receipt: receipt, home: home}
+	ctx, cancel := context.WithTimeout(context.Background(), bucketCreateTimeout)
+	providerErr = creator.CreateBucket(ctx, name, region)
+	cancel()
+	if providerErr == nil {
+		receiptErr = setupresources.Finish(home, receipt, setupresources.Created)
+	} else if s3CreationRefused(providerErr) {
+		receiptErr = setupresources.Finish(home, receipt, setupresources.Refused)
+	}
+	return created, providerErr, receiptErr
+}
+
+// finishNewS3Bucket secures only a confirmed creation and preserves its outcome.
+func finishNewS3Bucket(p *prompter, creator BucketCreator, created createdS3Bucket, prefix string) (newS3Bucket, bool, error) {
+	terminal.Printf(p.out, "Created bucket %s in %s.\n", created.name, created.region)
+	p.createdBuckets = append(p.createdBuckets, created)
+	secured, err := secureNewBucket(p, creator, created.name, created.profile)
+	if err != nil {
+		return newS3Bucket{}, false, err
+	}
+	if !secured {
+		// The delete action explicitly chose existing storage.
+		return newS3Bucket{}, false, nil
+	}
+	if err = setupresources.Finish(created.home, created.receipt, setupresources.Secured); err != nil {
+		return newS3Bucket{}, false, err
+	}
+	rememberSecuredBucket(p, created.name)
+	printRuntimePolicyAdvice(p, created.name, prefix)
+	return newS3Bucket{name: created.name, region: created.region, fresh: true}, true, nil
 }

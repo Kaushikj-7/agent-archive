@@ -5,11 +5,13 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	_ "github.com/wangjohn/agent-archive/internal/testutil/golden" // Registers the repository-wide -update test flag.
 )
 
 func TestInterruptedMutationRemainsUncertain(t *testing.T) {
 	home := t.TempDir()
-	receipt, err := Begin(home, Receipt{Provider: "r2", Account: "0123456789abcdef0123456789abcdef", Bucket: "archive", CreatedAt: time.Now().UTC()})
+	receipt, err := Begin(home, Receipt{Provider: R2, Account: "0123456789abcdef0123456789abcdef", Bucket: "archive", CreatedAt: time.Now().UTC()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +40,7 @@ func TestInterruptedMutationRemainsUncertain(t *testing.T) {
 
 func TestFailedOutcomeWritePreservesUncertainty(t *testing.T) {
 	home := t.TempDir()
-	receipt, err := Begin(home, Receipt{Provider: "s3", Profile: "default", Bucket: "archive"})
+	receipt, err := Begin(home, Receipt{Provider: S3, Profile: "default", Bucket: "archive"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +67,7 @@ func TestFailedOutcomeWritePreservesUncertainty(t *testing.T) {
 
 func TestCorruptAndPublicReceiptsFailClosed(t *testing.T) {
 	home := t.TempDir()
-	receipt, err := Begin(home, Receipt{Provider: "s3", Profile: "default", Bucket: "archive"})
+	receipt, err := Begin(home, Receipt{Provider: S3, Profile: "default", Bucket: "archive"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,5 +86,70 @@ func TestCorruptAndPublicReceiptsFailClosed(t *testing.T) {
 	}
 	if _, err = List(home); err == nil {
 		t.Fatal("corrupt receipt accepted")
+	}
+}
+
+func TestS3DottedNamesKeepTheirBinding(t *testing.T) {
+	home := t.TempDir()
+	r, err := Begin(home, Receipt{Provider: S3, Profile: "default", Bucket: "my.archive"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = Finish(home, r, Created); err != nil {
+		t.Fatal(err)
+	}
+	receipts, err := List(home)
+	if err != nil || len(receipts) != 1 || receipts[0].Bucket != "my.archive" {
+		t.Fatalf("%v %v", receipts, err)
+	}
+	if _, err = Begin(home, Receipt{Provider: R2, Account: "0123456789abcdef0123456789abcdef", Bucket: "my.archive"}); err == nil {
+		t.Fatal("R2 accepted dotted name")
+	}
+}
+
+func TestCrashTemporaryFilesDoNotHideCommittedReceipts(t *testing.T) {
+	home := t.TempDir()
+	r, err := Begin(home, Receipt{Provider: S3, Profile: "default", Bucket: "archive"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(filepath.Join(home, "setup-resources", ".pending-crashed-write"), []byte("partial JSON"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	receipts, err := List(home)
+	if err != nil || len(receipts) != 1 || receipts[0].ID != r.ID || receipts[0].State != RequestSent {
+		t.Fatalf("crash hid intent: %v %v", receipts, err)
+	}
+	if err = Finish(home, r, Created); err != nil {
+		t.Fatal(err)
+	}
+	if err = Finish(home, r, CleanupPending); err != nil {
+		t.Fatal(err)
+	}
+	// The loaded binding can complete recovery in a later process.
+	receipts, err = List(home)
+	if err != nil || len(receipts) != 1 {
+		t.Fatalf("%v %v", receipts, err)
+	}
+	if err = Finish(home, receipts[0], Deleted); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReceiptReadsBoundOversizedFiles(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "oversized.json")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = f.Truncate(64 << 20); err != nil {
+		t.Fatal(err)
+	}
+	if err = f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := readReceipt(path)
+	if err != nil || len(data) != 16385 {
+		t.Fatalf("read %d bytes: %v", len(data), err)
 	}
 }

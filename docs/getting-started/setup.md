@@ -130,6 +130,12 @@ choice separately from whether automatic discovery is enabled; see
 
 ## 2. Storage
 
+Within Step 2, **Account → Storage → Verification** shows the current work.
+Account covers provider access; Storage covers the destination and archive
+credentials; Verification checks connectivity and reports bucket privacy
+separately. Back and Retry return to the stage being edited, preserving valid
+existing-bucket answers within the run.
+
 Setup suggests S3 when your shell sets `AWS_PROFILE` or your AWS settings
 already have a profile with credentials, and R2 otherwise.
 
@@ -147,7 +153,8 @@ and during error recovery. See the [bucket guide](bucket.md) for credentials
 and permissions.
 
 S3 setup enables and reads back all four Block Public Access settings. It
-prints a narrower runtime policy, but does not create IAM identities or keys.
+offers **View archive permissions** for a narrower runtime policy, but does
+not create IAM identities or keys.
 The creation profile remains the default archive profile; choose **Choose
 another archive profile** to switch after attaching the policy yourself.
 
@@ -182,7 +189,7 @@ clear answer to the request, setup says the bucket may exist and to check
 the S3 console; it deletes nothing in that case. If the bucket was created
 but Block Public Access could not be turned on, setup does not use it: it
 offers to try again, to delete the empty bucket (after you type its name),
-or to stop. When it succeeds, setup prints the runtime policy for the new
+or to stop. When it succeeds, setup offers **View archive permissions** for the new
 bucket (not for a folder name with characters other than letters, digits
 and `. _ - /`; it says so and points at the guide) and asks which AWS
 profile archiving should use. The profile that created the bucket is the

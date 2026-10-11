@@ -15,7 +15,7 @@ import (
 
 func recoveryReceipt(t *testing.T, home string, state setupresources.State) setupresources.Receipt {
 	t.Helper()
-	r, err := setupresources.Begin(home, setupresources.Receipt{Provider: "s3", Profile: "creator", Bucket: "agent-archive-example", Region: "us-east-1", CreatedAt: time.Now()})
+	r, err := setupresources.Begin(home, setupresources.Receipt{Provider: setupresources.S3, Profile: "creator", Bucket: "agent-archive-example", Region: "us-east-1", CreatedAt: time.Now()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +51,7 @@ func TestUncertainResourceRecoveryConnectsWithoutClaimingOwnership(t *testing.T)
 	if !strings.Contains(out.String(), "Creation outcome unknown") {
 		t.Fatal(out.String())
 	}
-	if err = refuseUncertainCreation(home, setupresources.Receipt{Provider: "s3", Bucket: r.Bucket, Profile: "rebound"}); err == nil {
+	if err = refuseUncertainCreation(home, setupresources.Receipt{Provider: setupresources.S3, Bucket: r.Bucket, Profile: "rebound"}); err == nil {
 		t.Fatal("ambiguous create allowed after profile change")
 	}
 }

@@ -4,14 +4,25 @@ package setupresources
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/cloudflare"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
+)
+
+// Provider identifies the bucket service independently of its account binding.
+type Provider string
+
+// Supported bucket providers.
+const (
+	S3 Provider = "s3"
+	R2 Provider = "r2"
 )
 
 // State is the last durably observed provider outcome.
@@ -33,7 +44,7 @@ const (
 type Receipt struct {
 	Version      int       `json:"version"`
 	ID           string    `json:"id"`
-	Provider     string    `json:"provider"`
+	Provider     Provider  `json:"provider"`
 	Account      string    `json:"account,omitempty"`
 	Profile      string    `json:"profile,omitempty"`
 	Bucket       string    `json:"bucket"`
@@ -43,11 +54,13 @@ type Receipt struct {
 	State        State     `json:"state"`
 }
 
+var s3BucketName = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]*[a-z0-9]$`)
+
 func (r Receipt) validate() error {
-	if r.Version != 1 || len(r.ID) != 32 || strings.Trim(r.ID, "0123456789abcdef") != "" || r.Bucket == "" || r.CreatedAt.IsZero() || (r.Provider != "s3" && r.Provider != "r2") {
+	if r.Version != 1 || len(r.ID) != 32 || strings.Trim(r.ID, "0123456789abcdef") != "" || r.Bucket == "" || r.CreatedAt.IsZero() || (r.Provider != S3 && r.Provider != R2) {
 		return errors.New("invalid setup resource receipt")
 	}
-	if cloudflare.ValidateBucketName(r.Bucket) != nil || !config.SafeMachineText(r.Profile, 256) || !config.SafeMachineText(r.Region, 64) || (r.Provider == "r2" && (!config.ValidMachineID(r.Account) || r.Profile != "" || (r.Jurisdiction != "" && !cloudflare.ValidJurisdiction(r.Jurisdiction)))) || (r.Provider == "s3" && (r.Account != "" || r.Jurisdiction != "")) {
+	if !validBucket(r.Provider, r.Bucket) || !config.SafeMachineText(r.Profile, 256) || !config.SafeMachineText(r.Region, 64) || (r.Provider == R2 && (!config.ValidMachineID(r.Account) || r.Profile != "" || (r.Jurisdiction != "" && !cloudflare.ValidJurisdiction(r.Jurisdiction)))) || (r.Provider == S3 && (r.Account != "" || r.Jurisdiction != "")) {
 		return errors.New("invalid setup resource binding")
 	}
 	switch r.State {
@@ -72,14 +85,23 @@ func Begin(home string, r Receipt) (Receipt, error) {
 	if err = r.validate(); err != nil {
 		return Receipt{}, err
 	}
-	err = local.Write(filepath.Join(home, "setup-resources", "bucket-"+id+".json"), r)
-	return r, err
+	if err = local.Write(filepath.Join(home, "setup-resources", "bucket-"+id+".json"), r); err != nil {
+		return r, err
+	}
+	// The first write creates setup-resources. Sync its parent too, so the
+	// directory entry survives a machine crash before the provider call.
+	parent, err := os.Open(home)
+	if err != nil {
+		return r, err
+	}
+	defer func() { _ = parent.Close() }()
+	return r, parent.Sync()
 }
 
 // Finish records a provider outcome without changing the mutation's binding.
 func Finish(home string, r Receipt, state State) error {
 	path := filepath.Join(home, "setup-resources", "bucket-"+r.ID+".json")
-	data, err := os.ReadFile(path)
+	data, err := readReceipt(path)
 	if err != nil {
 		return err
 	}
@@ -118,11 +140,15 @@ func List(home string) ([]Receipt, error) {
 	}
 	var result []Receipt
 	for _, entry := range entries {
+		// Atomic writes abandoned by a crashed process are not committed receipts.
+		if strings.HasPrefix(entry.Name(), ".pending-") {
+			continue
+		}
 		info, e := entry.Info()
 		if e != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0600 {
 			return nil, errors.New("invalid setup resource receipt file")
 		}
-		data, e := os.ReadFile(filepath.Join(dir, entry.Name()))
+		data, e := readReceipt(filepath.Join(dir, entry.Name()))
 		if e != nil {
 			return nil, e
 		}
@@ -133,4 +159,21 @@ func List(home string) ([]Receipt, error) {
 		result = append(result, r)
 	}
 	return result, nil
+}
+
+// readReceipt bounds allocation before decoding untrusted local state.
+func readReceipt(path string) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	return io.ReadAll(io.LimitReader(f, 16385))
+}
+
+func validBucket(provider Provider, name string) bool {
+	if provider == R2 {
+		return cloudflare.ValidateBucketName(name) == nil
+	}
+	return provider == S3 && len(name) >= 3 && len(name) <= 63 && s3BucketName.MatchString(name) && !strings.Contains(name, "..")
 }
