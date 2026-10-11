@@ -4,6 +4,7 @@ package nativecodec
 import (
 	"context"
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"maps"
 	"path"
 	"strconv"
 	"strings"
@@ -73,7 +74,7 @@ func parse(ctx context.Context, bundle archive.SourceBundle, agent nativeProfile
 		candidates = append(candidates, calls...)
 		view.ToolResults = append(view.ToolResults, results...)
 		view.NativeSkillUses = append(view.NativeSkillUses, skillUses...)
-		role, text, kind, ok := visibleMessage(record)
+		role, text, kind, ok := visibleMessage(withoutCodexInjectedContext(agent, record))
 		if !ok {
 			continue
 		}
@@ -377,4 +378,71 @@ func skipNativeRecord(bundle archive.SourceBundle, index int, record map[string]
 		return true
 	}
 	return false
+}
+
+// withoutCodexInjectedContext applies the current filter's injected-context
+// rule to a Codex user message's text. Filter 16 drops a leading
+// <external_codex_apps_open_page> wrapper, but sources an earlier filter
+// retained still hold it, and a metadata refresh re-derives from those
+// retained bytes, not the live transcript. Without this, a desktop turn
+// whose first user record is only that wrapper becomes the session title.
+// Text the current filter kept is a fixed point, so new captures derive
+// what they did before. The record is copied only when text changes, and a
+// block left empty loses its text the way the filter drops it.
+func withoutCodexInjectedContext(agent nativeProfile, record map[string]any) map[string]any {
+	if agent != profileCodex {
+		return record
+	}
+	payload, ok := record["payload"].(map[string]any)
+	if !ok || firstString(payload, "role") != "user" {
+		return record
+	}
+	content, changed := stripInjectedContent(payload["content"])
+	if !changed {
+		return record
+	}
+	nextPayload := maps.Clone(payload)
+	nextPayload["content"] = content
+	next := maps.Clone(record)
+	next["payload"] = nextPayload
+	return next
+}
+
+// stripInjectedContent strips injected context from a string content or
+// from each text block of a block list, reporting whether any text changed.
+func stripInjectedContent(content any) (any, bool) {
+	switch value := content.(type) {
+	case string:
+		if injected, stripped := archive.StripInjectedContext(value); injected {
+			return stripped, true
+		}
+	case []any:
+		out := make([]any, len(value))
+		changed := false
+		for i, raw := range value {
+			out[i] = raw
+			block, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			text, ok := block["text"].(string)
+			if !ok {
+				continue
+			}
+			injected, stripped := archive.StripInjectedContext(text)
+			if !injected {
+				continue
+			}
+			kept := maps.Clone(block)
+			delete(kept, "text")
+			if stripped != "" {
+				kept["text"] = stripped
+			}
+			out[i], changed = kept, true
+		}
+		if changed {
+			return out, true
+		}
+	}
+	return content, false
 }
