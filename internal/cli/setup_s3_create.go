@@ -185,6 +185,7 @@ func createS3Bucket(p *prompter, cfg *credentials.Config, env Env, profileRegion
 	automaticName, regenerated := true, false
 	uncertain := map[string]bool{}
 	for {
+		p.storageStage(storageDetails)
 		var creator BucketCreator
 		var err error
 		if noCredentials {
@@ -544,6 +545,7 @@ const (
 // error, when the bucket was deleted and setup asks for an existing one.
 func secureNewBucket(p *prompter, creator BucketCreator, bucket, profile string) (secured bool, err error) {
 	for {
+		p.storageStage(storageVerification)
 		problem := blockPublicAccess(p, creator, bucket)
 		if problem == "" {
 			return true, nil

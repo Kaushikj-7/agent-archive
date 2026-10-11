@@ -552,6 +552,9 @@ func (c *r2Creator) askLocation() error {
 // any of those. An interrupt ends it at once.
 func (c *r2Creator) createUntilVerified() (credentials.R2Credentials, error) {
 	for {
+		if c.creationConfirmed {
+			c.p.storageStage(storageDetails)
+		}
 		key, err := c.attempt()
 		if err == nil {
 			return key, nil

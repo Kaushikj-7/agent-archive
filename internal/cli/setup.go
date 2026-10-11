@@ -623,6 +623,7 @@ func verifySetupDraftStorage(p *prompter, draft *setupDraft, save func() error, 
 		// A draft resumed past the storage questions (after changing
 		// apps, say) still doesn't check a failed region again.
 		if s := &draft.Config.Storage; s.Provider == credentials.ProviderS3 && draft.FailedRegion != "" && s.Region == draft.FailedRegion {
+			p.storageStage(storageDetails)
 			region, err := askFailedRegion(p, s.Region)
 			if err != nil {
 				return false, err
@@ -676,6 +677,7 @@ func recoverSetupStorageFailure(p *prompter, draft *setupDraft, save func() erro
 	}
 	// Retry and "Change other settings" keep the draft as it is, at the check.
 	if choice == "fix" && d.Cause == storage.CauseWrongRegion && draft.Config.Storage.Provider == credentials.ProviderS3 {
+		p.storageStage(storageDetails)
 		// When S3 didn't name the bucket's region, ask S3 for it, so the
 		// default is not the region that just failed.
 		region := d.Region
@@ -1080,6 +1082,11 @@ func runStorageCheck(p *prompter, cfg *config.Config, env Env) error {
 		return err
 	}
 	*cfg = checked
+	// The object key cannot inspect R2's public domains. Keep the management
+	// evidence from this run for the independent privacy result.
+	if report := p.guidedR2Privacy(*cfg); report != nil {
+		cfg.BucketPrivacy = report
+	}
 	terminal.Println(p.out, p.style.okMark()+" Connected to your storage.")
 	printReviewPrivacy(p, *cfg)
 	return nil

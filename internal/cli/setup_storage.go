@@ -52,7 +52,7 @@ func promptStorage(p *prompter, existing credentials.Config, env Env, failedRegi
 		if kept || err != nil {
 			return cfg, key, saved, err
 		}
-
+		answers[cfg.Provider+":existing"] = cfg
 	}
 	def := existing.Provider
 	if def == "" {
@@ -260,7 +260,7 @@ func promptKeepStorage(p *prompter, existing credentials.Config, env Env) (crede
 	}
 	cfg, key, saved, err := promptExistingR2(p, existing, env)
 	if errors.Is(err, errChooseStorageAgain) {
-		return existing, key, false, false, nil
+		return cfg, key, false, false, nil
 	}
 	return cfg, key, saved, true, err
 }
