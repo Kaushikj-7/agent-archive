@@ -208,6 +208,9 @@ func createS3Bucket(p *prompter, cfg *credentials.Config, env Env, profileRegion
 			if receiptErr != nil {
 				return newS3Bucket{}, false, receiptErr
 			}
+			if receiptErr = refuseUncertainCreation(home, setupresources.Receipt{Provider: "s3", Profile: cfg.AWSProfile, Bucket: name, Region: region, CreatedAt: env.now()}); receiptErr != nil {
+				return newS3Bucket{}, false, receiptErr
+			}
 			receipt, receiptErr := setupresources.Begin(home, setupresources.Receipt{Provider: "s3", Profile: cfg.AWSProfile, Bucket: name, Region: region, CreatedAt: env.now()})
 			if receiptErr != nil {
 				return newS3Bucket{}, false, receiptErr

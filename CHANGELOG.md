@@ -6,6 +6,10 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Resume interrupted storage setup from durable resource receipts, prevent
+  ambiguous duplicate creation, track manual bucket cleanup, and explicitly
+  revoke unused guided keys while protecting active and draft credentials.
+
 - Preserve private, durable bucket creation receipts across interrupted setup and
   abandoned drafts, including uncertain provider outcomes. Archive keys continue
   to use the existing issuance ledger.
