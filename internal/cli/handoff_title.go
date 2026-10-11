@@ -149,8 +149,7 @@ type handoffQueryResolver struct {
 }
 
 func (r *handoffQueryResolver) resolve() (code int, done bool) {
-	ctx, stopReads := readCommandContext(r.env)
-	defer stopReads()
+	ctx := context.Background()
 	opts := r.opts
 	var regs []archive.SessionRegistration
 	if opts.source != "archive" {
@@ -166,7 +165,10 @@ func (r *handoffQueryResolver) resolve() (code int, done bool) {
 		}
 	}
 	if opts.source != "local" && isArchiveSessionID(r.query) {
-		if harness, ok := r.exactArchiveSession(ctx); ok {
+		readCtx, stopReads := readCommandContext(r.env)
+		harness, ok := r.exactArchiveSession(readCtx)
+		stopReads()
+		if ok {
 			opts.sessionID, opts.harness = r.query, harness
 			return 0, false
 		}

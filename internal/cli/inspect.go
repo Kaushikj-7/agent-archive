@@ -144,6 +144,7 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	ctx, stopReads := readCommandContext(env)
 	defer stopReads()
 	listed, err := reader.ListRecent(ctx, store, archiveSessionsPrefix, opts.filter, listLimit, listOpts)
+	stopReads()
 	stopList()
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: list: %v\n", err)

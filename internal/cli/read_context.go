@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"os"
+	"sync"
 )
 
 // readCommandContext cancels remote reads when the user interrupts. It has
@@ -23,7 +24,8 @@ func readCommandContext(env interface {
 		case <-ctx.Done():
 		}
 	}()
-	return ctx, func() { cancel(); stop(); <-done }
+	var once sync.Once
+	return ctx, func() { once.Do(func() { cancel(); stop(); <-done }) }
 }
 
 // writeOutput treats a writer's short successful write as failure.
