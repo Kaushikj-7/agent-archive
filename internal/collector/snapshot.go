@@ -186,19 +186,7 @@ func sourceAdapter(sources agentapi.SourcesLookup, name string) (agentapi.Transc
 	return f, nil
 }
 
-// ReadImportBundle filters the selected native source without writing or admitting
-// it. Confirmed imports freeze this result before registration becomes visible.
-func ReadImportBundle(ctx context.Context, reg archive.SessionRegistration, at time.Time, opts Options) (archive.SourceBundle, error) {
-	bundle, _, err := ReadImportSourceSet(ctx, reg, at, opts)
-	return bundle, err
-}
-
-// ReadImportSourceSet freezes the selected logical history and independent revisions.
-func ReadImportSourceSet(ctx context.Context, reg archive.SessionRegistration, at time.Time, opts Options) (archive.SourceBundle, []archive.SourceBundle, error) {
-	return readImportSourceSet(ctx, reg, at, opts, nil)
-}
-
-// ReadImportSourceSelection also returns the binding validated by the same
+// ReadImportSourceSelection freezes the selected source set and its binding from the same
 // source handle, so admission can freeze ownership without a second native read.
 func ReadImportSourceSelection(ctx context.Context, reg archive.SessionRegistration, at time.Time, opts Options) (archive.SourceBundle, []archive.SourceBundle, *archive.CodexSourceBinding, error) {
 	var binding *archive.CodexSourceBinding
