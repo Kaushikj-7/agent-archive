@@ -156,17 +156,31 @@ type HandoffExchange struct {
 	PromptTruncated bool          `json:"prompt_truncated,omitempty"`
 	Timestamp       string        `json:"timestamp,omitempty"`
 	Steps           []HandoffStep `json:"steps,omitempty"`
+	// Condensed is set when the budget replaced the exchange's steps with
+	// counts of what they held, leaving only the prompt's first line.
+	Condensed *HandoffCondensed `json:"condensed,omitempty"`
+}
+
+// HandoffCondensed counts what a condensed exchange held, including what
+// earlier budget steps had already collapsed or omitted from it.
+type HandoffCondensed struct {
+	AgentMessages int `json:"agent_messages"`
+	ToolCalls     int `json:"tool_calls"`
+	ShellCommands int `json:"shell_commands,omitempty"`
 }
 
 // HandoffStep is assistant text, a tool call, a shell command the person ran
 // directly, the summary Claude Code wrote when the session was compacted, or —
-// once the budget has collapsed tool calls — a count of them such as
-// "14 tool calls: Bash ×9, Read ×5".
+// once the budget has collapsed tool calls or omitted agent messages — a
+// count of them such as "14 tool calls: Bash ×9, Read ×5".
 type HandoffStep struct {
 	Kind          HandoffStepKind  `json:"kind"`
 	Text          string           `json:"text,omitempty"`
 	TextTruncated bool             `json:"text_truncated,omitempty"`
 	Tool          *HandoffToolCall `json:"tool,omitempty"`
+	// Count is how many tool calls a collapsed step stands for, or how many
+	// agent messages an omitted step stands for.
+	Count int `json:"count,omitempty"`
 }
 
 // HandoffStepKind says which of the HandoffStep shapes a step is.
@@ -179,6 +193,8 @@ const (
 	HandoffStepShell     HandoffStepKind = "shell"
 	HandoffStepSummary   HandoffStepKind = "summary"
 	HandoffStepCollapsed HandoffStepKind = "collapsed"
+	// HandoffStepOmitted stands for agent messages the budget removed.
+	HandoffStepOmitted HandoffStepKind = "omitted"
 )
 
 // HandoffToolCall is one tool call in a HandoffStep: the tool's name, a short
@@ -214,8 +230,10 @@ type HandoffElision struct {
 // HandoffElisionKind names one FitHandoff budget step.
 type HandoffElisionKind string
 
-// HandoffElision kinds, in the order FitHandoff applies them. The first three
-// never touch the protected tail of recent steps.
+// HandoffElision kinds, in the order FitHandoff first applies them. The
+// first three never touch the protected tail of recent steps; a handoff still
+// over budget after the first five has tool output dropped, then tool calls
+// collapsed and agent text shortened, everywhere (see FitHandoff).
 const (
 	// HandoffElisionToolOutput drops tool results.
 	HandoffElisionToolOutput HandoffElisionKind = "tool_output"
@@ -226,6 +244,12 @@ const (
 	// HandoffElisionPromptText truncates long prompts; prompts are never
 	// dropped.
 	HandoffElisionPromptText HandoffElisionKind = "prompt_text"
+	// HandoffElisionAgentMessages omits all but the last of each exchange's
+	// agent messages outside the protected tail.
+	HandoffElisionAgentMessages HandoffElisionKind = "agent_messages"
+	// HandoffElisionExchanges condenses whole exchanges, never the last, to
+	// their prompts and counts of what they held.
+	HandoffElisionExchanges HandoffElisionKind = "exchanges"
 )
 
 // handoffSession selects recorded identity, model, and time metadata without
@@ -634,90 +658,10 @@ func (s *fileSet) add(file string) {
 	}
 }
 
-// FitHandoff returns a copy of h trimmed until measure(copy) is at most
-// maxBytes, applying the budget steps in order and recording each in
-// Elisions. Each step is applied to the oldest exchanges first, and to no more
-// of them than needed. The protected tail — steps in the last
-// handoffKeptExchanges exchanges, but no more than the last handoffKeptSteps
-// steps, so one long autonomous exchange can still be trimmed — is never
-// touched by the first three steps. Prompts are only ever truncated, and
-// LeftOff is never trimmed. fits is false when the result is still over
-// budget after every step. maxBytes <= 0 means no budget.
-//
-// Each step's effect only grows with the number of exchanges it is applied
-// to, so the smallest sufficient prefix is found by binary search: a handful
-// of measurements per step rather than one per exchange, which matters when
-// measure renders a multi-megabyte session.
-func FitHandoff(h Handoff, maxBytes int, measure func(Handoff) int) (Handoff, bool) {
-	out := cloneHandoff(h)
-	if maxBytes <= 0 || measure(out) <= maxBytes {
-		return out, true
-	}
-	steps := []struct {
-		kind  HandoffElisionKind
-		apply func(steps []HandoffStep, limit int) ([]HandoffStep, int)
-	}{
-		{HandoffElisionToolOutput, dropToolOutput},
-		{HandoffElisionToolCalls, collapseToolCalls},
-		{HandoffElisionAssistantText, shortenAssistantText},
-	}
-	for _, step := range steps {
-		// Protection is computed once, before the step: a step only changes
-		// steps outside the protected tail, so the tail it computes stays
-		// the same while the step runs.
-		limits := protectedStart(out.Exchanges, handoffKeptExchanges, handoffKeptSteps)
-		apply := func(k int) (Handoff, HandoffElision) {
-			trial := cloneHandoff(out)
-			elision := HandoffElision{Kind: step.kind}
-			for i := range k {
-				var n int
-				trial.Exchanges[i].Steps, n = step.apply(trial.Exchanges[i].Steps, limits[i])
-				if n > 0 {
-					if elision.First == 0 {
-						elision.First = i + 1
-					}
-					elision.Last, elision.Count = i+1, elision.Count+n
-				}
-			}
-			return trial, elision
-		}
-		trial, elision, fits := smallestFittingPrefix(len(out.Exchanges), maxBytes, measure, apply)
-		out = trial
-		if elision.Count > 0 {
-			out.Elisions = append(out.Elisions, elision)
-		}
-		if fits {
-			return out, true
-		}
-	}
-	// Prompts are truncated, never dropped, and every exchange is eligible.
-	apply := func(k int) (Handoff, HandoffElision) {
-		trial := cloneHandoff(out)
-		elision := HandoffElision{Kind: HandoffElisionPromptText}
-		for i := range k {
-			exchange := &trial.Exchanges[i]
-			if len(exchange.Prompt) > handoffPromptCap {
-				exchange.Prompt = TruncateUTF8(exchange.Prompt, handoffPromptCap)
-				exchange.PromptTruncated = true
-				if elision.First == 0 {
-					elision.First = i + 1
-				}
-				elision.Last, elision.Count = i+1, elision.Count+1
-			}
-		}
-		return trial, elision
-	}
-	trial, elision, fits := smallestFittingPrefix(len(out.Exchanges), maxBytes, measure, apply)
-	out = trial
-	if elision.Count > 0 {
-		out.Elisions = append(out.Elisions, elision)
-	}
-	return out, fits
-}
-
 // smallestFittingPrefix applies a step to the first k exchanges for the
 // smallest k whose result fits, or to all n when none does. apply(k) must not
-// modify its input and its result size must not grow with k. The returned
+// modify its input, and once apply(k) fits, apply(k+1) must fit too (see
+// fitStagePrefixes). The returned
 // handoff does not yet carry the step's elision.
 func smallestFittingPrefix(n, maxBytes int, measure func(Handoff) int, apply func(k int) (Handoff, HandoffElision)) (Handoff, HandoffElision, bool) {
 	all, allElision := apply(n)
@@ -818,6 +762,7 @@ func collapseToolCalls(steps []HandoffStep, limit int) ([]HandoffStep, int) {
 		noun = "tool call"
 	}
 	out[at].Text = fmt.Sprintf("%d %s: %s", total, noun, strings.Join(parts, ", "))
+	out[at].Count = total
 	return out, total
 }
 
@@ -840,18 +785,30 @@ func cloneHandoff(h Handoff) Handoff {
 	out.Elisions = append([]HandoffElision(nil), h.Elisions...)
 	out.Exchanges = make([]HandoffExchange, len(h.Exchanges))
 	for i, exchange := range h.Exchanges {
-		copied := exchange
-		copied.Steps = make([]HandoffStep, len(exchange.Steps))
-		for j, step := range exchange.Steps {
-			if step.Tool != nil {
-				tool := *step.Tool
-				step.Tool = &tool
-			}
-			copied.Steps[j] = step
-		}
-		out.Exchanges[i] = copied
+		out.Exchanges[i] = cloneHandoffExchange(exchange)
 	}
 	return out
+}
+
+// cloneHandoffExchange returns a copy of exchange that shares nothing a
+// budget step changes.
+func cloneHandoffExchange(exchange HandoffExchange) HandoffExchange {
+	copied := exchange
+	if exchange.Steps != nil {
+		copied.Steps = make([]HandoffStep, len(exchange.Steps))
+	}
+	for j, step := range exchange.Steps {
+		if step.Tool != nil {
+			tool := *step.Tool
+			step.Tool = &tool
+		}
+		copied.Steps[j] = step
+	}
+	if exchange.Condensed != nil {
+		condensed := *exchange.Condensed
+		copied.Condensed = &condensed
+	}
+	return copied
 }
 
 // BuildHandoffWithAnalysis renders a handoff from one previously derived analysis.
