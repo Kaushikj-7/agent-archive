@@ -15,6 +15,11 @@ follow [Semantic Versioning](https://semver.org/).
   source error can now carry a fixed, content-free cause ("source unavailable:
   Codex history coverage incomplete").
 
+- Stop titling Codex desktop sessions with injected open-page context such as
+  `<external_codex_apps_open_page>{"page_id":null}</external_codex_apps_open_page>`.
+  Sessions captured before that context was filtered now take their title from
+  the first real prompt when their metadata refreshes.
+
 - Preserve settled capture and source bytes when cached native naming reads are
   unavailable and the same observation uses an equivalent timezone offset.
 
