@@ -127,7 +127,9 @@ func runEvalExport(args []string, stdin io.Reader, stdout, stderr io.Writer, env
 		}
 		break
 	}
-	exporter := evalExporter{ctx: context.Background(), store: store, opts: opts, env: env}
+	ctx, stopReads := readCommandContext(env)
+	defer stopReads()
+	exporter := evalExporter{ctx: ctx, store: store, opts: opts, env: env}
 	failed, err := exporter.run(inputs, stdout)
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: eval export: %v\n", err)

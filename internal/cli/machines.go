@@ -3,7 +3,6 @@ package cli
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"path/filepath"
@@ -146,6 +145,9 @@ func runMachinesCommand(args []string, stdin io.Reader, out, errOut io.Writer, e
 	if !fs.parseFlagsOnly(args) {
 		return 2
 	}
+	if *unattended && !*verify {
+		return fs.usageError("--yes requires --verify")
+	}
 	home, err := env.readHome()
 	if err != nil {
 		return machineCommandError(errOut, err)
@@ -167,12 +169,9 @@ func runMachinesCommand(args []string, stdin io.Reader, out, errOut io.Writer, e
 	if *verify {
 		return runMachinesVerify(cfg, result, stdin, out, errOut, env, *asJSON, *unattended)
 	}
-	if *unattended {
-		return fs.usageError("--yes requires --verify")
-	}
 	observePairingClaims(home, cfg.DestinationID(), result, env.now())
 	if *asJSON {
-		if err := json.NewEncoder(out).Encode(struct {
+		if err := writeCompactJSON(out, struct {
 			machines.ListResult
 			PairingWarnings []string `json:"pairing_warnings,omitempty"`
 		}{result, pairingWarnings(home, env.now())}); err != nil {

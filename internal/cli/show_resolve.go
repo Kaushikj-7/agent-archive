@@ -32,7 +32,9 @@ type showLookup struct {
 // because the caller has something to do with one session (--transcript or
 // --json), when it returns the chosen session. Off a terminal they print the
 // candidates and exit 1.
-func resolveShowQuery(ctx context.Context, store storage.ObjectStore, env showQueryDependencies, stdin io.Reader, stdout, stderr io.Writer, harness, query string, cfgProjects map[string]string, noPager, pickOne bool) (showLookup, int) {
+func resolveShowQuery(store storage.ObjectStore, env showQueryDependencies, stdin io.Reader, stdout, stderr io.Writer, harness, query string, cfgProjects map[string]string, noPager, pickOne bool) (showLookup, int) {
+	ctx, stopReads := readCommandContext(env)
+	defer stopReads()
 	// Full archive IDs use the direct-read path. With --harness, a short ID
 	// or title would otherwise be mistaken for a literal object key.
 	if harness == "" || len(query) == 32 {
@@ -115,7 +117,8 @@ func resolveShowQuery(ctx context.Context, store storage.ObjectStore, env showQu
 	if !pickOne {
 		spec = browserSpec{Mode: browseSessions, Choices: choices, Query: words, Command: "show", Store: store, NoPager: noPager}
 	}
-	row, picked, code := runBrowser(ctx, env, newPrompter(stdin, stdout), stdout, stderr, spec)
+	stopReads()
+	row, picked, code := runBrowser(context.Background(), env, newPrompter(stdin, stdout), stdout, stderr, spec)
 	if code != 0 {
 		return showLookup{}, code
 	}

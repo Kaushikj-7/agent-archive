@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/wangjohn/agent-archive/internal/config"
@@ -47,14 +48,6 @@ func runPurgePlan(args []string, stdout, stderr io.Writer, env Env) int {
 	if !fs.parseFlagsOnly(args) {
 		return 2
 	}
-	store, cfg, found, err := openReadOnlyStore(env)
-	if err != nil {
-		return purgeError(stderr, err)
-	}
-	if !found {
-		terminal.Println(stderr, notSetUpMessage)
-		return 1
-	}
 	selectedMode := purge.Mode(*mode)
 	if selectedMode != purge.ModeUnreferenced && selectedMode != purge.ModeOldFilter {
 		return fs.usageError("--mode must be unreferenced or old-filter")
@@ -64,6 +57,20 @@ func runPurgePlan(args []string, stdout, stderr io.Writer, env Env) int {
 	}
 	if selectedMode == purge.ModeUnreferenced && *before != "" {
 		return fs.usageError("--before-filter requires --mode old-filter")
+	}
+	if selectedMode == purge.ModeOldFilter {
+		n, err := strconv.Atoi(*before)
+		if err != nil || n <= 0 {
+			return fs.usageError("--before-filter must be a positive numeric version")
+		}
+	}
+	store, cfg, found, err := openReadOnlyStore(env)
+	if err != nil {
+		return purgeError(stderr, err)
+	}
+	if !found {
+		terminal.Println(stderr, notSetUpMessage)
+		return 1
 	}
 	plan, err := purge.Inventory(context.Background(), store, cfg.DestinationID(), cfg.Storage.Bucket, cfg.Storage.Prefix, selectedMode, *before, env.now())
 	if err != nil {
