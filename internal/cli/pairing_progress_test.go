@@ -133,7 +133,7 @@ func TestPairingReceiverCancellationLeavesCaptureUnchanged(t *testing.T) {
 	if exit := Run(args, strings.NewReader("cancel\n"), &out, &out, env); exit != 1 {
 		t.Fatalf("cancel %d: %s", exit, &out)
 	}
-	if !strings.Contains(out.String(), "issued storage access") || strings.Contains(out.String(), "Paired successfully") {
+	if !strings.Contains(out.String(), "Issued storage access") || strings.Contains(out.String(), "Paired successfully") {
 		t.Fatalf("incorrect receiver cancellation: %s", &out)
 	}
 	if _, found, err := config.Load(home); found || err != nil {
