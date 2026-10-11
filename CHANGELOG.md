@@ -15,6 +15,12 @@ follow [Semantic Versioning](https://semver.org/).
   source error can now carry a fixed, content-free cause ("source unavailable:
   Codex history coverage incomplete"). A session still put off after 24
   hours of passes is reported as failed again, until a pass reads it.
+- Keep `handoff` within `--max-bytes` for long sessions: once the existing
+  trimming is not enough, older exchanges keep only their last agent message,
+  then all tool output is dropped, then every exchange but the last is
+  condensed to its prompt and counts. Markdown still over the limit because of
+  one oversized part, or of several hundred exchanges, is cut at a line with
+  a marker, keeping the last exchange.
 - Clarify storage onboarding with Account, Storage, and Verification stages.
   Keep valid existing-bucket answers when going back, show S3 archive
   permissions on request, and report privacy separately from connectivity.

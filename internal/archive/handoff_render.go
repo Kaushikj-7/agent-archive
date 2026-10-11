@@ -146,51 +146,84 @@ func planMarker(status string) (box, suffix string) {
 func renderHandoffConversation(b *strings.Builder, h Handoff) {
 	b.WriteString("## Conversation\n")
 	for i, exchange := range h.Exchanges {
-		if exchange.Prompt == "" {
-			fmt.Fprintf(b, "\n### %d · Before the first prompt\n", i+1)
-		} else {
-			fmt.Fprintf(b, "\n### %d · Person\n", i+1)
-			prompt := exchange.Prompt
-			if exchange.PromptTruncated {
-				prompt += " …(truncated)"
-			}
-			b.WriteString(quote(prompt))
+		renderHandoffExchange(b, i, exchange)
+	}
+}
+
+// renderHandoffExchange renders exchange i of a conversation. It depends on
+// nothing outside the exchange, so a conversation's rendering ends with its
+// last exchange's.
+func renderHandoffExchange(b *strings.Builder, i int, exchange HandoffExchange) {
+	if exchange.Prompt == "" {
+		fmt.Fprintf(b, "\n### %d · Before the first prompt\n", i+1)
+	} else {
+		fmt.Fprintf(b, "\n### %d · Person\n", i+1)
+		prompt := exchange.Prompt
+		if exchange.PromptTruncated {
+			prompt += " …(truncated)"
 		}
-		inTools := false
-		for _, step := range exchange.Steps {
-			switch step.Kind {
-			case HandoffStepText:
-				text := step.Text
-				if step.TextTruncated {
-					text += " …(shortened)"
-				}
-				fmt.Fprintf(b, "\n**Agent:**\n%s", quote(text))
-				inTools = false
-			case HandoffStepShell:
-				fmt.Fprintf(b, "\n**Person ran:** %s\n", codeSpan(firstLine(step.Text, handoffSummaryCap)))
-				inTools = false
-			case HandoffStepSummary:
-				text := step.Text
-				if step.TextTruncated {
-					text += " …(shortened)"
-				}
-				fmt.Fprintf(b, "\n**Conversation compacted.** The agent continued from this summary:\n\n%s", quote(text))
-				inTools = false
-			case HandoffStepTool:
-				if !inTools {
-					b.WriteString("\n")
-					inTools = true
-				}
-				renderTool(b, step.Tool)
-			case HandoffStepCollapsed:
-				if !inTools {
-					b.WriteString("\n")
-					inTools = true
-				}
-				fmt.Fprintf(b, "- %s\n", oneLine(step.Text))
+		b.WriteString(quote(prompt))
+	}
+	if exchange.Condensed != nil {
+		fmt.Fprintf(b, "\n- %s omitted\n", describeCondensed(*exchange.Condensed))
+	}
+	inTools := false
+	for _, step := range exchange.Steps {
+		switch step.Kind {
+		case HandoffStepText:
+			text := step.Text
+			if step.TextTruncated {
+				text += " …(shortened)"
 			}
+			fmt.Fprintf(b, "\n**Agent:**\n%s", quote(text))
+			inTools = false
+		case HandoffStepShell:
+			fmt.Fprintf(b, "\n**Person ran:** %s\n", codeSpan(firstLine(step.Text, handoffSummaryCap)))
+			inTools = false
+		case HandoffStepSummary:
+			text := step.Text
+			if step.TextTruncated {
+				text += " …(shortened)"
+			}
+			fmt.Fprintf(b, "\n**Conversation compacted.** The agent continued from this summary:\n\n%s", quote(text))
+			inTools = false
+		case HandoffStepTool:
+			if !inTools {
+				b.WriteString("\n")
+				inTools = true
+			}
+			renderTool(b, step.Tool)
+		case HandoffStepCollapsed:
+			if !inTools {
+				b.WriteString("\n")
+				inTools = true
+			}
+			fmt.Fprintf(b, "- %s\n", oneLine(step.Text))
+		case HandoffStepOmitted:
+			if !inTools {
+				b.WriteString("\n")
+				inTools = true
+			}
+			fmt.Fprintf(b, "- %s omitted\n", countNoun(step.Count, "agent message"))
 		}
 	}
+}
+
+// describeCondensed says what a condensed exchange held.
+func describeCondensed(c HandoffCondensed) string {
+	parts := []string{countNoun(c.AgentMessages, "agent message"), countNoun(c.ToolCalls, "tool call")}
+	if c.ShellCommands > 0 {
+		parts = append(parts, countNoun(c.ShellCommands, "shell command"))
+	}
+	return strings.Join(parts, ", ")
+}
+
+// countNoun is "1 tool call" or "3 tool calls".
+func countNoun(n int, noun string) string {
+	if n == 1 {
+		return "1 " + noun
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
 }
 
 func renderHandoffFooter(b *strings.Builder, h Handoff) {
@@ -533,6 +566,10 @@ func describeElision(e HandoffElision) string {
 		return fmt.Sprintf("%d agent messages in %s shortened", e.Count, span)
 	case HandoffElisionPromptText:
 		return fmt.Sprintf("%d long prompts in %s truncated", e.Count, span)
+	case HandoffElisionAgentMessages:
+		return fmt.Sprintf("%d agent messages in %s omitted, keeping each exchange's last", e.Count, span)
+	case HandoffElisionExchanges:
+		return fmt.Sprintf("%d exchanges in %s condensed to the prompt's first line and counts", e.Count, span)
 	}
 	return fmt.Sprintf("%d %s in %s", e.Count, oneLine(string(e.Kind)), span)
 }
