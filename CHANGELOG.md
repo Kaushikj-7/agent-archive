@@ -9,6 +9,15 @@ follow [Semantic Versioning](https://semver.org/).
 - Protect active and preserved revision sources during purge and selective archive
   cleanup. Invalid or missing history references block deletion; old-filter live
   evidence must be replaced through verified privacy publication first.
+- Stop reporting Codex sessions whose history coverage is not complete yet,
+  or whose source changed while being read, as failed: `sync` counts them by
+  reason ("8 waiting for Codex history coverage") and `status` lists them as
+  rechecking, while real failures are still listed. `backfill history` counts
+  as waiting only sessions not in the archive yet, and counts uploaded ones
+  with a re-scan or newer work owed apart (`uploaded · 2 rechecking`). A
+  source error can now carry a fixed, content-free cause ("source unavailable:
+  Codex history coverage incomplete"). A session still put off after 24
+  hours of passes is reported as failed again, until a pass reads it.
 - Keep `handoff` within `--max-bytes` for long sessions: once the existing
   trimming is not enough, older exchanges keep only their last agent message,
   then all tool output is dropped, then every exchange but the last is
