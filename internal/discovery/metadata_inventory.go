@@ -223,7 +223,7 @@ func (m *metadataInventory) beginOperation(ctx context.Context) (context.Context
 		}
 	}
 	if m.remaining <= 0 {
-		return ctx, nil, metadataLimit()
+		return ctx, nil, m.fail(metadataLimit())
 	}
 	m.deadline = started.Add(m.remaining)
 	operation, cancel := context.WithDeadline(ctx, m.deadline)
@@ -236,7 +236,7 @@ func (m *metadataInventory) operationFailure(parent context.Context, err error) 
 		return canceled
 	}
 	if !m.deadline.IsZero() && !time.Now().Before(m.deadline) {
-		return metadataLimit()
+		return m.fail(metadataLimit())
 	}
 	return err
 }
@@ -787,7 +787,7 @@ func (m *metadataInventory) BeginValidationSlice(ctx context.Context, limits age
 		err = m.validate(operation)
 	}
 	err = m.operationFailure(ctx, err)
-	if err != nil && m.failure != nil {
+	if err != nil && (ctx.Err() == nil || m.failure != nil) {
 		err = m.fail(err)
 	}
 	return &metadataSlice{inventory: m, remaining: limits.Steps, expires: time.Now().Add(limits.Duration), failure: err}, nil
