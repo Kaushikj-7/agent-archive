@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"net/url"
@@ -131,7 +130,7 @@ func runMachinesVerify(cfg config.Config, listing machines.ListResult, stdin io.
 	listing.ProviderVerified = !listing.Partial && len(listing.Unreadable) == 0 && !report.Partial && report.PaginationComplete
 	result := verifiedMachinesResult{ListResult: listing, Verification: report}
 	if asJSON {
-		if err := json.NewEncoder(out).Encode(result); err != nil {
+		if err := writeCompactJSON(out, result); err != nil {
 			return machineCommandError(errOut, err)
 		}
 	} else {

@@ -107,15 +107,25 @@ func Inventory(ctx context.Context, store storage.ObjectStore, destinationID, bu
 		if err != nil {
 			return Plan{}, fmt.Errorf("inspect %q: %w", object.Key, err)
 		}
-		if path.Dir(meta.SourceBundle.Key) != path.Dir(object.Key) || !validSourceKey(meta.SourceBundle.Key) {
-			return Plan{}, fmt.Errorf("metadata %q has an invalid source reference", object.Key)
+		refs, err := liveReferences(meta, object.Key, listedSources)
+		if err != nil {
+			return Plan{}, err
 		}
-		current[meta.SourceBundle.Key] = true
-		if !listedSources[meta.SourceBundle.Key] {
-			return Plan{}, fmt.Errorf("metadata %q references a missing source", object.Key)
-		}
-		if numericOlder(meta.FilterVersion, before) {
-			old = append(old, CurrentOldSession{MetadataKey: object.Key, SourceKey: meta.SourceBundle.Key, FilterVersion: meta.FilterVersion})
+		for i, ref := range refs {
+			current[ref.Key] = true
+			version := meta.FilterVersion
+			if i > 0 {
+				version = meta.History.Preserved[i-1].FilterVersion
+				if version == "" && mode == ModeOldFilter {
+					version, err = sourceFilterVersion(ctx, store, storage.Object{Key: ref.Key, Size: int64(ref.CompressedBytes)})
+					if err != nil {
+						return Plan{}, fmt.Errorf("inspect live source %q: %w", ref.Key, err)
+					}
+				}
+			}
+			if numericOlder(version, before) {
+				old = append(old, CurrentOldSession{MetadataKey: object.Key, SourceKey: ref.Key, FilterVersion: version})
+			}
 		}
 	}
 	var candidates []Candidate
@@ -136,10 +146,32 @@ func Inventory(ctx context.Context, store storage.ObjectStore, destinationID, bu
 		candidates = append(candidates, Candidate{Key: object.Key, Size: object.Size, ETag: object.ETag, FilterVersion: version})
 	}
 	sort.Slice(candidates, func(i, j int) bool { return candidates[i].Key < candidates[j].Key })
-	sort.Slice(old, func(i, j int) bool { return old[i].MetadataKey < old[j].MetadataKey })
+	sort.Slice(old, func(i, j int) bool {
+		if old[i].MetadataKey != old[j].MetadataKey {
+			return old[i].MetadataKey < old[j].MetadataKey
+		}
+		return old[i].SourceKey < old[j].SourceKey
+	})
 	plan := Plan{Version: 1, DestinationID: destinationID, Bucket: bucket, Prefix: prefix, Mode: mode, BeforeFilter: before, CreatedAt: now.UTC(), ExpiresAt: now.Add(Lifetime).UTC(), Candidates: candidates, CurrentOldSessions: old}
 	plan.Digest, err = digest(plan)
 	return plan, err
+}
+
+// liveReferences applies the same complete-set checks at inventory and deletion.
+func liveReferences(meta archive.Metadata, metadataKey string, listed map[string]bool) ([]archive.SourceReference, error) {
+	refs, err := meta.SourceReferences()
+	if err != nil {
+		return nil, fmt.Errorf("metadata %q has invalid source references: %w", metadataKey, err)
+	}
+	for _, ref := range refs {
+		if path.Dir(ref.Key) != path.Dir(metadataKey) || !validSourceKey(ref.Key) {
+			return nil, fmt.Errorf("metadata %q has an invalid source reference", metadataKey)
+		}
+		if !listed[ref.Key] {
+			return nil, fmt.Errorf("metadata %q references a missing source", metadataKey)
+		}
+	}
+	return refs, nil
 }
 
 func validMetadataKey(key string) bool {
@@ -327,14 +359,14 @@ func applyNext(ctx context.Context, store storage.ObjectStore, plan Plan, report
 		if err != nil {
 			return fmt.Errorf("recheck %q: %w", objects[i].Key, err)
 		}
-		if path.Dir(meta.SourceBundle.Key) != path.Dir(objects[i].Key) || !validSourceKey(meta.SourceBundle.Key) {
-			return fmt.Errorf("metadata %q has an invalid source reference", objects[i].Key)
+		refs, err := liveReferences(meta, objects[i].Key, listedSources)
+		if err != nil {
+			return err
 		}
-		if !listedSources[meta.SourceBundle.Key] {
-			return fmt.Errorf("metadata %q references a missing source", objects[i].Key)
-		}
-		if meta.SourceBundle.Key == key {
-			return fmt.Errorf("%q is now a current source", key)
+		for _, ref := range refs {
+			if ref.Key == key {
+				return fmt.Errorf("%q is now a current source", key)
+			}
 		}
 	}
 	if listed != nil && (listed.Size != candidate.Size || listed.ETag != candidate.ETag) {
