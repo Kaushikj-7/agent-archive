@@ -219,7 +219,7 @@ class PurgeRecipeTest(unittest.TestCase):
             (path.parent / name).write_bytes(b'gz')
             metadata['history']['preserved'].append({
                 'revision_id': str(index) * 8 + '-' + str(index) * 4 + '-4' + str(index) * 3 + '-8' + str(index) * 3 + '-' + str(index) * 12,
-                'captured_at': '2026-10-01T12:00:00Z', 'filter_version': '9',
+                'captured_at': '2024-02-29T12:00:00.123+05:30', 'filter_version': '9',
                 'source': {'key': 'sessions/codex/bbbb/' + name,
                            'sha256': hex_digit * 64, 'compressed_bytes': 2}})
         path.write_text(json.dumps(metadata))
@@ -239,7 +239,7 @@ class PurgeRecipeTest(unittest.TestCase):
 
     def test_invalid_history_blocks_selective_cleanup(self):
         for shell in self.shells:
-            for invalid in ('missing', 'cross-session', 'duplicate', 'revision', 'digest', 'schema'):
+            for invalid in ('missing', 'cross-session', 'duplicate', 'revision', 'digest', 'schema', 'false-preserved', 'invalid-time', 'invalid-day', 'fractional-size', 'false-source-schema'):
                 with self.subTest(shell=shell, invalid=invalid):
                     bucket = self.build()
                     path, metadata = self.history_metadata(bucket, 'agent-archive/')
@@ -254,8 +254,18 @@ class PurgeRecipeTest(unittest.TestCase):
                         refs[0]['revision_id'] = 'invalid'
                     elif invalid == 'digest':
                         refs[0]['source']['sha256'] = 'a' * 64
-                    else:
+                    elif invalid == 'schema':
                         metadata['schema_version'] = 1
+                    elif invalid == 'false-preserved':
+                        metadata['history']['preserved'] = False
+                    elif invalid == 'invalid-time':
+                        refs[0]['captured_at'] = '2026-10-01Tinvalid'
+                    elif invalid == 'invalid-day':
+                        refs[0]['captured_at'] = '2026-02-30T12:00:00Z'
+                    elif invalid == 'fractional-size':
+                        refs[0]['source']['compressed_bytes'] = 2.5
+                    elif invalid == 'false-source-schema':
+                        refs[0]['source_schema_version'] = False
                     path.write_text(json.dumps(metadata))
                     before = self.keys(bucket)
                     result = self.run_recipe(shell, 'agent-archive/', ['list', 'delete'])

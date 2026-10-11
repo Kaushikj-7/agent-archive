@@ -6,6 +6,10 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Protect active and preserved revision sources during purge and selective archive
+  cleanup. Invalid or missing history references block deletion; old-filter live
+  evidence must be replaced through verified privacy publication first.
+
 - Stop titling Codex desktop sessions with injected open-page context such as
   `<external_codex_apps_open_page>{"page_id":null}</external_codex_apps_open_page>`.
   Sessions captured before that context was filtered now take their title from

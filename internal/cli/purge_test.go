@@ -44,7 +44,7 @@ func TestPurgePlanAndApplyRequirePauseAndKeepCurrentSource(t *testing.T) {
 	if code := Run([]string{"purge", "plan"}, nil, &out, &errOut, env); code != 0 {
 		t.Fatalf("plan code %d: %s", code, &errOut)
 	}
-	if !strings.Contains(out.String(), orphan) || !strings.Contains(out.String(), "Still-current older-filter sessions (2;") {
+	if !strings.Contains(out.String(), orphan) || !strings.Contains(out.String(), "Live older-filter source references (2;") {
 		t.Fatalf("plan output: %s", &out)
 	}
 	var planFile string

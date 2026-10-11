@@ -194,6 +194,14 @@ purge_prepare() {
     # Validate the complete active/preserved set before classifying any source.
     if ! jq -ser --arg dir "${meta%metadata.json}" --arg p "$prefix" '
         def uuid: type == "string" and test("^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$");
+        def captured_time:
+          if type != "string" then false else
+            [try (capture("^(?<year>[0-9]{4})-(?<month>0[1-9]|1[0-2])-(?<day>0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](\\.[0-9]+)?(Z|[+-]([01][0-9]|2[0-3]):[0-5][0-9])$") |
+              (.year | tonumber) as $y | (.month | tonumber) as $m |
+              (.day | tonumber) as $d |
+              ($d <= ([31, (if $y % 4 == 0 and ($y % 100 != 0 or $y % 400 == 0) then 29 else 28 end),
+                31,30,31,30,31,31,30,31,30,31][$m - 1]))) catch false] | .[0] // false
+          end;
         def reference($base):
           type == "object" and (.key | type) == "string" and
           (.key | startswith($base)) and
@@ -205,20 +213,20 @@ purge_prepare() {
         if .schema_version == 1 and .history == null then [.source_bundle]
         elif .schema_version == 2 and ($base | startswith("sessions/codex/")) and
           (.history | type) == "object" and (.history.current_revision | uuid) and
-          ((.history.preserved // []) | type) == "array" and
+          (.history.preserved == null or (.history.preserved | type) == "array") and
           ((.history.preserved // []) | length <= 64) and
           all((.history.preserved // [])[];
-            (.revision_id | uuid) and (.captured_at | type) == "string" and
-            (.captured_at | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T")) and
+            (.revision_id | uuid) and (.captured_at | captured_time) and
             (.captured_at | startswith("0001-") | not) and
-            ((.source_schema_version // 0) as $sv | $sv == 0 or $sv == 2 or $sv == 3)) and
+            ((if .source_schema_version == null then 0 else .source_schema_version end) as $sv | $sv == 0 or $sv == 2 or $sv == 3)) and
           ([.history.current_revision, (.history.preserved // [])[].revision_id] |
             length == (unique | length)) then
           [.source_bundle, (.history.preserved // [])[].source] |
           if all(.[]; (.sha256 | type) == "string" and
               (.sha256 | test("^[0-9a-f]{64}$")) and
               (.sha256 as $sha | .key | endswith("source." + $sha + ".jsonl.gz")) and
-              (.compressed_bytes | type) == "number" and .compressed_bytes > 0)
+              (.compressed_bytes | type) == "number" and .compressed_bytes > 0 and
+              .compressed_bytes == (.compressed_bytes | floor))
           then . else error("invalid history source reference") end
         else error("unsupported or invalid metadata history") end |
         . as $refs |
