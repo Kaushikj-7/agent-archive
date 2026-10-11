@@ -244,6 +244,7 @@ func executePairingAdd(home string, cfg config.Config, payload pairing.Payload, 
 	if !opts.yes && !opts.printBundle && opts.file == "" {
 		defer env.clearPairClipboard(bundle)
 	}
+	terminal.Println(out, "Pairing · Transfer prepared")
 	if result := deliverPairingBundle(home, bundle, &ledger, &slot, env, out, errOut, opts); result != 0 {
 		return result
 	}
@@ -266,7 +267,7 @@ func choosePairingDelivery(p *prompter, opts *pairingAddOptions) error {
 		return errors.New("no transfer method selected; rerun machines add")
 	}
 	if choice == "cancel" {
-		return errors.New("pairing cancelled")
+		return errors.New("pairing cancelled before delivery; no bundle was delivered; any prepared dedicated key remains tracked for reuse or cleanup")
 	}
 	if choice == "clipboard" {
 		return nil
@@ -310,6 +311,7 @@ func finishPairingDelivery(p *prompter, code string, ledger pairingLedger, home 
 			terminal.Println(errOut, "code delivery uncertain; pairing remains tracked")
 			return 1
 		}
+		terminal.Println(out, "Pairing · Code available · Receiver completion unconfirmed")
 		prepareFuturePairingAccess(issuer, out, errOut)
 		return 0
 	}
@@ -322,20 +324,22 @@ func finishPairingDelivery(p *prompter, code string, ledger pairingLedger, home 
 		terminal.Println(errOut, "Could not show the code. The pairing remains valid until expiry; rerun machines add for a new pairing.")
 		return 1
 	}
-	terminal.Printf(out, "Finish setup on %s before closing this pairing.\n", ledger.Name)
+	terminal.Println(out, "Pairing · Code available · Receiver completion unconfirmed")
+	terminal.Printf(out, "Finish setup on %s. That machine confirms when its configuration is saved.\n", ledger.Name)
 	for {
-		choice, err := p.guidedMenu("Pairing", "done", option{"show", "Show code again"}, option{"done", "I'm finished"}, option{"cancel", "Cancel pairing"})
+		choice, err := p.guidedMenu("Pairing", "done", option{"show", "Show code again"}, option{"done", "Close transfer instructions"}, option{"cancel", "Cancel pairing"})
 		if err != nil {
 			terminal.Println(errOut, "pairing remains delivered; code discarded on exit")
 			return 1
 		}
 		if choice == "done" {
-			terminal.Println(out, "Transfer finished. The other machine confirms when setup succeeds.")
+			terminal.Println(out, "Transfer instructions closed. Receiver completion is unconfirmed on this machine.")
 			terminal.Println(out, "Delete any saved pairing files when no longer needed.")
 			prepareFuturePairingAccess(issuer, out, errOut)
 			return 0
 		}
 		if choice == "cancel" {
+			terminal.Println(out, "Cancellation does not delete transferred files or invalidate the encrypted bundle; delete your copies. Bundle expiry does not revoke storage access.")
 			ledger.State = pairingCancelled
 			if err = savePairingLedger(home, ledger); err != nil {
 				terminal.Println(errOut, "cannot record cancellation")
@@ -354,6 +358,8 @@ func finishPairingDelivery(p *prompter, code string, ledger pairingLedger, home 
 				} else {
 					terminal.Println(out, "Pairing cancelled locally; dedicated cleanup pending, access may remain. Use explicit revoke with management access.")
 				}
+			} else if ledger.Kind == pairingAWSProfile {
+				terminal.Println(out, "Pairing cancelled locally. Local AWS profiles on the receiving machine are unchanged; no AWS credential was issued by pairing.")
 			} else {
 				terminal.Println(out, "Pairing cancelled locally. Shared R2 access remains active; replace the shared key on every user to revoke it.")
 			}
@@ -764,6 +770,7 @@ func deliverPairingBundle(home, bundle string, ledger *pairingLedger, slot *issu
 }
 
 func printPairingTransfer(out io.Writer, path string, printed bool, ledger pairingLedger, now time.Time) {
+	terminal.Println(out, "Pairing · File delivered locally · Receiver completion unconfirmed")
 	terminal.Println(out, "1. Transfer the pairing file")
 	if path != "" {
 		terminal.Printf(out, "Saved to: %s\n", path)
@@ -773,7 +780,9 @@ func printPairingTransfer(out io.Writer, path string, printed bool, ledger pairi
 		terminal.Println(out, "Copied to this machine's clipboard. Paste the pairing text into a file or message and transfer it.")
 		terminal.Println(out, "The clipboard is cleared on exit if it still contains this text. Clipboard managers may retain it.")
 	}
-	terminal.Printf(out, "Expires in %.0f minutes.\n\n", ledger.ExpiresAt.Sub(now).Minutes())
+	terminal.Printf(out, "Expires in %.0f minutes.\n", ledger.ExpiresAt.Sub(now).Minutes())
+	terminal.Println(out, "Expiry prevents opening this bundle; it does not revoke storage access or delete transferred files.")
+	terminal.Println(out, "Deliver the code separately from the file or text.")
 	if path != "" {
 		terminal.Printf(out, "Send this file to %s (for example using AirDrop). Save it in Downloads there, then run:\n", ledger.Name)
 		terminal.Printf(out, "  agent-archive setup --pair-file \"$HOME\"/Downloads/%s\n", shellQuote(filepath.Base(path)))

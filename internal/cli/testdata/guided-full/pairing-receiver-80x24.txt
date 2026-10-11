@@ -14,6 +14,7 @@ $ agent-archive setup --pair --codex-discovery on --codex-capture-scope included
 › Credential:
 \e[3A\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[3A✓ Credential received
 
+Pairing · Review settings
 Pairing destination
 
 AWS profile/settings transfer from studio. Proposed machine: laptop.
@@ -47,6 +48,7 @@ Step 3 of 3 · Review and start
 
   ✓ Codex hooks: ~/.codex/hooks.json
   ✓ Background job: launchctl responds
+Pairing · Check storage
 
 Storage · Verification
 Account → Storage → Verification
@@ -65,9 +67,10 @@ Apps: Codex. Projects: 1. Storage: Amazon S3 bucket synthetic.
 Skill evidence: metadata. User-level skill roots outside selected projects may be scanned.
   ! Bucket privacy not verified: public-access settings could not be read.
     Make sure public access is off: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
-✓ laptop is connected. Paired with studio.
+Pairing · Save configuration
+✓ Paired successfully · laptop is connected. Paired with studio.
 AWS profile/settings transfer.
-You can finish on the source machine and delete the pairing file.
+Configuration saved here. The source does not receive automatic confirmation; close its transfer instructions and delete your pairing file copies.
 
 ✓ Setup complete · Automatic capture is on
 Installed /handoff, which continues a session in another agent: ~/.agents/skills/handoff/SKILL.md
