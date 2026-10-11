@@ -13,8 +13,10 @@ func (candidate coverageCandidate) byteBound() int64 {
 
 func (r coverageRequest) byteBound() int64 {
 	size := int64(512)
-	for path, candidate := range r.Candidates {
-		size += 6*int64(len(path)) + candidate.byteBound() + 16
+	for _, candidates := range []map[string]coverageCandidate{r.Candidates, r.Proven} {
+		for path, candidate := range candidates {
+			size += 6*int64(len(path)) + candidate.byteBound() + 16
+		}
 	}
 	return size
 }

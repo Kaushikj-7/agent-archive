@@ -329,6 +329,32 @@ func TestCompleteConnectedLineageSelectsUniqueTip(t *testing.T) {
 	}
 }
 
+// A retained coverage proof can lack a segment created after it, so without
+// a current locator its candidates cannot choose the tip whose content is
+// published. Signature may still use them to recognize an unchanged source,
+// and a current locator chooses the tip on its own.
+func TestRetainedProofSelectsNoLineageTipForRead(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	base, raw := historyFile(t, dir, threadA, threadA, 0, nil, "before")
+	leaf, _ := historyFile(t, dir, rolloutC, threadA, 2, map[string]any{"history_base": codexmeta.CodexHistoryPosition{RolloutID: threadA, EndOrdinal: 2, EndByteOffset: uint64(len(raw))}}, "after")
+	lookup := &historyLookup{thread: agentapi.CodexRolloutSet{Complete: true, Retained: true, Candidates: []agentapi.SourceRef{leaf, base}}, rollouts: map[string][]agentapi.SourceRef{threadA: {base}}}
+	p := historyPass(t, dir, lookup)
+	if _, e := p.Signature(t.Context(), base); e != nil {
+		t.Fatalf("signature refused a retained proof: %v", e)
+	}
+	if s, e := p.Read(t.Context(), base, agentapi.ReadLimits{}); e == nil {
+		_ = s.Close()
+		t.Fatal("read chose a lineage tip from a retained proof")
+	} else if agentapi.Failure(e) != agentapi.Unavailable {
+		t.Fatalf("retained proof refusal %v", e)
+	}
+	lookup.thread.Current = &leaf
+	if b := historyRead(t, historyPass(t, dir, lookup), base); b.History.ActiveRolloutID != rolloutC {
+		t.Fatalf("current locator with a retained proof: %+v", b.History)
+	}
+}
+
 func TestHistoryRejectsActualPhysicalCycle(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
