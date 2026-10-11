@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
+	"slices"
 	"strings"
 	"time"
 
@@ -50,6 +52,49 @@ func subagentsSummary(result collector.Result) string {
 	return summary
 }
 
+// deferredWhat words each reason a pass deferred a session's scan, after a
+// count, for sync and status.
+var deferredWhat = map[string]string{
+	collector.DeferredHistoryCoverage: "waiting for Codex history coverage",
+	collector.DeferredSourceChanged:   "rechecking after the source changed while being read",
+}
+
+// deferredReasonWhat words one deferral reason, with a general wording for a
+// reason this version does not write.
+func deferredReasonWhat(reason string) string {
+	if what, ok := deferredWhat[reason]; ok {
+		return what
+	}
+	return "rechecking on the next pass"
+}
+
+// deferredSummary is sync's count of the sessions a pass deferred, by
+// reason, or "" when it deferred none. A deferral is not a failure: the next
+// pass retries the session, so sync lists no error for it. A session in
+// failed (a retention failure recorded after collection, say) is counted
+// there only.
+func deferredSummary(deferred map[string]string, failed map[string]error) string {
+	counts := map[string]int{}
+	for id, reason := range deferred {
+		if failed[id] == nil {
+			counts[deferredReasonWhat(reason)]++
+		}
+	}
+	var summary strings.Builder
+	for _, what := range slices.Sorted(maps.Keys(counts)) {
+		fmt.Fprintf(&summary, "; %d %s", counts[what], what)
+	}
+	return summary.String()
+}
+
+// syncSummary is the line sync reports a pass on: what it published, held,
+// left unchanged, failed and deferred. A deferred session is not counted
+// as failed, and has no error line of its own.
+func syncSummary(result collector.Result) string {
+	return fmt.Sprintf("Scanned %d session(s): %d published, %s%d unchanged, %d failed%s%s.",
+		result.Scanned, len(result.Published), waitingSummary(result.Waiting, result.NextReadyAt), len(result.Skipped), len(result.Errors), deferredSummary(result.Deferred, result.Errors), subagentsSummary(result))
+}
+
 // runSyncCommand implements `agent-archive sync`: one explicit collection
 // pass, preserving queued work on failure. It respects paused state and
 // does not implicitly resume, per the spec.
@@ -81,8 +126,7 @@ func runSyncCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		}
 		return 1
 	}
-	terminal.Printf(stdout, "Scanned %d session(s): %d published, %s%d unchanged, %d failed%s.\n",
-		result.Scanned, len(result.Published), waitingSummary(result.Waiting, result.NextReadyAt), len(result.Skipped), len(result.Errors), subagentsSummary(result))
+	terminal.Println(stdout, syncSummary(result))
 	for id, sessionErr := range result.Errors {
 		for _, line := range sessionErrorLines(id, sessionErr) {
 			terminal.Println(stderr, line)

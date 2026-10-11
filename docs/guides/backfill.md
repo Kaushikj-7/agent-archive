@@ -23,6 +23,12 @@ agent-archive backfill undo          # remove the latest import from the bucket
 agent-archive backfill undo ID --project DIR
 ```
 
+In `backfill history`, an import's UPLOAD column counts as **waiting** only
+the sessions not in the archive yet. Sessions already uploaded are counted
+after it: **rechecking** when only a re-scan is still owed (a Codex session
+waiting for its history coverage, say), **updating** when newer work is still
+to upload, as in `uploaded · 2 rechecking` or `3 waiting · 1 updating`.
+
 Ctrl-C while the plan is being made stops it and changes nothing. Ctrl-C
 during registration or upload stops after the session in flight; run
 `backfill` again with the same options to finish the import, or let the
