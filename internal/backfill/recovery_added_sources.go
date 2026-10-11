@@ -4,6 +4,10 @@ import (
 	"context"
 	"errors"
 	"io"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"sort"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -18,7 +22,8 @@ import (
 // only change is added membership (recoverySourceInventory.compare) does not
 // fail every recorded recovery. The added transcripts are found again with
 // the apps' own discovery and header readers, within a bounded count and
-// byte budget, and each one is judged by the clone root it names
+// byte budget, without listing the stores again in full (addedListing), and
+// each one is judged by the clone root it names
 // (dev/specs/backfill.md, "Recorded project recovery"):
 //
 //   - A transcript whose folder is not an existing, unconfigured repository
@@ -72,8 +77,9 @@ func (i *recoverySourceInventory) added(ctx context.Context) (addedSources, bool
 	return i.rediscover(ctx)
 }
 
-// rediscover lists every app's store again with the app's own discovery and
-// reads headers only of transcripts the baseline did not observe.
+// rediscover runs every app's own discovery again over a view of its stores
+// that holds only what may have been added (addedListing), and reads headers
+// only of transcripts the baseline did not observe.
 func (i *recoverySourceInventory) rediscover(ctx context.Context) (addedSources, bool) {
 	env := i.env
 	if env.Discovery == nil {
@@ -82,6 +88,7 @@ func (i *recoverySourceInventory) rediscover(ctx context.Context) (addedSources,
 	out := addedSources{incomplete: map[string]bool{}}
 	budget := &addedHeaderBudget{files: recoveryAddedSourceLimit, bytes: recoveryAddedHeaderBytes}
 	files := discoveryFiles{env}
+	listing := i.addedListing(ctx)
 	for _, name := range env.Discovery.DiscoveryAgents() {
 		provider, _ := env.Discovery.LookupDiscovery(name)
 		if provider == nil {
@@ -93,13 +100,13 @@ func (i *recoverySourceInventory) rediscover(ctx context.Context) (addedSources,
 			}
 			return budget.scan(ctx, files, path, visit)
 		}
-		report, err := provider.Discover(ctx, agentapi.DiscoveryRequest{Purpose: agentapi.DiscoveryImport, Stage: agentapi.DiscoveryIdentities, Locations: agentapi.NativeLocations{UserHome: env.Home, Directories: env.nativeDirectories(name)}, Files: files, HeaderBytes: headScanLimit, RecordBytes: headLineLimit, Scan: scan}, func(c agentapi.DiscoveryCandidate) error {
+		report, err := provider.Discover(ctx, agentapi.DiscoveryRequest{Purpose: agentapi.DiscoveryImport, Stage: agentapi.DiscoveryIdentities, Locations: agentapi.NativeLocations{UserHome: env.Home, Directories: env.nativeDirectories(name)}, Files: listing, HeaderBytes: headScanLimit, RecordBytes: headLineLimit, Scan: scan}, func(c agentapi.DiscoveryCandidate) error {
 			if !i.known(c.Source.Path) {
 				out.candidates = append(out.candidates, c)
 			}
 			return nil
 		})
-		if err != nil || budget.exhausted || ctx.Err() != nil {
+		if err != nil || budget.exhausted || listing.exhausted || ctx.Err() != nil {
 			return addedSources{}, false
 		}
 		if report.StoreUnreadable || report.UnreadableFolders > 0 || report.Incomplete {
@@ -108,6 +115,129 @@ func (i *recoverySourceInventory) rediscover(ctx context.Context) (addedSources,
 	}
 	return out, true
 }
+
+// recoveryAddedEntryLimit bounds the directory entries one renewal lists
+// that the baseline did not: new entries of a directory whose stamp moved,
+// and every entry of a directory the baseline did not list (a new day
+// folder, a new store). Past it, the renewal fails every recovery. Tests
+// lower it.
+var recoveryAddedEntryLimit = 4096
+
+// addedListing is the stores' view for rediscover. The apps' discovery walks
+// it exactly as it walks the stores, except:
+//
+//   - A directory listed at the baseline whose stamp has not moved lists only
+//     its entries on the way to a path that changed: a directory whose stamp
+//     moved, an absent path that now exists, or a directory the baseline did
+//     not list in full. Its own entries are the baseline's (adding or
+//     removing one moves its stamp), and its unchanged subdirectories hold
+//     nothing new, so the rest of the store is not walked again.
+//   - Every other directory is listed in full, as discovery lists it, so an
+//     app's choices within a folder (Cursor's JSONL over text) stay the same
+//     and a folder that cannot be listed leaves the app's store incomplete.
+//   - A path compare renewed is not looked up again.
+//
+// The work is one listing per changed directory and per directory on the way
+// to one, plus the entries the baseline did not list, at most
+// recoveryAddedEntryLimit. One difference from a full rediscovery remains: a
+// transcript added under another of an app's roots with the name of one it
+// already holds (a Codex rollout copied to archived_sessions) is judged by
+// its own header, where discovery would have kept only the first. It can
+// only add evidence, never hide it.
+func (i *recoverySourceInventory) addedListing(ctx context.Context) *addedListingFiles {
+	relist := make(map[string]bool, len(i.moved))
+	for _, path := range i.moved {
+		relist[path] = true
+	}
+	for path, stamp := range i.stamps {
+		if _, listed := i.names[path]; !listed && !stamp.absent && stamp.info.IsDir() {
+			relist[path] = true
+		}
+	}
+	branches := map[string]map[string]bool{}
+	for path := range relist {
+		for child, parent := path, filepath.Dir(path); parent != child; child, parent = parent, filepath.Dir(parent) {
+			name := filepath.Base(child)
+			if branches[parent][name] {
+				break
+			}
+			if branches[parent] == nil {
+				branches[parent] = map[string]bool{}
+			}
+			branches[parent][name] = true
+		}
+	}
+	return &addedListingFiles{ctx: ctx, i: i, files: discoveryFiles{i.env}, relist: relist, branches: branches, entries: recoveryAddedEntryLimit}
+}
+
+// addedListingFiles is the view addedListing describes.
+type addedListingFiles struct {
+	ctx      context.Context
+	i        *recoverySourceInventory
+	files    discoveryFiles
+	relist   map[string]bool
+	branches map[string]map[string]bool
+	// entries is what is left of recoveryAddedEntryLimit.
+	entries   int
+	exhausted bool
+}
+
+func (f *addedListingFiles) ReadDir(path string) ([]fs.DirEntry, error) {
+	if err := f.ctx.Err(); err != nil {
+		return nil, err
+	}
+	names, listed := f.i.names[path]
+	if listed && !f.relist[path] {
+		return f.branchEntries(path)
+	}
+	entries, err := f.files.ReadDir(path)
+	if err != nil {
+		return nil, err
+	}
+	for _, e := range entries {
+		if names[e.Name()] {
+			continue
+		}
+		if f.entries--; f.entries < 0 {
+			f.exhausted = true
+			return nil, errAddedSourceBudget
+		}
+	}
+	return entries, nil
+}
+
+// branchEntries lists an unchanged directory's entries on the way to a
+// changed path.
+func (f *addedListingFiles) branchEntries(path string) ([]fs.DirEntry, error) {
+	names := make([]string, 0, len(f.branches[path]))
+	for name := range f.branches[path] {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	entries := make([]fs.DirEntry, 0, len(names))
+	for _, name := range names {
+		info, err := f.Lstat(filepath.Join(path, name))
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		entries = append(entries, fs.FileInfoToDirEntry(info))
+	}
+	return entries, nil
+}
+
+func (f *addedListingFiles) Lstat(path string) (fs.FileInfo, error) {
+	if stamp, ok := f.i.stamps[path]; ok && !stamp.absent {
+		if info, ok := f.i.renewed[path]; ok {
+			return info, nil
+		}
+	}
+	return f.files.Lstat(path)
+}
+
+func (f *addedListingFiles) Open(path string) (io.ReadCloser, error) { return f.files.Open(path) }
 
 // addedHeaderBudget bounds the header reads of added transcripts.
 type addedHeaderBudget struct {

@@ -6,6 +6,10 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Clarify storage onboarding with Account, Storage, and Verification stages.
+  Keep valid existing-bucket answers when going back, show S3 archive
+  permissions on request, and report privacy separately from connectivity.
+
 - Stop titling Codex desktop sessions with injected open-page context such as
   `<external_codex_apps_open_page>{"page_id":null}</external_codex_apps_open_page>`.
   Sessions captured before that context was filtered now take their title from

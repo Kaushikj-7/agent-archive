@@ -45,7 +45,12 @@ Step 3 of 3 · Review and start
 
   ✓ Codex hooks: ~/.codex/hooks.json
   ✓ Background job: launchctl responds
+
+Storage · Verification
+Account → Storage → Verification
 ✓ Connected to your storage.
+  ! Bucket privacy not verified: public-access settings could not be read.
+    Make sure public access is off: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
   · Codex capture: Automatic discovery plus hooks when approved.
   · Codex scope: Included projects only.
   · Exceptions: None configured.

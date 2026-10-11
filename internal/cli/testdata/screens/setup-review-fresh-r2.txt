@@ -30,6 +30,9 @@ Step 1 of 3 · Choose what to capture
 
 Step 2 of 3 · Connect storage
 
+Storage · Account
+Account → Storage → Verification
+
 ? Where should your archive live?
 
   1) Cloudflare R2 (default)
@@ -40,6 +43,9 @@ Step 2 of 3 · Connect storage
 › Choose [1]: r2-existing
 ✓ Provider Cloudflare R2
 
+Storage · Account
+Account → Storage → Verification
+
 ? R2 account ID or bucket URL
 
   Find the account ID or S3 endpoint in Cloudflare Dashboard > Storage &
@@ -49,6 +55,9 @@ Step 2 of 3 · Connect storage
 
 › Account: 0123456789abcdef0123456789abcdef
 ✓ R2 account ID or bucket URL 0123456789abcdef0123456789abcdef
+
+Storage · Storage
+Account → Storage → Verification
 
 ? Bucket name
 
@@ -70,8 +79,11 @@ Step 2 of 3 · Connect storage
 ✓ Credential received
 
 
+Storage · Verification
+Account → Storage → Verification
 Checking your storage connection…
 ✓ Connected to your storage.
+  · Bucket privacy not verified. Check that public access is disabled for the bucket in the Cloudflare dashboard.
 
 Step 3 of 3 · Review and start
   Apps      Claude Code

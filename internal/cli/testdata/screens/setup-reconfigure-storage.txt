@@ -15,6 +15,9 @@ Checking installed applications...
 ✓ Storage (bucket and credentials)
 
 Connect storage
+
+Storage · Account
+Account → Storage → Verification
 Current storage: s3 / team-archive
 
 ? Keep your current storage?
@@ -27,8 +30,12 @@ Current storage: s3 / team-archive
 ✓ Keep current storage
 
 
+Storage · Verification
+Account → Storage → Verification
 Checking your storage connection…
 ✓ Connected to your storage.
+  ! Bucket privacy not verified: public-access settings could not be read.
+    Make sure public access is off: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
 
 Review your changes
   Apps      Codex
