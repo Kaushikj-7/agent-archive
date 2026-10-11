@@ -41,6 +41,10 @@ type appStatus struct {
 	// Discovery health is independent of hook execution and publication verification.
 	CodexCaptureScope string            `json:"codex_capture_scope,omitempty"`
 	Discovery         *discovery.Health `json:"discovery,omitempty"`
+	// PreSetupSessions are sessions from the 7 days before discovery's
+	// start floor that discovery refused and that are not archived. Absent
+	// when there are none.
+	PreSetupSessions  *preSetupSessions `json:"pre_setup_sessions,omitempty"`
 	PublishedSessions int               `json:"published_sessions"`
 	VerifiedSessions  int               `json:"verified_sessions"`
 	Configured        bool              `json:"configured"`
@@ -405,6 +409,7 @@ func readStatus(env Env) (view statusView, err error) {
 	for _, name := range cfg.Harnesses {
 		view.Apps = append(view.Apps, sessions.appStatus(name, cfg, home, view.Collector.SessionIssues))
 	}
+	readPreSetupSessions(&view, cfg, home, store, sessions.regs, env.now())
 	for _, name := range cfg.ImportedHarnesses {
 		if len(cfg.Harnesses) == 0 || slices.Contains(cfg.Harnesses, name) {
 			continue
@@ -1710,6 +1715,7 @@ func (sc statusScreen) appRow(app appStatus, limit int) statusRow {
 	if discoveryEnabled(app) && app.Hooks != "installed" && !optionalCodexHooks(app) {
 		row.notes = append(row.notes, statusNote{s.warnMark(), "Capture hooks need attention: " + hooksLabel(app.Hooks) + "; run agent-archive status --verbose for details."})
 	}
+	row.notes = append(row.notes, sc.preSetupNotes(app)...)
 
 	if sc.verbose {
 		row.notes = append(row.notes, statusNote{sc.info(), appProgress(sc.now, app)})
