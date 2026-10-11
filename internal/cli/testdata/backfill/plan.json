@@ -119,6 +119,7 @@
     "codex",
     "cursor"
   ],
+  "automatic_expiry": true,
   "retention_days": 90,
   "expires_on": "2026-12-22",
   "storage_checked": false,

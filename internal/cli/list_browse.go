@@ -898,8 +898,10 @@ func readSessionView(ctx context.Context, store storage.ObjectStore, harness, se
 // loadSessionsForBrowse lists metadata with the same filters list uses, for
 // interactive show and handoff. It reads every match, newest activity first,
 // for the caller to scope and limit.
-func loadSessionsForBrowse(env metadataCacheDependencies, store storage.ObjectStore, opts listOptions, stderr io.Writer, command string) ([]archive.Metadata, error) {
-	sessions, err := reader.ListMetadataWithOptions(context.Background(), store, archiveSessionsPrefix, opts.filter, reader.ListOptions{Cache: listCache(env, opts.noCache), Skipped: warnSkippedSidecar(stderr, command)})
+func loadSessionsForBrowse(env browseReadDependencies, store storage.ObjectStore, opts listOptions, stderr io.Writer, command string) ([]archive.Metadata, error) {
+	ctx, stopReads := readCommandContext(env)
+	defer stopReads()
+	sessions, err := reader.ListMetadataWithOptions(ctx, store, archiveSessionsPrefix, opts.filter, reader.ListOptions{Cache: listCache(env, opts.noCache), Skipped: warnSkippedSidecar(stderr, command)})
 	if err != nil {
 		return nil, err
 	}

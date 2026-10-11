@@ -323,7 +323,7 @@ func TestSetupReviewProjectsIncludesCurrentFolderAfterSkippedCaptureStep(t *test
 			f.env.WorkingDir = func() (string, error) { return current, nil }
 			input := "storage\n\n"
 			if entry == "retention" {
-				input = "retention\n90\n"
+				input = "retention\n90-days\n"
 			}
 			if entry == "continue" {
 				cfg := mustLoadConfig(t, f.home)

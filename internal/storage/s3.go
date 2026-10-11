@@ -83,8 +83,8 @@ func NewS3Store(options S3StoreOptions) (*S3Store, error) {
 // collector pass stuck there holds the collector lock, so every later pass
 // quietly finds it busy. The client is therefore given connect, TLS, and
 // response-header timeouts (see withTimeouts). A body that stalls after its
-// headers arrived is bounded by the caller's context deadline instead,
-// since no fixed limit suits both a small metadata read and a large upload.
+// headers arrived is bounded by a two-minute per-read/page deadline and
+// any shorter caller context deadline. Uploads retain their caller budgets.
 //
 // The SDK's logger is silenced: config.LoadDefaultConfig points it at
 // stderr, where it would print lines such as "SDK <date> DEBUG Response has
@@ -110,6 +110,7 @@ func NewClient(cfg aws.Config, endpoint string, pathStyle bool, maxAttempts int)
 // Network timeouts for the SDK's HTTP client. Variables only so a test can
 // shorten them.
 var (
+	readOperationTimeout  = 2 * time.Minute
 	dialTimeout           = 15 * time.Second
 	tlsHandshakeTimeout   = 15 * time.Second
 	responseHeaderTimeout = 60 * time.Second
@@ -192,6 +193,8 @@ func (s *S3Store) GetVersioned(ctx context.Context, relative string) ([]byte, st
 }
 
 func (s *S3Store) getVersioned(ctx context.Context, relative string, limit int64) ([]byte, string, error) {
+	ctx, cancel := context.WithTimeout(ctx, readOperationTimeout)
+	defer cancel()
 	if limit < 1 {
 		return nil, "", errors.New("object read limit must be positive")
 	}
@@ -225,6 +228,8 @@ func (s *S3Store) getVersioned(ctx context.Context, relative string, limit int64
 // "<digest>-<parts>") yields an empty SHA256, so callers read the object
 // instead.
 func (s *S3Store) Stat(ctx context.Context, relative string) (ObjectInfo, error) {
+	ctx, cancel := context.WithTimeout(ctx, readOperationTimeout)
+	defer cancel()
 	key, err := s.key(relative)
 	if err != nil {
 		return ObjectInfo{}, err
@@ -273,7 +278,9 @@ func (s *S3Store) List(ctx context.Context, relativePrefix string) ([]Object, er
 	pager := s3.NewListObjectsV2Paginator(s.client, &s3.ListObjectsV2Input{Bucket: aws.String(s.bucket), Prefix: aws.String(prefix)})
 	var objects []Object
 	for pager.HasMorePages() {
-		page, pageErr := pager.NextPage(ctx)
+		pageCtx, cancel := context.WithTimeout(ctx, readOperationTimeout)
+		page, pageErr := pager.NextPage(pageCtx)
+		cancel()
 		if pageErr != nil {
 			return nil, pageErr
 		}
@@ -294,6 +301,8 @@ func (s *S3Store) List(ctx context.Context, relativePrefix string) ([]Object, er
 
 // ListPage returns one provider page without fetching later pages.
 func (s *S3Store) ListPage(ctx context.Context, relativePrefix, continuation string, limit int32) (ObjectPage, error) {
+	ctx, cancel := context.WithTimeout(ctx, readOperationTimeout)
+	defer cancel()
 	prefix, err := s.keyForList(relativePrefix)
 	if err != nil {
 		return ObjectPage{}, err
@@ -352,7 +361,9 @@ func (s *S3Store) ListRange(ctx context.Context, relativePrefix, after, through 
 	input := &s3.ListObjectsV2Input{Bucket: aws.String(s.bucket), Prefix: aws.String(prefix), StartAfter: start}
 	var objects []Object
 	for {
-		page, pageErr := s.client.ListObjectsV2(ctx, input)
+		pageCtx, cancel := context.WithTimeout(ctx, readOperationTimeout)
+		page, pageErr := s.client.ListObjectsV2(pageCtx, input)
+		cancel()
 		if pageErr != nil {
 			return nil, pageErr
 		}

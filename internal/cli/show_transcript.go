@@ -56,6 +56,9 @@ func renderTranscript(w io.Writer, view sessionView, t archive.Transcript, opts 
 		agent = "Agent"
 	}
 	terminal.Println(w, s.bold(summaryTitle(m)))
+	if view.SelectedRevisionID != "" {
+		terminal.Println(w, s.dim("Parent revision: "+archive.DisplayLine(view.SelectedRevisionID)))
+	}
 	header := []string{}
 	if agent := strings.TrimSpace(appName(archive.DisplayLine(m.Harness.Name)) + " " + archive.DisplayLine(m.Harness.Version)); agent != "" {
 		header = append(header, agent)

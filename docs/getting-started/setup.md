@@ -318,7 +318,7 @@ agent-archive setup --yes --provider s3 --bucket BUCKET --aws-profile PROFILE \
 - `--prefix PREFIX` sets the folder inside the bucket, including when changing
   only that setting on an existing installation.
 - `--retention-days DAYS` sets retention from 1 to 36500 days.
-- `--keep-forever` disables automatic whole-session expiry and conflicts with `--retention-days`. The default remains 90 days. Guided retention accepts `forever`. This preference applies to existing and future sessions owned by this installation; provider lifecycle rules and explicit deletion still apply.
+- `--keep-forever` disables automatic whole-session expiry and conflicts with `--retention-days`. The default remains 90 days. Guided retention offers **90 days**, **Custom duration**, and **Keep forever**, starting from the saved preference. Custom duration also accepts `forever`. This preference applies to existing and future sessions owned by this installation; provider lifecycle rules and explicit deletion still apply.
 - `--require-skill-use` captures only sessions that use skills;
   `--no-require-skill-use` captures sessions with or without skills. Omitted
   settings keep their saved values (fresh setup captures both).

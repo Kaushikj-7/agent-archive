@@ -117,7 +117,7 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		terminal.Println(stderr, notSetUpMessage)
 		return 1
 	}
-	if *rebuildIndex && !rebuildListingIndex(store, stderr) {
+	if *rebuildIndex && !rebuildListingIndex(env, store, stderr) {
 		return 1
 	}
 	scope, err := scopeFor(env, *project, *allProjects)
@@ -141,7 +141,7 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	if full {
 		listLimit = 0
 	}
-	listed, err := reader.ListRecent(context.Background(), store, archiveSessionsPrefix, opts.filter, listLimit, listOpts)
+	listed, err := listRecentWithInterrupts(env, store, opts.filter, listLimit, listOpts)
 	stopList()
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: list: %v\n", err)
@@ -567,6 +567,8 @@ func validLowerSHA256(value string) bool {
 func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, env showCommandDependencies) int {
 	fs := env.newCommandFlags("show", stderr)
 	harness := fs.String("harness", "", "the session's harness, if the same ID exists under more than one")
+	revisions := fs.Bool("revisions", false, "list validated active and preserved native revisions; with --json, print the inventory")
+	revision := fs.String("revision", "", "read this exact native revision ID from the parent only (see --revisions)")
 	transcript := fs.Bool("transcript", false, "also download and verify the source bundle, and print the conversation (this prints transcript content)")
 	full := fs.Bool("full", false, "with --transcript, also print each tool call's trimmed result")
 	normalized := fs.Bool("normalized", false, "deprecated: the same as --transcript --json")
@@ -586,6 +588,9 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	if *normalized {
 		terminal.Println(stderr, "agent-archive: show: --normalized is deprecated; use --transcript --json")
 		*transcript, *jsonOut = true, true
+	}
+	if code := checkShowRevisionFlags(fs, sessionID, *revision, *revisions, *transcript, *full, *normalized); code != 0 {
+		return code
 	}
 	if *full && !*transcript {
 		return fs.usageError("--full needs --transcript")
@@ -617,13 +622,11 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		return 1
 	}
 
-	ctx := context.Background()
 	summary := summaryOptions{Now: env.now(), Style: styleFor(stdout), Projects: projectLabels(cfg), Hints: true}
 	if sessionID == "" {
 		return runBareShow(env, store, cfg, stdin, stdout, stderr, *harness, *jsonOut, *noPager)
 	}
-
-	lookup, code := resolveShowQuery(ctx, store, env, stdin, stdout, stderr, *harness, sessionID, summary.Projects, *noPager, *transcript || *jsonOut)
+	lookup, code := resolveShowQuery(store, env, stdin, stdout, stderr, *harness, sessionID, summary.Projects, *noPager, *transcript || *jsonOut)
 	if code != 0 {
 		return code
 	}
@@ -631,6 +634,8 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		return 0
 	}
 	sessionID, *harness = lookup.SessionID, lookup.Harness
+	ctx, stopReads := readCommandContext(env)
+	defer stopReads()
 
 	stopShow := startActivity(stdout, "Loading session…")
 	key, err := locateMetadataKey(ctx, store, *harness, sessionID)
@@ -640,19 +645,22 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		return 1
 	}
 
+	if *revisions {
+		return readRevisionInventory(ctx, store, key, stdout, stderr, *jsonOut, stopShow)
+	}
 	if !*transcript {
-		metadata, err := reader.ReadMetadata(ctx, store, key)
+		view, err := loadShowSummarySelection(ctx, store, key, *revision, parsersFor(env))
 		if err != nil {
 			stopShow()
 			terminal.Printf(stderr, "agent-archive: show: %v\n", err)
 			return 1
 		}
-		view := metadataWithLinks(ctx, store, metadata)
+		stopReads()
 		stopShow()
 		if *jsonOut {
 			return printJSON(stdout, stderr, view)
 		}
-		if err := withPager(ctx, stdout, stderr, env, *noPager, func(w io.Writer) error {
+		if err := withPager(context.WithoutCancel(ctx), stdout, stderr, env, *noPager, func(w io.Writer) error {
 			renderSessionSummary(w, view, summary)
 			return nil
 		}); err != nil {
@@ -662,8 +670,8 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		return 0
 	}
 
-	return printSessionTranscript(ctx, store, env, stdout, stderr, key, sessionID, stopShow, sessionTranscriptOptions{
-		summary: summary, full: *full, json: *jsonOut, normalized: *normalized, noPager: *noPager, maxBytes: *maxBytes,
+	return printSessionTranscript(ctx, store, env, stdout, stderr, key, sessionID, stopShow, stopReads, sessionTranscriptOptions{
+		revision: *revision, summary: summary, full: *full, json: *jsonOut, normalized: *normalized, noPager: *noPager, maxBytes: *maxBytes,
 	})
 }
 
@@ -675,7 +683,9 @@ func runBareShow(env showCommandDependencies, store storage.ObjectStore, cfg con
 		if code != 0 || !selected {
 			return code
 		}
-		view, err := readSessionView(context.Background(), store, row.HarnessKey, row.SessionID)
+		ctx, stopReads := readCommandContext(env)
+		defer stopReads()
+		view, err := readSessionView(ctx, store, row.HarnessKey, row.SessionID)
 		if err != nil {
 			terminal.Printf(stderr, "agent-archive: show: %v\n", err)
 			return 1
@@ -706,6 +716,7 @@ func checkShowMaxBytes(fs *commandFlags, maxBytes int, transcript bool) int {
 
 // sessionTranscriptOptions are the show flags that shape a transcript.
 type sessionTranscriptOptions struct {
+	revision   string
 	summary    summaryOptions
 	full       bool
 	json       bool
@@ -717,8 +728,18 @@ type sessionTranscriptOptions struct {
 // printSessionTranscript downloads and verifies the session's source bundle
 // and prints its transcript: readable and paged, or with --json the sidecar
 // and the normalized view. stopShow ends the loading activity line.
-func printSessionTranscript(ctx context.Context, store storage.ObjectStore, env showCommandDependencies, stdout, stderr io.Writer, key, sessionID string, stopShow func(), opts sessionTranscriptOptions) int {
-	view, bundle, err := loadVerifiedSession(ctx, store, key)
+func printSessionTranscript(ctx context.Context, store storage.ObjectStore, env showCommandDependencies, stdout, stderr io.Writer, key, sessionID string, stopShow, stopReads func(), opts sessionTranscriptOptions) int {
+	var view sessionView
+	var bundle archive.SourceBundle
+	var err error
+	if opts.revision == "" {
+		view, bundle, err = loadVerifiedSession(ctx, store, key)
+	}
+	if opts.revision != "" {
+		var metadata archive.Metadata
+		metadata, bundle, err = loadArchiveSelection(ctx, store, key, opts.revision, parsersFor(env))
+		view = sessionView{Metadata: metadata, SelectedRevisionID: opts.revision}
+	}
 	if err != nil {
 		stopShow()
 		flag := "--transcript"
@@ -736,6 +757,8 @@ func printSessionTranscript(ctx context.Context, store storage.ObjectStore, env 
 	}
 	pruneHandoffs(home, env.now())
 	analysis, parseErr := analyzeSource(ctx, parsersFor(env), bundle)
+	// Remote reads are complete; the pager owns interruption from here.
+	stopReads()
 	if opts.json {
 		normalizedView, err := analysis.View, parseErr
 		stopShow()
@@ -759,7 +782,10 @@ func printSessionTranscript(ctx context.Context, store storage.ObjectStore, env 
 			terminal.Printf(stderr, "agent-archive: show: %v\n", err)
 			return 1
 		}
-		terminal.Print(stdout, string(data))
+		if err := writeOutput(stdout, data); err != nil {
+			terminal.Printf(stderr, "agent-archive: show: write JSON: %v\n", err)
+			return 1
+		}
 		return 0
 	}
 	var t archive.Transcript
@@ -777,7 +803,7 @@ func printSessionTranscript(ctx context.Context, store storage.ObjectStore, env 
 	if opts.maxBytes > 0 {
 		t, render = fitTranscriptToLimit(view, t, bundle, render, opts.maxBytes, home, stderr)
 	}
-	if err := withPager(ctx, stdout, stderr, env, opts.noPager, func(w io.Writer) error {
+	if err := withPager(context.WithoutCancel(ctx), stdout, stderr, env, opts.noPager, func(w io.Writer) error {
 		renderTranscript(w, view, t, render)
 		return nil
 	}); err != nil {
@@ -797,7 +823,7 @@ func printSessionTranscript(ctx context.Context, store storage.ObjectStore, env 
 // the sidecar's fields at the top level is what existing readers of this
 // command already parse. Validate stored objects, not command output.
 func metadataWithLinks(ctx context.Context, store storage.ObjectStore, metadata archive.Metadata) sessionView {
-	return sessionView{metadata, reader.ResolveLinkedSessions(ctx, store, metadata)}
+	return sessionView{Metadata: metadata, LinkedAvailability: reader.ResolveLinkedSessions(ctx, store, metadata)}
 }
 
 // normalizedOutput is the JSON shape `show --transcript --json` prints for
@@ -858,7 +884,10 @@ func printJSON(stdout, stderr io.Writer, value any) int {
 		terminal.Printf(stderr, "agent-archive: %v\n", err)
 		return 1
 	}
-	terminal.Print(stdout, string(data))
+	if err := writeOutput(stdout, data); err != nil {
+		terminal.Printf(stderr, "agent-archive: write JSON: %v\n", err)
+		return 1
+	}
 	return 0
 }
 
@@ -969,10 +998,19 @@ func listingReadOptions(env listCommandDependencies, scope sessionScope, opts li
 	}
 }
 
+// listRecentWithInterrupts releases the read listener before the browser or pager.
+func listRecentWithInterrupts(env listCommandDependencies, store storage.ObjectStore, filter reader.Filter, limit int, opts reader.ListOptions) (reader.RecentResult, error) {
+	ctx, stopReads := readCommandContext(env)
+	defer stopReads()
+	return reader.ListRecent(ctx, store, archiveSessionsPrefix, filter, limit, opts)
+}
+
 // rebuildListingIndex reports explicit index maintenance progress and resumable failure.
-func rebuildListingIndex(store storage.ObjectStore, stderr io.Writer) bool {
+func rebuildListingIndex(env listCommandDependencies, store storage.ObjectStore, stderr io.Writer) bool {
+	ctx, stopReads := readCommandContext(env)
+	defer stopReads()
 	terminal.Println(stderr, "agent-archive: list: rebuilding listing entries from live metadata…")
-	count, err := reader.RebuildIndex(context.Background(), store, archiveSessionsPrefix)
+	count, err := reader.RebuildIndex(ctx, store, archiveSessionsPrefix)
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: list: rebuild index stopped after %d metadata entries: %v; rerun to resume\n", count, err)
 		return false

@@ -49,6 +49,8 @@ would be before upload. With several workers each record is written as its
 session finishes. A session that cannot be exported is an error record on
 its own line; the others are still printed, and the exit code is 1.
 Nothing is uploaded or written.
+  --revision REVISION_ID     With one archive SESSION_ID and full detail,
+                             export this exact parent native revision
   --detail metadata|full     metadata prints no conversation text and, for
                              the archive, reads only sidecars (default full)
   --ids-from -               Read session IDs or transcript paths from stdin,
@@ -455,6 +457,12 @@ q. Nothing is asked when AGENT_ARCHIVE_NONINTERACTIVE is on, as it is inside
 coding agents: give a SESSION_ID.
   --harness NAME        The session's app, if the same SESSION_ID exists under
                         more than one
+  --revisions           List active and preserved native revision IDs, capture
+                        times and provenance; --json prints the inventory
+  --revision REVISION_ID
+                        Read one exact parent revision identifier (see
+                        --revisions), without resolving children; summary
+                        is rederived
   --transcript          Download and verify the source bundle, and print the
                         conversation: prompts, replies, one line per tool call
   --full                With --transcript, also print tool results and shell
@@ -620,6 +628,9 @@ unless --to is given.
   --harness NAME        claude, codex, or cursor
   --file PATH           Render a native transcript directly (needs --harness);
                         works for sessions the archive never captured
+  --revision REVISION_ID
+                        Read this exact parent native revision; requires a
+                        SESSION_ID and --source archive (no local/latest)
   --source auto|local|archive
                         Where the content comes from: auto (default) reads
                         this machine's transcript when there is one, else the

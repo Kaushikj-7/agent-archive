@@ -196,6 +196,10 @@ func setupFlags(fs *commandFlags, args []string) (setupOptions, bool) {
 			opts.storageFlagsSupplied = true
 		}
 	})
+	if opts.keepForever && opts.retentionSupplied {
+		fs.usageError("--keep-forever and --retention-days are mutually exclusive")
+		return opts, false
+	}
 	if err := validateProjectScopeOptions(opts); err != nil {
 		fs.usageError("%s", err)
 		return opts, false

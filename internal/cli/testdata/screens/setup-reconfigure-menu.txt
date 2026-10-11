@@ -14,9 +14,20 @@ Checking installed applications...
 › Choose [1]: 3
 ✓ How long sessions are kept
 
+? How long should sessions be kept?
+
+  Provider lifecycle rules and explicit deletion still apply.
+
+  1) 90 days (default)
+  2) Custom duration
+  3) Keep forever
+
+› Choose [1]: custom
+✓ Retention Custom duration
+
 ? Keep sessions for how many days?
 
-› Days [90]: 30
+› Days or forever [90]: 30
 ✓ Retention 30
 
 

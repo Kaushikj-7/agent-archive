@@ -29,12 +29,13 @@ func TestPurgePlanAndApplyRequirePauseAndKeepCurrentSource(t *testing.T) {
 	const id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	current := "sessions/codex/" + id + "/source." + strings.Repeat("a", 64) + ".jsonl.gz"
 	orphan := "sessions/codex/" + id + "/source." + strings.Repeat("b", 64) + ".jsonl.gz"
-	meta := archive.Metadata{SchemaVersion: archive.MetadataSchemaVersion, SourceBundle: archive.SourceReference{Key: current, SHA256: strings.Repeat("a", 64)}, FilterVersion: "9"}
+	preserved := "sessions/codex/" + id + "/source." + strings.Repeat("c", 64) + ".jsonl.gz"
+	meta := archive.Metadata{SchemaVersion: archive.HistoryMetadataSchemaVersion, SessionID: id, NativeSessionID: "11111111-1111-4111-8111-111111111111", ProjectID: "project", Harness: archive.Harness{Name: "codex"}, CapturedAt: now, SourceBundle: archive.SourceReference{Key: current, SHA256: strings.Repeat("a", 64), CompressedBytes: 7}, FilterVersion: "9", History: &archive.RevisionHistory{CurrentRevision: "11111111-1111-4111-8111-111111111111", Preserved: []archive.RevisionReference{{RevisionID: "22222222-2222-4222-8222-222222222222", CapturedAt: now, FilterVersion: "9", Source: archive.SourceReference{Key: preserved, SHA256: strings.Repeat("c", 64), CompressedBytes: 9}}}}}
 	data, err := json.Marshal(meta)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for key, value := range map[string][]byte{current: []byte("current"), orphan: []byte("orphan"), "sessions/codex/" + id + "/metadata.json": data} {
+	for key, value := range map[string][]byte{current: []byte("current"), preserved: []byte("preserved"), orphan: []byte("orphan"), "sessions/codex/" + id + "/metadata.json": data} {
 		if err := bucket.Put(context.Background(), key, value); err != nil {
 			t.Fatal(err)
 		}
@@ -43,7 +44,7 @@ func TestPurgePlanAndApplyRequirePauseAndKeepCurrentSource(t *testing.T) {
 	if code := Run([]string{"purge", "plan"}, nil, &out, &errOut, env); code != 0 {
 		t.Fatalf("plan code %d: %s", code, &errOut)
 	}
-	if !strings.Contains(out.String(), orphan) || !strings.Contains(out.String(), "Still-current older-filter sessions (1;") {
+	if !strings.Contains(out.String(), orphan) || !strings.Contains(out.String(), "Live older-filter source references (2;") {
 		t.Fatalf("plan output: %s", &out)
 	}
 	var planFile string
@@ -94,6 +95,9 @@ func TestPurgePlanAndApplyRequirePauseAndKeepCurrentSource(t *testing.T) {
 	}
 	if _, err := bucket.Get(context.Background(), current); err != nil {
 		t.Fatalf("current removed: %v", err)
+	}
+	if _, err := bucket.Get(context.Background(), preserved); err != nil {
+		t.Fatalf("preserved removed: %v", err)
 	}
 	if _, err := os.Stat(planFile + ".report"); err != nil {
 		t.Fatal(err)

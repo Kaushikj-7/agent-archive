@@ -8,6 +8,10 @@ keeps its meaning, and an incompatible change bumps `schema_version`, from
 conversation content, except `show --transcript --json` and a full
 `eval export` record, which you ask for explicitly.
 
+JSON output preserves its display-control escaping and returns a failure if
+the output writer rejects bytes or accepts only part of the document. Scripts
+should check the exit status before using redirected output.
+
 ## `list --json`
 
 ```json
@@ -424,6 +428,7 @@ Treat an absent field and `null` the same way.
 | `background` | The background job (the launchd job on macOS, the user's systemd timer on Linux): `loaded`, `running`, `missing`, `another_installation` (the scheduler runs this installation's job from a different definition, which is left alone), `broken` (the job runs an executable that no longer exists), or `unknown` (the scheduler could not say, for example because there is no systemd user bus). |
 | `background_warnings` | What the background job does, but not robustly, one sentence each: on Linux, that lingering is off (the collector stops when you log out) or that a systemd drop-in overrides its unit. The state is not changed by them. Absent when there is nothing to say, which is always the case on macOS. |
 | `paused` | Whether collection is paused. |
+| `retention` | Saved per-machine policy; absent before setup. `retention_days` is 0 for Keep forever or 1–36,500 for finite days; `automatic_expiry` is false for forever. Privacy and superseded-source cleanup, explicit deletion and provider lifecycle rules still apply. |
 | `projects` | Included project roots. |
 | `identity_recovery` | Codex local identity-recovery evidence: `complete`, `pending`, and bounded `phase` (`complete`, `registrations`, `candidates`, `packed-shards`, `packed-fallback`, `requested-misses`, or `unknown`). Missing/corrupt evidence is unknown; pending work advances through sync passes. This is separate from discovery scans, uploads and read-back verification. |
 | `skill_evidence` | Effective filesystem skill evidence policy: `none`, `metadata`, or `body`. Older configs without the field report `body`. |
@@ -462,6 +467,9 @@ IDs, or content, but project folders are absolute paths: `projects[].root`,
 `projects[].kept_out`, `projects[].kept_out_unchecked`, and `filters.projects`. `storage_checked` is always
 `false`, because a dry run writes nothing and the storage check writes a test
 object; only an import checks storage, before it asks.
+`retention_days` is 0 for Keep forever; `automatic_expiry` is then false and
+`expires_on` is an empty string, meaning no automatic whole-session expiry.
+Finite policies report `automatic_expiry: true` and an estimated expiry date.
 `handoff --format json` prints the handoff document. Its `workspace` object
 holds `directory` and `branch` as the transcript recorded them and, when the
 command knew the checkout the handoff is for (not with `--worktree` or

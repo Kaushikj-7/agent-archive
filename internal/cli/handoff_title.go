@@ -165,7 +165,10 @@ func (r *handoffQueryResolver) resolve() (code int, done bool) {
 		}
 	}
 	if opts.source != "local" && isArchiveSessionID(r.query) {
-		if harness, ok := r.exactArchiveSession(ctx); ok {
+		readCtx, stopReads := readCommandContext(r.env)
+		harness, ok := r.exactArchiveSession(readCtx)
+		stopReads()
+		if ok {
 			opts.sessionID, opts.harness = r.query, harness
 			return 0, false
 		}

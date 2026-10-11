@@ -64,8 +64,7 @@ func runMachinesRevoke(args []string, stdin io.Reader, out, errOut io.Writer, en
 			return machineCommandError(errOut, err)
 		}
 		publishRevocation(context.Background(), home, &journal, cfg, env)
-		printRevocation(out, journal, opts.JSON)
-		return 0
+		return revocationOutputCode(out, errOut, journal, opts.JSON)
 	}
 	p := newPrompter(stdin, out)
 	defer p.close()
@@ -82,7 +81,9 @@ func runMachinesRevoke(args []string, stdin io.Reader, out, errOut io.Writer, en
 			return machineCommandError(errOut, err)
 		}
 		publishRevocation(context.Background(), home, &journal, cfg, env)
-		printRevocation(out, journal, opts.JSON)
+		if err := printRevocation(out, journal, opts.JSON); err != nil {
+			return machineCommandError(errOut, err)
+		}
 		printUnverifiedRevocationClaims(errOut, cfg, selector)
 		terminal.Println(errOut, "Revocation requested—access not removed. Claimed keys are unverified; use the provider dashboard or IAM permissions.")
 		if cfg.Storage.Provider == credentials.ProviderS3 {
@@ -125,7 +126,9 @@ func runMachinesRevoke(args []string, stdin io.Reader, out, errOut io.Writer, en
 	executionCtx, executionCancel := context.WithTimeout(context.Background(), cloudflare.InventoryTimeout)
 	defer executionCancel()
 	executionErr := executeRevocation(executionCtx, home, &journal, cfg, api, reader, env)
-	printRevocation(out, journal, opts.JSON)
+	if err := printRevocation(out, journal, opts.JSON); err != nil {
+		return machineCommandError(errOut, err)
+	}
 	if executionErr != nil {
 		terminal.Println(errOut, "Operation interrupted or local persistence failed; retain confirmed outcomes and retry the exact operation.")
 		return 1
@@ -297,10 +300,16 @@ func revocationMetadataMatches(token cloudflare.TokenMetadata, key revocation.Ke
 	return ok && token.ID == key.ProviderID && id.RecipientID == key.RecipientID && id.IssuerID == key.IssuerID && id.SlotID == key.SlotID && cloudflare.ExactBucketPolicy(token, j.AccountID, cloudflare.BucketRef{Name: j.Bucket, Jurisdiction: j.Jurisdiction}, j.PermissionID)
 }
 
-func printRevocation(out io.Writer, j revocation.Journal, asJSON bool) {
+func revocationOutputCode(out, errOut io.Writer, journal revocation.Journal, asJSON bool) int {
+	if err := printRevocation(out, journal, asJSON); err != nil {
+		return machineCommandError(errOut, err)
+	}
+	return 0
+}
+
+func printRevocation(out io.Writer, j revocation.Journal, asJSON bool) error {
 	if asJSON {
-		_ = json.NewEncoder(out).Encode(j)
-		return
+		return writeCompactJSON(out, j)
 	}
 	terminal.Printf(out, "Revocation operation %s\n", j.OperationID)
 	if j.RequestOnly && j.RequestedSelector != nil {
@@ -319,6 +328,7 @@ func printRevocation(out io.Writer, j revocation.Journal, asJSON bool) {
 		terminal.Println(out, "Bucket progress publication pending; local provider results are retained.")
 	}
 	terminal.Println(out, "Account inventory completeness remains unknown. Sessions and downloaded data remain.")
+	return nil
 }
 
 type operatorBinding struct {

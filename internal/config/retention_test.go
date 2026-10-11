@@ -54,24 +54,79 @@ func TestRetentionWireAndStickyComposition(t *testing.T) {
 			t.Fatal("invalid policy accepted")
 		}
 	}
-	cfg := Config{RetentionDays: 0, GenerationProtection: true, CodexHistoryProtection: true, DurableStorageProtection: true, ImportStagingProtection: true}
+	cfg := Config{RetentionDays: 0, GenerationProtection: true, CodexHistoryProtection: true, DurableStorageProtection: true}
 	raw, err := json.Marshal(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var loaded Config
-	if err := json.Unmarshal(raw, &loaded); err != nil || loaded.SchemaVersion != 9 || !loaded.RetentionProtection || !loaded.DurableStorageProtection {
+	if err := json.Unmarshal(raw, &loaded); err != nil || loaded.SchemaVersion != 8 || !loaded.RetentionProtection || !loaded.DurableStorageProtection {
 		t.Fatalf("composition %+v %v", loaded, err)
 	}
 }
+
 func jsonInt(n int) string { b, _ := json.Marshal(n); return string(b) }
+
 func TestRetentionOrdering(t *testing.T) {
 	for _, tc := range []struct {
-		next, old int
-		shorter   bool
+		next    int
+		old     int
+		shorter bool
 	}{{0, 90, false}, {90, 0, true}, {0, 0, false}, {30, 90, true}, {90, 30, false}} {
 		if RetentionShorter(tc.next, tc.old) != tc.shorter {
 			t.Fatalf("ordering %+v", tc)
 		}
+	}
+}
+
+func TestRetentionRejectsNullInsteadOfDefaulting(t *testing.T) {
+	for _, raw := range []string{`{"retention_days":null}`, `{"schema_version":{"version":8,"writer":"retention-forever-v8"},"retention_protection":true,"retention_days":null}`} {
+		var cfg Config
+		if err := json.Unmarshal([]byte(raw), &cfg); err == nil {
+			t.Fatalf("accepted a noninteger retention policy: %s", raw)
+		}
+	}
+}
+
+func TestForeverFenceKeepsDiscoveryFloorValidation(t *testing.T) {
+	{
+		cfg, _ := discoveryConfig(t)
+		cfg.RetentionDays, cfg.RetentionProtection = 0, true
+		raw, err := json.Marshal(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var valid Config
+		if err := json.Unmarshal(raw, &valid); err != nil {
+			t.Fatal(err)
+		}
+		// A dominating fence must not turn the lower discovery authorization
+		// into a legacy floor migration and reopen admissions from the past.
+		var wire map[string]any
+		if err := json.Unmarshal(raw, &wire); err != nil {
+			t.Fatal(err)
+		}
+		auth := wire["discovery"].(map[string]any)["authorizations"].([]any)[0].(map[string]any)
+		delete(auth, "native_start_floor")
+		corrupt, err := json.Marshal(wire)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var rejected Config
+		if err := json.Unmarshal(corrupt, &rejected); err == nil {
+			t.Fatal("fence discarded discovery floor validation")
+		}
+	}
+}
+
+func TestRetentionWriterRejectsStagingCapability(t *testing.T) {
+	for _, raw := range []string{`{"schema_version":{"version":9,"writer":"import-staging-v9"},"import_staging_protection":true,"retention_days":0,"retention_protection":true}`, `{"schema_version":1,"import_staging_protection":true,"retention_days":90}`, `{"schema_version":9,"retention_days":90}`} {
+		var cfg Config
+		if err := json.Unmarshal([]byte(raw), &cfg); err == nil {
+			t.Fatalf("accepted unsupported staging configuration: %s", raw)
+		}
+	}
+	if _, err := json.Marshal(Config{RetentionDays: 90, ImportStagingProtection: true}); err == nil {
+		t.Fatal("emitted staging capability without implementation")
 	}
 }

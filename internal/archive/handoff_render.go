@@ -66,6 +66,12 @@ func renderHandoffHeader(b *strings.Builder, h Handoff, opts HandoffRenderOption
 
 func renderHandoffSession(b *strings.Builder, h Handoff) {
 	b.WriteString("## Session\n")
+	if h.Session.RevisionID != "" {
+		fmt.Fprintf(b, "- Parent revision: %s\n", oneLine(h.Session.RevisionID))
+		if h.Session.CapturedAt != nil {
+			fmt.Fprintf(b, "- Captured: %s · filter: %s\n", h.Session.CapturedAt.Format("2006-01-02 15:04 UTC"), oneLine(h.Session.FilterVersion))
+		}
+	}
 	agent := harnessDisplayName(h.Session.Harness)
 	if h.Session.HarnessVersion != "" {
 		agent += " " + h.Session.HarnessVersion

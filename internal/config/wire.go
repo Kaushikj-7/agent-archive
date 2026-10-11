@@ -70,9 +70,6 @@ func (c Config) MarshalJSON() ([]byte, error) {
 	if c.RetentionProtection {
 		version = writerVersion{Version: 8, Writer: retentionWriter}
 	}
-	if c.ImportStagingProtection {
-		version = writerVersion{Version: 9, Writer: importStagingWriter}
-	}
 	return json.Marshal(struct {
 		SchemaVersion writerVersion `json:"schema_version"`
 		*configJSON
@@ -90,16 +87,24 @@ func decodeConfig(data []byte, c *Config) (bool, error) {
 	plain := configJSON(*c)
 	wire := struct {
 		SchemaVersion json.RawMessage `json:"schema_version"`
-		RetentionDays *int            `json:"retention_days"`
+		RetentionDays json.RawMessage `json:"retention_days"`
 		*configJSON
 	}{configJSON: &plain}
 	if err := json.Unmarshal(data, &wire); err != nil {
 		return false, err
 	}
-	if wire.RetentionDays == nil {
+	if len(wire.RetentionDays) == 0 {
 		plain.RetentionDays = DefaultRetentionDays
 	} else {
-		plain.RetentionDays = *wire.RetentionDays
+		if bytes.Equal(bytes.TrimSpace(wire.RetentionDays), []byte("null")) {
+			return false, errors.New("retention_days must be an integer; omit the field for the legacy default")
+		}
+		if err := json.Unmarshal(wire.RetentionDays, &plain.RetentionDays); err != nil {
+			return false, err
+		}
+	}
+	if plain.ImportStagingProtection {
+		return false, errors.New("import staging protection requires a newer agent-archive writer")
 	}
 	if err := ValidateRetentionDays(plain.RetentionDays); err != nil {
 		return false, err
@@ -123,6 +128,9 @@ func decodeConfig(data []byte, c *Config) (bool, error) {
 			return false, err
 		}
 	}
+	if plain.SchemaVersion > 8 {
+		return false, errors.New("configuration requires a newer agent-archive writer")
+	}
 	*c = Config(plain)
 	if c.RetentionDays == 0 {
 		c.RetentionProtection = true
@@ -138,14 +146,10 @@ func codexMarkerMatches(mode SkillEvidence, writer configWriter) bool {
 }
 
 func validateWriterVersion(c Config, version writerVersion) error {
-	if (version.Version != 2 || (version.Writer != discoveryWriter && version.Writer != legacyDiscoveryWriter)) && (version.Version != 3 || (version.Writer != codexWriter && version.Writer != legacyCodexWriter)) && (version.Version != 4 || version.Writer != generationWriter) && (version.Version != 5 || version.Writer != codexHistoryWriter) && (version.Version != 7 || version.Writer != durableStorageWriter) && (version.Version != 8 || version.Writer != retentionWriter) && (version.Version != 9 || version.Writer != importStagingWriter) {
+	if (version.Version != 2 || (version.Writer != discoveryWriter && version.Writer != legacyDiscoveryWriter)) && (version.Version != 3 || (version.Writer != codexWriter && version.Writer != legacyCodexWriter)) && (version.Version != 4 || version.Writer != generationWriter) && (version.Version != 5 || version.Writer != codexHistoryWriter) && (version.Version != 7 || version.Writer != durableStorageWriter) && (version.Version != 8 || version.Writer != retentionWriter) {
 		return errors.New("configuration requires a supported writer fence")
 	}
-	if version.Version == 9 {
-		if !c.ImportStagingProtection {
-			return errors.New("import staging writer fence requires protection")
-		}
-	} else if version.Version == 8 {
+	if version.Version == 8 {
 		if !c.RetentionProtection {
 			return errors.New("retention writer fence requires protection")
 		}

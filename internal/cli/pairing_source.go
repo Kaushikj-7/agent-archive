@@ -142,6 +142,9 @@ func (o *pairingAddOptions) chooseDelivery(p *prompter) error {
 }
 
 func printPairingAccessReady(out io.Writer, cfg config.Config, slot issuance.Slot) {
+	if cfg.RetentionDays == 0 {
+		terminal.Println(out, "Keep forever is copied at pairing time. Upgrade the receiving machine to a version that supports Keep forever; older receivers reject this bundle.")
+	}
 	if slot.SlotID != "" {
 		terminal.Println(out, guidedOK(out)+" Separate access ready. You can revoke this machine independently.")
 	} else if cfg.Storage.Provider == credentials.ProviderR2 {
