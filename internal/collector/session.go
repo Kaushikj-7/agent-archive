@@ -340,6 +340,9 @@ func (s *sessionScan) read() (read sourceRead, ok bool, err error) {
 	if err := s.persistCodexBinding(read.observed.binding); err != nil {
 		return read, false, err
 	}
+	if err := s.followRelocatedRollout(read.observed.relocated); err != nil {
+		return read, false, err
+	}
 	return read, true, nil
 }
 

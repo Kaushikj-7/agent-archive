@@ -567,7 +567,6 @@ func (p *pass) scan(reg archive.SessionRegistration) {
 		p.opts.progress(id, false)
 		return
 	}
-	err = p.nameCodexCoverage(p.ctx, reg, err)
 	if reason, deferred := deferralReason(err); deferred {
 		p.deferScan(id, reason, err)
 		return

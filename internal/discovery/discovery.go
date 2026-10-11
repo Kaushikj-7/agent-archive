@@ -94,6 +94,35 @@ type catalog struct {
 	Health   Health                        `json:"health"`
 	Priority map[string]int64              `json:"priority,omitempty"`
 	Retries  []SourceDescriptor            `json:"retries,omitempty"`
+	// Classifier is the header classification the cached observations'
+	// refusals were made under (see reclassify).
+	Classifier int `json:"classifier,omitempty"`
+}
+
+// headerClassifier revises which Codex headers capture understands without
+// discarding the whole catalog: 1 accepts agent-created top-level threads.
+const headerClassifier = 1
+
+// reclassify drops cached observations that an older header classification
+// refused as an unsupported execution without any identity, so each is read
+// again, once, under the current one. A cached refusal is otherwise kept for
+// as long as the file is unchanged, and an archived rollout never changes:
+// its identity would stay unknown to coverage, which then proves the thread
+// has no rollouts at all. A refusal that kept its identity (a guardian review
+// child, say) already reaches coverage and is not read again: rereading many
+// headers at once would hold coverage incomplete for several passes. Every
+// other cached observation, the coverage inventory and its retained proofs
+// stay.
+func (c *catalog) reclassify() {
+	if c.Classifier >= headerClassifier {
+		return
+	}
+	for path, entry := range c.Cache {
+		if entry.Observation.Outcome == outcomeUnsupportedExec && entry.Observation.Identity == nil {
+			delete(c.Cache, path)
+		}
+	}
+	c.Classifier = headerClassifier
 }
 
 // Options contains injectable clocks and stop signals; it cannot override
@@ -1037,6 +1066,7 @@ func prepareCatalog(ctx context.Context, store *state.Store, cfg config.Config, 
 	if catalogNeedsReset(c, roots) {
 		c = catalog{}
 	}
+	c.reclassify()
 	if o.Rollouts != nil {
 		if o.Rollouts.coverage != nil && o.Rollouts.coverage.validate(roots) == nil {
 			c.Coverage = o.Rollouts.coverage

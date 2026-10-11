@@ -62,7 +62,7 @@ func TestCachedHistoryPrefixCapacityPressureRemainsRetryable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pass.graph(t.Context(), selection.leaf); err != nil {
+	if _, err := pass.graph(t.Context(), selection.leaf, selection.set); err != nil {
 		t.Fatal(err)
 	}
 	ledger := pass.env.ReadBudget

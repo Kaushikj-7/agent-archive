@@ -6,6 +6,15 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Capture Codex threads the Codex app opens for a task another thread's agent
+  handed off (`thread_source: "agent_created_thread"`). They are top-level
+  threads, named and listed by Codex like your own, and were failing on every
+  pass with "source unavailable". Rollouts already seen are read again once.
+- Follow a Codex rollout that Codex moved into `archived_sessions/` (or back)
+  by its thread ID: the session's recorded location moves with it instead of
+  leaving a "transcript missing" gap, and unchanged content is not uploaded
+  again. This also works while Codex's thread index still names the old
+  location.
 - Add an explicit Keep forever choice in setup and `--keep-forever` for
   scripted setup; new installations still default to 90 days. Pairing and
   imports preserve this per-machine preference. It disables automatic

@@ -147,6 +147,15 @@ type SourceAdmissionEvidence interface {
 	AdmissionEvidence(context.Context, SourceAdmission) (AdmissionEvidence, error)
 }
 
+// SourceRelocation names the physical rollout a snapshot of an unbound
+// legacy registration read when it is not the registered locator: Codex
+// renamed the rollout (into archived_sessions/, or back) and the lookup found
+// it by its thread ID. The registration keeps its legacy representation and
+// only follows the locator; a bound registration follows its binding instead.
+type SourceRelocation interface {
+	RelocatedFrom(registered SourceRef) (SourceRef, bool)
+}
+
 // RevisionEvidence identifies meaningful native evidence without teaching shared
 // orchestration native record vocabulary. Ownership is checked separately.
 type RevisionEvidence interface {

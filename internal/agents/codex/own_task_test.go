@@ -39,7 +39,7 @@ func TestSnapshotFirstOwnTaskSkipsLargeCopiedPrefixAndRejectsLaterRepair(t *test
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := provider.graph(t.Context(), selection.leaf); err != nil {
+			if _, err := provider.graph(t.Context(), selection.leaf, selection.set); err != nil {
 				t.Fatal(err)
 			}
 			ledger := provider.env.ReadBudget

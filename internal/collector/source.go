@@ -21,7 +21,10 @@ import (
 
 // sourceState carries a provider observation and legacy equality facts.
 type sourceState struct {
-	binding     *archive.CodexSourceBinding
+	binding *archive.CodexSourceBinding
+	// relocated is where an unbound Codex registration's rollout was read
+	// from when Codex had renamed it (see agentapi.SourceRelocation).
+	relocated   string
 	kind        archive.SourceKind
 	file        transcriptFileInfo
 	cursor      cursorstore.Signature
@@ -315,6 +318,11 @@ func (r providerReader) Filter(ctx context.Context, adapter archive.Adapter, max
 	observed.binding, err = r.snapshotBinding(ctx, snap)
 	if err != nil {
 		return out, observed, err
+	}
+	if relocation, ok := snap.(agentapi.SourceRelocation); ok && r.admission.Binding == nil {
+		if moved, relocated := relocation.RelocatedFrom(r.ref); relocated {
+			observed.relocated = moved.Path
+		}
 	}
 
 	out, err = r.filterOwned(ctx, f, in, agentapi.FilterContext{Filename: filepath.Base(r.ref.Path), StartedAt: r.startedAt, Limits: limits})
