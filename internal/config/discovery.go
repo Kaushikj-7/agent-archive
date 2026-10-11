@@ -432,6 +432,42 @@ func (c Config) DiscoveryGeneration(agent, root string, started, now time.Time) 
 	return "", false
 }
 
+// DiscoveryStartFloor is the earliest native start discovery admits for
+// agent under any current authorization (DiscoveryGeneration and
+// CodexDiscoveryGeneration refuse every session that started before it):
+// the earliest project floor, or, for Codex in all-projects scope, the
+// later of the capture and source floors, since admission needs both. ok
+// is false when no current authorization of agent has a known floor.
+func (c Config) DiscoveryStartFloor(agent string) (time.Time, bool) {
+	if c.Discovery == nil || !c.Discovery.Enabled {
+		return time.Time{}, false
+	}
+	if agent == "codex" && c.EffectiveCodexCaptureScope() == CodexAllProjects {
+		capture, source := c.CodexCapture.Authorization, c.CodexCapture.SourceAuthorization
+		if capture == nil || source == nil || capture.DestinationID != c.DestinationID() || source.DestinationID != c.DestinationID() {
+			return time.Time{}, false
+		}
+		captureFloor, sourceFloor := discoveryNativeStartFloor(*capture), discoveryNativeStartFloor(*source)
+		if captureFloor.IsZero() || sourceFloor.IsZero() {
+			return time.Time{}, false
+		}
+		if captureFloor.After(sourceFloor) {
+			return captureFloor, true
+		}
+		return sourceFloor, true
+	}
+	var earliest time.Time
+	for _, a := range c.Discovery.Authorizations {
+		if a.Agent != agent || a.DestinationID != c.DestinationID() {
+			continue
+		}
+		if floor := discoveryNativeStartFloor(a); !floor.IsZero() && (earliest.IsZero() || floor.Before(earliest)) {
+			earliest = floor
+		}
+	}
+	return earliest, !earliest.IsZero()
+}
+
 // Legacy retained history can only narrow permission to its earliest surviving
 // interval. Activation or observation times cannot recover an empty history.
 func discoveryNativeStartFloor(a DiscoveryAuthorization) time.Time {

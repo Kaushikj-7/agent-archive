@@ -598,7 +598,7 @@ func printReviewPrivacy(p *prompter, cfg config.Config) {
 	case report.Reason == r2PrivacyUnreadable:
 		// Every R2 bucket reads this way, and nothing setup can do changes
 		// it, so it is a reminder rather than a warning.
-		p.note("Check that public access is disabled for the bucket in the Cloudflare dashboard.")
+		p.note("Bucket privacy not verified. Check that public access is disabled for the bucket in the Cloudflare dashboard.")
 	default:
 		p.warn("Bucket privacy not verified: "+privacyReasonText(report.Reason)+".", "Make sure public access is off: "+report.GuidanceURL)
 	}

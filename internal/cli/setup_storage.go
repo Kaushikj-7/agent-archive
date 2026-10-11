@@ -25,6 +25,20 @@ const (
 	storageProviderS3Create   storageProviderChoice = storageChoiceS3New
 )
 
+// storageStage names the work currently being performed; it is not a counter.
+type storageStage string
+
+const (
+	storageAccount      storageStage = "Account"
+	storageDetails      storageStage = "Storage"
+	storageVerification storageStage = "Verification"
+)
+
+func (p *prompter) storageStage(stage storageStage) {
+	p.setupHeading("Storage · " + string(stage))
+	terminal.Println(p.out, p.style.dim("Account → Storage → Verification"))
+}
+
 func storageHelp(p *prompter) {
 	terminal.Println(p.out, "Step by step, for Cloudflare R2 and Amazon S3: "+bucketDocURL)
 }
@@ -32,18 +46,20 @@ func storageHelp(p *prompter) {
 func promptStorage(p *prompter, existing credentials.Config, env Env, failedRegion string, keepInstalled ...bool) (credentials.Config, credentials.R2Credentials, bool, error) {
 	offerKeep := len(keepInstalled) == 0 || keepInstalled[0]
 	var secret credentials.R2Credentials
+	answers := map[string]credentials.Config{}
 	if offerKeep && existing.Bucket != "" {
 		cfg, key, saved, kept, err := promptKeepStorage(p, existing, env)
 		if kept || err != nil {
 			return cfg, key, saved, err
 		}
-
+		answers[cfg.Provider+":existing"] = cfg
 	}
 	def := existing.Provider
 	if def == "" {
 		def = defaultStorageProvider(env)
 	}
 	for {
+		p.storageStage(storageAccount)
 		aliases, secondary := storageProviderActions(existing)
 		if existing.Bucket != "" {
 			terminal.Println(p.out, "Continue connecting the saved bucket, or choose a replacement.")
@@ -79,6 +95,10 @@ func promptStorage(p *prompter, existing credentials.Config, env Env, failedRegi
 		if cfg.Provider != provider || mode == "new" {
 			cfg = credentials.Config{Provider: provider}
 		}
+		answerKey := provider + ":" + mode
+		if saved, ok := answers[answerKey]; ok {
+			cfg = saved
+		}
 		if mode == "new" && provider == credentials.ProviderR2 {
 			var saved bool
 			cfg, secret, saved, err = createR2Bucket(p, env)
@@ -93,16 +113,19 @@ func promptStorage(p *prompter, existing credentials.Config, env Env, failedRegi
 			}
 			cfg.Provider = provider
 			mode = "existing"
+			answerKey = provider + ":" + mode
 		}
 		if provider == credentials.ProviderR2 {
 			connected, key, save, e := promptExistingR2(p, cfg, env)
 			if errors.Is(e, errChooseStorageAgain) {
+				answers[answerKey] = connected
 				continue
 			}
 			return connected, key, save, e
 		}
 		err = promptS3Bucket(p, &cfg, env, failedRegion, mode == "new")
 		if errors.Is(err, errChooseStorageAgain) {
+			answers[answerKey] = cfg
 			continue
 		}
 		if err != nil {
@@ -152,6 +175,7 @@ func storageIntroduction(p *prompter, provider string) (string, error) {
 func promptExistingR2(p *prompter, cfg credentials.Config, env Env) (credentials.Config, credentials.R2Credentials, bool, error) {
 	var secret credentials.R2Credentials
 	var err error
+	p.storageStage(storageAccount)
 	previous := cfg
 	// The account comes first, so a pasted bucket URL can fill in the
 	// bucket too.
@@ -159,10 +183,16 @@ func promptExistingR2(p *prompter, cfg credentials.Config, env Env) (credentials
 	if e != nil {
 		return cfg, secret, false, e
 	}
+	if cfg.R2Endpoint != previous.R2Endpoint || cfg.R2AccountID != previous.R2AccountID || cfg.Bucket != previous.Bucket {
+		cfg.R2CredentialRef = ""
+	}
+	p.storageStage(storageDetails)
 	if !fromURL {
-		if cfg.Bucket, err = p.setupStorageRequired("Bucket name", cfg.Bucket); err != nil {
-			return cfg, secret, false, err
+		bucket, e := p.setupStorageRequired("Bucket name", cfg.Bucket)
+		if e != nil {
+			return cfg, secret, false, e
 		}
+		cfg.Bucket = bucket
 	}
 	if cfg.Bucket != previous.Bucket || cfg.R2Endpoint != previous.R2Endpoint || cfg.R2AccountID != previous.R2AccountID {
 		cfg.R2CredentialRef = ""
@@ -216,6 +246,7 @@ func storageProviderLabel(key string) string {
 // replacement credential field completed. Back returns to the provider menu.
 func promptKeepStorage(p *prompter, existing credentials.Config, env Env) (credentials.Config, credentials.R2Credentials, bool, bool, error) {
 	var key credentials.R2Credentials
+	p.storageStage(storageAccount)
 	terminal.Println(p.out, "Current storage: "+existing.Provider+" / "+existing.Bucket)
 	choice, err := p.setupActions("Keep your current storage?", "keep", nil, []actionOption{{"keep", "", "Keep current storage"}, {"change", "c", "Change storage"}})
 	if err != nil {
@@ -229,7 +260,7 @@ func promptKeepStorage(p *prompter, existing credentials.Config, env Env) (crede
 	}
 	cfg, key, saved, err := promptExistingR2(p, existing, env)
 	if errors.Is(err, errChooseStorageAgain) {
-		return existing, key, false, false, nil
+		return cfg, key, false, false, nil
 	}
 	return cfg, key, saved, true, err
 }
