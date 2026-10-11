@@ -474,7 +474,7 @@ func TestDedicatedCreateWithIntentCallbackFailureAndInvalidRecipient(t *testing.
 }
 
 func TestDedicatedPairingReceiverCommitsSlotAndKeepsLocalIdentity(t *testing.T) {
-	source, _, _, _ := dedicatedFixture(t)
+	source, _, provider, _ := dedicatedFixture(t)
 	source.LookupEnv = func(key string) (string, bool) {
 		if key == "CLOUDFLARE_API_TOKEN" {
 			return bootstrapCanary, true
@@ -507,6 +507,20 @@ func TestDedicatedPairingReceiverCommitsSlotAndKeepsLocalIdentity(t *testing.T) 
 	}
 	if !strings.Contains(out.String(), "Dedicated R2 key") || strings.Contains(out.String(), "Shared-key R2") {
 		t.Fatal("dedicated receiver mislabeled shared")
+	}
+	live := len(provider.Live())
+	env.Cloudflare = func(string) cloudflare.API {
+		t.Fatal("receiving an existing pairing must not issue a provider key")
+		return nil
+	}
+	for range 2 {
+		out.Reset()
+		if result := Run([]string{"setup", "--pair-file", "-", "--yes", "--codex-discovery", "on", "--codex-capture-scope", "included-projects", "--project", project}, strings.NewReader(bundle), &out, &out, env); result != 0 {
+			t.Fatalf("repeat receiver %d %s", result, &out)
+		}
+		if len(provider.Live()) != live || len(kc.items) != 1 {
+			t.Fatal("repeated receive duplicated provider access or local credentials")
+		}
 	}
 }
 
