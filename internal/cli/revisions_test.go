@@ -16,6 +16,7 @@ import (
 )
 
 const revisionActive = "22222222-2222-4222-8222-222222222222"
+
 const revisionOld = "33333333-3333-4333-8333-333333333333"
 
 func revisionFixture(t *testing.T, legacy bool) (Env, *storagetest.MemoryStore, string, archive.Metadata) {
@@ -28,7 +29,7 @@ func revisionFixture(t *testing.T, legacy bool) (Env, *storagetest.MemoryStore, 
 	store := storagetest.NewMemoryStore()
 	env := testEnv(t, home, at.Add(time.Hour))
 	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return store, nil }
-	makeBundle := func(revision, prompt, filter string, captured time.Time, schema int) (archive.Metadata, archive.SourceBundle) {
+	makeBundle := func(revision, prompt, filter string, captured time.Time, schema int) archive.Metadata {
 		raw := `{"type":"turn_context","payload":{"model":"synthetic"}}` + "\n" + `{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"` + prompt + `"}]}}` + "\n"
 		filtered, err := (codex.Filter{}).FilterJSONL(strings.NewReader(raw))
 		must(t, err)
@@ -49,20 +50,20 @@ func revisionFixture(t *testing.T, legacy bool) (Env, *storagetest.MemoryStore, 
 		must(t, err)
 		meta, err := archive.BuildMetadataWithAnalysis(bundle, analysis, nil, "synthetic-machine", at.Add(-time.Hour), at.Add(time.Hour), archive.SourceReference{Key: key, SHA256: packed.SHA256, CompressedBytes: len(packed.Bytes)}, archive.ParserInfo{})
 		must(t, err)
-		return meta, bundle
+		return meta
 	}
 	oldSchema := archive.HistorySourceSchemaVersion
 	if legacy {
 		oldSchema = archive.SourceSchemaVersion
 	}
-	old, _ := makeBundle(revisionOld, "old preserved prompt", "14", at, oldSchema)
-	active, _ := makeBundle(revisionActive, "active prompt", "15", at.Add(time.Hour), archive.HistorySourceSchemaVersion)
+	old := makeBundle(revisionOld, "old preserved prompt", "14", at, oldSchema)
+	active := makeBundle(revisionActive, "active prompt", "15", at.Add(time.Hour), archive.HistorySourceSchemaVersion)
 	active.History.Preserved = []archive.RevisionReference{{RevisionID: revisionOld, CapturedAt: old.CapturedAt, Source: old.SourceBundle}}
 	if !legacy {
 		active.History.Preserved[0].FilterVersion = "14"
 		active.History.Preserved[0].SourceSchemaVersion = oldSchema
 	}
-	active.LinkedSessions = []archive.LinkedSessionReference{{SessionID: "unavailable-child", Relationship: "child", Status: archive.LinkedSessionStatus("captured"), ObservedAt: at}}
+	active.LinkedSessions = []archive.LinkedSessionReference{{SessionID: "unavailable-child", Relationship: "child", Status: archive.LinkedSessionPublished, ObservedAt: at}}
 	data, err := json.Marshal(active)
 	must(t, err)
 	key, err := archive.MetadataObjectKey("codex", id)

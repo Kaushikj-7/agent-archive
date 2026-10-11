@@ -40,7 +40,7 @@ func loadArchiveSelection(ctx context.Context, store storage.ObjectStore, key, r
 func printRevisionInventory(stdout, stderr io.Writer, metadata archive.Metadata, jsonOut bool) int {
 	revisions, err := reader.Revisions(metadata)
 	if err != nil {
-		fmt.Fprintf(stderr, "agent-archive: show: %v\n", err)
+		terminal.Printf(stderr, "agent-archive: show: %v\n", err)
 		return 1
 	}
 	if jsonOut {
@@ -69,7 +69,7 @@ func printRevisionInventory(stdout, stderr io.Writer, metadata archive.Metadata,
 		}
 	}
 	if err != nil {
-		fmt.Fprintf(stderr, "agent-archive: show: write revisions: %v\n", err)
+		terminal.Printf(stderr, "agent-archive: show: write revisions: %v\n", err)
 		return 1
 	}
 	return 0
