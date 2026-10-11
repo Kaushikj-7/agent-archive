@@ -105,7 +105,10 @@ func TestLegacyCodexOpenPageOnlySessionHasNoPromptTitle(t *testing.T) {
 // so they stay in the title as filter 16 keeps them.
 func TestLegacyCodexOpenPageExamplesStayInTitle(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct{ input, want string }{
+	for _, tc := range []struct {
+		input string
+		want  string
+	}{
 		{"Why does `<external_codex_apps_open_page>...</external_codex_apps_open_page>` appear?", "Why does `<external_codex_apps_open_page>...</external_codex_apps_open_page>` appear?"},
 		{"    <external_codex_apps_open_page>example</external_codex_apps_open_page>", "<external_codex_apps_open_page>example</external_codex_apps_open_page>"},
 		{"Explain external_codex_apps_open_page with examples.", "Explain external_codex_apps_open_page with examples."},
