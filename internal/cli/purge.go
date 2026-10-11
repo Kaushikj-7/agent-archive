@@ -99,14 +99,14 @@ func runPurgePlan(args []string, stdout, stderr io.Writer, env Env) int {
 }
 
 // printPurgePlan prints a saved plan, saved at file, for review: every
-// candidate key, then the still-current sessions it leaves alone.
+// candidate key, then the live source references it leaves alone.
 func printPurgePlan(w io.Writer, file string, plan purge.Plan) {
 	terminal.Printf(w, "Plan: %s\nBucket: %s\nPrefix: %s\nExpires: %s\nDigest: %s\n", file, plan.Bucket, plan.Prefix, plan.ExpiresAt.Format("2006-01-02T15:04:05Z"), plan.Digest)
 	terminal.Printf(w, "Unreferenced source deletion candidates (%d):\n", len(plan.Candidates))
 	for _, c := range plan.Candidates {
 		terminal.Printf(w, "  %s (%d bytes, filter %s)\n", c.Key, c.Size, c.FilterVersion)
 	}
-	terminal.Printf(w, "Still-current older-filter sessions (%d; never planned for deletion):\n", len(plan.CurrentOldSessions))
+	terminal.Printf(w, "Live older-filter source references (%d; never planned for deletion):\n", len(plan.CurrentOldSessions))
 	for _, s := range plan.CurrentOldSessions {
 		terminal.Printf(w, "  %s -> %s (filter %s)\n", s.MetadataKey, s.SourceKey, s.FilterVersion)
 	}
