@@ -113,7 +113,7 @@ func NewCodexRolloutLookup(ctx context.Context, store *state.Store, homes []stri
 		if root == "" || entry.Observation.Identity == nil {
 			continue
 		}
-		lookup.Observe(SourceDescriptor{Kind: archive.SourceKindFile, Root: root, Locator: path, StableKey: entry.Observation.Identity.RolloutID}, Fingerprint{Size: entry.Size, Mtime: entry.Mtime}, entry.Observation.Identity)
+		lookup.observe(SourceDescriptor{Kind: archive.SourceKindFile, Root: root, Locator: path, StableKey: entry.Observation.Identity.RolloutID}, Fingerprint{Size: entry.Size, Mtime: entry.Mtime}, entry.Observation.Identity, false)
 	}
 	lookup.coverageDirty = false
 	lookup.catalog = &prior
@@ -122,7 +122,14 @@ func NewCodexRolloutLookup(ctx context.Context, store *state.Store, homes []stri
 
 // Observe accepts already validated pass-owned metadata facts. It deep-copies
 // them so caller mutations cannot silently alter a lookup revision token.
+// The facts are live: a listing or header read of this pass.
 func (l *CodexRolloutLookup) Observe(source SourceDescriptor, stamp Fingerprint, identity *codexmeta.CodexIdentity) {
+	l.observe(source, stamp, identity, true)
+}
+
+// observe takes restored cache facts with listed false: they may name a
+// locator that no longer exists, so they cannot retire a coverage proof.
+func (l *CodexRolloutLookup) observe(source SourceDescriptor, stamp Fingerprint, identity *codexmeta.CodexIdentity, listed bool) {
 	if l.closed || identity == nil || identity.ThreadID == "" || identity.RolloutID == "" || source.Kind != archive.SourceKindFile || l.homeFor(source.Locator) != source.Root {
 		return
 	}
@@ -130,7 +137,7 @@ func (l *CodexRolloutLookup) Observe(source SourceDescriptor, stamp Fingerprint,
 		return
 	}
 	copyID := cloneRolloutIdentity(*identity)
-	if l.coverage != nil && l.coverage.observe(source, stamp, copyID) {
+	if l.coverage != nil && l.coverage.observe(source, stamp, copyID, listed) {
 		l.coverageDirty = true
 	}
 
@@ -318,12 +325,8 @@ func (l *CodexRolloutLookup) Rollout(ctx context.Context, id string) ([]agentapi
 	if len(refs) > archive.MaxHistorySpans {
 		return nil, agentapi.Wrap(agentapi.Limit, errors.New("physical locator limit"))
 	}
-	if request, found := l.coverage.Requests[id]; found && request.CompleteEpoch == l.coverage.Epoch && l.coverage.proofEpoch == l.coverage.Epoch && !l.coverage.Failed {
-		if request.DeliveredEpoch != request.AttemptEpoch {
-			request.DeliveredEpoch = request.AttemptEpoch
-			l.coverage.Requests[id] = request
-			l.coverageDirty = true
-		}
+	if _, epoch, proven := l.coverage.proven(id); proven {
+		l.markDelivered(id, epoch)
 	}
 	slices.SortFunc(refs, func(a, b agentapi.SourceRef) int { return strings.Compare(a.Path, b.Path) })
 	return refs, nil
@@ -458,16 +461,16 @@ func (l *CodexRolloutLookup) withCandidates(ctx context.Context, id string, set 
 		set.Candidates = append(set.Candidates, agentapi.SourceRef{Kind: archive.SourceKindFile, Path: path, Key: id})
 	}
 	slices.SortFunc(set.Candidates, func(a, b agentapi.SourceRef) int { return strings.Compare(a.Path, b.Path) })
-	set.Complete = false
-	if l.coverage != nil {
-		if request, present := l.coverage.Requests[id]; present && request.CompleteEpoch == l.coverage.Epoch && l.coverage.proofEpoch == l.coverage.Epoch && !request.Overflow && l.coverage.Phase == coverageComplete && !l.coverage.Failed {
-			set.Candidates = nil
-			for _, candidate := range request.Candidates {
-				set.Candidates = append(set.Candidates, agentapi.SourceRef{Kind: archive.SourceKindFile, Path: candidate.Source.Locator, Key: id})
-			}
-			slices.SortFunc(set.Candidates, func(a, b agentapi.SourceRef) int { return strings.Compare(a.Path, b.Path) })
-			set.Complete = true
+	set.Complete, set.Retained = false, false
+	candidates, epoch, proven := l.coverage.proven(id)
+	if proven {
+		set.Candidates = nil
+		for _, candidate := range candidates {
+			set.Candidates = append(set.Candidates, agentapi.SourceRef{Kind: archive.SourceKindFile, Path: candidate.Source.Locator, Key: id})
 		}
+		slices.SortFunc(set.Candidates, func(a, b agentapi.SourceRef) int { return strings.Compare(a.Path, b.Path) })
+		set.Complete = true
+		set.Retained = epoch != l.coverage.Epoch
 	}
 	value := struct {
 		Current      *agentapi.SourceRef        `json:"Current"`
@@ -480,17 +483,33 @@ func (l *CodexRolloutLookup) withCandidates(ctx context.Context, id string, set 
 		return agentapi.CodexRolloutSet{}, err
 	}
 	set.Revision = revision
-	// A refused digest has delivered no complete result. Keep that requested
-	// attempt enrolled until the caller actually receives its revision proof.
-	if set.Complete {
-		request := l.coverage.Requests[id]
-		if request.DeliveredEpoch != request.AttemptEpoch {
-			request.DeliveredEpoch = request.AttemptEpoch
-			l.coverage.Requests[id] = request
-			l.coverageDirty = true
+	// The lineage token is the revision this evidence would carry complete, so
+	// a complete set's equals its revision and source signatures recorded
+	// before it existed stay valid.
+	set.Lineage = revision
+	if !set.Complete {
+		value.Complete = true
+		if set.Lineage, err = l.revisionDigest(ctx, value); err != nil {
+			return agentapi.CodexRolloutSet{}, err
 		}
 	}
+	// A refused digest has delivered no complete result. Keep that requested
+	// attempt enrolled until the caller actually receives its revision proof.
+	if proven {
+		l.markDelivered(id, epoch)
+	}
 	return set, nil
+}
+
+// markDelivered records that the caller received the complete result of the
+// request's latest finished attempt, which lets capacity retire the request.
+func (l *CodexRolloutLookup) markDelivered(id string, epoch uint64) {
+	request := l.coverage.Requests[id]
+	if request.AttemptEpoch == epoch && request.DeliveredEpoch != request.AttemptEpoch {
+		request.DeliveredEpoch = request.AttemptEpoch
+		l.coverage.Requests[id] = request
+		l.coverageDirty = true
+	}
 }
 
 func (l *CodexRolloutLookup) revisionDigest(ctx context.Context, value any) (string, error) {
@@ -517,10 +536,8 @@ func (l *CodexRolloutLookup) revisionDigest(ctx context.Context, value any) (str
 }
 
 func (l *CodexRolloutLookup) candidateCount(id string) int {
-	if l.coverage != nil && l.coverage.Phase == coverageComplete && l.coverage.proofEpoch == l.coverage.Epoch && !l.coverage.Failed {
-		if request, found := l.coverage.Requests[id]; found && request.CompleteEpoch == l.coverage.Epoch && !request.Overflow {
-			return len(request.Candidates)
-		}
+	if candidates, _, proven := l.coverage.proven(id); proven {
+		return len(candidates)
 	}
 	return len(l.byThread[id])
 }
@@ -533,14 +550,12 @@ type rolloutObservationDigest struct {
 
 func (l *CodexRolloutLookup) candidateDigests(id string) []rolloutObservationDigest {
 	var out []rolloutObservationDigest
-	if l.coverage != nil && l.coverage.Phase == coverageComplete && l.coverage.proofEpoch == l.coverage.Epoch && !l.coverage.Failed {
-		if request, present := l.coverage.Requests[id]; present && request.CompleteEpoch == l.coverage.Epoch && !request.Overflow {
-			for path, candidate := range request.Candidates {
-				out = append(out, rolloutObservationDigest{path, candidate.Stamp, candidate.Identity})
-			}
-			slices.SortFunc(out, func(a, b rolloutObservationDigest) int { return strings.Compare(a.Path, b.Path) })
-			return out
+	if candidates, _, proven := l.coverage.proven(id); proven {
+		for path, candidate := range candidates {
+			out = append(out, rolloutObservationDigest{path, candidate.Stamp, candidate.Identity})
 		}
+		slices.SortFunc(out, func(a, b rolloutObservationDigest) int { return strings.Compare(a.Path, b.Path) })
+		return out
 	}
 	for path := range l.byThread[id] {
 		o := l.observations[path]
