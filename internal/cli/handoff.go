@@ -163,6 +163,11 @@ func runHandoffCommand(args []string, stdin io.Reader, stdout, stderr io.Writer,
 		terminal.Printf(stderr, "agent-archive: handoff: %v\n", err)
 		return 1
 	}
+	if opts.revision != "" {
+		h.Session.RevisionID = opts.revision
+		h.Session.CapturedAt = &target.bundle.Capture.CapturedAt
+		h.Session.FilterVersion = target.bundle.Capture.FilterVersion
+	}
 	if target.native != nil {
 		h.Session.ArchiveSessionID = ""
 	}
@@ -230,7 +235,7 @@ func resolveHandoffTarget(opts handoffOptions, home string, stderr io.Writer, en
 		skip = nil
 	}
 	resolver := handoffResolver{ctx: context.Background(), env: env, home: home, cfg: cfg,
-		harness: opts.harness, source: opts.source, skip: skip, gate: gate, stderr: stderr}
+		revision: opts.revision, harness: opts.harness, source: opts.source, skip: skip, gate: gate, stderr: stderr}
 	if !opts.latest {
 		return resolver.byID(opts.sessionID)
 	}
@@ -402,12 +407,13 @@ func hasPrompt(analysis archive.Analysis) bool {
 }
 
 type handoffResolver struct {
-	ctx     context.Context
-	env     handoffResolverDependencies
-	home    string
-	cfg     config.Config
-	harness string
-	source  string
+	revision string
+	ctx      context.Context
+	env      handoffResolverDependencies
+	home     string
+	cfg      config.Config
+	harness  string
+	source   string
 	// skip holds qualified session identities `--latest` must pass over: the agent
 	// session running the command.
 	skip map[agentmeta.SessionKey]bool
@@ -466,7 +472,7 @@ func (r handoffResolver) archiveByID(id string) (handoffTarget, error) {
 }
 
 func (r handoffResolver) fromArchive(store storage.ObjectStore, key, describe string) (handoffTarget, error) {
-	metadata, bundle, err := reader.RefreshAndLoad(r.ctx, store, key, reader.Limits{})
+	metadata, bundle, err := loadArchiveSelection(r.ctx, store, key, r.revision, r.env)
 	if err != nil {
 		if errors.Is(err, reader.ErrRefreshRequired) {
 			return handoffTarget{}, errors.New("the session's source bundle is not available (it may have just been replaced or deleted by retention); retry")

@@ -106,6 +106,9 @@ type Handoff struct {
 // was supplied, its lifecycle state and last turn outcome. Source names where
 // the bundle came from (HandoffOptions.Source).
 type HandoffSession struct {
+	RevisionID       string        `json:"revision_id,omitempty"`
+	CapturedAt       *time.Time    `json:"captured_at,omitempty"`
+	FilterVersion    string        `json:"filter_version,omitempty"`
 	ArchiveSessionID string        `json:"archive_session_id,omitempty"`
 	NativeSessionID  string        `json:"native_session_id,omitempty"`
 	Harness          string        `json:"harness"`

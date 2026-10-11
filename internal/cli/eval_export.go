@@ -59,6 +59,7 @@ func runEvalCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 
 // evalExportOptions is the validated command line of eval export.
 type evalExportOptions struct {
+	revision string
 	ids      []string
 	idsFrom  bool
 	file     string
@@ -143,6 +144,7 @@ func runEvalExport(args []string, stdin io.Reader, stdout, stderr io.Writer, env
 // or after the session IDs.
 func evalExportOptionsFromArgs(args []string, stderr io.Writer, env Env) (evalExportOptions, int) {
 	fs := env.newCommandFlags("eval export", stderr)
+	revision := fs.String("revision", "", "export this exact parent native revision ID; requires one archive SESSION_ID and --detail full")
 	harness := fs.String("harness", "", "the app the sessions were captured with (codex, claude, cursor); needed with --file, and for an archive ID that exists under more than one")
 	detail := fs.String("detail", string(archive.EvalExportDetailFull), "metadata (no conversation text; reads only metadata sidecars) or full (adds prompts, final response, edited files, feedback)")
 	maxBytes := fs.Int("max-bytes", defaultEvalMaxBytes, "cut each record's longest texts to fit this many bytes (0 for no limit)")
@@ -168,7 +170,7 @@ func evalExportOptionsFromArgs(args []string, stderr io.Writer, env Env) (evalEx
 		ids = append(ids, fs.Arg(0))
 		rest = fs.Args()[1:]
 	}
-	opts := evalExportOptions{ids: ids, idsFrom: *idsFrom != "", file: *file, scan: *scan, maxBytes: *maxBytes, workers: *workers}
+	opts := evalExportOptions{revision: *revision, ids: ids, idsFrom: *idsFrom != "", file: *file, scan: *scan, maxBytes: *maxBytes, workers: *workers}
 	if opts.workers == 0 {
 		opts.workers = min(runtime.NumCPU(), maxEvalWorkers)
 	}
@@ -205,6 +207,9 @@ func evalExportOptionsFromArgs(args []string, stderr io.Writer, env Env) (evalEx
 	opts.detail = archive.EvalExportDetail(*detail)
 	if opts.detail != archive.EvalExportDetailMetadata && opts.detail != archive.EvalExportDetailFull {
 		return evalExportOptions{}, fs.usageError("--detail must be metadata or full, not %q", *detail)
+	}
+	if opts.revision != "" && (len(ids) != 1 || !isArchiveSessionID(ids[0]) || opts.idsFrom || opts.file != "" || opts.scan || opts.detail != archive.EvalExportDetailFull) {
+		return evalExportOptions{}, fs.usageError("--revision requires one archive SESSION_ID and --detail full; batch and local inputs are unsupported")
 	}
 	if opts.scan {
 		sinceDay, err := backfillDay(*since, env.now())
@@ -415,7 +420,7 @@ func exportArchivedSession(ctx context.Context, parsers agentapi.ParsersLookup, 
 		}
 		return archive.FitEvalExport(record, opts.maxBytes)
 	}
-	metadata, bundle, err := reader.RefreshAndLoad(ctx, store, key, reader.Limits{})
+	metadata, bundle, err := loadArchiveSelection(ctx, store, key, opts.revision, parsers)
 	if errors.Is(err, storage.ErrNotFound) {
 		return fail(archive.EvalErrorNotFound, "no archived session with this ID")
 	}
@@ -437,6 +442,7 @@ func exportArchivedSession(ctx context.Context, parsers agentapi.ParsersLookup, 
 		return fail(archive.EvalErrorParseFailed, "the filtered source could not be parsed")
 	}
 	record, err := archive.BuildEvalExportWithAnalysis(bundle, analysis, metadata, archive.EvalExportSourceArchive, archive.EvalExportDetailFull, archive.ParserInfo{Version: parser.Version()})
+	record.RevisionID = opts.revision
 	if err != nil {
 		return fail(archive.EvalErrorParseFailed, "the filtered source could not be parsed")
 	}

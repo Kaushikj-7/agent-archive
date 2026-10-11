@@ -34,6 +34,7 @@ func ValidateEvalExport(e EvalExport) error {
 		}
 	}
 	check(e.SessionID != "" && e.Harness.Name != "", "missing session ID or harness")
+	check(e.RevisionID == "" || (historyID.MatchString(e.RevisionID) && e.Source == EvalExportSourceArchive && e.Detail == EvalExportDetailFull), "invalid revision selection")
 	check(e.Project.RepoKey == "" || IsRepoKey(e.Project.RepoKey), "invalid repo_key")
 	if h := e.GitHead; h != nil {
 		check(h.Start != nil || h.Last != nil, "empty git_head")

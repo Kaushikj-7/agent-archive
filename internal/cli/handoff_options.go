@@ -27,6 +27,7 @@ type handoffOptions struct {
 	config    *handoffConfigState
 	native    bool
 	sessionID string
+	revision  string
 	project   string
 	harness   string
 	// allProjects searches and lists every project, not only the working
@@ -62,6 +63,7 @@ const (
 
 func parseHandoffOptions(args []string, stderr io.Writer, env handoffOptionsDependencies, interactive bool) (handoffOptions, bool) {
 	fs := env.newCommandFlags("handoff", stderr)
+	revision := fs.String("revision", "", "read this exact parent native revision ID (requires SESSION_ID and --source archive)")
 	latest := fs.Bool("latest", false, "the most recent session for the project, by path or by repository (remote origin)")
 	project := fs.String("project", "", "the project to pick from and search, as a directory or a project name, and the directory --latest searches (default: the current directory's repository)")
 	allProjects := fs.Bool("all-projects", false, "pick from and search every project, not only the current repository's")
@@ -88,7 +90,7 @@ func parseHandoffOptions(args []string, stderr io.Writer, env handoffOptionsDepe
 	if !ok {
 		return handoffOptions{}, false
 	}
-	opts := handoffOptions{sessionID: sessionID, project: *project, allProjects: *allProjects, harness: *harness,
+	opts := handoffOptions{revision: *revision, sessionID: sessionID, project: *project, allProjects: *allProjects, harness: *harness,
 		file: *file, source: *source, maxBytes: *maxBytes, format: *format, to: *to,
 		output: *output, latest: *latest, force: *force, noPreamble: *noPreamble, here: *here, newWindow: *newWindow, agentArgs: agentArgs,
 		worktree: *worktree, branch: *branch}
@@ -135,6 +137,8 @@ func validateHandoffFlagCombinations(opts handoffOptions, interactive bool) stri
 		}
 	}
 	switch {
+	case opts.revision != "" && (opts.sessionID == "" || opts.latest || opts.file != "" || opts.source != "archive"):
+		return "--revision requires SESSION_ID and --source archive; it cannot read latest or local transcripts"
 	// An argument of only spaces names nothing, and must not stand for the
 	// no selector that lets --to take the calling agent's own session.
 	case opts.sessionID != "" && strings.TrimSpace(opts.sessionID) == "":

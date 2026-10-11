@@ -506,3 +506,44 @@ provenance and observation time; finishing a turn is never treated as
 success. The command rejects excluded sessions and sessions retired by a
 destination change. Feedback for a paused, still-included session waits for
 resume.
+
+## Preserved native revisions
+
+Codex sessions with native history may retain meaningful prior revisions. List
+validated references without downloading conversation content:
+
+```sh
+agent-archive show SESSION_ID --revisions
+agent-archive show SESSION_ID --revisions --json
+```
+
+The inventory lists the active revision first, then preserved revisions, with
+exact native rollout UUIDs, archive capture times and recorded source provenance.
+Legacy references without filter or source-schema provenance report it as unknown;
+selecting the revision verifies and derives that provenance from its source.
+Sessions without native history return an empty inventory with `has_history: false`.
+
+```sh
+agent-archive show SESSION_ID --revision REVISION_ID --transcript
+agent-archive handoff SESSION_ID --source archive --revision REVISION_ID
+agent-archive eval export SESSION_ID --revision REVISION_ID --detail full
+```
+
+Revision IDs are exact inventory IDs, not short prefixes or object keys. An
+unknown ID, malformed history, missing source or failed integrity check fails
+without falling back to the active revision. Capture time, filters, harness
+version and summaries describe the selected evidence. A historical summary is
+rederived from its verified source; it does not reuse active titles or counts.
+
+Selection applies to the parent only; children are not resolved or included.
+Handoff requires an explicit session and `--source archive`, and cannot combine
+revision selection with `--latest` or local files. Eval selection supports one
+explicit archive session at full detail; batch input, local files, scanning and
+metadata-only detail are rejected. Existing source and output size bounds still
+apply. Omitting `--revision` keeps the active behavior unchanged.
+
+`show` selection adds `selected_revision_id` to its JSON metadata view. Handoff
+selection adds `revision_id`, `captured_at` and `filter_version` to its session;
+eval selection adds `revision_id` to its JSON record. These optional fields are
+absent from ordinary active output. Retained history is bounded; this interface
+does not promise every past publication remains available.
