@@ -10,7 +10,7 @@ import (
 type Parser struct{}
 
 // Version identifies the native derivation policy.
-func (Parser) Version() string { return "0.26.0" }
+func (Parser) Version() string { return "0.27.0" }
 
 // Parse derives facts once from retained safe evidence.
 func (Parser) Parse(ctx context.Context, bundle archive.SourceBundle) (archive.Analysis, error) {

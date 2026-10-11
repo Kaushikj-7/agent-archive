@@ -37,3 +37,9 @@ func PrivacyDeniedArgument(key, tool string, labelled bool) bool {
 
 // PrivacyRedactArgv redacts credential arguments using the shared argv policy.
 func PrivacyRedactArgv(value []any) ([]any, bool) { return redactArgv(value) }
+
+// StripInjectedContext applies the filter's injected-context rule to one
+// string: instruction blocks anywhere and a leading Codex open-page wrapper.
+// It reports whether anything was removed. Text the current filter retained
+// is a fixed point, so a parser can apply it to sources an older filter kept.
+func StripInjectedContext(value string) (bool, string) { return stripInjectedInstructions(value) }
