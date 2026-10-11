@@ -621,10 +621,7 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	if sessionID == "" {
 		return runBareShow(env, store, cfg, stdin, stdout, stderr, *harness, *jsonOut, *noPager)
 	}
-	ctx, stopReads := readCommandContext(env)
-	defer stopReads()
-
-	lookup, code := resolveShowQuery(ctx, store, env, stdin, stdout, stderr, *harness, sessionID, summary.Projects, *noPager, *transcript || *jsonOut)
+	lookup, code := resolveShowQuery(store, env, stdin, stdout, stderr, *harness, sessionID, summary.Projects, *noPager, *transcript || *jsonOut)
 	if code != 0 {
 		return code
 	}
@@ -632,6 +629,8 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		return 0
 	}
 	sessionID, *harness = lookup.SessionID, lookup.Harness
+	ctx, stopReads := readCommandContext(env)
+	defer stopReads()
 
 	stopShow := startActivity(stdout, "Loading session…")
 	key, err := locateMetadataKey(ctx, store, *harness, sessionID)
@@ -654,7 +653,7 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		if *jsonOut {
 			return printJSON(stdout, stderr, view)
 		}
-		if err := withPager(context.Background(), stdout, stderr, env, *noPager, func(w io.Writer) error {
+		if err := withPager(context.WithoutCancel(ctx), stdout, stderr, env, *noPager, func(w io.Writer) error {
 			renderSessionSummary(w, view, summary)
 			return nil
 		}); err != nil {
@@ -786,7 +785,7 @@ func printSessionTranscript(ctx context.Context, store storage.ObjectStore, env 
 	if opts.maxBytes > 0 {
 		t, render = fitTranscriptToLimit(view, t, bundle, render, opts.maxBytes, home, stderr)
 	}
-	if err := withPager(context.Background(), stdout, stderr, env, opts.noPager, func(w io.Writer) error {
+	if err := withPager(context.WithoutCancel(ctx), stdout, stderr, env, opts.noPager, func(w io.Writer) error {
 		renderTranscript(w, view, t, render)
 		return nil
 	}); err != nil {

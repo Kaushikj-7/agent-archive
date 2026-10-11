@@ -14,6 +14,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/revocation"
 	"github.com/wangjohn/agent-archive/internal/storage"
@@ -337,4 +338,69 @@ func TestShowReleasesReadSignalsBeforePager(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestAmbiguousShowReleasesReadSignalsBeforeBrowserPager(t *testing.T) {
+	t.Parallel()
+	env, store, id := publishedFixture(t)
+	key := "sessions/codex/" + id + "/metadata.json"
+	raw, err := store.Get(context.Background(), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var metadata archive.Metadata
+	if err := json.Unmarshal(raw, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	metadata.Title = "shared title"
+	raw, err = json.Marshal(metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Put(context.Background(), key, raw); err != nil {
+		t.Fatal(err)
+	}
+	metadata.SessionID = strings.Repeat("f", 32)
+	metadata.CapturedAt = metadata.CapturedAt.Add(-time.Hour)
+	raw, err = json.Marshal(metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Put(context.Background(), "sessions/codex/"+metadata.SessionID+"/metadata.json", raw); err != nil {
+		t.Fatal(err)
+	}
+	synctest.Test(t, func(t *testing.T) {
+		var out, stderr bytes.Buffer
+		env.IsTerminal = func(any) bool { return true }
+		active := map[chan os.Signal]bool{}
+		env.Interrupts = func() (<-chan os.Signal, func()) {
+			signals := make(chan os.Signal, 1)
+			active[signals] = true
+			return signals, func() { delete(active, signals) }
+		}
+		paged := false
+		env.RunPager = func(ctx context.Context, _ string, _ []string, _ io.Reader, _, _ io.Writer) error {
+			paged = true
+			if len(active) != 1 {
+				t.Errorf("subscriptions=%d, want only browser", len(active))
+			}
+			for signals := range active {
+				signals <- os.Interrupt
+			}
+			synctest.Wait()
+			if ctx.Err() != nil {
+				t.Errorf("Ctrl-C cancelled browser pager: %v", ctx.Err())
+			}
+			return nil
+		}
+		if code := Run([]string{"show", "shared title"}, strings.NewReader("1\nt\nq\n"), &out, &stderr, env); code != 0 {
+			t.Fatalf("code=%d stderr=%s", code, stderr.String())
+		}
+		if !paged {
+			t.Fatalf("pager not reached: %s %s", out.String(), stderr.String())
+		}
+		if len(active) != 0 {
+			t.Fatalf("leaked subscriptions=%d", len(active))
+		}
+	})
 }
