@@ -917,7 +917,7 @@ func (s scan) refuseProven(candidate Candidate, loc string) {
 		r.refuse(candidate, loc)
 		return
 	}
-	if r.recorded(candidate, loc) || r.proofs >= maxRefusedProofs {
+	if r.recorded(candidate, loc, s.catalog.Cache) || r.proofs >= maxRefusedProofs {
 		return
 	}
 	r.proofs++

@@ -347,6 +347,30 @@ func TestRefusedStartsKeepsSessionsEvictedFromTheCatalog(t *testing.T) {
 	}
 }
 
+// A thread with two rollout members (a live and an archived copy) is proven
+// once: the member recorded first counts for the other while its rollout
+// exists, so the members do not take turns being proven on every pass.
+func TestRefusedStartsProvesAThreadWithTwoMembersOnce(t *testing.T) {
+	t.Parallel()
+	store, cfg, at, codex := fixture(t)
+	floor, ok := cfg.DiscoveryStartFloor("codex")
+	if !ok {
+		t.Fatal("no start floor")
+	}
+	project := cfg.Archive.Projects[0].Root
+	id := writeRollout(t, codex, project, floor.Add(-time.Hour), 1, "sessions")
+	writeRollout(t, codex, project, floor.Add(-time.Hour), 1, "archived_sessions")
+	for pass, want := range []int64{1, 0, 0} {
+		h, err := run(context.Background(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(time.Duration(2+90*pass) * time.Minute) }}, syntheticSupport)
+		if err != nil || h.Outcomes["start_not_authorized"] != 2 || h.NativeValidationAttempts != want {
+			t.Fatalf("pass %d: %#v %v", pass, h, err)
+		}
+		if got, err := ReadRefusedStarts(store.Home()); err != nil || len(got) != 1 || got[0].NativeSessionID != id {
+			t.Fatalf("pass %d recorded %+v %v", pass, got, err)
+		}
+	}
+}
+
 func rewriteRollout(t *testing.T, codex, id string, edit func([]string) []string) {
 	t.Helper()
 	path := filepath.Join(codex, "sessions", "rollout-2026-10-01T12-00-00-"+id+".jsonl")

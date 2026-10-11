@@ -139,11 +139,14 @@ func (r *refusedStarts) eligible(candidate Candidate, loc string) bool {
 	return !r.floor.IsZero() && !candidate.NativeChild && candidate.ParentNativeID == "" && len(loc) <= maxRefusedLocator && r.inWindow(candidate.StartedAt)
 }
 
-// recorded reports whether the record already holds the candidate at loc,
-// which it does only once the candidate's native admission proof passed.
-func (r *refusedStarts) recorded(candidate Candidate, loc string) bool {
+// recorded reports whether the record already holds the candidate, which it
+// does only once the candidate's native admission proof passed. A thread can
+// have several rollout members (a live and an archived copy, say); one
+// recorded at another locator counts while that rollout still exists, so the
+// members do not take turns being proven and recorded on every pass.
+func (r *refusedStarts) recorded(candidate Candidate, loc string, cache map[string]cached) bool {
 	session, found := r.sessions[refusedStartKey(candidate.Agent, candidate.NativeSessionID)]
-	return found && session.Locator == loc
+	return found && (session.Locator == loc || !sourceGone(session.Locator, cache))
 }
 
 // settle drops a candidate whose admission was decided otherwise: admitted,
