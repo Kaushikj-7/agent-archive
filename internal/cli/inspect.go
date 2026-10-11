@@ -620,12 +620,12 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		return 1
 	}
 
-	ctx, stopReads := readCommandContext(env)
-	defer stopReads()
 	summary := summaryOptions{Now: env.now(), Style: styleFor(stdout), Projects: projectLabels(cfg), Hints: true}
 	if sessionID == "" {
 		return runBareShow(env, store, cfg, stdin, stdout, stderr, *harness, *jsonOut, *noPager)
 	}
+	ctx, stopReads := readCommandContext(env)
+	defer stopReads()
 
 	lookup, code := resolveShowQuery(ctx, store, env, stdin, stdout, stderr, *harness, sessionID, summary.Projects, *noPager, *transcript || *jsonOut)
 	if code != 0 {
@@ -652,11 +652,12 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 			return 1
 		}
 		view := metadataWithLinks(ctx, store, metadata)
+		stopReads()
 		stopShow()
 		if *jsonOut {
 			return printJSON(stdout, stderr, view)
 		}
-		if err := withPager(ctx, stdout, stderr, env, *noPager, func(w io.Writer) error {
+		if err := withPager(context.Background(), stdout, stderr, env, *noPager, func(w io.Writer) error {
 			renderSessionSummary(w, view, summary)
 			return nil
 		}); err != nil {
@@ -666,7 +667,7 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		return 0
 	}
 
-	return printSessionTranscript(ctx, store, env, stdout, stderr, key, sessionID, stopShow, sessionTranscriptOptions{
+	return printSessionTranscript(ctx, store, env, stdout, stderr, key, sessionID, stopShow, stopReads, sessionTranscriptOptions{
 		summary: summary, full: *full, json: *jsonOut, normalized: *normalized, noPager: *noPager, maxBytes: *maxBytes,
 	})
 }
@@ -723,7 +724,7 @@ type sessionTranscriptOptions struct {
 // printSessionTranscript downloads and verifies the session's source bundle
 // and prints its transcript: readable and paged, or with --json the sidecar
 // and the normalized view. stopShow ends the loading activity line.
-func printSessionTranscript(ctx context.Context, store storage.ObjectStore, env showCommandDependencies, stdout, stderr io.Writer, key, sessionID string, stopShow func(), opts sessionTranscriptOptions) int {
+func printSessionTranscript(ctx context.Context, store storage.ObjectStore, env showCommandDependencies, stdout, stderr io.Writer, key, sessionID string, stopShow, stopReads func(), opts sessionTranscriptOptions) int {
 	view, bundle, err := loadVerifiedSession(ctx, store, key)
 	if err != nil {
 		stopShow()
@@ -742,6 +743,8 @@ func printSessionTranscript(ctx context.Context, store storage.ObjectStore, env 
 	}
 	pruneHandoffs(home, env.now())
 	analysis, parseErr := analyzeSource(ctx, parsersFor(env), bundle)
+	// Remote reads are complete; the pager owns interruption from here.
+	stopReads()
 	if opts.json {
 		normalizedView, err := analysis.View, parseErr
 		stopShow()
@@ -765,7 +768,10 @@ func printSessionTranscript(ctx context.Context, store storage.ObjectStore, env 
 			terminal.Printf(stderr, "agent-archive: show: %v\n", err)
 			return 1
 		}
-		terminal.Print(stdout, string(data))
+		if err := writeOutput(stdout, data); err != nil {
+			terminal.Printf(stderr, "agent-archive: show: write JSON: %v\n", err)
+			return 1
+		}
 		return 0
 	}
 	var t archive.Transcript
@@ -783,7 +789,7 @@ func printSessionTranscript(ctx context.Context, store storage.ObjectStore, env 
 	if opts.maxBytes > 0 {
 		t, render = fitTranscriptToLimit(view, t, bundle, render, opts.maxBytes, home, stderr)
 	}
-	if err := withPager(ctx, stdout, stderr, env, opts.noPager, func(w io.Writer) error {
+	if err := withPager(context.Background(), stdout, stderr, env, opts.noPager, func(w io.Writer) error {
 		renderTranscript(w, view, t, render)
 		return nil
 	}); err != nil {

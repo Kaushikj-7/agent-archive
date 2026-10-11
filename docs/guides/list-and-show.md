@@ -4,6 +4,11 @@
 touching local collector state. `feedback` attaches your own assessment to
 a session.
 
+Each remote object read and listing page has a two-minute budget, including
+retries and response-body reads. A large archive scan can take longer because
+each operation receives its own budget. Interrupting a read cancels it; time
+spent choosing a session or scrolling in the pager has no read deadline.
+
 ```sh
 # The most recently active archived sessions matching the filters (at most
 # 50 by default), top-level sessions only, from this repository when you are
@@ -492,6 +497,9 @@ for supported skill queries. Sidecars from parsers before 0.4.0 (or with a
 custom parser version) are never counted as observed non-use.
 
 ## Feedback
+
+Feedback accepts a regular UTF-8 text file of at most 64 KiB; a symlink to
+a regular file is allowed. Directories, devices and named pipes are rejected.
 
 Write your assessment to a private UTF-8 text file, then attach it to a
 session owned by this machine:

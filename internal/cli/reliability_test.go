@@ -278,3 +278,58 @@ func TestMachinesUsageBeforeConfiguration(t *testing.T) {
 		t.Fatalf("code=%d stderr=%s", code, stderr.String())
 	}
 }
+
+func TestShowTranscriptJSONChecksDelivery(t *testing.T) {
+	t.Parallel()
+	env, _, id := publishedFixture(t)
+	for _, flags := range [][]string{{"--transcript", "--json"}, {"--normalized"}} {
+		for _, w := range []io.Writer{failingOutput{}, failingOutput{short: true}} {
+			var stderr bytes.Buffer
+			args := append([]string{"show", id}, flags...)
+			if code := Run(args, nil, w, &stderr, env); code != 1 {
+				t.Fatalf("args=%v code=%d stderr=%s", args, code, stderr.String())
+			}
+		}
+	}
+}
+
+func TestShowReleasesReadSignalsBeforePager(t *testing.T) {
+	t.Parallel()
+	for _, transcript := range []bool{false, true} {
+		env, _, id := publishedFixture(t)
+		synctest.Test(t, func(t *testing.T) {
+			var out, stderr bytes.Buffer
+			env.IsTerminal = func(stream any) bool { return stream == any(&out) }
+			active := map[chan os.Signal]bool{}
+			env.Interrupts = func() (<-chan os.Signal, func()) {
+				signals := make(chan os.Signal, 1)
+				active[signals] = true
+				return signals, func() { delete(active, signals) }
+			}
+			env.RunPager = func(ctx context.Context, _ string, _ []string, _ io.Reader, _, _ io.Writer) error {
+				if len(active) != 1 {
+					t.Errorf("active signal subscriptions at pager=%d, want only pager", len(active))
+				}
+				// signal.Notify broadcasts to every active subscription.
+				for signals := range active {
+					signals <- os.Interrupt
+				}
+				synctest.Wait()
+				if ctx.Err() != nil {
+					t.Errorf("Ctrl-C cancelled pager context: %v", ctx.Err())
+				}
+				return nil
+			}
+			args := []string{"show", id}
+			if transcript {
+				args = append(args, "--transcript")
+			}
+			if code := Run(args, nil, &out, &stderr, env); code != 0 {
+				t.Fatalf("code=%d stderr=%s", code, stderr.String())
+			}
+			if len(active) != 0 {
+				t.Fatalf("leaked subscriptions=%d", len(active))
+			}
+		})
+	}
+}

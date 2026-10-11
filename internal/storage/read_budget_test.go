@@ -127,3 +127,44 @@ func TestRemoteBodyReadCancelsImmediately(t *testing.T) {
 		}
 	})
 }
+
+// Each page takes most of one read budget, so the complete scan exceeds it.
+type slowPagesClient struct{ pages int }
+
+func (c *slowPagesClient) Do(r *http.Request) (*http.Response, error) {
+	select {
+	case <-time.After(90 * time.Second):
+	case <-r.Context().Done():
+		return nil, r.Context().Err()
+	}
+	c.pages++
+	body := `<ListBucketResult><IsTruncated>false</IsTruncated></ListBucketResult>`
+	if c.pages == 1 {
+		body = `<ListBucketResult><IsTruncated>true</IsTruncated><NextContinuationToken>next</NextContinuationToken></ListBucketResult>`
+	}
+	return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
+}
+
+func TestRemoteScanAllowsIndependentPageBudgets(t *testing.T) {
+	for _, operation := range []string{"list", "range"} {
+		t.Run(operation, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				client := &slowPagesClient{}
+				cfg := aws.Config{Region: "test", Credentials: credentials.NewStaticCredentialsProvider("test", "test", ""), HTTPClient: client}
+				store, err := NewS3Store(S3StoreOptions{Client: NewClient(cfg, "https://synthetic.invalid", true, 1), Bucket: "test", MaxGetBytes: 1024})
+				if err != nil {
+					t.Fatal(err)
+				}
+				start := time.Now()
+				if operation == "list" {
+					_, err = store.List(context.Background(), "sessions")
+				} else {
+					_, err = store.ListRange(context.Background(), "sessions", "", "")
+				}
+				if err != nil || client.pages != 2 || time.Since(start) != 3*time.Minute {
+					t.Fatalf("pages=%d elapsed=%v err=%v", client.pages, time.Since(start), err)
+				}
+			})
+		})
+	}
+}
