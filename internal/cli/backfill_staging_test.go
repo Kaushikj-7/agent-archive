@@ -15,6 +15,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/reader"
+	"github.com/wangjohn/agent-archive/internal/scheduler"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
@@ -162,5 +163,27 @@ func TestStagedEvidenceRefusesRetentionOnlyWriterBeforeMutation(t *testing.T) {
 		if snapshotTree(t, f.data) != before {
 			t.Fatalf("retention-only %v mutated staged evidence or ownership", args)
 		}
+	}
+}
+
+func TestSetupRollbackPreservesImportStagingCapability(t *testing.T) {
+	home, userHome, env := installedFixture(t, newFakeKeychain(), s3SetupInput("original", "us-east-1", "profile", true, false, false, t.TempDir()))
+	cfg := mustLoadConfig(t, home)
+	cfg.ImportStagingProtection = true
+	must(t, config.Save(home, cfg))
+	cfg = mustLoadConfig(t, home)
+	sched := recordLaunchd(t, &env, "loaded")
+	sched.beforeLoad = func(scheduler.Ref) error { return errors.New("synthetic restart failure after config apply") }
+	next := cfg
+	// A resumable settings draft may predate the staging capability.
+	next.ImportStagingProtection = false
+	next.RetentionDays = 30
+	next.NoSkills = !cfg.NoSkills
+	if err := applySetup(home, userHome, cfg.InstalledExecutable, cfg, &next, nil, env); err == nil || !strings.Contains(err.Error(), "synthetic restart failure") {
+		t.Fatalf("rollback injection did not run: %v", err)
+	}
+	loaded := mustLoadConfig(t, home)
+	if loaded.SchemaVersion != 9 || !loaded.ImportStagingProtection || loaded.RetentionDays != cfg.RetentionDays {
+		t.Fatalf("setup rollback weakened staging ownership fence %+v", loaded)
 	}
 }

@@ -539,6 +539,8 @@ func (r Registration) stage(ctx context.Context, w *parentWork) error {
 		return err
 	} else if found {
 		w.stagedSHA256 = existing.SHA256
+		w.c.CodexBinding = existing.Registration.CodexBinding
+		w.c.TranscriptPath = existing.Registration.TranscriptPath
 		w.stagedChildren = map[string]state.SubagentCandidate{}
 		for _, child := range existing.Children {
 			w.stagedChildren[child.AgentID] = child
@@ -553,9 +555,15 @@ func (r Registration) stage(ctx context.Context, w *parentWork) error {
 		w.projectEvidenceStale = true
 		return nil
 	}
-	bundle, preserved, err := collector.ReadImportSourceSet(ctx, reg, r.AdmittedAt, collector.Options{Sources: r.Sources, CursorDatabase: r.CursorDatabase, CodexRollouts: r.CodexRollouts, ConfiguredCodexHomes: r.ConfiguredCodexHomes})
+	bundle, preserved, selectedBinding, err := collector.ReadImportSourceSelection(ctx, reg, r.AdmittedAt, collector.Options{Sources: r.Sources, CursorDatabase: r.CursorDatabase, CodexRollouts: r.CodexRollouts, ConfiguredCodexHomes: r.ConfiguredCodexHomes})
 	if err != nil {
 		return fmt.Errorf("stage imported evidence before admission: %w", err)
+	}
+	if selectedBinding != nil {
+		reg.CodexBinding = selectedBinding
+		reg.TranscriptPath = selectedBinding.Path
+		w.c.CodexBinding = selectedBinding
+		w.c.TranscriptPath = selectedBinding.Path
 	}
 	children := []state.SubagentCandidate{}
 	w.stagedChildren = map[string]state.SubagentCandidate{}

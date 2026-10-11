@@ -193,9 +193,20 @@ func ReadImportBundle(ctx context.Context, reg archive.SessionRegistration, at t
 	return bundle, err
 }
 
-// ReadImportSourceSet uses the existing source revision reader to freeze the
-// selected logical history and its required independent physical revisions.
+// ReadImportSourceSet freezes the selected logical history and independent revisions.
 func ReadImportSourceSet(ctx context.Context, reg archive.SessionRegistration, at time.Time, opts Options) (archive.SourceBundle, []archive.SourceBundle, error) {
+	return readImportSourceSet(ctx, reg, at, opts, nil)
+}
+
+// ReadImportSourceSelection also returns the binding validated by the same
+// source handle, so admission can freeze ownership without a second native read.
+func ReadImportSourceSelection(ctx context.Context, reg archive.SessionRegistration, at time.Time, opts Options) (archive.SourceBundle, []archive.SourceBundle, *archive.CodexSourceBinding, error) {
+	var binding *archive.CodexSourceBinding
+	bundle, preserved, err := readImportSourceSet(ctx, reg, at, opts, &binding)
+	return bundle, preserved, binding, err
+}
+
+func readImportSourceSet(ctx context.Context, reg archive.SessionRegistration, at time.Time, opts Options, selected **archive.CodexSourceBinding) (archive.SourceBundle, []archive.SourceBundle, error) {
 	adapter, err := sourceAdapter(opts.Sources, reg.Harness.Name)
 	if err != nil {
 		return archive.SourceBundle{}, nil, err
@@ -207,6 +218,9 @@ func ReadImportSourceSet(ctx context.Context, reg archive.SessionRegistration, a
 	filtered, observed, err := source.Filter(ctx, adapter, DefaultMaxTranscriptBytes)
 	if err != nil {
 		return archive.SourceBundle{}, nil, err
+	}
+	if selected != nil {
+		*selected = observed.binding
 	}
 	bundle, err := archive.NewSourceBundle(reg, adapter, filtered, at, nil)
 	if err != nil {

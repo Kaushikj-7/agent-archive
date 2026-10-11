@@ -57,9 +57,12 @@ func (s *sessionScan) readImportStage() (read sourceRead, ok bool, err error) {
 	}
 	// Refiltering retained safe records cannot rediscover omissions in the native
 	// input. Keep that capture proof, and append only newly observed gaps.
-	filtered.Gaps = mergeCaptureGaps(stage.Bundle.Capture.Gaps, filtered.Gaps)
+	filtered.Gaps = mergeCaptureGaps(importFilterGaps(stage.Bundle.Capture.Gaps), filtered.Gaps)
 	filtered.ObservedHarness = stage.Bundle.Capture.Harness
 	filtered.Format = stage.Bundle.Capture.SourceFormat
+	if stage.Registration.CodexBinding != nil {
+		filtered.NativeStartAt = stage.Registration.CodexBinding.FirstNativeTaskAt
+	}
 	n := int64(filtered.Boundary.RetainedBytes)
 	if n < 0 || n > allowance {
 		b.Release(allowance)
@@ -174,4 +177,16 @@ func (s *sessionScan) verifyImportPublication(p state.PendingPublication) error 
 		return errHistoryMetadataConflict
 	}
 	return nil
+}
+
+// Registration-derived relationship gaps are rebuilt from current ownership.
+// Retained native omissions remain proof of what the filter could not retain.
+func importFilterGaps(gaps []archive.CaptureGap) []archive.CaptureGap {
+	out := make([]archive.CaptureGap, 0, len(gaps))
+	for _, gap := range gaps {
+		if gap.Code != "native_parent_link_pending" && gap.Code != "recovered_generation" {
+			out = append(out, gap)
+		}
+	}
+	return out
 }

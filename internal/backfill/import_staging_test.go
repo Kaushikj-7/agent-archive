@@ -683,3 +683,39 @@ func TestStagedChildPreparationRetrySurvivesNativeDeletion(t *testing.T) {
 		t.Fatalf("prepared child was reread from vanished native source %+v %v", result, err)
 	}
 }
+
+func TestImportCancellationUsesReservedCapacityAtQuotaLimit(t *testing.T) {
+	r, c, _ := stagingFixture(t)
+	r.AfterStage = func(string) error { return errors.New("pre-admission crash") }
+	if _, err := r.Run([]Candidate{c}); err == nil {
+		t.Fatal("missing crash")
+	}
+	stages, _, err := r.Store.ImportStages("", 50)
+	if err != nil || len(stages) != 1 {
+		t.Fatalf("missing prepared evidence %v %v", stages, err)
+	}
+	stage := stages[0]
+	info, err := os.Stat(filepath.Join(r.Home, "sessions", stage.Registration.ArchiveSessionID, "import-stage", "stage.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(r.Home, "sessions", stage.Registration.ArchiveSessionID, "pending-sources")
+	if err := os.MkdirAll(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.OpenFile(filepath.Join(root, strings.Repeat("a", 64)+".gz"), os.O_CREATE|os.O_WRONLY, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The quota double-charges payload bytes and reserves 64 KiB controls.
+	if err := errors.Join(file.Truncate(((1<<30)-(64<<10))/2-info.Size()), file.Close()); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Store.CancelImportStage(t.Context(), stage.Registration); err != nil {
+		t.Fatalf("full data quota consumed reserved cancellation capacity: %v", err)
+	}
+	remaining, _, err := r.Store.ImportStages("", 50)
+	if err != nil || len(remaining) != 0 {
+		t.Fatalf("cancel did not settle %v %v", remaining, err)
+	}
+}

@@ -273,7 +273,7 @@ func (p ImportStage) Validate(reg archive.SessionRegistration) error {
 }
 
 func (p ImportStage) validateOwner(reg archive.SessionRegistration) error {
-	if reg.StagedImportSHA256 != "" && reg.StagedImportSHA256 != p.SHA256 || p.Registration.ArchiveSessionID != reg.ArchiveSessionID || p.Registration.NativeSessionID != reg.NativeSessionID || p.Registration.Harness.Name != reg.Harness.Name || p.Registration.ProjectID != reg.ProjectID || p.Registration.ProjectRoot != reg.ProjectRoot || p.Registration.ParentSessionID != reg.ParentSessionID || p.Registration.DestinationID != reg.DestinationID || !p.Registration.InBatch(reg.ImportBatch.Recorded()) || p.Bundle.ArchiveSessionID != reg.ArchiveSessionID || p.Bundle.NativeSessionID != reg.NativeSessionID || p.Bundle.ProjectID != reg.ProjectID || p.Bundle.Capture.Harness.Name != reg.Harness.Name {
+	if reg.StagedImportSHA256 != "" && reg.StagedImportSHA256 != p.SHA256 || p.Registration.ArchiveSessionID != reg.ArchiveSessionID || p.Registration.NativeSessionID != reg.NativeSessionID || p.Registration.Harness.Name != reg.Harness.Name || p.Registration.ProjectID != reg.ProjectID || p.Registration.ProjectRoot != reg.ProjectRoot || !sameImportParentProof(p.Registration, reg) || p.Registration.DestinationID != reg.DestinationID || !p.Registration.InBatch(reg.ImportBatch.Recorded()) || p.Bundle.ArchiveSessionID != reg.ArchiveSessionID || p.Bundle.NativeSessionID != reg.NativeSessionID || p.Bundle.ProjectID != reg.ProjectID || p.Bundle.Capture.Harness.Name != reg.Harness.Name {
 		return ErrDurableStorageRecovery
 	}
 	if len(p.Preserved) > archive.MaxHistorySpans {
@@ -658,4 +658,16 @@ func (s *Store) preparedImportChildren(ctx context.Context, stage ImportStage) (
 		children = append(children, child)
 	}
 	return children, nil
+}
+
+func sameImportParentProof(staged, current archive.SessionRegistration) bool {
+	if staged.ParentSessionID == current.ParentSessionID {
+		return true
+	}
+	// Native child links may resolve after independent admission. Their
+	// immutable native relationship facts still select the same evidence.
+	return staged.NativeChild && current.NativeChild &&
+		staged.ParentNativeSessionID == current.ParentNativeSessionID &&
+		staged.NativeRootSessionID == current.NativeRootSessionID &&
+		current.CodexBinding != nil && current.CodexBinding.PreservesFacts(staged.CodexBinding)
 }

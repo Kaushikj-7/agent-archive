@@ -92,6 +92,14 @@ func TestAdmittedHistoryUsesTrustedReadHomesWithDiscoveryDisabled(t *testing.T) 
 					t.Fatal("backfill did not admit one native session", len(registrations), out.String())
 				}
 				reg = registrations[0]
+				// Settle the confirmed frozen selection before testing subsequent
+				// native revision migration; it is independently durable now.
+				first, err := runOnePass(env, true)
+				must(t, err)
+				if len(first.Published) != 1 || len(first.Errors) != 0 {
+					t.Fatalf("staged admission did not settle %+v", first)
+				}
+				env.Now = func() time.Time { return at.Add(6 * time.Minute) }
 				prefix = append(meta(nil, 0), task...)
 				must(t, os.WriteFile(seed, append(prefix, []byte(`{"type":"response_item","ordinal":2,"payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"synthetic outgoing-only"}]}}`+"\n")...), 0600))
 				must(t, os.WriteFile(current, append(raw, []byte(`{"type":"response_item","ordinal":3,"payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"synthetic current-only"}]}}`+"\n")...), 0600))
