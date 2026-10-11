@@ -44,7 +44,7 @@ IDs/paths; review interactive output and record exit statuses and sanitized
 observations. `status --json` retains numeric `retention_days: 0` for forever.
 
 ```sh
-agent-archive setup --keep-forever
+agent-archive setup --yes --keep-forever
 agent-archive status --json
 agent-archive setup --refresh
 agent-archive status --verbose
@@ -106,18 +106,24 @@ receiver's reviewed preference, saved zero and writer fence before its first
 collector publication. Test interrupted/cancelled receive and retry in a fresh
 receiver account, preserving the original bundle only within its validity.
 
-On a separate finite fixture, configure one day; on the forever fixture perform
-an explicit shortening only after recording survival and its deletion preview:
+On a separate finite fixture, configure one day. On the forever fixture perform
+an explicit shortening only after recording survival. Run plain interactive
+setup in a terminal, choose **How long sessions are kept** (`retention`), then
+**Custom duration** (`custom`) and enter `1`. Inspect its deletion preview before
+confirming; first decline and verify the saved preference is still forever,
+then repeat and confirm:
 
 ```sh
-agent-archive setup --retention-days 1
+agent-archive setup
 agent-archive status --json
 ```
 
-Inspect the review/preview before confirmation. Wait for the background sweep
+Wait for the background sweep
 past the controlled boundary and read/list the session IDs. For scripted explicit
-flags, use the documented noninteractive approval contract; do not count the
-absence of an interactive prompt as a failed preview requirement. Do not change
+flags on a separate fixture, use `agent-archive setup --yes --retention-days 1`:
+answer flags require `--yes`, which approves the reported effect without an
+interactive confirmation. That scripted trial does not replace the reviewed
+shortening trial above. Do not change
 the sender's preference and expect the paired receiver to change remotely.
 
 ## Result ledger (one copy per provider)
@@ -144,11 +150,24 @@ native macOS only and validates the pinned v0.1.1 asset:
 bash scripts/test_published_writer.sh
 AGENT_ARCHIVE_OLD_CLI=/absolute/path/pre-forever-cli \
   go test -count=1 -v ./internal/pairing -run '^TestOldReceiverRejectsForeverBeforeSideEffects$'
-AGENT_ARCHIVE_SOURCE_OLD_BINARY=/absolute/path/prior-protected-writer \
+AGENT_ARCHIVE_SOURCE_OLD_BINARY=/absolute/path/prior-scalar-schema-writer \
   go test -count=1 -v ./internal/config -run '^TestSourceBuiltWriterRefusesProtectedConfiguration$'
+AGENT_ARCHIVE_PRE_FOREVER_BINARY=/absolute/path/pre-forever-protected-writer \
+  go test -count=1 -v ./internal/config -run '^TestPriorRetentionWriterRefusesForeverBeforeMutation$'
 AGENT_ARCHIVE_RETENTION_CLI=/absolute/path/retention-only-schema8-cli \
   go test -count=1 -v ./internal/cli -run '^TestStagedEvidenceRefusesRetentionOnlyWriterBeforeMutation$'
 ```
+
+The source-built scalar probe requires a writer with an integer-only schema
+decoder; it cannot test an already protected decoder. The separate protected
+probe targets pre-forever source commit
+`20f86e5f33fde4c720f3ca3554f4a234828bd7a3`, which supports fences through
+version 7. Its finite and supported discovery controls must successfully pause
+the intended configuration; forever, sticky finite-after-forever and composed
+staging/forever fixtures must refuse with its actual unsupported-writer-fence
+diagnostic and leave the entire disposable fixture tree unchanged. Record build
+source and digest alongside the result; a source build does not replace the
+published v0.1.1 probe.
 
 A skip, missing fixture binary or command matching no test leaves that check
 pending. These tests use isolated homes; their pass establishes command refusal,

@@ -56,11 +56,17 @@ were reported passing at the pinned base. Selected F–G reader/backfill/state/
 collector/CLI revision, staging, quota, cancellation and crash-recovery checks
 also passed. These are narrower than a full combined race suite.
 
-The local broad `internal/backfill` run at `b4122ea6` reported recovery-fixture
-failures (`worktree_evidence_unavailable`, empty candidates and mode-change
-acceptance); diagnosis and a supported isolated repeat remain required before
-using that run as an acceptance gate. Historical successful CI does not turn
-this local failure into a pass. Keep current-head readiness pending while any
+The initial local broad `internal/backfill` run at `b4122ea6` failed: recovery
+fixtures inherited read-only synthetic Git ancestors under `/tmp` and
+`/workspace`, and a `0077` umask disagreed with fixtures expecting `0644` files.
+An independent repeat at the same code SHA passed the full package with
+`-race -p 1 -count=1 -timeout 10m`, a private disposable
+`TMPDIR=/var/tmp/cli-forever-retention-full-20261011`, and shell-local
+`umask 022` (112.735 seconds). The synthetic ancestors were left unchanged;
+no product or test patch was needed. Preserve the original failure separately
+from that normalized pass. Focused independent source review found no supported
+A–G implementation defects; that verdict and this package repeat do not replace
+current-head required CI or live acceptance. Keep readiness pending while any
 supported in-scope finding or validation gap remains unresolved.
 
 ## Outstanding acceptance
@@ -74,10 +80,21 @@ architecture/app acceptance is also not implied by cross-build or real-systemd
 CI. The latest promoted release queried on 2026-10-11 is v0.1.1 with only
 `agent-archive-darwin-amd64`, `agent-archive-darwin-arm64` and `SHA256SUMS`.
 
-Actual-old-receiver/writer opt-in probes have not been repeated in this
-completion audit. The candidate macOS job's published-old-writer step succeeded;
-that single step does not establish every pairing receiver or predecessor fence.
-Run the documented isolated compatibility probes with the applicable published
-and retention-only predecessor binaries before claiming those matrix cells.
+The completion review executed a Linux source-built pre-forever binary from
+`20f86e5f33fde4c720f3ca3554f4a234828bd7a3` (Go 1.27.2, clean VCS build info,
+SHA-256 `1a71da5793c37cd17c9c60d9b7927302b6c2e959cec20f515b1c607056097116`).
+`TestPriorRetentionWriterRefusesForeverBeforeMutation` passed its finite and
+supported discovery controls and refused forever, sticky finite and staged
+forever without changing disposable state. The actual old receiver probe
+`TestOldReceiverRejectsForeverBeforeSideEffects` passed both synthetic S3 and R2
+payloads without creating receiver state. These `-race -p 1 -count=1` probes used
+private temporary homes and service stubs; the writer needed an isolated
+`/var/tmp` root outside this environment's injected Git ancestors.
+
+The candidate macOS job's published-old-writer step succeeded; the source-built
+checks above do not replace that published/native check or establish every
+predecessor fence. Run the documented isolated compatibility probes with the
+applicable published and retention-only predecessor binaries before claiming
+those remaining matrix cells. Live provider and release cells remain pending.
 Do not use an old binary on a live archive or replace absent signed-artifact,
 provider, app or platform evidence with unit-test passes.
