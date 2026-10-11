@@ -131,7 +131,9 @@ follow [Semantic Versioning](https://semver.org/).
   quota, resumable admission, current-policy filtering, and journalled cancel
   and undo cleanup. History distinguishes staged/admitted from remotely verified
   sessions. Staging rechecks native identity before admission. Dry-run creates
-  no staging and reports incomplete JSON writes as failures.
+  no staging and reports incomplete JSON writes as failures. Oversized selected
+  sources and encoded journals fail before admission, within the collector's
+  recovery memory allowance.
 
 - Validate a Codex fork's first own task during import and ongoing capture,
   and protect every qualified history import from older writers. Discovery

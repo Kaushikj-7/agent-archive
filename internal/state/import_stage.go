@@ -36,6 +36,10 @@ type ImportStage struct {
 	SkillEvidence    config.SkillEvidence        `json:"skill_evidence"`
 }
 
+// MaxImportStageBytes bounds a selected journal below the shared recovery
+// reader's 128 MiB allowance, including encoded strings and ownership context.
+const MaxImportStageBytes int64 = 32 << 20
+
 func importStageRelative(id string) string {
 	return filepath.Join("sessions", id, "import-stage", "stage.json")
 }
@@ -323,6 +327,9 @@ func (s *Store) SaveImportSourceSet(ctx context.Context, reg archive.SessionRegi
 	if err := stage.Validate(ctx, reg); err != nil {
 		return "", err
 	}
+	if err := validateImportStageCapacity(ctx, stage); err != nil {
+		return "", err
+	}
 	err = config.WithImportStaging(s.home, func(g config.DurableStorageGuard) error {
 		existing, found, err := s.LoadImportStage(ctx, reg)
 		if err != nil {
@@ -337,6 +344,33 @@ func (s *Store) SaveImportSourceSet(ctx context.Context, reg archive.SessionRegi
 		return s.writeDurableGuard(ctx, g, importStageRelative(reg.ArchiveSessionID), stage)
 	})
 	return digest, err
+}
+
+// Admission must not select a journal that the scheduled reader cannot load
+// and refilter. The reader retains one encoded-size owner after its three-owner
+// decode reservation, then reserves three largest-record owners and two output
+// owners while applying current privacy rules.
+func validateImportStageCapacity(ctx context.Context, stage ImportStage) error {
+	n, err := jsonwire.Bound(ctx, stage, MaxImportStageBytes)
+	if err != nil {
+		return errors.Join(ErrDurableStorageCapacity, err)
+	}
+	largest := int64(0)
+	for _, row := range stage.Bundle.NativeRecords {
+		size, err := jsonwire.Bound(ctx, row, MaxImportStageBytes)
+		if err != nil {
+			return errors.Join(ErrDurableStorageCapacity, err)
+		}
+		largest = max(largest, size)
+	}
+	for _, text := range stage.Bundle.NativeText {
+		largest = max(largest, int64(len(text.Content)))
+	}
+	remaining := (128 << 20) - n - 3*largest - (64 << 10)
+	if int64(stage.Bundle.Capture.Boundary.RetainedBytes) > remaining/2 || remaining <= 0 {
+		return errors.Join(ErrDurableStorageCapacity, errors.New("selected import evidence exceeds the durable recovery memory allowance"))
+	}
+	return nil
 }
 
 // LoadImportStage validates the selected digest and immutable admission identity.

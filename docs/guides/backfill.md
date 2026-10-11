@@ -44,7 +44,11 @@ finishes is reported for retry; it is not counted as admitted.
 Staging and pending publication share a 1 GiB local quota. Foreground imports
 upload completed groups to free capacity; setup and background imports preserve
 completed work and report a capacity error so you can retry after the collector
-makes room. `backfill history` distinguishes staged/admitted sessions from
+makes room. Each selected revision set and its encoded staging journal has a
+32 MiB upper bound; each child has a separate journal under the same quota.
+Encoded expansion and recovery work for large records can lower the practical
+input limit. A source that exceeds these bounds is rejected before admission;
+completed groups stay recoverable. `backfill history` distinguishes staged/admitted sessions from
 remotely verified uploads. Uploaded means the collector has read back the
 selected remote sources and metadata and committed its local completion state.
 
