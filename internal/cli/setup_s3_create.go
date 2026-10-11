@@ -154,24 +154,32 @@ type newS3Bucket struct {
 // a change of profile cannot clear them.
 func chooseArchiveProfile(p *prompter, cfg *credentials.Config, env Env, bucket newS3Bucket) error {
 	terminal.Println(p.out, "Setup created bucket "+bucket.name+" in "+bucket.region+"; it is empty and will stay in your account if you stop now.")
-	terminal.Println(p.out, p.style.hang("", "Setup saves the profile you used to create the bucket unless you choose another now. To use a narrower one, attach the policy above to it first."))
-	choice, err := p.setupActions("Profile for archiving", "keep", nil, []actionOption{{"keep", "", "Use the selected profile"}, {"profile", "p", "Choose another archive profile"}})
-	if err != nil {
-		return err
-	}
-	if choice == "profile" {
-		if _, _, err := chooseS3Profile(p, cfg, env); err != nil {
+	p.storageStage(storageDetails)
+	terminal.Println(p.out, p.style.hang("", "Setup saves the creation profile unless you choose another now. For a narrower profile, view the archive permissions and attach that policy first."))
+	for {
+		choice, err := p.setupActions("Profile for archiving", "keep", nil, []actionOption{{"keep", "", "Use the selected profile"}, {"profile", "p", "Choose another archive profile"}, {"permissions", "v", "View archive permissions"}})
+		if err != nil {
 			return err
 		}
+		if choice == "permissions" {
+			printRuntimePolicyAdvice(p, bucket.name, firstNonEmpty(cfg.Prefix, defaultPrefix))
+			continue
+		}
+		if choice == "profile" {
+			if _, _, err := chooseS3Profile(p, cfg, env); err != nil {
+				return err
+			}
+		}
+		setArchiveProfile(p, bucket.name, cfg.AWSProfile)
+		return nil
 	}
-	setArchiveProfile(p, bucket.name, cfg.AWSProfile)
-	return nil
 }
 
 // createS3Bucket creates a bucket with the profile in cfg and returns its
 // name and region; it writes neither to cfg. It returns false, having said
 // why, only when the user explicitly chooses an existing bucket.
 func createS3Bucket(p *prompter, cfg *credentials.Config, env Env, profileRegion string, noCredentials bool) (newS3Bucket, bool, error) {
+	p.storageStage(storageDetails)
 	if offered, used, err := offerCreatedBucket(p, cfg.AWSProfile); err != nil || used {
 		return offered, used, err
 	}
@@ -181,6 +189,7 @@ func createS3Bucket(p *prompter, cfg *credentials.Config, env Env, profileRegion
 	automaticName, regenerated := true, false
 	uncertain := map[string]bool{}
 	for {
+		p.storageStage(storageDetails)
 		var creator BucketCreator
 		var err error
 		if noCredentials {
@@ -322,6 +331,7 @@ type s3CreationSettings struct {
 // confirm returns false only for the explicit existing-bucket route.
 func (s *s3CreationSettings) confirm(p *prompter, cfg *credentials.Config, env Env) (bool, error) {
 	for {
+		p.storageStage(storageDetails)
 		if !standardAWSRegion(s.region) {
 			terminal.Println(p.out, "Setup can only create buckets in the standard AWS regions. Customize the region or use an existing bucket.")
 		}
@@ -530,6 +540,7 @@ const (
 // error, when the bucket was deleted and setup asks for an existing one.
 func secureNewBucket(p *prompter, creator BucketCreator, bucket, profile string) (secured bool, err error) {
 	for {
+		p.storageStage(storageVerification)
 		problem := blockPublicAccess(p, creator, bucket)
 		if problem == "" {
 			return true, nil

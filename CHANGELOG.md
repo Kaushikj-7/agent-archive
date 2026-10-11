@@ -6,6 +6,9 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Clarify storage onboarding with Account, Storage, and Verification stages.
+  Keep valid existing-bucket answers when going back, show S3 archive
+  permissions on request, and report privacy separately from connectivity.
 - Preserve private, durable bucket creation receipts across interrupted setup and
   abandoned drafts, including uncertain provider outcomes. Archive keys continue
   to use the existing issuance ledger.

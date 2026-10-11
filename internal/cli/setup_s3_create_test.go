@@ -134,12 +134,12 @@ func runCreate(t *testing.T, env Env, cfg *credentials.Config, input string) (st
 	return out.String(), err
 }
 
-func TestCreateS3BucketInProfileRegionRecordsBucketAndPrintsPolicy(t *testing.T) {
+func TestCreateS3BucketInProfileRegionRecordsBucketAndOffersPolicy(t *testing.T) {
 	sequentialNames(t)
 	creator := &fakeCreator{privacy: verifiedPrivate}
 	var opened []string
 	var cfg credentials.Config
-	out, err := runCreate(t, createEnv(t, "eu-west-2", creator, fakeBuckets{}, &opened), &cfg, "\n\n")
+	out, err := runCreate(t, createEnv(t, "eu-west-2", creator, fakeBuckets{}, &opened), &cfg, "\n\nv\n")
 	if err != nil {
 		t.Fatalf("err=%v output:\n%s", err, out)
 	}
@@ -579,7 +579,7 @@ func TestSetupThroughStorageCheckWithACreatedS3Bucket(t *testing.T) {
 	// The storage question's third choice creates the bucket; the profile,
 	// region and name questions take their defaults; then the review is
 	// cancelled.
-	out := f.runSetup(t, strings.Join([]string{"", "", storageMenuNumber(t, storageChoiceS3New), "", "", "", "q"}, "\n")+"\n")
+	out := f.runSetup(t, strings.Join([]string{"", "", storageMenuNumber(t, storageChoiceS3New), "", "", "v", "", "q"}, "\n")+"\n")
 	for _, text := range []string{
 		"Created bucket agent-archive-1 in us-west-2.",
 		"Checked: Block Public Access is on for all four settings.",
@@ -832,7 +832,7 @@ func TestCreateS3BucketAsksWhichProfileArchivingShouldUse(t *testing.T) {
 	var cfg credentials.Config
 	// Create with admin; then archive with archive, whose own region is not
 	// the bucket's.
-	out, err := runCreate(t, env, &cfg, "1\n\nprofile\n2\n")
+	out, err := runCreate(t, env, &cfg, "1\n\nv\nprofile\n2\n")
 	if err != nil {
 		t.Fatalf("err=%v\n%s", err, out)
 	}
@@ -841,9 +841,9 @@ func TestCreateS3BucketAsksWhichProfileArchivingShouldUse(t *testing.T) {
 	}
 	policyAt := strings.Index(out, `"Sid": "ArchiveObjects"`)
 	reminderAt := strings.Index(out, "Setup created bucket agent-archive-1 in us-east-1; it is empty and will stay in your account if you stop now.")
-	askAt := strings.Index(out, "Setup saves the profile you used to create the bucket unless you choose another now.")
-	if policyAt < 0 || reminderAt < policyAt || askAt < reminderAt {
-		t.Errorf("the bucket is named again, then the profile asked, after the policy:\n%s", out)
+	askAt := strings.Index(out, "Setup saves the creation profile unless you choose another now.")
+	if reminderAt < 0 || askAt < reminderAt || policyAt < askAt {
+		t.Errorf("the bucket and default profile are explained before optional permissions:\n%s", out)
 	}
 }
 
