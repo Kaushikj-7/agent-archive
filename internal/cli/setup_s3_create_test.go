@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -13,6 +14,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/setupresources"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
@@ -107,8 +109,11 @@ func sequentialNames(t *testing.T) {
 // region profileRegion, that opens creator, and that lists no buckets unless
 // finder says so. opened records each (profile, region) the creator was
 // opened with.
-func createEnv(profileRegion string, creator BucketCreator, finder fakeBuckets, opened *[]string) Env {
+func createEnv(t *testing.T, profileRegion string, creator BucketCreator, finder fakeBuckets, opened *[]string) Env {
+	t.Helper()
+	home := t.TempDir()
 	return Env{
+		Home:        func() (string, error) { return home, nil },
 		AWSProfiles: func() ([]AWSProfile, error) { return []AWSProfile{{Name: "work", Region: profileRegion}}, nil },
 		AWSBuckets:  finder.open,
 		AWSBucketCreator: func(profile, region string) (BucketCreator, error) {
@@ -134,7 +139,7 @@ func TestCreateS3BucketInProfileRegionRecordsBucketAndOffersPolicy(t *testing.T)
 	creator := &fakeCreator{privacy: verifiedPrivate}
 	var opened []string
 	var cfg credentials.Config
-	out, err := runCreate(t, createEnv("eu-west-2", creator, fakeBuckets{}, &opened), &cfg, "\n\nv\n")
+	out, err := runCreate(t, createEnv(t, "eu-west-2", creator, fakeBuckets{}, &opened), &cfg, "\n\nv\n")
 	if err != nil {
 		t.Fatalf("err=%v output:\n%s", err, out)
 	}
@@ -174,7 +179,7 @@ func TestCreateS3BucketInUSEast1AndOtherRegionsUseTheChosenRegion(t *testing.T) 
 		sequentialNames(t)
 		creator := &fakeCreator{privacy: verifiedPrivate}
 		var cfg credentials.Config
-		out, err := runCreate(t, createEnv(tc.profileRegion, creator, fakeBuckets{}, nil), &cfg, "\n"+tc.input)
+		out, err := runCreate(t, createEnv(t, tc.profileRegion, creator, fakeBuckets{}, nil), &cfg, "\n"+tc.input)
 		if err != nil || len(creator.calls) == 0 || creator.calls[0] != tc.want {
 			t.Errorf("profile region %q, input %q: calls %q err=%v, want %q\n%s", tc.profileRegion, tc.input, creator.calls, err, tc.want, out)
 		}
@@ -190,7 +195,7 @@ func TestCreateS3BucketRetriesADefaultNameOnceThenAsksAboutTheNext(t *testing.T)
 	// (taken, retried once as agent-archive-2, taken), so setup offers to
 	// pick an existing bucket instead, and the answer chooses another name,
 	// my-archive-store, which is created.
-	out, err := runCreate(t, createEnv("us-east-1", creator, fakeBuckets{}, nil), &cfg, "\n\n\nretry\nc\nname\nmy-archive-store\n\n")
+	out, err := runCreate(t, createEnv(t, "us-east-1", creator, fakeBuckets{}, nil), &cfg, "\n\n\nretry\nc\nname\nmy-archive-store\n\n")
 	if err != nil {
 		t.Fatalf("err=%v output:\n%s", err, out)
 	}
@@ -211,7 +216,7 @@ func TestCreateS3BucketAsksAgainWhenATypedNameIsTaken(t *testing.T) {
 	taken := errors.Join(storage.ErrBucketNameTaken, errors.New("BucketAlreadyExists"))
 	creator := &fakeCreator{create: []error{taken, nil}, privacy: verifiedPrivate}
 	var cfg credentials.Config
-	out, err := runCreate(t, createEnv("us-east-1", creator, fakeBuckets{}, nil), &cfg, "\nc\nname\nmine-alex\n\nretry\nc\nname\nmine-alex-2\n\n")
+	out, err := runCreate(t, createEnv(t, "us-east-1", creator, fakeBuckets{}, nil), &cfg, "\nc\nname\nmine-alex\n\nretry\nc\nname\nmine-alex-2\n\n")
 	if err != nil || cfg.Bucket != "mine-alex-2" {
 		t.Fatalf("cfg=%+v err=%v\n%s", cfg, err, out)
 	}
@@ -224,7 +229,7 @@ func TestCreateS3BucketRefusesNamesS3WouldRefuseBeforeAsking(t *testing.T) {
 	sequentialNames(t)
 	creator := &fakeCreator{privacy: verifiedPrivate}
 	var cfg credentials.Config
-	out, err := runCreate(t, createEnv("us-east-1", creator, fakeBuckets{}, nil), &cfg, "\nc\nname\nMy_Bucket\nab\nok-bucket\n\n")
+	out, err := runCreate(t, createEnv(t, "us-east-1", creator, fakeBuckets{}, nil), &cfg, "\nc\nname\nMy_Bucket\nab\nok-bucket\n\n")
 	if err != nil || cfg.Bucket != "ok-bucket" {
 		t.Fatalf("cfg=%+v err=%v\n%s", cfg, err, out)
 	}
@@ -243,7 +248,7 @@ func TestCreateS3BucketWithoutPermissionExplainsAndPicksAnExistingBucket(t *test
 	creator := &fakeCreator{create: []error{errCreateDenied}}
 	finder := fakeBuckets{names: []string{"photos", "team-archive"}, regions: map[string]string{"team-archive": "us-west-2"}}
 	var cfg credentials.Config
-	out, err := runCreate(t, createEnv("us-east-1", creator, finder, nil), &cfg, "\n\nexisting\n2\n")
+	out, err := runCreate(t, createEnv(t, "us-east-1", creator, finder, nil), &cfg, "\n\nexisting\n2\n")
 	if err != nil {
 		t.Fatalf("err=%v output:\n%s", err, out)
 	}
@@ -266,7 +271,7 @@ func TestCreateS3BucketWithoutPermissionExplainsAndPicksAnExistingBucket(t *test
 func TestCreateS3BucketProfileWithoutCredentialsFallsBackWithoutCallingS3(t *testing.T) {
 	sequentialNames(t)
 	creator := &fakeCreator{}
-	env := createEnv("us-east-1", creator, fakeBuckets{}, nil)
+	env := createEnv(t, "us-east-1", creator, fakeBuckets{}, nil)
 	env.AWSProfiles = func() ([]AWSProfile, error) { return []AWSProfile{{Name: "bare", NoCredentials: true}}, nil }
 	var cfg credentials.Config
 	out, err := runCreate(t, env, &cfg, "1\nexisting\ntyped\nus-east-1\n")
@@ -297,7 +302,7 @@ func TestCreateS3BucketOtherFailureIsExplainedWithoutQuotingS3(t *testing.T) {
 	} {
 		creator := &fakeCreator{create: []error{tc.err}}
 		var cfg credentials.Config
-		out, err := runCreate(t, createEnv("us-east-1", creator, fakeBuckets{names: []string{"x"}, regions: map[string]string{"x": "us-east-1"}}, nil), &cfg, "\n\nexisting\n1\n")
+		out, err := runCreate(t, createEnv(t, "us-east-1", creator, fakeBuckets{names: []string{"x"}, regions: map[string]string{"x": "us-east-1"}}, nil), &cfg, "\n\nexisting\n1\n")
 		if err != nil || cfg.Bucket != "x" {
 			t.Fatalf("%s: cfg=%+v err=%v\n%s", tc.name, cfg, err, out)
 		}
@@ -311,7 +316,7 @@ func TestCreateS3BucketRefusedRegionIsNotReportedAsAnotherRegionsBucket(t *testi
 	sequentialNames(t)
 	creator := &fakeCreator{create: []error{&smithy.GenericAPIError{Code: "IllegalLocationConstraintException", Message: "synthetic"}}}
 	var cfg credentials.Config
-	out, err := runCreate(t, createEnv("us-east-1", creator, fakeBuckets{names: []string{"x"}, regions: map[string]string{"x": "us-east-1"}}, nil), &cfg, "\n\nexisting\n1\n")
+	out, err := runCreate(t, createEnv(t, "us-east-1", creator, fakeBuckets{names: []string{"x"}, regions: map[string]string{"x": "us-east-1"}}, nil), &cfg, "\n\nexisting\n1\n")
 	if err != nil || cfg.Bucket != "x" {
 		t.Fatalf("cfg=%+v err=%v\n%s", cfg, err, out)
 	}
@@ -336,7 +341,7 @@ func TestCreateS3BucketBlockPublicAccessFailureNeverContinues(t *testing.T) {
 			creator := &fakeCreator{block: []error{errCreateDenied}}
 			finder := fakeBuckets{names: []string{"existing"}, regions: map[string]string{"existing": "us-east-1"}}
 			var cfg credentials.Config
-			out, err := runCreate(t, createEnv("us-east-1", creator, finder, nil), &cfg, "\n\n"+tc.answer)
+			out, err := runCreate(t, createEnv(t, "us-east-1", creator, finder, nil), &cfg, "\n\n"+tc.answer)
 			if tc.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 					t.Fatalf("err=%v, want %q", err, tc.wantErr)
@@ -366,7 +371,7 @@ func TestCreateS3BucketBlockPublicAccessRetrySucceeds(t *testing.T) {
 	sequentialNames(t)
 	creator := &fakeCreator{block: []error{errCreateDenied, nil}, privacy: verifiedPrivate}
 	var cfg credentials.Config
-	out, err := runCreate(t, createEnv("us-east-1", creator, fakeBuckets{}, nil), &cfg, "\n\nretry\n")
+	out, err := runCreate(t, createEnv(t, "us-east-1", creator, fakeBuckets{}, nil), &cfg, "\n\nretry\n")
 	if err != nil || cfg.Bucket != "agent-archive-1" {
 		t.Fatalf("cfg=%+v err=%v\n%s", cfg, err, out)
 	}
@@ -381,7 +386,7 @@ func TestCreateS3BucketDeleteFailureNamesTheCommand(t *testing.T) {
 	creator := &fakeCreator{block: []error{errCreateDenied}, deleted: errCreateDenied}
 	finder := fakeBuckets{names: []string{"existing"}, regions: map[string]string{"existing": "us-east-1"}}
 	var cfg credentials.Config
-	out, err := runCreate(t, createEnv("us-east-1", creator, finder, nil), &cfg, "\n\ndelete\nagent-archive-1\n1\n")
+	out, err := runCreate(t, createEnv(t, "us-east-1", creator, finder, nil), &cfg, "\n\ndelete\nagent-archive-1\n1\n")
 	if err != nil || cfg.Bucket != "existing" {
 		t.Fatalf("cfg=%+v err=%v\n%s", cfg, err, out)
 	}
@@ -394,7 +399,7 @@ func TestCreateS3BucketThatStillLooksPublicIsNotUsed(t *testing.T) {
 	sequentialNames(t)
 	creator := &fakeCreator{privacy: storage.PrivacyReport{State: "public_or_risky", Reason: "public_bucket_policy"}}
 	var cfg credentials.Config
-	out, err := runCreate(t, createEnv("us-east-1", creator, fakeBuckets{}, nil), &cfg, "\n\nstop\n")
+	out, err := runCreate(t, createEnv(t, "us-east-1", creator, fakeBuckets{}, nil), &cfg, "\n\nstop\n")
 	if err == nil || cfg.Bucket != "" {
 		t.Fatalf("cfg=%+v err=%v\n%s", cfg, err, out)
 	}
@@ -407,7 +412,7 @@ func TestCreateS3BucketUnreadableBlockPublicAccessWarnsAndContinues(t *testing.T
 	sequentialNames(t)
 	creator := &fakeCreator{privacy: storage.UnknownPrivacy("s3")}
 	var cfg credentials.Config
-	out, err := runCreate(t, createEnv("us-east-1", creator, fakeBuckets{}, nil), &cfg, "\n\n")
+	out, err := runCreate(t, createEnv(t, "us-east-1", creator, fakeBuckets{}, nil), &cfg, "\n\n")
 	if err != nil || cfg.Bucket != "agent-archive-1" {
 		t.Fatalf("cfg=%+v err=%v\n%s", cfg, err, out)
 	}
@@ -420,7 +425,7 @@ func TestStorageMenuOffersS3CreationAndUsesTheS3Provider(t *testing.T) {
 	sequentialNames(t)
 	creator := &fakeCreator{privacy: verifiedPrivate}
 	var out bytes.Buffer
-	cfg, _, saveSecret, err := promptStorage(newPrompter(strings.NewReader("s3-new\n\n\n\n\n"), &out), credentials.Config{}, createEnv("us-east-1", creator, fakeBuckets{}, nil), "")
+	cfg, _, saveSecret, err := promptStorage(newPrompter(strings.NewReader("s3-new\n\n\n\n\n"), &out), credentials.Config{}, createEnv(t, "us-east-1", creator, fakeBuckets{}, nil), "")
 	if err != nil || saveSecret {
 		t.Fatalf("err=%v saveSecret=%v\n%s", err, saveSecret, &out)
 	}
@@ -439,7 +444,7 @@ func TestEmptyBucketListPromptHasNoSpecialWords(t *testing.T) {
 	creator := &fakeCreator{}
 	var out bytes.Buffer
 	var cfg credentials.Config
-	err := promptS3Location(newPrompter(strings.NewReader("\nnew\n"), &out), &cfg, createEnv("eu-west-1", creator, fakeBuckets{regions: map[string]string{"new": "eu-west-1"}}, nil), "")
+	err := promptS3Location(newPrompter(strings.NewReader("\nnew\n"), &out), &cfg, createEnv(t, "eu-west-1", creator, fakeBuckets{regions: map[string]string{"new": "eu-west-1"}}, nil), "")
 	if err != nil || cfg.Bucket != "new" || len(creator.calls) != 0 {
 		t.Fatalf("cfg=%+v calls=%q err=%v\n%s", cfg, creator.calls, err, &out)
 	}
@@ -599,7 +604,7 @@ func TestCreateS3BucketOffersAnExitWhenEveryNameReadsAsTaken(t *testing.T) {
 	var cfg credentials.Config
 	// Default taken, retried once and taken, then two typed names taken,
 	// each time offered the exit; the last answer takes it.
-	out, err := runCreate(t, createEnv("us-east-1", creator, finder, nil), &cfg, "\n\n\nretry\nc\nname\nfirst\n\nretry\nc\nname\nsecond\n\nexisting\n1\n")
+	out, err := runCreate(t, createEnv(t, "us-east-1", creator, finder, nil), &cfg, "\n\n\nretry\nc\nname\nfirst\n\nretry\nc\nname\nsecond\n\nexisting\n1\n")
 	if err != nil || cfg.Bucket != "existing" {
 		t.Fatalf("cfg=%+v err=%v\n%s", cfg, err, out)
 	}
@@ -618,7 +623,7 @@ func TestCreateS3BucketWithAnUnclearAnswerSaysToLookAndNeverOffersDelete(t *test
 	creator := &fakeCreator{create: []error{errors.Join(storage.ErrBucketMayExist, errors.New("timeout"))}}
 	finder := fakeBuckets{names: []string{"x"}, regions: map[string]string{"x": "us-east-1"}}
 	var cfg credentials.Config
-	out, err := runCreate(t, createEnv("us-east-1", creator, finder, nil), &cfg, "\n\nexisting\n1\n")
+	out, err := runCreate(t, createEnv(t, "us-east-1", creator, finder, nil), &cfg, "\n\nexisting\n1\n")
 	if err != nil || cfg.Bucket != "x" {
 		t.Fatalf("cfg=%+v err=%v\n%s", cfg, err, out)
 	}
@@ -634,7 +639,7 @@ func TestCreateS3BucketAsksAgainWhenS3RefusesTheName(t *testing.T) {
 	sequentialNames(t)
 	creator := &fakeCreator{create: []error{errors.Join(storage.ErrInvalidBucketName, errors.New("InvalidBucketName")), nil}, privacy: verifiedPrivate}
 	var cfg credentials.Config
-	out, err := runCreate(t, createEnv("us-east-1", creator, fakeBuckets{}, nil), &cfg, "\nc\nname\nweird-name\n\nretry\nc\nname\nother-name\n\n")
+	out, err := runCreate(t, createEnv(t, "us-east-1", creator, fakeBuckets{}, nil), &cfg, "\nc\nname\nweird-name\n\nretry\nc\nname\nother-name\n\n")
 	if err != nil || cfg.Bucket != "other-name" {
 		t.Fatalf("cfg=%+v err=%v\n%s", cfg, err, out)
 	}
@@ -648,7 +653,7 @@ func TestCreateS3BucketOpensTheCreatorInTheChosenRegionNotTheProfilesOwn(t *test
 	creator := &fakeCreator{privacy: verifiedPrivate}
 	var opened []string
 	var cfg credentials.Config
-	out, err := runCreate(t, createEnv("us-east-1", creator, fakeBuckets{}, &opened), &cfg, "\nc\nregion\neu-west-3\n\n")
+	out, err := runCreate(t, createEnv(t, "us-east-1", creator, fakeBuckets{}, &opened), &cfg, "\nc\nregion\neu-west-3\n\n")
 	if err != nil || cfg.Region != "eu-west-3" {
 		t.Fatalf("cfg=%+v err=%v\n%s", cfg, err, out)
 	}
@@ -663,7 +668,7 @@ func TestCreateS3BucketDeclinesRegionsOutsideTheStandardOnes(t *testing.T) {
 		creator := &fakeCreator{}
 		var opened []string
 		var cfg credentials.Config
-		out, err := runCreate(t, createEnv("us-east-1", creator, fakeBuckets{}, &opened), &cfg, "\nc\nregion\n"+region+"\nexisting\ntyped\nus-east-1\n")
+		out, err := runCreate(t, createEnv(t, "us-east-1", creator, fakeBuckets{}, &opened), &cfg, "\nc\nregion\n"+region+"\nexisting\ntyped\nus-east-1\n")
 		if err != nil || cfg.Bucket != "typed" || len(opened) != 0 || len(creator.calls) != 0 {
 			t.Fatalf("%s: cfg=%+v opened=%q calls=%q err=%v\n%s", region, cfg, opened, creator.calls, err, out)
 		}
@@ -697,7 +702,7 @@ func TestCreateS3BucketDeletesOnlyTheNameItCreatedAndOnlyWhenTyped(t *testing.T)
 	// The default agent-archive-1 is taken, agent-archive-2 is created; Block
 	// Public Access is refused. Deleting first names the wrong bucket, so
 	// nothing is deleted and the menu returns; then the right one is typed.
-	out, err := runCreate(t, createEnv("us-east-1", creator, finder, nil), &cfg, "\n\n\ndelete\nagent-archive-1\ndelete\nagent-archive-2\n1\n")
+	out, err := runCreate(t, createEnv(t, "us-east-1", creator, finder, nil), &cfg, "\n\n\ndelete\nagent-archive-1\ndelete\nagent-archive-2\n1\n")
 	if err != nil || cfg.Bucket != "existing" {
 		t.Fatalf("cfg=%+v err=%v\n%s", cfg, err, out)
 	}
@@ -714,7 +719,7 @@ func TestCreateS3BucketBlankConfirmationKeepsTheBucket(t *testing.T) {
 	sequentialNames(t)
 	creator := &fakeCreator{block: []error{errCreateDenied}}
 	var cfg credentials.Config
-	out, err := runCreate(t, createEnv("us-east-1", creator, fakeBuckets{}, nil), &cfg, "\n\ndelete\n\nstop\n")
+	out, err := runCreate(t, createEnv(t, "us-east-1", creator, fakeBuckets{}, nil), &cfg, "\n\ndelete\n\nstop\n")
 	if err == nil || strings.Contains(strings.Join(creator.calls, ","), "delete") {
 		t.Fatalf("err=%v calls=%q\n%s", err, creator.calls, out)
 	}
@@ -735,7 +740,7 @@ func TestCreateS3BucketRetriesABucketThatIsNotThereYet(t *testing.T) {
 		privacy: verifiedPrivate,
 	}
 	var cfg credentials.Config
-	out, err := runCreate(t, createEnv("us-east-1", creator, fakeBuckets{}, nil), &cfg, "\n\n")
+	out, err := runCreate(t, createEnv(t, "us-east-1", creator, fakeBuckets{}, nil), &cfg, "\n\n")
 	if err != nil || cfg.Bucket != "agent-archive-1" {
 		t.Fatalf("cfg=%+v err=%v\n%s", cfg, err, out)
 	}
@@ -753,7 +758,7 @@ func TestCreateS3BucketGivesUpAfterAFewAttempts(t *testing.T) {
 	noSuchBucket := &smithy.GenericAPIError{Code: "NoSuchBucket", Message: "synthetic"}
 	creator := &fakeCreator{block: []error{noSuchBucket}}
 	var cfg credentials.Config
-	out, err := runCreate(t, createEnv("us-east-1", creator, fakeBuckets{}, nil), &cfg, "\n\nstop\n")
+	out, err := runCreate(t, createEnv(t, "us-east-1", creator, fakeBuckets{}, nil), &cfg, "\n\nstop\n")
 	if err == nil {
 		t.Fatalf("err=nil\n%s", out)
 	}
@@ -773,7 +778,7 @@ func TestCreateS3BucketWithASettingStillOffIsAFailureNotAWarning(t *testing.T) {
 	partial := storage.PrivacyReport{State: "not_verified", Reason: "public_access_controls_not_fully_verified", Checks: []string{"bucket_public_access_block"}}
 	creator := &fakeCreator{privacy: partial}
 	var cfg credentials.Config
-	out, err := runCreate(t, createEnv("us-east-1", creator, fakeBuckets{}, nil), &cfg, "\n\nstop\n")
+	out, err := runCreate(t, createEnv(t, "us-east-1", creator, fakeBuckets{}, nil), &cfg, "\n\nstop\n")
 	if err == nil || cfg.Bucket != "" {
 		t.Fatalf("cfg=%+v err=%v\n%s", cfg, err, out)
 	}
@@ -789,7 +794,7 @@ func TestCreateS3BucketDoesNotSpendAllAttemptsWhenTheReadBackIsRefused(t *testin
 	sequentialNames(t)
 	creator := &fakeCreator{reads: []fakeRead{{err: errCreateDenied}}}
 	var cfg credentials.Config
-	out, err := runCreate(t, createEnv("us-east-1", creator, fakeBuckets{}, nil), &cfg, "\n\n")
+	out, err := runCreate(t, createEnv(t, "us-east-1", creator, fakeBuckets{}, nil), &cfg, "\n\n")
 	if err != nil || cfg.Bucket != "agent-archive-1" {
 		t.Fatalf("cfg=%+v err=%v\n%s", cfg, err, out)
 	}
@@ -805,7 +810,7 @@ func TestCreateS3BucketRetriesAnEmptyReadBackAndThenWarnsWithoutBlamingPermissio
 	sequentialNames(t)
 	creator := &fakeCreator{reads: []fakeRead{{err: errors.New("no answer")}}}
 	var cfg credentials.Config
-	out, err := runCreate(t, createEnv("us-east-1", creator, fakeBuckets{}, nil), &cfg, "\n\n")
+	out, err := runCreate(t, createEnv(t, "us-east-1", creator, fakeBuckets{}, nil), &cfg, "\n\n")
 	if err != nil || cfg.Bucket != "agent-archive-1" {
 		t.Fatalf("cfg=%+v err=%v\n%s", cfg, err, out)
 	}
@@ -820,7 +825,7 @@ func TestCreateS3BucketRetriesAnEmptyReadBackAndThenWarnsWithoutBlamingPermissio
 func TestCreateS3BucketAsksWhichProfileArchivingShouldUse(t *testing.T) {
 	sequentialNames(t)
 	creator := &fakeCreator{privacy: verifiedPrivate}
-	env := createEnv("us-east-1", creator, fakeBuckets{}, nil)
+	env := createEnv(t, "us-east-1", creator, fakeBuckets{}, nil)
 	env.AWSProfiles = func() ([]AWSProfile, error) {
 		return []AWSProfile{{Name: "admin", Region: "us-east-1"}, {Name: "archive", Region: "eu-west-1"}}, nil
 	}
@@ -846,8 +851,29 @@ func TestCreateS3BucketKeepsTheCreationProfileOnABlankAnswer(t *testing.T) {
 	sequentialNames(t)
 	creator := &fakeCreator{privacy: verifiedPrivate}
 	var cfg credentials.Config
-	if out, err := runCreate(t, createEnv("us-east-1", creator, fakeBuckets{}, nil), &cfg, "\n\n"); err != nil || cfg.AWSProfile != "work" {
+	if out, err := runCreate(t, createEnv(t, "us-east-1", creator, fakeBuckets{}, nil), &cfg, "\n\n"); err != nil || cfg.AWSProfile != "work" {
 		t.Fatalf("cfg=%+v err=%v\n%s", cfg, err, out)
+	}
+}
+
+func TestCreatedS3BucketShowsPolicyOnlyWhenRequested(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		input string
+		want  int
+	}{
+		{"default", "\n\n", 0},
+		{"view permissions", "\n\nv\n", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sequentialNames(t)
+			creator := &fakeCreator{privacy: verifiedPrivate}
+			var cfg credentials.Config
+			out, err := runCreate(t, createEnv(t, "us-east-1", creator, fakeBuckets{}, nil), &cfg, tc.input)
+			if err != nil || strings.Count(out, `"Sid": "ArchiveObjects"`) != tc.want {
+				t.Fatalf("policy count want %d, err=%v\n%s", tc.want, err, out)
+			}
+		})
 	}
 }
 
@@ -855,7 +881,7 @@ func TestCreateS3BucketKeepsTheCreationProfileOnABlankAnswer(t *testing.T) {
 func TestCreateS3BucketOffersTheBucketThisRunAlreadyCreated(t *testing.T) {
 	sequentialNames(t)
 	creator := &fakeCreator{privacy: verifiedPrivate}
-	env := createEnv("us-east-1", creator, fakeBuckets{}, nil)
+	env := createEnv(t, "us-east-1", creator, fakeBuckets{}, nil)
 	var out bytes.Buffer
 	// First run: profile, region, name, archive profile. Second: profile,
 	// then the offer, taken with its default.
@@ -885,7 +911,7 @@ func TestCreateS3BucketOffersTheBucketThisRunAlreadyCreated(t *testing.T) {
 func TestCreateS3BucketDeclinedOfferCreatesAnother(t *testing.T) {
 	sequentialNames(t)
 	creator := &fakeCreator{privacy: verifiedPrivate}
-	env := createEnv("us-east-1", creator, fakeBuckets{}, nil)
+	env := createEnv(t, "us-east-1", creator, fakeBuckets{}, nil)
 	var out bytes.Buffer
 	p := newPrompter(strings.NewReader("\n\n\n"+"\nn\n\n\n"), &out)
 	var cfg credentials.Config
@@ -904,7 +930,7 @@ func TestDeletedBucketIsNoLongerRemembered(t *testing.T) {
 	var out bytes.Buffer
 	p := newPrompter(strings.NewReader("\n\ndelete\nagent-archive-1\n1\n"), &out)
 	var cfg credentials.Config
-	if err := promptS3Bucket(p, &cfg, createEnv("us-east-1", creator, finder, nil), "", true); err != nil {
+	if err := promptS3Bucket(p, &cfg, createEnv(t, "us-east-1", creator, finder, nil), "", true); err != nil {
 		t.Fatalf("err=%v\n%s", err, &out)
 	}
 	if len(p.createdBuckets) != 0 {
@@ -969,7 +995,7 @@ func TestCreateS3BucketCredentialsCheckFailureIsNotABucketPermissionProblem(t *t
 	creator := &fakeCreator{create: []error{check}}
 	finder := fakeBuckets{names: []string{"x"}, regions: map[string]string{"x": "us-east-1"}}
 	var cfg credentials.Config
-	out, err := runCreate(t, createEnv("us-east-1", creator, finder, nil), &cfg, "\n\nexisting\n1\n")
+	out, err := runCreate(t, createEnv(t, "us-east-1", creator, finder, nil), &cfg, "\n\nexisting\n1\n")
 	if err != nil || cfg.Bucket != "x" {
 		t.Fatalf("cfg=%+v err=%v\n%s", cfg, err, out)
 	}
@@ -1003,5 +1029,124 @@ func TestNoteUnusedCreatedBucketsSaysWhenTheSavedDraftUsesIt(t *testing.T) {
 		if !strings.Contains(out.String(), tc.want) || strings.Contains(out.String(), tc.not) {
 			t.Errorf("%s: output:\n%s", tc.name, &out)
 		}
+	}
+}
+
+// receiptCheckingCreator checks the crash boundary from inside the provider call.
+type receiptCheckingCreator struct {
+	*fakeCreator
+	t    *testing.T
+	home string
+}
+
+func (c *receiptCheckingCreator) CreateBucket(ctx context.Context, bucket, region string) error {
+	receipts, err := setupresources.List(c.home)
+	if err != nil || len(receipts) != 1 || receipts[0].State != setupresources.RequestSent || receipts[0].Bucket != bucket {
+		c.t.Fatalf("provider called without durable intent: %v %v", receipts, err)
+	}
+	return c.fakeCreator.CreateBucket(ctx, bucket, region)
+}
+
+func TestS3PersistsIntentBeforeProviderAndSecurityAfter(t *testing.T) {
+	sequentialNames(t)
+	home := t.TempDir()
+	creator := &receiptCheckingCreator{fakeCreator: &fakeCreator{privacy: verifiedPrivate}, t: t, home: home}
+	env := createEnv(t, "eu-west-2", creator, fakeBuckets{}, nil)
+	env.Home = func() (string, error) { return home, nil }
+	var cfg credentials.Config
+	if out, err := runCreate(t, env, &cfg, "\n\n"); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	receipts, err := setupresources.List(home)
+	if err != nil || len(receipts) != 1 || receipts[0].State != setupresources.Secured {
+		t.Fatalf("security outcome not durable: %v %v", receipts, err)
+	}
+}
+
+func (c *receiptCheckingCreator) DeleteBucket(ctx context.Context, bucket string) error {
+	receipts, err := setupresources.List(c.home)
+	if err != nil || len(receipts) != 1 || receipts[0].State != setupresources.CleanupPending || receipts[0].Bucket != bucket {
+		c.t.Fatalf("provider delete called without durable cleanup intent: %v %v", receipts, err)
+	}
+	return c.fakeCreator.DeleteBucket(ctx, bucket)
+}
+
+func TestS3DeletionPersistsCleanupBeforeProvider(t *testing.T) {
+	for _, deleteErr := range []error{nil, errors.New("lost delete answer")} {
+		t.Run(fmt.Sprint(deleteErr), func(t *testing.T) {
+			sequentialNames(t)
+			home := t.TempDir()
+			creator := &receiptCheckingCreator{fakeCreator: &fakeCreator{block: []error{errCreateDenied}, deleted: deleteErr}, t: t, home: home}
+			env := createEnv(t, "us-east-1", creator, fakeBuckets{names: []string{"saved"}, regions: map[string]string{"saved": "us-east-1"}}, nil)
+			env.Home = func() (string, error) { return home, nil }
+			var cfg credentials.Config
+			if out, err := runCreate(t, env, &cfg, "\n\ndelete\nagent-archive-1\n1\n"); err != nil {
+				t.Fatalf("%v: %s", err, out)
+			}
+			receipts, err := setupresources.List(home)
+			want := setupresources.Deleted
+			if deleteErr != nil {
+				want = setupresources.CleanupPending
+			}
+			if err != nil || len(receipts) != 1 || receipts[0].State != want {
+				t.Fatalf("%v %v want %s", receipts, err, want)
+			}
+		})
+	}
+}
+
+func TestS3DeletionStopsWhenCleanupIntentCannotBeSaved(t *testing.T) {
+	home := t.TempDir()
+	r, err := setupresources.Begin(home, setupresources.Receipt{Provider: setupresources.S3, Profile: "work", Bucket: "archive"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = setupresources.Finish(home, r, setupresources.Created); err != nil {
+		t.Fatal(err)
+	}
+	r.Bucket = "other" // Mismatched immutable binding makes the save fail.
+	var out bytes.Buffer
+	p := newPrompter(strings.NewReader(""), &out)
+	p.createdBuckets = []createdS3Bucket{{name: "archive", profile: "work", home: home, receipt: r}}
+	creator := &fakeCreator{}
+	deleteNewBucket(p, creator, "archive", "work")
+	if len(creator.calls) != 0 {
+		t.Fatalf("provider called after failed intent: %v", creator.calls)
+	}
+	receipts, err := setupresources.List(home)
+	if err != nil || receipts[0].State != setupresources.Created {
+		t.Fatalf("%v %v", receipts, err)
+	}
+}
+
+func TestS3CreationReceiptsDistinguishRefusalFromMissingAnswers(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		failure error
+		want    setupresources.State
+	}{
+		{"client refusal", &smithy.GenericAPIError{Code: "AccessDenied", Fault: smithy.FaultClient}, setupresources.Refused},
+		{"account limit", storage.ErrTooManyBuckets, setupresources.Refused},
+		{"lost response", storage.ErrBucketMayExist, setupresources.RequestSent},
+		{"server error", &smithy.GenericAPIError{Code: "InternalError", Fault: smithy.FaultServer}, setupresources.RequestSent},
+		{"unknown error", errors.New("unknown response"), setupresources.RequestSent},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sequentialNames(t)
+			creator := &fakeCreator{create: []error{tc.failure}}
+			env := createEnv(t, "us-east-1", creator, fakeBuckets{names: []string{"saved"}, regions: map[string]string{"saved": "us-east-1"}}, nil)
+			var cfg credentials.Config
+			if out, err := runCreate(t, env, &cfg, "\n\nexisting\n1\n"); err != nil {
+				t.Fatalf("%v: %s", err, out)
+			}
+			home, err := env.readHome()
+			if err != nil {
+				t.Fatal(err)
+			}
+			receipts, err := setupresources.List(home)
+			if err != nil || len(receipts) != 1 || receipts[0].State != tc.want {
+				t.Fatalf("%v %v want %s", receipts, err, tc.want)
+			}
+		})
 	}
 }
