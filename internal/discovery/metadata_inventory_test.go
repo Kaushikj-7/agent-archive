@@ -1508,9 +1508,19 @@ func (c *metadataCompletionContext) Err() error {
 	return c.Context.Err()
 }
 
+type metadataExpiryOperation string
+
+const (
+	metadataExpiryRenewal metadataExpiryOperation = "renewal"
+	metadataExpiryThread  metadataExpiryOperation = "thread"
+	metadataExpiryRollout metadataExpiryOperation = "rollout"
+	metadataExpiryCheck   metadataExpiryOperation = "check"
+	metadataExpiryEntry   metadataExpiryOperation = "entry"
+)
+
 func TestMetadataOwnedExpiryInvalidatesCompletedEpoch(t *testing.T) {
-	for _, operation := range []string{"renewal", "thread", "rollout", "check", "entry"} {
-		t.Run(operation, func(t *testing.T) {
+	for _, operation := range []metadataExpiryOperation{metadataExpiryRenewal, metadataExpiryThread, metadataExpiryRollout, metadataExpiryCheck, metadataExpiryEntry} {
+		t.Run(string(operation), func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				lookup, _, _ := metadataFixture(t, 0)
 				lookup.homes, lookup.roots = nil, nil
@@ -1524,8 +1534,8 @@ func TestMetadataOwnedExpiryInvalidatesCompletedEpoch(t *testing.T) {
 				ctx := &metadataCompletionContext{Context: t.Context(), complete: func() { time.Sleep(31 * time.Second) }}
 				var failure error
 				switch operation {
-				case "renewal", "entry":
-					if operation == "entry" {
+				case metadataExpiryRenewal, metadataExpiryEntry:
+					if operation == metadataExpiryEntry {
 						view.remaining = 0
 					}
 					renewed, err := view.BeginValidationSlice(ctx, agentapi.CodexValidationLimits{})
@@ -1534,25 +1544,25 @@ func TestMetadataOwnedExpiryInvalidatesCompletedEpoch(t *testing.T) {
 					}
 					defer func() { _ = renewed.Close() }()
 					failure = renewed.Valid(t.Context())
-				case "thread":
+				case metadataExpiryThread:
 					set, err := held.Thread(ctx, "00000000-0000-0000-0000-000000000001")
 					failure = err
 					if set.Complete || set.Current != nil || set.Revision != "" || len(set.Candidates) != 0 {
 						t.Fatal("expired query retained selection", set)
 					}
-				case "rollout":
+				case metadataExpiryRollout:
 					refs, err := held.Rollout(ctx, "00000000-0000-0000-0000-000000000001")
 					failure = err
 					if len(refs) != 0 {
 						t.Fatal("expired query retained candidates", refs)
 					}
-				case "check":
+				case metadataExpiryCheck:
 					failure = held.Check(ctx, "00000000-0000-0000-0000-000000000001", "revision")
 				}
 				if agentapi.Failure(failure) != agentapi.Limit || view.complete || view.failure == nil || view.cursor != nil || t.Context().Err() != nil {
 					t.Fatalf("owned expiry retained epoch: operation=%s failure=%v complete=%v recorded=%v cursor=%v checks=%d remaining=%s", operation, failure, view.complete, view.failure, view.cursor, ctx.checks, view.remaining)
 				}
-				if operation != "entry" && ctx.checks < 3 {
+				if operation != metadataExpiryEntry && ctx.checks < 3 {
 					t.Fatal("did not reach completed-work boundary", ctx.checks)
 				}
 				if err := held.Close(); err != nil {
