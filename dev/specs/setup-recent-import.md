@@ -247,8 +247,11 @@ From the §4 implementation:
   count covers starts from that day's midnight up to the floor, so it is
   exactly what `backfill --since DATE` reaches. The scan keeps a day more so
   the local midnight is always inside what it recorded.
-- **Top-level only.** Subagents are not counted; backfill imports them with
-  their parent (Codex children wait on native child capture, #355).
+- **Top-level only.** Subagents are not counted. Backfill can import qualified
+  Codex children with their parent, but each child must independently pass the
+  native evidence and consent checks described in the
+  [current history contract](codex-history.md); importing a parent does not
+  authorize its children.
 - **Only after a scan.** Existing installs show the line once the collector
   of a version with this change has scanned the session. A session that
   discovery refused for another reason first (an unresolved project, a
