@@ -130,7 +130,8 @@ follow [Semantic Versioning](https://semver.org/).
   before reporting completion. Private filtered staging has a shared 1 GiB
   quota, resumable admission, current-policy filtering, and journalled cancel
   and undo cleanup. History distinguishes staged/admitted from remotely verified
-  sessions. Dry-run creates no staging.
+  sessions. Staging rechecks native identity before admission. Dry-run creates
+  no staging and reports incomplete JSON writes as failures.
 
 - Validate a Codex fork's first own task during import and ongoing capture,
   and protect every qualified history import from older writers. Discovery

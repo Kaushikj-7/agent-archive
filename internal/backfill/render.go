@@ -853,9 +853,16 @@ func RenderJSON(w io.Writer, p Plan) error {
 		accounting := p.InventoryAccounting()
 		out.Inventory = &accounting
 	}
-	encoder := json.NewEncoder(w)
-	encoder.SetIndent("", "  ")
-	return encoder.Encode(out)
+	data, err := json.MarshalIndent(out, "", "  ")
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	n, err := w.Write(data)
+	if err == nil && n != len(data) {
+		return io.ErrShortWrite
+	}
+	return err
 }
 
 func sortedAgentKeys(values map[string]bool) []string {

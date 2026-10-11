@@ -719,3 +719,45 @@ func TestImportCancellationUsesReservedCapacityAtQuotaLimit(t *testing.T) {
 		t.Fatalf("cancel did not settle %v %v", remaining, err)
 	}
 }
+
+func TestImportStagingRejectsChangedNativeIdentity(t *testing.T) {
+	r, c, _ := stagingFixture(t)
+	// The plan selected this parent, but its path now holds another native session.
+	if err := os.WriteFile(c.TranscriptPath, []byte(claudeTranscript("different-parent", c.ProjectRoot, c.StartedAt)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	result, err := r.Run([]Candidate{c})
+	if err == nil || len(result.Sessions) != 0 {
+		t.Fatalf("changed native owner admitted: %+v %v", result, err)
+	}
+	regs, err := r.Store.LoadRegistrations()
+	if err != nil || len(regs) != 0 {
+		t.Fatalf("changed source left admission: %+v %v", regs, err)
+	}
+	stages, _, err := r.Store.ImportStages("", 50)
+	if err != nil || len(stages) != 0 {
+		t.Fatalf("changed source durably selected: %+v %v", stages, err)
+	}
+}
+
+func TestImportStagingAcceptsSelectedIdentityInCopiedTranscript(t *testing.T) {
+	r, c, cfg := stagingFixture(t)
+	// Claude resume/copy records may name earlier sessions as long as the
+	// selected session remains among the observed ownership identities.
+	raw := claudeTranscript("earlier-session", c.ProjectRoot, c.StartedAt) + claudeTranscript(c.NativeSessionID, c.ProjectRoot, c.StartedAt)
+	if err := os.WriteFile(c.TranscriptPath, []byte(raw), 0600); err != nil {
+		t.Fatal(err)
+	}
+	result, err := r.Run([]Candidate{c})
+	if err != nil || len(result.Sessions) != 1 {
+		t.Fatalf("selected membership refused: %+v %v", result, err)
+	}
+	if err := os.Remove(c.TranscriptPath); err != nil {
+		t.Fatal(err)
+	}
+	remote := storagetest.NewMemoryStore()
+	collected, err := collector.Run(t.Context(), r.Store, remote, collector.Options{Sources: testSources, Parsers: testSources, MachineID: cfg.MachineID, Now: func() time.Time { return fixedNow.Add(time.Minute) }, AcceptSession: cfg.AcceptSession})
+	if err != nil || len(collected.Errors) != 0 || len(collected.Published) != 1 {
+		t.Fatalf("selected copied evidence not recovered: %+v %v", collected, err)
+	}
+}
