@@ -30,9 +30,9 @@ type recoverySourceInventory struct {
 	env    Environment
 	stamps map[string]recoveryFileStamp
 	// targets holds, for each listed path that is a symlink (a symlinked
-	// store), the stamp of the directory it names, taken before the listing.
-	// The link's own stamp does not move when the directory gains entries.
-	targets map[string]recoveryFileStamp
+	// store), what it names, taken before the listing. The link's own stamp
+	// does not move when the directory gains entries.
+	targets map[string]recoveryTarget
 	// appendable names observed regular files whose content belongs to a work
 	// item's own source check.
 	appendable map[string]bool
@@ -56,7 +56,7 @@ type recoverySourceInventory struct {
 const recoverySourceObservationLimit = 65536
 
 func newRecoverySourceInventory(env Environment) *recoverySourceInventory {
-	return &recoverySourceInventory{env: env, stamps: map[string]recoveryFileStamp{}, targets: map[string]recoveryFileStamp{}, appendable: map[string]bool{}, names: map[string]map[string]bool{}, complete: true}
+	return &recoverySourceInventory{env: env, stamps: map[string]recoveryFileStamp{}, targets: map[string]recoveryTarget{}, appendable: map[string]bool{}, names: map[string]map[string]bool{}, complete: true}
 }
 
 // ownContent hands content changes of an observed transcript to the work item
@@ -106,8 +106,8 @@ func (i *recoverySourceInventory) environment() Environment {
 	return env
 }
 
-// observeTarget stamps the directory a listed symlink names, before the
-// listing, so entries added to a symlinked store move a stamp.
+// observeTarget stamps what a listed symlink names, before the listing, so
+// entries added to a symlinked store move a stamp.
 func (i *recoverySourceInventory) observeTarget(path string) {
 	stamp, ok := i.stamps[path]
 	if _, done := i.targets[path]; done || !ok || stamp.absent || stamp.info.Mode()&fs.ModeSymlink == 0 {
@@ -117,14 +117,37 @@ func (i *recoverySourceInventory) observeTarget(path string) {
 		i.complete = false
 		return
 	}
-	info, err := i.env.stat(path)
-	if os.IsNotExist(err) {
-		i.targets[path] = recoveryFileStamp{absent: true}
-	} else if err != nil {
-		i.complete = false
-	} else {
-		i.targets[path] = recoveryFileStamp{info: info}
+	i.targets[path] = observeRecoveryTarget(i.env.stat(path))
+}
+
+// recoveryTarget is what a listed symlink names. Only a directory is listed
+// through the link; a missing target, a file and one that cannot be reached
+// (a link loop, a folder without search permission) are listed as nothing,
+// or as an unreadable store, an app's own gap rather than a strict failure.
+type recoveryTarget struct {
+	info fs.FileInfo
+	kind recoveryTargetKind
+}
+
+type recoveryTargetKind int
+
+const (
+	recoveryTargetAbsent recoveryTargetKind = iota
+	recoveryTargetUnreadable
+	recoveryTargetOther
+	recoveryTargetDirectory
+)
+
+func observeRecoveryTarget(info fs.FileInfo, err error) recoveryTarget {
+	switch {
+	case os.IsNotExist(err):
+		return recoveryTarget{kind: recoveryTargetAbsent}
+	case err != nil:
+		return recoveryTarget{kind: recoveryTargetUnreadable}
+	case info.IsDir():
+		return recoveryTarget{info: info, kind: recoveryTargetDirectory}
 	}
+	return recoveryTarget{info: info, kind: recoveryTargetOther}
 }
 
 // recordNames keeps a baseline listing's entry names within the observation
@@ -196,17 +219,19 @@ func (i *recoverySourceInventory) compare(ctx context.Context) (grown, ok bool) 
 		if ctx.Err() != nil {
 			return false, false
 		}
-		// The link itself is the same link (above); the directory it names
-		// is listed again when its stamp moved.
-		before := i.targets[path]
-		info, err := i.env.stat(path)
+		// The link itself is the same link (above). The directory it named
+		// is listed again when its stamp moved, and must remain that
+		// directory. Anything else it named was listed as nothing or as
+		// unreadable; it is listed again when it became something else.
+		before, after := i.targets[path], observeRecoveryTarget(i.env.stat(path))
 		switch {
-		case before.absent && os.IsNotExist(err):
-		case before.absent && err == nil:
-			i.moved = append(i.moved, path)
-		case err != nil || before.absent || !sameRecoveryDirectory(before.info, info):
+		case before.kind != recoveryTargetDirectory:
+			if after.kind != before.kind {
+				i.moved = append(i.moved, path)
+			}
+		case after.kind != recoveryTargetDirectory || !sameRecoveryDirectory(before.info, after.info):
 			return false, false
-		case !sameRecoveryMember(before.info, info, false):
+		case !sameRecoveryMember(before.info, after.info, false):
 			i.moved = append(i.moved, path)
 		}
 	}

@@ -295,3 +295,118 @@ func TestAddedSourcesInSymlinkedStores(t *testing.T) {
 		}
 	}
 }
+
+// The directory a symlinked store names stays strict: replaced, removed,
+// or named no more because the link now names another, every recovery fails.
+func TestReplacedSymlinkedStoresAreStrict(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		change func(t *testing.T, store, target string)
+	}{
+		{name: "target replaced", change: func(t *testing.T, _, target string) {
+			t.Helper()
+			if err := os.RemoveAll(target); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Mkdir(target, 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "target removed", change: func(t *testing.T, _, target string) {
+			t.Helper()
+			if err := os.RemoveAll(target); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "link retargeted", change: func(t *testing.T, store, target string) {
+			t.Helper()
+			other := target + "-other"
+			if err := os.Mkdir(other, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Remove(store); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(other, store); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tr, env, _, _, _ := addedSourcesFixture(t)
+			store := tr.path("home/.codex/archived_sessions")
+			target := tr.mkdir("elsewhere/store")
+			if err := os.RemoveAll(store); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, store); err != nil {
+				t.Fatal(err)
+			}
+			inv := inventoryBaseline(t, env)
+			if _, ok := inv.added(t.Context()); !ok {
+				t.Fatal("unchanged symlinked store failed")
+			}
+			tc.change(t, store, target)
+			if got, ok := inv.added(t.Context()); ok {
+				t.Fatalf("added = %+v, ok after the store's folder changed", got)
+			}
+		})
+	}
+}
+
+// A symlinked store that names no directory (a file, nothing, or a link loop)
+// was listed as nothing or as unreadable, an app's own gap: unchanged, it is
+// no change at all, and once it names a directory, that directory's
+// transcripts are found.
+func TestAddedSourcesInSymlinkedStoresNamingNoDirectory(t *testing.T) {
+	const addedID = "00000000-0000-0000-0000-0000000000c3"
+	for _, tc := range []struct {
+		name  string
+		named func(t *testing.T, tr *tree, target string) // what the link names
+	}{
+		{name: "file", named: func(_ *testing.T, tr *tree, _ string) { tr.write("elsewhere/store", "not a folder") }},
+		{name: "missing", named: func(*testing.T, *tree, string) {}},
+		{name: "loop", named: func(t *testing.T, _ *tree, target string) {
+			t.Helper()
+			if err := os.Symlink(target, target); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		for _, becomes := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s becomes=%v", tc.name, becomes), func(t *testing.T) {
+				tr, env, _, _, _ := addedSourcesFixture(t)
+				store := tr.path("home/.codex/archived_sessions")
+				target := tr.path("elsewhere/store")
+				if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				tc.named(t, tr, target)
+				if err := os.RemoveAll(store); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(target, store); err != nil {
+					t.Fatal(err)
+				}
+				inv := inventoryBaseline(t, env)
+				var want []string
+				if becomes {
+					if err := os.Remove(target); err != nil && !os.IsNotExist(err) {
+						t.Fatal(err)
+					}
+					name := "rollout-2026-09-01T10-00-00-" + addedID + ".jsonl"
+					tr.write(filepath.Join("elsewhere", "store", name), codexTranscript(addedID, addedID, tr.repo("home/other"), fixedNow))
+					want = []string{filepath.Join(store, name)}
+				}
+				got, ok := inv.added(t.Context())
+				var paths []string
+				for _, c := range got.candidates {
+					paths = append(paths, c.Source.Path)
+				}
+				if !ok || !reflect.DeepEqual(paths, want) || len(got.incomplete) != 0 {
+					t.Fatalf("added = %v (%+v), %v; want %v", paths, got.incomplete, ok, want)
+				}
+			})
+		}
+	}
+}

@@ -1289,7 +1289,10 @@ observed transcript (a symlinked store) is told by file identity against the
 observed transcripts of the same name. A listed store that is a symlink
 (`archived_sessions` or `projects` linked to another disk) is also stamped
 through the link, before it is listed: the link's own stamp does not move when
-the folder it names gains entries. Each
+the folder it names gains entries. That folder stays strict (replaced, removed
+or no longer named fails every recovery); a link that named no folder (a file,
+nothing, a link loop) was listed as nothing or as the app's unreadable store,
+and is listed again only once it names something else. Each
 added transcript is judged by the root its folder resolves to, with committed
 configuration only:
 
