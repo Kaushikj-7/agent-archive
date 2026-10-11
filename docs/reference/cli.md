@@ -821,7 +821,10 @@ Usage: agent-archive backfill history
 
 List past imports, oldest first: each import's IMPORT_ID, when it started,
 how many sessions and projects it added, and its upload state (waiting,
-uploaded, interrupted, or undone). Reads this machine's records only.
+uploaded, interrupted, or undone). Waiting counts sessions not in the archive
+yet; archived sessions that are rechecking (a re-scan is still owed) or
+updating (newer work is still to upload) are counted after it.
+Reads this machine's records only.
 Example: agent-archive backfill history
 ```
 
