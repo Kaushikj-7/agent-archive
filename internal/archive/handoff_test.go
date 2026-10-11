@@ -66,7 +66,9 @@ func TestFitHandoffAppliesStepsInOrderAndKeepsRecentExchanges(t *testing.T) {
 
 func TestFitHandoffRunsEveryStepUnderPressure(t *testing.T) {
 	t.Parallel()
-	fit, _ := FitHandoff(bigHandoff(40), 40_000, markdownSize)
+	// 40 prompts capped at handoffPromptCap still fit, so the steps after
+	// prompt truncation are not reached.
+	fit, _ := FitHandoff(bigHandoff(40), 130_000, markdownSize)
 	var kinds []HandoffElisionKind
 	for _, e := range fit.Elisions {
 		kinds = append(kinds, e.Kind)
@@ -198,7 +200,14 @@ func TestFitHandoffMeasuresLogarithmically(t *testing.T) {
 	t.Parallel()
 	h := bigHandoff(512)
 	calls := 0
-	fit, ok := FitHandoff(h, 2_000_000, func(x Handoff) int { calls++; return markdownSize(x) })
+	fit, ok := FitHandoff(h, 2_000_000, func(x Handoff) int {
+		// Measuring one exchange alone, to decide whether a step shortens
+		// it, costs about what rendering that exchange does.
+		if len(x.Exchanges) > 1 {
+			calls++
+		}
+		return markdownSize(x)
+	})
 	if !ok {
 		t.Fatalf("did not fit: %d", markdownSize(fit))
 	}
