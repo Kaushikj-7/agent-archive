@@ -215,3 +215,40 @@ func TestSyncCountsDeferredSessionsByReason(t *testing.T) {
 		}
 	}
 }
+
+// Durable admission and deferral reporting must compose: an already published
+// import owes only a recheck or newer work, while its verification count stays
+// distinct from the sessions whose first publication is still waiting.
+func TestBackfillHistoryStagedVerificationAndDeferralCounts(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		waiting bool
+		want    string
+	}{
+		{"first publication waiting", true, "3 registered; 3 durably staged; 2 remotely verified; 1 waiting · 1 rechecking · 1 updating"},
+		{"all first publications verified", false, "uploaded; 2 remotely verified · 1 rechecking · 1 updating"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newDeferredFixture(t)
+			f.session(t, "rechecking", true, true, false)
+			f.session(t, "updating", true, true, true)
+			if tc.waiting {
+				f.session(t, "waiting", false, true, true)
+			}
+			regs, err := f.store.LoadRegistrations()
+			if err != nil {
+				t.Fatal(err)
+			}
+			for i := range regs {
+				regs[i].StagedImportSHA256 = strings.Repeat("a", 64)
+			}
+			done := f.now
+			batch := backfill.Batch{ID: "batch-1", CompletedAt: &done, Sessions: []string{"rechecking", "updating"}}
+			got, err := batchUploadState(f.store, f.cfg, regs, batch, true)
+			if err != nil || got != tc.want {
+				t.Fatalf("upload state = %q, %v; want %q", got, err, tc.want)
+			}
+		})
+	}
+}
