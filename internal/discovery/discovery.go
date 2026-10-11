@@ -868,14 +868,29 @@ func (s scan) admitCandidate(candidate Candidate, loc string) (bool, bool) {
 		_, existing, err := store.ArchiveSessionID(sessionKey(candidate.Agent, candidate.NativeSessionID))
 		if err != nil || !existing {
 			h.Outcomes["start_not_authorized"]++
-			if err == nil {
+			if err == nil && s.startOnlyRefusal(candidate.Agent, root, facts.Cwd) {
 				s.refused.refuse(candidate, loc)
+			} else if err == nil {
+				s.refused.settle(candidate)
 			}
 			return false, false
 		}
 	}
 	s.refused.settle(candidate)
 	return s.finishCandidate(candidate, loc, root, generation, ownedRoot, physical, facts)
+}
+
+// startOnlyRefusal reports whether a session refused as start_not_authorized
+// would be admitted had it started now: refused for its start alone, not
+// also by a project rule (in all-projects scope an excluded project refuses
+// through the same check), so backfill can import it.
+func (s scan) startOnlyRefusal(agent, root, cwd string) bool {
+	if s.cfg.EffectiveCodexCaptureScope() == config.CodexAllProjects {
+		_, ok := s.cfg.CodexDiscoveryGeneration(root, cwd, s.now, s.now)
+		return ok
+	}
+	_, ok := s.cfg.DiscoveryGeneration(agent, root, s.now, s.now)
+	return ok
 }
 
 func (s scan) finishCandidate(candidate Candidate, loc, root, generation, ownedRoot string, physical bool, facts sourcefacts.ProjectFacts) (bool, bool) {

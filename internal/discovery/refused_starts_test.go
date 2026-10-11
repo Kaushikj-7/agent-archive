@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agents/builtin"
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 )
 
@@ -154,6 +157,40 @@ func TestReadRefusedStartsRejectsInvalidRecords(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(home, refusedStartsName)); !os.IsNotExist(err) {
 			t.Errorf("%s: unreadable record kept: %v", name, err)
 		}
+	}
+}
+
+// In all-projects scope a project rule refuses through the same start
+// check: a session in an excluded project is not a pre-setup session, since
+// backfill skips it and status would name it for as long as it is kept.
+func TestRefusedStartsSkipsExcludedProjectsInAllProjectsScope(t *testing.T) {
+	t.Parallel()
+	store, cfg, at, codex := fixture(t)
+	parent, err := filepath.EvalSymlinks(t.TempDir())
+	must(t, err)
+	kept, excluded := filepath.Join(parent, "kept"), filepath.Join(parent, "excluded")
+	for _, dir := range []string{kept, excluded} {
+		must(t, os.MkdirAll(filepath.Join(dir, ".git"), 0o700))
+	}
+	cfg.Archive.Projects = append(cfg.Archive.Projects,
+		archive.ProjectActivation{Root: parent, ProjectID: archive.ProjectID(parent), Included: true, ActivatedAt: at},
+		archive.ProjectActivation{Root: excluded, ProjectID: archive.ProjectID(excluded), Included: false, ActivatedAt: at})
+	setTestCodexScope(&cfg, config.CodexAllProjects)
+	must(t, config.ReconcileDiscovery(&cfg, config.Config{}, at))
+	must(t, config.Save(store.Home(), cfg))
+	floor, ok := cfg.DiscoveryStartFloor("codex")
+	if !ok {
+		t.Fatal("no start floor")
+	}
+	keptID := writeRollout(t, codex, kept, floor.Add(-time.Hour), 1, "sessions")
+	writeRollout(t, codex, excluded, floor.Add(-time.Hour), 2, "sessions")
+	h, err := run(context.Background(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(2 * time.Minute) }}, syntheticSupport)
+	if err != nil || h.Registered != 0 || h.Outcomes["start_not_authorized"] != 2 {
+		t.Fatalf("scan %#v %v", h, err)
+	}
+	got, err := ReadRefusedStarts(store.Home())
+	if err != nil || len(got) != 1 || got[0].NativeSessionID != keptID {
+		t.Fatalf("recorded %+v %v", got, err)
 	}
 }
 
