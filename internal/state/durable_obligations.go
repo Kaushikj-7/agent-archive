@@ -18,7 +18,8 @@ const (
 	// GenerationRecoveryStorage holds the existing generation recovery journal.
 	GenerationRecoveryStorage DurableStorageNamespace = "generation-recovery"
 	// PendingHistoryStorage holds current history stages, including source-only leftovers.
-	PendingHistoryStorage  DurableStorageNamespace = "pending-history"
+	PendingHistoryStorage DurableStorageNamespace = "pending-history"
+	// ImportAdmissionStorage identifies durable preparation and cancellation journals.
 	ImportAdmissionStorage DurableStorageNamespace = "import-admission"
 	// PublicationEvidenceStorage holds opaque original publication evidence.
 	PublicationEvidenceStorage DurableStorageNamespace = "publication-evidence"
