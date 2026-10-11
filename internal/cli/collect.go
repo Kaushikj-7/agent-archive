@@ -298,7 +298,7 @@ func finishPassWithRetention(home string, env Env, cfg config.Config, localStore
 		CurrentDestination: cfg.InCurrentDestination,
 		// Outstanding work defers expiry only when the collector will do it.
 		Publishable:    cfg.AcceptSession,
-		SessionMaxAge:  time.Duration(cfg.RetentionDays) * 24 * time.Hour,
+		SessionMaxAge:  config.RetentionDuration(cfg.RetentionDays),
 		PreviousScanAt: previousScanAt,
 	}
 	if env.sweepClock != nil {

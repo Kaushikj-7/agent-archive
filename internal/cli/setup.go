@@ -2,7 +2,6 @@ package cli
 
 import (
 	"bytes"
-	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -32,9 +31,10 @@ import (
 
 const defaultPrefix = "agent-archive/"
 
-const defaultRetentionDays = 90
+const defaultRetentionDays = config.DefaultRetentionDays
 
 type setupDraft struct {
+	RetentionEdited   bool          `json:"retention_edited,omitempty"`
 	NewInstallation   bool          `json:"new_installation,omitempty"`
 	DiscoveryReviewed bool          `json:"discovery_reviewed,omitempty"`
 	GuidedSlotID      string        `json:"guided_slot_id,omitempty"`
@@ -367,6 +367,10 @@ func retiredStagedRefs(retired, staged []string, active string) []string {
 // to applySetup. Draft persistence and installation happen elsewhere.
 func reviewedSetupConfig(existing config.Config, draft setupDraft) config.Config {
 	cfg := draft.Config
+	if existing.RetentionDays == 0 && existing.RetentionProtection && !draft.RetentionEdited {
+		cfg.RetentionDays = 0
+		cfg.RetentionProtection = true
+	}
 	// The token source is local configuration, never an answer restored from a draft.
 	cfg.CloudflareTokenCommand = append([]string(nil), existing.CloudflareTokenCommand...)
 	// Existing-machine setup keeps the committed label: a resumed draft may
@@ -383,7 +387,7 @@ func reviewedSetupConfig(existing config.Config, draft setupDraft) config.Config
 	if cfg.DestinationID() == existing.DestinationID() && cfg.Storage.R2CredentialRef == existing.Storage.R2CredentialRef {
 		cfg.MachineAssignment = existing.MachineAssignment
 	}
-	if cfg.RetentionDays <= 0 {
+	if cfg.RetentionDays == 0 && !cfg.RetentionProtection {
 		cfg.RetentionDays = defaultRetentionDays
 	}
 	cfg.ImportedHarnesses = carriedImportedHarnesses(existing.ImportedHarnesses, cfg.Harnesses, draft.StopImported)
@@ -409,6 +413,7 @@ func selectSetupDraft(p *prompter, home, userHome string, env Env, existing conf
 	initial := existing
 	if !found {
 		initial.SkillEvidence = config.SkillEvidenceMetadata
+		initial.RetentionDays = defaultRetentionDays
 	}
 	draft := setupDraft{Version: draftFormat, Config: initial, NewInstallation: !found}
 	saved, haveDraft, err := offerUnusableDraft(p, home)
@@ -453,10 +458,14 @@ func selectSetupDraft(p *prompter, home, userHome string, env Env, existing conf
 			}
 			if choice == "retention" {
 				days := draft.Config.RetentionDays
-				if days <= 0 {
+				if days == 0 && !draft.Config.RetentionProtection {
 					days = defaultRetentionDays
 				}
+				draft.RetentionEdited = true
 				draft.Config.RetentionDays, e = p.setupRetentionDays(days)
+				if draft.Config.RetentionDays == 0 {
+					draft.Config.RetentionProtection = true
+				}
 				if e != nil {
 					return setupDraft{}, false, e
 				}
@@ -488,7 +497,11 @@ func selectSetupDraft(p *prompter, home, userHome string, env Env, existing conf
 			draft.Step = 1
 		case "retention":
 			draft.Step = 2
+			draft.RetentionEdited = true
 			draft.Config.RetentionDays, err = p.setupRetentionDays(existing.RetentionDays)
+			if draft.Config.RetentionDays == 0 {
+				draft.Config.RetentionProtection = true
+			}
 			if err != nil {
 				return setupDraft{}, false, err
 			}
@@ -1180,7 +1193,12 @@ func anotherMachineCommand(cfg config.Config, userHome string, environments ...E
 		}
 		args = append(args, "--codex-discovery", discoveryChoice, "--codex-capture-scope", string(cfg.EffectiveCodexCaptureScope()))
 	}
-	args = append(args, "--prefix", firstNonEmpty(cfg.Storage.Prefix, defaultPrefix), "--retention-days", strconv.Itoa(cmp.Or(cfg.RetentionDays, defaultRetentionDays)))
+	args = append(args, "--prefix", firstNonEmpty(cfg.Storage.Prefix, defaultPrefix))
+	if cfg.RetentionDays == 0 {
+		args = append(args, "--keep-forever")
+	} else {
+		args = append(args, "--retention-days", strconv.Itoa(cfg.RetentionDays))
+	}
 	if cfg.RequireSkillUse {
 		args = append(args, "--require-skill-use")
 	} else {
@@ -1311,7 +1329,7 @@ func chooseCapture(p *prompter, cfg *config.Config, userHome string, env Env, kn
 		if err := promptCodexExceptions(p, cfg, userHome); err != nil {
 			return err
 		}
-		if cfg.RetentionDays <= 0 {
+		if cfg.RetentionDays == 0 && !cfg.RetentionProtection {
 			cfg.RetentionDays = defaultRetentionDays
 		}
 		return nil
@@ -1323,7 +1341,7 @@ func chooseCapture(p *prompter, cfg *config.Config, userHome string, env Env, kn
 	if err != nil {
 		return err
 	}
-	if cfg.RetentionDays <= 0 {
+	if cfg.RetentionDays == 0 && !cfg.RetentionProtection {
 		cfg.RetentionDays = defaultRetentionDays
 	}
 	return nil
@@ -1880,7 +1898,7 @@ func isGoBuildDir(name string) bool {
 }
 
 func runPairingSetupCommand(opts setupOptions, refresh, abandon bool, fs *commandFlags, stdin io.Reader, stdout, stderr io.Writer, env Env) int {
-	if refresh || abandon || opts.storageFlagsSupplied || opts.prefixSupplied || opts.retentionSupplied || opts.requireSkillSupplied || opts.noRequireSkillSupplied || opts.apps != "" || opts.skillEvidence != "" || opts.noSkills || opts.skills || len(opts.projectRepos) > 0 || opts.hasProjectScope() {
+	if refresh || abandon || opts.storageFlagsSupplied || opts.prefixSupplied || opts.keepForever || opts.retentionSupplied || opts.requireSkillSupplied || opts.noRequireSkillSupplied || opts.apps != "" || opts.skillEvidence != "" || opts.noSkills || opts.skills || len(opts.projectRepos) > 0 || opts.hasProjectScope() {
 		return fs.usageError("pairing accepts --yes, --verbose, --project, --codex-discovery, --codex-capture-scope and one bundle input; other settings are reviewed interactively")
 	}
 	if err := setupPairing(opts, stdin, stdout, stderr, env.choosingBackend()); err != nil {

@@ -19,6 +19,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/retention"
 	"github.com/wangjohn/agent-archive/internal/scheduler"
 	"github.com/wangjohn/agent-archive/internal/scheduler/host"
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
@@ -158,25 +159,37 @@ func reviewChanges(home string, old, next config.Config, p *prompter, env Env) e
 				"They published nothing and will not be captured at the new destination either.")
 		}
 	}
-	if next.RetentionDays < old.RetentionDays {
+	if config.RetentionShorter(next.RetentionDays, old.RetentionDays) {
 		store := state.OpenReadOnly(home)
 		regs, err := store.LoadRegistrations()
 		if err != nil {
 			return err
 		}
 		cutoff := env.now().Add(-time.Duration(next.RetentionDays) * 24 * time.Hour)
-		count := 0
+		count, localCount := 0, 0
+		preview, err := retention.NewExpiryPreview(store, env.now(), next.AcceptSession)
+		if err != nil {
+			return fmt.Errorf("cannot preview retention effect: %w", err)
+		}
 		for _, r := range regs {
-			if !old.AcceptSession(r) {
+			if r.ParentSessionID != "" && !r.NativeChild {
 				continue
 			}
-			bundle, _, _, found, err := store.LoadPublished(r.ArchiveSessionID)
+			expired, err := preview.SessionExpired(r, config.RetentionDuration(next.RetentionDays))
 			if err != nil {
 				return fmt.Errorf("cannot preview retention effect: %w", err)
 			}
-			if found && !bundle.Capture.CapturedAt.IsZero() && !bundle.Capture.CapturedAt.After(cutoff) {
-				count++
+			if expired {
+				if next.InCurrentDestination(r) {
+					count++
+				} else {
+					localCount++
+				}
 			}
+		}
+
+		if localCount > 0 {
+			p.warn(fmt.Sprintf("Shorter retention: %s from previous destinations will be eligible for local cleanup; their remote archives stay untouched.", countNoun(localCount, "session")))
 		}
 		// The cutoff is a time of day, so the date says "on or before": a
 		// session from earlier that day is counted too. It is the date where
@@ -288,6 +301,7 @@ func claudeConfigDir(files hooks.Files) string { return filepath.Dir(files["clau
 // mergeCommittedSetupState carries operational ownership from the committed
 // configuration, never from a resumable draft. It does no I/O.
 func mergeCommittedSetupState(old config.Config, next *config.Config, stopImported []string) {
+	config.PreserveWriterFence(next, old)
 	// Operational ownership comes from committed state, never a resumable
 	// draft. A crash after commit can leave a pre-commit draft on disk.
 	next.RetiredMachineAssignments = append([]config.MachineAssignment(nil), old.RetiredMachineAssignments...)
@@ -666,7 +680,7 @@ func protectSetupWriter(home string, current config.Config, proposed ...config.C
 	if setupjournal.TransactionPending(home) {
 		return errors.New("setup pending before writer protection")
 	}
-	if len(proposed) > 0 && ((proposed[0].CodexCapture != nil && current.CodexCapture == nil) || (proposed[0].CodexHistoryProtection && !current.CodexHistoryProtection) || (proposed[0].GenerationProtection && !current.GenerationProtection) || (proposed[0].DurableStorageProtection && !current.DurableStorageProtection)) {
+	if len(proposed) > 0 && ((proposed[0].CodexCapture != nil && current.CodexCapture == nil) || (proposed[0].CodexHistoryProtection && !current.CodexHistoryProtection) || (proposed[0].GenerationProtection && !current.GenerationProtection) || (proposed[0].DurableStorageProtection && !current.DurableStorageProtection) || (proposed[0].RetentionProtection && !current.RetentionProtection) || (proposed[0].ImportStagingProtection && !current.ImportStagingProtection)) {
 		if _, found, err := config.Load(home); err != nil {
 			return err
 		} else if found {

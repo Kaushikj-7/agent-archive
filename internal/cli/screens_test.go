@@ -241,7 +241,7 @@ var screens = []screen{
 		// Setup on an installed Mac asks what to change; this run leaves
 		// at the review.
 		name:    "setup-reconfigure-menu",
-		answers: []string{"3", "30", "q"},
+		answers: []string{"3", "custom", "30", "q"},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
 			f.installed(t)
@@ -397,7 +397,7 @@ var screens = []screen{
 		// Reconfiguring from a shell whose CODEX_HOME differs from when
 		// setup ran: the review warns that the hooks move, and stops there.
 		name:    "setup-review-hooks-move",
-		answers: []string{"3", "90", "q"},
+		answers: []string{"3", "90-days", "q"},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
 			f.installed(t)
@@ -410,7 +410,7 @@ var screens = []screen{
 		// The review of a reconfiguration that changes apps, projects and
 		// retention, saved.
 		name:    "setup-review-reconfigure-changes",
-		answers: []string{"4", "y", "y", "p", "~/src/api", "", "", "edit", "retention", "30", ""},
+		answers: []string{"4", "y", "y", "p", "~/src/api", "", "", "edit", "retention", "custom", "30", ""},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
 			f.installed(t)

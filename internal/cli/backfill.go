@@ -669,8 +669,8 @@ func confirmImport(p *prompter, out io.Writer, plan *backfill.Plan, configured i
 		case "y", "yes":
 			return true, nil
 		case "e", "edit":
-			if configured <= 0 {
-				terminal.Println(out, "Retention is off, so no session is deleted; there is nothing to keep longer.")
+			if configured == 0 {
+				terminal.Println(out, "Keep forever: there is no automatic expiry to extend. Explicit deletion and provider lifecycle rules still apply.")
 				continue
 			}
 			guidedExplanation(out, "Edit retention", "Retention applies to every session in the archive, not only these.", fmt.Sprintf("Here it can only be raised from %d days, and undo puts %d back. Shorten it in setup.", configured, configured))
@@ -678,10 +678,10 @@ func confirmImport(p *prompter, out io.Writer, plan *backfill.Plan, configured i
 			if err != nil {
 				return false, err
 			}
-			if days < configured {
+			if config.RetentionShorter(days, configured) {
 				// A shorter retention deletes sessions already archived,
 				// hook-captured ones too, which an import never does.
-				terminal.Printf(out, "Retention stays at %d days: a shorter period would delete sessions\nalready in the archive. Shorten it in setup.\n", plan.RetentionDays)
+				terminal.Printf(out, "Retention stays at %s: a shorter period would delete sessions\nalready in the archive. Shorten it in setup.\n", config.RetentionLabel(plan.RetentionDays))
 				continue
 			}
 			plan.RetentionDays = days

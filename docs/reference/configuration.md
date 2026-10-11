@@ -29,7 +29,7 @@ consistent with each other.
 | `hook_files` | Per app, the hook file setup installed into, resolved from `CLAUDE_CONFIG_DIR` and `CODEX_HOME` at setup time. |
 | `installed_executable` | The `agent-archive` path written into the hooks and the background job's definition. |
 | `background_backend` | The scheduler that runs the background collector, as setup recorded it: `systemd` on Linux. Status, uninstall, `setup --refresh` and recovery use this one and never pick another. Setup leaves it out for launchd, and an absent field means launchd on macOS and systemd on Linux, for all time, so a macOS `config.json` is what it always was. A build that predates the field ignores it. |
-| `retention_days` | Whole-session retention in days: 90 by default, 1 to 36,500. There is no "keep forever". |
+| `retention_days` | Whole-session retention in days: 90 by default; 1 to 36,500 for finite retention, or 0 for **Keep forever**. Missing legacy values default to 90. Forever disables whole-session expiry, while superseded-source/privacy cleanup and explicit deletion continue. Provider lifecycle rules can still delete objects. |
 | `require_skill_use` | When `true`, only sessions that used a skill are captured. Default `false`: all sessions. |
 | `codex_name_lookup` | Optional `files` (default) or `native`. Native explicitly permits a bounded Codex app-server startup for admitted ordinary session names. Startup can write Codex databases/system skills; desktop coexistence and real authentication are unverified. See [Codex session names](codex-session-names.md). |
 | `skill_evidence` | `none` omits filesystem skill inventory and snapshots; `metadata` uploads skill names and hashes of filtered skill text but no body; `body` uploads filtered SKILL.md snapshots. Fresh setup saves `metadata`. A schema 1 config without this field retains `body` and setup labels it “kept from previous setup”. Skill use detected in a native transcript can still satisfy `require_skill_use` with `none`. |
@@ -210,8 +210,8 @@ projects never append permissions or cause configuration writes.
 
 Scope-capable records use the incompatible writer fence
 `{"version":3,"writer":"codex-scope-floor-v3"}` in `schema_version` and a protected
-skill-evidence marker. Active, disabled and rollback snapshots retain this
-fence. Older discovery-v2 and numeric writers refuse it before mutation;
+skill-evidence marker, unless a higher protection supplies the outer fence.
+Active, disabled and rollback snapshots retain the protection. Older discovery-v2 and numeric writers refuse it before mutation;
 removing authorization fields is not a supported downgrade. Pairing transfers
 scope preferences, then obtains new local permission, not another machine's
 live authorization.
@@ -236,6 +236,16 @@ transition without changing configuration. Compaction never resets the floor.
 Earlier `codex-scope-v3` documents migrate nonempty histories conservatively
 from their earliest retained interval; empty unknown histories cannot resume
 or authorize starts until explicit local setup renews them. Every protected
-save, nested draft and rollback emits `codex-scope-floor-v3`, retaining schema
-version 3 and the stronger `+codex-scope-floor-v3` skill marker. Prior policy writers refuse this new
-identity before they can drop floors; schema 4 remains reserved for future UX.
+save, nested draft and rollback retains the stronger
+`+codex-scope-floor-v3` skill marker and native-floor validation. Without a higher
+protection, the outer fence is `codex-scope-floor-v3` (version3). Later sticky
+protections supply the outer fence: `archive-generations-v4` for generations,
+`codex-history-v5` for preserved history, `durable-storage-v7` for durable local
+storage, and `retention-forever-v8` for Keep forever. Version9,
+`import-staging-v9`, is reserved for the dependent durable import-staging feature.
+This retention implementation rejects version9 until that feature is installed.
+Each higher fence preserves the validation and compatibility protections below
+it. Older writers must understand the outer writer identity before mutation;
+a numeric schema bump alone does not protect against permissive legacy decoders.
+
+Choosing Keep forever installs a sticky compatibility fence: older binaries refuse this configuration before writing. Changing back to finite retention retains that fence; upgrade all installed hooks and collectors before using this option. Retention is per machine; pairing copies the current choice but later changes do not propagate. Already deleted sessions are not restored.

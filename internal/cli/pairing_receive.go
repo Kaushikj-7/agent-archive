@@ -293,6 +293,9 @@ func reviewPairingDestination(p *prompter, payload pairing.Payload, existing con
 func pairingCaptureSettings(p *prompter, payload pairing.Payload, cfg, existing config.Config, userHome string, opts setupOptions, env Env) (config.Config, error) {
 	var err error
 	cfg.RetentionDays = payload.RetentionDays
+	if payload.RetentionDays == 0 {
+		cfg.RetentionProtection = true
+	}
 	cfg.RequireSkillUse = payload.RequireSkillUse
 	cfg.SkillEvidence = config.SkillEvidence(payload.SkillEvidence)
 	cfg.NoSkills = payload.NoSkills

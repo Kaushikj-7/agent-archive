@@ -212,7 +212,7 @@ func (p Payload) validateProvenance() error {
 func (p Payload) validateCaptureAndLocation() error {
 	bad := invalidSettings()
 	s := p.Storage
-	if !safeText(s.Region) || !safeText(s.R2Account) || !safeText(s.R2Endpoint) || p.RetentionDays < 1 || p.RetentionDays > 36500 || !slices.Contains([]string{"none", "metadata", "body"}, p.SkillEvidence) || len(p.Apps) == 0 || len(p.Apps) > 3 {
+	if !safeText(s.Region) || !safeText(s.R2Account) || !safeText(s.R2Endpoint) || p.RetentionDays < 0 || p.RetentionDays > 36500 || !slices.Contains([]string{"none", "metadata", "body"}, p.SkillEvidence) || len(p.Apps) == 0 || len(p.Apps) > 3 {
 		return bad
 	}
 	return nil

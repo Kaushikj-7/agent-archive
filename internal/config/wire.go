@@ -21,6 +21,10 @@ const legacyCodexWriter configWriter = "codex-scope-v3"
 
 const codexWriter configWriter = "codex-scope-floor-v3"
 
+const importStagingWriter configWriter = "import-staging-v9"
+
+const retentionWriter configWriter = "retention-forever-v8"
+
 const durableStorageWriter configWriter = "durable-storage-v7"
 
 const codexHistoryWriter configWriter = "codex-history-v5"
@@ -37,11 +41,14 @@ type writerVersion struct {
 // reject this object before they can discard unknown authorization fields.
 // Normalize a value copy so edited nested setup drafts retain that fence.
 func (c Config) MarshalJSON() ([]byte, error) {
+	if c.RetentionDays == 0 {
+		c.RetentionProtection = true
+	}
 	if err := prepareDiscoveryConfig(&c); err != nil {
 		return nil, err
 	}
 	plain := configJSON(c)
-	if c.Discovery == nil && c.CodexCapture == nil && !c.GenerationProtection && !c.CodexHistoryProtection && !c.DurableStorageProtection {
+	if c.Discovery == nil && !c.ImportStagingProtection && !c.RetentionProtection && c.CodexCapture == nil && !c.GenerationProtection && !c.CodexHistoryProtection && !c.DurableStorageProtection {
 		return json.Marshal(plain)
 	}
 	if err := validateDiscoveryConfig(c); err != nil {
@@ -60,6 +67,9 @@ func (c Config) MarshalJSON() ([]byte, error) {
 	if c.DurableStorageProtection {
 		version = writerVersion{Version: 7, Writer: durableStorageWriter}
 	}
+	if c.RetentionProtection {
+		version = writerVersion{Version: 8, Writer: retentionWriter}
+	}
 	return json.Marshal(struct {
 		SchemaVersion writerVersion `json:"schema_version"`
 		*configJSON
@@ -77,9 +87,26 @@ func decodeConfig(data []byte, c *Config) (bool, error) {
 	plain := configJSON(*c)
 	wire := struct {
 		SchemaVersion json.RawMessage `json:"schema_version"`
+		RetentionDays json.RawMessage `json:"retention_days"`
 		*configJSON
 	}{configJSON: &plain}
 	if err := json.Unmarshal(data, &wire); err != nil {
+		return false, err
+	}
+	if len(wire.RetentionDays) == 0 {
+		plain.RetentionDays = DefaultRetentionDays
+	} else {
+		if bytes.Equal(bytes.TrimSpace(wire.RetentionDays), []byte("null")) {
+			return false, errors.New("retention_days must be an integer; omit the field for the legacy default")
+		}
+		if err := json.Unmarshal(wire.RetentionDays, &plain.RetentionDays); err != nil {
+			return false, err
+		}
+	}
+	if plain.ImportStagingProtection {
+		return false, errors.New("import staging protection requires a newer agent-archive writer")
+	}
+	if err := ValidateRetentionDays(plain.RetentionDays); err != nil {
 		return false, err
 	}
 	raw := bytes.TrimSpace(wire.SchemaVersion)
@@ -94,14 +121,23 @@ func decodeConfig(data []byte, c *Config) (bool, error) {
 		}
 		// Prior protected writers also need canonical migration before identity
 		// mutation: they do not understand immutable generation floors.
-		fenced = version.Writer == discoveryWriter || version.Writer == codexWriter || version.Writer == generationWriter || version.Writer == codexHistoryWriter || version.Writer == durableStorageWriter
+		fenced = version.Writer == discoveryWriter || version.Writer == codexWriter || version.Writer == generationWriter || version.Writer == codexHistoryWriter || version.Writer == durableStorageWriter || version.Writer == retentionWriter || version.Writer == importStagingWriter
 		plain.SchemaVersion = version.Version
 	} else if len(raw) > 0 {
 		if err := json.Unmarshal(raw, &plain.SchemaVersion); err != nil {
 			return false, err
 		}
 	}
+	if plain.SchemaVersion > 8 {
+		return false, errors.New("configuration requires a newer agent-archive writer")
+	}
 	*c = Config(plain)
+	if c.RetentionDays == 0 {
+		c.RetentionProtection = true
+		if err := prepareDiscoveryConfig(c); err != nil {
+			return false, err
+		}
+	}
 	return fenced, nil
 }
 
@@ -110,10 +146,14 @@ func codexMarkerMatches(mode SkillEvidence, writer configWriter) bool {
 }
 
 func validateWriterVersion(c Config, version writerVersion) error {
-	if (version.Version != 2 || (version.Writer != discoveryWriter && version.Writer != legacyDiscoveryWriter)) && (version.Version != 3 || (version.Writer != codexWriter && version.Writer != legacyCodexWriter)) && (version.Version != 4 || version.Writer != generationWriter) && (version.Version != 5 || version.Writer != codexHistoryWriter) && (version.Version != 7 || version.Writer != durableStorageWriter) {
+	if (version.Version != 2 || (version.Writer != discoveryWriter && version.Writer != legacyDiscoveryWriter)) && (version.Version != 3 || (version.Writer != codexWriter && version.Writer != legacyCodexWriter)) && (version.Version != 4 || version.Writer != generationWriter) && (version.Version != 5 || version.Writer != codexHistoryWriter) && (version.Version != 7 || version.Writer != durableStorageWriter) && (version.Version != 8 || version.Writer != retentionWriter) {
 		return errors.New("configuration requires a supported writer fence")
 	}
-	if version.Version == 7 {
+	if version.Version == 8 {
+		if !c.RetentionProtection {
+			return errors.New("retention writer fence requires protection")
+		}
+	} else if version.Version == 7 {
 		if !c.DurableStorageProtection {
 			return errors.New("durable storage writer fence requires protection")
 		}
@@ -136,14 +176,14 @@ func validateWriterVersion(c Config, version writerVersion) error {
 }
 
 func validateWriterFloors(c Config, version writerVersion) error {
-	if version.Writer == discoveryWriter || ((version.Writer == generationWriter || version.Writer == codexHistoryWriter || version.Writer == durableStorageWriter) && c.Discovery != nil) {
+	if version.Writer == discoveryWriter || ((version.Writer == generationWriter || version.Writer == codexHistoryWriter || version.Writer == durableStorageWriter || version.Writer == retentionWriter || version.Writer == importStagingWriter) && c.Discovery != nil) {
 		for _, a := range c.Discovery.Authorizations {
 			if len(a.Intervals) > 0 && a.NativeStartFloor.IsZero() {
 				return errors.New("discovery permission history requires its native start floor")
 			}
 		}
 	}
-	if version.Writer == codexWriter || ((version.Writer == generationWriter || version.Writer == codexHistoryWriter || version.Writer == durableStorageWriter) && c.CodexCapture != nil) {
+	if version.Writer == codexWriter || ((version.Writer == generationWriter || version.Writer == codexHistoryWriter || version.Writer == durableStorageWriter || version.Writer == retentionWriter || version.Writer == importStagingWriter) && c.CodexCapture != nil) {
 		var scopes []*DiscoveryAuthorization
 		scopes = append(scopes, c.CodexCapture.Authorization, c.CodexCapture.SourceAuthorization)
 		if c.Discovery != nil {

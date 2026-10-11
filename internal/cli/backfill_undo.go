@@ -205,7 +205,7 @@ func (cmd undoCommand) finishEmpty(plan backfill.UndoPlan) int {
 		terminal.Printf(cmd.stdout, "Import %s has nothing left to undo. Nothing was changed.\n", batch.ID)
 	}
 	if r := plan.RetentionKept; r != nil {
-		terminal.Printf(cmd.stdout, "Retention stays at %d days. To put back the %d days from before the import, run agent-archive backfill undo %s --restore-retention\n", r.To, r.From, batch.ID)
+		terminal.Printf(cmd.stdout, "Retention stays at %s. To put back the %d days from before the import, run agent-archive backfill undo %s --restore-retention\n", config.RetentionLabel(r.To), r.From, batch.ID)
 	}
 	return 0
 }

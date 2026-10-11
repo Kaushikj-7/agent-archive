@@ -177,7 +177,7 @@ func (p Plan) AppsWithoutHooks() []string {
 // ExpiresOn is the local date retention deletes sessions imported now, or
 // false when retention is off.
 func (p Plan) ExpiresOn() (string, bool) {
-	if p.RetentionDays <= 0 {
+	if p.RetentionDays == 0 {
 		return "", false
 	}
 	return p.GeneratedAt.AddDate(0, 0, p.RetentionDays).Format(dateLayout), true
@@ -306,7 +306,7 @@ func renderPlanNextSteps(w io.Writer, p Plan, projects []ProjectSummary) {
 	if expires, ok := p.ExpiresOn(); ok {
 		terminal.Printf(w, "  • Retention is %d days, so these sessions are deleted on %s.\n    Choose `edit` to keep them longer.\n", p.RetentionDays, expires)
 	} else {
-		terminal.Println(w, "  • Retention is off, so these sessions are kept until you delete them.")
+		terminal.Println(w, "  • Keep forever: these sessions have no automatic expiry. Provider lifecycle rules and explicit deletion still apply.")
 	}
 	terminal.Println(w, "  • Undo any time with `agent-archive backfill undo`.")
 }
@@ -726,6 +726,7 @@ type planJSON struct {
 	Projects             []projectJSON         `json:"projects"`
 	Skipped              map[SkipReason]int    `json:"skipped"`
 	AppsWithoutHooks     []string              `json:"apps_without_hooks"`
+	AutomaticExpiry      bool                  `json:"automatic_expiry"`
 	RetentionDays        int                   `json:"retention_days"`
 	// ExpiresOn is empty when retention is off.
 	ExpiresOn string `json:"expires_on"`
@@ -808,6 +809,7 @@ func RenderJSON(w io.Writer, p Plan) error {
 		Diagnostics:          p.Diagnostics(),
 		RecoveryEvidenceGaps: p.RecoveryEvidenceGaps,
 		AppsWithoutHooks:     p.AppsWithoutHooks(),
+		AutomaticExpiry:      p.RetentionDays != 0,
 		RetentionDays:        p.RetentionDays,
 		StorageChecked:       false,
 		// False when Cursor's database could not be read; see

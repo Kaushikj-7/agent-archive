@@ -59,7 +59,7 @@ func TestAnotherMachineCommandNeverCarriesTheR2Secret(t *testing.T) {
 // quotes what the shell would split.
 func TestAnotherMachineCommand(t *testing.T) {
 	t.Parallel()
-	cfg := config.Config{
+	cfg := config.Config{RetentionDays: 90,
 		Storage:   credentials.Config{Provider: credentials.ProviderS3, Bucket: "team-archive", AWSProfile: "work", Region: "us-east-1"},
 		Harnesses: []string{"codex", "claude"},
 		Archive: archive.Config{Projects: []archive.ProjectActivation{
@@ -87,7 +87,7 @@ func TestAnotherMachineCommandResolvesTheHomeFolder(t *testing.T) {
 	must(t, os.Symlink(target, link))
 	resolved, err := filepath.EvalSymlinks(target)
 	must(t, err)
-	cfg := config.Config{
+	cfg := config.Config{RetentionDays: 90,
 		Storage:   credentials.Config{Provider: credentials.ProviderS3, Bucket: "b", AWSProfile: "p"},
 		Harnesses: []string{"claude"},
 		Archive:   archive.Config{Projects: []archive.ProjectActivation{{Root: filepath.Join(resolved, "src", "app"), Included: true}}},
@@ -103,7 +103,7 @@ func TestAnotherMachineCommandResolvesTheHomeFolder(t *testing.T) {
 func TestAnotherMachineCommandCustomEndpointAndFolder(t *testing.T) {
 	t.Parallel()
 	endpoint := "https://" + testR2Account + ".eu.r2.cloudflarestorage.com"
-	cfg := config.Config{
+	cfg := config.Config{RetentionDays: 90,
 		Storage: credentials.Config{
 			Provider: credentials.ProviderR2, Bucket: "b", Prefix: "team/",
 			R2Endpoint: endpoint, R2CredentialRef: "ref-123",

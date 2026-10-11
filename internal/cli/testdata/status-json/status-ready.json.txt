@@ -1,5 +1,9 @@
 $ agent-archive status --json
 {
+  "retention": {
+    "retention_days": 90,
+    "automatic_expiry": true
+  },
   "identity_recovery": {
     "complete": true,
     "pending": false,
