@@ -191,7 +191,7 @@ func fromHandoffExchanges(handoff []HandoffExchange) []TranscriptExchange {
 				exchange.Steps = append(exchange.Steps, TranscriptStep{Kind: TranscriptStepShell, Text: step.Text})
 			case HandoffStepSummary:
 				exchange.Steps = append(exchange.Steps, TranscriptStep{Kind: TranscriptStepSummary, Text: step.Text})
-			case HandoffStepCollapsed:
+			case HandoffStepCollapsed, HandoffStepOmitted:
 				// Only a budget collapses steps, and a transcript has none.
 			}
 		}
