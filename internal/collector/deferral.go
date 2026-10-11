@@ -3,6 +3,7 @@ package collector
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"time"
@@ -21,6 +22,39 @@ const (
 	// naming it) changed while it was being read.
 	DeferredSourceChanged = "source_changed"
 )
+
+// MaxDeferral bounds how long a session's scans may be deferred: once every
+// pass for this long has deferred them, the next deferral is a failure,
+// reported as one (DeferralExpiredProblem), so a refusal no later pass
+// clears (coverage that never completes for the thread, a source changed on
+// every read) cannot hide as "rechecking" for good. A pass that scans the
+// session without deferring it (it fails, or succeeds) starts the clock
+// again.
+const MaxDeferral = 24 * time.Hour
+
+// DeferralExpiredProblem prefixes the error of a session whose deferral
+// outlasted MaxDeferral.
+var DeferralExpiredProblem = fmt.Sprintf("still not read after %d hours of retries", int(MaxDeferral/time.Hour))
+
+// loadDeferredSince reads when each session's run of deferred scans began
+// (state.Status.DeferredSince) from the previous pass's status. A status
+// that cannot be read starts every clock again, delaying a failure by at
+// most MaxDeferral.
+func (p *pass) loadDeferredSince() {
+	if previous, err := p.local.LoadStatus(); err == nil {
+		p.priorDeferredSince = previous.DeferredSince
+	}
+}
+
+// deferredSince is when the run of deferred scans this deferral continues
+// began: the previous pass's, when it deferred the session too, or now.
+func (p *pass) deferredSince(id string) time.Time {
+	now := p.now.UTC()
+	if since, ok := p.priorDeferredSince[id]; ok && !since.IsZero() && !since.After(now) {
+		return since
+	}
+	return now
+}
 
 // coverageLookupTimeout bounds the one coverage lookup a failed Codex scan
 // may cost (see pass.nameCodexCoverage).

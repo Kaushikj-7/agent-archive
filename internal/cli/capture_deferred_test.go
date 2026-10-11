@@ -192,10 +192,11 @@ func TestStatusListsDeferredSessionsApartFromFailures(t *testing.T) {
 func TestSyncCountsDeferredSessionsByReason(t *testing.T) {
 	t.Parallel()
 	result := collector.Result{
-		Scanned:  4,
-		Skipped:  []string{"unchanged"},
-		Errors:   map[string]error{"failed": errors.New("boom")},
-		Deferred: map[string]string{"a": collector.DeferredHistoryCoverage, "b": collector.DeferredHistoryCoverage},
+		Scanned: 4,
+		Skipped: []string{"unchanged"},
+		Errors:  map[string]error{"failed": errors.New("boom")},
+		// "failed" was deferred, then failed retention: counted as failed only.
+		Deferred: map[string]string{"a": collector.DeferredHistoryCoverage, "b": collector.DeferredHistoryCoverage, "failed": collector.DeferredHistoryCoverage},
 	}
 	if got, want := syncSummary(result), "Scanned 4 session(s): 0 published, 1 unchanged, 1 failed; 2 waiting for Codex history coverage."; got != want {
 		t.Errorf("sync summary = %q, want %q", got, want)
@@ -209,7 +210,7 @@ func TestSyncCountsDeferredSessionsByReason(t *testing.T) {
 		{map[string]string{"a": collector.DeferredHistoryCoverage, "b": collector.DeferredHistoryCoverage, "c": collector.DeferredSourceChanged, "d": "from_a_later_version"},
 			"; 1 rechecking after the source changed while being read; 1 rechecking on the next pass; 2 waiting for Codex history coverage"},
 	} {
-		if got := deferredSummary(tc.deferred); got != tc.want {
+		if got := deferredSummary(tc.deferred, nil); got != tc.want {
 			t.Errorf("deferredSummary(%v) = %q, want %q", tc.deferred, got, tc.want)
 		}
 	}

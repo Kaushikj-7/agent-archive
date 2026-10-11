@@ -1004,9 +1004,13 @@ type Status struct {
 	// and the next pass retries. Such a session is pending; a deferral alone
 	// never makes it one of the SessionIssues.
 	DeferredSessions map[string]string `json:"deferred_sessions,omitempty"`
-	LastScanAt       time.Time         `json:"last_scan_at,omitzero"`
-	LastPublishedAt  time.Time         `json:"last_published_at,omitzero"`
-	PendingCount     int               `json:"pending_count"`
+	// DeferredSince gives, for each of the DeferredSessions, when the run of
+	// passes that each deferred its scan began. A session deferred for
+	// collector.MaxDeferral fails instead.
+	DeferredSince   map[string]time.Time `json:"deferred_since,omitempty"`
+	LastScanAt      time.Time            `json:"last_scan_at,omitzero"`
+	LastPublishedAt time.Time            `json:"last_published_at,omitzero"`
+	PendingCount    int                  `json:"pending_count"`
 	// LastError is every problem the last pass recorded, joined with "; ".
 	// It is kept, with the same contents, for older readers; LastErrors
 	// holds the same problems one per entry. Set both with SetLastErrors

@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
@@ -196,4 +198,53 @@ func TestNameCoverageRefusalsOnlyNamesBareRefusals(t *testing.T) {
 			t.Errorf("%v was named a coverage deferral", unnamed)
 		}
 	}
+}
+
+// A refusal no later pass clears (coverage that never completes, a source
+// changed on every read) must not stay "rechecking" for good: once a
+// session's scans have been deferred on every pass for MaxDeferral, the next
+// deferral is a failure, and a pass that does not defer it starts the clock
+// again.
+func TestRunFailsDeferralsOlderThanMaxDeferral(t *testing.T) {
+	t.Parallel()
+	local := newTestStore(t)
+	reg := registration(t, writeTranscript(t, t.TempDir(), "codex.jsonl", codexTranscript))
+	if err := local.SaveRegistration(reg); err != nil {
+		t.Fatal(err)
+	}
+	id := reg.ArchiveSessionID
+	start := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
+	changed := agentapi.Wrap(agentapi.Changed, errors.New("native index changed during snapshot"))
+	pass := func(at time.Time) (Result, state.Status) {
+		t.Helper()
+		opts := Options{Sources: failingReadSources{err: changed}, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return at }}
+		result, err := Run(t.Context(), local, storagetest.NewMemoryStore(), opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		status, err := local.LoadStatus()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return result, status
+	}
+	deferredSince := func(at, since time.Time) {
+		t.Helper()
+		result, status := pass(at)
+		if len(result.Errors) != 0 || result.Deferred[id] != DeferredSourceChanged || !status.DeferredSince[id].Equal(since) {
+			t.Fatalf("pass at %v: errors=%v deferred=%v since=%v, want deferred since %v", at, result.Errors, result.Deferred, status.DeferredSince, since)
+		}
+	}
+	deferredSince(start, start)
+	deferredSince(start.Add(MaxDeferral-time.Minute), start)
+	result, status := pass(start.Add(MaxDeferral))
+	if err := result.Errors[id]; err == nil || !strings.Contains(err.Error(), DeferralExpiredProblem) || len(result.Deferred) != 0 || len(status.DeferredSessions) != 0 || len(status.DeferredSince) != 0 || len(status.LastErrors) == 0 {
+		t.Fatalf("expired deferral: errors=%v deferred=%v status=%+v, want a failure", result.Errors, result.Deferred, status)
+	}
+	if status.PendingCount != 1 {
+		t.Fatalf("pending=%d, want the failed scan still pending", status.PendingCount)
+	}
+	// The failure was reported; the next deferral starts a new run.
+	restart := start.Add(MaxDeferral + time.Hour)
+	deferredSince(restart, restart)
 }

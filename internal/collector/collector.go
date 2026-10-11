@@ -302,6 +302,7 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	if err := p.loadWork(); err != nil {
 		return Result{}, err
 	}
+	p.loadDeferredSince()
 	p.reconcileNativeLinks()
 	if p.opts.PrepareCodexCoverage != nil {
 		if err := p.opts.PrepareCodexCoverage(ctx, p.registrations); err != nil {
@@ -365,6 +366,10 @@ type pass struct {
 	result             Result
 	durableObligations []state.DurableStorageObligation
 	durableCounted     map[string]bool
+	// priorDeferredSince is the previous pass's state.Status.DeferredSince,
+	// and deferredAt this pass's (see deferredSince).
+	priorDeferredSince map[string]time.Time
+	deferredAt         map[string]time.Time
 }
 
 // loadWork lists the registered sessions and their pending requests. One
@@ -469,12 +474,26 @@ func (p *pass) fail(id string, err error) {
 // deferScan ends a session's turn in the pass without a failure: its source
 // could not be read completely yet (see deferralReason). Like a failure, it
 // leaves the scan journal standing for the next pass to retry, and counts
-// as pending.
-func (p *pass) deferScan(id, reason string) {
+// as pending. A session that already has a failure recorded this pass, or
+// whose scans have been deferred on every pass for MaxDeferral, fails with
+// err instead (see deferredSince).
+func (p *pass) deferScan(id, reason string, err error) {
+	since := p.deferredSince(id)
+	if p.result.Errors[id] != nil {
+		// One failure already makes it a failed session; it is counted once.
+		p.fail(id, err)
+		return
+	}
+	if p.now.Sub(since) >= MaxDeferral {
+		p.fail(id, fmt.Errorf("%s: %w", DeferralExpiredProblem, err))
+		return
+	}
 	if p.result.Deferred == nil {
 		p.result.Deferred = map[string]string{}
+		p.deferredAt = map[string]time.Time{}
 	}
 	p.result.Deferred[id] = reason
+	p.deferredAt[id] = since
 	p.pending++
 	p.opts.progress(id, false)
 }
@@ -534,7 +553,7 @@ func (p *pass) scan(reg archive.SessionRegistration) {
 	}
 	err = p.nameCodexCoverage(p.ctx, reg, err)
 	if reason, deferred := deferralReason(err); deferred {
-		p.deferScan(id, reason)
+		p.deferScan(id, reason, err)
 		return
 	}
 	if err != nil {
@@ -645,6 +664,7 @@ func (p *pass) saveStatus() error {
 		UnrefreshableSummaries: p.countRefreshSkips(),
 		PendingNativeLinks:     p.result.PendingNativeLinks, NativeLinkPendingReasons: p.result.NativeLinkPendingReasons,
 		DeferredSessions: p.result.Deferred,
+		DeferredSince:    p.deferredAt,
 		WaitingSubagents: len(p.result.WaitingSubagents),
 		RunningSubagents: len(p.result.RunningSubagents),
 		// The pass rebuilds everything else from scratch; this list is a

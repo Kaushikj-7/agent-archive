@@ -13,7 +13,8 @@ follow [Semantic Versioning](https://semver.org/).
   as waiting only sessions not in the archive yet, and counts uploaded ones
   with a re-scan or newer work owed apart (`uploaded · 2 rechecking`). A
   source error can now carry a fixed, content-free cause ("source unavailable:
-  Codex history coverage incomplete").
+  Codex history coverage incomplete"). A session still put off after 24
+  hours of passes is reported as failed again.
 
 - Stop titling Codex desktop sessions with injected open-page context such as
   `<external_codex_apps_open_page>{"page_id":null}</external_codex_apps_open_page>`.

@@ -70,11 +70,15 @@ func deferredReasonWhat(reason string) string {
 
 // deferredSummary is sync's count of the sessions a pass deferred, by
 // reason, or "" when it deferred none. A deferral is not a failure: the next
-// pass retries the session, so sync lists no error for it.
-func deferredSummary(deferred map[string]string) string {
+// pass retries the session, so sync lists no error for it. A session in
+// failed (a retention failure recorded after collection, say) is counted
+// there only.
+func deferredSummary(deferred map[string]string, failed map[string]error) string {
 	counts := map[string]int{}
-	for _, reason := range deferred {
-		counts[deferredReasonWhat(reason)]++
+	for id, reason := range deferred {
+		if failed[id] == nil {
+			counts[deferredReasonWhat(reason)]++
+		}
 	}
 	var summary strings.Builder
 	for _, what := range slices.Sorted(maps.Keys(counts)) {
@@ -88,7 +92,7 @@ func deferredSummary(deferred map[string]string) string {
 // as failed, and has no error line of its own.
 func syncSummary(result collector.Result) string {
 	return fmt.Sprintf("Scanned %d session(s): %d published, %s%d unchanged, %d failed%s%s.",
-		result.Scanned, len(result.Published), waitingSummary(result.Waiting, result.NextReadyAt), len(result.Skipped), len(result.Errors), deferredSummary(result.Deferred), subagentsSummary(result))
+		result.Scanned, len(result.Published), waitingSummary(result.Waiting, result.NextReadyAt), len(result.Skipped), len(result.Errors), deferredSummary(result.Deferred, result.Errors), subagentsSummary(result))
 }
 
 // runSyncCommand implements `agent-archive sync`: one explicit collection
