@@ -6,6 +6,9 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Protect active and preserved revision sources during purge and selective archive
+  cleanup. Invalid or missing history references block deletion; old-filter live
+  evidence must be replaced through verified privacy publication first.
 - Stop reporting Codex sessions whose history coverage is not complete yet,
   or whose source changed while being read, as failed: `sync` counts them by
   reason ("8 waiting for Codex history coverage") and `status` lists them as
