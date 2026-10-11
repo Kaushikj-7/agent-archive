@@ -1,8 +1,13 @@
 $ agent-archive setup --yes --apps codex --provider s3 --bucket team-archive --aws-profile work --region us-east-1 --codex-discovery off --codex-capture-scope all-projects
   \e[32m✓\e[0m Codex hooks: ~/.codex/hooks.json
   \e[32m✓\e[0m Background job: launchctl responds
+
+\e[1mStorage · Verification\e[0m
+\e[2mAccount → Storage → Verification\e[0m
 Checking your storage connection…
 \e[32m✓\e[0m Connected to your storage.
+  \e[33m!\e[0m Bucket privacy not verified: public-access settings could not be read.
+    Make sure public access is off: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
   \e[33m!\e[0m Codex scope expands to all current and future projects (Codex only).
     New admissions start after this local consent; old history and paused or excluded starts remain out of scope.
   \e[2m·\e[0m Codex capture: Approved hooks only; automatic discovery off.

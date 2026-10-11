@@ -51,7 +51,12 @@ account , endpoint .
 
   \e[32m✓\e[0m Codex hooks: ~/.codex/hooks.json
   \e[32m✓\e[0m Background job: launchctl responds
+
+\e[1mStorage · Verification\e[0m
+\e[2mAccount → Storage → Verification\e[0m
 \e[32m✓\e[0m Connected to your storage.
+  \e[33m!\e[0m Bucket privacy not verified: public-access settings could not be read.
+    Make sure public access is off: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
   \e[2m·\e[0m Codex capture: Automatic discovery plus hooks when approved.
   \e[2m·\e[0m Codex scope: Included projects only.
   \e[2m·\e[0m Exceptions: None configured.
