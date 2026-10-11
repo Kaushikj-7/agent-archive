@@ -367,7 +367,7 @@ type pass struct {
 	durableObligations []state.DurableStorageObligation
 	durableCounted     map[string]bool
 	// priorDeferredSince is the previous pass's state.Status.DeferredSince,
-	// and deferredAt this pass's (see deferredSince).
+	// and deferredAt this pass's (see deferredSince, keepDeferredSince).
 	priorDeferredSince map[string]time.Time
 	deferredAt         map[string]time.Time
 }
@@ -457,7 +457,11 @@ func (p *pass) loadWork() error {
 // work (a request) is left for the next pass.
 func (p *pass) leaveForNextPass(rest []archive.SessionRegistration) {
 	for _, reg := range rest {
-		if !p.durableCounted[reg.ArchiveSessionID] && p.requests[reg.ArchiveSessionID].Token != "" && (p.opts.AcceptSession == nil || p.opts.AcceptSession(reg)) {
+		accepted := p.opts.AcceptSession == nil || p.opts.AcceptSession(reg)
+		if accepted {
+			p.carryDeferredSince(reg.ArchiveSessionID)
+		}
+		if !p.durableCounted[reg.ArchiveSessionID] && p.requests[reg.ArchiveSessionID].Token != "" && accepted {
 			p.pending++
 		}
 	}
@@ -479,6 +483,10 @@ func (p *pass) fail(id string, err error) {
 // err instead (see deferredSince).
 func (p *pass) deferScan(id, reason string, err error) {
 	since := p.deferredSince(id)
+	// The clock runs on through a failure for it: the next pass that defers
+	// the session fails it again rather than starting a new run of
+	// "rechecking" passes.
+	p.keepDeferredSince(id, since)
 	if p.result.Errors[id] != nil {
 		// One failure already makes it a failed session; it is counted once.
 		p.fail(id, err)
@@ -490,10 +498,8 @@ func (p *pass) deferScan(id, reason string, err error) {
 	}
 	if p.result.Deferred == nil {
 		p.result.Deferred = map[string]string{}
-		p.deferredAt = map[string]time.Time{}
 	}
 	p.result.Deferred[id] = reason
-	p.deferredAt[id] = since
 	p.pending++
 	p.opts.progress(id, false)
 }
@@ -547,6 +553,7 @@ func (p *pass) scan(reg archive.SessionRegistration) {
 		// The pass ran out of time (or was cancelled) with this session in
 		// flight. That is not the session failing: its pending publication
 		// is intact and the next pass carries on with it.
+		p.carryDeferredSince(id)
 		p.pending++
 		p.opts.progress(id, false)
 		return

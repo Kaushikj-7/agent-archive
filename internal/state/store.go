@@ -1004,9 +1004,11 @@ type Status struct {
 	// and the next pass retries. Such a session is pending; a deferral alone
 	// never makes it one of the SessionIssues.
 	DeferredSessions map[string]string `json:"deferred_sessions,omitempty"`
-	// DeferredSince gives, for each of the DeferredSessions, when the run of
+	// DeferredSince gives, for each session whose scan the last pass
+	// deferred (one of the DeferredSessions, or of the SessionIssues once
+	// deferred for collector.MaxDeferral) or did not reach, when the run of
 	// passes that each deferred its scan began. A session deferred for
-	// collector.MaxDeferral fails instead.
+	// collector.MaxDeferral fails instead, on every pass that defers it.
 	DeferredSince   map[string]time.Time `json:"deferred_since,omitempty"`
 	LastScanAt      time.Time            `json:"last_scan_at,omitzero"`
 	LastPublishedAt time.Time            `json:"last_published_at,omitzero"`

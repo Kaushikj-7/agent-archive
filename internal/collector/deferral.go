@@ -25,11 +25,12 @@ const (
 
 // MaxDeferral bounds how long a session's scans may be deferred: once every
 // pass for this long has deferred them, the next deferral is a failure,
-// reported as one (DeferralExpiredProblem), so a refusal no later pass
-// clears (coverage that never completes for the thread, a source changed on
-// every read) cannot hide as "rechecking" for good. A pass that scans the
-// session without deferring it (it fails, or succeeds) starts the clock
-// again.
+// reported as one (DeferralExpiredProblem), and so is every deferral after
+// it, so a refusal no later pass clears (coverage that never completes for
+// the thread, a source changed on every read) cannot hide as "rechecking"
+// for good. A pass that scans the session without deferring it (it fails
+// otherwise, or succeeds) starts the clock again; a pass that ends before
+// scanning it leaves the clock running.
 const MaxDeferral = 24 * time.Hour
 
 // DeferralExpiredProblem prefixes the error of a session whose deferral
@@ -54,6 +55,25 @@ func (p *pass) deferredSince(id string) time.Time {
 		return since
 	}
 	return now
+}
+
+// keepDeferredSince records since as when the session's run of deferred
+// scans began, for the next pass to continue.
+func (p *pass) keepDeferredSince(id string, since time.Time) {
+	if p.deferredAt == nil {
+		p.deferredAt = map[string]time.Time{}
+	}
+	p.deferredAt[id] = since
+}
+
+// carryDeferredSince keeps the previous pass's clock for a session this pass
+// ended before scanning (it stopped early, or ran out of time with the
+// session in flight): not scanning a session is not scanning it without a
+// deferral, so its run of deferred scans goes on.
+func (p *pass) carryDeferredSince(id string) {
+	if since, ok := p.priorDeferredSince[id]; ok {
+		p.keepDeferredSince(id, since)
+	}
 }
 
 // coverageLookupTimeout bounds the one coverage lookup a failed Codex scan

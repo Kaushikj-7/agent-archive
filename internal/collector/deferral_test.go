@@ -15,20 +15,24 @@ import (
 )
 
 // failingReadSources serves the built-in sources, except that every read
-// fails with err.
-type failingReadSources struct{ err error }
+// fails with err, after calling cancel when it is set.
+type failingReadSources struct {
+	err    error
+	cancel func()
+}
 
 func (s failingReadSources) LookupSources(name string) (agentapi.SourceProvider, agentapi.TranscriptFilter, bool) {
 	p, f, ok := testSources.LookupSources(name)
 	if !ok {
 		return nil, nil, false
 	}
-	return failingReadProvider{SourceProvider: p, err: s.err}, f, true
+	return failingReadProvider{SourceProvider: p, err: s.err, cancel: s.cancel}, f, true
 }
 
 type failingReadProvider struct {
 	agentapi.SourceProvider
-	err error
+	err    error
+	cancel func()
 }
 
 func (p failingReadProvider) OpenPass(ctx context.Context, env agentapi.SourceEnvironment) (agentapi.SourcePass, error) {
@@ -36,15 +40,19 @@ func (p failingReadProvider) OpenPass(ctx context.Context, env agentapi.SourceEn
 	if err != nil {
 		return nil, err
 	}
-	return failingReadPass{SourcePass: pass, err: p.err}, nil
+	return failingReadPass{SourcePass: pass, err: p.err, cancel: p.cancel}, nil
 }
 
 type failingReadPass struct {
 	agentapi.SourcePass
-	err error
+	err    error
+	cancel func()
 }
 
 func (p failingReadPass) Read(context.Context, agentapi.SourceRef, agentapi.ReadLimits) (agentapi.SourceSnapshot, error) {
+	if p.cancel != nil {
+		p.cancel()
+	}
 	return nil, p.err
 }
 
@@ -202,9 +210,9 @@ func TestNameCoverageRefusalsOnlyNamesBareRefusals(t *testing.T) {
 
 // A refusal no later pass clears (coverage that never completes, a source
 // changed on every read) must not stay "rechecking" for good: once a
-// session's scans have been deferred on every pass for MaxDeferral, the next
-// deferral is a failure, and a pass that does not defer it starts the clock
-// again.
+// session's scans have been deferred on every pass for MaxDeferral, every
+// further deferral is a failure; a pass that ends before scanning it leaves
+// the clock running, and a pass that reads it starts the clock again.
 func TestRunFailsDeferralsOlderThanMaxDeferral(t *testing.T) {
 	t.Parallel()
 	local := newTestStore(t)
@@ -215,10 +223,11 @@ func TestRunFailsDeferralsOlderThanMaxDeferral(t *testing.T) {
 	id := reg.ArchiveSessionID
 	start := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 	changed := agentapi.Wrap(agentapi.Changed, errors.New("native index changed during snapshot"))
-	pass := func(at time.Time) (Result, state.Status) {
+	remote := storagetest.NewMemoryStore()
+	run := func(opts Options, at time.Time) (Result, state.Status) {
 		t.Helper()
-		opts := Options{Sources: failingReadSources{err: changed}, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return at }}
-		result, err := Run(t.Context(), local, storagetest.NewMemoryStore(), opts)
+		opts.Parsers, opts.MachineID, opts.Now = testParsers, "m", func() time.Time { return at }
+		result, err := Run(t.Context(), local, remote, opts)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -228,6 +237,11 @@ func TestRunFailsDeferralsOlderThanMaxDeferral(t *testing.T) {
 		}
 		return result, status
 	}
+	refusing := Options{Sources: failingReadSources{err: changed}}
+	pass := func(at time.Time) (Result, state.Status) {
+		t.Helper()
+		return run(refusing, at)
+	}
 	deferredSince := func(at, since time.Time) {
 		t.Helper()
 		result, status := pass(at)
@@ -235,18 +249,59 @@ func TestRunFailsDeferralsOlderThanMaxDeferral(t *testing.T) {
 			t.Fatalf("pass at %v: errors=%v deferred=%v since=%v, want deferred since %v", at, result.Errors, result.Deferred, status.DeferredSince, since)
 		}
 	}
+	expired := func(at time.Time) {
+		t.Helper()
+		result, status := pass(at)
+		if err := result.Errors[id]; err == nil || !strings.Contains(err.Error(), DeferralExpiredProblem) || len(result.Deferred) != 0 || len(status.DeferredSessions) != 0 || !status.DeferredSince[id].Equal(start) || len(status.LastErrors) == 0 {
+			t.Fatalf("pass at %v: errors=%v deferred=%v status=%+v, want a failure with the clock still running from %v", at, result.Errors, result.Deferred, status, start)
+		}
+		if status.PendingCount != 1 {
+			t.Fatalf("pending=%d, want the failed scan still pending", status.PendingCount)
+		}
+	}
 	deferredSince(start, start)
+	// A pass that stops before reaching the session keeps its clock.
+	stopped := Options{Sources: refusing.Sources, Stop: func() bool { return true }}
+	if result, status := run(stopped, start.Add(time.Hour)); result.Deferred[id] != "" || !status.DeferredSince[id].Equal(start) {
+		t.Fatalf("stopped pass: deferred=%v since=%v, want the session unscanned and its clock from %v kept", result.Deferred, status.DeferredSince, start)
+	}
+	// So does one that runs out of time with the session in flight.
+	ctx, cancel := context.WithCancel(t.Context())
+	interrupted := Options{Sources: failingReadSources{err: context.Canceled, cancel: cancel}, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return start.Add(2 * time.Hour) }}
+	if result, err := Run(ctx, local, remote, interrupted); err != nil || len(result.Errors) != 0 || result.Deferred[id] != "" {
+		t.Fatalf("interrupted pass: err=%v errors=%v deferred=%v, want the session left for the next pass", err, result.Errors, result.Deferred)
+	}
+	if status, err := local.LoadStatus(); err != nil || !status.DeferredSince[id].Equal(start) {
+		t.Fatalf("interrupted pass: since=%v (%v), want the clock from %v kept", status.DeferredSince, err, start)
+	}
 	deferredSince(start.Add(MaxDeferral-time.Minute), start)
-	result, status := pass(start.Add(MaxDeferral))
-	if err := result.Errors[id]; err == nil || !strings.Contains(err.Error(), DeferralExpiredProblem) || len(result.Deferred) != 0 || len(status.DeferredSessions) != 0 || len(status.DeferredSince) != 0 || len(status.LastErrors) == 0 {
-		t.Fatalf("expired deferral: errors=%v deferred=%v status=%+v, want a failure", result.Errors, result.Deferred, status)
+	expired(start.Add(MaxDeferral))
+	// Once reported, it stays a failure on every pass that defers it.
+	expired(start.Add(MaxDeferral + time.Hour))
+	// A pass that reads the session ends the run.
+	if result, status := run(Options{Sources: testSources}, start.Add(MaxDeferral+2*time.Hour)); len(result.Errors) != 0 || len(status.DeferredSince) != 0 {
+		t.Fatalf("read pass: errors=%v since=%v, want no failure and no clock", result.Errors, status.DeferredSince)
 	}
-	if status.PendingCount != 1 {
-		t.Fatalf("pending=%d, want the failed scan still pending", status.PendingCount)
+	// Scan it again: the next deferral starts a new run.
+	if err := local.SetScanPending(id, true); err != nil {
+		t.Fatal(err)
 	}
-	// The failure was reported; the next deferral starts a new run.
-	restart := start.Add(MaxDeferral + time.Hour)
+	restart := start.Add(MaxDeferral + 3*time.Hour)
 	deferredSince(restart, restart)
+}
+
+// A recorded start after the pass's own clock (the clock was set back) is
+// not trusted: the run starts again now rather than never expiring.
+func TestDeferredSinceRestartsAFutureClock(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
+	p := &pass{now: now, priorDeferredSince: map[string]time.Time{"future": now.Add(time.Hour), "past": now.Add(-time.Hour)}}
+	if got := p.deferredSince("future"); !got.Equal(now) {
+		t.Errorf("deferredSince(future) = %v, want %v", got, now)
+	}
+	if got := p.deferredSince("past"); !got.Equal(now.Add(-time.Hour)) {
+		t.Errorf("deferredSince(past) = %v, want %v", got, now.Add(-time.Hour))
+	}
 }
 
 // A session the pass already recorded a failure for (a warning, say) is a

@@ -44,7 +44,7 @@ find none say so without creating the data directory.
   **waiting for Codex history coverage** or **rechecking after the source
   changed while being read** rather than as failed. A session still put
   off after 24 hours of passes is reported as failed, with "still not read
-  after 24 hours of retries".
+  after 24 hours of retries", on every pass until one reads it.
 
   None of these is a failure, and none changes the exit code. Claude Code
   reports some background agents with a transcript it never writes; such a
