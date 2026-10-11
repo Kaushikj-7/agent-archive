@@ -10,8 +10,9 @@ import like `backfill --since 7d --project DIR`, listed in `backfill history`
 and undone with `backfill undo`; see [setup](../getting-started/setup.md#sessions-from-the-last-7-days));
 run `backfill` for older sessions and anything else. With
 no options it imports every session it finds, but first it shows each project
-with its session count per app, what it will skip and why, and the date
-retention will delete the imported sessions. Nothing changes until you answer
+with its session count per app, what it will skip and why, and an estimated
+finite-retention expiry date or **no automatic expiry** for Keep forever.
+Nothing changes until you answer
 `y`.
 
 ```sh
@@ -77,11 +78,15 @@ may have made; a copy a killed backfill leaves is removed by the next
   with an age is finished by the same age on a later day too. When the
   latest import was interrupted and a run with other options would start a
   new one, the plan says so and prints the command that finishes it.
-- Retention applies to imports from the day they are imported, so a whole
-  import expires on one day. Choose `edit` at the prompt to keep them longer.
-  Retention applies to the whole archive, so `edit` only raises it; shorten
-  it in setup. Undoing the import can put the earlier retention back; see
-  [undo](#undo).
+- Finite retention starts a new window for imported old sessions rather than
+  aging them from their native start date. The plan estimates expiry from the
+  import day; later meaningful captures, including preserved revisions, can
+  extend it, and pending publication can postpone deletion. Choose `edit` to
+  keep sessions longer or select `forever` for no automatic whole-session expiry.
+  This changes the owning machine's policy for all its sessions, so `edit` only
+  raises retention; shorten it in setup. Provider lifecycle rules, privacy and
+  superseded-source cleanup, and explicit deletion still apply. Undoing the
+  import can put the earlier retention back; see [undo](#undo).
 - Claude Code deletes its own transcripts after 30 days by default. To keep
   more history for backfill, set `"cleanupPeriodDays"` in
   `~/.claude/settings.json`.
@@ -112,13 +117,17 @@ Sessions captured by hooks in an excluded project stop uploading; they are not
 deleted.
 
 If the import raised retention (`edit` at the prompt), undo offers to put the
-shorter retention back. That applies to the whole archive, so the next
-collector pass deletes every session older than it, hook-captured sessions
-and other imports' included. The undo plan says how many, and the question
+shorter retention back. That applies to all sessions owned by this machine,
+so later collector passes may delete other eligible old sessions, including
+hook-captured sessions and other imports. The undo plan says how many, and the question
 you answer names them. With `--yes` undo leaves retention as it is and prints
 the command that restores it: `agent-archive backfill undo ID --yes
 --restore-retention`. A `--project` undo never changes retention, and neither
-does undo when retention was changed after the import.
+does undo when retention was changed after the import. This includes an import
+that raised finite retention to Keep forever: default `--yes` undo keeps forever.
+Only explicit `--restore-retention` restores the earlier finite policy; its
+preview counts other eligible sessions using meaningful capture age and pending
+work, and the compatibility fence remains installed.
 
 Undo refuses, and changes nothing, when it cannot tell its sessions from
 another import's (an earlier import whose file is missing had the same ID).

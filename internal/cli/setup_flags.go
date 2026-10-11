@@ -372,6 +372,23 @@ func reviewWithoutQuestions(home string, existing, cfg config.Config, p *prompte
 	return nil
 }
 
+func (opts setupOptions) applyRetentionAnswer(cfg *config.Config) error {
+	if opts.keepForever && opts.retentionSupplied {
+		return errors.New("--keep-forever and --retention-days are mutually exclusive")
+	}
+	if opts.keepForever {
+		cfg.RetentionDays = 0
+		cfg.RetentionProtection = true
+	}
+	if opts.retentionSupplied {
+		if opts.retentionDays < 1 || opts.retentionDays > 36500 {
+			return errors.New("--retention-days must be between 1 and 36500; use --keep-forever for no automatic expiry")
+		}
+		cfg.RetentionDays = opts.retentionDays
+	}
+	return nil
+}
+
 // setupAnswers is the configuration setup --yes saves, before its storage
 // is checked: existing with the flags' answers. secret carries a new R2
 // access key ID, if one was given; its secret is read once the answers
@@ -381,18 +398,8 @@ func setupAnswers(existing config.Config, opts setupOptions, home, userHome stri
 	if err := validateProjectScopeOptions(opts); err != nil {
 		return cfg, credentials.R2Credentials{}, err
 	}
-	if opts.keepForever && opts.retentionSupplied {
-		return cfg, credentials.R2Credentials{}, errors.New("--keep-forever and --retention-days are mutually exclusive")
-	}
-	if opts.keepForever {
-		cfg.RetentionDays = 0
-		cfg.RetentionProtection = true
-	}
-	if opts.retentionSupplied {
-		if opts.retentionDays < 1 || opts.retentionDays > 36500 {
-			return cfg, credentials.R2Credentials{}, errors.New("--retention-days must be between 1 and 36500; use --keep-forever for no automatic expiry")
-		}
-		cfg.RetentionDays = opts.retentionDays
+	if err := opts.applyRetentionAnswer(&cfg); err != nil {
+		return cfg, credentials.R2Credentials{}, err
 	}
 	if opts.prefixSupplied {
 		if strings.TrimSpace(opts.prefix) == "" {
