@@ -102,6 +102,11 @@ func (s *sessionScan) publishPending(pending state.PendingPublication) (sessionO
 	if err := s.upload(pending); err != nil {
 		return outcomeSkipped, err
 	}
+	if s.reg.StagedImportSHA256 != "" && pending.History == nil {
+		if err := s.verifyImportPublication(pending); err != nil {
+			return outcomeSkipped, err
+		}
+	}
 	if pending.History != nil {
 		if err := s.verifyHistoryReadback(pending); err != nil {
 			return outcomeSkipped, err
@@ -147,6 +152,9 @@ func (s *sessionScan) acknowledgePublication(pending state.PendingPublication, k
 			}
 		}
 	}
+	if err := s.recordImportRetired(pending, protected); err != nil {
+		return outcomeSkipped, err
+	}
 	if previous, hadPrevious := s.published.LastPublishedSource(); hadPrevious && !protected[previous.Key] {
 		priorBundle, _, havePrior := s.published.LastPublished()
 		privacySensitive := havePrior && priorBundle.Capture.FilterVersion != pending.Bundle.Capture.FilterVersion
@@ -191,6 +199,11 @@ func (s *sessionScan) acknowledgePublication(pending state.PendingPublication, k
 	}
 	if !keepPending {
 		if err := s.local.RemovePending(s.id()); err != nil {
+			return outcomeSkipped, err
+		}
+	}
+	if s.reg.StagedImportSHA256 != "" && !keepPending {
+		if err := s.local.RemoveImportStage(s.id()); err != nil {
 			return outcomeSkipped, err
 		}
 	}
@@ -245,6 +258,9 @@ func (s *sessionScan) upload(pending state.PendingPublication) error {
 			return s.verifyHistoryReadback(pending)
 		}
 		return s.remote.Put(s.ctx, pending.MetadataKey, pending.MetadataBytes)
+	}
+	if !pending.CarriesNoSource() && s.reg.StagedImportSHA256 != "" {
+		return s.uploadImportPending(pending)
 	}
 	if !pending.CarriesNoSource() {
 		if err := storage.PutSourceThenMetadataIndexed(s.ctx, s.remote, pending.SourceKey, pending.MetadataKey, pending.SourceBytes, pending.MetadataBytes, s.opts.Retry, nil); err != nil {
@@ -309,4 +325,44 @@ func (s *sessionScan) verifyHistorySource(ctx context.Context, key, sha string, 
 		return fmt.Errorf("%w for %q", storage.ErrChecksumMismatch, key)
 	}
 	return nil
+}
+
+func (s *sessionScan) recordImportRetired(pending state.PendingPublication, protected map[string]bool) error {
+	for _, retired := range pending.ImportRetired {
+		if !protected[retired.Key] {
+			if err := s.local.RecordSupersededWithPrivacy(s.id(), retired.Key, s.now, true); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (s *sessionScan) uploadImportPending(pending state.PendingPublication) error {
+	if err := s.ensureHistorySource(pending.SourceKey, pending.SourceSHA256, pending.SourceBytes); err != nil {
+		return err
+	}
+	// Verify source ownership before publishing the pointer. A retry preserves
+	// the exact pending bytes and may not overwrite another archive owner.
+	raw, err := s.historyGet(pending.MetadataKey, historyMetadataLimit)
+	if err != nil && !errors.Is(err, storage.ErrNotFound) {
+		return err
+	}
+	if errors.Is(err, storage.ErrNotFound) && pending.ImportExpectedMetadataSHA256 != "" {
+		return errHistoryMetadataConflict
+	}
+	if err == nil && metadataSHA(raw) != metadataSHA(pending.MetadataBytes) {
+		if pending.ImportExpectedMetadataSHA256 == "" || metadataSHA(raw) != pending.ImportExpectedMetadataSHA256 {
+			return errHistoryMetadataConflict
+		}
+		var previous archive.Metadata
+		if err := s.unmarshalRetained(raw, &previous); err != nil {
+			return err
+		}
+		if err := s.validateAuthorityIdentity(previous); err != nil {
+			return err
+		}
+	}
+
+	return s.remote.Put(s.ctx, pending.MetadataKey, pending.MetadataBytes)
 }

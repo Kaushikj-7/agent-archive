@@ -195,6 +195,10 @@ func (q *durableQuota) usage() (u durableUsage, err error) {
 			if !safeFileComponent(entry.Name()) {
 				return u, ErrDurableStorageRecovery
 			}
+			e = q.scan(filepath.Join("sessions", entry.Name(), "import-stage"), 0, &remaining, &u)
+			if e != nil && !errors.Is(e, os.ErrNotExist) {
+				return u, e
+			}
 			e = q.scan(filepath.Join("sessions", entry.Name(), "pending-sources"), 0, &remaining, &u)
 			if e != nil && !errors.Is(e, os.ErrNotExist) {
 				return u, e
@@ -228,7 +232,7 @@ func (q *durableQuota) scan(path string, depth int, remaining *int, u *durableUs
 		return err
 	}
 	defer func() { err = errors.Join(err, d.Close()) }()
-	controlled := strings.HasPrefix(path, "publication-evidence/")
+	controlled := strings.HasPrefix(path, "publication-evidence/") || strings.HasSuffix(path, "/import-stage")
 	first := true
 	for {
 		entries, e := d.ReadDir(128)
@@ -266,16 +270,8 @@ func (q *durableQuota) scan(path string, depth int, remaining *int, u *durableUs
 			if !info.Mode().IsRegular() || info.Size() < 0 {
 				return ErrDurableStorageRecovery
 			}
-			if info.Size() > (durableStorageQuota-u.charged)/2 {
-				return ErrDurableStorageCapacity
-			}
-			if (protectedDurableRoot(path)) && !strings.HasSuffix(entry.Name(), ".json") {
-				u.recovery = true
-			}
-			u.physical += info.Size()
-			u.charged += 2 * info.Size()
-			if strings.HasSuffix(path, "pending-sources") && !stagedSourceName.MatchString(entry.Name()) && !stagedTempName.MatchString(entry.Name()) {
-				u.recovery = true
+			if err := chargeDurableFile(path, entry.Name(), info.Size(), u); err != nil {
+				return err
 			}
 		}
 		if errors.Is(e, io.EOF) {
@@ -303,6 +299,21 @@ func (q *durableQuota) write(path string, n int64, write func(io.Writer) error) 
 		return e
 	}
 	additional := max(int64(0), 2*n-2*old)
+	if strings.HasSuffix(filepath.Dir(path), "/import-stage") {
+		present, e := rootHasEntries(q.home.Root, filepath.Dir(path))
+		if e != nil && !errors.Is(e, os.ErrNotExist) {
+			return e
+		}
+		if !present {
+			additional += durableControlBytes
+		}
+		if filepath.Base(path) == "cancel.json" && present {
+			if n > durableControlBytes/2 {
+				return ErrDurableStorageCapacity
+			}
+			additional = 0
+		}
+	}
 	if additional > durableStorageQuota-u.charged {
 		return ErrDurableStorageCapacity
 	}
@@ -386,4 +397,26 @@ func (s *Store) stagePendingSourceGuard(g config.DurableStorageGuard, id string,
 	}
 	defer func() { err = errors.Join(err, q.Close()) }()
 	return q.write(filepath.Join("sessions", id, "pending-sources", ref.SHA256+".gz"), int64(len(data)), func(w io.Writer) error { _, e := w.Write(data); return e })
+}
+
+func chargeDurableFile(path, name string, size int64, u *durableUsage) error {
+	if strings.HasSuffix(path, "/import-stage") && name == "cancel.json" {
+		if size > durableControlBytes/2 {
+			return ErrDurableStorageRecovery
+		}
+		u.physical += size
+		return nil // Charged by the import directory's reserved control allowance.
+	}
+	if size > (durableStorageQuota-u.charged)/2 {
+		return ErrDurableStorageCapacity
+	}
+	if (protectedDurableRoot(path)) && !strings.HasSuffix(name, ".json") {
+		u.recovery = true
+	}
+	u.physical += size
+	u.charged += 2 * size
+	if strings.HasSuffix(path, "pending-sources") && !stagedSourceName.MatchString(name) && !stagedTempName.MatchString(name) {
+		u.recovery = true
+	}
+	return nil
 }

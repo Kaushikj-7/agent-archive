@@ -38,6 +38,20 @@ func ReadLocalBundle(ctx context.Context, home string, reg archive.SessionRegist
 	if errors.Is(publishedErr, state.ErrDurableStorageRecovery) {
 		return archive.SourceBundle{}, publishedErr
 	}
+	if reg.StagedImportSHA256 != "" && (publishedErr != nil || !published.Summary().Published) {
+		stage, found, err := store.LoadImportStage(reg)
+		if err != nil {
+			return archive.SourceBundle{}, err
+		}
+		if !found {
+			return archive.SourceBundle{}, state.ErrDurableStorageRecovery
+		}
+		adapter, err := sourceAdapter(sources, reg.Harness.Name)
+		if err != nil {
+			return archive.SourceBundle{}, err
+		}
+		return refilterBundleBounded(ctx, reg, adapter, stage.Bundle, agentapi.ReadLimits{FilteredBytes: DefaultMaxTranscriptBytes, RecordBytes: archive.MaxRecordBytes})
+	}
 	source, ok := newSourceReader(reg, Options{CursorDatabase: cursorDatabase, Sources: sources})
 	if !ok {
 		return archive.SourceBundle{}, ErrNoTranscript
@@ -170,4 +184,63 @@ func sourceAdapter(sources agentapi.SourcesLookup, name string) (agentapi.Transc
 		return nil, fmt.Errorf("source filter unavailable for %s", name)
 	}
 	return f, nil
+}
+
+// ReadImportBundle filters the selected native source without writing or admitting
+// it. Confirmed imports freeze this result before registration becomes visible.
+func ReadImportBundle(ctx context.Context, reg archive.SessionRegistration, at time.Time, opts Options) (archive.SourceBundle, error) {
+	bundle, _, err := ReadImportSourceSet(ctx, reg, at, opts)
+	return bundle, err
+}
+
+// ReadImportSourceSet uses the existing source revision reader to freeze the
+// selected logical history and its required independent physical revisions.
+func ReadImportSourceSet(ctx context.Context, reg archive.SessionRegistration, at time.Time, opts Options) (archive.SourceBundle, []archive.SourceBundle, error) {
+	adapter, err := sourceAdapter(opts.Sources, reg.Harness.Name)
+	if err != nil {
+		return archive.SourceBundle{}, nil, err
+	}
+	source, ok := newSourceReader(reg, opts)
+	if !ok {
+		return archive.SourceBundle{}, nil, ErrNoTranscript
+	}
+	filtered, observed, err := source.Filter(ctx, adapter, DefaultMaxTranscriptBytes)
+	if err != nil {
+		return archive.SourceBundle{}, nil, err
+	}
+	bundle, err := archive.NewSourceBundle(reg, adapter, filtered, at, nil)
+	if err != nil {
+		return bundle, nil, err
+	}
+	if reg.Harness.Name != archive.HarnessCodex || observed.binding == nil || (bundle.History == nil && opts.CodexRollouts == nil) {
+		return bundle, nil, nil
+	}
+	provider, ok := source.(providerReader)
+	if !ok {
+		return bundle, nil, errors.New("import revision reader unavailable")
+	}
+	preserved := []archive.SourceBundle{}
+	remaining := DefaultMaxTranscriptBytes - int64(bundle.Capture.Boundary.RetainedBytes)
+	seen := map[string]bool{revisionID(bundle): true}
+	err = provider.revisions(ctx, adapter, observed, DefaultMaxTranscriptBytes, bundle.History != nil, func(part archive.FilteredTranscript, binding *archive.CodexSourceBinding) error {
+		owner := reg
+		owner.CodexBinding = binding
+		prior, err := archive.NewSourceBundle(owner, adapter, part, at, nil)
+		if err != nil {
+			return err
+		}
+		id := revisionID(prior)
+		if seen[id] {
+			return nil
+		}
+		seen[id] = true
+		n := int64(prior.Capture.Boundary.RetainedBytes)
+		if n > remaining {
+			return agentapi.ErrReadBudget
+		}
+		remaining -= n
+		preserved = append(preserved, prior)
+		return nil
+	})
+	return bundle, preserved, err
 }

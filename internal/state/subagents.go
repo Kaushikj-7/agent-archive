@@ -37,7 +37,8 @@ type SubagentCandidate struct {
 	// through archive.SanitizeSubagentType, or empty when unknown. It is
 	// informational and local: status reports it, it is never uploaded, and
 	// it never decides anything.
-	AgentType string `json:"agent_type,omitempty"`
+	AgentType          string `json:"agent_type,omitempty"`
+	StagedImportSHA256 string `json:"staged_import_sha256,omitempty"`
 }
 
 var (
@@ -83,6 +84,12 @@ func (s *Store) SaveSubagentCandidate(candidate SubagentCandidate) error {
 			}
 			if prior.NativeSessionID != merged.NativeSessionID || prior.ParentArchiveSessionID != merged.ParentArchiveSessionID || prior.ParentNativeSessionID != merged.ParentNativeSessionID || prior.ProjectID != merged.ProjectID || prior.ProjectRoot != merged.ProjectRoot || archive.CanonicalHarness(prior.Harness.Name) != archive.CanonicalHarness(merged.Harness.Name) || prior.AgentID != merged.AgentID || prior.TranscriptPath != merged.TranscriptPath {
 				return nil, false, ErrSubagentCandidateConflict
+			}
+			if prior.StagedImportSHA256 != "" {
+				if merged.StagedImportSHA256 != "" && merged.StagedImportSHA256 != prior.StagedImportSHA256 {
+					return nil, false, ErrSubagentCandidateConflict
+				}
+				merged.StagedImportSHA256 = prior.StagedImportSHA256
 			}
 			if prior.ObservedAt.After(merged.ObservedAt) {
 				merged.ObservedAt = prior.ObservedAt

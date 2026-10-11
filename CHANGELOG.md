@@ -97,6 +97,14 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Preserve confirmed backfill evidence before registering sessions, including
+  selected Codex history and native children. Imports can finish after native
+  files disappear; background recovery verifies remote sources and metadata
+  before reporting completion. Private filtered staging has a shared 1 GiB
+  quota, resumable admission, current-policy filtering, and journalled cancel
+  and undo cleanup. History distinguishes staged/admitted from remotely verified
+  sessions. Dry-run creates no staging.
+
 - Validate a Codex fork's first own task during import and ongoing capture,
   and protect every qualified history import from older writers. Discovery
   stops rereading decisively rejected tasks until their native source changes.

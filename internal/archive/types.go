@@ -408,6 +408,8 @@ type SessionRegistration struct {
 	// ImportBatch is the backfill run that registered the session. Whether
 	// a registration belongs to an import is InBatch's to say.
 	ImportBatch ImportBatch `json:"import_batch,omitzero"`
+	// StagedImportSHA256 selects durably filtered pre-admission evidence.
+	StagedImportSHA256 string `json:"staged_import_sha256,omitempty"`
 	// DestinationID is config.DestinationID of the storage destination the
 	// session was admitted into. Set once, at registration, by hooks and
 	// backfill; a subagent copies its parent's. Empty on older

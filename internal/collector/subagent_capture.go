@@ -182,7 +182,23 @@ func materializeSubagentCandidate(ctx context.Context, local *state.Store, candi
 		return err
 	}
 	reg := assembleSubagentRegistration(parent, candidate)
-	reg, err = validateCandidateTranscript(ctx, local, candidate, parent, reg, opts, now)
+	if candidate.StagedImportSHA256 != "" {
+		reg.StagedImportSHA256 = candidate.StagedImportSHA256
+		stage, found, loadErr := local.LoadImportStage(reg)
+		if loadErr != nil {
+			return loadErr
+		}
+		if !found {
+			return state.ErrDurableStorageRecovery
+		}
+		reg = stage.Registration
+		reg.StagedImportSHA256 = candidate.StagedImportSHA256
+		if reg.ParentSessionID != parent.ArchiveSessionID || reg.ParentNativeSessionID != parent.NativeSessionID {
+			return state.ErrDurableStorageRecovery
+		}
+	} else {
+		reg, err = validateCandidateTranscript(ctx, local, candidate, parent, reg, opts, now)
+	}
 	if err != nil {
 		return err
 	}
@@ -498,4 +514,25 @@ func announceSubagent(local *state.Store, reg archive.SessionRegistration, child
 		return err
 	}
 	return local.SaveRequest(reg.ParentSessionID, "subagent-published", publishedAt, evidence)
+}
+
+// ReadImportSubagentBundle validates the child on its filtered snapshot before
+// its parent import admits the durable source selection.
+func ReadImportSubagentBundle(ctx context.Context, parent archive.SessionRegistration, candidate state.SubagentCandidate, opts Options) (archive.SessionRegistration, archive.SourceBundle, error) {
+	reg := assembleSubagentRegistration(parent, candidate)
+	adapter, err := sourceAdapter(opts.Sources, reg.Harness.Name)
+	if err != nil {
+		return reg, archive.SourceBundle{}, err
+	}
+	source, _ := newSourceReader(reg, opts)
+	filtered, _, err := source.Filter(ctx, adapter, opts.maxTranscriptBytes())
+	if err != nil {
+		return reg, archive.SourceBundle{}, err
+	}
+	if err := CheckImportedSubagent(filtered, parent.NativeSessionID, candidate.AgentID, parent.SessionStartedAt, candidate.ObservedAt); err != nil {
+		return reg, archive.SourceBundle{}, err
+	}
+	reg.SessionStartedAt = filtered.NativeStartAt
+	bundle, err := archive.NewSourceBundle(reg, adapter, filtered, candidate.ObservedAt, nil)
+	return reg, bundle, err
 }

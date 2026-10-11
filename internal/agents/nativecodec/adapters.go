@@ -49,6 +49,17 @@ func (ClaudeAdapter) FilterJSONL(r io.Reader) (archive.FilteredTranscript, error
 	return filterClaudeJSONL(r, nil)
 }
 
+// FilterClaudeRetainedBounded applies the ordinary privacy codec while refusing
+// retained output beyond the caller's allowance before accumulating it.
+func FilterClaudeRetainedBounded(r io.Reader, boundary archive.CaptureBoundary) (archive.FilteredTranscript, error) {
+	return filterJSONL(r, "claude-jsonl", map[string]bool{"user": true, "assistant": true, "tool_use": true, "tool_result": true, "message": true, "summary": true}, nil, nil, boundary)
+}
+
+// FilterCursorRetainedBounded is the equivalent ordinary Cursor record codec.
+func FilterCursorRetainedBounded(r io.Reader, boundary archive.CaptureBoundary) (archive.FilteredTranscript, error) {
+	return filterJSONL(r, "cursor-jsonl", map[string]bool{"session": true, "message": true, "tool_call": true, "tool_result": true, "event": true, "turn_ended": true}, nil, nil, boundary)
+}
+
 // FilterSubagentJSONL is FilterJSONL for a Claude Code subagent's transcript
 // with the contents of its sibling agent-<id>.meta.json (see
 // archive.SubagentMetaPath). The description in it, redacted and bounded as prompt

@@ -213,7 +213,7 @@ func parseBackfillOptions(args []string, stderr io.Writer, env Env) (backfillCom
 	dryRun := fs.Bool("dry-run", false, "print the plan and exit; nothing is written")
 	jsonOut := fs.Bool("json", false, "with --dry-run, print the plan as JSON")
 	yes := fs.Bool("yes", false, "skip the confirmation")
-	background := fs.Bool("background", false, "register the sessions and let the collector upload them")
+	background := fs.Bool("background", false, "stage and register sessions; the collector verifies uploads")
 	if !fs.parseFlagsOnly(args) {
 		return backfillCommandOptions{}, false
 	}
@@ -482,7 +482,7 @@ func importRecentSessions(p *prompter, errOut io.Writer, home, userHome string, 
 		return
 	}
 	if len(plan.Imported()) > 0 {
-		reg, err := registerImportLocked(env, p.out, errOut, home, plan, configFingerprint(cfg), setupImportCollectorWait)
+		reg, err := registerImportLocked(env, p.out, errOut, home, plan, configFingerprint(cfg), setupImportCollectorWait, false)
 		reg.release()
 		if err != nil {
 			notImported(err)

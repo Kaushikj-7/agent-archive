@@ -876,6 +876,38 @@ so existing metadata is byte-identical and the parser version stays the same.
 The source bundle doesn't change either: a transcript hashes the same whether
 a hook or backfill registered it.
 
+## Durable evidence for confirmed imports
+
+Confirmed imports freeze selected, privacy-filtered evidence before registration.
+The private staging journal records the selected source set, immutable native and
+archive identity, destination, policy context, and child ownership. Registration
+selects its checksum atomically. A staging or quota failure leaves that candidate
+unadmitted; completed groups remain recoverable. Dry-run creates no staging.
+
+Import staging shares the 1 GiB durable publication quota, including atomic
+replacement allowance. Each stage reserves bounded control space for cancellation.
+Selected revision sets have a 32 MiB retained input allowance, and each serialized
+journal is capped at 128 MiB. Scheduled admission recovery visits at most 50 session
+directories per group and persists its cursor. Foreground backfill can publish a
+completed group to free capacity; setup and `--background` leave a resumable capacity
+error for later collection and retry.
+
+Native deletion after preparation does not remove selected evidence. Recovery
+rechecks current destination, exclusions and pause, and reapplies current privacy
+rules to retained evidence. History publication uses the existing revision journal:
+verified immutable sources precede metadata, and verified metadata and source
+readback precede local completion and staging removal. The history display reports
+staged/admitted progress separately from remotely verified sessions.
+
+Cancellation before admission journals and cleans unreferenced preparation.
+Admitted staging survives cancellation, pause and upload failure. Undo includes
+selected preparations that crashed before registration and records removal before
+releasing their bytes. Unknown or damaged obligations remain protected for recovery.
+
+Import staging permanently enables the `import-staging-v9` writer fence. Earlier
+mutating binaries must refuse the installation before updating registrations or
+publication state. A later finite retention preference does not remove this fence.
+
 ## Registration and concurrency
 
 The lock order stays `setup.lock` → `collector.lock` → `hooks.lock`. A hook

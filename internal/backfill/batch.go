@@ -44,6 +44,9 @@ type Batch struct {
 	ProjectsKeptOut []string `json:"projects_kept_out,omitempty"`
 	// Sessions are the archive session IDs the import registered.
 	Sessions []string `json:"sessions"`
+	// StagedSessions records selected durable evidence, independently of
+	// registration and remotely verified publication. It contains no locators.
+	StagedSessions []string `json:"staged_sessions,omitempty"`
 	// Subagents are the archive session IDs given to the imported sessions'
 	// subagent transcripts. Each registers when the collector validates it.
 	Subagents []string `json:"subagents"`
@@ -116,6 +119,21 @@ func (b *Batch) Reconcile(store *state.Store) error {
 	regs, err := store.LoadRegistrations()
 	if err != nil {
 		return err
+	}
+	for after := ""; ; {
+		stages, next, err := store.ImportStages(after, 50)
+		if err != nil {
+			return err
+		}
+		for _, stage := range stages {
+			if stage.Registration.InBatch(b.ID) {
+				b.StagedSessions = addUnique(b.StagedSessions, stage.Registration.ArchiveSessionID)
+			}
+		}
+		if next == "" {
+			break
+		}
+		after = next
 	}
 	parents := map[string]bool{}
 	for _, reg := range regs {

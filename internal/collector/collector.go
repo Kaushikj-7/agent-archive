@@ -220,6 +220,15 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	if opts.MachineID == "" {
 		return Result{}, errors.New("machine ID is required")
 	}
+	_, durableErr := local.DurableStorageObligations()
+	if durableErr != nil {
+		return Result{Errors: map[string]error{"durable-storage": durableErr}}, durableErr
+	}
+	if err := local.ResumeImportAdmissions(ctx); err != nil {
+		return Result{Errors: map[string]error{"staged-imports": err}}, err
+	}
+	// Recovery can finish cancellation or establish selected admissions. Report
+	// their current obligations, rather than the pre-recovery orphan snapshot.
 	durableObligations, durableErr := local.DurableStorageObligations()
 	if durableErr != nil {
 		return Result{Errors: map[string]error{"durable-storage": durableErr}}, durableErr

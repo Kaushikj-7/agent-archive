@@ -32,6 +32,27 @@ quits at once, after removing the private copy of Cursor's database backfill
 may have made; a copy a killed backfill leaves is removed by the next
 `backfill` command of any kind.
 
+## Durable import and recovery
+
+After confirmation, backfill stores the selected privacy-filtered evidence in
+private local staging before admitting each session. Setup's recent import and
+`--background` use the same protection. Once staged, an import can finish even
+if the apps delete their native files. A source that disappears before staging
+finishes is reported for retry; it is not counted as admitted.
+
+Staging and pending publication share a 1 GiB local quota. Foreground imports
+upload completed groups to free capacity; setup and background imports preserve
+completed work and report a capacity error so you can retry after the collector
+makes room. `backfill history` distinguishes staged/admitted sessions from
+remotely verified uploads. Uploaded means the collector has read back the
+selected remote sources and metadata and committed its local completion state.
+
+Pausing keeps referenced evidence for retry. Updated privacy rules are applied
+again before staged evidence is published. Canceling before admission removes
+unreferenced evidence, with a cleanup journal if interrupted; canceling after
+admission keeps evidence for recovery. Undo removes that import's owned staging
+along with its sessions. Dry-run writes no staging or admission state.
+
 ## What gets imported
 
 - Claude Code and Codex sessions are read from `~/.claude` and `~/.codex`,

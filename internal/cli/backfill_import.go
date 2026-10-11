@@ -14,6 +14,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/backfill"
@@ -67,7 +68,7 @@ func importPlanLocked(env Env, stdout, stderr io.Writer, home string, plan backf
 		terminal.Printf(stderr, "agent-archive: backfill: "+format+"\n", args...)
 		return 1
 	}
-	reg, err := registerImportLocked(env, stdout, stderr, home, plan, fingerprint, backfillCollectorWait)
+	reg, err := registerImportLocked(env, stdout, stderr, home, plan, fingerprint, backfillCollectorWait, !background)
 	defer reg.release()
 	if errors.Is(err, errCollectorBusy) {
 		return fail("%v; run backfill again. Nothing was changed", err)
@@ -159,7 +160,7 @@ func (e *importRegistrationError) Unwrap() error { return e.err }
 // background collector. It waits up to collectorWait for a collector pass
 // to finish, and returns errCollectorBusy when one is still running. The
 // returned import's release is always called.
-func registerImportLocked(env Env, stdout, stderr io.Writer, home string, plan backfill.Plan, fingerprint string, collectorWait time.Duration) (*registeredImport, error) {
+func registerImportLocked(env Env, stdout, stderr io.Writer, home string, plan backfill.Plan, fingerprint string, collectorWait time.Duration, capacityUploads bool) (*registeredImport, error) {
 	reg := &registeredImport{out: stdout}
 	confirmationCtx, stopConfirmation := importConfirmationContext(env, stderr, plan)
 	stopConfirmation = releaseOnce(stopConfirmation)
@@ -213,7 +214,42 @@ func registerImportLocked(env Env, stdout, stderr io.Writer, home string, plan b
 	sort.SliceStable(candidates, func(i, j int) bool { return candidates[i].StartedAt.Before(candidates[j].StartedAt) })
 	stopRegister := startActivity(stdout, "Registering sessions…")
 	reg.activity.set(stopRegister)
+	cfg, _, err := config.Load(home)
+	if err != nil {
+		return reg, err
+	}
+	lookup, readHomes, err := passCodexRollouts(registrationCtx, state.OpenReadOnly(home), cfg, env)
+	if err != nil {
+		return reg, err
+	}
+	defer lookup.Close()
+	// The confirmation's lookup is closed with its plan. Rebuild the trusted
+	// census before reading qualified selected history in this fresh pass.
+	for _, candidate := range candidates {
+		if candidate.Harness == archive.HarnessCodex {
+			if _, err := lookup.Thread(registrationCtx, candidate.NativeSessionID); err != nil && registrationCtx.Err() != nil {
+				return reg, err
+			}
+		}
+	}
+	for {
+		health, err := lookup.ObserveReadOnly(registrationCtx)
+		if err != nil {
+			return reg, err
+		}
+		if !health.Pending {
+			break
+		}
+	}
 	registration := backfill.Registration{
+		DurableSources: true, CodexRollouts: lookup, ConfiguredCodexHomes: readHomes,
+		AfterStage: func(id string) error {
+			batch.StagedSessions = append(batch.StagedSessions, id)
+			if err := backfill.SaveBatch(home, batch); err != nil {
+				return err
+			}
+			return env.checkpoint("staged")
+		},
 		Context: registrationCtx,
 		Sources: env.agentRegistry(),
 		Home:    home, Store: store, Batch: batch.ID, AdmittedAt: admittedAt, DestinationID: batch.DestinationID,
@@ -226,6 +262,9 @@ func registerImportLocked(env Env, stdout, stderr io.Writer, home string, plan b
 			return env.checkpoint("registered")
 		},
 		Stop: interrupt.requested,
+	}
+	if capacityUploads {
+		registration.OnCapacity = importCapacityDrain(env, stdout, home, store, lookup, readHomes, interrupt.requested)
 	}
 	result, err := registration.Run(candidates)
 	reg.batch, reg.result = batch, result
@@ -301,7 +340,16 @@ func finishInterruptedBatch(env Env, stdout io.Writer, home string, plan backfil
 		return nil
 	}
 	last = latest
-	if err := completeBatch(env, home, state.OpenReadOnly(home), &last); err != nil {
+	store, err := state.Open(home)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := store.ResumeAllImportAdmissions(ctx); err != nil {
+		return err
+	}
+	if err := completeBatch(env, home, store, &last); err != nil {
 		return err
 	}
 	terminal.Printf(stdout, "\nImport %s, which was interrupted, is complete: %s registered.\n", last.ID, countNoun(len(last.Sessions), "session"))
@@ -823,6 +871,7 @@ func runBackfillHistory(args []string, stdout, stderr io.Writer, env Env) int {
 // the latest import can still be finished by running backfill again.
 func batchUploadState(store *state.Store, cfg config.Config, regs []archive.SessionRegistration, b backfill.Batch, latest bool) (string, error) {
 	registered, subagents, waiting := 0, 0, 0
+	staged, verified := 0, 0
 	for _, reg := range regs {
 		if !reg.InBatch(b.ID) {
 			continue
@@ -832,6 +881,16 @@ func batchUploadState(store *state.Store, cfg config.Config, regs []archive.Sess
 			continue
 		}
 		registered++
+		if reg.StagedImportSHA256 != "" {
+			staged++
+			summary, _, err := store.LoadPublishedSummary(reg.ArchiveSessionID)
+			if err != nil {
+				return "", err
+			}
+			if summary.Published {
+				verified++
+			}
+		}
 		pending, err := importPending(store, cfg, reg)
 		if err != nil {
 			return "", err
@@ -859,6 +918,8 @@ func batchUploadState(store *state.Store, cfg config.Config, regs []archive.Sess
 		return "undone", nil
 	}
 	switch {
+	case b.CompletedAt == nil && latest && len(b.StagedSessions) > 0:
+		return fmt.Sprintf("interrupted; %d durably staged; %d registered; %d remotely verified; run agent-archive backfill with the same options to finish", len(b.StagedSessions), registered, verified), nil
 	case b.CompletedAt == nil && latest:
 		return fmt.Sprintf("interrupted; %d registered; run agent-archive backfill with the same options to finish", registered), nil
 	case b.CompletedAt == nil:
@@ -867,8 +928,38 @@ func batchUploadState(store *state.Store, cfg config.Config, regs []archive.Sess
 		return "nothing registered", nil
 	case registered == 0:
 		return "removed", nil
+	case waiting > 0 && staged > 0:
+		return fmt.Sprintf("%d registered; %d durably staged; %d remotely verified; %d waiting", registered, staged, verified, waiting), nil
 	case waiting > 0:
 		return fmt.Sprintf("%d waiting", waiting), nil
 	}
+	if staged > 0 {
+		return fmt.Sprintf("uploaded; %d remotely verified", verified), nil
+	}
 	return "uploaded", nil
+}
+
+func importCapacityDrain(env Env, stdout io.Writer, home string, store *state.Store, lookup agentapi.CodexRolloutLookup, readHomes []string, stop func() bool) func(context.Context) error {
+	return func(ctx context.Context) error {
+		current, found, err := config.Load(home)
+		if err != nil || !found {
+			return errors.Join(state.ErrDurableStorageRecovery, err)
+		}
+		if current.Paused {
+			return errPaused
+		}
+		remote, err := env.openStore(current)
+		if err != nil {
+			return err
+		}
+		result, err := collector.Run(ctx, store, remote, collector.Options{Sources: env.agentRegistry(), Parsers: parsersFor(env), Decoders: env.agentRegistry(), MachineID: current.MachineID, Now: env.Now, AcceptSession: current.AcceptSession, SkillEvidence: current.EffectiveSkillEvidence(), RequireSkillUse: current.RequireSkillUse, CursorDatabase: env.cursorDatabase(), CodexRollouts: lookup, ConfiguredCodexHomes: readHomes, RepoKey: env.repoKey, Stop: stop})
+		if err != nil {
+			return err
+		}
+		if len(result.Published) == 0 {
+			return state.ErrDurableStorageCapacity
+		}
+		terminal.Printf(stdout, "Freed staging capacity after remotely verifying %s; continuing admission.\n", countNoun(len(result.Published), "session"))
+		return nil
+	}
 }

@@ -1,6 +1,22 @@
 # Historical backfill recovery: implementation plan
 
-Status: planned; not implemented. Prepared 2026-10-06 against `f0dca28b1191`.
+Status: partially implemented; remaining milestones remain gated. Prepared
+2026-10-06 against `f0dca28b1191`; staging implementation updated 2026-10-11.
+
+Step 4a now stages the selected filtered source set, including preserved Codex
+revisions and qualified children, before admission. A bounded SHA-256 journal
+links identity, selection, privacy context, destination and batch ownership to
+registration. Recovery scans at most 50 session directories per cursor slice;
+explicit foreground recovery drains slices. Staging and publication share the
+1 GiB quota with reserved cancellation controls. Native deletion, admission
+crashes, remote readback failures, quota retry, privacy replacement, pause,
+cancellation and undo have synthetic lifecycle coverage. The writer capability
+is fenced as `import-staging-v9` only with staging-aware mutation paths.
+
+This completes the pre-admission staging gap on top of existing source-set
+publication and revision maintenance; it does not establish live provider,
+platform or signed release acceptance. Fragment import, historical destinations
+and remaining scale/release gates below remain separate work.
 
 Staff review: revised 2026-10-06. The sequence below incorporates the findings
 from an architecture and lifecycle review. Implementation can begin with

@@ -140,7 +140,7 @@ func (s *sessionScan) refilterRetainedFor(reg archive.SessionRegistration, adapt
 	if !retainedParentMatches(reg, bundle) {
 		return archive.SourceBundle{}, errors.New("retained refilter parent identity mismatch")
 	}
-	if reg.Harness.Name != archive.HarnessCodex {
+	if reg.Harness.Name != archive.HarnessCodex && reg.StagedImportSHA256 == "" {
 		return refilterBundle(s.ctx, reg, adapter, bundle)
 	}
 	b := s.readBudget()

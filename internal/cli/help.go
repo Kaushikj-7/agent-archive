@@ -672,6 +672,9 @@ per app, and why any session is not imported; nothing is written until you
 confirm. Live repositories can be proposed for matching deleted worktrees.
 Projects the import needs are added to capture. Prints project
 folders, counts, and recovery reasons, never conversation content.
+After confirmation, filtered evidence is staged before admission; uploads can
+finish after native files disappear. Staging shares a 1 GiB quota with pending
+publication. History reports admitted and remotely verified uploads separately.
   --harness NAME        Only claude, codex, or cursor (repeatable)
   --project DIR         Only this project; it need not still exist (repeatable)
   --map-project OLD=ROOT Exact missing cwd to included root (repeatable)
@@ -686,8 +689,8 @@ folders, counts, and recovery reasons, never conversation content.
   --dry-run             Print the plan and exit; nothing is written
   --json                With --dry-run, print the plan as JSON
   --yes                 Skip the confirmation (required without a terminal)
-  --background          Register the sessions and exit; the background
-                        collector uploads them
+  --background          Stage and register sessions, then exit; the background
+                        collector verifies and uploads them
 See agent-archive help backfill history and agent-archive help backfill undo.
 Example: agent-archive backfill --dry-run --since 30d
 `,

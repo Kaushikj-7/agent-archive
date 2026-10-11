@@ -221,6 +221,7 @@ func (s *Store) updateRegistration(archiveSessionID string, update func(*archive
 		if err := json.Unmarshal(current.data, &reg); err != nil {
 			return nil, false, fmt.Errorf("read registration %q: %w", archiveSessionID, err)
 		}
+		originalStage := reg.StagedImportSHA256
 		originalBinding := reg.CodexBinding
 		if originalBinding != nil {
 			copyBinding := *originalBinding
@@ -248,6 +249,9 @@ func (s *Store) updateRegistration(archiveSessionID string, update func(*archive
 		}
 		if !reg.CodexBinding.PreservesFacts(originalBinding) {
 			return nil, false, errors.New("a registration update cannot change native Codex binding facts")
+		}
+		if originalStage != reg.StagedImportSHA256 {
+			return nil, false, errors.New("a registration update cannot change import staging selection")
 		}
 		if !sameCodexAdmission(originalProof, reg.CodexAdmission) {
 			return nil, false, errors.New("a registration update cannot change Codex admission proof")
@@ -358,6 +362,9 @@ func (s *Store) registerUnderLock(key agentmeta.SessionKey, id string, build fun
 				prior, found, err := s.LoadRegistration(id)
 				if err != nil {
 					return err
+				}
+				if found && prior.StagedImportSHA256 != reg.StagedImportSHA256 {
+					return errors.New("a registration replacement cannot change import staging selection")
 				}
 				if found && !sameCodexAdmission(prior.CodexAdmission, reg.CodexAdmission) {
 					return errors.New("a registration replacement cannot change Codex admission proof")
@@ -744,6 +751,10 @@ func (s *Store) CompleteRequest(archiveSessionID, coveredToken string) (bool, er
 // every retry uses the same hash and timestamps even after process restart.
 // Bundle remains available for change detection and future parser-only rebuilds.
 type PendingPublication struct {
+	// ImportExpectedMetadataSHA256 freezes staged imports' predecessor. Retired
+	// privacy sources become cleanup obligations only after successor readback.
+	ImportExpectedMetadataSHA256 string                    `json:"import_expected_metadata_sha256,omitempty"`
+	ImportRetired                []archive.SourceReference `json:"import_retired,omitempty"`
 	// ScanSignature freezes the consumed native observation for resumed history
 	// acknowledgement. It never licenses newer input or a privacy successor.
 	ScanSignature *ScanSignature       `json:"scan_signature,omitempty"`
@@ -788,6 +799,21 @@ func (s *Store) pendingPath(id string) string {
 // validateComplete is the supported transaction structure shared by writes
 // and protected reads. History validation keeps its separate budget ownership.
 func (pending PendingPublication) validateComplete() error {
+	if pending.ImportExpectedMetadataSHA256 != "" {
+		decoded, err := hex.DecodeString(pending.ImportExpectedMetadataSHA256)
+		if err != nil || len(decoded) != sha256.Size {
+			return ErrDurableStorageRecovery
+		}
+	}
+	if len(pending.ImportRetired) > 64 {
+		return ErrDurableStorageRecovery
+	}
+	for _, ref := range pending.ImportRetired {
+		key, err := archive.SourceObjectKey(pending.Bundle, ref.SHA256)
+		if err != nil || ref.Key != key || ref.CompressedBytes <= 0 || ref.CompressedBytes > maxPendingHistoryBytes {
+			return ErrDurableStorageRecovery
+		}
+	}
 	if len(pending.SourceBytes) > maxPendingHistoryBytes {
 		return ErrDurableStorageCapacity
 	}

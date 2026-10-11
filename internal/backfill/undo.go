@@ -169,6 +169,10 @@ func PlanUndo(env Environment, store *state.Store, cfg config.Config, batches []
 	if err != nil {
 		return UndoPlan{}, err
 	}
+	regs, err = importUndoRegistrations(store, regs, b.ID)
+	if err != nil {
+		return UndoPlan{}, err
+	}
 	if n := sessionsOutsideBatch(regs, b); n > 0 {
 		return UndoPlan{}, &SharedBatchIDError{Batch: b.ID, Sessions: n}
 	}
@@ -1101,4 +1105,32 @@ func orderUndoChildrenFirst(sessions []UndoSession) ([]UndoSession, error) {
 // Other subagents continue to follow their imported parent.
 func independentImportOwner(reg archive.SessionRegistration) bool {
 	return reg.NativeChild || reg.ParentSessionID == ""
+}
+
+func importUndoRegistrations(store *state.Store, regs []archive.SessionRegistration, batchID string) ([]archive.SessionRegistration, error) {
+	// Include selected evidence prepared before an admission crash. Undo owns
+	// its durable cleanup even when no registration reached disk yet.
+	seen := map[string]bool{}
+	for _, reg := range regs {
+		seen[reg.ArchiveSessionID] = true
+	}
+	for after := ""; ; {
+		stages, next, err := store.ImportStages(after, 50)
+		if err != nil {
+			return nil, err
+		}
+		for _, stage := range stages {
+			reg := stage.Registration
+			if reg.InBatch(batchID) && !seen[reg.ArchiveSessionID] {
+				reg.StagedImportSHA256 = stage.SHA256
+				regs = append(regs, reg)
+				seen[reg.ArchiveSessionID] = true
+			}
+		}
+		if next == "" {
+			break
+		}
+		after = next
+	}
+	return regs, nil
 }

@@ -212,6 +212,12 @@ func (s *sessionScan) resume() (outcome sessionOutcome, handled bool, err error)
 		}
 		return regenerateMetadata(s)
 	}
+	if s.reg.StagedImportSHA256 != "" && pending.History == nil {
+		pending, err = s.resumeStagedPolicy(pending)
+		if err != nil {
+			return outcomeSkipped, true, err
+		}
+	}
 	if pending.History != nil {
 		outcome, err := s.resumeHistory(pending)
 		return outcome, true, err
@@ -251,10 +257,11 @@ func (s *sessionScan) resume() (outcome sessionOutcome, handled bool, err error)
 
 // sourceRead is what reading the session's source produced.
 type sourceRead struct {
-	filterLease *int
-	adapter     agentapi.TranscriptFilter
-	filtered    archive.FilteredTranscript
-	observed    sourceState
+	stagedRevisions []archive.SourceBundle
+	filterLease     *int
+	adapter         agentapi.TranscriptFilter
+	filtered        archive.FilteredTranscript
+	observed        sourceState
 	// outcome is the scan's outcome when the read ended it.
 	outcome sessionOutcome
 }
@@ -262,6 +269,27 @@ type sourceRead struct {
 // read reads and filters the session's source. ok is false when the scan
 // ends here: nothing to read yet, or a recorded gap, or an error.
 func (s *sessionScan) read() (read sourceRead, ok bool, err error) {
+	if s.reg.StagedImportSHA256 != "" {
+		if _, _, published := s.published.LastPublished(); !published {
+			return s.readImportStage()
+		}
+		// A crash after local acknowledgement can leave preparation behind. Its
+		// removal still requires the complete remotely verified publication.
+		if _, found, err := s.local.LoadImportStage(s.reg); err != nil {
+			return read, false, err
+		} else if found {
+			key, err := archive.MetadataObjectKey(s.reg.Harness.Name, s.id())
+			if err != nil {
+				return read, false, err
+			}
+			if err := s.verifyImportPublication(state.PendingPublication{MetadataKey: key, MetadataBytes: s.published.Metadata()}); err != nil {
+				return read, false, err
+			}
+			if err := s.local.RemoveImportStage(s.id()); err != nil {
+				return read, false, err
+			}
+		}
+	}
 	reader, available := newSourceReader(s.reg, s.opts)
 	if !available {
 		// Not an error: a Cursor desktop chat is registered at its first
@@ -644,6 +672,9 @@ func (s *sessionScan) publish(read sourceRead, candidate archive.SourceBundle) (
 		Bundle:        candidate, SourceKey: rendered.source.Key, MetadataKey: rendered.metadataKey,
 		SourceSHA256: rendered.source.SHA256, SourceBytes: rendered.sourceBytes, MetadataBytes: rendered.metadata,
 		RequestToken: s.req.Token, ReadyAt: readyAt, Attempted: !readyAt.After(s.now),
+	}
+	if s.reg.StagedImportSHA256 != "" && s.published.Summary().Published {
+		pending.ImportExpectedMetadataSHA256 = metadataSHA(s.published.Metadata())
 	}
 	if s.revisions != nil && (candidate.History != nil || len(s.revisions.Preserved) > 0) {
 		if err := s.freezeRevisionPublication(&pending); err != nil {
