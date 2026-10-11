@@ -9,6 +9,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/wangjohn/agent-archive/internal/backfill"
 	"github.com/wangjohn/agent-archive/internal/config"
@@ -163,21 +164,9 @@ func setupPairing(opts setupOptions, stdin io.Reader, out, errOut io.Writer, env
 	if err != nil {
 		return err
 	}
-	pairedAt := env.now().UTC()
-	kind := config.MachineAssignmentAWSProfile
-	sharedWith := ""
-	if cfg.Storage.Provider == credentials.ProviderR2 {
-		kind = config.MachineAssignmentR2Shared
-		sharedWith = payload.IssuerID
-		if payload.Kind == config.MachineAssignmentR2Own {
-			kind = payload.Kind
-			sharedWith = ""
-		}
-	}
-	cfg.MachineName = payload.Name
-	cfg.MachineAssignment = &config.MachineAssignment{DestinationID: cfg.DestinationID(), Kind: kind, SlotID: payload.SlotID, AccessKeyID: payload.AccessKeyID, RecipientID: payload.RecipientID, IssuerID: payload.IssuerID, SharedWith: sharedWith, PairingID: payload.PairingID, PairedFrom: payload.IssuerID, PairedAt: &pairedAt}
-	if err = cfg.ValidateMachine(); err != nil {
-		return fmt.Errorf("invalid paired machine assignment")
+	cfg, err = assignPairedMachine(cfg, payload, env.now())
+	if err != nil {
+		return err
 	}
 
 	cfg, err = stagePairingCredential(home, cfg, payload, env)
@@ -208,6 +197,27 @@ func setupPairing(opts setupOptions, stdin io.Reader, out, errOut io.Writer, env
 		return err
 	}
 	return nil
+}
+
+func assignPairedMachine(cfg config.Config, payload pairing.Payload, now time.Time) (config.Config, error) {
+	pairedAt := now.UTC()
+	kind := config.MachineAssignmentAWSProfile
+	sharedWith := ""
+	if cfg.Storage.Provider == credentials.ProviderR2 {
+		kind = config.MachineAssignmentR2Shared
+		sharedWith = payload.IssuerID
+		if payload.Kind == config.MachineAssignmentR2Own {
+			kind = payload.Kind
+			sharedWith = ""
+		}
+	}
+	cfg.MachineName = payload.Name
+	cfg.MachineAssignment = &config.MachineAssignment{DestinationID: cfg.DestinationID(), Kind: kind, SlotID: payload.SlotID, AccessKeyID: payload.AccessKeyID, RecipientID: payload.RecipientID, IssuerID: payload.IssuerID, SharedWith: sharedWith, PairingID: payload.PairingID, PairedFrom: payload.IssuerID, PairedAt: &pairedAt}
+	if err := cfg.ValidateMachine(); err != nil {
+		return cfg, fmt.Errorf("invalid paired machine assignment")
+	}
+
+	return cfg, nil
 }
 
 func printPairingConnected(out io.Writer, name string, payload pairing.Payload, yes bool) {
