@@ -6,7 +6,7 @@ it as a design record. Record differences and remaining follow-ups; acceptance
 and release gates remain visible even after a design moves. Update incoming and
 relative links, and move companion evidence with its design.
 
-Reviewed 2026-10-11 against `db2ccd3e`. Statuses describe this checkout, not a
+Reviewed 2026-10-11 against `b4122ea6`. Statuses describe this checkout, not a
 published release or current remote PR activity. Recent merged work establishes
 implementation progress; an open plan alone does not establish someone is
 actively working on it. Code and user documentation remain the current contract.
@@ -15,7 +15,6 @@ actively working on it. Code and user documentation remain the current contract.
 
 | Proposal | Implemented | Remaining |
 | --- | --- | --- |
-| [CLI reliability and keep forever](cli-reliability-and-retention.md) | Implementation integrated for cleanup, CLI reliability, retention, revisions and staging; delivery record tracks review. | Combined-head validation, independent review and release/provider/platform acceptance. |
 | [Historical backfill recovery](historical-backfill-recovery.md) | Diagnostics, portable recovery, rollout lookup, history lifecycle and native child capture; recent recovery hardening. | Historical-only ownership/bulk mappings, fragment artifact/lifecycle, full acceptance matrix. |
 | [Archive listing at scale](listing-at-scale.md) | Parallel listing, tracing, bounded metadata-body reads; 10k benchmark and 10k/20k operation-count coverage. | Full 1k/10k/100k measurement matrix and an index that bounds LIST header cost. |
 | [Cloud capture](cloud-capture.md) | No cloud collector/push or vendor pull implementation. | Proposed, unscheduled; requires producer probes and runtime/authentication design. |
@@ -28,6 +27,7 @@ seven-day import and the status prompt for existing installations. See the
 
 | Record | Status |
 | --- | --- |
+| [CLI reliability and keep forever](cli-reliability-and-retention.md) | A–G implementation landed; [exact implementation-SHA evidence](../maintainers/acceptance/cli-reliability-and-retention-2026-10-11.md) recorded. Final-head checks/review and signed-release/provider/app/platform acceptance remain open; retain the plan here while those gates are pending. |
 | [Release remediation](release-remediation.md) | Implementation record; disposable provider/per-app acceptance and release sign-off remain open. |
 | [Native name comparisons](../maintainers/native-session-name-comparisons.md) | Partial sandbox evidence; native UI acceptance blocked. |
 | [Published-release acceptance](../maintainers/open-source-acceptance.md) | Maintainer runbook for candidate/provider/app checks; implementation does not imply a passing release gate. |
