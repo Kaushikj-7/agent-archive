@@ -26,8 +26,12 @@ Checking installed applications...
 \e[2m✓ Retention 90 days\e[0m
 
 
+\e[1mStorage · Verification\e[0m
+\e[2mAccount → Storage → Verification\e[0m
 Checking your storage connection…
 \e[32m✓\e[0m Connected to your storage.
+  \e[33m!\e[0m Bucket privacy not verified: public-access settings could not be read.
+    Make sure public access is off: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
 
 \e[1mReview your changes\e[0m
   Apps      Codex
