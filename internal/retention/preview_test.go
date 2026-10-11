@@ -2,10 +2,10 @@ package retention
 
 import (
 	"encoding/json"
-	"fmt"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -53,7 +53,7 @@ func TestRetentionPreviewUsesPreservedMeaningfulAge(t *testing.T) {
 
 func TestRetentionPreviewLeavesFutureCaptureUntouched(t *testing.T) {
 	for _, cachedClock := range []bool{false, true} {
-		t.Run(fmt.Sprint(cachedClock), func(t *testing.T) {
+		t.Run(strconv.FormatBool(cachedClock), func(t *testing.T) {
 			local := newTestStore(t)
 			now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 			publishTwice(t, local, storagetest.NewMemoryStore(), "future", t.TempDir(), now.Add(365*24*time.Hour))
