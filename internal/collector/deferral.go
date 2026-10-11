@@ -140,7 +140,7 @@ func (p *pass) nameCodexCoverage(ctx context.Context, reg archive.SessionRegistr
 	// A lineage chosen from an earlier epoch's retained proof, with no
 	// current locator, is refused the same way until coverage completes in
 	// this pass (see relatedSourcePass.Read), so it is deferred too.
-	if lookupErr != nil || set.Complete && !(set.Retained && set.Current == nil) {
+	if lookupErr != nil || set.Complete && (!set.Retained || set.Current != nil) {
 		return err
 	}
 	return nameCoverageRefusals(err)
