@@ -141,10 +141,7 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	if full {
 		listLimit = 0
 	}
-	ctx, stopReads := readCommandContext(env)
-	defer stopReads()
-	listed, err := reader.ListRecent(ctx, store, archiveSessionsPrefix, opts.filter, listLimit, listOpts)
-	stopReads()
+	listed, err := listRecentWithInterrupts(env, store, opts.filter, listLimit, listOpts)
 	stopList()
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: list: %v\n", err)
@@ -982,6 +979,13 @@ func listingReadOptions(env listCommandDependencies, scope sessionScope, opts li
 		CompatibilityScan: func(reason string) { terminal.Printf(stderr, "agent-archive: list: %s.\n", reason) },
 		BodyRead:          bodyRead, ScopeMatch: scopeMatch,
 	}
+}
+
+// listRecentWithInterrupts releases the read listener before the browser or pager.
+func listRecentWithInterrupts(env listCommandDependencies, store storage.ObjectStore, filter reader.Filter, limit int, opts reader.ListOptions) (reader.RecentResult, error) {
+	ctx, stopReads := readCommandContext(env)
+	defer stopReads()
+	return reader.ListRecent(ctx, store, archiveSessionsPrefix, filter, limit, opts)
 }
 
 // rebuildListingIndex reports explicit index maintenance progress and resumable failure.

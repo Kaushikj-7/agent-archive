@@ -177,6 +177,7 @@ func (f failedTemporaryOutput) Write(p []byte) (int, error) {
 	}
 	return f.File.Write(p)
 }
+
 func (f failedTemporaryOutput) Close() error {
 	err := f.File.Close()
 	if f.step == "close" {
@@ -189,6 +190,7 @@ func TestAtomicOutputFailurePreservesPreviousFile(t *testing.T) {
 	t.Parallel()
 	for _, step := range []string{"write", "close", "replace"} {
 		t.Run(step, func(t *testing.T) {
+			t.Parallel()
 			dir := t.TempDir()
 			path := filepath.Join(dir, "output")
 			if err := os.WriteFile(path, []byte("previous"), 0600); err != nil {
@@ -203,11 +205,11 @@ func TestAtomicOutputFailurePreservesPreviousFile(t *testing.T) {
 					return failedTemporaryOutput{File: f, step: step}, nil
 				},
 				link: os.Link,
-				rename: func(old, new string) error {
+				rename: func(old, destination string) error {
 					if step == "replace" {
 						return errors.New("replace failed")
 					}
-					return os.Rename(old, new)
+					return os.Rename(old, destination)
 				},
 			}
 			if err := writeAtomicOutput(path, []byte("new"), true, ops); err == nil {
@@ -265,6 +267,9 @@ func TestRevocationJSONOutputChecksDelivery(t *testing.T) {
 	for _, w := range []io.Writer{failingOutput{}, failingOutput{short: true}} {
 		if err := printRevocation(w, revocation.Journal{}, true); err == nil {
 			t.Fatal("JSON output failure ignored")
+		}
+		if code := revocationOutputCode(w, io.Discard, revocation.Journal{}, true); code != 1 {
+			t.Fatalf("revocation output code=%d", code)
 		}
 	}
 }

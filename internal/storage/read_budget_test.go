@@ -29,18 +29,29 @@ func (c *budgetClient) Do(r *http.Request) (*http.Response, error) {
 		<-r.Context().Done()
 		return nil, r.Context().Err()
 	}
-	return &http.Response{StatusCode: 200, Header: http.Header{}, Body: &stalledReadBody{ctx: r.Context()}, Request: r}, nil
+	return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: &stalledReadBody{ctx: r.Context()}, Request: r}, nil
 }
 
 type stalledReadBody struct{ ctx context.Context }
 
 func (b *stalledReadBody) Read([]byte) (int, error) { <-b.ctx.Done(); return 0, b.ctx.Err() }
-func (*stalledReadBody) Close() error               { return nil }
+
+func (*stalledReadBody) Close() error { return nil }
+
+type budgetTestOperation string
+
+const (
+	budgetGet   budgetTestOperation = "get"
+	budgetHead  budgetTestOperation = "head"
+	budgetPage  budgetTestOperation = "page"
+	budgetList  budgetTestOperation = "list"
+	budgetRange budgetTestOperation = "range"
+)
 
 func TestRemoteReadBoundsStalledHeadersAndBody(t *testing.T) {
 	for _, body := range []bool{false, true} {
-		for _, operation := range []string{"get", "head", "page", "list", "range"} {
-			t.Run(operation+map[bool]string{false: "-headers", true: "-body"}[body], func(t *testing.T) {
+		for _, operation := range []budgetTestOperation{budgetGet, budgetHead, budgetPage, budgetList, budgetRange} {
+			t.Run(string(operation)+map[bool]string{false: "-headers", true: "-body"}[body], func(t *testing.T) {
 				synctest.Test(t, func(t *testing.T) {
 					client := &budgetClient{body: body}
 					cfg := aws.Config{Region: "test", Credentials: credentials.NewStaticCredentialsProvider("test", "test", ""), HTTPClient: client}
@@ -50,19 +61,19 @@ func TestRemoteReadBoundsStalledHeadersAndBody(t *testing.T) {
 					}
 					start := time.Now()
 					switch operation {
-					case "get":
+					case budgetGet:
 						_, err = store.Get(context.Background(), "object")
-					case "head":
+					case budgetHead:
 						_, err = store.Stat(context.Background(), "object")
-					case "page":
+					case budgetPage:
 						_, err = store.ListPage(context.Background(), "sessions", "", 1000)
-					case "list":
+					case budgetList:
 						_, err = store.List(context.Background(), "sessions")
-					case "range":
+					case budgetRange:
 						_, err = store.ListRange(context.Background(), "sessions", "", "")
 					}
 					// HEAD has no body to consume, so a successful header is a complete read.
-					if body && operation == "head" {
+					if body && operation == budgetHead {
 						return
 					}
 					if err == nil {
@@ -80,7 +91,7 @@ func TestRemoteReadBoundsStalledHeadersAndBody(t *testing.T) {
 type successfulReadClient struct{}
 
 func (successfulReadClient) Do(r *http.Request) (*http.Response, error) {
-	return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("complete")), Request: r}, nil
+	return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("complete")), Request: r}, nil
 }
 
 func TestRemoteReadRetainsShorterCallerDeadlineAndSuccessfulBody(t *testing.T) {
@@ -142,7 +153,7 @@ func (c *slowPagesClient) Do(r *http.Request) (*http.Response, error) {
 	if c.pages == 1 {
 		body = `<ListBucketResult><IsTruncated>true</IsTruncated><NextContinuationToken>next</NextContinuationToken></ListBucketResult>`
 	}
-	return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
+	return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
 }
 
 func TestRemoteScanAllowsIndependentPageBudgets(t *testing.T) {

@@ -64,10 +64,7 @@ func runMachinesRevoke(args []string, stdin io.Reader, out, errOut io.Writer, en
 			return machineCommandError(errOut, err)
 		}
 		publishRevocation(context.Background(), home, &journal, cfg, env)
-		if err := printRevocation(out, journal, opts.JSON); err != nil {
-			return machineCommandError(errOut, err)
-		}
-		return 0
+		return revocationOutputCode(out, errOut, journal, opts.JSON)
 	}
 	p := newPrompter(stdin, out)
 	defer p.close()
@@ -301,6 +298,13 @@ func reconcileRevocationSlots(home string, j revocation.Journal) error {
 func revocationMetadataMatches(token cloudflare.TokenMetadata, key revocation.Key, j revocation.Journal) bool {
 	id, ok := cloudflare.ParseProviderName(token.Name)
 	return ok && token.ID == key.ProviderID && id.RecipientID == key.RecipientID && id.IssuerID == key.IssuerID && id.SlotID == key.SlotID && cloudflare.ExactBucketPolicy(token, j.AccountID, cloudflare.BucketRef{Name: j.Bucket, Jurisdiction: j.Jurisdiction}, j.PermissionID)
+}
+
+func revocationOutputCode(out, errOut io.Writer, journal revocation.Journal, asJSON bool) int {
+	if err := printRevocation(out, journal, asJSON); err != nil {
+		return machineCommandError(errOut, err)
+	}
+	return 0
 }
 
 func printRevocation(out io.Writer, j revocation.Journal, asJSON bool) error {
