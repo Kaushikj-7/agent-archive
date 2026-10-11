@@ -17,7 +17,7 @@ func historyFixture(t *testing.T) (*storagetest.MemoryStore, archive.Metadata, [
 	now := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
 	m := archive.Metadata{SchemaVersion: archive.HistoryMetadataSchemaVersion, SessionID: session, NativeSessionID: "11111111-1111-4111-8111-111111111111", ProjectID: "project", Harness: archive.Harness{Name: "codex"}, CapturedAt: now, FilterVersion: "10", History: &archive.RevisionHistory{CurrentRevision: "11111111-1111-4111-8111-111111111111"}}
 	var keys []string
-	for _, hex := range []string{"a", "b", "c", "d"} {
+	for index, hex := range []string{"a", "b", "c", "d"} {
 		key := "sessions/codex/" + session + "/source." + strings.Repeat(hex, 64) + ".jsonl.gz"
 		keys = append(keys, key)
 		data := compressedHeader(t, "9")
@@ -25,12 +25,12 @@ func historyFixture(t *testing.T) (*storagetest.MemoryStore, archive.Metadata, [
 			t.Fatal(err)
 		}
 		ref := archive.SourceReference{Key: key, SHA256: strings.Repeat(hex, 64), CompressedBytes: len(data)}
-		switch hex {
-		case "a":
+		switch index {
+		case 0:
 			m.SourceBundle = ref
-		case "b", "c":
+		case 1, 2:
 			id := "22222222-2222-4222-8222-222222222222"
-			if hex == "c" {
+			if index == 2 {
 				id = "33333333-3333-4333-8333-333333333333"
 			}
 			m.History.Preserved = append(m.History.Preserved, archive.RevisionReference{RevisionID: id, CapturedAt: now, Source: ref, FilterVersion: "9"})
@@ -105,24 +105,33 @@ func TestApplyProtectsNewPreservedReference(t *testing.T) {
 	}
 }
 
+type invalidHistoryKind string
+
+const (
+	missingHistorySource   invalidHistoryKind = "missing"
+	foreignHistorySource   invalidHistoryKind = "cross-session"
+	duplicateHistorySource invalidHistoryKind = "duplicate"
+	invalidHistoryRevision invalidHistoryKind = "invalid revision"
+)
+
 func TestHistoryAmbiguityBlocksInventoryAndApply(t *testing.T) {
-	for _, kind := range []string{"missing", "cross-session", "duplicate", "invalid revision"} {
-		t.Run(kind, func(t *testing.T) {
+	for _, kind := range []invalidHistoryKind{missingHistorySource, foreignHistorySource, duplicateHistorySource, invalidHistoryRevision} {
+		t.Run(string(kind), func(t *testing.T) {
 			store, m, keys, now := historyFixture(t)
 			plan, err := Inventory(context.Background(), store, "destination", "bucket", "", ModeUnreferenced, "", now)
 			if err != nil {
 				t.Fatal(err)
 			}
 			switch kind {
-			case "missing":
+			case missingHistorySource:
 				if err := store.Delete(context.Background(), keys[1]); err != nil {
 					t.Fatal(err)
 				}
-			case "cross-session":
+			case foreignHistorySource:
 				m.History.Preserved[0].Source.Key = strings.Replace(keys[1], session, strings.Repeat("e", 32), 1)
-			case "duplicate":
+			case duplicateHistorySource:
 				m.History.Preserved[1].Source = m.History.Preserved[0].Source
-			case "invalid revision":
+			case invalidHistoryRevision:
 				m.History.Preserved[0].RevisionID = "invalid"
 			}
 			saveHistory(t, store, m)
