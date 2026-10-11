@@ -61,6 +61,8 @@ parser 0.23.0 derive the corrected labels and prompt fallback.
   Quoted markup, fenced and indented code examples (including after blank
   lines containing whitespace), and mentions in human prose remain intact. Human
   text outside the block remains a prompt; context-only text is omitted.
+  Sources filtered earlier keep the wrapper; Codex parser 0.27.0 applies the
+  same rule when deriving their metadata, so a refresh corrects their titles.
 - Head/tail previews keep name class precedence and report partial coverage
   when records between their bounded windows were not read.
 
