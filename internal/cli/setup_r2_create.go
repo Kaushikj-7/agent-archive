@@ -899,7 +899,9 @@ func (c *r2Creator) mintKey(ctx context.Context) (token cloudflare.Token, name s
 			slot.CleanupReason = "creation-refused"
 		}
 		if saveErr := issuance.Save(home, slot); saveErr != nil {
-			return token, name, key, saveErr
+			// Preserve the failed durability result while still revoking any token
+			// whose identifier came back without a usable secret.
+			err = errors.Join(err, saveErr)
 		}
 	} else {
 		slot.State = issuance.SecretIntent

@@ -26,6 +26,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/cloudflare/cloudflaretest"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
+	"github.com/wangjohn/agent-archive/internal/issuance"
 	"github.com/wangjohn/agent-archive/internal/setupresources"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
@@ -1676,6 +1677,17 @@ func TestGuidedR2TokenAnswerWithoutAValueIsRevokedByID(t *testing.T) {
 	if len(deleted) != 1 || !strings.HasSuffix(deleted[0], "/tokens/abc123") || !setupContainsText(out, "Cloudflare says that token doesn't exist.") || !setupContainsText(out, `named "`) {
 		t.Fatalf("deleted %v\n%s", deleted, out)
 	}
+	// An invalid returned identifier cannot overwrite the durable creation
+	// intent, even though best-effort provider cleanup still runs.
+	home, err := g.env.readHome()
+	if err != nil {
+		t.Fatal(err)
+	}
+	slots, err := issuance.List(home)
+	if err != nil || len(slots) != 1 || slots[0].State != issuance.CreationIntent {
+		t.Fatalf("lost creation evidence: %v %v", slots, err)
+	}
+
 }
 
 // Guided creation works through the explicit shortcut without environment switches.
