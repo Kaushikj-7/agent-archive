@@ -802,3 +802,5 @@ such a bucket. S3 receipts identify the creation profile, not a verified AWS
 account identity. R2 archive keys use the existing issuance ledger; receipts and
 ledger records contain identifiers and credential references, never setup tokens
 or credential values. Old drafts remain readable and have no inferred receipts.
+Setup withholds new bucket creation if existing receipts cannot be read or the
+receipt limit is reached; preserve and reconcile that history before retrying.
