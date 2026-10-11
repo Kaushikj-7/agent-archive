@@ -738,7 +738,7 @@ func checkRemovableHome(home, userHome string) error {
 // an entry missing here is left behind by uninstall (and reported), never
 // silently deleted.
 var localStateEntries = []string{
-	"discovery-catalog.json", "discovery-health.json",
+	"discovery-catalog.json", "discovery-health.json", "discovery-refused-starts.json",
 	machineRegistrationFile, "config.json", "setup-draft.json", "setup-transaction.json", "imports",
 	"storage-health.json", "capture-diagnostics.json", "diagnostics.lock", "application-versions.json",
 	"admission-intents", "admission-intents.lock", "admission-replay-cursor.json",
