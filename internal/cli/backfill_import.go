@@ -821,8 +821,13 @@ func runBackfillHistory(args []string, stdout, stderr io.Writer, env Env) int {
 // with what is left; interrupted, nothing registered, removed (none of its
 // sessions is registered any more), how many are waiting, or uploaded. Only
 // the latest import can still be finished by running backfill again.
+//
+// Waiting counts the pending sessions not in the archive yet. A pending
+// session already published is counted apart, after them: rechecking when
+// it owes only a re-scan (state.Outstanding's Rechecking), updating when it
+// has newer work to upload.
 func batchUploadState(store *state.Store, cfg config.Config, regs []archive.SessionRegistration, b backfill.Batch, latest bool) (string, error) {
-	registered, subagents, waiting := 0, 0, 0
+	registered, subagents, waiting, rechecking, updating := 0, 0, 0, 0, 0
 	for _, reg := range regs {
 		if !reg.InBatch(b.ID) {
 			continue
@@ -832,11 +837,17 @@ func batchUploadState(store *state.Store, cfg config.Config, regs []archive.Sess
 			continue
 		}
 		registered++
-		pending, err := importPending(store, cfg, reg)
+		owed, err := importOutstanding(store, cfg, reg)
 		if err != nil {
 			return "", err
 		}
-		if pending {
+		switch {
+		case !owed.Pending():
+		case owed.Rechecking():
+			rechecking++
+		case owed.Published:
+			updating++
+		default:
 			waiting++
 		}
 	}
@@ -867,8 +878,16 @@ func batchUploadState(store *state.Store, cfg config.Config, regs []archive.Sess
 		return "nothing registered", nil
 	case registered == 0:
 		return "removed", nil
-	case waiting > 0:
-		return fmt.Sprintf("%d waiting", waiting), nil
 	}
-	return "uploaded", nil
+	upload := "uploaded"
+	if waiting > 0 {
+		upload = fmt.Sprintf("%d waiting", waiting)
+	}
+	if rechecking > 0 {
+		upload += fmt.Sprintf(" · %d rechecking", rechecking)
+	}
+	if updating > 0 {
+		upload += fmt.Sprintf(" · %d updating", updating)
+	}
+	return upload, nil
 }

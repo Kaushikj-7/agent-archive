@@ -19,24 +19,61 @@ const (
 	Cleanup        FailureKind = "cleanup"
 )
 
+// SourceCause names why a source failed, in fixed words that carry no path
+// or content, where its kind alone would leave the reader guessing. Callers
+// still switch on Kind; a cause only words the failure (see SourceError.Error)
+// and lets a caller tell a deferral from a failure.
+type SourceCause string
+
+// Source causes.
+const (
+	// CauseHistoryCoverage: Codex has not yet established which rollout files
+	// make up the thread's history, so the source cannot select its lineage
+	// or list its historical candidates. A later pass, once coverage
+	// completes, can.
+	CauseHistoryCoverage SourceCause = "history_coverage"
+)
+
+// causeText words each cause after the kind's own words.
+var causeText = map[SourceCause]string{
+	CauseHistoryCoverage: "Codex history coverage incomplete",
+}
+
 // SourceError retains a local cause and a bounded public classification.
 type SourceError struct {
 	Kind     FailureKind
 	Err      error
 	Observed *SourceObservation
+	// Cause, when set, words why the source failed (see SourceCause). It never
+	// changes Kind.
+	Cause SourceCause
 }
 
 func (e *SourceError) Error() string {
+	text := "source " + string(e.Kind)
 	if e.Kind == Unsafe || e.Kind == FormatMismatch {
-		return "unsafe source format"
+		text = "unsafe source format"
 	}
 	if e.Kind == Changed {
-		return "source changed while reading; try again"
+		text = "source changed while reading; try again"
 	}
-	return "source " + string(e.Kind)
+	if cause, ok := causeText[e.Cause]; ok {
+		text += ": " + cause
+	}
+	return text
 }
 
 func (e *SourceError) Unwrap() error { return e.Err }
+
+// Classification reports this error's own kind and cause (see Classified).
+func (e *SourceError) Classification() (FailureKind, SourceCause) { return e.Kind, e.Cause }
+
+// Classified is implemented by SourceError alone. A caller that walks an error
+// tree itself asks each node through it: errors.As would skip past a join to
+// the first SourceError anywhere below.
+type Classified interface {
+	Classification() (FailureKind, SourceCause)
+}
 
 // Failure reports the outer classified failure, including joined cleanup errors.
 func Failure(err error) FailureKind {
@@ -53,6 +90,20 @@ func Wrap(k FailureKind, err error) error {
 		return nil
 	}
 	return &SourceError{Kind: k, Err: err}
+}
+
+// WithCause returns err with cause recorded on its outermost SourceError,
+// leaving the original unchanged. An err that is not itself a SourceError (a
+// join, or one wrapped with more context) is returned as it is: a cause
+// describes one failure, never a group of them.
+func WithCause(err error, cause SourceCause) error {
+	var e *SourceError
+	if _, outermost := err.(Classified); !outermost || !errors.As(err, &e) {
+		return err
+	}
+	copied := *e
+	copied.Cause = cause
+	return &copied
 }
 
 // ErrClosed rejects use of a borrowed input after its owner closes.

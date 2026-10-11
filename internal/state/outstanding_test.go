@@ -30,6 +30,7 @@ func TestOutstandingFacets(t *testing.T) {
 		owed          bool
 		syncCanFinish bool
 		defersExpiry  bool
+		rechecking    bool
 	}{
 		{
 			name: "never captured", want: Outstanding{NeverCaptured: true},
@@ -62,7 +63,32 @@ func TestOutstandingFacets(t *testing.T) {
 				}
 			},
 			want:    Outstanding{Scan: true, Published: true},
+			pending: true, owed: true, syncCanFinish: true, rechecking: true,
+		},
+		{
+			// Not in the archive yet: waiting, not rechecking.
+			name: "never captured with an interrupted scan",
+			setup: func(t *testing.T, s *Store, reg archive.SessionRegistration) {
+				t.Helper()
+				if err := s.SetScanPending(reg.ArchiveSessionID, true); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want:    Outstanding{Scan: true, NeverCaptured: true},
 			pending: true, owed: true, syncCanFinish: true,
+		},
+		{
+			// Newer work to upload as well: more than a re-scan.
+			name: "published with an interrupted scan and a request", requested: true,
+			setup: func(t *testing.T, s *Store, reg archive.SessionRegistration) {
+				t.Helper()
+				savePublished(t, s, reg, bundle(reg), CacheStatusPublished)
+				if err := s.SetScanPending(reg.ArchiveSessionID, true); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want:    Outstanding{Requested: true, Scan: true, Published: true},
+			pending: true, owed: true, syncCanFinish: true, defersExpiry: true,
 		},
 		{
 			// The review's case: a published session whose update waits for
@@ -163,6 +189,9 @@ func TestOutstandingFacets(t *testing.T) {
 			}
 			if got.Pending() != tc.pending || got.Owed() != tc.owed || got.SyncCanFinish() != tc.syncCanFinish || got.DefersExpiry() != tc.defersExpiry {
 				t.Fatalf("Pending %v Owed %v SyncCanFinish %v DefersExpiry %v, want %v %v %v %v", got.Pending(), got.Owed(), got.SyncCanFinish(), got.DefersExpiry(), tc.pending, tc.owed, tc.syncCanFinish, tc.defersExpiry)
+			}
+			if got.Rechecking() != tc.rechecking {
+				t.Fatalf("Rechecking %v, want %v", got.Rechecking(), tc.rechecking)
 			}
 		})
 	}
