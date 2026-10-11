@@ -230,6 +230,7 @@ func TestBackfillHistoryStagedVerificationAndDeferralCounts(t *testing.T) {
 		{"all first publications verified", false, "uploaded; 2 remotely verified · 1 rechecking · 1 updating"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			f := newDeferredFixture(t)
 			f.session(t, "rechecking", true, true, false)
 			f.session(t, "updating", true, true, true)
