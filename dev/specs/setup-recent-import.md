@@ -1,6 +1,6 @@
 # Import the last 7 days at setup — engineering plan
 
-Status: planned 2026-10-08; [decisions](#decisions) confirmed by the owner
+Status: implemented; planned 2026-10-08; [decisions](#decisions) confirmed by the owner
 the same day. §1–§3 implemented in
 [#386](https://github.com/wangjohn/agent-archive/pull/386)
 (`importRecentSessions` in `internal/cli/backfill.go`, `backfill.Plan.Recent`

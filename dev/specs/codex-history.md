@@ -1,5 +1,11 @@
 # Codex retained history reader
 
+Status: implemented retained-history reader and lifecycle contract (#336, #341,
+#348, #355), reconciled 2026-10-11 at `db2ccd3e`. Native lookup, ownership,
+child admission and maintenance are covered by code and synthetic tests. The
+broader [historical recovery plan](../proposals/historical-backfill-recovery.md)
+still has historical-only ownership, fragment artifacts and acceptance work.
+
 A stable Codex thread is distinct from its physical rollout revisions, root
 conversation, parent and fork relation. The source provider consumes injected
 `CodexRolloutLookup` catalog evidence; it never enumerates a home directory per

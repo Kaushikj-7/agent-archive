@@ -4,7 +4,7 @@ Add a concrete package under `internal/agents/<name>` and bind its implemented
 ports once in `agents/builtin`. Shared archive, capture, collector, reader,
 backfill and CLI policies consume narrow `agentapi` lookups. Native vocabulary
 belongs to the integration. Read [architecture](architecture.md) and the
-[integration contracts](../proposals/agent-integration-contracts.md) first.
+[integration contracts](../proposals/implemented/agent-integration-contracts.md) first.
 
 ## Establish evidence and declare identity
 

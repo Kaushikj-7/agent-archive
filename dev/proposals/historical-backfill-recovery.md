@@ -18,6 +18,26 @@ publication and revision maintenance; it does not establish live provider,
 platform or signed release acceptance. Fragment import, historical destinations
 and remaining scale/release gates below remain separate work.
 
+## Current implementation and remaining scope
+
+Diagnostics (#345), portable Git recovery (#347), shared rollout lookup (#348),
+history lifecycle (#341), first-run recovery (#349), and native child/history
+capture (#355) have landed. Later recovery fixes (#387, #393–#395, #397–#398,
+#403, #408, #410, #417) harden inventory, per-app isolation, admission and paths.
+See `internal/backfill`, `internal/discovery`, `internal/collector/history_*.go`
+and [the retained-history contract](../specs/codex-history.md).
+
+Steps 1–5 now have substantial implementation; this does not establish every
+original completion gate. Historical-only ownership without a live checkout
+(step 6a), a separately versioned fragment artifact and lifecycle (step 6b),
+and the full portability/provider/older-writer acceptance matrix (step 7) remain
+open. Existing exact cwd mappings are not the complete historical-only product.
+
+The gap descriptions and delivery gates below preserve the reviewed starting
+point; claims that all related histories are pending or all history writes are
+fenced describe that baseline, not current behavior.
+
+
 Staff review: revised 2026-10-06. The sequence below incorporates the findings
 from an architecture and lifecycle review. Implementation can begin with
 diagnostics and portable Git recovery; history and fragment writers require

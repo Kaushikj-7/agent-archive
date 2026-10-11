@@ -1,6 +1,6 @@
 # Finding a session — engineering plan
 
-Status: planned 2026-09-30, [decisions](#decisions) confirmed the same day;
+Status: implemented; planned 2026-09-30, [decisions](#decisions) confirmed the same day;
 PRs 1 to 8 merged (the last on 2026-10-01); the owner's
 [live check](#live-check-pr-8) is not recorded yet.
 Where this plan and the code differ once packages merge, the code is the

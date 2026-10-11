@@ -12,8 +12,8 @@ and reports bounded local and untrusted remote operation progress. Portable
 standalone exclusions, safe interactive mappings, direct-first discovery, partial
 candidate review/manual recovery, post-commit success, management-token fallback,
 clipboard recovery and missing-app recheck are implemented. See the
-[multiple-machine guide](../../docs/guides/multiple-machines.md) for the exact current
-experimental flow and [uninstall instructions](../../docs/getting-started/uninstall.md)
+[multiple-machine guide](../../../docs/guides/multiple-machines.md) for the exact current
+experimental flow and [uninstall instructions](../../../docs/getting-started/uninstall.md)
 for safe revocation before deleting local ownership evidence.
 
 Provider token names intentionally contain only recipient, issuer and slot IDs;
@@ -86,7 +86,7 @@ Today, repeating `setup` requires manual settings and credential entry. Its prin
 - Uses project paths under `~` (`homeRelative`, `setup.go:1023`), so relocated checkouts fail to match. Handoff already uses `repo_key` (`internal/archive/repo_key.go`).
 - Shares the first machine's R2 key, preventing independent revocation.
 
-Copying the data directory also copies `machine_id`, causing competing session owners and overwrites ([multiple machines](../../docs/guides/multiple-machines.md)).
+Copying the data directory also copies `machine_id`, causing competing session owners and overwrites ([multiple machines](../../../docs/guides/multiple-machines.md)).
 
 ## Decisions
 
@@ -424,7 +424,7 @@ An issuer may have copied every minted/delivered secret. `machines revoke NAME -
 
 ### What revocation does not do
 
-Revocation leaves sessions and previously downloaded data intact. [Uninstall’s lifecycle backstop](../../docs/getting-started/uninstall.md#a-lifecycle-rule-as-a-backstop) covers retention after the owner stops sweeping, with deletion instructions. It does not modify the remote machine; subsequent uploads fail and `status` reports credential rejection.
+Revocation leaves sessions and previously downloaded data intact. [Uninstall’s lifecycle backstop](../../../docs/getting-started/uninstall.md#a-lifecycle-rule-as-a-backstop) covers retention after the owner stops sweeping, with deletion instructions. It does not modify the remote machine; subsequent uploads fail and `status` reports credential rejection.
 ### Moving a machine off the shared key
 
 Beta/shared-key users run `agent-archive machines own-key` with a management token:
@@ -467,10 +467,10 @@ S3 carries only profile name and region—usually SSO with short-lived credentia
 
 - **Config:** add optional `machine_name`, credential recipient/issuer bindings, `spare_keys`, `spare_credential_refs`, `cloudflare_token_command`. `config.Load` (`internal/config/config.go:201`) tolerates unknown fields, but older setup drops them while provider/stored keys remain. Upgrade all machines before spares; `machines --verify` finds unclaimed keys for cleanup.
 - **Bucket:** new `machines/` is ignored by existing retention/purge/list paths, which scan `sessions/`/`listing/` (`internal/purge/purge.go:87`, `internal/reader/list_index.go:131`). No record retention deletion; include the folder in archive-removal instructions/layout docs.
-- **Bucket permissions:** a key limited to the prefix ([bucket permissions](../../docs/security/bucket-permissions.md)) already covers `machines/`.
+- **Bucket permissions:** a key limited to the prefix ([bucket permissions](../../../docs/security/bucket-permissions.md)) already covers `machines/`.
 - **`setup --yes`:** unchanged for existing scripts. New flags are added only (Phase 1).
 - **Schemas:** session metadata remains unchanged and joins on `machine_id`; specify/validate new machine, operation, and ledger schemas separately.
-- **Privacy filter:** the `aa-pair1:` shape bumps `FilterVersion`, so existing sessions are republished under the new filter as any filter bump does (see [versions](../maintainers/versions.md)).
+- **Privacy filter:** the `aa-pair1:` shape bumps `FilterVersion`, so existing sessions are republished under the new filter as any filter bump does (see [versions](../../maintainers/versions.md)).
 - **Local state:** the issued-key ledger is a new folder in the data directory, ignored by older binaries.
 
 ## Phases and pull requests
@@ -494,7 +494,7 @@ Ship only as an opt-in beta for R2, requiring explicit `--share-key` consent and
 
 ### Phase 3: live acceptance of guided R2 creation (gate)
 
-Run every box of "Live acceptance: guided R2 creation" in `dev/contributing/testing.md` against a real Cloudflare account, plus the new items under [things to verify](#open-questions-and-things-to-verify). Nothing in Phase 4 ships before this passes. This is the open item already recorded in [the portable handoff plan](implemented/portable-handoff-and-onboarding.md#outcome-as-built).
+Run every box of "Live acceptance: guided R2 creation" in `dev/contributing/testing.md` against a real Cloudflare account, plus the new items under [things to verify](#open-questions-and-things-to-verify). Nothing in Phase 4 ships before this passes. This is the open item already recorded in [the portable handoff plan](portable-handoff-and-onboarding.md#outcome-as-built).
 
 ### Phase 4: per-machine keys and revocation
 
@@ -570,7 +570,7 @@ Rename then revoke, handed-out spare ownership, issuer-compromise recovery, inte
 
 ## Alternatives considered
 
-- **Copy the data directory or `config.json`.** Carries `machine_id`; two machines would claim the same sessions. Already warned against in [multiple machines](../../docs/guides/multiple-machines.md).
+- **Copy the data directory or `config.json`.** Carries `machine_id`; two machines would claim the same sessions. Already warned against in [multiple machines](../../../docs/guides/multiple-machines.md).
 - **An unencrypted, secret-free profile with the key entered by hand.** Simpler, and still possible: `setup --yes` after Phase 1 is exactly that. Pairing exists to move the key without the person handling it.
 - **A passphrase the person chooses.** People choose guessable passphrases, and the bundle can be attacked offline. A generated code is the same effort to type.
 - **Six words from the EFF large wordlist (77.5 bits).** The first draft of this plan. It means twice the typing and no prefix shortcut, to protect a revocable key that 62 bits already puts beyond guessing.

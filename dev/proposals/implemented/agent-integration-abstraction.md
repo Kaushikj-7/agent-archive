@@ -1,5 +1,9 @@
 # Coding-agent integration abstraction
 
+Status: implemented on the default branch: phases 0–6 landed in #278, #290, #293, #295, #298, #299, #300 and #301. Reconciled 2026-10-11 at `db2ccd3e`. See `internal/agentapi`, `internal/agents/builtin`, `internal/cli/fourth_flow_test.go` and [Adding an integration](../../contributing/adding-an-adapter.md). The stacked/readiness statuses below are historical. The [baseline](agent-integration-baseline.md) remains pinned historical evidence: its unresolved relative timing gate and later installed-version/platform acceptance are not declared passed by this cleanup.
+
+## Original design and execution record
+
 Prepared 2026-10-01 against `main` at `98f8bd0`. Status: stacked implementation in progress; readiness and independent review
 remain pending. Reviewed against the current capture, state, collector, parser,
 and source-reader implementations on 2026-10-01. The interface sketch is ready
@@ -480,7 +484,7 @@ import, and collection entry points.
 Initially all three integrations report today's shared version values. This
 proposal does not introduce independent per-agent version policy. Extraction
 alone does not bump versions. Any output change follows the existing
-filter/parser/schema rules in [Versions](../maintainers/versions.md), with
+filter/parser/schema rules in [Versions](../../maintainers/versions.md), with
 reviewed golden changes.
 
 ### Historical discovery
@@ -594,14 +598,14 @@ with PRs and implementation differences as work proceeds.
 
 | Phase | Deliverable | Completion gate | Status |
 | --- | --- | --- | --- |
-| 0 | Characterization, identity migration design, performance baseline | Capture/index races, native-label/outcome paths, read consistency, and existing hot-path costs are recorded before contracts move. | [PR #278](https://github.com/wangjohn/agent-archive/pull/278): contracts and measured references; independent review/CI pending. |
-| 1 | Catalog, immutable registry, operation lookup | Config, flags, setup order, known-agent reader probes, and destinations consume one identity source; aliases and unknown archive names retain behavior. | [PR #290](https://github.com/wangjohn/agent-archive/pull/290): stacked implementation; readiness and review pending. |
-| 2 | Launch/runtime contracts for all three agents | Existing argument, environment, terminal, current-session, and noninteractive tests pass through injected integrations. | [PR #293](https://github.com/wangjohn/agent-archive/pull/293): stacked implementation; readiness and review pending. |
-| 3a | Qualified identity and migration | Opaque agent-qualified keys, compatibility adoption, races and recovery preserve archive identity. | [PR #295](https://github.com/wangjohn/agent-archive/pull/295): stacked implementation; readiness and review pending. |
-| 3b | Lifecycle and hook plans | Qualified native-key migration precedes decoder cutover; native names/payload interpretation leave capture; generic admission preserves fresh/resume, deferred intent, lock, parent/child, and transactional setup behavior. | [PR #298](https://github.com/wangjohn/agent-archive/pull/298): stacked implementation; readiness and review pending. |
-| 4 | Source passes and snapshots | File/text/database reads use common contracts; bounds, locator transitions, legacy signatures, typed failures, cleanup, declarative rewrite policy, and Cursor reuse are preserved. | [PR #299](https://github.com/wangjohn/agent-archive/pull/299): stacked implementation; readiness and review pending. |
-| 5 | Codec dispatch and bundle observability | Filters/parsers expose shared Analysis; native facts leave bundle/metadata/labels/subagent paths; one analysis feeds shared rendering; old and new fixtures remain equivalent. | [PR #300](https://github.com/wangjohn/agent-archive/pull/300): stacked implementation; readiness and review pending. |
-| 6 | Discovery, skills, contributor guide, extension proof | Backfill/evidence/skills use integrations; test-only fourth agent completes archive flows; temporary wrappers and duplicated lists are removed. | [PR #301](https://github.com/wangjohn/agent-archive/pull/301): stacked implementation; readiness and review pending. |
+| 0 | Characterization, identity migration design, performance baseline | Capture/index races, native-label/outcome paths, read consistency, and existing hot-path costs are recorded before contracts move. | [PR #278](https://github.com/wangjohn/agent-archive/pull/278): merged contracts and measured references; historical timing caveat remains. |
+| 1 | Catalog, immutable registry, operation lookup | Config, flags, setup order, known-agent reader probes, and destinations consume one identity source; aliases and unknown archive names retain behavior. | [PR #290](https://github.com/wangjohn/agent-archive/pull/290): merged on the default branch; acceptance limits above apply. |
+| 2 | Launch/runtime contracts for all three agents | Existing argument, environment, terminal, current-session, and noninteractive tests pass through injected integrations. | [PR #293](https://github.com/wangjohn/agent-archive/pull/293): merged on the default branch; acceptance limits above apply. |
+| 3a | Qualified identity and migration | Opaque agent-qualified keys, compatibility adoption, races and recovery preserve archive identity. | [PR #295](https://github.com/wangjohn/agent-archive/pull/295): merged on the default branch; acceptance limits above apply. |
+| 3b | Lifecycle and hook plans | Qualified native-key migration precedes decoder cutover; native names/payload interpretation leave capture; generic admission preserves fresh/resume, deferred intent, lock, parent/child, and transactional setup behavior. | [PR #298](https://github.com/wangjohn/agent-archive/pull/298): merged on the default branch; acceptance limits above apply. |
+| 4 | Source passes and snapshots | File/text/database reads use common contracts; bounds, locator transitions, legacy signatures, typed failures, cleanup, declarative rewrite policy, and Cursor reuse are preserved. | [PR #299](https://github.com/wangjohn/agent-archive/pull/299): merged on the default branch; acceptance limits above apply. |
+| 5 | Codec dispatch and bundle observability | Filters/parsers expose shared Analysis; native facts leave bundle/metadata/labels/subagent paths; one analysis feeds shared rendering; old and new fixtures remain equivalent. | [PR #300](https://github.com/wangjohn/agent-archive/pull/300): merged on the default branch; acceptance limits above apply. |
+| 6 | Discovery, skills, contributor guide, extension proof | Backfill/evidence/skills use integrations; test-only fourth agent completes archive flows; temporary wrappers and duplicated lists are removed. | [PR #301](https://github.com/wangjohn/agent-archive/pull/301): merged on the default branch; acceptance limits above apply. |
 
 Phases are review boundaries, not a promise of exactly seven PRs. Define
 interfaces in the phase that first uses them; phase 1 does not land the entire
@@ -685,7 +689,7 @@ helper names are legitimate; prohibit dispatch leaks rather than every mention
 of an agent string.
 
 Run checks appropriate to each phase, then the repository's required macOS and
-Linux checks before completion; see [Testing](../contributing/testing.md).
+Linux checks before completion; see [Testing](../../contributing/testing.md).
 Privacy/parsing changes follow the existing fuzzing requirements. Installed
 version verification uses disposable synthetic-content sessions and read-back;
 fixture success alone must not upgrade a capability to verified. Strengthen the
@@ -697,7 +701,7 @@ the extension proof another fixture that happens to use existing JSONL shapes.
 
 Done means the three integrations preserve behavior and compatibility, the
 fourth-agent extension proof passes, source and hook budgets do not regress,
-and [Adding an adapter](../contributing/adding-an-adapter.md) becomes a
+and [Adding an adapter](../../contributing/adding-an-adapter.md) becomes a
 concrete integration recipe instead of a trail through shared packages. Update
 the architecture map and capability documentation with the implementation.
 

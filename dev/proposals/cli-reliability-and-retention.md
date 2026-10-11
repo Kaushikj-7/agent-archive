@@ -15,7 +15,7 @@ whole-session expiry.
 This plan covers the findings from that review, plus the retention changes needed
 to make the new choice reliable. It does not establish that no other CLI defects
 exist. Confirm each finding against the implementation branch before changing it.
-Use the existing [CLI experience plan](setup-and-cli-ux.md) for prompt conventions
+Use the existing [CLI experience plan](implemented/setup-and-cli-ux.md) for prompt conventions
 and the [historical recovery plan](historical-backfill-recovery.md) for import
 architecture; reconcile their remaining work with current code rather than
 reimplementing shipped functionality.

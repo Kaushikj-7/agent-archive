@@ -107,7 +107,7 @@ unknown future semantics, detect every imported/recently copied native file, or
 guarantee that future transcript bodies remain readable. Bodies still pass
 through the existing filter/collector rules, which may reject or omit unfamiliar
 content. Successful publication and read-back verify the retained archive,
-not completeness for unknown representations. The [pinned evidence](../../dev/proposals/local-session-discovery-evidence.md)
+not completeness for unknown representations. The [pinned evidence](../../dev/proposals/implemented/local-session-discovery-evidence.md)
 and synthetic fixtures document what was actually inspected and exercised.
 
 ## Measured operating envelope

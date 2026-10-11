@@ -1,6 +1,10 @@
 # Local session discovery: engineering proposal
 
-> **Proposed; revised source contract.** Not implemented on the default branch. See the [documentation index](../../docs/README.md) for what exists today.
+Status: implemented for Codex on the default branch. Reconciled 2026-10-11 at `db2ccd3e`: consent/admission (#305), collector discovery (#306), explicit all-project scope (#309, #311), bounded scans (#310, #316), and regression coverage (#327) have landed. See `internal/discovery` and the [capture reference](../../../docs/reference/capture-capabilities.md). Claude/Cursor automatic discovery and cloud capture remain outside this scope. The proposed/not-implemented statements below are historical design context; installed-platform acceptance is separate.
+
+## Original design and execution record
+
+> **Proposed; revised source contract.** Not implemented on the default branch. See the [documentation index](../../../docs/README.md) for what exists today.
 
 Status: proposed plan for review. Prepared 2026-10-01; source and Codex scope contract revised 2026-10-03. This proposal adds automatic discovery of new local Codex sessions to the background collector, with shared admission rules that can support other agents later. This document describes the intended behavior, not a claim that automatic discovery is available. Implementation work is tracked separately; it does not change this machine's capture configuration.
 
@@ -26,17 +30,17 @@ OpenAI documents trust review for non-managed hooks and the `/hooks` review flow
 
 Relevant existing code:
 
-- [Collector](../../internal/collector/collector.go) processes registered sources and replays pending admission intents.
-- [Codex backfill discovery](../../internal/backfill/discover.go) locates rollout files and reads bounded headers.
-- [Project resolution](../../internal/backfill/resolve.go) handles configured projects and Git worktrees.
-- [Hook admission](../../internal/capture/hook.go) owns fresh-start admission and lifecycle evidence.
-- [Session admission guide](../contributing/session-admission.md) distinguishes native start time from archive admission time.
+- [Collector](../../../internal/collector/collector.go) processes registered sources and replays pending admission intents.
+- [Codex backfill discovery](../../../internal/backfill/discover.go) locates rollout files and reads bounded headers.
+- [Project resolution](../../../internal/backfill/resolve.go) handles configured projects and Git worktrees.
+- [Hook admission](../../../internal/capture/hook.go) owns fresh-start admission and lifecycle evidence.
+- [Session admission guide](../../contributing/session-admission.md) distinguishes native start time from archive admission time.
 
 ## Scope
 
 **Included:** new, eligible local Codex sessions; desktop and CLI validation; worktree resolution; hooks and discovery cooperating; explicit Codex-only included-projects or all-projects consent; bounded discovery; accurate status; compatibility with existing registrations, backfill, pause, retention, and destination changes.
 
-**Deferred:** automatic discovery for Claude Code or Cursor, cloud retrieval, a new GUI onboarding application, filesystem watchers, runtime plugins, retroactive imports, and changes to the transcript privacy filter. Cloud capture remains a [separate proposal](cloud-capture.md).
+**Deferred:** automatic discovery for Claude Code or Cursor, cloud retrieval, a new GUI onboarding application, filesystem watchers, runtime plugins, retroactive imports, and changes to the transcript privacy filter. Cloud capture remains a [separate proposal](../cloud-capture.md).
 
 “Local” means a supported session record read from a default or explicitly configured Codex home on this computer. It does not mean proven execution on this computer. The adapter validates source format, native identity, start time, and available import/fork/remote classifications. Identifiable unsupported histories remain available through deliberate backfill rather than automatic admission.
 
@@ -199,7 +203,7 @@ Keep overall capture, discovery health, hook observation, and storage verificati
 - Old main/v2 writers must refuse active and disabled/history-bearing blanket state before mutation. Every save/marker helper preserves the strongest fence: setup drafts, journal Before snapshots, pairing, pause, skill policy, backfill and recovery. Removing authorization fields must never downgrade the fence. Test refusal without changing any files.
 - Existing registrations and archive IDs remain stable. Empty origin remains legacy hook origin. Existing imports, publication requests, and removal records retain their meanings.
 - Add discovery origin to relevant registration, source, metadata, and JSON schema definitions where those fields are emitted. Audit every `!Imported()` branch: automatic capture does not imply hook execution.
-- Update parser/filter/adapter or schema versions only according to the actual output changes and the [version rules](../maintainers/versions.md). Do not assume that an optional origin enum extension is understood by every older reader.
+- Update parser/filter/adapter or schema versions only according to the actual output changes and the [version rules](../../maintainers/versions.md). Do not assume that an optional origin enum extension is understood by every older reader.
 - Update the admission guide, adding-an-adapter guide, architecture, setup/help, status reference, and privacy documentation when the feature is implemented. This proposal makes no changes to current user documentation.
 
 ## Phases and work packages

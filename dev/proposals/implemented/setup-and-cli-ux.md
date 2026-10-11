@@ -1,9 +1,13 @@
 # Setup and CLI experience implementation plan
 
+Status: implemented on the default branch. Reconciled 2026-10-11 at `db2ccd3e`. Shared prompts, setup selection/review, and guided commands merged in #354, #357 and #358. Platform acceptance and release sign-off remain separate gates; the original pending-review wording below is historical.
+
+## Original design and execution record
+
 Status: Accepted design; shared rendering, setup and remaining guided commands
 are implemented in dependent changes. Final integration review, required gates
 and platform acceptance remain pending. See the
-[renderer contract](../contributing/prompt-rendering.md).
+[renderer contract](../../contributing/prompt-rendering.md).
 
 Make guided commands clearly distinguish completed answers, explanatory text,
 and the current question. Initial onboarding and later interactive setup use
@@ -387,13 +391,13 @@ evaluation output concise and preserve their output contracts.
 ### Presentation matrix
 
 Use synthetic fixtures and injected `Env`, following the repository's
-[testing guide](../contributing/testing.md). Record normal color and
+[testing guide](../../contributing/testing.md). Record normal color and
 `NO_COLOR` terminals at 80×24, 100×30, and 60×20; include long paths, wide
 characters, and many projects. Add a narrow 36-column static snapshot for
 readability in phone-sized examples. Also cover dumb terminals, redirected
 input/output, separate stdout/stderr, and existing noninteractive controls.
 
-Extend [screen fixtures](../../internal/cli/screens_test.go) beyond setup
+Extend [screen fixtures](../../../internal/cli/screens_test.go) beyond setup
 and status to full guided pairing, handoff, backfill, uninstall, and purge
 transcripts. Give synthetic outputs explicit color, redraw, width, and
 height capabilities; color alone currently cannot model the proposed UI.
