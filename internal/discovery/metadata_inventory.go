@@ -223,7 +223,7 @@ func (m *metadataInventory) beginOperation(ctx context.Context) (context.Context
 		}
 	}
 	if m.remaining <= 0 {
-		return ctx, nil, metadataLimit()
+		return ctx, nil, m.fail(metadataLimit())
 	}
 	m.deadline = started.Add(m.remaining)
 	operation, cancel := context.WithDeadline(ctx, m.deadline)
@@ -236,7 +236,7 @@ func (m *metadataInventory) operationFailure(parent context.Context, err error) 
 		return canceled
 	}
 	if !m.deadline.IsZero() && !time.Now().Before(m.deadline) {
-		return metadataLimit()
+		return m.fail(metadataLimit())
 	}
 	return err
 }
