@@ -54,13 +54,13 @@ func TestRetentionWireAndStickyComposition(t *testing.T) {
 			t.Fatal("invalid policy accepted")
 		}
 	}
-	cfg := Config{RetentionDays: 0, GenerationProtection: true, CodexHistoryProtection: true, DurableStorageProtection: true, ImportStagingProtection: true}
+	cfg := Config{RetentionDays: 0, GenerationProtection: true, CodexHistoryProtection: true, DurableStorageProtection: true}
 	raw, err := json.Marshal(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var loaded Config
-	if err := json.Unmarshal(raw, &loaded); err != nil || loaded.SchemaVersion != 9 || !loaded.RetentionProtection || !loaded.DurableStorageProtection {
+	if err := json.Unmarshal(raw, &loaded); err != nil || loaded.SchemaVersion != 8 || !loaded.RetentionProtection || !loaded.DurableStorageProtection {
 		t.Fatalf("composition %+v %v", loaded, err)
 	}
 }
@@ -88,10 +88,10 @@ func TestRetentionRejectsNullInsteadOfDefaulting(t *testing.T) {
 	}
 }
 
-func TestForeverAndStagingFencesKeepDiscoveryFloorValidation(t *testing.T) {
-	for _, staging := range []bool{false, true} {
+func TestForeverFenceKeepsDiscoveryFloorValidation(t *testing.T) {
+	{
 		cfg, _ := discoveryConfig(t)
-		cfg.RetentionDays, cfg.RetentionProtection, cfg.ImportStagingProtection = 0, true, staging
+		cfg.RetentionDays, cfg.RetentionProtection = 0, true
 		raw, err := json.Marshal(cfg)
 		if err != nil {
 			t.Fatal(err)
@@ -114,7 +114,19 @@ func TestForeverAndStagingFencesKeepDiscoveryFloorValidation(t *testing.T) {
 		}
 		var rejected Config
 		if err := json.Unmarshal(corrupt, &rejected); err == nil {
-			t.Fatalf("staging=%v: fence discarded discovery floor validation", staging)
+			t.Fatal("fence discarded discovery floor validation")
 		}
+	}
+}
+
+func TestRetentionWriterRejectsStagingCapability(t *testing.T) {
+	for _, raw := range []string{`{"schema_version":{"version":9,"writer":"import-staging-v9"},"import_staging_protection":true,"retention_days":0,"retention_protection":true}`, `{"schema_version":1,"import_staging_protection":true,"retention_days":90}`} {
+		var cfg Config
+		if err := json.Unmarshal([]byte(raw), &cfg); err == nil {
+			t.Fatalf("accepted unsupported staging configuration: %s", raw)
+		}
+	}
+	if _, err := json.Marshal(Config{RetentionDays: 90, ImportStagingProtection: true}); err == nil {
+		t.Fatal("emitted staging capability without implementation")
 	}
 }

@@ -243,6 +243,7 @@ protections supply the outer fence: `archive-generations-v4` for generations,
 `codex-history-v5` for preserved history, `durable-storage-v7` for durable local
 storage, and `retention-forever-v8` for Keep forever. Version9,
 `import-staging-v9`, is reserved for the dependent durable import-staging feature.
+This retention implementation rejects version9 until that feature is installed.
 Each higher fence preserves the validation and compatibility protections below
 it. Older writers must understand the outer writer identity before mutation;
 a numeric schema bump alone does not protect against permissive legacy decoders.

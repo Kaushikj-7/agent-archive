@@ -61,7 +61,7 @@ func TestGuidedRetentionChoicesPreserveSavedPolicy(t *testing.T) {
 		saved int
 		want  int
 	}{
-		{"\n", 90, 90}, {"\n\n", 14, 14}, {"\n", 0, 0},
+		{"90\n", 90, 90}, {"30\n", 0, 30}, {"\n", 90, 90}, {"\n\n", 14, 14}, {"\n", 0, 0},
 		{"3\n", 90, 0}, {"1\n", 0, 90}, {"custom\n30\n", 0, 30}, {"custom\nforever\n", 90, 0},
 	} {
 		var out bytes.Buffer
