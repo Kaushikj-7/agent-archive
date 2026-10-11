@@ -214,7 +214,7 @@ func createS3Bucket(p *prompter, cfg *credentials.Config, env Env, profileRegion
 			creator = openS3CreationClient(p, cfg, env, region, name, noCredentials, uncertain[name])
 		}
 		if creator != nil {
-			created, createErr, receiptErr := requestS3Bucket(env, creator, cfg.AWSProfile, name, region)
+			created, createErr, receiptErr := requestS3Bucket(p, env, creator, cfg.AWSProfile, name, region)
 			if receiptErr != nil {
 				return newS3Bucket{}, false, receiptErr
 			}
@@ -846,15 +846,19 @@ func s3CreationRefused(err error) bool {
 
 // requestS3Bucket keeps persistence failures distinct from provider refusals,
 // which the interactive flow may offer to retry.
-func requestS3Bucket(env Env, creator BucketCreator, profile, name, region string) (created createdS3Bucket, providerErr, receiptErr error) {
+func requestS3Bucket(p *prompter, env Env, creator BucketCreator, profile, name, region string) (created createdS3Bucket, providerErr, receiptErr error) {
 	home, err := env.readHome()
 	if err != nil {
+		return created, nil, err
+	}
+	if err = p.refuseUncertainCreation(home, setupresources.Receipt{Provider: setupresources.S3, Profile: profile, Bucket: name, Region: region, CreatedAt: env.now()}); err != nil {
 		return created, nil, err
 	}
 	receipt, err := setupresources.Begin(home, setupresources.Receipt{Provider: setupresources.S3, Profile: profile, Bucket: name, Region: region, CreatedAt: env.now()})
 	if err != nil {
 		return created, nil, err
 	}
+	p.rememberResourceRequest(receipt.ID)
 	created = createdS3Bucket{name: name, region: region, profile: profile, receipt: receipt, home: home}
 	ctx, cancel := context.WithTimeout(context.Background(), bucketCreateTimeout)
 	providerErr = creator.CreateBucket(ctx, name, region)
