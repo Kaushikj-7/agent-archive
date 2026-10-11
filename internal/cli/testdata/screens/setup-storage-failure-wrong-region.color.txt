@@ -55,6 +55,9 @@ Choose which apps to include:
 
 \e[1mStep 2 of 3 · Connect storage\e[0m
 
+\e[1mStorage · Account\e[0m
+\e[2mAccount → Storage → Verification\e[0m
+
 ? Where should your archive live?
 
   1) Cloudflare R2 (default)
@@ -65,12 +68,18 @@ Choose which apps to include:
 › Choose [1]: s3-existing
 \e[2m✓ Provider Amazon S3\e[0m
 
+\e[1mStorage · Account\e[0m
+\e[2mAccount → Storage → Verification\e[0m
+
 ? AWS profile
 
   [:back] Back to storage options
 
 › Answer: work
 \e[2m✓ AWS profile work\e[0m
+
+\e[1mStorage · Storage\e[0m
+\e[2mAccount → Storage → Verification\e[0m
 
 ? Which bucket should sessions be stored in?
 
@@ -84,6 +93,8 @@ Choose which apps to include:
 
 Bucket team-archive is in us-east-1; using that region.
 
+\e[1mStorage · Verification\e[0m
+\e[2mAccount → Storage → Verification\e[0m
 Checking your storage connection…
 
   \e[31m✗\e[0m The bucket is in another region.

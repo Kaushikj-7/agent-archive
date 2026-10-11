@@ -50,6 +50,9 @@ Choose Cloudflare R2 or Amazon S3 for private archive storage. Setup will guide 
 
 \e[1mStep 2 of 3 · Connect storage\e[0m
 
+\e[1mStorage · Account\e[0m
+\e[2mAccount → Storage → Verification\e[0m
+
 ? Where should your archive live?
 
   1) Cloudflare R2 (default)
@@ -60,12 +63,18 @@ Choose Cloudflare R2 or Amazon S3 for private archive storage. Setup will guide 
 › Choose [1]:
 \e[2m✓ Provider Amazon S3\e[0m
 
+\e[1mStorage · Account\e[0m
+\e[2mAccount → Storage → Verification\e[0m
+
 ? AWS profile
 
   [:back] Back to storage options
 
 › Answer:
 \e[2m✓ AWS profile work\e[0m
+
+\e[1mStorage · Storage\e[0m
+\e[2mAccount → Storage → Verification\e[0m
 
 ? Which bucket should sessions be
   stored in?
@@ -80,8 +89,12 @@ Choose Cloudflare R2 or Amazon S3 for private archive storage. Setup will guide 
 
 Bucket team-archive is in us-east-1; using that region.
 
+\e[1mStorage · Verification\e[0m
+\e[2mAccount → Storage → Verification\e[0m
 Checking your storage connection…
 \e[32m✓\e[0m Connected to your storage.
+  \e[33m!\e[0m Bucket privacy not verified: public-access settings could not be read.
+    Make sure public access is off: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
 
 \e[1mStep 3 of 3 · Review and start\e[0m
   Apps
