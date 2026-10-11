@@ -58,7 +58,7 @@ func (p *relatedSourcePass) genericLegacyRead(ctx context.Context, ref agentapi.
 	if err := p.env.CodexRollouts.Check(ctx, ref.Key, set.Revision); err != nil {
 		return nil, errors.Join(err, snapshot.Close())
 	}
-	return &registeredLegacySnapshot{SourceSnapshot: snapshot, owner: p, ref: ref, revision: set.Revision, ctx: ctx}, nil
+	return &registeredLegacySnapshot{SourceSnapshot: snapshot, owner: p, ref: ref, revision: set.Revision, lineage: set.LineageToken(), ctx: ctx}, nil
 }
 
 type registeredLegacySnapshot struct {
@@ -66,12 +66,15 @@ type registeredLegacySnapshot struct {
 	owner    *relatedSourcePass
 	ref      agentapi.SourceRef
 	revision string
-	ctx      context.Context
+	// lineage is the token genericLegacySignature hashes, so the signature a
+	// read records matches the next pass's Signature of an unchanged source.
+	lineage string
+	ctx     context.Context
 }
 
 func (s *registeredLegacySnapshot) Observation() agentapi.SourceObservation {
 	observation := s.SourceSnapshot.Observation()
-	sum := sha256.Sum256([]byte(observation.Signature.Token + "\x00" + s.revision))
+	sum := sha256.Sum256([]byte(observation.Signature.Token + "\x00" + s.lineage))
 	observation.Signature.Token = hex.EncodeToString(sum[:])
 	return observation
 }

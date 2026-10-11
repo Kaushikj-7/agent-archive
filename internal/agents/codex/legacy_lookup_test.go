@@ -156,3 +156,36 @@ func TestLegacyUnboundSignatureIgnoresCoverageCompleteness(t *testing.T) {
 		t.Fatal("a changed lineage kept the legacy signature")
 	}
 }
+
+// A registered legacy read records the signature the next pass compares with
+// Signature, so both must hash the same lineage token. On an incomplete set
+// Revision and Lineage differ, and a read keyed by Revision would make every
+// later pass see a change.
+func TestLegacyUnboundReadObservationMatchesSignature(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	ref := legacyTestFile(t, root, threadA, threadA, map[string]any{})
+	renamed := filepath.Join(root, "legacy-session.jsonl")
+	if err := os.Rename(ref.Path, renamed); err != nil {
+		t.Fatal(err)
+	}
+	ref.Path, ref.Key = renamed, "legacy-session"
+	lookup := &historyLookup{thread: agentapi.CodexRolloutSet{Revision: "incomplete", Lineage: "lineage"}}
+	pass, err := (SourceProvider{}).OpenPass(t.Context(), agentapi.SourceEnvironment{CodexRollouts: registeredHistoryLookup{lookup}, LegacyUnboundRegistration: true, Policy: transcriptio.OpenPolicy{Root: root, RejectSymlinks: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = pass.Close() }()
+	observed, err := pass.Signature(t.Context(), ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := pass.Read(t.Context(), ref, agentapi.ReadLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = snapshot.Close() }()
+	if snapshot.Observation().Signature != observed.Signature {
+		t.Fatal("legacy read recorded a signature its next Signature cannot match")
+	}
+}
