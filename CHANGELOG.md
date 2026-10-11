@@ -18,6 +18,12 @@ follow [Semantic Versioning](https://semver.org/).
 - Protect active and preserved revision sources during purge and selective archive
   cleanup. Invalid or missing history references block deletion; old-filter live
   evidence must be replaced through verified privacy publication first.
+- Keep `handoff` within `--max-bytes` for long sessions: once the existing
+  trimming is not enough, older exchanges keep only their last agent message,
+  then all tool output is dropped, then every exchange but the last is
+  condensed to its prompt and counts. Markdown still over the limit because of
+  one oversized part, or of several hundred exchanges, is cut at a line with
+  a marker, keeping the last exchange.
 - Clarify storage onboarding with Account, Storage, and Verification stages.
   Keep valid existing-bucket answers when going back, show S3 archive
   permissions on request, and report privacy separately from connectivity.
