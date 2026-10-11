@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -67,7 +68,7 @@ func TestFitHandoffBoundsALongCodexSession(t *testing.T) {
 	t.Parallel()
 	h := longCodexHandoff()
 	full := markdownSize(h)
-	for _, limit := range []int{DefaultHandoffMaxBytes, 60_000, 30_000} {
+	for _, limit := range []int{DefaultHandoffMaxBytes, 60_000, 30_000, 14_000} {
 		fit, ok := FitHandoff(h, limit, markdownSize)
 		out := string(RenderHandoffMarkdown(fit, HandoffRenderOptions{Preamble: true}))
 		t.Logf("limit %d: %d bytes → %d bytes", limit, full, len(out))
@@ -82,7 +83,7 @@ func TestFitHandoffBoundsALongCodexSession(t *testing.T) {
 			"## Where it left off\n" + quote(h.LeftOff),
 			"Omitted to fit the size limit:",
 			"Full record: /data/handoffs/97636671.md",
-			// The last exchange's final message is kept whole.
+			// The last exchange's final message is kept, if shortened.
 			"Exchange 34 message 36: the check is still in progress",
 		} {
 			if !strings.Contains(out, want) {
@@ -93,6 +94,9 @@ func TestFitHandoffBoundsALongCodexSession(t *testing.T) {
 			if !strings.Contains(out, fmt.Sprintf("prompt %d: continue with the next PR", i)) {
 				t.Fatalf("limit %d: prompt %d lost", limit, i)
 			}
+		}
+		if fit.Exchanges[len(fit.Exchanges)-1].Condensed != nil {
+			t.Fatalf("limit %d: the last exchange was condensed", limit)
 		}
 		// The first prompt, which is long, keeps its body up to the cap.
 		first := fit.Exchanges[0].Prompt
@@ -131,6 +135,28 @@ func TestFitHandoffStopsAtTheFirstStageThatFits(t *testing.T) {
 	condensed, _ := FitHandoff(longCodexHandoff(), 30_000, markdownSize)
 	if !slices.ContainsFunc(condensed.Elisions, func(e HandoffElision) bool { return e.Kind == HandoffElisionExchanges }) {
 		t.Fatalf("a 30,000-byte limit condensed no exchanges: %v", condensed.Elisions)
+	}
+}
+
+// When the recent steps' own tool output is what is over budget, it is
+// dropped before any exchange is condensed.
+func TestFitHandoffDropsRecentToolOutputBeforeCondensing(t *testing.T) {
+	t.Parallel()
+	h := Handoff{Version: HandoffVersion, Session: HandoffSession{Harness: "codex"}, LeftOff: "done"}
+	for i := range 3 {
+		exchange := HandoffExchange{Prompt: fmt.Sprintf("prompt %d", i)}
+		for j := range 6 {
+			exchange.Steps = append(exchange.Steps, HandoffStep{Kind: HandoffStepTool, Tool: &HandoffToolCall{Name: "gh", Summary: strconv.Itoa(j), Result: strings.Repeat("{}\n", 600)}})
+		}
+		h.Exchanges = append(h.Exchanges, exchange)
+	}
+	fit, ok := FitHandoff(h, 20_000, markdownSize)
+	if !ok || markdownSize(fit) > 20_000 {
+		t.Fatalf("fits=%v size=%d", ok, markdownSize(fit))
+	}
+	last := fit.Elisions[len(fit.Elisions)-1]
+	if last.Kind != HandoffElisionToolOutput || slices.ContainsFunc(fit.Exchanges, func(e HandoffExchange) bool { return e.Condensed != nil }) {
+		t.Fatalf("elisions = %v", fit.Elisions)
 	}
 }
 
