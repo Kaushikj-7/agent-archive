@@ -622,6 +622,23 @@ agent-archive status --json
 What each status line means is in
 [troubleshooting](../guides/troubleshooting.md#reading-status).
 
+If you set up Codex discovery before setup imported the last 7 days, or a
+session in those days was not imported, `status` says so under Codex, once
+discovery has scanned it:
+
+```text
+! 1 Codex session from the 7 days before setup was not captured.
+  Import it with agent-archive backfill --since 2026-09-28.
+```
+
+The date is the local day 7 days before discovery was first enabled for Codex.
+The count is top-level Codex sessions that started from that day until
+discovery was enabled, that discovery refused for starting before it, and that
+are not archived; the line goes away once they are imported. Claude Code and
+Cursor have no such line: their hooks see no session from before they were
+installed, unless one runs a hook later, which status lists as a session
+skipped for starting before the project's activation.
+
 ### Sessions from the last 7 days
 
 Sessions that started before setup, the one you may be running setup from
