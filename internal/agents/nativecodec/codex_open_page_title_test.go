@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/wangjohn/agent-archive/internal/archive"
 )
 
 const codexNullOpenPage = `<external_codex_apps_open_page>{"page_id":null}</external_codex_apps_open_page>`
@@ -158,5 +160,55 @@ func TestClaudePromptKeepsOpenPageMarkup(t *testing.T) {
 	}
 	if got := parserTestMetadata(t, bundle).Title; got != codexNullOpenPage {
 		t.Fatalf("title = %q", got)
+	}
+}
+
+// The parser strip is Codex's alone, even for a record shaped like a Codex
+// one: Claude and Cursor derivation never applies the filter's rule again.
+func TestInjectedContextStripIsCodexOnly(t *testing.T) {
+	t.Parallel()
+	record := map[string]any{"type": "response_item", "payload": map[string]any{"type": "message", "role": "user", "content": inputText(codexNullOpenPage + "\nReview this page.")}}
+	before, err := json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, agent := range []nativeProfile{profileClaude, profileCursor} {
+		if got, _ := json.Marshal(withoutCodexInjectedContext(agent, record)); string(got) != string(before) {
+			t.Fatalf("%s record changed: %s", agent, got)
+		}
+	}
+	got, _ := json.Marshal(withoutCodexInjectedContext(profileCodex, record))
+	if !strings.Contains(string(got), `"text":"Review this page."`) || strings.Contains(string(got), "external_codex_apps_open_page") {
+		t.Fatalf("codex record = %s", got)
+	}
+	if after, _ := json.Marshal(record); string(after) != string(before) {
+		t.Fatalf("input record mutated: %s", after)
+	}
+}
+
+// Text the current filter keeps is a fixed point of the parser strip, so a
+// Codex session captured under filter 16 or later derives what it did.
+func TestCurrentFilterTextIsInjectedContextFixedPoint(t *testing.T) {
+	t.Parallel()
+	for _, in := range []string{
+		codexNullOpenPage,
+		codexNullOpenPage + "Summarize this page.",
+		"Keep this <external_codex_apps_open_page>outer<external_codex_apps_open_page>inner</external_codex_apps_open_page>tail</external_codex_apps_open_page> request",
+		"<external_codex_apps_open_page>unfinished",
+		"```xml\n<external_codex_apps_open_page>example</external_codex_apps_open_page>\n```",
+		"<external_codex_apps_open_page>Context</external_codex_apps_open_page>\n    <external_codex_apps_open_page>example</external_codex_apps_open_page>",
+		"<system-reminder>Injected</system-reminder><external_codex_apps_open_page>Context</external_codex_apps_open_page> \t\r\n    <external_codex_apps_open_page>example</external_codex_apps_open_page>",
+		"\r\n" + codexNullOpenPage + "\r\nFix it",
+		"<sys<system-reminder>x</system-reminder>tem-reminder>y</system-reminder>z",
+		" \n    <external_codex_apps_open_page>example</external_codex_apps_open_page>",
+	} {
+		state := sanitizeState{AddGap: func(string, int, string) {}}
+		kept, keep := sanitizeValue(in, &state)
+		if !keep {
+			continue
+		}
+		if injected, out := archive.StripInjectedContext(kept.(string)); injected {
+			t.Fatalf("filtered %q from %q strips again to %q", kept, in, out)
+		}
 	}
 }
