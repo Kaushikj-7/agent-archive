@@ -21,6 +21,9 @@ import (
 //     that is not in the bucket yet.
 //   - Pending: Owed, or a session never captured at all. This is the count
 //     users see as "pending".
+//   - Rechecking: Pending, for a session already published that owes only
+//     an interrupted scan; backfill history counts it apart from the
+//     sessions not in the archive yet.
 //   - SyncCanFinish: Pending, less a session only waiting for its
 //     transcript, which nothing a sync does can publish.
 //
@@ -86,6 +89,15 @@ func (o Outstanding) DefersExpiry() bool {
 // captured at all.
 func (o Outstanding) Pending() bool {
 	return o.Owed() || o.NeverCaptured
+}
+
+// Rechecking reports a pending session that is already in the archive and
+// owes nothing but an interrupted scan: a re-scan that failed or was put off
+// (a Codex session whose history coverage was not complete, say). It is
+// pending, but unlike a session never published, a copy of it is already in
+// the bucket.
+func (o Outstanding) Rechecking() bool {
+	return o.Published && o.Scan && !o.OwedAfterScan()
 }
 
 // SyncCanFinish reports a pending session a sync could finish: every pending
