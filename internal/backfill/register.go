@@ -188,7 +188,7 @@ func (r Registration) Run(candidates []Candidate) (RegistrationResult, error) {
 		}
 		groupStart := i
 		err := r.hold(works, &i, &result)
-		if cleanupErr := r.cleanObsoleteStages(works[groupStart : groupStart+min(limit, len(works)-groupStart)]); err == nil {
+		if cleanupErr := r.cleanObsoleteStages(ctx, works[groupStart:groupStart+min(limit, len(works)-groupStart)]); err == nil {
 			err = cleanupErr
 		}
 		if flushErr := flush(); err == nil {
@@ -535,7 +535,7 @@ func regularFile(path string) bool {
 // the reservation unadmitted and safe to retry.
 func (r Registration) stage(ctx context.Context, w *parentWork) error {
 	reg := r.registration(w.c, w.id, w.repoKey)
-	if existing, found, err := r.Store.LoadImportStage(reg); err != nil {
+	if existing, found, err := r.Store.LoadImportStage(ctx, reg); err != nil {
 		return err
 	} else if found {
 		w.stagedSHA256 = existing.SHA256
@@ -597,7 +597,7 @@ func (r Registration) stageSelectedChild(ctx context.Context, parent archive.Ses
 	owner := parent
 	owner.ArchiveSessionID, owner.NativeSessionID = candidate.ArchiveSessionID, candidate.NativeSessionID
 	owner.ParentSessionID = parent.ArchiveSessionID
-	if stage, found, err := r.Store.LoadImportStage(owner); err != nil {
+	if stage, found, err := r.Store.LoadImportStage(ctx, owner); err != nil {
 		return "", err
 	} else if found {
 		return stage.SHA256, nil
@@ -664,14 +664,14 @@ func (r Registration) stageGroup(ctx context.Context, works []*parentWork) error
 	return nil
 }
 
-func (r Registration) cleanObsoleteStages(works []*parentWork) (err error) {
+func (r Registration) cleanObsoleteStages(ctx context.Context, works []*parentWork) (err error) {
 	for _, w := range works {
 		if w.stageObsolete {
 			reg := r.registration(w.c, w.id, w.repoKey)
 			reg.StagedImportSHA256 = w.stagedSHA256
-			stage, found, e := r.Store.LoadImportStage(reg)
+			stage, found, e := r.Store.LoadImportStage(ctx, reg)
 			if e == nil && found {
-				e = r.Store.DropUnadmittedImportStage(stage)
+				e = r.Store.DropUnadmittedImportStage(ctx, stage)
 			}
 			if err == nil {
 				err = e

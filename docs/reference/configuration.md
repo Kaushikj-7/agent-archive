@@ -241,9 +241,12 @@ save, nested draft and rollback retains the stronger
 protection, the outer fence is `codex-scope-floor-v3` (version3). Later sticky
 protections supply the outer fence: `archive-generations-v4` for generations,
 `codex-history-v5` for preserved history, `durable-storage-v7` for durable local
-storage, and `retention-forever-v8` for Keep forever. Version9,
-`import-staging-v9`, is reserved for the dependent durable import-staging feature.
-This retention implementation rejects version9 until that feature is installed.
+storage, `retention-forever-v8` for Keep forever, and `import-staging-v9`
+(version9) for durable import staging. Confirmed imports install the sticky
+staging fence before retaining selected filtered evidence. Earlier retention-only
+writers refuse version9 before mutation; upgrade installed hooks and collectors
+before importing with this writer. Finite retention changes retain the staging
+fence.
 Each higher fence preserves the validation and compatibility protections below
 it. Older writers must understand the outer writer identity before mutation;
 a numeric schema bump alone does not protect against permissive legacy decoders.

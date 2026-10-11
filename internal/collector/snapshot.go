@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/trace"
@@ -39,7 +40,7 @@ func ReadLocalBundle(ctx context.Context, home string, reg archive.SessionRegist
 		return archive.SourceBundle{}, publishedErr
 	}
 	if reg.StagedImportSHA256 != "" && (publishedErr != nil || !published.Summary().Published) {
-		stage, found, err := store.LoadImportStage(reg)
+		stage, found, err := store.LoadImportStage(ctx, reg)
 		if err != nil {
 			return archive.SourceBundle{}, err
 		}
@@ -207,6 +208,9 @@ func readImportSourceSet(ctx context.Context, reg archive.SessionRegistration, a
 	if err != nil {
 		return archive.SourceBundle{}, nil, err
 	}
+	if err := validateImportSelection(ctx, reg, filtered, opts.Sources); err != nil {
+		return archive.SourceBundle{}, nil, err
+	}
 	if selected != nil {
 		*selected = observed.binding
 	}
@@ -245,4 +249,32 @@ func readImportSourceSet(ctx context.Context, reg archive.SessionRegistration, a
 		return nil
 	})
 	return bundle, preserved, err
+}
+
+// Reuse each integration's planning identity and conversation rules against the
+// fresh snapshot. A stable descriptor alone does not prove that a replaced path
+// still belongs to the native session selected in the confirmed plan.
+func validateImportSelection(ctx context.Context, reg archive.SessionRegistration, filtered archive.FilteredTranscript, sources agentapi.SourcesLookup) error {
+	imports, ok := sources.(agentapi.ImportsLookup)
+	if !ok {
+		return errors.New("import inspection capability unavailable")
+	}
+	inspector, ok := imports.LookupImport(reg.Harness.Name)
+	if !ok {
+		return errors.New("import inspection unavailable for selected harness")
+	}
+	inspection, err := inspector.InspectImport(ctx, agentapi.ImportInspectionRequest{
+		Session: agentapi.NativeSession{Agent: agentmeta.ID(reg.Harness.Name), NativeID: reg.NativeSessionID},
+		Source:  sourceRef(reg), Header: agentapi.NativeHeader{NativeID: reg.NativeSessionID, StartedAt: reg.SessionStartedAt}, Filtered: filtered,
+	})
+	if err != nil {
+		return err
+	}
+	if inspection.IdentityMismatch || filtered.LocalIdentity.ID != "" && filtered.LocalIdentity.ID != reg.NativeSessionID {
+		return errors.New("selected import source native identity changed; replan the import")
+	}
+	if !inspection.Conversation {
+		return errors.New("selected import source no longer contains a conversation; replan the import")
+	}
+	return nil
 }

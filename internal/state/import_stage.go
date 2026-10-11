@@ -40,10 +40,10 @@ func importStageRelative(id string) string {
 	return filepath.Join("sessions", id, "import-stage", "stage.json")
 }
 
-func (p ImportStage) digest() (string, error) {
+func (p ImportStage) digest(ctx context.Context) (string, error) {
 	p.SHA256 = ""
 	p.Registration.StagedImportSHA256 = ""
-	if _, err := jsonwire.Bound(context.Background(), p, maxPendingHistoryBytes); err != nil {
+	if _, err := jsonwire.Bound(ctx, p, maxPendingHistoryBytes); err != nil {
 		return "", errors.Join(ErrDurableStorageCapacity, err)
 	}
 	raw, err := json.Marshal(p)
@@ -59,7 +59,10 @@ func (p ImportStage) digest() (string, error) {
 
 // ImportStages returns a bounded slice of durable preparation journals. The
 // lexical cursor is progress only, never a proof of absence or permission.
-func (s *Store) ImportStages(after string, limit int) (stages []ImportStage, next string, err error) {
+func (s *Store) ImportStages(ctx context.Context, after string, limit int) (stages []ImportStage, next string, err error) {
+	if err := ctx.Err(); err != nil {
+		return nil, "", err
+	}
 	if limit <= 0 || limit > 50 {
 		limit = 50
 	}
@@ -75,7 +78,7 @@ func (s *Store) ImportStages(after string, limit int) (stages []ImportStage, nex
 	if err != nil {
 		return nil, "", err
 	}
-	defer dir.Close()
+	defer func() { err = errors.Join(err, dir.Close()) }()
 	entries, err := dir.ReadDir(durableEntryLimit + 1)
 	if err != nil && !errors.Is(err, io.EOF) {
 		return nil, "", err
@@ -86,6 +89,9 @@ func (s *Store) ImportStages(after string, limit int) (stages []ImportStage, nex
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
 	visited := 0
 	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return nil, "", err
+		}
 		if !entry.IsDir() || entry.Name() <= after {
 			continue
 		}
@@ -114,8 +120,8 @@ func (s *Store) ImportStages(after string, limit int) (stages []ImportStage, nex
 		if err != nil || !info.Mode().IsRegular() || info.Size() > maxPendingHistoryBytes {
 			return nil, "", errors.Join(ErrDurableStorageRecovery, err)
 		}
-		scratch, closeScratch := s.WithReadBudget(s.durableContext(), agentapi.NewNativeReadBudget(128<<20))
-		stage, found, err := scratch.loadPreparedImportStage(entry.Name())
+		scratch, closeScratch := s.WithReadBudget(ctx, agentapi.NewNativeReadBudget(128<<20))
+		stage, found, err := scratch.loadPreparedImportStage(ctx, entry.Name())
 		if err != nil || !found {
 			closeScratch()
 			return nil, "", errors.Join(ErrDurableStorageRecovery, err)
@@ -155,7 +161,7 @@ func (s *Store) ResumeImportAdmissions(ctx context.Context) error {
 	if err := s.readImportControl("import-stage-cursor.json", &cursor); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return errors.Join(ErrDurableStorageRecovery, err)
 	}
-	stages, next, err := s.ImportStages(cursor.After, 50)
+	stages, next, err := s.ImportStages(ctx, cursor.After, 50)
 	if err != nil {
 		return err
 	}
@@ -231,7 +237,7 @@ func (s *Store) admitPreparedImport(ctx context.Context, stage ImportStage, reg 
 			return err
 		}
 		if found && (existing.StagedImportSHA256 != reg.StagedImportSHA256 || !existing.InBatch(batchID)) {
-			return s.DropUnadmittedImportStage(stage)
+			return s.DropUnadmittedImportStage(ctx, stage)
 		}
 		children, err := s.preparedImportChildren(ctx, stage)
 		if err != nil {
@@ -239,7 +245,7 @@ func (s *Store) admitPreparedImport(ctx context.Context, stage ImportStage, reg 
 		}
 		if !found {
 			key := agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(reg.Harness.Name)), NativeID: reg.NativeSessionID}
-			existing, err = s.RegisterReservedSession(key, reg.ArchiveSessionID, func(string) archive.SessionRegistration { return reg })
+			_, err = s.RegisterReservedSession(key, reg.ArchiveSessionID, func(string) archive.SessionRegistration { return reg })
 			if err != nil {
 				return err
 			}
@@ -261,8 +267,8 @@ func (s *Store) admitPreparedImport(ctx context.Context, stage ImportStage, reg 
 }
 
 // Validate checks the bounded journal digest, identity and selected source set.
-func (p ImportStage) Validate(reg archive.SessionRegistration) error {
-	expected, err := p.digest()
+func (p ImportStage) Validate(ctx context.Context, reg archive.SessionRegistration) error {
+	expected, err := p.digest(ctx)
 	if err != nil {
 		return err
 	}
@@ -309,16 +315,16 @@ func (s *Store) SaveImportSourceSet(ctx context.Context, reg archive.SessionRegi
 		return "", ErrDurableStorageRecovery
 	}
 	stage := ImportStage{Version: 1, Registration: reg, Bundle: bundle, SkillEvidence: mode, Children: children, Preserved: preserved}
-	digest, err := stage.digest()
+	digest, err := stage.digest(ctx)
 	if err != nil {
 		return "", err
 	}
 	stage.SHA256 = digest
-	if err := stage.Validate(reg); err != nil {
+	if err := stage.Validate(ctx, reg); err != nil {
 		return "", err
 	}
 	err = config.WithImportStaging(s.home, func(g config.DurableStorageGuard) error {
-		existing, found, err := s.LoadImportStage(reg)
+		existing, found, err := s.LoadImportStage(ctx, reg)
 		if err != nil {
 			return err
 		}
@@ -334,15 +340,18 @@ func (s *Store) SaveImportSourceSet(ctx context.Context, reg archive.SessionRegi
 }
 
 // LoadImportStage validates the selected digest and immutable admission identity.
-func (s *Store) LoadImportStage(reg archive.SessionRegistration) (stage ImportStage, found bool, err error) {
-	stage, found, err = s.loadPreparedImportStage(reg.ArchiveSessionID)
+func (s *Store) LoadImportStage(ctx context.Context, reg archive.SessionRegistration) (stage ImportStage, found bool, err error) {
+	stage, found, err = s.loadPreparedImportStage(ctx, reg.ArchiveSessionID)
 	if err != nil || !found {
 		return stage, found, err
 	}
 	return stage, true, stage.validateOwner(reg)
 }
 
-func (s *Store) loadPreparedImportStage(id string) (stage ImportStage, found bool, err error) {
+func (s *Store) loadPreparedImportStage(ctx context.Context, id string) (stage ImportStage, found bool, err error) {
+	if err := ctx.Err(); err != nil {
+		return stage, false, err
+	}
 	reg := archive.SessionRegistration{ArchiveSessionID: id}
 
 	if !safeFileComponent(reg.ArchiveSessionID) {
@@ -415,7 +424,7 @@ func (s *Store) loadPreparedImportStage(id string) (stage ImportStage, found boo
 	if stage.Registration.ArchiveSessionID != id {
 		return stage, true, ErrDurableStorageRecovery
 	}
-	return stage, true, stage.Validate(stage.Registration)
+	return stage, true, stage.Validate(ctx, stage.Registration)
 }
 
 // RemoveImportStage releases verified or explicitly cancelled selected evidence.
@@ -493,7 +502,10 @@ func (s *Store) ResumeAllImportAdmissions(ctx context.Context) error {
 // DropUnadmittedImportStage cancels a preparation superseded by an existing
 // owner. It removes only its private filtered evidence, never registrations or
 // remote objects that another admission owns.
-func (s *Store) DropUnadmittedImportStage(stage ImportStage) error {
+func (s *Store) DropUnadmittedImportStage(ctx context.Context, stage ImportStage) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	for _, child := range stage.Children {
 		registered, admitted, err := s.LoadRegistration(child.ArchiveSessionID)
 		if err != nil {
@@ -510,11 +522,11 @@ func (s *Store) DropUnadmittedImportStage(stage ImportStage) error {
 			if candidate.StagedImportSHA256 != child.StagedImportSHA256 || candidate.ParentArchiveSessionID != stage.Registration.ArchiveSessionID {
 				return ErrDurableStorageRecovery
 			}
-			if err := s.RemoveSubagentCandidate(child.ArchiveSessionID); err != nil {
+			if err := s.removeSubagentCandidateContext(ctx, child.ArchiveSessionID); err != nil {
 				return err
 			}
 		}
-		prepared, found, err := s.loadPreparedImportStage(child.ArchiveSessionID)
+		prepared, found, err := s.loadPreparedImportStage(ctx, child.ArchiveSessionID)
 		if err != nil {
 			return err
 		}
@@ -576,6 +588,7 @@ type importCancellation struct {
 func importCancelRelative(id string) string {
 	return filepath.Join("sessions", id, "import-stage", "cancel.json")
 }
+
 func (s *Store) removeImportCancellation(id string) error {
 	return s.removeImportFile(id, "cancel.json")
 }
@@ -590,14 +603,14 @@ func (s *Store) CancelImportStage(ctx context.Context, reg archive.SessionRegist
 		if found && admitted.StagedImportSHA256 != "" {
 			return nil
 		}
-		stage, found, err := s.LoadImportStage(reg)
+		stage, found, err := s.LoadImportStage(ctx, reg)
 		if err != nil || !found {
 			return err
 		}
 		if err := s.writeDurableGuard(ctx, g, importCancelRelative(reg.ArchiveSessionID), importCancellation{SHA256: stage.SHA256}); err != nil {
 			return err
 		}
-		if err := s.DropUnadmittedImportStage(stage); err != nil {
+		if err := s.DropUnadmittedImportStage(ctx, stage); err != nil {
 			return err
 		}
 		return s.removeImportCancellation(reg.ArchiveSessionID)
@@ -647,7 +660,7 @@ func (s *Store) preparedImportChildren(ctx context.Context, stage ImportStage) (
 			continue // Its registration independently owns publication and recovery.
 		}
 		scratch, closeScratch := s.WithReadBudget(ctx, agentapi.NewNativeReadBudget(128<<20))
-		prepared, found, err := scratch.loadPreparedImportStage(child.ArchiveSessionID)
+		prepared, found, err := scratch.loadPreparedImportStage(ctx, child.ArchiveSessionID)
 		closeScratch()
 		if err != nil {
 			return nil, err

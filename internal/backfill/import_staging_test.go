@@ -116,7 +116,7 @@ func TestStagedImportRequiresRemoteReadbackBeforeLocalDone(t *testing.T) {
 		t.Fatalf("unverified ack: %v", result.Errors)
 	}
 	reg, _, _ := r.Store.LoadRegistration(id)
-	if _, found, err := r.Store.LoadImportStage(reg); err != nil || !found {
+	if _, found, err := r.Store.LoadImportStage(t.Context(), reg); err != nil || !found {
 		t.Fatalf("lost retry stage %t %v", found, err)
 	}
 	pending, found, err := r.Store.LoadPending(id)
@@ -132,7 +132,7 @@ func TestStagedImportRequiresRemoteReadbackBeforeLocalDone(t *testing.T) {
 	if err != nil || len(result.Errors) != 0 || len(result.Published) != 1 {
 		t.Fatalf("retry %v %v", result.Errors, err)
 	}
-	if _, found, err := r.Store.LoadImportStage(reg); err != nil || found {
+	if _, found, err := r.Store.LoadImportStage(t.Context(), reg); err != nil || found {
 		t.Fatalf("verified stage retained %t %v", found, err)
 	}
 }
@@ -190,7 +190,7 @@ func TestImportStagingSurvivesNativeDeletionAtAdmissionCrash(t *testing.T) {
 			if !bytes.Contains(text, []byte("please check it")) {
 				t.Fatal("lost staged selected evidence")
 			}
-			if _, found, err := reopened.LoadImportStage(regs[0]); err != nil || found {
+			if _, found, err := reopened.LoadImportStage(t.Context(), regs[0]); err != nil || found {
 				t.Fatalf("verified stage not released: %t %v", found, err)
 			}
 		})
@@ -274,13 +274,13 @@ func TestImportStagingQuotaFailureNeverAdmits(t *testing.T) {
 }
 
 func TestImportAdmissionCursorAndPausedRecovery(t *testing.T) {
-	r, c, cfg := stagingFixture(t)
+	r, c, _ := stagingFixture(t)
 	r.AfterStage = func(string) error { return errors.New("crash") }
 	if _, err := r.Run([]Candidate{c}); err == nil {
 		t.Fatal("missing crash")
 	}
 	// Populate ordinary session directories before the journal in scan order.
-	for i := 0; i < 65; i++ {
+	for i := range 65 {
 		if err := os.MkdirAll(filepath.Join(r.Home, "sessions", fmt.Sprintf("000%03d", i)), 0700); err != nil {
 			t.Fatal(err)
 		}
@@ -288,7 +288,7 @@ func TestImportAdmissionCursorAndPausedRecovery(t *testing.T) {
 	if err := os.Remove(c.TranscriptPath); err != nil {
 		t.Fatal(err)
 	}
-	cfg, _, _ = config.Load(r.Home)
+	cfg, _, _ := config.Load(r.Home)
 	cfg.Paused = true
 	if err := config.Save(r.Home, cfg); err != nil {
 		t.Fatal(err)
@@ -319,7 +319,7 @@ func TestImportAdmissionCursorAndPausedRecovery(t *testing.T) {
 	if len(regs) != 1 {
 		t.Fatalf("cursor lost selection: %v", regs)
 	}
-	stage, found, err := r.Store.LoadImportStage(regs[0])
+	stage, found, err := r.Store.LoadImportStage(t.Context(), regs[0])
 	if err != nil || !found || stage.Bundle.NativeRecords == nil {
 		t.Fatalf("recovery lost stage %v", err)
 	}
@@ -385,7 +385,7 @@ func TestStagedAcknowledgementCrashCleanupRequiresVerifiedRemote(t *testing.T) {
 	}
 	id := registered.Sessions[0]
 	reg, _, _ := r.Store.LoadRegistration(id)
-	stage, found, err := r.Store.LoadImportStage(reg)
+	stage, found, err := r.Store.LoadImportStage(t.Context(), reg)
 	if err != nil || !found {
 		t.Fatal(err)
 	}
@@ -423,7 +423,7 @@ func TestStagedAcknowledgementCrashCleanupRequiresVerifiedRemote(t *testing.T) {
 	if !errors.Is(result.Errors[id], storage.ErrNotFound) {
 		t.Fatalf("cleanup without remote source %v", result.Errors)
 	}
-	if _, found, err := r.Store.LoadImportStage(reg); err != nil || !found {
+	if _, found, err := r.Store.LoadImportStage(t.Context(), reg); err != nil || !found {
 		t.Fatalf("lost unverified stage %v", err)
 	}
 	if err := remote.Put(t.Context(), ref.Key, saved); err != nil {
@@ -433,7 +433,7 @@ func TestStagedAcknowledgementCrashCleanupRequiresVerifiedRemote(t *testing.T) {
 	if err != nil || len(result.Errors) > 0 {
 		t.Fatal(result.Errors, err)
 	}
-	if _, found, err := r.Store.LoadImportStage(reg); err != nil || found {
+	if _, found, err := r.Store.LoadImportStage(t.Context(), reg); err != nil || found {
 		t.Fatalf("verified ack staging leaked %v", err)
 	}
 }
@@ -472,7 +472,7 @@ func TestImportCancellationBeforeAdmissionReleasesOnlyPreparedEvidence(t *testin
 	if !errors.Is(err, ErrStopped) || len(result.Sessions) != 0 {
 		t.Fatalf("cancel admitted %+v %v", result, err)
 	}
-	stages, _, err := r.Store.ImportStages("", 50)
+	stages, _, err := r.Store.ImportStages(t.Context(), "", 50)
 	if err != nil || len(stages) != 0 {
 		t.Fatalf("unreferenced cancellation leaked %v %v", stages, err)
 	}
@@ -503,7 +503,7 @@ func TestImportCancellationAfterAdmissionKeepsReferencedEvidence(t *testing.T) {
 		t.Fatalf("missing admitted group %+v", result)
 	}
 	reg, _, _ := r.Store.LoadRegistration(result.Sessions[0])
-	if _, found, err := r.Store.LoadImportStage(reg); err != nil || !found {
+	if _, found, err := r.Store.LoadImportStage(t.Context(), reg); err != nil || !found {
 		t.Fatalf("referenced stage lost on cancellation %v", err)
 	}
 }
@@ -519,7 +519,7 @@ func TestJournalledImportCancellationResumesCleanupWithoutAdmission(t *testing.T
 	if _, err := r.Run([]Candidate{c}); err == nil {
 		t.Fatal("missing stage crash")
 	}
-	stages, _, err := r.Store.ImportStages("", 50)
+	stages, _, err := r.Store.ImportStages(t.Context(), "", 50)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -556,7 +556,7 @@ func TestJournalledImportCancellationResumesCleanupWithoutAdmission(t *testing.T
 	if len(regs) != 0 {
 		t.Fatal("canceled preparation admitted during recovery")
 	}
-	stages, _, err = r.Store.ImportStages("", 50)
+	stages, _, err = r.Store.ImportStages(t.Context(), "", 50)
 	if err != nil || len(stages) != 0 {
 		t.Fatalf("cleanup not completed %v %v", stages, err)
 	}
@@ -585,7 +585,7 @@ func TestStagedSelectionSurvivesHookObservationAndRejectsReplacement(t *testing.
 	if _, err := r.Store.UpdateRegistration(id, func(reg *archive.SessionRegistration) error { reg.StagedImportSHA256 = ""; return nil }); err == nil {
 		t.Fatal("update cleared stage ownership")
 	}
-	if _, found, err := r.Store.LoadImportStage(after); err != nil || !found {
+	if _, found, err := r.Store.LoadImportStage(t.Context(), after); err != nil || !found {
 		t.Fatalf("mutation discarded durable evidence %v", err)
 	}
 }
@@ -601,7 +601,7 @@ func TestStagedAdmissionRequiresEverySelectedChild(t *testing.T) {
 	if _, err := r.Run([]Candidate{c}); err == nil {
 		t.Fatal("missing crash")
 	}
-	stages, _, err := r.Store.ImportStages("", 50)
+	stages, _, err := r.Store.ImportStages(t.Context(), "", 50)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -639,7 +639,7 @@ func TestStagedEvidenceRejectsDirectoryAliasForReadAndRemoval(t *testing.T) {
 	if err := os.Symlink(preserved, path); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := r.Store.LoadImportStage(reg); err == nil {
+	if _, _, err := r.Store.LoadImportStage(t.Context(), reg); err == nil {
 		t.Fatal("stage reader followed directory alias")
 	}
 	if err := r.Store.RemoveImportStage(reg.ArchiveSessionID); err == nil {
@@ -657,12 +657,12 @@ func TestStagedChildPreparationRetrySurvivesNativeDeletion(t *testing.T) {
 		t.Fatal(err)
 	}
 	c.Subagents = []Subagent{{Path: childPath, AgentID: "prepared-child"}}
-	parentID, _, err := r.Store.EnsureArchiveSessionID(agentmeta.SessionKey{Agent: "claude", NativeID: c.NativeSessionID})
+	parentID, _, err := r.Store.EnsureArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.Claude, NativeID: c.NativeSessionID})
 	if err != nil {
 		t.Fatal(err)
 	}
 	childNative := c.NativeSessionID + ":subagent:prepared-child"
-	childID, _, err := r.Store.EnsureArchiveSessionID(agentmeta.SessionKey{Agent: "claude", NativeID: childNative})
+	childID, _, err := r.Store.EnsureArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.Claude, NativeID: childNative})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -690,7 +690,7 @@ func TestImportCancellationUsesReservedCapacityAtQuotaLimit(t *testing.T) {
 	if _, err := r.Run([]Candidate{c}); err == nil {
 		t.Fatal("missing crash")
 	}
-	stages, _, err := r.Store.ImportStages("", 50)
+	stages, _, err := r.Store.ImportStages(t.Context(), "", 50)
 	if err != nil || len(stages) != 1 {
 		t.Fatalf("missing prepared evidence %v %v", stages, err)
 	}
@@ -714,8 +714,81 @@ func TestImportCancellationUsesReservedCapacityAtQuotaLimit(t *testing.T) {
 	if err := r.Store.CancelImportStage(t.Context(), stage.Registration); err != nil {
 		t.Fatalf("full data quota consumed reserved cancellation capacity: %v", err)
 	}
-	remaining, _, err := r.Store.ImportStages("", 50)
+	remaining, _, err := r.Store.ImportStages(t.Context(), "", 50)
 	if err != nil || len(remaining) != 0 {
 		t.Fatalf("cancel did not settle %v %v", remaining, err)
+	}
+}
+
+func TestImportStagingRejectsChangedNativeIdentity(t *testing.T) {
+	r, c, _ := stagingFixture(t)
+	// The plan selected this parent, but its path now holds another native session.
+	if err := os.WriteFile(c.TranscriptPath, []byte(claudeTranscript("different-parent", c.ProjectRoot, c.StartedAt)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	result, err := r.Run([]Candidate{c})
+	if err == nil || len(result.Sessions) != 0 {
+		t.Fatalf("changed native owner admitted: %+v %v", result, err)
+	}
+	regs, err := r.Store.LoadRegistrations()
+	if err != nil || len(regs) != 0 {
+		t.Fatalf("changed source left admission: %+v %v", regs, err)
+	}
+	stages, _, err := r.Store.ImportStages(t.Context(), "", 50)
+	if err != nil || len(stages) != 0 {
+		t.Fatalf("changed source durably selected: %+v %v", stages, err)
+	}
+}
+
+func TestImportStagingAcceptsSelectedIdentityInCopiedTranscript(t *testing.T) {
+	r, c, cfg := stagingFixture(t)
+	// Claude resume/copy records may name earlier sessions as long as the
+	// selected session remains among the observed ownership identities.
+	raw := claudeTranscript("earlier-session", c.ProjectRoot, c.StartedAt) + claudeTranscript(c.NativeSessionID, c.ProjectRoot, c.StartedAt)
+	if err := os.WriteFile(c.TranscriptPath, []byte(raw), 0600); err != nil {
+		t.Fatal(err)
+	}
+	result, err := r.Run([]Candidate{c})
+	if err != nil || len(result.Sessions) != 1 {
+		t.Fatalf("selected membership refused: %+v %v", result, err)
+	}
+	if err := os.Remove(c.TranscriptPath); err != nil {
+		t.Fatal(err)
+	}
+	remote := storagetest.NewMemoryStore()
+	collected, err := collector.Run(t.Context(), r.Store, remote, collector.Options{Sources: testSources, Parsers: testSources, MachineID: cfg.MachineID, Now: func() time.Time { return fixedNow.Add(time.Minute) }, AcceptSession: cfg.AcceptSession})
+	if err != nil || len(collected.Errors) != 0 || len(collected.Published) != 1 {
+		t.Fatalf("selected copied evidence not recovered: %+v %v", collected, err)
+	}
+}
+
+func TestCanceledStagingReadAndCleanupPreserveEvidence(t *testing.T) {
+	r, c, _ := stagingFixture(t)
+	r.AfterStage = func(string) error { return errors.New("pre-admission crash") }
+	if _, err := r.Run([]Candidate{c}); err == nil {
+		t.Fatal("missing preparation boundary")
+	}
+	stages, _, err := r.Store.ImportStages(t.Context(), "", 50)
+	if err != nil || len(stages) != 1 {
+		t.Fatalf("missing prepared evidence: %+v %v", stages, err)
+	}
+	stage := stages[0]
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, _, err := r.Store.LoadImportStage(ctx, stage.Registration); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled stage read: %v", err)
+	}
+	if _, _, err := r.Store.ImportStages(ctx, "", 50); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled inventory: %v", err)
+	}
+	if err := r.Store.DropUnadmittedImportStage(ctx, stage); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled cleanup: %v", err)
+	}
+	if _, found, err := r.Store.LoadImportStage(t.Context(), stage.Registration); err != nil || !found {
+		t.Fatalf("canceled cleanup lost evidence: %t %v", found, err)
+	}
+	regs, err := r.Store.LoadRegistrations()
+	if err != nil || len(regs) != 0 {
+		t.Fatalf("cancellation admitted evidence: %+v %v", regs, err)
 	}
 }

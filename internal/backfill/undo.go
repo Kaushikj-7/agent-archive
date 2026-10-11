@@ -1123,7 +1123,7 @@ func importUndoRegistrations(store *state.Store, regs []archive.SessionRegistrat
 		seen[reg.ArchiveSessionID] = true
 	}
 	for after := ""; ; {
-		stages, next, err := store.ImportStages(after, 50)
+		stages, next, err := store.ImportStages(context.Background(), after, 50)
 		if err != nil {
 			return nil, err
 		}

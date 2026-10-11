@@ -1,6 +1,7 @@
 package backfill
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -422,7 +423,7 @@ func (b *Batch) reconcileStagedSources(store *state.Store) error {
 		return nil
 	}
 	for after := ""; ; {
-		stages, next, err := store.ImportStages(after, 50)
+		stages, next, err := store.ImportStages(context.Background(), after, 50)
 		if err != nil {
 			return err
 		}
