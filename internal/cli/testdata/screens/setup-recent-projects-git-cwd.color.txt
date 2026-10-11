@@ -64,6 +64,9 @@ Choose Cloudflare R2 or Amazon S3 for private archive storage. Setup will guide 
 
 \e[1mStep 2 of 3 · Connect storage\e[0m
 
+\e[1mStorage · Account\e[0m
+\e[2mAccount → Storage → Verification\e[0m
+
 ? Where should your archive live?
 
   1) Cloudflare R2 (default)
