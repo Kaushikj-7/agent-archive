@@ -113,7 +113,7 @@ func setupPairing(opts setupOptions, stdin io.Reader, out, errOut io.Writer, env
 	}
 	payload, err := pairing.Open(bundle, code, env.now())
 	if err != nil {
-		return err
+		return fmt.Errorf("%w; for a wrong code, retry this bundle with the code delivered separately; for an expired bundle, ask the source for a new pairing. Expiry does not revoke storage access", err)
 	}
 	// Validation above is direct: setup's transaction does not call Config.Save.
 	home, err := env.home()
@@ -146,6 +146,7 @@ func setupPairing(opts setupOptions, stdin io.Reader, out, errOut io.Writer, env
 	if result, refused := refuseNetworkHome(opts, out, errOut, env); refused {
 		return fmt.Errorf("network home refused (exit %d)", result)
 	}
+	terminal.Println(p.out, "Pairing · Review settings")
 	cfg, err := reviewPairingDestination(p, payload, existing, found, opts, env)
 	if err != nil {
 		return err
@@ -188,6 +189,7 @@ func setupPairing(opts setupOptions, stdin io.Reader, out, errOut io.Writer, env
 	if checks.blocked() {
 		return &preflightError{checks: checks, yes: opts.yes}
 	}
+	terminal.Println(p.out, "Pairing · Check storage")
 	if err = runStorageCheck(p, &cfg, env); err != nil {
 		return fmt.Errorf("paired storage check failed; existing capture is unchanged, retry this pairing or finish/discard the saved setup")
 	}
@@ -197,6 +199,7 @@ func setupPairing(opts setupOptions, stdin io.Reader, out, errOut io.Writer, env
 	cfg.ImportedHarnesses = carriedImportedHarnesses(existing.ImportedHarnesses, cfg.Harnesses, nil)
 	skills := planSkillOptOut(env, home, userHome, exe, existing, cfg)
 	discoveries := env.discoverApplications(userHome)
+	terminal.Println(p.out, "Pairing · Save configuration")
 	if err = applySetup(home, userHome, exe, existing, &cfg, nil, env); err != nil {
 		return fmt.Errorf("pairing setup did not commit: %w; retry the same pairing or finish/discard the saved setup", err)
 	}
@@ -208,9 +211,9 @@ func setupPairing(opts setupOptions, stdin io.Reader, out, errOut io.Writer, env
 }
 
 func printPairingConnected(out io.Writer, name string, payload pairing.Payload, yes bool) {
-	terminal.Printf(out, "%s %s is connected. Paired with %s.\n%s.\n", guidedOK(out), name, payload.IssuerName, pairingCredentialDescription(payload))
+	terminal.Printf(out, "%s Paired successfully · %s is connected. Paired with %s.\n%s.\n", guidedOK(out), name, payload.IssuerName, pairingCredentialDescription(payload))
 	if !yes {
-		terminal.Println(out, "You can finish on the source machine and delete the pairing file.")
+		terminal.Println(out, "Configuration saved here. The source does not receive automatic confirmation; close its transfer instructions and delete your pairing file copies.")
 	}
 }
 
@@ -323,7 +326,7 @@ func pairingCaptureSettings(p *prompter, payload pairing.Payload, cfg, existing 
 					return cfg, e
 				}
 				if choice == "cancel" {
-					return cfg, fmt.Errorf("pairing setup cancelled before commit")
+					return cfg, fmt.Errorf("pairing setup cancelled before commit; existing capture is unchanged. Delete your bundle copies; issued storage access is not revoked here")
 				}
 				if choice == "retry" && slices.Contains(env.detectHarnesses(userHome), app) {
 					apps = append(apps, app)
@@ -379,7 +382,7 @@ func reviewPairingSettings(p *prompter, payload pairing.Payload, cfg, existing c
 				return cfg, e
 			}
 			if choice == "cancel" {
-				return cfg, fmt.Errorf("pairing cancelled; nothing was changed")
+				return cfg, fmt.Errorf("pairing cancelled before commit; existing capture is unchanged. The transferred bundle remains usable until expiry; delete your copies. Issued storage access is not revoked here")
 			}
 			if choice == "save" {
 				if setupNeedsProject(cfg) {

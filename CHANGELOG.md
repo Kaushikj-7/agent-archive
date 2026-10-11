@@ -6,6 +6,10 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Show pairing delivery and receiver setup as separate progress stages. Closing
+  source transfer instructions no longer implies receiver success. Cancellation
+  and expiry explain bundle and credential effects, including local S3 profiles.
+
 - Preserve settled capture and source bytes when cached native naming reads are
   unavailable and the same observation uses an equivalent timezone offset.
 

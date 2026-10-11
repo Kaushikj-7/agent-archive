@@ -378,7 +378,7 @@ func normalizeGuidedPairingCode(text string) string {
 func TestGuidedPairingCodeNormalizationPreservesInstructionsAndControls(t *testing.T) {
 	t.Parallel()
 	code := "aardvark abandoned abbreviate abdomen abhorrence abiding"
-	kept := "\x1b[?1049h\x1b[2J\x1b[H2. Enter the pairing code on the other machine\n\n" + code + "\n\nKeep this screen open while entering the code there.\nPress Enter to hide.\n\x1b[?1049l\n? Pairing\n\n[Enter] I'm finished\n"
+	kept := "\x1b[?1049h\x1b[2J\x1b[H2. Enter the pairing code on the other machine\n\n" + code + "\n\nKeep this screen open while entering the code there.\nPress Enter to hide.\n\x1b[?1049l\n? Pairing\n\n[Enter] Close transfer instructions\n"
 	want := strings.Replace(kept, "\n"+code+"\n", "\nPAIRING_CODE\n", 1)
 	if got := normalizeGuidedPairingCode(kept); got != want {
 		t.Fatalf("normalization changed prompt structure: %q", got)

@@ -1,0 +1,9 @@
+Pairing · File delivered locally · Receiver completion unconfirmed
+1. Transfer the pairing file
+Saved to: /source/Downloads/synthetic.txt
+Expires in 15 minutes.
+Expiry prevents opening this bundle; it does not revoke storage access or delete transferred files.
+Deliver the code separately from the file or text.
+Send this file to laptop (for example using AirDrop). Save it in Downloads there, then run:
+  agent-archive setup --pair-file "$HOME"/Downloads/synthetic.txt
+If you save it elsewhere, use that path with --pair-file.
