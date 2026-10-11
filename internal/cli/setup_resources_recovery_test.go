@@ -176,6 +176,8 @@ func TestRecoveryCleanupProtectsReenteredProviderKeys(t *testing.T) {
 						stagedRefs = []string{"reentered"}
 					}
 					must(t, local.Write(draftPath(home), setupDraft{Version: draftFormat, Config: draftConfig, Step: 1, StagedRefs: stagedRefs}))
+				case protectedKeyUnused:
+					// Leave the provider key absent from every protected credential.
 				case protectedKeyUnreadable:
 					env.Credentials = func() (credentials.CredentialStore, error) { return nil, errors.New("locked") }
 				}
