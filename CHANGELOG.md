@@ -6,6 +6,10 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Preserve private, durable bucket creation receipts across interrupted setup and
+  abandoned drafts, including uncertain provider outcomes. Archive keys continue
+  to use the existing issuance ledger.
+
 - Preserve settled capture and source bytes when cached native naming reads are
   unavailable and the same observation uses an equivalent timezone offset.
 

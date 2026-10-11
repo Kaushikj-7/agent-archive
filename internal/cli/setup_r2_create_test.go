@@ -26,6 +26,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/cloudflare/cloudflaretest"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
+	"github.com/wangjohn/agent-archive/internal/setupresources"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
@@ -206,6 +207,14 @@ func TestGuidedR2CreatesBucketAndScopedKey(t *testing.T) {
 	t.Parallel()
 	g := newGuidedR2Fixture(t)
 	out := g.run(t, g.happy(), 0)
+	home, homeErr := g.env.readHome()
+	if homeErr != nil {
+		t.Fatal(homeErr)
+	}
+	receipts, receiptErr := setupresources.List(home)
+	if receiptErr != nil || len(receipts) != 1 || receipts[0].State != setupresources.Created {
+		t.Fatalf("bucket receipt missing: %v %v", receipts, receiptErr)
+	}
 	if !setupContainsText(out, "Using Cloudflare account: Test account ("+cloudflaretest.AccountID+")") {
 		t.Fatalf("account was not selected automatically:\n%s", out)
 	}

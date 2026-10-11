@@ -12,6 +12,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
+	"github.com/wangjohn/agent-archive/internal/setupresources"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
@@ -33,8 +34,10 @@ const storageChoiceS3New = "s3-new"
 // run so that setup can offer it again instead of creating a second one,
 // and say at the end that it is there.
 type createdS3Bucket struct {
-	name   string
-	region string
+	receipt setupresources.Receipt
+	home    string
+	name    string
+	region  string
 	// profile created it; archiveProfile is the one chosen to archive with.
 	profile        string
 	archiveProfile string
@@ -201,17 +204,37 @@ func createS3Bucket(p *prompter, cfg *credentials.Config, env Env, profileRegion
 			creator = openS3CreationClient(p, cfg, env, region, name, noCredentials, uncertain[name])
 		}
 		if creator != nil {
+			home, receiptErr := env.readHome()
+			if receiptErr != nil {
+				return newS3Bucket{}, false, receiptErr
+			}
+			receipt, receiptErr := setupresources.Begin(home, setupresources.Receipt{Provider: "s3", Profile: cfg.AWSProfile, Bucket: name, Region: region, CreatedAt: env.now()})
+			if receiptErr != nil {
+				return newS3Bucket{}, false, receiptErr
+			}
 			ctx, cancel := context.WithTimeout(context.Background(), bucketCreateTimeout)
 			err = creator.CreateBucket(ctx, name, region)
 			cancel()
 			if err == nil {
+				if receiptErr = setupresources.Finish(home, receipt, setupresources.Created); receiptErr != nil {
+					return newS3Bucket{}, false, receiptErr
+				}
+			} else if errors.Is(err, storage.ErrBucketNameTaken) || errors.Is(err, storage.ErrInvalidBucketName) {
+				if receiptErr = setupresources.Finish(home, receipt, setupresources.Refused); receiptErr != nil {
+					return newS3Bucket{}, false, receiptErr
+				}
+			}
+			if err == nil {
 				terminal.Printf(p.out, "Created bucket %s in %s.\n", name, region)
-				p.createdBuckets = append(p.createdBuckets, createdS3Bucket{name: name, region: region, profile: cfg.AWSProfile})
+				p.createdBuckets = append(p.createdBuckets, createdS3Bucket{name: name, region: region, profile: cfg.AWSProfile, receipt: receipt, home: home})
 				secured, e := secureNewBucket(p, creator, name, cfg.AWSProfile)
 				if e != nil {
 					return newS3Bucket{}, false, e
 				}
 				if secured {
+					if receiptErr = setupresources.Finish(home, receipt, setupresources.Secured); receiptErr != nil {
+						return newS3Bucket{}, false, receiptErr
+					}
 					rememberSecuredBucket(p, name)
 					printRuntimePolicyAdvice(p, name, firstNonEmpty(cfg.Prefix, defaultPrefix))
 					return newS3Bucket{name: name, region: region, fresh: true}, true, nil
@@ -675,9 +698,23 @@ func deleteNewBucket(p *prompter, creator BucketCreator, bucket, profile string)
 	ctx, cancel := context.WithTimeout(context.Background(), bucketCreateTimeout)
 	defer cancel()
 	if err := creator.DeleteBucket(ctx, bucket); err != nil {
+		for _, created := range p.createdBuckets {
+			if created.name == bucket && created.profile == profile && created.receipt.ID != "" {
+				if receiptErr := setupresources.Finish(created.home, created.receipt, setupresources.CleanupPending); receiptErr != nil {
+					p.warn("Cleanup remains pending; its receipt could not be updated.")
+				}
+			}
+		}
 		terminal.Printf(p.out, "Couldn't delete bucket %s (%s). It is empty; delete it yourself with:\n", bucket, discoveryReason(err))
 		terminal.Printf(p.out, "  aws s3api delete-bucket --bucket %s --profile %s\n", bucket, profile)
 		return
+	}
+	for _, created := range p.createdBuckets {
+		if created.name == bucket && created.profile == profile && created.receipt.ID != "" {
+			if err := setupresources.Finish(created.home, created.receipt, setupresources.Deleted); err != nil {
+				p.warn("Bucket deleted, but its recovery receipt could not be updated. Check the account before acting on that receipt.")
+			}
+		}
 	}
 	forgetCreatedBucket(p, bucket)
 	terminal.Printf(p.out, "Deleted bucket %s.\n", bucket)
