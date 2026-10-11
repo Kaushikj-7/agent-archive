@@ -49,7 +49,7 @@ would be before upload. With several workers each record is written as its
 session finishes. A session that cannot be exported is an error record on
 its own line; the others are still printed, and the exit code is 1.
 Nothing is uploaded or written.
-  --revision ID              With one archive SESSION_ID and full detail,
+  --revision REVISION_ID     With one archive SESSION_ID and full detail,
                              export this exact parent native revision
   --detail metadata|full     metadata prints no conversation text and, for
                              the archive, reads only sidecars (default full)
@@ -457,8 +457,10 @@ coding agents: give a SESSION_ID.
                         more than one
   --revisions           List active and preserved native revision IDs, capture
                         times and provenance; --json prints the inventory
-  --revision ID         Read one exact parent revision ID (see --revisions),
-                        without resolving children; summary is rederived
+  --revision REVISION_ID
+                        Read one exact parent revision identifier (see
+                        --revisions), without resolving children; summary
+                        is rederived
   --transcript          Download and verify the source bundle, and print the
                         conversation: prompts, replies, one line per tool call
   --full                With --transcript, also print tool results and shell
@@ -624,7 +626,8 @@ unless --to is given.
   --harness NAME        claude, codex, or cursor
   --file PATH           Render a native transcript directly (needs --harness);
                         works for sessions the archive never captured
-  --revision ID         Read this exact parent native revision; requires a
+  --revision REVISION_ID
+                        Read this exact parent native revision; requires a
                         SESSION_ID and --source archive (no local/latest)
   --source auto|local|archive
                         Where the content comes from: auto (default) reads
