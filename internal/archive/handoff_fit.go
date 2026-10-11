@@ -42,30 +42,18 @@ type handoffFitStage struct {
 // one of those is over budget by itself or the exchanges are so many that
 // their lines together are. maxBytes <= 0 means no budget.
 //
-// Each step's effect only grows with the number of exchanges it is applied
-// to, so the smallest sufficient prefix is found by binary search: a handful
-// of measurements per step rather than one per exchange, which matters when
-// measure renders a multi-megabyte session.
+// Each step is applied to an exchange only when that does not make the
+// rendering longer (see fitStagePrefixes), so a step's result only shrinks as
+// it reaches more exchanges and the smallest sufficient prefix is found by
+// binary search: a handful of full measurements per step rather than one per
+// exchange, which matters when measure renders a multi-megabyte session.
 func FitHandoff(h Handoff, maxBytes int, measure func(Handoff) int) (Handoff, bool) {
 	out := cloneHandoff(h)
 	if maxBytes <= 0 || measure(out) <= maxBytes {
 		return out, true
 	}
 	for _, stage := range handoffFitStages() {
-		do := stage.plan(out)
-		apply := func(k int) (Handoff, HandoffElision) {
-			trial := cloneHandoff(out)
-			elision := HandoffElision{Kind: stage.kind}
-			for i := range k {
-				if n := do(&trial.Exchanges[i], i); n > 0 {
-					if elision.First == 0 {
-						elision.First = i + 1
-					}
-					elision.Last, elision.Count = i+1, elision.Count+n
-				}
-			}
-			return trial, elision
-		}
+		apply := fitStagePrefixes(out, stage, measure)
 		trial, elision, fits := smallestFittingPrefix(len(out.Exchanges), maxBytes, measure, apply)
 		out = trial
 		if elision.Count > 0 {
@@ -76,6 +64,67 @@ func FitHandoff(h Handoff, maxBytes int, measure func(Handoff) int) (Handoff, bo
 		}
 	}
 	return out, false
+}
+
+// fitStagePrefixes decides, oldest exchange first, what stage does to each
+// of out's exchanges, and returns apply(k): out with the first k exchanges
+// changed, and the elision that records it.
+//
+// A change is kept only when it does not make the rendering longer, measured
+// on a handoff holding just that exchange and the elisions recorded so far,
+// since an exchange renders the same whatever surrounds it. A step can make a
+// small exchange longer: a condensed exchange's counts line can outweigh the
+// one short reply it replaces. From the first kept change on, each one also
+// pays for what it adds to the stage's footer description, so the rendering
+// of apply(k) never grows with k past the first change; before that, apply(k)
+// is out unchanged, which is over budget. That is what smallestFittingPrefix
+// needs to find the smallest prefix that fits.
+func fitStagePrefixes(out Handoff, stage handoffFitStage, measure func(Handoff) int) func(k int) (Handoff, HandoffElision) {
+	do := stage.plan(out)
+	changed := make([]*HandoffExchange, len(out.Exchanges))
+	counts := make([]int, len(out.Exchanges))
+	elision := HandoffElision{Kind: stage.kind}
+	sized := func(exchange HandoffExchange, elision HandoffElision) int {
+		single := Handoff{FullRecordPath: out.FullRecordPath, Elisions: out.Elisions, Exchanges: []HandoffExchange{exchange}}
+		return measure(withElision(single, elision))
+	}
+	for i, exchange := range out.Exchanges {
+		candidate := cloneHandoffExchange(exchange)
+		n := do(&candidate, i)
+		if n <= 0 {
+			continue
+		}
+		next := elision
+		if next.First == 0 {
+			next.First = i + 1
+		}
+		next.Last, next.Count = i+1, next.Count+n
+		// The first change adds the stage's footer description, which only
+		// matters to prefixes that are over budget anyway.
+		after := next
+		if elision.Count == 0 {
+			after = elision
+		}
+		if sized(candidate, after) > sized(exchange, elision) {
+			continue
+		}
+		changed[i], counts[i], elision = &candidate, n, next
+	}
+	return func(k int) (Handoff, HandoffElision) {
+		trial := cloneHandoff(out)
+		elision := HandoffElision{Kind: stage.kind}
+		for i := range k {
+			if changed[i] == nil {
+				continue
+			}
+			trial.Exchanges[i] = cloneHandoffExchange(*changed[i])
+			if elision.First == 0 {
+				elision.First = i + 1
+			}
+			elision.Last, elision.Count = i+1, elision.Count+counts[i]
+		}
+		return trial, elision
+	}
 }
 
 func handoffFitStages() []handoffFitStage {
@@ -234,8 +283,11 @@ func promptFirstLine(prompt string) string {
 // exchanges that their condensed prompts are. It keeps whole lines from the
 // start, never stops inside a code fence, and adds a marker saying where the
 // rest is, then the last exchange when it takes at most half the budget, then
-// h's footer, so what was omitted is still listed. A rendering within
-// maxBytes, or any rendering when maxBytes <= 0, is returned as it is.
+// h's footer, so what was omitted is still listed. When the limit leaves no
+// room for that marker and the footer, a compact marker that names the full
+// record takes their place, and when even that does not fit, the output is
+// the compact marker cut to the limit. A rendering within maxBytes, or any
+// rendering when maxBytes <= 0, is returned as it is.
 func CutHandoffMarkdown(rendered []byte, h Handoff, maxBytes int) []byte {
 	if maxBytes <= 0 || len(rendered) <= maxBytes {
 		return rendered
@@ -248,15 +300,24 @@ func CutHandoffMarkdown(rendered []byte, h Handoff, maxBytes int) []byte {
 		footer = ""
 	}
 	body = strings.TrimSuffix(body, footer)
+	fullRecord := h.FullRecordPath != "" && len(h.Elisions) > 0
 	rest := "rerun with `--max-bytes 0` for the rest"
-	if h.FullRecordPath != "" && len(h.Elisions) > 0 {
+	if fullRecord {
 		rest = "the full record named below has the rest"
 	}
 	marker := "\n**Cut here: this handoff was still over its " + strconv.Itoa(maxBytes) + "-byte limit after every trimming step; " + rest + ".**\n"
 	budget := maxBytes - len(marker) - len(footer)
 	if budget <= 0 {
-		// A limit smaller than the marker and footer: keep what fits.
-		return []byte(wholeLines(body+footer, maxBytes))
+		// Too small a limit for the marker and footer: a compact marker
+		// that still says where the rest is replaces them both.
+		compact := "\n**Cut to " + strconv.Itoa(maxBytes) + " bytes; rerun with `--max-bytes 0` for the rest.**\n"
+		if fullRecord {
+			compact = "\n**Cut to " + strconv.Itoa(maxBytes) + " bytes; full record: " + oneLine(displayText(h.FullRecordPath)) + "**\n"
+		}
+		if len(compact) > maxBytes {
+			return []byte(TruncateUTF8(strings.TrimPrefix(compact, "\n"), maxBytes))
+		}
+		return []byte(wholeLines(body, maxBytes-len(compact)) + compact)
 	}
 	// With many exchanges, their prompts alone can be over the limit; the
 	// last exchange then goes after the marker rather than being cut off,

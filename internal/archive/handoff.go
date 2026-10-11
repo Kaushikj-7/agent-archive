@@ -657,7 +657,8 @@ func (s *fileSet) add(file string) {
 
 // smallestFittingPrefix applies a step to the first k exchanges for the
 // smallest k whose result fits, or to all n when none does. apply(k) must not
-// modify its input and its result size must not grow with k. The returned
+// modify its input, and once apply(k) fits, apply(k+1) must fit too (see
+// fitStagePrefixes). The returned
 // handoff does not yet carry the step's elision.
 func smallestFittingPrefix(n, maxBytes int, measure func(Handoff) int, apply func(k int) (Handoff, HandoffElision)) (Handoff, HandoffElision, bool) {
 	all, allElision := apply(n)
@@ -781,20 +782,30 @@ func cloneHandoff(h Handoff) Handoff {
 	out.Elisions = append([]HandoffElision(nil), h.Elisions...)
 	out.Exchanges = make([]HandoffExchange, len(h.Exchanges))
 	for i, exchange := range h.Exchanges {
-		copied := exchange
-		if exchange.Steps != nil {
-			copied.Steps = make([]HandoffStep, len(exchange.Steps))
-		}
-		for j, step := range exchange.Steps {
-			if step.Tool != nil {
-				tool := *step.Tool
-				step.Tool = &tool
-			}
-			copied.Steps[j] = step
-		}
-		out.Exchanges[i] = copied
+		out.Exchanges[i] = cloneHandoffExchange(exchange)
 	}
 	return out
+}
+
+// cloneHandoffExchange returns a copy of exchange that shares nothing a
+// budget step changes.
+func cloneHandoffExchange(exchange HandoffExchange) HandoffExchange {
+	copied := exchange
+	if exchange.Steps != nil {
+		copied.Steps = make([]HandoffStep, len(exchange.Steps))
+	}
+	for j, step := range exchange.Steps {
+		if step.Tool != nil {
+			tool := *step.Tool
+			step.Tool = &tool
+		}
+		copied.Steps[j] = step
+	}
+	if exchange.Condensed != nil {
+		condensed := *exchange.Condensed
+		copied.Condensed = &condensed
+	}
+	return copied
 }
 
 // BuildHandoffWithAnalysis renders a handoff from one previously derived analysis.

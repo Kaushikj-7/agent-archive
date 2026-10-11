@@ -200,7 +200,14 @@ func TestFitHandoffMeasuresLogarithmically(t *testing.T) {
 	t.Parallel()
 	h := bigHandoff(512)
 	calls := 0
-	fit, ok := FitHandoff(h, 2_000_000, func(x Handoff) int { calls++; return markdownSize(x) })
+	fit, ok := FitHandoff(h, 2_000_000, func(x Handoff) int {
+		// Measuring one exchange alone, to decide whether a step shortens
+		// it, costs about what rendering that exchange does.
+		if len(x.Exchanges) > 1 {
+			calls++
+		}
+		return markdownSize(x)
+	})
 	if !ok {
 		t.Fatalf("did not fit: %d", markdownSize(fit))
 	}

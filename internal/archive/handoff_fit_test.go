@@ -1,7 +1,9 @@
 package archive
 
 import (
+	"encoding/json"
 	"fmt"
+	"math/rand/v2"
 	"reflect"
 	"slices"
 	"strconv"
@@ -317,7 +319,7 @@ func TestCutHandoffMarkdownKeepsTheLastOfManyExchanges(t *testing.T) {
 	t.Parallel()
 	h := Handoff{Version: HandoffVersion, Session: HandoffSession{Harness: "claude", ArchiveSessionID: "x"}, LeftOff: "left off here", FullRecordPath: "/data/handoffs/x.md"}
 	for i := range 700 {
-		h.Exchanges = append(h.Exchanges, HandoffExchange{Prompt: fmt.Sprintf("prompt %d ", i) + strings.Repeat("words ", 25), Steps: []HandoffStep{{Kind: HandoffStepText, Text: fmt.Sprintf("done %d", i)}}})
+		h.Exchanges = append(h.Exchanges, HandoffExchange{Prompt: fmt.Sprintf("prompt %d ", i) + strings.Repeat("words ", 25), Steps: []HandoffStep{{Kind: HandoffStepText, Text: fmt.Sprintf("done %d", i) + strings.Repeat(" and more", 8)}}})
 	}
 	fit, ok := FitHandoff(h, DefaultHandoffMaxBytes, markdownSize)
 	if ok {
@@ -329,7 +331,7 @@ func TestCutHandoffMarkdownKeepsTheLastOfManyExchanges(t *testing.T) {
 		t.Fatalf("cut to %d bytes", len(out))
 	}
 	marker, last := strings.Index(out, "**Cut here:"), strings.Index(out, "### 700 · Person\n> prompt 699 ")
-	if marker < 0 || last < marker || !strings.Contains(out[last:], "> done 699\n") || !strings.Contains(out, "left off here") || !strings.HasSuffix(out, "Full record: /data/handoffs/x.md (read it for anything omitted here).\n") {
+	if marker < 0 || last < marker || !strings.Contains(out[last:], "> done 699 and more") || !strings.Contains(out, "left off here") || !strings.HasSuffix(out, "Full record: /data/handoffs/x.md (read it for anything omitted here).\n") {
 		t.Fatalf("marker at %d, last exchange at %d:\n%s", marker, last, out[len(out)-800:])
 	}
 	if !strings.Contains(out, "### 2 · Person") {
@@ -342,6 +344,133 @@ func TestCutHandoffMarkdownKeepsTheLastOfManyExchanges(t *testing.T) {
 		out := string(CutHandoffMarkdown(rendered, fit, limit))
 		if len(out) > limit || strings.Contains(out, "### 700 ·") || !strings.Contains(out, "**Cut here:") {
 			t.Fatalf("limit %d: %d bytes", limit, len(out))
+		}
+	}
+}
+
+// A limit too small for the marker and footer still names the full record,
+// and a limit too small for even that is filled with as much of it as fits.
+func TestCutHandoffMarkdownNamesTheFullRecordAtSmallLimits(t *testing.T) {
+	t.Parallel()
+	h := longCodexHandoff()
+	h.LeftOff = strings.Repeat("字字字 a long final message\n", 4000)
+	fit, _ := FitHandoff(h, DefaultHandoffMaxBytes, markdownSize)
+	rendered := RenderHandoffMarkdown(fit, HandoffRenderOptions{Preamble: true})
+	for _, limit := range []int{1, 10, 50, 100, 500, 1000, 2000} {
+		compact := "**Cut to " + strconv.Itoa(limit) + " bytes; full record: /data/handoffs/97636671.md**\n"
+		out := string(CutHandoffMarkdown(rendered, fit, limit))
+		if len(out) > limit || !utf8.ValidString(out) || openFenceStart(out) >= 0 {
+			t.Fatalf("limit %d: cut to %d bytes", limit, len(out))
+		}
+		switch {
+		case limit > len(compact):
+			// The compact marker, or the full marker and footer when they fit.
+			if !strings.HasSuffix(out, "\n"+compact) && !strings.HasSuffix(out, "Full record: /data/handoffs/97636671.md (read it for anything omitted here).\n") {
+				t.Fatalf("limit %d: no full record named:\n%s", limit, out)
+			}
+		case !strings.HasPrefix(compact, out) || len(out) < limit-utf8.UTFMax:
+			t.Fatalf("limit %d: %q is not the compact marker cut to the limit", limit, out)
+		}
+	}
+	// Without a saved full record, the marker says how to get the rest.
+	fit.FullRecordPath = ""
+	if out := string(CutHandoffMarkdown(rendered, fit, 500)); len(out) > 500 || !strings.HasSuffix(out, "rerun with `--max-bytes 0` for the rest.**\n") {
+		t.Fatalf("no full record: %q", out)
+	}
+}
+
+// Condensing a tiny exchange makes it longer, so it is left as it is, and a
+// limit met by condensing only the long exchange before it is met without
+// cutting.
+func TestFitHandoffSkipsChangesThatGrowAnExchange(t *testing.T) {
+	t.Parallel()
+	h := Handoff{Version: HandoffVersion, Session: HandoffSession{Harness: "claude", ArchiveSessionID: "x"}, FullRecordPath: "/data/handoffs/x.md", Exchanges: []HandoffExchange{
+		{Prompt: "start", Steps: []HandoffStep{{Kind: HandoffStepText, Text: strings.Repeat("a long reply ", 30)}}},
+		{Prompt: "ok?", Steps: []HandoffStep{{Kind: HandoffStepText, Text: "ok"}}},
+		{Prompt: "last", Steps: []HandoffStep{{Kind: HandoffStepText, Text: "done"}}},
+	}}
+	first := cloneHandoff(h)
+	condenseExchange(&first.Exchanges[0], false)
+	first.Elisions = []HandoffElision{{Kind: HandoffElisionExchanges, First: 1, Last: 1, Count: 1}}
+	both := cloneHandoff(first)
+	condenseExchange(&both.Exchanges[1], true)
+	both.Elisions = []HandoffElision{{Kind: HandoffElisionExchanges, First: 1, Last: 2, Count: 2}}
+	limit := markdownSize(first)
+	if markdownSize(h) <= limit || markdownSize(both) <= limit {
+		t.Fatalf("fixture: %d uncondensed, %d condensing the first, %d condensing both", markdownSize(h), limit, markdownSize(both))
+	}
+	fit, ok := FitHandoff(h, limit, markdownSize)
+	if !ok || markdownSize(fit) > limit || fit.Exchanges[0].Condensed == nil || fit.Exchanges[1].Condensed != nil {
+		t.Fatalf("fits=%v, %d bytes over a %d-byte limit, elisions %#v", ok, markdownSize(fit), limit, fit.Elisions)
+	}
+}
+
+// Past its first change, every stage's rendering shrinks or stays the same
+// as it reaches more exchanges, in markdown and JSON: the binary search in
+// smallestFittingPrefix depends on it.
+func TestFitStagesNeverGrowWithThePrefix(t *testing.T) {
+	t.Parallel()
+	jsonSize := func(h Handoff) int {
+		data, err := json.MarshalIndent(h, "", "  ")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(DisplayJSON(data)) + 1
+	}
+	rng := rand.New(rand.NewPCG(414, 1))
+	words := func(n int) string {
+		parts := make([]string, n)
+		for i := range parts {
+			parts[i] = []string{"ok", "go", "test", "字", "fix", "\n", "done"}[rng.IntN(7)]
+		}
+		return strings.Join(parts, " ")
+	}
+	text := func() string {
+		if rng.IntN(4) == 0 {
+			return words(rng.IntN(400))
+		}
+		return words(rng.IntN(4))
+	}
+	for n := range 300 {
+		h := Handoff{Version: HandoffVersion, Session: HandoffSession{Harness: "codex"}, FullRecordPath: "/data/handoffs/p.md"}
+		for range 1 + rng.IntN(8) {
+			prompt := text()
+			if rng.IntN(10) == 0 {
+				prompt = strings.Repeat("p", handoffPromptCap+rng.IntN(50))
+			}
+			exchange := HandoffExchange{Prompt: prompt}
+			for range rng.IntN(6) {
+				switch rng.IntN(5) {
+				case 0, 1:
+					exchange.Steps = append(exchange.Steps, HandoffStep{Kind: HandoffStepText, Text: text()})
+				case 2:
+					result := text()
+					exchange.Steps = append(exchange.Steps, HandoffStep{Kind: HandoffStepTool, Tool: &HandoffToolCall{Name: "Bash", Summary: text(), Result: result, ResultLines: strings.Count(result, "\n") + 1}})
+				case 3:
+					exchange.Steps = append(exchange.Steps, HandoffStep{Kind: HandoffStepShell, Text: text()})
+				default:
+					exchange.Steps = append(exchange.Steps, HandoffStep{Kind: HandoffStepSummary, Text: text()})
+				}
+			}
+			h.Exchanges = append(h.Exchanges, exchange)
+		}
+		for format, measure := range map[string]func(Handoff) int{"markdown": markdownSize, "json": jsonSize} {
+			out := cloneHandoff(h)
+			for s, stage := range handoffFitStages() {
+				apply := fitStagePrefixes(out, stage, measure)
+				previous, started := 0, false
+				for k := range len(out.Exchanges) + 1 {
+					trial, elision := apply(k)
+					size := measure(withElision(trial, elision))
+					if started && size > previous {
+						t.Fatalf("handoff %d, %s, stage %d: %d bytes at prefix %d, %d at %d", n, format, s+1, size, k, previous, k-1)
+					}
+					previous, started = size, started || elision.Count > 0
+				}
+				// The next stage starts from this one applied everywhere.
+				all, elision := apply(len(out.Exchanges))
+				out = withElision(all, elision)
+			}
 		}
 	}
 }

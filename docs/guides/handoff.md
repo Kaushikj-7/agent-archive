@@ -697,13 +697,16 @@ each older exchange's agent messages cut to its last one, then all tool
 output dropped, then every exchange but the last condensed to its prompt's
 first line and a count of what it held (the first prompt keeps its first
 2,000 bytes), then the last exchange's tool calls collapsed and its messages
-shortened. Every prompt and where it left off are always kept. Markdown
+shortened. A step leaves alone an exchange it would make longer, such as a
+one-line reply that its count would outweigh. Every prompt and where it left
+off are always kept. Markdown
 output that is still over the limit, which happens when one part, such as a
 very long final message, is larger than the limit by itself, or when a
 session has so many exchanges (several hundred) that their first lines are,
 is cut at a line with a marker. The last exchange is kept after the marker
 when it is small enough, and the list of what was omitted stays at the end;
-JSON output is not cut. When anything is trimmed, the
+under a limit too small for that list, a shorter marker naming the saved
+untrimmed version replaces it. JSON output is not cut. When anything is trimmed, the
 untrimmed version is saved under the data directory in `handoffs/` (mode
 0600, removed after 7 days and by `uninstall --delete-local-data`) and its
 path is named at the end, so the receiving agent can read what was omitted.
