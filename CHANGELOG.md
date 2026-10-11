@@ -9,6 +9,9 @@ follow [Semantic Versioning](https://semver.org/).
 - Protect active and preserved revision sources during purge and selective archive
   cleanup. Invalid or missing history references block deletion; old-filter live
   evidence must be replaced through verified privacy publication first.
+- Clarify storage onboarding with Account, Storage, and Verification stages.
+  Keep valid existing-bucket answers when going back, show S3 archive
+  permissions on request, and report privacy separately from connectivity.
 
 - Stop titling Codex desktop sessions with injected open-page context such as
   `<external_codex_apps_open_page>{"page_id":null}</external_codex_apps_open_page>`.
