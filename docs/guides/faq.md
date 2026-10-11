@@ -8,10 +8,12 @@ Prompts, assistant text, tool inputs and outputs, commands, file paths,
 working directories (which usually contain your username), Git branch names,
 model names, and token counts, after a best-effort filter that drops hidden
 reasoning, injected instructions, images, and unknown fields, and redacts
-recognizable credentials. Each session also carries the filtered text of
-the skills installed in the app's user-level skill folders (such as
-`~/.claude/skills`), whatever the project. There is no client-side
-encryption. See [privacy](../security/privacy.md#what-is-uploaded).
+recognizable credentials. Fresh setup records skill names and hashes of
+filtered skill text, with no skill bodies. This includes user-level skill
+folders (such as `~/.claude/skills`), whatever the project, and the project's
+skill folder. Older configurations retain filtered skill bodies until you
+change their `skill_evidence` setting; you can choose `none`, `metadata`, or
+`body`. There is no client-side encryption. See [privacy](../security/privacy.md#what-is-uploaded).
 
 **Can it capture sessions I had before installing it?**
 Yes. Setup imports the sessions of the last 7 days in the projects you
@@ -20,9 +22,13 @@ and [`agent-archive backfill`](backfill.md) imports older ones, or ones in
 other folders, when you run it.
 
 **Does it capture every project on my machine?**
-No. Only projects you include in setup (or that a backfill adds, which it
-tells you first). Sessions run from your home directory or a temporary
-directory are skipped by default.
+By default, capture is limited to projects you include in setup (or that a
+backfill adds, which it tells you first). Codex also offers an explicit
+all-current-and-future-projects scope; it applies only to Codex and does not
+change Claude Code or Cursor scope. Existing installations must opt in. See
+[automatic Codex discovery](../getting-started/setup.md#automatic-codex-discovery).
+Sessions run from your home directory or a temporary directory are skipped
+by default.
 
 **What does it cost?**
 Your provider's storage, request, retrieval, and transfer charges, as
