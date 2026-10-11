@@ -258,6 +258,7 @@ func promptS3Location(p *prompter, cfg *credentials.Config, env Env, failedRegio
 // the profile's own region, when discovery found a valid one, and whether
 // the profile names no credential source.
 func chooseS3Profile(p *prompter, cfg *credentials.Config, env Env) (profileRegion string, noCredentials bool, err error) {
+	p.storageStage(storageAccount)
 	profiles, err := env.awsProfiles()
 	if err != nil {
 		terminal.Println(p.out, "Could not read AWS profiles automatically. Enter an existing profile name below.")
@@ -297,6 +298,7 @@ func chooseS3Profile(p *prompter, cfg *credentials.Config, env Env) (profileRegi
 // chooseS3Profile recorded in cfg, then settles the region as
 // promptS3Location describes.
 func promptS3ExistingBucket(p *prompter, cfg *credentials.Config, env Env, failedRegion, profileRegion string, noCredentials bool) error {
+	p.storageStage(storageDetails)
 	profile := cfg.AWSProfile
 	var err error
 	var finder BucketFinder
@@ -306,10 +308,11 @@ func promptS3ExistingBucket(p *prompter, cfg *credentials.Config, env Env, faile
 		finder = nil
 		noteListFailure(p, profile, err)
 	}
-	var listErr error
-	if cfg.Bucket, listErr, err = promptBucket(p, finder, profile, cfg.Bucket); err != nil {
+	bucket, listErr, err := promptBucket(p, finder, profile, cfg.Bucket)
+	if err != nil {
 		return err
 	}
+	cfg.Bucket = bucket
 	// Without working credentials or a network, the region lookup would run
 	// the credential chain again only to fail the same way.
 	if cause := storage.Diagnose(listErr).Cause; listErr != nil && (cause == storage.CauseNoCredentials || cause == storage.CauseNetwork) {

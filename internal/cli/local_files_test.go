@@ -26,6 +26,7 @@ var damagedLocalFiles = []struct {
 	{"capture-diagnostics.json", true},
 	{"status.json", true},
 	{"application-versions.json", true},
+	{"discovery-refused-starts.json", true},
 	{"registrations/x.json", true},
 	{"requests/x.json", true},
 	{collectorLockRecordName, true},
