@@ -23,6 +23,20 @@ type CodexRolloutSet struct {
 	Candidates []SourceRef
 	Revision   string
 	Complete   bool
+	// Lineage identifies the same current locator and candidate evidence as
+	// Revision, leaving out whether coverage was complete. Persisted source
+	// signatures use it (see LineageToken), so coverage changing between
+	// passes does not by itself make an unchanged source look changed.
+	Lineage string
+}
+
+// LineageToken is Lineage, or Revision for a lookup whose Revision never
+// depends on coverage completeness.
+func (s CodexRolloutSet) LineageToken() string {
+	if s.Lineage != "" {
+		return s.Lineage
+	}
+	return s.Revision
 }
 
 // CodexHistoryHeader and CodexHistoryRecord frame selected identity and physical records.

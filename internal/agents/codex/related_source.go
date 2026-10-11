@@ -494,7 +494,7 @@ func checkHeaders(ctx context.Context, files []*rolloutFile) error {
 
 func (p *relatedSourcePass) observation(ctx context.Context, selection sourceSelection, spans []physicalSpan) (agentapi.SourceObservation, error) {
 	h := sha256.New()
-	_, _ = fmt.Fprint(h, "codex-history-v1\x00", selection.set.Revision, "\x00", selection.leaf.ref.Path)
+	_, _ = fmt.Fprint(h, "codex-history-v1\x00", selection.set.LineageToken(), "\x00", selection.leaf.ref.Path)
 	candidatePaths := make([]string, 0, len(selection.set.Candidates))
 	for _, ref := range selection.set.Candidates {
 		candidatePaths = append(candidatePaths, string(ref.Kind)+"\x00"+ref.Path+"\x00"+ref.Key)

@@ -38,7 +38,7 @@ func (p *relatedSourcePass) genericLegacySignature(ctx context.Context, ref agen
 	if err != nil {
 		return observation, err
 	}
-	sum := sha256.Sum256([]byte(observation.Signature.Token + "\x00" + set.Revision))
+	sum := sha256.Sum256([]byte(observation.Signature.Token + "\x00" + set.LineageToken()))
 	observation.Signature.Token = hex.EncodeToString(sum[:])
 	return observation, p.env.CodexRollouts.Check(ctx, ref.Key, set.Revision)
 }

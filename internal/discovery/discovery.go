@@ -211,7 +211,8 @@ func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config,
 		}
 		return h, nil
 	}
-	if err := persistNativeCatalog(checkpointCtx, o.Rollouts, path, c); err != nil {
+	if err := persistCatalog(checkpointCtx, o.Rollouts, path, c); err != nil {
+		o.Rollouts.deferCheckpoint(&c, err)
 		return h, errors.Join(errors.New("discovery state write failed; retry next scan"), err)
 	}
 	if o.Rollouts != nil {
@@ -1179,6 +1180,20 @@ func hasValidatedCoverage(coverage *coverageInventory) bool {
 func catalogPending(c catalog, nativeOnly bool) bool {
 	return len(c.Queue) > 0 || !nativeOnly && len(c.Retries) > 0 || c.Coverage != nil && c.Coverage.Phase != coverageComplete
 }
+
+// deferCheckpoint hands a catalog whose checkpoint ran out of its slice (it
+// can, just after coverage completed) to the lookup's close, which writes it
+// without the pass deadline, so a completed epoch and the proof it becomes
+// are not lost with the checkpoint. Other write failures stay this pass's.
+func (l *CodexRolloutLookup) deferCheckpoint(c *catalog, err error) {
+	if l != nil && (errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)) {
+		l.catalog = c
+		l.coverageDirty = true
+	}
+}
+
+// persistCatalog is persistNativeCatalog; tests replace it to fail a checkpoint.
+var persistCatalog = persistNativeCatalog
 
 func persistNativeCatalog(ctx context.Context, lookup *CodexRolloutLookup, path string, c catalog) error {
 	if lookup != nil {
