@@ -160,8 +160,8 @@ func (e *importRegistrationError) Unwrap() error { return e.err }
 // background collector. It waits up to collectorWait for a collector pass
 // to finish, and returns errCollectorBusy when one is still running. The
 // returned import's release is always called.
-func registerImportLocked(env Env, stdout, stderr io.Writer, home string, plan backfill.Plan, fingerprint string, collectorWait time.Duration, capacityUploads bool) (*registeredImport, error) {
-	reg := &registeredImport{out: stdout}
+func registerImportLocked(env Env, stdout, stderr io.Writer, home string, plan backfill.Plan, fingerprint string, collectorWait time.Duration, capacityUploads bool) (reg *registeredImport, resultErr error) {
+	reg = &registeredImport{out: stdout}
 	confirmationCtx, stopConfirmation := importConfirmationContext(env, stderr, plan)
 	stopConfirmation = releaseOnce(stopConfirmation)
 	reg.releases = append(reg.releases, stopConfirmation)
@@ -222,7 +222,7 @@ func registerImportLocked(env Env, stdout, stderr io.Writer, home string, plan b
 	if err != nil {
 		return reg, err
 	}
-	defer lookup.Close()
+	defer func() { resultErr = errors.Join(resultErr, lookup.Close()) }()
 	// The confirmation's lookup is closed with its plan. Rebuild the trusted
 	// census before reading qualified selected history in this fresh pass.
 	for _, candidate := range candidates {
@@ -241,7 +241,12 @@ func registerImportLocked(env Env, stdout, stderr io.Writer, home string, plan b
 			break
 		}
 	}
+	var onCapacity func(context.Context) error
+	if capacityUploads {
+		onCapacity = importCapacityDrain(env, stdout, home, store, lookup, readHomes, interrupt.requested)
+	}
 	registration := backfill.Registration{
+		OnCapacity:     onCapacity,
 		DurableSources: true, CodexRollouts: lookup, ConfiguredCodexHomes: readHomes,
 		AfterStage: func(id string) error {
 			batch.StagedSessions = append(batch.StagedSessions, id)
@@ -262,9 +267,6 @@ func registerImportLocked(env Env, stdout, stderr io.Writer, home string, plan b
 			return env.checkpoint("registered")
 		},
 		Stop: interrupt.requested,
-	}
-	if capacityUploads {
-		registration.OnCapacity = importCapacityDrain(env, stdout, home, store, lookup, readHomes, interrupt.requested)
 	}
 	result, err := registration.Run(candidates)
 	reg.batch, reg.result = batch, result
@@ -948,7 +950,7 @@ func importCapacityDrain(env Env, stdout io.Writer, home string, store *state.St
 		if current.Paused {
 			return errPaused
 		}
-		remote, err := env.openStore(current)
+		remote, err := env.openStoreContext(ctx, current)
 		if err != nil {
 			return err
 		}

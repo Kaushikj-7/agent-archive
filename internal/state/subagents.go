@@ -1,6 +1,7 @@
 package state
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -159,6 +160,13 @@ func subagentLockName(id string) string {
 
 // RemoveSubagentCandidate removes one subagent candidate, under its lock.
 func (s *Store) RemoveSubagentCandidate(id string) error {
+	return s.removeSubagentCandidateContext(context.Background(), id)
+}
+
+func (s *Store) removeSubagentCandidateContext(ctx context.Context, id string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	unlock, err := s.lockSubagentCandidate(id)
 	if err != nil {
 		return err
@@ -168,7 +176,7 @@ func (s *Store) RemoveSubagentCandidate(id string) error {
 	if err != nil {
 		return err
 	}
-	return s.pruneAcknowledgedPackedCandidate(id)
+	return s.pruneAcknowledgedPackedCandidateContext(ctx, id)
 }
 
 // AcknowledgeSubagentCandidate marks a candidate handled. A later stop may
@@ -203,6 +211,10 @@ func (s *Store) AcknowledgeSubagentCandidate(expected SubagentCandidate) error {
 }
 
 func (s *Store) pruneAcknowledgedPackedCandidate(id string) error {
+	return s.pruneAcknowledgedPackedCandidateContext(context.Background(), id)
+}
+
+func (s *Store) pruneAcknowledgedPackedCandidateContext(ctx context.Context, id string) error {
 	var marker sessionIndexMarker
 	err := readRecoveryJSON(filepath.Join(s.home, sessionIndexMarkerFile), &marker)
 	if errors.Is(err, os.ErrNotExist) || (err == nil && marker.Version != 2) {
@@ -214,7 +226,7 @@ func (s *Store) pruneAcknowledgedPackedCandidate(id string) error {
 	if exists(s.registrationPath(id)) {
 		return nil // Admitted children retain their exact packed ownership.
 	}
-	return s.removePackedIdentities(map[string]bool{id: true})
+	return s.removePackedIdentitiesContext(ctx, map[string]bool{id: true})
 }
 
 // removeSubagentCandidate removes a candidate and then its lock file, under

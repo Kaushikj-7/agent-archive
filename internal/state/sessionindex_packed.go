@@ -925,7 +925,14 @@ func (s *Store) packedRemovalIDs(id string) (map[string]bool, error) {
 	return removed, nil
 }
 
-func (s *Store) removePackedIdentities(ids map[string]bool) (err error) {
+func (s *Store) removePackedIdentities(ids map[string]bool) error {
+	return s.removePackedIdentitiesContext(context.Background(), ids)
+}
+
+func (s *Store) removePackedIdentitiesContext(ctx context.Context, ids map[string]bool) (err error) {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if len(ids) == 0 {
 		return nil
 	}
@@ -974,7 +981,7 @@ func (s *Store) removePackedIdentities(ids map[string]bool) (err error) {
 					// a complete validated census can prove all owners expired.
 					// It runs outside locks and its revision is fenced at commit.
 					if inventory == nil || inventoryRevision != revision {
-						inventory, err = s.sessionRegistrationInventory(context.Background())
+						inventory, err = s.sessionRegistrationInventory(ctx)
 						if err != nil {
 							return err
 						}
@@ -1011,7 +1018,7 @@ func (s *Store) removePackedIdentities(ids map[string]bool) (err error) {
 			// uses the current membership snapshot that authorized deletion.
 			fence := marker
 			fence.PackedRevision = revision
-			err = s.commitPackedIndexGuarded(context.Background(), path, fence, before, data, true, func() (func() error, error) {
+			err = s.commitPackedIndexGuarded(ctx, path, fence, before, data, true, func() (func() error, error) {
 				return s.lockPackedRemovedCandidates(candidateIDs)
 			})
 			if errors.Is(err, errIndexMoved) {

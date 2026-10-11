@@ -275,7 +275,7 @@ func (s *sessionScan) read() (read sourceRead, ok bool, err error) {
 		}
 		// A crash after local acknowledgement can leave preparation behind. Its
 		// removal still requires the complete remotely verified publication.
-		if _, found, err := s.local.LoadImportStage(s.reg); err != nil {
+		if _, found, err := s.local.LoadImportStage(s.ctx, s.reg); err != nil {
 			return read, false, err
 		} else if found {
 			key, err := archive.MetadataObjectKey(s.reg.Harness.Name, s.id())
@@ -666,15 +666,17 @@ func (s *sessionScan) publish(read sourceRead, candidate archive.SourceBundle) (
 		proof := s.scanSignature(read.observed, candidate)
 		frozenSignature = &proof
 	}
+	expectedImportMetadata := ""
+	if s.reg.StagedImportSHA256 != "" && s.published.Summary().Published {
+		expectedImportMetadata = metadataSHA(s.published.Metadata())
+	}
 	pending := state.PendingPublication{
-		ScanSignature: frozenSignature,
-		SkillEvidence: string(s.opts.skillEvidence()),
-		Bundle:        candidate, SourceKey: rendered.source.Key, MetadataKey: rendered.metadataKey,
+		ImportExpectedMetadataSHA256: expectedImportMetadata,
+		ScanSignature:                frozenSignature,
+		SkillEvidence:                string(s.opts.skillEvidence()),
+		Bundle:                       candidate, SourceKey: rendered.source.Key, MetadataKey: rendered.metadataKey,
 		SourceSHA256: rendered.source.SHA256, SourceBytes: rendered.sourceBytes, MetadataBytes: rendered.metadata,
 		RequestToken: s.req.Token, ReadyAt: readyAt, Attempted: !readyAt.After(s.now),
-	}
-	if s.reg.StagedImportSHA256 != "" && s.published.Summary().Published {
-		pending.ImportExpectedMetadataSHA256 = metadataSHA(s.published.Metadata())
 	}
 	if s.revisions != nil && (candidate.History != nil || len(s.revisions.Preserved) > 0) {
 		if err := s.freezeRevisionPublication(&pending); err != nil {

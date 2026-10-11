@@ -184,7 +184,7 @@ func materializeSubagentCandidate(ctx context.Context, local *state.Store, candi
 	reg := assembleSubagentRegistration(parent, candidate)
 	if candidate.StagedImportSHA256 != "" {
 		reg.StagedImportSHA256 = candidate.StagedImportSHA256
-		stage, found, loadErr := local.LoadImportStage(reg)
+		stage, found, loadErr := local.LoadImportStage(ctx, reg)
 		if loadErr != nil {
 			return loadErr
 		}

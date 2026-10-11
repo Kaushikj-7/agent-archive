@@ -12,7 +12,7 @@ import (
 )
 
 func (s *sessionScan) readImportStage() (read sourceRead, ok bool, err error) {
-	stage, found, err := s.local.LoadImportStage(s.reg)
+	stage, found, err := s.local.LoadImportStage(s.ctx, s.reg)
 	if err != nil {
 		return read, false, err
 	}
@@ -181,10 +181,17 @@ func (s *sessionScan) verifyImportPublication(p state.PendingPublication) error 
 
 // Registration-derived relationship gaps are rebuilt from current ownership.
 // Retained native omissions remain proof of what the filter could not retain.
+type importRelationshipGap string
+
+const (
+	importParentLinkPending   importRelationshipGap = "native_parent_link_pending"
+	importRecoveredGeneration importRelationshipGap = "recovered_generation"
+)
+
 func importFilterGaps(gaps []archive.CaptureGap) []archive.CaptureGap {
 	out := make([]archive.CaptureGap, 0, len(gaps))
 	for _, gap := range gaps {
-		if gap.Code != "native_parent_link_pending" && gap.Code != "recovered_generation" {
+		if code := importRelationshipGap(gap.Code); code != importParentLinkPending && code != importRecoveredGeneration {
 			out = append(out, gap)
 		}
 	}

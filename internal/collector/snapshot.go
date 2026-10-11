@@ -40,7 +40,7 @@ func ReadLocalBundle(ctx context.Context, home string, reg archive.SessionRegist
 		return archive.SourceBundle{}, publishedErr
 	}
 	if reg.StagedImportSHA256 != "" && (publishedErr != nil || !published.Summary().Published) {
-		stage, found, err := store.LoadImportStage(reg)
+		stage, found, err := store.LoadImportStage(ctx, reg)
 		if err != nil {
 			return archive.SourceBundle{}, err
 		}

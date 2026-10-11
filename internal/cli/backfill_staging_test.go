@@ -58,7 +58,7 @@ func TestBackfillStagedAdmissionCrashBackgroundRecoversDeletedNative(t *testing.
 	if err != nil || !pub.Summary().Published {
 		t.Fatalf("not verified %v", err)
 	}
-	if _, found, err := st.LoadImportStage(reg); err != nil || found {
+	if _, found, err := st.LoadImportStage(t.Context(), reg); err != nil || found {
 		t.Fatalf("ack stage remains %v", err)
 	}
 	cfg, _, err := config.Load(f.data)
@@ -238,7 +238,7 @@ func TestBackfillStagesPreservedRevisionBeforeNativeDeletion(t *testing.T) {
 	if len(regs) != 1 {
 		t.Fatalf("unexpected owners: %+v", regs)
 	}
-	stage, found, err := local.LoadImportStage(regs[0])
+	stage, found, err := local.LoadImportStage(t.Context(), regs[0])
 	must(t, err)
 	if !found || len(stage.Preserved) == 0 {
 		t.Fatal("selected alternative not staged before admission")
@@ -276,7 +276,7 @@ func TestBackfillStagesPreservedRevisionBeforeNativeDeletion(t *testing.T) {
 	if !recovered {
 		t.Fatal("staged preserved alternative unreadable without native files")
 	}
-	if _, found, err := local.LoadImportStage(regs[0]); err != nil || found {
+	if _, found, err := local.LoadImportStage(t.Context(), regs[0]); err != nil || found {
 		t.Fatalf("verified source set staging not released: %t %v", found, err)
 	}
 }
