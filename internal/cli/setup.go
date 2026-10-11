@@ -468,12 +468,7 @@ func selectSetupDraft(p *prompter, home, userHome string, env Env, existing conf
 				if days == 0 && !draft.Config.RetentionProtection {
 					days = defaultRetentionDays
 				}
-				draft.RetentionEdited = true
-				draft.Config.RetentionDays, e = p.setupRetentionDays(days)
-				if draft.Config.RetentionDays == 0 {
-					draft.Config.RetentionProtection = true
-				}
-				if e != nil {
+				if e = editSetupDraftRetention(p, &draft, days); e != nil {
 					return setupDraft{}, false, e
 				}
 			}
@@ -504,12 +499,7 @@ func selectSetupDraft(p *prompter, home, userHome string, env Env, existing conf
 			draft.Step = 1
 		case "retention":
 			draft.Step = 2
-			draft.RetentionEdited = true
-			draft.Config.RetentionDays, err = p.setupRetentionDays(existing.RetentionDays)
-			if draft.Config.RetentionDays == 0 {
-				draft.Config.RetentionProtection = true
-			}
-			if err != nil {
+			if err = editSetupDraftRetention(p, &draft, existing.RetentionDays); err != nil {
 				return setupDraft{}, false, err
 			}
 		}
@@ -524,6 +514,16 @@ func selectSetupDraft(p *prompter, home, userHome string, env Env, existing conf
 		}
 	}
 	return draft, false, nil
+}
+
+func editSetupDraftRetention(p *prompter, draft *setupDraft, days int) error {
+	draft.RetentionEdited = true
+	var err error
+	draft.Config.RetentionDays, err = p.setupRetentionDays(days)
+	if draft.Config.RetentionDays == 0 {
+		draft.Config.RetentionProtection = true
+	}
+	return err
 }
 
 func advanceSetupDraft(p *prompter, draft *setupDraft, save func() error, savedPath, home, userHome string, env Env, known func(config.Config) []backfill.KnownProject, verifiedStorage *credentials.Config, verbose bool) (bool, error) {
