@@ -135,10 +135,17 @@ func projectScopeBlocked(root string, included, excluded []string) bool {
 	return false
 }
 
+// projectMatchDeadline bounds one matchProjects call.
+const projectMatchDeadline = 5 * time.Second
+
 // matchProjects shares one deadline across discovery and four bounded Git
 // workers. Paths are canonicalized and each repository is queried once.
 func matchProjects(ctx context.Context, env Env, userHome string, cfg config.Config, requests []projectMatchRequest) projectMatchResult {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	timeout := projectMatchDeadline
+	if env.projectMatchTimeout > 0 {
+		timeout = env.projectMatchTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	result := projectMatchResult{Roots: make([][]string, len(requests)), RepositoryKeys: map[string]string{}}
 	bf := env.backfillEnvironment(userHome, cfg)

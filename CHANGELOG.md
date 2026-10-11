@@ -6,6 +6,16 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Clarify storage onboarding with Account, Storage, and Verification stages.
+  Keep valid existing-bucket answers when going back, show S3 archive
+  permissions on request, and report privacy separately from connectivity.
+- Resume interrupted storage setup from durable resource receipts, prevent
+  ambiguous duplicate creation, track manual bucket cleanup, and explicitly
+  revoke unused guided keys while protecting active and draft credentials.
+
+- Preserve private, durable bucket creation receipts across interrupted setup and
+  abandoned drafts, including uncertain provider outcomes. Archive keys continue
+  to use the existing issuance ledger.
 - Show pairing delivery and receiver setup as separate progress stages. Closing
   source transfer instructions no longer implies receiver success. Cancellation
   and expiry explain bundle and credential effects, including local S3 profiles.

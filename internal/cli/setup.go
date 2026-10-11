@@ -415,6 +415,13 @@ func selectSetupDraft(p *prompter, home, userHome string, env Env, existing conf
 	if err != nil {
 		return setupDraft{}, false, err
 	}
+	saved, haveDraft, err = recoverSetupResources(p, home, saved, haveDraft, initial, env)
+	if errors.Is(err, errResourceRecoveryStopped) {
+		return setupDraft{}, true, nil
+	}
+	if err != nil {
+		return setupDraft{}, false, err
+	}
 	if haveDraft {
 		choice, e := p.setupMenu("You have an unfinished setup. What would you like to do?", "continue",
 			option{"continue", "Continue where you left off"},
@@ -623,6 +630,7 @@ func verifySetupDraftStorage(p *prompter, draft *setupDraft, save func() error, 
 		// A draft resumed past the storage questions (after changing
 		// apps, say) still doesn't check a failed region again.
 		if s := &draft.Config.Storage; s.Provider == credentials.ProviderS3 && draft.FailedRegion != "" && s.Region == draft.FailedRegion {
+			p.storageStage(storageDetails)
 			region, err := askFailedRegion(p, s.Region)
 			if err != nil {
 				return false, err
@@ -676,6 +684,7 @@ func recoverSetupStorageFailure(p *prompter, draft *setupDraft, save func() erro
 	}
 	// Retry and "Change other settings" keep the draft as it is, at the check.
 	if choice == "fix" && d.Cause == storage.CauseWrongRegion && draft.Config.Storage.Provider == credentials.ProviderS3 {
+		p.storageStage(storageDetails)
 		// When S3 didn't name the bucket's region, ask S3 for it, so the
 		// default is not the region that just failed.
 		region := d.Region
@@ -1038,6 +1047,7 @@ func storageCheckMayPrompt(storage credentials.Config, env Env) bool {
 // interrupt stops the spinner and returns at once with
 // errStorageCheckInterrupted.
 func runStorageCheck(p *prompter, cfg *config.Config, env Env) error {
+	p.storageStage(storageVerification)
 	release := p.suspendPrompts()
 	defer release()
 	const label = "Checking your storage connection…"
@@ -1079,7 +1089,13 @@ func runStorageCheck(p *prompter, cfg *config.Config, env Env) error {
 		return err
 	}
 	*cfg = checked
+	// The object key cannot inspect R2's public domains. Keep the management
+	// evidence from this run for the independent privacy result.
+	if report := p.guidedR2Privacy(*cfg); report != nil {
+		cfg.BucketPrivacy = report
+	}
 	terminal.Println(p.out, p.style.okMark()+" Connected to your storage.")
+	printReviewPrivacy(p, *cfg)
 	return nil
 }
 

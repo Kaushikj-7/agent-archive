@@ -58,9 +58,10 @@ const testTempPrefix = "agent-archive-cli-test-"
 //     ~/.local/share/agent-archive, or ~/.aws.
 //
 //   - $TMPDIR, and so every t.TempDir: a fresh folder of the run's own under
-//     /tmp. local.CanonicalPath lists every parent of a path to find its
-//     spelling, and macOS's per-user temporary folder can hold thousands of
-//     entries; listing it for every path was most of this package's run time.
+//     /tmp, so no test reads or depends on what macOS's per-user temporary
+//     folder holds (it can hold tens of thousands of entries). The cost of
+//     local.CanonicalPath no longer depends on it either: it spells a path
+//     without listing its parents.
 //
 // It returns a function that removes the temporary folders.
 func isolateProcessForTesting() func() {

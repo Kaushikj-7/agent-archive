@@ -28,6 +28,25 @@ storage prompt for a link to the [bucket guide](bucket.md). Setup asks questions
 stops before asking anything and changes nothing. Its prompt sequence is not
 a scripting API; to script it, use [`setup --yes`](#set-up-without-questions).
 
+### Interrupted storage creation
+
+If setup stops after requesting a bucket, rerun `agent-archive setup`. Private
+resource receipts survive draft changes and record whether creation was confirmed
+or its outcome remains unknown. Setup offers to connect the bucket as existing
+storage, choose other storage, or inspect resource details. Connecting still asks
+for credentials and verifies access; it does not establish ownership.
+
+An unknown creation is never retried for the same bucket automatically. Inspect
+the named account and bucket in the provider console. S3 receipts record the
+creation profile, which can change accounts; a profile name is not ownership proof.
+Bucket cleanup instructions remain pending because setup cannot verify ownership
+or manual deletion. Check bucket contents and other machines before deleting it.
+
+Unused guided R2 keys can be explicitly revoked after confirmation, using a fresh
+management token. Setup verifies exact provider key lineage and permissions before
+deleting, protects active and saved-draft credentials, and retains unsuccessful
+cleanup for retry. Bootstrap and management tokens are not stored in receipts.
+
 Setup groups each question, explanation, choices and shortcuts together. On a
 supported terminal, the answered question becomes a short receipt. Yes/No receipts
 retain the question subject so completed decisions remain identifiable.
@@ -111,6 +130,12 @@ choice separately from whether automatic discovery is enabled; see
 
 ## 2. Storage
 
+Within Step 2, **Account → Storage → Verification** shows the current work.
+Account covers provider access; Storage covers the destination and archive
+credentials; Verification checks connectivity and reports bucket privacy
+separately. Back and Retry return to the stage being edited, preserving valid
+existing-bucket answers within the run.
+
 Setup suggests S3 when your shell sets `AWS_PROFILE` or your AWS settings
 already have a profile with credentials, and R2 otherwise.
 
@@ -128,7 +153,8 @@ and during error recovery. See the [bucket guide](bucket.md) for credentials
 and permissions.
 
 S3 setup enables and reads back all four Block Public Access settings. It
-prints a narrower runtime policy, but does not create IAM identities or keys.
+offers **View archive permissions** for a narrower runtime policy, but does
+not create IAM identities or keys.
 The creation profile remains the default archive profile; choose **Choose
 another archive profile** to switch after attaching the policy yourself.
 
@@ -163,7 +189,7 @@ clear answer to the request, setup says the bucket may exist and to check
 the S3 console; it deletes nothing in that case. If the bucket was created
 but Block Public Access could not be turned on, setup does not use it: it
 offers to try again, to delete the empty bucket (after you type its name),
-or to stop. When it succeeds, setup prints the runtime policy for the new
+or to stop. When it succeeds, setup offers **View archive permissions** for the new
 bucket (not for a folder name with characters other than letters, digits
 and `. _ - /`; it says so and points at the guide) and asks which AWS
 profile archiving should use. The profile that created the bucket is the
@@ -765,3 +791,14 @@ format of existing sessions. Structural checks cannot prove that an unknown
 future producer preserves all current semantics, and these rules do not claim
 desktop GUI acceptance. See the [format contract](../reference/local-discovery-scanner.md#codex-format-compatibility)
 for supported profiles and limits.
+
+### Interrupted resource creation
+
+Guided storage creation records a private receipt before sending each bucket
+creation request. Receipts survive removing a setup draft. A request without a
+durably recorded response is uncertain: it does not prove that a bucket exists
+or that setup owns it. Check your provider account before retrying or deleting
+such a bucket. S3 receipts identify the creation profile, not a verified AWS
+account identity. R2 archive keys use the existing issuance ledger; receipts and
+ledger records contain identifiers and credential references, never setup tokens
+or credential values. Old drafts remain readable and have no inferred receipts.
