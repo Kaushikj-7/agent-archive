@@ -149,7 +149,8 @@ type handoffQueryResolver struct {
 }
 
 func (r *handoffQueryResolver) resolve() (code int, done bool) {
-	ctx := context.Background()
+	ctx, stopReads := readCommandContext(r.env)
+	defer stopReads()
 	opts := r.opts
 	var regs []archive.SessionRegistration
 	if opts.source != "archive" {

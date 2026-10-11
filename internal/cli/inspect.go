@@ -117,7 +117,7 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		terminal.Println(stderr, notSetUpMessage)
 		return 1
 	}
-	if *rebuildIndex && !rebuildListingIndex(store, stderr) {
+	if *rebuildIndex && !rebuildListingIndex(env, store, stderr) {
 		return 1
 	}
 	scope, err := scopeFor(env, *project, *allProjects)
@@ -141,7 +141,9 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	if full {
 		listLimit = 0
 	}
-	listed, err := reader.ListRecent(context.Background(), store, archiveSessionsPrefix, opts.filter, listLimit, listOpts)
+	ctx, stopReads := readCommandContext(env)
+	defer stopReads()
+	listed, err := reader.ListRecent(ctx, store, archiveSessionsPrefix, opts.filter, listLimit, listOpts)
 	stopList()
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: list: %v\n", err)
@@ -617,7 +619,8 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		return 1
 	}
 
-	ctx := context.Background()
+	ctx, stopReads := readCommandContext(env)
+	defer stopReads()
 	summary := summaryOptions{Now: env.now(), Style: styleFor(stdout), Projects: projectLabels(cfg), Hints: true}
 	if sessionID == "" {
 		return runBareShow(env, store, cfg, stdin, stdout, stderr, *harness, *jsonOut, *noPager)
@@ -675,7 +678,9 @@ func runBareShow(env showCommandDependencies, store storage.ObjectStore, cfg con
 		if code != 0 || !selected {
 			return code
 		}
-		view, err := readSessionView(context.Background(), store, row.HarnessKey, row.SessionID)
+		ctx, stopReads := readCommandContext(env)
+		defer stopReads()
+		view, err := readSessionView(ctx, store, row.HarnessKey, row.SessionID)
 		if err != nil {
 			terminal.Printf(stderr, "agent-archive: show: %v\n", err)
 			return 1
@@ -858,7 +863,10 @@ func printJSON(stdout, stderr io.Writer, value any) int {
 		terminal.Printf(stderr, "agent-archive: %v\n", err)
 		return 1
 	}
-	terminal.Print(stdout, string(data))
+	if err := writeOutput(stdout, data); err != nil {
+		terminal.Printf(stderr, "agent-archive: write JSON: %v\n", err)
+		return 1
+	}
 	return 0
 }
 
@@ -970,9 +978,11 @@ func listingReadOptions(env listCommandDependencies, scope sessionScope, opts li
 }
 
 // rebuildListingIndex reports explicit index maintenance progress and resumable failure.
-func rebuildListingIndex(store storage.ObjectStore, stderr io.Writer) bool {
+func rebuildListingIndex(env listCommandDependencies, store storage.ObjectStore, stderr io.Writer) bool {
+	ctx, stopReads := readCommandContext(env)
+	defer stopReads()
 	terminal.Println(stderr, "agent-archive: list: rebuilding listing entries from live metadata…")
-	count, err := reader.RebuildIndex(context.Background(), store, archiveSessionsPrefix)
+	count, err := reader.RebuildIndex(ctx, store, archiveSessionsPrefix)
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: list: rebuild index stopped after %d metadata entries: %v; rerun to resume\n", count, err)
 		return false
