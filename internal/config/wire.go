@@ -128,6 +128,9 @@ func decodeConfig(data []byte, c *Config) (bool, error) {
 			return false, err
 		}
 	}
+	if plain.SchemaVersion > 8 {
+		return false, errors.New("configuration requires a newer agent-archive writer")
+	}
 	*c = Config(plain)
 	if c.RetentionDays == 0 {
 		c.RetentionProtection = true
