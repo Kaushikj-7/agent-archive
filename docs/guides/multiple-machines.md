@@ -29,8 +29,11 @@ hooks, collector, and local state.
   your branch first: uncommitted changes stay on the machine that made them.
   See [handoff](handoff.md#finding-a-session-by-repository).
 - **Retention is per machine too.** Each machine's retention setting applies
-  to the sessions it owns. Set the same value on every machine if you want one
-  policy.
+  to the sessions it owns, including Keep forever. Pairing copies the preference
+  once; later changes do not propagate. Set the same value on every machine if
+  you want one policy. Upgrade a receiving machine before pairing a Keep forever
+  installation: older receivers reject that bundle. Provider lifecycle rules
+  apply to the shared bucket independently and can override any machine's policy.
 - **Credentials.** Each machine needs its own access to the bucket: an AWS
   profile, or R2 credentials entered in its own setup (stored in that
   machine's Keychain on macOS, or in a private file under its data directory
