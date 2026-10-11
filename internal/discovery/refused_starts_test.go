@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -368,6 +369,57 @@ func TestRefusedStartsProvesAThreadWithTwoMembersOnce(t *testing.T) {
 		if got, err := ReadRefusedStarts(store.Home()); err != nil || len(got) != 1 || got[0].NativeSessionID != id {
 			t.Fatalf("pass %d recorded %+v %v", pass, got, err)
 		}
+	}
+}
+
+// A pass proves at most maxRefusedProofs refused sessions and leaves the
+// rest for later passes; a session the record would not keep (one that
+// started before the lookback) is never proven.
+func TestRefusedStartsBoundsProofsPerPass(t *testing.T) {
+	t.Parallel()
+	store, cfg, at, codex := fixture(t)
+	floor, ok := cfg.DiscoveryStartFloor("codex")
+	if !ok {
+		t.Fatal("no start floor")
+	}
+	project := cfg.Archive.Projects[0].Root
+	for n := 1; n <= maxRefusedProofs+1; n++ {
+		writeRollout(t, codex, project, floor.Add(-time.Hour), n, "sessions")
+	}
+	writeRollout(t, codex, project, floor.Add(-RefusedStartLookback-48*time.Hour), maxRefusedProofs+2, "sessions")
+	type passWant struct {
+		proofs   int
+		recorded int
+	}
+	for pass, want := range []passWant{{maxRefusedProofs, maxRefusedProofs}, {1, maxRefusedProofs + 1}, {0, maxRefusedProofs + 1}} {
+		h, err := run(context.Background(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(time.Duration(2+90*pass) * time.Minute) }}, syntheticSupport)
+		if err != nil || h.Outcomes["start_not_authorized"] != maxRefusedProofs+2 || h.NativeValidationAttempts != int64(want.proofs) {
+			t.Fatalf("pass %d: %#v %v", pass, h, err)
+		}
+		if got, err := ReadRefusedStarts(store.Home()); err != nil || len(got) != want.recorded {
+			t.Fatalf("pass %d recorded %d %v", pass, len(got), err)
+		}
+	}
+}
+
+// Only a rollout known to be missing drops a session the catalog no longer
+// holds: an lstat that fails for another reason keeps it.
+func TestRefusedStartsKeepsSessionsWhoseRolloutIsUnreadable(t *testing.T) {
+	t.Parallel()
+	dir := filepath.Join(t.TempDir(), "sessions")
+	must(t, os.Mkdir(dir, 0o700))
+	loc := filepath.Join(dir, "rollout-unreadable.jsonl")
+	must(t, os.WriteFile(loc, nil, 0o600))
+	must(t, os.Chmod(dir, 0))
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	if _, err := os.Lstat(loc); err == nil || errors.Is(err, os.ErrNotExist) {
+		t.Skipf("lstat through an unsearchable directory: %v", err)
+	}
+	if sourceGone(loc, map[string]cached{}) {
+		t.Fatal("unreadable rollout treated as gone")
+	}
+	if !sourceGone(filepath.Join(t.TempDir(), "rollout-missing.jsonl"), map[string]cached{}) {
+		t.Fatal("missing rollout kept")
 	}
 }
 
