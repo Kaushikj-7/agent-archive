@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agents/builtin"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/state"
 )
 
 func refusedCandidate(id string, started time.Time) (Candidate, string) {
@@ -191,6 +193,52 @@ func TestRefusedStartsSkipsExcludedProjectsInAllProjectsScope(t *testing.T) {
 	got, err := ReadRefusedStarts(store.Home())
 	if err != nil || len(got) != 1 || got[0].NativeSessionID != keptID {
 		t.Fatalf("recorded %+v %v", got, err)
+	}
+}
+
+// A scan that reaches a recorded session again drops it once it has been
+// removed, or once its project is no longer included.
+func TestRefusedStartsScanDropsRemovedAndExcludedSessions(t *testing.T) {
+	t.Parallel()
+	store, cfg, at, codex := fixture(t)
+	project := cfg.Archive.Projects[0].Root
+	// Another included project keeps a start floor once project is excluded.
+	other, err := filepath.EvalSymlinks(t.TempDir())
+	must(t, err)
+	before := cfg
+	cfg.Archive.Projects = append(slices.Clone(cfg.Archive.Projects), archive.ProjectActivation{Root: other, ProjectID: archive.ProjectID(other), Included: true, ActivatedAt: at})
+	must(t, config.ReconcileDiscovery(&cfg, before, at))
+	floor, ok := cfg.DiscoveryStartFloor("codex")
+	if !ok {
+		t.Fatal("no start floor")
+	}
+	removed := writeRollout(t, codex, project, floor.Add(-time.Hour), 1, "sessions")
+	kept := writeRollout(t, codex, project, floor.Add(-2*time.Hour), 2, "sessions")
+	scan := func(cfg config.Config, after time.Duration) []RefusedStart {
+		t.Helper()
+		if _, err := run(context.Background(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(after) }}, syntheticSupport); err != nil {
+			t.Fatal(err)
+		}
+		got, err := ReadRefusedStarts(store.Home())
+		must(t, err)
+		return got
+	}
+	if got := scan(cfg, 2*time.Minute); len(got) != 2 {
+		t.Fatalf("recorded %+v", got)
+	}
+	must(t, store.RecordRemoval("codex", removed, state.RemovalReasonUndo, at.Add(3*time.Minute)))
+	if got := scan(cfg, 4*time.Minute); len(got) != 1 || got[0].NativeSessionID != kept {
+		t.Fatalf("after removal %+v", got)
+	}
+	excluded := cfg
+	excluded.Archive.Projects = slices.Clone(cfg.Archive.Projects)
+	excluded.Archive.Projects[0].Included = false
+	must(t, config.ReconcileDiscovery(&excluded, cfg, at.Add(5*time.Minute)))
+	if _, ok := excluded.DiscoveryStartFloor("codex"); !ok {
+		t.Fatal("no start floor with the other project")
+	}
+	if got := scan(excluded, 6*time.Minute); len(got) != 0 {
+		t.Fatalf("after exclusion %+v", got)
 	}
 }
 
