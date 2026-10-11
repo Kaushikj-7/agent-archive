@@ -4,7 +4,9 @@ Status: planned 2026-10-08; [decisions](#decisions) confirmed by the owner
 the same day. §1–§3 implemented in
 [#386](https://github.com/wangjohn/agent-archive/pull/386)
 (`importRecentSessions` in `internal/cli/backfill.go`, `backfill.Plan.Recent`
-in `internal/backfill/recent.go`); §4 (`status`) not started. Where this plan
+in `internal/backfill/recent.go`); §4 (`status`) implemented in a follow-up
+PR (`readPreSetupSessions` in `internal/cli/status_pre_setup.go`, recorded by
+the scan in `internal/discovery/refused_starts.go`). Where this plan
 and the code differ once it merges, the code is the reference and
 differences go under Deviations.
 
@@ -216,3 +218,46 @@ From the §1–§3 implementation (#386):
   backfill's 2 minutes, and then prints the retry line ("Recent sessions
   were not imported: a collector pass is still running. Run agent-archive
   backfill --since 7d to retry.").
+
+From the §4 implementation:
+
+- **The last scan's counts could not carry it.** `health.Outcomes` counts
+  observations per pass, not sessions, and a pass reaches only part of the
+  catalog (the owner's last health file had no outcomes at all), so it can
+  neither count sessions nor tell when one is imported. The catalog has each
+  observation's start and identity but not the admission decision, and
+  re-deciding it in `status` would mean reading the 2 MB catalog and
+  resolving projects. So the scan records the one extra fact:
+  `discovery-refused-starts.json` lists the top-level sessions it refused as
+  `start_not_authorized` that started within 8 days before the floor (native
+  ID, start, rollout path; at most 256; written only when it changes). A
+  pass that reaches a session and admits it, finds it archived or removed, or
+  finds its project excluded drops it; so does a pass whose catalog no longer
+  holds its rollout. Health stays free of IDs.
+- **Status checks archived state itself.** It drops recorded sessions that
+  have a registration (from the registrations it already reads) or a removal
+  record, so the line goes away as soon as `backfill` imports them, without
+  waiting for a scan to revisit them.
+- **The floor and window.** The floor is `config.DiscoveryStartFloor`: the
+  earliest project authorization floor in included-projects scope, or the
+  later of the capture and source floors in all-projects scope (admission
+  needs both). The date is the local day 7 days before the floor, and the
+  count covers starts from that day's midnight up to the floor, so it is
+  exactly what `backfill --since DATE` reaches. The scan keeps a day more so
+  the local midnight is always inside what it recorded.
+- **Top-level only.** Subagents are not counted; backfill imports them with
+  their parent (Codex children wait on native child capture, #355).
+- **Only after a scan.** Existing installs show the line once the collector
+  of a version with this change has scanned the session. A session that
+  discovery refused for another reason first (an unresolved project, a
+  deleted worktree) is not counted.
+- **No hook-app equivalent.** Claude Code and Cursor hooks see a session
+  from before their installation only if it runs a hook later, and then
+  record a content-free `session_started_before_activation` diagnostic with
+  no session identity or start time, so it cannot be counted or cleared on
+  import. The line is Codex discovery only.
+- **Placement.** The line is a note under the Codex row in Capture (in
+  `status` and `status codex`), and `status --json` has
+  `applications[].pre_setup_sessions` (`sessions`, `since`, `window_start`,
+  `start_floor`, `command`; no IDs). It does not change the overall state,
+  and it is hidden while capture is paused (backfill refuses then).

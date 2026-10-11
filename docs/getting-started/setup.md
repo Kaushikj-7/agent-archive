@@ -111,6 +111,12 @@ choice separately from whether automatic discovery is enabled; see
 
 ## 2. Storage
 
+Within Step 2, **Account → Storage → Verification** shows the current work.
+Account covers provider access; Storage covers the destination and archive
+credentials; Verification checks connectivity and reports bucket privacy
+separately. Back and Retry return to the stage being edited, preserving valid
+existing-bucket answers within the run.
+
 Setup suggests S3 when your shell sets `AWS_PROFILE` or your AWS settings
 already have a profile with credentials, and R2 otherwise.
 
@@ -128,7 +134,8 @@ and during error recovery. See the [bucket guide](bucket.md) for credentials
 and permissions.
 
 S3 setup enables and reads back all four Block Public Access settings. It
-prints a narrower runtime policy, but does not create IAM identities or keys.
+offers **View archive permissions** for a narrower runtime policy, but does
+not create IAM identities or keys.
 The creation profile remains the default archive profile; choose **Choose
 another archive profile** to switch after attaching the policy yourself.
 
@@ -163,7 +170,7 @@ clear answer to the request, setup says the bucket may exist and to check
 the S3 console; it deletes nothing in that case. If the bucket was created
 but Block Public Access could not be turned on, setup does not use it: it
 offers to try again, to delete the empty bucket (after you type its name),
-or to stop. When it succeeds, setup prints the runtime policy for the new
+or to stop. When it succeeds, setup offers **View archive permissions** for the new
 bucket (not for a folder name with characters other than letters, digits
 and `. _ - /`; it says so and points at the guide) and asks which AWS
 profile archiving should use. The profile that created the bucket is the
@@ -614,6 +621,23 @@ agent-archive status --json
 
 What each status line means is in
 [troubleshooting](../guides/troubleshooting.md#reading-status).
+
+If you set up Codex discovery before setup imported the last 7 days, or a
+session in those days was not imported, `status` says so under Codex, once
+discovery has scanned it:
+
+```text
+! 1 Codex session from the 7 days before setup was not captured.
+  Import it with agent-archive backfill --since 2026-09-28.
+```
+
+The date is the local day 7 days before discovery was first enabled for Codex.
+The count is top-level Codex sessions that started from that day until
+discovery was enabled, that discovery refused for starting before it, and that
+are not archived; the line goes away once they are imported. Claude Code and
+Cursor have no such line: their hooks see no session from before they were
+installed, unless one runs a hook later, which status lists as a session
+skipped for starting before the project's activation.
 
 ### Sessions from the last 7 days
 

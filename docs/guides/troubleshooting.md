@@ -137,7 +137,11 @@ with the project, start time, and any failure. A session without its first
 upload says **waiting for its first upload**; one whose last scan was put off
 until the next pass says why (**waiting for Codex history coverage**, say)
 and is not a failure. Capture gaps and Cursor chats
-without transcripts are reported separately.
+without transcripts are reported separately. Under Codex, **N Codex sessions
+from the 7 days before setup were not captured** counts sessions that started
+in the week before discovery was enabled and are not archived, with the
+`backfill --since` command that imports them (see
+[setup](../getting-started/setup.md#after-setup)).
 
 **Hooks installed** means the hook configuration is present, not that the
 hooks have run or been approved. `status --verbose` reports hook execution

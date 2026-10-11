@@ -15,6 +15,9 @@ follow [Semantic Versioning](https://semver.org/).
   source error can now carry a fixed, content-free cause ("source unavailable:
   Codex history coverage incomplete"). A session still put off after 24
   hours of passes is reported as failed again, until a pass reads it.
+- Clarify storage onboarding with Account, Storage, and Verification stages.
+  Keep valid existing-bucket answers when going back, show S3 archive
+  permissions on request, and report privacy separately from connectivity.
 
 - Stop titling Codex desktop sessions with injected open-page context such as
   `<external_codex_apps_open_page>{"page_id":null}</external_codex_apps_open_page>`.
