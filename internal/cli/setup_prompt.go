@@ -100,6 +100,8 @@ func (p *prompter) setupRetentionDays(def int) (int, error) {
 		return 90, nil
 	case retentionChoiceForever:
 		return 0, nil
+	case retentionChoiceCustom:
+		// Ask for the duration below.
 	}
 	value := strconv.Itoa(def)
 	if def == 0 {
