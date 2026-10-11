@@ -6,11 +6,13 @@ import (
 	"time"
 )
 
-// PreviewSessionExpiry shares the sweeper's local age and pending-work decision.
+// ExpiryPreview shares the sweeper's local age and pending-work decision.
 // It is read-only: remote evidence may only postpone the predicted expiry,
 // and no clock correction, publication, or deletion is performed.
 type ExpiryPreview struct{ sweeper sweeper }
 
+// NewExpiryPreview snapshots pending requests for a read-only preview at now.
+// Publishable controls whether pending work defers expiry, as in the sweeper.
 func NewExpiryPreview(local *state.Store, now time.Time, publishable func(archive.SessionRegistration) bool) (*ExpiryPreview, error) {
 	reqs, err := local.LoadRequests()
 	if err != nil {
@@ -24,6 +26,8 @@ func NewExpiryPreview(local *state.Store, now time.Time, publishable func(archiv
 	}}, nil
 }
 
+// SessionExpired reports local expiry eligibility under maxAge; zero disables it.
+// Remote evidence and the sweeper's clock checks may still postpone deletion.
 func (p *ExpiryPreview) SessionExpired(reg archive.SessionRegistration, maxAge time.Duration) (bool, error) {
 	s := &p.sweeper
 	s.opts.SessionMaxAge = maxAge
