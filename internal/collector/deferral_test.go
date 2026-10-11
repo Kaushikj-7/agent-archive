@@ -59,6 +59,10 @@ func (p failingReadPass) Read(context.Context, agentapi.SourceRef, agentapi.Read
 // coverageLookup answers every thread with the coverage it was given.
 type coverageLookup struct {
 	complete bool
+	// retained marks a complete answer that rests on an earlier epoch's
+	// proof; current, when set, is the thread's current locator.
+	retained bool
+	current  *agentapi.SourceRef
 	err      error
 	threads  int
 }
@@ -69,7 +73,7 @@ func (l *coverageLookup) Rollout(context.Context, string) ([]agentapi.SourceRef,
 
 func (l *coverageLookup) Thread(context.Context, string) (agentapi.CodexRolloutSet, error) {
 	l.threads++
-	return agentapi.CodexRolloutSet{Complete: l.complete}, l.err
+	return agentapi.CodexRolloutSet{Complete: l.complete, Retained: l.retained, Current: l.current}, l.err
 }
 
 func (l *coverageLookup) Check(context.Context, string, string) error { return nil }
@@ -96,6 +100,8 @@ func TestRunDefersScansTheNextPassCanFinish(t *testing.T) {
 		{"coverage incomplete", lineageRefusal(), &coverageLookup{}, DeferredHistoryCoverage},
 		{"coverage incomplete through a join", errors.Join(lineageRefusal(), nil), &coverageLookup{}, DeferredHistoryCoverage},
 		{"coverage complete", lineageRefusal(), &coverageLookup{complete: true}, ""},
+		{"lineage refused on a retained proof", lineageRefusal(), &coverageLookup{complete: true, retained: true}, DeferredHistoryCoverage},
+		{"retained proof with a current locator", lineageRefusal(), &coverageLookup{complete: true, retained: true, current: &agentapi.SourceRef{Path: "/synthetic/current.jsonl"}}, ""},
 		{"coverage unknown", lineageRefusal(), &coverageLookup{err: errors.New("lookup failed")}, ""},
 		{"no coverage lookup", lineageRefusal(), nil, ""},
 		{"input/output failure while coverage is incomplete", agentapi.Wrap(agentapi.Unavailable, &fs.PathError{Op: "read", Path: "/synthetic", Err: errors.New("i/o")}), &coverageLookup{}, ""},

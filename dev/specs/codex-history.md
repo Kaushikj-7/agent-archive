@@ -44,6 +44,42 @@ subdirectories and unrelated entries and retain a separate18432-entry traversal
 ceiling. Aliases of one canonical home share acquisition while every approved
 home spelling remains fenced.
 
+Requested coverage runs in epochs: observe every directory, then validate every
+directory's membership digest and each rollout's header identity, then
+complete. Only a completed, unfailed epoch proves a requested thread's
+candidate set (`Complete`). A completed epoch restarts when the next pass loads
+it, so proofs are double-buffered: on restart each request the epoch covered
+keeps that epoch's member candidates as its retained proof, which serves the
+thread while later epochs run. A newer unfailed epoch replaces it; one that did
+not cover the request (it overflowed) drops it; a failed epoch leaves it. A
+proof is a past observation: consumers reopen every candidate and recheck its
+identity, and a candidate moved or rewritten since fails that read and is
+retried. What a proof can miss is a rollout created later, so live evidence
+retires it: when a listing or current-row header read finds a locator claiming
+the thread that the proof in use (this epoch's or retained) does not hold, or
+another identity at one it does, that request has no proof until a newer epoch
+completes. Restored observation-cache facts, which can name vanished locators,
+never retire a proof. Live evidence arrives only as listings reach a
+directory, so a retained proof can still lack a segment created after it. The
+set marks such a proof `Retained`: a source signature may use it to recognize
+an unchanged lineage, but a read without a current locator does not choose a
+lineage tip from it, and waits for a proof completed in its own pass; the
+collector reports that wait as deferred (waiting for history coverage), not
+as a failure. A proof completed in the current pass can also lack a segment
+created after its directory was listed earlier in the epoch; such a read
+chooses the older tip, history already captured, and the next listing of that
+directory changes the lineage and causes a recapture. A discovery checkpoint that misses its pass deadline
+hands its catalog to the lookup, whose close writes it without that deadline,
+so an epoch that completed just before is not lost. Checkpoints accept a retained proof only from an earlier
+attempt that covered the request, with every candidate marked a member.
+
+Source signatures hash the set's lineage token: the revision the same current
+locator, candidates and candidate observations would carry if complete. The
+pass-local revision that `Check` compares still includes completeness, but a
+coverage change alone never makes an unchanged session look changed to the
+scan-skip check. A new segment, a changed candidate set or changed candidate
+stamps still change the token.
+
 The full view binds lazy acquisition to the owner's constructor-approved
 canonical root set and fences every supplied alias spelling. A changed or
 collapsed root set leaves incomplete evidence before native acquisition.

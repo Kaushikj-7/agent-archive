@@ -309,7 +309,7 @@ func validatingRequestedRollout(t *testing.T) (*catalog, string) {
 	if observed.Identity == nil || observed.Identity.ThreadID != wanted {
 		t.Fatalf("fixture identity %#v", observed.Identity)
 	}
-	c.observe(source, Fingerprint{}, *observed.Identity)
+	c.observe(source, Fingerprint{}, *observed.Identity, true)
 	collectCoverageDirectory(t, c, root, "sessions", false)
 	collectCoverageDirectory(t, c, root, "archived_sessions", false)
 	c.beginValidation()
