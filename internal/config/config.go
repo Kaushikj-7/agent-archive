@@ -186,6 +186,9 @@ type Config struct {
 	// RetentionDays is whole-session retention, proposed as 90 by setup.
 	// Enforcing it is the Retention slice's job, not this package's.
 	RetentionDays int `json:"retention_days"`
+	// RetentionProtection is sticky: older setup must never reset forever to 90 days.
+	ImportStagingProtection bool `json:"import_staging_protection,omitempty"`
+	RetentionProtection     bool `json:"retention_protection,omitempty"`
 	// Handoff holds preferences for `agent-archive handoff`. Setup never
 	// asks for them; they are edited by hand and carried through
 	// reconfiguration like the rest of this file.
@@ -307,6 +310,9 @@ func SaveWithCatalog(home string, cfg Config, c agentmeta.Catalog) error {
 	}
 	if found {
 		PreserveWriterFence(&cfg, previous)
+	}
+	if cfg.RetentionDays == 0 {
+		cfg.RetentionProtection = true
 	}
 	if err := prepareDiscoveryConfig(&cfg); err != nil {
 		return err

@@ -13,7 +13,7 @@ import (
 func TestGenerationFencePreservesPoliciesAndRollback(t *testing.T) {
 	t.Parallel()
 	protected, _ := blanketConfig(t)
-	for _, initial := range []Config{{MachineID: "m", Archive: archive.Config{Enabled: true}}, protected} {
+	for _, initial := range []Config{{RetentionDays: 90, MachineID: "m", Archive: archive.Config{Enabled: true}}, protected} {
 		home := t.TempDir()
 		initial.GenerationProtection = true
 		if err := Save(home, initial); err != nil {
@@ -34,7 +34,7 @@ func TestGenerationFencePreservesPoliciesAndRollback(t *testing.T) {
 		}
 		// A setup rollback restoring legacy policy keeps the irreversible writer
 		// capability floor, without reopening blanket permissions.
-		rollback := Config{MachineID: "m", Archive: archive.Config{Enabled: false}}
+		rollback := Config{RetentionDays: 90, MachineID: "m", Archive: archive.Config{Enabled: false}}
 		PreserveWriterFence(&rollback, loaded)
 		if err := Save(home, rollback); err != nil {
 			t.Fatal(err)
@@ -48,7 +48,7 @@ func TestGenerationFencePreservesPoliciesAndRollback(t *testing.T) {
 		}
 		_ = originalDiscovery
 		// Even an attempted plain Save cannot strip the floor.
-		if err := Save(home, Config{MachineID: "m"}); err != nil {
+		if err := Save(home, Config{RetentionDays: 90, MachineID: "m"}); err != nil {
 			t.Fatal(err)
 		}
 		raw, err := os.ReadFile(filepath.Join(home, "config.json"))
