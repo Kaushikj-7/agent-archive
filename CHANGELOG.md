@@ -10,7 +10,8 @@ follow [Semantic Versioning](https://semver.org/).
   trimming is not enough, older exchanges keep only their last agent message,
   then all tool output is dropped, then every exchange but the last is
   condensed to its prompt and counts. Markdown still over the limit because of
-  one oversized part is cut at a line with a marker.
+  one oversized part, or of several hundred exchanges, is cut at a line with
+  a marker, keeping the last exchange.
 
 - Preserve settled capture and source bytes when cached native naming reads are
   unavailable and the same observation uses an equivalent timezone offset.

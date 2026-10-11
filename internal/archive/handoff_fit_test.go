@@ -200,6 +200,11 @@ func TestOmitAgentMessagesKeepsTheLastBeforeTheTail(t *testing.T) {
 	if _, n := omitAgentMessages([]HandoffStep{text("only")}, 1); n != 0 {
 		t.Fatal("a lone message was omitted")
 	}
+	// A run omitted earlier joins the new one rather than standing apart.
+	merged, n := omitAgentMessages([]HandoffStep{{Kind: HandoffStepOmitted, Count: 3}, text("d"), text("e")}, 3)
+	if n != 1 || len(merged) != 2 || merged[0].Kind != HandoffStepOmitted || merged[0].Count != 4 || merged[1].Text != "e" {
+		t.Fatalf("merged = %+v, %d", merged, n)
+	}
 }
 
 func TestCondenseExchangeCountsEverythingItHeld(t *testing.T) {
@@ -210,16 +215,17 @@ func TestCondenseExchangeCountsEverythingItHeld(t *testing.T) {
 		{Kind: HandoffStepCollapsed, Count: 9, Text: "9 tool calls: `Bash` ×9"},
 		{Kind: HandoffStepTool, Tool: &HandoffToolCall{Name: "Read"}},
 		{Kind: HandoffStepShell, Text: "ls"},
+		{Kind: HandoffStepSummary, Text: "compacted"},
 	}}
 	if condenseExchange(&exchange, true) != 1 {
 		t.Fatal("not condensed")
 	}
-	want := HandoffCondensed{AgentMessages: 5, ToolCalls: 10, ShellCommands: 1}
+	want := HandoffCondensed{AgentMessages: 6, ToolCalls: 10, ShellCommands: 1}
 	if *exchange.Condensed != want || exchange.Prompt != "first line" || !exchange.PromptTruncated || exchange.Steps != nil {
 		t.Fatalf("condensed = %#v", exchange)
 	}
 	out := string(RenderHandoffMarkdown(Handoff{Exchanges: []HandoffExchange{exchange}}, HandoffRenderOptions{}))
-	if !strings.Contains(out, "> first line …(truncated)\n\n- 5 agent messages, 10 tool calls, 1 shell command omitted\n") {
+	if !strings.Contains(out, "> first line …(truncated)\n\n- 6 agent messages, 10 tool calls, 1 shell command omitted\n") {
 		t.Fatalf("rendered:\n%s", out)
 	}
 	if condenseExchange(&exchange, true) != 0 {
@@ -284,5 +290,49 @@ func TestWholeLinesNeverStopsInsideAFence(t *testing.T) {
 	}
 	if got := wholeLines(text, strings.Index(text, "inner")+3); got != "intro\n- `Bash` go test\n" {
 		t.Fatalf("cut inside the fence: %q", got)
+	}
+	// A tilde fence opens one too, and a backtick line does not close it.
+	tilde := "intro\n~~~\n```\ninner\n~~~\nafter\n"
+	if got := wholeLines(tilde, strings.Index(tilde, "inner")+3); got != "intro\n" {
+		t.Fatalf("cut inside the tilde fence: %q", got)
+	}
+	// Nor does a tilde line close a backtick fence.
+	backtick := "intro\n```\n~~~\ninner\n```\nafter\n"
+	if got := wholeLines(backtick, strings.Index(backtick, "inner")+3); got != "intro\n" {
+		t.Fatalf("cut inside the backtick fence: %q", got)
+	}
+}
+
+func TestPromptFirstLineIsCapped(t *testing.T) {
+	t.Parallel()
+	got := promptFirstLine("\n  " + strings.Repeat("字", 100) + "\nsecond")
+	if len(got) > handoffSummaryCap || !utf8.ValidString(got) || !strings.HasPrefix(got, "字") {
+		t.Fatalf("first line = %q (%d bytes)", got, len(got))
+	}
+}
+
+// Hundreds of exchanges can be over the limit even condensed to a line
+// each; the cut then keeps the last exchange after its marker.
+func TestCutHandoffMarkdownKeepsTheLastOfManyExchanges(t *testing.T) {
+	t.Parallel()
+	h := Handoff{Version: HandoffVersion, Session: HandoffSession{Harness: "claude", ArchiveSessionID: "x"}, LeftOff: "left off here", FullRecordPath: "/data/handoffs/x.md"}
+	for i := range 700 {
+		h.Exchanges = append(h.Exchanges, HandoffExchange{Prompt: fmt.Sprintf("prompt %d ", i) + strings.Repeat("words ", 25), Steps: []HandoffStep{{Kind: HandoffStepText, Text: fmt.Sprintf("done %d", i)}}})
+	}
+	fit, ok := FitHandoff(h, DefaultHandoffMaxBytes, markdownSize)
+	if ok {
+		t.Fatal("700 exchanges fitted; the fixture no longer exercises the cut")
+	}
+	rendered := RenderHandoffMarkdown(fit, HandoffRenderOptions{Preamble: true})
+	out := string(CutHandoffMarkdown(rendered, fit, DefaultHandoffMaxBytes))
+	if len(out) > DefaultHandoffMaxBytes || !utf8.ValidString(out) || openFenceStart(out) >= 0 {
+		t.Fatalf("cut to %d bytes", len(out))
+	}
+	marker, last := strings.Index(out, "**Cut here:"), strings.Index(out, "### 700 · Person\n> prompt 699 ")
+	if marker < 0 || last < marker || !strings.Contains(out[last:], "> done 699\n") || !strings.Contains(out, "left off here") || !strings.HasSuffix(out, "Full record: /data/handoffs/x.md (read it for anything omitted here).\n") {
+		t.Fatalf("marker at %d, last exchange at %d:\n%s", marker, last, out[len(out)-800:])
+	}
+	if !strings.Contains(out, "### 2 · Person") {
+		t.Fatal("the earliest exchanges were not kept before the marker")
 	}
 }

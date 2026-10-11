@@ -299,7 +299,9 @@ func prepareHandoff(h archive.Handoff, bundle archive.SourceBundle, opts handoff
 		return rendered
 	}
 	// FitHandoff could not fit: one part (where it left off, the plan, the
-	// file list) is over the limit by itself. Markdown is cut at a line;
+	// file list, the last exchange) is over the limit by itself, or the
+	// session has so many exchanges that their prompts' first lines are.
+	// Markdown is cut at a line;
 	// JSON cannot be cut and still parse, so it is left whole.
 	if opts.format == "json" {
 		terminal.Printf(stderr, "agent-archive: handoff: warning: still %d bytes after trimming, over the %d-byte limit\n", len(rendered), opts.maxBytes)

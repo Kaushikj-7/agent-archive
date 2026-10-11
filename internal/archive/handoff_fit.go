@@ -39,7 +39,8 @@ type handoffFitStage struct {
 // Prompts are only ever truncated, and LeftOff is never trimmed. After step 9
 // what remains is the header, LeftOff, the plan and file list, one line per
 // exchange, and the last exchange's capped steps, so fits is false only when
-// one of those is over budget by itself. maxBytes <= 0 means no budget.
+// one of those is over budget by itself or the exchanges are so many that
+// their lines together are. maxBytes <= 0 means no budget.
 //
 // Each step's effect only grows with the number of exchanges it is applied
 // to, so the smallest sufficient prefix is found by binary search: a handful
@@ -228,11 +229,13 @@ func promptFirstLine(prompt string) string {
 }
 
 // CutHandoffMarkdown bounds a markdown rendering of h that FitHandoff could
-// not fit, which happens only when one part (LeftOff, the plan, the file list)
-// is over budget by itself. It keeps whole lines from the start, never stops
-// inside a code fence, and ends with a marker saying where the rest is,
-// followed by h's footer, so what was omitted is still listed. A rendering
-// within maxBytes, or any rendering when maxBytes <= 0, is returned as it is.
+// not fit, which happens when one part (LeftOff, the plan, the file list, the
+// last exchange) is over budget by itself, or when there are so many
+// exchanges that their condensed prompts are. It keeps whole lines from the
+// start, never stops inside a code fence, and adds a marker saying where the
+// rest is, then the last exchange when it takes at most half the budget, then
+// h's footer, so what was omitted is still listed. A rendering within
+// maxBytes, or any rendering when maxBytes <= 0, is returned as it is.
 func CutHandoffMarkdown(rendered []byte, h Handoff, maxBytes int) []byte {
 	if maxBytes <= 0 || len(rendered) <= maxBytes {
 		return rendered
@@ -255,7 +258,25 @@ func CutHandoffMarkdown(rendered []byte, h Handoff, maxBytes int) []byte {
 		// A limit smaller than the marker and footer: keep what fits.
 		return []byte(wholeLines(body+footer, maxBytes))
 	}
+	// With many exchanges, their prompts alone can be over the limit; the
+	// last exchange then goes after the marker rather than being cut off,
+	// as long as it leaves most of the budget to what comes before it.
+	if last := lastExchangeMarkdown(h); last != "" && len(last) <= budget/2 && strings.HasSuffix(body, last) {
+		return []byte(wholeLines(strings.TrimSuffix(body, last), budget-len(last)) + marker + last + footer)
+	}
 	return []byte(wholeLines(body, budget) + marker + footer)
+}
+
+// lastExchangeMarkdown is how h's last exchange renders, which is how its
+// markdown conversation ends, or "" when h has no exchanges.
+func lastExchangeMarkdown(h Handoff) string {
+	if len(h.Exchanges) == 0 {
+		return ""
+	}
+	h = displayHandoff(h)
+	var b strings.Builder
+	renderHandoffExchange(&b, len(h.Exchanges)-1, h.Exchanges[len(h.Exchanges)-1])
+	return b.String()
 }
 
 // wholeLines returns the longest prefix of s, at most n bytes, that ends at
