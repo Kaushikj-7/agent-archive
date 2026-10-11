@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
@@ -14,7 +15,7 @@ import (
 func TestLegacyOrdinaryUnboundKeepsAnchoredSourceAndCurrentToken(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	ref := legacyTestFile(t, root, threadA, threadA, map[string]any{})
+	ref := legacyTestFile(t, root, threadA, map[string]any{})
 	ref.Key = threadA
 	lookup := &historyLookup{thread: agentapi.CodexRolloutSet{Revision: "one"}}
 	pass, err := (SourceProvider{}).OpenPass(t.Context(), agentapi.SourceEnvironment{CodexRollouts: lookup, LegacyUnboundRegistration: true, Policy: transcriptio.OpenPolicy{Root: root, RejectSymlinks: true}})
@@ -73,7 +74,7 @@ func TestLegacyCompatibilityRefusesBoundPaginatedRelatedAndRevert(t *testing.T) 
 			case scenarioBase0:
 				extra["history_base"] = map[string]any{"thread_id": threadB, "end_ordinal_exclusive": 1, "end_byte_offset": 1}
 			}
-			ref := legacyTestFile(t, root, physical, threadA, extra)
+			ref := legacyTestFile(t, root, physical, extra)
 			ref.Key = threadA
 			lookup := &historyLookup{thread: agentapi.CodexRolloutSet{Revision: "one"}}
 			pass, err := (SourceProvider{}).OpenPass(context.Background(), agentapi.SourceEnvironment{CodexRollouts: lookup, LegacyUnboundRegistration: scenario != scenarioBound0, Policy: transcriptio.OpenPolicy{Root: root, RejectSymlinks: true}})
@@ -92,9 +93,9 @@ func TestLegacyCompatibilityRefusesBoundPaginatedRelatedAndRevert(t *testing.T) 
 	}
 }
 
-func legacyTestFile(t *testing.T, root, physical, thread string, extra map[string]any) agentapi.SourceRef {
+func legacyTestFile(t *testing.T, root, physical string, extra map[string]any) agentapi.SourceRef {
 	t.Helper()
-	ref, raw := historyFile(t, root, physical, thread, 0, extra, "legacy task")
+	ref, raw := historyFile(t, root, physical, threadA, 0, extra, "legacy task")
 	if _, present := extra["history_mode"]; !present {
 		first, tail, _ := bytes.Cut(raw, []byte("\n"))
 		var meta map[string]any
@@ -111,4 +112,80 @@ func legacyTestFile(t *testing.T, root, physical, thread string, extra map[strin
 		}
 	}
 	return ref
+}
+
+type registeredHistoryLookup struct{ *historyLookup }
+
+func (l registeredHistoryLookup) RegisteredThread(ctx context.Context, id string) (agentapi.CodexRolloutSet, error) {
+	return l.Thread(ctx, id)
+}
+
+// A registered legacy source's signature hashes the lineage token, so
+// coverage completeness flipping between passes does not make it look
+// changed, while a changed lineage still does.
+func TestLegacyUnboundSignatureIgnoresCoverageCompleteness(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	ref := legacyTestFile(t, root, threadA, map[string]any{})
+	renamed := filepath.Join(root, "legacy-session.jsonl")
+	if err := os.Rename(ref.Path, renamed); err != nil {
+		t.Fatal(err)
+	}
+	ref.Path, ref.Key = renamed, "legacy-session"
+	lookup := &historyLookup{thread: agentapi.CodexRolloutSet{Revision: "complete", Lineage: "lineage", Complete: true}}
+	pass, err := (SourceProvider{}).OpenPass(t.Context(), agentapi.SourceEnvironment{CodexRollouts: registeredHistoryLookup{lookup}, LegacyUnboundRegistration: true, Policy: transcriptio.OpenPolicy{Root: root, RejectSymlinks: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = pass.Close() }()
+	signature := func() string {
+		t.Helper()
+		observed, err := pass.Signature(t.Context(), ref)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return observed.Signature.Token
+	}
+	settled := signature()
+	lookup.thread.Revision, lookup.thread.Complete = "incomplete", false
+	if signature() != settled {
+		t.Fatal("a coverage flip alone changed the legacy signature")
+	}
+	lookup.thread.Lineage = "new segment"
+	if signature() == settled {
+		t.Fatal("a changed lineage kept the legacy signature")
+	}
+}
+
+// A registered legacy read records the signature the next pass compares with
+// Signature, so both must hash the same lineage token. On an incomplete set
+// Revision and Lineage differ, and a read keyed by Revision would make every
+// later pass see a change.
+func TestLegacyUnboundReadObservationMatchesSignature(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	ref := legacyTestFile(t, root, threadA, map[string]any{})
+	renamed := filepath.Join(root, "legacy-session.jsonl")
+	if err := os.Rename(ref.Path, renamed); err != nil {
+		t.Fatal(err)
+	}
+	ref.Path, ref.Key = renamed, "legacy-session"
+	lookup := &historyLookup{thread: agentapi.CodexRolloutSet{Revision: "incomplete", Lineage: "lineage"}}
+	pass, err := (SourceProvider{}).OpenPass(t.Context(), agentapi.SourceEnvironment{CodexRollouts: registeredHistoryLookup{lookup}, LegacyUnboundRegistration: true, Policy: transcriptio.OpenPolicy{Root: root, RejectSymlinks: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = pass.Close() }()
+	observed, err := pass.Signature(t.Context(), ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := pass.Read(t.Context(), ref, agentapi.ReadLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = snapshot.Close() }()
+	if snapshot.Observation().Signature != observed.Signature {
+		t.Fatal("legacy read recorded a signature its next Signature cannot match")
+	}
 }
