@@ -74,6 +74,10 @@ type Plan struct {
 	// nested holds, for each project the plan adds that would capture its
 	// subfolders, the folders inside it the import keeps out (see nested.go).
 	nested map[string]nestedFolders
+	// policyConfig is the committed configuration the recovery policy was
+	// bound against (bindRecoveryPolicy), so AdmitRecovery can bind it again
+	// for the sessions it keeps.
+	policyConfig *config.Config
 }
 
 // Destination names the bucket imports go to.
@@ -129,6 +133,9 @@ type work struct {
 	sourceRewritten bool
 	appendWitness   *resolution
 	evidenceOnly    bool
+	// addedSource marks an evidence-only witness from a transcript added
+	// while planning (addedWitnesses); its renewal accepts appends.
+	addedSource bool
 }
 
 // subagentWork is one subagent transcript of an imported parent.
@@ -317,7 +324,7 @@ func preparePlanWork(ctx context.Context, env Environment, cfg config.Config, fi
 		inventory.ownContent(w.t.path, w.t.sourceInfo)
 	}
 	r := newResolver(env, cfg, filters)
-	r.inventoryCurrent = inventory.current
+	r.inventoryAdded = inventory.added
 	var cursorCandidates []string
 	for _, p := range cfg.Archive.Projects {
 		cursorCandidates = append(cursorCandidates, p.Root)
@@ -370,8 +377,11 @@ func preparePlanWork(ctx context.Context, env Environment, cfg config.Config, fi
 		w.checkSource(env)
 		if w.t.sourceInfo != nil && w.res.current != nil {
 			base := w.res.current
+			// The session's own source may only have grown: its header, which
+			// recovery used, comes from leading records an append cannot change.
 			w.res.current = &resolutionCheck{reset: base.reset, valid: func() bool {
-				return w.sourceCurrent(env) && base.valid()
+				current, err := env.lstat(w.t.path)
+				return (w.matchesSource(current, err) || appendedSource(w.t.sourceInfo, current, err)) && base.valid()
 			}}
 		}
 	}

@@ -153,7 +153,7 @@ func TestRecoveryGapsBlockOnlyAffectedApps(t *testing.T) {
 			key := archive.RepoKey("https://example.test/acme/repo")
 			cfg.Archive.Projects = []archive.ProjectActivation{project(root, true)}
 			r := newResolver(env, cfg, Filters{})
-			r.inventoryCurrent = func(context.Context) bool { return !tc.changed }
+			r.inventoryAdded = func(context.Context) (addedSources, bool) { return addedSources{}, !tc.changed }
 			prepareRecoveryInventory(t.Context(), r, nil, tc.unread, tc.db)
 			for h, want := range map[harness]sourcefacts.RecoveryOutcome{harnessCodex: tc.codex, harnessCursor: tc.cursor} {
 				res := r.resolveSessionEvidence(t.Context(), h, gone, key)
@@ -366,7 +366,7 @@ func TestAppendedWitnessIsNonEligibleAndRenewsOnlyAppends(t *testing.T) {
 	}
 	env := tr.env()
 	w := &work{t: &transcript{harness: harnessCodex, path: path, sourceInfo: info, cwd: root}, res: resolution{root: root, kind: ProjectKindRepository}, sourceChanged: true}
-	projects, witnesses, gaps := recoveryWitnessInventory(t.Context(), newResolver(env, config.Config{}, Filters{}), []*work{w})
+	projects, witnesses, gaps := recoveryWitnessInventory(newResolver(env, config.Config{}, Filters{}), []*work{w})
 	if len(gaps) != 0 || len(witnesses[root]) != 1 || len(projects) != 1 || projects[0].Included {
 		t.Fatalf("appended witness: %+v %+v %+v", projects, witnesses, gaps)
 	}
@@ -484,11 +484,11 @@ func TestAppendedWitnessRenewsAtAdmission(t *testing.T) {
 	}
 	witnesses := map[string][]*work{w.res.root: {w}}
 	tr.write("home/source.jsonl", "a\nb\nc\n")
-	if current, _ := recoveryWitnessesCurrent(t.Context(), r, witnesses, map[string]bool{}, true); !current {
+	if current, _, _ := recoveryWitnessesCurrent(t.Context(), r, witnesses, map[string]bool{}, true); !current {
 		t.Fatal("further append invalidated the appended witness")
 	}
 	tr.write("home/source.jsonl", "a\n")
-	if current, _ := recoveryWitnessesCurrent(t.Context(), r, witnesses, map[string]bool{}, true); current {
+	if current, _, _ := recoveryWitnessesCurrent(t.Context(), r, witnesses, map[string]bool{}, true); current {
 		t.Fatal("truncated witness renewed")
 	}
 }

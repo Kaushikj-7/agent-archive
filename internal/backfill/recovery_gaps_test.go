@@ -198,7 +198,7 @@ func TestRecoveryInventoryGapCauseReachesResolution(t *testing.T) {
 			key := archive.RepoKey("https://example.test/acme/repo")
 			cfg.Archive.Projects = []archive.ProjectActivation{project(root, true)}
 			r := newResolver(env, cfg, Filters{})
-			r.inventoryCurrent = func(context.Context) bool { return !tc.changed }
+			r.inventoryAdded = func(context.Context) (addedSources, bool) { return addedSources{}, !tc.changed }
 			prepareRecoveryInventory(t.Context(), r, nil, tc.unread, tc.db)
 			res := r.resolveEvidence(t.Context(), gone, key)
 			if res.outcome != tc.outcome || res.cause != tc.cause {

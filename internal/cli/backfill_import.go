@@ -81,6 +81,7 @@ func importPlanLocked(env Env, stdout, stderr io.Writer, home string, plan backf
 		return fail("%v", err)
 	}
 	printRegistered(reg.out, reg.batch.ID, reg.added, reg.result)
+	printChangedAtAdmission(reg.out, reg.changed, "backfill again with the same options")
 
 	if background {
 		terminal.Println(reg.out, "The background collector uploads them. Run agent-archive status to follow it.")
@@ -91,7 +92,7 @@ func importPlanLocked(env Env, stdout, stderr io.Writer, home string, plan backf
 	if err := env.checkpoint("uploading"); err != nil {
 		return fail("%v", err)
 	}
-	return uploadImport(env, reg.out, stderr, home, reg.batch.ID, plan, reg.interrupt, &reg.activity)
+	return uploadImport(env, reg.out, stderr, home, reg.batch.ID, reg.plan, reg.interrupt, &reg.activity)
 }
 
 // registeredImport is a committed, completely registered import, with the
@@ -100,6 +101,11 @@ type registeredImport struct {
 	batch  backfill.Batch
 	added  int
 	result backfill.RegistrationResult
+	// plan is what was imported: the confirmed plan without the sessions
+	// whose evidence changed before the configuration was committed, which
+	// changed counts (backfill.Plan.AdmitRecovery).
+	plan    backfill.Plan
+	changed int
 	// out is the caller's writer, serialized against the watch's message.
 	out       io.Writer
 	interrupt *signalWatch
@@ -176,11 +182,12 @@ func registerImportLocked(env Env, stdout, stderr io.Writer, home string, plan b
 	// deadline only after that wait, retaining signal cancellation throughout.
 	confirmationCtx, cancelConfirmation := context.WithTimeout(confirmationCtx, 30*time.Second)
 	reg.releases = append(reg.releases, cancelConfirmation)
-	batch, admittedAt, added, err := commitImport(confirmationCtx, env, home, plan, fingerprint)
+	commit, err := commitImport(confirmationCtx, env, home, plan, fingerprint)
 	if err != nil {
 		return reg, err
 	}
-	reg.added = added
+	batch, admittedAt, plan := commit.batch, commit.admittedAt, commit.plan
+	reg.added, reg.plan, reg.changed = commit.added, commit.plan, commit.changed
 	stopConfirmation()
 	if err := env.checkpoint("committed"); err != nil {
 		return reg, err
@@ -363,17 +370,38 @@ func importConfirmationContext(env Env, stderr io.Writer, plan backfill.Plan) (c
 	return interruptibleContext(env, stderr)
 }
 
-// commitImport is step 4. With collector.lock held, it takes hooks.lock,
-// rereads the configuration, and checks that it is the one the plan was made
-// from. It then stamps the admission time and writes the batch file, which
-// records every configuration change (backfill.ConfigChanges), then the new
-// projects, apps, and retention. The batch file is written first,
-// so a crash in between leaves a batch that names projects it did not add,
-// never projects added without a record.
-func commitImport(ctx context.Context, env Env, home string, plan backfill.Plan, fingerprint string) (batch backfill.Batch, admittedAt time.Time, added int, err error) {
-	if err := plan.CheckRecovery(ctx); err != nil {
-		return batch, admittedAt, 0, err
+// committedImport is a committed configuration change and its batch file.
+// plan is what the import admits: the confirmed plan without the sessions
+// whose evidence changed since it was made, which changed counts.
+type committedImport struct {
+	batch      backfill.Batch
+	admittedAt time.Time
+	added      int
+	plan       backfill.Plan
+	changed    int
+}
+
+// commitImport is step 4. It renews recovered ownership first, outside
+// hooks.lock (backfill.Plan.AdmitRecovery): a session whose evidence changed
+// is left out rather than refusing the import. With collector.lock held, it
+// then takes hooks.lock, rereads the configuration, and checks that it is the
+// one the plan was made from. It then stamps the admission time and writes
+// the batch file, which records every configuration change
+// (backfill.ConfigChanges), then the new projects, apps, and retention, for
+// the sessions left. The batch file is written first, so a crash in between
+// leaves a batch that names projects it did not add, never projects added
+// without a record.
+func commitImport(ctx context.Context, env Env, home string, confirmed backfill.Plan, fingerprint string) (committedImport, error) {
+	plan, changed, err := confirmed.AdmitRecovery(ctx)
+	if err != nil {
+		return committedImport{}, err
 	}
+	batch, admittedAt, added, err := commitAdmitted(ctx, env, home, plan, fingerprint)
+	return committedImport{batch: batch, admittedAt: admittedAt, added: added, plan: plan, changed: changed}, err
+}
+
+// commitAdmitted is commitImport for the admitted plan.
+func commitAdmitted(ctx context.Context, env Env, home string, plan backfill.Plan, fingerprint string) (batch backfill.Batch, admittedAt time.Time, added int, err error) {
 	releaseHooks, err := local.NamedLockWait(home, "hooks.lock", backfillHooksWait)
 	if err != nil {
 		return batch, admittedAt, 0, errors.New("capture hooks are busy; run backfill again. Nothing was changed")
@@ -464,6 +492,20 @@ func printRegistered(out io.Writer, batchID string, added int, result backfill.R
 	if len(skipped) > 0 {
 		terminal.Printf(out, "Not registered: %s.\n", strings.Join(skipped, ", "))
 	}
+}
+
+// printChangedAtAdmission says how many confirmed sessions were left out
+// because their project or source evidence changed after the plan was made,
+// and what imports them (retry, already styled).
+func printChangedAtAdmission(out io.Writer, changed int, retry string) {
+	if changed == 0 {
+		return
+	}
+	them := "them"
+	if changed == 1 {
+		them = "it"
+	}
+	terminal.Printf(out, "Not imported: %s whose project or source evidence changed after the plan was made. Run %s to import %s.\n", countNoun(changed, "session"), retry, them)
 }
 
 func printImportHints(out io.Writer, batchID string) {

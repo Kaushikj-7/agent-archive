@@ -55,7 +55,7 @@ type resolver struct {
 	worktreeStores          []string
 	cache                   map[string]resolution
 	recovery                *sourcefacts.RecoveryResolver
-	recoverySourcesCurrent  func(harness, string) bool
+	recoverySourcesCurrent  func(harness, archive.ProjectResolution) bool
 	recoverySourcesReset    func(context.Context)
 	databaseRecoveryCurrent func(context.Context) bool
 	// recoveryGaps are the witness inventory's gaps, per app. gapRecovery
@@ -64,7 +64,7 @@ type resolver struct {
 	recoveryGaps          recoveryGaps
 	gapRecovery           map[bool]*sourcefacts.RecoveryResolver
 	gapProjects           []archive.ProjectActivation
-	inventoryCurrent      func(context.Context) bool
+	inventoryAdded        func(context.Context) (addedSources, bool)
 	mappingRecovery       *sourcefacts.RecoveryResolver
 	workspaceReset        func()
 	requireWitnessFormats func(string)
@@ -180,7 +180,7 @@ func (r *resolver) resolveSessionEvidence(ctx context.Context, h harness, cwd, k
 			}, valid: func() bool {
 				if !checked {
 					checked = true
-					valid = !r.env.exists(cwd) && r.env.exists(proof.Root) && !r.hasRepositoryEvidence(cwd) && (proof.Method == "explicit_mapping" || r.recoverySourcesCurrent == nil || r.recoverySourcesCurrent(h, proof.Root)) && recovery.CurrentSlice(proof)
+					valid = !r.env.exists(cwd) && r.env.exists(proof.Root) && !r.hasRepositoryEvidence(cwd) && (proof.Method == "explicit_mapping" || r.recoverySourcesCurrent == nil || r.recoverySourcesCurrent(h, proof)) && recovery.CurrentSlice(proof)
 				}
 				return valid
 			}}

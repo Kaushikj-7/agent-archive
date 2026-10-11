@@ -65,3 +65,19 @@ func cursorWorkspaceFolders(env Environment) []string {
 	}
 	return out
 }
+
+// CheckRecovery is AdmitRecovery that refuses unless every imported session
+// is still current: what a test asserts about one plan's evidence.
+func (p Plan) CheckRecovery(ctx context.Context) error {
+	_, changed, err := p.AdmitRecovery(ctx)
+	if err == nil && changed > 0 {
+		err = errRecoveryChanged
+	}
+	return err
+}
+
+// current reports an inventory with no membership change at all.
+func (i *recoverySourceInventory) current(ctx context.Context) bool {
+	grown, ok := i.compare(ctx)
+	return ok && !grown
+}

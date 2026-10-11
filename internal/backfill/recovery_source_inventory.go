@@ -32,6 +32,9 @@ type recoverySourceInventory struct {
 	// item's own source check.
 	appendable map[string]bool
 	complete   bool
+	// resolvedKnown holds the resolved paths of observed regular files, built
+	// on first use by known.
+	resolvedKnown map[string]bool
 }
 
 const recoverySourceObservationLimit = 65536
@@ -82,9 +85,16 @@ func (i *recoverySourceInventory) environment() Environment {
 	return env
 }
 
-func (i *recoverySourceInventory) current(ctx context.Context) bool {
+// compare renews every observation. ok is false for a change that can remove
+// or replace evidence: a missing, replaced or rewritten observed path, a mode
+// change, an incomplete baseline, or an ended context. grown reports the only
+// other change, a directory whose own stamp moved or an absent path that now
+// exists: membership that may have been added to. Additions are judged by
+// rediscovery (addedSources); a removed entry that was never observed was
+// never evidence, and a removed observed entry fails its own stamp.
+func (i *recoverySourceInventory) compare(ctx context.Context) (grown, ok bool) {
 	if !i.complete || ctx.Err() != nil {
-		return false
+		return false, false
 	}
 	paths := make([]string, 0, len(i.stamps))
 	for path := range i.stamps {
@@ -93,19 +103,47 @@ func (i *recoverySourceInventory) current(ctx context.Context) bool {
 	sort.Strings(paths)
 	for _, path := range paths {
 		if ctx.Err() != nil {
-			return false
+			return false, false
 		}
 		before := i.stamps[path]
 		info, err := i.env.lstat(path)
-		if before.absent {
-			if !os.IsNotExist(err) {
-				return false
-			}
-		} else if err != nil || !sameRecoveryMember(before.info, info, i.appendable[path]) {
-			return false
+		switch {
+		case before.absent && os.IsNotExist(err):
+		case before.absent && err == nil:
+			grown = true
+		case err != nil || before.absent:
+			return false, false
+		case sameRecoveryDirectory(before.info, info):
+			grown = grown || !sameRecoveryMember(before.info, info, false)
+		case !sameRecoveryMember(before.info, info, i.appendable[path]):
+			return false, false
 		}
 	}
-	return ctx.Err() == nil
+	return grown, ctx.Err() == nil
+}
+
+// sameRecoveryDirectory reports the same directory, whatever its entries.
+func sameRecoveryDirectory(before, after fs.FileInfo) bool {
+	return before.IsDir() && after.IsDir() && os.SameFile(before, after) && before.Mode() == after.Mode()
+}
+
+// known reports a regular file observed at the baseline; compare keeps it the
+// same file.
+func (i *recoverySourceInventory) known(path string) bool {
+	if stamp, ok := i.stamps[path]; ok {
+		return !stamp.absent && stamp.info.Mode().IsRegular()
+	}
+	// Another spelling of an observed file (a symlinked home or store) is
+	// still that file, not an added one.
+	if i.resolvedKnown == nil {
+		i.resolvedKnown = map[string]bool{}
+		for p, stamp := range i.stamps {
+			if !stamp.absent && stamp.info.Mode().IsRegular() {
+				i.resolvedKnown[i.env.resolved(p)] = true
+			}
+		}
+	}
+	return i.resolvedKnown[i.env.resolved(path)]
 }
 
 // sameRecoveryMember reports whether a path still names the observed member.

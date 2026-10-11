@@ -491,6 +491,7 @@ func importRecentSessions(p *prompter, errOut io.Writer, home, userHome string, 
 		if apps := registeredByApp(home, reg.batch.ID); len(reg.result.Sessions) > 0 {
 			terminal.Printf(p.out, "Imported %s from the last 7 days%s. Uploading in the background.\n", countNoun(len(reg.result.Sessions), "session"), apps)
 		}
+		printChangedAtAdmission(p.out, reg.changed, p.style.cmd(setupImportRetryCommand))
 	}
 	if older > 0 {
 		them := "them"

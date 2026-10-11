@@ -215,9 +215,15 @@ func TestFirstRunRecoveryToleratesAppendedTranscript(t *testing.T) {
 	if err := p.CheckRecovery(t.Context()); err != nil {
 		t.Fatal("appended transcript invalidated confirmation", err)
 	}
-	tr.write(filepath.Join("home", codexFile("00000000-0000-0000-0000-000000000077")), body)
+	// A new session in the destination the plan already witnessed names no
+	// new clone; one in a new clone of the same repository does.
+	addRepoRollout(tr, "00000000-0000-0000-0000-000000000077", root)
+	if err := p.CheckRecovery(t.Context()); err != nil {
+		t.Fatal("added transcript in a witnessed root invalidated confirmation", err)
+	}
+	addRepoRollout(tr, "00000000-0000-0000-0000-000000000078", tr.repo("home/clone"))
 	if err := p.CheckRecovery(t.Context()); err == nil {
-		t.Fatal("added transcript escaped renewal")
+		t.Fatal("added transcript naming a competing clone escaped renewal")
 	}
 }
 

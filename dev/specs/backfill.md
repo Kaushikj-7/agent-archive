@@ -526,8 +526,11 @@ matching rule wins.
    Unsettled sources can renew at most eight bounded evidence epochs per plan;
    exhausted renewal leaves admission pending with the instruction to rerun.
    File membership/header observations renew through at most 65,536 observed
-   native paths per slice, including directory and absent-store stamps; changed
-   or larger inventories require a new plan and keep automatic recovery pending.
+   native paths per slice, including directory and absent-store stamps; larger
+   inventories, and removed, replaced or rewritten observed paths, require a new
+   plan and keep automatic recovery pending. Membership that only grew (a
+   directory stamp moved, an absent path appeared) is judged by the transcripts
+   added (see [Recorded project recovery](#recorded-project-recovery)).
    The inventory checks membership, not content: added, removed or replaced
    paths (file identity), mode changes, truncation and same-size rewrites change
    it, but a transcript growing in place does not when a planned session owns
@@ -1203,14 +1206,16 @@ Backfill's uniqueness proof is over the clone roots its evidence names: the
 configured roots plus the live repository roots of every observed session, from
 every app, before output filters. Evidence that could name a root but was not
 observed (an unreadable store or folder, a session whose folder is unknown or
-unreadable, a changed native inventory, an unavailable or unsettled Cursor
+unreadable, a native inventory that changed other than by added transcripts,
+an added transcript whose folder cannot be told, an unavailable or unsettled Cursor
 database, an exhausted budget, more than 1,024 distinct witness roots) is a
 recorded gap. Evidence that names no root (a Cursor chat with no folder,
 workspace reference or message folder) cannot be a clone and is not a gap. Gaps are kept as a finite set of (app, cause)
 values and isolated by app: a gap blocks recorded-key recovery only for the
 sessions of the app whose evidence is missing, and a gap that cannot be
-attributed to one app (a changed native inventory, the 1,024-root bound, an
-unreadable folder of unknown app) blocks every app. A gap in another app's
+attributed to one app (a native inventory that changed other than by added
+transcripts, the 1,024-root bound, an unreadable folder of unknown app) blocks
+every app. A gap in another app's
 evidence does not block. This holds with or without `--harness`: an app the
 filter leaves out still contributes the witnesses it observed (they can make a
 recovery ambiguous or name its destination), and its gaps block only its own
@@ -1259,6 +1264,60 @@ can), `native_store_unreadable`, `cursor_database_unavailable`,
 `native_inventory_changed`, `cursor_chat_folder_unavailable`, then
 `session_folder_unknown`. Exact mappings and configured-path ownership do not
 depend on the witness inventory.
+
+Running agents keep creating transcripts while a plan is made and confirmed
+(a review agent in a temporary clone starts a rollout every minute), and a new
+transcript can only add evidence: it cannot take away a clone another
+transcript named. So a native inventory whose only change is added membership
+does not fail every recorded recovery. Every app's store is listed again with
+the app's own discovery, and the headers of transcripts the plan did not
+observe are read with discovery's header readers, at most 64 transcripts and
+16 MiB together; past either bound (including a header the byte bound would
+cut short) the change is unattributed and blocks every app, as before. Each
+added transcript is judged by the root its folder resolves to, with committed
+configuration only:
+
+- A folder that is not an existing, unconfigured repository root (a configured
+  project, a plain or temporary folder, a deleted folder) names no clone that
+  could compete with a recorded key and is ignored, as the witness inventory
+  ignores it.
+- A root the witness inventory already holds adds nothing; a new Cursor chat in
+  a project folder a planned chat was found in names that folder's root.
+- A new root found while planning joins the inventory as evidence that cannot
+  propose a destination, so the recovery resolver reads its key and a clone of
+  the same repository makes the recovery ambiguous; its renewal accepts
+  appends. Found after planning (confirmation or an admission slice), the new
+  root's key is read and every recorded-key recovery of that key fails; a
+  keyless root (as a proposed root above) or a repository without a key
+  matches none.
+- An added transcript whose folder cannot be told (no folder, a header that is
+  not understood or whose IDs disagree, a Cursor project folder no planned chat
+  had, a root whose key cannot be read), and a store that can no longer be
+  listed in full, is a `native_inventory_changed` gap of that app, isolated
+  like any other per-app gap. After planning it blocks that app's
+  recorded-key recoveries and recoveries of unknown app.
+
+Removed, replaced or rewritten observed transcripts and directories stay
+strict for every app. An entry removed from a listed directory that discovery
+never observed (not a transcript of the store's layout) was never evidence.
+
+Confirmation admits recovered sessions one by one. A session whose project or
+source evidence is no longer current when the import is confirmed (its own
+transcript changed, its proof's evidence changed, or a new clone of its
+repository appeared) is left out as `source_changed`, as planning leaves out a
+transcript that changed while it was read, and the rest of the confirmed plan
+is imported: a strict subset of what was confirmed. The configuration change
+is recomputed for what is left: a proposed project only the left-out sessions
+needed is not added, and every remaining proof is bound to that configuration
+(`PolicyContext`). The import says how many were left out and to run backfill
+again (setup names its own retry command). Confirmation still refuses, with
+nothing changed, when no session would be left or when the check ran out of
+time or was cancelled, since a session that read as changed then may only have
+run out of time. It also refuses when a dropped proposed project nests with a
+plain folder the import still adds (one inside the other): the plan decided
+what to keep out of that folder with the dropped project as a project of its
+own, so without it the folder would capture what the plan never checked.
+Admission slices already skip a stale session per session.
 
 `--map-project OLD_CWD=CONFIGURED_ROOT` is exact and invocation-local, with at
 most 128 mappings and 4,096 bytes per absolute path. The first equals sign is
