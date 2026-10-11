@@ -808,6 +808,62 @@ func metadataScaleFailure(t *testing.T, phase string, err error, started time.Ti
 	t.Fatalf("phase=%s failure=%v kind=%s cause=%v elapsed=%s fullRemaining=%s counts=%+v SQL=%d retained=%d headerwork=%d charged=%d peak=%d", phase, err, agentapi.Failure(err), cause, time.Since(started), view.remaining, view.counts, lookup.queries, view.charge, view.headerBytes, used, peak)
 }
 
+func TestMetadataValidationOwnedDeadlineInvalidatesCompleteInventory(t *testing.T) {
+	lookup, ids, _ := metadataFixture(t, 1)
+	view := lookup.MetadataInventory().(*metadataInventory)
+	first, err := view.BeginValidationSlice(t.Context(), agentapi.CodexValidationLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := first.Valid(t.Context()); err != nil || !view.complete {
+		t.Fatal("fixture inventory incomplete", err)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Cancellation belongs to the caller and must not poison the complete
+	// inventory or prevent a different caller from renewing validation.
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := view.BeginValidationSlice(ctx, agentapi.CodexValidationLimits{}); !errors.Is(err, context.Canceled) || !view.complete || view.failure != nil {
+		t.Fatal("caller cancellation invalidated inventory", err)
+	}
+	renewed, err := view.BeginValidationSlice(t.Context(), agentapi.CodexValidationLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := renewed.Valid(t.Context()); err != nil {
+		t.Fatal("caller cancellation prevented renewal", err)
+	}
+	if err := renewed.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Acquisition is already complete, so an exhausted owned allowance now
+	// fails in validation, rather than through ensure's failure cleanup.
+	view.remaining = time.Nanosecond
+	sweeps := view.counts.sweeps
+	refused, err := view.BeginValidationSlice(t.Context(), agentapi.CodexValidationLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = refused.Close() }()
+	if err := refused.Valid(t.Context()); agentapi.Failure(err) != agentapi.Limit {
+		t.Fatal("owned validation deadline lost", err)
+	}
+	set, err := refused.Thread(t.Context(), ids[0])
+	if agentapi.Failure(err) != agentapi.Limit || set.Current != nil || set.Complete || len(set.Candidates) != 0 {
+		t.Fatal("owned validation refusal retained authority", set, err)
+	}
+	if view.counts.sweeps != sweeps+1 || view.remaining > 0 || view.complete || view.cursor != nil || agentapi.Failure(view.failure) != agentapi.Limit {
+		t.Fatalf("owned validation refusal retained inventory: sweeps=%d remaining=%s complete=%v cursor=%v failure=%v", view.counts.sweeps-sweeps, view.remaining, view.complete, view.cursor != nil, view.failure)
+	}
+	if t.Context().Err() != nil {
+		t.Fatal("owned deadline canceled caller", t.Context().Err())
+	}
+}
+
 func TestMetadataOwnedDeadlineRefusesAndPreservesCaller(t *testing.T) {
 	lookup, ids, root := metadataFixture(t, 1)
 	db := hintDatabase(t, root, true)
