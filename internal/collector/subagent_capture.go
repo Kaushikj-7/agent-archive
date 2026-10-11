@@ -525,7 +525,7 @@ func ReadImportSubagentBundle(ctx context.Context, parent archive.SessionRegistr
 		return reg, archive.SourceBundle{}, err
 	}
 	source, _ := newSourceReader(reg, opts)
-	filtered, _, err := source.Filter(ctx, adapter, opts.maxTranscriptBytes())
+	filtered, _, err := source.Filter(ctx, adapter, min(opts.maxTranscriptBytes(), state.MaxImportStageBytes))
 	if err != nil {
 		return reg, archive.SourceBundle{}, err
 	}

@@ -204,7 +204,7 @@ func readImportSourceSet(ctx context.Context, reg archive.SessionRegistration, a
 	if !ok {
 		return archive.SourceBundle{}, nil, ErrNoTranscript
 	}
-	filtered, observed, err := source.Filter(ctx, adapter, DefaultMaxTranscriptBytes)
+	filtered, observed, err := source.Filter(ctx, adapter, state.MaxImportStageBytes)
 	if err != nil {
 		return archive.SourceBundle{}, nil, err
 	}
@@ -226,9 +226,9 @@ func readImportSourceSet(ctx context.Context, reg archive.SessionRegistration, a
 		return bundle, nil, errors.New("import revision reader unavailable")
 	}
 	preserved := []archive.SourceBundle{}
-	remaining := DefaultMaxTranscriptBytes - int64(bundle.Capture.Boundary.RetainedBytes)
+	remaining := state.MaxImportStageBytes - int64(bundle.Capture.Boundary.RetainedBytes)
 	seen := map[string]bool{revisionID(bundle): true}
-	err = provider.revisions(ctx, adapter, observed, DefaultMaxTranscriptBytes, bundle.History != nil, func(part archive.FilteredTranscript, binding *archive.CodexSourceBinding) error {
+	err = provider.revisions(ctx, adapter, observed, state.MaxImportStageBytes, bundle.History != nil, func(part archive.FilteredTranscript, binding *archive.CodexSourceBinding) error {
 		owner := reg
 		owner.CodexBinding = binding
 		prior, err := archive.NewSourceBundle(owner, adapter, part, at, nil)

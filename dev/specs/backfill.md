@@ -887,7 +887,14 @@ unadmitted; completed groups remain recoverable. Dry-run creates no staging.
 Import staging shares the 1 GiB durable publication quota, including atomic
 replacement allowance. Each stage reserves bounded control space for cancellation.
 Selected revision sets have a 32 MiB retained input allowance, and each serialized
-journal is capped at 128 MiB. Scheduled admission recovery visits at most 50 session
+journal has a conservative 32 MiB encoded allowance, including identity and child
+context. Each qualified child has its own bounded journal; the shared 1 GiB quota
+also bounds their aggregate staging. Admission preflights the largest record or
+text and refilter output against the shared 128 MiB recovery budget. Encoded
+expansion and large-record scratch can lower the accepted input size; these are
+upper bounds, not a promise that every 32 MiB transcript fits. An oversized
+selection remains unadmitted instead of producing a journal the collector cannot
+read. Scheduled admission recovery visits at most 50 session
 directories per group and persists its cursor. Foreground backfill can publish a
 completed group to free capacity; setup and `--background` leave a resumable capacity
 error for later collection and retry.
