@@ -248,3 +248,17 @@ func TestRunFailsDeferralsOlderThanMaxDeferral(t *testing.T) {
 	restart := start.Add(MaxDeferral + time.Hour)
 	deferredSince(restart, restart)
 }
+
+// A session the pass already recorded a failure for (a warning, say) is a
+// failed session: its deferral joins that failure rather than counting it
+// in Deferred as well.
+func TestDeferScanFailsASessionThatAlreadyFailed(t *testing.T) {
+	t.Parallel()
+	warning := errors.New("synthetic warning")
+	changed := agentapi.Wrap(agentapi.Changed, errors.New("changed"))
+	p := &pass{now: time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC), result: Result{Errors: map[string]error{"s": warning}}}
+	p.deferScan("s", DeferredSourceChanged, changed)
+	if len(p.result.Deferred) != 0 || !errors.Is(p.result.Errors["s"], warning) || !errors.Is(p.result.Errors["s"], changed) || p.pending != 1 {
+		t.Fatalf("deferred=%v errors=%v pending=%d, want one failure joining both", p.result.Deferred, p.result.Errors, p.pending)
+	}
+}
