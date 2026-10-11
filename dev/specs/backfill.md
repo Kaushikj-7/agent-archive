@@ -1269,11 +1269,24 @@ Running agents keep creating transcripts while a plan is made and confirmed
 (a review agent in a temporary clone starts a rollout every minute), and a new
 transcript can only add evidence: it cannot take away a clone another
 transcript named. So a native inventory whose only change is added membership
-does not fail every recorded recovery. Every app's store is listed again with
-the app's own discovery, and the headers of transcripts the plan did not
-observe are read with discovery's header readers, at most 64 transcripts and
-16 MiB together; past either bound (including a header the byte bound would
-cut short) the change is unattributed and blocks every app, as before. Each
+does not fail every recorded recovery. The plan keeps the entry names of each
+folder it listed (within the 65,536-observation bound), and each app's own
+discovery runs again over a view of its stores in which a folder whose stamp
+did not move shows only its entries on the way to one that did (or to an
+absent path that now exists, or a folder the plan could not list in full):
+only changed and new folders are listed again, in full, and observations the
+renewal just took are not repeated, so the work follows what changed rather
+than the size of the stores. At most 4,096 entries the plan did not list are
+walked, and the headers of transcripts the plan did not observe are read with
+discovery's header readers, at most 64 transcripts and 16 MiB together; past
+any of these bounds (including a header the byte bound would cut short) the
+change is unattributed and blocks every app, as before. A folder that cannot
+be listed leaves its app's store incomplete. A transcript added under another
+of an app's roots with the name of one already there (a Codex rollout copied
+to `archived_sessions`) is judged by its own header rather than hidden behind
+the copy discovery prefers; it can only add evidence. Another spelling of an
+observed transcript (a symlinked store) is told by file identity against the
+observed transcripts of the same name. Each
 added transcript is judged by the root its folder resolves to, with committed
 configuration only:
 

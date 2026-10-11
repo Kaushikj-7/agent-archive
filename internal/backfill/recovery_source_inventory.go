@@ -4,6 +4,7 @@ import (
 	"context"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"sort"
 )
 
@@ -32,15 +33,26 @@ type recoverySourceInventory struct {
 	// item's own source check.
 	appendable map[string]bool
 	complete   bool
-	// resolvedKnown holds the resolved paths of observed regular files, built
-	// on first use by known.
-	resolvedKnown map[string]bool
+	// names holds the entry names of each directory listed at the baseline,
+	// at most recoverySourceObservationLimit names in all. A directory whose
+	// listing failed or did not fit has none and is listed again in full when
+	// membership grew (addedListing).
+	names     map[string]map[string]bool
+	nameCount int
+	// renewed and moved are what the last compare saw: the renewed
+	// observation of each existing stamped path, and the directories whose
+	// stamp moved and absent paths that now exist.
+	renewed map[string]fs.FileInfo
+	moved   []string
+	// byBase indexes observed regular files by base name, built on first use
+	// by known.
+	byBase map[string][]string
 }
 
 const recoverySourceObservationLimit = 65536
 
 func newRecoverySourceInventory(env Environment) *recoverySourceInventory {
-	return &recoverySourceInventory{env: env, stamps: map[string]recoveryFileStamp{}, appendable: map[string]bool{}, complete: true}
+	return &recoverySourceInventory{env: env, stamps: map[string]recoveryFileStamp{}, appendable: map[string]bool{}, names: map[string]map[string]bool{}, complete: true}
 }
 
 // ownContent hands content changes of an observed transcript to the work item
@@ -76,7 +88,11 @@ func (i *recoverySourceInventory) environment() Environment {
 	env := i.env
 	env.ReadDir = func(path string) ([]fs.DirEntry, error) {
 		i.observe(path)
-		return i.env.readDir(path)
+		entries, err := i.env.readDir(path)
+		if err == nil {
+			i.recordNames(path, entries)
+		}
+		return entries, err
 	}
 	env.Lstat = func(path string) (fs.FileInfo, error) {
 		i.observe(path)
@@ -85,13 +101,33 @@ func (i *recoverySourceInventory) environment() Environment {
 	return env
 }
 
+// recordNames keeps a baseline listing's entry names within the observation
+// limit. Only the first listing of a directory counts: its stamp was taken
+// before it, so a later addition moves the stamp.
+func (i *recoverySourceInventory) recordNames(path string, entries []fs.DirEntry) {
+	if _, ok := i.names[path]; ok || i.nameCount+len(entries) > recoverySourceObservationLimit {
+		return
+	}
+	if _, ok := i.stamps[path]; !ok {
+		return
+	}
+	names := make(map[string]bool, len(entries))
+	for _, e := range entries {
+		names[e.Name()] = true
+	}
+	i.names[path] = names
+	i.nameCount += len(entries)
+}
+
 // compare renews every observation. ok is false for a change that can remove
 // or replace evidence: a missing, replaced or rewritten observed path, a mode
 // change, an incomplete baseline, or an ended context. grown reports the only
 // other change, a directory whose own stamp moved or an absent path that now
-// exists: membership that may have been added to. Additions are judged by
-// rediscovery (addedSources); a removed entry that was never observed was
-// never evidence, and a removed observed entry fails its own stamp.
+// exists: membership that may have been added to. compare keeps those paths
+// (moved) and the renewed observations (renewed) for rediscovery, which
+// judges the additions (addedSources); a removed entry that was never
+// observed was never evidence, and a removed observed entry fails its own
+// stamp.
 func (i *recoverySourceInventory) compare(ctx context.Context) (grown, ok bool) {
 	if !i.complete || ctx.Err() != nil {
 		return false, false
@@ -101,6 +137,7 @@ func (i *recoverySourceInventory) compare(ctx context.Context) (grown, ok bool) 
 		paths = append(paths, path)
 	}
 	sort.Strings(paths)
+	i.renewed, i.moved = make(map[string]fs.FileInfo, len(paths)), nil
 	for _, path := range paths {
 		if ctx.Err() != nil {
 			return false, false
@@ -110,16 +147,21 @@ func (i *recoverySourceInventory) compare(ctx context.Context) (grown, ok bool) 
 		switch {
 		case before.absent && os.IsNotExist(err):
 		case before.absent && err == nil:
-			grown = true
+			i.moved = append(i.moved, path)
 		case err != nil || before.absent:
 			return false, false
 		case sameRecoveryDirectory(before.info, info):
-			grown = grown || !sameRecoveryMember(before.info, info, false)
+			if !sameRecoveryMember(before.info, info, false) {
+				i.moved = append(i.moved, path)
+			}
 		case !sameRecoveryMember(before.info, info, i.appendable[path]):
 			return false, false
 		}
+		if err == nil {
+			i.renewed[path] = info
+		}
 	}
-	return grown, ctx.Err() == nil
+	return len(i.moved) > 0, ctx.Err() == nil
 }
 
 // sameRecoveryDirectory reports the same directory, whatever its entries.
@@ -134,16 +176,31 @@ func (i *recoverySourceInventory) known(path string) bool {
 		return !stamp.absent && stamp.info.Mode().IsRegular()
 	}
 	// Another spelling of an observed file (a symlinked home or store) is
-	// still that file, not an added one.
-	if i.resolvedKnown == nil {
-		i.resolvedKnown = map[string]bool{}
+	// still that file, not an added one. Such a spelling keeps the file's
+	// name, so only observed files of the same name are compared, by file
+	// identity: one Lstat per added path, no symlink resolution.
+	if i.byBase == nil {
+		i.byBase = map[string][]string{}
 		for p, stamp := range i.stamps {
 			if !stamp.absent && stamp.info.Mode().IsRegular() {
-				i.resolvedKnown[i.env.resolved(p)] = true
+				i.byBase[filepath.Base(p)] = append(i.byBase[filepath.Base(p)], p)
 			}
 		}
 	}
-	return i.resolvedKnown[i.env.resolved(path)]
+	same := i.byBase[filepath.Base(path)]
+	if len(same) == 0 {
+		return false
+	}
+	info, err := i.env.lstat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return false
+	}
+	for _, p := range same {
+		if os.SameFile(i.stamps[p].info, info) {
+			return true
+		}
+	}
+	return false
 }
 
 // sameRecoveryMember reports whether a path still names the observed member.
