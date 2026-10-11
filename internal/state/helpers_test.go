@@ -44,7 +44,7 @@ func openTestStore(home string) (*Store, error) {
 		return nil, err
 	}
 	if !found {
-		err = config.Save(home, config.Config{MachineID: "synthetic"})
+		err = config.Save(home, config.Config{MachineID: "synthetic", RetentionDays: config.DefaultRetentionDays})
 	}
 	return store, err
 }
