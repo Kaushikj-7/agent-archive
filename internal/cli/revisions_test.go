@@ -169,3 +169,26 @@ func TestRevisionInvalidCombinationsBeforeSetup(t *testing.T) {
 		}
 	}
 }
+
+func TestRevisionInventoryWithoutHistory(t *testing.T) {
+	_, _, _, metadata := revisionFixture(t, true)
+	metadata.SchemaVersion = archive.MetadataSchemaVersion
+	metadata.History = nil
+	var out, errs bytes.Buffer
+	if code := printRevisionInventory(&out, &errs, metadata, false); code != 0 || !strings.Contains(out.String(), "No native revision history") {
+		t.Fatalf("human inventory=%d %s %s", code, &out, &errs)
+	}
+	out.Reset()
+	errs.Reset()
+	if code := printRevisionInventory(&out, &errs, metadata, true); code != 0 {
+		t.Fatalf("JSON inventory=%d %s", code, &errs)
+	}
+	var result struct {
+		HasHistory bool              `json:"has_history"`
+		Revisions  []json.RawMessage `json:"revisions"`
+	}
+	must(t, json.Unmarshal(out.Bytes(), &result))
+	if result.HasHistory || result.Revisions == nil || len(result.Revisions) != 0 {
+		t.Fatalf("empty inventory=%s", &out)
+	}
+}
