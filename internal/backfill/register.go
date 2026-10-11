@@ -326,7 +326,9 @@ func (r Registration) step(cfg config.Config, w *parentWork, result *Registratio
 		return false, err
 	}
 	if r.DurableSources && w.stagedSHA256 == "" {
-		return false, nil
+		// Reservation can outlive its project proof or authorization. Finish
+		// rejected work even when it no longer qualifies for staging.
+		return r.skip(cfg, w, result)
 	}
 	if w.next < len(c.Subagents) {
 		sub := c.Subagents[w.next]

@@ -134,6 +134,8 @@ follow [Semantic Versioning](https://semver.org/).
   no staging and reports incomplete JSON writes as failures. Oversized selected
   sources and encoded journals fail before admission, within the collector's
   recovery memory allowance.
+  Imports also finish skipped candidates promptly when their project proof or
+  authorization changes after identity reservation and before staging.
 
 - Validate a Codex fork's first own task during import and ongoing capture,
   and protect every qualified history import from older writers. Discovery
