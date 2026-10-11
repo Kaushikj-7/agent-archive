@@ -942,6 +942,11 @@ func batchUploadState(store *state.Store, cfg config.Config, regs []archive.Sess
 	case registered == 0:
 		return "removed", nil
 	}
+	return batchUploadSummary(registered, staged, verified, waiting, rechecking, updating), nil
+}
+
+// batchUploadSummary keeps first-publication progress separate from later work.
+func batchUploadSummary(registered, staged, verified, waiting, rechecking, updating int) string {
 	upload := "uploaded"
 	if waiting > 0 {
 		if staged > 0 {
@@ -958,7 +963,7 @@ func batchUploadState(store *state.Store, cfg config.Config, regs []archive.Sess
 	if updating > 0 {
 		upload += fmt.Sprintf(" · %d updating", updating)
 	}
-	return upload, nil
+	return upload
 }
 
 func importCapacityDrain(env Env, stdout io.Writer, home string, store *state.Store, lookup agentapi.CodexRolloutLookup, readHomes []string, stop func() bool) func(context.Context) error {
