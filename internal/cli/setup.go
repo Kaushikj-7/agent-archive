@@ -420,6 +420,13 @@ func selectSetupDraft(p *prompter, home, userHome string, env Env, existing conf
 	if err != nil {
 		return setupDraft{}, false, err
 	}
+	saved, haveDraft, err = recoverSetupResources(p, home, saved, haveDraft, initial, env)
+	if errors.Is(err, errResourceRecoveryStopped) {
+		return setupDraft{}, true, nil
+	}
+	if err != nil {
+		return setupDraft{}, false, err
+	}
 	if haveDraft {
 		choice, e := p.setupMenu("You have an unfinished setup. What would you like to do?", "continue",
 			option{"continue", "Continue where you left off"},

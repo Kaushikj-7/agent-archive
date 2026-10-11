@@ -51,6 +51,8 @@ type prompter struct {
 	// createdBuckets are the S3 buckets setup created in this run (see
 	// setup_s3_create.go); in memory only.
 	createdBuckets []createdS3Bucket
+	// resourceRequestsThisRun separates explicit in-process retries from restart recovery.
+	resourceRequestsThisRun map[string]bool
 	// guided is a guided R2 bucket creation whose key setup has yet to
 	// stage; created is every bucket and key such creations left in the
 	// person's Cloudflare account in this run.
