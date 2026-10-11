@@ -13,7 +13,7 @@ affects.
 | Parser | per-agent `Parser.Version()` / `archive.DefaultParserVersion` | metadata `parser.version` | 0.21.0 | How metadata is derived from a source changes: counts, turns, models, skills, gaps, titles, session names, branch, linked pull requests, tools used, end time, tokens (per model too), tool errors, MCP calls, git activity, the repository key (derived from the project's git origin, not the source). |
 | Source schema | `archive.SourceSchemaVersion` / `HistorySourceSchemaVersion` | source header `schema_version` | 2 | The source bundle's line format changes. Readers refuse other versions. |
 | Metadata schema | `archive.MetadataSchemaVersion` / `HistoryMetadataSchemaVersion` | metadata `schema_version` | 1 | The metadata sidecar changes incompatibly. Optional fields don't bump it. |
-| Codex parser | `codex.Parser.Version()` | metadata `parser.version` | 0.26.0 | Codex identity, ownership or metadata interpretation changes. |
+| Codex parser | `codex.Parser.Version()` | metadata `parser.version` | 0.27.0 | Codex identity, ownership or metadata interpretation changes. |
 | History source schema | `archive.HistorySourceSchemaVersion` | source header `schema_version` | 3 | The self-contained Codex history manifest or record envelopes change. |
 | History metadata schema | `archive.HistoryMetadataSchemaVersion` | metadata `schema_version` | 2 | Preserved native revision references change incompatibly. |
 | Machine record | `machines.SchemaVersion` | `machines/<machine_id>.json` and `machines --json` | 1 | Informational registry format changes incompatibly; independent of session schemas and filtering. |
@@ -155,3 +155,9 @@ and `native_child` remains observable while their parent archive link is pending
 The new parser version also rechecks older naming-era child caches before
 migrating their retained ownership headers. Claude and the common parser remain
 0.21.0, Cursor remains 0.20.0, adapter 0.18.0 and privacy filter 18.
+
+Codex parser 0.27.0 applies filter 16's injected-context rule to user text a
+filter 15 or earlier source retained, so a leading open-page wrapper is neither
+a prompt nor the title, and the title falls through to the next real prompt.
+The bump makes existing sessions refresh their metadata from the retained
+source without a new source upload. Filter, adapter and other parsers are unchanged.

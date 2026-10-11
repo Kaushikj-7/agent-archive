@@ -10,6 +10,11 @@ follow [Semantic Versioning](https://semver.org/).
   Keep valid existing-bucket answers when going back, show S3 archive
   permissions on request, and report privacy separately from connectivity.
 
+- Stop titling Codex desktop sessions with injected open-page context such as
+  `<external_codex_apps_open_page>{"page_id":null}</external_codex_apps_open_page>`.
+  Sessions captured before that context was filtered now take their title from
+  the first real prompt when their metadata refreshes.
+
 - Preserve settled capture and source bytes when cached native naming reads are
   unavailable and the same observation uses an equivalent timezone offset.
 
