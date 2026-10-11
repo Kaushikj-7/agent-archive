@@ -22,7 +22,7 @@ missing signed Linux assets cannot be replaced by a source build in release
 acceptance.
 
 Keep the collector installed and observe its timer/launchd runs. Reserve separate
-finite, forever, pairing and upgrade fixtures/prefixes to avoid cross-deletion;
+finite, forever, pairing, native-loss and upgrade fixtures/prefixes to avoid cross-deletion;
 record which installation owns each session. Disable provider lifecycle rules
 for the retention comparison and record that fact. A separate documented
 lifecycle rule review must confirm that such rules can override forever. Stop
@@ -56,8 +56,16 @@ agent-archive show SESSION_ID --revision REVISION_ID
 agent-archive handoff SESSION_ID --revision REVISION_ID
 ```
 
-For native-loss publication, stop only this disposable installation's scheduler
-while leaving capture unpaused, so admission can run without a background upload.
+For native-loss publication, reserve a distinct synthetic project
+(`NATIVE_LOSS_PROJECT`) and fresh native session/revision IDs. Keep their native
+files outside every configured app/discovery directory until the collector is
+stopped. They must not be exposed to setup's automatic import, the foreground
+backfill above, hooks or earlier collector runs. Reusing the earlier project
+and sessions cannot prove this check: foreground import publishes them and
+backfill skips accepted registrations.
+
+Stop only this disposable installation's scheduler while leaving capture
+unpaused, so admission can run without a background upload.
 On its disposable Linux user manager run:
 
 ```sh
@@ -71,14 +79,23 @@ launchctl bootout "gui/$(id -u)" "$HOME/Library/LaunchAgents/com.agent-archive.c
 ```
 
 Confirm the owned job stopped; do not proceed while an in-flight collector or
-other writer remains. Run flagged background backfill, which admits/stages
-without foreground publication. Record staged/admitted versus remotely verified
-progress and confirm the session has not yet published. Then pause, move only
-the reserved synthetic native files to a private backup, refresh the scheduler
-and resume:
+other writer remains. Only now place the reserved synthetic native files in
+the disposable app directories; do not launch an app or invoke a hook. Run the
+dry-run below and verify that those fresh IDs are eligible new imports, not
+already registered/archived. Confirm no corresponding remote session metadata
+exists. If either check fails, reserve new IDs and repeat before proceeding.
+
+Run flagged background backfill, which admits/stages without foreground
+publication. Record the new import batch and its archive session/revision IDs
+as `NATIVE_LOSS_SESSION_ID` and `NATIVE_LOSS_REVISION_ID`. Verify those sessions
+were staged/admitted by this batch, have pending remote verification and still
+have no published metadata. An empty import or a previously published session
+does not satisfy this check. Then pause, move only the reserved synthetic native
+files to a private backup, refresh the scheduler and resume:
 
 ```sh
-agent-archive backfill --project PROJECT --background
+agent-archive backfill --project NATIVE_LOSS_PROJECT --dry-run
+agent-archive backfill --project NATIVE_LOSS_PROJECT --background
 agent-archive backfill history
 agent-archive pause
 # Move this run's synthetic native files after admission; record the action.
@@ -107,8 +124,8 @@ running either. Confirm the timer/LaunchAgent is loaded, then resume capture:
 ```sh
 agent-archive resume
 agent-archive status --verbose
-agent-archive show SESSION_ID --revisions --json
-agent-archive show SESSION_ID --revision REVISION_ID
+agent-archive show NATIVE_LOSS_SESSION_ID --revisions --json
+agent-archive show NATIVE_LOSS_SESSION_ID --revision NATIVE_LOSS_REVISION_ID
 ```
 
 Never move real app history; for Cursor use a disposable synthetic database.
@@ -157,7 +174,7 @@ the sender's preference and expect the paired receiver to change remotely.
 | History-aware shortening | Forever-to-finite review predicts eligible sessions using meaningful history capture age; no preview deletion. Confirmed background expiry matches prediction, including exactly-at-cutoff and preserved-newer cases. Paused/pending cases follow sweeper rules. | pending — |
 | Pairing | S3 settings transfer / R2 dedicated-key path preserves zero and protection before first hook/collector run; cancelled/interrupted receive rolls back safely and retry preserves forever. Record sender/receiver versions separately. Later sender finite edit does not change receiver. | pending — |
 | Revisions | Every referenced meaningful revision has stable inventory identity/provenance, and show/handoff selection returns the matching synthetic fixture. Unknown/unreferenced selectors fail; default remains active; selection is parent-only. Record IDs and comparisons without content. | pending — |
-| Native-loss background publication | Prove stage/admission before upload and native removal. Background run publishes and read-back verifies active plus preserved revisions with no native files. Restart/interruption retains recoverable ownership; prior published revisions remain readable. | pending — |
+| Native-loss background publication | Use fresh IDs withheld from setup, hooks and earlier imports until writers stop. Prove new stage/admission and pending verification before upload and native removal; an empty/reused import cannot pass. Background run publishes and read-back verifies active plus preserved revisions with no native files. Restart/interruption retains recoverable ownership; prior published revisions remain readable. | pending — |
 | Import/undo retention | Finite-to-forever import records the change; retry preserves it. Ordinary undo and `--yes` keep current forever. Separate explicit `--restore-retention` trial previews other eligible sessions and restores finite only when the saved policy was not independently changed. Explicit undo removes only its owned import. | pending — |
 | Maintenance under forever | In isolated fixtures, unreferenced superseded cleanup and verified privacy replacement still run; all live history references survive. Explicit purge/undo remain available. For recipe apply stop every writer and follow the existing reviewed plan/retry protocol. | pending — |
 | Compatibility | Representative published integer/protected decoders and actual old pairing receiver reject forever without writes; retention-only predecessor rejects staging protection. Use private temporary homes and fake scheduler/store for command probes, never the live accounts. Record binaries/digests and each named test execution or skip. | pending — |
