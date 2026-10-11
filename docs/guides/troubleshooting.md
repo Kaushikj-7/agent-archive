@@ -118,7 +118,11 @@ transcript. Imported sessions and sessions waiting to upload have separate count
 Under each app are at most five uploading sessions (`status APP` lists all),
 with the project, start time, and any failure. A session without its first
 upload says **waiting for its first upload**. Capture gaps and Cursor chats
-without transcripts are reported separately.
+without transcripts are reported separately. Under Codex, **N Codex sessions
+from the 7 days before setup were not captured** counts sessions that started
+in the week before discovery was enabled and are not archived, with the
+`backfill --since` command that imports them (see
+[setup](../getting-started/setup.md#after-setup)).
 
 **Hooks installed** means the hook configuration is present, not that the
 hooks have run or been approved. `status --verbose` reports hook execution
