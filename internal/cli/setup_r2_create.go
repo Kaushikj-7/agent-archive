@@ -136,6 +136,7 @@ type r2Created struct {
 // key typed in. On success the prompter holds the bootstrap client until
 // setup calls finishGuidedCreation or rollbackGuidedCreation.
 func createR2Bucket(p *prompter, env Env) (credentials.Config, credentials.R2Credentials, bool, error) {
+	p.storageStage(storageAccount)
 	var none credentials.R2Credentials
 	token, fromEnv, removed, err := askBootstrapToken(p, env)
 	if err != nil {
@@ -551,6 +552,9 @@ func (c *r2Creator) askLocation() error {
 // any of those. An interrupt ends it at once.
 func (c *r2Creator) createUntilVerified() (credentials.R2Credentials, error) {
 	for {
+		if c.creationConfirmed {
+			c.p.storageStage(storageDetails)
+		}
 		key, err := c.attempt()
 		if err == nil {
 			return key, nil
@@ -559,6 +563,7 @@ func (c *r2Creator) createUntilVerified() (credentials.R2Credentials, error) {
 			return credentials.R2Credentials{}, err
 		}
 		if errors.Is(err, errConfirmR2Creation) {
+			c.p.storageStage(storageDetails)
 			terminal.Println(c.p.out, "Account: "+c.account)
 			terminal.Println(c.p.out, "Bucket: "+c.bucket.Name)
 			location := "automatic"
@@ -926,6 +931,7 @@ func (c *r2Creator) wait(ctx context.Context, d time.Duration) {
 // without a diagnosis.
 func (c *r2Creator) checkKey(ctx context.Context, key credentials.R2Credentials) error {
 	p := c.p
+	p.storageStage(storageVerification)
 	cfg := c.storageConfig()
 	if c.keyStorage != nil {
 		cfg = *c.keyStorage

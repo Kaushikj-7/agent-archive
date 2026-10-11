@@ -6,6 +6,25 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Stop reporting Codex sessions whose history coverage is not complete yet,
+  or whose source changed while being read, as failed: `sync` counts them by
+  reason ("8 waiting for Codex history coverage") and `status` lists them as
+  rechecking, while real failures are still listed. `backfill history` counts
+  as waiting only sessions not in the archive yet, and counts uploaded ones
+  with a re-scan or newer work owed apart (`uploaded · 2 rechecking`). A
+  source error can now carry a fixed, content-free cause ("source unavailable:
+  Codex history coverage incomplete"). A session still put off after 24
+  hours of passes is reported as failed again, until a pass reads it.
+- Keep `handoff` within `--max-bytes` for long sessions: once the existing
+  trimming is not enough, older exchanges keep only their last agent message,
+  then all tool output is dropped, then every exchange but the last is
+  condensed to its prompt and counts. Markdown still over the limit because of
+  one oversized part, or of several hundred exchanges, is cut at a line with
+  a marker, keeping the last exchange.
+- Clarify storage onboarding with Account, Storage, and Verification stages.
+  Keep valid existing-bucket answers when going back, show S3 archive
+  permissions on request, and report privacy separately from connectivity.
+
 - Stop titling Codex desktop sessions with injected open-page context such as
   `<external_codex_apps_open_page>{"page_id":null}</external_codex_apps_open_page>`.
   Sessions captured before that context was filtered now take their title from

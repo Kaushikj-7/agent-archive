@@ -143,7 +143,12 @@ content-free health snapshot. These are scheduling hints, not identity or consen
 authority. Namespaced native identities and their registration journal prevent
 duplicate logical archives across hooks, discovery and deliberate imports.
 Deleting a scan cache may cause another bounded scan; it does not grant permission
-to capture old history. Preserve protected configuration and identity state when
+to capture old history. `discovery-refused-starts.json` lists the top-level
+Codex sessions discovery refused for starting in the 8 days before its start
+floor (at most 256, each with its native ID, start time and rollout path, no
+conversation text) so `status` can point at `backfill` for them; the scan
+drops a session once it is archived, removed, excluded or its rollout is gone,
+and the file once it is empty. Preserve protected configuration and identity state when
 disabling discovery; an older binary refuses protected configuration.
 
 ## Archive generations

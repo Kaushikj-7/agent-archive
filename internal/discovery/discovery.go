@@ -170,7 +170,8 @@ func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config,
 	resolver := sourcefacts.NewProjectResolver()
 	recovery := sourcefacts.NewRecoveryResolver(cfg.Archive.Projects, nil, canonicalProjectPath, o.RepositoryIdentity, &c.Recovery)
 	recovery.Validate = o.RepositoryIdentityCurrent
-	priority := scan{nativeOnly: o.nativeOnly, inventoryOnly: o.inventoryOnly, proofs: proofs, resolver: resolver, recovery: recovery, store: store, cfg: cfg, catalog: &c, health: &h, now: now, adapter: adapter, priority: true, ctx: ctx, rollouts: o.Rollouts}
+	refused := admissionRefusedStarts(store.Home(), cfg, adapter.Agent(), o)
+	priority := scan{nativeOnly: o.nativeOnly, inventoryOnly: o.inventoryOnly, proofs: proofs, resolver: resolver, recovery: recovery, store: store, cfg: cfg, catalog: &c, health: &h, now: now, adapter: adapter, priority: true, ctx: ctx, rollouts: o.Rollouts, refused: refused}
 	// The shared lookup owns the only native index projection. Production
 	// observation uses the shared directory worker rather than opening native
 	// SQLite via the legacy settled-only scheduling hint adapter.
@@ -222,6 +223,9 @@ func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config,
 	if err := writeHealth(store.Home(), h); err != nil {
 		return h, err
 	}
+	// The record only lets status point at backfill; failing to write it
+	// leaves the previous one, and the next pass writes it again.
+	_ = refused.save(store.Home(), c.Cache)
 	return h, nil
 }
 
@@ -563,6 +567,9 @@ type scan struct {
 	ctx                 context.Context
 	priority            bool
 	reservedDirectories int
+	// refused records sessions refused for starting shortly before the
+	// start floor, for status (nil when the pass admits nothing).
+	refused *refusedStarts
 }
 
 func (s scan) visitEntry(d directory, source SourceEntry) (retry, stop bool) {
@@ -666,7 +673,12 @@ func (s scan) admitObservation(source SourceEntry, entry cached) (bool, bool) {
 	}
 	h.Supported = true
 	h.observeFormat(candidate)
-	if s.removalBlocks(candidate) {
+	if blocked, removed := s.removalBlocks(candidate); blocked {
+		// Only a lookup that found the removal settles the record; one that
+		// failed decides nothing about the session.
+		if removed {
+			s.refused.settle(candidate)
+		}
 		return false, false
 	}
 	// Lookup homes may include hooks/import locations for already admitted
@@ -746,16 +758,17 @@ func (s scan) enqueueDirectory(d directory, path string) bool {
 
 // removalBlocks avoids repeat census work for a known removed source. Retention
 // and removal share collector.lock with the scanner's production caller.
-func (s scan) removalBlocks(candidate Candidate) bool {
+// removed is true only when the lookup succeeded and found a removal.
+func (s scan) removalBlocks(candidate Candidate) (blocked, removed bool) {
 	if _, removed, err := s.store.Removal(candidate.Agent, candidate.NativeSessionID); err != nil {
 		s.health.Outcomes["removal_unavailable"]++
 		s.health.Errors = appendUnique(s.health.Errors, "removal_unavailable")
-		return true
+		return true, false
 	} else if removed {
 		s.health.Outcomes["removed_session"]++
-		return true
+		return true, true
 	}
-	return false
+	return false, false
 }
 
 func pruneCatalog(c *catalog) {
@@ -788,11 +801,13 @@ func (s scan) admitCandidate(candidate Candidate, loc string) (bool, bool) {
 	physical := cfg.EffectiveCodexCaptureScope() == config.CodexAllProjects
 	if prior, blocked := s.retainedProject(candidate); blocked {
 		h.Outcomes["project_not_authorized"]++
+		s.refused.settle(candidate)
 		return false, false
 	} else if prior != nil {
 		if prior.ProjectResolution != nil && prior.ProjectResolution.OriginalCwd == candidate.WorkingDirectory {
 			if p, matched := sourcefacts.ConfiguredOwner(cfg.Archive.Projects, canonicalProjectPath(candidate.WorkingDirectory), canonicalProjectPath); matched && !p.Included {
 				h.Outcomes["project_not_authorized"]++
+				s.refused.settle(candidate)
 				return false, false
 			}
 			ownedRoot = prior.ProjectRoot
@@ -831,6 +846,8 @@ func (s scan) admitCandidate(candidate Candidate, loc string) (bool, bool) {
 				h.Outcomes[string(outcome)]++
 				if outcome != sourcefacts.RecoveryExcluded {
 					s.retainRetry(candidate.Source)
+				} else {
+					s.refused.settle(candidate)
 				}
 				return false, false
 			}
@@ -846,6 +863,7 @@ func (s scan) admitCandidate(candidate Candidate, loc string) (bool, bool) {
 			return false, false
 		}
 		h.Outcomes["project_not_authorized"]++
+		s.refused.settle(candidate)
 		return false, false
 	}
 	generation, authorized := cfg.DiscoveryGeneration(candidate.Agent, root, candidate.StartedAt, now)
@@ -856,10 +874,83 @@ func (s scan) admitCandidate(candidate Candidate, loc string) (bool, bool) {
 		_, existing, err := store.ArchiveSessionID(sessionKey(candidate.Agent, candidate.NativeSessionID))
 		if err != nil || !existing {
 			h.Outcomes["start_not_authorized"]++
+			if err == nil && s.startOnlyRefusal(candidate.Agent, root, facts.Cwd) {
+				s.refuseProven(candidate, loc)
+			} else if err == nil {
+				s.refused.settle(candidate)
+			}
 			return false, false
 		}
 	}
+	s.refused.settle(candidate)
 	return s.finishCandidate(candidate, loc, root, generation, ownedRoot, physical, facts)
+}
+
+// startOnlyRefusal reports whether a session refused as start_not_authorized
+// would be admitted had it started now: refused for its start alone, not
+// also by a project rule (in all-projects scope an excluded project refuses
+// through the same check), so backfill can import it.
+func (s scan) startOnlyRefusal(agent, root, cwd string) bool {
+	if s.cfg.EffectiveCodexCaptureScope() == config.CodexAllProjects {
+		_, ok := s.cfg.CodexDiscoveryGeneration(root, cwd, s.now, s.now)
+		return ok
+	}
+	_, ok := s.cfg.DiscoveryGeneration(agent, root, s.now, s.now)
+	return ok
+}
+
+// refuseProven records a start-refused candidate only once it passes the
+// native admission proof finishCandidate requires before admitting one, so a
+// provisional observation (incomplete metadata, pending related history) or
+// a session whose own task fails the proof is not named as one backfill
+// imports. A recorded session is not proven again, and past
+// maxRefusedProofs a pass leaves the rest for later passes.
+func (s scan) refuseProven(candidate Candidate, loc string) {
+	r := s.refused
+	if r == nil {
+		return
+	}
+	if !r.eligible(candidate, loc) {
+		r.settle(candidate)
+		return
+	}
+	if candidate.SnapshotProven {
+		r.refuse(candidate, loc)
+		return
+	}
+	if r.recorded(candidate, loc, s.catalog.Cache) || r.proofs >= maxRefusedProofs {
+		return
+	}
+	r.proofs++
+	proven, err := s.proofs.Prove(s.ctx, candidate)
+	if err != nil {
+		if nativeProofOutcome(err) == string(outcomeOwnTaskRejected) && s.ctx.Err() == nil {
+			s.rejectOwnTask(loc)
+		}
+		r.settle(candidate)
+		return
+	}
+	if !validCandidate(proven, proven.Source, s.adapter.Agent(), s.now) {
+		r.settle(candidate)
+		return
+	}
+	r.refuse(proven, loc)
+}
+
+// rejectOwnTask keeps a decisive own-task rejection in the catalog, so the
+// unchanged source is not proven again, and drops its pending retry.
+func (s scan) rejectOwnTask(loc string) {
+	c := s.catalog
+	entry := c.Cache[loc]
+	entry.Observation.Outcome = outcomeOwnTaskRejected
+	c.Cache[loc] = entry
+	kept := c.Retries[:0]
+	for _, pending := range c.Retries {
+		if pending.Locator != loc {
+			kept = append(kept, pending)
+		}
+	}
+	c.Retries = kept
 }
 
 func (s scan) finishCandidate(candidate Candidate, loc, root, generation, ownedRoot string, physical bool, facts sourcefacts.ProjectFacts) (bool, bool) {
@@ -870,16 +961,7 @@ func (s scan) finishCandidate(candidate Candidate, loc, root, generation, ownedR
 			outcome := nativeProofOutcome(err)
 			h.Outcomes[outcome]++
 			if outcome == string(outcomeOwnTaskRejected) && s.ctx.Err() == nil {
-				entry := c.Cache[loc]
-				entry.Observation.Outcome = outcomeOwnTaskRejected
-				c.Cache[loc] = entry
-				kept := c.Retries[:0]
-				for _, pending := range c.Retries {
-					if pending.Locator != loc {
-						kept = append(kept, pending)
-					}
-				}
-				c.Retries = kept
+				s.rejectOwnTask(loc)
 			} else {
 				s.retainRetry(candidate.Source)
 			}
@@ -1011,7 +1093,7 @@ func (s scan) observeDirectories(o Options, deadline time.Time) {
 			unavailable = append(unavailable, d)
 			continue
 		}
-		worker := scan{nativeOnly: s.nativeOnly, inventoryOnly: s.inventoryOnly, proofs: s.proofs, resolver: s.resolver, recovery: s.recovery, store: s.store, cfg: s.cfg, catalog: c, health: h, now: s.now, adapter: s.adapter, ctx: s.ctx, reservedDirectories: len(unavailable), rollouts: o.Rollouts}
+		worker := scan{nativeOnly: s.nativeOnly, inventoryOnly: s.inventoryOnly, proofs: s.proofs, resolver: s.resolver, recovery: s.recovery, store: s.store, cfg: s.cfg, catalog: c, health: h, now: s.now, adapter: s.adapter, ctx: s.ctx, reservedDirectories: len(unavailable), rollouts: o.Rollouts, refused: s.refused}
 		advanced := true
 		for _, source := range batch.Entries {
 			if scanStopped(s.ctx, o) || time.Now().After(deadline) {

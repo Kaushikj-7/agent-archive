@@ -79,6 +79,9 @@ Also found on this computer: Claude Code and Cursor.
   · All adds or re-enables 1 projects; review the expanded capture scope before saving.
 
 Step 2 of 3 · Connect storage
+
+Storage · Account
+Account → Storage → Verification
 Current storage: s3 / team-archive
 
 ? Keep your current storage?
@@ -91,8 +94,12 @@ Current storage: s3 / team-archive
 ✓ Keep current storage
 
 
+Storage · Verification
+Account → Storage → Verification
 Checking your storage connection…
 ✓ Connected to your storage.
+  ! Bucket privacy not verified: public-access settings could not be read.
+    Make sure public access is off: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
 
 Step 3 of 3 · Review your changes
 * Apps      Codex 0.121.0 · Claude Code 2.1.90 · Cursor 3.21.13

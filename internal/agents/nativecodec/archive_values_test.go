@@ -169,6 +169,8 @@ var TruncateUTF8 = archive.TruncateUTF8
 
 var FitHandoff = archive.FitHandoff
 
+var CutHandoffMarkdown = archive.CutHandoffMarkdown
+
 var BuildHandoffWithAnalysis = archive.BuildHandoffWithAnalysis
 
 type HandoffRenderOptions = archive.HandoffRenderOptions

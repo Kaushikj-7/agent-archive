@@ -55,6 +55,31 @@ func TestHandoffGolden(t *testing.T) {
 	}
 }
 
+// A session already under the limit is fitted to exactly its golden
+// rendering: no step runs and nothing is cut.
+func TestHandoffGoldenUnderTheLimitIsUnchanged(t *testing.T) {
+	t.Parallel()
+	for _, harness := range []string{"claude", "codex", "cursor"} {
+		h, err := BuildHandoff(handoffBundle(t, harness), nil, HandoffOptions{Source: "local"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		render := func(h Handoff) []byte { return RenderHandoffMarkdown(h, HandoffRenderOptions{Preamble: true}) }
+		fit, ok := FitHandoff(h, DefaultHandoffMaxBytes, func(h Handoff) int { return len(render(h)) })
+		if !ok || len(fit.Elisions) != 0 {
+			t.Fatalf("%s: fits=%v elisions=%v", harness, ok, fit.Elisions)
+		}
+		got := CutHandoffMarkdown(render(fit), fit, DefaultHandoffMaxBytes)
+		want, err := os.ReadFile(filepath.Join("..", "..", "archive", "testdata", "handoff", harness+".md"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(got, want) {
+			t.Fatalf("%s: fitted rendering differs from the golden", harness)
+		}
+	}
+}
+
 func TestHandoffClaudeContent(t *testing.T) {
 	t.Parallel()
 	h, err := BuildHandoff(handoffBundle(t, "claude"), nil, HandoffOptions{Source: "local"})
