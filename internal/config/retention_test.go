@@ -84,3 +84,34 @@ func TestRetentionRejectsNullInsteadOfDefaulting(t *testing.T) {
 		}
 	}
 }
+
+func TestForeverAndStagingFencesKeepDiscoveryFloorValidation(t *testing.T) {
+	for _, staging := range []bool{false, true} {
+		cfg, _ := discoveryConfig(t)
+		cfg.RetentionDays, cfg.RetentionProtection, cfg.ImportStagingProtection = 0, true, staging
+		raw, err := json.Marshal(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var valid Config
+		if err := json.Unmarshal(raw, &valid); err != nil {
+			t.Fatal(err)
+		}
+		// A dominating fence must not turn the lower discovery authorization
+		// into a legacy floor migration and reopen admissions from the past.
+		var wire map[string]any
+		if err := json.Unmarshal(raw, &wire); err != nil {
+			t.Fatal(err)
+		}
+		auth := wire["discovery"].(map[string]any)["authorizations"].([]any)[0].(map[string]any)
+		delete(auth, "native_start_floor")
+		corrupt, err := json.Marshal(wire)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var rejected Config
+		if err := json.Unmarshal(corrupt, &rejected); err == nil {
+			t.Fatalf("staging=%v: fence discarded discovery floor validation", staging)
+		}
+	}
+}

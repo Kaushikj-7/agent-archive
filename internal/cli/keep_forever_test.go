@@ -3,7 +3,12 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/pairing"
+	"github.com/wangjohn/agent-archive/internal/scheduler"
+	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 	"strings"
 	"testing"
 	"time"
@@ -104,5 +109,52 @@ func TestKeepForeverConflictsFailBeforeReadingPairingOrConfig(t *testing.T) {
 		if code := Run(args, &unreadInput{}, &out, &out, env); code != 2 {
 			t.Fatalf("%v: code %d %s", args, code, &out)
 		}
+	}
+}
+
+func TestPairingForeverFencedBeforeCollectorAndSurvivesRetry(t *testing.T) {
+	for _, provider := range []string{"s3", "r2"} {
+		t.Run(provider, func(t *testing.T) {
+			now := time.Now().UTC()
+			home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
+			env := setupTestEnv(t, home, userHome, newFakeKeychain(), now)
+			env.DetectHarnesses = func(string) []string { return []string{"claude"} }
+			env.AWSProfiles = func() ([]AWSProfile, error) { return []AWSProfile{{Name: "synthetic", Region: "us-east-1"}}, nil }
+			bucket := storagetest.NewMemoryStore()
+			env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return bucket, nil }
+			payload := pairing.Payload{Version: 1, PairingID: strings.Repeat("1", 32), RecipientID: strings.Repeat("2", 32), IssuerID: strings.Repeat("3", 32), IssuerName: "studio", Name: "laptop", CreatedAt: now, ExpiresAt: now.Add(time.Hour), Apps: []string{"claude"}, RetentionDays: 0, SkillEvidence: "metadata", Storage: pairing.Storage{Provider: "s3", Bucket: "synthetic", AWSProfile: "synthetic", Region: "us-east-1"}}
+			if provider == "r2" {
+				payload.Storage = pairing.Storage{Provider: "r2", Bucket: "synthetic", R2Account: strings.Repeat("a", 32), Region: "auto"}
+				payload.AccessKeyID = "SYNTHETIC"
+				payload.SecretAccessKey = "synthetic-secret"
+			}
+			code, err := pairing.NewCode()
+			must(t, err)
+			bundle, err := pairing.Seal(payload, code)
+			must(t, err)
+			env.LookupEnv = func(key string) (string, bool) { return code, key == "AGENT_ARCHIVE_PAIRING_CODE" }
+			fail := true
+			fakeSched(env).beforeLoad = func(scheduler.Ref) error {
+				cfg := mustLoadConfig(t, home)
+				if cfg.RetentionDays != 0 || !cfg.RetentionProtection || cfg.SchemaVersion < 8 {
+					t.Fatalf("collector started before forever fence: %+v", cfg)
+				}
+				if fail {
+					return errors.New("synthetic start failure")
+				}
+				return nil
+			}
+			args := []string{"--pair-file", "-", "--yes", "--project", project}
+			setupYes(t, env, bundle, 1, args...)
+			if _, found, err := config.Load(home); err != nil || found {
+				t.Fatalf("failed fresh pairing left active config: %v %v", found, err)
+			}
+			fail = false
+			setupYes(t, env, bundle, 0, args...)
+			cfg := mustLoadConfig(t, home)
+			if cfg.RetentionDays != 0 || !cfg.RetentionProtection {
+				t.Fatalf("retry lost forever: %+v", cfg)
+			}
+		})
 	}
 }
