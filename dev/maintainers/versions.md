@@ -161,3 +161,12 @@ filter 15 or earlier source retained, so a leading open-page wrapper is neither
 a prompt nor the title, and the title falls through to the next real prompt.
 The bump makes existing sessions refresh their metadata from the retained
 source without a new source upload. Filter, adapter and other parsers are unchanged.
+
+Confirmed import staging uses the incompatible configuration fence
+`{version: 9, writer: import-staging-v9}` and sticky
+`import_staging_protection`. It dominates retention's version 8 fence while
+preserving retention protection and every underlying authorization floor.
+Only staging-aware writers accept version 9: the earlier retention-only writer
+refuses it before mutation because it cannot preserve the registration's staged
+source digest. This adds private admission/publication journal fields; published
+source, metadata, filter and adapter versions remain unchanged.

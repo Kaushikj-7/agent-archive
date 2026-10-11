@@ -73,13 +73,10 @@ func underlyingSkillEvidence(mode SkillEvidence) SkillEvidence {
 }
 
 func prepareDiscoveryConfig(c *Config) error {
-	if c.ImportStagingProtection {
-		return errors.New("import staging protection requires a newer agent-archive writer")
-	}
 	if err := ValidateRetentionDays(c.RetentionDays); err != nil {
 		return err
 	}
-	if (c.SchemaVersion > 5 && c.SchemaVersion != 7 && c.SchemaVersion != 8) || (c.SchemaVersion == 8 && !c.RetentionProtection) || (c.SchemaVersion == 7 && !c.DurableStorageProtection) || (c.SchemaVersion == 5 && !c.CodexHistoryProtection) || (c.SchemaVersion == 4 && !c.GenerationProtection) || (c.SchemaVersion == 3 && c.CodexCapture == nil) {
+	if (c.SchemaVersion > 5 && c.SchemaVersion != 7 && c.SchemaVersion != 8 && c.SchemaVersion != 9) || (c.SchemaVersion == 9 && !c.ImportStagingProtection) || (c.SchemaVersion == 8 && !c.RetentionProtection) || (c.SchemaVersion == 7 && !c.DurableStorageProtection) || (c.SchemaVersion == 5 && !c.CodexHistoryProtection) || (c.SchemaVersion == 4 && !c.GenerationProtection) || (c.SchemaVersion == 3 && c.CodexCapture == nil) {
 		return errors.New("configuration requires a newer agent-archive writer")
 	}
 	if c.Discovery != nil {
@@ -117,12 +114,17 @@ func prepareDiscoveryConfig(c *Config) error {
 	if c.RetentionProtection {
 		c.SchemaVersion = 8
 	}
+	if c.ImportStagingProtection {
+		c.SchemaVersion = 9
+	}
 	return validateDiscoveryConfig(*c)
 }
 
 func validateDiscoveryConfig(c Config) error {
-	if c.ImportStagingProtection || c.SchemaVersion > 8 {
-		return errors.New("configuration requires a newer agent-archive writer")
+	var err error
+	c, err = peelImportStagingProtection(c)
+	if err != nil {
+		return err
 	}
 	if c.RetentionProtection {
 		if c.SchemaVersion != 8 {
@@ -495,4 +497,39 @@ func validateDiscoveryPayload(d *DiscoveryConfig) error {
 		}
 	}
 	return nil
+}
+
+// peelImportStagingProtection validates the capability before checking every
+// underlying policy floor. Staging does not grant legacy permission migration.
+func peelImportStagingProtection(c Config) (Config, error) {
+	if c.SchemaVersion > 9 || (c.SchemaVersion == 9 && !c.ImportStagingProtection) {
+		return c, errors.New("configuration requires a newer agent-archive writer")
+	}
+	if !c.ImportStagingProtection {
+		return c, nil
+	}
+	if c.SchemaVersion != 9 {
+		return c, errors.New("import staging protection requires schema 9")
+	}
+	c.ImportStagingProtection = false
+	c.SchemaVersion = 1
+	if c.Discovery != nil {
+		c.SchemaVersion = 2
+	}
+	if c.CodexCapture != nil {
+		c.SchemaVersion = 3
+	}
+	if c.GenerationProtection {
+		c.SchemaVersion = 4
+	}
+	if c.CodexHistoryProtection {
+		c.SchemaVersion = 5
+	}
+	if c.DurableStorageProtection {
+		c.SchemaVersion = 7
+	}
+	if c.RetentionProtection {
+		c.SchemaVersion = 8
+	}
+	return c, nil
 }

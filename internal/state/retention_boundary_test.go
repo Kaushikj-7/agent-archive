@@ -12,7 +12,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
-func TestRetentionWriterRefusesStagingBeforeHookObservation(t *testing.T) {
+func TestStagingWriterRefusesFutureCapabilityBeforeHookObservation(t *testing.T) {
 	s := newTestStore(t)
 	if err := config.Save(s.Home(), config.Config{RetentionDays: 90}); err != nil {
 		t.Fatal(err)
@@ -46,7 +46,7 @@ func TestRetentionWriterRefusesStagingBeforeHookObservation(t *testing.T) {
 	if err := json.Unmarshal(raw, &fields); err != nil {
 		t.Fatal(err)
 	}
-	fields["schema_version"] = map[string]any{"version": 9, "writer": "import-staging-v9"}
+	fields["schema_version"] = map[string]any{"version": 10, "writer": "future-staging-v10"}
 	fields["import_staging_protection"] = true
 	if err := local.Write(configPath, fields); err != nil {
 		t.Fatal(err)

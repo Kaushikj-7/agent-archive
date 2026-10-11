@@ -119,14 +119,11 @@ func TestForeverFenceKeepsDiscoveryFloorValidation(t *testing.T) {
 	}
 }
 
-func TestRetentionWriterRejectsStagingCapability(t *testing.T) {
-	for _, raw := range []string{`{"schema_version":{"version":9,"writer":"import-staging-v9"},"import_staging_protection":true,"retention_days":0,"retention_protection":true}`, `{"schema_version":1,"import_staging_protection":true,"retention_days":90}`, `{"schema_version":9,"retention_days":90}`} {
+func TestStagingWriterRejectsMissingOrFutureCapability(t *testing.T) {
+	for _, raw := range []string{`{"schema_version":{"version":10,"writer":"future-v10"},"import_staging_protection":true,"retention_days":0,"retention_protection":true}`, `{"schema_version":1,"import_staging_protection":true,"retention_days":90}`, `{"schema_version":9,"retention_days":90}`} {
 		var cfg Config
 		if err := json.Unmarshal([]byte(raw), &cfg); err == nil {
 			t.Fatalf("accepted unsupported staging configuration: %s", raw)
 		}
-	}
-	if _, err := json.Marshal(Config{RetentionDays: 90, ImportStagingProtection: true}); err == nil {
-		t.Fatal("emitted staging capability without implementation")
 	}
 }
