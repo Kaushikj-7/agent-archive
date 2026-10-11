@@ -148,6 +148,9 @@ func TestStagedEvidenceRefusesRetentionOnlyWriterBeforeMutation(t *testing.T) {
 	if _, _, code := f.importRun(t, nil, false, "--yes", "--background", "--harness", "claude"); code != 1 {
 		t.Fatalf("crash exit %d", code)
 	}
+	if err := os.RemoveAll(filepath.Join(f.userHome, ".claude")); err != nil {
+		t.Fatal(err)
+	}
 	before := snapshotTree(t, f.data)
 	for _, args := range [][]string{{"status"}, {"sync"}, {"_collect"}, {"setup", "--refresh"}} {
 		cmd := exec.CommandContext(t.Context(), binary, args...)
