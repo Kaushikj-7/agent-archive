@@ -28,6 +28,25 @@ storage prompt for a link to the [bucket guide](bucket.md). Setup asks questions
 stops before asking anything and changes nothing. Its prompt sequence is not
 a scripting API; to script it, use [`setup --yes`](#set-up-without-questions).
 
+### Interrupted storage creation
+
+If setup stops after requesting a bucket, rerun `agent-archive setup`. Private
+resource receipts survive draft changes and record whether creation was confirmed
+or its outcome remains unknown. Setup offers to connect the bucket as existing
+storage, choose other storage, or inspect resource details. Connecting still asks
+for credentials and verifies access; it does not establish ownership.
+
+An unknown creation is never retried for the same bucket automatically. Inspect
+the named account and bucket in the provider console. S3 receipts record the
+creation profile, which can change accounts; a profile name is not ownership proof.
+Bucket cleanup instructions remain pending because setup cannot verify ownership
+or manual deletion. Check bucket contents and other machines before deleting it.
+
+Unused guided R2 keys can be explicitly revoked after confirmation, using a fresh
+management token. Setup verifies exact provider key lineage and permissions before
+deleting, protects active and saved-draft credentials, and retains unsuccessful
+cleanup for retry. Bootstrap and management tokens are not stored in receipts.
+
 Setup groups each question, explanation, choices and shortcuts together. On a
 supported terminal, the answered question becomes a short receipt. Yes/No receipts
 retain the question subject so completed decisions remain identifiable.

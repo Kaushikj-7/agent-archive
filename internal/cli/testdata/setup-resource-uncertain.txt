@@ -1,0 +1,15 @@
+
+Setup paused · Storage resources
+Bucket agent-archive-example · s3
+  ! Creation outcome unknown. The bucket may exist; setup will not retry its creation.
+
+? What would you like to do?
+
+  1) Connect this as an existing bucket (default)
+  2) Choose other storage
+  3) Resource details and cleanup
+  4) Stop; keep saved progress
+
+> Choose [1]:
+OK Connect this as an existing bucket
+
