@@ -104,6 +104,21 @@ func (f registeredLegacyInput) Check() error {
 // wrapped ordinary input still checks its exact prefix and real lookup token.
 type legacyOrdinarySnapshot struct{ agentapi.SourceSnapshot }
 
+// RelocatedFrom reports the rollout this snapshot read when the lookup found
+// the registered rollout renamed: the same physical rollout ID and thread,
+// at another locator the source pass opened under its confinement policy.
+func (s legacyOrdinarySnapshot) RelocatedFrom(registered agentapi.SourceRef) (agentapi.SourceRef, bool) {
+	ordinary, ok := s.SourceSnapshot.(*ordinarySnapshot)
+	if !ok || ordinary.source == nil {
+		return agentapi.SourceRef{}, false
+	}
+	read := ordinary.source.ref
+	id := ordinary.source.identity
+	rollout := codexmeta.RolloutID(registered.Path)
+	moved := read.Path != registered.Path && rollout != "" && id.RolloutID == rollout && id.ThreadID == registered.Key
+	return read, moved
+}
+
 func (s legacyOrdinarySnapshot) ValidateAdmission(ctx context.Context, a agentapi.SourceAdmission) error {
 	if a.Binding != nil || !a.NativeCreatedAt.IsZero() {
 		return sourceFailure(agentapi.Unavailable, "legacy compatibility requires unbound admission")

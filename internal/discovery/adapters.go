@@ -58,6 +58,7 @@ const (
 	outcomeOwnTaskRejected Outcome = "own_task_rejected"
 	outcomeIncomplete      Outcome = "incomplete_metadata"
 	outcomeRelatedHistory  Outcome = Outcome(codexmeta.RelatedHistoryPending)
+	outcomeUnsupportedExec Outcome = Outcome(codexmeta.UnsupportedExecution)
 	outcomeUnavailable     Outcome = "source_unavailable"
 	outcomeChanged         Outcome = "source_changed"
 )

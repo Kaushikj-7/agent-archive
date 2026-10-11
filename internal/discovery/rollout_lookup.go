@@ -108,6 +108,7 @@ func NewCodexRolloutLookup(ctx context.Context, store *state.Store, homes []stri
 		lookup.coverage = newCoverage(roots)
 	}
 	lookup.coverage.reserveFacts = lookup.reserveCatalog
+	prior.reclassify()
 	for path, entry := range prior.Cache {
 		root := lookup.homeFor(path)
 		if root == "" || entry.Observation.Identity == nil {
@@ -409,6 +410,9 @@ func (l *CodexRolloutLookup) thread(ctx context.Context, id string, native bool)
 		if l.homeFor(path) != root {
 			return agentapi.CodexRolloutSet{}, agentapi.Wrap(agentapi.Unsafe, errors.New("current locator belongs to another native home"))
 		}
+		if currentLocatorMissing(path) {
+			continue
+		}
 		ref, err := l.inspect(ctx, path, id)
 		if err != nil {
 			return agentapi.CodexRolloutSet{}, err
@@ -605,6 +609,9 @@ func (l *CodexRolloutLookup) Check(ctx context.Context, id, revision string) err
 		if l.homeFor(path) != root {
 			return agentapi.Wrap(agentapi.Unsafe, errIndexChanged)
 		}
+		if currentLocatorMissing(path) {
+			continue
+		}
 		if current != nil && current.Path != ref.Path {
 			return agentapi.Wrap(agentapi.Changed, errIndexChanged)
 		}
@@ -729,6 +736,17 @@ func openPrivateCurrent(path string) (*sql.DB, error) {
 		db.SetMaxOpenConns(1)
 	}
 	return db, err
+}
+
+// currentLocatorMissing reports a current row naming a rollout that is no
+// longer there: Codex renamed it into archived_sessions/ (or back) without
+// updating its thread index yet, or the row outlived the file. Such a row is
+// no evidence of where the thread is now, so it is passed over like an absent
+// row, and the thread's candidates, found by its ID, locate the rollout
+// instead. Callers confine path to its native home first.
+func currentLocatorMissing(path string) bool {
+	_, err := os.Lstat(path)
+	return errors.Is(err, os.ErrNotExist)
 }
 
 func currentLocator(ctx context.Context, db *sql.DB, id string) (string, bool, error) {
