@@ -152,6 +152,10 @@ type Env struct {
 	// would wait for collector.lock (backfillCollectorWait for backfill,
 	// setupImportCollectorWait for setup) and returns the wait to use.
 	importCollectorWait func(wait time.Duration) time.Duration
+	// projectMatchTimeout, set only by tests, replaces matchProjects'
+	// deadline (projectMatchDeadline), so a test of what the matcher finds
+	// does not race the clock on a loaded machine.
+	projectMatchTimeout time.Duration
 	// exitOnSignal, set only by tests, stands in for exitOnSignal (the
 	// function) when a signal stops backfill at once.
 	exitOnSignal func(os.Signal)
