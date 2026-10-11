@@ -53,7 +53,7 @@ corrects existing claims, and preserves outstanding live release gates.
 | D/E | Retention policy, setup, pairing, backfill and undo | Implementation in progress; independent review pending. |
 | F | Preserved-revision inventory and selection | Implementation in progress; independent review pending. |
 | G | Durable import admission and recovery | Implementation in progress; independent review pending. |
-| H | Documentation corrections and acceptance record | Implementation in progress; independent review pending. |
+| H | [Documentation corrections #426](https://github.com/wangjohn/agent-archive/pull/426) | Draft implementation; independent review and release acceptance pending. |
 
 Resolved implementation contracts:
 
