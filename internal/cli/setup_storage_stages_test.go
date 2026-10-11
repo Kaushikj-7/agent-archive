@@ -66,7 +66,7 @@ func TestWrongRegionCorrectionRestoresStorageStage(t *testing.T) {
 func TestS3CreationProfileRetryRestoresStorageBeforeRegion(t *testing.T) {
 	sequentialNames(t)
 	creator := &fakeCreator{create: []error{errCreateDenied}}
-	env := createEnv("us-east-1", creator, fakeBuckets{}, nil)
+	env := createEnv(t, "us-east-1", creator, fakeBuckets{}, nil)
 	env.AWSProfiles = func() ([]AWSProfile, error) {
 		return []AWSProfile{{Name: "work", Region: "us-east-1"}, {Name: "other"}}, nil
 	}
@@ -86,7 +86,7 @@ func TestS3CreationPrivacyCheckUsesVerificationStage(t *testing.T) {
 	sequentialNames(t)
 	cfg := credentials.Config{AWSProfile: "work"}
 	var out bytes.Buffer
-	_, made, err := createS3Bucket(newPrompter(strings.NewReader("\n"), &out), &cfg, createEnv("us-east-1", &fakeCreator{privacy: verifiedPrivate}, fakeBuckets{}, nil), "us-east-1", false)
+	_, made, err := createS3Bucket(newPrompter(strings.NewReader("\n"), &out), &cfg, createEnv(t, "us-east-1", &fakeCreator{privacy: verifiedPrivate}, fakeBuckets{}, nil), "us-east-1", false)
 	if err != nil || !made {
 		t.Fatalf("made=%v err=%v output:\n%s", made, err, &out)
 	}

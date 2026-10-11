@@ -27,6 +27,9 @@ follow [Semantic Versioning](https://semver.org/).
 - Clarify storage onboarding with Account, Storage, and Verification stages.
   Keep valid existing-bucket answers when going back, show S3 archive
   permissions on request, and report privacy separately from connectivity.
+- Preserve private, durable bucket creation receipts across interrupted setup and
+  abandoned drafts, including uncertain provider outcomes. Archive keys continue
+  to use the existing issuance ledger.
 
 - Stop titling Codex desktop sessions with injected open-page context such as
   `<external_codex_apps_open_page>{"page_id":null}</external_codex_apps_open_page>`.

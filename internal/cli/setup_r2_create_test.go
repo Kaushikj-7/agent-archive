@@ -26,6 +26,8 @@ import (
 	"github.com/wangjohn/agent-archive/internal/cloudflare/cloudflaretest"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
+	"github.com/wangjohn/agent-archive/internal/issuance"
+	"github.com/wangjohn/agent-archive/internal/setupresources"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
@@ -206,6 +208,14 @@ func TestGuidedR2CreatesBucketAndScopedKey(t *testing.T) {
 	t.Parallel()
 	g := newGuidedR2Fixture(t)
 	out := g.run(t, g.happy(), 0)
+	home, homeErr := g.env.readHome()
+	if homeErr != nil {
+		t.Fatal(homeErr)
+	}
+	receipts, receiptErr := setupresources.List(home)
+	if receiptErr != nil || len(receipts) != 1 || receipts[0].State != setupresources.Created {
+		t.Fatalf("bucket receipt missing: %v %v", receipts, receiptErr)
+	}
 	if !setupContainsText(out, "Using Cloudflare account: Test account ("+cloudflaretest.AccountID+")") {
 		t.Fatalf("account was not selected automatically:\n%s", out)
 	}
@@ -1667,6 +1677,17 @@ func TestGuidedR2TokenAnswerWithoutAValueIsRevokedByID(t *testing.T) {
 	if len(deleted) != 1 || !strings.HasSuffix(deleted[0], "/tokens/abc123") || !setupContainsText(out, "Cloudflare says that token doesn't exist.") || !setupContainsText(out, `named "`) {
 		t.Fatalf("deleted %v\n%s", deleted, out)
 	}
+	// An invalid returned identifier cannot overwrite the durable creation
+	// intent, even though best-effort provider cleanup still runs.
+	home, err := g.env.readHome()
+	if err != nil {
+		t.Fatal(err)
+	}
+	slots, err := issuance.List(home)
+	if err != nil || len(slots) != 1 || slots[0].State != issuance.CreationIntent {
+		t.Fatalf("lost creation evidence: %v %v", slots, err)
+	}
+
 }
 
 // Guided creation works through the explicit shortcut without environment switches.
