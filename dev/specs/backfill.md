@@ -1286,7 +1286,10 @@ of an app's roots with the name of one already there (a Codex rollout copied
 to `archived_sessions`) is judged by its own header rather than hidden behind
 the copy discovery prefers; it can only add evidence. Another spelling of an
 observed transcript (a symlinked store) is told by file identity against the
-observed transcripts of the same name. Each
+observed transcripts of the same name. A listed store that is a symlink
+(`archived_sessions` or `projects` linked to another disk) is also stamped
+through the link, before it is listed: the link's own stamp does not move when
+the folder it names gains entries. Each
 added transcript is judged by the root its folder resolves to, with committed
 configuration only:
 

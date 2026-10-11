@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -224,5 +225,73 @@ func TestAddedSourcesKnowOtherSpellingsOfObservedFiles(t *testing.T) {
 	copied := tr.write(filepath.Join("home", "copy", filepath.Base(file)), string(body))
 	if !inv.known(file) || !inv.known(filepath.Join(link, filepath.Base(file))) || inv.known(copied) || inv.known(filepath.Join(link, "missing.jsonl")) {
 		t.Fatal("known did not tell observed transcripts by file identity")
+	}
+}
+
+// A store reached through a symlink (archived_sessions or projects linked to
+// another disk) gains entries without its link moving: the directory the link
+// names is stamped too, so an addition there is found, alone or beside
+// another addition.
+func TestAddedSourcesInSymlinkedStores(t *testing.T) {
+	const knownID, addedID = "00000000-0000-0000-0000-0000000000c1", "00000000-0000-0000-0000-0000000000c2"
+	for _, tc := range []struct {
+		name  string
+		store string // linked store, under home
+		file  func(id string) string
+	}{
+		{name: "codex archived", store: ".codex/archived_sessions", file: func(id string) string {
+			return "rollout-2026-09-01T10-00-00-" + id + ".jsonl"
+		}},
+		{name: "claude projects", store: ".claude/projects", file: func(id string) string {
+			return filepath.Join("slug-"+id, id+".jsonl")
+		}},
+	} {
+		for _, beside := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s beside=%v", tc.name, beside), func(t *testing.T) {
+				tr, env, _, _, _ := addedSourcesFixture(t)
+				other := tr.repo("home/other")
+				body := func(id string) string {
+					if strings.HasPrefix(tc.store, ".claude") {
+						return claudeTranscript(id, other, fixedNow)
+					}
+					return codexTranscript(id, id, other, fixedNow)
+				}
+				store := tr.path(filepath.Join("home", tc.store))
+				target := tr.mkdir("elsewhere/store")
+				if entries, err := os.ReadDir(store); err == nil {
+					for _, e := range entries {
+						if err := os.Rename(filepath.Join(store, e.Name()), filepath.Join(target, e.Name())); err != nil {
+							t.Fatal(err)
+						}
+					}
+				}
+				if err := os.RemoveAll(store); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.MkdirAll(filepath.Dir(store), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(target, store); err != nil {
+					t.Fatal(err)
+				}
+				tr.write(filepath.Join("elsewhere", "store", tc.file(knownID)), body(knownID))
+				inv := inventoryBaseline(t, env)
+				want := []string{filepath.Join(store, tc.file(addedID))}
+				tr.write(filepath.Join("elsewhere", "store", tc.file(addedID)), body(addedID))
+				if beside {
+					want = append(want, addedRollout(tr, "00000000-0000-0000-0000-0000000000e1", other, addedOtherURL))
+				}
+				got, ok := inv.added(t.Context())
+				var paths []string
+				for _, c := range got.candidates {
+					paths = append(paths, c.Source.Path)
+				}
+				sort.Strings(paths)
+				sort.Strings(want)
+				if !ok || !reflect.DeepEqual(paths, want) || len(got.incomplete) != 0 {
+					t.Fatalf("added = %v (%+v), %v; want %v", paths, got.incomplete, ok, want)
+				}
+			})
+		}
 	}
 }

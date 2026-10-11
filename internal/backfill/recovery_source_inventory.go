@@ -29,6 +29,10 @@ import (
 type recoverySourceInventory struct {
 	env    Environment
 	stamps map[string]recoveryFileStamp
+	// targets holds, for each listed path that is a symlink (a symlinked
+	// store), the stamp of the directory it names, taken before the listing.
+	// The link's own stamp does not move when the directory gains entries.
+	targets map[string]recoveryFileStamp
 	// appendable names observed regular files whose content belongs to a work
 	// item's own source check.
 	appendable map[string]bool
@@ -52,7 +56,7 @@ type recoverySourceInventory struct {
 const recoverySourceObservationLimit = 65536
 
 func newRecoverySourceInventory(env Environment) *recoverySourceInventory {
-	return &recoverySourceInventory{env: env, stamps: map[string]recoveryFileStamp{}, appendable: map[string]bool{}, names: map[string]map[string]bool{}, complete: true}
+	return &recoverySourceInventory{env: env, stamps: map[string]recoveryFileStamp{}, targets: map[string]recoveryFileStamp{}, appendable: map[string]bool{}, names: map[string]map[string]bool{}, complete: true}
 }
 
 // ownContent hands content changes of an observed transcript to the work item
@@ -88,6 +92,7 @@ func (i *recoverySourceInventory) environment() Environment {
 	env := i.env
 	env.ReadDir = func(path string) ([]fs.DirEntry, error) {
 		i.observe(path)
+		i.observeTarget(path)
 		entries, err := i.env.readDir(path)
 		if err == nil {
 			i.recordNames(path, entries)
@@ -99,6 +104,27 @@ func (i *recoverySourceInventory) environment() Environment {
 		return i.env.lstat(path)
 	}
 	return env
+}
+
+// observeTarget stamps the directory a listed symlink names, before the
+// listing, so entries added to a symlinked store move a stamp.
+func (i *recoverySourceInventory) observeTarget(path string) {
+	stamp, ok := i.stamps[path]
+	if _, done := i.targets[path]; done || !ok || stamp.absent || stamp.info.Mode()&fs.ModeSymlink == 0 {
+		return
+	}
+	if len(i.stamps)+len(i.targets) >= recoverySourceObservationLimit {
+		i.complete = false
+		return
+	}
+	info, err := i.env.stat(path)
+	if os.IsNotExist(err) {
+		i.targets[path] = recoveryFileStamp{absent: true}
+	} else if err != nil {
+		i.complete = false
+	} else {
+		i.targets[path] = recoveryFileStamp{info: info}
+	}
 }
 
 // recordNames keeps a baseline listing's entry names within the observation
@@ -159,6 +185,29 @@ func (i *recoverySourceInventory) compare(ctx context.Context) (grown, ok bool) 
 		}
 		if err == nil {
 			i.renewed[path] = info
+		}
+	}
+	targets := make([]string, 0, len(i.targets))
+	for path := range i.targets {
+		targets = append(targets, path)
+	}
+	sort.Strings(targets)
+	for _, path := range targets {
+		if ctx.Err() != nil {
+			return false, false
+		}
+		// The link itself is the same link (above); the directory it names
+		// is listed again when its stamp moved.
+		before := i.targets[path]
+		info, err := i.env.stat(path)
+		switch {
+		case before.absent && os.IsNotExist(err):
+		case before.absent && err == nil:
+			i.moved = append(i.moved, path)
+		case err != nil || before.absent || !sameRecoveryDirectory(before.info, info):
+			return false, false
+		case !sameRecoveryMember(before.info, info, false):
+			i.moved = append(i.moved, path)
 		}
 	}
 	return len(i.moved) > 0, ctx.Err() == nil
