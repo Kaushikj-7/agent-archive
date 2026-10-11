@@ -355,19 +355,26 @@ func validateImportStageCapacity(ctx context.Context, stage ImportStage) error {
 	if err != nil {
 		return errors.Join(ErrDurableStorageCapacity, err)
 	}
-	largest := int64(0)
-	for _, row := range stage.Bundle.NativeRecords {
-		size, err := jsonwire.Bound(ctx, row, MaxImportStageBytes)
-		if err != nil {
-			return errors.Join(ErrDurableStorageCapacity, err)
+	largest, retained := int64(0), int64(0)
+	for _, bundle := range append([]archive.SourceBundle{stage.Bundle}, stage.Preserved...) {
+		retained += int64(bundle.Capture.Boundary.RetainedBytes)
+		for _, row := range bundle.NativeRecords {
+			size, err := jsonwire.Bound(ctx, row, MaxImportStageBytes)
+			if err != nil {
+				return errors.Join(ErrDurableStorageCapacity, err)
+			}
+			largest = max(largest, size)
 		}
-		largest = max(largest, size)
+		for _, text := range bundle.NativeText {
+			largest = max(largest, int64(len(text.Content)))
+		}
 	}
-	for _, text := range stage.Bundle.NativeText {
-		largest = max(largest, int64(len(text.Content)))
+	scanner := int64(64 << 10)
+	for scanner < largest+1 {
+		scanner *= 2
 	}
-	remaining := (128 << 20) - n - 3*largest - (64 << 10)
-	if int64(stage.Bundle.Capture.Boundary.RetainedBytes) > remaining/2 || remaining <= 0 {
+	remaining := (128 << 20) - n - 3*largest - scanner
+	if retained > remaining/2 || remaining <= 0 {
 		return errors.Join(ErrDurableStorageCapacity, errors.New("selected import evidence exceeds the durable recovery memory allowance"))
 	}
 	return nil
