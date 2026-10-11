@@ -17,6 +17,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/issuance"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/setupresources"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
@@ -758,7 +759,24 @@ func answerLost(err error) bool {
 // made that bucket.
 func (c *r2Creator) createBucket(ctx context.Context) error {
 	p := c.p
-	err := c.api.CreateBucket(ctx, c.account, c.bucket)
+	home, err := c.env.readHome()
+	if err != nil {
+		return err
+	}
+	receipt, err := setupresources.Begin(home, setupresources.Receipt{Provider: setupresources.R2, Account: c.account, Bucket: c.bucket.Name, Jurisdiction: c.bucket.Jurisdiction, CreatedAt: c.env.now()})
+	if err != nil {
+		return err
+	}
+	err = c.api.CreateBucket(ctx, c.account, c.bucket)
+	if err == nil {
+		if receiptErr := setupresources.Finish(home, receipt, setupresources.Created); receiptErr != nil {
+			return receiptErr
+		}
+	} else if !answerLost(err) {
+		if receiptErr := setupresources.Finish(home, receipt, setupresources.Refused); receiptErr != nil {
+			return receiptErr
+		}
+	}
 	if err == nil {
 		c.bucketCreated = true
 		terminal.Println(p.out, p.style.okMark()+" Created bucket "+c.bucket.Name+".")
@@ -885,7 +903,11 @@ func (c *r2Creator) mintKey(ctx context.Context) (token cloudflare.Token, name s
 			slot.State = issuance.Deleted
 			slot.CleanupReason = "creation-refused"
 		}
-		_ = issuance.Save(home, slot)
+		if saveErr := issuance.Save(home, slot); saveErr != nil {
+			// Preserve the failed durability result while still revoking any token
+			// whose identifier came back without a usable secret.
+			err = errors.Join(err, saveErr)
+		}
 	} else {
 		slot.State = issuance.SecretIntent
 		if e = issuance.Save(home, slot); e != nil {

@@ -789,3 +789,16 @@ format of existing sessions. Structural checks cannot prove that an unknown
 future producer preserves all current semantics, and these rules do not claim
 desktop GUI acceptance. See the [format contract](../reference/local-discovery-scanner.md#codex-format-compatibility)
 for supported profiles and limits.
+
+### Interrupted resource creation
+
+Guided storage creation records a private receipt before sending each bucket
+creation request. Receipts survive removing a setup draft. A request without a
+durably recorded response is uncertain: it does not prove that a bucket exists
+or that setup owns it. Check your provider account before retrying or deleting
+such a bucket. S3 receipts identify the creation profile, not a verified AWS
+account identity. R2 archive keys use the existing issuance ledger; receipts and
+ledger records contain identifiers and credential references, never setup tokens
+or credential values. Old drafts remain readable and have no inferred receipts.
+Setup withholds new bucket creation if existing receipts cannot be read or the
+receipt limit is reached; preserve and reconcile that history before retrying.
