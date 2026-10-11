@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -12,6 +13,11 @@ import (
 	"testing"
 	"testing/synctest"
 	"time"
+
+	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/revocation"
+	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
 type failingOutput struct{ short bool }
@@ -216,5 +222,59 @@ func TestAtomicOutputFailurePreservesPreviousFile(t *testing.T) {
 				t.Fatalf("temporary artifacts: %v %v", entries, err)
 			}
 		})
+	}
+}
+
+// stalledCommandStore exposes only the required store port, forcing the reader
+// to use this listing rather than an optional in-memory listing shortcut.
+type stalledCommandStore struct {
+	storage.ObjectStore
+	signals chan os.Signal
+}
+
+func (s stalledCommandStore) List(ctx context.Context, _ string) ([]storage.Object, error) {
+	s.signals <- os.Interrupt
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func TestListInterruptCancelsStalledStore(t *testing.T) {
+	t.Parallel()
+	home, project := t.TempDir(), t.TempDir()
+	now := time.Now()
+	setUpTestConfig(t, home, project, now.Add(-time.Hour))
+	synctest.Test(t, func(t *testing.T) {
+		signals := make(chan os.Signal, 1)
+		env := testEnv(t, home, now)
+		env.Interrupts = func() (<-chan os.Signal, func()) { return signals, func() {} }
+		env.OpenStore = func(config.Config) (storage.ObjectStore, error) {
+			return stalledCommandStore{ObjectStore: storagetest.NewMemoryStore(), signals: signals}, nil
+		}
+		var out, stderr bytes.Buffer
+		if code := runListCommand([]string{"--json", "--all-projects"}, nil, &out, &stderr, env); code != 1 {
+			t.Fatalf("code=%d stderr=%s", code, stderr.String())
+		}
+		if out.Len() != 0 {
+			t.Fatalf("partial successful output=%s", out.String())
+		}
+	})
+}
+
+func TestRevocationJSONOutputChecksDelivery(t *testing.T) {
+	t.Parallel()
+	for _, w := range []io.Writer{failingOutput{}, failingOutput{short: true}} {
+		if err := printRevocation(w, revocation.Journal{}, true); err == nil {
+			t.Fatal("JSON output failure ignored")
+		}
+	}
+}
+
+func TestMachinesUsageBeforeConfiguration(t *testing.T) {
+	t.Parallel()
+	env := testEnv(t, t.TempDir(), time.Now())
+	env.Home = func() (string, error) { t.Fatal("usage read home"); return "", nil }
+	var out, stderr bytes.Buffer
+	if code := runMachinesCommand([]string{"--yes"}, nil, &out, &stderr, env); code != 2 {
+		t.Fatalf("code=%d stderr=%s", code, stderr.String())
 	}
 }

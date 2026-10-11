@@ -2,9 +2,12 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"os"
 	"sync"
+
+	"github.com/wangjohn/agent-archive/internal/archive"
 )
 
 // readCommandContext cancels remote reads when the user interrupts. It has
@@ -35,4 +38,14 @@ func writeOutput(w io.Writer, data []byte) error {
 		return io.ErrShortWrite
 	}
 	return err
+}
+
+// writeCompactJSON preserves machine commands' compact JSON contract, while
+// escaping display controls and checking the entire document was delivered.
+func writeCompactJSON(w io.Writer, value any) error {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	return writeOutput(w, append(archive.DisplayJSON(data), '\n'))
 }

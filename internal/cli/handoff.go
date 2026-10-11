@@ -877,5 +877,11 @@ func pruneHandoffs(home string, now time.Time) {
 // writeHandoffOutput writes the rendered handoff with mode 0600, refusing to
 // replace an existing file unless force is set.
 func writeHandoffOutput(path string, data []byte, force bool) error {
-	return writeStatsHTMLFile(path, data, force)
+	err := writeStatsHTMLFile(path, data, force)
+	// Report the requested destination, rather than a private temporary name.
+	var pathErr *os.PathError
+	if errors.As(err, &pathErr) {
+		return &os.PathError{Op: pathErr.Op, Path: path, Err: pathErr.Err}
+	}
+	return err
 }
