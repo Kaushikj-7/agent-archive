@@ -335,4 +335,13 @@ func TestCutHandoffMarkdownKeepsTheLastOfManyExchanges(t *testing.T) {
 	if !strings.Contains(out, "### 2 · Person") {
 		t.Fatal("the earliest exchanges were not kept before the marker")
 	}
+	// A last exchange over half the budget is cut like everything else.
+	fit.Exchanges[len(fit.Exchanges)-1].Steps[0].Text = strings.Repeat("a long final message\n", 300)
+	rendered = RenderHandoffMarkdown(fit, HandoffRenderOptions{Preamble: true})
+	for _, limit := range []int{4000, 8000, 12000} {
+		out := string(CutHandoffMarkdown(rendered, fit, limit))
+		if len(out) > limit || strings.Contains(out, "### 700 ·") || !strings.Contains(out, "**Cut here:") {
+			t.Fatalf("limit %d: %d bytes", limit, len(out))
+		}
+	}
 }
