@@ -589,11 +589,8 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		terminal.Println(stderr, "agent-archive: show: --normalized is deprecated; use --transcript --json")
 		*transcript, *jsonOut = true, true
 	}
-	if (*revisions || *revision != "") && sessionID == "" {
-		return fs.usageError("--revisions and --revision need a SESSION_ID")
-	}
-	if *revisions && (*revision != "" || *transcript || *full || *normalized) {
-		return fs.usageError("--revisions cannot be combined with --revision or transcript flags")
+	if code := checkShowRevisionFlags(fs, sessionID, *revision, *revisions, *transcript, *full, *normalized); code != 0 {
+		return code
 	}
 	if *full && !*transcript {
 		return fs.usageError("--full needs --transcript")
@@ -649,31 +646,14 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	}
 
 	if *revisions {
-		metadata, err := reader.ReadMetadata(ctx, store, key)
-		stopShow()
-		if err != nil {
-			terminal.Printf(stderr, "agent-archive: show: %v\n", err)
-			return 1
-		}
-		if actual, err := archive.MetadataObjectKey(metadata.Harness.Name, metadata.SessionID); err != nil || actual != key {
-			terminal.Println(stderr, "agent-archive: show: revision parent does not match requested identity")
-			return 1
-		}
-		return printRevisionInventory(stdout, stderr, metadata, *jsonOut)
+		return readRevisionInventory(ctx, store, key, stdout, stderr, *jsonOut, stopShow)
 	}
 	if !*transcript {
-		metadata, err := reader.ReadMetadata(ctx, store, key)
-		if *revision != "" {
-			metadata, _, err = loadArchiveSelection(ctx, store, key, *revision, parsersFor(env))
-		}
+		view, err := loadShowSummarySelection(ctx, store, key, *revision, parsersFor(env))
 		if err != nil {
 			stopShow()
 			terminal.Printf(stderr, "agent-archive: show: %v\n", err)
 			return 1
-		}
-		view := metadataWithLinks(ctx, store, metadata)
-		if *revision != "" {
-			view = sessionView{Metadata: metadata, SelectedRevisionID: *revision}
 		}
 		stopShow()
 		if *jsonOut {

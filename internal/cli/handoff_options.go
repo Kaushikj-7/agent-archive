@@ -90,6 +90,9 @@ func parseHandoffOptions(args []string, stderr io.Writer, env handoffOptionsDepe
 	if !ok {
 		return handoffOptions{}, false
 	}
+	if checkNonemptyRevisionFlag(fs, *revision) != 0 {
+		return handoffOptions{}, false
+	}
 	opts := handoffOptions{revision: *revision, sessionID: sessionID, project: *project, allProjects: *allProjects, harness: *harness,
 		file: *file, source: *source, maxBytes: *maxBytes, format: *format, to: *to,
 		output: *output, latest: *latest, force: *force, noPreamble: *noPreamble, here: *here, newWindow: *newWindow, agentArgs: agentArgs,
@@ -137,7 +140,7 @@ func validateHandoffFlagCombinations(opts handoffOptions, interactive bool) stri
 		}
 	}
 	switch {
-	case opts.revision != "" && (opts.sessionID == "" || opts.latest || opts.file != "" || opts.source != "archive"):
+	case invalidHandoffRevisionSelection(opts):
 		return "--revision requires SESSION_ID and --source archive; it cannot read latest or local transcripts"
 	// An argument of only spaces names nothing, and must not stand for the
 	// no selector that lets --to take the calling agent's own session.
@@ -230,4 +233,8 @@ func (e Env) loadHandoffConfig(home string) (config.Config, bool, error) {
 		return e.handoffConfigLoad(home)
 	}
 	return config.LoadWithCatalog(home, e.agentRegistry().Catalog())
+}
+
+func invalidHandoffRevisionSelection(opts handoffOptions) bool {
+	return opts.revision != "" && (opts.sessionID == "" || opts.latest || opts.file != "" || opts.source != "archive")
 }

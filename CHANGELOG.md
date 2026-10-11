@@ -38,6 +38,13 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- List retained native revision IDs with `show SESSION_ID --revisions`, including
+  capture times and recorded provenance in human or JSON output. Select one exact
+  parent revision with `--revision` in show, archive-only handoff, or a single
+  full-detail eval export. Selected summaries and provenance come from verified
+  retained evidence; unknown IDs and invalid history fail without an active
+  fallback. Selection excludes children, and retained history remains bounded.
+
 - Capture native Codex children without a stop hook or archived parent. Children
   keep their own identity, creation, task evidence, consent and activity. Historical
   imports validate the same native source facts; nested children belong to the new

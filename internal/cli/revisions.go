@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"io"
 
@@ -9,6 +10,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
 // loadArchiveSelection preserves the active read path. Explicit revision reads
@@ -79,4 +81,52 @@ func currentRevisionParser(parsers agentapi.ParsersLookup, bundle archive.Source
 		return archive.ParserInfo{}
 	}
 	return archive.ParserInfo{Name: bundle.Capture.Harness.Name, Version: parser.Version()}
+}
+
+func checkShowRevisionFlags(fs *commandFlags, sessionID, revision string, revisions, transcript, full, normalized bool) int {
+	if code := checkNonemptyRevisionFlag(fs, revision); code != 0 {
+		return code
+	}
+	if (revisions || revision != "") && sessionID == "" {
+		return fs.usageError("--revisions and --revision need a SESSION_ID")
+	}
+	if revisions && (revision != "" || transcript || full || normalized) {
+		return fs.usageError("--revisions cannot be combined with --revision or transcript flags")
+	}
+	return 0
+}
+
+func readRevisionInventory(ctx context.Context, store storage.ObjectStore, key string, stdout, stderr io.Writer, jsonOut bool, stopShow func()) int {
+	metadata, err := reader.ReadMetadata(ctx, store, key)
+	stopShow()
+	if err != nil {
+		terminal.Printf(stderr, "agent-archive: show: %v\n", err)
+		return 1
+	}
+	if actual, err := archive.MetadataObjectKey(metadata.Harness.Name, metadata.SessionID); err != nil || actual != key {
+		terminal.Println(stderr, "agent-archive: show: revision parent does not match requested identity")
+		return 1
+	}
+	return printRevisionInventory(stdout, stderr, metadata, jsonOut)
+}
+
+func loadShowSummarySelection(ctx context.Context, store storage.ObjectStore, key, revision string, parsers agentapi.ParsersLookup) (sessionView, error) {
+	if revision != "" {
+		metadata, _, err := loadArchiveSelection(ctx, store, key, revision, parsers)
+		return sessionView{Metadata: metadata, SelectedRevisionID: revision}, err
+	}
+	metadata, err := reader.ReadMetadata(ctx, store, key)
+	if err != nil {
+		return sessionView{}, err
+	}
+	return metadataWithLinks(ctx, store, metadata), nil
+}
+
+func checkNonemptyRevisionFlag(fs *commandFlags, revision string) int {
+	given := false
+	fs.Visit(func(f *flag.Flag) { given = given || f.Name == "revision" })
+	if given && revision == "" {
+		return fs.usageError("--revision needs a nonempty revision ID (see show SESSION_ID --revisions)")
+	}
+	return 0
 }

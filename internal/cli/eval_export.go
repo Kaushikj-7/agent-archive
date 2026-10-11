@@ -205,11 +205,8 @@ func evalExportOptionsFromArgs(args []string, stderr io.Writer, env Env) (evalEx
 	}
 	opts.harness = canonical
 	opts.detail = archive.EvalExportDetail(*detail)
-	if opts.detail != archive.EvalExportDetailMetadata && opts.detail != archive.EvalExportDetailFull {
-		return evalExportOptions{}, fs.usageError("--detail must be metadata or full, not %q", *detail)
-	}
-	if opts.revision != "" && (len(ids) != 1 || !isArchiveSessionID(ids[0]) || opts.idsFrom || opts.file != "" || opts.scan || opts.detail != archive.EvalExportDetailFull) {
-		return evalExportOptions{}, fs.usageError("--revision requires one archive SESSION_ID and --detail full; batch and local inputs are unsupported")
+	if code := validateEvalRevisionDetail(fs, opts); code != 0 {
+		return evalExportOptions{}, code
 	}
 	if opts.scan {
 		sinceDay, err := backfillDay(*since, env.now())
@@ -611,4 +608,21 @@ func writeEvalRecord(w io.Writer, record any) error {
 		return fmt.Errorf("write record: %w", io.ErrShortWrite)
 	}
 	return nil
+}
+
+func invalidEvalRevisionSelection(opts evalExportOptions) bool {
+	return opts.revision != "" && (len(opts.ids) != 1 || !isArchiveSessionID(opts.ids[0]) || opts.idsFrom || opts.file != "" || opts.scan || opts.detail != archive.EvalExportDetailFull)
+}
+
+func validateEvalRevisionDetail(fs *commandFlags, opts evalExportOptions) int {
+	if code := checkNonemptyRevisionFlag(fs, opts.revision); code != 0 {
+		return code
+	}
+	if opts.detail != archive.EvalExportDetailMetadata && opts.detail != archive.EvalExportDetailFull {
+		return fs.usageError("--detail must be metadata or full, not %q", opts.detail)
+	}
+	if invalidEvalRevisionSelection(opts) {
+		return fs.usageError("--revision requires one archive SESSION_ID and --detail full; batch and local inputs are unsupported")
+	}
+	return 0
 }

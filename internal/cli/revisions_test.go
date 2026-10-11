@@ -192,3 +192,21 @@ func TestRevisionInventoryWithoutHistory(t *testing.T) {
 		t.Fatalf("empty inventory=%s", &out)
 	}
 }
+
+func TestEmptyRevisionSelectorBeforeSetup(t *testing.T) {
+	env := testEnv(t, t.TempDir(), time.Now())
+	env.OpenStore = func(config.Config) (storage.ObjectStore, error) {
+		t.Fatal("opened storage for an empty revision selector")
+		return nil, nil
+	}
+	for _, args := range [][]string{
+		{"show", "0123456789abcdef0123456789abcdef", "--revision", ""},
+		{"handoff", "0123456789abcdef0123456789abcdef", "--source", "archive", "--revision", ""},
+		{"eval", "export", "0123456789abcdef0123456789abcdef", "--revision", ""},
+	} {
+		var out, errs bytes.Buffer
+		if code := Run(args, nil, &out, &errs, env); code != 2 || !strings.Contains(errs.String(), "--revision needs a nonempty revision ID") {
+			t.Errorf("%v = %d %s", args, code, &errs)
+		}
+	}
+}
