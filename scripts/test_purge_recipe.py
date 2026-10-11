@@ -128,7 +128,7 @@ class PurgeRecipeTest(unittest.TestCase):
             for name in ([current] if current else []) + others:
                 (base / name).write_bytes(b'gz')
             if current:
-                metadata = {'filter_version': str(version), 'machine_id': (machine or ['m-other'])[0],
+                metadata = {'schema_version': 1, 'filter_version': str(version), 'machine_id': (machine or ['m-other'])[0],
                             'source_bundle': {'key': f'sessions/{directory}/{current}'}}
                 (base / 'metadata.json').write_text(json.dumps(metadata))
         for key in extra:
@@ -204,6 +204,95 @@ class PurgeRecipeTest(unittest.TestCase):
             'cursor/cccc': (None, ['source.c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1.jsonl.gz'], 0),
             'cursor/dddd': ('source.d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1.jsonl.gz', [], 10, 'm-retired'),
         }
+
+    def history_metadata(self, bucket, prefix):
+        path = bucket / prefix / 'sessions/codex/bbbb/metadata.json'
+        metadata = json.loads(path.read_text())
+        metadata['schema_version'] = 2
+        metadata['history'] = {'current_revision': '11111111-1111-4111-8111-111111111111',
+                               'preserved': []}
+        current = metadata['source_bundle']
+        current['sha256'] = Path(current['key']).name.split('.')[1]
+        current['compressed_bytes'] = 2
+        for index, hex_digit in enumerate(('e', 'f'), start=2):
+            name = 'source.' + hex_digit * 64 + '.jsonl.gz'
+            (path.parent / name).write_bytes(b'gz')
+            metadata['history']['preserved'].append({
+                'revision_id': str(index) * 8 + '-' + str(index) * 4 + '-4' + str(index) * 3 + '-8' + str(index) * 3 + '-' + str(index) * 12,
+                'captured_at': '2024-02-29T12:00:00.123+05:30', 'filter_version': '9',
+                'source': {'key': 'sessions/codex/bbbb/' + name,
+                           'sha256': hex_digit * 64, 'compressed_bytes': 2}})
+        path.write_text(json.dumps(metadata))
+        return path, metadata
+
+    def test_preserved_revisions_survive_unreferenced_cleanup(self):
+        for shell in self.shells:
+            for prefix in ('agent-archive/', 'nested/archive/', ''):
+                with self.subTest(shell=shell, prefix=prefix):
+                    bucket = self.build(prefix)
+                    self.history_metadata(bucket, prefix)
+                    result = self.run_recipe(shell, prefix, ['list', 'delete'])
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    for key in ('e', 'f'):
+                        self.assertIn(prefix + 'sessions/codex/bbbb/source.' + key * 64 + '.jsonl.gz', self.keys(bucket))
+                    self.assertEqual(len(self.attempts()), 3)
+
+    def test_invalid_history_blocks_selective_cleanup(self):
+        for shell in self.shells:
+            for invalid in ('missing', 'cross-session', 'duplicate', 'revision', 'digest', 'schema', 'false-preserved', 'invalid-time', 'invalid-day', 'fractional-size', 'false-source-schema'):
+                with self.subTest(shell=shell, invalid=invalid):
+                    bucket = self.build()
+                    path, metadata = self.history_metadata(bucket, 'agent-archive/')
+                    refs = metadata['history']['preserved']
+                    if invalid == 'missing':
+                        (bucket / 'agent-archive' / refs[0]['source']['key']).unlink()
+                    elif invalid == 'cross-session':
+                        refs[0]['source']['key'] = refs[0]['source']['key'].replace('/bbbb/', '/aaaa/')
+                    elif invalid == 'duplicate':
+                        refs[1]['source'] = refs[0]['source']
+                    elif invalid == 'revision':
+                        refs[0]['revision_id'] = 'invalid'
+                    elif invalid == 'digest':
+                        refs[0]['source']['sha256'] = 'a' * 64
+                    elif invalid == 'schema':
+                        metadata['schema_version'] = 1
+                    elif invalid == 'false-preserved':
+                        metadata['history']['preserved'] = False
+                    elif invalid == 'invalid-time':
+                        refs[0]['captured_at'] = '2026-10-01Tinvalid'
+                    elif invalid == 'invalid-day':
+                        refs[0]['captured_at'] = '2026-02-30T12:00:00Z'
+                    elif invalid == 'fractional-size':
+                        refs[0]['source']['compressed_bytes'] = 2.5
+                    elif invalid == 'false-source-schema':
+                        refs[0]['source_schema_version'] = False
+                    path.write_text(json.dumps(metadata))
+                    before = self.keys(bucket)
+                    result = self.run_recipe(shell, 'agent-archive/', ['list', 'delete'])
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertEqual(self.attempts(), [])
+                    self.assertEqual(self.keys(bucket), before)
+
+    def test_new_preserved_reference_invalidates_plan(self):
+        for shell in self.shells:
+            with self.subTest(shell=shell):
+                bucket = self.build()
+                path, metadata = self.history_metadata(bucket, 'agent-archive/')
+                before = self.keys(bucket)
+                source = 'sessions/codex/bbbb/source.' + 'a' * 64 + '.jsonl.gz'
+                (bucket / 'agent-archive' / source).write_bytes(b'gz')
+                before = self.keys(bucket)
+                metadata['history']['preserved'].append({
+                    'revision_id': '44444444-4444-4444-8444-444444444444',
+                    'captured_at': '2026-10-01T12:00:00Z', 'filter_version': '8',
+                    'source': {'key': source, 'sha256': 'a' * 64, 'compressed_bytes': 2}})
+                replacement = self.root / 'replacement.json'
+                replacement.write_text(json.dumps(metadata))
+                result = self.run_recipe(shell, 'agent-archive/', ['list', 'delete'],
+                    between='cp "' + str(replacement) + '" "' + str(path) + '"')
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(self.attempts(), [])
+                self.assertEqual(self.keys(bucket), before)
 
     def test_unreferenced_sources_keep_current_and_scope(self):
         for shell in self.shells:

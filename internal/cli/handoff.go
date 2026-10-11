@@ -229,7 +229,9 @@ func resolveHandoffTarget(opts handoffOptions, home string, stderr io.Writer, en
 		// The calling agent is the source of a direct handoff.
 		skip = nil
 	}
-	resolver := handoffResolver{ctx: context.Background(), env: env, home: home, cfg: cfg,
+	ctx, stopReads := readCommandContext(env)
+	defer stopReads()
+	resolver := handoffResolver{ctx: ctx, env: env, home: home, cfg: cfg,
 		harness: opts.harness, source: opts.source, skip: skip, gate: gate, stderr: stderr}
 	if !opts.latest {
 		return resolver.byID(opts.sessionID)
@@ -313,7 +315,7 @@ func prepareHandoff(h archive.Handoff, bundle archive.SourceBundle, opts handoff
 
 func writeHandoffResult(rendered []byte, opts handoffOptions, stdout, stderr io.Writer) error {
 	if opts.output == "" {
-		if _, err := stdout.Write(rendered); err != nil {
+		if err := writeOutput(stdout, rendered); err != nil {
 			return err
 		}
 		return nil
@@ -884,24 +886,11 @@ func pruneHandoffs(home string, now time.Time) {
 // writeHandoffOutput writes the rendered handoff with mode 0600, refusing to
 // replace an existing file unless force is set.
 func writeHandoffOutput(path string, data []byte, force bool) error {
-	flags := os.O_WRONLY | os.O_CREATE | os.O_EXCL
-	if force {
-		flags = os.O_WRONLY | os.O_CREATE | os.O_TRUNC
+	err := writeStatsHTMLFile(path, data, force)
+	// Report the requested destination, rather than a private temporary name.
+	var pathErr *os.PathError
+	if errors.As(err, &pathErr) {
+		return &os.PathError{Op: pathErr.Op, Path: path, Err: pathErr.Err}
 	}
-	f, err := os.OpenFile(path, flags, 0o600)
-	if err != nil {
-		if errors.Is(err, os.ErrExist) {
-			return fmt.Errorf("%s already exists; pass --force to replace it", path)
-		}
-		return err
-	}
-	if err := f.Chmod(0o600); err != nil {
-		_ = f.Close()
-		return err
-	}
-	if _, err := f.Write(data); err != nil {
-		_ = f.Close()
-		return err
-	}
-	return f.Close()
+	return err
 }

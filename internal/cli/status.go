@@ -1,10 +1,8 @@
 package cli
 
 import (
-	"bytes"
 	"cmp"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -284,16 +282,7 @@ func runStatusCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		return 1
 	}
 	if *jsonOut {
-		var encoded bytes.Buffer
-		encoder := json.NewEncoder(&encoded)
-		encoder.SetIndent("", "  ")
-		if err := encoder.Encode(view); err != nil {
-			terminal.Println(stderr, err)
-			return 1
-		}
-		// Errors and names in the view can come from the bucket.
-		terminal.Print(stdout, string(archive.DisplayJSON(encoded.Bytes())))
-		return 0
+		return printJSON(stdout, stderr, view)
 	}
 	// The style is the terminal's, not the pager buffer's.
 	sc := statusScreen{style: styleFor(stdout), now: env.now(), home: view.userHome, verbose: *verbose}

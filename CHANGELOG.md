@@ -6,6 +6,18 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Report failed or short JSON output writes, including status and normalized
+  transcripts. Reject nonregular or invalid UTF-8 feedback input without
+  blocking on named pipes. Publish handoff files privately and atomically,
+  preserving existing files on errors and refusing symlink targets.
+- Reject invalid purge and machine-listing flags before setup or credentials.
+  Remote object reads and listing pages have a two-minute budget covering
+  retries and stalled bodies; interactive selection and whole archive scans
+  have no shared deadline. Interrupts cancel command reads while the pager
+  retains its own signal behavior.
+- Protect active and preserved revision sources during purge and selective archive
+  cleanup. Invalid or missing history references block deletion; old-filter live
+  evidence must be replaced through verified privacy publication first.
 - Stop reporting Codex sessions whose history coverage is not complete yet,
   or whose source changed while being read, as failed: `sync` counts them by
   reason ("8 waiting for Codex history coverage") and `status` lists them as
@@ -24,6 +36,10 @@ follow [Semantic Versioning](https://semver.org/).
 - Clarify storage onboarding with Account, Storage, and Verification stages.
   Keep valid existing-bucket answers when going back, show S3 archive
   permissions on request, and report privacy separately from connectivity.
+- Resume interrupted storage setup from durable resource receipts, prevent
+  ambiguous duplicate creation, track manual bucket cleanup, and explicitly
+  revoke unused guided keys while protecting active and draft credentials.
+
 - Preserve private, durable bucket creation receipts across interrupted setup and
   abandoned drafts, including uncertain provider outcomes. Archive keys continue
   to use the existing issuance ledger.
