@@ -787,7 +787,7 @@ func (m *metadataInventory) BeginValidationSlice(ctx context.Context, limits age
 		err = m.validate(operation)
 	}
 	err = m.operationFailure(ctx, err)
-	if err != nil && (ctx.Err() == nil || m.failure != nil) {
+	if err != nil && m.failure != nil {
 		err = m.fail(err)
 	}
 	return &metadataSlice{inventory: m, remaining: limits.Steps, expires: time.Now().Add(limits.Duration), failure: err}, nil
