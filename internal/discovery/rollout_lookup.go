@@ -182,7 +182,7 @@ func (l *CodexRolloutLookup) Observe(source SourceDescriptor, stamp Fingerprint,
 }
 
 func rolloutFactByteBound(source SourceDescriptor, stamp Fingerprint, id codexmeta.CodexIdentity) int64 {
-	return (coverageCandidate{source, stamp, id}).byteBound() + 6*int64(len(source.Locator)) + 512
+	return (coverageCandidate{Source: source, Stamp: stamp, Identity: id}).byteBound() + 6*int64(len(source.Locator)) + 512
 }
 
 // Strings are immutable; copy the optional ordinal/base values so pass-owned

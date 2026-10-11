@@ -26,6 +26,9 @@ func collectCoverageDirectory(t *testing.T, c *coverageInventory, root, path str
 			t.Fatal("missing all-entry digest")
 		}
 		if validation {
+			if !checkCoverageMembers(t.Context(), &catalog{Coverage: c, Cache: map[string]cached{}}, &Health{}, adapter, nil, batch.Entries) {
+				t.Fatal("member probe refused")
+			}
 			c.validateBatch(d, *batch.coverage, batch.Complete)
 		} else {
 			c.recordBatch(d, *batch.coverage, batch.Continuation, batch.Complete, true)
