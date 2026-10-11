@@ -90,12 +90,28 @@ func publishedPauseFixture(t *testing.T, binary string) (string, func(string) ([
 
 func TestPublishedWriterRefusesProtectedConfiguration(t *testing.T) {
 	t.Parallel()
-	root, pause := publishedPauseFixture(t, publishedWriterBinary(t))
+	assertOldWriterRefusesProtectedConfiguration(t, publishedWriterBinary(t))
+}
+
+func TestSourceBuiltWriterRefusesProtectedConfiguration(t *testing.T) {
+	binary := os.Getenv("AGENT_ARCHIVE_SOURCE_OLD_BINARY")
+	if binary == "" {
+		t.Skip("requires isolated source-built prior writer")
+	}
+	if !filepath.IsAbs(binary) {
+		t.Fatal("source-built writer must be an absolute executable")
+	}
+	assertOldWriterRefusesProtectedConfiguration(t, binary)
+}
+
+func assertOldWriterRefusesProtectedConfiguration(t *testing.T, binary string) {
+	t.Helper()
+	root, pause := publishedPauseFixture(t, binary)
 	control := filepath.Join(root, "control")
 	if err := os.Mkdir(control, 0700); err != nil {
 		t.Fatal(err)
 	}
-	cfg := Config{MachineID: "synthetic-old-writer", Archive: archive.Config{Enabled: true}}
+	cfg := publishedWriterFiniteControl()
 	if err := Save(control, cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -116,15 +132,12 @@ func TestPublishedWriterRefusesProtectedConfiguration(t *testing.T) {
 	if err := json.Unmarshal(after, &paused); err != nil || !paused.Paused {
 		t.Fatal("published control did not persist paused=true", err)
 	}
-	for _, enabled := range []bool{false, true} {
-		home := filepath.Join(root, "disabled")
-		if enabled {
-			home = filepath.Join(root, "enabled")
-		}
+	for _, fixture := range publishedWriterProtectedFixtures() {
+		home := filepath.Join(root, fixture.name)
 		if err := os.Mkdir(home, 0700); err != nil {
 			t.Fatal(err)
 		}
-		cfg.Discovery = &DiscoveryConfig{Enabled: enabled}
+		cfg = fixture.cfg
 		if err := Save(home, cfg); err != nil {
 			t.Fatal(err)
 		}
@@ -134,11 +147,86 @@ func TestPublishedWriterRefusesProtectedConfiguration(t *testing.T) {
 		}
 		out, err := pause(home)
 		if err == nil || !strings.Contains(string(out), "cannot unmarshal object") || !strings.Contains(string(out), "schema_version") || !strings.Contains(string(out), "type int") || !strings.Contains(string(out), filepath.Join(home, "config.json")) {
-			t.Fatalf("published writer did not reject protected schema in intended root (enabled=%t): %v %s", enabled, err, out)
+			t.Fatalf("published writer did not reject protected schema in intended root (%s): %v %s", fixture.name, err, out)
 		}
 		after, err := os.ReadFile(filepath.Join(home, "config.json"))
 		if err != nil || !bytes.Equal(before, after) {
-			t.Fatalf("published writer changed protected config (enabled=%t): %v", enabled, err)
+			t.Fatalf("published writer changed protected config (%s): %v", fixture.name, err)
 		}
+	}
+}
+
+func publishedWriterFiniteControl() Config {
+	return Config{RetentionDays: DefaultRetentionDays, MachineID: "synthetic-old-writer", Archive: archive.Config{Enabled: true}}
+}
+
+type publishedWriterProtectedFixture struct {
+	name   string
+	cfg    Config
+	writer configWriter
+}
+
+func publishedWriterProtectedFixtures() []publishedWriterProtectedFixture {
+	disabled, enabled := publishedWriterFiniteControl(), publishedWriterFiniteControl()
+	disabled.Discovery = &DiscoveryConfig{Enabled: false}
+	enabled.Discovery = &DiscoveryConfig{Enabled: true}
+	forever := publishedWriterFiniteControl()
+	forever.RetentionDays = 0
+	stagedFinite, stagedForever := publishedWriterFiniteControl(), forever
+	stagedFinite.ImportStagingProtection = true
+	stagedForever.ImportStagingProtection = true
+	return []publishedWriterProtectedFixture{
+		{name: "consent-disabled-finite", cfg: disabled, writer: discoveryWriter},
+		{name: "consent-enabled-finite", cfg: enabled, writer: discoveryWriter},
+		{name: "forever", cfg: forever, writer: retentionWriter},
+		{name: "staging-finite", cfg: stagedFinite, writer: importStagingWriter},
+		{name: "staging-forever", cfg: stagedForever, writer: importStagingWriter},
+	}
+}
+
+func TestPublishedWriterFixturesKeepFiniteControlAndProtectedPromises(t *testing.T) {
+	control := t.TempDir()
+	if err := Save(control, publishedWriterFiniteControl()); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(control, "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var legacy struct {
+		SchemaVersion int `json:"schema_version"`
+		RetentionDays int `json:"retention_days"`
+	}
+	if err := json.Unmarshal(raw, &legacy); err != nil || legacy.RetentionDays != DefaultRetentionDays {
+		t.Fatalf("finite control must remain scalar-schema: %s %v", raw, err)
+	}
+	loaded, _, err := Load(control)
+	if err != nil || loaded.RetentionProtection || loaded.ImportStagingProtection || loaded.Discovery != nil {
+		t.Fatalf("finite control gained protection: %+v %v", loaded, err)
+	}
+	for _, fixture := range publishedWriterProtectedFixtures() {
+		t.Run(fixture.name, func(t *testing.T) {
+			home := t.TempDir()
+			if err := Save(home, fixture.cfg); err != nil {
+				t.Fatal(err)
+			}
+			raw, err := os.ReadFile(filepath.Join(home, "config.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal(raw, &legacy); err == nil {
+				t.Fatal("protected fixture accepted by scalar schema decoder")
+			}
+			var fenced struct {
+				SchemaVersion writerVersion `json:"schema_version"`
+			}
+			if err := json.Unmarshal(raw, &fenced); err != nil || fenced.SchemaVersion.Writer != fixture.writer {
+				t.Fatalf("wrong protection: %s %v", raw, err)
+			}
+			loaded, _, err := Load(home)
+			if err != nil || loaded.RetentionDays != fixture.cfg.RetentionDays || loaded.ImportStagingProtection != fixture.cfg.ImportStagingProtection {
+				t.Fatalf("protected fixture lost retention/staging: %+v %v", loaded, err)
+			}
+		})
 	}
 }
