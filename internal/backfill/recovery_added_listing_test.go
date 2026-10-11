@@ -305,10 +305,17 @@ func TestReplacedSymlinkedStoresAreStrict(t *testing.T) {
 	}{
 		{name: "target replaced", change: func(t *testing.T, _, target string) {
 			t.Helper()
+			// The replacement exists before the original is removed, so it
+			// cannot reuse the original's inode (Linux file systems reuse a
+			// freed inode number at once, which would look like no change).
+			next := target + ".next"
+			if err := os.Mkdir(next, 0o755); err != nil {
+				t.Fatal(err)
+			}
 			if err := os.RemoveAll(target); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.Mkdir(target, 0o755); err != nil {
+			if err := os.Rename(next, target); err != nil {
 				t.Fatal(err)
 			}
 		}},
