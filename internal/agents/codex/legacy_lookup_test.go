@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
@@ -111,4 +112,47 @@ func legacyTestFile(t *testing.T, root, physical, thread string, extra map[strin
 		}
 	}
 	return ref
+}
+
+type registeredHistoryLookup struct{ *historyLookup }
+
+func (l registeredHistoryLookup) RegisteredThread(ctx context.Context, id string) (agentapi.CodexRolloutSet, error) {
+	return l.Thread(ctx, id)
+}
+
+// A registered legacy source's signature hashes the lineage token, so
+// coverage completeness flipping between passes does not make it look
+// changed, while a changed lineage still does.
+func TestLegacyUnboundSignatureIgnoresCoverageCompleteness(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	ref := legacyTestFile(t, root, threadA, threadA, map[string]any{})
+	renamed := filepath.Join(root, "legacy-session.jsonl")
+	if err := os.Rename(ref.Path, renamed); err != nil {
+		t.Fatal(err)
+	}
+	ref.Path, ref.Key = renamed, "legacy-session"
+	lookup := &historyLookup{thread: agentapi.CodexRolloutSet{Revision: "complete", Lineage: "lineage", Complete: true}}
+	pass, err := (SourceProvider{}).OpenPass(t.Context(), agentapi.SourceEnvironment{CodexRollouts: registeredHistoryLookup{lookup}, LegacyUnboundRegistration: true, Policy: transcriptio.OpenPolicy{Root: root, RejectSymlinks: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = pass.Close() }()
+	signature := func() string {
+		t.Helper()
+		observed, err := pass.Signature(t.Context(), ref)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return observed.Signature.Token
+	}
+	settled := signature()
+	lookup.thread.Revision, lookup.thread.Complete = "incomplete", false
+	if signature() != settled {
+		t.Fatal("a coverage flip alone changed the legacy signature")
+	}
+	lookup.thread.Lineage = "new segment"
+	if signature() == settled {
+		t.Fatal("a changed lineage kept the legacy signature")
+	}
 }

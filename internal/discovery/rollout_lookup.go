@@ -461,7 +461,7 @@ func (l *CodexRolloutLookup) withCandidates(ctx context.Context, id string, set 
 		set.Candidates = append(set.Candidates, agentapi.SourceRef{Kind: archive.SourceKindFile, Path: path, Key: id})
 	}
 	slices.SortFunc(set.Candidates, func(a, b agentapi.SourceRef) int { return strings.Compare(a.Path, b.Path) })
-	set.Complete = false
+	set.Complete, set.Retained = false, false
 	candidates, epoch, proven := l.coverage.proven(id)
 	if proven {
 		set.Candidates = nil
@@ -470,6 +470,7 @@ func (l *CodexRolloutLookup) withCandidates(ctx context.Context, id string, set 
 		}
 		slices.SortFunc(set.Candidates, func(a, b agentapi.SourceRef) int { return strings.Compare(a.Path, b.Path) })
 		set.Complete = true
+		set.Retained = epoch != l.coverage.Epoch
 	}
 	value := struct {
 		Current      *agentapi.SourceRef        `json:"Current"`

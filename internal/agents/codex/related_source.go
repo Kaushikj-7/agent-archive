@@ -221,6 +221,10 @@ type sourceSelection struct {
 	set            agentapi.CodexRolloutSet
 	thread         string
 	headers        []*rolloutFile
+
+	// lineage reports that selectLineage chose leaf from set's candidates
+	// alone, without a current locator.
+	lineage bool
 }
 
 func (p *relatedSourcePass) selectSource(ctx context.Context, ref agentapi.SourceRef) (sourceSelection, error) {
@@ -353,6 +357,7 @@ func (p *relatedSourcePass) selectLineage(ctx context.Context, selected sourceSe
 		return selected, sourceFailure(agentapi.Unavailable, "disconnected rollout lineage")
 	}
 	selected.leaf = tip
+	selected.lineage = true
 	return selected, nil
 }
 
@@ -539,6 +544,12 @@ func (p *relatedSourcePass) Read(ctx context.Context, ref agentapi.SourceRef, li
 			return p.legacy.Read(ctx, ref, limits)
 		}
 		return fail(err)
+	}
+	if selection.lineage && selection.set.Retained {
+		// A retained proof can lack a segment created since it, so the tip it
+		// yields may be stale. It still lets Signature recognize an unchanged
+		// source; content waits for this pass's own coverage proof.
+		return fail(sourceFailure(agentapi.Unavailable, "rollout lineage incomplete"))
 	}
 	return p.readSelection(ctx, limits, selection)
 }

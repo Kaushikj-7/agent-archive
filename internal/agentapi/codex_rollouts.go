@@ -28,6 +28,13 @@ type CodexRolloutSet struct {
 	// signatures use it (see LineageToken), so coverage changing between
 	// passes does not by itself make an unchanged source look changed.
 	Lineage string
+	// Retained reports that Complete rests on an earlier coverage epoch's
+	// proof rather than this pass's. That proof stays sound for every
+	// candidate it names (each is reopened and rechecked), but a segment
+	// created since it, in a directory not listed again yet, can be missing.
+	// A reader may still use it to recognize an unchanged source, but not to
+	// choose a lineage tip from the candidates alone.
+	Retained bool
 }
 
 // LineageToken is Lineage, or Revision for a lookup whose Revision never

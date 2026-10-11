@@ -59,7 +59,11 @@ retires it: when a listing or current-row header read finds a locator claiming
 the thread that the proof in use (this epoch's or retained) does not hold, or
 another identity at one it does, that request has no proof until a newer epoch
 completes. Restored observation-cache facts, which can name vanished locators,
-never retire a proof. A discovery checkpoint that misses its pass deadline
+never retire a proof. Live evidence arrives only as listings reach a
+directory, so a retained proof can still lack a segment created after it. The
+set marks such a proof `Retained`: a source signature may use it to recognize
+an unchanged lineage, but a read without a current locator does not choose a
+lineage tip from it, and waits for a proof completed in its own pass. A discovery checkpoint that misses its pass deadline
 hands its catalog to the lookup, whose close writes it without that deadline,
 so an epoch that completed just before is not lost. Checkpoints accept a retained proof only from an earlier
 attempt that covered the request, with every candidate marked a member.

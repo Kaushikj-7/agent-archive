@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -226,6 +228,20 @@ func TestCoverageRetainedProofRotationAndCheckpoint(t *testing.T) {
 		"future epoch":   func(r *coverageRequest) { r.ProvenEpoch = c.Epoch },
 		"epochless":      func(r *coverageRequest) { r.ProvenEpoch = 0 },
 		"other identity": func(r *coverageRequest) { r.Proven = map[string]coverageCandidate{"/elsewhere": {}} },
+		"requested after the proof": func(r *coverageRequest) {
+			r.TargetEpoch = r.ProvenEpoch + 1
+		},
+		"too many candidates": func(r *coverageRequest) {
+			var member coverageCandidate
+			for _, candidate := range r.Proven {
+				member = candidate
+			}
+			for n := range 65 {
+				copied := member
+				copied.Source.Locator = filepath.Join(member.Source.Root, "sessions", "extra-"+strconv.Itoa(n)+".jsonl")
+				r.Proven[copied.Source.Locator] = copied
+			}
+		},
 	} {
 		copied := restoreCoverage(t, c)
 		r := copied.Requests[wanted]
@@ -279,4 +295,114 @@ func TestCoverageCompletionSurvivesFailedCheckpoint(t *testing.T) {
 		}
 	}
 	t.Fatal("coverage completed only in memory; failed checkpoints lost it")
+}
+
+// A retained proof is a past observation: a same-thread segment Codex creates
+// after it, in a directory no listing has reached since, is missing from it.
+// The set must say its proof is retained, so a consumer that would select a
+// lineage tip from the candidates alone (no current locator) can refuse.
+func TestCoverageRetainedProofMarksSetRetained(t *testing.T) {
+	t.Parallel()
+	store, cfg, at, root := fixture(t)
+	f := coverageFixture{store: store, cfg: cfg, at: at, root: root}
+	wanted := writeRollout(t, root, cfg.Archive.Projects[0].Root, at.Add(-time.Hour), 1, "sessions")
+	complete := completedCoverage(t, f, wanted)
+	if complete.Retained {
+		t.Fatal("the completing epoch's own proof reported as retained")
+	}
+	raw, err := os.ReadFile(rolloutPath(root, "sessions", wanted))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const segment = "abcdefab-abcd-4abc-8abc-abcdefabcdea"
+	header := string(raw[:strings.IndexByte(string(raw), '\n')])
+	header = strings.Replace(header, `"source":"cli"`, `"source":"cli","history_mode":"paginated","history_base":{"thread_id":"`+wanted+`","end_ordinal_exclusive":1,"end_byte_offset":`+strconv.Itoa(len(header)+1)+`}`, 1)
+	newer := filepath.Join(root, "sessions", "2026", "10", "02", "rollout-2026-10-02T12-00-00-"+segment+".jsonl")
+	if err := os.MkdirAll(filepath.Dir(newer), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(newer, []byte(header+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	set := f.passThread(t, 10, wanted, stopNow, nil)
+	if !set.Complete || slices.Contains(candidatePaths(set), newer) {
+		t.Fatalf("fixture: expected the retained proof without the new segment, got complete=%v %v", set.Complete, candidatePaths(set))
+	}
+	if !set.Retained {
+		t.Fatal("a retained proof missing a newer segment was served as this epoch's")
+	}
+	// A whole pass lists the segment, which retires the proof.
+	set = f.passThread(t, 11, wanted, nil, nil)
+	if set.Complete && !slices.Contains(candidatePaths(set), newer) {
+		t.Fatalf("listing the new segment left a proof without it: %v", candidatePaths(set))
+	}
+}
+
+// Live evidence retires the current epoch's own proof too, once it is
+// complete, and that retired proof is not retained by the next epoch. Restored
+// cache facts do neither. A request overflowing in a later epoch, which has
+// listed more candidates than any proof can hold, is served no retained proof.
+func TestCoverageCurrentProofRetiredByLiveEvidence(t *testing.T) {
+	t.Parallel()
+	cat, wanted := validatingRequestedRollout(t)
+	c := cat.Coverage
+	advanceCoverageValidation(t.Context(), cat, &Health{}, codexAdapter{}, time.Now().Add(time.Minute), Options{})
+	if _, epoch, ok := c.proven(wanted); !ok || epoch != c.Epoch {
+		t.Fatalf("setup phase=%s failed=%v", c.Phase, c.Failed)
+	}
+	var held coverageCandidate
+	for _, candidate := range c.Requests[wanted].Candidates {
+		held = candidate
+	}
+	other := held.Source
+	other.Locator = filepath.Join(other.Root, "archived_sessions", filepath.Base(held.Source.Locator))
+	c.observe(other, Fingerprint{}, held.Identity, false)
+	if _, _, ok := c.proven(wanted); !ok {
+		t.Fatal("a restored cache fact retired the current proof")
+	}
+	c.observe(other, Fingerprint{}, held.Identity, true)
+	if _, _, ok := c.proven(wanted); ok {
+		t.Fatal("a listed locator the current proof lacks left it in use")
+	}
+	c.restart()
+	if _, _, ok := c.proven(wanted); ok {
+		t.Fatal("the next epoch retained a retired proof")
+	}
+
+	cat, wanted = validatingRequestedRollout(t)
+	c = cat.Coverage
+	advanceCoverageValidation(t.Context(), cat, &Health{}, codexAdapter{}, time.Now().Add(time.Minute), Options{})
+	c.restart()
+	if _, _, ok := c.proven(wanted); !ok {
+		t.Fatal("setup: no retained proof")
+	}
+	r := c.Requests[wanted]
+	r.Overflow = true
+	c.Requests[wanted] = r
+	if _, _, ok := c.proven(wanted); ok {
+		t.Fatal("an overflowing epoch still served the retained proof")
+	}
+}
+
+// Only a checkpoint that ran out of time or was cancelled is handed to the
+// lookup's close; other write failures stay the pass's own.
+func TestDeferCheckpointOnlyForDeadline(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		err      error
+		deferred bool
+	}{
+		{context.DeadlineExceeded, true},
+		{context.Canceled, true},
+		{errCatalogBudget, false},
+	} {
+		l := &CodexRolloutLookup{}
+		c := catalog{Version: catalogVersion}
+		l.deferCheckpoint(&c, tc.err)
+		if (l.catalog == &c && l.coverageDirty) != tc.deferred {
+			t.Fatalf("%v: deferred=%v dirty=%v", tc.err, l.catalog == &c, l.coverageDirty)
+		}
+	}
+	var none *CodexRolloutLookup
+	none.deferCheckpoint(&catalog{}, context.DeadlineExceeded)
 }
