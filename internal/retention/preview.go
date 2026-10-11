@@ -16,7 +16,12 @@ func NewExpiryPreview(local *state.Store, now time.Time, publishable func(archiv
 	if err != nil {
 		return nil, err
 	}
-	return &ExpiryPreview{sweeper: sweeper{local: local, now: now, opts: Options{Publishable: publishable}, requested: state.QueuedRequests(reqs)}}, nil
+	return &ExpiryPreview{sweeper: sweeper{
+		local: local, now: now, opts: Options{Publishable: publishable}, requested: state.QueuedRequests(reqs),
+		// Preview cannot confirm the server clock or correct a future capture.
+		// Keep its age unchanged; only the actual sweep may probe and clamp it.
+		clock: clockVerdict{checked: true, held: ErrClockUnverified},
+	}}, nil
 }
 
 func (p *ExpiryPreview) SessionExpired(reg archive.SessionRegistration, maxAge time.Duration) (bool, error) {

@@ -2,7 +2,10 @@ package retention
 
 import (
 	"encoding/json"
+	"fmt"
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/state"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 	"strings"
 	"testing"
 	"time"
@@ -45,5 +48,42 @@ func TestRetentionPreviewUsesPreservedMeaningfulAge(t *testing.T) {
 		if err != nil || expired != tc.expired {
 			t.Fatalf("age %v expired %v error %v", tc.age, expired, err)
 		}
+	}
+}
+
+func TestRetentionPreviewLeavesFutureCaptureUntouched(t *testing.T) {
+	for _, cachedClock := range []bool{false, true} {
+		t.Run(fmt.Sprint(cachedClock), func(t *testing.T) {
+			local := newTestStore(t)
+			now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+			publishTwice(t, local, storagetest.NewMemoryStore(), "future", t.TempDir(), now.Add(365*24*time.Hour))
+			reg := registration("future", "")
+			if cachedClock {
+				if err := local.SaveStorageClockReading(state.StorageClockReading{CheckedAt: now, ServerAt: now}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			before, found, err := local.LoadPublishedSummary(reg.ArchiveSessionID)
+			if err != nil || !found {
+				t.Fatalf("published capture: %v %v", found, err)
+			}
+			clockBefore, clockFound := local.LoadStorageClockReading()
+			preview, err := NewExpiryPreview(state.OpenReadOnly(local.Home()), now, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			expired, err := preview.SessionExpired(reg, 30*24*time.Hour)
+			if err != nil || expired {
+				t.Fatalf("future capture expiry: %v %v", expired, err)
+			}
+			after, _, err := local.LoadPublishedSummary(reg.ArchiveSessionID)
+			if err != nil || after.RetentionAge() != before.RetentionAge() {
+				t.Fatalf("preview changed capture age: %v %v", after.RetentionAge(), err)
+			}
+			clockAfter, clockFoundAfter := local.LoadStorageClockReading()
+			if clockAfter != clockBefore || clockFoundAfter != clockFound {
+				t.Fatal("preview changed the storage clock reading")
+			}
+		})
 	}
 }
