@@ -40,10 +40,12 @@ func recoveryReceipt(t *testing.T, home string, state setupresources.State) setu
 }
 
 func TestUncertainResourceRecoveryConnectsWithoutClaimingOwnership(t *testing.T) {
+	// The golden specifies ASCII output independently of the inherited terminal.
+	t.Setenv("TERM", "xterm-256color")
 	home := t.TempDir()
 	r := recoveryReceipt(t, home, setupresources.RequestSent)
-	var out bytes.Buffer
-	p := newPrompter(strings.NewReader("1\n"), &out)
+	out := &guidedCommandOutput{caps: promptCapabilities{ASCII: true}}
+	p := newPrompter(strings.NewReader("1\n"), out)
 	saved, have, err := recoverSetupResources(p, home, setupDraft{}, false, config.Config{}, Env{})
 	if err != nil || !have || saved.Config.Storage.Bucket != r.Bucket || saved.Step != 0 {
 		t.Fatalf("saved=%+v have=%v err=%v", saved, have, err)
