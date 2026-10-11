@@ -164,10 +164,17 @@ use a lifecycle rule.
 ### A lifecycle rule as a backstop
 
 A bucket lifecycle rule deletes objects by age whatever happens to your
-machines. Make it comfortably longer than the longest retention any machine uses
-(90 days by default), so it only removes what no machine is left to delete; a
-rule shorter than retention would delete sessions agent-archive still keeps.
-It needs an administrator's credentials, not the archive's:
+machines. With finite retention, make it comfortably longer than the longest
+policy any machine uses (90 days by default). Object age and session capture
+age differ, so even a longer rule can remove sources of a session still kept
+by agent-archive. **Keep forever has no longer finite backstop:** remove or
+exclude the archive prefix from expiration rules if you want that preference
+to retain evidence indefinitely. Retired machines receive no cleanup worker;
+delete their archives explicitly when wanted.
+
+The following 180-day example intentionally expires objects, including those
+owned by a Keep forever installation. It needs an administrator's credentials,
+not the archive's:
 
 ```sh
 # Replaces the bucket's whole lifecycle configuration: merge any rules it already has.
@@ -202,6 +209,9 @@ Do not remove the data directory by hand while a collector is running.
 
 ## Downgrading
 
+- **After choosing Keep forever**, older binaries refuse the saved configuration
+  before writing. Returning to finite retention keeps this compatibility fence;
+  retain a version that supports Keep forever for installed hooks and collectors.
 - **After changing storage**, do not downgrade to a version that does not
   support `destination_since`. Older versions ignore that saved boundary and
   may upload earlier sessions to the new destination.

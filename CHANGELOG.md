@@ -6,6 +6,13 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Add an explicit Keep forever choice in setup and `--keep-forever` for
+  scripted setup; new installations still default to 90 days. Pairing and
+  imports preserve this per-machine preference. It disables automatic
+  whole-session expiry, while privacy cleanup, explicit deletion and provider
+  lifecycle rules still apply. Choosing it installs a permanent compatibility
+  fence: older binaries refuse the configuration, even after switching back
+  to finite retention. Upgrade installed hooks and collectors before using it.
 - Report failed or short JSON output writes, including status and normalized
   transcripts. Reject nonregular or invalid UTF-8 feedback input without
   blocking on named pipes. Publish handoff files privately and atomically,

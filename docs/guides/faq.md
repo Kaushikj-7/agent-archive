@@ -68,11 +68,18 @@ for the commands, and for a lifecycle rule that cleans up after a machine you
 retire.
 
 **How long are sessions kept?**
-90 days by default, counted from each session's last capture; setup lets you
-set 1 to 36,500 days. There is no "keep forever". Imported sessions count
-from the day of the import. After a
-[filter upgrade](../security/privacy.md#after-a-filter-upgrade), older
-copies can stay until the session expires.
+90 days by default; setup offers 1 to 36,500 days or **Keep forever**
+(`agent-archive setup --yes --keep-forever`). Finite retention counts from the
+last meaningful capture, including preserved revisions; importing old native
+sessions starts a new retention window rather than expiring them immediately.
+Keep forever disables automatic whole-session expiry for existing and future
+sessions owned by this machine. It keeps the active source and bounded meaningful
+revision history, not every redundant snapshot. Superseded-source cleanup,
+[verified privacy replacement](../security/privacy.md#after-a-filter-upgrade),
+explicit purge and import undo still run. Provider lifecycle rules and manual
+bucket deletion can still remove evidence; deleted sessions are not restored.
+The preference is per machine, and older binaries refuse its sticky compatibility
+fence even after you return to finite retention.
 
 **Can I use it on several machines?**
 Yes, macOS and Linux in any mix; see [multiple machines](multiple-machines.md).
