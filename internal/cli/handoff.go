@@ -262,7 +262,6 @@ type handoffRenderPlan struct {
 	fullPath string
 	full     []byte
 	fitted   archive.Handoff
-	fits     bool
 }
 
 // planHandoffRendering decides what to trim and where an untrimmed copy
@@ -271,8 +270,8 @@ func planHandoffRendering(h archive.Handoff, bundle archive.SourceBundle, opts h
 	fullPath := handoffFullPath(home, bundle, opts.format)
 	full := renderHandoff(h, opts)
 	h.FullRecordPath = fullPath
-	fitted, fits := archive.FitHandoff(h, opts.maxBytes, func(h archive.Handoff) int { return len(renderHandoff(h, opts)) })
-	return handoffRenderPlan{fullPath: fullPath, full: full, fitted: fitted, fits: fits}
+	fitted, _ := archive.FitHandoff(h, opts.maxBytes, func(h archive.Handoff) int { return len(renderHandoff(h, opts)) })
+	return handoffRenderPlan{fullPath: fullPath, full: full, fitted: fitted}
 }
 
 func prepareHandoff(h archive.Handoff, bundle archive.SourceBundle, opts handoffOptions, home string, stderr io.Writer, env handoffFileDependencies) []byte {
@@ -296,10 +295,18 @@ func prepareHandoff(h archive.Handoff, bundle archive.SourceBundle, opts handoff
 		fitted.FullRecordPath = ""
 	}
 	rendered := renderHandoff(fitted, opts)
-	if !plan.fits {
-		terminal.Printf(stderr, "agent-archive: handoff: warning: still %d bytes after trimming, over the %d-byte limit\n", len(rendered), opts.maxBytes)
+	if opts.maxBytes <= 0 || len(rendered) <= opts.maxBytes {
+		return rendered
 	}
-	return rendered
+	// FitHandoff could not fit: one part (where it left off, the plan, the
+	// file list) is over the limit by itself. Markdown is cut at a line;
+	// JSON cannot be cut and still parse, so it is left whole.
+	if opts.format == "json" {
+		terminal.Printf(stderr, "agent-archive: handoff: warning: still %d bytes after trimming, over the %d-byte limit\n", len(rendered), opts.maxBytes)
+		return rendered
+	}
+	terminal.Printf(stderr, "agent-archive: handoff: warning: still %d bytes after trimming; cut to the %d-byte limit\n", len(rendered), opts.maxBytes)
+	return archive.CutHandoffMarkdown(rendered, fitted, opts.maxBytes)
 }
 
 func writeHandoffResult(rendered []byte, opts handoffOptions, stdout, stderr io.Writer) error {

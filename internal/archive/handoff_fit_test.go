@@ -1,0 +1,262 @@
+package archive
+
+import (
+	"fmt"
+	"reflect"
+	"slices"
+	"strings"
+	"testing"
+	"unicode/utf8"
+)
+
+// longCodexHandoff is shaped like the three-day Codex session that rendered
+// to 215 KB after the first four budget steps: 35 exchanges, 717 agent
+// messages (many short "still in progress" notes, ~30 in the last
+// exchange), 1,903 tool calls with JSON output, four prompts over
+// handoffPromptCap, and a plan and file list.
+func longCodexHandoff() Handoff {
+	h := Handoff{
+		Version:        HandoffVersion,
+		Session:        HandoffSession{Harness: "codex", ArchiveSessionID: "97636671", Source: "archive"},
+		Workspace:      HandoffWorkspace{Directory: "agent-archive", Branch: "main"},
+		LeftOff:        "Merged the last PR; CI is green. " + strings.Repeat("Next: verify the release notes. ", 40),
+		FullRecordPath: "/data/handoffs/97636671.md",
+	}
+	for i := range 12 {
+		h.Plan = append(h.Plan, HandoffPlanItem{Text: fmt.Sprintf("step %d of the plan", i), Status: "completed"})
+	}
+	for i := range 80 {
+		h.FilesTouched = append(h.FilesTouched, fmt.Sprintf("internal/pkg%d/file%d.go", i%9, i))
+	}
+	for i := range 35 {
+		prompt := fmt.Sprintf("prompt %d: continue with the next PR", i)
+		if i%9 == 0 {
+			prompt += "\n" + strings.Repeat("Details — with é and 字 to cross character boundaries. ", 120)
+		}
+		exchange := HandoffExchange{Prompt: prompt}
+		n := 20
+		if i == 34 {
+			n = 37
+		}
+		for j := range n {
+			text := fmt.Sprintf("Exchange %d message %d: the check is still in progress; waiting on CI. "+strings.Repeat("Polling gh pr checks again. ", 6), i, j)
+			if j%5 == 0 {
+				text += " " + strings.Repeat("Longer reasoning about the change. ", 20)
+			}
+			exchange.Steps = append(exchange.Steps, HandoffStep{Kind: HandoffStepText, Text: text})
+			calls := 3
+			if j%3 == 2 {
+				calls = 2
+			}
+			for k := range calls {
+				// Backtick runs in the output make its fence longer.
+				json := fmt.Sprintf(`{"statusCheckRollup":[%s],"agents":"list_agents %d"}`, strings.Repeat("{\"name\":\"ci\",\"conclusion\":\"SUCCESS\",\"detail\":\"````x\"},\n", 30), k)
+				result := trimResult(json, 12, 2000)
+				exchange.Steps = append(exchange.Steps, HandoffStep{Kind: HandoffStepTool, Tool: &HandoffToolCall{
+					Name: []string{"exec_command", "gh", "list_agents"}[k], Summary: fmt.Sprintf("gh pr view %d --json statusCheckRollup", j),
+					Result: result, ResultLines: lineCount(json), ResultBytes: len(json),
+				}})
+			}
+		}
+		h.Exchanges = append(h.Exchanges, exchange)
+	}
+	return h
+}
+
+func TestFitHandoffBoundsALongCodexSession(t *testing.T) {
+	t.Parallel()
+	h := longCodexHandoff()
+	full := markdownSize(h)
+	for _, limit := range []int{DefaultHandoffMaxBytes, 60_000, 30_000} {
+		fit, ok := FitHandoff(h, limit, markdownSize)
+		out := string(RenderHandoffMarkdown(fit, HandoffRenderOptions{Preamble: true}))
+		t.Logf("limit %d: %d bytes → %d bytes", limit, full, len(out))
+		if !ok || len(out) > limit {
+			t.Fatalf("limit %d: fits=%v, %d bytes", limit, ok, len(out))
+		}
+		if !utf8.ValidString(out) || openFenceStart(out) >= 0 {
+			t.Fatalf("limit %d: invalid UTF-8 or an unclosed fence", limit)
+		}
+		for _, want := range []string{
+			"# Handoff: continuing a Codex session",
+			"## Where it left off\n" + quote(h.LeftOff),
+			"Omitted to fit the size limit:",
+			"Full record: /data/handoffs/97636671.md",
+			// The last exchange's final message is kept whole.
+			"Exchange 34 message 36: the check is still in progress",
+		} {
+			if !strings.Contains(out, want) {
+				t.Fatalf("limit %d: missing %q", limit, want)
+			}
+		}
+		for i := range h.Exchanges {
+			if !strings.Contains(out, fmt.Sprintf("prompt %d: continue with the next PR", i)) {
+				t.Fatalf("limit %d: prompt %d lost", limit, i)
+			}
+		}
+		// The first prompt, which is long, keeps its body up to the cap.
+		first := fit.Exchanges[0].Prompt
+		if len(first) < handoffPromptCap-3 || !strings.Contains(out, quote(first+" …(truncated)")) {
+			t.Fatalf("limit %d: the first prompt lost its body: %d bytes", limit, len(first))
+		}
+	}
+}
+
+// At the default limit the session keeps more than the bare minimum: the
+// later stages stop once it fits, and the last exchange keeps its tool
+// output.
+func TestFitHandoffStopsAtTheFirstStageThatFits(t *testing.T) {
+	t.Parallel()
+	fit, ok := FitHandoff(longCodexHandoff(), DefaultHandoffMaxBytes, markdownSize)
+	if !ok {
+		t.Fatal("did not fit")
+	}
+	var kinds []HandoffElisionKind
+	for _, e := range fit.Elisions {
+		kinds = append(kinds, e.Kind)
+	}
+	want := []HandoffElisionKind{HandoffElisionToolOutput, HandoffElisionToolCalls, HandoffElisionAssistantText, HandoffElisionPromptText, HandoffElisionAgentMessages}
+	if !slices.Equal(kinds, want) {
+		t.Fatalf("elisions = %v, want %v", kinds, want)
+	}
+	kept := 0
+	for _, step := range fit.Exchanges[len(fit.Exchanges)-1].Steps {
+		if step.Tool != nil && step.Tool.Result != "" {
+			kept++
+		}
+	}
+	if kept == 0 {
+		t.Fatal("the last exchange lost all its tool output")
+	}
+	condensed, _ := FitHandoff(longCodexHandoff(), 30_000, markdownSize)
+	if !slices.ContainsFunc(condensed.Elisions, func(e HandoffElision) bool { return e.Kind == HandoffElisionExchanges }) {
+		t.Fatalf("a 30,000-byte limit condensed no exchanges: %v", condensed.Elisions)
+	}
+}
+
+func TestFitHandoffIsStable(t *testing.T) {
+	t.Parallel()
+	h := longCodexHandoff()
+	first, _ := FitHandoff(h, 30_000, markdownSize)
+	second, _ := FitHandoff(h, 30_000, markdownSize)
+	if !reflect.DeepEqual(first, second) {
+		t.Fatal("fitting the same handoff twice gave different results")
+	}
+	again, ok := FitHandoff(first, 30_000, markdownSize)
+	if !ok || !reflect.DeepEqual(again, first) {
+		t.Fatal("refitting a fitted handoff changed it")
+	}
+	if !reflect.DeepEqual(h, longCodexHandoff()) {
+		t.Fatal("FitHandoff mutated its input")
+	}
+}
+
+func TestOmitAgentMessagesKeepsTheLastBeforeTheTail(t *testing.T) {
+	t.Parallel()
+	text := func(s string) HandoffStep { return HandoffStep{Kind: HandoffStepText, Text: s} }
+	tool := HandoffStep{Kind: HandoffStepTool, Tool: &HandoffToolCall{Name: "Bash"}}
+	steps := []HandoffStep{text("a"), tool, text("b"), {Kind: HandoffStepSummary, Text: "s"}, text("c"), tool, text("tail")}
+	got, n := omitAgentMessages(steps, 6)
+	if n != 2 {
+		t.Fatalf("omitted %d, want 2", n)
+	}
+	var kinds []string
+	for _, step := range got {
+		kinds = append(kinds, string(step.Kind)+":"+step.Text)
+	}
+	want := []string{"omitted:", "tool:", "summary:s", "text:c", "tool:", "text:tail"}
+	if !slices.Equal(kinds, want) || got[0].Count != 2 {
+		t.Fatalf("steps = %v (count %d), want %v", kinds, got[0].Count, want)
+	}
+	if again, n := omitAgentMessages(got, 5); n != 0 || len(again) != len(got) {
+		t.Fatalf("second pass omitted %d", n)
+	}
+	if _, n := omitAgentMessages([]HandoffStep{text("only")}, 1); n != 0 {
+		t.Fatal("a lone message was omitted")
+	}
+}
+
+func TestCondenseExchangeCountsEverythingItHeld(t *testing.T) {
+	t.Parallel()
+	exchange := HandoffExchange{Prompt: "first line\nsecond line", Steps: []HandoffStep{
+		{Kind: HandoffStepOmitted, Count: 4},
+		{Kind: HandoffStepText, Text: "kept"},
+		{Kind: HandoffStepCollapsed, Count: 9, Text: "9 tool calls: `Bash` ×9"},
+		{Kind: HandoffStepTool, Tool: &HandoffToolCall{Name: "Read"}},
+		{Kind: HandoffStepShell, Text: "ls"},
+	}}
+	if condenseExchange(&exchange, true) != 1 {
+		t.Fatal("not condensed")
+	}
+	want := HandoffCondensed{AgentMessages: 5, ToolCalls: 10, ShellCommands: 1}
+	if *exchange.Condensed != want || exchange.Prompt != "first line" || !exchange.PromptTruncated || exchange.Steps != nil {
+		t.Fatalf("condensed = %#v", exchange)
+	}
+	out := string(RenderHandoffMarkdown(Handoff{Exchanges: []HandoffExchange{exchange}}, HandoffRenderOptions{}))
+	if !strings.Contains(out, "> first line …(truncated)\n\n- 5 agent messages, 10 tool calls, 1 shell command omitted\n") {
+		t.Fatalf("rendered:\n%s", out)
+	}
+	if condenseExchange(&exchange, true) != 0 {
+		t.Fatal("condensed twice")
+	}
+	whole := HandoffExchange{Prompt: "keep\nall of it", Steps: []HandoffStep{{Kind: HandoffStepText, Text: "x"}}}
+	condenseExchange(&whole, false)
+	if whole.Prompt != "keep\nall of it" || whole.PromptTruncated {
+		t.Fatalf("the first prompt was shortened: %#v", whole)
+	}
+}
+
+func TestHandoffFooterDescribesTheNewSteps(t *testing.T) {
+	t.Parallel()
+	h := Handoff{Elisions: []HandoffElision{
+		{Kind: HandoffElisionAgentMessages, First: 1, Last: 30, Count: 600},
+		{Kind: HandoffElisionExchanges, First: 1, Last: 34, Count: 34},
+	}}
+	got := handoffFooterLines(h)[0]
+	want := "Omitted to fit the size limit: 600 agent messages in exchanges 1–30 omitted, keeping each exchange's last; 34 exchanges in exchanges 1–34 condensed to the prompt's first line and counts."
+	if got != want {
+		t.Fatalf("footer = %q", got)
+	}
+}
+
+// One part over budget by itself cannot be fitted; the rendering is then
+// cut at a line, outside any fence, with a marker and the footer kept.
+func TestCutHandoffMarkdownBoundsAPathologicalHandoff(t *testing.T) {
+	t.Parallel()
+	h := longCodexHandoff()
+	h.LeftOff = strings.Repeat("字字字 a long final message\n", 4000)
+	fit, ok := FitHandoff(h, DefaultHandoffMaxBytes, markdownSize)
+	if ok {
+		t.Fatal("an oversized LeftOff fitted")
+	}
+	rendered := RenderHandoffMarkdown(fit, HandoffRenderOptions{Preamble: true})
+	out := string(CutHandoffMarkdown(rendered, fit, DefaultHandoffMaxBytes))
+	if len(out) > DefaultHandoffMaxBytes || !utf8.ValidString(out) || openFenceStart(out) >= 0 {
+		t.Fatalf("cut to %d bytes", len(out))
+	}
+	for _, want := range []string{"# Handoff:", "**Cut here: this handoff was still over its 120000-byte limit", "the full record named below has the rest", "Full record: /data/handoffs/97636671.md"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q", want)
+		}
+	}
+	if got := CutHandoffMarkdown(rendered[:100], fit, DefaultHandoffMaxBytes); string(got) != string(rendered[:100]) {
+		t.Fatal("a rendering within the limit was changed")
+	}
+	if tiny := CutHandoffMarkdown(rendered, fit, 50); len(tiny) > 50 || !utf8.Valid(tiny) {
+		t.Fatalf("tiny limit: %d bytes", len(tiny))
+	}
+}
+
+func TestWholeLinesNeverStopsInsideAFence(t *testing.T) {
+	t.Parallel()
+	text := "intro\n- `Bash` go test\n  ````\n  ```\n  inner\n  ````\nafter\n"
+	for n := range len(text) + 1 {
+		got := wholeLines(text, n)
+		if !strings.HasPrefix(text, got) || len(got) > n || openFenceStart(got) >= 0 {
+			t.Fatalf("n=%d: %q", n, got)
+		}
+	}
+	if got := wholeLines(text, strings.Index(text, "inner")+3); got != "intro\n- `Bash` go test\n" {
+		t.Fatalf("cut inside the fence: %q", got)
+	}
+}

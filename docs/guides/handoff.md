@@ -691,8 +691,17 @@ the [threat model](../security/privacy.md#threat-model).
 Output is limited to 120,000 bytes (about 30k tokens; `--max-bytes`, `0` for
 no limit). Over the limit, older tool output is dropped first, then older
 tool calls are collapsed to counts, then older agent messages are shortened,
-then long prompts are truncated. The last three exchanges (up to their last
-twenty steps) and every prompt are kept. When anything is trimmed, the
+then long prompts are truncated; until then the last three exchanges (up to
+their last twenty steps) are kept whole. A session still over the limit has
+each older exchange's agent messages cut to its last one, then all tool
+output dropped, then every exchange but the last condensed to its prompt's
+first line and a count of what it held (the first prompt keeps its first
+2,000 bytes), then the last exchange's tool calls collapsed and its messages
+shortened. Every prompt and where it left off are always kept. Markdown
+output that is still over the limit, which happens only when one part, such
+as a very long final message, is larger than the limit by itself, is cut at
+a line with a marker, and the list of what was omitted stays at the end; JSON
+output is not cut. When anything is trimmed, the
 untrimmed version is saved under the data directory in `handoffs/` (mode
 0600, removed after 7 days and by `uninstall --delete-local-data`) and its
 path is named at the end, so the receiving agent can read what was omitted.

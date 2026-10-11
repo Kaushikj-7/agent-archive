@@ -156,6 +156,9 @@ func renderHandoffConversation(b *strings.Builder, h Handoff) {
 			}
 			b.WriteString(quote(prompt))
 		}
+		if exchange.Condensed != nil {
+			fmt.Fprintf(b, "\n- %s omitted\n", describeCondensed(*exchange.Condensed))
+		}
 		inTools := false
 		for _, step := range exchange.Steps {
 			switch step.Kind {
@@ -188,9 +191,32 @@ func renderHandoffConversation(b *strings.Builder, h Handoff) {
 					inTools = true
 				}
 				fmt.Fprintf(b, "- %s\n", oneLine(step.Text))
+			case HandoffStepOmitted:
+				if !inTools {
+					b.WriteString("\n")
+					inTools = true
+				}
+				fmt.Fprintf(b, "- %s omitted\n", countNoun(step.Count, "agent message"))
 			}
 		}
 	}
+}
+
+// describeCondensed says what a condensed exchange held.
+func describeCondensed(c HandoffCondensed) string {
+	parts := []string{countNoun(c.AgentMessages, "agent message"), countNoun(c.ToolCalls, "tool call")}
+	if c.ShellCommands > 0 {
+		parts = append(parts, countNoun(c.ShellCommands, "shell command"))
+	}
+	return strings.Join(parts, ", ")
+}
+
+// countNoun is "1 tool call" or "3 tool calls".
+func countNoun(n int, noun string) string {
+	if n == 1 {
+		return "1 " + noun
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
 }
 
 func renderHandoffFooter(b *strings.Builder, h Handoff) {
@@ -533,6 +559,10 @@ func describeElision(e HandoffElision) string {
 		return fmt.Sprintf("%d agent messages in %s shortened", e.Count, span)
 	case HandoffElisionPromptText:
 		return fmt.Sprintf("%d long prompts in %s truncated", e.Count, span)
+	case HandoffElisionAgentMessages:
+		return fmt.Sprintf("%d agent messages in %s omitted, keeping each exchange's last", e.Count, span)
+	case HandoffElisionExchanges:
+		return fmt.Sprintf("%d exchanges in %s condensed to the prompt's first line and counts", e.Count, span)
 	}
 	return fmt.Sprintf("%d %s in %s", e.Count, oneLine(string(e.Kind)), span)
 }

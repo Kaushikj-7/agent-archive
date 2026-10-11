@@ -66,7 +66,9 @@ func TestFitHandoffAppliesStepsInOrderAndKeepsRecentExchanges(t *testing.T) {
 
 func TestFitHandoffRunsEveryStepUnderPressure(t *testing.T) {
 	t.Parallel()
-	fit, _ := FitHandoff(bigHandoff(40), 40_000, markdownSize)
+	// 40 prompts capped at handoffPromptCap still fit, so the steps after
+	// prompt truncation are not reached.
+	fit, _ := FitHandoff(bigHandoff(40), 130_000, markdownSize)
 	var kinds []HandoffElisionKind
 	for _, e := range fit.Elisions {
 		kinds = append(kinds, e.Kind)
