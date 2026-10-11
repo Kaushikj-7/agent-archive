@@ -1,6 +1,8 @@
 package setupresources
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -8,6 +10,69 @@ import (
 
 	_ "github.com/wangjohn/agent-archive/internal/testutil/golden" // Registers the repository-wide -update test flag.
 )
+
+func TestNewMutationRequiresReadableRecoveryHistory(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		data []byte
+		mode os.FileMode
+	}{
+		{"corrupt", []byte("{}"), 0600},
+		{"public", nil, 0644},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			home := t.TempDir()
+			r, err := Begin(home, Receipt{Provider: S3, Profile: "default", Bucket: "archive"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(home, "setup-resources", "bucket-"+r.ID+".json")
+			if tc.data != nil {
+				if err = os.WriteFile(path, tc.data, 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err = os.Chmod(path, tc.mode); err != nil {
+				t.Fatal(err)
+			}
+			if _, err = Begin(home, Receipt{Provider: S3, Profile: "default", Bucket: "another"}); err == nil {
+				t.Fatal("mutation accepted with unreadable recovery history")
+			}
+			entries, err := os.ReadDir(filepath.Dir(path))
+			if err != nil || len(entries) != 1 {
+				t.Fatalf("failed preflight changed receipt history: %v %v", entries, err)
+			}
+		})
+	}
+}
+
+func TestNewMutationDoesNotExceedRecoveryReceiptLimit(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	r, err := Begin(home, Receipt{Provider: S3, Profile: "default", Bucket: "archive"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 1; i < maxReceipts; i++ {
+		r.ID = fmt.Sprintf("%032x", i)
+		data, marshalErr := json.Marshal(r)
+		if marshalErr != nil {
+			t.Fatal(marshalErr)
+		}
+		if err = os.WriteFile(filepath.Join(home, "setup-resources", "bucket-"+r.ID+".json"), data, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err = Begin(home, Receipt{Provider: S3, Profile: "default", Bucket: "another"}); err == nil {
+		t.Fatal("mutation exceeded recovery receipt limit")
+	}
+	receipts, err := List(home)
+	if err != nil || len(receipts) != maxReceipts {
+		t.Fatalf("preflight made existing history unreadable: %d %v", len(receipts), err)
+	}
+}
 
 func TestInterruptedMutationRemainsUncertain(t *testing.T) {
 	home := t.TempDir()
