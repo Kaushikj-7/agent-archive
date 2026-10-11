@@ -28,8 +28,15 @@ func TestPairingTransferPaneMatchesFixture(t *testing.T) {
 }
 
 func TestPairingFailureNeverClaimsCommittedSuccessAndCanRetry(t *testing.T) {
-	for _, failure := range []string{"wrong-code", "expired", "storage", "commit"} {
-		t.Run(failure, func(t *testing.T) {
+	type pairingFailure string
+	const (
+		wrongCode      pairingFailure = "wrong-code"
+		expiredBundle  pairingFailure = "expired"
+		storageFailure pairingFailure = "storage"
+		commitFailure  pairingFailure = "commit"
+	)
+	for _, failure := range []pairingFailure{wrongCode, expiredBundle, storageFailure, commitFailure} {
+		t.Run(string(failure), func(t *testing.T) {
 			now := time.Now().UTC()
 			payload := pairing.Payload{Version: 1, PairingID: strings.Repeat("1", 32), RecipientID: strings.Repeat("2", 32), IssuerID: strings.Repeat("3", 32), IssuerName: "studio", Name: "laptop", CreatedAt: now, ExpiresAt: now.Add(15 * time.Minute), Storage: pairing.Storage{Provider: "s3", Bucket: "synthetic", AWSProfile: "archive", Region: "us-east-1"}, Apps: []string{"codex"}, RetentionDays: 90, SkillEvidence: "metadata"}
 			code := "aardvark-abandoned-abbreviate-abdomen-abhorrence-abiding"
@@ -44,13 +51,13 @@ func TestPairingFailureNeverClaimsCommittedSuccessAndCanRetry(t *testing.T) {
 			store := storagetest.NewMemoryStore()
 			env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return store, nil }
 			switch failure {
-			case "wrong-code":
+			case wrongCode:
 				entered = "yo-yo-abandoned-abbreviate-abdomen-abhorrence-abiding"
-			case "expired":
+			case expiredBundle:
 				env.Now = func() time.Time { return now.Add(time.Hour) }
-			case "storage":
+			case storageFailure:
 				env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return nil, errors.New("offline") }
-			case "commit":
+			case commitFailure:
 				fakeSched(env).beforeLoad = func(scheduler.Ref) error { return errors.New("interrupted load") }
 			}
 			args := []string{"setup", "--pair-file", "-", "--yes", "--codex-discovery", "on", "--codex-capture-scope", "included-projects", "--project", project}
@@ -64,7 +71,7 @@ func TestPairingFailureNeverClaimsCommittedSuccessAndCanRetry(t *testing.T) {
 			if _, found, err := config.Load(home); err != nil || found {
 				t.Fatalf("failed pairing committed: %t %v", found, err)
 			}
-			if failure == "wrong-code" || failure == "expired" {
+			if failure == wrongCode || failure == expiredBundle {
 				if !strings.Contains(out.String(), "Expiry does not revoke storage access") {
 					t.Fatalf("missing recovery guidance: %s", &out)
 				}
