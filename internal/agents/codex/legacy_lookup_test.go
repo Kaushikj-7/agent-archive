@@ -15,7 +15,7 @@ import (
 func TestLegacyOrdinaryUnboundKeepsAnchoredSourceAndCurrentToken(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	ref := legacyTestFile(t, root, threadA, threadA, map[string]any{})
+	ref := legacyTestFile(t, root, threadA, map[string]any{})
 	ref.Key = threadA
 	lookup := &historyLookup{thread: agentapi.CodexRolloutSet{Revision: "one"}}
 	pass, err := (SourceProvider{}).OpenPass(t.Context(), agentapi.SourceEnvironment{CodexRollouts: lookup, LegacyUnboundRegistration: true, Policy: transcriptio.OpenPolicy{Root: root, RejectSymlinks: true}})
@@ -74,7 +74,7 @@ func TestLegacyCompatibilityRefusesBoundPaginatedRelatedAndRevert(t *testing.T) 
 			case scenarioBase0:
 				extra["history_base"] = map[string]any{"thread_id": threadB, "end_ordinal_exclusive": 1, "end_byte_offset": 1}
 			}
-			ref := legacyTestFile(t, root, physical, threadA, extra)
+			ref := legacyTestFile(t, root, physical, extra)
 			ref.Key = threadA
 			lookup := &historyLookup{thread: agentapi.CodexRolloutSet{Revision: "one"}}
 			pass, err := (SourceProvider{}).OpenPass(context.Background(), agentapi.SourceEnvironment{CodexRollouts: lookup, LegacyUnboundRegistration: scenario != scenarioBound0, Policy: transcriptio.OpenPolicy{Root: root, RejectSymlinks: true}})
@@ -93,9 +93,9 @@ func TestLegacyCompatibilityRefusesBoundPaginatedRelatedAndRevert(t *testing.T) 
 	}
 }
 
-func legacyTestFile(t *testing.T, root, physical, thread string, extra map[string]any) agentapi.SourceRef {
+func legacyTestFile(t *testing.T, root, physical string, extra map[string]any) agentapi.SourceRef {
 	t.Helper()
-	ref, raw := historyFile(t, root, physical, thread, 0, extra, "legacy task")
+	ref, raw := historyFile(t, root, physical, threadA, 0, extra, "legacy task")
 	if _, present := extra["history_mode"]; !present {
 		first, tail, _ := bytes.Cut(raw, []byte("\n"))
 		var meta map[string]any
@@ -126,7 +126,7 @@ func (l registeredHistoryLookup) RegisteredThread(ctx context.Context, id string
 func TestLegacyUnboundSignatureIgnoresCoverageCompleteness(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	ref := legacyTestFile(t, root, threadA, threadA, map[string]any{})
+	ref := legacyTestFile(t, root, threadA, map[string]any{})
 	renamed := filepath.Join(root, "legacy-session.jsonl")
 	if err := os.Rename(ref.Path, renamed); err != nil {
 		t.Fatal(err)
@@ -164,7 +164,7 @@ func TestLegacyUnboundSignatureIgnoresCoverageCompleteness(t *testing.T) {
 func TestLegacyUnboundReadObservationMatchesSignature(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	ref := legacyTestFile(t, root, threadA, threadA, map[string]any{})
+	ref := legacyTestFile(t, root, threadA, map[string]any{})
 	renamed := filepath.Join(root, "legacy-session.jsonl")
 	if err := os.Rename(ref.Path, renamed); err != nil {
 		t.Fatal(err)
