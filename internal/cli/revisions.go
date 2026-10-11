@@ -13,17 +13,13 @@ import (
 
 // loadArchiveSelection preserves the active read path. Explicit revision reads
 // rederive their view from verified historical bytes, never active summaries.
-func loadArchiveSelection(ctx context.Context, store storage.ObjectStore, key, revision string, deps any) (archive.Metadata, archive.SourceBundle, error) {
+func loadArchiveSelection(ctx context.Context, store storage.ObjectStore, key, revision string, parsers agentapi.ParsersLookup) (archive.Metadata, archive.SourceBundle, error) {
 	if revision == "" {
 		return reader.RefreshAndLoad(ctx, store, key, reader.Limits{})
 	}
 	selected, bundle, err := reader.ReadRevision(ctx, store, key, revision, reader.Limits{})
 	if err != nil {
 		return archive.Metadata{}, archive.SourceBundle{}, err
-	}
-	parsers := parsersFor(deps)
-	if lookup, ok := deps.(agentapi.ParsersLookup); ok {
-		parsers = lookup
 	}
 	analysis, err := analyzeSource(ctx, parsers, bundle)
 	if err != nil {

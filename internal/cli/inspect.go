@@ -664,7 +664,7 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	if !*transcript {
 		metadata, err := reader.ReadMetadata(ctx, store, key)
 		if *revision != "" {
-			metadata, _, err = loadArchiveSelection(ctx, store, key, *revision, env)
+			metadata, _, err = loadArchiveSelection(ctx, store, key, *revision, parsersFor(env))
 		}
 		if err != nil {
 			stopShow()
@@ -754,7 +754,7 @@ func printSessionTranscript(ctx context.Context, store storage.ObjectStore, env 
 	}
 	if opts.revision != "" {
 		var metadata archive.Metadata
-		metadata, bundle, err = loadArchiveSelection(ctx, store, key, opts.revision, env)
+		metadata, bundle, err = loadArchiveSelection(ctx, store, key, opts.revision, parsersFor(env))
 		view = sessionView{Metadata: metadata, SelectedRevisionID: opts.revision}
 	}
 	if err != nil {

@@ -74,7 +74,7 @@ func revisionFixture(t *testing.T, legacy bool) (Env, *storagetest.MemoryStore, 
 func TestRevisionInventoryAndConsumers(t *testing.T) {
 	for _, legacy := range []bool{false, true} {
 		t.Run(map[bool]string{false: "history", true: "legacy"}[legacy], func(t *testing.T) {
-			env, _, id, _ := revisionFixture(t, legacy)
+			env, store, id, metadata := revisionFixture(t, legacy)
 			var out, errs bytes.Buffer
 			run := func(args ...string) int { out.Reset(); errs.Reset(); return Run(args, nil, &out, &errs, env) }
 			if code := run("show", id, "--revisions", "--json"); code != 0 {
@@ -125,6 +125,10 @@ func TestRevisionInventoryAndConsumers(t *testing.T) {
 			}
 			if code := run("show", id, "--transcript", "--json"); code != 0 || !strings.Contains(out.String(), "active prompt") {
 				t.Fatalf("default=%d %s %s", code, &out, &errs)
+			}
+			must(t, store.Delete(t.Context(), metadata.SourceBundle.Key))
+			if code := run("show", id, "--revision", revisionOld, "--transcript", "--json"); code != 0 {
+				t.Fatalf("historical read depended on unavailable active source: %d %s", code, &errs)
 			}
 		})
 	}

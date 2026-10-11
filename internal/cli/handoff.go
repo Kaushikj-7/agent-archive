@@ -472,7 +472,7 @@ func (r handoffResolver) archiveByID(id string) (handoffTarget, error) {
 }
 
 func (r handoffResolver) fromArchive(store storage.ObjectStore, key, describe string) (handoffTarget, error) {
-	metadata, bundle, err := loadArchiveSelection(r.ctx, store, key, r.revision, r.env)
+	metadata, bundle, err := loadArchiveSelection(r.ctx, store, key, r.revision, parsersFor(r.env))
 	if err != nil {
 		if errors.Is(err, reader.ErrRefreshRequired) {
 			return handoffTarget{}, errors.New("the session's source bundle is not available (it may have just been replaced or deleted by retention); retry")

@@ -105,6 +105,9 @@ func renderSessionSummary(w io.Writer, view sessionView, opts summaryOptions) {
 		if harness := archive.DisplayLine(m.Harness.Name); harness != "" {
 			command += " --harness " + shellWord(harness)
 		}
+		if view.SelectedRevisionID != "" {
+			command += " --revision " + shellWord(archive.DisplayLine(view.SelectedRevisionID))
+		}
 		terminal.Println(w)
 		terminal.Printf(w, "  %s %s\n", s.dim("Transcript:"), s.cmd(cut(command+" --transcript", 14)))
 		terminal.Printf(w, "  %s %s\n", s.dim("JSON:      "), s.cmd(cut(command+" --json", 14)))
