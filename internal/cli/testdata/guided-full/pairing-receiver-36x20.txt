@@ -16,6 +16,7 @@ OK Credential received
 > Credential:
 OK Credential received
 
+Pairing · Review settings
 Pairing destination
 
 AWS profile/settings transfer from
@@ -64,6 +65,7 @@ OK Save the displayed destination
   ✓ Codex hooks: ~/.codex/hooks.json
   ✓ Background job: launchctl
     responds
+Pairing · Check storage
 
 Storage · Verification
 Account → Storage → Verification
@@ -83,9 +85,10 @@ Apps: Codex. Projects: 1. Storage: Amazon S3 bucket synthetic.
 Skill evidence: metadata. User-level skill roots outside selected projects may be scanned.
   ! Bucket privacy not verified: public-access settings could not be read.
     Make sure public access is off: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
-OK laptop is connected. Paired with studio.
+Pairing · Save configuration
+OK Paired successfully · laptop is connected. Paired with studio.
 AWS profile/settings transfer.
-You can finish on the source machine and delete the pairing file.
+Configuration saved here. The source does not receive automatic confirmation; close its transfer instructions and delete your pairing file copies.
 
 ✓ Setup complete · Automatic capture is on
 Installed /handoff, which continues a session in another agent: ~/.agents/skills/handoff/SKILL.md

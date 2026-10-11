@@ -33,6 +33,14 @@ func TestPairingGuidedFileTransferCanBeReceived(t *testing.T) {
 	if code := Run([]string{"machines", "add", "--name", "laptop"}, strings.NewReader("\n\n\n\ndone\n"), &out, &out, source); code != 0 {
 		t.Fatalf("source: %d %s", code, &out)
 	}
+	for _, text := range []string{"Pairing · Transfer prepared", "File delivered locally", "Code available", "Close transfer instructions", "Receiver completion is unconfirmed"} {
+		if !strings.Contains(out.String(), text) {
+			t.Fatalf("missing source progress %q: %s", text, &out)
+		}
+	}
+	if strings.Contains(out.String(), "Paired successfully") {
+		t.Fatal("source claimed receiver success")
+	}
 	path := filepath.Join(userHome, "Downloads", "agent-archive-pairing-laptop.txt")
 	info, err := os.Stat(path)
 	must(t, err)
@@ -333,7 +341,7 @@ func TestPairingStatusGlyphsRespectTerminalCapabilities(t *testing.T) {
 		if ascii {
 			mark = "OK "
 		}
-		for _, fact := range []string{"Archive settings ready.", "Shared access ready. Revoking it affects every machine using this key.", "Separate access ready. You can revoke this machine independently.", "laptop is connected. Paired with studio."} {
+		for _, fact := range []string{"Archive settings ready.", "Shared access ready. Revoking it affects every machine using this key.", "Separate access ready. You can revoke this machine independently.", "Paired successfully · laptop is connected. Paired with studio."} {
 			if !strings.Contains(out.String(), mark+fact) {
 				t.Fatalf("missing resolved status in ASCII=%t: %q", ascii, out.String())
 			}
