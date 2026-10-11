@@ -792,3 +792,41 @@ func TestCanceledStagingReadAndCleanupPreserveEvidence(t *testing.T) {
 		t.Fatalf("cancellation admitted evidence: %+v %v", regs, err)
 	}
 }
+
+func TestImportStagingStaleProofAfterReservationMakesProgress(t *testing.T) {
+	for _, changePolicy := range []bool{false, true} {
+		t.Run(map[bool]string{false: "stale proof", true: "changed authorization"}[changePolicy], func(t *testing.T) {
+			r, c, cfg := stagingFixture(t)
+			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+			defer cancel()
+			r.Context = ctx
+			checks := 0
+			c.projectResolutionCurrent = func() bool {
+				checks++
+				if checks == 1 {
+					return true // First hold reserves identity with valid proof.
+				}
+				if changePolicy {
+					cfg.Archive.Projects[0].Included = false
+					if err := config.Save(r.Home, cfg); err != nil {
+						t.Fatal(err)
+					}
+					return true
+				}
+				return false
+			}
+			result, err := r.Run([]Candidate{c})
+			if err != nil || result.NotAdmitted != 1 || len(result.Sessions) != 0 {
+				t.Fatalf("stale reserved candidate did not finish without admission: %+v %v", result, err)
+			}
+			stages, _, err := r.Store.ImportStages(t.Context(), "", 50)
+			if err != nil || len(stages) != 0 {
+				t.Fatalf("stale proof left staged evidence: %+v %v", stages, err)
+			}
+			regs, err := r.Store.LoadRegistrations()
+			if err != nil || len(regs) != 0 {
+				t.Fatalf("stale proof acquired ownership: %+v %v", regs, err)
+			}
+		})
+	}
+}
