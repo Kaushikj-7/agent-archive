@@ -11,7 +11,7 @@ import (
 
 func TestInterruptedMutationRemainsUncertain(t *testing.T) {
 	home := t.TempDir()
-	receipt, err := Begin(home, Receipt{Provider: "r2", Account: "0123456789abcdef0123456789abcdef", Bucket: "archive", CreatedAt: time.Now().UTC()})
+	receipt, err := Begin(home, Receipt{Provider: R2, Account: "0123456789abcdef0123456789abcdef", Bucket: "archive", CreatedAt: time.Now().UTC()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +40,7 @@ func TestInterruptedMutationRemainsUncertain(t *testing.T) {
 
 func TestFailedOutcomeWritePreservesUncertainty(t *testing.T) {
 	home := t.TempDir()
-	receipt, err := Begin(home, Receipt{Provider: "s3", Profile: "default", Bucket: "archive"})
+	receipt, err := Begin(home, Receipt{Provider: S3, Profile: "default", Bucket: "archive"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,7 @@ func TestFailedOutcomeWritePreservesUncertainty(t *testing.T) {
 
 func TestCorruptAndPublicReceiptsFailClosed(t *testing.T) {
 	home := t.TempDir()
-	receipt, err := Begin(home, Receipt{Provider: "s3", Profile: "default", Bucket: "archive"})
+	receipt, err := Begin(home, Receipt{Provider: S3, Profile: "default", Bucket: "archive"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +91,7 @@ func TestCorruptAndPublicReceiptsFailClosed(t *testing.T) {
 
 func TestS3DottedNamesKeepTheirBinding(t *testing.T) {
 	home := t.TempDir()
-	r, err := Begin(home, Receipt{Provider: "s3", Profile: "default", Bucket: "my.archive"})
+	r, err := Begin(home, Receipt{Provider: S3, Profile: "default", Bucket: "my.archive"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,14 +102,14 @@ func TestS3DottedNamesKeepTheirBinding(t *testing.T) {
 	if err != nil || len(receipts) != 1 || receipts[0].Bucket != "my.archive" {
 		t.Fatalf("%v %v", receipts, err)
 	}
-	if _, err = Begin(home, Receipt{Provider: "r2", Account: "0123456789abcdef0123456789abcdef", Bucket: "my.archive"}); err == nil {
+	if _, err = Begin(home, Receipt{Provider: R2, Account: "0123456789abcdef0123456789abcdef", Bucket: "my.archive"}); err == nil {
 		t.Fatal("R2 accepted dotted name")
 	}
 }
 
 func TestCrashTemporaryFilesDoNotHideCommittedReceipts(t *testing.T) {
 	home := t.TempDir()
-	r, err := Begin(home, Receipt{Provider: "s3", Profile: "default", Bucket: "archive"})
+	r, err := Begin(home, Receipt{Provider: S3, Profile: "default", Bucket: "archive"})
 	if err != nil {
 		t.Fatal(err)
 	}

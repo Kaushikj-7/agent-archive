@@ -1076,7 +1076,7 @@ func TestS3DeletionPersistsCleanupBeforeProvider(t *testing.T) {
 
 func TestS3DeletionStopsWhenCleanupIntentCannotBeSaved(t *testing.T) {
 	home := t.TempDir()
-	r, err := setupresources.Begin(home, setupresources.Receipt{Provider: "s3", Profile: "work", Bucket: "archive"})
+	r, err := setupresources.Begin(home, setupresources.Receipt{Provider: setupresources.S3, Profile: "work", Bucket: "archive"})
 	if err != nil {
 		t.Fatal(err)
 	}

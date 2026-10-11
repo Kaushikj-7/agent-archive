@@ -758,7 +758,7 @@ func (c *r2Creator) createBucket(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	receipt, err := setupresources.Begin(home, setupresources.Receipt{Provider: "r2", Account: c.account, Bucket: c.bucket.Name, Jurisdiction: c.bucket.Jurisdiction, CreatedAt: c.env.now()})
+	receipt, err := setupresources.Begin(home, setupresources.Receipt{Provider: setupresources.R2, Account: c.account, Bucket: c.bucket.Name, Jurisdiction: c.bucket.Jurisdiction, CreatedAt: c.env.now()})
 	if err != nil {
 		return err
 	}

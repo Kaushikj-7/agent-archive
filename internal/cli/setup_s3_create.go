@@ -840,7 +840,7 @@ func requestS3Bucket(env Env, creator BucketCreator, profile, name, region strin
 	if err != nil {
 		return created, nil, err
 	}
-	receipt, err := setupresources.Begin(home, setupresources.Receipt{Provider: "s3", Profile: profile, Bucket: name, Region: region, CreatedAt: env.now()})
+	receipt, err := setupresources.Begin(home, setupresources.Receipt{Provider: setupresources.S3, Profile: profile, Bucket: name, Region: region, CreatedAt: env.now()})
 	if err != nil {
 		return created, nil, err
 	}
