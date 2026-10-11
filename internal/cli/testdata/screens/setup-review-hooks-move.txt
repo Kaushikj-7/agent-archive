@@ -26,8 +26,12 @@ Checking installed applications...
 ✓ Retention 90 days
 
 
+Storage · Verification
+Account → Storage → Verification
 Checking your storage connection…
 ✓ Connected to your storage.
+  ! Bucket privacy not verified: public-access settings could not be read.
+    Make sure public access is off: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
 
 Review your changes
   Apps      Codex
