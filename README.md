@@ -24,7 +24,7 @@ OpenAI and Anthropic are constantly one-upping each other or the best model, but
    curl -fsSL https://raw.githubusercontent.com/wangjohn/agent-archive/v0.1.1/install.sh | AGENT_ARCHIVE_VERSION=v0.1.1 sh
    ```
 
-   v0.1.1 has no Linux binary, so that command is for macOS. On Linux, drop the two pins (`install.sh | sh`) once the latest release has Linux binaries, or [build from source](docs/getting-started/install.md#build-from-source).
+   The latest published release, v0.1.1, has macOS binaries only. On Linux, [build from source](docs/getting-started/install.md#build-from-source). These docs describe the current checkout; local handoff before setup and other newer features require a current source build until the next release is published.
 
 2. **Try a local handoff before setup** inside a project:
 

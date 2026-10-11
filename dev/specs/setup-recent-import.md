@@ -147,10 +147,12 @@ order works; §4 helps existing installs first.
 
 - **Window length.** 7 days is the decision; `config` does not expose it.
   Revisit if people ask for a different default.
-- **Codex subagents.** The import brings in the parent; children stay
-  `child_history_pending` until native child capture
-  ([#355](https://github.com/wangjohn/agent-archive/pull/355)) lands, as
-  with `backfill` today.
+- **Codex subagents.** Native child capture and import are now implemented.
+  Each child must independently satisfy native identity, creation, first-own-task
+  evidence and consent checks; importing a parent does not authorize its children.
+  Qualified nested children belong to the new import batch, and undo preserves
+  a parent owned by an earlier batch. Missing or partial native evidence remains
+  pending. See the [current history contract](codex-history.md).
 - **Repositories in temporary folders** (separate from this plan). Plain
   `backfill` treats a Git checkout under `/private/tmp` as a repository
   project (rule 4 runs before rule 6) and proposes adding it, e.g. a

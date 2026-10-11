@@ -34,7 +34,7 @@ session identities. Its discovery implementation is internal to the import
 workflow; reuse requires separating read-only discovery from import policy,
 planning, and registration.
 
-The earlier [portability proposal](implemented/portable-handoff-and-onboarding.md)
+The earlier [portability proposal](portable-handoff-and-onboarding.md)
 excluded persistent local-only setup and additional storage backends. This
 proposal preserves that scope decision and extends the existing pre-setup
 file handoff with discovery and selection.
