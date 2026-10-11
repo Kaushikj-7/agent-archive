@@ -1038,6 +1038,7 @@ func storageCheckMayPrompt(storage credentials.Config, env Env) bool {
 // interrupt stops the spinner and returns at once with
 // errStorageCheckInterrupted.
 func runStorageCheck(p *prompter, cfg *config.Config, env Env) error {
+	p.storageStage(storageVerification)
 	release := p.suspendPrompts()
 	defer release()
 	const label = "Checking your storage connection…"
@@ -1080,6 +1081,7 @@ func runStorageCheck(p *prompter, cfg *config.Config, env Env) error {
 	}
 	*cfg = checked
 	terminal.Println(p.out, p.style.okMark()+" Connected to your storage.")
+	printReviewPrivacy(p, *cfg)
 	return nil
 }
 

@@ -30,6 +30,9 @@ Step 1 of 3 · Choose what to capture
 
 Step 2 of 3 · Connect storage
 
+Storage · Account
+Account → Storage → Verification
+
 ? Where should your archive live?
 
   1) Cloudflare R2 (default)
@@ -40,12 +43,18 @@ Step 2 of 3 · Connect storage
 › Choose [1]: s3-existing
 ✓ Provider Amazon S3
 
+Storage · Account
+Account → Storage → Verification
+
 ? AWS profile
 
   [:back] Back to storage options
 
 › Answer: work
 ✓ AWS profile work
+
+Storage · Storage
+Account → Storage → Verification
 
 ? Which bucket should sessions be stored in?
 
@@ -59,8 +68,12 @@ Step 2 of 3 · Connect storage
 
 Bucket team-archive is in us-east-1; using that region.
 
+Storage · Verification
+Account → Storage → Verification
 Checking your storage connection…
 ✓ Connected to your storage.
+  ! The bucket looks public (a bucket policy allows public access).
+    Fix its access before archiving: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
 
 Step 3 of 3 · Review and start
   Apps      Claude Code
