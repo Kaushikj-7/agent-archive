@@ -1108,6 +1108,14 @@ func independentImportOwner(reg archive.SessionRegistration) bool {
 }
 
 func importUndoRegistrations(store *state.Store, regs []archive.SessionRegistration, batchID string) ([]archive.SessionRegistration, error) {
+	cfg, found, err := config.Load(store.Home())
+	if err != nil {
+		return nil, err
+	}
+	if !found || !cfg.ImportStagingProtection {
+		return regs, nil
+	}
+
 	// Include selected evidence prepared before an admission crash. Undo owns
 	// its durable cleanup even when no registration reached disk yet.
 	seen := map[string]bool{}

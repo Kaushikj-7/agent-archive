@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/state"
 )
@@ -120,20 +121,8 @@ func (b *Batch) Reconcile(store *state.Store) error {
 	if err != nil {
 		return err
 	}
-	for after := ""; ; {
-		stages, next, err := store.ImportStages(after, 50)
-		if err != nil {
-			return err
-		}
-		for _, stage := range stages {
-			if stage.Registration.InBatch(b.ID) {
-				b.StagedSessions = addUnique(b.StagedSessions, stage.Registration.ArchiveSessionID)
-			}
-		}
-		if next == "" {
-			break
-		}
-		after = next
+	if err := b.reconcileStagedSources(store); err != nil {
+		return err
 	}
 	parents := map[string]bool{}
 	for _, reg := range regs {
@@ -422,4 +411,30 @@ func addUnique(list []string, values ...string) []string {
 		}
 	}
 	return list
+}
+
+func (b *Batch) reconcileStagedSources(store *state.Store) error {
+	cfg, found, err := config.Load(store.Home())
+	if err != nil {
+		return err
+	}
+	if !found || !cfg.ImportStagingProtection {
+		return nil
+	}
+	for after := ""; ; {
+		stages, next, err := store.ImportStages(after, 50)
+		if err != nil {
+			return err
+		}
+		for _, stage := range stages {
+			if stage.Registration.InBatch(b.ID) {
+				b.StagedSessions = addUnique(b.StagedSessions, stage.Registration.ArchiveSessionID)
+			}
+		}
+		if next == "" {
+			break
+		}
+		after = next
+	}
+	return nil
 }
