@@ -72,11 +72,31 @@ func parseRetentionAnswer(value string) (int, error) {
 }
 
 func (p *prompter) setupRetentionDays(def int) (int, error) {
+	choice := "custom"
+	if def == 90 {
+		choice = "90-days"
+	} else if def == 0 {
+		choice = "forever"
+	}
+	custom := "Custom duration"
+	if choice == "custom" {
+		custom += " (" + config.RetentionLabel(def) + ")"
+	}
+	answer, err := p.guidedChoice(promptModel{Question: "How long should sessions be kept?", Default: choice, Receipt: "Retention", Primary: []option{{"90-days", "90 days"}, {"custom", custom}, {"forever", "Keep forever"}}, Helpers: []string{"Provider lifecycle rules and explicit deletion still apply."}})
+	if err != nil {
+		return 0, err
+	}
+	switch answer {
+	case "90-days":
+		return 90, nil
+	case "forever":
+		return 0, nil
+	}
 	value := strconv.Itoa(def)
 	if def == 0 {
 		value = "forever"
 	}
-	answer, err := p.guidedText(promptModel{Question: "Keep sessions for how many days?", Label: "Days or forever", Default: value, Receipt: "Retention", Helpers: []string{"90 days (default), a custom duration, or forever", "Provider lifecycle rules and explicit deletion still apply."}, Validate: func(value string) error { _, err := parseRetentionAnswer(value); return err }})
+	answer, err = p.guidedText(promptModel{Question: "Keep sessions for how many days?", Label: "Days or forever", Default: value, Receipt: "Retention", Validate: func(value string) error { _, err := parseRetentionAnswer(value); return err }})
 	if err != nil {
 		return 0, err
 	}

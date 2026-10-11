@@ -173,7 +173,13 @@ type projectCaptureStatus struct {
 	automaticCapture bool
 }
 
+type statusRetention struct {
+	Days            int  `json:"retention_days"`
+	AutomaticExpiry bool `json:"automatic_expiry"`
+}
+
 type statusView struct {
+	Retention                  *statusRetention                  `json:"retention,omitempty"`
 	IdentityRecovery           *state.SessionIndexRecoveryStatus `json:"identity_recovery,omitempty"`
 	MachineRegistrationPending bool                              `json:"machine_registration_pending,omitempty"`
 	PrivacyEvidence            storage.PrivacyReport             `json:"privacy_evidence"`
@@ -453,6 +459,7 @@ func readConfiguredStatus(view *statusView, cfg config.Config, home string, env 
 		view.Warnings = append(view.Warnings, "Machine registration pending; the collector retries independently of capture.")
 	}
 	view.configured = true
+	view.Retention = &statusRetention{Days: cfg.RetentionDays, AutomaticExpiry: cfg.RetentionDays != 0}
 	view.SkillEvidence = string(cfg.EffectiveSkillEvidence())
 	view.AgentSkillsDisabled = cfg.NoSkills
 	view.Background = "unknown"
@@ -1654,6 +1661,9 @@ func (sc statusScreen) captureRows(view statusView) []statusRow {
 	}
 	rows = append(rows, statusRow{mark: sc.info(), cells: []string{"Projects: " + projects}})
 	rows = append(rows, statusRow{mark: sc.info(), cells: []string{"Skill evidence: " + view.SkillEvidence}})
+	if view.Retention != nil {
+		rows = append(rows, statusRow{mark: sc.info(), cells: []string{"Retention: " + config.RetentionLabel(view.Retention.Days)}})
+	}
 	if view.AgentSkillsDisabled {
 		rows = append(rows, statusRow{mark: sc.info(), cells: []string{"Agent skills: turned off; " + sc.style.cmd("agent-archive setup --skills") + " turns them on"}})
 	}
@@ -2572,6 +2582,9 @@ func printStatusDetails(out io.Writer, view statusView) {
 	}
 	terminal.Printf(out, "  Projects:      %d included\n  Pending:       %d session(s)\n  Last scan:     %s\n  Last publish:  %s\n", len(view.Projects), view.Collector.PendingCount, formatTimeOrNever(view.Collector.LastScanAt), formatTimeOrNever(view.Collector.LastPublishedAt))
 	terminal.Printf(out, "  Skill evidence: %s\n", view.SkillEvidence)
+	if view.Retention != nil {
+		terminal.Printf(out, "  Retention:     %s\n", config.RetentionLabel(view.Retention.Days))
+	}
 	if view.ImportedSessions > 0 {
 		imported := fmt.Sprintf("%d session(s), %d waiting to upload", view.ImportedSessions, view.ImportedPending)
 		if view.ImportedWithIssues > 0 {

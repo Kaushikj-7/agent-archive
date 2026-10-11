@@ -25,7 +25,7 @@ type projectRequirementEdit struct {
 // Returning from an edit must retain that unchecked state too.
 func TestPairingReviewDoesNotClaimUnprobedStorage(t *testing.T) {
 	t.Parallel()
-	for _, input := range []string{"cancel\n", "edit\nretention\n30\ncancel\n"} {
+	for _, input := range []string{"cancel\n", "edit\nretention\ncustom\n30\ncancel\n"} {
 		t.Run(input, func(t *testing.T) {
 			t.Parallel()
 			home, userHome, root := t.TempDir(), t.TempDir(), t.TempDir()
@@ -94,7 +94,7 @@ func TestSetupReviewRequiresProjectsAfterZeroProjectScopeOrAppEdit(t *testing.T)
 			cfg := mustLoadConfig(t, home)
 			before := setupCaptureFiles(t, env, home, userHome, cfg)
 			// A save answer is rejected in the real review loop, then cancel.
-			out := setupRun(t, env, "retention\n90\nedit\n"+edit.answers+"yes\nno\n", 0)
+			out := setupRun(t, env, "retention\n90-days\nedit\n"+edit.answers+"yes\nno\n", 0)
 			if !strings.Contains(out, "Project required") || !strings.Contains(out, "Fix the blocking checks first") || strings.Contains(out, "Setup complete") {
 				t.Fatalf("invalid review edit committed or lacked correction: %s", out)
 			}
@@ -113,7 +113,7 @@ func TestSetupReviewProjectEditRepairsZeroProjectScopeOrAppChange(t *testing.T) 
 			env, home, _ := zeroProjectCodexSetup(t)
 			project, err := filepath.EvalSymlinks(t.TempDir())
 			must(t, err)
-			out := setupRun(t, env, "retention\n90\nedit\n"+edit.answers+"edit\nprojects\n"+project+"\n\nyes\n", 0)
+			out := setupRun(t, env, "retention\n90-days\nedit\n"+edit.answers+"edit\nprojects\n"+project+"\n\nyes\n", 0)
 			cfg := mustLoadConfig(t, home)
 			if !strings.Contains(out, "Setup complete") || includedProjects(cfg.Archive.Projects) != 1 || cfg.Archive.Projects[0].Root != project {
 				t.Fatalf("project correction did not commit: %+v %s", cfg.Archive.Projects, out)

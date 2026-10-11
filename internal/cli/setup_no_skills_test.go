@@ -128,7 +128,7 @@ func TestNoSkillsRemovesOwnedSkillFilesAndReportsForeignOnes(t *testing.T) {
 			if mode == "yes" {
 				output = setupYes(t, env, "", 0, "--yes", "--no-skills")
 			} else {
-				output, _ = setupRunWith(t, env, []string{"--no-skills"}, "retention\n120\ny\n", 0)
+				output, _ = setupRunWith(t, env, []string{"--no-skills"}, "retention\ncustom\n120\ny\n", 0)
 			}
 			wantSkillFiles(t, []string{agentsSkillPath(userHome)}, []string{claudeSkillPath(userHome)})
 			if got := readText(t, agentsSkillPath(userHome)); got != "my own skill\n" {
@@ -176,7 +176,7 @@ func TestNoSkillsSticksUntilSkillsTurnsThemOn(t *testing.T) {
 	if !mustLoadConfig(t, home).NoSkills {
 		t.Fatal("a plain setup --yes cleared the opt-out")
 	}
-	output, _ = setupRunWith(t, env, nil, "retention\n120\ny\n", 0)
+	output, _ = setupRunWith(t, env, nil, "retention\ncustom\n120\ny\n", 0)
 	if !strings.Contains(output, turnedOffLine) {
 		t.Fatalf("a plain setup does not say the skills are off:\n%s", output)
 	}
@@ -206,7 +206,7 @@ func TestSkillsFlagTurnsThemOnInPromptDrivenSetup(t *testing.T) {
 	t.Parallel()
 	home, userHome, env := installedFixture(t, newFakeKeychain(), s3SetupInput("test-bucket", "us-east-1", "profile", false, true, false, t.TempDir()))
 	setupYes(t, env, "", 0, "--yes", "--no-skills")
-	output, _ := setupRunWith(t, env, []string{"--skills"}, "retention\n120\ny\n", 0)
+	output, _ := setupRunWith(t, env, []string{"--skills"}, "retention\ncustom\n120\ny\n", 0)
 	if !strings.Contains(output, "Installed /handoff") {
 		t.Fatalf("setup --skills output:\n%s", output)
 	}
@@ -239,7 +239,7 @@ func TestFailedSetupTakesBackTheRemovalOfSkills(t *testing.T) {
 	home, userHome, env := installedFixture(t, newFakeKeychain(), s3SetupInput("test-bucket", "us-east-1", "profile", true, true, false, t.TempDir()))
 	before := map[string]string{claudeSkillPath(userHome): readText(t, claudeSkillPath(userHome)), agentsSkillPath(userHome): readText(t, agentsSkillPath(userHome))}
 	fakeSched(env).beforeLoad = func(scheduler.Ref) error { return errors.New("bootstrap failed") }
-	setupRunWith(t, env, []string{"--no-skills"}, "retention\n120\ny\n", 1)
+	setupRunWith(t, env, []string{"--no-skills"}, "retention\ncustom\n120\ny\n", 1)
 	for path, want := range before {
 		if got := readText(t, path); got != want {
 			t.Errorf("failed setup did not restore %s:\n%s", path, got)
@@ -300,7 +300,7 @@ func TestNoSkillsFlagWhenSetupMakesNoChange(t *testing.T) {
 func TestSavedDraftDoesNotKeepTheOptOut(t *testing.T) {
 	t.Parallel()
 	home, userHome, env := installedFixture(t, newFakeKeychain(), s3SetupInput("test-bucket", "us-east-1", "profile", true, true, false, t.TempDir()))
-	setupRunWith(t, env, []string{"--no-skills"}, "retention\n120\nno\n", 0)
+	setupRunWith(t, env, []string{"--no-skills"}, "retention\ncustom\n120\nno\n", 0)
 	wantSkillFiles(t, []string{claudeSkillPath(userHome)}, nil)
 	output, _ := setupRunWith(t, env, nil, "continue\nyes\n", 0)
 	if !strings.Contains(output, "Installed /handoff") {

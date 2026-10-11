@@ -90,16 +90,21 @@ func decodeConfig(data []byte, c *Config) (bool, error) {
 	plain := configJSON(*c)
 	wire := struct {
 		SchemaVersion json.RawMessage `json:"schema_version"`
-		RetentionDays *int            `json:"retention_days"`
+		RetentionDays json.RawMessage `json:"retention_days"`
 		*configJSON
 	}{configJSON: &plain}
 	if err := json.Unmarshal(data, &wire); err != nil {
 		return false, err
 	}
-	if wire.RetentionDays == nil {
+	if len(wire.RetentionDays) == 0 {
 		plain.RetentionDays = DefaultRetentionDays
 	} else {
-		plain.RetentionDays = *wire.RetentionDays
+		if bytes.Equal(bytes.TrimSpace(wire.RetentionDays), []byte("null")) {
+			return false, errors.New("retention_days must be an integer; omit the field for the legacy default")
+		}
+		if err := json.Unmarshal(wire.RetentionDays, &plain.RetentionDays); err != nil {
+			return false, err
+		}
 	}
 	if err := ValidateRetentionDays(plain.RetentionDays); err != nil {
 		return false, err

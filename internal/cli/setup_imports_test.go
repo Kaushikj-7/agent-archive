@@ -143,7 +143,7 @@ func TestSetupAfterImportWithMissingFolders(t *testing.T) {
 	oldNotes := filepath.Join(f.userHome, "old-notes")
 	env := setupTestEnv(t, f.data, f.userHome, newFakeKeychain(), backfillNow)
 	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return bucket, nil }
-	setupRun(t, env, "retention\n30\ny\n", 0)
+	setupRun(t, env, "retention\ncustom\n30\ny\n", 0)
 	cfg, _, _ := config.Load(f.data)
 	if cfg.RetentionDays != 30 {
 		t.Fatalf("retention %d", cfg.RetentionDays)

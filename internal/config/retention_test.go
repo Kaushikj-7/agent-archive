@@ -75,3 +75,12 @@ func TestRetentionOrdering(t *testing.T) {
 		}
 	}
 }
+
+func TestRetentionRejectsNullInsteadOfDefaulting(t *testing.T) {
+	for _, raw := range []string{`{"retention_days":null}`, `{"schema_version":{"version":8,"writer":"retention-forever-v8"},"retention_protection":true,"retention_days":null}`} {
+		var cfg Config
+		if err := json.Unmarshal([]byte(raw), &cfg); err == nil {
+			t.Fatalf("accepted a noninteger retention policy: %s", raw)
+		}
+	}
+}

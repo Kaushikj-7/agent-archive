@@ -14,9 +14,20 @@ Checking installed applications...
 › Choose [1]: 3
 \e[2m✓ How long sessions are kept\e[0m
 
+? How long should sessions be kept?
+
+  Provider lifecycle rules and explicit deletion still apply.
+
+  1) 90 days (default)
+  2) Custom duration
+  3) Keep forever
+
+› Choose [1]: custom
+\e[2m✓ Retention Custom duration\e[0m
+
 ? Keep sessions for how many days?
 
-› Days [90]: 30
+› Days or forever [90]: 30
 \e[2m✓ Retention 30\e[0m
 
 
