@@ -40,6 +40,16 @@ const (
 // validation instead rechecks each rollout's header identity against the
 // recorded candidates. Stamp comparison has the ordinary filesystem model:
 // same-stamp out-of-band rewrites and changes after observation are not detected.
+//
+// Proofs are double-buffered. A completed, unfailed epoch's per-request
+// candidates move into coverageRequest.Proven when the following epoch starts,
+// and stay usable (see proven) while later epochs observe and validate, until
+// a newer epoch completes unfailed and replaces them. A proof is a past
+// observation either way: consumers reopen every candidate and recheck its
+// header identity. Listing a locator for the request that the proof in use
+// does not hold, or rereading a different identity at one it does, retires
+// that proof (see observe), so a new lineage member is not hidden behind a
+// proof once any pass has seen it.
 type coverageInventory struct {
 	Version      int                          `json:"version"`
 	Epoch        uint64                       `json:"epoch"`
@@ -69,6 +79,11 @@ type coverageRequest struct {
 	CompleteEpoch  uint64                       `json:"complete_epoch,omitempty"`
 	Overflow       bool                         `json:"overflow,omitempty"`
 	Candidates     map[string]coverageCandidate `json:"candidates"`
+	// ProvenEpoch is the last epoch that completed unfailed with this request
+	// covered, and Proven the member candidates it validated; 0 means no
+	// retained proof. They outlive that epoch (see restart).
+	ProvenEpoch uint64                       `json:"proven_epoch,omitempty"`
+	Proven      map[string]coverageCandidate `json:"proven,omitempty"`
 }
 
 type coverageCandidate struct {
@@ -156,7 +171,7 @@ func (c *coverageInventory) validate(roots []string) error {
 		return errors.New("native coverage byte limit")
 	}
 	for _, request := range c.Requests {
-		if request.byteBound() > maxCoverageRequestBytes || len(request.Candidates) > 64 {
+		if request.byteBound() > maxCoverageRequestBytes || len(request.Candidates) > 64 || len(request.Proven) > 64 {
 			return errors.New("native coverage request limit")
 		}
 	}
@@ -228,10 +243,29 @@ func (c *coverageInventory) request(id string) bool {
 	return true
 }
 
-func (c *coverageInventory) observe(source SourceDescriptor, stamp Fingerprint, id codexmeta.CodexIdentity) bool {
+// observe records a candidate for the requests it claims. listed reports
+// live evidence (a directory listing, or a header just read), as opposed to a
+// fact restored from the observation cache, which can name a locator that no
+// longer exists. Live evidence that disagrees with a proof, this epoch's
+// complete one or the retained one, retires that proof in every phase.
+func (c *coverageInventory) observe(source SourceDescriptor, stamp Fingerprint, id codexmeta.CodexIdentity, listed bool) bool {
 	changed := false
 	for key, request := range c.Requests {
-		if key != id.ThreadID && key != id.RolloutID || c.Phase != coverageObserve || request.TargetEpoch > c.Epoch {
+		if key != id.ThreadID && key != id.RolloutID {
+			continue
+		}
+		if listed && request.ProvenEpoch != 0 && !holds(request.Proven, source.Locator, id) {
+			request.ProvenEpoch, request.Proven = 0, nil
+			c.factBound = 0
+			c.Requests[key] = request
+			changed = true
+		}
+		if listed && c.Phase == coverageComplete && request.CompleteEpoch == c.Epoch && !holds(request.Candidates, source.Locator, id) {
+			request.CompleteEpoch = 0
+			c.Requests[key] = request
+			changed = true
+		}
+		if c.Phase != coverageObserve || request.TargetEpoch > c.Epoch {
 			continue
 		}
 		if _, present := request.Candidates[source.Locator]; !present && len(request.Candidates) >= 64 {
@@ -258,6 +292,12 @@ func (c *coverageInventory) observe(source SourceDescriptor, stamp Fingerprint, 
 		c.Requests[key] = request
 	}
 	return changed
+}
+
+// holds reports that a proof's candidates include locator with identity id.
+func holds(candidates map[string]coverageCandidate, locator string, id codexmeta.CodexIdentity) bool {
+	candidate, found := candidates[locator]
+	return found && reflect.DeepEqual(candidate.Identity, id)
 }
 
 func coverageKey(d directory) string { return filepath.Join(d.Root, d.Path) }
@@ -417,7 +457,13 @@ func (c *coverageInventory) finishValidation() bool {
 	return !c.Failed
 }
 
+// restart begins the next epoch. An epoch that completed unfailed becomes the
+// retained proof of each request it covered, replacing the older one; a
+// request it did not cover (overflowed, or requested mid-epoch) keeps none.
+// After a failed epoch, retained proofs stay as they were.
 func (c *coverageInventory) restart() {
+	proved := c.Phase == coverageComplete && !c.Failed && c.proofEpoch == c.Epoch
+	finished := c.Epoch
 	c.factBound = 0
 	c.Epoch++
 	c.proofEpoch = 0
@@ -428,6 +474,12 @@ func (c *coverageInventory) restart() {
 	c.Validation = nil
 	c.FinalOffset = 0
 	for key, request := range c.Requests {
+		switch {
+		case proved && request.CompleteEpoch == finished && !request.Overflow:
+			request.ProvenEpoch, request.Proven = finished, request.Candidates
+		case proved:
+			request.ProvenEpoch, request.Proven = 0, nil
+		}
 		request.Candidates = map[string]coverageCandidate{}
 		request.CompleteEpoch = 0
 		request.Overflow = false
@@ -574,11 +626,44 @@ func (c *coverageInventory) validateCompleteRequests() error {
 		if request.CompleteEpoch != 0 && (request.CompleteEpoch != c.Epoch || request.TargetEpoch > c.Epoch || request.Overflow) {
 			return errors.New("native coverage request proof inconsistent")
 		}
+		// A retained proof comes from an earlier, unfailed attempt that covered
+		// this request, and holds only candidates that attempt marked members.
+		if request.ProvenEpoch == 0 && request.Proven != nil || request.ProvenEpoch != 0 && (request.ProvenEpoch >= c.Epoch || request.ProvenEpoch > request.AttemptEpoch || request.TargetEpoch > request.ProvenEpoch) {
+			return errors.New("native coverage retained proof inconsistent")
+		}
+		for path, candidate := range request.Proven {
+			if !candidate.Member || !c.validCandidate(id, path, candidate) {
+				return errors.New("native coverage retained proof inconsistent")
+			}
+		}
 		for path, candidate := range request.Candidates {
-			if path != candidate.Source.Locator || candidate.Source.Kind != "" || !slices.Contains(c.Roots, candidate.Source.Root) || !filepath.IsAbs(path) || filepath.Clean(path) != path || (!local.PathWithin(path, filepath.Join(candidate.Source.Root, "sessions")) && !local.PathWithin(path, filepath.Join(candidate.Source.Root, "archived_sessions"))) || candidate.Identity.ThreadID != id && candidate.Identity.RolloutID != id {
+			if !c.validCandidate(id, path, candidate) {
 				return errors.New("native coverage candidate proof inconsistent")
 			}
 		}
 	}
 	return nil
+}
+
+func (c *coverageInventory) validCandidate(id, path string, candidate coverageCandidate) bool {
+	return path == candidate.Source.Locator && candidate.Source.Kind == "" && slices.Contains(c.Roots, candidate.Source.Root) && filepath.IsAbs(path) && filepath.Clean(path) == path && (local.PathWithin(path, filepath.Join(candidate.Source.Root, "sessions")) || local.PathWithin(path, filepath.Join(candidate.Source.Root, "archived_sessions"))) && (candidate.Identity.ThreadID == id || candidate.Identity.RolloutID == id)
+}
+
+// proven returns the candidates a coverage proof establishes for id, and the
+// epoch that proved them: the current epoch once it completed unfailed, and
+// otherwise the request's retained proof (see restart). A request the
+// completed current epoch did not cover has no proof, and neither does one
+// whose current epoch overflowed.
+func (c *coverageInventory) proven(id string) (map[string]coverageCandidate, uint64, bool) {
+	if c == nil {
+		return nil, 0, false
+	}
+	request, present := c.Requests[id]
+	if !present || request.Overflow {
+		return nil, 0, false
+	}
+	if c.Phase == coverageComplete && c.proofEpoch == c.Epoch && !c.Failed {
+		return request.Candidates, c.Epoch, request.CompleteEpoch == c.Epoch
+	}
+	return request.Proven, request.ProvenEpoch, request.ProvenEpoch != 0
 }
