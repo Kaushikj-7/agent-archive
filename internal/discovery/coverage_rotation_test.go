@@ -128,7 +128,7 @@ func TestCoverageByteCapsPrecedeAccumulationAndSerialization(t *testing.T) {
 	for n := range 256 {
 		for k := range 64 {
 			path := "/synthetic/sessions/" + strings.Repeat("x", 3500) + fmt.Sprintf("-%d-%d", n, k)
-			c.observe(SourceDescriptor{Root: "/synthetic", Locator: path}, Fingerprint{}, codexmeta.CodexIdentity{ThreadID: fmt.Sprintf("thread-%d", n)})
+			c.observe(SourceDescriptor{Root: "/synthetic", Locator: path}, Fingerprint{}, codexmeta.CodexIdentity{ThreadID: fmt.Sprintf("thread-%d", n)}, true)
 		}
 	}
 	if c.byteBound() > maxCoverageBytes {
