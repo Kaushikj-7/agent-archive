@@ -1314,12 +1314,12 @@ func (l *CodexRolloutLookup) deferCheckpoint(c *catalog, err error) {
 
 // checkpointCatalog persists the pass's catalog. One that, even without its
 // observation cache, is past the size the next read accepts is not written:
-// the previous file stays, the pass goes on, and health says so.
+// the previous file stays and health says so. Return the refusal so the caller
+// cannot mark unwritten queue and coverage changes as checkpointed.
 func checkpointCatalog(ctx context.Context, lookup *CodexRolloutLookup, path string, c *catalog, h *Health) error {
 	err := persistCatalog(ctx, lookup, path, *c)
 	if errors.Is(err, errCatalogTooLarge) {
 		h.Errors = append(h.Errors, "catalog_over_cap")
-		return nil
 	}
 	if err != nil {
 		lookup.deferCheckpoint(c, err)
