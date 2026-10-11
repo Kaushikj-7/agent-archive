@@ -83,6 +83,28 @@ agent-archive backfill history
 agent-archive pause
 # Move this run's synthetic native files after admission; record the action.
 agent-archive setup --refresh
+```
+
+Refresh preserves an unloaded scheduler's state; `resume` changes capture's
+pause setting and does not load the job. While still paused, explicitly restart
+only this installation's scheduler. On its disposable Linux user manager run:
+
+```sh
+systemctl --user start agent-archive-collector.timer
+```
+
+On the disposable macOS account load the owned LaunchAgent again:
+
+```sh
+launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/com.agent-archive.collector.plist"
+```
+
+The scheduler commands above use the default installation's names. If the
+disposable fixture uses a separate data directory, use its recorded owned unit
+name or LaunchAgent path for both stop and start; confirm ownership before
+running either. Confirm the timer/LaunchAgent is loaded, then resume capture:
+
+```sh
 agent-archive resume
 agent-archive status --verbose
 agent-archive show SESSION_ID --revisions --json
