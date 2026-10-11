@@ -8,6 +8,10 @@ keeps its meaning, and an incompatible change bumps `schema_version`, from
 conversation content, except `show --transcript --json` and a full
 `eval export` record, which you ask for explicitly.
 
+JSON output preserves its display-control escaping and returns a failure if
+the output writer rejects bytes or accepts only part of the document. Scripts
+should check the exit status before using redirected output.
+
 ## `list --json`
 
 ```json
