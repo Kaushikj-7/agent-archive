@@ -57,8 +57,9 @@ func TestKeepForeverFreshRepeatAndFiniteSetup(t *testing.T) {
 
 func TestGuidedRetentionChoicesPreserveSavedPolicy(t *testing.T) {
 	for _, tc := range []struct {
-		input       string
-		saved, want int
+		input string
+		saved int
+		want  int
 	}{
 		{"\n", 90, 90}, {"\n\n", 14, 14}, {"\n", 0, 0},
 		{"3\n", 90, 0}, {"1\n", 0, 90}, {"custom\n30\n", 0, 30}, {"custom\nforever\n", 90, 0},
@@ -122,12 +123,13 @@ func TestPairingForeverFencedBeforeCollectorAndSurvivesRetry(t *testing.T) {
 			env.AWSProfiles = func() ([]AWSProfile, error) { return []AWSProfile{{Name: "synthetic", Region: "us-east-1"}}, nil }
 			bucket := storagetest.NewMemoryStore()
 			env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return bucket, nil }
-			payload := pairing.Payload{Version: 1, PairingID: strings.Repeat("1", 32), RecipientID: strings.Repeat("2", 32), IssuerID: strings.Repeat("3", 32), IssuerName: "studio", Name: "laptop", CreatedAt: now, ExpiresAt: now.Add(time.Hour), Apps: []string{"claude"}, RetentionDays: 0, SkillEvidence: "metadata", Storage: pairing.Storage{Provider: "s3", Bucket: "synthetic", AWSProfile: "synthetic", Region: "us-east-1"}}
+			settings := pairing.Storage{Provider: "s3", Bucket: "synthetic", AWSProfile: "synthetic", Region: "us-east-1"}
+			key, secret := "", ""
 			if provider == "r2" {
-				payload.Storage = pairing.Storage{Provider: "r2", Bucket: "synthetic", R2Account: strings.Repeat("a", 32), Region: "auto"}
-				payload.AccessKeyID = "SYNTHETIC"
-				payload.SecretAccessKey = "synthetic-secret"
+				settings = pairing.Storage{Provider: "r2", Bucket: "synthetic", R2Account: strings.Repeat("a", 32), Region: "auto"}
+				key, secret = "SYNTHETIC", "synthetic-secret"
 			}
+			payload := pairing.Payload{Version: 1, PairingID: strings.Repeat("1", 32), RecipientID: strings.Repeat("2", 32), IssuerID: strings.Repeat("3", 32), IssuerName: "studio", Name: "laptop", CreatedAt: now, ExpiresAt: now.Add(time.Hour), Apps: []string{"claude"}, RetentionDays: 0, SkillEvidence: "metadata", Storage: settings, AccessKeyID: key, SecretAccessKey: secret}
 			code, err := pairing.NewCode()
 			must(t, err)
 			bundle, err := pairing.Seal(payload, code)

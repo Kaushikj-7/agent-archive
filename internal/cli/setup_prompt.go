@@ -71,25 +71,34 @@ func parseRetentionAnswer(value string) (int, error) {
 	return n, nil
 }
 
+type retentionChoice string
+
+const (
+	retentionChoiceDefault retentionChoice = "90-days"
+	retentionChoiceCustom  retentionChoice = "custom"
+	retentionChoiceForever retentionChoice = "forever"
+)
+
 func (p *prompter) setupRetentionDays(def int) (int, error) {
-	choice := "custom"
-	if def == 90 {
-		choice = "90-days"
-	} else if def == 0 {
-		choice = "forever"
+	choice := retentionChoiceCustom
+	switch def {
+	case 90:
+		choice = retentionChoiceDefault
+	case 0:
+		choice = retentionChoiceForever
 	}
 	custom := "Custom duration"
-	if choice == "custom" {
+	if choice == retentionChoiceCustom {
 		custom += " (" + config.RetentionLabel(def) + ")"
 	}
-	answer, err := p.guidedChoice(promptModel{Question: "How long should sessions be kept?", Default: choice, Receipt: "Retention", Primary: []option{{"90-days", "90 days"}, {"custom", custom}, {"forever", "Keep forever"}}, Helpers: []string{"Provider lifecycle rules and explicit deletion still apply."}})
+	answer, err := p.guidedChoice(promptModel{Question: "How long should sessions be kept?", Default: string(choice), Receipt: "Retention", Primary: []option{{string(retentionChoiceDefault), "90 days"}, {string(retentionChoiceCustom), custom}, {string(retentionChoiceForever), "Keep forever"}}, Helpers: []string{"Provider lifecycle rules and explicit deletion still apply."}})
 	if err != nil {
 		return 0, err
 	}
-	switch answer {
-	case "90-days":
+	switch retentionChoice(answer) {
+	case retentionChoiceDefault:
 		return 90, nil
-	case "forever":
+	case retentionChoiceForever:
 		return 0, nil
 	}
 	value := strconv.Itoa(def)

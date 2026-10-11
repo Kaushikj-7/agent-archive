@@ -64,11 +64,14 @@ func TestRetentionWireAndStickyComposition(t *testing.T) {
 		t.Fatalf("composition %+v %v", loaded, err)
 	}
 }
+
 func jsonInt(n int) string { b, _ := json.Marshal(n); return string(b) }
+
 func TestRetentionOrdering(t *testing.T) {
 	for _, tc := range []struct {
-		next, old int
-		shorter   bool
+		next    int
+		old     int
+		shorter bool
 	}{{0, 90, false}, {90, 0, true}, {0, 0, false}, {30, 90, true}, {90, 30, false}} {
 		if RetentionShorter(tc.next, tc.old) != tc.shorter {
 			t.Fatalf("ordering %+v", tc)
