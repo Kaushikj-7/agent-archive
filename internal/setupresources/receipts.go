@@ -56,6 +56,8 @@ type Receipt struct {
 
 var s3BucketName = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]*[a-z0-9]$`)
 
+const maxReceipts = 1000
+
 func (r Receipt) validate() error {
 	if r.Version != 1 || len(r.ID) != 32 || strings.Trim(r.ID, "0123456789abcdef") != "" || r.Bucket == "" || r.CreatedAt.IsZero() || (r.Provider != S3 && r.Provider != R2) {
 		return errors.New("invalid setup resource receipt")
@@ -73,6 +75,15 @@ func (r Receipt) validate() error {
 
 // Begin records uncertainty before the provider mutation. Failure prevents the call.
 func Begin(home string, r Receipt) (Receipt, error) {
+	// Do not send another mutation while its recovery history is unreadable,
+	// or add an intent that would make that history exceed the reader's cap.
+	receipts, err := List(home)
+	if err != nil {
+		return Receipt{}, err
+	}
+	if len(receipts) >= maxReceipts {
+		return Receipt{}, errors.New("too many setup resource receipts; preserve and reconcile the existing receipts before creating another bucket")
+	}
 	id, err := local.ID()
 	if err != nil {
 		return Receipt{}, err
@@ -135,14 +146,14 @@ func List(home string) ([]Receipt, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(entries) > 1000 {
-		return nil, errors.New("too many setup resource receipts")
-	}
 	var result []Receipt
 	for _, entry := range entries {
 		// Atomic writes abandoned by a crashed process are not committed receipts.
 		if strings.HasPrefix(entry.Name(), ".pending-") {
 			continue
+		}
+		if len(result) >= maxReceipts {
+			return nil, errors.New("too many setup resource receipts")
 		}
 		info, e := entry.Info()
 		if e != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0600 {

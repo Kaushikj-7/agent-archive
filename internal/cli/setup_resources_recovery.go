@@ -29,17 +29,26 @@ func resourceUsed(r setupresources.Receipt, cfg credentials.Config) bool {
 }
 
 func resourceStorage(r setupresources.Receipt) credentials.Config {
-	cfg := credentials.Config{Provider: string(r.Provider), Bucket: r.Bucket, Region: r.Region, AWSProfile: r.Profile, R2AccountID: r.Account}
+	region, endpoint := r.Region, ""
 	if r.Provider == setupresources.R2 {
-		cfg.Region = "auto"
+		region = "auto"
 		host := r.Account
 		if r.Jurisdiction != "" {
 			host += "." + r.Jurisdiction
 		}
-		cfg.R2Endpoint = "https://" + host + ".r2.cloudflarestorage.com"
+		endpoint = "https://" + host + ".r2.cloudflarestorage.com"
 	}
-	return cfg
+	return credentials.Config{Provider: string(r.Provider), Bucket: r.Bucket, Region: region, AWSProfile: r.Profile, R2AccountID: r.Account, R2Endpoint: endpoint}
 }
+
+type resourceRecoveryChoice string
+
+const (
+	resourceRecoveryConnect resourceRecoveryChoice = "connect"
+	resourceRecoveryOther   resourceRecoveryChoice = "other"
+	resourceRecoveryDetails resourceRecoveryChoice = "details"
+	resourceRecoveryStop    resourceRecoveryChoice = "stop"
+)
 
 // recoverSetupResources never interprets connectivity as proof of ownership.
 // A recovered bucket goes through the ordinary existing-storage credential flow.
@@ -73,8 +82,8 @@ func recoverSetupResources(p *prompter, home string, saved setupDraft, have bool
 			if e != nil {
 				return saved, have, e
 			}
-			switch choice {
-			case "connect":
+			switch resourceRecoveryChoice(choice) {
+			case resourceRecoveryConnect:
 				if !have {
 					saved = setupDraft{Version: draftFormat, Config: initial, NewInstallation: initial.Storage.Provider == ""}
 				}
@@ -88,11 +97,11 @@ func recoverSetupResources(p *prompter, home string, saved setupDraft, have bool
 					return saved, have, e
 				}
 				return saved, true, nil
-			case "other":
+			case resourceRecoveryOther:
 				return saved, have, nil
-			case "stop":
+			case resourceRecoveryStop:
 				return saved, have, errResourceRecoveryStopped
-			case "details":
+			case resourceRecoveryDetails:
 				if e = setupResourceDetails(p, home, r, slots, saved, have, initial, env); e != nil {
 					return saved, have, e
 				}
@@ -110,7 +119,7 @@ func recoverSetupResources(p *prompter, home string, saved setupDraft, have bool
 			return saved, have, e
 		}
 		if choice == "cleanup" {
-			if e = cleanupSetupKey(p, home, s, saved, have, initial, env); e != nil {
+			if e = cleanupSetupKey(p, home, s, env); e != nil {
 				return saved, have, e
 			}
 		}
@@ -151,7 +160,7 @@ func setupResourceDetails(p *prompter, home string, r setupresources.Receipt, sl
 				return err
 			}
 			if choice == "cleanup" {
-				if err = cleanupSetupKey(p, home, s, saved, have, active, env); err != nil {
+				if err = cleanupSetupKey(p, home, s, env); err != nil {
 					return err
 				}
 			}
@@ -174,7 +183,7 @@ func setupResourceDetails(p *prompter, home string, r setupresources.Receipt, sl
 	return nil
 }
 
-func cleanupSetupKey(p *prompter, home string, s issuance.Slot, saved setupDraft, have bool, active config.Config, env Env) error {
+func cleanupSetupKey(p *prompter, home string, s issuance.Slot, env Env) error {
 	terminal.Printf(p.out, "Revoke unused archive key slot %s in Cloudflare account %s for bucket %s?\n", s.SlotID, s.AccountID, s.Bucket)
 	choice, err := p.setupMenu("This permanently revokes this key", "keep", option{"keep", "Keep this key"}, option{"revoke", "Revoke this unused key"})
 	if err != nil || choice != "revoke" {
@@ -189,6 +198,19 @@ func cleanupSetupKey(p *prompter, home string, s issuance.Slot, saved setupDraft
 	if err != nil {
 		return err
 	}
+	// setup.lock is held by the wizard; issued.lock now excludes ledger changes.
+	// Refresh both protected snapshots before any provider mutation.
+	active, _, err := config.Load(home)
+	if err != nil {
+		return err
+	}
+	saved, have, problem, err := readDraft(home)
+	if err != nil {
+		return err
+	}
+	if problem != "" {
+		return errors.New("saved setup cannot be read; no key was revoked")
+	}
 	for _, current := range slots {
 		if current.SlotID != s.SlotID {
 			continue
@@ -196,29 +218,35 @@ func cleanupSetupKey(p *prompter, home string, s issuance.Slot, saved setupDraft
 		if !cleanupGuidedEligible(current, saved, have, active) {
 			return fmt.Errorf("key is now referenced or no longer eligible; no key was revoked")
 		}
-		token, _, _, err := readManagementToken(context.Background(), p, env, active.CloudflareTokenCommand, true)
-		if err != nil {
-			return err
-		}
-		api := env.cloudflareAPI(token)
-		defer api.Discard()
-		issuer := keyIssuer{home: home, env: env, p: p, api: api, account: current.AccountID, bucket: cloudflare.BucketRef{Name: current.Bucket, Jurisdiction: current.Jurisdiction}}
-		issuer.cleanup(&current)
-		if current.State == issuance.Deleted {
-			p.note("Unused key revoked. Credential cleanup is tracked separately if needed.")
-		} else {
-			p.warn("Key cleanup remains pending. Check account API token permissions and retry; no deletion was confirmed.")
-		}
-		return nil
+		return cleanupCurrentSetupKey(p, home, current, saved, have, active, env)
 	}
 	return fmt.Errorf("key receipt no longer exists; no key was revoked")
 }
 
-// refuseUncertainCreation prevents retries across process restarts without ownership evidence.
-func refuseUncertainCreation(home string, candidate setupresources.Receipt) error {
-	return new(prompter).refuseUncertainCreation(home, candidate)
+func cleanupCurrentSetupKey(p *prompter, home string, current issuance.Slot, saved setupDraft, have bool, active config.Config, env Env) error {
+	token, _, _, err := readManagementToken(context.Background(), p, env, active.CloudflareTokenCommand, true)
+	if err != nil {
+		return err
+	}
+	api := env.cloudflareAPI(token)
+	defer api.Discard()
+	var protectionErr error
+	issuer := keyIssuer{home: home, env: env, p: p, api: api, account: current.AccountID, bucket: cloudflare.BucketRef{Name: current.Bucket, Jurisdiction: current.Jurisdiction}, beforeCleanupDelete: func(ctx context.Context, providerID string) error {
+		protectionErr = protectSetupKeyCredentials(ctx, providerID, active, saved, have, env)
+		return protectionErr
+	}}
+	issuer.cleanup(&current)
+	if current.State == issuance.Deleted {
+		p.note("Unused key revoked. Credential cleanup is tracked separately if needed.")
+	} else if protectionErr != nil {
+		p.warn(protectionErr.Error())
+	} else {
+		p.warn("Key cleanup remains pending. Check account API token permissions and retry; no deletion was confirmed.")
+	}
+	return nil
 }
 
+// refuseUncertainCreation prevents retries across process restarts without ownership evidence.
 func (p *prompter) refuseUncertainCreation(home string, candidate setupresources.Receipt) error {
 	receipts, err := setupresources.List(home)
 	if err != nil {
@@ -240,4 +268,36 @@ func (p *prompter) rememberResourceRequest(id string) {
 		p.resourceRequestsThisRun = make(map[string]bool)
 	}
 	p.resourceRequestsThisRun[id] = true
+}
+
+// protectSetupKeyCredentials protects a provider key even when it was entered
+// again under a different opaque reference. Unreadable references fail closed.
+func protectSetupKeyCredentials(ctx context.Context, providerID string, active config.Config, saved setupDraft, have bool, env Env) error {
+	refs := append([]string{active.Storage.R2CredentialRef}, active.SpareCredentialRefs...)
+	if have {
+		refs = append(refs, saved.Config.Storage.R2CredentialRef, saved.CredentialRef)
+		refs = append(refs, saved.StagedRefs...)
+		refs = append(refs, saved.Config.SpareCredentialRefs...)
+	}
+	var store credentials.CredentialStore
+	for _, ref := range refs {
+		if ref == "" {
+			continue
+		}
+		if store == nil {
+			var err error
+			store, err = env.credentialStore()
+			if err != nil {
+				return errors.New("cannot inspect protected credentials; no key was revoked")
+			}
+		}
+		key, err := credentials.LoadStored(ctx, store, ref)
+		if err != nil {
+			return errors.New("cannot inspect protected credentials; no key was revoked")
+		}
+		if key.AccessKeyID == providerID {
+			return errors.New("key is used by active or saved setup credentials; no key was revoked")
+		}
+	}
+	return nil
 }

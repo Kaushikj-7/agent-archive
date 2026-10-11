@@ -2,6 +2,11 @@ package cli
 
 import (
 	"bytes"
+	"context"
+	"errors"
+	"github.com/wangjohn/agent-archive/internal/cloudflare"
+	"github.com/wangjohn/agent-archive/internal/cloudflare/cloudflaretest"
+	"github.com/wangjohn/agent-archive/internal/local"
 	"strings"
 	"testing"
 	"time"
@@ -51,7 +56,7 @@ func TestUncertainResourceRecoveryConnectsWithoutClaimingOwnership(t *testing.T)
 	if !strings.Contains(out.String(), "Creation outcome unknown") {
 		t.Fatal(out.String())
 	}
-	if err = refuseUncertainCreation(home, setupresources.Receipt{Provider: setupresources.S3, Bucket: r.Bucket, Profile: "rebound"}); err == nil {
+	if err = new(prompter).refuseUncertainCreation(home, setupresources.Receipt{Provider: setupresources.S3, Bucket: r.Bucket, Profile: "rebound"}); err == nil {
 		t.Fatal("ambiguous create allowed after profile change")
 	}
 }
@@ -114,5 +119,83 @@ func TestUnknownCreationRetryRequiresCurrentProcessContext(t *testing.T) {
 	restarted := newPrompter(strings.NewReader(""), &bytes.Buffer{})
 	if err := restarted.refuseUncertainCreation(home, r); err == nil {
 		t.Fatal("restart forgot uncertain provider request")
+	}
+}
+
+type protectedKeyOwner string
+
+const (
+	protectedKeyActive     protectedKeyOwner = "active"
+	protectedKeyDraft      protectedKeyOwner = "draft"
+	protectedKeyStaged     protectedKeyOwner = "staged"
+	protectedKeySpare      protectedKeyOwner = "spare"
+	protectedKeyUnreadable protectedKeyOwner = "unreadable"
+	protectedKeyUnused     protectedKeyOwner = "unused"
+)
+
+func TestRecoveryCleanupProtectsReenteredProviderKeys(t *testing.T) {
+	for _, owner := range []protectedKeyOwner{protectedKeyActive, protectedKeyDraft, protectedKeyStaged, protectedKeySpare, protectedKeyUnreadable, protectedKeyUnused} {
+		for _, lost := range []bool{false, true} {
+			t.Run(string(owner)+map[bool]string{false: "-known", true: "-lost"}[lost], func(t *testing.T) {
+				env, home, cf, kc := dedicatedFixture(t)
+				i := fixtureIssuer(t, env, home)
+				slot, err := issuance.New(i.cfg.MachineID, i.cfg.DestinationID(), i.account, i.bucket, i.group, issuance.Guided, env.now())
+				must(t, err)
+				must(t, issuance.Save(home, slot))
+				resource, err := cloudflare.BucketResource(i.account, i.bucket)
+				must(t, err)
+				token, err := i.api.CreateToken(context.Background(), i.account, cloudflare.TokenSpec{Name: slot.ProviderName, Policies: []cloudflare.Policy{{PermissionGroupIDs: []string{i.group}, Resources: map[string]string{resource: "*"}}}})
+				must(t, err)
+				derived := cloudflare.DeriveS3Credentials(token)
+				key := credentials.R2Credentials{AccessKeyID: derived.AccessKeyID, SecretAccessKey: derived.SecretAccessKey}
+				slot.State = issuance.CleanupPending
+				slot.ProviderID = token.ID
+				if lost {
+					slot.ProviderID = ""
+				}
+				must(t, issuance.Save(home, slot))
+				active, _, err := config.Load(home)
+				must(t, err)
+				switch owner {
+				case protectedKeyActive:
+					must(t, kc.Save(context.Background(), "reentered", key))
+					active.Storage.R2CredentialRef = "reentered"
+					must(t, config.Save(home, active))
+				case protectedKeySpare:
+					ref := "issued-" + strings.Repeat("f", 32)
+					must(t, kc.Save(context.Background(), ref, key))
+					active.SpareCredentialRefs = []string{ref}
+					must(t, config.Save(home, active))
+				case protectedKeyDraft, protectedKeyStaged:
+					must(t, kc.Save(context.Background(), "reentered", key))
+					draftConfig := active
+					var stagedRefs []string
+					if owner == protectedKeyDraft {
+						draftConfig.Storage.R2CredentialRef = "reentered"
+					} else {
+						stagedRefs = []string{"reentered"}
+					}
+					must(t, local.Write(draftPath(home), setupDraft{Version: draftFormat, Config: draftConfig, Step: 1, StagedRefs: stagedRefs}))
+				case protectedKeyUnused:
+					// Leave the provider key absent from every protected credential.
+				case protectedKeyUnreadable:
+					env.Credentials = func() (credentials.CredentialStore, error) { return nil, errors.New("locked") }
+				}
+				env.LookupEnv = func(name string) (string, bool) { return bootstrapCanary, name == "CLOUDFLARE_API_TOKEN" }
+				var out bytes.Buffer
+				// The deletion gate reads protected credentials from current disk state.
+				err = cleanupSetupKey(newPrompter(strings.NewReader("2\n"), &out), home, slot, env)
+				must(t, err)
+				slots, err := issuance.List(home)
+				must(t, err)
+				if owner == protectedKeyUnused {
+					if cf.Calls(cloudflaretest.RouteDeleteToken) != 1 || slots[0].State != issuance.Deleted {
+						t.Fatalf("unused key retained: %+v %s", slots, out.String())
+					}
+				} else if cf.Calls(cloudflaretest.RouteDeleteToken) != 0 || len(cf.Live()) != 1 || slots[0].State != issuance.CleanupPending {
+					t.Fatalf("protected key revoked: %+v %s", slots, out.String())
+				}
+			})
+		}
 	}
 }

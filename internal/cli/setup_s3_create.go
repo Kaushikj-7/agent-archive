@@ -220,7 +220,7 @@ func createS3Bucket(p *prompter, cfg *credentials.Config, env Env, profileRegion
 			}
 			err = createErr
 			if err == nil {
-				return finishNewS3Bucket(p, creator, created, firstNonEmpty(cfg.Prefix, defaultPrefix))
+				return finishNewS3Bucket(p, creator, created)
 			} else if errors.Is(err, storage.ErrBucketNameTaken) && automaticName && !regenerated {
 				terminal.Printf(p.out, "The name %s is taken; preparing another suggested name.\n", name)
 				name, regenerated = newBucketName(), true
@@ -872,7 +872,7 @@ func requestS3Bucket(p *prompter, env Env, creator BucketCreator, profile, name,
 }
 
 // finishNewS3Bucket secures only a confirmed creation and preserves its outcome.
-func finishNewS3Bucket(p *prompter, creator BucketCreator, created createdS3Bucket, prefix string) (newS3Bucket, bool, error) {
+func finishNewS3Bucket(p *prompter, creator BucketCreator, created createdS3Bucket) (newS3Bucket, bool, error) {
 	terminal.Printf(p.out, "Created bucket %s in %s.\n", created.name, created.region)
 	p.createdBuckets = append(p.createdBuckets, created)
 	secured, err := secureNewBucket(p, creator, created.name, created.profile)
@@ -887,6 +887,5 @@ func finishNewS3Bucket(p *prompter, creator BucketCreator, created createdS3Buck
 		return newS3Bucket{}, false, err
 	}
 	rememberSecuredBucket(p, created.name)
-	printRuntimePolicyAdvice(p, created.name, prefix)
 	return newS3Bucket{name: created.name, region: created.region, fresh: true}, true, nil
 }

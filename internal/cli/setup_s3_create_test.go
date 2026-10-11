@@ -856,6 +856,27 @@ func TestCreateS3BucketKeepsTheCreationProfileOnABlankAnswer(t *testing.T) {
 	}
 }
 
+func TestCreatedS3BucketShowsPolicyOnlyWhenRequested(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		input string
+		want  int
+	}{
+		{"default", "\n\n", 0},
+		{"view permissions", "\n\nv\n", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sequentialNames(t)
+			creator := &fakeCreator{privacy: verifiedPrivate}
+			var cfg credentials.Config
+			out, err := runCreate(t, createEnv(t, "us-east-1", creator, fakeBuckets{}, nil), &cfg, tc.input)
+			if err != nil || strings.Count(out, `"Sid": "ArchiveObjects"`) != tc.want {
+				t.Fatalf("policy count want %d, err=%v\n%s", tc.want, err, out)
+			}
+		})
+	}
+}
+
 // A bucket created earlier in the same run is offered, not duplicated.
 func TestCreateS3BucketOffersTheBucketThisRunAlreadyCreated(t *testing.T) {
 	sequentialNames(t)
