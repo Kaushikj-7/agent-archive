@@ -672,8 +672,12 @@ func (s scan) admitObservation(source SourceEntry, entry cached) (bool, bool) {
 	}
 	h.Supported = true
 	h.observeFormat(candidate)
-	if s.removalBlocks(candidate) {
-		s.refused.settle(candidate)
+	if blocked, removed := s.removalBlocks(candidate); blocked {
+		// Only a lookup that found the removal settles the record; one that
+		// failed decides nothing about the session.
+		if removed {
+			s.refused.settle(candidate)
+		}
 		return false, false
 	}
 	// Lookup homes may include hooks/import locations for already admitted
@@ -753,16 +757,17 @@ func (s scan) enqueueDirectory(d directory, path string) bool {
 
 // removalBlocks avoids repeat census work for a known removed source. Retention
 // and removal share collector.lock with the scanner's production caller.
-func (s scan) removalBlocks(candidate Candidate) bool {
+// removed is true only when the lookup succeeded and found a removal.
+func (s scan) removalBlocks(candidate Candidate) (blocked, removed bool) {
 	if _, removed, err := s.store.Removal(candidate.Agent, candidate.NativeSessionID); err != nil {
 		s.health.Outcomes["removal_unavailable"]++
 		s.health.Errors = appendUnique(s.health.Errors, "removal_unavailable")
-		return true
+		return true, false
 	} else if removed {
 		s.health.Outcomes["removed_session"]++
-		return true
+		return true, true
 	}
-	return false
+	return false, false
 }
 
 func pruneCatalog(c *catalog) {
@@ -869,7 +874,7 @@ func (s scan) admitCandidate(candidate Candidate, loc string) (bool, bool) {
 		if err != nil || !existing {
 			h.Outcomes["start_not_authorized"]++
 			if err == nil && s.startOnlyRefusal(candidate.Agent, root, facts.Cwd) {
-				s.refused.refuse(candidate, loc)
+				s.refuseProven(candidate, loc)
 			} else if err == nil {
 				s.refused.settle(candidate)
 			}
@@ -893,6 +898,60 @@ func (s scan) startOnlyRefusal(agent, root, cwd string) bool {
 	return ok
 }
 
+// refuseProven records a start-refused candidate only once it passes the
+// native admission proof finishCandidate requires before admitting one, so a
+// provisional observation (incomplete metadata, pending related history) or
+// a session whose own task fails the proof is not named as one backfill
+// imports. A recorded session is not proven again, and past
+// maxRefusedProofs a pass leaves the rest for later passes.
+func (s scan) refuseProven(candidate Candidate, loc string) {
+	r := s.refused
+	if r == nil {
+		return
+	}
+	if !r.eligible(candidate, loc) {
+		r.settle(candidate)
+		return
+	}
+	if candidate.SnapshotProven {
+		r.refuse(candidate, loc)
+		return
+	}
+	if r.recorded(candidate, loc) || r.proofs >= maxRefusedProofs {
+		return
+	}
+	r.proofs++
+	proven, err := s.proofs.Prove(s.ctx, candidate)
+	if err != nil {
+		if nativeProofOutcome(err) == string(outcomeOwnTaskRejected) && s.ctx.Err() == nil {
+			s.rejectOwnTask(loc)
+		}
+		r.settle(candidate)
+		return
+	}
+	if !validCandidate(proven, proven.Source, s.adapter.Agent(), s.now) {
+		r.settle(candidate)
+		return
+	}
+	r.refuse(proven, loc)
+}
+
+// rejectOwnTask keeps a decisive own-task rejection in the catalog, so the
+// unchanged source is not proven again, and drops its pending retry.
+func (s scan) rejectOwnTask(loc string) {
+	c := s.catalog
+	entry := c.Cache[loc]
+	entry.Observation.Outcome = outcomeOwnTaskRejected
+	c.Cache[loc] = entry
+	kept := c.Retries[:0]
+	for _, pending := range c.Retries {
+		if pending.Locator != loc {
+			kept = append(kept, pending)
+		}
+	}
+	c.Retries = kept
+}
+
 func (s scan) finishCandidate(candidate Candidate, loc, root, generation, ownedRoot string, physical bool, facts sourcefacts.ProjectFacts) (bool, bool) {
 	store, h, c, now := s.store, s.health, s.catalog, s.now
 	if !candidate.SnapshotProven {
@@ -901,16 +960,7 @@ func (s scan) finishCandidate(candidate Candidate, loc, root, generation, ownedR
 			outcome := nativeProofOutcome(err)
 			h.Outcomes[outcome]++
 			if outcome == string(outcomeOwnTaskRejected) && s.ctx.Err() == nil {
-				entry := c.Cache[loc]
-				entry.Observation.Outcome = outcomeOwnTaskRejected
-				c.Cache[loc] = entry
-				kept := c.Retries[:0]
-				for _, pending := range c.Retries {
-					if pending.Locator != loc {
-						kept = append(kept, pending)
-					}
-				}
-				c.Retries = kept
+				s.rejectOwnTask(loc)
 			} else {
 				s.retainRetry(candidate.Source)
 			}

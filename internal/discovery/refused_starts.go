@@ -30,6 +30,9 @@ const (
 	// whose source path is longer is not recorded.
 	maxRefusedLocator     = 1024
 	maxRefusedStartsBytes = 512 * 1024
+	// maxRefusedProofs bounds the native admission proofs one pass runs for
+	// refused sessions not yet recorded; the rest wait for later passes.
+	maxRefusedProofs = 16
 )
 
 // RefusedStart is one top-level session discovery classified as capturable
@@ -85,6 +88,8 @@ type refusedStarts struct {
 	floor    time.Time
 	sessions map[string]RefusedStart
 	changed  bool
+	// proofs counts the native admission proofs this pass ran for refusals.
+	proofs int
 }
 
 // admissionRefusedStarts is the record for a pass that decides admissions,
@@ -116,7 +121,7 @@ func (r *refusedStarts) refuse(candidate Candidate, loc string) {
 	if r == nil {
 		return
 	}
-	if r.floor.IsZero() || candidate.NativeChild || candidate.ParentNativeID != "" || len(loc) > maxRefusedLocator || !r.inWindow(candidate.StartedAt) {
+	if !r.eligible(candidate, loc) {
 		r.settle(candidate)
 		return
 	}
@@ -126,6 +131,19 @@ func (r *refusedStarts) refuse(candidate Candidate, loc string) {
 		r.sessions[key] = session
 		r.changed = true
 	}
+}
+
+// eligible reports whether a refused candidate is one the record keeps: a
+// top-level session that started within the lookback before the floor.
+func (r *refusedStarts) eligible(candidate Candidate, loc string) bool {
+	return !r.floor.IsZero() && !candidate.NativeChild && candidate.ParentNativeID == "" && len(loc) <= maxRefusedLocator && r.inWindow(candidate.StartedAt)
+}
+
+// recorded reports whether the record already holds the candidate at loc,
+// which it does only once the candidate's native admission proof passed.
+func (r *refusedStarts) recorded(candidate Candidate, loc string) bool {
+	session, found := r.sessions[refusedStartKey(candidate.Agent, candidate.NativeSessionID)]
+	return found && session.Locator == loc
 }
 
 // settle drops a candidate whose admission was decided otherwise: admitted,
@@ -145,16 +163,16 @@ func (r *refusedStarts) inWindow(started time.Time) bool {
 	return started.Before(r.floor) && !started.Before(r.floor.Add(-RefusedStartLookback-24*time.Hour))
 }
 
-// save drops sessions whose source the catalog no longer holds or that fall
-// outside the current window, keeps the latest starts within the bound, and
-// writes the record when anything changed.
+// save drops sessions whose rollout is gone or that fall outside the current
+// window, keeps the latest starts within the bound, and writes the record
+// when anything changed.
 func (r *refusedStarts) save(home string, cache map[string]cached) error {
 	if r == nil {
 		return nil
 	}
 	sessions := make([]RefusedStart, 0, len(r.sessions))
 	for key, session := range r.sessions {
-		if _, observed := cache[session.Locator]; !observed || r.floor.IsZero() || !r.inWindow(session.StartedAt) {
+		if sourceGone(session.Locator, cache) || r.floor.IsZero() || !r.inWindow(session.StartedAt) {
 			delete(r.sessions, key)
 			r.changed = true
 			continue
@@ -184,4 +202,17 @@ func (r *refusedStarts) save(home string, cache map[string]cached) error {
 	}
 	r.changed = false
 	return nil
+}
+
+// sourceGone reports whether a recorded session's rollout no longer exists.
+// The catalog cache is bounded and evicts sources that still exist, so a
+// locator it does not hold is checked on disk: only a missing file drops the
+// session, and any other error keeps it. A save costs one lstat per recorded
+// session the cache does not hold.
+func sourceGone(locator string, cache map[string]cached) bool {
+	if _, observed := cache[locator]; observed {
+		return false
+	}
+	_, err := os.Lstat(locator)
+	return errors.Is(err, os.ErrNotExist)
 }

@@ -174,11 +174,13 @@ working directory is no longer available.
 When a scan refuses a top-level session as `start_not_authorized` and it
 started within 8 days before the earliest discovery start floor
 (`config.DiscoveryStartFloor`), the scan records it in
-`discovery-refused-starts.json`: native ID, start time and rollout path, at
+`discovery-refused-starts.json` once it passes the same native admission
+proof an admitted session needs (at most 16 proofs per pass; a provisional or
+rejected session is not recorded): native ID, start time and rollout path, at
 most 256 sessions, written atomically and only when it changed. A later scan
-that reaches the session and admits it, finds it archived or removed, or finds
-its project excluded drops it, as does a scan whose catalog no longer holds its
-rollout. Status reads this file instead of the catalog for the pre-setup line
+that reaches the session and admits it, finds it archived or removed (a
+removal lookup that fails keeps it), or finds its project excluded drops it,
+as does a scan that finds its rollout file gone. Status reads this file instead of the catalog for the pre-setup line
 ([setup](../getting-started/setup.md#after-setup)), and checks each session
 against registrations and removal records itself, so an import clears the line
 without waiting for a scan.

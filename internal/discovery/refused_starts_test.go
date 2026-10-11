@@ -2,6 +2,8 @@ package discovery
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,6 +15,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agents/builtin"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 	"github.com/wangjohn/agent-archive/internal/state"
 )
 
@@ -240,6 +243,117 @@ func TestRefusedStartsScanDropsRemovedAndExcludedSessions(t *testing.T) {
 	if got := scan(excluded, 6*time.Minute); len(got) != 0 {
 		t.Fatalf("after exclusion %+v", got)
 	}
+}
+
+// Only a session that passes the native admission proof discovery requires
+// before admitting one is recorded: a provisional observation or a session
+// whose own task fails the proof is one backfill would not import.
+func TestRefusedStartsRecordsOnlyProvenSessions(t *testing.T) {
+	t.Parallel()
+	store, cfg, at, codex := fixture(t)
+	project := cfg.Archive.Projects[0].Root
+	floor, ok := cfg.DiscoveryStartFloor("codex")
+	if !ok {
+		t.Fatal("no start floor")
+	}
+	started := floor.Add(-time.Hour)
+	proven := writeRollout(t, codex, project, started, 1, "sessions")
+	incomplete := writeRollout(t, codex, project, started, 2, "sessions")
+	// Without its first task the observation is provisional, and the
+	// native proof finds no own task.
+	rewriteRollout(t, codex, incomplete, func(lines []string) []string { return lines[:1] })
+	// Its first task, past the header window, started well before the
+	// session was created: the proof rejects it decisively.
+	rejected := writeRollout(t, codex, project, started, 3, "sessions")
+	rewriteRollout(t, codex, rejected, func(lines []string) []string {
+		padded := []string{lines[0]}
+		for range max(sourcefacts.HeaderRecords, sourcefacts.HeaderBytes/512) + 1 {
+			padded = append(padded, `{"type":"turn_context","payload":{"model":"synthetic","synthetic_padding":"`+strings.Repeat("x", 512)+`"}}`)
+		}
+		task := strings.ReplaceAll(lines[1], started.Format(time.RFC3339Nano), started.Add(-2*time.Hour).Format(time.RFC3339Nano))
+		return append(padded, task, lines[2])
+	})
+	options := Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(2 * time.Minute) }}
+	h, err := run(context.Background(), store, cfg, options, syntheticSupport)
+	if err != nil || h.Registered != 0 || h.Outcomes["start_not_authorized"] != 3 || h.Outcomes["own_task_rejected"] != 0 || h.NativeValidationAttempts != 3 {
+		t.Fatalf("scan %#v %v", h, err)
+	}
+	got, err := ReadRefusedStarts(store.Home())
+	if err != nil || len(got) != 1 || got[0].NativeSessionID != proven {
+		t.Fatalf("recorded %+v %v", got, err)
+	}
+	// A recorded session is not proven again, nor is a decisively rejected
+	// one: a second pass proves only the still-incomplete session.
+	h, err = run(context.Background(), store, cfg, options, syntheticSupport)
+	if err != nil || h.NativeValidationAttempts != 1 {
+		t.Fatalf("second scan %#v %v", h, err)
+	}
+	if got, err := ReadRefusedStarts(store.Home()); err != nil || len(got) != 1 || got[0].NativeSessionID != proven {
+		t.Fatalf("second scan recorded %+v %v", got, err)
+	}
+}
+
+// A removal lookup that fails decides nothing: the recorded session is kept
+// until a lookup finds it removed.
+func TestRefusedStartsKeepsSessionsWhenRemovalLookupFails(t *testing.T) {
+	t.Parallel()
+	store, cfg, at, codex := fixture(t)
+	floor, ok := cfg.DiscoveryStartFloor("codex")
+	if !ok {
+		t.Fatal("no start floor")
+	}
+	id := writeRollout(t, codex, cfg.Archive.Projects[0].Root, floor.Add(-time.Hour), 1, "sessions")
+	scan := func(after time.Duration) (Health, []RefusedStart) {
+		t.Helper()
+		h, err := run(context.Background(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(after) }}, syntheticSupport)
+		must(t, err)
+		got, err := ReadRefusedStarts(store.Home())
+		must(t, err)
+		return h, got
+	}
+	if _, got := scan(2 * time.Minute); len(got) != 1 || got[0].NativeSessionID != id {
+		t.Fatalf("recorded %+v", got)
+	}
+	// A directory where the removal record belongs makes the lookup fail.
+	sum := sha256.Sum256([]byte(archive.CanonicalHarness("codex") + "\x00" + id))
+	must(t, os.MkdirAll(filepath.Join(store.Home(), "forgotten", hex.EncodeToString(sum[:])+".json"), 0o700))
+	if h, got := scan(3 * time.Minute); h.Outcomes["removal_unavailable"] == 0 || len(got) != 1 || got[0].NativeSessionID != id {
+		t.Fatalf("failed lookup: %#v %+v", h.Outcomes, got)
+	}
+}
+
+// The catalog cache is bounded and evicts sources that still exist: a
+// session whose rollout the cache no longer holds is kept while the file is
+// there, and dropped once it is gone.
+func TestRefusedStartsKeepsSessionsEvictedFromTheCatalog(t *testing.T) {
+	t.Parallel()
+	floor := time.Date(2026, 10, 5, 21, 43, 0, 0, time.UTC)
+	home := t.TempDir()
+	loc := filepath.Join(t.TempDir(), "rollout-evicted.jsonl")
+	must(t, os.WriteFile(loc, nil, 0o600))
+	r := &refusedStarts{floor: floor, sessions: map[string]RefusedStart{}}
+	c, _ := refusedCandidate("evicted", floor.Add(-time.Hour))
+	r.refuse(c, loc)
+	must(t, r.save(home, map[string]cached{}))
+	if got, err := ReadRefusedStarts(home); err != nil || len(got) != 1 || got[0].Locator != loc {
+		t.Fatalf("evicted session dropped: %+v %v", got, err)
+	}
+	must(t, os.Remove(loc))
+	reloaded := loadRefusedStarts(home, config.Config{}, "codex")
+	reloaded.floor = floor
+	must(t, reloaded.save(home, map[string]cached{}))
+	if got, err := ReadRefusedStarts(home); err != nil || got != nil {
+		t.Fatalf("missing rollout kept: %+v %v", got, err)
+	}
+}
+
+func rewriteRollout(t *testing.T, codex, id string, edit func([]string) []string) {
+	t.Helper()
+	path := filepath.Join(codex, "sessions", "rollout-2026-10-01T12-00-00-"+id+".jsonl")
+	data, err := os.ReadFile(path)
+	must(t, err)
+	lines := edit(strings.Split(strings.TrimSuffix(string(data), "\n"), "\n"))
+	must(t, os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600))
 }
 
 func must(t *testing.T, err error) {
