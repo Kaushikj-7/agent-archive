@@ -743,6 +743,9 @@ agent-archive handoff --file ~/.codex/sessions/.../rollout-....jsonl --harness c
 ```
 
 `--output` refuses to replace an existing file unless you add `--force`.
+It publishes a complete private file atomically; `--force` replaces only an
+ordinary file and rejects symbolic links and other file types. Failed writes
+preserve the previous output.
 `--format json` prints the structured handoff document the prompt is rendered
 from; see [JSON output](../reference/json-output.md). The format is specified
 in the [handoff design](../../dev/specs/handoff.md).

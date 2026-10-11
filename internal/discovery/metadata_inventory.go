@@ -787,9 +787,9 @@ func (m *metadataInventory) BeginValidationSlice(ctx context.Context, limits age
 		err = m.validate(operation)
 	}
 	err = m.operationFailure(ctx, err)
-	// Owned expiry invalidates even a fully acquired inventory when validation
-	// is the first failed operation. Caller cancellation can still renew it.
-	if err != nil && (m.failure != nil || ctx.Err() == nil && agentapi.Failure(err) == agentapi.Limit) {
+	// A caller-local failed sweep stays in its slice, but exhaustion of the
+	// fixed epoch leaves incomplete evidence even after enumeration finished.
+	if err != nil && (m.failure != nil || (ctx.Err() == nil && agentapi.Failure(err) == agentapi.Limit)) {
 		err = m.fail(err)
 	}
 	return &metadataSlice{inventory: m, remaining: limits.Steps, expires: time.Now().Add(limits.Duration), failure: err}, nil

@@ -6,6 +6,15 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Report failed or short JSON output writes, including status and normalized
+  transcripts. Reject nonregular or invalid UTF-8 feedback input without
+  blocking on named pipes. Publish handoff files privately and atomically,
+  preserving existing files on errors and refusing symlink targets.
+- Reject invalid purge and machine-listing flags before setup or credentials.
+  Remote object reads and listing pages have a two-minute budget covering
+  retries and stalled bodies; interactive selection and whole archive scans
+  have no shared deadline. Interrupts cancel command reads while the pager
+  retains its own signal behavior.
 - Protect active and preserved revision sources during purge and selective archive
   cleanup. Invalid or missing history references block deletion; old-filter live
   evidence must be replaced through verified privacy publication first.
