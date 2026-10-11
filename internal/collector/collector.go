@@ -204,6 +204,13 @@ type Result struct {
 	NativeLinkPendingReasons map[string]int
 	RejectedSubagents        map[string]string
 	Errors                   map[string]error
+	// Deferred maps each session whose scan was put off this pass to why (a
+	// Deferred* reason): its source could not be read completely yet for a
+	// reason the next pass is expected to clear, so it is not a failure and
+	// is not in Errors. Like a failed scan, the session keeps its scan
+	// journal and is counted as pending; that journal still does not defer
+	// its expiry (see state.Outstanding.DefersExpiry).
+	Deferred map[string]string
 }
 
 // Run performs one collector pass over every registered session: for each,
@@ -459,6 +466,19 @@ func (p *pass) fail(id string, err error) {
 	p.opts.progress(id, false)
 }
 
+// deferScan ends a session's turn in the pass without a failure: its source
+// could not be read completely yet (see deferralReason). Like a failure, it
+// leaves the scan journal standing for the next pass to retry, and counts
+// as pending.
+func (p *pass) deferScan(id, reason string) {
+	if p.result.Deferred == nil {
+		p.result.Deferred = map[string]string{}
+	}
+	p.result.Deferred[id] = reason
+	p.pending++
+	p.opts.progress(id, false)
+}
+
 // scan gives one session its turn in the pass: skip it if nothing about it
 // changed, otherwise scan it (sessionScan.run) and account for the outcome.
 func (p *pass) scan(reg archive.SessionRegistration) {
@@ -510,6 +530,11 @@ func (p *pass) scan(reg archive.SessionRegistration) {
 		// is intact and the next pass carries on with it.
 		p.pending++
 		p.opts.progress(id, false)
+		return
+	}
+	err = p.nameCodexCoverage(p.ctx, reg, err)
+	if reason, deferred := deferralReason(err); deferred {
+		p.deferScan(id, reason)
 		return
 	}
 	if err != nil {
@@ -619,6 +644,7 @@ func (p *pass) saveStatus() error {
 		QuarantinedFiles:       p.local.QuarantinedFiles(),
 		UnrefreshableSummaries: p.countRefreshSkips(),
 		PendingNativeLinks:     p.result.PendingNativeLinks, NativeLinkPendingReasons: p.result.NativeLinkPendingReasons,
+		DeferredSessions: p.result.Deferred,
 		WaitingSubagents: len(p.result.WaitingSubagents),
 		RunningSubagents: len(p.result.RunningSubagents),
 		// The pass rebuilds everything else from scratch; this list is a

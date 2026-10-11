@@ -29,7 +29,22 @@ find none say so without creating the data directory.
   Scanned 2 session(s): 0 published, 2 unchanged, 0 failed; 1 subagent(s) waiting for transcripts; 1 subagent(s) not captured.
   ```
 
-  Neither is a failure, and neither changes the exit code. Claude Code
+  `sync` also counts sessions whose scan it put off until a later pass,
+  by reason, instead of listing them as failed:
+
+  ```text
+  Scanned 40 session(s): 1 published, 30 unchanged, 0 failed; 1 rechecking after the source changed while being read; 8 waiting for Codex history coverage.
+  ```
+
+  Codex history coverage is the work of finding every rollout file that
+  belongs to a Codex thread; until a pass completes it, a session whose
+  history spans several files can't be read in full. A source that changed
+  while being read is read again. Neither is a failure: the next pass
+  retries, the session stays pending, and `status` lists it as
+  **waiting for Codex history coverage** or **rechecking after the source
+  changed while being read** rather than as failed.
+
+  None of these is a failure, and none changes the exit code. Claude Code
   reports some background agents with a transcript it never writes; such a
   subagent waits up to 30 minutes, then is not captured and its parent
   session records the link as unavailable, with a
@@ -117,7 +132,9 @@ transcript. Imported sessions and sessions waiting to upload have separate count
 
 Under each app are at most five uploading sessions (`status APP` lists all),
 with the project, start time, and any failure. A session without its first
-upload says **waiting for its first upload**. Capture gaps and Cursor chats
+upload says **waiting for its first upload**; one whose last scan was put off
+until the next pass says why (**waiting for Codex history coverage**, say)
+and is not a failure. Capture gaps and Cursor chats
 without transcripts are reported separately.
 
 **Hooks installed** means the hook configuration is present, not that the

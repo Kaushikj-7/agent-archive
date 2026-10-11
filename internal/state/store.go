@@ -997,10 +997,16 @@ type Status struct {
 	// numbers the last error's summary of failed sessions is built from. It
 	// is cleared when a later failure replaces that summary, so status can
 	// trust it to describe the last error.
-	IssueCounts     map[string]int `json:"issue_counts,omitempty"`
-	LastScanAt      time.Time      `json:"last_scan_at,omitzero"`
-	LastPublishedAt time.Time      `json:"last_published_at,omitzero"`
-	PendingCount    int            `json:"pending_count"`
+	IssueCounts map[string]int `json:"issue_counts,omitempty"`
+	// DeferredSessions gives, per archive session ID, why the last pass put
+	// off its scan without failing it (a collector.Deferred* reason, such as
+	// codex_history_coverage): the source could not be read completely yet,
+	// and the next pass retries. Such a session is pending; a deferral alone
+	// never makes it one of the SessionIssues.
+	DeferredSessions map[string]string `json:"deferred_sessions,omitempty"`
+	LastScanAt       time.Time         `json:"last_scan_at,omitzero"`
+	LastPublishedAt  time.Time         `json:"last_published_at,omitzero"`
+	PendingCount     int               `json:"pending_count"`
 	// LastError is every problem the last pass recorded, joined with "; ".
 	// It is kept, with the same contents, for older readers; LastErrors
 	// holds the same problems one per entry. Set both with SetLastErrors

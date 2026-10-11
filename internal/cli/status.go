@@ -139,6 +139,9 @@ const (
 	// uploadingFailing: the last pass recorded an issue for the session
 	// (Issue names its kind).
 	uploadingFailing uploadingState = "failing"
+	// uploadingRechecking: the last pass put off its scan without a failure
+	// (Deferred names why) and the next pass retries it.
+	uploadingRechecking uploadingState = "rechecking"
 )
 
 // uploadingSession is one top-level session with work not yet published.
@@ -148,6 +151,7 @@ type uploadingSession struct {
 	Project          string         `json:"project"`
 	State            uploadingState `json:"state"`
 	Issue            string         `json:"issue,omitempty"`
+	Deferred         string         `json:"deferred,omitempty"`
 	Imported         bool           `json:"imported,omitempty"`
 }
 
@@ -538,6 +542,9 @@ type statusSessions struct {
 	skip  func(id string, err error)
 	// owed is what each accepted or imported session still owes.
 	owed map[string]state.Outstanding
+	// deferred is why the last pass put off each deferred session's scan
+	// (state.Status.DeferredSessions).
+	deferred map[string]string
 }
 
 // readSessionStatus reads the collector's status, the pending count, and the
@@ -630,7 +637,7 @@ func readSessionStatus(view *statusView, cfg config.Config, home string, store *
 	if len(batches) > 0 {
 		view.LastImport = batches[len(batches)-1].ID
 	}
-	return statusSessions{store: store, regs: regs, skip: skip, owed: owed}
+	return statusSessions{store: store, regs: regs, skip: skip, owed: owed, deferred: view.Collector.DeferredSessions}
 }
 
 // appStatus is one configured app's capture evidence: its sessions, per
@@ -774,9 +781,13 @@ func (s statusSessions) addUploading(app *appStatus, project *projectCaptureStat
 		ArchiveSessionID: reg.ArchiveSessionID, Project: reg.ProjectRoot, StartedAt: reg.SessionStartedAt,
 		State: uploadingPending, Imported: reg.Imported(),
 	}
-	switch issue := issues[reg.ArchiveSessionID]; {
+	switch issue, deferred := issues[reg.ArchiveSessionID], s.deferred[reg.ArchiveSessionID]; {
 	case issue != "":
 		session.State, session.Issue = uploadingFailing, issue
+	case deferred != "" && o.Scan:
+		// The last pass put its scan off; the scan journal says it is still
+		// owed, so the reason still applies.
+		session.State, session.Deferred = uploadingRechecking, deferred
 	case !o.Published:
 		session.State = uploadingFirst
 	}
@@ -1340,18 +1351,21 @@ func importedSessionCounts(cfg config.Config, regs []archive.SessionRegistration
 // the one definition state.Outstanding gives, for a caller that has not
 // listed the queued requests.
 func importPending(store *state.Store, cfg config.Config, reg archive.SessionRegistration) (bool, error) {
+	owed, err := importOutstanding(store, cfg, reg)
+	return owed.Pending(), err
+}
+
+// importOutstanding is what an imported session still owes under cfg (see
+// state.Outstanding), or nothing for a session cfg does not publish.
+func importOutstanding(store *state.Store, cfg config.Config, reg archive.SessionRegistration) (state.Outstanding, error) {
 	if !cfg.AcceptSession(reg) {
-		return false, nil
+		return state.Outstanding{}, nil
 	}
 	_, requested, err := store.LoadRequest(reg.ArchiveSessionID)
 	if err != nil {
-		return false, err
+		return state.Outstanding{}, err
 	}
-	owed, err := store.Outstanding(reg, requested)
-	if err != nil {
-		return false, err
-	}
-	return owed.Pending(), nil
+	return store.Outstanding(reg, requested)
 }
 
 const (
@@ -1872,6 +1886,9 @@ func (sc statusScreen) uploadingNotes(app appStatus, limit int) []statusNote {
 			text += "   " + issueWhat(session.Issue)
 		case uploadingFirst:
 			text += "   waiting for its first upload"
+		case uploadingRechecking:
+			// Not a failure: the next pass retries it.
+			text += "   " + deferredReasonWhat(session.Deferred)
 		case uploadingPending:
 			// The usual state: nothing to add.
 		}

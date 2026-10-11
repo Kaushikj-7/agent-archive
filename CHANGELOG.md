@@ -6,6 +6,15 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Stop reporting Codex sessions whose history coverage is not complete yet,
+  or whose source changed while being read, as failed: `sync` counts them by
+  reason ("8 waiting for Codex history coverage") and `status` lists them as
+  rechecking, while real failures are still listed. `backfill history` counts
+  as waiting only sessions not in the archive yet, and counts uploaded ones
+  with a re-scan or newer work owed apart (`uploaded · 2 rechecking`). A
+  source error can now carry a fixed, content-free cause ("source unavailable:
+  Codex history coverage incomplete").
+
 - Preserve settled capture and source bytes when cached native naming reads are
   unavailable and the same observation uses an equivalent timezone offset.
 
