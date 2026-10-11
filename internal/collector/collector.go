@@ -204,6 +204,13 @@ type Result struct {
 	NativeLinkPendingReasons map[string]int
 	RejectedSubagents        map[string]string
 	Errors                   map[string]error
+	// Deferred maps each session whose scan was put off this pass to why (a
+	// Deferred* reason): its source could not be read completely yet for a
+	// reason the next pass is expected to clear, so it is not a failure and
+	// is not in Errors. Like a failed scan, the session keeps its scan
+	// journal and is counted as pending; that journal still does not defer
+	// its expiry (see state.Outstanding.DefersExpiry).
+	Deferred map[string]string
 }
 
 // Run performs one collector pass over every registered session: for each,
@@ -295,6 +302,7 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	if err := p.loadWork(); err != nil {
 		return Result{}, err
 	}
+	p.loadDeferredSince()
 	p.reconcileNativeLinks()
 	if p.opts.PrepareCodexCoverage != nil {
 		if err := p.opts.PrepareCodexCoverage(ctx, p.registrations); err != nil {
@@ -358,6 +366,10 @@ type pass struct {
 	result             Result
 	durableObligations []state.DurableStorageObligation
 	durableCounted     map[string]bool
+	// priorDeferredSince is the previous pass's state.Status.DeferredSince,
+	// and deferredAt this pass's (see deferredSince, keepDeferredSince).
+	priorDeferredSince map[string]time.Time
+	deferredAt         map[string]time.Time
 }
 
 // loadWork lists the registered sessions and their pending requests. One
@@ -445,7 +457,11 @@ func (p *pass) loadWork() error {
 // work (a request) is left for the next pass.
 func (p *pass) leaveForNextPass(rest []archive.SessionRegistration) {
 	for _, reg := range rest {
-		if !p.durableCounted[reg.ArchiveSessionID] && p.requests[reg.ArchiveSessionID].Token != "" && (p.opts.AcceptSession == nil || p.opts.AcceptSession(reg)) {
+		accepted := p.opts.AcceptSession == nil || p.opts.AcceptSession(reg)
+		if accepted {
+			p.carryDeferredSince(reg.ArchiveSessionID)
+		}
+		if !p.durableCounted[reg.ArchiveSessionID] && p.requests[reg.ArchiveSessionID].Token != "" && accepted {
 			p.pending++
 		}
 	}
@@ -455,6 +471,35 @@ func (p *pass) leaveForNextPass(rest []archive.SessionRegistration) {
 // session is retried on the next one.
 func (p *pass) fail(id string, err error) {
 	addError(p.result.Errors, id, err)
+	p.pending++
+	p.opts.progress(id, false)
+}
+
+// deferScan ends a session's turn in the pass without a failure: its source
+// could not be read completely yet (see deferralReason). Like a failure, it
+// leaves the scan journal standing for the next pass to retry, and counts
+// as pending. A session that already has a failure recorded this pass, or
+// whose scans have been deferred on every pass for MaxDeferral, fails with
+// err instead (see deferredSince).
+func (p *pass) deferScan(id, reason string, err error) {
+	since := p.deferredSince(id)
+	// The clock runs on through a failure for it: the next pass that defers
+	// the session fails it again rather than starting a new run of
+	// "rechecking" passes.
+	p.keepDeferredSince(id, since)
+	if p.result.Errors[id] != nil {
+		// One failure already makes it a failed session; it is counted once.
+		p.fail(id, err)
+		return
+	}
+	if p.now.Sub(since) >= MaxDeferral {
+		p.fail(id, fmt.Errorf("%s: %w", DeferralExpiredProblem, err))
+		return
+	}
+	if p.result.Deferred == nil {
+		p.result.Deferred = map[string]string{}
+	}
+	p.result.Deferred[id] = reason
 	p.pending++
 	p.opts.progress(id, false)
 }
@@ -508,8 +553,14 @@ func (p *pass) scan(reg archive.SessionRegistration) {
 		// The pass ran out of time (or was cancelled) with this session in
 		// flight. That is not the session failing: its pending publication
 		// is intact and the next pass carries on with it.
+		p.carryDeferredSince(id)
 		p.pending++
 		p.opts.progress(id, false)
+		return
+	}
+	err = p.nameCodexCoverage(p.ctx, reg, err)
+	if reason, deferred := deferralReason(err); deferred {
+		p.deferScan(id, reason, err)
 		return
 	}
 	if err != nil {
@@ -619,6 +670,8 @@ func (p *pass) saveStatus() error {
 		QuarantinedFiles:       p.local.QuarantinedFiles(),
 		UnrefreshableSummaries: p.countRefreshSkips(),
 		PendingNativeLinks:     p.result.PendingNativeLinks, NativeLinkPendingReasons: p.result.NativeLinkPendingReasons,
+		DeferredSessions: p.result.Deferred,
+		DeferredSince:    p.deferredAt,
 		WaitingSubagents: len(p.result.WaitingSubagents),
 		RunningSubagents: len(p.result.RunningSubagents),
 		// The pass rebuilds everything else from scratch; this list is a
