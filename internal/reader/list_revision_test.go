@@ -54,7 +54,13 @@ func newOpaqueListingStore() *opaqueListingStore {
 // archive size changes header work, never the selected-body work.
 func TestListRevisionBodyBudgetColdWarmAndExhaustiveOracle(t *testing.T) {
 	t.Parallel()
-	for _, size := range []int{10000, 20000} {
+	sizes := []int{10000, 20000}
+	if testing.Short() {
+		// Still double the archive beyond a provider page and two timestamp
+		// cycles, so selected bodies remain a small subset with tied dates.
+		sizes = []int{1600, 3200}
+	}
+	for _, size := range sizes {
 		t.Run(strconv.Itoa(size), func(t *testing.T) {
 			t.Parallel()
 			ctx := context.Background()
