@@ -183,3 +183,11 @@ refuse the unknown section. No native path or mapping is portable in that sectio
 All lower policy floors, protections and published older-writer refusal controls
 remain mandatory. Native macOS/old-release and provider acceptance are recorded
 separately from synthetic Linux tests and cross-compilation.
+
+The [Codex fragment foundation](../specs/codex-fragments.md) proposes an independent
+`fragment_version: 1` line schema. This is unpublished and has only executable
+schema checks; it adds no production decoder, consumer, filter route or writer.
+Published source/metadata schemas, filter/adapter/parser versions and permanent
+configuration capabilities remain unchanged. Schema-valid headers do not certify
+privacy. A future fragment writer capability must be coordinated separately;
+historical-projects-v10 already owns configuration version 10.

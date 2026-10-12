@@ -1,0 +1,137 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/wangjohn/agent-archive/main/schemas/codex-fragment.schema.json",
+  "title": "Proposed Codex fragment line (fragment version 1; unpublished)",
+  "description": "Reader/filter/publication remain gated. One fragment_header followed by exactly record_count fragment_record lines, each newline-terminated, gzip compressed. A line schema cannot establish cross-line identity, monotone physical ordinals, compressed checksum, content authorization or privacy filtering. See dev/specs/codex-fragments.md for mandatory decoder and lifecycle gates. This is not a complete source bundle or session metadata.",
+  "oneOf": [
+    {"$ref": "#/$defs/header"},
+    {"$ref": "#/$defs/record_line"}
+  ],
+  "$defs": {
+    "uuid": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"},
+    "timestamp": {"type": "string", "format": "date-time", "maxLength": 64},
+    "label": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^\u0000-\u001f\u007f]+$"},
+    "header": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "fragment_version", "agent", "thread_id", "physical_rollout_id", "completeness", "activity_ownership", "capture", "missing_evidence", "record_count"],
+      "properties": {
+        "kind": {"const": "fragment_header"},
+        "fragment_version": {"const": 1},
+        "agent": {"const": "codex"},
+        "thread_id": {"$ref": "#/$defs/uuid"},
+        "physical_rollout_id": {"$ref": "#/$defs/uuid"},
+        "completeness": {"const": "incomplete"},
+        "activity_ownership": {"const": "unknown"},
+        "capture": {"$ref": "#/$defs/capture"},
+        "missing_evidence": {"type": "array", "minItems": 1, "maxItems": 64, "uniqueItems": true, "items": {"$ref": "#/$defs/missing"}},
+        "record_count": {"type": "integer", "minimum": 1, "maximum": 1000000}
+      }
+    },
+    "capture": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Observation provenance only; these claims never certify filtering or grant content/destination authority.",
+      "required": ["adapter_name", "adapter_version", "source_format", "filter_version", "captured_at"],
+      "properties": {
+        "adapter_name": {"const": "codex"},
+        "adapter_version": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[^\u0000-\u001f\u007f]+$"},
+        "source_format": {"const": "codex-jsonl"},
+        "filter_version": {"type": "string", "maxLength": 32, "pattern": "^[1-9][0-9]*$"},
+        "captured_at": {"$ref": "#/$defs/timestamp"}
+      }
+    },
+    "missing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reason"],
+      "properties": {
+        "reason": {"enum": ["missing_base", "ambiguous_tip", "incomplete_inventory", "current_selection_unavailable", "excluded_dependency", "unproven_ownership"]},
+        "physical_rollout_id": {"$ref": "#/$defs/uuid"}
+      }
+    },
+    "record_line": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "record"],
+      "properties": {
+        "kind": {"const": "fragment_record"},
+        "ordinal": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615, "description": "Exact physical native ordinal when validated; omit when unknown. Never derive from retained position."},
+        "record": {"$ref": "#/$defs/record"}
+      }
+    },
+    "record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "payload"],
+      "properties": {
+        "type": {"enum": ["session_meta", "turn_context", "response_item", "event_msg"]},
+        "timestamp": {"$ref": "#/$defs/timestamp"},
+        "payload": {"type": "object"}
+      },
+      "oneOf": [
+        {"properties": {"type": {"const": "session_meta"}, "payload": {"$ref": "#/$defs/session_meta"}}},
+        {"properties": {"type": {"const": "turn_context"}, "payload": {"$ref": "#/$defs/turn_context"}}},
+        {"properties": {"type": {"const": "response_item"}, "payload": {"$ref": "#/$defs/message"}}},
+        {"properties": {"type": {"const": "event_msg"}, "payload": {"$ref": "#/$defs/event"}}}
+      ]
+    },
+    "session_meta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id"],
+      "properties": {
+        "id": {"$ref": "#/$defs/uuid"},
+        "session_id": {"$ref": "#/$defs/uuid", "description": "Observed root conversation identity, not a parent link or authority."}
+      }
+    },
+    "turn_context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model"],
+      "properties": {"model": {"$ref": "#/$defs/label"}}
+    },
+    "text": {"type": "string", "maxLength": 65536},
+    "text_block": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "text"],
+      "properties": {
+        "type": {"enum": ["input_text", "output_text", "text"]},
+        "text": {"$ref": "#/$defs/text"}
+      }
+    },
+    "message": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "role", "content"],
+      "properties": {
+        "type": {"const": "message"},
+        "role": {"enum": ["user", "assistant"]},
+        "content": {"type": "array", "minItems": 1, "maxItems": 4096, "items": {"$ref": "#/$defs/text_block"}}
+      }
+    },
+    "event": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "message"],
+          "properties": {
+            "type": {"enum": ["user_message", "agent_message"]},
+            "message": {"$ref": "#/$defs/text"}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type"],
+          "properties": {
+            "type": {"enum": ["task_started", "task_complete"]},
+            "turn_id": {"$ref": "#/$defs/label"}
+          }
+        }
+      ]
+    }
+  }
+}
