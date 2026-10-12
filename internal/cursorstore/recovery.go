@@ -29,16 +29,19 @@ func ReadRecovery(ctx context.Context, path string, budget agentapi.RecoveryRead
 		return err
 	}
 	if src.live {
+		if !src.emptyWAL {
+			return NotChecked(Locked)
+		}
+		// Reserve both observations before opening or reading the -shm.
+		if err := budget.Charge(0, 2*shmHeaderSize); err != nil {
+			return err
+		}
 		settled, ok := src.settled()
 		if !ok {
 			// Frames in the -wal are only safely read through Cursor's
 			// shared-memory index, which a settled observation can't vouch
 			// for: immutable would ignore them.
 			return NotChecked(Locked)
-		}
-		// settled and the post-read check each read the -shm header.
-		if err := budget.Charge(0, 2*shmHeaderSize); err != nil {
-			return err
 		}
 		src = settled
 	}
