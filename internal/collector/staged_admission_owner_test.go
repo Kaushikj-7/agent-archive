@@ -12,6 +12,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -37,7 +38,7 @@ func stagedUnadmittedGroupFixture(t *testing.T) (*state.Store, archive.SessionRe
 	}
 	at := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 	parentPath := writeTranscript(t, store.Home(), "parent.jsonl", `{"type":"assistant","sessionId":"parent-native","timestamp":"2026-01-01T00:01:00Z","message":{"role":"assistant","content":"parent"}}`+"\n")
-	childPath := writeTranscript(t, store.Home(), "child.jsonl", `{"type":"assistant","sessionId":"parent-native","agentId":"agent-1","timestamp":"2026-01-01T00:02:00Z","message":{"role":"assistant","content":"child"}}`+"\n")
+	childPath := writeTranscript(t, store.Home(), "child.jsonl", `{"type":"assistant","sessionId":"parent-native","agentId":"agent-1","timestamp":"2026-01-01T00:02:00Z","message":{"role":"assistant","content":"`+strings.Repeat("c", 96<<10)+`"}}`+"\n")
 	parent := archive.SessionRegistration{ArchiveSessionID: "a-parent", NativeSessionID: "parent-native", ProjectID: "project", ProjectRoot: "/project", Harness: archive.Harness{Name: "claude"}, TranscriptPath: parentPath, SessionStartedAt: at.Add(-time.Hour), RegisteredAt: at, AdmittedAt: at, Origin: archive.SessionOriginImport, ImportBatch: archive.NewImportBatch("confirmed-group"), DestinationID: cfg.DestinationID()}
 	child := parent
 	child.ArchiveSessionID = "z-child"
@@ -139,7 +140,13 @@ func TestStagedMaterializationFitsOneValidatedStageView(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			limit := 3*info.Size() + int64(32<<10)
+			parentInfo, err := os.Stat(filepath.Join(store.Home(), "registrations", parent.ArchiveSessionID+".json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Parent registration remains owned while the three stage wire views and
+			// typed digest scratch coexist; the child payload exceeds that scratch.
+			limit := parentInfo.Size() + 3*info.Size() + int64(32<<10)
 			if mode == "refuses-before-first-view" {
 				limit--
 			}
