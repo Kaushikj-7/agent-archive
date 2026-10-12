@@ -23,6 +23,9 @@ func (s *Store) catalogJournalDigest(ctx context.Context, id string, pending Pen
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
+	if err := pending.ValidateReadySlot(id); err != nil {
+		return "", err
+	}
 	if pending.Catalog == nil || pending.Catalog.Protocol != 10 {
 		return "", ErrDurableStorageRecovery
 	}

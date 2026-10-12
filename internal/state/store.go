@@ -765,7 +765,9 @@ type CatalogPublication struct {
 }
 
 type PendingPublication struct {
-	Catalog *CatalogPublication `json:"commit,omitempty"`
+	JournalVersion int                 `json:"journal_version,omitempty"`
+	Selection      *ReadySelection     `json:"selection_commit,omitempty"`
+	Catalog        *CatalogPublication `json:"commit,omitempty"`
 	// ImportExpectedMetadataSHA256 freezes staged imports' predecessor. Retired
 	// privacy sources become cleanup obligations only after successor readback.
 	ImportExpectedMetadataSHA256 string                    `json:"import_expected_metadata_sha256,omitempty"`
@@ -814,6 +816,9 @@ func (s *Store) pendingPath(id string) string {
 // validateComplete is the supported transaction structure shared by writes
 // and protected reads. History validation keeps its separate budget ownership.
 func (pending PendingPublication) validateComplete() error {
+	if err := pending.validateReadySelectionShape(); err != nil {
+		return err
+	}
 	if pending.Catalog != nil && (pending.Catalog.ID == "" || len(pending.Catalog.ID) > 128 || len(pending.Catalog.ExpectedRevision) > 128) {
 		return errors.New("invalid catalog publication")
 	}
@@ -841,13 +846,12 @@ func (pending PendingPublication) validateComplete() error {
 	return nil
 }
 
-// validateReadablePending applies the existing publication checksum and JSON
+// validateReadablePendingContext applies the existing publication checksum and JSON
 // preconditions without deriving new ownership or remote-source authority.
-func (s *Store) validateReadablePending(pending PendingPublication) error {
-	return s.validateReadablePendingContext(s.durableContext(), pending)
-}
-
 func (s *Store) validateReadablePendingContext(ctx context.Context, pending PendingPublication) error {
+	if err := s.validateReadySelection(ctx, pending); err != nil {
+		return err
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -879,6 +883,9 @@ func (s *Store) SavePending(id string, pending PendingPublication) error {
 	if !safeFileComponent(id) {
 		return errors.New("archive session ID is not a safe file name component")
 	}
+	if err := pending.ValidateReadySlot(id); err != nil {
+		return err
+	}
 	if err := pending.validateComplete(); err != nil {
 		return err
 	}
@@ -897,6 +904,21 @@ func (s *Store) SavePending(id string, pending PendingPublication) error {
 // A supported legacy collector pass may quarantine damaged ordinary state.
 // Protected state stays present and returns ErrDurableStorageRecovery instead.
 func (s *Store) LoadPending(id string) (PendingPublication, bool, error) {
+	return s.loadPendingContext(s.durableContext(), id)
+}
+
+// LoadPendingContext keeps the supplied context through all selected journal
+// reads and validation while borrowing the current resource reservation owner.
+func (s *Store) LoadPendingContext(ctx context.Context, id string) (PendingPublication, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return PendingPublication{}, false, err
+	}
+	read := *s
+	read.resourceContext = ctx
+	return read.loadPendingContext(ctx, id)
+}
+
+func (s *Store) loadPendingContext(ctx context.Context, id string) (PendingPublication, bool, error) {
 	if !safeFileComponent(id) {
 		return PendingPublication{}, false, errors.New("archive session ID is not a safe file name component")
 	}
@@ -940,8 +962,11 @@ func (s *Store) LoadPending(id string) (PendingPublication, bool, error) {
 		return PendingPublication{}, protected || cfg.DurableStorageProtection || errors.Is(err, ErrDurableStorageRecovery), fmt.Errorf("read pending publication %q: %w", id, errors.Join(ErrDurableStorageRecovery, err))
 	}
 	if found {
+		if err := pending.ValidateReadySlot(id); err != nil {
+			return PendingPublication{}, true, err
+		}
 		if protected {
-			if err := s.validateReadablePending(pending); err != nil {
+			if err := s.validateReadablePendingContext(ctx, pending); err != nil {
 				return PendingPublication{}, true, errors.Join(ErrDurableStorageRecovery, err)
 			}
 		}
@@ -1007,6 +1032,9 @@ func (s *Store) HasPending(id string) (owed bool, err error) {
 func (s *Store) RemovePending(id string) error {
 	if !safeFileComponent(id) {
 		return errors.New("archive session ID is not a safe file name component")
+	}
+	if err := s.checkSelectingPendingRemoval(id); err != nil {
+		return err
 	}
 	if err := s.checkCatalogPendingRemoval(id); err != nil {
 		return err

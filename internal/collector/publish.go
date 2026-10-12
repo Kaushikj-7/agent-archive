@@ -74,6 +74,12 @@ func (s *sessionScan) block(reason state.BlockedReason, candidate *archive.Sourc
 // finally the removal of the pending file. ctx must be the original scan
 // context; admission derives an invocation context for this serial lifecycle.
 func (s *sessionScan) publishPending(ctx context.Context, pending state.PendingPublication) (sessionOutcome, error) {
+	if err := pending.ValidateReadySlot(s.id()); err != nil {
+		return outcomeSkipped, err
+	}
+	if err := s.local.ValidateReadySelection(ctx, pending); err != nil {
+		return outcomeSkipped, err
+	}
 	if remote, ok := s.remote.(storage.CatalogPublisher); ok && remote.CatalogMetadataAuthority() {
 		if pending.Catalog == nil {
 			id, revision, err := remote.FreezeCatalogMutation(ctx, pending.MetadataKey)
@@ -140,6 +146,11 @@ func (s *sessionScan) publishPending(ctx context.Context, pending state.PendingP
 			return outcomeSkipped, err
 		}
 	}
+	if pending.Selection != nil {
+		if err := s.verifyImportPublication(pending); err != nil {
+			return outcomeSkipped, err
+		}
+	}
 	if pending.History != nil {
 		if err := s.verifyHistoryReadback(pending); err != nil {
 			return outcomeSkipped, err
@@ -185,7 +196,7 @@ func (s *sessionScan) acknowledgePublication(pending state.PendingPublication, k
 	if pending.MetadataOnly {
 		saveErr = s.published.SaveRepublishedMetadata(pending, s.now)
 	} else {
-		saveErr = s.published.SavePublication(pending.Bundle, s.now, pending.SourceReference(), pending.MetadataBytes)
+		saveErr = s.published.SaveReadyPublication(pending, s.now)
 	}
 	if err := saveErr; err != nil {
 		return outcomeSkipped, fmt.Errorf("update published cache: %w", err)
@@ -234,6 +245,9 @@ func (s *sessionScan) acknowledgePublication(pending state.PendingPublication, k
 func (s *sessionScan) upload(pending state.PendingPublication) error {
 	if err := s.local.SaveListingRepair(s.id(), state.ListingRepair{MetadataKey: pending.MetadataKey, DestinationID: s.reg.DestinationID}); err != nil {
 		return fmt.Errorf("journal listing repair: %w", err)
+	}
+	if pending.Selection != nil {
+		return s.uploadReadySelection(pending)
 	}
 	if pending.History != nil {
 		committed, err := s.checkFrozenHistoryMetadata(pending)

@@ -258,7 +258,7 @@ func (s *Store) admitPreparedImport(ctx context.Context, stage ImportStage, reg 
 				return err
 			}
 		}
-		publication, err := s.LoadPublishedState(reg.ArchiveSessionID)
+		publication, err := s.LoadPublishedStateContext(ctx, reg.ArchiveSessionID)
 		if err != nil {
 			return err
 		}
