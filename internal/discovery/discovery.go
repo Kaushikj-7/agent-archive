@@ -634,7 +634,8 @@ func (s scan) visitEntry(d directory, source SourceEntry) (retry, stop bool) {
 			return true, true
 		}
 		headerCharge := int64(sourcefacts.HeaderBytes + 128<<10)
-		if s.rollouts != nil && !s.rollouts.readBudget.Reserve(headerCharge) {
+		reservation := s.probeReservation()
+		if !reservation.Reserve(headerCharge) {
 			return true, true
 		}
 		memberChanged := !hit || entry.Size != source.Fingerprint.Size || entry.Mtime != source.Fingerprint.Mtime || entry.SourceFingerprint != source.CoverageFingerprint
@@ -647,7 +648,7 @@ func (s scan) visitEntry(d directory, source SourceEntry) (retry, stop bool) {
 		h.NativeReadBytes += observation.NativeReadBytes
 		h.NativeReadOperations += observation.NativeReadOperations
 		entry = cached{SourceFingerprint: source.CoverageFingerprint, Size: source.Fingerprint.Size, Mtime: source.Fingerprint.Mtime, Checked: now, Observation: observation}
-		if !s.retainProbedObservation(entry, headerCharge) {
+		if !s.retainProbedObservation(entry, headerCharge, reservation) {
 			return true, true
 		}
 		c.Cache[loc] = entry
@@ -723,14 +724,24 @@ func (s scan) admitObservation(source SourceEntry, entry cached) (bool, bool) {
 	return s.admitCandidate(candidate, loc)
 }
 
+// probeReservation captures the probe's owner. Without a shared lookup the
+// disabled budget preserves the unbudgeted discovery path.
+func (s scan) probeReservation() *agentapi.NativeReadReservation {
+	var budget *agentapi.NativeReadBudget
+	if s.rollouts != nil {
+		budget = s.rollouts.readBudget
+	}
+	return budget.Reservation()
+}
+
 // retainProbedObservation transfers the probe scratch to a catalog fact owner
 // before returning the scratch, including when retained ownership is refused.
-func (s scan) retainProbedObservation(entry cached, scratch int64) bool {
+func (s scan) retainProbedObservation(entry cached, scratch int64, reservation *agentapi.NativeReadReservation) bool {
 	if s.rollouts == nil {
 		return true
 	}
 	retained := s.rollouts.retainObservation(s.ctx, entry)
-	s.rollouts.readBudget.Release(scratch)
+	reservation.Release(scratch)
 	return retained
 }
 

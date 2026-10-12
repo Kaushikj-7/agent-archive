@@ -22,6 +22,7 @@ func (l recoveryBudgetLookup) NativeReadBudget() *agentapi.NativeReadBudget { re
 func TestGenerationPreviewHoldsSharedOwnerUntilConsumerClose(t *testing.T) {
 	scan, _ := reconciliationFixture(t)
 	budget := agentapi.NewNativeReadBudget(128 << 20)
+	reservation := budget.Reservation()
 	opts := scan.opts
 	opts.CodexRollouts = recoveryBudgetLookup{CodexRolloutLookup: opts.CodexRollouts, budget: budget}
 	build, closePreview, err := PrepareGenerationRecovery(t.Context(), scan.reg, scan.now, opts)
@@ -34,7 +35,7 @@ func TestGenerationPreviewHoldsSharedOwnerUntilConsumerClose(t *testing.T) {
 		t.Fatal("preview output has no owned charge")
 	}
 	pressure := budget.Available()
-	if !budget.Reserve(pressure) {
+	if !reservation.Reserve(pressure) {
 		t.Fatal("pressure")
 	}
 	if _, _, err := build(scan.reg, "next"); !errors.Is(err, agentapi.ErrReadBudget) {
@@ -44,7 +45,7 @@ func TestGenerationPreviewHoldsSharedOwnerUntilConsumerClose(t *testing.T) {
 	if used != owned+pressure {
 		t.Fatal("failed builder retained temporary work", used, owned+pressure)
 	}
-	budget.Release(pressure)
+	reservation.Release(pressure)
 	_, pending, err := build(scan.reg, "next")
 	if err != nil {
 		t.Fatal(err)
@@ -69,10 +70,11 @@ func TestGenerationPreviewHoldsSharedOwnerUntilConsumerClose(t *testing.T) {
 func TestGenerationPreviewCancellationAndInitialPressureRelease(t *testing.T) {
 	scan, _ := reconciliationFixture(t)
 	budget := agentapi.NewNativeReadBudget(128 << 20)
+	reservation := budget.Reservation()
 	opts := scan.opts
 	opts.CodexRollouts = recoveryBudgetLookup{CodexRolloutLookup: opts.CodexRollouts, budget: budget}
 	pressure := budget.Available()
-	if !budget.Reserve(pressure) {
+	if !reservation.Reserve(pressure) {
 		t.Fatal("pressure")
 	}
 	build, closePreview, err := PrepareGenerationRecovery(t.Context(), scan.reg, scan.now, opts)
@@ -80,7 +82,7 @@ func TestGenerationPreviewCancellationAndInitialPressureRelease(t *testing.T) {
 	if build != nil || !errors.Is(err, agentapi.ErrReadBudget) {
 		t.Fatal("native preview bypassed pressure", err)
 	}
-	budget.Release(pressure)
+	reservation.Release(pressure)
 	if used, _ := budget.Charged(); used != 0 {
 		t.Fatal("initial refusal leaked", used)
 	}
@@ -126,8 +128,9 @@ func TestRunGenerationReplayUsesSharedBudgetBeforeStartupRead(t *testing.T) {
 		t.Fatal(err)
 	}
 	budget := agentapi.NewNativeReadBudget(128 << 20)
+	reservation := budget.Reservation()
 	pressure := budget.Available()
-	if !budget.Reserve(pressure) {
+	if !reservation.Reserve(pressure) {
 		t.Fatal("pressure")
 	}
 	opts := Options{MachineID: "machine", Sources: testSources, Parsers: testParsers, SkipSessionIndexRecovery: true, CodexRollouts: recoveryBudgetLookup{budget: budget}}
@@ -135,7 +138,7 @@ func TestRunGenerationReplayUsesSharedBudgetBeforeStartupRead(t *testing.T) {
 	if err != nil || !errors.Is(result.Errors["generation-recovery"], agentapi.ErrReadBudget) {
 		t.Fatal("scheduled replay bypassed shared pressure", result.Errors, err)
 	}
-	budget.Release(pressure)
+	reservation.Release(pressure)
 	if used, _ := budget.Charged(); used != 0 {
 		t.Fatal("replay refusal leaked", used)
 	}

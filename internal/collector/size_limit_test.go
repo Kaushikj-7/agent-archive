@@ -288,7 +288,8 @@ func TestOverCeilingReadAndBuildRespectPendingUpload(t *testing.T) {
 		scan.lastRead = &sourceRead{adapter: adapter, observed: observed}
 		budget := scan.readBudget()
 		end := budget.BeginScope(1 << 20)
-		if budget.Reserve(2 << 20) {
+		reservation := budget.Reservation()
+		if reservation.Reserve(2 << 20) {
 			t.Fatal("over the ceiling was reserved")
 		}
 		var outcome sessionOutcome
@@ -334,7 +335,8 @@ func TestOverCeilingReadAndBuildRespectPendingUpload(t *testing.T) {
 		t.Fatal("reserve")
 	}
 	end := budget.BeginScope(sessionReadCeiling)
-	if budget.Reserve(2 << 20) {
+	reservation := budget.Reservation()
+	if reservation.Reserve(2 << 20) {
 		t.Fatal("reserved past the held ledger")
 	}
 	_, err := scan.overCeiling(errRetainedBudget)
@@ -367,11 +369,12 @@ func TestSessionStartsWithItsCeilingFree(t *testing.T) {
 		t.Fatal(err)
 	}
 	end := budget.BeginScope(SessionReadCeiling)
+	reservation := budget.Reservation()
 	defer end()
-	if !budget.Reserve(SessionReadCeiling) || budget.ScopeExceeded() || budget.ScopePressured() {
+	if !reservation.Reserve(SessionReadCeiling) || budget.ScopeExceeded() || budget.ScopePressured() {
 		t.Fatal("a session within its ceiling could not run")
 	}
-	budget.Release(SessionReadCeiling)
+	reservation.Release(SessionReadCeiling)
 }
 
 type cachingPass struct {

@@ -395,6 +395,7 @@ func (s *Store) LoadImportStage(ctx context.Context, reg archive.SessionRegistra
 }
 
 func (s *Store) loadPreparedImportStage(ctx context.Context, id string) (stage ImportStage, found bool, err error) {
+	reservation := s.resourceBudget.Reservation()
 	if err := ctx.Err(); err != nil {
 		return stage, false, err
 	}
@@ -440,16 +441,16 @@ func (s *Store) loadPreparedImportStage(ctx context.Context, id string) (stage I
 	}
 	if s.resourceBudget != nil {
 		n := info.Size()
-		if !s.resourceBudget.Reserve(3 * n) {
+		if !reservation.Reserve(3 * n) {
 			return stage, true, errStateBudget
 		}
 		keep := false
 		defer func() {
 			if keep {
-				s.resourceBudget.Release(2 * n)
-				*s.resourceReleases = append(*s.resourceReleases, func() { s.resourceBudget.Release(n) })
+				reservation.Release(2 * n)
+				*s.resourceReleases = append(*s.resourceReleases, func() { reservation.Release(n) })
 			} else {
-				s.resourceBudget.Release(3 * n)
+				reservation.Release(3 * n)
 			}
 		}()
 		// Ownership continues with the enclosing scoped state reader.

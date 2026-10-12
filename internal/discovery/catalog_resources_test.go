@@ -32,6 +32,7 @@ func TestCatalogReadAndWritePressurePreserveCheckpointAndRelease(t *testing.T) {
 		t.Fatalf("refusal leaked %d", used)
 	}
 	l.readBudget = agentapi.NewNativeReadBudget(1 << 20)
+	reservation := l.readBudget.Reservation()
 	if err := l.readCatalog(t.Context(), path, &restored); err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +40,7 @@ func TestCatalogReadAndWritePressurePreserveCheckpointAndRelease(t *testing.T) {
 		t.Fatalf("decoded checkpoint ownership lost: charge=%d queue=%v", used, restored.Queue)
 	}
 	pressure := l.readBudget.Available()
-	if !l.readBudget.Reserve(pressure) {
+	if !reservation.Reserve(pressure) {
 		t.Fatal("pressure")
 	}
 	if err := l.writeCatalog(t.Context(), path, restored); !errors.Is(err, agentapi.ErrReadBudget) {
@@ -49,7 +50,7 @@ func TestCatalogReadAndWritePressurePreserveCheckpointAndRelease(t *testing.T) {
 	if err != nil || !bytes.Equal(raw, after) {
 		t.Fatal("refusal changed durable checkpoint", err)
 	}
-	l.readBudget.Release(pressure)
+	reservation.Release(pressure)
 	if err := l.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -64,12 +65,13 @@ func TestRequestedCoverageCannotAllocateWithExhaustedSharedLedger(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
+	reservation := l.readBudget.Reservation()
 	defer func() { _ = l.Close() }()
 	if !l.coverage.request("wanted") || l.catalogCharge == 0 {
 		t.Fatal("requested facts were not charged")
 	}
 	pressure := l.readBudget.Available()
-	if !l.readBudget.Reserve(pressure) {
+	if !reservation.Reserve(pressure) {
 		t.Fatal("pressure")
 	}
 	if l.coverage.request("fresh") {
@@ -79,7 +81,7 @@ func TestRequestedCoverageCannotAllocateWithExhaustedSharedLedger(t *testing.T) 
 	if len(l.coverage.Requests["wanted"].Candidates) != 0 || len(l.observations) != 0 {
 		t.Fatal("native facts accumulated under exhausted ledger")
 	}
-	l.readBudget.Release(pressure)
+	reservation.Release(pressure)
 	if !l.coverage.request("fresh") {
 		t.Fatal("independent request cannot progress after pressure ends")
 	}

@@ -43,6 +43,7 @@ func (l *CodexRolloutLookup) reserveCatalog(n int64) bool {
 }
 
 func (l *CodexRolloutLookup) readCatalog(ctx context.Context, path string, c *catalog) error {
+	reservation := l.readBudget.Reservation()
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -65,10 +66,10 @@ func (l *CodexRolloutLookup) readCatalog(ctx context.Context, path string, c *ca
 	if l.catalogCharge+n > maxCatalogBytes {
 		return errCatalogTooLarge
 	}
-	if !l.readBudget.Reserve(n) {
+	if !reservation.Reserve(n) {
 		return errCatalogBudget
 	}
-	defer l.readBudget.Release(n)
+	defer reservation.Release(n)
 	if !l.readBudget.ReserveUnscoped(n) {
 		return errCatalogBudget
 	}
@@ -124,21 +125,22 @@ func (l *CodexRolloutLookup) writeCatalog(ctx context.Context, path string, c ca
 }
 
 func (l *CodexRolloutLookup) writeCatalogWithin(ctx context.Context, path string, c catalog) error {
+	reservation := l.readBudget.Reservation()
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	const countScratch = 32 << 10
-	if !l.readBudget.Reserve(countScratch) {
+	if !reservation.Reserve(countScratch) {
 		return errCatalogBudget
 	}
-	available := l.readBudget.Available()
+	available := reservation.Available()
 	limit := min(available-1, maxCatalogBytes)
 	n, err := jsonwire.Bound(ctx, c, limit)
 	overCap := errors.Is(err, jsonwire.ErrLimit) && limit == maxCatalogBytes
 	if errors.Is(err, jsonwire.ErrLimit) && !overCap {
-		l.readBudget.Refuse(available + 1)
+		reservation.Refuse(available + 1)
 	}
-	l.readBudget.Release(countScratch)
+	reservation.Release(countScratch)
 	if overCap {
 		return errCatalogTooLarge
 	}
@@ -148,10 +150,10 @@ func (l *CodexRolloutLookup) writeCatalogWithin(ctx context.Context, path string
 		}
 		return errors.Join(errCatalogBudget, err)
 	}
-	if !l.readBudget.Reserve(n + 1) {
+	if !reservation.Reserve(n + 1) {
 		return errCatalogBudget
 	}
-	defer l.readBudget.Release(n + 1)
+	defer reservation.Release(n + 1)
 	if err := ctx.Err(); err != nil {
 		return err
 	}

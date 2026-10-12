@@ -15,6 +15,7 @@ func TestOrdinaryOwnTaskScannerRequiresAndReleasesSharedScratch(t *testing.T) {
 	dir := t.TempDir()
 	ref, _ := historyFile(t, dir, threadA, threadA, 0, nil, strings.Repeat("x", 1<<20))
 	ledger := agentapi.NewNativeReadBudget(passReadBudget)
+	reservation := ledger.Reservation()
 	pass, err := (SourceProvider{}).OpenPass(t.Context(), agentapi.SourceEnvironment{ReadBudget: ledger})
 	if err != nil {
 		t.Fatal(err)
@@ -31,14 +32,14 @@ func TestOrdinaryOwnTaskScannerRequiresAndReleasesSharedScratch(t *testing.T) {
 	}
 	usedBefore, _ := ledger.Charged()
 	remaining := ledger.Available()
-	if !ledger.Reserve(remaining) {
+	if !reservation.Reserve(remaining) {
 		t.Fatal("reserve")
 	}
 	_, err = ordinary.FirstOwnTask(t.Context())
 	if !errors.Is(err, agentapi.ErrReadBudget) {
 		t.Fatal("scanner allocated with full ledger", err)
 	}
-	ledger.Release(remaining)
+	reservation.Release(remaining)
 	if _, err := ordinary.FirstOwnTask(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -62,9 +63,10 @@ func TestHistoryUnterminatedBoundaryRequiresSharedScratchAndRetries(t *testing.T
 		t.Fatal(err)
 	}
 	ledger := pass.env.ReadBudget
+	reservation := ledger.Reservation()
 	before, _ := ledger.Charged()
 	pressure := ledger.Available()
-	if !ledger.Reserve(pressure) {
+	if !reservation.Reserve(pressure) {
 		t.Fatal("reserve pressure")
 	}
 	if _, err := pass.graph(t.Context(), selection.leaf, selection.set); !errors.Is(err, agentapi.ErrReadBudget) {
@@ -74,7 +76,7 @@ func TestHistoryUnterminatedBoundaryRequiresSharedScratchAndRetries(t *testing.T
 	if used != before+pressure {
 		t.Fatal("refused scratch charge leaked")
 	}
-	ledger.Release(pressure)
+	reservation.Release(pressure)
 	bundle := historyRead(t, pass, ref)
 	if len(bundle.NativeRecords) != 2 {
 		t.Fatal("history committed an unterminated record")
@@ -98,6 +100,7 @@ func TestOpenRolloutChargesHeldBytesNotFileLength(t *testing.T) {
 	lookup := &historyLookup{thread: agentapi.CodexRolloutSet{Current: &ref}}
 	pass := historyPass(t, dir, lookup).(*relatedSourcePass)
 	ledger := pass.env.ReadBudget
+	reservation := ledger.Reservation()
 	snap, err := pass.Read(t.Context(), ref, agentapi.ReadLimits{})
 	if err != nil {
 		t.Fatal(err)
@@ -119,7 +122,7 @@ func TestOpenRolloutChargesHeldBytesNotFileLength(t *testing.T) {
 		t.Fatal("idle header ownership", before)
 	}
 	pressure := ledger.Available()
-	if !ledger.Reserve(pressure) {
+	if !reservation.Reserve(pressure) {
 		t.Fatal("pressure")
 	}
 	// Observing a cached file holds nothing new.
@@ -132,7 +135,7 @@ func TestOpenRolloutChargesHeldBytesNotFileLength(t *testing.T) {
 	if pass.files[ref.Path] != file || facts.PhysicalProducerVersion != "0.160.0" {
 		t.Fatal("refusal evicted live header facts")
 	}
-	ledger.Release(pressure)
+	reservation.Release(pressure)
 	snap, err = pass.Read(t.Context(), ref, agentapi.ReadLimits{})
 	if err != nil {
 		t.Fatal("cached reopen failed", err)
@@ -146,5 +149,39 @@ func TestOpenRolloutChargesHeldBytesNotFileLength(t *testing.T) {
 	used, _ := ledger.Charged()
 	if used != 0 {
 		t.Fatal("cached owners leaked", used)
+	}
+}
+
+func TestPriorOrdinarySnapshotClosePreservesCurrentScope(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	ref, _ := historyFile(t, dir, threadA, threadA, 0, nil, "owned task")
+	ledger := agentapi.NewNativeReadBudget(passReadBudget)
+	pass, err := (SourceProvider{}).OpenPass(t.Context(), agentapi.SourceEnvironment{ReadBudget: ledger})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap, err := pass.Read(t.Context(), ref, agentapi.ReadLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	end := ledger.BeginScope(10)
+	defer end()
+	current := ledger.Reservation()
+	if !current.Reserve(10) {
+		t.Fatal("current reserve")
+	}
+	if err := snap.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := pass.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if current.Reserve(1) || !ledger.ScopeExceeded() {
+		t.Fatal("prior snapshot cleanup freed current scope charges")
+	}
+	current.Release(10)
+	if used, _ := ledger.Charged(); used != 0 {
+		t.Fatal("cleanup leaked", used)
 	}
 }

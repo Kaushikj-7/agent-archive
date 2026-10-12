@@ -805,16 +805,17 @@ func (s *historySnapshot) Next(ctx context.Context) (agentapi.NativeRecord, bool
 
 // ordinarySnapshot retains file framing while accepting verified later appends.
 type ordinarySnapshot struct {
-	scratchCharge int64
-	owner         *relatedSourcePass
-	source        *rolloutFile
-	selection     sourceSelection
-	ctx           context.Context
-	length        int64
-	digest        [32]byte
-	closed        bool
-	observed      agentapi.SourceObservation
-	headers       []*rolloutFile
+	scratchCharge      int64
+	scratchReservation *agentapi.NativeReadReservation
+	owner              *relatedSourcePass
+	source             *rolloutFile
+	selection          sourceSelection
+	ctx                context.Context
+	length             int64
+	digest             [32]byte
+	closed             bool
+	observed           agentapi.SourceObservation
+	headers            []*rolloutFile
 }
 
 func (p *relatedSourcePass) ordinary(ctx context.Context, limits agentapi.ReadLimits, selection sourceSelection) (agentapi.SourceSnapshot, error) {
@@ -831,13 +832,14 @@ func (p *relatedSourcePass) ordinary(ctx context.Context, limits agentapi.ReadLi
 		}
 		return nil, agentapi.RawLimit(f.file.Length(), rawLimit, &o)
 	}
-	if !p.reserve(ordinaryScratch) {
+	reservation := p.env.ReadBudget.Reservation()
+	if !p.reserve(reservation, ordinaryScratch) {
 		return nil, agentapi.WithCause(agentapi.ReadBudgetLimit(errors.New("ordinary native scratch budget exhausted")), agentapi.CauseOrdinaryNativeScratchBudgetExhausted)
 	}
 	transferred := false
 	defer func() {
 		if !transferred {
-			p.release(ordinaryScratch)
+			p.release(reservation, ordinaryScratch)
 		}
 	}()
 	h := sha256.New()
@@ -845,7 +847,7 @@ func (p *relatedSourcePass) ordinary(ctx context.Context, limits agentapi.ReadLi
 		return nil, err
 	}
 	stamp := f.file.Stamp()
-	out := &ordinarySnapshot{scratchCharge: ordinaryScratch, owner: p, source: f, selection: selection, headers: selection.headerFiles(nil), ctx: ctx, length: f.boundary, observed: agentapi.SourceObservation{Signature: sourceio.FileSignature(stamp.Size, stamp.ModifiedAt.UnixNano()), Present: true, Empty: f.boundary == 0, Activity: stamp.ModifiedAt, Size: stamp.Size}}
+	out := &ordinarySnapshot{scratchCharge: ordinaryScratch, scratchReservation: reservation, owner: p, source: f, selection: selection, headers: selection.headerFiles(nil), ctx: ctx, length: f.boundary, observed: agentapi.SourceObservation{Signature: sourceio.FileSignature(stamp.Size, stamp.ModifiedAt.UnixNano()), Present: true, Empty: f.boundary == 0, Activity: stamp.ModifiedAt, Size: stamp.Size}}
 	copy(out.digest[:], h.Sum(nil))
 	if p.env.CodexRollouts != nil {
 		var err error
@@ -875,7 +877,7 @@ func (s *ordinarySnapshot) Close() error {
 	if !s.closed {
 		s.closed = true
 		delete(s.owner.ordinaryLive, s)
-		s.owner.release(s.scratchCharge)
+		s.owner.release(s.scratchReservation, s.scratchCharge)
 		s.scratchCharge = 0
 		for _, header := range s.headers {
 			header.refs--
@@ -949,10 +951,11 @@ func (p *relatedSourcePass) chargedNewlineBoundary(file *transcriptio.Snapshot) 
 		return size, nil
 	}
 	const scratch = 64 << 10
-	if !p.reserve(scratch) {
+	reservation := p.env.ReadBudget.Reservation()
+	if !p.reserve(reservation, scratch) {
 		return 0, agentapi.ReadBudgetLimit(errors.New("native newline scratch budget exhausted"))
 	}
-	defer p.release(scratch)
+	defer p.release(reservation, scratch)
 	return newlineBoundary(file, size)
 }
 
@@ -961,10 +964,11 @@ func (f ordinaryFile) Records(ctx context.Context, tail bool, windowBytes, recor
 		return transcriptio.RecordWindow{}, agentapi.ErrClosed
 	}
 	charge := max(int64(4096), min(f.s.length, max(recordBytes, windowBytes))) + max(windowBytes, 0) + 64<<10
-	if !f.s.owner.reserve(charge) {
+	reservation := f.s.owner.env.ReadBudget.Reservation()
+	if !f.s.owner.reserve(reservation, charge) {
 		return transcriptio.RecordWindow{}, sourceRefusal(agentapi.Unavailable, agentapi.CauseNativeRecordWindowBudgetExhausted, "native record window budget exhausted")
 	}
-	defer f.s.owner.release(charge)
+	defer f.s.owner.release(reservation, charge)
 	return f.FileInput.Records(ctx, tail, windowBytes, recordBytes, visit)
 }
 
@@ -1546,15 +1550,18 @@ func (s *ordinarySnapshot) AdmissionEvidence(ctx context.Context, admission agen
 	return agentapi.AdmissionEvidence{Binding: binding, Task: task}, nil
 }
 
-func (p *relatedSourcePass) reserve(bytes int64) bool {
-	if bytes < 0 || !p.env.ReadBudget.Reserve(bytes) {
+func (p *relatedSourcePass) reserve(reservation *agentapi.NativeReadReservation, bytes int64) bool {
+	if bytes < 0 || !reservation.Reserve(bytes) {
 		return false
 	}
 	p.bytes += bytes
 	return true
 }
 
-func (p *relatedSourcePass) release(bytes int64) { p.env.ReadBudget.Release(bytes); p.bytes -= bytes }
+func (p *relatedSourcePass) release(reservation *agentapi.NativeReadReservation, bytes int64) {
+	reservation.Release(bytes)
+	p.bytes -= bytes
+}
 
 // reserveCache charges what the pass keeps between reads (cached headers and
 // ancestor prefixes): no session's own, so no session's scope counts it.
@@ -1630,10 +1637,11 @@ func (p *relatedSourcePass) chargedBoundary(f *transcriptio.Snapshot) (int64, er
 		return f.Length(), nil
 	}
 	charge := min(f.Length(), int64(archive.MaxRecordBytes)) + 64<<10
-	if !p.reserve(charge) {
+	reservation := p.env.ReadBudget.Reservation()
+	if !p.reserve(reservation, charge) {
 		return 0, sourceRefusal(agentapi.Unavailable, agentapi.CauseNativeBoundaryScratchBudgetExhausted, "native boundary scratch budget exhausted")
 	}
-	defer p.release(charge)
+	defer p.release(reservation, charge)
 	return transcriptio.CompleteJSONLBoundary(f, f.Length(), archive.MaxRecordBytes)
 }
 

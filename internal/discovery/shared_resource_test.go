@@ -58,6 +58,7 @@ func TestSourceAndLiveIndexShareChargeBeforeCopyAndRelease(t *testing.T) {
 		t.Fatal(err)
 	}
 	ledger := agentapi.NewNativeReadBudget(currentSnapshotLimit)
+	reservation := ledger.Reservation()
 	// A restored local catalog remains an input owner while the real native
 	// source and private index compete for the same logical data allowance.
 	catalogPath := filepath.Join(root, "synthetic-catalog.json")
@@ -87,7 +88,7 @@ func TestSourceAndLiveIndexShareChargeBeforeCopyAndRelease(t *testing.T) {
 	// Another holder (a session's record buffers and filtered output) takes
 	// the rest the index copy would need.
 	held := int64(32 << 20)
-	if !ledger.Reserve(held) {
+	if !reservation.Reserve(held) {
 		t.Fatal("reserve held output")
 	}
 	before, _ := ledger.Charged()
@@ -103,7 +104,7 @@ func TestSourceAndLiveIndexShareChargeBeforeCopyAndRelease(t *testing.T) {
 	if used != before || peak > currentSnapshotLimit {
 		t.Fatalf("failed indexCopy leaked/exceeded shared charge: %d %d", used, peak)
 	}
-	ledger.Release(held)
+	reservation.Release(held)
 	if err := captured.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -152,16 +153,17 @@ func TestCurrentHeaderRequiresSharedScratchBeforeProbe(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	reservation := lookup.readBudget.Reservation()
 	defer func() { _ = lookup.Close() }()
 	held := lookup.readBudget.Available()
-	if !lookup.readBudget.Reserve(held) {
+	if !reservation.Reserve(held) {
 		t.Fatal("reserve")
 	}
 	_, err = lookup.inspect(t.Context(), path, id)
 	if agentapi.Failure(err) != agentapi.Limit || lookup.probes != 0 {
 		t.Fatal("header read without reserved scratch", err, lookup.probes)
 	}
-	lookup.readBudget.Release(held)
+	reservation.Release(held)
 	if _, err := lookup.inspect(t.Context(), path, id); err != nil {
 		t.Fatal(err)
 	}
@@ -184,13 +186,14 @@ func TestDiscoveryHeaderCannotReadWithExhaustedSharedScratch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	reservation := lookup.readBudget.Reservation()
 	defer func() { _ = lookup.Close() }()
 	held := lookup.readBudget.Available()
-	if !lookup.readBudget.Reserve(held) {
+	if !reservation.Reserve(held) {
 		t.Fatal("reserve")
 	}
 	health, err := run(t.Context(), store, cfg, Options{Now: func() time.Time { return at }, Rollouts: lookup}, syntheticSupport)
-	lookup.readBudget.Release(held)
+	reservation.Release(held)
 	if err != nil && !errors.Is(err, agentapi.ErrReadBudget) {
 		t.Fatal(err)
 	}
@@ -207,6 +210,7 @@ func TestLookupRevisionDigestRefusesSharedPressureAndRetries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	reservation := lookup.readBudget.Reservation()
 	defer func() { _ = lookup.Close() }()
 	if _, err := lookup.Thread(t.Context(), id); err != nil {
 		t.Fatal(err)
@@ -230,7 +234,7 @@ func TestLookupRevisionDigestRefusesSharedPressureAndRetries(t *testing.T) {
 	lookup.coverage.Requests[id] = request
 	owned, _ := lookup.readBudget.Charged()
 	pressure := lookup.readBudget.Available()
-	if !lookup.readBudget.Reserve(pressure) {
+	if !reservation.Reserve(pressure) {
 		t.Fatal("pressure")
 	}
 	if _, err := lookup.Thread(t.Context(), id); !errors.Is(err, agentapi.ErrReadBudget) {
@@ -242,7 +246,7 @@ func TestLookupRevisionDigestRefusesSharedPressureAndRetries(t *testing.T) {
 	if request := lookup.coverage.Requests[id]; request.DeliveredEpoch != 0 {
 		t.Fatal("refusal delivered an unseen requested proof", request)
 	}
-	lookup.readBudget.Release(pressure)
+	reservation.Release(pressure)
 	if used, _ := lookup.readBudget.Charged(); used != owned {
 		t.Fatal("refused digest leaked", used, owned)
 	}

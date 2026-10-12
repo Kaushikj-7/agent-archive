@@ -1,12 +1,18 @@
 # Archive listing at scale: implementation plan
 
 Prepared 2026-09-30 against `main` at `dc443c7`. Status: phases 1
-and 2 implemented; phase 3 partially covered; phase 4 partially implemented.
+and 2 implemented; phase 3's historical synthetic matrix recorded in #451;
+phase 4 partially implemented. Matched measurements with the repaired command
+output-validation harness remain pending.
 Reconciled 2026-10-11 at `db2ccd3e`. The current
 [listing contract](../maintainers/list-performance.md) specifies indexed bounded
 metadata reads (#320), with 10k/20k correctness and operation-count coverage.
-`internal/reader/list_index_bench_test.go` has a 10k benchmark; the full original
-1k/10k/100k cold/warm measurement matrix is not recorded. Fresh LIST header
+`internal/reader/list_index_bench_test.go` retains its original 10k benchmark.
+The original 1k/10k/100k cold/warm matrix is recorded in the
+[historical synthetic baseline](../maintainers/list-performance.md#synthetic-baseline-recorded-2026-10-12).
+Its modeled latency and measured local costs remain separate; the retained
+samples used the historical discard-writer harness and do not qualify current
+main or a matched comparison with the repaired harness. Fresh LIST header
 enumeration still grows with archive size, so the original constant-cost index
 goal remains open. The phase designs below preserve the original plan.
 Each phase lands before the next one starts. Each phase's PR updates its
@@ -16,7 +22,7 @@ status line below.
 | --- | --- | --- |
 | 1 | Parallel range listing | Implemented in [#219](https://github.com/wangjohn/agent-archive/pull/219) |
 | 2 | `AGENT_ARCHIVE_TRACE` timings | Implemented in [#225](https://github.com/wangjohn/agent-archive/pull/225) |
-| 3 | Listing benchmark at 1k, 10k and 100k sessions | Partial: 10k benchmark exists; full measurement matrix pending. |
+| 3 | Listing benchmark at 1k, 10k and 100k sessions | Historical synthetic matrix recorded in #451; matched repaired-harness measurements pending. |
 | 4 | Index read whose cost doesn't grow with the archive (spec first) | Partial: bounded metadata bodies implemented; proportional LIST headers remain. |
 
 ## Problem
@@ -153,7 +159,10 @@ Size: ~250 lines of production code, ~200 of tests. One PR.
 
 A benchmark in `internal/reader` against a store wrapper that behaves like R2
 as measured above: ~100 ms per request plus ~0.45 ms per listed key, pages of
-1,000. It sleeps at a reduced time scale and reports modeled time. Fixtures:
+1,000. The original design proposed reduced-scale sleeps. The recorded
+historical model instead uses deterministic virtual scheduling and reports
+projected latency separately from measured local work; it does not measure
+current provider latency. Fixtures:
 1k, 10k and 100k sessions, 85% of them subagents, ~1.5 superseded snapshots
 per session. For each fixture it measures:
 
@@ -168,6 +177,10 @@ performance tests. The results are recorded in
 [list-performance.md](../maintainers/list-performance.md) and become phase 4's
 baseline.
 
+Keep the original measured source/toolchain and raw samples pinned. Freeze the
+same repaired output-validation harness on both production baseline and
+optimization candidate before accepting a performance comparison.
+
 Size: ~300 lines, test code only. One PR.
 
 ## Phase 4: reads whose cost doesn't grow with the archive (spec first)
@@ -175,7 +188,9 @@ Size: ~300 lines, test code only. One PR.
 Starts after phases 1–3 merge and after the session-finding picker changes
 land, since it changes where the picker gets its rows. The first PR is a
 spec in `dev/specs`. The build follows in PRs sized by that spec, expected to
-be 4–5. The spec must decide:
+be 4–5. The [CLI performance follow-up plan](cli-performance.md) proposes
+dependencies and catalog work for this remaining goal; it does not activate a
+new format or complete the proportional-header-cost acceptance. The spec must decide:
 
 1. **Index readiness without a manual step.** The collector runs
    `RebuildIndex` once, in the background, on a destination marked as

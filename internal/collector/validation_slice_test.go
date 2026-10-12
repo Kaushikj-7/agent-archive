@@ -316,8 +316,9 @@ func TestCollectorActualInventoryLimitCachesFailureAndCloses(t *testing.T) {
 	home := t.TempDir()
 	c := newCollectorCatalog(t, []string{home})
 	budget := c.NativeReadBudget()
+	reservation := budget.Reservation()
 	held := budget.Available()
-	if !budget.Reserve(held) {
+	if !reservation.Reserve(held) {
 		t.Fatal("fixture ledger reservation failed")
 	}
 	opts := Options{Sources: testSources, CodexRollouts: c}
@@ -343,7 +344,7 @@ func TestCollectorActualInventoryLimitCachesFailureAndCloses(t *testing.T) {
 	if err := closePasses(); err != nil {
 		t.Fatal(err)
 	}
-	budget.Release(held)
+	reservation.Release(held)
 	if err := c.owner.CloseReadOnly(); err != nil {
 		t.Fatal(err)
 	}
