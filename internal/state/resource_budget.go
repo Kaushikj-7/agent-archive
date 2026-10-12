@@ -46,7 +46,14 @@ var errStateFileUnstable = errors.New("local state file is not a stable regular 
 func (s *Store) readBudgeted(path string, value any, retain bool) error {
 	reservation := s.resourceBudget.Reservation()
 	if s.resourceBudget == nil {
-		return local.Read(path, value)
+		if _, published := value.(*publishedState); !published {
+			return local.Read(path, value)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return decodeStateJSON(data, value)
 	}
 	if err := s.resourceContext.Err(); err != nil {
 		return err
@@ -98,7 +105,7 @@ func (s *Store) readBudgeted(path string, value any, retain bool) error {
 	if err := s.resourceContext.Err(); err != nil {
 		return err
 	}
-	if err := json.Unmarshal(data, value); err != nil {
+	if err := decodeStateJSON(data, value); err != nil {
 		return err
 	}
 	if retain {
@@ -239,4 +246,20 @@ func (p *Published) nextBudgeted(bundle archive.SourceBundle, at time.Time, stat
 	}
 	defer reservation.Release(n)
 	return p.state.next(bundle, at, status, reason, metadata, held, source), nil
+}
+
+// decodeStateJSON avoids encoding/json's complete-value method-dispatch scan
+// before the published decoder's own validity, authority, and full wire checks.
+// Invalid JSON still goes through encoding/json so corruption keeps its existing
+// syntax error and quarantine behavior. Other state decoders retain their route.
+func decodeStateJSON(data []byte, value any) error {
+	published, ok := value.(*publishedState)
+	if !ok {
+		return json.Unmarshal(data, value)
+	}
+	err := published.UnmarshalJSON(data)
+	if err != nil && !json.Valid(data) {
+		return json.Unmarshal(data, value)
+	}
+	return err
 }
