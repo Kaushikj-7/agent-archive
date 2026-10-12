@@ -63,7 +63,8 @@ func TestCompatibleUnknownProducerStillNeedsOriginalAdmissionEvidence(t *testing
 		{"no-turn-id", func(_, task map[string]any) { delete(task, "turn_id") }, "inherited_history"},
 		{"no-started-at", func(_, task map[string]any) { delete(task, "started_at") }, "inherited_history"},
 		{"bad-started-at", func(_, task map[string]any) { task["started_at"] = "bad" }, "inherited_history"},
-		{"mismatched-root", func(_, task map[string]any) { task["root_turn_id"] = "00000000-0000-0000-0000-000000000002" }, "inherited_history"},
+		{"attributed-root", func(_, task map[string]any) { task["root_turn_id"] = "00000000-0000-0000-0000-000000000002" }, "native_format"},
+		{"invalid-root", func(_, task map[string]any) { task["root_turn_id"] = "invalid" }, "inherited_history"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

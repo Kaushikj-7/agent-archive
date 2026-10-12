@@ -123,6 +123,7 @@ type work struct {
 	sourceChanged    bool
 	tooLarge         bool
 	sourceErr        error
+	refusalDetail    DiagnosticDetail
 	workspaceCurrent func(context.Context) bool
 	proposedWitness  bool
 	validated        bool
@@ -503,6 +504,9 @@ func markPendingHistory(group []*work) {
 		if w.t.capturePending {
 			for _, sibling := range group {
 				sibling.t.capturePending = true
+				if sibling.refusalDetail == "" {
+					sibling.refusalDetail = w.refusalDetail
+				}
 			}
 			return
 		}
@@ -516,7 +520,7 @@ func selectAdapterWork(items []*work, since, until time.Time) []*work {
 	dated := !since.IsZero() || !until.IsZero()
 	var selected []*work
 	for _, w := range items {
-		if w.vanished || (w.state == SkipAlreadyArchived && !w.proposedWitness) || w.tooLarge || w.unsafe || w.sourceChanged || w.t.capturePending {
+		if w.vanished || w.state == SkipIndexRecovery || (w.state == SkipAlreadyArchived && !w.proposedWitness) || w.tooLarge || w.unsafe || w.sourceChanged || w.t.capturePending {
 			continue
 		}
 		if w.proposedWitness || w.duplicated || (w.state == "" && !w.filtered && (dated || (w.res.skip == "" && !w.t.identityMismatch))) {
@@ -610,6 +614,11 @@ func decidePlanCandidates(items []*work, since, until, now time.Time) []*work {
 		}
 		w.c.Skip = w.reason(now)
 		w.c.Diagnostic = candidateDiagnostic(w.c.Skip, w.res.outcome, w.res.cause)
+		if w.c.Skip == SkipRelatedHistory && w.refusalDetail != "" {
+			if description, ok := diagnosticDescriptions[w.refusalDetail]; ok {
+				w.c.Diagnostic = &Diagnostic{Detail: w.refusalDetail, Action: description.action}
+			}
+		}
 		if w.c.Skip == "" {
 			parents = append(parents, w)
 		}
@@ -737,6 +746,7 @@ func runAdapter(ctx context.Context, env Environment, w *work) {
 			w.sourceChanged = true
 		case errors.Is(err, archive.ErrRelatedHistory) || agentapi.HasFailure(err, agentapi.Unavailable) || agentapi.HasFailure(err, agentapi.Limit):
 			w.t.capturePending = true
+			w.refusalDetail = sourceRefusalDetail(err)
 		case errors.Is(err, archive.ErrRecordTooLarge) || (statErr == nil && info.Size() > collector.MaxRawTranscriptBytes(string(w.t.harness))):
 			// One record over the limit, or a file that grew past it since
 			// discovery: the collector blocks it as too large.

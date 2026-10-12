@@ -318,14 +318,14 @@ func TestSetupImportNeedsProjectsAndApps(t *testing.T) {
 func TestSetupImportPlanningErrorKeepsSetup(t *testing.T) {
 	t.Parallel()
 	f := newImportOfferFixture(t)
-	// An index entry for one of the sessions that cannot be read: the plan
-	// cannot tell whether that session is archived.
+	// A directory in place of an index file causes a fatal read error. Malformed
+	// JSON instead leaves that session pending recovery and permits a partial plan.
 	key, err := agentmeta.NewSessionKey("claude", "two")
 	must(t, err)
 	sum := sha256.Sum256(key.Encoding())
 	index := filepath.Join(f.home, "sessions-v1", hex.EncodeToString(sum[:])+".json")
 	must(t, os.MkdirAll(filepath.Dir(index), 0o700))
-	must(t, os.WriteFile(index, []byte("{"), 0o600))
+	must(t, os.Mkdir(index, 0o700))
 	out := f.runSetup(t, "", setupYesArgs...)
 	if !strings.Contains(out, "Recent sessions were not imported: check the archive: ") || !strings.Contains(out, ". Run agent-archive backfill --since 7d to retry.\n") || !strings.Contains(out, "Check progress with agent-archive status.") {
 		t.Fatalf("output:\n%s", out)

@@ -214,8 +214,13 @@ parent from shared Codex metadata. It never creates Claude composite subagent ID
 or enumerates a native home for each parent. Child root absence remains unknown.
 A validated source snapshot supplies original same-thread creation and the first
 OWN task. Its timestamp must be no earlier than original native creation, with
-the same one-second tolerance as bounded header admission. A rejected first
-task cannot be replaced by a later native-looking event. Discovery, historical
+the same one-second tolerance as bounded header admission. The task's optional
+`root_turn_id` is attribution to the originating root-thread turn, so a
+descendant's own turn UUID may differ. Both IDs must be valid when
+present, but equality is not ownership proof. Native own-history boundaries and
+creation-time checks establish ownership independently of root attribution.
+See the [producer event definition](https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/protocol/src/protocol.rs).
+A rejected first task cannot be replaced by a later native-looking event. Discovery, historical
 import and ongoing capture apply that constraint. Earlier private related-owner (fork or child)
 scan proofs are revalidated once; parser, adapter and privacy versions remain
 unchanged by this admission correction. The inherited prefix may

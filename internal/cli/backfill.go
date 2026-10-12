@@ -799,6 +799,11 @@ func newArchiveState(home string, cfg config.Config) archiveState {
 // registration does not count, as for hooks (capture.HasRegistration).
 func (s archiveState) Classify(harness, nativeSessionID string) (backfill.SkipReason, error) {
 	archiveID, found, err := s.store.ArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(harness)), NativeID: nativeSessionID})
+	if errors.Is(err, state.ErrSessionIndexRecoveryRequired) {
+		// A read-only preview must neither repair the index nor guess absence.
+		// Retain this session as pending while planning other proven identities.
+		return backfill.SkipIndexRecovery, nil
+	}
 	if err != nil {
 		return "", err
 	}

@@ -16,7 +16,7 @@ func TestSnapshotFirstOwnTaskSkipsLargeCopiedPrefixAndRejectsLaterRepair(t *test
 			boundary := uint64(1025)
 			ref, _ := historyFile(t, dir, threadB, threadB, 0, map[string]any{"parent_thread_id": threadA, "session_id": threadA, "subagent_history_start_ordinal": boundary})
 			task := func(id string) map[string]any {
-				return map[string]any{"type": "event_msg", "payload": map[string]any{"type": "task_started", "turn_id": id, "root_turn_id": id, "started_at": "2026-10-01T12:02:00Z"}}
+				return map[string]any{"type": "event_msg", "payload": map[string]any{"type": "task_started", "turn_id": id, "root_turn_id": threadA, "started_at": "2026-10-01T12:02:00Z"}}
 			}
 			rows := []map[string]any{task(threadA)}
 			for n := range 1023 {
