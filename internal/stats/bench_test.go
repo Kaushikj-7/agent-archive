@@ -24,8 +24,8 @@ func BenchmarkCompute50kSessions(b *testing.B) {
 
 // The worst case for ranking projects: every session in a project of its own,
 // with a spend of its own, so 50,000 projects are ranked (by spend, then the
-// tie-breaks) and cut. The list of every project and the default top few cost
-// the same to rank.
+// tie-breaks) and cut. AllRows requires a full sort; bounded top rows retain
+// only the requested projects.
 func BenchmarkCompute50kProjects(b *testing.B) {
 	rng := rand.New(rand.NewPCG(7, 7))
 	sessions := make([]archive.Metadata, 0, 50_000)
