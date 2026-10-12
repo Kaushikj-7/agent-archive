@@ -550,7 +550,7 @@ func sanitizeStringOnce(v string, state *PrivacyState) (string, bool) {
 		}
 		v = stripped
 	}
-	if base64DataURL.MatchString(v) {
+	if hasDataURLPrefix(v) && base64DataURL.MatchString(v) {
 		state.AddGap("binary_content_omitted", state.Record, "base64 data URL omitted")
 		v = base64DataURL.ReplaceAllString(v, "data:${1}${2};base64,[OMITTED]")
 	}
