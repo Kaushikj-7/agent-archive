@@ -531,19 +531,24 @@ matching rule wins.
    plan and keep automatic recovery pending. Membership that only grew (a
    directory stamp moved, an absent path appeared) is judged by the transcripts
    added (see [Recorded project recovery](#recorded-project-recovery)).
-   The inventory checks membership, not content: added, removed or replaced
-   paths (file identity), mode changes, truncation and same-size rewrites change
-   it, but a transcript growing in place does not when a planned session owns
-   that file (its header came from that same file). Running agents append to
-   their transcripts, and header facts come from complete leading records that
-   an append cannot change; a header no complete record decided already keeps
-   recovery unavailable. The owning session's own source observation still
-   skips it as `source_changed` and still governs its witness renewal, but
-   that check only runs for imported sessions' sources and for the witness a
-   recovery relies on: a same-inode rewrite that grows any other owned
-   transcript is not detected. Agents append rather than rewrite in place, so
-   this limit is accepted. Paths no session owns keep the full size and
-   modification-time comparison.
+   Owned transcripts may grow in place only when the bounded prefix consumed
+   by their original native header inspection is unchanged. Renewal checks all
+   such header participants, including filtered, nonselected and negative
+   ownership evidence, not only imported sessions and selected root witnesses.
+   Discovery retains only a digest and byte count of bytes already read, never
+   transcript content; the existing 8 MiB header and 65,536-path bounds remain.
+   Growing files are reopened through their retained provider root with regular
+   file, symlink/containment, inode, mode and before/after observation checks.
+   Each coalesced inventory renewal has an additional strict 128 MiB aggregate
+   prefix-read cap, charged before opening/reading; exhaustion is unavailable
+   evidence and cannot certify a partial inventory. This new stricter resource
+   cap is unqualified pending workload validation. Genuine tail appends leave
+   the inspected prefix unchanged; replacement, truncation, same-size metadata
+   changes and rewritten leading bytes invalidate the plan. Unchanged files
+   retain stat-only renewal. Imported source checks and selected witness checks
+   still apply independently. These are observations, not an atomic snapshot;
+   restored unchanged-size timestamps and changes reversed between observations
+   remain limits of the existing checks.
    Known plain-folder and absent-cwd ownership is also renewed, so a newly
    created checkout cannot evade clone evidence. This is an observation boundary,
    not an atomic filesystem snapshot.
@@ -1289,13 +1294,14 @@ from another source can propose. Such a proof used Cursor's chats only as
 possible clones, and a change can at most remove one (the proof stays
 unique) or add one (a second checkout known only to Cursor, the residual
 above).
-A native transcript that was only appended to after its header was read (same
-file, same mode, larger size) keeps its own `source_changed` skip but stays
-clone evidence that cannot propose a destination, and further appends renew
-it; a truncation, replacement or other rewrite is still a gap. Header facts
-come from leading complete records, so an append cannot change them. An
-in-place rewrite that grows the file is indistinguishable from an append by
-file metadata; that is the accepted residual of the rule. The candidate
+An append-shaped native change (same file and mode, larger size) remains
+`source_changed` for its own session. It can become noneligible clone evidence
+only after the complete original-header prefix inventory check succeeds. The
+same coalesced prefix check runs before witness renewal, covering hidden and
+negative participants as well as selected witnesses. Stat growth alone is never
+proof of an append: a growing rewrite of inspected bytes blocks recovery.
+Unchanged and genuine tail-appended prefixes retain their prior roles; strict
+root containment and finite prefix/path/deadline bounds still apply. The candidate
 diagnostic names the highest-priority blocking cause instead of
 `project_inventory_unavailable`: `project_budget_exhausted`,
 `project_witness_limit` (retrying cannot help; an exact `--map-project`
@@ -1303,6 +1309,13 @@ can), `native_store_unreadable`, `cursor_database_unavailable`,
 `native_inventory_changed`, `cursor_chat_folder_unavailable`, then
 `session_folder_unknown`. Exact mappings and configured-path ownership do not
 depend on the witness inventory.
+
+Temporary checkouts remain clone membership even when default capture excludes
+those sessions. A temporary root with a Git marker can make a recorded-key match
+ambiguous or unavailable; a plain temporary folder cannot. This also applies to
+transcripts added while planning or confirming. Clone membership alone never
+enables capture or a proposed destination; temporary capture still requires its
+existing explicit option and all ordinary source/filter/permission checks.
 
 Running agents keep creating transcripts while a plan is made and confirmed
 (a review agent in a temporary clone starts a rollout every minute), and a new

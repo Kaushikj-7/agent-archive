@@ -130,7 +130,8 @@ func TestRecoveryWitnessGapsNameTheirCause(t *testing.T) {
 	}{
 		"usable":                {file(func(*work) {}), "", false},
 		"changed":               {file(func(w *work) { w.sourceChanged, w.sourceRewritten = true, true }), CauseNativeInventoryChanged, true},
-		"appended":              {file(func(w *work) { w.sourceChanged = true }), "", false},
+		"appended":              {file(func(w *work) { w.sourceChanged, w.appendHeaderVerified = true, true }), "", false},
+		"appended unverified":   {file(func(w *work) { w.sourceChanged = true }), CauseNativeInventoryChanged, true},
 		"appended unknown":      {file(func(w *work) { w.sourceChanged, w.res = true, resolution{skip: SkipProjectUnknown} }), CauseNativeInventoryChanged, true},
 		"appended mismatch":     {file(func(w *work) { w.sourceChanged, w.t.identityMismatch = true, true }), CauseNativeInventoryChanged, true},
 		"database appended":     {database(func(w *work) { w.sourceChanged = true }), CauseCursorDatabaseUnavailable, true},

@@ -6,6 +6,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
 func TestMeasuredStoreCountsReaderExtensionsOnce(t *testing.T) {
@@ -77,4 +79,49 @@ func TestMeasuredStoreJoinsConcurrentCancelledReads(t *testing.T) {
 		t.Fatalf("metrics %#v", got)
 	}
 	s.Reset()
+}
+
+type qualifiedMeasuredFixture struct{ *MemoryStore }
+
+func (*qualifiedMeasuredFixture) CatalogAtomicQualification() error { return nil }
+
+func TestMeasuredStoreForwardsAtomicCapabilitiesAndCountsBoundedReads(t *testing.T) {
+	underlying := &qualifiedMeasuredFixture{NewMemoryStore()}
+	measured := NewMeasuredStore(underlying, 0)
+	if err := measured.CatalogAtomicQualification(); err != nil {
+		t.Fatal("qualification lost", err)
+	}
+	etag, err := measured.PutConditional(t.Context(), "synthetic", []byte("abc"), storage.PutCondition{CreateOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = measured.PutConditional(t.Context(), "synthetic", []byte("def"), storage.PutCondition{CreateOnly: true}); !errors.Is(err, storage.ErrPreconditionFailed) {
+		t.Fatal(err)
+	}
+	b, gotTag, err := measured.GetLimitedVersioned(t.Context(), "synthetic", 3)
+	if err != nil || gotTag != etag || string(b) != "abc" {
+		t.Fatal(err)
+	}
+	if _, err = measured.Stat(t.Context(), "synthetic"); err != nil {
+		t.Fatal(err)
+	}
+	if got := measured.Metrics(); got.Gets != 1 || got.Bytes != 3 || got.Lists != 0 {
+		t.Fatal("conditional writes or HEAD counted as GET", got)
+	}
+	if measured.CatalogMetadataAuthority() {
+		t.Fatal("raw qualified store invented metadata authority")
+	}
+	unqualified := NewMeasuredStore(NewMemoryStore(), 0)
+	if !errors.Is(unqualified.CatalogAtomicQualification(), storage.ErrAtomicCatalogUnqualified) {
+		t.Fatal("memory fixture invented qualification")
+	}
+	// Existing benchmarks replace this field between iterations.
+	replacement := NewMemoryStore()
+	unqualified.MemoryStore = replacement
+	if err = unqualified.Put(t.Context(), "replacement", []byte("x")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = replacement.Get(t.Context(), "replacement"); err != nil {
+		t.Fatal("legacy fixture replacement lost", err)
+	}
 }

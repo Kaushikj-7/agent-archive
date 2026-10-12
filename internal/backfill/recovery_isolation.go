@@ -97,9 +97,9 @@ func (r *resolver) recoveryFor(ctx context.Context, h harness) (*sourcefacts.Rec
 	return recovery, &gap
 }
 
-// appendedSource reports a change that only appended to the same regular
-// file: same identity and mode, larger size. Header facts come from leading
-// complete records, so an append cannot change cwd, repository key or IDs.
+// appendedSource recognizes tentative append-shaped metadata, not proof that
+// the inspected bytes are unchanged. Only the complete original-prefix inventory
+// check can authorize the associated witness copy or its renewal.
 func appendedSource(before, after fs.FileInfo, err error) bool {
 	return err == nil && before != nil && after != nil && before.Mode().IsRegular() && after.Mode() == before.Mode() && os.SameFile(before, after) && after.Size() > before.Size()
 }
@@ -108,13 +108,14 @@ func appendedSource(before, after fs.FileInfo, err error) bool {
 // copy resolved from its unchanged header. The session itself keeps its empty
 // resolution and its source_changed decision; the copy is a non-eligible
 // witness whose renewal accepts further appends (stillAppendedOnly).
-func recoveryEvidenceItems(items []*work) []*work {
+func recoveryEvidenceItems(items []*work, headersCurrent bool) []*work {
 	out := make([]*work, 0, len(items))
 	for _, w := range items {
-		if w.appendWitness != nil && w.appendedOnly() {
+		if headersCurrent && w.appendWitness != nil && w.appendedOnly() {
 			evidence := *w
 			evidence.res = *w.appendWitness
 			evidence.appendWitness = nil
+			evidence.appendHeaderVerified = true
 			w = &evidence
 		}
 		out = append(out, w)
@@ -122,15 +123,15 @@ func recoveryEvidenceItems(items []*work) []*work {
 	return out
 }
 
-// appendedOnly reports a source whose every observed change was an append.
+// appendedOnly reports append-shaped metadata; it does not grant header authority.
 func (w *work) appendedOnly() bool {
 	return w.sourceChanged && !w.sourceRewritten && !w.vanished
 }
 
-// stillAppendedOnly renews an appended witness: still the same file, only
-// grown since the header observation.
-func (w *work) stillAppendedOnly(env Environment) bool {
-	if !w.appendedOnly() || w.t.sourceInfo == nil {
+// stillAppendedOnly renews a verified witness only after the coalesced inventory
+// rechecked all original header prefixes, and its current metadata still grows.
+func (w *work) stillAppendedOnly(env Environment, headersCurrent bool) bool {
+	if !headersCurrent || !w.appendHeaderVerified || !w.appendedOnly() || w.t.sourceInfo == nil {
 		return false
 	}
 	current, err := env.lstat(w.t.path)

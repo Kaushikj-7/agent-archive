@@ -27,7 +27,7 @@ import (
 // (dev/specs/backfill.md, "Recorded project recovery"):
 //
 //   - A transcript whose folder is not an existing, unconfigured repository
-//     (a configured project, a plain or temporary folder, a deleted folder)
+//     (a configured project, a plain folder without a Git marker, a deleted folder)
 //     names no clone that could compete with a recorded key, and is ignored.
 //   - One in a root the witness inventory already holds adds nothing.
 //   - One naming a new root makes that root evidence: while planning, it joins
@@ -354,7 +354,7 @@ func classifyAddedSource(ownership *resolver, slugs map[string]bool, c agentapi.
 	for _, p := range ownership.cfg.Archive.Projects {
 		configured = configured || ownership.env.resolved(p.Root) == ownership.env.resolved(out.res.root)
 	}
-	out.relevant = out.res.skip == "" && out.res.kind == ProjectKindRepository && ownership.env.exists(out.res.root) && !configured
+	out.relevant = ownership.recoveryRepositoryWitness(out.res) && ownership.env.exists(out.res.root) && !configured
 	return out
 }
 
