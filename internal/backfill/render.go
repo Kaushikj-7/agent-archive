@@ -99,11 +99,11 @@ func (p Plan) Projects() []ProjectSummary {
 		}
 		s, ok := byRoot[key]
 		if !ok {
-			s = &ProjectSummary{Root: c.ProjectRoot, Kind: c.ProjectKind, Included: c.ProjectIncluded, Exists: c.ProjectExists, Sessions: map[string]int{}}
+			var historicalID, historicalLabel string
 			if c.HistoricalProject != nil {
-				s.HistoricalProjectID = c.ProjectIdentity()
-				s.HistoricalLabel = c.HistoricalProject.Label
+				historicalID, historicalLabel = c.ProjectIdentity(), c.HistoricalProject.Label
 			}
+			s = &ProjectSummary{HistoricalProjectID: historicalID, HistoricalLabel: historicalLabel, Root: c.ProjectRoot, Kind: c.ProjectKind, Included: c.ProjectIncluded, Exists: c.ProjectExists, Sessions: map[string]int{}}
 			byRoot[key] = s
 			order = append(order, s)
 		}
@@ -790,6 +790,7 @@ type projectStatus string
 const (
 	projectStatusWillBeAdded     projectStatus = "will_be_added"
 	projectStatusAlreadyIncluded projectStatus = "already_included"
+	projectStatusHistoricalOnly  projectStatus = "historical_only"
 )
 
 type projectJSON struct {
@@ -858,7 +859,7 @@ func RenderJSON(w io.Writer, p Plan) error {
 	for _, s := range p.Projects() {
 		status := projectStatusWillBeAdded
 		if s.HistoricalProjectID != "" {
-			status = projectStatus("historical_only")
+			status = projectStatusHistoricalOnly
 		} else if s.Included {
 			status = projectStatusAlreadyIncluded
 		}

@@ -35,9 +35,9 @@ func filterImportSource(ctx context.Context, env Environment, w *work, started t
 	if shared, ok := env.CodexRollouts.(agentapi.CodexRolloutResourceBudget); ok {
 		budget = shared.NativeReadBudget()
 	}
-	environment := agentapi.SourceEnvironment{ReadBudget: budget, CodexRollouts: env.CodexRollouts, RequireConfinedHistory: true, Files: sourcefacts.RootOpener{Root: root}, Policy: transcriptio.OpenPolicy{Root: root, RejectSymlinks: true}}
+	var sourceAllowed func(string) bool
 	if w.res.historical != nil {
-		environment.HistorySourceAllowed = func(cwd string) bool {
+		sourceAllowed = func(cwd string) bool {
 			if env.HistoricalSourceAllowed != nil && !env.HistoricalSourceAllowed(cwd) {
 				return false
 			}
@@ -49,6 +49,7 @@ func filterImportSource(ctx context.Context, env Environment, w *work, started t
 			return len(w.res.historical.SourceCwds) <= 2*archive.MaxHistorySpans
 		}
 	}
+	environment := agentapi.SourceEnvironment{HistorySourceAllowed: sourceAllowed, ReadBudget: budget, CodexRollouts: env.CodexRollouts, RequireConfinedHistory: true, Files: sourcefacts.RootOpener{Root: root}, Policy: transcriptio.OpenPolicy{Root: root, RejectSymlinks: true}}
 	pass, err := provider.OpenPass(ctx, environment)
 	if err != nil {
 		return out, release, err

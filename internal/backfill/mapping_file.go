@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"path/filepath"
 	"unicode"
 	"unicode/utf8"
@@ -74,9 +75,7 @@ func ReadMappingFile(input io.Reader, filters *Filters) error {
 		definitions[p.ID] = true
 	}
 	live := map[string]string{}
-	for cwd, root := range filters.ProjectMappings {
-		live[cwd] = root
-	}
+	maps.Copy(live, filters.ProjectMappings)
 	historical := map[string]string{}
 	for _, m := range file.Mappings {
 		if !validMappingPath(m.Cwd) || (m.ConfiguredRoot == "") == (m.HistoricalProjectID == "") {

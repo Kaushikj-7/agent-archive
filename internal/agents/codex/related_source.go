@@ -1703,9 +1703,11 @@ func (p *relatedSourcePass) checkHistoryAdmissionFacts(ctx context.Context, sele
 func (p *relatedSourcePass) historySourceAllowed(cwd string) bool {
 	return p.env.HistorySourceAllowed == nil || p.env.HistorySourceAllowed(cwd)
 }
+
 func (f *rolloutFile) currentHeader(ctx context.Context) bool {
 	return f.file.Check() == nil && f.checkHeader(ctx) == nil
 }
+
 func originalProducerMatches(original *rolloutFile, admission agentapi.SourceAdmission) bool {
 	return (admission.InitialProducerVersion == "" || admission.InitialProducerVersion == original.meta.Version) && (admission.InitialProducerOriginator == "" || admission.InitialProducerOriginator == original.meta.Originator)
 }

@@ -12,6 +12,15 @@ import (
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
+type historicalProjectAction string
+
+const (
+	historicalProjectList    historicalProjectAction = "list"
+	historicalProjectRename  historicalProjectAction = "rename"
+	historicalProjectEnable  historicalProjectAction = "enable"
+	historicalProjectDisable historicalProjectAction = "disable"
+)
+
 func runHistoricalProjects(args []string, stdout, stderr io.Writer, env Env) int {
 	fs := env.newCommandFlags("historical-project", stderr)
 	if !fs.parse(args) {
@@ -26,7 +35,7 @@ func runHistoricalProjects(args []string, stdout, stderr io.Writer, env Env) int
 		terminal.Println(stderr, "agent-archive: historical-project: use list, rename ID LABEL, enable ID, or disable ID with an exact project ID and bounded plain-text label")
 		return 2
 	}
-	action := args[0]
+	action := historicalProjectAction(args[0])
 	home, err := env.readHome()
 	if err != nil {
 		return fail(err.Error())
@@ -38,7 +47,7 @@ func runHistoricalProjects(args []string, stdout, stderr io.Writer, env Env) int
 	if !found {
 		return fail(errNotSetUp.Error())
 	}
-	if action == "list" {
+	if action == historicalProjectList {
 		for _, project := range cfg.HistoricalProjects {
 			enabled, recorded := project.HistoricalPermission(cfg.DestinationID())
 			state := "no permission"
@@ -85,14 +94,14 @@ func runHistoricalProjects(args []string, stdout, stderr io.Writer, env Env) int
 		return fail("unknown historical project ID; introduce it in a confirmed mapping-file import")
 	}
 	project := &cfg.HistoricalProjects[index]
-	if action == "rename" {
+	if action == historicalProjectRename {
 		project.Label = args[2]
 	} else {
 		permission := slices.IndexFunc(project.Permissions, func(p config.HistoricalProjectPermission) bool { return p.DestinationID == cfg.DestinationID() })
 		if permission < 0 {
 			return fail("this project has no permission in the current destination; review a mapping-file import to authorize it here")
 		}
-		project.Permissions[permission].Enabled = action == "enable"
+		project.Permissions[permission].Enabled = action == historicalProjectEnable
 	}
 	cfg.HistoricalProjectProtection = true
 	if err := config.Save(home, cfg); err != nil {
@@ -106,16 +115,16 @@ func validHistoricalArguments(args []string) bool {
 	if len(args) == 0 {
 		return false
 	}
-	action := args[0]
+	action := historicalProjectAction(args[0])
 	count := 2
 	switch action {
-	case "list":
+	case historicalProjectList:
 		count = 1
-	case "rename":
+	case historicalProjectRename:
 		count = 3
-	case "enable", "disable":
+	case historicalProjectEnable, historicalProjectDisable:
 	default:
 		return false
 	}
-	return len(args) == count && (action == "list" || archive.IsHistoricalProjectID(args[1])) && (action != "rename" || archive.ValidHistoricalProjectLabel(args[2]))
+	return len(args) == count && (action == historicalProjectList || archive.IsHistoricalProjectID(args[1])) && (action != historicalProjectRename || archive.ValidHistoricalProjectLabel(args[2]))
 }

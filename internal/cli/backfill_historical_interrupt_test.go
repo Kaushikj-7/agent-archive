@@ -17,6 +17,16 @@ import (
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
+type historicalImportCheckpoint string
+
+const (
+	historicalBatchSaved historicalImportCheckpoint = "batch saved"
+	historicalCommitted  historicalImportCheckpoint = "committed"
+	historicalStaged     historicalImportCheckpoint = "staged"
+	historicalRegistered historicalImportCheckpoint = "registered"
+	historicalUploading  historicalImportCheckpoint = "uploading"
+)
+
 func newHistoricalOnlyFixture(t *testing.T) (*backfillFixture, *storagetest.MemoryStore, string) {
 	t.Helper()
 	home, userHome := t.TempDir(), t.TempDir()
@@ -36,20 +46,20 @@ func newHistoricalOnlyFixture(t *testing.T) (*backfillFixture, *storagetest.Memo
 
 func TestHistoricalImportInterruptionKeepsFrozenOwnership(t *testing.T) {
 	t.Parallel()
-	for _, checkpoint := range []string{"batch saved", "committed", "staged", "registered", "uploading"} {
-		t.Run(checkpoint, func(t *testing.T) {
+	for _, checkpoint := range []historicalImportCheckpoint{historicalBatchSaved, historicalCommitted, historicalStaged, historicalRegistered, historicalUploading} {
+		t.Run(string(checkpoint), func(t *testing.T) {
 			t.Parallel()
 			fixture, _, mapping := newHistoricalOnlyFixture(t)
 			observed := false
 			fixture.env.backfillCheckpoint = func(step string) error {
-				if step == checkpoint {
+				if historicalImportCheckpoint(step) == checkpoint {
 					observed = true
 					return errors.New("synthetic interruption")
 				}
 				return nil
 			}
 			args := []string{"--yes", "--mapping-file", mapping}
-			if checkpoint != "uploading" {
+			if checkpoint != historicalUploading {
 				args = append(args, "--background")
 			}
 			_, stderr, code := fixture.importRun(t, nil, false, args...)
@@ -60,7 +70,7 @@ func TestHistoricalImportInterruptionKeepsFrozenOwnership(t *testing.T) {
 				t.Fatalf("interruption %d %s", code, stderr)
 			}
 			fixture.env.backfillCheckpoint = nil
-			if checkpoint == "staged" || checkpoint == "registered" || checkpoint == "uploading" {
+			if checkpoint == historicalStaged || checkpoint == historicalRegistered || checkpoint == historicalUploading {
 				must(t, os.RemoveAll(filepath.Join(fixture.userHome, ".claude")))
 				result, err := runOnePass(fixture.env, true)
 				must(t, err)
@@ -98,7 +108,8 @@ func TestHistoricalBulkAssignmentsImportBeyondInlineLimit(t *testing.T) {
 		if i > 0 {
 			rows.WriteByte(',')
 		}
-		rows.WriteString(fmt.Sprintf(`{"cwd":%q,"historical_project_id":"11111111111111111111111111111111"}`, cwd))
+		_, err := fmt.Fprintf(&rows, `{"cwd":%q,"historical_project_id":"11111111111111111111111111111111"}`, cwd)
+		must(t, err)
 	}
 	rows.WriteString("]}")
 	must(t, os.WriteFile(mapping, []byte(rows.String()), 0600))

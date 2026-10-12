@@ -106,6 +106,13 @@ func TestHistoricalTemporaryOriginalCwdCannotEscapeThroughSymlink(t *testing.T) 
 	}
 }
 
+func TestExcludedHistoricalDependencyCountsAsExcluded(t *testing.T) {
+	t.Parallel()
+	if got := candidateDisposition(Candidate{Skip: SkipExcludedHistory}); got != "excluded" {
+		t.Fatalf("excluded dependency counted as %q", got)
+	}
+}
+
 func TestHistoricalSourceRestrictionsCannotBeBypassedByAssignment(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()

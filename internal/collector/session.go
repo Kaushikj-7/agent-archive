@@ -832,6 +832,7 @@ func (s *sessionScan) hasRetainedPublication() bool {
 	_, _, found := s.published.LastPublished()
 	return found
 }
+
 func applyProjectName(m *archive.Metadata, reg archive.SessionRegistration, opts Options) {
 	if reg.HistoricalProject == nil {
 		m.ApplyProjectName(reg.ProjectRoot)
@@ -862,6 +863,7 @@ func (s *sessionScan) validateHistoricalSnapshot() error {
 	}
 	return nil
 }
+
 func (s *sessionScan) maintainsRetainedOnly() bool {
 	return s.reg.CaptureFrozen || s.reg.HistoricalProject != nil && s.hasRetainedPublication()
 }
