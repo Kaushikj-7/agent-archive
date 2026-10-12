@@ -615,7 +615,8 @@ func uploadImport(env Env, stdout, stderr io.Writer, home, batchID string, plan 
 	lastProgress := time.Now()
 	for len(u.pending) > 0 && !stop() {
 		before := len(u.pending)
-		_, err := runPass(env, false, passOptions{progress: u.observe, stop: stop})
+		result, err := runPass(env, false, passOptions{progress: u.observe, stop: stop})
+		result.CloseStagedResults()
 		u.stopFinishing()
 		if refreshErr := u.refresh(); refreshErr != nil && err == nil {
 			err = refreshErr
@@ -992,6 +993,7 @@ func importCapacityDrain(env Env, stdout io.Writer, home string, store *state.St
 			return err
 		}
 		result, err := collector.Run(ctx, store, remote, collector.Options{Sources: env.agentRegistry(), Parsers: parsersFor(env), Decoders: env.agentRegistry(), MachineID: current.MachineID, Now: env.Now, AcceptSession: current.AcceptSession, HistoricalProjectLabel: current.HistoricalProjectLabel, SkillEvidence: current.EffectiveSkillEvidence(), RequireSkillUse: current.RequireSkillUse, CursorDatabase: env.cursorDatabase(), CodexRollouts: lookup, ConfiguredCodexHomes: readHomes, RepoKey: env.repoKey, Stop: stop})
+		defer result.CloseStagedResults()
 		if err != nil {
 			return err
 		}

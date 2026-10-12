@@ -329,24 +329,29 @@ func (s *Store) removeExactStagedPending(ctx context.Context, g config.DurableSt
 
 // ResumeStagedReleases visits one bounded page following the existing admission
 // cursor. Receipt-only entries survive payload unlink and remain explicit owners.
-func (s *Store) ResumeStagedReleases(ctx context.Context, remote StagedReadback, guard *local.CollectorGuard) (map[string]error, error) {
+// The returned close ends detached diagnostic ownership after ALL map use; nil
+// means no staged result owner. It never grants cleanup or release authority.
+func (s *Store) ResumeStagedReleases(ctx context.Context, remote StagedReadback, guard *local.CollectorGuard) (map[string]error, func(), error) {
 	holds := make(map[string]error)
 	cfg, present, err := config.Load(s.home)
 	if err != nil {
-		return holds, err
+		return holds, nil, err
 	}
 	if !present || !cfg.StagedSelectionProtection {
-		return holds, nil
+		return holds, nil, nil
 	}
 	if !cfg.SupportsStagedSelection() || guard == nil {
-		return holds, ErrReadySelectionFrozen
+		return holds, nil, ErrReadySelectionFrozen
 	}
-	if s.resourceBudget == nil {
-		reader, closeReader := s.WithImportResultScope(ctx)
-		defer closeReader()
-		return reader.ResumeStagedReleases(ctx, remote, guard)
-	}
+	receiver, closeDiagnostics := s.WithImportResultScope(ctx)
+	holds, err = receiver.resumeStagedReleases(ctx, remote, guard)
+	return holds, closeDiagnostics, err
+}
 
+// The receiver outlives every detached returned diagnostic ID. Page views and
+// per-owner publication/readback views end here; only bounded ID copies remain.
+func (s *Store) resumeStagedReleases(ctx context.Context, remote StagedReadback, guard *local.CollectorGuard) (map[string]error, error) {
+	holds := make(map[string]error)
 	var cursor struct {
 		After string `json:"after"`
 	}
@@ -357,6 +362,18 @@ func (s *Store) ResumeStagedReleases(ctx context.Context, remote StagedReadback,
 	defer closePage()
 	if err != nil {
 		return holds, err
+	}
+	// Reserve/detach every candidate ID before any release attempt. Pressure
+	// cannot erase an already-produced per-owner hold after remote readback.
+	for i := range stages {
+		if !stages[i].TypedSelection {
+			continue
+		}
+		id, err := s.RetainImportID(ctx, stages[i].Registration.ArchiveSessionID)
+		if err != nil {
+			return holds, err
+		}
+		stages[i].Registration.ArchiveSessionID = id
 	}
 	for _, stage := range stages {
 		if err := ctx.Err(); err != nil {

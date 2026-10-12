@@ -2,6 +2,8 @@ package collector
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -18,7 +20,8 @@ import (
 // Already-committed exact staged publication is the same valid setup in both
 // arms. Actual Run must not release it through an independent scheduled ledger
 // after ordinary scans refuse the captured pass budget.
-func TestStagedRunScheduledReleaseRespectsCapturedPassBudget(t *testing.T) {
+func stagedCommittedOwnerFixture(t *testing.T) (*state.Store, state.PendingPublication, Options, *storagetest.MemoryStore) {
+	t.Helper()
 	store := newTestStore(t)
 	cfg, _, err := config.Load(store.Home())
 	if err != nil {
@@ -95,8 +98,13 @@ func TestStagedRunScheduledReleaseRespectsCapturedPassBudget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer guard.Release()
+	t.Cleanup(func() { guard.Release() })
 	opts.CollectorGuard = guard
+	return store, p, opts, remote
+}
+
+func TestStagedRunScheduledReleaseRespectsCapturedPassBudget(t *testing.T) {
+	store, p, opts, remote := stagedCommittedOwnerFixture(t)
 	budget := agentapi.NewNativeReadBudget(128 << 20)
 	pressure := budget.Reservation()
 	if !pressure.Reserve((128 << 20) - 512) {
@@ -104,8 +112,8 @@ func TestStagedRunScheduledReleaseRespectsCapturedPassBudget(t *testing.T) {
 	}
 	defer pressure.Release((128 << 20) - 512)
 	opts.CodexRollouts = recoveryBudgetLookup{budget: budget}
-	pendingPath := filepath.Join(store.Home(), "pending", reg.ArchiveSessionID+".json")
-	stagePath := filepath.Join(store.Home(), "sessions", reg.ArchiveSessionID, "import-stage", "stage.json")
+	pendingPath := filepath.Join(store.Home(), "pending", p.Bundle.ArchiveSessionID+".json")
+	stagePath := filepath.Join(store.Home(), "sessions", p.Bundle.ArchiveSessionID, "import-stage", "stage.json")
 	beforePending, err := os.ReadFile(pendingPath)
 	if err != nil {
 		t.Fatal(err)
@@ -114,11 +122,16 @@ func TestStagedRunScheduledReleaseRespectsCapturedPassBudget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = Run(t.Context(), store, remote, opts); err != nil {
+	result, err := Run(t.Context(), store, remote, opts)
+	defer closeStagedControlResult(result)
+	if err != nil {
 		t.Fatal(err)
 	}
-	current, found, err := store.LoadRequest(reg.ArchiveSessionID)
-	if err != nil || !found || current.Token != request.Token {
+	if !errors.Is(result.Errors["staged-releases"], agentapi.ErrReadBudget) {
+		t.Fatalf("missing actual scheduled pressure cause: %v", result.Errors["staged-releases"])
+	}
+	current, found, err := store.LoadRequest(p.Bundle.ArchiveSessionID)
+	if err != nil || !found || current.Token != p.RequestToken {
 		t.Fatalf("scheduled release escaped pass owner: %v %v", found, err)
 	}
 	afterPending, err := os.ReadFile(pendingPath)
@@ -128,5 +141,71 @@ func TestStagedRunScheduledReleaseRespectsCapturedPassBudget(t *testing.T) {
 	afterStage, err := os.ReadFile(stagePath)
 	if err != nil || !bytes.Equal(beforeStage, afterStage) {
 		t.Fatalf("stage lost under pressure: %v", err)
+	}
+}
+
+func closeStagedControlResult(result Result) {
+	if closer, ok := any(result).(interface{ CloseStagedResults() }); ok {
+		closer.CloseStagedResults()
+	}
+}
+
+type stagedDiagnosticFailureStore struct {
+	*storagetest.MemoryStore
+	source string
+	cause  error
+}
+
+func (r *stagedDiagnosticFailureStore) GetLimited(ctx context.Context, key string, limit int64) ([]byte, error) {
+	if key == r.source {
+		return nil, r.cause
+	}
+	return r.MemoryStore.GetLimited(ctx, key, limit)
+}
+func TestStagedRunDiagnosticOwnerSurvivesAliasesFailuresAndRepeatedPasses(t *testing.T) {
+	store, p, opts, remote := stagedCommittedOwnerFixture(t)
+	cause := errors.New("controlled bounded readback failure")
+	failing := &stagedDiagnosticFailureStore{MemoryStore: remote, source: p.SourceKey, cause: cause}
+	budget := agentapi.NewNativeReadBudget(2 << 20)
+	opts.CodexRollouts = recoveryBudgetLookup{budget: budget}
+	before := budget.Available()
+	for range 3 {
+		result, err := Run(t.Context(), store, failing, opts)
+		if err != nil {
+			closeStagedControlResult(result)
+			t.Fatal(err)
+		}
+		alias := result
+		id := p.Bundle.ArchiveSessionID
+		if !errors.Is(result.Errors[id], cause) || !errors.Is(alias.Errors[id], cause) {
+			closeStagedControlResult(result)
+			t.Fatal("raw per-owner cause lost")
+		}
+		if before-budget.Available() != int64(len(id)) {
+			closeStagedControlResult(result)
+			t.Fatalf("returned diagnostic ID not owned: %d", before-budget.Available())
+		}
+		current, found, err := store.LoadRequest(id)
+		if err != nil || !found || current.Token != p.RequestToken {
+			closeStagedControlResult(result)
+			t.Fatal("failure changed selecting token", err)
+		}
+		// Both aliases have completed diagnostic reads before the first close.
+		closeStagedControlResult(alias)
+		closeStagedControlResult(result)
+		if budget.Available() != before {
+			t.Fatal("loop iteration retained diagnostic ownership")
+		}
+	}
+}
+
+func TestStagedLegacyResultCloseIsNoop(t *testing.T) {
+	cause := errors.New("legacy result cause")
+	result := Result{Errors: map[string]error{"legacy": cause}}
+	alias := result
+	closeStagedControlResult(result)
+	closeStagedControlResult(alias)
+	if !errors.Is(result.Errors["legacy"], cause) {
+		t.Fatal("legacy close changed diagnostics")
 	}
 }

@@ -224,7 +224,11 @@ func (o Options) minUploadInterval() time.Duration {
 }
 
 // Result summarizes one Run call. It never includes transcript content.
+// CloseStagedResults ends copied staged diagnostic ownership after all result
+// aliases and diagnostic consumers finish; it is a no-op for legacy results.
 type Result struct {
+	stagedDiagnostics *stagedDiagnosticResult
+
 	Scanned   int
 	Published []string
 	// Skipped lists sessions with nothing new to publish.
@@ -387,7 +391,10 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	}
 	if remote, ok := store.(state.StagedReadback); ok {
 		scoped, closeSchedule := local.WithReadBudget(ctx, (&sessionScan{opts: opts}).readBudget())
-		holds, err := scoped.ResumeStagedReleases(ctx, remote, opts.CollectorGuard)
+		holds, closeDiagnostics, err := scoped.ResumeStagedReleases(ctx, remote, opts.CollectorGuard)
+		if closeDiagnostics != nil {
+			p.result.stagedDiagnostics = &stagedDiagnosticResult{close: closeDiagnostics}
+		}
 		closeSchedule()
 		for id, hold := range holds {
 			addError(p.result.Errors, id, hold)
@@ -882,5 +889,17 @@ func (p *pass) repairListingIndex() {
 		if err != nil {
 			p.result.Errors["listing-maintenance"] = err
 		}
+	}
+}
+
+// A value copy of Result shares this owner. Close only after every diagnostic
+// consumer and alias is finished; legacy results have no staged owner.
+type stagedDiagnosticResult struct{ close func() }
+
+// CloseStagedResults is idempotent and ends only staged diagnostic ID ownership.
+// No result alias may use those diagnostics after the shared owner is closed.
+func (r Result) CloseStagedResults() {
+	if r.stagedDiagnostics != nil {
+		r.stagedDiagnostics.close()
 	}
 }

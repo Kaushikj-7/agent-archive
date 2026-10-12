@@ -51,7 +51,11 @@ func (p ImportStage) digest(ctx context.Context) (string, error) {
 	p.SHA256 = ""
 	p.Registration.StagedImportSHA256 = ""
 	if p.TypedSelection {
-		return boundedStagedWireDigest(ctx, p, MaxImportStageBytes)
+		digest, err := boundedStagedWireDigest(ctx, p, MaxImportStageBytes)
+		if errors.Is(err, agentmeta.ErrJSONWireLimit) || errors.Is(err, agentapi.ErrReadBudget) {
+			return "", errors.Join(ErrDurableStorageCapacity, err)
+		}
+		return digest, err
 	}
 	if _, err := agentmeta.JSONWireBound(ctx, p, maxPendingHistoryBytes); err != nil {
 		return "", errors.Join(ErrDurableStorageCapacity, err)

@@ -121,8 +121,10 @@ func stagedParentFirstRestartControl(t *testing.T, assertReadbacks bool) {
 		t.Fatal(err)
 	}
 	remote := &stagedChildFailureStore{MemoryStore: storagetest.NewMemoryStore(), childMetadata: key, failChild: true}
-	if _, err = Run(t.Context(), store, remote, opts); err != nil {
-		t.Fatal(err)
+	firstResult, runErr := Run(t.Context(), store, remote, opts)
+	closeStagedControlResult(firstResult)
+	if runErr != nil {
+		t.Fatal(runErr)
 	}
 	request, found, err := store.LoadRequest(child.ArchiveSessionID)
 	if err != nil || !found || request.Token == "" {
@@ -145,8 +147,10 @@ func stagedParentFirstRestartControl(t *testing.T, assertReadbacks bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = Run(t.Context(), reopened, remote, opts); err != nil {
-		t.Fatal(err)
+	secondResult, runErr := Run(t.Context(), reopened, remote, opts)
+	closeStagedControlResult(secondResult)
+	if runErr != nil {
+		t.Fatal(runErr)
 	}
 	published, err := store.LoadPublishedState(child.ArchiveSessionID)
 	if err != nil || !published.TypedStagedPublished() {
