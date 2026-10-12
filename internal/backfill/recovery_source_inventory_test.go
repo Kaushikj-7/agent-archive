@@ -129,6 +129,10 @@ func TestRecoverySourceInventoryToleratesOwnedAppendsOnly(t *testing.T) {
 			tr := newTree(t)
 			dir := tr.mkdir("home/store")
 			file := tr.write("home/store/source.jsonl", header)
+			// Establish the intended pre-mutation mode regardless of the process umask.
+			if err := os.Chmod(file, 0o644); err != nil {
+				t.Fatal(err)
+			}
 			inv := newRecoverySourceInventory(tr.env())
 			seen := inv.environment()
 			if _, err := seen.ReadDir(dir); err != nil {

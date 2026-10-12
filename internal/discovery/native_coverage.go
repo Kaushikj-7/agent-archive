@@ -536,7 +536,7 @@ func checkCoverageMembers(ctx context.Context, c *catalog, h *Health, adapter So
 		if entry.Source.Locator == "" {
 			continue
 		}
-		if prior, hit := c.Cache[entry.Source.Locator]; hit && prior.SourceFingerprint == entry.CoverageFingerprint && prior.Size == entry.Fingerprint.Size && prior.Mtime == entry.Fingerprint.Mtime {
+		if prior, hit := c.Cache[entry.Source.Locator]; hit && prior.SourceFingerprint == entry.CoverageFingerprint && prior.Size == entry.Fingerprint.Size && prior.Mtime == entry.Fingerprint.Mtime && !coverageObservationUncertain(prior.Observation) {
 			c.Coverage.checkMember(entry.Source.Locator, prior.Observation.Identity)
 			continue
 		}
@@ -556,13 +556,21 @@ func checkCoverageMembers(ctx context.Context, c *catalog, h *Health, adapter So
 		h.Bytes += observation.Bytes
 		h.NativeReadBytes += observation.NativeReadBytes
 		h.NativeReadOperations += observation.NativeReadOperations
-		if ctx.Err() != nil || observation.Outcome == outcomeChanged {
-			// An append raced the header read; read it again next pass.
+		if ctx.Err() != nil || coverageObservationUncertain(observation) {
+			// Uncertain metadata cannot establish nonmembership. Retry next pass.
 			return false
 		}
 		c.Coverage.checkMember(entry.Source.Locator, observation.Identity)
 	}
 	return true
+}
+
+// coverageObservationUncertain separates a failed probe from a proven
+// nonmember. Incomplete task evidence can still contain a validated identity;
+// membership uses that identity while admission retains its own evidence gates.
+// Uncertain cached probes must be read again rather than reused.
+func coverageObservationUncertain(o Observation) bool {
+	return o.Outcome == outcomeChanged || o.Outcome == outcomeUnavailable || o.Outcome == outcomeIncomplete && (o.Identity == nil || o.Identity.ThreadID == "" || o.Identity.RolloutID == "" || identityByteBound(*o.Identity) > 4096)
 }
 
 func finishCoverageDirectoryCheck(ctx context.Context, c *coverageInventory, h *Health, deadline time.Time, o Options) {

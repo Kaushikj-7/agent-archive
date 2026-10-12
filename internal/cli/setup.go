@@ -1152,6 +1152,7 @@ func printNextSteps(p *prompter, cfg config.Config, paused bool) {
 			}
 		}
 		if containsString(cfg.Harnesses, "codex") && cfg.EffectiveCodexCaptureScope() == config.CodexAllProjects {
+			terminal.Println(p.out, "Setup's recent import only covers explicitly included projects. Review earlier Codex sessions in other projects with "+p.style.cmd(setupImportRetryCommand)+".")
 			// The discovery line above names the scope; hook capture's does not.
 			if cfg.Discovery == nil || !cfg.Discovery.Enabled {
 				terminal.Println(p.out, "Codex hooks capture supported tasks in any non-excluded project.")

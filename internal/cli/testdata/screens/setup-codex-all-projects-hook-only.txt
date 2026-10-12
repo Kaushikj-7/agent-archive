@@ -31,6 +31,7 @@ To remove the agent skills and keep them off, run agent-archive setup --no-skill
 Next, in each app
   Codex: run /hooks and approve the archive hooks; they capture sessions that
   start after that (or after /clear).
+Setup's recent import only covers explicitly included projects. Review earlier Codex sessions in other projects with agent-archive backfill --since 7d.
 Codex hooks capture supported tasks in any non-excluded project.
 Check progress with agent-archive status.
   · Another machine: agent-archive machines pair

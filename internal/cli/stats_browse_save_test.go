@@ -19,7 +19,7 @@ func lastRowOf(run screenRun, i int) string {
 // screen after it is left.
 func TestStatsScreenSavesTheRedactedPage(t *testing.T) {
 	t.Parallel()
-	dir := t.TempDir()
+	dir := shortDisplayFixtureDir(t)
 	run := runScreen(t, screenOptions{width: 120, height: 30, dir: dir}, "h", "out.html", "\r", "d", "q")
 	path := filepath.Join(dir, "out.html")
 	data, err := os.ReadFile(path)

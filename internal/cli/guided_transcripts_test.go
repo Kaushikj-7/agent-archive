@@ -74,7 +74,7 @@ func TestGuidedFullCommandTranscripts(t *testing.T) {
 					}
 					switch flow {
 					case guidedFlowPairingSource:
-						env, home, _ := pairingSourceFixture(t)
+						env, home, _ := pairingSourceFixtureAt(t, t.TempDir(), pairingDisplayFixtureHome(t))
 						env.Now = func() time.Time { return screenNow }
 						env.Clipboard = func([]byte) error { return nil }
 						env.Interrupts = noInterrupts
@@ -103,8 +103,8 @@ func TestGuidedFullCommandTranscripts(t *testing.T) {
 							t.Fatal("pairing did not check storage before completed capture")
 						}
 					case guidedFlowHandoffFile:
-						f := newHandoffFixture(t, false)
-						path := filepath.Join(t.TempDir(), "handoff.md")
+						home, project, path := handoffDisplayFixturePaths(t)
+						f := newHandoffFixtureForAt(t, false, "codex", handoffTranscript, home, project)
 						run([]string{"handoff", f.id}, "w\n"+path+"\n", f.env)
 						normalize = func(s string) string {
 							s = strings.ReplaceAll(s, f.id, "SESSION")

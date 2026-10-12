@@ -181,7 +181,7 @@ class CandidateTest(unittest.TestCase):
         self.assertEqual(self.mutations(), [])
 
     def test_manifest_wrong_commit_toolchain_or_notary_refused_even_with_api_digest(self):
-        for key, value in [('commit', 'b'*40), ('toolchain', 'go1.0'), ('notarization', {})]:
+        for key, value in [('commit', 'b'*40), ('toolchain', 'go1.0'), ('toolchain', 'go1.27.1'), ('notarization', {})]:
             with self.subTest(key=key):
                 m = json.loads(self.files[rc.MANIFEST])
                 m[key] = value

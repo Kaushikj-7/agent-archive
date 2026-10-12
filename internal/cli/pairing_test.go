@@ -50,7 +50,11 @@ func TestPairingRejectsOversizeAndChecksumBeforeCodeAndHome(t *testing.T) {
 
 func pairingSourceFixture(t *testing.T) (Env, string, *storagetest.MemoryStore) {
 	t.Helper()
-	home, userHome := t.TempDir(), t.TempDir()
+	return pairingSourceFixtureAt(t, t.TempDir(), t.TempDir())
+}
+
+func pairingSourceFixtureAt(t *testing.T, home, userHome string) (Env, string, *storagetest.MemoryStore) {
+	t.Helper()
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now().UTC())
 	store := storagetest.NewMemoryStore()
 	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return store, nil }

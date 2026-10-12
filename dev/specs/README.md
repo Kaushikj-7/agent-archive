@@ -15,7 +15,8 @@ Historical-only ownership status reconciled 2026-10-12 after #433 merged as
 | [Privacy filter](privacy-filter.md) | Implemented current rules; filter 18. |
 | [Privacy filter changelog](privacy-filter-changelog.md) | Version history; maintained alongside the filter contract. |
 | [Backfill](backfill.md) | Implemented original file/database import and historical-only ownership/bounded bulk mappings (#433). Cursor subagent import remains a follow-up; broader [historical recovery](../proposals/historical-backfill-recovery.md) remains partial. |
-| [Codex history](codex-history.md) | Implemented retained-history reader, lookup, lifecycle, native child admission and historical-only ownership (#433). Fragment artifacts (6b) and combined acceptance remain in the recovery proposal. |
+| [Codex history](codex-history.md) | Implemented retained-history reader, lookup, lifecycle, native child admission and historical-only ownership (#433). Fragment artifacts (6b) and combined acceptance remain gated. |
+| [Codex fragments](codex-fragments.md) | Proposed step 6B1 format and schema checks only. Decoder, privacy-context-proven filtering, explicit incomplete consumer, lifecycle, opt-in import and exact repair undo are not shipped. |
 | [Handoff](handoff.md) | Implemented; [local pre-setup handoff](../proposals/implemented/local-handoff-before-setup.md) extends the original design. |
 | [Agent skills](agent-skill.md) | Implemented; explicit follow-ups and per-app live verification limits remain. |
 | [Session finding](session-finding.md) | PRs 1–8 merged; owner live-check evidence remains unrecorded in the spec. |

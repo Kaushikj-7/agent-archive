@@ -501,9 +501,7 @@ func importRecentSessions(p *prompter, errOut io.Writer, home, userHome string, 
 			notImported(err)
 			return
 		}
-		if apps := registeredByApp(home, reg.batch.ID); len(reg.result.Sessions) > 0 {
-			terminal.Printf(p.out, "Imported %s from the last 7 days%s. Uploading in the background.\n", countNoun(len(reg.result.Sessions), "session"), apps)
-		}
+		printSetupImportResult(p, home, reg.result)
 		printChangedAtAdmission(p.out, reg.changed, p.style.cmd(setupImportRetryCommand))
 	}
 	if older > 0 {
@@ -515,21 +513,46 @@ func importRecentSessions(p *prompter, errOut io.Writer, home, userHome string, 
 	}
 }
 
-// registeredByApp is " (Codex 2, Claude Code 1)": the sessions import
-// batchID registered, by app, most first; "" when the store cannot say.
-func registeredByApp(home, batchID string) string {
+// printSetupImportResult reports this run, including independently registered
+// native children, without counting dependent subagent candidates as sessions.
+func printSetupImportResult(p *prompter, home string, result backfill.RegistrationResult) {
+	total, apps, err := registeredByApp(home, result)
+	if err != nil {
+		terminal.Println(p.out, "Recent session registration finished, but its totals could not be read. Check agent-archive status.")
+	} else if total > 0 {
+		terminal.Printf(p.out, "Imported %s from the last 7 days%s. Uploading in the background.\n", countNoun(total, "session"), apps)
+	}
+	printRegistrationSkips(p.out, result)
+	if result.Gone+result.NotAdmitted+result.StartInFuture+result.Invalid+result.SubagentsInvalid > 0 {
+		terminal.Println(p.out, "Some recent sessions were not imported. Check the reasons above, or run "+p.style.cmd(setupImportRetryCommand)+" to review and retry.")
+	}
+}
+
+// registeredByApp counts only authoritative independent registrations made
+// by this invocation. Prior members of a resumed batch and dependent subagent
+// candidates are excluded; a native child's parent link does not change its count.
+func registeredByApp(home string, result backfill.RegistrationResult) (int, string, error) {
+	if len(result.Sessions)+len(result.Subagents) == 0 {
+		return 0, "", nil
+	}
 	regs, err := state.OpenReadOnly(home).LoadRegistrations()
 	if err != nil {
-		return ""
+		return 0, "", err
+	}
+	ids := map[string]bool{}
+	for _, id := range result.Sessions {
+		ids[id] = true
+	}
+	for _, id := range result.Subagents {
+		ids[id] = true
 	}
 	counts := map[string]int{}
+	total := 0
 	for _, reg := range regs {
-		if reg.InBatch(batchID) && reg.ParentSessionID == "" {
+		if ids[reg.ArchiveSessionID] && independentImportedSession(reg) {
 			counts[appName(reg.Harness.Name)]++
+			total++
 		}
-	}
-	if len(counts) == 0 {
-		return ""
 	}
 	apps := make([]string, 0, len(counts))
 	for app := range counts {
@@ -545,7 +568,10 @@ func registeredByApp(home, batchID string) string {
 	for i, app := range apps {
 		parts[i] = fmt.Sprintf("%s %d", app, counts[app])
 	}
-	return " (" + strings.Join(parts, ", ") + ")"
+	if len(parts) == 0 {
+		return total, "", nil
+	}
+	return total, " (" + strings.Join(parts, ", ") + ")", nil
 }
 
 // interruptibleContext returns a context that the first Ctrl-C cancels,
