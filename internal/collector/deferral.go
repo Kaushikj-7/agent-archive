@@ -16,7 +16,26 @@ const (
 	// DeferredSourceChanged: the source (a transcript, or the native index
 	// naming it) changed while it was being read.
 	DeferredSourceChanged = "source_changed"
+	// DeferredReadBudget: the pass's shared read memory was held by others
+	// when the session needed it. A session that needs more than its own
+	// share (SessionReadCeiling) is a size-limit gap instead.
+	DeferredReadBudget = "read_budget"
 )
+
+// readBudgetDeferralError marks a source read the pass's shared read ledger
+// refused while others held it, the session itself being within its own
+// share (see SessionReadCeiling): a later pass, starting with the ledger
+// free, reads it. Only the session's own source read is marked; any other
+// refusal of the ledger stays a failure.
+type readBudgetDeferralError struct{ err error }
+
+func (e *readBudgetDeferralError) Error() string { return e.err.Error() }
+
+func (e *readBudgetDeferralError) Unwrap() error { return e.err }
+
+// deferralReason is the reason deferralReason, which asks only the outermost
+// error of each failure it joins, reports for the type.
+func (*readBudgetDeferralError) deferralReason() string { return DeferredReadBudget }
 
 // MaxDeferral bounds how long a session's scans may be deferred: once every
 // pass for this long has deferred them, the next deferral is a failure,
@@ -88,6 +107,9 @@ func deferralReason(err error) (string, bool) {
 			return DeferredSourceChanged, true
 		}
 		return "", false
+	}
+	if deferral, ok := err.(interface{ deferralReason() string }); ok {
+		return deferral.deferralReason(), true
 	}
 	if joined, ok := err.(interface{ Unwrap() []error }); ok {
 		reason := ""

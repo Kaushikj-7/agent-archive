@@ -29,7 +29,7 @@ func (s *sessionScan) readBudget() *agentapi.NativeReadBudget {
 			s.retainedBudget = shared.NativeReadBudget()
 		}
 		if s.retainedBudget == nil {
-			s.retainedBudget = agentapi.NewNativeReadBudget(128 << 20)
+			s.retainedBudget = agentapi.NewNativeReadBudget(agentapi.PassReadBudget)
 		}
 	}
 	return s.retainedBudget
@@ -151,8 +151,12 @@ func (s *sessionScan) refilterRetainedFor(reg archive.SessionRegistration, adapt
 	largest := int64(0)
 	var sizingErr error
 	for _, record := range bundle.NativeRecords {
-		n, err := jsonwire.Bound(s.ctx, record, b.Available())
+		available := b.Available()
+		n, err := jsonwire.Bound(s.ctx, record, available)
 		if err != nil {
+			if errors.Is(err, jsonwire.ErrLimit) {
+				b.Refuse(available + 1)
+			}
 			sizingErr = err
 			break
 		}
@@ -169,6 +173,7 @@ func (s *sessionScan) refilterRetainedFor(reg archive.SessionRegistration, adapt
 	// Three distinct row owners, plus the scanner, are temporary. Check additions
 	// against available capacity before forming the sum.
 	if largest > (b.Available()-scanner)/3 {
+		b.Refuse(3*largest + scanner)
 		return archive.SourceBundle{}, errRetainedBudget
 	}
 	scratch := largest + largest + largest + scanner
@@ -204,6 +209,7 @@ func (s *sessionScan) refilterRetainedFor(reg archive.SessionRegistration, adapt
 	}
 	capBytes := min(int64(32<<20), max(int64(0), (b.Available()-(64<<10))/2))
 	if capBytes <= 0 {
+		b.Refuse(64<<10 + 2)
 		return archive.SourceBundle{}, errRetainedBudget
 	}
 	// Accumulated records and decoded output each have an independently
@@ -250,12 +256,17 @@ func (s *sessionScan) compressSource(bundle archive.SourceBundle) (archive.Compr
 	if !b.Reserve(preflightScratch) {
 		return archive.CompressedSource{}, errRetainedBudget
 	}
-	largest, err := archive.SourceEncodingLineBound(s.ctx, bundle, b.Available())
+	available := b.Available()
+	largest, err := archive.SourceEncodingLineBound(s.ctx, bundle, available)
+	if errors.Is(err, jsonwire.ErrLimit) {
+		b.Refuse(available + 1)
+	}
 	b.Release(preflightScratch)
 	if err != nil {
 		return archive.CompressedSource{}, errors.Join(errRetainedBudget, err)
 	}
 	if largest > (b.Available()-compressorScratch)/2 {
+		b.Refuse(2*largest + compressorScratch)
 		return archive.CompressedSource{}, errRetainedBudget
 	}
 	scratch := largest + largest + compressorScratch
@@ -298,7 +309,11 @@ func (s *sessionScan) marshalRetained(value any) ([]byte, error) {
 	if !b.Reserve(scratch) {
 		return nil, errRetainedBudget
 	}
-	n, err := jsonwire.Bound(s.ctx, value, b.Available()/2)
+	available := b.Available()
+	n, err := jsonwire.Bound(s.ctx, value, available/2)
+	if errors.Is(err, jsonwire.ErrLimit) {
+		b.Refuse(available + 2)
+	}
 	b.Release(scratch)
 	if err != nil {
 		return nil, errors.Join(errRetainedBudget, err)
@@ -344,6 +359,7 @@ func (s *sessionScan) newSourceBundle(reg archive.SessionRegistration, adapter a
 	var n int64
 	for _, row := range filtered.Records {
 		if int64(len(row)) > s.readBudget().Available()-n {
+			s.readBudget().Refuse(n + int64(len(row)))
 			return archive.SourceBundle{}, errRetainedBudget
 		}
 		n += int64(len(row))

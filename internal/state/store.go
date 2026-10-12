@@ -906,6 +906,11 @@ func (s *Store) LoadPending(id string) (PendingPublication, bool, error) {
 	} else {
 		found, err = s.readOwned(s.pendingPath(id), &pending)
 	}
+	if errors.Is(err, agentapi.ErrReadBudget) && !errors.Is(err, ErrDurableStorageRecovery) {
+		// The memory ledger refused the read: the publication is intact and
+		// is read again when there is room, never recovered.
+		return PendingPublication{}, true, fmt.Errorf("read pending publication %q: %w", id, err)
+	}
 	if err != nil {
 		return PendingPublication{}, protected || cfg.DurableStorageProtection || errors.Is(err, ErrDurableStorageRecovery), fmt.Errorf("read pending publication %q: %w", id, errors.Join(ErrDurableStorageRecovery, err))
 	}
@@ -1290,6 +1295,13 @@ type ScanSignature struct {
 	// stands only while they do.
 	FailedMaxBytes    int64 `json:"failed_max_bytes,omitempty"`
 	FailedRecordLimit int64 `json:"failed_record_limit,omitempty"`
+	// FailedRawLimit is the raw size limit for the session's harness under
+	// which the failure or gap was reached: raising it reads the source
+	// again. Zero (a signature from before the field) stands under none.
+	FailedRawLimit int64 `json:"failed_raw_limit,omitempty"`
+	// SizeLimit names the limit a size-limit gap (Blocked) stopped at, and
+	// how far over it the source was, for status.
+	SizeLimit *SizeLimitGap `json:"size_limit,omitempty"`
 	// Blocked marks a scan that ended in a recorded capture gap (see
 	// CacheStatusBlocked) at this source state, so an unchanged source is
 	// skipped rather than read again to reach the same gap. For
@@ -1301,6 +1313,34 @@ type ScanSignature struct {
 	// A registration whose observation differs owes a metadata update, so
 	// the session is scanned again however unchanged its source is.
 	PublishedLastHead string `json:"published_last_head,omitempty"`
+}
+
+// SizeLimitKind names which size limit a size-limit gap stopped at. Once
+// written each keeps its spelling.
+type SizeLimitKind string
+
+// Size limits a capture gap can stop at.
+const (
+	// SizeLimitRaw: the source (a Codex thread: every rollout its history
+	// spans) is larger than its harness's raw transcript limit.
+	SizeLimitRaw SizeLimitKind = "raw"
+	// SizeLimitFiltered: what the filter keeps is larger than the filtered
+	// transcript limit.
+	SizeLimitFiltered SizeLimitKind = "filtered"
+	// SizeLimitRecord: one record is larger than the record size limit.
+	SizeLimitRecord SizeLimitKind = "record"
+	// SizeLimitReadBudget: reading the session needs more memory than one
+	// session's share of a pass (collector.SessionReadCeiling).
+	SizeLimitReadBudget SizeLimitKind = "read_budget"
+)
+
+// SizeLimitGap is the limit a size-limit gap stopped at.
+type SizeLimitGap struct {
+	Kind       SizeLimitKind `json:"kind"`
+	LimitBytes int64         `json:"limit_bytes"`
+	// SizeBytes is the size measured against the limit, when known: the
+	// raw or filtered size. Record and read_budget gaps have none.
+	SizeBytes int64 `json:"size_bytes,omitempty"`
 }
 
 // CursorSignature is the Cursor chat state the signature was recorded at.

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"io"
 	"slices"
@@ -872,6 +873,11 @@ func encodeSafeRecord(value map[string]any, encoder func(map[string]any) ([]byte
 
 func retainEncodedRecord(result *archive.FilteredTranscript, safe map[string]any, encoder func(map[string]any) ([]byte, error), bounds []archive.CaptureBoundary) error {
 	encoded, err := encodeSafeRecord(safe, encoder)
+	if errors.Is(err, agentapi.ErrReadBudget) {
+		// The caller's memory ledger refused the record, not its content:
+		// no claim that the source format is unsafe.
+		return err
+	}
 	if err != nil {
 		return errors.Join(&archive.FilterError{Reason: "safe record cannot be encoded"}, err)
 	}

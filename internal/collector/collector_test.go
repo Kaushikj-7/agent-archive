@@ -1016,7 +1016,7 @@ func TestRunRejectsTranscriptAboveCollectionLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Sparse: no disk space, and a read of it would take seconds.
-	if err := file.Truncate(maxRawBytes(DefaultMaxTranscriptBytes) + 1); err != nil {
+	if err := file.Truncate(maxRawBytes(archive.HarnessCodex, DefaultMaxTranscriptBytes) + 1); err != nil {
 		t.Fatal(err)
 	}
 	if err := file.Close(); err != nil {
@@ -1036,6 +1036,14 @@ func TestRunRejectsTranscriptAboveCollectionLimit(t *testing.T) {
 	}
 	if reason, blocked, err := local.LoadBlocked("session-1"); err != nil || !blocked || reason != state.BlockedReasonTranscriptTooLarge {
 		t.Fatalf("blocked=%v reason=%q err=%v", blocked, reason, err)
+	}
+	signature, _, err := local.LoadScanSignature("session-1")
+	want := state.SizeLimitGap{Kind: state.SizeLimitRaw, LimitBytes: archive.MaxCodexRawTranscriptBytes, SizeBytes: archive.MaxCodexRawTranscriptBytes + 1}
+	if err != nil || signature.SizeLimit == nil || *signature.SizeLimit != want || signature.FailedRawLimit != archive.MaxCodexRawTranscriptBytes {
+		t.Fatalf("gap does not name its limit: %+v err=%v", signature, err)
+	}
+	if status, err := local.LoadStatus(); err != nil || len(status.LastErrors) != 1 || !strings.Contains(status.LastErrors[0], "1 session(s) stopped being captured at a size limit (Codex raw 512 MiB)") {
+		t.Fatalf("status problem does not name the limit: %q err=%v", status.LastErrors, err)
 	}
 	objects, _ := store.List(context.Background(), "sessions")
 	if len(objects) != 0 {

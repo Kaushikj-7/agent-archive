@@ -39,7 +39,7 @@ func filterImportSource(ctx context.Context, env Environment, w *work, started t
 		return out, release, err
 	}
 	defer func() { err = errors.Join(err, pass.Close()) }()
-	limits := agentapi.ReadLimits{RawBytes: collector.DefaultMaxRawTranscriptBytes, RecordBytes: archive.MaxRecordBytes, FilteredBytes: collector.DefaultMaxTranscriptBytes}
+	limits := agentapi.ReadLimits{RawBytes: collector.MaxRawTranscriptBytes(string(w.t.harness)), RecordBytes: archive.MaxRecordBytes, FilteredBytes: collector.DefaultMaxTranscriptBytes}
 	snapshot, err := pass.Read(ctx, ref, limits)
 	if err != nil {
 		return out, release, err

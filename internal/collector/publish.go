@@ -19,7 +19,7 @@ func (s *sessionScan) blockThenRemember(reason state.BlockedReason, read sourceR
 	if err != nil {
 		return outcome, err
 	}
-	return outcome, rememberFailedRead(s.local, s.reg, read.adapter, read.observed, s.opts, nil, reason, s.publishedLastHead())
+	return outcome, rememberFailedRead(s.local, s.reg, read.adapter, read.observed, s.opts, nil, reason, s.sizeLimit, s.publishedLastHead())
 }
 
 // block records a terminal capture gap for the session and completes its

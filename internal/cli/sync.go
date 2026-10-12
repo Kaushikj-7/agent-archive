@@ -57,6 +57,7 @@ func subagentsSummary(result collector.Result) string {
 var deferredWhat = map[string]string{
 	collector.DeferredHistoryCoverage: "waiting for Codex history coverage",
 	collector.DeferredSourceChanged:   "rechecking after the source changed while being read",
+	collector.DeferredReadBudget:      "waiting for read memory other sessions held",
 }
 
 // deferredReasonWhat words one deferral reason, with a general wording for a

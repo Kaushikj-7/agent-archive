@@ -295,7 +295,7 @@ func (r providerReader) Filter(ctx context.Context, adapter archive.Adapter, max
 		return out, observed, err
 	}
 	defer func() { err = errors.Join(err, closePass()) }()
-	limits := agentapi.ReadLimits{RawBytes: maxRawBytes(maxBytes), RecordBytes: recordLimit, SubagentMetadata: r.subagentMetadata}
+	limits := agentapi.ReadLimits{RawBytes: maxRawBytes(r.harness, maxBytes), RecordBytes: recordLimit, SubagentMetadata: r.subagentMetadata}
 	snap, err := p.Read(ctx, r.ref, limits)
 	if err != nil {
 		if o, ok := agentapi.ErrorObservation(err); ok {
@@ -412,7 +412,7 @@ func checkCursorChatSize(c cursorstore.Composer, maxBytes int64) error {
 			return errRecordTooLarge
 		}
 	}
-	if CursorChatSize(c) > maxRawBytes(maxBytes) {
+	if CursorChatSize(c) > maxRawBytes(archive.HarnessCursor, maxBytes) {
 		return errTranscriptTooLarge
 	}
 	return nil
@@ -483,6 +483,21 @@ type sourcePassSet struct {
 	passes       map[sourcePassKey]agentapi.SourcePass
 }
 
+// releaseCaches drops the open source passes' idle caches when budget has
+// less than need free (see pass.scan).
+func (s *sourcePassSet) releaseCaches(budget *agentapi.NativeReadBudget, need int64) error {
+	if s == nil || budget.Available() >= need {
+		return nil
+	}
+	var err error
+	for _, pass := range s.passes {
+		if caches, ok := pass.(interface{ ReleaseCaches() error }); ok {
+			err = errors.Join(err, caches.ReleaseCaches())
+		}
+	}
+	return err
+}
+
 func (s *sourcePassSet) get(ctx context.Context, key sourcePassKey, p agentapi.SourceProvider) (agentapi.SourcePass, error) {
 	if key.name == "codex" {
 		if provider, ok := s.env.CodexRollouts.(agentapi.CodexRolloutSliceProvider); ok {
@@ -547,7 +562,7 @@ func (s *sourcePassSet) get(ctx context.Context, key sourcePassKey, p agentapi.S
 }
 
 func openCursorPass(_ []archive.SessionRegistration, opts *Options) func() error {
-	budget := agentapi.NewNativeReadBudget(128 << 20)
+	budget := agentapi.NewNativeReadBudget(agentapi.PassReadBudget)
 	if shared, ok := opts.CodexRollouts.(agentapi.CodexRolloutResourceBudget); ok && shared.NativeReadBudget() != nil {
 		budget = shared.NativeReadBudget()
 	}
@@ -577,7 +592,7 @@ func openCursorPass(_ []archive.SessionRegistration, opts *Options) func() error
 // left to be retried. The size limits in force are recorded too, so raising
 // one reads the chat again, and so is the gap (blocked) a size limit
 // recorded, for status.
-func rememberFailedRead(local *state.Store, reg archive.SessionRegistration, adapter archive.Adapter, observed sourceState, opts Options, failure error, blocked state.BlockedReason, publishedLastHead string) error {
+func rememberFailedRead(local *state.Store, reg archive.SessionRegistration, adapter archive.Adapter, observed sourceState, opts Options, failure error, blocked state.BlockedReason, limit *state.SizeLimitGap, publishedLastHead string) error {
 	if !observed.observation.Present {
 		return nil
 	}
@@ -595,7 +610,7 @@ func rememberFailedRead(local *state.Store, reg archive.SessionRegistration, ada
 		SourceSignature: signaturePointer(observed), SourceKind: observed.kind, CursorLastUpdatedAt: observed.cursor.LastUpdatedAt,
 		CursorHeaderCount: observed.cursor.HeaderCount, CursorLastBubbleID: observed.cursor.LastBubbleID,
 		CursorMessageRows: observed.cursor.MessageRows, CursorLastMessageHash: observed.cursor.LastMessageHash,
-		Failed: true, FailedError: message, FailedMaxBytes: opts.maxTranscriptBytes(), FailedRecordLimit: recordLimit,
+		Failed: true, FailedError: message, FailedMaxBytes: opts.maxTranscriptBytes(), FailedRecordLimit: recordLimit, FailedRawLimit: opts.maxRawBytes(reg.Harness.Name), SizeLimit: limit,
 		Blocked: blocked, PublishedLastHead: publishedLastHead,
 	})
 }

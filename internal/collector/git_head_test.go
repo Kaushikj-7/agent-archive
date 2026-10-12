@@ -397,7 +397,7 @@ func TestStopCommitIsNotHiddenByARememberedFailure(t *testing.T) {
 		t.Fatalf("no signature: %v", err)
 	}
 	signature.Failed, signature.FailedError = true, "unsafe source format"
-	signature.FailedMaxBytes, signature.FailedRecordLimit = opts.maxTranscriptBytes(), recordLimit
+	signature.FailedMaxBytes, signature.FailedRecordLimit, signature.FailedRawLimit = opts.maxTranscriptBytes(), recordLimit, opts.maxRawBytes(reg.Harness.Name)
 	if err := local.SaveScanSignature(reg.ArchiveSessionID, signature); err != nil {
 		t.Fatal(err)
 	}

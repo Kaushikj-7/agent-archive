@@ -305,7 +305,7 @@ func TestNothingToDoProblemsAreNotShownAsFailures(t *testing.T) {
 	// it; the size-limit notice beside it is still shown, and --verbose
 	// shows both.
 	plain := statusOutput(t, env)
-	if !strings.Contains(plain, "! Some sessions could not be captured\n") || strings.Contains(plain, "Last error: 1 session failed to capture") || !strings.Contains(plain, "over the transcript size limit") {
+	if !strings.Contains(plain, "! Some sessions could not be captured\n") || strings.Contains(plain, "Last error: 1 session failed to capture") || !strings.Contains(plain, "stopped being captured at a size limit") {
 		t.Errorf("status with a failure:\n%s", plain)
 	}
 	if verbose := statusOutput(t, env, "--verbose"); !strings.Contains(verbose, "✗ Last error: 1 session failed to capture") {

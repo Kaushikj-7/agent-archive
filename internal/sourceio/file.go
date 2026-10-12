@@ -109,7 +109,7 @@ func (p *filePass) Read(ctx context.Context, ref agentapi.SourceRef, limits agen
 		if checkErr := f.Check(); checkErr != nil {
 			return nil, errors.Join(Classify(checkErr), s.Close())
 		}
-		return nil, errors.Join(&agentapi.SourceError{Kind: agentapi.Limit, Err: agentapi.ErrRawLimit, Observed: &o}, s.Close())
+		return nil, errors.Join(agentapi.RawLimit(f.Stamp().Size, limits.RawBytes, &o), s.Close())
 	}
 
 	return s, nil

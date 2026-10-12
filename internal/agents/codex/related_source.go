@@ -22,7 +22,26 @@ import (
 	"github.com/wangjohn/agent-archive/internal/transcriptio"
 )
 
-const relatedRawBudget int64 = 128 << 20
+// passReadBudget is the shared ledger a pass opens when its caller supplies
+// none. It charges bytes the pass holds in memory (headers, line buffers,
+// cached prefixes), never the length of a file it reads through a
+// descriptor.
+const passReadBudget = agentapi.PassReadBudget
+
+// prefixCacheLimit bounds the immutable ancestor prefixes a pass keeps for
+// the threads that share them. The cache outlives one session's read, so it
+// stays small beside a session's own ceiling.
+const prefixCacheLimit int64 = 16 << 20
+
+// PassCacheBytes is the most a pass keeps between reads: cached ancestor
+// prefixes and the header of every open rollout, all charged unscoped
+// within agentapi.PassCacheReserve.
+const PassCacheBytes = prefixCacheLimit + archive.MaxHistorySpans*sourceHeaderCharge
+
+// ordinaryScratch is what an ordinary snapshot holds while open: hashing and
+// boundary scratch. The filter charges its own record buffer (see
+// nativeScannerCharge).
+const ordinaryScratch int64 = 64 << 10
 
 const sourceHeaderCharge int64 = 128 << 10
 
@@ -44,7 +63,7 @@ func (SourceProvider) OpenPass(ctx context.Context, e agentapi.SourceEnvironment
 		if shared, ok := e.CodexRollouts.(agentapi.CodexRolloutResourceBudget); ok {
 			e.ReadBudget = shared.NativeReadBudget()
 		} else {
-			e.ReadBudget = agentapi.NewNativeReadBudget(relatedRawBudget)
+			e.ReadBudget = agentapi.NewNativeReadBudget(passReadBudget)
 		}
 	}
 	if e.Files == nil {
@@ -59,7 +78,6 @@ func (SourceProvider) Activities(ctx context.Context, e agentapi.SourceEnvironme
 }
 
 type rolloutFile struct {
-	rawCharged   bool
 	ref          agentapi.SourceRef
 	file         *transcriptio.Snapshot
 	meta         codexmeta.CodexMeta
@@ -79,6 +97,7 @@ type relatedSourcePass struct {
 	live         map[*historySnapshot]bool
 	ordinaryLive map[*ordinarySnapshot]bool
 	bytes        int64
+	prefixBytes  int64
 	cacheHits    int64
 	closed       bool
 	closeErr     error
@@ -103,19 +122,12 @@ func (p *relatedSourcePass) open(ctx context.Context, ref agentapi.SourceRef) (*
 	}
 	if old := p.files[ref.Path]; old != nil {
 		if err := old.file.Check(); err == nil && old.checkHeader(ctx) == nil {
-			if !old.rawCharged {
-				if !p.reserve(old.file.Length()) {
-					return nil, agentapi.ReadBudgetLimit(errors.New("cached native extent exceeds shared budget"))
-				}
-				old.rawCharged = true
-			}
 			return old, nil
 		}
 		if old.refs > 0 {
 			return nil, sourceFailure(agentapi.Changed, "rollout dependency changed")
 		}
-		p.release(old.charge())
-		delete(p.files, ref.Path)
+		p.dropFile(ref.Path, old)
 		if err := old.file.Close(); err != nil {
 			return nil, agentapi.Wrap(agentapi.Cleanup, err)
 		}
@@ -130,24 +142,22 @@ func (p *relatedSourcePass) open(ctx context.Context, ref agentapi.SourceRef) (*
 	ownedCharge := int64(0)
 	fail := func(e error) (*rolloutFile, error) {
 		if ownedCharge > 0 {
-			p.release(ownedCharge)
+			p.releaseCache(ownedCharge)
 			ownedCharge = 0
 		}
 		return nil, errors.Join(e, agentapi.Wrap(agentapi.Cleanup, f.Close()))
 	}
-	if f.Length() > relatedRawBudget {
+	if f.Length() > archive.MaxCodexRawTranscriptBytes {
 		stamp := f.Stamp()
 		o := agentapi.SourceObservation{Present: true, Size: stamp.Size, Activity: stamp.ModifiedAt, Signature: sourceio.FileSignature(stamp.Size, stamp.ModifiedAt.UnixNano())}
-		return fail(&agentapi.SourceError{Kind: agentapi.Limit, Err: agentapi.ErrRawLimit, Observed: &o})
+		return fail(agentapi.RawLimit(f.Length(), archive.MaxCodexRawTranscriptBytes, &o))
 	}
-
-	if p.bytes+f.Length() > relatedRawBudget || len(p.files) >= archive.MaxHistorySpans {
-		return fail(sourceFailure(agentapi.Limit, "shared rollout budget exhausted"))
-	}
-	if !p.reserve(f.Length() + sourceHeaderCharge) {
+	// The file is read through its descriptor, a bounded record at a time;
+	// only the header and proof state stay in memory with it.
+	if !p.reserveHeader() {
 		return fail(agentapi.ReadBudgetLimit(errors.New("shared source and index budget exhausted")))
 	}
-	ownedCharge = f.Length() + sourceHeaderCharge
+	ownedCharge = sourceHeaderCharge
 	reader := bufio.NewReaderSize(io.NewSectionReader(f, 0, min(f.Length(), int64(64<<10)+1)), 4096)
 	line, err := reader.ReadBytes('\n')
 	if err != nil || len(line) > 64<<10 {
@@ -168,7 +178,7 @@ func (p *relatedSourcePass) open(ctx context.Context, ref agentapi.SourceRef) (*
 	if err != nil {
 		return fail(sourceio.Classify(err))
 	}
-	out := &rolloutFile{rawCharged: true, ref: ref, file: f, meta: meta, identity: identity, header: line, headerDigest: sha256.Sum256(line), boundary: boundary}
+	out := &rolloutFile{ref: ref, file: f, meta: meta, identity: identity, header: line, headerDigest: sha256.Sum256(line), boundary: boundary}
 	p.files[ref.Path] = out
 	return out, nil
 }
@@ -178,11 +188,17 @@ func (p *relatedSourcePass) evict() error {
 	for path, f := range p.files {
 		if f.refs == 0 {
 			err = errors.Join(err, agentapi.Wrap(agentapi.Cleanup, f.file.Close()))
-			p.release(f.charge())
-			delete(p.files, path)
+			p.dropFile(path, f)
 		}
 	}
 	return err
+}
+
+// dropFile forgets a cached file and returns everything it held.
+func (p *relatedSourcePass) dropFile(path string, f *rolloutFile) {
+	p.releaseCache(f.charge())
+	p.prefixBytes -= int64(len(f.prefix))
+	delete(p.files, path)
 }
 
 func (p *relatedSourcePass) Close() error {
@@ -198,13 +214,14 @@ func (p *relatedSourcePass) Close() error {
 		err = errors.Join(err, s.Close())
 	}
 	for _, f := range p.files {
-		p.release(f.charge())
+		p.releaseCache(f.charge())
 		err = errors.Join(err, agentapi.Wrap(agentapi.Cleanup, f.file.Close()))
 		f.prefix = nil
 		f.validated = nil
 	}
 	p.files = nil
 	p.bytes = 0
+	p.prefixBytes = 0
 	p.closeErr = err
 	return err
 }
@@ -228,7 +245,7 @@ type sourceSelection struct {
 }
 
 func (p *relatedSourcePass) selectSource(ctx context.Context, ref agentapi.SourceRef) (sourceSelection, error) {
-	if len(p.files) >= 32 || p.bytes > relatedRawBudget/2 {
+	if len(p.files) >= 32 || p.prefixBytes > prefixCacheLimit/2 {
 		if err := p.evict(); err != nil {
 			return sourceSelection{}, err
 		}
@@ -444,7 +461,6 @@ func hasRelated(f *rolloutFile) bool {
 }
 
 func (p *relatedSourcePass) Signature(ctx context.Context, ref agentapi.SourceRef) (agentapi.SourceObservation, error) {
-	defer p.releaseIdleExtents()
 	if p.env.CodexRollouts != nil && p.genericLegacy(ref) {
 		return p.genericLegacySignature(ctx, ref)
 	}
@@ -587,27 +603,20 @@ func (p *relatedSourcePass) readHistorySelection(ctx context.Context, limits age
 	for _, span := range spans {
 		size += span.end
 	}
-	if size > relatedRawBudget || limits.RawBytes > 0 && size > limits.RawBytes {
-		return fail(sourceFailure(agentapi.Limit, "aggregate history byte limit"))
+	if rawLimit := codexRawLimit(limits); size > rawLimit {
+		// The observation lets the caller record the gap at this state, so
+		// an unchanged lineage is not read again to reach it.
+		observed, err := p.observation(ctx, selection, spans)
+		if err != nil {
+			return fail(errors.Join(agentapi.RawLimit(size, rawLimit, nil), err))
+		}
+		return fail(agentapi.RawLimit(size, rawLimit, &observed))
 	}
 	limit := limits.RecordBytes
 	if limit <= 0 || limit > archive.MaxRecordBytes {
 		limit = archive.MaxRecordBytes
 	}
-	var largest int64
-	for _, span := range spans {
-		largest = max(largest, span.end)
-	}
-	recordCeiling := limit
-	bufferCharge := min(max(int64(4096), min(largest+1, limit+1)), min(relatedRawBudget-p.bytes, p.env.ReadBudget.Available()))
-	if bufferCharge < 4096 {
-		return fail(agentapi.ReadBudgetLimit(errors.New("shared record buffer budget exhausted")))
-	}
-	limit = min(limit, bufferCharge-1)
-	s := &historySnapshot{owner: p, selection: selection, spans: spans, headers: selection.headerFiles(spans), recordLimit: limit, recordCeiling: recordCeiling, bufferCharge: bufferCharge}
-	if !p.reserve(bufferCharge) {
-		return fail(agentapi.ReadBudgetLimit(errors.New("shared record buffer budget exhausted")))
-	}
+	s := &historySnapshot{owner: p, selection: selection, spans: spans, headers: selection.headerFiles(spans), recordLimit: limit}
 	for _, f := range s.headers {
 		f.refs++
 	}
@@ -626,22 +635,20 @@ func (p *relatedSourcePass) readHistorySelection(ctx context.Context, limits age
 }
 
 type historySnapshot struct {
-	admission     *archive.CodexSourceBinding
-	firstOwnTask  *agentapi.OwnTaskFacts
-	owner         *relatedSourcePass
-	selection     sourceSelection
-	spans         []physicalSpan
-	headers       []*rolloutFile
-	history       archive.SourceHistory
-	observed      agentapi.SourceObservation
-	recordLimit   int64
-	recordCeiling int64
-	bufferCharge  int64
-	span          int
-	scanner       *bufio.Scanner
-	nextOrdinal   uint64
-	headerSent    bool
-	closed        bool
+	admission    *archive.CodexSourceBinding
+	firstOwnTask *agentapi.OwnTaskFacts
+	owner        *relatedSourcePass
+	selection    sourceSelection
+	spans        []physicalSpan
+	headers      []*rolloutFile
+	history      archive.SourceHistory
+	observed     agentapi.SourceObservation
+	recordLimit  int64
+	span         int
+	lines        *chargedLineReader
+	nextOrdinal  uint64
+	headerSent   bool
+	closed       bool
 }
 
 func (s *historySnapshot) validate(ctx context.Context) error {
@@ -698,16 +705,14 @@ func (s *historySnapshot) Close() error {
 	}
 	s.closed = true
 	delete(s.owner.live, s)
-	s.owner.release(s.bufferCharge)
-	s.bufferCharge = 0
+	s.lines.close()
+	s.lines = nil
 	for _, f := range s.headers {
 		f.refs--
 	}
 	s.headers = nil
-	s.scanner = nil
 	s.spans = nil
 	s.selection = sourceSelection{}
-	s.owner.releaseIdleExtents()
 	return nil
 }
 
@@ -760,13 +765,19 @@ func (s *historySnapshot) Next(ctx context.Context) (agentapi.NativeRecord, bool
 	}
 	for s.span < len(s.spans) {
 		span := s.spans[s.span]
-		if s.scanner == nil {
-			s.scanner = bufio.NewScanner(io.NewSectionReader(span.reader(), 0, span.end))
-			s.scanner.Buffer(make([]byte, min(int64(4096), s.recordLimit+1)), int(s.recordLimit)+1)
+		if s.lines == nil {
+			lines, err := s.owner.newChargedLineReader(io.NewSectionReader(span.reader(), 0, span.end), s.recordLimit)
+			if err != nil {
+				return agentapi.NativeRecord{}, false, err
+			}
+			s.lines = lines
 			s.nextOrdinal = span.startOrdinal
 		}
-		if s.scanner.Scan() {
-			raw := s.scanner.Bytes()
+		raw, more, err := s.lines.next(ctx)
+		if err != nil {
+			return agentapi.NativeRecord{}, false, sourceio.Classify(err)
+		}
+		if more {
 			if len(bytes.TrimSpace(raw)) == 0 {
 				continue
 			}
@@ -774,13 +785,8 @@ func (s *historySnapshot) Next(ctx context.Context) (agentapi.NativeRecord, bool
 			s.nextOrdinal++
 			return agentapi.NativeRecord{Kind: agentapi.CodexHistoryRecord, Key: span.file.identity.RolloutID, Raw: raw, Ordinal: ordinal}, true, nil
 		}
-		if err := s.scanner.Err(); err != nil {
-			if errors.Is(err, bufio.ErrTooLong) {
-				return agentapi.NativeRecord{}, false, s.recordCapacityError(0)
-			}
-			return agentapi.NativeRecord{}, false, sourceio.Classify(err)
-		}
-		s.scanner = nil
+		s.lines.close()
+		s.lines = nil
 		s.span++
 	}
 	return agentapi.NativeRecord{}, false, s.check(ctx)
@@ -788,39 +794,47 @@ func (s *historySnapshot) Next(ctx context.Context) (agentapi.NativeRecord, bool
 
 // ordinarySnapshot retains file framing while accepting verified later appends.
 type ordinarySnapshot struct {
-	bufferCharge int64
-	owner        *relatedSourcePass
-	source       *rolloutFile
-	selection    sourceSelection
-	ctx          context.Context
-	length       int64
-	digest       [32]byte
-	closed       bool
-	observed     agentapi.SourceObservation
-	headers      []*rolloutFile
+	scratchCharge int64
+	owner         *relatedSourcePass
+	source        *rolloutFile
+	selection     sourceSelection
+	ctx           context.Context
+	length        int64
+	digest        [32]byte
+	closed        bool
+	observed      agentapi.SourceObservation
+	headers       []*rolloutFile
 }
 
 func (p *relatedSourcePass) ordinary(ctx context.Context, limits agentapi.ReadLimits, selection sourceSelection) (agentapi.SourceSnapshot, error) {
-	bufferCharge := min(int64(archive.MaxRecordBytes)+1, selection.leaf.file.Length()+1) + 64<<10
-	if !p.reserve(bufferCharge) {
-		return nil, sourceFailure(agentapi.Unavailable, "ordinary native scanner budget exhausted")
+	f := selection.leaf
+	if rawLimit := codexRawLimit(limits); f.file.Length() > rawLimit {
+		stamp := f.file.Stamp()
+		o := agentapi.SourceObservation{Present: true, Size: stamp.Size, Activity: stamp.ModifiedAt, Signature: sourceio.FileSignature(stamp.Size, stamp.ModifiedAt.UnixNano())}
+		if p.env.CodexRollouts != nil {
+			observed, err := p.observation(ctx, selection, []physicalSpan{{file: f, end: f.boundary}})
+			if err != nil {
+				return nil, errors.Join(agentapi.RawLimit(f.file.Length(), rawLimit, nil), err)
+			}
+			o = observed
+		}
+		return nil, agentapi.RawLimit(f.file.Length(), rawLimit, &o)
+	}
+	if !p.reserve(ordinaryScratch) {
+		return nil, agentapi.ReadBudgetLimit(errors.New("ordinary native scratch budget exhausted"))
 	}
 	transferred := false
 	defer func() {
 		if !transferred {
-			p.release(bufferCharge)
+			p.release(ordinaryScratch)
 		}
 	}()
-	f := selection.leaf
-	if limits.RawBytes > 0 && f.file.Length() > limits.RawBytes {
-		return nil, agentapi.Wrap(agentapi.Limit, agentapi.ErrRawLimit)
-	}
 	h := sha256.New()
 	if _, err := io.Copy(h, io.LimitReader(f.file.Reader(ctx), f.boundary)); err != nil {
 		return nil, err
 	}
 	stamp := f.file.Stamp()
-	out := &ordinarySnapshot{bufferCharge: bufferCharge, owner: p, source: f, selection: selection, headers: selection.headerFiles(nil), ctx: ctx, length: f.boundary, observed: agentapi.SourceObservation{Signature: sourceio.FileSignature(stamp.Size, stamp.ModifiedAt.UnixNano()), Present: true, Empty: f.boundary == 0, Activity: stamp.ModifiedAt, Size: stamp.Size}}
+	out := &ordinarySnapshot{scratchCharge: ordinaryScratch, owner: p, source: f, selection: selection, headers: selection.headerFiles(nil), ctx: ctx, length: f.boundary, observed: agentapi.SourceObservation{Signature: sourceio.FileSignature(stamp.Size, stamp.ModifiedAt.UnixNano()), Present: true, Empty: f.boundary == 0, Activity: stamp.ModifiedAt, Size: stamp.Size}}
 	copy(out.digest[:], h.Sum(nil))
 	if p.env.CodexRollouts != nil {
 		var err error
@@ -850,13 +864,12 @@ func (s *ordinarySnapshot) Close() error {
 	if !s.closed {
 		s.closed = true
 		delete(s.owner.ordinaryLive, s)
-		s.owner.release(s.bufferCharge)
-		s.bufferCharge = 0
+		s.owner.release(s.scratchCharge)
+		s.scratchCharge = 0
 		for _, header := range s.headers {
 			header.refs--
 		}
 		s.headers = nil
-		s.owner.releaseIdleExtents()
 	}
 	return nil
 }
@@ -1029,7 +1042,6 @@ func (s *historySnapshot) AdmissionFacts(ctx context.Context) (archive.CodexSour
 }
 
 func (p *relatedSourcePass) ValidateSourceAdmission(ctx context.Context, ref agentapi.SourceRef, admission agentapi.SourceAdmission) error {
-	defer p.releaseIdleExtents()
 	if p.env.CodexRollouts != nil && p.genericLegacy(ref) && admission.Binding == nil && admission.NativeCreatedAt.IsZero() {
 		if admission.NativeID != ref.Key {
 			return sourceFailure(agentapi.Unsafe, "legacy admission identity mismatch")
@@ -1108,9 +1120,6 @@ const prefixSummaryCharge int64 = 128
 
 func (f *rolloutFile) charge() int64 {
 	charge := sourceHeaderCharge
-	if f.rawCharged {
-		charge += f.file.Length()
-	}
 	if f.prefix != nil {
 		charge += int64(len(f.prefix)) + prefixSummaryCharge
 	}
@@ -1127,43 +1136,41 @@ func (span physicalSpan) reader() io.ReaderAt {
 func (p *relatedSourcePass) cachePrefixes(ctx context.Context, spans []physicalSpan) error {
 	for _, span := range spans[:len(spans)-1] {
 		f := span.file
-		if f.prefix != nil || span.end > relatedRawBudget/4 || p.bytes+span.end+prefixSummaryCharge > relatedRawBudget || span.end+prefixSummaryCharge > p.env.ReadBudget.Available() {
+		if f.prefix != nil || p.prefixBytes+span.end > prefixCacheLimit || span.end+prefixSummaryCharge > p.env.ReadBudget.Available() {
 			continue
 		}
 		// The one bounded immutable copy is shared by descendants; never replace it
 		// while a snapshot might hold a borrowed scanner over its bytes.
 		charge := span.end + prefixSummaryCharge
-		if !p.reserve(charge) {
+		if !p.reserveCache(charge) {
 			continue
 		}
 		raw := make([]byte, span.end)
 		reader := sourceio.Reader(ctx, f.file, span.end)
 		if _, err := io.ReadFull(reader, raw); err != nil {
-			p.release(charge)
+			p.releaseCache(charge)
 			return sourceio.Classify(err)
 		}
 		f.prefix = raw
+		p.prefixBytes += span.end
 	}
 	return nil
 }
 
-// recordCapacityError keeps a shared-capacity scanner refusal distinct from
-// the configured native record ceiling. Only the latter can establish a gap.
-func (s *historySnapshot) recordCapacityError(recordBytes int64) error {
-	if recordBytes > s.recordCeiling && s.recordCeiling > 0 {
-		return agentapi.Wrap(agentapi.Limit, archive.ErrRecordTooLarge)
+// codexRawLimit is the raw size a read may cover: the caller's limit, never
+// more than archive.MaxCodexRawTranscriptBytes.
+func codexRawLimit(limits agentapi.ReadLimits) int64 {
+	if limits.RawBytes > 0 {
+		return min(limits.RawBytes, archive.MaxCodexRawTranscriptBytes)
 	}
-	if s.recordLimit < s.recordCeiling {
-		return agentapi.ReadBudgetLimit(errors.New("history record scanner exceeds shared capacity"))
-	}
-	return agentapi.Wrap(agentapi.Limit, archive.ErrRecordTooLarge)
+	return archive.MaxCodexRawTranscriptBytes
 }
 
 func (s *historySnapshot) validateSpan(ctx context.Context, span *physicalSpan) (prefixValidation, error) {
 	cached := span.file.validated
 	if cached != nil && int64(len(span.file.prefix)) == span.end && cached.startOrdinal == span.startOrdinal {
 		if cached.maxRecordBytes > s.recordLimit {
-			return prefixValidation{}, s.recordCapacityError(cached.maxRecordBytes)
+			return prefixValidation{}, agentapi.Wrap(agentapi.Limit, archive.ErrRecordTooLarge)
 		}
 		s.owner.cacheHits++
 		result := *cached
@@ -1183,17 +1190,21 @@ func (s *historySnapshot) validateSpan(ctx context.Context, span *physicalSpan) 
 	facts := prefixValidation{startOrdinal: span.startOrdinal, endOrdinal: span.startOrdinal, taskOwned: span.file.identity.ThreadID == s.selection.thread, taskBoundary: boundary}
 
 	h := sha256.New()
-	scanner := bufio.NewScanner(io.TeeReader(io.NewSectionReader(span.reader(), 0, span.end), h))
-	scanner.Buffer(make([]byte, min(int64(4096), s.recordLimit+1)), int(s.recordLimit)+1)
-	for scanner.Scan() {
-		if err := ctx.Err(); err != nil {
-			return facts, err
+	lines, err := s.owner.newChargedLineReader(io.TeeReader(io.NewSectionReader(span.reader(), 0, span.end), h), s.recordLimit)
+	if err != nil {
+		return facts, err
+	}
+	defer lines.close()
+	for {
+		raw, more, err := lines.next(ctx)
+		if err != nil {
+			return facts, sourceio.Classify(err)
 		}
-		facts.maxRecordBytes = max(facts.maxRecordBytes, int64(len(scanner.Bytes())))
-		if facts.maxRecordBytes > s.recordLimit {
-			return facts, s.recordCapacityError(facts.maxRecordBytes)
+		if !more {
+			break
 		}
-		line := bytes.TrimSpace(scanner.Bytes())
+		facts.maxRecordBytes = max(facts.maxRecordBytes, int64(len(raw)))
+		line := bytes.TrimSpace(raw)
 		if len(line) == 0 {
 			continue
 		}
@@ -1220,12 +1231,6 @@ func (s *historySnapshot) validateSpan(ctx context.Context, span *physicalSpan) 
 		if facts.records > archive.MaxHistoryRecords {
 			return facts, sourceFailure(agentapi.Limit, "history record limit")
 		}
-	}
-	if err := scanner.Err(); err != nil {
-		if errors.Is(err, bufio.ErrTooLong) {
-			return facts, s.recordCapacityError(0)
-		}
-		return facts, sourceio.Classify(err)
 	}
 	copy(facts.digest[:], h.Sum(nil))
 	if int64(len(span.file.prefix)) == span.end {
@@ -1441,7 +1446,7 @@ func (s *historySnapshot) gatherOwnTask(ctx context.Context) (agentapi.OwnTaskFa
 		}
 		ordinal := span.startOrdinal
 		facts := agentapi.OwnTaskFacts{}
-		err := s.owner.scanChargedLines(ctx, io.NewSectionReader(span.file.file, 0, span.end), s.recordLimit+1, func(line []byte) bool {
+		err := s.owner.scanChargedLines(ctx, io.NewSectionReader(span.file.file, 0, span.end), s.recordLimit, func(line []byte) bool {
 			line = bytes.TrimSpace(line)
 			if len(line) == 0 {
 				return false
@@ -1473,7 +1478,7 @@ func (s *ordinarySnapshot) FirstOwnTask(ctx context.Context) (agentapi.OwnTaskFa
 		return agentapi.OwnTaskFacts{}, agentapi.ErrClosed
 	}
 	facts := agentapi.OwnTaskFacts{}
-	err := s.owner.scanChargedLines(ctx, io.NewSectionReader(s.source.file, 0, s.length), archive.MaxRecordBytes+1, func(line []byte) bool {
+	err := s.owner.scanChargedLines(ctx, io.NewSectionReader(s.source.file, 0, s.length), archive.MaxRecordBytes, func(line []byte) bool {
 		facts = ownTaskFacts(bytes.TrimSpace(line), localExecutionShape(s.source))
 		return facts.Seen
 	})
@@ -1531,7 +1536,7 @@ func (s *ordinarySnapshot) AdmissionEvidence(ctx context.Context, admission agen
 }
 
 func (p *relatedSourcePass) reserve(bytes int64) bool {
-	if bytes < 0 || bytes > relatedRawBudget-p.bytes || !p.env.ReadBudget.Reserve(bytes) {
+	if bytes < 0 || !p.env.ReadBudget.Reserve(bytes) {
 		return false
 	}
 	p.bytes += bytes
@@ -1540,16 +1545,40 @@ func (p *relatedSourcePass) reserve(bytes int64) bool {
 
 func (p *relatedSourcePass) release(bytes int64) { p.env.ReadBudget.Release(bytes); p.bytes -= bytes }
 
-// Idle file handles retain header/proof and immutable-prefix ownership. Native
-// raw extents have no remaining record consumer once every snapshot closes.
-// Reopening a cached extent reserves it again before graph/record consumption.
-func (p *relatedSourcePass) releaseIdleExtents() {
-	for _, file := range p.files {
-		if file.refs == 0 && file.rawCharged {
-			p.release(file.file.Length())
-			file.rawCharged = false
-		}
+// reserveCache charges what the pass keeps between reads (cached headers and
+// ancestor prefixes): no session's own, so no session's scope counts it.
+func (p *relatedSourcePass) reserveCache(bytes int64) bool {
+	if bytes < 0 || !p.env.ReadBudget.ReserveUnscoped(bytes) {
+		return false
 	}
+	p.bytes += bytes
+	return true
+}
+
+// reserveHeader charges a cached rollout's header like reserveCache, but
+// the read cannot go on without it: a refusal marks the session's scope
+// pressured, so the session is deferred rather than failed.
+func (p *relatedSourcePass) reserveHeader() bool {
+	if !p.env.ReadBudget.ReserveUnscopedRequired(sourceHeaderCharge) {
+		return false
+	}
+	p.bytes += sourceHeaderCharge
+	return true
+}
+
+func (p *relatedSourcePass) releaseCache(bytes int64) {
+	p.env.ReadBudget.ReleaseUnscoped(bytes)
+	p.bytes -= bytes
+}
+
+// ReleaseCaches drops every cached file no snapshot holds, with its header
+// and any ancestor prefix, so the next session's scan starts with the pass
+// ledger as free as the pass can make it.
+func (p *relatedSourcePass) ReleaseCaches() error {
+	if p.closed {
+		return nil
+	}
+	return p.evict()
 }
 
 func (p *relatedSourcePass) lookupThread(ctx context.Context, id string) (agentapi.CodexRolloutSet, error) {

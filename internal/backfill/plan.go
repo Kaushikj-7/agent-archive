@@ -451,7 +451,7 @@ func classifyPlanWork(ctx context.Context, env Environment, state ArchiveState, 
 			sessions[key] = append(sessions[key], w)
 		}
 		w.filtered = !harnessMatches(filters.Harnesses, string(w.t.harness)) || !projectMatches(env, projectFilter, w.res.root)
-		w.tooLarge = w.tooLarge || w.t.size > collector.DefaultMaxRawTranscriptBytes
+		w.tooLarge = w.tooLarge || w.t.size > collector.MaxRawTranscriptBytes(string(w.t.harness))
 	}
 	for _, group := range sessions {
 		markPendingHistory(group)
@@ -542,7 +542,7 @@ func finalizePlanWork(ctx context.Context, env Environment, items []*work, unrea
 		}
 	}
 	if err := forEach(ctx, workers, subagents, func(s *subagentWork) {
-		if s.sub.Bytes > collector.DefaultMaxRawTranscriptBytes {
+		if s.sub.Bytes > collector.MaxRawTranscriptBytes(string(s.parent.t.harness)) {
 			s.skipped = true
 			return
 		}
@@ -651,7 +651,7 @@ func (w *work) checkSource(env Environment) {
 		w.vanished = true
 		return
 	}
-	if err == nil && current.Size() > collector.DefaultMaxRawTranscriptBytes {
+	if err == nil && current.Size() > collector.MaxRawTranscriptBytes(string(w.t.harness)) {
 		w.tooLarge = true
 	}
 	if !w.matchesSource(current, err) {
@@ -726,7 +726,7 @@ func runAdapter(ctx context.Context, env Environment, w *work) {
 			w.sourceChanged = true
 		case errors.Is(err, archive.ErrRelatedHistory) || agentapi.HasFailure(err, agentapi.Unavailable) || agentapi.HasFailure(err, agentapi.Limit):
 			w.t.capturePending = true
-		case errors.Is(err, archive.ErrRecordTooLarge) || (statErr == nil && info.Size() > collector.DefaultMaxRawTranscriptBytes):
+		case errors.Is(err, archive.ErrRecordTooLarge) || (statErr == nil && info.Size() > collector.MaxRawTranscriptBytes(string(w.t.harness))):
 			// One record over the limit, or a file that grew past it since
 			// discovery: the collector blocks it as too large.
 			w.tooLarge = true

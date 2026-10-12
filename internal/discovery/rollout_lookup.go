@@ -46,6 +46,7 @@ type CodexRolloutLookup struct {
 	remaining        time.Duration
 	observationBytes int64
 	catalogCharge    int64
+	restoredCharge   int64
 	observations     map[string]rolloutObservation
 	byThread         map[string]map[string]struct{}
 	byPhysical       map[string]map[string]struct{}
@@ -84,7 +85,7 @@ func NewCodexRolloutLookup(ctx context.Context, store *state.Store, homes []stri
 	if len(roots) > 1024 {
 		return nil, agentapi.Wrap(agentapi.Limit, errors.New("native home limit"))
 	}
-	lookup := &CodexRolloutLookup{store: store, homes: slices.Clone(homes), readBudget: agentapi.NewNativeReadBudget(currentSnapshotLimit), roots: roots, deadline: time.Now().Add(Budget), remaining: Budget, coverage: newCoverage(roots), observations: map[string]rolloutObservation{}, byThread: map[string]map[string]struct{}{}, byPhysical: map[string]map[string]struct{}{}, threads: map[string]agentapi.CodexRolloutSet{}, indexes: map[string]*currentIndexView{}}
+	lookup := &CodexRolloutLookup{store: store, homes: slices.Clone(homes), readBudget: agentapi.NewNativeReadBudget(agentapi.PassReadBudget), roots: roots, deadline: time.Now().Add(Budget), remaining: Budget, coverage: newCoverage(roots), observations: map[string]rolloutObservation{}, byThread: map[string]map[string]struct{}{}, byPhysical: map[string]map[string]struct{}{}, threads: map[string]agentapi.CodexRolloutSet{}, indexes: map[string]*currentIndexView{}}
 	lookup.coverage.reserveFacts = lookup.reserveCatalog
 	var prior catalog
 	if err := lookup.readCatalog(ctx, filepath.Join(store.Home(), "discovery-catalog.json"), &prior); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -97,6 +98,7 @@ func NewCodexRolloutLookup(ctx context.Context, store *state.Store, homes []stri
 		return nil, errors.Join(errors.New("native coverage requires a newer writer"), lookup.closeWithContext(ctx))
 	}
 	if catalogNeedsReset(prior, roots) {
+		lookup.releaseRestored()
 		return lookup, nil
 	}
 	if prior.Coverage != nil {
@@ -158,11 +160,11 @@ func (l *CodexRolloutLookup) observe(source SourceDescriptor, stamp Fingerprint,
 	if l.observationBytes+size-oldSize > maxCoverageBytes/2 || inventoryBytes+l.observationBytes+size-oldSize > maxCoverageBytes {
 		return
 	}
-	if size > oldSize && !l.readBudget.Reserve(size-oldSize) {
+	if size > oldSize && !l.readBudget.ReserveUnscoped(size-oldSize) {
 		return
 	}
 	if oldSize > size {
-		l.readBudget.Release(oldSize - size)
+		l.readBudget.ReleaseUnscoped(oldSize - size)
 	}
 	l.observationBytes += size - oldSize
 	if l.coverage != nil {
@@ -521,7 +523,11 @@ func (l *CodexRolloutLookup) revisionDigest(ctx context.Context, value any) (str
 	if !l.readBudget.Reserve(scratch) {
 		return "", errCatalogBudget
 	}
-	n, err := jsonwire.Bound(ctx, value, l.readBudget.Available()/2)
+	available := l.readBudget.Available()
+	n, err := jsonwire.Bound(ctx, value, available/2)
+	if errors.Is(err, jsonwire.ErrLimit) {
+		l.readBudget.Refuse(available + 2)
+	}
 	l.readBudget.Release(scratch)
 	if err != nil {
 		return "", errors.Join(errCatalogBudget, err)
@@ -838,10 +844,11 @@ func (l *CodexRolloutLookup) closeWithContext(ctx context.Context) error {
 	}
 	l.closed = true
 	defer func() {
-		l.readBudget.Release(l.catalogCharge)
+		l.readBudget.ReleaseUnscoped(l.catalogCharge)
 		l.catalogCharge = 0
+		l.releaseRestored()
 	}()
-	l.readBudget.Release(l.observationBytes)
+	l.readBudget.ReleaseUnscoped(l.observationBytes)
 	l.observationBytes = 0
 	if l.coverage != nil {
 		l.coverage.hintBytes = 0
