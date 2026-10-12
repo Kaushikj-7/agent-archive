@@ -19,13 +19,42 @@ python3 scripts/test_install.py
 python3 scripts/test_install_from_source.py
 python3 scripts/test_purge_recipe.py                     # runs the bucket purge recipes in the docs
 python3 scripts/test_ci_workflow.py                      # Extended keeps the validated systemd image
+python3 scripts/test_go_shards.py                         # discovery, coverage, verdict, and process cleanup
 python3 scripts/test_measure_hook.py                     # synthetic hook benchmark effect/cleanup checks
 ./scripts/test_macos_smoke.sh                             # native macOS with cgo; the PR gate
 VERSION=dev ./scripts/build-release.sh                   # the release build (CI runs it on a release tag)
 ```
 
 CI's [Test workflow](../../.github/workflows/test.yml) runs the short race
-suite, vet, and all script tests on Ubuntu for each pull request. On macOS it builds all production packages with cgo and runs the
+suite across two Ubuntu workers for each pull request. Each worker discovers all
+packages and CLI top-level tests, fuzz seeds and executable examples, assigns
+ordinary packages once and CLI names to disjoint bins, and retains complete
+subtest trees. Timing hints only rank discovered units; new units are assigned
+and logged. The workers overlap bounded ordinary-package and CLI processes,
+then vet runs once. Each worker records its source, catalog, assignment and
+terminal coverage; the stable required `linux-race` verdict reconciles both
+artifacts and fails on any missing, failed or cancelled worker. All Linux
+Python gates, including purge, staging, scope and shard-runner regressions, run
+in a parallel script job required by that verdict. Candidates instead run an
+unsharded full Linux race suite, plain full-size performance assertions and vet.
+The runner's shared 25-minute deadline includes discovery and tests; cancellation
+and failure stop and reap both test process groups. CLI listing invokes TestMain
+before execution, and both shards have independent TestMain initialization and
+temporary state. Cold workers keep independent build/module caches; sharding
+improves latency only if measured scheduling benefits outweigh that extra work.
+For local coverage validation, run one worker at a time:
+
+```sh
+python3 scripts/run_go_shard.py --shard 0 --output /tmp/go-shard-0
+python3 scripts/run_go_shard.py --shard 1 --output /tmp/go-shard-1
+```
+
+The checked-in timing hints are historical elapsed rankings, including parallel
+child trees, rather than wall-time or CPU forecasts. Hosted comparisons must
+record whole-job latency and rounded runner allocation, including scripts,
+verdict and native verification, against both the original spend and the new
+single-worker fixture baseline. A local warm serial run proves coverage rather
+than two-runner cold latency. On macOS it builds all production packages with cgo and runs the
 focused Keychain, launchd, terminal, and CLI smoke suite above in short mode.
 macOS golangci-lint also runs on each pull request: the first pass blocks, and
 revive's doc-comment rule checks only code the pull request adds or changes.

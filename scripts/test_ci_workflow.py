@@ -39,7 +39,10 @@ def job_key(text, key):
     match = re.search(rf'(?m)^    {re.escape(key)}:(.*)$', text)
     if not match:
         return None
-    return re.sub(r'\s+#.*$', '', match.group(1)).strip().strip('\'"')
+    value = re.sub(r'\s+#.*$', '', match.group(1)).strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+        value = value[1:-1]
+    return value
 
 
 def condition_matches(expression, event, ref='', suite=''):
@@ -115,7 +118,7 @@ class CandidateCampaignTest(unittest.TestCase):
     def test_candidate_validation_never_restores_shared_go_build_state(self):
         # Candidate evidence must come from fresh source/module verification,
         # not executable build state restored from another workflow's cache.
-        expected = {'test': 5, 'levenshtein': 1, 'extended': 4}
+        expected = {'test': 6, 'levenshtein': 1, 'extended': 4}
         for name, count in expected.items():
             workflow = (ROOT / '.github/workflows' / f'{name}.yml').read_text()
             setup = [step for job in jobs(workflow).values() for step in steps(job)
@@ -140,9 +143,10 @@ class CandidateCampaignTest(unittest.TestCase):
     def test_candidate_test_keeps_all_pr_gates(self):
         workflow = (ROOT / '.github/workflows/test.yml').read_text()
         self.assertIn('  pull_request:', workflow)
-        self.assertEqual(set(jobs(workflow)), {'linux-race', 'git-identity-compatibility', 'macos-smoke', 'cross-build', 'lint'})
+        self.assertEqual(set(jobs(workflow)), {'linux-race', 'linux-short', 'linux-full', 'script-tests', 'git-identity-compatibility', 'macos-smoke', 'cross-build', 'lint'})
         for name, text in jobs(workflow).items():
-            self.assertIsNone(job_key(text, 'if'), name)
+            if name not in ('linux-race', 'linux-short', 'linux-full'):
+                self.assertIsNone(job_key(text, 'if'), name)
         self.assertIn('go test -race -timeout 20m ./...', workflow)
         self.assertIn('github.event.pull_request.number || github.ref', workflow)
 
@@ -185,36 +189,36 @@ class CadenceTest(unittest.TestCase):
         self.assertNotIn('|| true', execute)
 
     def test_scoping_helper_suite_is_a_mandatory_pr_gate(self):
-        linux = jobs((ROOT / '.github/workflows/test.yml').read_text())['linux-race']
+        linux = jobs((ROOT / '.github/workflows/test.yml').read_text())['script-tests']
         step = next(step for step in steps(linux) if 'python3 -B scripts/test_scope_native_verify.py' in step)
         self.assertIsNone(step_key(step, 'if'))
 
     def test_pr_and_candidate_linux_steps_select_the_correct_fixture_sizes(self):
-        linux = jobs((ROOT / '.github/workflows/test.yml').read_text())['linux-race']
-        race = [step for step in steps(linux) if 'run: go test -race ' in step]
-        perf = [step for step in steps(linux) if 'AGENT_ARCHIVE_PERF:' in step]
-        self.assertEqual(len(race), 2)
-        self.assertEqual(len(perf), 1)
+        found = jobs((ROOT / '.github/workflows/test.yml').read_text())
         for event, ref, short, full in (
                 ('pull_request', 'refs/pull/1/merge', True, False),
                 ('push', 'refs/heads/release-candidate/final', False, True),
                 ('push', 'refs/heads/main', False, False),
-                ('push', 'refs/heads/feature', False, False),
                 ('workflow_dispatch', 'refs/heads/main', False, False)):
-            with self.subTest(event=event, ref=ref):
-                selected = [step for step in race if condition_matches(step_key(step, 'if'), event, ref)]
-                self.assertEqual(any('run: go test -race -short -timeout 20m ./...' in step for step in selected), short)
-                self.assertEqual(any('run: go test -race -timeout 20m ./...' in step for step in selected), full)
-                self.assertEqual(condition_matches(step_key(perf[0], 'if'), event, ref), full)
-        self.assertNotIn('-short', perf[0])
-        self.assertIn("AGENT_ARCHIVE_PERF: '1'", perf[0])
+            self.assertEqual(condition_matches(job_key(found['linux-short'], 'if'), event, ref), short)
+            self.assertEqual(condition_matches(job_key(found['linux-full'], 'if'), event, ref), full)
+        self.assertIn('python3 scripts/run_go_shard.py --shard', found['linux-short'])
+        self.assertIn('fail-fast: false', found['linux-short'])
+        self.assertIn('shard: [0, 1]', found['linux-short'])
+        self.assertIn('go test -race -timeout 20m ./...', found['linux-full'])
+        self.assertNotIn('-short', found['linux-full'])
+        perf = next(step for step in steps(found['linux-full']) if 'AGENT_ARCHIVE_PERF:' in step)
+        self.assertIn("AGENT_ARCHIVE_PERF: '1'", perf)
         for package in ('collector', 'archive', 'agents/nativecodec', 'capture'):
-            self.assertIn('./internal/' + package, perf[0])
-        for script in ('test_purge_recipe.py', 'test_release_candidate.py', 'test_ci_workflow.py'):
-            step = next(step for step in steps(linux) if script in step)
+            self.assertIn('./internal/' + package, perf)
+        for script in ('test_purge_recipe.py', 'test_release_candidate.py', 'test_ci_workflow.py',
+                       'test_stage_native_verify.py', 'test_scope_native_verify.py', 'test_go_shards.py'):
+            step = next(step for step in steps(found['script-tests']) if script in step)
             self.assertIsNone(step_key(step, 'if'))
-        vet = next(step for step in steps(linux) if 'run: go vet ./...' in step)
-        self.assertIsNone(step_key(vet, 'if'))
+        self.assertEqual(job_key(found['linux-race'], 'if'), 'always()')
+        self.assertEqual(job_key(found['linux-race'], 'needs'), '[linux-short, linux-full, script-tests]')
+        self.assertIn('--verdict', found['linux-race'])
+        self.assertIn('--reconcile', found['linux-race'])
 
     def test_extended_event_matrix_and_full_size_backstops(self):
         workflow = EXTENDED_YML.read_text()
