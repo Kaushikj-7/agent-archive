@@ -64,29 +64,30 @@ func (s *Store) validateExactLegacyPending(ctx context.Context, id string, expec
 func (s *Store) exactLegacyPendingWire(ctx context.Context, expected PendingPublication) ([sha256.Size]byte, int64, error) {
 	var digest [sha256.Size]byte
 	const scratch = int64(32 << 10)
+	reservation := s.resourceBudget.Reservation()
 	if err := ctx.Err(); err != nil {
 		return digest, 0, err
 	}
 	limit := int64(durableStorageQuota/2 - 1)
 	if s.resourceBudget != nil {
-		if !s.resourceBudget.Reserve(scratch) {
+		if !reservation.Reserve(scratch) {
 			return digest, 0, errStateBudget
 		}
-		limit = min(limit, s.resourceBudget.Available()-1)
+		limit = min(limit, reservation.Available()-1)
 	}
 	n, err := jsonwire.Bound(ctx, expected, limit)
 	if s.resourceBudget != nil {
-		s.resourceBudget.Release(scratch)
+		reservation.Release(scratch)
 	}
 	if err != nil {
 		return digest, 0, errors.Join(errStateBudget, err)
 	}
 	n++
 	if s.resourceBudget != nil {
-		if !s.resourceBudget.Reserve(n) {
+		if !reservation.Reserve(n) {
 			return digest, 0, errStateBudget
 		}
-		defer s.resourceBudget.Release(n)
+		defer reservation.Release(n)
 	}
 	hash := sha256.New()
 	wire := exactPendingDigestWriter{writer: hash, remaining: n}
@@ -186,11 +187,12 @@ func (s *Store) readExactLegacyPendingWire(ctx context.Context, dir *os.Root, na
 		return nil, errors.Join(ErrDurableStorageRecovery, err)
 	}
 	const scratch = int64(32 << 10)
+	reservation := s.resourceBudget.Reservation()
 	if s.resourceBudget != nil {
-		if !s.resourceBudget.Reserve(scratch) {
+		if !reservation.Reserve(scratch) {
 			return nil, errStateBudget
 		}
-		defer s.resourceBudget.Release(scratch)
+		defer reservation.Release(scratch)
 	}
 	hash := sha256.New()
 	reader := exactPendingContextReader{ctx: ctx, reader: io.LimitReader(f, length+1)}

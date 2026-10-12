@@ -77,14 +77,15 @@ type RetiredSource struct {
 // ValidateHistoryBudgeted reserves the independent ephemeral metadata view used
 // by journal validation. The input bytes retain their original caller ownership.
 func (p PendingPublication) ValidateHistoryBudgeted(id string, budget *agentapi.NativeReadBudget) error {
+	reservation := budget.Reservation()
 	if p.History == nil {
 		return nil
 	}
 	n := int64(len(p.MetadataBytes))
-	if !budget.Reserve(n) {
+	if !reservation.Reserve(n) {
 		return errStateBudget
 	}
-	defer budget.Release(n)
+	defer reservation.Release(n)
 	return p.ValidateHistory(id)
 }
 

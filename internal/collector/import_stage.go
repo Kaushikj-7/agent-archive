@@ -29,9 +29,10 @@ func (s *sessionScan) readImportStage() (read sourceRead, ok bool, err error) {
 		return read, false, errors.New("staged import requires bounded privacy refilter")
 	}
 	b := s.readBudget()
+	reservation := b.Reservation()
 	largest := int64(0)
 	for _, row := range stage.Bundle.NativeRecords {
-		n, err := jsonwire.Bound(s.ctx, row, b.Available())
+		n, err := jsonwire.Bound(s.ctx, row, reservation.Available())
 		if err != nil {
 			return read, false, err
 		}
@@ -41,18 +42,18 @@ func (s *sessionScan) readImportStage() (read sourceRead, ok bool, err error) {
 		largest = max(largest, int64(len(text.Content)))
 	}
 	scratch := 3*largest + (64 << 10)
-	if !b.Reserve(scratch) {
+	if !reservation.Reserve(scratch) {
 		return read, false, errRetainedBudget
 	}
-	defer b.Release(scratch)
-	allowance := min(s.opts.maxTranscriptBytes(), b.Available()/2)
-	if allowance <= 0 || !b.Reserve(allowance) {
+	defer reservation.Release(scratch)
+	allowance := min(s.opts.maxTranscriptBytes(), reservation.Available()/2)
+	if allowance <= 0 || !reservation.Reserve(allowance) {
 		return read, false, errRetainedBudget
 	}
 	mark := len(s.retainedReleases)
 	filtered, err := bounded.RefilterBounded(s.ctx, stage.Bundle, s.reg.SessionStartedAt, agentapi.ReadLimits{FilteredBytes: allowance, RecordBytes: archive.MaxRecordBytes})
 	if err != nil {
-		b.Release(allowance)
+		reservation.Release(allowance)
 		return read, false, err
 	}
 	// Refiltering retained safe records cannot rediscover omissions in the native
@@ -65,11 +66,11 @@ func (s *sessionScan) readImportStage() (read sourceRead, ok bool, err error) {
 	}
 	n := int64(filtered.Boundary.RetainedBytes)
 	if n < 0 || n > allowance {
-		b.Release(allowance)
+		reservation.Release(allowance)
 		return read, false, errRetainedBudget
 	}
-	b.Release(allowance - n)
-	s.retainedReleases = append(s.retainedReleases, func() { b.Release(n) })
+	reservation.Release(allowance - n)
+	s.retainedReleases = append(s.retainedReleases, func() { reservation.Release(n) })
 	read.filterLease = &mark
 	if err != nil {
 		return read, false, err

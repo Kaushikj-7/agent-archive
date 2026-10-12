@@ -33,18 +33,18 @@ type indexCopyMetrics struct {
 }
 
 type privateIndex struct {
-	dir     string
-	path    string
-	metrics indexCopyMetrics
-	lock    *os.File
-	proof   indexAppendProof
-	budget  *agentapi.NativeReadBudget
-	charge  int64
+	dir         string
+	path        string
+	metrics     indexCopyMetrics
+	lock        *os.File
+	proof       indexAppendProof
+	reservation *agentapi.NativeReadReservation
+	charge      int64
 }
 
 func (p *privateIndex) close() error {
 	if p.charge != 0 {
-		p.budget.Release(p.charge)
+		p.reservation.Release(p.charge)
 		p.charge = 0
 	}
 	removeErr := os.RemoveAll(p.dir)
@@ -63,11 +63,12 @@ func (p *privateIndex) close() error {
 // The private immutable main file contains the replayed committed state, so
 // SQLite does not need a WAL, SHM, lock, or recovery operation beside native data.
 func snapshotCurrentIndexBudget(ctx context.Context, root string, step func(string), budget *agentapi.NativeReadBudget) (*privateIndex, error) {
+	reservation := budget.Reservation()
 	charge := indexVerificationScratch + 64
-	if !budget.Reserve(charge) {
+	if !reservation.Reserve(charge) {
 		return nil, agentapi.Wrap(agentapi.Limit, errors.New("shared index scratch budget exhausted"))
 	}
-	defer func() { budget.Release(charge) }()
+	defer func() { reservation.Release(charge) }()
 	mainPath := filepath.Join(root, "state_5.sqlite")
 	if _, err := os.Lstat(mainPath + "-journal"); !errors.Is(err, os.ErrNotExist) {
 		return nil, errIndexChanged
@@ -88,7 +89,7 @@ func snapshotCurrentIndexBudget(ctx context.Context, root string, step func(stri
 	if wal != nil {
 		defer func() { _ = wal.Close() }()
 	}
-	extra, err := reserveIndexExtents(budget, before, walBefore)
+	extra, err := reserveIndexExtents(reservation, before, walBefore)
 	if err != nil {
 		return nil, err
 	}
@@ -146,7 +147,7 @@ func snapshotCurrentIndexBudget(ctx context.Context, root string, step func(stri
 		if peak > currentSnapshotLimit {
 			return nil, errIndexChanged
 		}
-		if !budget.Reserve(projected) {
+		if !reservation.Reserve(projected) {
 			return nil, agentapi.Wrap(agentapi.Limit, errors.New("shared native replay budget exhausted"))
 		}
 		charge += projected
@@ -167,7 +168,7 @@ func snapshotCurrentIndexBudget(ctx context.Context, root string, step func(stri
 		// Transfer the already reserved header/proof allowance to the private
 		// view lifetime. Close returns it exactly once.
 		charge -= 64
-		out.budget, out.charge = budget, 64
+		out.reservation, out.charge = reservation, 64
 		out.proof = indexAppendProof{main: before, mainHash: mainHash, wal: walBefore, header: bytes.Clone(header), end: committed, prefixHash: sha256.Sum256(walBytes[:committed]), pageSize: pageSize}
 	}
 	return out, err
@@ -415,12 +416,12 @@ func verifyIndexGeneration(mainPath string, before os.FileInfo, wal *os.File, wa
 	return nil
 }
 
-func reserveIndexExtents(budget *agentapi.NativeReadBudget, main, wal os.FileInfo) (int64, error) {
+func reserveIndexExtents(reservation *agentapi.NativeReadReservation, main, wal os.FileInfo) (int64, error) {
 	bytes := main.Size()
 	if wal != nil {
 		bytes += wal.Size()
 	}
-	if !budget.Reserve(bytes) {
+	if !reservation.Reserve(bytes) {
 		return 0, agentapi.Wrap(agentapi.Limit, errors.New("shared native copy budget exhausted"))
 	}
 	return bytes, nil

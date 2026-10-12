@@ -19,13 +19,14 @@ func TestNativeHistoryScannerPressurePreservesRequestAndRetries(t *testing.T) {
 		t.Fatal(err)
 	}
 	budget := agentapi.NewNativeReadBudget(128 << 20)
+	reservation := budget.Reservation()
 	scan.opts.CodexRollouts = &lifecycleLookup{reconciliationLookup: lookup, budget: budget}
 	original, err := os.ReadFile(scan.reg.TranscriptPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	pressure := budget.Available() - int64(len(raw)+len(original)) - (256 << 10) - 6000
-	if !budget.Reserve(pressure) {
+	if !reservation.Reserve(pressure) {
 		t.Fatal("reserve")
 	}
 	if err := scan.local.SaveRequest(scan.id(), "stop", scan.now); err != nil {
@@ -50,7 +51,7 @@ func TestNativeHistoryScannerPressurePreservesRequestAndRetries(t *testing.T) {
 	if _, found, err := scan.local.LoadScanSignature(scan.id()); err != nil || found {
 		t.Fatal("resource pressure settled scan", err)
 	}
-	budget.Release(pressure)
+	reservation.Release(pressure)
 	if _, ok, err := scan.read(); !ok || err != nil {
 		t.Fatal("retry after release", err)
 	}

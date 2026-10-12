@@ -46,7 +46,6 @@ Inspect history
 Import history
   agent-archive backfill    Import sessions already on this machine
   agent-archive historical-project  Manage historical project permissions
-
   agent-archive migrate     Migrate to an isolated catalog destination
 
 Switch agents

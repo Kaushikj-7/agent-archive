@@ -22,15 +22,16 @@ func TestHistoryRecordCapacityPressureRemainsRetryable(t *testing.T) {
 		t.Fatal(err)
 	}
 	ledger := pass.env.ReadBudget
+	reservation := ledger.Reservation()
 	pressure := ledger.Available() - 6000
-	if !ledger.Reserve(pressure) {
+	if !reservation.Reserve(pressure) {
 		t.Fatal("reserve")
 	}
 	_, err = pass.readHistorySelection(t.Context(), agentapi.ReadLimits{}, selection)
 	if !errors.Is(err, agentapi.ErrReadBudget) {
 		t.Fatalf("valid record under shared pressure must remain retryable: %v", err)
 	}
-	ledger.Release(pressure)
+	reservation.Release(pressure)
 	snapshot, err := pass.Read(t.Context(), ref, agentapi.ReadLimits{})
 	if err != nil {
 		t.Fatal("retry after pressure released", err)
@@ -66,8 +67,9 @@ func TestCachedHistoryPrefixCapacityPressureRemainsRetryable(t *testing.T) {
 		t.Fatal(err)
 	}
 	ledger := pass.env.ReadBudget
+	reservation := ledger.Reservation()
 	pressure := ledger.Available() - 6000
-	if !ledger.Reserve(pressure) {
+	if !reservation.Reserve(pressure) {
 		t.Fatal("reserve")
 	}
 	// A validated cached prefix needs no record buffer to open; reading its
@@ -94,7 +96,7 @@ func TestCachedHistoryPrefixCapacityPressureRemainsRetryable(t *testing.T) {
 	if !errors.Is(err, archive.ErrRecordTooLarge) || errors.Is(err, agentapi.ErrReadBudget) {
 		t.Fatalf("cached proof of configured oversize must remain permanent: %v", err)
 	}
-	ledger.Release(pressure)
+	reservation.Release(pressure)
 	retry, err := pass.Read(t.Context(), leaf, agentapi.ReadLimits{})
 	if err != nil {
 		t.Fatal("cached retry", err)
@@ -127,15 +129,16 @@ func TestHistoryScannerScratchPressureRemainsRetryable(t *testing.T) {
 		t.Fatal(err)
 	}
 	ledger := pass.env.ReadBudget
+	reservation := ledger.Reservation()
 	pressure := ledger.Available()
-	if !ledger.Reserve(pressure) {
+	if !reservation.Reserve(pressure) {
 		t.Fatal("reserve")
 	}
 	_, err = pass.readHistorySelection(t.Context(), agentapi.ReadLimits{}, selection)
 	if !errors.Is(err, agentapi.ErrReadBudget) {
 		t.Fatalf("scratch capacity refusal must remain pending: %v", err)
 	}
-	ledger.Release(pressure)
+	reservation.Release(pressure)
 	snapshot, err := pass.Read(t.Context(), ref, agentapi.ReadLimits{})
 	if err != nil {
 		t.Fatal("scratch retry", err)

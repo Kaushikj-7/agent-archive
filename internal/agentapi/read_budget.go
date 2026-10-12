@@ -8,11 +8,12 @@ import (
 // NativeReadBudget bounds charged native extents, immutable caches and borrowed
 // scratch across one pass. It is not a bound on filtered maps or process RSS.
 type NativeReadBudget struct {
-	mu    sync.Mutex
-	limit int64
-	used  int64
-	peak  int64
-	scope *readScope
+	mu           sync.Mutex
+	limit        int64
+	used         int64
+	peak         int64
+	unscopedUsed int64
+	scope        *readScope
 }
 
 // readScope attributes charges to one owner under its own ceiling.
@@ -49,8 +50,35 @@ func NewNativeReadBudget(limit int64) *NativeReadBudget {
 	return &NativeReadBudget{limit: max(limit, 0)}
 }
 
-// Reserve charges before allocation or borrowing; refusal changes no state.
-func (b *NativeReadBudget) Reserve(bytes int64) bool {
+// NativeReadReservation owns charges attributed to the scope in which it was
+// created. Growth and delayed releases keep that owner even after scopes change.
+// A handle may group charges belonging to the same scope, with exact partial
+// releases. Resources belonging to different scopes need separate handles.
+type NativeReadReservation struct{ owner *readReservationOwner }
+
+// The mutable owner is private and shared by copies of a handle.
+type readReservationOwner struct {
+	budget *NativeReadBudget
+	scope  *readScope
+	used   int64
+}
+
+// Reservation captures the current owner without charging any bytes. Keep this
+// handle with the resource or its cleanup closure; never recreate it at release.
+func (b *NativeReadBudget) Reservation() *NativeReadReservation {
+	if b == nil {
+		return &NativeReadReservation{owner: &readReservationOwner{}}
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return &NativeReadReservation{owner: &readReservationOwner{budget: b, scope: b.scope}}
+}
+
+// Reserve grows this owner's reservation before allocation or borrowing.
+// Refusal changes no charge and reports pressure on this owner, not a later one.
+func (reservation *NativeReadReservation) Reserve(bytes int64) bool {
+	r := reservation.owner
+	b := r.budget
 	if b == nil {
 		return true
 	}
@@ -59,40 +87,77 @@ func (b *NativeReadBudget) Reserve(bytes int64) bool {
 	if bytes < 0 {
 		return false
 	}
-	if s := b.scope; s != nil && bytes > s.ceiling-s.used {
+	if s := r.scope; s != nil && bytes > s.ceiling-s.used {
 		s.exceeded = true
 		return false
 	}
 	if bytes > b.limit-b.used {
-		if b.scope != nil {
-			b.scope.pressured = true
+		if r.scope != nil {
+			r.scope.pressured = true
 		}
 		return false
 	}
 	b.used += bytes
 	b.peak = max(b.peak, b.used)
-	if b.scope != nil {
-		b.scope.used += bytes
+	r.used += bytes
+	if r.scope != nil {
+		r.scope.used += bytes
 	}
 	return true
 }
 
-// Release returns an exact owned charge. Imbalanced releases panic because
-// quietly resetting the ledger would hide a violated safety invariant.
-func (b *NativeReadBudget) Release(bytes int64) {
+// Release returns only this handle's exact owned charge. Over-release panics
+// before mutating either ledger; it cannot consume another reservation's bytes.
+func (reservation *NativeReadReservation) Release(bytes int64) {
+	r := reservation.owner
+	b := r.budget
 	if b == nil {
 		return
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if bytes < 0 || bytes > b.used {
-		panic("unbalanced native read budget release")
+	if bytes < 0 || bytes > r.used {
+		panic("unbalanced native read reservation release")
 	}
+	r.used -= bytes
 	b.used -= bytes
-	if s := b.scope; s != nil {
-		// A charge taken before the scope began can end inside it; the scope
-		// then under-counts rather than refusing its owner too early.
-		s.used -= min(bytes, s.used)
+	if r.scope != nil {
+		r.scope.used -= bytes
+	}
+}
+
+// Available bounds growth by this reservation's original owner and the shared
+// ledger, even if a different scope is currently active.
+func (reservation *NativeReadReservation) Available() int64 {
+	r := reservation.owner
+	b := r.budget
+	if b == nil {
+		return 1 << 62
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	available := b.limit - b.used
+	if r.scope != nil {
+		available = min(available, r.scope.ceiling-r.scope.used)
+	}
+	return available
+}
+
+// Refuse attributes a preflight refusal to the same owner as Reserve.
+func (reservation *NativeReadReservation) Refuse(bytes int64) {
+	r := reservation.owner
+	b := r.budget
+	if b == nil {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	switch s := r.scope; {
+	case s == nil:
+	case bytes > s.ceiling-s.used:
+		s.exceeded = true
+	case bytes > b.limit-b.used:
+		s.pressured = true
 	}
 }
 
@@ -110,6 +175,7 @@ func (b *NativeReadBudget) ReserveUnscoped(bytes int64) bool {
 		return false
 	}
 	b.used += bytes
+	b.unscopedUsed += bytes
 	b.peak = max(b.peak, b.used)
 	return true
 }
@@ -138,13 +204,14 @@ func (b *NativeReadBudget) ReleaseUnscoped(bytes int64) {
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if bytes < 0 || bytes > b.used {
+	if bytes < 0 || bytes > b.unscopedUsed {
 		panic("unbalanced native read budget release")
 	}
 	b.used -= bytes
+	b.unscopedUsed -= bytes
 }
 
-// BeginScope attributes every later charge, until end, to one owner (one
+// BeginScope attributes reservations created until end to one owner (one
 // session's scan) under its own ceiling as well as the shared limit. Owners
 // run one at a time, so a scope nests none: end restores the one before.
 // ScopeExceeded then tells a refusal at the owner's own ceiling, which the

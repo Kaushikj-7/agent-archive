@@ -86,7 +86,7 @@ func (i *recoverySourceInventory) rediscover(ctx context.Context) (addedSources,
 		return addedSources{}, false
 	}
 	out := addedSources{incomplete: map[string]bool{}}
-	budget := &addedHeaderBudget{files: recoveryAddedSourceLimit, bytes: recoveryAddedHeaderBytes}
+	budget := &addedHeaderBudget{files: recoveryAddedSourceLimit, bytes: recoveryAddedHeaderBytes, seen: map[string]bool{}}
 	files := discoveryFiles{env}
 	listing := i.addedListing(ctx)
 	for _, name := range env.Discovery.DiscoveryAgents() {
@@ -102,6 +102,9 @@ func (i *recoverySourceInventory) rediscover(ctx context.Context) (addedSources,
 		}
 		report, err := provider.Discover(ctx, agentapi.DiscoveryRequest{Purpose: agentapi.DiscoveryImport, Stage: agentapi.DiscoveryIdentities, Locations: agentapi.NativeLocations{UserHome: env.Home, Directories: env.nativeDirectories(name)}, Files: listing, HeaderBytes: headScanLimit, RecordBytes: headLineLimit, Scan: scan}, func(c agentapi.DiscoveryCandidate) error {
 			if !i.known(c.Source.Path) {
+				if err := budget.admit(c.Source.Path); err != nil {
+					return err
+				}
 				out.candidates = append(out.candidates, c)
 			}
 			return nil
@@ -244,17 +247,35 @@ type addedHeaderBudget struct {
 	files     int
 	bytes     int64
 	exhausted bool
+	seen      map[string]bool
+}
+
+// admit charges each added transcript path once, whether discovery scans its
+// header or emits its identity directly. Cursor file discovery selects one
+// physical transcript per chat; SQLite identities belong to the separate epoch.
+func (b *addedHeaderBudget) admit(path string) error {
+	if b.seen[path] {
+		return nil
+	}
+	if b.files <= 0 {
+		b.exhausted = true
+		return errAddedSourceBudget
+	}
+	b.files--
+	if b.seen == nil {
+		b.seen = map[string]bool{}
+	}
+	b.seen[path] = true
+	return nil
 }
 
 // scan reads one added transcript's header with discovery's own bounds, cut
 // to what is left of the budget. A read the budget cut short exhausts it:
 // a shortened header could leave out the folder it would have named.
 func (b *addedHeaderBudget) scan(ctx context.Context, files agentapi.DiscoveryFiles, path string, visit func([]byte) bool) error {
-	if b.files <= 0 {
-		b.exhausted = true
-		return errAddedSourceBudget
+	if err := b.admit(path); err != nil {
+		return err
 	}
-	b.files--
 	limit := min(int64(headScanLimit), b.bytes)
 	counted := &countingFiles{DiscoveryFiles: files}
 	err := discoveryio.ScanRecords(ctx, counted, path, limit, headLineLimit, visit)
