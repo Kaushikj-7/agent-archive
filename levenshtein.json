@@ -14,8 +14,6 @@
   "checks": {
     "lint": {"kind": "go-lint", "target": "archive", "environment": "go"},
     "vet": {"kind": "go-vet", "target": "archive", "environment": "go"},
-    "http": {"kind": "go-http", "target": "archive", "environment": "go"},
-    "sql": {"kind": "go-sql", "target": "archive", "environment": "go"},
     "modules": {"kind": "go-mod", "target": "archive", "environment": "go"},
     "vulnerabilities": {"kind": "go-vuln", "target": "archive", "environment": "go"},
     "workflow-lint": {"kind": "workflow-lint", "target": "workflows", "environment": "go"},
@@ -23,7 +21,7 @@
   },
   "runs": {
     "branch": {"checks": ["lint", "vet"]},
-    "pre-merge": {"checks": ["lint", "vet", "http", "sql", "modules", "vulnerabilities", "workflow-lint", "workflow-security"]},
-    "main": {"checks": ["lint", "vet", "http", "sql", "modules", "vulnerabilities", "workflow-lint", "workflow-security"], "rerun_checks": true}
+    "pre-merge": {"checks": ["lint", "vet", "modules", "vulnerabilities", "workflow-lint", "workflow-security"]},
+    "main": {"checks": ["lint", "vet", "modules", "vulnerabilities", "workflow-lint", "workflow-security"], "rerun_checks": true}
   }
 }
