@@ -56,6 +56,7 @@ jobs:
       # Extended's real-systemd backstop keeps its name and validated image.
       - run: python3 scripts/test_ci_workflow.py
       - run: python3 scripts/test_stage_native_verify.py
+      - run: python3 -B scripts/test_scope_native_verify.py
       - run: python3 scripts/test_measure_hook.py
       # Static and fake-Docker checks of the Linux live acceptance scripts;
       # the live run itself needs privileged Docker and is not run in CI.
