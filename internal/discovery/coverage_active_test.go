@@ -1,11 +1,13 @@
 package discovery
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -365,6 +367,73 @@ func TestCoverageFailsWhenRequestedRolloutIdentityChangesMidEpoch(t *testing.T) 
 	}
 }
 
+type unavailableCoverageAdapter struct {
+	SourceAdapter
+	path      string
+	rewritten *bool
+	blocked   bool
+}
+
+func (a *unavailableCoverageAdapter) Inspect(ctx context.Context, source SourceDescriptor) Observation {
+	if a.blocked && *a.rewritten && source.Locator == a.path {
+		return Observation{Outcome: outcomeUnavailable}
+	}
+	return a.SourceAdapter.Inspect(ctx, source)
+}
+
+// A failed read of a grown, rewritten nonmember cannot establish absence.
+// A later successful read must discover both physical requested rollouts.
+func TestUnavailableChangedCoverageMemberCannotCertifyAbsence(t *testing.T) {
+	t.Parallel()
+	store, cfg, at, root := fixture(t)
+	f := coverageFixture{store: store, cfg: cfg, at: at, root: root}
+	project := cfg.Archive.Projects[0].Root
+	wanted := writeRollout(t, root, project, at.Add(-2*time.Hour), 1, "archived_sessions")
+	other := writeRollout(t, root, project, at.Add(-time.Hour), 2, "sessions")
+	claim, err := os.ReadFile(rolloutPath(root, "archived_sessions", wanted))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.requestThread(t, wanted)
+	otherPath := rolloutPath(root, "sessions", other)
+	before, err := os.Stat(otherPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rewritten := false
+	changes := &changingCoverageAdapter{SourceAdapter: codexAdapter{supported: syntheticSupport}, change: func(call int) {
+		if call == 2 {
+			grown := string(claim) + strings.Repeat(" ", int(before.Size())+256)
+			if err := os.WriteFile(otherPath, []byte(grown), 0600); err != nil {
+				t.Fatal(err)
+			}
+			rewritten = true
+		}
+	}}
+	adapter := &unavailableCoverageAdapter{SourceAdapter: changes, path: otherPath, rewritten: &rewritten, blocked: true}
+	complete, candidates := f.pass(t, 0, adapter, wanted)
+	after, err := os.Stat(otherPath)
+	if err != nil || !rewritten || !os.SameFile(before, after) || after.Size() <= before.Size() {
+		t.Fatal("fixture must grow and rewrite the observed file in place")
+	}
+	if complete {
+		t.Fatalf("unavailable changed member certified absence: %v", candidates)
+	}
+	adapter.blocked = false
+	for n := 1; n < 5; n++ {
+		complete, candidates = f.pass(t, n, adapter, wanted)
+		if complete {
+			want := []string{rolloutPath(root, "archived_sessions", wanted), otherPath}
+			slices.Sort(want)
+			if !slices.Equal(candidates, want) {
+				t.Fatalf("candidates %v, want %v", candidates, want)
+			}
+			return
+		}
+	}
+	t.Fatal("coverage did not recover after the unavailable read")
+}
+
 // A validating checkpoint written before membership marks existed carries
 // unmarked candidates for batches it already validated. Finishing that epoch
 // must not drop them and certify the request with no candidates.
@@ -393,8 +462,8 @@ func TestCoverageFailsValidatingCheckpointWithoutMemberMarks(t *testing.T) {
 		candidate.Member = false
 		request.Candidates[locator] = candidate
 	}
-	c.MemberChecks = false
-	legacy := restoreCoverage(t, c)
+
+	legacy := restoreCoverage(t, c, true)
 	advanceCoverageValidation(t.Context(), &catalog{Coverage: legacy, Cache: map[string]cached{}}, &Health{}, codexAdapter{}, time.Now().Add(time.Minute), Options{})
 	if legacy.Phase != coverageComplete || !legacy.Failed || legacy.Requests[wanted].CompleteEpoch != 0 || len(legacy.Requests[wanted].Candidates) != 1 {
 		t.Fatalf("unmarked checkpoint phase=%s failed=%v request=%#v", legacy.Phase, legacy.Failed, legacy.Requests[wanted])
@@ -402,13 +471,30 @@ func TestCoverageFailsValidatingCheckpointWithoutMemberMarks(t *testing.T) {
 }
 
 // restoreCoverage round-trips a checkpoint the way a later pass loads it.
-func restoreCoverage(t *testing.T, c *coverageInventory) *coverageInventory {
+func restoreCoverage(t *testing.T, c *coverageInventory, unmarked ...bool) *coverageInventory {
 	t.Helper()
 	// The catalog is persisted through local's generic JSON writer and reader.
 	var checkpoint any = catalog{Coverage: c}
 	raw, err := json.Marshal(checkpoint)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if len(unmarked) > 0 && unmarked[0] {
+		var wire map[string]any
+		decoder := json.NewDecoder(bytes.NewReader(raw))
+		decoder.UseNumber()
+		if err := decoder.Decode(&wire); err != nil {
+			t.Fatal(err)
+		}
+		for _, v := range wire {
+			if value, ok := v.(map[string]any); ok {
+				delete(value, "member_checks")
+			}
+		}
+		raw, err = json.Marshal(wire)
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 	var restored catalog
 	var target any = &restored
