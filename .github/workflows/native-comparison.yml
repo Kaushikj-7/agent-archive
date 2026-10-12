@@ -79,11 +79,21 @@ jobs:
           set -e
           echo "$status" > evidence/exit-code.txt
           echo "$(($(date +%s) - start))" > evidence/total-wall-seconds.txt
+          # Keep diagnostics and timing in normal job logs too; artifact storage
+          # is not reachable from every managed development environment.
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          root = Path('evidence')
+          print('COMPARISON_REPORT=' + json.dumps(json.loads((root / 'report.json').read_text()), separators=(',', ':')))
+          print('COMPARISON_TOTAL_WALL=' + (root / 'total-wall-seconds.txt').read_text().strip())
+          print((root / 'time.txt').read_text())
+          PY
           if [[ "$SAMPLE" == baseline ]]; then test "$status" = 0; else test "$status" = 1; fi
       - name: Retain comparison evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: native-comparison-${{ matrix.executor }}-${{ matrix.sample }}
+          name: native-comparison-${{ matrix.executor }}-${{ matrix.sample }}-${{ github.run_attempt }}
           path: evidence
           retention-days: 30
