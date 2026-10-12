@@ -389,13 +389,18 @@ func shmHeader(path string) (header []byte, ok bool) {
 	if err != nil || !info.Mode().IsRegular() {
 		return nil, false
 	}
-	f, err := os.Open(name)
+	return shmHeaderFile(name, info)
+}
+
+// shmHeaderFile checks an opened descriptor against the prior regular-file observation.
+func shmHeaderFile(name string, info os.FileInfo) (header []byte, ok bool) {
+	f, err := openShmHeaderFile(name)
 	if err != nil {
 		return nil, false
 	}
 	defer func() { _ = f.Close() }()
 	opened, err := f.Stat()
-	if err != nil || !os.SameFile(info, opened) {
+	if err != nil || !opened.Mode().IsRegular() || !os.SameFile(info, opened) {
 		return nil, false
 	}
 	header = make([]byte, shmHeaderSize)
