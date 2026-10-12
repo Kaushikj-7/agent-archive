@@ -1,7 +1,7 @@
 name: Extended
 on:
   push:
-    branches: [main, 'release-candidate/**']
+    branches: ['release-candidate/**']
   schedule:
     # Off the hour, when GitHub's scheduled workflow queue is less crowded.
     - cron: '17 8 * * *'
@@ -16,14 +16,14 @@ on:
 permissions:
   contents: read
 concurrency:
-  # Keep only the newest post-merge run during a burst of main pushes. A
+  # Keep only the newest run for each candidate branch. A
   # scheduled or manually requested run always gets its own group.
   group: ${{ github.workflow }}-${{ github.event_name == 'push' && github.ref || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'push' }}
 # Every action is pinned to a full commit SHA; keep these in step with test.yml.
 jobs:
   linux-race:
-    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'linux'))
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'linux'))
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -54,7 +54,7 @@ jobs:
       - run: python3 scripts/test_linux_acceptance.py
 
   macos-full:
-    if: github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'macos'))
+    if: (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release-candidate/')) || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'macos'))
     runs-on: macos-14
     timeout-minutes: 45
     steps:
