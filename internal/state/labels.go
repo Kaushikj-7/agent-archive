@@ -108,8 +108,13 @@ func (s *Store) LoadLabelPublication(id string, budget int64) (*Published, int64
 	if err := json.Unmarshal(data, &p.state); err != nil {
 		return nil, int64(len(data)), err
 	}
+	if p.state.PublicationVersion == 3 {
+		if err := p.preserveStagedPublished(s.durableContext(), &p.state); err != nil {
+			return nil, int64(len(data)), err
+		}
+	}
 	if p.state.PublicationVersion == 2 {
-		if err := p.preserveReadyPublished(&p.state); err != nil {
+		if err := p.preserveReadyPublished(s.durableContext(), &p.state); err != nil {
 			return nil, int64(len(data)), err
 		}
 	}

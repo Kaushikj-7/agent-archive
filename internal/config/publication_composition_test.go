@@ -9,11 +9,8 @@ import (
 )
 
 func TestPublicationCompositionExactFenceAndLowerLayers(t *testing.T) {
-	for _, catalog := range []bool{false, true} {
-		c := Config{MachineID: "synthetic", RetentionDays: 90, DurableStorageProtection: true, ImportStagingProtection: true, HistoricalProjectProtection: true, PublicationCompositionProtection: true}
-		if catalog {
-			c.Storage.ArchiveFormat = destination.FormatCatalogV4
-		}
+	for _, format := range []destination.ArchiveFormat{"", destination.FormatCatalogV4} {
+		c := Config{MachineID: "synthetic", RetentionDays: 90, DurableStorageProtection: true, ImportStagingProtection: true, HistoricalProjectProtection: true, PublicationCompositionProtection: true, Storage: destination.Config{ArchiveFormat: format}}
 		raw, err := json.Marshal(c)
 		if err != nil {
 			t.Fatal(err)
@@ -45,8 +42,7 @@ func TestPublicationCompositionExactFenceAndLowerLayers(t *testing.T) {
 			}
 		}
 	}
-	c := Config{MachineID: "synthetic", RetentionDays: 90, DurableStorageProtection: true}
-	c.Storage.ArchiveFormat = destination.FormatCatalogV4
+	c := Config{MachineID: "synthetic", RetentionDays: 90, DurableStorageProtection: true, Storage: destination.Config{ArchiveFormat: destination.FormatCatalogV4}}
 	raw, err := json.Marshal(c)
 	if err != nil {
 		t.Fatal(err)

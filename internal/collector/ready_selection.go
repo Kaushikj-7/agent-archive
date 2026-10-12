@@ -20,8 +20,12 @@ func (s *sessionScan) freezeOrdinaryReadySelection(ctx context.Context, p *state
 	}
 	staged := s.reg.StagedImportSHA256 != "" && cfg.StagedSelectionProtection
 	if staged {
-		if !cfg.SupportsStagedSelection() { return state.ErrReadySelectionFrozen }
-		if authority,ok := s.remote.(interface{ CatalogMetadataAuthority() bool }); ok && authority.CatalogMetadataAuthority() { return state.ErrReadySelectionFrozen }
+		if !cfg.SupportsStagedSelection() {
+			return state.ErrReadySelectionFrozen
+		}
+		if authority, ok := s.remote.(interface{ CatalogMetadataAuthority() bool }); ok && authority.CatalogMetadataAuthority() {
+			return state.ErrReadySelectionFrozen
+		}
 	}
 	if p.History != nil || p.Bundle.History != nil || p.MetadataOnly || s.reg.HistoricalProject != nil || s.reg.StagedImportSHA256 != "" && !staged {
 		return state.ErrReadySelectionFrozen
@@ -30,21 +34,25 @@ func (s *sessionScan) freezeOrdinaryReadySelection(ctx context.Context, p *state
 	if err != nil {
 		return err
 	}
-	predecessor := "unknown"
+	predecessor := state.ReadyPredecessorUnknown
 	var raw []byte
 	if found {
-		predecessor = "present"
+		predecessor = state.ReadyPredecessorPresent
 		raw = s.published.Metadata()
 	} else {
 		_, e := s.historyGet(p.MetadataKey, historyMetadataLimit)
 		if errors.Is(e, storage.ErrNotFound) {
-			predecessor = "absent"
+			predecessor = state.ReadyPredecessorAbsent
 		} else if e != nil {
 			return e
 		}
 	}
 	var next state.PendingPublication
-	if staged { next,err = s.local.FreezeStagedSelection(ctx,s.id(),*p,predecessor,raw) } else { next,err = s.local.FreezeReadySelection(ctx, s.id(), *p, predecessor, raw) }
+	if staged {
+		next, err = s.local.FreezeStagedSelection(ctx, s.id(), *p, predecessor, raw)
+	} else {
+		next, err = s.local.FreezeReadySelection(ctx, s.id(), *p, predecessor, raw)
+	}
 	if err != nil {
 		return err
 	}
@@ -55,11 +63,15 @@ func (s *sessionScan) freezeOrdinaryReadySelection(ctx context.Context, p *state
 // checkReadySelectionRemote never converts an unknown predecessor to absence.
 func (s *sessionScan) checkReadySelectionRemote(p state.PendingPublication) (bool, error) {
 	proof := p.Selection
-	if p.StagedSelection != nil { proof = &p.StagedSelection.Core }
-	if proof == nil { return false,state.ErrReadySelectionFrozen }
+	if p.StagedSelection != nil {
+		proof = &p.StagedSelection.Core
+	}
+	if proof == nil {
+		return false, state.ErrReadySelectionFrozen
+	}
 	raw, err := s.historyGet(p.MetadataKey, historyMetadataLimit)
 	if errors.Is(err, storage.ErrNotFound) {
-		if proof.Predecessor == "absent" {
+		if proof.Predecessor == state.ReadyPredecessorAbsent {
 			return false, nil
 		}
 		return false, errHistoryMetadataConflict
@@ -71,7 +83,7 @@ func (s *sessionScan) checkReadySelectionRemote(p state.PendingPublication) (boo
 	if digest == proof.MetadataSHA256 {
 		return true, nil
 	}
-	if proof.Predecessor == "present" && digest == proof.PredecessorSHA256 {
+	if proof.Predecessor == state.ReadyPredecessorPresent && digest == proof.PredecessorSHA256 {
 		return false, nil
 	}
 	return false, errHistoryMetadataConflict
@@ -99,7 +111,9 @@ func (s *sessionScan) uploadReadySelection(p state.PendingPublication) error {
 }
 
 func (s *sessionScan) releaseTypedStage() error {
- remote,ok := s.remote.(state.StagedReadback)
- if !ok { return state.ErrReadySelectionFrozen }
- return s.local.VerifyAndBeginStagedRelease(s.ctx,s.id(),remote,s.opts.CollectorGuard)
+	remote, ok := s.remote.(state.StagedReadback)
+	if !ok {
+		return state.ErrReadySelectionFrozen
+	}
+	return s.local.VerifyAndBeginStagedRelease(s.ctx, s.id(), remote, s.opts.CollectorGuard)
 }

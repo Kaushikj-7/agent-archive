@@ -13,21 +13,43 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 )
 
+// ReadyPredecessor records the frozen remote predecessor observation.
+type ReadyPredecessor string
+
+// ReadyPredecessorAbsent, ReadyPredecessorPresent, and ReadyPredecessorUnknown
+// retain the exact predecessor wire states.
+const (
+	ReadyPredecessorAbsent  ReadyPredecessor = "absent"
+	ReadyPredecessorPresent ReadyPredecessor = "present"
+	ReadyPredecessorUnknown ReadyPredecessor = "unknown"
+)
+
+type readyPolicyContext struct {
+	Filter  string
+	Adapter string
+	Version string
+	Skill   string
+}
+
+func readyPolicy(p PendingPublication) readyPolicyContext {
+	return readyPolicyContext{Filter: p.Bundle.Capture.FilterVersion, Adapter: p.Bundle.Capture.AdapterName, Version: p.Bundle.Capture.AdapterVersion, Skill: p.SkillEvidence}
+}
+
 // ReadySelection freezes one ordinary ready source without catalog ownership.
 // JournalVersion2 is mandatory so prior decoders cannot ignore this authority.
 type ReadySelection struct {
-	Version           int    `json:"version"`
-	BundleSHA256      string `json:"bundle_sha256"`
-	MetadataSHA256    string `json:"metadata_sha256"`
-	SourceSetSHA256   string `json:"source_set_sha256"`
-	BindingSHA256     string `json:"binding_sha256"`
-	DestinationID     string `json:"destination_id"`
-	AdmissionContext  string `json:"admission_context"`
-	PolicyContext     string `json:"policy_context"`
-	Predecessor       string `json:"predecessor"`
-	PredecessorSHA256 string `json:"predecessor_sha256,omitempty"`
-	Purpose           string `json:"purpose"`
-	SHA256            string `json:"sha256"`
+	Version           int              `json:"version"`
+	BundleSHA256      string           `json:"bundle_sha256"`
+	MetadataSHA256    string           `json:"metadata_sha256"`
+	SourceSetSHA256   string           `json:"source_set_sha256"`
+	BindingSHA256     string           `json:"binding_sha256"`
+	DestinationID     string           `json:"destination_id"`
+	AdmissionContext  string           `json:"admission_context"`
+	PolicyContext     string           `json:"policy_context"`
+	Predecessor       ReadyPredecessor `json:"predecessor"`
+	PredecessorSHA256 string           `json:"predecessor_sha256,omitempty"`
+	Purpose           string           `json:"purpose"`
+	SHA256            string           `json:"sha256"`
 }
 
 // ErrReadySelectionFrozen keeps unsupported successors and their evidence pending.
@@ -68,7 +90,9 @@ func readyDigestValid(h string) bool {
 }
 
 func (p PendingPublication) validateReadySelectionShape() error {
-	if p.StagedSelection != nil { return p.validateStagedShape() }
+	if p.StagedSelection != nil {
+		return p.validateStagedShape()
+	}
 	if p.JournalVersion == 0 && p.Selection == nil {
 		return nil
 	}
@@ -85,11 +109,11 @@ func (p PendingPublication) validateReadySelectionShape() error {
 		}
 	}
 	switch q.Predecessor {
-	case "absent", "unknown":
+	case ReadyPredecessorAbsent, ReadyPredecessorUnknown:
 		if q.PredecessorSHA256 != "" {
 			return ErrDurableStorageRecovery
 		}
-	case "present":
+	case ReadyPredecessorPresent:
 		if !readyDigestValid(q.PredecessorSHA256) {
 			return ErrDurableStorageRecovery
 		}
@@ -102,7 +126,7 @@ func (p PendingPublication) validateReadySelectionShape() error {
 // FreezeReadySelection creates the proof only from current protected ownership.
 // Remote predecessor observation belongs to the caller; publication rechecks it
 // before any source effect. Present is checksum-bound to retained exact bytes.
-func (s *Store) FreezeReadySelection(ctx context.Context, id string, p PendingPublication, predecessor string, previous []byte) (PendingPublication, error) {
+func (s *Store) FreezeReadySelection(ctx context.Context, id string, p PendingPublication, predecessor ReadyPredecessor, previous []byte) (PendingPublication, error) {
 	if p.Selection != nil || p.JournalVersion != 0 || p.Catalog != nil {
 		return p, ErrReadySelectionFrozen
 	}
@@ -124,28 +148,14 @@ func (s *Store) FreezeReadySelection(ctx context.Context, id string, p PendingPu
 	if err != nil {
 		return p, err
 	}
-	policy, err := s.readyDigest(ctx, struct{ Filter, Adapter, Version, Skill string }{p.Bundle.Capture.FilterVersion, p.Bundle.Capture.AdapterName, p.Bundle.Capture.AdapterVersion, p.SkillEvidence})
+	policy, err := s.readyDigest(ctx, readyPolicy(p))
 	if err != nil {
 		return p, err
 	}
 	p.JournalVersion = 2
 	p.Selection = &ReadySelection{Version: 2, MetadataSHA256: readySHA(p.MetadataBytes), DestinationID: cfg.DestinationID(), AdmissionContext: admission, PolicyContext: policy, Predecessor: predecessor, Purpose: "capture"}
-	if predecessor == "present" {
-		if len(previous) == 0 {
-			return p, ErrDurableStorageRecovery
-		}
-		read, closeRead := s.WithReadBudget(ctx, s.resourceBudget)
-		defer closeRead()
-		published, err := read.LoadPublishedState(id)
-		if err != nil {
-			return p, err
-		}
-		if readySHA(published.Metadata()) != readySHA(previous) {
-			return p, ErrDurableStorageRecovery
-		}
-		p.Selection.PredecessorSHA256 = readySHA(previous)
-	} else if len(previous) != 0 {
-		return p, ErrDurableStorageRecovery
+	if err := s.freezeReadyPredecessor(ctx, id, &p, previous); err != nil {
+		return p, err
 	}
 	var metadata archive.Metadata
 	scratch, closeScratch := s.WithReadBudget(ctx, s.resourceBudget)
@@ -178,6 +188,27 @@ func (s *Store) FreezeReadySelection(ctx context.Context, id string, p PendingPu
 	return p, s.validateReadySelection(ctx, p)
 }
 
+func (s *Store) freezeReadyPredecessor(ctx context.Context, id string, p *PendingPublication, previous []byte) error {
+	if p.Selection.Predecessor == ReadyPredecessorPresent {
+		if len(previous) == 0 {
+			return ErrDurableStorageRecovery
+		}
+		read, closeRead := s.WithReadBudget(ctx, s.resourceBudget)
+		defer closeRead()
+		published, err := read.LoadPublishedStateContext(ctx, id)
+		if err != nil {
+			return err
+		}
+		if readySHA(published.Metadata()) != readySHA(previous) {
+			return ErrDurableStorageRecovery
+		}
+		p.Selection.PredecessorSHA256 = readySHA(previous)
+	} else if len(previous) != 0 {
+		return ErrDurableStorageRecovery
+	}
+	return nil
+}
+
 func (s *Store) readyBinding(ctx context.Context, p PendingPublication) (string, error) {
 	p.Selection = nil
 	p.StagedSelection = nil
@@ -190,13 +221,28 @@ func (s *Store) readyBinding(ctx context.Context, p PendingPublication) (string,
 }
 
 func (s *Store) validateReadySelection(ctx context.Context, p PendingPublication) error {
-	if p.StagedSelection != nil { return s.validateStagedSelection(ctx, p) }
+	if p.StagedSelection != nil {
+		return s.validateStagedSelection(ctx, p)
+	}
 	if p.Selection == nil {
 		return p.validateReadySelectionShape()
 	}
 	if err := p.validateReadySelectionShape(); err != nil {
 		return err
 	}
+	if err := validateReadySourceKeys(p); err != nil {
+		return err
+	}
+	if err := s.validateReadyOwner(ctx, p); err != nil {
+		return err
+	}
+	if err := s.validateReadyDigests(ctx, p); err != nil {
+		return err
+	}
+	return s.validateReadyReference(ctx, p)
+}
+
+func validateReadySourceKeys(p PendingPublication) error {
 	if len(p.SourceBytes) == 0 || len(p.SourceBytes) > maxPendingHistoryBytes || readySHA(p.SourceBytes) != p.SourceSHA256 {
 		return ErrDurableStorageRecovery
 	}
@@ -208,6 +254,10 @@ func (s *Store) validateReadySelection(ctx context.Context, p PendingPublication
 	if err != nil || metadataKey != p.MetadataKey {
 		return errors.Join(ErrDurableStorageRecovery, err)
 	}
+	return nil
+}
+
+func (s *Store) validateReadyOwner(ctx context.Context, p PendingPublication) error {
 	cfg, err := s.inspectDurableReadRoots()
 	if err != nil || !cfg.SupportsOrdinarySelection() || cfg.DestinationID() != p.Selection.DestinationID {
 		return errors.Join(ErrDurableStorageRecovery, err)
@@ -226,7 +276,11 @@ func (s *Store) validateReadySelection(ctx context.Context, p PendingPublication
 	if p.SkillEvidence != string(cfg.EffectiveSkillEvidence()) {
 		return ErrReadySelectionFrozen
 	}
-	policy, err := s.readyDigest(ctx, struct{ Filter, Adapter, Version, Skill string }{p.Bundle.Capture.FilterVersion, p.Bundle.Capture.AdapterName, p.Bundle.Capture.AdapterVersion, p.SkillEvidence})
+	return nil
+}
+
+func (s *Store) validateReadyDigests(ctx context.Context, p PendingPublication) error {
+	policy, err := s.readyDigest(ctx, readyPolicy(p))
 	if err != nil || policy != p.Selection.PolicyContext {
 		return errors.Join(ErrDurableStorageRecovery, err)
 	}
@@ -244,6 +298,10 @@ func (s *Store) validateReadySelection(ctx context.Context, p PendingPublication
 	if err != nil || digest != p.Selection.SHA256 {
 		return errors.Join(ErrDurableStorageRecovery, err)
 	}
+	return nil
+}
+
+func (s *Store) validateReadyReference(ctx context.Context, p PendingPublication) error {
 	var metadata archive.Metadata
 	scratch, closeScratch := s.WithReadBudget(ctx, s.resourceBudget)
 	defer closeScratch()
@@ -269,6 +327,7 @@ func (s *Store) ValidateReadySelection(ctx context.Context, p PendingPublication
 	return s.validateReadySelection(ctx, p)
 }
 
+// UnmarshalJSON decodes a bounded descriptor and refuses unknown or duplicate fields.
 func (q *ReadySelection) UnmarshalJSON(raw []byte) error {
 	if len(raw) > 16<<10 {
 		return ErrDurableStorageRecovery
@@ -303,7 +362,9 @@ func (q *ReadySelection) validateProofDigest() error {
 // SaveReadyPublication records selecting proof together with the cache before
 // request acknowledgment and pending removal. No source body is duplicated.
 func (p *Published) SaveReadyPublication(pending PendingPublication, at time.Time) error {
-	if pending.StagedSelection != nil { return p.saveStagedPublication(pending, at) }
+	if pending.StagedSelection != nil {
+		return p.saveStagedPublication(pending, at)
+	}
 	if err := pending.ValidateReadySlot(p.id); err != nil {
 		return err
 	}
@@ -324,7 +385,7 @@ func (p *Published) SaveReadyPublication(pending PendingPublication, at time.Tim
 	return p.write(next)
 }
 
-func (p *Published) preserveReadyPublished(next *publishedState) error {
+func (p *Published) preserveReadyPublished(ctx context.Context, next *publishedState) error {
 	prior := p.state.LastPublished
 	if prior != nil && prior.Selection != nil {
 		if next.LastPublished == nil {
@@ -347,7 +408,7 @@ func (p *Published) preserveReadyPublished(next *publishedState) error {
 		if next.LastPublished.Selection.MetadataSHA256 != readySHA(next.MetadataBytes) {
 			return ErrReadySelectionFrozen
 		}
-		return p.validateReadyPublished(next)
+		return p.validateReadyPublished(ctx, next)
 	}
 	return nil
 }
@@ -362,7 +423,7 @@ func (s *Store) checkSelectingPendingWrite(ctx context.Context, id string, p Pen
 	}
 	read, closeRead := s.WithReadBudget(ctx, s.resourceBudget)
 	defer closeRead()
-	old, found, err := read.LoadPending(id)
+	old, found, err := read.LoadPendingContext(ctx, id)
 	if err != nil {
 		return err
 	}
@@ -372,7 +433,9 @@ func (s *Store) checkSelectingPendingWrite(ctx context.Context, id string, p Pen
 		}
 		return ErrReadySelectionFrozen
 	}
-	if old.StagedSelection != nil && (p.StagedSelection == nil || *old.StagedSelection != *p.StagedSelection) { return ErrReadySelectionFrozen }
+	if old.StagedSelection != nil && (p.StagedSelection == nil || *old.StagedSelection != *p.StagedSelection) {
+		return ErrReadySelectionFrozen
+	}
 	if old.Selection != nil && (p.Selection == nil || *old.Selection != *p.Selection) {
 		return ErrReadySelectionFrozen
 	}
@@ -399,7 +462,9 @@ func (s *Store) checkSelectingPendingRemoval(id string) error {
 	if !found {
 		return nil
 	}
-	if pending.StagedSelection != nil { return s.checkStagedPendingRemoval(pending) }
+	if pending.StagedSelection != nil {
+		return s.checkStagedPendingRemoval(pending)
+	}
 	if pending.Selection == nil {
 		return nil
 	}
@@ -418,7 +483,7 @@ func (s *Store) checkSelectingPendingRemoval(id string) error {
 
 // validateReadyPublished applies the existing acknowledged metadata/snapshot
 // checks to the candidate state, then binds the full retained bundle and set.
-func (p *Published) validateReadyPublished(next *publishedState) error {
+func (p *Published) validateReadyPublished(ctx context.Context, next *publishedState) error {
 	q := next.LastPublished.Selection
 	if err := (PendingPublication{JournalVersion: 2, Selection: q}).validateReadySelectionShape(); err != nil {
 		return err
@@ -426,7 +491,6 @@ func (p *Published) validateReadyPublished(next *publishedState) error {
 	if err := q.validateProofDigest(); err != nil {
 		return err
 	}
-	ctx := p.store.durableContext()
 	read, closeRead := p.store.WithReadBudget(ctx, p.store.resourceBudget)
 	defer closeRead()
 	view := &Published{store: read, id: p.id, state: *next, found: true}

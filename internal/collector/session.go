@@ -297,7 +297,7 @@ func (s *sessionScan) read() (read sourceRead, ok bool, err error) {
 		if s.published.TypedStagedPublished() {
 			err := s.releaseTypedStage()
 			read.outcome = outcomeSkipped
-			return read,false,err
+			return read, false, err
 		}
 		if _, _, published := s.published.LastPublished(); !published {
 			return s.readImportStage()

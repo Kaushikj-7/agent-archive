@@ -669,7 +669,9 @@ func peelCatalogProtection(c Config) (Config, error) {
 func peelProtectedWriterLayers(c Config) (Config, error) {
 	var err error
 	c, err = peelStagedSelectionProtection(c)
-	if err != nil { return c, err }
+	if err != nil {
+		return c, err
+	}
 	c, err = peelPublicationProtection(c)
 	if err != nil {
 		return c, err
@@ -730,21 +732,25 @@ func peelPublicationProtection(c Config) (Config, error) {
 
 // SupportsOrdinarySelection preserves the ordinary codec under both supported floors.
 func (c Config) SupportsOrdinarySelection() bool {
- return c.PublicationCompositionProtection && c.DurableStorageProtection && (c.SchemaVersion == 12 || c.SchemaVersion == 13 && c.StagedSelectionProtection)
+	return c.PublicationCompositionProtection && c.DurableStorageProtection && (c.SchemaVersion == 12 || c.SchemaVersion == 13 && c.StagedSelectionProtection)
 }
 
 // SupportsStagedSelection never enables catalog staging.
 func (c Config) SupportsStagedSelection() bool {
- return c.SchemaVersion == 13 && c.StagedSelectionProtection && c.SupportsOrdinarySelection() && c.ImportStagingProtection && c.Storage.EffectiveArchiveFormat() == destination.FormatLegacy
+	return c.SchemaVersion == 13 && c.StagedSelectionProtection && c.SupportsOrdinarySelection() && c.ImportStagingProtection && c.Storage.EffectiveArchiveFormat() == destination.FormatLegacy
 }
 
 func peelStagedSelectionProtection(c Config) (Config, error) {
- if !c.StagedSelectionProtection {
-  if c.SchemaVersion == 13 { return c, errors.New("staged selection floor lacks protection") }
-  return c, nil
- }
- if !c.SupportsStagedSelection() { return c, errors.New("unsupported staged selection configuration") }
- c.StagedSelectionProtection = false
- c.SchemaVersion = 12
- return c, nil
+	if !c.StagedSelectionProtection {
+		if c.SchemaVersion == 13 {
+			return c, errors.New("staged selection floor lacks protection")
+		}
+		return c, nil
+	}
+	if !c.SupportsStagedSelection() {
+		return c, errors.New("unsupported staged selection configuration")
+	}
+	c.StagedSelectionProtection = false
+	c.SchemaVersion = 12
+	return c, nil
 }

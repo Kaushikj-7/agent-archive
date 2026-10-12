@@ -75,8 +75,12 @@ func (s *sessionScan) block(reason state.BlockedReason, candidate *archive.Sourc
 // context; admission derives an invocation context for this serial lifecycle.
 func (s *sessionScan) publishPending(ctx context.Context, pending state.PendingPublication) (sessionOutcome, error) {
 	if pending.StagedSelection != nil {
-		if authority,ok := s.remote.(interface{CatalogMetadataAuthority() bool}); ok && authority.CatalogMetadataAuthority() { return outcomeSkipped,state.ErrReadySelectionFrozen }
-		if pending.Catalog != nil { return outcomeSkipped,state.ErrReadySelectionFrozen }
+		if authority, ok := s.remote.(interface{ CatalogMetadataAuthority() bool }); ok && authority.CatalogMetadataAuthority() {
+			return outcomeSkipped, state.ErrReadySelectionFrozen
+		}
+		if pending.Catalog != nil {
+			return outcomeSkipped, state.ErrReadySelectionFrozen
+		}
 	}
 	if err := pending.ValidateReadySlot(s.id()); err != nil {
 		return outcomeSkipped, err
@@ -221,9 +225,13 @@ func (s *sessionScan) acknowledgePublication(pending state.PendingPublication, k
 		return outcomeSkipped, err
 	}
 	if pending.StagedSelection != nil {
-		if keepPending { return outcomeSkipped,state.ErrReadySelectionFrozen }
-		if err := s.releaseTypedStage(); err != nil { return outcomeSkipped,err }
-		return outcomePublished,nil
+		if keepPending {
+			return outcomeSkipped, state.ErrReadySelectionFrozen
+		}
+		if err := s.releaseTypedStage(); err != nil {
+			return outcomeSkipped, err
+		}
+		return outcomePublished, nil
 	}
 	if pending.RequestToken != "" {
 		if _, err := s.local.CompleteRequest(s.id(), pending.RequestToken); err != nil {

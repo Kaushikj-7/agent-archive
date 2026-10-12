@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"maps"
 	"os"
 	"strings"
 	"testing"
@@ -52,7 +53,7 @@ func readySelectionFixture(t *testing.T) (*Store, PendingPublication) {
 		t.Fatal(err)
 	}
 	p.SkillEvidence = string(cfg.EffectiveSkillEvidence())
-	p, err = s.FreezeReadySelection(context.Background(), p.Bundle.ArchiveSessionID, p, "absent", nil)
+	p, err = s.FreezeReadySelection(context.Background(), p.Bundle.ArchiveSessionID, p, ReadyPredecessorAbsent, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +120,7 @@ func TestReadySelectionMutationsRetainExactEvidence(t *testing.T) {
 		"source":       func(q *PendingPublication) { q.SourceBytes = []byte("different source") },
 		"registration": func(q *PendingPublication) { q.Bundle.ParentSessionID = "foreign" },
 		"policy":       func(q *PendingPublication) { q.SkillEvidence = "none" },
-		"predecessor":  func(q *PendingPublication) { q.Selection.Predecessor = "unknown" },
+		"predecessor":  func(q *PendingPublication) { q.Selection.Predecessor = ReadyPredecessorUnknown },
 		"destination":  func(q *PendingPublication) { q.Selection.DestinationID = "foreign" },
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -150,9 +151,7 @@ func TestReadySelectionWireRefusesAmbiguousAndUnversionedAuthority(t *testing.T)
 	}
 	for _, version := range []json.RawMessage{nil, []byte(`null`), []byte(`1`)} {
 		copyFields := map[string]json.RawMessage{}
-		for k, v := range fields {
-			copyFields[k] = v
-		}
+		maps.Copy(copyFields, fields)
 		if version == nil {
 			delete(copyFields, "journal_version")
 		} else {
@@ -186,7 +185,7 @@ func TestReadySelectionRecomputedProofCannotReplacePendingOwner(t *testing.T) {
 		t.Fatal(err)
 	}
 	replacement := *p.Selection
-	replacement.Predecessor = "unknown"
+	replacement.Predecessor = ReadyPredecessorUnknown
 	replacement.SHA256 = ""
 	replacement.SHA256, err = s.readyDigest(t.Context(), replacement)
 	if err != nil {

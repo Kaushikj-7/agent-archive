@@ -1,141 +1,287 @@
 package state
 
 import (
- "bytes"
- "context"
- "encoding/json"
- "errors"
- "os"
- "strings"
- "testing"
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"os"
+	"strings"
+	"testing"
 
- "github.com/wangjohn/agent-archive/internal/archive"
- "github.com/wangjohn/agent-archive/internal/config"
- "github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/local"
 )
 
-func stagedSelectionFixture(t *testing.T,request bool) (*Store,PendingPublication,*local.CollectorGuard) {
- t.Helper()
- s,p := readySelectionFixture(t)
- p.Selection = nil; p.JournalVersion = 0
- cfg,_,err := config.Load(s.Home()); if err != nil { t.Fatal(err) }
- cfg.ImportStagingProtection = true; cfg.StagedSelectionProtection = true
- if err = config.Save(s.Home(),cfg); err != nil { t.Fatal(err) }
- cfg,_,err = config.Load(s.Home()); if err != nil { t.Fatal(err) }
- reg,_,err := s.LoadRegistration(p.Bundle.ArchiveSessionID); if err != nil { t.Fatal(err) }
- reg.Origin = archive.SessionOriginImport; reg.ImportBatch = archive.NewImportBatch("synthetic-batch"); reg.AdmittedAt = p.ReadyAt
- digest,err := s.SaveImportStage(t.Context(),reg,p.Bundle,cfg.EffectiveSkillEvidence()); if err != nil { t.Fatal(err) }
- reg.StagedImportSHA256 = digest
- if err = s.SaveRegistration(reg); err != nil { t.Fatal(err) }
- if request {
-  if err = s.SaveRequest(reg.ArchiveSessionID,"backfill",p.ReadyAt); err != nil { t.Fatal(err) }
-  req,_,err := s.LoadRequest(reg.ArchiveSessionID); if err != nil { t.Fatal(err) }; p.RequestToken = req.Token
- }
- p,err = s.FreezeStagedSelection(t.Context(),reg.ArchiveSessionID,p,"absent",nil); if err != nil { t.Fatal(err) }
- if err = s.SavePending(reg.ArchiveSessionID,p); err != nil { t.Fatal(err) }
- published,err := s.LoadPublishedState(reg.ArchiveSessionID); if err != nil { t.Fatal(err) }
- if err = published.SaveReadyPublication(p,p.ReadyAt); err != nil { t.Fatal(err) }
- guard,err := local.LockCollectorGuard(s.Home()); if err != nil { t.Fatal(err) }
- t.Cleanup(func(){ guard.Release() })
- return s,p,guard
+func stagedSelectionFixture(t *testing.T, request bool) (*Store, PendingPublication, *local.CollectorGuard) {
+	t.Helper()
+	s, p := readySelectionFixture(t)
+	p.Selection = nil
+	p.JournalVersion = 0
+	cfg, _, err := config.Load(s.Home())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.ImportStagingProtection = true
+	cfg.StagedSelectionProtection = true
+	if err = config.Save(s.Home(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err = config.Load(s.Home())
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg, _, err := s.LoadRegistration(p.Bundle.ArchiveSessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg.Origin = archive.SessionOriginImport
+	reg.ImportBatch = archive.NewImportBatch("synthetic-batch")
+	reg.AdmittedAt = p.ReadyAt
+	digest, err := s.SaveImportStage(t.Context(), reg, p.Bundle, cfg.EffectiveSkillEvidence())
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg.StagedImportSHA256 = digest
+	if err = s.SaveRegistration(reg); err != nil {
+		t.Fatal(err)
+	}
+	if request {
+		if err = s.SaveRequest(reg.ArchiveSessionID, "backfill", p.ReadyAt); err != nil {
+			t.Fatal(err)
+		}
+		req, _, err := s.LoadRequest(reg.ArchiveSessionID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		p.RequestToken = req.Token
+	}
+	p, err = s.FreezeStagedSelection(t.Context(), reg.ArchiveSessionID, p, "absent", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.SavePending(reg.ArchiveSessionID, p); err != nil {
+		t.Fatal(err)
+	}
+	published, err := s.LoadPublishedState(reg.ArchiveSessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = published.SaveReadyPublication(p, p.ReadyAt); err != nil {
+		t.Fatal(err)
+	}
+	guard, err := local.LockCollectorGuard(s.Home())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { guard.Release() })
+	return s, p, guard
 }
 
-type stagedReadbackFixture struct { values map[string][]byte; corrupt bool; reads int; afterRead func(int) error }
-func (r *stagedReadbackFixture) GetLimited(ctx context.Context,key string,limit int64) ([]byte,error) {
- r.reads++
- if r.afterRead != nil { if err := r.afterRead(r.reads); err != nil { return nil,err } }
- if err := ctx.Err(); err != nil { return nil,err }
- b,ok := r.values[key]; if !ok || int64(len(b)) > limit { return nil,errors.New("synthetic readback unavailable") }
- if r.corrupt { return []byte("wrong synthetic bytes"),nil }
- return append([]byte(nil),b...),nil
+type stagedReadbackFixture struct {
+	values    map[string][]byte
+	corrupt   bool
+	reads     int
+	afterRead func(int) error
 }
-func stagedRemote(p PendingPublication) *stagedReadbackFixture { return &stagedReadbackFixture{values:map[string][]byte{p.MetadataKey:p.MetadataBytes,p.SourceKey:p.SourceBytes}} }
+
+func (r *stagedReadbackFixture) GetLimited(ctx context.Context, key string, limit int64) ([]byte, error) {
+	r.reads++
+	if r.afterRead != nil {
+		if err := r.afterRead(r.reads); err != nil {
+			return nil, err
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	b, ok := r.values[key]
+	if !ok || int64(len(b)) > limit {
+		return nil, errors.New("synthetic readback unavailable")
+	}
+	if r.corrupt {
+		return []byte("wrong synthetic bytes"), nil
+	}
+	return append([]byte(nil), b...), nil
+}
+func stagedRemote(p PendingPublication) *stagedReadbackFixture {
+	return &stagedReadbackFixture{values: map[string][]byte{p.MetadataKey: p.MetadataBytes, p.SourceKey: p.SourceBytes}}
+}
 
 func TestStagedSelectionExactReleaseAndRestart(t *testing.T) {
- s,p,guard := stagedSelectionFixture(t,true)
- id := p.Bundle.ArchiveSessionID
- if err := s.RemoveImportStage(id); !errors.Is(err,ErrReadySelectionFrozen) { t.Fatalf("generic cleanup bypass: %v",err) }
- remote := stagedRemote(p)
- if err := s.VerifyAndBeginStagedRelease(t.Context(),id,remote,guard); err != nil { t.Fatal(err) }
- if _,found,err := s.LoadRequest(id); err != nil || found { t.Fatalf("covered request: %v %v",found,err) }
- if _,found,err := s.LoadPending(id); err != nil || found { t.Fatalf("pending: %v %v",found,err) }
- reg,_,err := s.LoadRegistration(id); if err != nil { t.Fatal(err) }
- if _,found,err := s.LoadImportStage(t.Context(),reg); err != nil || found { t.Fatalf("stage: %v %v",found,err) }
- reads := remote.reads
- if err := OpenReadOnly(s.Home()).VerifyAndBeginStagedRelease(t.Context(),id,remote,guard); err != nil { t.Fatal(err) }
- if remote.reads != reads { t.Fatal("completed release replayed remote reads") }
+	s, p, guard := stagedSelectionFixture(t, true)
+	id := p.Bundle.ArchiveSessionID
+	if err := s.RemoveImportStage(id); !errors.Is(err, ErrReadySelectionFrozen) {
+		t.Fatalf("generic cleanup bypass: %v", err)
+	}
+	remote := stagedRemote(p)
+	if err := s.VerifyAndBeginStagedRelease(t.Context(), id, remote, guard); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := s.LoadRequest(id); err != nil || found {
+		t.Fatalf("covered request: %v %v", found, err)
+	}
+	if _, found, err := s.LoadPending(id); err != nil || found {
+		t.Fatalf("pending: %v %v", found, err)
+	}
+	reg, _, err := s.LoadRegistration(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := s.LoadImportStage(t.Context(), reg); err != nil || found {
+		t.Fatalf("stage: %v %v", found, err)
+	}
+	reads := remote.reads
+	if err := OpenReadOnly(s.Home()).VerifyAndBeginStagedRelease(t.Context(), id, remote, guard); err != nil {
+		t.Fatal(err)
+	}
+	if remote.reads != reads {
+		t.Fatal("completed release replayed remote reads")
+	}
 }
 
 func TestStagedSelectionReadbackAndNewerTokenRetainEvidence(t *testing.T) {
- for _,mode := range []string{"wrong-readback","newer-token","missing-guard"} { t.Run(mode,func(t *testing.T){
-  s,p,guard := stagedSelectionFixture(t,true); id := p.Bundle.ArchiveSessionID; remote := stagedRemote(p)
-  if mode == "wrong-readback" { remote.corrupt = true }
-  if mode == "newer-token" { if err := s.SaveRequest(id,"hook",p.ReadyAt); err != nil { t.Fatal(err) } }
-  if mode == "missing-guard" { guard = nil }
-  before,err := os.ReadFile(s.requestPath(id)); if err != nil { t.Fatal(err) }
-  if err = s.VerifyAndBeginStagedRelease(t.Context(),id,remote,guard); err == nil { t.Fatal("unsupported release accepted") }
-  after,err := os.ReadFile(s.requestPath(id)); if err != nil || !bytes.Equal(before,after) { t.Fatal("request changed",err) }
-  reg,_,err := s.LoadRegistration(id); if err != nil { t.Fatal(err) }
-  if _,found,err := s.LoadImportStage(t.Context(),reg); err != nil || !found { t.Fatalf("stage lost: %v %v",found,err) }
- }) }
+	for _, mode := range []string{"wrong-readback", "newer-token", "missing-guard"} {
+		t.Run(mode, func(t *testing.T) {
+			s, p, guard := stagedSelectionFixture(t, true)
+			id := p.Bundle.ArchiveSessionID
+			remote := stagedRemote(p)
+			if mode == "wrong-readback" {
+				remote.corrupt = true
+			}
+			if mode == "newer-token" {
+				if err := s.SaveRequest(id, "hook", p.ReadyAt); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if mode == "missing-guard" {
+				guard = nil
+			}
+			before, err := os.ReadFile(s.requestPath(id))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = s.VerifyAndBeginStagedRelease(t.Context(), id, remote, guard); err == nil {
+				t.Fatal("unsupported release accepted")
+			}
+			after, err := os.ReadFile(s.requestPath(id))
+			if err != nil || !bytes.Equal(before, after) {
+				t.Fatal("request changed", err)
+			}
+			reg, _, err := s.LoadRegistration(id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, found, err := s.LoadImportStage(t.Context(), reg); err != nil || !found {
+				t.Fatalf("stage lost: %v %v", found, err)
+			}
+		})
+	}
 }
 
 func TestStagedSelectionMandatoryCodecAndClosedAuthority(t *testing.T) {
- _,p,_ := stagedSelectionFixture(t,false)
- raw,err := json.Marshal(p); if err != nil { t.Fatal(err) }
- for _,mutate := range []func(string)string{
-  func(s string)string{return strings.Replace(s,`"journal_version":3`,`"journal_version":2`,1)},
-  func(s string)string{return strings.Replace(s,`"stage_sha256":`, `"stage_sha256":null,"stage_sha256":`,1)},
-  func(s string)string{return strings.Replace(s,`"had_request":false`,`"had_request":null`,1)},
-  func(s string)string{return strings.Replace(s,`"stage_sha256":`,`"Stage_SHA256":`,1)},
- } {
-  var decoded PendingPublication
-  if err := json.Unmarshal([]byte(mutate(string(raw))),&decoded); err == nil { t.Fatal("damaged staged authority accepted") }
- }
+	_, p, _ := stagedSelectionFixture(t, false)
+	raw, err := json.Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, mutate := range []func(string) string{
+		func(s string) string { return strings.Replace(s, `"journal_version":3`, `"journal_version":2`, 1) },
+		func(s string) string {
+			return strings.Replace(s, `"stage_sha256":`, `"stage_sha256":null,"stage_sha256":`, 1)
+		},
+		func(s string) string { return strings.Replace(s, `"had_request":false`, `"had_request":null`, 1) },
+		func(s string) string { return strings.Replace(s, `"stage_sha256":`, `"Stage_SHA256":`, 1) },
+	} {
+		var decoded PendingPublication
+		if err := json.Unmarshal([]byte(mutate(string(raw))), &decoded); err == nil {
+			t.Fatal("damaged staged authority accepted")
+		}
+	}
 }
 
 func TestStagedSelectionLegacyExactRemovalCannotBypassReceipt(t *testing.T) {
- s,p,_ := stagedSelectionFixture(t,true)
- if err := s.RemoveExactLegacyPending(p.Bundle.ArchiveSessionID,p); err == nil { t.Fatal("legacy exact removal accepted typed3") }
- if _,found,err := s.LoadPending(p.Bundle.ArchiveSessionID); err != nil || !found { t.Fatalf("typed pending lost: %v %v",found,err) }
+	s, p, _ := stagedSelectionFixture(t, true)
+	if err := s.RemoveExactLegacyPending(p.Bundle.ArchiveSessionID, p); err == nil {
+		t.Fatal("legacy exact removal accepted typed3")
+	}
+	if _, found, err := s.LoadPending(p.Bundle.ArchiveSessionID); err != nil || !found {
+		t.Fatalf("typed pending lost: %v %v", found, err)
+	}
 }
 
 func TestStagedFloorPreservesOrdinarySelection2(t *testing.T) {
- s,p := readySelectionFixture(t)
- cfg,_,err := config.Load(s.Home()); if err != nil { t.Fatal(err) }
- cfg.ImportStagingProtection = true; cfg.StagedSelectionProtection = true
- if err = config.Save(s.Home(),cfg); err != nil { t.Fatal(err) }
- if err = s.SavePending(p.Bundle.ArchiveSessionID,p); err != nil { t.Fatal(err) }
- loaded,found,err := s.LoadPending(p.Bundle.ArchiveSessionID)
- if err != nil || !found || loaded.Selection == nil || loaded.JournalVersion != 2 || *loaded.Selection != *p.Selection { t.Fatal("ordinary pending2 changed",err) }
- published,err := s.LoadPublishedState(p.Bundle.ArchiveSessionID); if err != nil { t.Fatal(err) }
- if err = published.SaveReadyPublication(p,p.ReadyAt); err != nil { t.Fatal(err) }
- loadedPublished,err := OpenReadOnly(s.Home()).LoadPublishedState(p.Bundle.ArchiveSessionID)
- if err != nil || loadedPublished.state.PublicationVersion != 2 || loadedPublished.state.LastPublished.Selection == nil || *loadedPublished.state.LastPublished.Selection != *p.Selection { t.Fatal("ordinary published2 changed",err) }
+	s, p := readySelectionFixture(t)
+	cfg, _, err := config.Load(s.Home())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.ImportStagingProtection = true
+	cfg.StagedSelectionProtection = true
+	if err = config.Save(s.Home(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.SavePending(p.Bundle.ArchiveSessionID, p); err != nil {
+		t.Fatal(err)
+	}
+	loaded, found, err := s.LoadPending(p.Bundle.ArchiveSessionID)
+	if err != nil || !found || loaded.Selection == nil || loaded.JournalVersion != 2 || *loaded.Selection != *p.Selection {
+		t.Fatal("ordinary pending2 changed", err)
+	}
+	published, err := s.LoadPublishedState(p.Bundle.ArchiveSessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = published.SaveReadyPublication(p, p.ReadyAt); err != nil {
+		t.Fatal(err)
+	}
+	loadedPublished, err := OpenReadOnly(s.Home()).LoadPublishedState(p.Bundle.ArchiveSessionID)
+	if err != nil || loadedPublished.state.PublicationVersion != 2 || loadedPublished.state.LastPublished.Selection == nil || *loadedPublished.state.LastPublished.Selection != *p.Selection {
+		t.Fatal("ordinary published2 changed", err)
+	}
 }
 
 func TestStagedReleaseRechecksTokenAfterVerifiedReadback(t *testing.T) {
- s,p,guard := stagedSelectionFixture(t,true)
- id := p.Bundle.ArchiveSessionID
- remote := stagedRemote(p)
- remote.afterRead = func(n int) error {
-  if n == 3 { return s.SaveRequest(id,"hook",p.ReadyAt) }
-  return nil
- }
- if err := s.VerifyAndBeginStagedRelease(t.Context(),id,remote,guard); !errors.Is(err,ErrReadySelectionFrozen) { t.Fatalf("new final token: %v",err) }
- request,found,err := s.LoadRequest(id)
- if err != nil || !found || request.Token == p.RequestToken { t.Fatal("new token not preserved",err) }
- reg,_,err := s.LoadRegistration(id); if err != nil { t.Fatal(err) }
- if _,found,err := s.LoadImportStage(t.Context(),reg); err != nil || !found { t.Fatal("stage removed before final token check",err) }
+	s, p, guard := stagedSelectionFixture(t, true)
+	id := p.Bundle.ArchiveSessionID
+	remote := stagedRemote(p)
+	remote.afterRead = func(n int) error {
+		if n == 3 {
+			return s.SaveRequest(id, "hook", p.ReadyAt)
+		}
+		return nil
+	}
+	if err := s.VerifyAndBeginStagedRelease(t.Context(), id, remote, guard); !errors.Is(err, ErrReadySelectionFrozen) {
+		t.Fatalf("new final token: %v", err)
+	}
+	request, found, err := s.LoadRequest(id)
+	if err != nil || !found || request.Token == p.RequestToken {
+		t.Fatal("new token not preserved", err)
+	}
+	reg, _, err := s.LoadRegistration(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := s.LoadImportStage(t.Context(), reg); err != nil || !found {
+		t.Fatal("stage removed before final token check", err)
+	}
 }
 
 type stagedCatalogRefusalFixture struct{ *stagedReadbackFixture }
+
 func (*stagedCatalogRefusalFixture) CatalogMetadataAuthority() bool { return true }
 
 func TestStagedReleaseRefusesCatalogBeforeAnyRead(t *testing.T) {
- s,p,guard := stagedSelectionFixture(t,true)
- remote := &stagedCatalogRefusalFixture{stagedRemote(p)}
- if err := s.VerifyAndBeginStagedRelease(t.Context(),p.Bundle.ArchiveSessionID,remote,guard); !errors.Is(err,ErrReadySelectionFrozen) { t.Fatalf("catalog accepted: %v",err) }
- if remote.reads != 0 { t.Fatal("catalog refusal performed remote reads") }
- if _,found,err := s.LoadPending(p.Bundle.ArchiveSessionID); err != nil || !found { t.Fatal("catalog refusal lost pending",err) }
+	s, p, guard := stagedSelectionFixture(t, true)
+	remote := &stagedCatalogRefusalFixture{stagedRemote(p)}
+	if err := s.VerifyAndBeginStagedRelease(t.Context(), p.Bundle.ArchiveSessionID, remote, guard); !errors.Is(err, ErrReadySelectionFrozen) {
+		t.Fatalf("catalog accepted: %v", err)
+	}
+	if remote.reads != 0 {
+		t.Fatal("catalog refusal performed remote reads")
+	}
+	if _, found, err := s.LoadPending(p.Bundle.ArchiveSessionID); err != nil || !found {
+		t.Fatal("catalog refusal lost pending", err)
+	}
 }

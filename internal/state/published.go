@@ -3,6 +3,7 @@ package state
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -234,10 +235,10 @@ func (p publishedState) summaryFromMetadata(m archive.Metadata) PublishedSummary
 }
 
 type publishedSnapshot struct {
-	StagedSelection *StagedSelection `json:"staged_commit3,omitempty"`
-	Selection   *ReadySelection      `json:"selection_commit,omitempty"`
-	Bundle      archive.SourceBundle `json:"bundle"`
-	PublishedAt time.Time            `json:"published_at"`
+	StagedSelection *StagedSelection     `json:"staged_commit3,omitempty"`
+	Selection       *ReadySelection      `json:"selection_commit,omitempty"`
+	Bundle          archive.SourceBundle `json:"bundle"`
+	PublishedAt     time.Time            `json:"published_at"`
 	// Source is the source object this publication's metadata points at:
 	// exactly the key, digest, and size that were uploaded. The next
 	// publication names the object it supersedes from it. Rebuilding that
@@ -396,6 +397,21 @@ func PublishedStateLoads() int64 { return publishedStateLoads.Load() }
 // LoadPublishedState reads a session's published state. A session with none
 // yet yields an empty one (Found reports false) that saves create.
 func (s *Store) LoadPublishedState(archiveSessionID string) (*Published, error) {
+	return s.loadPublishedStateContext(s.durableContext(), archiveSessionID)
+}
+
+// LoadPublishedStateContext inherits the invocation context without creating a
+// different resource scope or releasing the caller's retained decoded owner.
+func (s *Store) LoadPublishedStateContext(ctx context.Context, archiveSessionID string) (*Published, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	read := *s
+	read.resourceContext = ctx
+	return read.loadPublishedStateContext(ctx, archiveSessionID)
+}
+
+func (s *Store) loadPublishedStateContext(ctx context.Context, archiveSessionID string) (*Published, error) {
 	if !safeFileComponent(archiveSessionID) {
 		return nil, errors.New("archive session ID is not a safe file name component")
 	}
@@ -408,10 +424,12 @@ func (s *Store) LoadPublishedState(archiveSessionID string) (*Published, error) 
 		return nil, fmt.Errorf("read published state %q: %w", archiveSessionID, s.afterLoss(archiveSessionID, err))
 	}
 	if found && p.state.PublicationVersion == 3 {
-		if err := p.preserveStagedPublished(&p.state); err != nil { return nil,err }
+		if err := p.preserveStagedPublished(ctx, &p.state); err != nil {
+			return nil, err
+		}
 	}
 	if found && p.state.PublicationVersion == 2 {
-		if err := p.preserveReadyPublished(&p.state); err != nil {
+		if err := p.preserveReadyPublished(ctx, &p.state); err != nil {
 			return nil, err
 		}
 	}
@@ -432,8 +450,10 @@ func (s *Store) LoadPublishedState(archiveSessionID string) (*Published, error) 
 }
 
 func (p *Published) write(next publishedState) error {
-	if err := p.preserveStagedPublished(&next); err != nil { return err }
-	if err := p.preserveReadyPublished(&next); err != nil {
+	if err := p.preserveStagedPublished(p.store.durableContext(), &next); err != nil {
+		return err
+	}
+	if err := p.preserveReadyPublished(p.store.durableContext(), &next); err != nil {
 		return err
 	}
 	summary, err := p.store.summaryBudgeted(next)
