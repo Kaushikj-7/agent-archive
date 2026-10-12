@@ -1,6 +1,7 @@
 # Listing performance target
 
-Ordinary noninteractive `list --limit N` and `list --json --limit N`
+On the default legacy destination format, ordinary noninteractive
+`list --limit N` and `list --json --limit N`
 use session-addressed revision-qualified `listing/v3/` entries; existing
 `listing/v2/` summaries remain readable. A complete healthy archive reads
 at most N canonical metadata bodies on a cold run, or N selected cache files
@@ -9,10 +10,12 @@ fixtures assert the default 50-body budget against the exhaustive reader.
 Warm unchanged selections perform no remote metadata GETs. Normal metadata
 refreshes share the same total body budget: a stale cached revision is never
 opened before downloading its replacement. Cache paths encode the canonical
-key and a SHA-256 of the opaque validator; header-only pruning removes old
-versions. Flat legacy cache files are disposable cold misses and are removed
-without opening their bodies. Cache key limits and corruption fallback remain
-unchanged.
+key and a SHA-256 of the opaque validator. Changed-key writes prune stale
+versions; each command also maintains at most 64 cache directories, resuming
+from a private checkpoint and using file modification times for deferred
+cleanup. Cache opening skips session directories. Flat legacy cache files are
+disposable cold misses. Fresh complete listings still evict absent keys. Cache
+key limits, private file handling and corruption fallback remain unchanged.
 
 The budget covers bodies, not discovery: fresh canonical and both v2/v3 index LIST
 headers are enumerated on every query, proportional to archive size. Text
@@ -22,13 +25,29 @@ capture times use harness and session identity as deterministic tie breakers. Im
 across clones and falls back to local ProjectIDs for legacy sidecars. Empty
 scopes choose the existing all-project fallback before reading bodies.
 
-Named explicit project scope, interactive browsing, search, origin, model, skill and
-completeness queries remain exhaustive, as does `--limit 0`. A missing,
+Named explicit project scope, origin, model, skill and completeness queries
+retain complete selection, as does `--limit 0`. Search and interactive browsing
+can reuse the private typed summary catalog and load selected details; initial
+summary construction and complete fresh-header checks still grow with archive
+size. A missing,
 stale, unsupported or damaged index produces an explicit compatibility-scan
 diagnostic and complete legacy results. A selected object deleted or changed
 during a bounded query fails explicitly, suggesting retry or `--limit 0`;
 it never refills indefinitely. Exact counts describe discovered matching
 identities, not validation of every unselected sidecar.
+
+The opt-in catalog-v4 implementation landed in
+[#460](https://github.com/wangjohn/agent-archive/pull/460). Eligible queries use
+bounded tree paths and selected immutable metadata without canonical LIST;
+complex predicates and scope tiers use the complete summary fallback. This is
+a separate destination format, not a change to default legacy discovery costs.
+See [catalog migration and query](../catalog/migration-and-query.md) for query
+eligibility, pinned read views and migration restrictions. Production S3/R2
+construction and migration remain refused until reviewed provider atomicity,
+same-version timestamp/clock and cutover authority qualification exists; see
+the [provider release gate](../catalog/provider-qualification.md). Synthetic
+controls and merged source do not qualify live activation, full-load or matched
+performance acceptance.
 
 ## Revision protocol
 
@@ -107,9 +126,11 @@ is supplementary; deterministic operation counts are the regression gate.
 
 ## Full scans
 
-Every command that needs the whole archive runs the full scan: `list --limit 0`,
-`stats`, bare `show`, the handoff picker, `handoff "<query>"`, and `list` on an
-archive whose index isn't ready. On R2 a listing page of 1,000 keys takes
+On the default legacy format, complete discovery still enumerates fresh headers.
+Unlimited listing and complete analytics select the full required universe;
+search and browsers may reuse validated summaries before loading selected
+details. A missing index retains complete compatibility scanning. On R2 a
+listing page of 1,000 keys takes
 0.5–0.9 s, and one listing's pages are strictly sequential. So since the
 [listing-at-scale](../proposals/listing-at-scale.md) phase 1 change, the scan is
 split into contiguous key ranges listed concurrently: at most 16 in flight,
@@ -201,7 +222,9 @@ LIST wait while increasing modeled request pages/end-page headers. Current
 indexed reads retain the exact 50-body bound but still enumerate canonical and
 v3 summary headers, so modeled header discovery grows with archive size.
 These results complete the original phase-3 fixture/measurement matrix in the
-baseline PR; the phase-4 constant-header-cost goal remains open. The original plan’s
+baseline PR; qualified production phase-4 activation remains open. The default
+legacy path still has proportional header cost, while the later opt-in catalog
+implementation has the separate gates described above. The original plan’s
 662-session live timings and older pinned compiler/source baselines stay
 historical evidence and are not measurements of this source commit.
 

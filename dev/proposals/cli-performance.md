@@ -1,18 +1,56 @@
 # CLI performance implementation plan
 
-Status: proposed follow-ups. Historical measurements were recorded at
+Status: historical design with partially integrated source. Historical measurements were recorded at
 `3878e73f43a2c372a63773b6ba0b436057606d5f`; this repaired harness is
 reconciled with main `52a9eb2c8ddb58cbcb539364c02e43b20d053714`.
 Freeze the same repaired harness on both production baseline and optimization
 candidate before comparing them. Historical raw samples do not establish
 matched-harness or current-main performance acceptance.
 The original baseline/design was prepared at `a21bc752` on 2026-10-07.
-Current v3 summary authority, exact coverage and selected-body budgets remain
-the contract; the proposed v4 catalog below is not activated by these baselines.
+Default legacy v3 summary authority, exact coverage and selected-body budgets
+remain the contract. Later source integration in #460 adds the opt-in catalog-v4
+format; these baselines do not activate it or qualify production providers.
 Cover all five areas from the performance review: concurrent
 reads, listing and cache cost, query selection, bounded discovery, and stats
 computation. Preserve output, search rules, retention, and source verification.
-Use short technical English; API names below are proposed unless marked existing.
+The original API designs below are historical proposals; the current contracts
+and source status are linked here.
+
+## Current reconciliation
+
+Reconciled against main `4a2ca72a` (2026-10-12). Closed original PRs were
+source-superseded rather than merged unchanged. Their historical measurements
+do not establish current-main performance acceptance.
+
+| Original work | Integrated replacement | Remaining work |
+| --- | --- | --- |
+| #390 compiler/verifier regressions | #449 and supplementary native scan #467 | Historical eight-check protection identities are not the current six-check configuration. |
+| #376 command/scale baselines | #451 output validation/model and #458 plan status | Fresh matched repaired-harness measurements. |
+| #379 selected reads, #381 discovery, #377 cache maintenance, #385 search/browser | #460 | Native/provider/operator, full-size and matched-performance qualification. |
+| #382 concurrent show/lookup | #460, original latency benchmark #465, release note #468 | Matched output/performance qualification. |
+| #384 transactional catalog and #391 migration/bounded reads | #460, preserved measured/year-window controls #464/#466 | Provider atomicity/clock, durable global writer barriers and cutover qualification; full-load/peak-memory acceptance. |
+| #383 stats selection | Source-superseded by #460; original year-window benchmark preserved in #466 | Full-window and matched-performance qualification remain open. |
+| #375 prepared stats, #380 ranking | #375 reconciled onto current main; original #380 closed in favor of #470 ranking and #474 scratch reuse (stacked on #375) | Exact current-head independent review evidence, CI and combined integration remain gates. Merge #375 before #474 and refresh affected candidates after main changes. Draft source does not establish readiness or matched performance. |
+
+The [default listing contract](../maintainers/list-performance.md) now
+distinguishes legacy header enumeration and private summary reuse from
+[opt-in catalog tree reads](../catalog/migration-and-query.md). Production
+S3/R2 construction and migration remain refused under the
+[provider release gate](../catalog/provider-qualification.md). The recorded
+120-second paired full-load timeouts and 180-second failure remain HOLD;
+source integration and green hosted checks do not resolve those gates.
+
+[#469](https://github.com/wangjohn/agent-archive/pull/469) additionally supplies
+the opt-in ordinary-ready selecting authority under the distinct
+`publication-composition-v12` fence. It does not complete the broader historical,
+private, staged publication or legacy-provenance work in #352/#356/#406, qualify
+providers, or supply a fragment consumer. The [fragment foundation](../specs/codex-fragments.md)
+is a proposed schema and test-only transport contract; production decoder,
+privacy-context consumer, lifecycle/import
+and the contribution/enrichment journal for complete repair and exact undo
+remain dependent work.
+
+The remaining sections preserve the original proposed implementation sequence.
 
 The goal is to make common commands fast as the archive grows. First, reduce
 serial network waits and repeated local work. Then, read only the metadata that
