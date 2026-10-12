@@ -671,7 +671,7 @@ func (s *sessionScan) publish(ctx context.Context, read sourceRead, candidate ar
 	if err != nil {
 		return outcomeSkipped, err
 	}
-	rendered, err := renderPublication(s.ctx, s.resolveParser(), s.parserVersion(), candidate, s.reg, s.now, s.opts, s.priorRepoKey)
+	rendered, err := renderPublication(ctx, s.resolveParser(), s.parserVersion(), candidate, s.reg, s.now, s.opts, s.priorRepoKey)
 	if err != nil {
 		return outcomeSkipped, err
 	}

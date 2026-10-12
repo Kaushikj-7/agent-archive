@@ -129,15 +129,7 @@ func prepareDiscoveryConfig(c *Config) error {
 
 func validateDiscoveryConfig(c Config) error {
 	var err error
-	c, err = peelCatalogProtection(c)
-	if err != nil {
-		return err
-	}
-	c, err = peelHistoricalProjectProtection(c)
-	if err != nil {
-		return err
-	}
-	c, err = peelImportStagingProtection(c)
+	c, err = peelProtectedWriterLayers(c)
 	if err != nil {
 		return err
 	}
@@ -663,6 +655,24 @@ func peelCatalogProtection(c Config) (Config, error) {
 	}
 	if c.HistoricalProjectProtection {
 		c.SchemaVersion = 10
+	}
+	return c, nil
+}
+
+// peelProtectedWriterLayers validates catalog, historical and import fences in order.
+func peelProtectedWriterLayers(c Config) (Config, error) {
+	var err error
+	c, err = peelCatalogProtection(c)
+	if err != nil {
+		return c, err
+	}
+	c, err = peelHistoricalProjectProtection(c)
+	if err != nil {
+		return c, err
+	}
+	c, err = peelImportStagingProtection(c)
+	if err != nil {
+		return c, err
 	}
 	return c, nil
 }

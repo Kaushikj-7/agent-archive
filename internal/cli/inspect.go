@@ -642,14 +642,11 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	sessionID, *harness = lookup.SessionID, lookup.Harness
 
 	stopShow := startActivity(stdout, "Loading session…")
-	selected := lookup.Metadata
-	if selected.Key == "" {
-		selected, err = locateShowMetadata(ctx, store, *harness, sessionID)
-		if err != nil {
-			stopShow()
-			terminal.Printf(stderr, "agent-archive: show: %v\n", err)
-			return 1
-		}
+	selected, err := selectedShowMetadata(ctx, store, *harness, sessionID, lookup.Metadata)
+	if err != nil {
+		stopShow()
+		terminal.Printf(stderr, "agent-archive: show: %v\n", err)
+		return 1
 	}
 	key := selected.Key
 	if *revisions {
@@ -1023,4 +1020,12 @@ func rebuildListingIndex(env listCommandDependencies, store storage.ObjectStore,
 	}
 	terminal.Printf(stderr, "agent-archive: list: rebuilt %d metadata entries.\n", count)
 	return true
+}
+
+// selectedShowMetadata keeps an already verified selection or resolves its body.
+func selectedShowMetadata(ctx context.Context, store storage.ObjectStore, harness, sessionID string, selected reader.MetadataLookup) (reader.MetadataLookup, error) {
+	if selected.Key != "" {
+		return selected, nil
+	}
+	return locateShowMetadata(ctx, store, harness, sessionID)
 }

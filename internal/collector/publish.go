@@ -178,28 +178,8 @@ func (s *sessionScan) acknowledgePublication(pending state.PendingPublication, k
 	for _, ref := range refs {
 		protected[ref.Key] = true
 	}
-	if pending.History != nil {
-		for _, retired := range pending.History.Retired {
-			if err := s.local.RecordSupersededWithPrivacy(s.id(), retired.Reference.Key, retired.RetiredAt, retired.PrivacySensitive); err != nil {
-				return outcomeSkipped, fmt.Errorf("record retired revision cleanup: %w", err)
-			}
-		}
-	}
-	if err := s.recordImportRetired(pending, protected); err != nil {
+	if err := s.recordPublicationRetirement(pending, protected); err != nil {
 		return outcomeSkipped, err
-	}
-	if previous, hadPrevious := s.published.LastPublishedSource(); hadPrevious && !protected[previous.Key] {
-		priorBundle, _, havePrior := s.published.LastPublished()
-		privacySensitive := havePrior && priorBundle.Capture.FilterVersion != pending.Bundle.Capture.FilterVersion
-		if err := s.local.RecordSupersededWithPrivacy(s.id(), previous.Key, s.now, privacySensitive); err != nil {
-			if privacySensitive {
-				// Keep the pending publication for another attempt. Saving the
-				// new published state here would lose the only retry path for
-				// this old-filter source, leaving it until session expiry.
-				return outcomeSkipped, fmt.Errorf("record privacy-sensitive predecessor: %w", err)
-			}
-			s.warn(fmt.Errorf("record superseded source for cleanup: %w", err))
-		}
 	}
 	var saveErr error
 	if pending.MetadataOnly {
@@ -421,4 +401,32 @@ func (s *sessionScan) publishListingRevision(p state.PendingPublication) error {
 		return nil
 	}
 	return listingindex.PublishRevision(s.ctx, s.remote, p.MetadataKey, p.MetadataBytes)
+}
+
+// recordPublicationRetirement preserves cleanup obligations before cache commit.
+func (s *sessionScan) recordPublicationRetirement(pending state.PendingPublication, protected map[string]bool) error {
+	if pending.History != nil {
+		for _, retired := range pending.History.Retired {
+			if err := s.local.RecordSupersededWithPrivacy(s.id(), retired.Reference.Key, retired.RetiredAt, retired.PrivacySensitive); err != nil {
+				return fmt.Errorf("record retired revision cleanup: %w", err)
+			}
+		}
+	}
+	if err := s.recordImportRetired(pending, protected); err != nil {
+		return err
+	}
+	if previous, hadPrevious := s.published.LastPublishedSource(); hadPrevious && !protected[previous.Key] {
+		priorBundle, _, havePrior := s.published.LastPublished()
+		privacySensitive := havePrior && priorBundle.Capture.FilterVersion != pending.Bundle.Capture.FilterVersion
+		if err := s.local.RecordSupersededWithPrivacy(s.id(), previous.Key, s.now, privacySensitive); err != nil {
+			if privacySensitive {
+				// Keep the pending publication for another attempt. Saving the
+				// new published state here would lose the only retry path for
+				// this old-filter source, leaving it until session expiry.
+				return fmt.Errorf("record privacy-sensitive predecessor: %w", err)
+			}
+			s.warn(fmt.Errorf("record superseded source for cleanup: %w", err))
+		}
+	}
+	return nil
 }
