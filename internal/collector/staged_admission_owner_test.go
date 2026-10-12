@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
@@ -41,9 +42,18 @@ func stagedUnadmittedGroupFixture(t *testing.T) (*state.Store, archive.SessionRe
 	// Real-shaped Claude child records name the parent session and child agent.
 	// Use the dedicated child producer, as actual backfill staging does.
 	childPath := writeTranscript(t, store.Home(), "agent-agent-1.jsonl", `{"type":"assistant","sessionId":"parent-native","agentId":"agent-1","timestamp":"2026-01-01T00:02:00Z","message":{"role":"assistant","content":"`+strings.Repeat("c", 96<<10)+`"}}`+"\n")
-	parent := archive.SessionRegistration{ArchiveSessionID: "a-parent", NativeSessionID: "parent-native", ProjectID: "project", ProjectRoot: "/project", Harness: archive.Harness{Name: "claude"}, TranscriptPath: parentPath, SessionStartedAt: at.Add(-time.Hour), RegisteredAt: at, AdmittedAt: at, Origin: archive.SessionOriginImport, ImportBatch: archive.NewImportBatch("confirmed-group"), DestinationID: cfg.DestinationID()}
+	// Actual import planning reserves native-key mappings before preparation.
+	parentID, _, err := store.EnsureArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.Claude, NativeID: "parent-native"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	childID, _, err := store.EnsureArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.Claude, NativeID: "parent-native:subagent:agent-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent := archive.SessionRegistration{ArchiveSessionID: parentID, NativeSessionID: "parent-native", ProjectID: "project", ProjectRoot: "/project", Harness: archive.Harness{Name: "claude"}, TranscriptPath: parentPath, SessionStartedAt: at.Add(-time.Hour), RegisteredAt: at, AdmittedAt: at, Origin: archive.SessionOriginImport, ImportBatch: archive.NewImportBatch("confirmed-group"), DestinationID: cfg.DestinationID()}
 	child := parent
-	child.ArchiveSessionID = "z-child"
+	child.ArchiveSessionID = childID
 	child.NativeSessionID = "parent-native:subagent:agent-1"
 	child.ParentSessionID = parent.ArchiveSessionID
 	child.ParentNativeSessionID = parent.NativeSessionID
@@ -214,6 +224,16 @@ func stagedGroupAuthorityFiles(t *testing.T, store *state.Store, parent, child a
 			paths = append(paths, filepath.Join(store.Home(), directory, id+".json"))
 		}
 		paths = append(paths, filepath.Join(store.Home(), "sessions", id, "import-stage", "stage.json"))
+	}
+	// Include actual index reservations and their presence in raw no-loss evidence.
+	entries, err := os.ReadDir(filepath.Join(store.Home(), "sessions-v1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			paths = append(paths, filepath.Join(store.Home(), "sessions-v1", entry.Name()))
+		}
 	}
 	out := make(map[string][]byte)
 	for _, path := range paths {
