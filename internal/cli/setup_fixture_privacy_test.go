@@ -70,6 +70,9 @@ func TestSetupFixturePrivacyLeavesAbsentAndLinkedHomesUntouched(t *testing.T) {
 	if err := os.WriteFile(file, []byte("keep"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Chmod(file, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	setupTestEnv(t, file, t.TempDir(), newFakeKeychain(), time.Now())
 	info, err = os.Stat(file)
 	if err != nil || info.Mode().Perm() != 0o644 {

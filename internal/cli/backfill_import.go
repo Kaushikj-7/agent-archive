@@ -524,6 +524,11 @@ func printRegistered(out io.Writer, batchID string, added int, result backfill.R
 		line += " and " + countNoun(n, "subagent transcript")
 	}
 	terminal.Printf(out, "%s as import %s.\n", line, batchID)
+	printRegistrationSkips(out, result)
+}
+
+// printRegistrationSkips keeps non-admission outcomes visible to every import caller.
+func printRegistrationSkips(out io.Writer, result backfill.RegistrationResult) {
 	var skipped []string
 	if n := result.AlreadyArchived; n > 0 {
 		skipped = append(skipped, fmt.Sprintf("%d already in the archive", n))

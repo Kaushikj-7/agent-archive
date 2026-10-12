@@ -65,7 +65,12 @@ func newHandoffFixture(t *testing.T, sync bool) handoffFixture {
 // transcript, whose PROJECT is replaced by the project directory.
 func newHandoffFixtureFor(t *testing.T, sync bool, harness, transcriptTemplate string) handoffFixture {
 	t.Helper()
-	home, project := t.TempDir(), t.TempDir()
+	return newHandoffFixtureForAt(t, sync, harness, transcriptTemplate, t.TempDir(), t.TempDir())
+}
+
+// newHandoffFixtureForAt registers the same genuine hook fixture at owned paths.
+func newHandoffFixtureForAt(t *testing.T, sync bool, harness, transcriptTemplate, home, project string) handoffFixture {
+	t.Helper()
 	setUpTestConfig(t, home, project, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	transcript := filepath.Join(project, harness+".jsonl")
 	if err := os.WriteFile(transcript, []byte(strings.ReplaceAll(transcriptTemplate, "PROJECT", project)), 0o600); err != nil {

@@ -36,6 +36,7 @@ func newRetireeFixture(t *testing.T) *retireeFixture {
 	}
 	must(t, os.MkdirAll(agents, 0o700))
 	must(t, os.WriteFile(f.prototype, []byte(legacyPlist), 0o640))
+	must(t, os.Chmod(f.prototype, 0o640))
 	for i, spelling := range []string{"/old/spelling/a", "/old/spelling/b"} {
 		label := launchd.CollectorLabel(spelling, "")
 		f.earlier[i] = filepath.Join(agents, label+".plist")
