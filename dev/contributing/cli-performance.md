@@ -5,7 +5,7 @@ credentials, transcripts, native applications or a bucket. They change no
 production command behavior. Run from the repository root with the toolchain in go.mod (Go 1.27.2):
 
 ```sh
-go test ./internal/reader ./internal/cli -run '^$' -bench 'Benchmark(ReaderScale|CommandScale)$' -benchtime=1x -count=2
+AGENT_ARCHIVE_PERF=1 go test ./internal/reader ./internal/cli -run '^$' -bench 'Benchmark(ReaderScale|CommandScale)$' -benchtime=1x -count=2
 go test ./internal/reader ./internal/cli -run '^$' -bench 'Benchmark(ReaderLatency|CommandLatency|UsableTerminalScreen|CommandReads)$' -benchtime=1x -count=2
 ```
 
@@ -83,3 +83,9 @@ latency, first-screen and command-read cases. This closes the matrix execution
 coverage gap. Unrelated CPU race tests and temporary cleanup overlapped that
 run, so its wall times still carry an external-contention limitation. They do
 not establish idle-host, live-provider or real-terminal acceptance.
+
+The 10k/50k scale fixtures and 10k/100k historical model require
+`AGENT_ARCHIVE_PERF=1`. The default scale run retains the 800-session matrix.
+The historical model's full measured matrix and assumptions are recorded in
+[listing performance](../maintainers/list-performance.md). Its virtual latency
+is a historical cost projection, not a live R2 measurement or benchmark wall time.

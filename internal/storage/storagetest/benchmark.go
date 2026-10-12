@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"testing"
 	"time"
 
@@ -28,6 +29,9 @@ func (c BenchCase) Name() string {
 func ScaleCases() []BenchCase {
 	var cases []BenchCase
 	for _, size := range []int{800, 10000, 50000} {
+		if size > 800 && os.Getenv("AGENT_ARCHIVE_PERF") != "1" {
+			continue
+		}
 		for _, limit := range []int{1, 50, 0} {
 			for _, state := range []string{"cold", "warm", "changed"} {
 				cases = append(cases, BenchCase{Sessions: size, Limit: limit, CacheState: state})

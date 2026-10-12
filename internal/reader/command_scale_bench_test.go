@@ -84,6 +84,9 @@ func benchmarkReaderCase(b *testing.B, c storagetest.BenchCase) {
 // measures exhaustive remote/decode cost without filesystem cache teardown.
 // It supplements rather than replaces the scale matrix's cache cases.
 func BenchmarkReaderExhaustiveNoCache(b *testing.B) {
+	if os.Getenv("AGENT_ARCHIVE_PERF") != "1" {
+		b.Skip("set AGENT_ARCHIVE_PERF=1 for large fixtures")
+	}
 	for _, size := range []int{10000, 50000} {
 		c := storagetest.BenchCase{Sessions: size, Limit: 0, CacheState: "disabled"}
 		b.Run(c.Name(), func(b *testing.B) {

@@ -1,6 +1,9 @@
 # CLI performance implementation plan
 
-Status: proposed. Baseline: main at `a21bc752`, 2026-10-07.
+Status: proposed follow-ups, reconciled with main `e1436e35` on 2026-10-12.
+The original baseline/design was prepared at `a21bc752` on 2026-10-07.
+Current v3 summary authority, exact coverage and selected-body budgets remain
+the contract; the proposed v4 catalog below is not activated by these baselines.
 Cover all five areas from the performance review: concurrent
 reads, listing and cache cost, query selection, bounded discovery, and stats
 computation. Preserve output, search rules, retention, and source verification.
@@ -14,7 +17,8 @@ Keep these changes separate so each improvement can ship and be measured alone.
 ## PR order
 
 Each row is one PR. Start each branch from its listed dependencies. Merge each
-dependency before its child; then rebase the child onto main. Independent rows
+dependency before its child; reconcile the child with normal history-preserving
+merges. Independent rows
 can proceed separately. Do not put the full program on one branch.
 
 | PR | Scope | Depends on |
@@ -37,7 +41,8 @@ without the reader changes. PR 9 is the only remote format cutover.
 ## PR 1 Command and scale benchmarks
 
 This PR makes runtime cost visible and repeatable. It measures complete user
-commands, including startup, cache work, and network waits. It does not change
+commands through injected `CLI.Run`, including config/store initialization and
+cache work. OS process startup is excluded; synthetic waits are explicit. It does not change
 command speed. Its results will show whether later PRs reduce work or only move
 it to another step; provider latency must remain separate from local CPU cost.
 
