@@ -734,6 +734,11 @@ func (r providerReader) snapshotBinding(ctx context.Context, snap agentapi.Sourc
 			return nil, agentapi.Wrap(agentapi.Unavailable, errors.New("first own task does not establish native execution"))
 		}
 		if r.admission.Binding != nil && !r.admission.Binding.FirstNativeTaskAt.IsZero() {
+			if evidence.Binding.RequiresOwnTask() && (!evidence.Task.ValidNativeCreation(evidence.Binding.NativeCreatedAt) ||
+				!evidence.Task.StartedAt.Equal(r.admission.Binding.FirstNativeTaskAt) ||
+				evidence.Task.TurnID != r.admission.Binding.FirstNativeTaskID) {
+				return nil, agentapi.Wrap(agentapi.Unavailable, errors.New("first own task admission evidence changed"))
+			}
 			evidence.Binding.FirstNativeTaskAt = r.admission.Binding.FirstNativeTaskAt
 			evidence.Binding.FirstNativeTaskID = r.admission.Binding.FirstNativeTaskID
 		} else if evidence.Task.Native && evidence.Task.LocalExecution {

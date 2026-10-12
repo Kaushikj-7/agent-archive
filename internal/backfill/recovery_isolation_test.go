@@ -323,6 +323,9 @@ func TestAppendedSourceRequiresSameGrownFile(t *testing.T) {
 		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 			t.Fatal(err)
 		}
+		if err := os.Chmod(path, 0o644); err != nil {
+			t.Fatal(err)
+		}
 		info, err := os.Lstat(path)
 		if err != nil {
 			t.Fatal(err)

@@ -210,7 +210,7 @@ func PlanUndo(env Environment, store *state.Store, cfg config.Config, batches []
 	}
 	// Excluding a project also stops its hook-captured sessions uploading.
 	for _, reg := range regs {
-		if !reg.Imported() && reg.ParentSessionID == "" && excludedRoots[reg.ProjectRoot] {
+		if !reg.Imported() && independentImportOwner(reg) && excludedRoots[reg.ProjectRoot] {
 			p.HookCapturedStopping++
 		}
 	}
@@ -623,7 +623,7 @@ func (p UndoPlan) Empty() bool {
 }
 
 // UndoCounts summarises an undo's sessions. Sessions and Subagents count
-// every one removed; Resumed counts the sessions (not subagents) resumed
+// every one removed; Resumed counts independent import owners resumed
 // since the import; Deleted and Forgotten split them all by whether the
 // bucket is called, and DeletedSessions and ForgottenSessions split the
 // sessions alone.
@@ -647,14 +647,16 @@ func (p UndoPlan) Counts() UndoCounts {
 		parent := !s.Registration.IsChild()
 		if parent {
 			c.Sessions++
+		} else {
+			c.Subagents++
+		}
+		if independentImportOwner(s.Registration) {
 			if s.Resumed {
 				c.Resumed++
 			}
 			if s.ResumeUnknown {
 				c.ResumeUnknown++
 			}
-		} else {
-			c.Subagents++
 		}
 		if s.InCurrentDestination {
 			c.Deleted++

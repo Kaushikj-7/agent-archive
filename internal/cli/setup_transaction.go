@@ -100,9 +100,9 @@ func pendingSessionCounts(home string, cfg config.Config) (blocking, waiting int
 
 // sessionsAdmittedInto counts the registrations that record cfg's
 // destination and that cfg accepts: when setup switches back to a
-// destination used before, these resume there. Subagents go with their
-// parents and are not counted. A registration without a destination ID
-// stays behind.
+// destination used before, these resume there. Independent native children
+// are counted; dependent subagents go with their parents and are not counted.
+// A registration without a destination ID stays behind.
 func sessionsAdmittedInto(home string, cfg config.Config) (int, error) {
 	regs, err := state.OpenReadOnly(home).LoadRegistrations()
 	if err != nil {
@@ -110,7 +110,7 @@ func sessionsAdmittedInto(home string, cfg config.Config) (int, error) {
 	}
 	id, count := cfg.DestinationID(), 0
 	for _, r := range regs {
-		if r.ParentSessionID == "" && r.DestinationID == id && cfg.AcceptSession(r) {
+		if (r.NativeChild || r.ParentSessionID == "") && r.DestinationID == id && cfg.AcceptSession(r) {
 			count++
 		}
 	}
