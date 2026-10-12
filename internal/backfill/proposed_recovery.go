@@ -3,6 +3,7 @@ package backfill
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"path/filepath"
 	"slices"
 
@@ -17,13 +18,14 @@ import (
 // Gaps stay per app: each session's recorded recovery is blocked only by the
 // gaps that can affect it (see recoveryGaps.blocking).
 func prepareRecoveryInventory(ctx context.Context, r *resolver, items []*work, unread unreadable, dbGaps recoveryGaps) {
-	items = recoveryEvidenceItems(items)
+	headersCurrent := false
 	slugs := addedSourceSlugs(items)
 	var inventoryGaps recoveryGaps
 	if r.inventoryAdded != nil {
 		// Transcripts added while planning become evidence; any other
 		// membership change leaves every app's inventory incomplete.
 		added, ok := r.inventoryAdded(ctx)
+		headersCurrent = ok
 		if !ok {
 			inventoryGaps.add("", CauseNativeInventoryChanged)
 		} else {
@@ -32,6 +34,7 @@ func prepareRecoveryInventory(ctx context.Context, r *resolver, items []*work, u
 			items = append(items, witnesses...)
 		}
 	}
+	items = recoveryEvidenceItems(items, headersCurrent)
 	projects, witnesses, gaps := recoveryWitnessInventory(r, items)
 	gaps.merge(inventoryGaps)
 	gaps.merge(dbGaps)
@@ -202,7 +205,7 @@ func (g *recoveryGaps) cause() DiagnosticDetail {
 func witnessGap(w *work) (cause DiagnosticDetail, ok bool) {
 	database := w.c.SourceKind == archive.SourceKindCursorSQLite
 	switch {
-	case w.appendedOnly() && !database && !w.unsafe && !w.t.identityMismatch && w.res.skip != SkipProjectUnknown:
+	case w.appendHeaderVerified && w.appendedOnly() && !database && !w.unsafe && !w.t.identityMismatch && w.res.skip != SkipProjectUnknown:
 		// A pure append cannot change header facts; the file stays clone
 		// evidence (non-eligible) instead of hiding every app's recoveries.
 		return "", false
@@ -255,7 +258,7 @@ func recoveryWitnessInventory(r *resolver, items []*work) ([]archive.ProjectActi
 		if w.res.skip == SkipProjectUnknown {
 			continue // folderless: a non-witness, not a gap
 		}
-		if w.res.skip != "" || w.res.kind != ProjectKindRepository || !r.env.exists(w.res.root) || configured[r.env.resolved(w.res.root)] {
+		if !r.recoveryRepositoryWitness(w.res) || !r.env.exists(w.res.root) || configured[r.env.resolved(w.res.root)] {
 			continue
 		}
 		// Pending or oversized sources can establish clone uncertainty, but cannot
@@ -266,7 +269,7 @@ func recoveryWitnessInventory(r *resolver, items []*work) ([]archive.ProjectActi
 		}
 		// Appended sources and an incomplete source's witnesses count as
 		// possible clones but cannot propose a destination.
-		eligible := !w.t.capturePending && !w.tooLarge && !w.sourceChanged && !w.evidenceOnly
+		eligible := w.res.skip == "" && !w.t.capturePending && !w.tooLarge && !w.sourceChanged && !w.evidenceOnly
 		observed[w.res.root] = observed[w.res.root] || eligible
 		witnesses[w.res.root] = append(witnesses[w.res.root], w)
 	}
@@ -274,6 +277,24 @@ func recoveryWitnessInventory(r *resolver, items []*work) ([]archive.ProjectActi
 		projects = append(projects, archive.ProjectActivation{Root: root, ProjectID: archive.ProjectID(root), Included: eligible})
 	}
 	return projects, witnesses, gaps
+}
+
+// recoveryRepositoryWitness keeps observed checkout membership separate from
+// capture eligibility. A temporary clone cannot authorize capture by default,
+// but its identity can still make a recorded-key match ambiguous or unavailable.
+// Plain temporary folders are not checkout evidence.
+func (r *resolver) recoveryRepositoryWitness(res resolution) bool {
+	if res.kind == ProjectKindRepository {
+		return res.skip == ""
+	}
+	if res.kind != ProjectKindTemporary || (res.skip != "" && res.skip != SkipTemporaryDirectory) {
+		return false
+	}
+	// A present dangling marker or an unreadable locator is uncertainty, not
+	// proof that the temporary root is an ordinary folder. Let identity lookup
+	// retain its unavailable answer in the membership inventory.
+	_, err := r.env.lstat(filepath.Join(res.root, ".git"))
+	return !errors.Is(err, fs.ErrNotExist)
 }
 
 // recoveryWitnessesCurrent renews every witness root: each must still have one
@@ -284,13 +305,14 @@ func recoveryWitnessInventory(r *resolver, items []*work) ([]archive.ProjectActi
 // failing every recovery; recoverySourcesCurrent decides whom it blocks. The
 // native inventory may only have grown; added is what it gained.
 func recoveryWitnessesCurrent(ctx context.Context, r *resolver, witnesses map[string][]*work, selectedRoots map[string]bool, databaseCurrent bool) (current bool, added addedSources, cursorRoots map[string]bool) {
+	headersCurrent := r.inventoryAdded != nil
 	if r.inventoryAdded != nil {
 		var ok bool
 		if added, ok = r.inventoryAdded(ctx); !ok {
 			return false, addedSources{}, nil
 		}
 	}
-	renewal := witnessRenewal{ctx: ctx, r: r, ownership: newResolver(r.env, r.cfg, r.filters), databaseCurrent: databaseCurrent}
+	renewal := witnessRenewal{ctx: ctx, r: r, ownership: newResolver(r.env, r.cfg, r.filters), databaseCurrent: databaseCurrent, headersCurrent: headersCurrent}
 	for root, group := range witnesses {
 		found, proposes, database, ok := renewal.root(group, selectedRoots[root])
 		if !ok || (!found && !database) {
@@ -313,6 +335,7 @@ type witnessRenewal struct {
 	ownership       *resolver
 	checks          int
 	databaseCurrent bool
+	headersCurrent  bool
 }
 
 // root renews one root's witnesses. found is a current witness (a Cursor
@@ -341,7 +364,7 @@ func (v *witnessRenewal) root(group []*work, selected bool) (found, proposes, da
 			database = true
 			continue
 		}
-		if (w.sourceCurrent(v.r.env) || w.stillAppendedOnly(v.r.env) || w.addedSourceGrown(v.r.env)) && (w.workspaceCurrent == nil || w.workspaceCurrent(v.ctx)) {
+		if (w.sourceCurrent(v.r.env) || w.stillAppendedOnly(v.r.env, v.headersCurrent) || w.addedSourceGrown(v.r.env)) && (w.workspaceCurrent == nil || w.workspaceCurrent(v.ctx)) {
 			found = true
 			proposes = proposes || proposesRoot(w)
 			if v.databaseCurrent || !selected || proposes {
