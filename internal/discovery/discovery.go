@@ -634,11 +634,8 @@ func (s scan) visitEntry(d directory, source SourceEntry) (retry, stop bool) {
 			return true, true
 		}
 		headerCharge := int64(sourcefacts.HeaderBytes + 128<<10)
-		var reservation *agentapi.NativeReadReservation
-		if s.rollouts != nil {
-			reservation = s.rollouts.readBudget.Reservation()
-		}
-		if s.rollouts != nil && !reservation.Reserve(headerCharge) {
+		reservation := s.probeReservation()
+		if !reservation.Reserve(headerCharge) {
 			return true, true
 		}
 		memberChanged := !hit || entry.Size != source.Fingerprint.Size || entry.Mtime != source.Fingerprint.Mtime || entry.SourceFingerprint != source.CoverageFingerprint
@@ -725,6 +722,16 @@ func (s scan) admitObservation(source SourceEntry, entry cached) (bool, bool) {
 		return false, false
 	}
 	return s.admitCandidate(candidate, loc)
+}
+
+// probeReservation captures the probe's owner. Without a shared lookup the
+// disabled budget preserves the unbudgeted discovery path.
+func (s scan) probeReservation() *agentapi.NativeReadReservation {
+	var budget *agentapi.NativeReadBudget
+	if s.rollouts != nil {
+		budget = s.rollouts.readBudget
+	}
+	return budget.Reservation()
 }
 
 // retainProbedObservation transfers the probe scratch to a catalog fact owner
