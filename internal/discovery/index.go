@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"io/fs"
 	"net/url"
 	"os"
@@ -31,6 +32,9 @@ type HintBatch struct {
 	Locators int
 	Rejected int
 	Outcome  Outcome
+	// refusal is transient diagnostic evidence for synthetic tests. It is never
+	// persisted in health or used to authorize, schedule or retry a source.
+	refusal error
 }
 
 // HintAdapter supplies optional native index hints without admission policy.
@@ -66,8 +70,8 @@ func (s scan) observeIndexHints(ctx context.Context, o Options, roots []string, 
 }
 
 func (a codexAdapter) Hints(ctx context.Context, root string) HintBatch {
-	hints, queries, bytes, outcome := indexHints(ctx, root)
-	batch := HintBatch{Queries: queries, Bytes: bytes, Locators: len(hints), Outcome: Outcome(outcome)}
+	hints, queries, bytes, outcome, refusal := indexHintsDetailed(ctx, root)
+	batch := HintBatch{Queries: queries, Bytes: bytes, Locators: len(hints), Outcome: Outcome(outcome), refusal: refusal}
 	if outcome != "" {
 		return batch
 	}
@@ -87,16 +91,27 @@ func (a codexAdapter) Hints(ctx context.Context, root string) HintBatch {
 }
 
 func indexHints(ctx context.Context, root string) ([]string, int, int64, string) {
+	hints, queries, bytes, outcome, _ := indexHintsDetailed(ctx, root)
+	return hints, queries, bytes, outcome
+}
+
+// indexHintsDetailed returns the original attempt's refusal for synthetic
+// diagnostics. The bounded read, metrics, cleanup and public outcome stay the
+// same; diagnostic consumers must not issue a second read to infer its cause.
+func indexHintsDetailed(ctx context.Context, root string) ([]string, int, int64, string, error) {
 	path := filepath.Join(root, "state_5.sqlite")
 	// Only settled DBs are useful through the read-only Go VFS. Live WAL
 	// requires shared-memory operations that can race into native side writes;
 	// skip it rather than dropping WAL updates or changing Codex's files.
 	before, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, 0, 0, "index_hints_missing"
+		return nil, 0, 0, "index_hints_missing", err
 	}
 	if err != nil || !before.Mode().IsRegular() || indexHasSides(path) {
-		return nil, 0, 0, "index_hints_unavailable"
+		if err == nil {
+			err = errors.New("index is not a settled regular file")
+		}
+		return nil, 0, 0, "index_hints_unavailable", err
 	}
 	ctx, cancel := context.WithTimeout(ctx, indexHintTimeout)
 	defer cancel()
@@ -105,13 +120,13 @@ func indexHints(ctx context.Context, root string) ([]string, int, int64, string)
 	fsys := &indexFS{root: root, ctx: ctx}
 	name, registered, err := vfs.New(fsys)
 	if err != nil {
-		return nil, 0, 0, "index_hints_unavailable"
+		return nil, 0, 0, "index_hints_unavailable", err
 	}
 	defer func() { _ = registered.Close() }()
 	parameters := url.Values{"vfs": {name}, "mode": {"ro"}, "immutable": {"1"}}
 	db, err := sql.Open("sqlite", (&url.URL{Scheme: "file", Opaque: "state_5.sqlite", RawQuery: parameters.Encode()}).String())
 	if err != nil {
-		return nil, 0, 0, "index_hints_unavailable"
+		return nil, 0, 0, "index_hints_unavailable", err
 	}
 	defer func() { _ = db.Close() }()
 	db.SetMaxOpenConns(1)
@@ -142,21 +157,27 @@ func indexHints(ctx context.Context, root string) ([]string, int, int64, string)
 			query := ordered.query
 			queries++
 			if err := hintPlan(ctx, conn, query, ordered.index); err != nil {
-				return err
+				return fmt.Errorf("%s EXPLAIN: %w", ordered.index, err)
 			}
 			queries++
 			hints, err = readIndexLocators(ctx, conn, query, hints)
 			if err != nil {
-				return err
+				return fmt.Errorf("%s locators: %w", ordered.index, err)
 			}
 		}
 		return nil
 	}()
 	after, statErr := os.Lstat(path)
 	if err != nil || statErr != nil || !os.SameFile(before, after) || before.Size() != after.Size() || !before.ModTime().Equal(after.ModTime()) || indexHasSides(path) {
-		return nil, queries, fsys.bytes, "index_hints_unavailable"
+		if err == nil {
+			err = statErr
+		}
+		if err == nil {
+			err = errors.New("index changed during hint read")
+		}
+		return nil, queries, fsys.bytes, "index_hints_unavailable", err
 	}
-	return hints, queries, fsys.bytes, ""
+	return hints, queries, fsys.bytes, "", nil
 }
 
 func readIndexLocators(ctx context.Context, conn *sql.Conn, query string, hints []string) ([]string, error) {
