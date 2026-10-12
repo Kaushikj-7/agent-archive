@@ -835,6 +835,8 @@ func sameHistoricalProjectProof(a, b archive.SessionRegistration) bool {
 	return a.HistoricalProject.Equal(b.HistoricalProject)
 }
 
+// UnmarshalJSON bounds and validates typed stage authority before decoding it;
+// legacy stage decoding retains its existing format.
 func (p *ImportStage) UnmarshalJSON(raw []byte) error {
 	type plain ImportStage
 	var header struct {

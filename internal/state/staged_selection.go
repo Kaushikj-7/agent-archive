@@ -25,6 +25,7 @@ type StagedSelection struct {
 	SHA256       string         `json:"sha256"`
 }
 
+// UnmarshalJSON enforces the bounded, closed staged-selection proof codec.
 func (q *StagedSelection) UnmarshalJSON(raw []byte) error {
 	if len(raw) > 16<<10 {
 		return ErrDurableStorageRecovery

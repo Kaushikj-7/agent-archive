@@ -472,6 +472,8 @@ type stagedBatchResult struct {
 	close  func()
 }
 
+// CloseStagedResults releases copied staged-result IDs after all batch aliases
+// finish using them; repeated calls and legacy batches are safe.
 func (b *Batch) CloseStagedResults() {
 	if b.stagedResult != nil {
 		b.stagedResult.close()
