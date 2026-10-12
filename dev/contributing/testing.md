@@ -149,6 +149,17 @@ configuration keeps Dagger for local runs, main pushes, nightly audits, and
 exact release candidates. Go build caches are not restored between CI runs,
 and vulnerability checks continue querying current advisory data.
 
+The additional `native-release-vulnerabilities` job runs on the same workflow
+events, alongside the existing verifier. It installs the product Go 1.27.2
+compiler from `go.mod` and refuses a different native compiler or shared
+verifier pin. Its helper stages the tracked archive inputs into a new private
+directory and generates a temporary native-only vulnerability run; it leaves
+the repository's six-check Dagger configuration and PR selection unchanged.
+The pinned scanner queries advisory data on every execution. This additional
+check identity is not added to branch protections by this change. Passing
+Python preparation controls or compiling the helper does not establish a
+native scan pass; record the exact candidate and successful scanner result.
+
 For PRs, the staging helper can omit `actionlint` and `zizmor` when the event
 base, actual PR head, and tested merge prove that workflow inputs are unchanged.
 The four Go checks still run in full. Changes anywhere under `.github` or
