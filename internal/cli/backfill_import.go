@@ -20,6 +20,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/backfill"
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/discovery"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/terminal"
@@ -227,21 +228,8 @@ func registerImportLocked(env Env, stdout, stderr io.Writer, home string, plan b
 	defer func() { resultErr = errors.Join(resultErr, lookup.Close()) }()
 	// The confirmation's lookup is closed with its plan. Rebuild the trusted
 	// census before reading qualified selected history in this fresh pass.
-	for _, candidate := range candidates {
-		if candidate.Harness == archive.HarnessCodex {
-			if _, err := lookup.Thread(registrationCtx, candidate.NativeSessionID); err != nil && registrationCtx.Err() != nil {
-				return reg, err
-			}
-		}
-	}
-	for {
-		health, err := lookup.ObserveReadOnly(registrationCtx)
-		if err != nil {
-			return reg, err
-		}
-		if !health.Pending {
-			break
-		}
+	if err := prepareImportLookup(registrationCtx, lookup, candidates); err != nil {
+		return reg, err
 	}
 	var onCapacity func(context.Context) error
 	if capacityUploads {
@@ -1003,4 +991,24 @@ func importCapacityDrain(env Env, stdout io.Writer, home string, store *state.St
 		terminal.Printf(stdout, "Freed staging capacity after remotely verifying %s; continuing admission.\n", countNoun(len(result.Published), "session"))
 		return nil
 	}
+}
+
+func prepareImportLookup(registrationCtx context.Context, lookup *discovery.CodexRolloutLookup, candidates []backfill.Candidate) error {
+	for _, candidate := range candidates {
+		if candidate.Harness == archive.HarnessCodex {
+			if _, err := lookup.Thread(registrationCtx, candidate.NativeSessionID); err != nil && registrationCtx.Err() != nil {
+				return err
+			}
+		}
+	}
+	for {
+		health, err := lookup.ObserveReadOnly(registrationCtx)
+		if err != nil {
+			return err
+		}
+		if !health.Pending {
+			break
+		}
+	}
+	return nil
 }

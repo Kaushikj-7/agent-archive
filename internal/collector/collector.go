@@ -392,6 +392,14 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 		}
 		p.scan(ctx, reg)
 	}
+	if err := p.resumeStagedReleases(ctx, local, store, opts); err != nil {
+		return p.result, err
+	}
+	return p.result, p.saveStatus()
+}
+
+// resumeStagedReleases transfers diagnostic ownership before ending its read scope.
+func (p *pass) resumeStagedReleases(ctx context.Context, local *state.Store, store storage.ObjectStore, opts Options) error {
 	if remote, ok := store.(state.StagedReadback); ok {
 		scoped, closeSchedule := local.WithReadBudget(ctx, (&sessionScan{opts: opts}).readBudget())
 		holds, closeDiagnostics, err := scoped.ResumeStagedReleases(ctx, remote, opts.CollectorGuard)
@@ -403,13 +411,13 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 			addError(p.result.Errors, id, hold)
 		}
 		if ctx.Err() != nil {
-			return p.result, ctx.Err()
+			return ctx.Err()
 		}
 		if err != nil {
 			addError(p.result.Errors, "staged-releases", err)
 		}
 	}
-	return p.result, p.saveStatus()
+	return nil
 }
 
 // Cancellation remains fatal even when a refusal also identifies owed work.

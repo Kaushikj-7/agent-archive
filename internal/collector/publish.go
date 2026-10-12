@@ -74,16 +74,8 @@ func (s *sessionScan) block(reason state.BlockedReason, candidate *archive.Sourc
 // finally the removal of the pending file. ctx must be the original scan
 // context; admission derives an invocation context for this serial lifecycle.
 func (s *sessionScan) publishPending(ctx context.Context, pending state.PendingPublication) (sessionOutcome, error) {
-	if pending.StagedSelection != nil {
-		if s.opts.CollectorGuard == nil {
-			return outcomeSkipped, state.ErrReadySelectionFrozen
-		}
-		if authority, ok := s.remote.(interface{ CatalogMetadataAuthority() bool }); ok && authority.CatalogMetadataAuthority() {
-			return outcomeSkipped, state.ErrReadySelectionFrozen
-		}
-		if pending.Catalog != nil {
-			return outcomeSkipped, state.ErrReadySelectionFrozen
-		}
+	if err := s.checkStagedDestination(pending); err != nil {
+		return outcomeSkipped, err
 	}
 	if err := pending.ValidateReadySlot(s.id()); err != nil {
 		return outcomeSkipped, err
@@ -163,6 +155,22 @@ func (s *sessionScan) publishPending(ctx context.Context, pending state.PendingP
 		}
 	}
 	return s.acknowledgePublication(pending, false)
+}
+
+// checkStagedDestination runs before any slot check, catalog admission or remote effect.
+func (s *sessionScan) checkStagedDestination(pending state.PendingPublication) error {
+	if pending.StagedSelection != nil {
+		if s.opts.CollectorGuard == nil {
+			return state.ErrReadySelectionFrozen
+		}
+		if authority, ok := s.remote.(interface{ CatalogMetadataAuthority() bool }); ok && authority.CatalogMetadataAuthority() {
+			return state.ErrReadySelectionFrozen
+		}
+		if pending.Catalog != nil {
+			return state.ErrReadySelectionFrozen
+		}
+	}
+	return nil
 }
 
 // acknowledgePublication follows verified exact readback. A committed privacy

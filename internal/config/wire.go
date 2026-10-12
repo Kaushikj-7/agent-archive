@@ -147,14 +147,8 @@ func decodeConfig(data []byte, c *Config) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if plain.StagedSelectionProtection && (!fenced || plain.SchemaVersion != 13 || plain.Storage.EffectiveArchiveFormat() != destination.FormatLegacy) {
-		return false, errors.New("staged selection requires its exact noncatalog writer fence")
-	}
-	if plain.PublicationCompositionProtection && (!fenced || (plain.SchemaVersion != 12 && !(plain.SchemaVersion == 13 && plain.StagedSelectionProtection)) || !plain.DurableStorageProtection) {
-		return false, errors.New("publication composition requires its exact protected writer fence")
-	}
-	if plain.Storage.EffectiveArchiveFormat() == destination.FormatCatalogV4 && (!fenced || (plain.SchemaVersion != 11 && (plain.SchemaVersion != 12 || !plain.PublicationCompositionProtection || !plain.DurableStorageProtection))) {
-		return false, errors.New("catalog format requires its supported forward writer fence")
+	if err := validateCompositionConfig(plain, fenced); err != nil {
+		return false, err
 	}
 	if plain.ImportStagingProtection || plain.SchemaVersion >= 9 {
 		if err := validateDiscoveryConfig(Config(plain)); err != nil {
@@ -169,6 +163,19 @@ func decodeConfig(data []byte, c *Config) (bool, error) {
 		}
 	}
 	return fenced, nil
+}
+
+func validateCompositionConfig(plain configJSON, fenced bool) error {
+	if plain.StagedSelectionProtection && (!fenced || plain.SchemaVersion != 13 || plain.Storage.EffectiveArchiveFormat() != destination.FormatLegacy) {
+		return errors.New("staged selection requires its exact noncatalog writer fence")
+	}
+	if plain.PublicationCompositionProtection && (!fenced || (plain.SchemaVersion != 12 && !(plain.SchemaVersion == 13 && plain.StagedSelectionProtection)) || !plain.DurableStorageProtection) {
+		return errors.New("publication composition requires its exact protected writer fence")
+	}
+	if plain.Storage.EffectiveArchiveFormat() == destination.FormatCatalogV4 && (!fenced || (plain.SchemaVersion != 11 && (plain.SchemaVersion != 12 || !plain.PublicationCompositionProtection || !plain.DurableStorageProtection))) {
+		return errors.New("catalog format requires its supported forward writer fence")
+	}
+	return nil
 }
 
 func decodeConfigVersion(plain *configJSON, rawVersion json.RawMessage) (bool, error) {
@@ -263,14 +270,14 @@ func supportedWriterVersion(v writerVersion) bool {
 }
 
 func validateWriterFloors(c Config, version writerVersion) error {
-	if version.Writer == discoveryWriter || ((version.Writer == generationWriter || version.Writer == codexHistoryWriter || version.Writer == durableStorageWriter || version.Writer == retentionWriter || version.Writer == importStagingWriter || version.Writer == historicalProjectWriter || version.Writer == catalogWriter || (version.Writer == publicationCompositionWriter || version.Writer == stagedSelectionWriter)) && c.Discovery != nil) {
+	if version.Writer == discoveryWriter || (writerHasPermissionFloors(version.Writer) && c.Discovery != nil) {
 		for _, a := range c.Discovery.Authorizations {
 			if len(a.Intervals) > 0 && a.NativeStartFloor.IsZero() {
 				return errors.New("discovery permission history requires its native start floor")
 			}
 		}
 	}
-	if version.Writer == codexWriter || ((version.Writer == generationWriter || version.Writer == codexHistoryWriter || version.Writer == durableStorageWriter || version.Writer == retentionWriter || version.Writer == importStagingWriter || version.Writer == historicalProjectWriter || version.Writer == catalogWriter || (version.Writer == publicationCompositionWriter || version.Writer == stagedSelectionWriter)) && c.CodexCapture != nil) {
+	if version.Writer == codexWriter || (writerHasPermissionFloors(version.Writer) && c.CodexCapture != nil) {
 		var scopes []*DiscoveryAuthorization
 		scopes = append(scopes, c.CodexCapture.Authorization, c.CodexCapture.SourceAuthorization)
 		if c.Discovery != nil {
@@ -285,4 +292,13 @@ func validateWriterFloors(c Config, version writerVersion) error {
 		}
 	}
 	return nil
+}
+
+func writerHasPermissionFloors(writer configWriter) bool {
+	switch writer {
+	case generationWriter, codexHistoryWriter, durableStorageWriter, retentionWriter, importStagingWriter, historicalProjectWriter, catalogWriter, publicationCompositionWriter, stagedSelectionWriter:
+		return true
+	default:
+		return false
+	}
 }
