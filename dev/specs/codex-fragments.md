@@ -35,7 +35,11 @@ absence means unknown, not zero. Known ordinals must increase strictly across th
 artifact, including across records with unknown ordinals. Gaps are allowed and
 do not establish raw-prefix agreement, ancestry or contiguous coverage. Never
 invent ordinals from retained-array positions. Header `record_count` is between
-1 and 1,000,000. Missing evidence has 1–64 unique entries; an available dependency
+1 and 1,000,000. Both `record_count` and `ordinal` use unsigned decimal integer
+JSON tokens: fractional, exponent and negative forms are refused, even when
+their mathematical values satisfy the line schema's integer constraint. Exact
+values, including the full uint64 ordinal range, must survive decoding. Missing
+evidence has 1–64 unique entries; an available dependency
 UUID may accompany a content-free reason. A reason is not permission to read or
 retain the dependency. Do not disclose a forbidden dependency locator or content.
 
@@ -132,8 +136,8 @@ establish fragment archival, native app support, provider acceptance, downgrade
 safety, step 7 coverage or a published release.
 
 The test-only checker in `internal/archive/fragment_decoder_contract_test.go`
-exercises duplicate keys, header/count/order/identity agreement, newline framing,
-gzip corruption, caller ceilings and cancellation cleanup. It buffers bounded
+exercises UTF-8 framing, duplicate keys, header/count/order/identity agreement,
+newline framing, gzip corruption, caller ceilings and cancellation cleanup. It buffers bounded
 uncompressed fixture input and exposes no production API or retained records.
 It is not the production streaming decoder or the shared read-budget/resource
 proof required above. Its synthetic privacy case demonstrates that a supported,
