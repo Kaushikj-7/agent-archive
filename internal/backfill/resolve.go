@@ -597,13 +597,15 @@ func (r *resolver) historicalSourceRestriction(cwd string) SkipReason {
 			return SkipExcludedProject
 		}
 	}
-	if r.homeOrAbove(canonical) {
-		if result := r.homeRule(canonical); result.skip != "" {
-			return result.skip
+	for _, path := range uniquePaths(original, canonical) {
+		if r.homeOrAbove(path) {
+			if result := r.homeRule(path); result.skip != "" {
+				return result.skip
+			}
 		}
-	}
-	if r.temporaryRepository(canonical) && !r.filters.IncludeTemp {
-		return SkipTemporaryDirectory
+		if r.temporaryRepository(path) && !r.filters.IncludeTemp {
+			return SkipTemporaryDirectory
+		}
 	}
 	return ""
 }

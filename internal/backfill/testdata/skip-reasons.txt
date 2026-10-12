@@ -18,6 +18,7 @@ Not imported:
    1  removed earlier by retention              add --include-removed
    1  not matching the filters
    1  in projects excluded in setup             change in setup
+   1  whose complete history requires an excluded source
    1  run from the home folder                  add --include-home
    1  run from / or /Users, above the home folder
    1  run from temporary directories            add --include-temp

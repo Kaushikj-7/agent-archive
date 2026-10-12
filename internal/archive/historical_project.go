@@ -37,7 +37,7 @@ func (r SessionRegistration) ValidateHistoricalProject() error {
 	if h == nil {
 		return errors.New("historical project proof is required")
 	}
-	if h.Version != 1 || !IsHistoricalProjectID(h.ProjectID) || h.ProjectID != r.ProjectID || h.DestinationID == "" || h.DestinationID != r.DestinationID || !r.Imported() || r.ImportBatch.Recorded() == "" || r.ProjectRoot != "" || r.CodexAdmission != nil || r.ProjectResolution != nil || r.CaptureFrozen || r.PreviousGenerationID != "" {
+	if h.Version != 1 || !IsHistoricalProjectID(h.ProjectID) || h.ProjectID != r.ProjectID || h.DestinationID == "" || h.DestinationID != r.DestinationID || !r.Imported() || r.ImportBatch.IsZero() || r.ProjectRoot != "" || r.CodexAdmission != nil || r.ProjectResolution != nil || r.CaptureFrozen || r.PreviousGenerationID != "" {
 		return errors.New("invalid historical import ownership proof")
 	}
 	if len(h.SourceCwds) > 2*MaxHistorySpans {

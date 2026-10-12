@@ -289,6 +289,8 @@ file is limited to 4 MiB, 16,384 mappings and 16,384 project definitions. Unknow
 fields, duplicate JSON fields, conflicting cleaned cwds, invalid labels and
 multiple targets are refused before discovery. Inline `--map-project` keeps its
 128-mapping limit and merges with the file under the same conflict rule.
+Field names must use the exact lowercase schema spelling. Supplying both target
+fields is invalid even when one is an empty string.
 
 Rerun with the same semantic assignments to resume an interrupted batch. Ordering,
 filename and display labels do not change its canonical ownership digest. Changing
@@ -300,8 +302,11 @@ project output filter and does not select historical project IDs.
 Explicit exclusions and original source location restrictions also apply to required
 physical ancestors. A complete history requiring an excluded or restricted dependency is refused as
 `excluded_history`; it is not flattened into a partial session. Home, temporary
-and above-home restrictions still apply to the original cwd. Missing dependencies
-or ambiguous histories remain unresolved; fragment import is still unavailable.
+and above-home restrictions still apply to the original cwd.
+Both original and canonical paths must pass these restrictions, so a symlink
+from a temporary directory still requires `--include-temp`.
+Missing dependencies or ambiguous histories remain unresolved; fragment import
+is still unavailable.
 
 After confirmation, filtered staging survives native source deletion before the
 first upload or after a restart. Subsequent publication, privacy filtering,

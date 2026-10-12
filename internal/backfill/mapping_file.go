@@ -212,6 +212,15 @@ func (f Filters) mappingDigest() string {
 }
 
 func (entry *mappingEntry) UnmarshalJSON(data []byte) error {
+	fields, err := strictMappingFields(data, "cwd", "configured_root", "historical_project_id")
+	if err != nil {
+		return err
+	}
+	_, live := fields["configured_root"]
+	_, historical := fields["historical_project_id"]
+	if live == historical {
+		return errors.New("mapping requires exactly one configured_root or historical_project_id field")
+	}
 	type plain mappingEntry
 	var decoded plain
 	decoder := json.NewDecoder(bytes.NewReader(data))
@@ -219,20 +228,14 @@ func (entry *mappingEntry) UnmarshalJSON(data []byte) error {
 	if err := decoder.Decode(&decoded); err != nil {
 		return err
 	}
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(data, &fields); err != nil {
-		return err
-	}
-	for _, raw := range fields {
-		if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
-			return errors.New("mapping fields cannot be null")
-		}
-	}
 	*entry = mappingEntry(decoded)
 	return nil
 }
 
 func (file *mappingFile) UnmarshalJSON(data []byte) error {
+	if _, err := strictMappingFields(data, "schema_version", "historical_projects", "mappings"); err != nil {
+		return err
+	}
 	type plain mappingFile
 	var decoded plain
 	decoder := json.NewDecoder(bytes.NewReader(data))
@@ -240,15 +243,43 @@ func (file *mappingFile) UnmarshalJSON(data []byte) error {
 	if err := decoder.Decode(&decoded); err != nil {
 		return err
 	}
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(data, &fields); err != nil {
-		return err
-	}
-	for _, raw := range fields {
-		if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
-			return errors.New("mapping file fields cannot be null")
-		}
-	}
 	*file = mappingFile(decoded)
 	return nil
+}
+
+// UnmarshalJSON requires schema-exact names, rather than Go's case-insensitive aliases.
+func (definition *HistoricalProjectDefinition) UnmarshalJSON(data []byte) error {
+	if _, err := strictMappingFields(data, "id", "label"); err != nil {
+		return err
+	}
+	type plain HistoricalProjectDefinition
+	var decoded plain
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	*definition = HistoricalProjectDefinition(decoded)
+	return nil
+}
+
+func strictMappingFields(data []byte, allowed ...string) (map[string]json.RawMessage, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return nil, err
+	}
+	if fields == nil {
+		return nil, errors.New("mapping document entries must be objects")
+	}
+	for name, raw := range fields {
+		known := false
+		for _, field := range allowed {
+			known = known || name == field
+		}
+		if !known {
+			return nil, fmt.Errorf("unknown mapping field %q", name)
+		}
+		if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+			return nil, errors.New("mapping fields cannot be null")
+		}
+	}
+	return fields, nil
 }

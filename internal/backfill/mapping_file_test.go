@@ -64,16 +64,45 @@ func TestBulkMappingsCanonicalIdentityAndConflicts(t *testing.T) {
 		`{"schema_version":1,"mappings":null}`,
 		`{"schema_version":1,"mappings":[]} {}`,
 		`{"schema_version":1,"mappings":[{"cwd":"/gone/a","configured_root":"/live","historical_project_id":"` + id + `"}]}`,
+		`{"schema_version":1,"mappings":[{"cwd":"/gone/a","configured_root":"","historical_project_id":"` + id + `"}]}`,
+		`{"schema_version":1,"mappings":[{"cwd":"/gone/a","configured_root":"/live","historical_project_id":""}]}`,
+		`{"schema_version":1,"mappings":[{"cwd":"/reviewed","CWD":"/different","configured_root":"/live"}]}`,
+		`{"SCHEMA_VERSION":1,"mappings":[]}`,
+		`{"schema_version":1,"historical_projects":[{"id":"` + id + `","label":"Reviewed","Label":"Different"}],"mappings":[]}`,
 		`{"schema_version":1,"mappings":[{"cwd":"/gone/a","configured_root":"/live"},{"cwd":"/gone/./a","historical_project_id":"` + id + `"}]}`,
 	} {
 		var invalid Filters
 		if err := ReadMappingFile(strings.NewReader(value), &invalid); err == nil {
-			t.Fatalf("ambiguous mapping accepted: %s", value)
+			t.Errorf("ambiguous mapping accepted: %s", value)
 		}
 	}
 	var tooLarge Filters
 	if ReadMappingFile(strings.NewReader(strings.Repeat(" ", MappingFileLimit+1)), &tooLarge) == nil {
 		t.Fatal("unbounded mapping file")
+	}
+}
+
+func TestHistoricalTemporaryOriginalCwdCannotEscapeThroughSymlink(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	temporary := filepath.Join(root, "temporary")
+	service := filepath.Join(home, "service")
+	for _, path := range []string{temporary, service} {
+		if err := os.MkdirAll(path, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	alias := filepath.Join(temporary, "service")
+	if err := os.Symlink(service, alias); err != nil {
+		t.Fatal(err)
+	}
+	env := Environment{Home: home, TempDirs: []string{temporary}}
+	if NewHistoricalSourcePolicy(env, config.Config{}, Filters{})(alias) {
+		t.Fatal("temporary original cwd gained permission through its canonical target")
+	}
+	if !NewHistoricalSourcePolicy(env, config.Config{}, Filters{IncludeTemp: true})(alias) {
+		t.Fatal("explicit temporary-source permission refused")
 	}
 }
 
