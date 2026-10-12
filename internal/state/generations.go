@@ -18,7 +18,6 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
-	"github.com/wangjohn/agent-archive/internal/jsonwire"
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
@@ -915,7 +914,7 @@ func generationSourceDigest(ctx context.Context, bundle archive.SourceBundle, bu
 	}
 	available := reservation.Available()
 	largest, err := archive.SourceEncodingLineBound(ctx, bundle, available)
-	if errors.Is(err, jsonwire.ErrLimit) {
+	if errors.Is(err, agentmeta.ErrJSONWireLimit) {
 		reservation.Refuse(available + 1)
 	}
 	reservation.Release(preflight)

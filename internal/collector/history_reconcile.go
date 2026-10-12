@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/jsonwire"
 	"github.com/wangjohn/agent-archive/internal/state"
 )
 
@@ -356,9 +356,9 @@ func (p *revisionPlanner) checkStageEvidence(ctx context.Context, bundle archive
 	for _, record := range bundle.NativeRecords {
 		// Count a conservative wire bound without allocating an encoded row.
 		// Native records already belong to the retained input lease.
-		n, err := jsonwire.Bound(ctx, record, int64(bytesLeft-size))
+		n, err := agentmeta.JSONWireBound(ctx, record, int64(bytesLeft-size))
 		if err != nil {
-			if errors.Is(err, jsonwire.ErrLimit) {
+			if errors.Is(err, agentmeta.ErrJSONWireLimit) {
 				return 0, agentapi.Wrap(agentapi.Limit, errors.Join(errors.New("revision retained byte budget exceeded"), err))
 			}
 			return 0, err
