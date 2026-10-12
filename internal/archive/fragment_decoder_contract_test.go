@@ -338,3 +338,16 @@ func TestFragmentStructureCannotCertifyPrivacy(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestFragmentCloseErrorsPreserveCancellation(t *testing.T) {
+	t.Parallel()
+	schema := compileSchema(t, "codex-fragment.schema.json")
+	closeErr := errors.New("synthetic input close failure")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	input := &fragmentCloseProbe{Reader: strings.NewReader("unused"), closeErr: closeErr}
+	err := checkFragmentContract(ctx, input, schema, fragmentContractLimits{})
+	if !errors.Is(err, context.Canceled) || !errors.Is(err, closeErr) || !input.closed {
+		t.Fatalf("cancellation/close error=%v closed=%v", err, input.closed)
+	}
+}
