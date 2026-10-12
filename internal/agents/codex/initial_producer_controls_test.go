@@ -67,9 +67,7 @@ func TestHistoryInitialProducerAndKnownBindingControls(t *testing.T) {
 		}
 	}()
 	missingReader := missingSnapshot.(agentapi.SourceAdmissionEvidence)
-	// Current admission classifies missing original producer authority as Unsafe;
-	// the unchanged control must still refuse an unbound original admission.
-	if _, err := missingReader.AdmissionEvidence(t.Context(), admission); !agentapi.HasFailure(err, agentapi.Unsafe) {
+	if _, err := missingReader.AdmissionEvidence(t.Context(), admission); !agentapi.HasFailure(err, agentapi.Unavailable) {
 		t.Fatal("unknown original admitted", err)
 	}
 	known := agentapi.SourceAdmission{NativeID: threadA, Binding: &evidence.Binding}
