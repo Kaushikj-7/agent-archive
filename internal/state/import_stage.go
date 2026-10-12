@@ -538,7 +538,7 @@ func (s *Store) loadPreparedImportStage(ctx context.Context, id string) (stage I
 			}
 		}()
 	}
-	stage, err = s.decodePreparedImportStage(ctx, id, file, info.Size())
+	stage, err = s.decodePreparedImportStage(ctx, id, file, info.Size(), reservation)
 	return stage, true, err
 }
 
@@ -987,9 +987,8 @@ func (s *Store) importStageAbsentDescriptor(ctx context.Context, id string) (Imp
 }
 
 // decodePreparedImportStage shares the enclosing captured ledger; it owns only digest scratch.
-func (s *Store) decodePreparedImportStage(ctx context.Context, id string, file io.Reader, size int64) (ImportStage, error) {
+func (s *Store) decodePreparedImportStage(ctx context.Context, id string, file io.Reader, size int64, reservation *agentapi.NativeReadReservation) (ImportStage, error) {
 	var stage ImportStage
-	reservation := s.resourceBudget.Reservation()
 	decoder := json.NewDecoder(io.LimitReader(file, maxPendingHistoryBytes+1))
 	if err := decoder.Decode(&stage); err != nil {
 		return stage, errors.Join(ErrDurableStorageRecovery, err)
