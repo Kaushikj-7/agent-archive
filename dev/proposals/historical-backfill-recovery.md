@@ -514,6 +514,23 @@ exact batch undo.
 
 ### Step 6b: fragment readers, lifecycle and import
 
+The [fragment foundation](../specs/codex-fragments.md) reconciles this step against
+`e1436e35` (2026-10-12). Its independent version-1 schema and executable line
+checks are proposed only: there is no fragment decoder, filter route, publisher,
+registration or import option. Initial activity ownership is always unknown;
+historical project attribution remains a separate authorization decision. Schema
+validation and capture provenance never certify privacy. Complete source and
+metadata schemas and their validators remain unchanged.
+
+Deliver the decoder and context-proven filter with the first real explicit
+incomplete consumer, then staging/publication and every maintenance/compatibility
+path, then reviewed opt-in import with a separate logical fragment registry.
+Coordinate future writer capabilities with existing historical-projects-v10;
+the foundation allocates no new fence. Inspection of current batch/undo code found
+no generic enrichment/contribution journal. That step-5 prerequisite must land
+before complete repair or exact undo can be enabled; ordinary whole-session batch
+undo and the publication journal do not provide that contract.
+
 For incomplete but identifiable history, design a separately versioned retained
 fragment representation. Do not weaken the complete-history validator or turn
 fragments into ordinary complete sessions. Each fragment retains only approved,
@@ -529,12 +546,14 @@ Later complete evidence can supersede fragments while preserving archive
 identity, batch provenance, removal semantics and verified prior references.
 Do not invent missing history, relations or ownership boundaries.
 
-Land fragment readers and format validation first, then staging/publication and
+Land the proposed format/schema foundation first, then readers with an explicit
+incomplete consumer and proven filter context, then staging/publication and
 maintenance, then the explicit import option. Make failure to initialize the
 privacy filter without missing ancestor context an unresolved outcome, not a
 fallback to generic JSON/text retention. Repair to a complete history and undo
-of that repair must use the enrichment journal from step 5. Fragment archival
-must not reserve the ordinary thread identity in a way that prevents its later
+of that repair must use the prerequisite enrichment journal specified in step 5.
+That journal is not implemented in the reconciled current batch/undo code.
+Fragment archival must not reserve the ordinary thread identity in a way that prevents its later
 complete import, or create two logical sessions counted as independent usage.
 
 Tests: no live repository/no Git, mappings over one batch's interactive limit,
