@@ -152,37 +152,23 @@ class GitIdentityCompatibilityTest(unittest.TestCase):
         self.assertIn('Older distribution package acceptance is recorded separately.', TESTING_MD.read_text())
 
 
-class LevenshteinToolchainTest(unittest.TestCase):
-    def test_vulnerability_scan_uses_release_compiler_and_other_checks_keep_container(self):
+class LevenshteinSharedChecksTest(unittest.TestCase):
+    def test_all_required_checks_use_the_pinned_shared_container(self):
         config = json.loads((ROOT / 'levenshtein.json').read_text())
         expected = {'lint', 'vet', 'http', 'sql', 'modules', 'vulnerabilities',
                     'workflow-lint', 'workflow-security'}
         self.assertEqual(set(config['checks']), expected)
         for name in ('pre-merge', 'main'):
             self.assertEqual(set(config['runs'][name]['checks']), expected)
-        vulnerability = config['checks']['vulnerabilities']
-        self.assertEqual(vulnerability['kind'], 'go-vuln')
-        self.assertEqual(vulnerability['environment'], 'release-go')
-        self.assertEqual(config['environments']['release-go'], {'executor': 'native'})
-        self.assertEqual(config['environments']['go'], {'executor': 'dagger'})
+        self.assertEqual(config['checks']['vulnerabilities']['kind'], 'go-vuln')
         for name, check in config['checks'].items():
-            if name != 'vulnerabilities':
-                self.assertEqual(check['environment'], 'go', name)
-
-    def test_native_scan_checks_actual_host_go_against_product_toolchain(self):
+            self.assertEqual(config['environments'][check['environment']],
+                             {'executor': 'dagger'}, name)
         workflow = (ROOT / '.github/workflows/levenshtein.yml').read_text()
-        compiler = re.search(r'(?m)^toolchain (go\S+)$', (ROOT / 'go.mod').read_text())[1]
-        self.assertEqual(job_key(jobs(workflow)['verify'], 'runs-on'), 'ubuntu-24.04')
-        setup = [step for step in steps(jobs(workflow)['verify'])
-                 if 'uses: actions/setup-go@' in step]
-        self.assertEqual(len(setup), 1)
-        self.assertIn('go-version-file: app/go.mod', setup[0])
-        guards = [step for step in steps(jobs(workflow)['verify'])
-                  if 'go version | grep' in step]
-        self.assertEqual(len(guards), 1)
-        self.assertIn('GOTOOLCHAIN: local', guards[0])
-        self.assertIn("grep -q ' " + re.escape(compiler) + " '", guards[0])
-        self.assertIn('ref: b8b8ee429de80d44c00ae7c8020662de89f927c6', workflow)
+        shared_checkout = [step for step in steps(jobs(workflow)['verify'])
+                           if 'repository: wangjohn/levenshtein' in step]
+        self.assertEqual(len(shared_checkout), 1)
+        self.assertRegex(shared_checkout[0], r'(?m)^          ref: [0-9a-f]{40}$')
         self.assertIn('./levenshtein/verify "$run" --source ./app', workflow)
 
 
