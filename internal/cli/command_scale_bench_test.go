@@ -37,11 +37,11 @@ func BenchmarkCommandLatency(b *testing.B) {
 	}
 }
 
-func benchmarkEnv(b testing.TB, home string, store storage.ObjectStore) Env {
-	b.Helper()
+func benchmarkEnv(tb testing.TB, home string, store storage.ObjectStore) Env {
+	tb.Helper()
 	cfg := config.Config{MachineID: "bench", Storage: credentialsTestConfig(), Archive: archive.Config{SchemaVersion: 1, MachineID: "bench", Enabled: true}}
 	if err := config.Save(home, cfg); err != nil {
-		b.Fatal(err)
+		tb.Fatal(err)
 	}
 	// Read-only commands receive private homes and no host environment, repo,
 	// scheduler or credentials. TestMain additionally fails closed for host calls.
