@@ -468,7 +468,8 @@ resume, rerun, continued capture and exact undo ownership.
 
 ### Step 6a: historical-only ownership and bulk mappings
 
-Implementation contract reconciled against main `7cfcc565`: this change adds
+Implementation contract reconciled against main `b7435197` (including #430 streaming read accounting, per-session ceilings
+and named size gaps): this change adds
 strict bounded mapping JSON, separate opaque historical identities and
 destination permissions, frozen private dependency cwd evidence, retained-only
 publication/local reads and permanent v10 compatibility protection. Existing

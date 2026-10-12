@@ -70,9 +70,25 @@ func TestCachedHistoryPrefixCapacityPressureRemainsRetryable(t *testing.T) {
 	if !ledger.Reserve(pressure) {
 		t.Fatal("reserve")
 	}
-	_, err = pass.readHistorySelection(t.Context(), agentapi.ReadLimits{}, selection)
-	if !errors.Is(err, agentapi.ErrReadBudget) {
-		t.Fatalf("cached valid prefix became a permanent record limit: %v", err)
+	// A validated cached prefix needs no record buffer to open; reading its
+	// 20 KB record does, and that refusal stays retryable.
+	opened, err := pass.readHistorySelection(t.Context(), agentapi.ReadLimits{}, selection)
+	if err != nil {
+		t.Fatal("cached prefix needs no buffer to open", err)
+	}
+	var readErr error
+	for {
+		_, more, err := opened.(*historySnapshot).Next(t.Context())
+		if err != nil || !more {
+			readErr = err
+			break
+		}
+	}
+	if err := opened.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if !errors.Is(readErr, agentapi.ErrReadBudget) || errors.Is(readErr, archive.ErrRecordTooLarge) {
+		t.Fatalf("cached valid prefix became a permanent record limit: %v", readErr)
 	}
 	_, err = pass.Read(t.Context(), leaf, agentapi.ReadLimits{RecordBytes: 8192})
 	if !errors.Is(err, archive.ErrRecordTooLarge) || errors.Is(err, agentapi.ErrReadBudget) {

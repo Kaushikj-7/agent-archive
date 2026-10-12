@@ -3,6 +3,7 @@ package agentapi
 import (
 	"context"
 	"errors"
+	"fmt"
 )
 
 // FailureKind controls retry and fallback without inspecting provider error text.
@@ -111,6 +112,25 @@ var ErrClosed = errors.New("source owner is closed")
 
 // ErrRawLimit reports an aggregate source value limit.
 var ErrRawLimit = errors.New("source exceeds raw size limit")
+
+// RawLimitError is ErrRawLimit with the sizes that decided it, so a recorded
+// gap can name the limit and how far over it the source is.
+type RawLimitError struct {
+	Size  int64
+	Limit int64
+}
+
+func (e *RawLimitError) Error() string {
+	return fmt.Sprintf("%v: %d bytes, limit %d bytes", ErrRawLimit, e.Size, e.Limit)
+}
+
+// Is matches ErrRawLimit.
+func (e *RawLimitError) Is(target error) bool { return target == ErrRawLimit }
+
+// RawLimit is a Limit failure for a source of size bytes over limit.
+func RawLimit(size, limit int64, observed *SourceObservation) error {
+	return &SourceError{Kind: Limit, Err: &RawLimitError{Size: size, Limit: limit}, Observed: observed}
+}
 
 // Deterministic permits caching only stable filter/limit failures without cleanup or retryable causes.
 func Deterministic(err error) bool {

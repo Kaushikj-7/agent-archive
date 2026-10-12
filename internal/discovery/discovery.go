@@ -241,9 +241,8 @@ func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config,
 		}
 		return h, nil
 	}
-	if err := persistCatalog(checkpointCtx, o.Rollouts, path, c); err != nil {
-		o.Rollouts.deferCheckpoint(&c, err)
-		return h, errors.Join(errors.New("discovery state write failed; retry next scan"), err)
+	if err := checkpointCatalog(checkpointCtx, o.Rollouts, path, &c, &h); err != nil {
+		return h, err
 	}
 	if o.Rollouts != nil {
 		o.Rollouts.catalog = &c
@@ -1065,6 +1064,10 @@ func prepareCatalog(ctx context.Context, store *state.Store, cfg config.Config, 
 	}
 	if catalogNeedsReset(c, roots) {
 		c = catalog{}
+		if o.Rollouts != nil {
+			// The discarded catalog's charge goes with it.
+			o.Rollouts.releaseRestored()
+		}
 	}
 	c.reclassify()
 	if o.Rollouts != nil {
@@ -1302,6 +1305,22 @@ func (l *CodexRolloutLookup) deferCheckpoint(c *catalog, err error) {
 		l.catalog = c
 		l.coverageDirty = true
 	}
+}
+
+// checkpointCatalog persists the pass's catalog. One that, even without its
+// observation cache, is past the size the next read accepts is not written:
+// the previous file stays, the pass goes on, and health says so.
+func checkpointCatalog(ctx context.Context, lookup *CodexRolloutLookup, path string, c *catalog, h *Health) error {
+	err := persistCatalog(ctx, lookup, path, *c)
+	if errors.Is(err, errCatalogTooLarge) {
+		h.Errors = append(h.Errors, "catalog_over_cap")
+		return nil
+	}
+	if err != nil {
+		lookup.deferCheckpoint(c, err)
+		return errors.Join(errors.New("discovery state write failed; retry next scan"), err)
+	}
+	return nil
 }
 
 // persistCatalog is persistNativeCatalog; tests replace it to fail a checkpoint.

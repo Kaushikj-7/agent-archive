@@ -139,10 +139,15 @@ Appends beyond the captured prefix are allowed; replacements and prefix rewrites
 are retryable changes. This permits continuously active chats to make progress.
 
 A pass owns at most 64 open dependencies, depth 64 and one million records per
-materialized graph. The shared 128 MiB charge includes captured input extents,
-immutable ancestor-prefix byte caches, bounded prefix summaries and reserved
-borrowed scanner buffers. One ancestor prefix of at most 32 MiB may be cached
-per open physical file when the remaining budget permits it. Descendants reuse
+materialized graph. The shared pass charge (agentapi.PassReadBudget, 256 MiB)
+includes cached headers, immutable ancestor-prefix byte caches, bounded prefix
+summaries and line buffers grown only as far as the longest record read. A
+rollout read through its descriptor is not charged for its length. Cached
+ancestor prefixes total at most 16 MiB per pass, within the remaining budget.
+A thread's rollouts may total archive.MaxCodexRawTranscriptBytes (512 MiB);
+past that the source reports a raw-limit failure with the sizes and an
+observation, which the collector records once as a named size-limit gap.
+Descendants reuse
 its bytes and validated ordinal summary. The provider still reads and hashes
 the native prefix once per completed descendant capture; it does not use file
 stamps as proof that cached bytes remained unchanged. Changed dependencies evict

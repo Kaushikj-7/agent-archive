@@ -197,8 +197,11 @@ stays the same length however many projects you include.
   apart) and what to do: for example "2 sessions failed to reach storage
   (network or service unavailable) — check the network and the storage
   service, then run agent-archive sync (the next pass also retries)". A
-  session over the transcript size limit needs nothing from you: its last
-  snapshot is kept. `agent-archive sync` prints each session's own error,
+  session over a transcript size limit keeps its last snapshot; the row
+  names the limit, and `agent-archive status APP` lists each such session
+  with its size and how to keep capturing the work (continue it in a new
+  session; `agent-archive handoff` carries the context there).
+  `agent-archive sync` prints each session's own error,
   and `status --json` has each session's kind as a code
   (`collector.session_issues`). When no kind is about storage, status
   leads with the most pressing one ("Some sessions could not be captured")

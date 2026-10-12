@@ -67,14 +67,17 @@ type appStatus struct {
 	CaptureGaps []archive.CaptureGap `json:"capture_gaps,omitempty"`
 	// SessionsWithCaptureGaps counts the distinct sessions behind
 	// CaptureGaps: one session can record several gaps.
-	SessionsWithCaptureGaps int       `json:"sessions_with_capture_gaps,omitempty"`
-	Installed               bool      `json:"installed"`
-	InstalledVersion        string    `json:"installed_version,omitempty"`
-	VersionSource           string    `json:"installed_version_source,omitempty"`
-	VersionObservedAt       time.Time `json:"installed_version_observed_at,omitzero"`
-	VersionKind             string    `json:"installed_version_kind,omitempty"`
-	VersionState            string    `json:"installed_version_state"`
-	VersionSupport          string    `json:"installed_version_support"`
+	SessionsWithCaptureGaps int `json:"sessions_with_capture_gaps,omitempty"`
+	// SizeLimitedSessions lists the sessions whose capture stopped at a
+	// size limit, with the limit when it was recorded.
+	SizeLimitedSessions []sizeLimitedSession `json:"size_limited_sessions,omitempty"`
+	Installed           bool                 `json:"installed"`
+	InstalledVersion    string               `json:"installed_version,omitempty"`
+	VersionSource       string               `json:"installed_version_source,omitempty"`
+	VersionObservedAt   time.Time            `json:"installed_version_observed_at,omitzero"`
+	VersionKind         string               `json:"installed_version_kind,omitempty"`
+	VersionState        string               `json:"installed_version_state"`
+	VersionSupport      string               `json:"installed_version_support"`
 	// VersionSupportReason is set when VersionSupport is unverified. Verified
 	// captures report the harness's own version (Codex cli_version, Claude
 	// Code record version, Cursor hook cursor_version) in HarnessVersions; the
@@ -339,9 +342,49 @@ func blockedReasonDetail(reason state.BlockedReason) string {
 	case state.BlockedReasonTranscriptRewritten:
 		return "The current transcript cannot prove extension of retained history. Automatic capture resumes only if extension can be proved. To preserve this history and capture current activity under a new linked ID, preview agent-archive recover SESSION_ID, then explicitly confirm it."
 	case state.BlockedReasonTranscriptTooLarge:
-		// Permanent for the current transcript: the general wording below.
+		// Permanent for the current transcript: the general wording below,
+		// or sizeLimitDetail when the limit is known.
 	}
 	return "The current transcript can no longer be captured; the last published snapshot, if any, stays retained."
+}
+
+// sizeLimitDetail explains a size-limit gap whose limit was recorded: which
+// limit, how far over it the session is, and how to go on capturing.
+func sizeLimitDetail(harness, archiveSessionID string, limit state.SizeLimitGap) string {
+	label := collector.SizeLimitLabel(harness, limit)
+	over := ""
+	if limit.SizeBytes > 0 {
+		over = " at " + formatBytes(limit.SizeBytes)
+	}
+	var what string
+	switch limit.Kind {
+	case state.SizeLimitRaw:
+		what = fmt.Sprintf("The transcript%s is over the %s limit on what a pass reads.", over, label)
+	case state.SizeLimitFiltered:
+		what = fmt.Sprintf("What the archive keeps of the transcript%s is over the %s limit.", over, label)
+	case state.SizeLimitRecord:
+		what = fmt.Sprintf("One record in the transcript is over the %s limit.", label)
+	case state.SizeLimitReadBudget:
+		what = fmt.Sprintf("Reading the transcript%s needs more than the %s one session may use in a pass.", over, label)
+	default:
+		what = fmt.Sprintf("The transcript is over the %s limit.", label)
+	}
+	return what + " Capture stopped at the last published snapshot, which stays retained and readable. To keep capturing the work, continue it in a new session: agent-archive handoff " + archiveSessionID + " carries this one's context there."
+}
+
+// formatBytes words a byte count in MB, as file sizes are usually shown.
+func formatBytes(n int64) string {
+	return fmt.Sprintf("%.1f MB", float64(n)/1e6)
+}
+
+// sizeLimitedSession is one session status APP lists as stopped at a size
+// limit.
+type sizeLimitedSession struct {
+	ArchiveSessionID string `json:"archive_session_id"`
+	// Limit is the limit it stopped at, as SizeLimitLabel words it, or ""
+	// when the gap was recorded without one.
+	Limit     string `json:"limit,omitempty"`
+	SizeBytes int64  `json:"size_bytes,omitempty"`
 }
 
 // readBackProgress summarises how much of an app's evidence is verified:
@@ -854,7 +897,18 @@ func (s statusSessions) addSession(app *appStatus, pair *projectCaptureStatus, r
 			s.skip(reg.ArchiveSessionID, e)
 			return
 		}
-		app.CaptureGaps = append(app.CaptureGaps, archive.CaptureGap{Code: string(reason), Detail: blockedReasonDetail(reason)})
+		detail := blockedReasonDetail(reason)
+		if reason == state.BlockedReasonTranscriptTooLarge || reason == state.BlockedReasonRecordTooLarge {
+			var label string
+			var size int64
+			if signature, found, err := s.store.LoadScanSignature(reg.ArchiveSessionID); err == nil && found && signature.Blocked == reason && signature.SizeLimit != nil {
+				detail = sizeLimitDetail(reg.Harness.Name, reg.ArchiveSessionID, *signature.SizeLimit)
+				label = collector.SizeLimitLabel(reg.Harness.Name, *signature.SizeLimit)
+				size = signature.SizeLimit.SizeBytes
+			}
+			app.SizeLimitedSessions = append(app.SizeLimitedSessions, sizeLimitedSession{ArchiveSessionID: reg.ArchiveSessionID, Limit: label, SizeBytes: size})
+		}
+		app.CaptureGaps = append(app.CaptureGaps, archive.CaptureGap{Code: string(reason), Detail: detail})
 	}
 	if found {
 		if cacheStatus != state.CacheStatusBlocked {

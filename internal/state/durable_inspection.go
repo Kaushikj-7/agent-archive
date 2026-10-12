@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"errors"
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"io"
@@ -278,8 +279,11 @@ func (s *Store) CheckDurableSessionRead(id string) (err error) {
 		return errors.Join(ErrDurableStorageRecovery, err)
 	}
 	defer func() {
-		err = errors.Join(err, home.Check(), home.Close())
-		if err != nil {
+		cleanup := errors.Join(home.Check(), home.Close())
+		// A read the memory ledger refused names no recovery: it is retried.
+		refused := cleanup == nil && errors.Is(err, agentapi.ErrReadBudget)
+		err = errors.Join(err, cleanup)
+		if err != nil && !refused {
 			err = errors.Join(ErrDurableStorageRecovery, err)
 		}
 	}()
@@ -316,17 +320,29 @@ func (s *Store) CheckDurableSessionRead(id string) (err error) {
 		return ErrDurableStorageRecovery
 	}
 	if history || present {
-		// This guard discards the validated transaction; its decoded inputs
-		// must not accumulate on the caller's existing ledger.
-		scratch, closeScratch := s.WithReadBudget(s.durableContext(), s.resourceBudget)
-		pending, readable, readErr := scratch.LoadPending(id)
-		missingHistory := history && pending.History == nil
-		closeScratch()
-		if readErr != nil || !readable || missingHistory {
-			return errors.Join(ErrDurableStorageRecovery, readErr)
+		if err := s.checkPendingReadable(id, history); err != nil {
+			return err
 		}
 	}
 	return s.durableContext().Err()
+}
+
+// checkPendingReadable reads the pending publication CheckDurableSessionRead
+// found. This guard discards the validated transaction; its decoded inputs
+// must not accumulate on the caller's existing ledger.
+func (s *Store) checkPendingReadable(id string, history bool) error {
+	scratch, closeScratch := s.WithReadBudget(s.durableContext(), s.resourceBudget)
+	pending, readable, readErr := scratch.LoadPending(id)
+	missingHistory := history && pending.History == nil
+	closeScratch()
+	if errors.Is(readErr, agentapi.ErrReadBudget) {
+		// Memory for reading it, not the evidence, is what is missing.
+		return readErr
+	}
+	if readErr != nil || !readable || missingHistory {
+		return errors.Join(ErrDurableStorageRecovery, readErr)
+	}
+	return nil
 }
 
 // CheckDurableReadRoots refuses anonymous recovery work before native content is read.

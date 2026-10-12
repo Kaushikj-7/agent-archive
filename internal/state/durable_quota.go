@@ -370,6 +370,10 @@ func (s *Store) writeDurableGuard(ctx context.Context, g config.DurableStorageGu
 	}
 	n, err := jsonwire.Bound(ctx, p, limit)
 	if s.resourceBudget != nil {
+		if errors.Is(err, jsonwire.ErrLimit) && limit < durableStorageQuota/2-1 {
+			// Memory, not the disk quota, refused the encoding.
+			s.resourceBudget.Refuse(limit + 2)
+		}
 		s.resourceBudget.Release(scratch)
 	}
 	if err != nil {

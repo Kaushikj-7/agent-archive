@@ -544,12 +544,12 @@ func checkCoverageMembers(ctx context.Context, c *catalog, h *Health, adapter So
 			return false
 		}
 		const headerCharge = int64(sourcefacts.HeaderBytes + 128<<10)
-		if rollouts != nil && !rollouts.readBudget.Reserve(headerCharge) {
+		if rollouts != nil && !rollouts.readBudget.ReserveUnscoped(headerCharge) {
 			return false
 		}
 		observation := adapter.Inspect(ctx, entry.Source)
 		if rollouts != nil {
-			rollouts.readBudget.Release(headerCharge)
+			rollouts.readBudget.ReleaseUnscoped(headerCharge)
 			rollouts.probes++
 		}
 		h.Probes++

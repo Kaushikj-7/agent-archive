@@ -77,6 +77,12 @@ type sessionScan struct {
 	warnings []error
 	// gap is the capture gap the scan ended in, if it did (see block).
 	gap state.BlockedReason
+	// sizeLimit names the limit a size-limit gap stopped at, when known.
+	sizeLimit *state.SizeLimitGap
+	// lastRead is the source read whose observation a ceiling refusal uses:
+	// either the read this scan went on from or the read that was refused.
+	// The gap is recorded at its state (see overCeiling).
+	lastRead *sourceRead
 	// subagentRunning reports that the scan ended waiting for a resumed
 	// subagent to stop again (see errSubagentRunning).
 	subagentRunning bool
@@ -313,6 +319,13 @@ func (s *sessionScan) read() (read sourceRead, ok bool, err error) {
 		read.filterLease = s.nativeFilterLease(mark)
 	}
 	if err != nil {
+		if s.overSessionCeiling(err) && !read.observed.observation.Present {
+			// The gap is recorded at the state the source is in, so an
+			// unchanged source is not read again to reach it.
+			if observed, signatureErr := reader.Signature(s.ctx); signatureErr == nil {
+				read.observed = observed
+			}
+		}
 		read.outcome, err = s.readFailed(read, err)
 		return read, false, err
 	}
@@ -343,12 +356,22 @@ func (s *sessionScan) read() (read sourceRead, ok bool, err error) {
 	if err := s.followRelocatedRollout(read.observed.relocated); err != nil {
 		return read, false, err
 	}
+	s.lastRead = &read
 	return read, true, nil
 }
 
 // readFailed turns a failed read into the scan's end: a recorded gap for a
 // condition retrying cannot fix, otherwise the error.
 func (s *sessionScan) readFailed(read sourceRead, err error) (sessionOutcome, error) {
+	if s.overSessionCeiling(err) {
+		// Use the same pending-upload guard as a refusal after the read:
+		// superseding an unattempted publication must not leave its upload
+		// owed behind a terminal gap. Keep this read's exact observation.
+		s.lastRead = &read
+		return s.overCeiling(err)
+	}
+	// A refusal under others' pressure ends the scan here; pass.scan defers
+	// it (sessionScan.overCeiling), as any refusal after the read.
 	if agentapi.HasFailure(err, agentapi.Cleanup) || agentapi.HasFailure(err, agentapi.Changed) || agentapi.HasFailure(err, agentapi.Unavailable) || errors.Is(err, agentapi.ErrReadBudget) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return outcomeSkipped, err
 	}
@@ -356,10 +379,12 @@ func (s *sessionScan) readFailed(read sourceRead, err error) (sessionOutcome, er
 	case errors.Is(err, errTranscriptTooLarge):
 		// The file will not shrink by retrying: record the gap once and
 		// keep the last published snapshot instead of failing every pass.
+		s.sizeLimit = sizeLimitOf(err, read.observed, s.reg.Harness.Name, s.opts.maxTranscriptBytes())
 		return s.blockThenRemember(state.BlockedReasonTranscriptTooLarge, read)
 	case errors.Is(err, errRecordTooLarge):
 		// Likewise one record too long to read: a gap recorded once, the
 		// last published snapshot kept, cleared when the file changes.
+		s.sizeLimit = sizeLimitOf(err, read.observed, s.reg.Harness.Name, s.opts.maxTranscriptBytes())
 		return s.blockThenRemember(state.BlockedReasonRecordTooLarge, read)
 	case errors.Is(err, os.ErrNotExist):
 		// The application deleted its own transcript. Retention keeps
@@ -374,7 +399,7 @@ func (s *sessionScan) readFailed(read sourceRead, err error) (sessionOutcome, er
 	// Unsafe format: never upload; the last published snapshot, if any,
 	// remains untouched and readable.
 	err = fmt.Errorf("filter transcript: %w", err)
-	if rememberErr := rememberFailedRead(s.local, s.reg, read.adapter, read.observed, s.opts, err, "", s.publishedLastHead()); rememberErr != nil {
+	if rememberErr := rememberFailedRead(s.local, s.reg, read.adapter, read.observed, s.opts, err, "", nil, s.publishedLastHead()); rememberErr != nil {
 		return outcomeSkipped, errors.Join(err, rememberErr)
 	}
 	return outcomeSkipped, err
