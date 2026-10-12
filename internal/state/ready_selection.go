@@ -388,8 +388,11 @@ func (s *Store) checkSelectingPendingRemoval(id string) error {
 	read, closeRead := s.WithReadBudget(s.durableContext(), s.resourceBudget)
 	defer closeRead()
 	pending, found, err := read.catalogPendingForFence(id)
-	if err != nil || !found {
-		return err
+	if err != nil {
+		return errors.Join(ErrDurableStorageRecovery, err)
+	}
+	if !found {
+		return nil
 	}
 	if pending.Selection == nil {
 		return nil
