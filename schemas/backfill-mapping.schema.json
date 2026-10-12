@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://agent-archive.dev/schemas/backfill-mapping.schema.json",
+  "$id": "https://raw.githubusercontent.com/wangjohn/agent-archive/main/schemas/backfill-mapping.schema.json",
   "type": "object",
   "additionalProperties": false,
   "properties": {
@@ -22,7 +22,7 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 128,
-            "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+            "pattern": "^[^\u0000-\u001f\u007f]+$"
           }
         },
         "required": [
@@ -42,13 +42,13 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 4096,
-            "pattern": "^/[^\\u0000\\r\\n]*$"
+            "pattern": "^/[^\u0000\\r\\n]*$"
           },
           "configured_root": {
             "type": "string",
             "minLength": 1,
             "maxLength": 4096,
-            "pattern": "^/[^\\u0000\\r\\n]*$"
+            "pattern": "^/[^\u0000\\r\\n]*$"
           },
           "historical_project_id": {
             "type": "string",

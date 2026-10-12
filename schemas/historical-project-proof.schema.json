@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://agent-archive.dev/schemas/historical-project-proof.schema.json",
+  "$id": "https://raw.githubusercontent.com/wangjohn/agent-archive/main/schemas/historical-project-proof.schema.json",
   "type": "object",
   "additionalProperties": false,
   "properties": {
@@ -19,19 +19,19 @@
       "type": "string",
       "minLength": 1,
       "maxLength": 4096,
-      "pattern": "^/[^\\u0000\\r\\n]*$"
+      "pattern": "^/[^\u0000\\r\\n]*$"
     },
     "canonical_cwd": {
       "type": "string",
       "minLength": 1,
       "maxLength": 4096,
-      "pattern": "^/[^\\u0000\\r\\n]*$"
+      "pattern": "^/[^\u0000\\r\\n]*$"
     },
     "label": {
       "type": "string",
       "minLength": 1,
       "maxLength": 128,
-      "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+      "pattern": "^[^\u0000-\u001f\u007f]+$"
     },
     "source_cwds": {
       "type": "array",
@@ -40,7 +40,7 @@
         "type": "string",
         "minLength": 1,
         "maxLength": 4096,
-        "pattern": "^/[^\\u0000\\r\\n]*$"
+        "pattern": "^/[^\u0000\\r\\n]*$"
       }
     }
   },
