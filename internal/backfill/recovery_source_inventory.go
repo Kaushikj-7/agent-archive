@@ -2,30 +2,25 @@ package backfill
 
 import (
 	"context"
+	"crypto/sha256"
+	"errors"
+	"hash"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
+
+	"github.com/wangjohn/agent-archive/internal/sourcefacts"
+	"github.com/wangjohn/agent-archive/internal/transcriptio"
 )
 
-// recoverySourceInventory binds discovered membership to the native paths
-// inspected during discovery. It never reopens transcripts. Directory stamps
-// include absent stores, so new files/clones require a new plan.
-//
-// It checks membership, not content. A transcript that a work item owns (the
-// item's header came from that same file) may grow in place: running agents
-// append to their transcripts, and every header fact comes from a complete
-// leading record that an append cannot change. A header that no complete record
-// decided (no cwd yet, no session_meta) already leaves recovery unavailable for
-// the plan. An owned file's content is only rechecked where its own source
-// check (checkSource, sourceCurrent) runs: for an imported session's source and
-// for the witness a recovery relies on. A same-inode rewrite that grows another
-// owned transcript is therefore not caught here; agents append rather than
-// rewrite, so that limit is accepted. Added, removed or replaced paths, mode changes,
-// truncation and same-size rewrites still change the inventory, as does any
-// change to a path no work item owns. These are practical observations, with
-// the same timestamp-restoration limit as the existing native file checks, not
-// an atomic filesystem snapshot.
+// recoverySourceInventory binds membership and header evidence to the native
+// paths inspected during discovery. Directory stamps include absent stores.
+// Owned transcripts may append only while their inspected prefix is unchanged,
+// including hidden/nonselected sessions that supplied negative ownership facts.
+// Reads are bounded and remain outside admission locks. This is an observation
+// boundary, not an atomic snapshot or a guarantee against change and reversal.
 type recoverySourceInventory struct {
 	env    Environment
 	stamps map[string]recoveryFileStamp
@@ -33,9 +28,9 @@ type recoverySourceInventory struct {
 	// store), what it names, taken before the listing. The link's own stamp
 	// does not move when the directory gains entries.
 	targets map[string]recoveryTarget
-	// appendable names observed regular files whose content belongs to a work
-	// item's own source check.
-	appendable map[string]bool
+	// appendable retains the original bounded header prefix and provider root.
+	appendable map[string]recoveryHeaderPrefix
+	headers    map[string]recoveryHeaderPrefix
 	complete   bool
 	// names holds the entry names of each directory listed at the baseline,
 	// at most recoverySourceObservationLimit names in all. A directory whose
@@ -55,19 +50,69 @@ type recoverySourceInventory struct {
 
 const recoverySourceObservationLimit = 65536
 
-func newRecoverySourceInventory(env Environment) *recoverySourceInventory {
-	return &recoverySourceInventory{env: env, stamps: map[string]recoveryFileStamp{}, targets: map[string]recoveryTarget{}, appendable: map[string]bool{}, names: map[string]map[string]bool{}, complete: true}
+// Bound extra renewal I/O independently of path count and existing header bounds.
+// Exhaustion requires a new plan; it cannot establish partial uniqueness.
+const recoveryHeaderRenewalBytes int64 = 128 << 20
+
+type recoveryHeaderPrefix struct {
+	bytes int64
+	sum   [32]byte
+	root  string
 }
 
-// ownContent hands content changes of an observed transcript to the work item
-// whose header came from source. Only the same regular file qualifies; every
-// other path keeps the full size and modification-time comparison.
-func (i *recoverySourceInventory) ownContent(path string, source fs.FileInfo) {
+type recoveryHeaderReader struct {
+	io.ReadCloser
+	hash   hash.Hash
+	bytes  int64
+	valid  bool
+	retain func(recoveryHeaderPrefix)
+}
+
+func (r *recoveryHeaderReader) Read(p []byte) (int, error) {
+	n, err := r.ReadCloser.Read(p)
+	if r.bytes+int64(n) > headScanLimit {
+		r.valid = false
+	} else {
+		_, _ = r.hash.Write(p[:n])
+	}
+	r.bytes += int64(n)
+	if err != nil && !errors.Is(err, io.EOF) {
+		r.valid = false
+	}
+	return n, err
+}
+
+func (r *recoveryHeaderReader) Close() error {
+	err := r.ReadCloser.Close()
+	if err == nil && r.valid && r.bytes > 0 {
+		var sum [32]byte
+		copy(sum[:], r.hash.Sum(nil))
+		r.retain(recoveryHeaderPrefix{bytes: r.bytes, sum: sum})
+	}
+	return err
+}
+
+func newRecoverySourceInventory(env Environment) *recoverySourceInventory {
+	return &recoverySourceInventory{env: env, stamps: map[string]recoveryFileStamp{}, targets: map[string]recoveryTarget{}, appendable: map[string]recoveryHeaderPrefix{}, headers: map[string]recoveryHeaderPrefix{}, names: map[string]map[string]bool{}, complete: true}
+}
+
+// ownContent binds captured header bytes to their observed regular file and
+// provider root. Paths without a completed bounded read keep strict stat checks.
+func (i *recoverySourceInventory) ownContent(path string, source fs.FileInfo, roots ...string) {
 	stamp, ok := i.stamps[path]
-	if !ok || stamp.absent || source == nil || !stamp.info.Mode().IsRegular() || !source.Mode().IsRegular() || !os.SameFile(stamp.info, source) {
+	prefix, read := i.headers[path]
+	if !ok || !read || stamp.absent || source == nil || !stamp.info.Mode().IsRegular() || !source.Mode().IsRegular() || !os.SameFile(stamp.info, source) {
 		return
 	}
-	i.appendable[path] = true
+	root := filepath.Dir(path)
+	if len(roots) != 0 {
+		root = roots[0]
+	}
+	if root == "" {
+		return
+	}
+	prefix.root = root
+	i.appendable[path] = prefix
 }
 
 func (i *recoverySourceInventory) observe(path string) {
@@ -90,6 +135,20 @@ func (i *recoverySourceInventory) observe(path string) {
 
 func (i *recoverySourceInventory) environment() Environment {
 	env := i.env
+	env.Open = func(path string) (io.ReadCloser, error) {
+		f, err := i.env.open(path)
+		if err != nil {
+			return nil, err
+		}
+		return &recoveryHeaderReader{ReadCloser: f, hash: sha256.New(), valid: true, retain: func(prefix recoveryHeaderPrefix) {
+			if _, observed := i.stamps[path]; observed {
+				if _, recorded := i.headers[path]; recorded {
+					return
+				}
+				i.headers[path] = prefix
+			}
+		}}, nil
+	}
 	env.ReadDir = func(path string) ([]fs.DirEntry, error) {
 		i.observe(path)
 		i.observeTarget(path)
@@ -178,6 +237,12 @@ func (i *recoverySourceInventory) recordNames(path string, entries []fs.DirEntry
 // observed was never evidence, and a removed observed entry fails its own
 // stamp.
 func (i *recoverySourceInventory) compare(ctx context.Context) (grown, ok bool) {
+	return i.compareBound(ctx, recoveryHeaderRenewalBytes)
+}
+
+// compareBound reserves each growing original header prefix before reopening it.
+// Added-directory/target observations keep their existing rediscovery semantics.
+func (i *recoverySourceInventory) compareBound(ctx context.Context, remaining int64) (grown, ok bool) {
 	if !i.complete || ctx.Err() != nil {
 		return false, false
 	}
@@ -203,8 +268,17 @@ func (i *recoverySourceInventory) compare(ctx context.Context) (grown, ok bool) 
 			if !sameRecoveryMember(before.info, info, false) {
 				i.moved = append(i.moved, path)
 			}
-		case !sameRecoveryMember(before.info, info, i.appendable[path]):
+		case !sameRecoveryMember(before.info, info, i.owned(path)):
 			return false, false
+		case i.owned(path) && info.Size() > before.info.Size():
+			prefix := i.appendable[path]
+			if ctx.Err() != nil || prefix.bytes <= 0 || prefix.bytes > headScanLimit || prefix.bytes > remaining {
+				return false, false
+			}
+			remaining -= prefix.bytes
+			if !i.prefixCurrent(ctx, path, info, prefix) {
+				return false, false
+			}
 		}
 		if err == nil {
 			i.renewed[path] = info
@@ -236,6 +310,26 @@ func (i *recoverySourceInventory) compare(ctx context.Context) (grown, ok bool) 
 		}
 	}
 	return len(i.moved) > 0, ctx.Err() == nil
+}
+
+func (i *recoverySourceInventory) owned(path string) bool {
+	_, owned := i.appendable[path]
+	return owned
+}
+
+func (i *recoverySourceInventory) prefixCurrent(ctx context.Context, path string, info fs.FileInfo, prefix recoveryHeaderPrefix) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+	snapshot, err := transcriptio.Open(sourcefacts.RootOpener{Root: prefix.root}, path, transcriptio.OpenPolicy{Root: prefix.root, RejectSymlinks: true})
+	if err != nil {
+		return false
+	}
+	h := sha256.New()
+	n, readErr := io.CopyN(h, snapshot.Reader(ctx), prefix.bytes)
+	checkErr := snapshot.Check()
+	closeErr := snapshot.Close()
+	return ctx.Err() == nil && readErr == nil && checkErr == nil && closeErr == nil && n == prefix.bytes && transcriptio.SameObservation(info, snapshot.SourceInfo()) && string(h.Sum(nil)) == string(prefix.sum[:])
 }
 
 // sameRecoveryDirectory reports the same directory, whatever its entries.
