@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"strings"
 	"testing"
 	"time"
@@ -219,5 +222,49 @@ func TestUnsafeDiagnosticDoesNotInventUnsupportedFormat(t *testing.T) {
 	RenderText(&output, Plan{Candidates: []Candidate{w.c}, Filters: Filters{Harnesses: []string{"codex"}}})
 	if strings.Contains(output.String(), "support is required") || !strings.Contains(output.String(), "check source access and format support") {
 		t.Fatal(output.String())
+	}
+}
+
+func TestNativeRefusalDetailsPreserveJoinsPrivacyAndPrecedence(t *testing.T) {
+	const unknownSourceCause agentapi.SourceCause = "secret untrusted cause"
+	secret := errors.New("/private/transcript secret-native-id prompt contents")
+	cases := []struct {
+		name string
+		err  error
+		want DiagnosticDetail
+	}{
+		{"coverage", agentapi.WithCause(agentapi.Wrap(agentapi.Unavailable, secret), agentapi.CauseHistoryCoverage), DetailHistoryCoverage},
+		{"dependency", errors.Join(agentapi.WithCause(agentapi.Wrap(agentapi.Unavailable, secret), agentapi.CauseHistoryDependencyUnavailable), archive.ErrRelatedHistory), DetailHistoryDependencyUnavailable},
+		{"wrapped limit", fmt.Errorf("private path: %w", agentapi.WithCause(agentapi.Wrap(agentapi.Limit, secret), agentapi.CauseAggregateHistoryByteLimit)), DetailAggregateHistoryByteLimit},
+		{"unknown cause", agentapi.WithCause(agentapi.Wrap(agentapi.Unavailable, secret), unknownSourceCause), DetailNativeSourceUnavailable},
+		{"unnamed limit", agentapi.Wrap(agentapi.Limit, secret), DetailNativeResourceLimit},
+		{"bare related", archive.ErrRelatedHistory, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			detail := sourceRefusalDetail(tc.err)
+			if detail != tc.want {
+				t.Fatalf("got %q want %q", detail, tc.want)
+			}
+			w := &work{t: &transcript{capturePending: true}, c: Candidate{StartedAt: fixedNow.Add(-time.Hour)}, refusalDetail: detail}
+			decidePlanCandidates([]*work{w}, time.Time{}, time.Time{}, fixedNow)
+			var output bytes.Buffer
+			mustWant := tc.want
+			if mustWant == "" {
+				mustWant = DetailHistoryLookupPending
+			}
+			if w.c.Diagnostic == nil || w.c.Diagnostic.Detail != mustWant {
+				t.Fatalf("lost refusal: %+v", w.c)
+			}
+			RenderText(&output, Plan{Candidates: []Candidate{w.c}, Filters: Filters{Harnesses: []string{"codex"}}})
+			if strings.Contains(output.String(), "secret") || strings.Contains(output.String(), "/private") {
+				t.Fatal(output.String())
+			}
+			w.state = SkipAlreadyArchived
+			decidePlanCandidates([]*work{w}, time.Time{}, time.Time{}, fixedNow)
+			if w.c.Diagnostic != nil {
+				t.Fatal("refusal overrode archived precedence")
+			}
+		})
 	}
 }

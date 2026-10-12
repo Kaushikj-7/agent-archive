@@ -509,6 +509,7 @@ var skipLabels = map[SkipReason]string{
 	SkipTemporaryDirectory:    "run from temporary directories",
 	SkipProjectUnknown:        "%s whose project could not be determined",
 	SkipWorktreeUnresolved:    "with unresolved worktree project ownership",
+	SkipIndexRecovery:         "waiting for local session index recovery",
 	SkipIdentityMismatch:      "with conflicting or invalid session IDs",
 	SkipSourceChanged:         "that changed while being read; retry backfill",
 	SkipRelatedHistory:        "waiting for native history or own-task evidence",

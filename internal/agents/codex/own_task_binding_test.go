@@ -29,7 +29,7 @@ func TestRevisionOwnTaskUsesRetainedBoundaryAfterAdmissionValidation(t *testing.
 			}
 			ref, _ := historyFile(t, root, threadB, threadB, 0, metadata)
 			task := func(id string) map[string]any {
-				return map[string]any{"type": "event_msg", "payload": map[string]any{"type": "task_started", "turn_id": id, "root_turn_id": id, "started_at": "2026-10-01T12:02:00Z"}}
+				return map[string]any{"type": "event_msg", "payload": map[string]any{"type": "task_started", "turn_id": id, "root_turn_id": threadA, "started_at": "2026-10-01T12:02:00Z"}}
 			}
 			appendHistoryRows(t, ref, 1, task("copied-imported-turn"), task(threadB))
 			lookup := &historyLookup{thread: agentapi.CodexRolloutSet{Current: &ref, Revision: "one"}}

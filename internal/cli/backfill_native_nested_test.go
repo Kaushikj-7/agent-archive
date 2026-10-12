@@ -36,7 +36,7 @@ func TestBackfillNativeNestedChildrenUseNewBatchAndUndoKeepsOldParent(t *testing
 		}
 		header, e := json.Marshal(map[string]any{"type": "session_meta", "payload": meta})
 		must(t, e)
-		body := fmt.Sprintf(`{"type":"event_msg","payload":{"type":"task_started","turn_id":%q,"started_at":%q}}`+"\n"+`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Synthetic independent own prompt"}]}}`+"\n", id, at.Format(time.RFC3339Nano))
+		body := fmt.Sprintf(`{"type":"event_msg","payload":{"type":"task_started","turn_id":%q,"root_turn_id":%q,"started_at":%q}}`+"\n"+`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Synthetic independent own prompt"}]}}`+"\n", id, parent, at.Format(time.RFC3339Nano))
 		must(t, os.WriteFile(filepath.Join(native, "sessions", "rollout-"+id+".jsonl"), append(append(header, '\n'), []byte(body)...), 0600))
 	}
 	cfg := config.Config{MachineID: "synthetic-machine", Storage: credentialsTestConfig(), Harnesses: []string{"codex"}, ImportedHarnesses: []string{"codex"}, Archive: archive.Config{Enabled: true, Projects: []archive.ProjectActivation{{Root: project, ProjectID: archive.ProjectID(project), Included: true, ActivatedAt: at.Add(time.Hour)}}}}

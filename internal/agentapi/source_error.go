@@ -35,6 +35,62 @@ const (
 	CauseHistoryCoverage SourceCause = "history_coverage"
 )
 
+// Native source refusal causes are fixed codes with no paths or content.
+const (
+	// CauseAggregateHistoryByteLimit identifies the aggregate history byte limit refusal.
+	CauseAggregateHistoryByteLimit SourceCause = "aggregate_history_byte_limit"
+	// CauseCurrentRolloutEvidenceUnavailable identifies the current rollout evidence unavailable refusal.
+	CauseCurrentRolloutEvidenceUnavailable SourceCause = "current_rollout_evidence_unavailable"
+	// CauseForkOwnershipBoundaryUnavailable identifies the fork ownership boundary unavailable refusal.
+	CauseForkOwnershipBoundaryUnavailable SourceCause = "fork_ownership_boundary_unavailable"
+	// CauseHistoricalCandidateLimit identifies the historical candidate limit refusal.
+	CauseHistoricalCandidateLimit SourceCause = "historical_candidate_limit"
+	// CauseHistoryDependencyUnavailable identifies the history dependency unavailable refusal.
+	CauseHistoryDependencyUnavailable SourceCause = "history_dependency_unavailable"
+	// CauseHistoryOrdinalOverflow identifies the history ordinal overflow refusal.
+	CauseHistoryOrdinalOverflow SourceCause = "history_ordinal_overflow"
+	// CauseHistoryRecordLimit identifies the history record limit refusal.
+	CauseHistoryRecordLimit SourceCause = "history_record_limit"
+	// CauseLegacyCompatibilityRequiresUnboundAdmission identifies the legacy compatibility requires unbound admission refusal.
+	CauseLegacyCompatibilityRequiresUnboundAdmission SourceCause = "legacy_compatibility_requires_unbound_admission"
+	// CauseNativeAdmissionEvidenceUnavailable identifies the native admission evidence unavailable refusal.
+	CauseNativeAdmissionEvidenceUnavailable SourceCause = "native_admission_evidence_unavailable"
+	// CauseNativeBoundaryScratchBudgetExhausted identifies the native boundary scratch budget exhausted refusal.
+	CauseNativeBoundaryScratchBudgetExhausted SourceCause = "native_boundary_scratch_budget_exhausted"
+	// CauseNativeCreationEvidenceUnavailable identifies the native creation evidence unavailable refusal.
+	CauseNativeCreationEvidenceUnavailable SourceCause = "native_creation_evidence_unavailable"
+	// CauseNativeRecordWindowBudgetExhausted identifies the native record window budget exhausted refusal.
+	CauseNativeRecordWindowBudgetExhausted SourceCause = "native_record_window_budget_exhausted"
+	// CauseOrdinaryNativeScratchBudgetExhausted identifies the ordinary native scratch budget exhausted refusal.
+	CauseOrdinaryNativeScratchBudgetExhausted SourceCause = "ordinary_native_scratch_budget_exhausted"
+	// CauseOriginalFactCandidateLimit identifies the original fact candidate limit refusal.
+	CauseOriginalFactCandidateLimit SourceCause = "original_fact_candidate_limit"
+	// CauseOwnTaskBeforeCreation identifies the own task before creation refusal.
+	CauseOwnTaskBeforeCreation SourceCause = "own_task_before_creation"
+	// CauseOwnTaskExecutionUnsupported identifies the own task execution unsupported refusal.
+	CauseOwnTaskExecutionUnsupported SourceCause = "own_task_execution_unsupported"
+	// CauseOwnTaskInvalid identifies the own task invalid refusal.
+	CauseOwnTaskInvalid SourceCause = "own_task_invalid"
+	// CauseOwnTaskMissing identifies the own task missing refusal.
+	CauseOwnTaskMissing SourceCause = "own_task_missing"
+	// CauseRelatedAdmissionRequiresConfinedSourceHome identifies the related admission requires confined source home refusal.
+	CauseRelatedAdmissionRequiresConfinedSourceHome SourceCause = "related_admission_requires_confined_source_home"
+	// CauseRelatedHistoryRequiresAdmittedConfinedSourceHome identifies the related history requires admitted confined source home refusal.
+	CauseRelatedHistoryRequiresAdmittedConfinedSourceHome SourceCause = "related_history_requires_admitted_confined_source_home"
+	// CauseRolloutCandidateLimit identifies the rollout candidate limit refusal.
+	CauseRolloutCandidateLimit SourceCause = "rollout_candidate_limit"
+	// CauseRolloutHistoryDepthLimit identifies the rollout history depth limit refusal.
+	CauseRolloutHistoryDepthLimit SourceCause = "rollout_history_depth_limit"
+	// CauseRolloutLocatorLimit identifies the rollout locator limit refusal.
+	CauseRolloutLocatorLimit SourceCause = "rollout_locator_limit"
+	// CauseRolloutMetadataIncomplete identifies the rollout metadata incomplete refusal.
+	CauseRolloutMetadataIncomplete SourceCause = "rollout_metadata_incomplete"
+	// CauseSharedRolloutFileLimit identifies the shared rollout file limit refusal.
+	CauseSharedRolloutFileLimit SourceCause = "shared_rollout_file_limit"
+	// CauseSourceAndLookupRequireTheSameChargeLedger identifies the source and lookup require the same charge ledger refusal.
+	CauseSourceAndLookupRequireTheSameChargeLedger SourceCause = "source_and_lookup_require_the_same_charge_ledger"
+)
+
 // causeText words each cause after the kind's own words.
 var causeText = map[SourceCause]string{
 	CauseHistoryCoverage: "Codex history coverage incomplete",

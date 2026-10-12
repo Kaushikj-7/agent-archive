@@ -24,6 +24,12 @@ agent-archive backfill undo          # remove the latest import from the bucket
 agent-archive backfill undo ID --project DIR
 ```
 
+While planning on a live terminal, backfill shows the current step and progress
+counts. Discovery shows a running count of sessions found; once transcript checking
+starts, it shows completed/total sessions and a percentage.
+These counts include sessions examined before date and project filters are applied;
+the finished plan shows how many will actually be imported.
+
 In `backfill history`, an import's UPLOAD column counts as **waiting** only
 the sessions not in the archive yet. Sessions already uploaded are counted
 after it: **rechecking** when only a re-scan is still owed (a Codex session
@@ -38,6 +44,13 @@ stopping. A second Ctrl-C, or closing the terminal (SIGHUP), SIGTERM or SIGQUIT,
 quits at once, after removing the private copy of Cursor's database backfill
 may have made; a copy a killed backfill leaves is removed by the next
 `backfill` command of any kind.
+
+When local session identity recovery is pending, the plan still prints.
+Affected sessions appear as **waiting for local session index recovery**, with
+`session_index_pending` in JSON and a counted `session_index_recovery`
+diagnostic. They are not selected for import. The dry-run does not repair or
+change the index; the background collector owns recovery. Retry after it
+completes. Identity conflicts and other archive read errors still stop the plan.
 
 ## Durable import and recovery
 
@@ -236,6 +249,12 @@ blanket refusal of supported complete histories. Complete native children, forks
 and selected physical revisions use the validated shared history reader and
 durable staging; missing or ambiguous dependencies remain unresolved.
 Summaries contain no transcript paths, native IDs, remote URLs, or content.
+For Codex history refusals, `diagnostics` preserves fixed source reason codes
+when available: incomplete history coverage, missing dependencies or ownership
+boundaries, missing or invalid first-own-task evidence, and specific resource
+limits. Text plans show the same counted breakdown. Unknown source reasons
+use a generic unavailable or resource-limit diagnostic; raw errors are never
+printed. These details explain the existing skip and do not change eligibility.
 
 File and database-only candidates receive the same diagnostic details. For
 `unsafe_format`, the `source_inspection_unavailable` detail asks you to review

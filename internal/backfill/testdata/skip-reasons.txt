@@ -24,6 +24,7 @@ Not imported:
    1  run from temporary directories            add --include-temp
    1  Cursor chat whose project could not be determined
    1  with unresolved worktree project ownership
+   1  waiting for local session index recovery
    1  with conflicting or invalid session IDs
    1  waiting for native history or own-task evidence
    1  that changed while being read; retry backfill

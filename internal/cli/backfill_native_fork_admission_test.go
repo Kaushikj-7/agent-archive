@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/backfill"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
@@ -17,7 +18,7 @@ import (
 )
 
 func TestBackfillForkRejectsInheritedFirstOwnTask(t *testing.T) {
-	for _, first := range []forkFirstTaskCase{forkTaskExternal, forkTaskPredates, forkTaskMissingTime, forkTaskMissingTask} {
+	for _, first := range []forkFirstTaskCase{forkTaskExternal, forkTaskPredates, forkTaskMissingTime, forkTaskMissingTask, forkTaskInvalidRoot} {
 		t.Run(string(first), func(t *testing.T) {
 			canonical := func() string { p, e := filepath.EvalSymlinks(t.TempDir()); must(t, e); return p }
 			home, userHome, project := canonical(), canonical(), canonical()
@@ -34,6 +35,9 @@ func TestBackfillForkRejectsInheritedFirstOwnTask(t *testing.T) {
 			if first == forkTaskPredates {
 				invalid = fmt.Sprintf(`{"type":"event_msg","payload":{"type":"task_started","turn_id":%q,"started_at":%q}}`+"\n", fork, at.Add(-time.Second-time.Millisecond).Format(time.RFC3339Nano))
 			}
+			if first == forkTaskInvalidRoot {
+				invalid = fmt.Sprintf(`{"type":"event_msg","payload":{"type":"task_started","turn_id":%q,"root_turn_id":%q,"started_at":%q}}`+"\n", fork, "invalid-root", at.Format(time.RFC3339Nano))
+			}
 			if first == forkTaskMissingTime {
 				invalid = fmt.Sprintf(`{"type":"event_msg","payload":{"type":"task_started","turn_id":%q}}`+"\n", fork)
 			}
@@ -49,8 +53,28 @@ func TestBackfillForkRejectsInheritedFirstOwnTask(t *testing.T) {
 			env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return cloud, nil }
 			beforePreview := snapshotTree(t, home)
 			var preview, previewErr bytes.Buffer
-			if code := Run([]string{"backfill", "--dry-run", "--harness", "codex", "--include-temp", "--project", project}, nil, &preview, &previewErr, env); code != 0 {
+			if code := Run([]string{"backfill", "--dry-run", "--json", "--harness", "codex", "--include-temp", "--project", project}, nil, &preview, &previewErr, env); code != 0 {
 				t.Fatal(code, previewErr.String())
+			}
+			var plan struct {
+				Diagnostics []backfill.DiagnosticSummary `json:"diagnostics"`
+			}
+			must(t, json.Unmarshal(preview.Bytes(), &plan))
+			want := backfill.DetailOwnTaskTurnIDInvalid
+			if first == forkTaskInvalidRoot {
+				want = backfill.DetailOwnTaskRootTurnInvalid
+			}
+			if first == forkTaskMissingTime {
+				want = backfill.DetailOwnTaskStartedAtMissing
+			}
+			if first == forkTaskMissingTask {
+				want = backfill.DetailOwnTaskMissing
+			}
+			if first == forkTaskPredates {
+				want = backfill.DetailOwnTaskBeforeCreation
+			}
+			if len(plan.Diagnostics) != 1 || plan.Diagnostics[0].Detail != want || plan.Diagnostics[0].Count != 1 {
+				t.Fatalf("missing own-task refusal detail: %s", preview.String())
 			}
 			if snapshotTree(t, home) != beforePreview {
 				t.Fatal("fork preview wrote protection or state")
@@ -76,6 +100,7 @@ func TestBackfillForkRejectsInheritedFirstOwnTask(t *testing.T) {
 type forkFirstTaskCase string
 
 const (
+	forkTaskInvalidRoot forkFirstTaskCase = "invalid_root"
 	forkTaskExternal    forkFirstTaskCase = "external"
 	forkTaskPredates    forkFirstTaskCase = "predates"
 	forkTaskMissingTime forkFirstTaskCase = "missing_time"

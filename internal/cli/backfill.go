@@ -266,10 +266,13 @@ func parseBackfillOptions(args []string, stderr io.Writer, env Env) (backfillCom
 // before reporting an error or handing the completed plan to the next phase.
 func planBackfill(env Env, stdout, stderr io.Writer, home, userHome string, cfg config.Config, opts backfillCommandOptions, style textStyle) (backfill.Plan, bool) {
 	var stopLooking func()
+	var progress func(backfill.PlanningProgress)
 	if !opts.jsonOut {
 		label := backfill.SearchLine(opts.filters, env.agentRegistry().DiscoveryAgents())
 		if style.live {
-			stopLooking = style.spin(stdout, label).stop
+			display := newPlanningDisplay(label)
+			progress = display.observe
+			stopLooking = style.spinLabelEvery(stdout, display.label, spinnerInterval).stop
 		} else {
 			terminal.Print(stdout, label+" ")
 			stopLooking = func() {}
@@ -282,7 +285,7 @@ func planBackfill(env Env, stdout, stderr io.Writer, home, userHome string, cfg 
 	// folder. A second Ctrl-C, SIGTERM, SIGHUP, or SIGQUIT quits at once, removing
 	// the copy first.
 	planCtx, stopPlanning := interruptibleContext(env, stderr)
-	plan, err := buildBackfillPlan(planCtx, env, home, userHome, cfg, opts.filters)
+	plan, err := buildBackfillPlan(planCtx, env, home, userHome, cfg, opts.filters, progress)
 	interrupted := planCtx.Err() != nil
 	stopPlanning()
 	stopLooking()
@@ -465,12 +468,15 @@ func importRecentSessions(p *prompter, errOut io.Writer, home, userHome string, 
 	const label = "Looking for sessions from the last 7 days…"
 	releasePrompts := p.suspendPrompts()
 	stopLooking := func() {}
+	var progress func(backfill.PlanningProgress)
 	if p.style.live {
-		stopLooking = p.style.spin(p.out, label).stop
+		display := newPlanningDisplay(label)
+		progress = display.observe
+		stopLooking = p.style.spinLabelEvery(p.out, display.label, spinnerInterval).stop
 	}
 	// Ctrl-C while planning stops the import, never setup.
 	planCtx, stopPlanning := interruptibleContext(env, errOut)
-	full, err := buildBackfillPlan(planCtx, env, home, userHome, cfg, filters)
+	full, err := buildBackfillPlan(planCtx, env, home, userHome, cfg, filters, progress)
 	interrupted := planCtx.Err() != nil
 	stopPlanning()
 	stopLooking()
@@ -799,6 +805,11 @@ func newArchiveState(home string, cfg config.Config) archiveState {
 // registration does not count, as for hooks (capture.HasRegistration).
 func (s archiveState) Classify(harness, nativeSessionID string) (backfill.SkipReason, error) {
 	archiveID, found, err := s.store.ArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(harness)), NativeID: nativeSessionID})
+	if errors.Is(err, state.ErrSessionIndexRecoveryRequired) {
+		// A read-only preview must neither repair the index nor guess absence.
+		// Retain this session as pending while planning other proven identities.
+		return backfill.SkipIndexRecovery, nil
+	}
 	if err != nil {
 		return "", err
 	}
