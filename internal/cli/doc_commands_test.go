@@ -157,6 +157,7 @@ func quotedInvocationProblems(sets map[string]*flag.FlagSet, code string, bareCo
 	others := map[string][]string{
 		"help": nil, "--help": nil, "-h": nil, "--version": nil, "-v": nil,
 		"_collect": nil, "_hook": {"harness"},
+		"_catalog": {"bucket", "prefix", "isolated", "owner"},
 	}
 	code = shellContinuation.ReplaceAllString(code, " ")
 	for line := range strings.SplitSeq(code, "\n") {

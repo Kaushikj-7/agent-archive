@@ -166,9 +166,11 @@ The first of these that has a match answers:
 2. top-level sessions in every project;
 3. subagent sessions, in the scope and then everywhere.
 
-A session ID, full or the 8-character short one, names that session first. When
-the scope answers, the footer says how many more match elsewhere (`1 match in
-agent-archive (3 more in other projects: --all-projects or a project name finds
+For `list` and `handoff`, a session ID, full or the 8-character short one,
+names that session first. `show` gives a full ID that precedence; a short ID
+combines prefix matches with title and pull request matches, then applies the
+scope tiers above. When the scope answers, the footer says how many more match
+elsewhere (`1 match in agent-archive (3 more in other projects: --all-projects or a project name finds
 them)`). `--harness`, `--since`, and the other filters apply before this, and
 `--limit` last. A query nothing matches prints `No archived sessions match
 "<words>".` and exits 0, as an empty list does. `list "<words>" --json` prints
@@ -184,6 +186,13 @@ run inside a project now returns only its sessions, a script that reads every
 session passes `--all-projects`. See [JSON output](../reference/json-output.md).
 
 ## Browsing on a terminal
+
+The list and bare-show browsers offer **Older sessions** when the initial table
+is limited. Press `o` to extend it by another batch. Search checks older
+sessions and subagents as well as the rows on screen; `a` changes the project
+scope. Repeated searches reuse private local summaries, while each command
+checks the archive for changed and deleted sessions. `--no-cache` bypasses
+local cached data.
 
 When stdin and stdout are both terminals, `list` and bare `show` open a
 session browser on the terminal's alternate screen, so the list and a

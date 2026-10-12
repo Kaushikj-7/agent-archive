@@ -99,6 +99,7 @@ var commandGuides = map[string]string{
 	"purge plan":         "[Privacy cleanup](../security/privacy.md#after-a-filter-upgrade)",
 	"purge apply":        "[Privacy cleanup](../security/privacy.md#after-a-filter-upgrade)",
 	"version":            "[Install](../getting-started/install.md)",
+	"migrate":            "[Migrate the archive](../guides/catalog-migration.md)",
 }
 
 // renderCLIReference renders docs/reference/cli.md from the help each

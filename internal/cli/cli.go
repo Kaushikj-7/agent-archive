@@ -568,6 +568,7 @@ Inspect history
 Import history
   agent-archive backfill    Import sessions already on this machine
   agent-archive historical-project  Manage historical project permissions
+  agent-archive migrate     Migrate to an isolated catalog destination
 
 Switch agents
   agent-archive handoff     Continue a session in another coding agent
@@ -591,20 +592,7 @@ Docs: https://github.com/wangjohn/agent-archive/tree/main/docs
 func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int {
 	stdin, stdout, stderr = defaultStreams(stdin, stdout, stderr)
 	if len(args) == 0 {
-		if !nonInteractiveSettingUsable(args, stderr, env) {
-			return 2
-		}
-		if browseInteractive(env, stdin, stdout) && !notSetUp(env) {
-			startTrace("list", stderr, env)
-			defer finishTraceNow()
-			return runListCommand(nil, stdin, stdout, stderr, env)
-		}
-		if notSetUp(env) {
-			terminal.Println(stdout, "Not set up yet — run agent-archive setup.")
-			terminal.Println(stdout)
-		}
-		terminal.Print(stdout, usage)
-		return 0
+		return runEmptyInvocation(args, stdin, stdout, stderr, env)
 	}
 	if err := pairingInvocationError(args, env); err != nil {
 		terminal.Println(stderr, err.Error())
@@ -632,6 +620,8 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 		return runHookCommand(args[1:], stdin, stderr, env)
 	case "_collect":
 		return runCollectCommand(args[1:], stdout, stderr, env)
+	case "_catalog":
+		return runCatalogOperator(args[1:], stdout, stderr, env)
 	case "machines":
 		return runMachinesWithInput(args[1:], stdin, stdout, stderr, env)
 	case "status":
@@ -661,6 +651,8 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 		return runHandoffCommand(args[1:], stdin, stdout, stderr, env)
 	case "historical-project":
 		return runHistoricalProjects(args[1:], stdout, stderr, env)
+	case "migrate":
+		return runMigrateCommand(args[1:], stdout, stderr, env)
 	case "backfill":
 		return runBackfillCommand(args[1:], stdin, stdout, stderr, env)
 	case "purge":
@@ -690,3 +682,20 @@ func defaultStreams(stdin io.Reader, stdout, stderr io.Writer) (in io.Reader, ou
 }
 
 func (e Env) listBodyObserver() func(string, bool) { return e.observeListBody }
+
+func runEmptyInvocation(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int {
+	if !nonInteractiveSettingUsable(args, stderr, env) {
+		return 2
+	}
+	if browseInteractive(env, stdin, stdout) && !notSetUp(env) {
+		startTrace("list", stderr, env)
+		defer finishTraceNow()
+		return runListCommand(nil, stdin, stdout, stderr, env)
+	}
+	if notSetUp(env) {
+		terminal.Println(stdout, "Not set up yet — run agent-archive setup.")
+		terminal.Println(stdout)
+	}
+	terminal.Print(stdout, usage)
+	return 0
+}

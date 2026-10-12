@@ -71,8 +71,41 @@ func (s *sessionScan) block(reason state.BlockedReason, candidate *archive.Sourc
 // metadata (or, for a metadata-only publication that carries no source
 // bytes, a check of the recorded source then metadata), the superseded
 // source in the ledger, the new published state, the covered request, and
-// finally the removal of the pending file.
-func (s *sessionScan) publishPending(pending state.PendingPublication) (sessionOutcome, error) {
+// finally the removal of the pending file. ctx must be the original scan
+// context; admission derives an invocation context for this serial lifecycle.
+func (s *sessionScan) publishPending(ctx context.Context, pending state.PendingPublication) (sessionOutcome, error) {
+	if remote, ok := s.remote.(storage.CatalogPublisher); ok && remote.CatalogMetadataAuthority() {
+		if pending.Catalog == nil {
+			id, revision, err := remote.FreezeCatalogMutation(ctx, pending.MetadataKey)
+			if err != nil {
+				return outcomeSkipped, err
+			}
+			pending.Catalog = &state.CatalogPublication{Protocol: 10, ID: id, ExpectedRevision: revision}
+			if err = s.local.SavePending(s.id(), pending); err != nil {
+				return outcomeSkipped, err
+			}
+		}
+	} else if pending.Catalog != nil {
+		return outcomeSkipped, errors.New("catalog pending publication requires catalog destination")
+	}
+
+	if remote, ok := s.remote.(storage.CatalogLifecycle); ok && pending.Catalog != nil {
+		var settled bool
+		var err error
+		originalCtx := ctx
+		var admittedCtx context.Context
+		pending, admittedCtx, settled, err = s.beginCatalogJournal(ctx, pending, remote)
+		if err != nil {
+			return outcomeSkipped, err
+		}
+		ctx = admittedCtx
+		s.ctx = ctx
+		defer func() { remote.EndPublicationAttempt(pending.Catalog.ID); s.ctx = originalCtx }()
+		if settled {
+			return s.acknowledgePublication(pending, false)
+		}
+	}
+
 	if err := s.checkHistoryPublication(pending); err != nil {
 		return outcomeSkipped, err
 	}
@@ -118,7 +151,7 @@ func (s *sessionScan) publishPending(pending state.PendingPublication) (sessionO
 // acknowledgePublication follows verified exact readback. A committed privacy
 // retry keeps its journal until the all-reference successor replaces it durably.
 func (s *sessionScan) acknowledgePublication(pending state.PendingPublication, keepPending bool) (sessionOutcome, error) {
-	if err := listingindex.PublishRevision(s.ctx, s.remote, pending.MetadataKey, pending.MetadataBytes); err != nil {
+	if err := s.publishListingRevision(pending); err != nil {
 		s.warn(fmt.Errorf("listing maintenance pending: %w", err))
 	} else if err := s.local.RemoveListingRepair(s.id()); err != nil {
 		s.warn(err)
@@ -145,28 +178,8 @@ func (s *sessionScan) acknowledgePublication(pending state.PendingPublication, k
 	for _, ref := range refs {
 		protected[ref.Key] = true
 	}
-	if pending.History != nil {
-		for _, retired := range pending.History.Retired {
-			if err := s.local.RecordSupersededWithPrivacy(s.id(), retired.Reference.Key, retired.RetiredAt, retired.PrivacySensitive); err != nil {
-				return outcomeSkipped, fmt.Errorf("record retired revision cleanup: %w", err)
-			}
-		}
-	}
-	if err := s.recordImportRetired(pending, protected); err != nil {
+	if err := s.recordPublicationRetirement(pending, protected); err != nil {
 		return outcomeSkipped, err
-	}
-	if previous, hadPrevious := s.published.LastPublishedSource(); hadPrevious && !protected[previous.Key] {
-		priorBundle, _, havePrior := s.published.LastPublished()
-		privacySensitive := havePrior && priorBundle.Capture.FilterVersion != pending.Bundle.Capture.FilterVersion
-		if err := s.local.RecordSupersededWithPrivacy(s.id(), previous.Key, s.now, privacySensitive); err != nil {
-			if privacySensitive {
-				// Keep the pending publication for another attempt. Saving the
-				// new published state here would lose the only retry path for
-				// this old-filter source, leaving it until session expiry.
-				return outcomeSkipped, fmt.Errorf("record privacy-sensitive predecessor: %w", err)
-			}
-			s.warn(fmt.Errorf("record superseded source for cleanup: %w", err))
-		}
 	}
 	var saveErr error
 	if pending.MetadataOnly {
@@ -197,8 +210,15 @@ func (s *sessionScan) acknowledgePublication(pending state.PendingPublication, k
 			return outcomeSkipped, fmt.Errorf("complete published request: %w", err)
 		}
 	}
+	if !keepPending && pending.Catalog != nil && s.ctx.Value(catalogSettledKey{}) != true {
+		if remote, ok := s.remote.(storage.CatalogLifecycle); ok {
+			if err := remote.CompletePublication(s.ctx, pending.Catalog.ID, pending.MetadataBytes); err != nil {
+				return outcomeSkipped, err
+			}
+		}
+	}
 	if !keepPending {
-		if err := s.local.RemovePending(s.id()); err != nil {
+		if err := s.removeCompletedCatalogJournal(pending); err != nil {
 			return outcomeSkipped, err
 		}
 	}
@@ -257,19 +277,21 @@ func (s *sessionScan) upload(pending state.PendingPublication) error {
 		} else if committed {
 			return s.verifyHistoryReadback(pending)
 		}
-		return s.remote.Put(s.ctx, pending.MetadataKey, pending.MetadataBytes)
+		return s.publicationRemote(pending).Put(s.ctx, pending.MetadataKey, pending.MetadataBytes)
 	}
 	if !pending.CarriesNoSource() && s.reg.StagedImportSHA256 != "" {
 		return s.uploadImportPending(pending)
 	}
 	if !pending.CarriesNoSource() {
-		if err := storage.PutSourceThenMetadataIndexed(s.ctx, s.remote, pending.SourceKey, pending.MetadataKey, pending.SourceBytes, pending.MetadataBytes, s.opts.Retry, nil); err != nil {
+		if err := storage.PutSourceThenMetadataIndexed(s.ctx, s.publicationRemote(pending), pending.SourceKey, pending.MetadataKey, pending.SourceBytes, pending.MetadataBytes, s.opts.Retry, nil); err != nil {
 			return fmt.Errorf("publish: %w", err)
 		}
 		return nil
 	}
-	err := storage.PutMetadataForSourceIndexed(s.ctx, s.remote, pending.SourceKey, pending.SourceSHA256, pending.SourceSize, pending.MetadataKey, pending.MetadataBytes, s.opts.Retry, nil)
-	if errors.Is(err, storage.ErrNotFound) || errors.Is(err, storage.ErrChecksumMismatch) {
+	err := storage.PutMetadataForSourceIndexed(s.ctx, s.publicationRemote(pending), pending.SourceKey, pending.SourceSHA256, pending.SourceSize, pending.MetadataKey, pending.MetadataBytes, s.opts.Retry, nil)
+	if pending.Catalog == nil && (errors.Is(err, storage.ErrNotFound) || errors.Is(err, storage.ErrChecksumMismatch)) {
+		// Catalog journal owners retain their exact recovery proof on source
+		// failure. Only legacy pending work can be dropped here.
 		// The recorded source is not in storage as recorded, and without its
 		// bytes this publication can never succeed. Dropping it keeps it from
 		// holding back normal capture; the metadata still points at whatever
@@ -364,5 +386,47 @@ func (s *sessionScan) uploadImportPending(pending state.PendingPublication) erro
 		}
 	}
 
-	return s.remote.Put(s.ctx, pending.MetadataKey, pending.MetadataBytes)
+	return s.publicationRemote(pending).Put(s.ctx, pending.MetadataKey, pending.MetadataBytes)
+}
+
+func (s *sessionScan) publicationRemote(p state.PendingPublication) storage.ObjectStore {
+	if remote, ok := s.remote.(storage.CatalogPublisher); ok && remote.CatalogMetadataAuthority() && p.Catalog != nil {
+		return remote.Publication(p.Catalog.ID, p.MetadataKey, p.Catalog.ExpectedRevision)
+	}
+	return s.remote
+}
+
+func (s *sessionScan) publishListingRevision(p state.PendingPublication) error {
+	if remote, ok := s.remote.(storage.CatalogPublisher); ok && remote.CatalogMetadataAuthority() {
+		return nil
+	}
+	return listingindex.PublishRevision(s.ctx, s.remote, p.MetadataKey, p.MetadataBytes)
+}
+
+// recordPublicationRetirement preserves cleanup obligations before cache commit.
+func (s *sessionScan) recordPublicationRetirement(pending state.PendingPublication, protected map[string]bool) error {
+	if pending.History != nil {
+		for _, retired := range pending.History.Retired {
+			if err := s.local.RecordSupersededWithPrivacy(s.id(), retired.Reference.Key, retired.RetiredAt, retired.PrivacySensitive); err != nil {
+				return fmt.Errorf("record retired revision cleanup: %w", err)
+			}
+		}
+	}
+	if err := s.recordImportRetired(pending, protected); err != nil {
+		return err
+	}
+	if previous, hadPrevious := s.published.LastPublishedSource(); hadPrevious && !protected[previous.Key] {
+		priorBundle, _, havePrior := s.published.LastPublished()
+		privacySensitive := havePrior && priorBundle.Capture.FilterVersion != pending.Bundle.Capture.FilterVersion
+		if err := s.local.RecordSupersededWithPrivacy(s.id(), previous.Key, s.now, privacySensitive); err != nil {
+			if privacySensitive {
+				// Keep the pending publication for another attempt. Saving the
+				// new published state here would lose the only retry path for
+				// this old-filter source, leaving it until session expiry.
+				return fmt.Errorf("record privacy-sensitive predecessor: %w", err)
+			}
+			s.warn(fmt.Errorf("record superseded source for cleanup: %w", err))
+		}
+	}
+	return nil
 }

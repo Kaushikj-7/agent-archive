@@ -71,7 +71,16 @@ func rowChoices(rows []listRow, format listFormatOptions) *scopeChoices {
 // it picks on a terminal read by keys, what the person typed ahead is handed
 // back for the prompts after it to read (prompter.handBack).
 func runBrowser(ctx context.Context, env sessionBrowserDependencies, p *prompter, stdout, stderr io.Writer, spec browserSpec) (row listRow, picked bool, code int) {
-	screen := enterAltScreen(stdout, env)
+	owner := readPhase(ctx)
+	var cancelReads context.CancelFunc
+	if owner != nil {
+		cancelReads = owner.cancel
+	}
+	screen := enterAltScreenWithReadCancel(stdout, env, cancelReads)
+	if owner != nil && env.interactive(stdout) {
+		owner.Pause()
+		defer owner.Resume()
+	}
 	// Only a screen that clears can draw a page again in place.
 	var redraw func()
 	if screen.clears() {
@@ -84,6 +93,9 @@ func runBrowser(ctx context.Context, env sessionBrowserDependencies, p *prompter
 	defer screen.leave()
 	if keys != nil {
 		defer keys.close()
+	}
+	if spec.LoadOlder == nil {
+		spec.LoadOlder = spec.Choices.loadOlder
 	}
 	list := &sessionPicker{older: spec.LoadOlder, boundedNotice: spec.Notice, env: env, clear: redraw, keys: keys, verb: spec.Verb, filter: spec.Query, filtering: spec.Query != "" && keys != nil}
 	var err error

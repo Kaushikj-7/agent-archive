@@ -9,9 +9,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
-	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
@@ -32,7 +32,8 @@ import (
 //
 // Version lookup: the opaque ETag is hashed into the filename before any
 // cache body opens. Changed versions and flat legacy entries are cold misses;
-// canonical headers prune stale versions without reading them.
+// changed-key writes and bounded maintenance prune stale versions without
+// reading their bodies.
 //
 // Exhaustive-path staleness: the bytes come from a Get after the listing, so an
 // object rewritten in between would be stored under the old ETag. S3, R2 and
@@ -48,7 +49,10 @@ import (
 type MetadataCache struct {
 	dir string
 	// readFile, when set by tests, observes physical cache-body reads.
-	readFile func(string) ([]byte, error)
+	// Tests set observers before reading and synchronize concurrent invocations.
+	readFile        func(string) ([]byte, error)
+	readDir         func(string) ([]os.DirEntry, error)
+	maintenanceOnce sync.Once
 }
 
 // maxCacheKeyBytes keeps hex(key) comfortably inside a file name limit. A
@@ -66,25 +70,19 @@ func OpenMetadataCache(home string) (*MetadataCache, error) {
 		if err := os.MkdirAll(path, 0o700); err != nil {
 			return nil, err
 		}
+		info, err := os.Lstat(path)
+		if err != nil || !info.IsDir() {
+			return nil, errors.New("metadata cache requires real directories")
+		}
 		if err := os.Chmod(path, 0o700); err != nil {
 			return nil, err
-		}
-	}
-	// A listing killed between creating a temporary file and renaming it
-	// leaves the file behind; nothing else would ever remove it. Best
-	// effort, like every other write to this cache.
-	_ = local.RemoveStaleTemps(dir, staleCacheTempAge)
-	entries, _ := os.ReadDir(dir)
-	for _, entry := range entries {
-		if entry.IsDir() && cacheKey(entry.Name()) != "" {
-			_ = local.RemoveStaleTemps(filepath.Join(dir, entry.Name()), staleCacheTempAge)
 		}
 	}
 	return &MetadataCache{dir: dir}, nil
 }
 
 // staleCacheTempAge is how old a temporary file in the cache must be before
-// OpenMetadataCache removes it: far longer than any write takes.
+// maintenance removes it: far longer than any write takes.
 const staleCacheTempAge = time.Hour
 
 type metadataCacheEntry struct {
@@ -155,7 +153,7 @@ func (c *MetadataCache) get(key, etag string) ([]byte, bool) {
 		return nil, false
 	}
 	info, err := os.Lstat(path)
-	if err != nil || !info.Mode().IsRegular() {
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 {
 		return nil, false
 	}
 	readFile := os.ReadFile
@@ -201,7 +199,9 @@ func (c *MetadataCache) putVerified(key, etag string, data []byte) {
 	if err != nil {
 		return
 	}
-	_ = writeCacheFile(path, encoded)
+	if writeCacheFile(path, encoded) == nil {
+		c.pruneVersions(dir, filepath.Base(path))
+	}
 }
 
 // writeCacheFile replaces path atomically with a 0600 file. Unlike
@@ -234,31 +234,21 @@ func (c *MetadataCache) evictUnlisted(known []string, listed []storage.Object) {
 	if c == nil {
 		return
 	}
-	present := make(map[string]string, len(listed))
+	present := make(map[string]struct{}, len(listed))
 	for _, object := range listed {
-		present[object.Key] = object.ETag
+		present[object.Key] = struct{}{}
 	}
 	for _, key := range known {
+		if _, exists := present[key]; exists {
+			continue
+		}
 		dir, ok := c.keyDir(key)
 		if !ok {
 			continue
 		}
 		info, err := os.Lstat(dir)
-		if err != nil || !info.IsDir() || info.Mode().Perm() != 0o700 {
-			continue
-		}
-		etag, exists := present[key]
-		if !exists {
+		if err == nil && info.IsDir() && info.Mode().Perm() == 0o700 {
 			_ = os.RemoveAll(dir)
-			continue
-		}
-		// A changed validator is a header-only miss, never a stale body read.
-		entries, _ := os.ReadDir(dir)
-		current := sha256Hex([]byte(etag)) + ".json"
-		for _, entry := range entries {
-			if strings.HasSuffix(entry.Name(), ".json") && (etag == "" || entry.Name() != current) {
-				_ = os.Remove(filepath.Join(dir, entry.Name()))
-			}
 		}
 	}
 }

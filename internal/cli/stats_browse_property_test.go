@@ -81,6 +81,18 @@ func statsShapes() []statsShape {
 			}
 			return append(append(all, subs...), spread("cursor", "cursor-auto", now, loc, 60, 4, 8, false)...)
 		}},
+		{"old descendants of recent roots", func(now time.Time, loc *time.Location) []syntheticSession {
+			roots := spread("claude", "claude-opus-5", now, loc, 5, 3, 11, true)
+			all := slices.Clone(roots)
+			for i, root := range roots {
+				child := root
+				child.id, child.parent, child.captured = fmt.Sprintf("old-child-%d", i), root.id, now.AddDate(0, 0, -800)
+				grandchild := child
+				grandchild.id, grandchild.parent, grandchild.captured = fmt.Sprintf("old-grandchild-%d", i), child.id, now.AddDate(0, 0, -900)
+				all = append(all, child, grandchild)
+			}
+			return all
+		}},
 		{"day boundaries", func(now time.Time, loc *time.Location) []syntheticSession {
 			// Sessions on the first and last second of days around every
 			// window's edge, and around the month rank's.
@@ -109,14 +121,28 @@ func statsShapes() []statsShape {
 }
 
 // fetched is what a run that reads for the longest of windows would read of
-// sessions: those captured from the bound statsFetchFrom sets, as the reader
-// filters them.
+// sessions: date matches plus descendants of those matches. This oracle walks
+// backwards through parents independently of the reader's forward queue.
 func fetched(sessions []archive.Metadata, now time.Time, loc *time.Location, windows []int) []archive.Metadata {
 	from := statsFetchFrom(now, loc, slices.Max(windows))
+	byID := make(map[string]archive.Metadata, len(sessions))
+	for _, m := range sessions {
+		byID[m.SessionID] = m
+	}
 	var out []archive.Metadata
 	for _, m := range sessions {
-		if !m.CapturedAt.Before(from) {
-			out = append(out, m)
+		seen := make(map[string]bool)
+		for current := m; !seen[current.SessionID]; {
+			if !current.CapturedAt.Before(from) {
+				out = append(out, m)
+				break
+			}
+			seen[current.SessionID] = true
+			parent, found := byID[current.ParentSessionID]
+			if !found {
+				break
+			}
+			current = parent
 		}
 	}
 	return out
@@ -173,6 +199,12 @@ func TestStatsInteractiveWindowsEqualStaticRunsForEveryShape(t *testing.T) {
 						}
 						if string(got) != string(want) {
 							t.Fatalf("%s %s at %v: window %d read for the cycle from %d differs from a static --days %d:\n%s\n---- static:\n%s", zone, shape.name, now, days, start, days, got, want)
+						}
+						if shape.name == "old descendants of recent roots" {
+							complete, err := json.Marshal(statsInputs{sessions: metas, now: now, location: loc}.compute(days, true))
+							if err != nil || string(got) != string(complete) {
+								t.Fatalf("%s window %d: old descendants differ from complete engine accounting: %v", zone, days, err)
+							}
 						}
 					}
 				}

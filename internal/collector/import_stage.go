@@ -90,6 +90,11 @@ func (s *sessionScan) resumeStagedPolicy(p state.PendingPublication) (state.Pend
 	if p.Bundle.Capture.FilterVersion == archive.FilterVersion && p.Bundle.Capture.AdapterVersion == adapter.Version() && pendingSkillMode(p.SkillEvidence) == s.opts.skillEvidence() {
 		return p, nil
 	}
+	// Frozen catalog ownership cannot be reused for changed policy bytes. Keep
+	// the journal and every source until exact owner recovery settles it.
+	if p.Catalog != nil {
+		return p, state.ErrCatalogJournalFrozen
+	}
 	current, err := s.historyGet(p.MetadataKey, historyMetadataLimit)
 	expected := ""
 	if errors.Is(err, storage.ErrNotFound) && p.ImportExpectedMetadataSHA256 != "" {

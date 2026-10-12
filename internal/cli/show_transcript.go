@@ -299,3 +299,11 @@ func describeBundleError(err error, sessionID, flag string) string {
 	}
 	return err.Error()
 }
+
+func loadVerifiedMetadata(ctx context.Context, store storage.ObjectStore, selected reader.MetadataLookup) (sessionView, archive.SourceBundle, error) {
+	metadata, bundle, err := reader.RefreshAndLoadMetadata(ctx, store, selected.Key, selected.Metadata, reader.Limits{})
+	if err != nil {
+		return sessionView{}, archive.SourceBundle{}, err
+	}
+	return metadataWithLinks(ctx, store, metadata), bundle, nil
+}

@@ -139,7 +139,7 @@ func regenerateMetadata(s *sessionScan) (outcome sessionOutcome, handled bool, e
 	if err := s.local.SavePending(s.id(), pending); err != nil {
 		return outcomeSkipped, false, err
 	}
-	outcome, err = s.publishPending(pending)
+	outcome, err = s.publishPending(s.ctx, pending)
 	return outcome, true, err
 }
 
@@ -407,7 +407,7 @@ func (s *sessionScan) publishRecordedGitHead(last lastPublication, key string) (
 	if err := s.local.SavePending(s.id(), pending); err != nil {
 		return outcomeSkipped, false, err
 	}
-	outcome, err := s.publishPending(pending)
+	outcome, err := s.publishPending(s.ctx, pending)
 	if err != nil {
 		return outcome, true, err
 	}

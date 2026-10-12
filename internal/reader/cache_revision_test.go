@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -58,15 +59,15 @@ func TestIndexedRefreshSharesPhysicalBodyBudgetWithWarmHits(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			physical := 0
-			cache.readFile = func(path string) ([]byte, error) { physical++; return os.ReadFile(path) }
+			var physical atomic.Int64
+			cache.readFile = func(path string) ([]byte, error) { physical.Add(1); return os.ReadFile(path) }
 			store.reset()
 			observed := 0
 			scanned := false
 			got, err := ListRecent(ctx, store, "sessions", Filter{}, limit, ListOptions{Cache: cache, BodyRead: func(string, bool) { observed++ }, CompatibilityScan: func(string) { scanned = true }})
 			_, gets := store.counts()
-			if err != nil || scanned || len(got.Sessions) != limit || physical != limit-refreshed || len(gets) != refreshed || physical+len(gets) != limit || observed != limit {
-				t.Fatalf("limit=%d cached=%d GETs=%v observed=%d scan=%v err=%v", limit, physical, gets, observed, scanned, err)
+			if err != nil || scanned || len(got.Sessions) != limit || int(physical.Load()) != limit-refreshed || len(gets) != refreshed || int(physical.Load())+len(gets) != limit || observed != limit {
+				t.Fatalf("limit=%d cached=%d GETs=%v observed=%d scan=%v err=%v", limit, physical.Load(), gets, observed, scanned, err)
 			}
 			if files := cacheFiles(t, home); len(files) != limit {
 				t.Fatalf("stale versions retained: %v", files)
@@ -100,15 +101,15 @@ func TestVersionCacheMigratesFlatFilesWithoutReadingAndPreservesLongKeys(t *test
 	if err = os.WriteFile(flat, []byte("legacy cache body must not be read"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	physical := 0
-	cache.readFile = func(path string) ([]byte, error) { physical++; return os.ReadFile(path) }
+	var physical atomic.Int64
+	cache.readFile = func(path string) ([]byte, error) { physical.Add(1); return os.ReadFile(path) }
 	store.reset()
 	if _, err = ListRecent(ctx, store, "sessions", Filter{}, 1, ListOptions{Cache: cache}); err != nil {
 		t.Fatal(err)
 	}
 	_, gets := store.counts()
-	if physical != 0 || len(gets) != 1 {
-		t.Fatalf("migration bodies=%d GETs=%v", physical, gets)
+	if int(physical.Load()) != 0 || len(gets) != 1 {
+		t.Fatalf("migration bodies=%d GETs=%v", physical.Load(), gets)
 	}
 	if _, err = os.Lstat(flat); !os.IsNotExist(err) {
 		t.Fatalf("legacy cache not discarded: %v", err)
@@ -118,8 +119,8 @@ func TestVersionCacheMigratesFlatFilesWithoutReadingAndPreservesLongKeys(t *test
 		t.Fatal(err)
 	}
 	_, gets = store.counts()
-	if physical != 1 || len(gets) != 0 {
-		t.Fatalf("long-key warm bodies=%d GETs=%v", physical, gets)
+	if int(physical.Load()) != 1 || len(gets) != 0 {
+		t.Fatalf("long-key warm bodies=%d GETs=%v", physical.Load(), gets)
 	}
 	dir, ok := cache.keyDir(key)
 	if !ok {

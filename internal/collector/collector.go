@@ -25,6 +25,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/listingindex"
+	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
@@ -33,6 +34,8 @@ import (
 // local.Lock(home) around Run; Run itself does not acquire it, so it stays
 // simple to call directly from tests.
 type Options struct {
+	CollectorGuard     *local.CollectorGuard
+	CatalogDestination string
 	// HistoricalSourceAllowed vetoes explicitly excluded native dependencies at staging.
 	HistoricalSourceAllowed func(string) bool
 	// HistoricalProjectLabel resolves mutable display state without filesystem access.
@@ -271,6 +274,9 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	if opts.MachineID == "" {
 		return Result{}, errors.New("machine ID is required")
 	}
+	if err := recoverCatalogRemovals(ctx, local, store, opts); err != nil {
+		return Result{}, err
+	}
 	_, durableErr := local.DurableStorageObligations()
 	if durableErr != nil {
 		return Result{Errors: map[string]error{"durable-storage": durableErr}}, durableErr
@@ -377,7 +383,7 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 		if p.opts.AcceptSession != nil && !p.opts.AcceptSession(reg) {
 			continue
 		}
-		p.scan(reg)
+		p.scan(ctx, reg)
 	}
 	return p.result, p.saveStatus()
 }
@@ -565,7 +571,7 @@ func (p *pass) deferScan(id, reason string, err error) {
 
 // scan gives one session its turn in the pass: skip it if nothing about it
 // changed, otherwise scan it (sessionScan.run) and account for the outcome.
-func (p *pass) scan(reg archive.SessionRegistration) {
+func (p *pass) scan(ctx context.Context, reg archive.SessionRegistration) {
 	priorLocal := p.local
 	budget := (&sessionScan{opts: p.opts}).readBudget()
 	// Every pass-lifetime cache is bounded by agentapi.PassCacheReserve, so
@@ -579,7 +585,7 @@ func (p *pass) scan(reg archive.SessionRegistration) {
 	// too, so one large session cannot leave the others without room, and
 	// its own excess is told from pressure others put on the ledger.
 	defer budget.BeginScope(sessionReadCeiling)()
-	scopedLocal, closeLocal := p.local.WithReadBudget(p.ctx, budget)
+	scopedLocal, closeLocal := p.local.WithReadBudget(ctx, budget)
 	p.local = scopedLocal
 	defer func() { closeLocal(); p.local = priorLocal }()
 	id := reg.ArchiveSessionID
@@ -622,9 +628,9 @@ func (p *pass) scan(reg archive.SessionRegistration) {
 		addError(p.result.Errors, id, err)
 		p.pending++
 	}
-	scan := newSessionScan(p.ctx, p.local, p.remote, reg, req, published, p.now, p.opts)
+	scan := newSessionScan(ctx, p.local, p.remote, reg, req, published, p.now, p.opts)
 	defer scan.releaseRetained()
-	outcome, err := scan.run()
+	outcome, err := scan.run(ctx)
 	if err != nil && p.ctx.Err() == nil {
 		outcome, err = scan.overCeiling(err)
 	}
@@ -834,6 +840,14 @@ func (p *pass) repairListingIndex() {
 			continue
 		}
 		if p.opts.AcceptSession != nil && !p.opts.AcceptSession(reg) {
+			continue
+		}
+		if remote, ok := p.remote.(storage.CatalogPublisher); ok && remote.CatalogMetadataAuthority() {
+			// Catalog indexes commit together with metadata in the head. A
+			// crash journal cannot authorize auxiliary legacy publication.
+			if err := p.local.RemoveListingRepair(id); err != nil {
+				p.result.Errors["listing-maintenance"] = err
+			}
 			continue
 		}
 		getter, ok := p.remote.(storage.VersionedGetter)

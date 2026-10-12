@@ -329,7 +329,7 @@ func (s *sessionScan) refreshLabels() (sessionOutcome, bool, error) {
 			observed = &current
 		}
 	}
-	outcome, err := s.publish(sourceRead{observed: *observed}, candidate)
+	outcome, err := s.publish(s.ctx, sourceRead{observed: *observed}, candidate)
 	return outcome, true, err
 }
 

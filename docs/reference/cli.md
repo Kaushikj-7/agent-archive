@@ -46,6 +46,7 @@ Inspect history
 Import history
   agent-archive backfill    Import sessions already on this machine
   agent-archive historical-project  Manage historical project permissions
+  agent-archive migrate     Migrate to an isolated catalog destination
 
 Switch agents
   agent-archive handoff     Continue a session in another coding agent
@@ -896,6 +897,34 @@ import.
 ```
 
 No flags.
+
+## agent-archive migrate
+
+Guide: [Migrate the archive](../guides/catalog-migration.md).
+
+```text
+Usage: agent-archive migrate --format catalog-v4 [options]
+
+Copies an isolated destination in durable bounded batches, verifies all metadata
+and active/preserved source bytes against an exhaustive read-only source oracle,
+then activates catalog discovery. Resumes the original checkpoint
+on interruption.
+Requires reviewed live provider atomic/clock qualification, revoked old write
+credentials, and complete global writer drain evidence. S3/R2 currently refuse.
+No --force bypass exists. The original destination remains read-only. Rollback
+requires an unchanged catalog and leaves collection paused.
+  --format FORMAT  Destination format; only catalog-v4
+  --prefix PREFIX  Isolated destination prefix (or use --bucket)
+  --bucket BUCKET  Isolated destination bucket (or use --prefix)
+  --rollback       Return to retained source; leave collection paused
+```
+
+| Flag | Takes | Default |
+| --- | --- | --- |
+| `--bucket` | a value | — |
+| `--format` | a value | — |
+| `--prefix` | a value | — |
+| `--rollback` | no value | — |
 
 ## agent-archive handoff
 

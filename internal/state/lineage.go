@@ -419,22 +419,13 @@ func (s *Store) forgetSession(archiveSessionID string, key agentmeta.SessionKey,
 	if !safeFileComponent(archiveSessionID) {
 		return errors.New("archive session ID is not a safe file name component")
 	}
-	if key.NativeID != "" {
-		if err := key.Validate(); err != nil {
-			return err
-		}
-		reg, found, err := s.LoadRegistration(archiveSessionID)
-		if err != nil {
-			return err
-		}
-		if found {
-			actual, err := registrationKey(reg)
-			if err != nil || actual != key || reg.ArchiveSessionID != archiveSessionID {
-				return ErrSessionIdentityConflict
-			}
-		}
+	if err := s.validateForgottenSessionIdentity(archiveSessionID, key); err != nil {
+		return err
 	}
 	if err := s.CheckDurableSessionRead(archiveSessionID); err != nil {
+		return err
+	}
+	if err := s.checkCatalogPendingRemoval(archiveSessionID); err != nil {
 		return err
 	}
 	if withCandidates {
@@ -517,6 +508,26 @@ func (s *Store) forgetSession(archiveSessionID string, key agentmeta.SessionKey,
 	if len(entries) == 0 {
 		if err := os.Remove(dir); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("remove session directory %q: %w", dir, err)
+		}
+	}
+	return nil
+}
+
+// validateForgottenSessionIdentity checks any supplied native key before removals.
+func (s *Store) validateForgottenSessionIdentity(archiveSessionID string, key agentmeta.SessionKey) error {
+	if key.NativeID != "" {
+		if err := key.Validate(); err != nil {
+			return err
+		}
+		reg, found, err := s.LoadRegistration(archiveSessionID)
+		if err != nil {
+			return err
+		}
+		if found {
+			actual, err := registrationKey(reg)
+			if err != nil || actual != key || reg.ArchiveSessionID != archiveSessionID {
+				return ErrSessionIdentityConflict
+			}
 		}
 	}
 	return nil

@@ -39,6 +39,14 @@ type ObjectStore interface {
 	Delete(ctx context.Context, key string) error
 }
 
+// CatalogNamespace optionally identifies an immutable object-store destination
+// across process lifetimes. The value must bind provider/endpoint/bucket/prefix
+// (and any custom routing identity); revision validators are scoped to it. Empty
+// declines persistent summary reuse. It must not contain credentials or tokens.
+type CatalogNamespace interface {
+	CatalogNamespace() string
+}
+
 // LimitedGetter reads at most limit bytes, rejecting oversized objects before
 // allocating their bodies. Callers of untrusted small records require it.
 type LimitedGetter interface {

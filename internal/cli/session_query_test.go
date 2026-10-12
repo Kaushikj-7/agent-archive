@@ -205,3 +205,19 @@ func TestSessionQueryShortWordsDoNotMatchAnIDPrefix(t *testing.T) {
 		t.Error("a three-character word no longer matches a title")
 	}
 }
+
+// Show prefixes remain ambiguous when another title mentions the same prefix.
+func TestShowPrefixIncludesTextCandidates(t *testing.T) {
+	sessions := []archive.Metadata{
+		{SessionID: "abcdef01000000000000000000000001", Harness: archive.Harness{Name: "codex"}},
+		{SessionID: "other", Title: "Compare abcdef01 results", Harness: archive.Harness{Name: "codex"}},
+	}
+	fields := func(m archive.Metadata) sessionFields { return fieldsOf(m, "") }
+	got := searchShowSessions(sessions, parseSessionQuery("abcdef01"), sessionScope{}, fields)
+	if len(got.matches) != 2 {
+		t.Fatalf("show matched %d sessions; want prefix and title", len(got.matches))
+	}
+	if legacy := searchSessions(sessions, parseSessionQuery("abcdef01"), sessionScope{}, fields); len(legacy.matches) != 1 {
+		t.Fatal("handoff prefix precedence changed")
+	}
+}

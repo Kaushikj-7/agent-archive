@@ -209,7 +209,7 @@ func checkStatsAll(fs *commandFlags, all, jsonOut bool) int {
 
 // readStatsSessions reads the sessions stats counts. On a terminal it shows
 // a spinner with how many sidecars are read, since the first run downloads
-// and caches every one. Ctrl-C (or SIGTERM, SIGHUP or SIGQUIT) stops the read at
+// and caches the selected ones. Ctrl-C (or SIGTERM, SIGHUP or SIGQUIT) stops the read at
 // once, leaves nothing on the screen and exits as the signal would have;
 // the cache is only ever written by atomic renames, so an interrupted read
 // leaves nothing damaged. A non-zero code is the command's exit code.
@@ -258,7 +258,7 @@ func readStatsSessions(stdout, stderr io.Writer, env statsCommandDependencies, s
 			return "Reading sessions…"
 		}, spinnerInterval).stop
 	}
-	listed, err := reader.ListRecent(ctx, store, archiveSessionsPrefix, opts.filter, 0, listOpts)
+	listed, err := reader.SelectMetadata(ctx, store, archiveSessionsPrefix, reader.MetadataQuery{Filter: opts.filter, IncludeRootChildren: true}, listOpts)
 	stopReading()
 	// From here on a signal is the default one's again; one that arrived
 	// while the read was finishing still stops the command, as it asked.
