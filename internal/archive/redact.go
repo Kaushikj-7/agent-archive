@@ -559,6 +559,24 @@ func writeRedacted(out *strings.Builder, secret string) {
 // the payload is replaced (see sanitizeValue). Short payloads are left alone.
 var base64DataURL = regexp.MustCompile(`(?i)\bdata:([a-z0-9.+-]+/[a-z0-9.+-]+)?((?:;[a-z0-9.+-]+=[a-z0-9.+-]+)*);base64,[A-Za-z0-9+/_-]{16,}=*`)
 
+// Every base64DataURL match needs this ASCII case-insensitive prefix. Probe
+// colons without allocating or running the full regexp over ordinary text.
+// The regexp still decides boundaries, media types, parameters and payloads.
+func hasDataURLPrefix(text string) bool {
+	for start := 0; start < len(text); {
+		colon := strings.IndexByte(text[start:], ':')
+		if colon < 0 {
+			return false
+		}
+		colon += start
+		if colon >= 4 && text[colon-4]|0x20 == 'd' && text[colon-3]|0x20 == 'a' && text[colon-2]|0x20 == 't' && text[colon-1]|0x20 == 'a' {
+			return true
+		}
+		start = colon + 1
+	}
+	return false
+}
+
 // binaryBlockTypes are content-block types that carry an image, a document,
 // or audio rather than text: Claude's `image` and `document` blocks (their
 // `source` is base64 data, a URL, or a file ID) and the OpenAI Responses and
