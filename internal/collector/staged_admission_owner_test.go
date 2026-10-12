@@ -120,6 +120,30 @@ func TestStagedRunFreshGroupAdmissionRespectsCapturedPressure(t *testing.T) {
 	}
 }
 
+func TestStagedRunFreshGroupAdmissionWithSufficientCapturedOwner(t *testing.T) {
+	t.Helper()
+	store, parent, child, opts := stagedUnadmittedGroupFixture(t)
+	opts.CodexRollouts = recoveryBudgetLookup{budget: agentapi.NewNativeReadBudget(128 << 20)}
+	opts.SkipSessionIndexRecovery = true
+	guard, err := local.LockCollectorGuard(store.Home())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer guard.Release()
+	opts.CollectorGuard = guard
+	result, err := Run(t.Context(), store, storagetest.NewMemoryStore(), opts)
+	defer closeStagedControlResult(result)
+	if err != nil {
+		t.Fatalf("actual fresh group sufficient owner: %v %v", result.Errors, err)
+	}
+	for _, want := range []archive.SessionRegistration{parent, child} {
+		got, found, err := store.LoadRegistration(want.ArchiveSessionID)
+		if err != nil || !found || got.StagedImportSHA256 != want.StagedImportSHA256 {
+			t.Fatalf("actual group admission %s: %v %v", want.ArchiveSessionID, found, err)
+		}
+	}
+}
+
 func TestStagedMaterializationFitsOneValidatedStageView(t *testing.T) {
 	for _, mode := range []string{"refuses-before-first-view", "persists-single-view-continuation"} {
 		t.Run(mode, func(t *testing.T) {
