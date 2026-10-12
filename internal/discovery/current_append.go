@@ -32,14 +32,15 @@ type indexAppendProof struct {
 // The caller closes SQLite first and poisons this view on any failure. Native
 // SQLite/WAL/SHM files are only read through confined regular-file handles.
 func appendCurrentIndex(ctx context.Context, root string, p *privateIndex, budget *agentapi.NativeReadBudget) error {
+	reservation := budget.Reservation()
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	charge := indexVerificationScratch + 64
-	if !budget.Reserve(charge) {
+	if !reservation.Reserve(charge) {
 		return agentapi.Wrap(agentapi.Limit, errors.New("shared native append scratch budget exhausted"))
 	}
-	defer func() { budget.Release(charge) }()
+	defer func() { reservation.Release(charge) }()
 	proof := p.proof
 	if proof.main == nil || proof.wal == nil || len(proof.header) != 32 {
 		return errIndexChanged
@@ -59,7 +60,7 @@ func appendCurrentIndex(ctx context.Context, root string, p *privateIndex, budge
 	if !os.SameFile(proof.wal, info) || !bytes.Equal(header, proof.header) || info.Size() < int64(proof.end) {
 		return errIndexChanged
 	}
-	if info.Size()+charge > currentSnapshotLimit || !budget.Reserve(info.Size()) {
+	if info.Size()+charge > currentSnapshotLimit || !reservation.Reserve(info.Size()) {
 		return agentapi.Wrap(agentapi.Limit, errors.New("shared native append budget exhausted"))
 	}
 	charge += info.Size()

@@ -356,6 +356,7 @@ func (s *Store) savePendingGuard(ctx context.Context, g config.DurableStorageGua
 }
 
 func (s *Store) writeDurableGuard(ctx context.Context, g config.DurableStorageGuard, path string, p any) (err error) {
+	reservation := s.resourceBudget.Reservation()
 	if err = g.CheckHome(s.home); err != nil {
 		return err
 	}
@@ -363,28 +364,28 @@ func (s *Store) writeDurableGuard(ctx context.Context, g config.DurableStorageGu
 	const scratch = 32 << 10
 	limit := durableStorageQuota/2 - 1
 	if s.resourceBudget != nil {
-		if !s.resourceBudget.Reserve(scratch) {
+		if !reservation.Reserve(scratch) {
 			return errStateBudget
 		}
-		limit = min(limit, s.resourceBudget.Available()-1)
+		limit = min(limit, reservation.Available()-1)
 	}
 	n, err := jsonwire.Bound(ctx, p, limit)
 	if s.resourceBudget != nil {
 		if errors.Is(err, jsonwire.ErrLimit) && limit < durableStorageQuota/2-1 {
 			// Memory, not the disk quota, refused the encoding.
-			s.resourceBudget.Refuse(limit + 2)
+			reservation.Refuse(limit + 2)
 		}
-		s.resourceBudget.Release(scratch)
+		reservation.Release(scratch)
 	}
 	if err != nil {
 		return errors.Join(errStateBudget, err)
 	}
 	n++
 	if s.resourceBudget != nil {
-		if !s.resourceBudget.Reserve(n) {
+		if !reservation.Reserve(n) {
 			return errStateBudget
 		}
-		defer s.resourceBudget.Release(n)
+		defer reservation.Release(n)
 	}
 	q, err := s.openDurableQuota(g)
 	if err != nil {

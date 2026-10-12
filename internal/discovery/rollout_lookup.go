@@ -240,6 +240,7 @@ func (l *CodexRolloutLookup) checkBudget(ctx context.Context) error {
 }
 
 func (l *CodexRolloutLookup) inspect(ctx context.Context, path, thread string) (*agentapi.SourceRef, error) {
+	reservation := l.readBudget.Reservation()
 	root := l.homeFor(path)
 	if root == "" {
 		return nil, agentapi.Wrap(agentapi.Unsafe, errors.New("current locator outside native home"))
@@ -258,10 +259,10 @@ func (l *CodexRolloutLookup) inspect(ctx context.Context, path, thread string) (
 		return nil, agentapi.Wrap(agentapi.Limit, errors.New("native header probe limit"))
 	}
 	const headerCharge = int64(sourcefacts.HeaderBytes + 128<<10)
-	if !l.readBudget.Reserve(headerCharge) {
+	if !reservation.Reserve(headerCharge) {
 		return nil, agentapi.Wrap(agentapi.Limit, errors.New("shared native header budget exhausted"))
 	}
-	defer l.readBudget.Release(headerCharge)
+	defer reservation.Release(headerCharge)
 	l.probes++
 	header := sourcefacts.ReadHeader(ctx, root, path)
 	if header.Identity == nil {
@@ -519,24 +520,25 @@ func (l *CodexRolloutLookup) markDelivered(id string, epoch uint64) {
 }
 
 func (l *CodexRolloutLookup) revisionDigest(ctx context.Context, value any) (string, error) {
+	reservation := l.readBudget.Reservation()
 	const scratch = 32 << 10
-	if !l.readBudget.Reserve(scratch) {
+	if !reservation.Reserve(scratch) {
 		return "", errCatalogBudget
 	}
-	available := l.readBudget.Available()
+	available := reservation.Available()
 	n, err := jsonwire.Bound(ctx, value, available/2)
 	if errors.Is(err, jsonwire.ErrLimit) {
-		l.readBudget.Refuse(available + 2)
+		reservation.Refuse(available + 2)
 	}
-	l.readBudget.Release(scratch)
+	reservation.Release(scratch)
 	if err != nil {
 		return "", errors.Join(errCatalogBudget, err)
 	}
 	// The encoder buffer and returned immutable JSON coexist until hashing ends.
-	if !l.readBudget.Reserve(n + n) {
+	if !reservation.Reserve(n + n) {
 		return "", errCatalogBudget
 	}
-	defer l.readBudget.Release(n + n)
+	defer reservation.Release(n + n)
 	data, err := json.Marshal(value)
 	if err != nil {
 		return "", err

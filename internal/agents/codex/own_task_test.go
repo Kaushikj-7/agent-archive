@@ -43,16 +43,17 @@ func TestSnapshotFirstOwnTaskSkipsLargeCopiedPrefixAndRejectsLaterRepair(t *test
 				t.Fatal(err)
 			}
 			ledger := provider.env.ReadBudget
+			reservation := ledger.Reservation()
 			usedBefore, _ := ledger.Charged()
 			pressure := ledger.Available() - 6000
-			if !ledger.Reserve(pressure) {
+			if !reservation.Reserve(pressure) {
 				t.Fatal("reserve copied-prefix pressure")
 			}
 			_, err = provider.readHistorySelection(t.Context(), agentapi.ReadLimits{}, selection)
 			if !errors.Is(err, agentapi.ErrReadBudget) || errors.Is(err, archive.ErrRecordTooLarge) {
 				t.Fatalf("copied child prefix under transient pressure became permanent: %v", err)
 			}
-			ledger.Release(pressure)
+			reservation.Release(pressure)
 			if used, _ := ledger.Charged(); used > usedBefore {
 				t.Fatal("copied-prefix refusal leaked ownership", used, usedBefore)
 			}
