@@ -116,7 +116,7 @@ func (s *Store) FreezeReadySelection(ctx context.Context, id string, p PendingPu
 	if err != nil || !found || reg.CaptureFrozen || reg.StagedImportSHA256 != "" || reg.HistoricalProject != nil || !cfg.AcceptSession(reg) {
 		return p, errors.Join(ErrReadySelectionFrozen, err)
 	}
-	if reg.ArchiveSessionID != p.Bundle.ArchiveSessionID || reg.NativeSessionID != p.Bundle.NativeSessionID || reg.ProjectID != p.Bundle.ProjectID || reg.ParentSessionID != p.Bundle.ParentSessionID || reg.NativeChild != p.Bundle.NativeChild || reg.Harness.Name != p.Bundle.Capture.Harness.Name {
+	if !readySelectionOwnerMatches(reg, p.Bundle) {
 		return p, ErrDurableStorageRecovery
 	}
 	admission, err := s.readyDigest(ctx, reg)
@@ -210,8 +210,11 @@ func (s *Store) validateReadySelection(ctx context.Context, p PendingPublication
 		return errors.Join(ErrDurableStorageRecovery, err)
 	}
 	reg, found, err := s.LoadRegistration(p.Bundle.ArchiveSessionID)
-	if err != nil || !found || reg.CaptureFrozen || !cfg.AcceptSession(reg) {
+	if err != nil || !found || reg.CaptureFrozen || reg.StagedImportSHA256 != "" || reg.HistoricalProject != nil || !cfg.AcceptSession(reg) {
 		return errors.Join(ErrDurableStorageRecovery, err)
+	}
+	if !readySelectionOwnerMatches(reg, p.Bundle) {
+		return ErrDurableStorageRecovery
 	}
 	admission, err := s.readyDigest(ctx, reg)
 	if err != nil || admission != p.Selection.AdmissionContext {
@@ -440,4 +443,10 @@ func (p *Published) validateReadyPublished(next *publishedState) error {
 		return errors.Join(ErrDurableStorageRecovery, err)
 	}
 	return nil
+}
+
+// The proof is recomputable wire data. Both construction and every subsequent
+// validator must independently match the retained registration's owner.
+func readySelectionOwnerMatches(reg archive.SessionRegistration, bundle archive.SourceBundle) bool {
+	return reg.ArchiveSessionID == bundle.ArchiveSessionID && reg.NativeSessionID == bundle.NativeSessionID && reg.ProjectID == bundle.ProjectID && reg.ParentSessionID == bundle.ParentSessionID && reg.NativeChild == bundle.NativeChild && reg.Harness.Name == bundle.Capture.Harness.Name
 }
