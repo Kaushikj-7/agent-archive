@@ -846,12 +846,8 @@ func (pending PendingPublication) validateComplete() error {
 	return nil
 }
 
-// validateReadablePending applies the existing publication checksum and JSON
+// validateReadablePendingContext applies the existing publication checksum and JSON
 // preconditions without deriving new ownership or remote-source authority.
-func (s *Store) validateReadablePending(pending PendingPublication) error {
-	return s.validateReadablePendingContext(s.durableContext(), pending)
-}
-
 func (s *Store) validateReadablePendingContext(ctx context.Context, pending PendingPublication) error {
 	if err := s.validateReadySelection(ctx, pending); err != nil {
 		return err
