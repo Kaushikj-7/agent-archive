@@ -6,6 +6,7 @@ Read without PyYAML, like test_release_assets.py.
 """
 import ast
 from pathlib import Path
+import json
 import re
 import unittest
 
@@ -282,6 +283,36 @@ class GitIdentityCompatibilityTest(unittest.TestCase):
         self.assertIn('./internal/gitremote ./internal/sourcefacts', text)
         self.assertIn("-run 'RecoveredImport|DeletedWorktree' ./internal/backfill", text)
         self.assertIn('Older distribution package acceptance is recorded separately.', TESTING_MD.read_text())
+
+
+class LevenshteinSharedChecksTest(unittest.TestCase):
+    def test_required_checks_keep_full_selection_and_pinned_shared_verifier(self):
+        config = json.loads((ROOT / 'levenshtein.json').read_text())
+        expected = {'lint', 'vet', 'modules', 'vulnerabilities',
+                    'workflow-lint', 'workflow-security'}
+        self.assertEqual(set(config['checks']), expected)
+        for name in ('pre-merge', 'main'):
+            self.assertEqual(set(config['runs'][name]['checks']), expected)
+        # The pinned full go-lint selection includes bodyclose and sqlclosecheck.
+        # A per-check selection override could silently drop those analyses now
+        # that they no longer run as separate go-http and go-sql checks.
+        self.assertEqual(config['checks']['lint'],
+                         {'kind': 'go-lint', 'target': 'archive', 'environment': 'go'})
+        self.assertEqual(config['checks']['vulnerabilities']['kind'], 'go-vuln')
+        for name, check in config['checks'].items():
+            self.assertEqual(config['environments'][check['environment']],
+                             {'executor': 'dagger'}, name)
+        workflow = (ROOT / '.github/workflows/levenshtein.yml').read_text()
+        shared_checkout = [step for step in steps(jobs(workflow)['verify'])
+                           if 'repository: wangjohn/levenshtein' in step]
+        self.assertEqual(len(shared_checkout), 1)
+        self.assertRegex(shared_checkout[0], r'(?m)^          ref: [0-9a-f]{40}$')
+        self.assertIn('./levenshtein/verify "$run" --source "$source" --jobs 4', workflow)
+        # PR verification uses the declared-input staging path; non-PR runs
+        # retain the complete source and configured container execution.
+        self.assertIn('source=./app', workflow)
+        self.assertIn('source="$RUNNER_TEMP/native-source"', workflow)
+        self.assertIn('--run pre-merge --pr-scope', workflow)
 
 
 class JobsParserTest(unittest.TestCase):
