@@ -229,6 +229,9 @@ func (s *sessionScan) resume(ctx context.Context) (outcome sessionOutcome, handl
 		return outcome, true, err
 	}
 	if pendingSkillMode(pending.SkillEvidence) != s.opts.skillEvidence() {
+		if pending.Selection != nil {
+			return outcomeSkipped, true, state.ErrReadySelectionFrozen
+		}
 		if pending.Catalog != nil {
 			return outcomeSkipped, true, state.ErrCatalogJournalFrozen
 		}
@@ -240,6 +243,9 @@ func (s *sessionScan) resume(ctx context.Context) (outcome sessionOutcome, handl
 		return outcomeSkipped, false, nil
 	}
 	if !pending.Attempted && s.req.Token != "" && s.req.Token != pending.RequestToken {
+		if pending.Selection != nil {
+			return outcomeSkipped, true, state.ErrReadySelectionFrozen
+		}
 		if pending.Catalog != nil {
 			return outcomeSkipped, true, state.ErrCatalogJournalFrozen
 		}
@@ -254,6 +260,9 @@ func (s *sessionScan) resume(ctx context.Context) (outcome sessionOutcome, handl
 	// publicationReadyAt); it is capped durably, since a cap recomputed from
 	// each pass's now would keep moving away.
 	if latest := s.now.Add(s.opts.minUploadInterval()); pending.ReadyAt.After(latest) {
+		if pending.Selection != nil {
+			return outcomeSkipped, true, state.ErrReadySelectionFrozen
+		}
 		if pending.Catalog != nil {
 			return outcomeSkipped, true, state.ErrCatalogJournalFrozen
 		}
@@ -719,6 +728,9 @@ func (s *sessionScan) publish(ctx context.Context, read sourceRead, candidate ar
 		if err := s.freezeRevisionPublication(&pending); err != nil {
 			return outcomeSkipped, err
 		}
+	}
+	if err := s.freezeOrdinaryReadySelection(ctx, &pending); err != nil {
+		return outcomeSkipped, err
 	}
 	if err := s.local.SavePending(s.id(), pending); err != nil {
 		return outcomeSkipped, fmt.Errorf("persist pending publication: %w", err)

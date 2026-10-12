@@ -23,6 +23,8 @@ const legacyCodexWriter configWriter = "codex-scope-v3"
 
 const codexWriter configWriter = "codex-scope-floor-v3"
 
+const publicationCompositionWriter configWriter = "publication-composition-v12"
+
 const catalogWriter configWriter = "catalog-v4-v11"
 
 const historicalProjectWriter configWriter = "historical-projects-v10"
@@ -60,7 +62,7 @@ func (c Config) MarshalJSON() ([]byte, error) {
 		}
 	}
 	plain := configJSON(c)
-	if c.Storage.EffectiveArchiveFormat() != destination.FormatCatalogV4 && !c.HistoricalProjectProtection && c.Discovery == nil && !c.ImportStagingProtection && !c.RetentionProtection && c.CodexCapture == nil && !c.GenerationProtection && !c.CodexHistoryProtection && !c.DurableStorageProtection {
+	if !c.PublicationCompositionProtection && c.Storage.EffectiveArchiveFormat() != destination.FormatCatalogV4 && !c.HistoricalProjectProtection && c.Discovery == nil && !c.ImportStagingProtection && !c.RetentionProtection && c.CodexCapture == nil && !c.GenerationProtection && !c.CodexHistoryProtection && !c.DurableStorageProtection {
 		return json.Marshal(plain)
 	}
 	if err := validateDiscoveryConfig(c); err != nil {
@@ -90,6 +92,9 @@ func (c Config) MarshalJSON() ([]byte, error) {
 	}
 	if c.Storage.EffectiveArchiveFormat() == destination.FormatCatalogV4 {
 		version = writerVersion{Version: 11, Writer: catalogWriter}
+	}
+	if c.PublicationCompositionProtection {
+		version = writerVersion{Version: 12, Writer: publicationCompositionWriter}
 	}
 	return json.Marshal(struct {
 		SchemaVersion writerVersion `json:"schema_version"`
@@ -130,26 +135,14 @@ func decodeConfig(data []byte, c *Config) (bool, error) {
 	if len(plain.HistoricalProjects) > 0 && !plain.HistoricalProjectProtection {
 		return false, errors.New("historical project configuration requires permanent writer protection")
 	}
-	raw := bytes.TrimSpace(wire.SchemaVersion)
-	fenced := len(raw) > 0 && raw[0] == '{'
-	if fenced {
-		var version writerVersion
-		if err := json.Unmarshal(raw, &version); err != nil {
-			return false, err
-		}
-		if err := validateWriterVersion(Config(plain), version); err != nil {
-			return false, err
-		}
-		// Prior protected writers also need canonical migration before identity
-		// mutation: they do not understand immutable generation floors.
-		fenced = version.Writer == discoveryWriter || version.Writer == codexWriter || version.Writer == generationWriter || version.Writer == codexHistoryWriter || version.Writer == durableStorageWriter || version.Writer == retentionWriter || version.Writer == importStagingWriter || version.Writer == historicalProjectWriter || version.Writer == catalogWriter
-		plain.SchemaVersion = version.Version
-	} else if len(raw) > 0 {
-		if err := json.Unmarshal(raw, &plain.SchemaVersion); err != nil {
-			return false, err
-		}
+	fenced, err := decodeConfigVersion(&plain, wire.SchemaVersion)
+	if err != nil {
+		return false, err
 	}
-	if plain.Storage.EffectiveArchiveFormat() == destination.FormatCatalogV4 && (!fenced || plain.SchemaVersion != 11) {
+	if plain.PublicationCompositionProtection && (!fenced || plain.SchemaVersion != 12 || !plain.DurableStorageProtection) {
+		return false, errors.New("publication composition requires its exact protected writer fence")
+	}
+	if plain.Storage.EffectiveArchiveFormat() == destination.FormatCatalogV4 && (!fenced || (plain.SchemaVersion != 11 && (plain.SchemaVersion != 12 || !plain.PublicationCompositionProtection || !plain.DurableStorageProtection))) {
 		return false, errors.New("catalog format requires its supported forward writer fence")
 	}
 	if plain.ImportStagingProtection || plain.SchemaVersion >= 9 {
@@ -167,6 +160,29 @@ func decodeConfig(data []byte, c *Config) (bool, error) {
 	return fenced, nil
 }
 
+func decodeConfigVersion(plain *configJSON, rawVersion json.RawMessage) (bool, error) {
+	raw := bytes.TrimSpace(rawVersion)
+	fenced := len(raw) > 0 && raw[0] == '{'
+	if fenced {
+		var version writerVersion
+		if err := json.Unmarshal(raw, &version); err != nil {
+			return false, err
+		}
+		if err := validateWriterVersion(Config(*plain), version); err != nil {
+			return false, err
+		}
+		// Prior protected writers also need canonical migration before identity
+		// mutation: they do not understand immutable generation floors.
+		fenced = version.Writer == discoveryWriter || version.Writer == codexWriter || version.Writer == generationWriter || version.Writer == codexHistoryWriter || version.Writer == durableStorageWriter || version.Writer == retentionWriter || version.Writer == importStagingWriter || version.Writer == historicalProjectWriter || version.Writer == catalogWriter || version.Writer == publicationCompositionWriter
+		plain.SchemaVersion = version.Version
+	} else if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &plain.SchemaVersion); err != nil {
+			return false, err
+		}
+	}
+	return fenced, nil
+}
+
 func codexMarkerMatches(mode SkillEvidence, writer configWriter) bool {
 	return strings.HasSuffix(string(mode), codexWriterMarker) || (writer == legacyCodexWriter && strings.HasSuffix(string(mode), legacyCodexWriterMarker))
 }
@@ -175,7 +191,11 @@ func validateWriterVersion(c Config, version writerVersion) error {
 	if !supportedWriterVersion(version) {
 		return errors.New("configuration requires a supported writer fence")
 	}
-	if version.Version == 11 {
+	if version.Version == 12 {
+		if !c.PublicationCompositionProtection || !c.DurableStorageProtection {
+			return errors.New("publication composition requires durable storage protection")
+		}
+	} else if version.Version == 11 {
 		if c.Storage.EffectiveArchiveFormat() != destination.FormatCatalogV4 {
 			return errors.New("catalog writer fence requires catalog format")
 		}
@@ -222,18 +242,19 @@ func supportedWriterVersion(v writerVersion) bool {
 		(v.Version == 8 && v.Writer == retentionWriter) ||
 		(v.Version == 9 && v.Writer == importStagingWriter) ||
 		(v.Version == 10 && v.Writer == historicalProjectWriter) ||
-		(v.Version == 11 && v.Writer == catalogWriter)
+		(v.Version == 11 && v.Writer == catalogWriter) ||
+		(v.Version == 12 && v.Writer == publicationCompositionWriter)
 }
 
 func validateWriterFloors(c Config, version writerVersion) error {
-	if version.Writer == discoveryWriter || ((version.Writer == generationWriter || version.Writer == codexHistoryWriter || version.Writer == durableStorageWriter || version.Writer == retentionWriter || version.Writer == importStagingWriter || version.Writer == historicalProjectWriter || version.Writer == catalogWriter) && c.Discovery != nil) {
+	if version.Writer == discoveryWriter || ((version.Writer == generationWriter || version.Writer == codexHistoryWriter || version.Writer == durableStorageWriter || version.Writer == retentionWriter || version.Writer == importStagingWriter || version.Writer == historicalProjectWriter || version.Writer == catalogWriter || version.Writer == publicationCompositionWriter) && c.Discovery != nil) {
 		for _, a := range c.Discovery.Authorizations {
 			if len(a.Intervals) > 0 && a.NativeStartFloor.IsZero() {
 				return errors.New("discovery permission history requires its native start floor")
 			}
 		}
 	}
-	if version.Writer == codexWriter || ((version.Writer == generationWriter || version.Writer == codexHistoryWriter || version.Writer == durableStorageWriter || version.Writer == retentionWriter || version.Writer == importStagingWriter || version.Writer == historicalProjectWriter || version.Writer == catalogWriter) && c.CodexCapture != nil) {
+	if version.Writer == codexWriter || ((version.Writer == generationWriter || version.Writer == codexHistoryWriter || version.Writer == durableStorageWriter || version.Writer == retentionWriter || version.Writer == importStagingWriter || version.Writer == historicalProjectWriter || version.Writer == catalogWriter || version.Writer == publicationCompositionWriter) && c.CodexCapture != nil) {
 		var scopes []*DiscoveryAuthorization
 		scopes = append(scopes, c.CodexCapture.Authorization, c.CodexCapture.SourceAuthorization)
 		if c.Discovery != nil {

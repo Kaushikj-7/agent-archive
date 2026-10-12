@@ -73,8 +73,9 @@ const (
 // private file elsewhere; see destination.Config.R2CredentialRef)
 // and S3 credentials are resolved through the named AWS profile.
 type Config struct {
-	HistoricalProjects          []HistoricalProject `json:"historical_projects,omitempty"`
-	HistoricalProjectProtection bool                `json:"historical_project_protection,omitempty"`
+	PublicationCompositionProtection bool                `json:"publication_composition_protection,omitempty"`
+	HistoricalProjects               []HistoricalProject `json:"historical_projects,omitempty"`
+	HistoricalProjectProtection      bool                `json:"historical_project_protection,omitempty"`
 	// CodexNameLookup selects files (default) or explicitly opted-in native startup.
 	CodexNameLookup CodexNameLookup     `json:"codex_name_lookup,omitempty"`
 	CodexCapture    *CodexCaptureConfig `json:"codex_capture,omitempty"`
