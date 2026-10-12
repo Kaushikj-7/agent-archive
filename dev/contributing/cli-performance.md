@@ -27,8 +27,7 @@ outside timed/allocation measurements.
 Reader and command scale operations include opening the metadata cache. Reader
 cases additionally report `cacheOpen-ns/op`; their total includes that span.
 Command cases call `Run` with injected `Env` and include flags, config loading,
-store opening, cache work, discovery, downloads and JSON rendering to a discard
-writer. They exclude OS process execution, credential lookup and real network
+store opening, cache work, discovery, downloads and JSON rendering to an in-memory buffer with complete-output validation. They exclude OS process execution, credential lookup and real network
 transport. Limits select by capture time; limit 0 exercises exhaustive fallback.
 
 `MeasuredStore` retains versioned GET, bounded GET, paged/ranged LIST and Stat
