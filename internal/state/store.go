@@ -887,6 +887,9 @@ func (s *Store) SavePending(id string, pending PendingPublication) error {
 	if !safeFileComponent(id) {
 		return errors.New("archive session ID is not a safe file name component")
 	}
+	if err := pending.ValidateReadySlot(id); err != nil {
+		return err
+	}
 	if err := pending.validateComplete(); err != nil {
 		return err
 	}
@@ -948,6 +951,9 @@ func (s *Store) LoadPending(id string) (PendingPublication, bool, error) {
 		return PendingPublication{}, protected || cfg.DurableStorageProtection || errors.Is(err, ErrDurableStorageRecovery), fmt.Errorf("read pending publication %q: %w", id, errors.Join(ErrDurableStorageRecovery, err))
 	}
 	if found {
+		if err := pending.ValidateReadySlot(id); err != nil {
+			return PendingPublication{}, true, err
+		}
 		if protected {
 			if err := s.validateReadablePending(pending); err != nil {
 				return PendingPublication{}, true, errors.Join(ErrDurableStorageRecovery, err)

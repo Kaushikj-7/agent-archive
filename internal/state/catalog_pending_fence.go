@@ -20,6 +20,9 @@ func (s *Store) catalogPendingForFence(id string) (PendingPublication, bool, err
 	if errors.Is(err, os.ErrNotExist) {
 		return pending, false, nil
 	}
+	if err == nil {
+		err = pending.ValidateReadySlot(id)
+	}
 	return pending, err == nil, err
 }
 

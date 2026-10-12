@@ -74,6 +74,9 @@ func (s *sessionScan) block(reason state.BlockedReason, candidate *archive.Sourc
 // finally the removal of the pending file. ctx must be the original scan
 // context; admission derives an invocation context for this serial lifecycle.
 func (s *sessionScan) publishPending(ctx context.Context, pending state.PendingPublication) (sessionOutcome, error) {
+	if err := pending.ValidateReadySlot(s.id()); err != nil {
+		return outcomeSkipped, err
+	}
 	if err := s.local.ValidateReadySelection(ctx, pending); err != nil {
 		return outcomeSkipped, err
 	}

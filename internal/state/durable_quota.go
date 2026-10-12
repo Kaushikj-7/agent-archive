@@ -349,6 +349,9 @@ func (w *boundedDurableWriter) Write(p []byte) (int, error) {
 }
 
 func (s *Store) savePendingGuard(ctx context.Context, g config.DurableStorageGuard, id string, p PendingPublication) error {
+	if err := p.ValidateReadySlot(id); err != nil {
+		return err
+	}
 	if err := s.validateReadySelection(ctx, p); err != nil {
 		return err
 	}

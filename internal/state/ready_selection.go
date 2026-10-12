@@ -300,6 +300,9 @@ func (q *ReadySelection) validateProofDigest() error {
 // SaveReadyPublication records selecting proof together with the cache before
 // request acknowledgment and pending removal. No source body is duplicated.
 func (p *Published) SaveReadyPublication(pending PendingPublication, at time.Time) error {
+	if err := pending.ValidateReadySlot(p.id); err != nil {
+		return err
+	}
 	if pending.Selection == nil {
 		return p.SavePublication(pending.Bundle, at, pending.SourceReference(), pending.MetadataBytes)
 	}
@@ -449,4 +452,14 @@ func (p *Published) validateReadyPublished(next *publishedState) error {
 // validator must independently match the retained registration's owner.
 func readySelectionOwnerMatches(reg archive.SessionRegistration, bundle archive.SourceBundle) bool {
 	return reg.ArchiveSessionID == bundle.ArchiveSessionID && reg.NativeSessionID == bundle.NativeSessionID && reg.ProjectID == bundle.ProjectID && reg.ParentSessionID == bundle.ParentSessionID && reg.NativeChild == bundle.NativeChild && reg.Harness.Name == bundle.Capture.Harness.Name
+}
+
+// ValidateReadySlot binds selecting authority to the requested journal/session
+// slot independently of the owner recorded inside its recomputable wire data.
+// Existing legacy publication wire keeps its current identity rules.
+func (p PendingPublication) ValidateReadySlot(id string) error {
+	if (p.Selection != nil || p.JournalVersion != 0) && id != p.Bundle.ArchiveSessionID {
+		return ErrDurableStorageRecovery
+	}
+	return nil
 }
