@@ -1,9 +1,14 @@
 # CLI reliability and keep forever implementation plan
 
-Status: Implementation in progress. Prepared 2026-10-11 against
-`d3e525605855`; implementation branches start from `20f86e5f33fde4c720f3ca3554f4a234828bd7a3`.
-The delivery record below tracks reviewable changes. No release promotion or
-live provider/platform acceptance is established by this plan.
+Status: A–G implementation landed on `main`; live release acceptance remains
+pending. Reconciled 2026-10-11 against
+`b4122ea6694dbe679783b724b6adbfdc11047c0d`. The original plan was prepared
+against `d3e525605855`, with implementation branches starting at
+`20f86e5f33fde4c720f3ca3554f4a234828bd7a3`. The requirements and baseline
+findings below preserve that design context; “confirmed defect” and
+“implementation gap” describe that baseline, not an outstanding finding in
+current code. No release promotion or live provider/platform acceptance is
+established by this record.
 
 Fix the CLI defects identified in the open-source readiness review, complete
 revision access and durable import admission, and add an explicit **Keep forever**
@@ -40,20 +45,27 @@ reviews; avoid holding the confirmed bug fixes for those larger projects.
 
 ## Implementation delivery record
 
-Updated 2026-10-11. These changes are being implemented and independently
-reviewed as separate pull requests; a linked draft is not release acceptance.
-Feature-specific CLI help, generated reference and user contracts belong to
-those feature changes. This documentation change supplies the original plan,
-corrects existing claims, and preserves outstanding live release gates.
+Updated 2026-10-11. The integrated code and feature-specific help, generated
+reference and user contracts are present on `main`. The table records actual
+merge/commit evidence, rather than the state of historical proposal branches.
+The [implementation evidence](../maintainers/acceptance/cli-reliability-and-retention-2026-10-11.md)
+links owning code, regression suites and exact-SHA CI, and distinguishes those
+checks from the remaining live gates.
 
-| Plan scope | Change | Current state |
+| Plan scope | Delivered change | Current state |
 | --- | --- | --- |
-| A | [History-safe cleanup #423](https://github.com/wangjohn/agent-archive/pull/423) | Draft implementation; review and combined-head acceptance pending. |
-| B/C | [CLI reliability #424](https://github.com/wangjohn/agent-archive/pull/424) | Draft implementation; review and combined-head acceptance pending. |
-| D/E | Retention policy, setup, pairing, backfill and undo | Implementation in progress; independent review pending. |
-| F | Preserved-revision inventory and selection | Implementation in progress; independent review pending. |
-| G | Durable import admission and recovery | Implementation in progress; independent review pending. |
-| H | [Documentation corrections #426](https://github.com/wangjohn/agent-archive/pull/426) | Draft implementation; independent review and release acceptance pending. |
+| A | [History-safe cleanup #423](https://github.com/wangjohn/agent-archive/pull/423) | Merged; complete live-reference protection and fail-closed plan/apply checks. |
+| B/C | [CLI reliability #424](https://github.com/wangjohn/agent-archive/pull/424) | Merged; checked output, safe file handling, early validation and cancellable bounded remote reads. |
+| D/E | [Retention flows #427](https://github.com/wangjohn/agent-archive/pull/427) | Merged; explicit forever, sticky compatibility fence, setup/pairing/import/undo and lifecycle semantics. |
+| F | [Revision selection #425](https://github.com/wangjohn/agent-archive/pull/425), implementation `3f4f1aed` and follow-ups | Merged; exact referenced native UUID inventory/selection across supported consumers. Historical open PR heads are not merge evidence. |
+| G | [Durable import staging #428](https://github.com/wangjohn/agent-archive/pull/428), implementation `7e417c9b` and follow-ups | Merged; filtered admission staging, native-loss publication, recovery, quota and cancellation. |
+| H | [Documentation corrections #426](https://github.com/wangjohn/agent-archive/pull/426), [index reconciliation #431](https://github.com/wangjohn/agent-archive/pull/431), and this acceptance reconciliation | Earlier docs merged; current-head validation and independent review of this reconciliation remain required. Signed-artifact/provider/app/platform acceptance remains pending. |
+
+The exact implementation candidate `db2ccd3ef1490970d9c8476041d8056608ed8c2f`
+has successful Test, Levenshtein and Extended evidence, including macOS full,
+fuzz and real-systemd. That evidence applies to that SHA; the final documentation
+head and any later merged commit need their own checks. The live release
+follow-up has an [executable acceptance protocol](../maintainers/acceptance/cli-retention-live-protocol.md).
 
 Resolved implementation contracts:
 

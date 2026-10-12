@@ -133,17 +133,18 @@ establish real title parity or desktop coexistence.
 ## CLI reliability and retention release follow-up
 
 The [CLI reliability and keep forever implementation plan](../proposals/cli-reliability-and-retention.md)
-is being delivered in separate implementation and review PRs. This work does not
-fill the pending provider, signed-release or actual-app results above. On
-2026-10-11, the latest promoted release remains v0.1.1 with macOS assets only;
-current-checkout and source-build checks do not establish acceptance for a new
-published release.
+has A–G implementation on `main`. Its [dated implementation evidence](acceptance/cli-reliability-and-retention-2026-10-11.md)
+records actual code/tests and exact-SHA CI; it does not fill the pending provider,
+signed-release or actual-app results above. On 2026-10-11 the latest promoted
+release remains v0.1.1 with macOS assets only. Current-checkout and source-build
+checks do not establish acceptance for a new published release.
 
-Before promoting a release containing these changes, extend each disposable
-provider record to cover both finite and forever retention, paired-machine
-preference preservation, and an explicit forever-to-finite change with its
-expiration preview. Include active and preserved history in the cleanup and
-read checks, and recovery after native import files disappear. Record supported
-macOS/Linux architecture coverage separately. Keep the existing results pending
-until the final release bytes and that provider's behavior have actually been
-exercised; do not carry focused unit-test results into these live result cells.
+For each disposable S3 and R2 record, execute the
+[retention, pairing, transition and native-loss protocol](acceptance/cli-retention-live-protocol.md)
+alongside this sheet. It supplies prerequisites, commands, observable pass
+conditions and separate pending result cells. Record supported macOS/Linux
+architecture coverage separately; the Linux MinIO/systemd harness establishes
+only its documented source-build coverage. Keep every result pending until the
+final release bytes and that provider's behavior have actually been exercised.
+The maintainer's go/no-go requires both this sheet and the extension, including
+any missing platform, app or compatibility evidence.
