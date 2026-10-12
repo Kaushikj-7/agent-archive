@@ -1,12 +1,15 @@
 # Archive listing at scale: implementation plan
 
 Prepared 2026-09-30 against `main` at `dc443c7`. Status: phases 1
-and 2 implemented; phase 3 partially covered; phase 4 partially implemented.
+and 2 implemented; phase 3 recorded in baseline PR #376 (pending merge); phase 4
+partially implemented.
 Reconciled 2026-10-11 at `db2ccd3e`. The current
 [listing contract](../maintainers/list-performance.md) specifies indexed bounded
 metadata reads (#320), with 10k/20k correctness and operation-count coverage.
-`internal/reader/list_index_bench_test.go` has a 10k benchmark; the full original
-1k/10k/100k cold/warm measurement matrix is not recorded. Fresh LIST header
+`internal/reader/list_index_bench_test.go` retains its original 10k benchmark.
+The full original 1k/10k/100k cold/warm matrix is now recorded in the
+[2026-10-12 synthetic baseline](../maintainers/list-performance.md#synthetic-baseline-recorded-2026-10-12),
+including a historical request-cost model rather than new live R2 timings. Fresh LIST header
 enumeration still grows with archive size, so the original constant-cost index
 goal remains open. The phase designs below preserve the original plan.
 Each phase lands before the next one starts. Each phase's PR updates its
@@ -16,7 +19,7 @@ status line below.
 | --- | --- | --- |
 | 1 | Parallel range listing | Implemented in [#219](https://github.com/wangjohn/agent-archive/pull/219) |
 | 2 | `AGENT_ARCHIVE_TRACE` timings | Implemented in [#225](https://github.com/wangjohn/agent-archive/pull/225) |
-| 3 | Listing benchmark at 1k, 10k and 100k sessions | Partial: 10k benchmark exists; full measurement matrix pending. |
+| 3 | Listing benchmark at 1k, 10k and 100k sessions | Full synthetic matrix recorded in #376 (pending merge); historical modeled latency and measured local costs remain separate. |
 | 4 | Index read whose cost doesn't grow with the archive (spec first) | Partial: bounded metadata bodies implemented; proportional LIST headers remain. |
 
 ## Problem
@@ -153,7 +156,9 @@ Size: ~250 lines of production code, ~200 of tests. One PR.
 
 A benchmark in `internal/reader` against a store wrapper that behaves like R2
 as measured above: ~100 ms per request plus ~0.45 ms per listed key, pages of
-1,000. It sleeps at a reduced time scale and reports modeled time. Fixtures:
+1,000. The original plan called for reduced-scale sleeps; the recorded harness instead
+uses deterministic virtual scheduling and reports modeled time separately from
+measured local work. Fixtures:
 1k, 10k and 100k sessions, 85% of them subagents, ~1.5 superseded snapshots
 per session. For each fixture it measures:
 

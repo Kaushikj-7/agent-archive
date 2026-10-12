@@ -118,3 +118,88 @@ ranges cover every key whatever the boundaries, so the cache only decides
 how evenly the work is spread. With under 400 cached sidecars under the
 listed prefix (a `--harness` listing counts only that harness's), or with
 `--no-cache`, the scan is the single sequential listing.
+
+## Synthetic baseline recorded 2026-10-12
+
+Measured source: `3878e73f43a2c372a63773b6ba0b436057606d5f`, Go 1.27.2,
+Linux/amd64, AMD EPYC 9V74, benchmark concurrency setting 5. The source includes
+normal merges of main `e1436e35` and compiler regression parent `d8d0f2cf`.
+The [raw benchmark output](listing-baseline-2026-10-12.txt) records the full
+27 reader and 27 CLI.Run scale cases (800/10k/50k, limit 1/50/all,
+cold/warm/changed), latency, first-screen and command-read probes, and the
+21-case historical listing matrix below. Later evidence/documentation commits
+do not change the measured benchmark source. These are synthetic single-run
+measurements on a shared host: local wall times can include unrelated contention
+and establish no paired speed comparison, idle-host threshold, live-provider,
+real-terminal or platform acceptance. Counts are the primary baseline.
+
+```sh
+AGENT_ARCHIVE_PERF=1 go test ./internal/reader ./internal/cli ./internal/storage/storagetest \
+  -run 'Test(HistoricalListingModel|MeasuredStore|ListRevision|ListRecent|IndexedRefresh)' \
+  -bench '^Benchmark(ReaderScale|CommandScale|ReaderLatency|CommandLatency|UsableTerminalScreen|CommandReads|ListingHistoricalModel)$' \
+  -benchtime=1x -count=1 -timeout=15m
+```
+
+The historical fixtures contain exactly 85% children, one current source plus
+1.5 superseded source snapshots/session, and complete current v3 summaries.
+Full scans return every session; indexed reads select 50 top-level sessions.
+Sequential mode deliberately hides `RangeLister`; ranged cold starts without
+boundaries and therefore retains sequential LIST behavior. Warm full scans
+prepare all sidecars; warm indexed reads prepare only the selected 50.
+Fixture creation and warmup occur outside measured time. Every measured
+operation includes opening the private disk cache. No transcript is read.
+
+The historical latency model uses 1,000 keys/page, 100 ms/request and
+0.45 ms/listed key, derived from the original design's historical assumptions.
+It transfers the complete final page of a range, including headers beyond its
+boundary, and counts empty LIST requests. Ranges are scheduled deterministically
+in key order into 16 ideal slots; exhaustive GETs use eight ideal slots and the
+current selected reader uses serial GETs. LIST services precede GET services.
+This virtual scheduling replaces scaled sleeps: it reports a reproducible
+projection and does not simulate local/network overlap, connection setup,
+retries, provider throttling or actual transport. GET body bytes, local runtime,
+allocations and observed peak GET concurrency are separately measured. Header
+bytes estimate key+ETag lengths plus 16 bytes for size/time, excluding XML/HTTP/TLS.
+The model replays a pinned sorted header snapshot to avoid repeated whole-map
+MemoryStore sorting for every range; local numbers remain harness costs.
+
+| Sessions | Read/cache | GETs | Modeled LIST pages | Modeled wire headers | Modeled ms | Local ms | Cache open ms |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1,000 | sequential/cold | 1,000 | 4 | 3,500 | 14,475 | 327.0 | 0.07 |
+| 1,000 | sequential/warm | 0 | 4 | 3,500 | 1,975 | 40.7 | 10.99 |
+| 1,000 | ranged/cold | 1,000 | 4 | 3,500 | 14,475 | 273.7 | 0.06 |
+| 1,000 | ranged/warm | 0 | 5 | 4,703 | 550 | 38.3 | 10.89 |
+| 1,000 | indexed/cold | 50 | 6 | 4,500 | 7,625 | 15.7 | 0.06 |
+| 1,000 | indexed/warm | 0 | 6 | 4,500 | 2,625 | 8.7 | 0.49 |
+| 10,000 | sequential/cold | 10,000 | 35 | 35,000 | 144,250 | 2,663.1 | 0.08 |
+| 10,000 | sequential/warm | 0 | 35 | 35,000 | 19,250 | 332.7 | 109.46 |
+| 10,000 | ranged/cold | 10,000 | 35 | 35,000 | 144,250 | 1,220.7 | 0.06 |
+| 10,000 | ranged/warm | 0 | 50 | 49,703 | 2,200 | 339.8 | 106.24 |
+| 10,000 | indexed/cold | 50 | 46 | 45,000 | 29,850 | 74.5 | 0.06 |
+| 10,000 | indexed/warm | 0 | 46 | 45,000 | 24,850 | 79.8 | 0.47 |
+| 100,000 | sequential/cold | 100,000 | 350 | 350,000 | 1,442,500 | 24,916.6 | 0.55 |
+| 100,000 | sequential/warm | 0 | 350 | 350,000 | 192,500 | 3,728.0 | 1,157.99 |
+| 100,000 | ranged/cold | 100,000 | 350 | 350,000 | 1,442,500 | 24,741.8 | 0.07 |
+| 100,000 | ranged/warm | 0 | 500 | 499,703 | 17,600 | 4,217.8 | 1,136.62 |
+| 100,000 | indexed/cold | 50 | 451 | 450,000 | 252,600 | 778.7 | 0.09 |
+| 100,000 | indexed/warm | 0 | 451 | 450,000 | 247,600 | 881.2 | 0.60 |
+
+Isolated JSON decode of all canonical bodies (no cache I/O or transport):
+
+| Sessions | Local decode ms |
+| --- | --- |
+| 1,000 | 4.8 |
+| 10,000 | 34.5 |
+| 100,000 | 486.6 |
+
+The raw output includes per-case GET bytes, modeled header bytes, returned
+header counts, allocations and peak GET concurrency. Warm selections and warm
+full scans retain zero remote GETs. At 100k, a warm full-scan cache opening
+is measurable separately from JSON decoding. Ranged warm reduces projected
+LIST wait while increasing modeled request pages/end-page headers. Current
+indexed reads retain the exact 50-body bound but still enumerate canonical and
+v3 summary headers, so modeled header discovery grows with archive size.
+These results complete the original phase-3 fixture/measurement matrix in the
+baseline PR; the phase-4 constant-header-cost goal remains open. The original plan’s
+662-session live timings and older pinned compiler/source baselines stay
+historical evidence and are not measurements of this source commit.

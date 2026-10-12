@@ -89,3 +89,11 @@ The 10k/50k scale fixtures and 10k/100k historical model require
 The historical model's full measured matrix and assumptions are recorded in
 [listing performance](../maintainers/list-performance.md). Its virtual latency
 is a historical cost projection, not a live R2 measurement or benchmark wall time.
+
+The reconciled measurement at source `3878e73f43a2c372a63773b6ba0b436057606d5f`
+uses Go 1.27.2 and records the complete original matrix plus the historical
+phase-3 matrix. See [the recorded results](../maintainers/list-performance.md#synthetic-baseline-recorded-2026-10-12)
+and [raw output](../maintainers/listing-baseline-2026-10-12.txt). The older
+`d914dfb2` compiler/head results above remain historical; they were not relabeled
+as measurements of the reconciled source. Local single-run timings retain a
+shared-host contention limitation; request/body counts are primary.
