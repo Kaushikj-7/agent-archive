@@ -21,7 +21,7 @@ func (s *sessionScan) freezeOrdinaryReadySelection(ctx context.Context, p *state
 	if p.History != nil || p.Bundle.History != nil || p.MetadataOnly || s.reg.HistoricalProject != nil || s.reg.StagedImportSHA256 != "" {
 		return state.ErrReadySelectionFrozen
 	}
-	_, found, err := s.published.LastPublishedMetadata()
+	_, found, err = s.published.LastPublishedMetadata()
 	if err != nil {
 		return err
 	}
