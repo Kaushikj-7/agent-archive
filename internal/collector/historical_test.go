@@ -77,11 +77,13 @@ func TestHistoricalRetainedPrivacyParserAndLocalReadNeverObserveNative(t *testin
 	}
 	cfg.ImportedHarnesses = nil
 	opts.AcceptSession = cfg.AcceptSession
+	opts.ParserVersion = "would-publish-if-app-still-authorized"
 	if result, cost := measurePass(t, store, cloud, opts); len(result.Errors) != 0 || len(result.Published) != 0 || cost.loads != 0 || cost.writes != 0 {
 		t.Fatalf("removed historical app retained publication authority: %+v %+v", result, cost)
 	}
 	cfg.ImportedHarnesses = []string{"codex"}
 	opts.AcceptSession = cfg.AcceptSession
+	opts.ParserVersion = ""
 	editRetainedRecords(t, store, plantSecret)
 	simulateFilterUpgrade(t, store)
 	opts.Now = func() time.Time { return at.Add(time.Hour) }
