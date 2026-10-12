@@ -129,9 +129,7 @@ class ProcessTest(unittest.TestCase):
     def assert_stopped(self, pidfile):
         if pidfile.exists():
             pid = int(pidfile.read_text())
-            # An orphan zombie awaits init reaping but cannot execute or mutate files.
-            stat = Path(f'/proc/{pid}/stat')
-            self.assertTrue(not stat.exists() or stat.read_text().split()[2] == 'Z')
+            self.assertFalse(Path(f'/proc/{pid}').exists(), 'test grandchild must be reaped, including zombies')
 
     def test_failed_child_and_shared_timeout_stop_sibling_descendants(self):
         for failure in (False, True):
@@ -146,11 +144,23 @@ class ProcessTest(unittest.TestCase):
                 self.assertLess(time.monotonic()-start, 3)
                 self.assert_stopped(pidfile)
 
+    def test_live_json_failure_stops_commands_that_have_not_exited(self):
+        with tempfile.TemporaryDirectory() as d:
+            sleeper, pidfile = self.sleeper(d)
+            code = "import json,time;time.sleep(.2);print(json.dumps({'Action':'fail','Package':'p','Test':'TestA'}),flush=True);time.sleep(60)"
+            commands = [(sleeper, Path(d)/'sleep.out', os.environ.copy()),
+                        ([sys.executable, '-c', code, 'test', '-json'], Path(d)/'json.out', os.environ.copy())]
+            start = time.monotonic()
+            with self.assertRaisesRegex(runner.Failure, 'live Go failure'):
+                runner.supervise(commands, start+10)
+            self.assertLess(time.monotonic()-start, 3)
+            self.assert_stopped(pidfile)
+
     def test_cancellation_stops_process_group(self):
         with tempfile.TemporaryDirectory() as d:
             sleeper, pidfile = self.sleeper(d)
-            code = "import sys,signal,time;sys.path.insert(0,"+repr(str(runner.ROOT/'scripts'))+");import run_go_shard as r;signal.signal(signal.SIGTERM,lambda *args: (_ for _ in ()).throw(r.Failure('cancelled')));r.supervise([("+repr(sleeper)+","+repr(str(Path(d)/'out'))+",None)],time.monotonic()+60)"
-            process = subprocess.Popen([sys.executable, '-c', code], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            code = "import sys,signal,time;sys.path.insert(0,"+repr(str(Path(runner.__file__).parent))+");import run_go_shard as r;signal.signal(signal.SIGTERM,lambda *args: (_ for _ in ()).throw(r.Failure('cancelled')));r.supervise([("+repr(sleeper)+","+repr(str(Path(d)/'out'))+",None)],time.monotonic()+60)"
+            process = subprocess.Popen([sys.executable, '-B', '-c', code], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             try:
                 end = time.monotonic()+3
                 while not pidfile.exists() and time.monotonic()<end:

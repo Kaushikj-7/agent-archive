@@ -4,6 +4,7 @@
 Timing hints rank discovered units; they never limit discovery or test coverage.
 """
 import argparse
+import ctypes
 import hashlib
 import json
 import os
@@ -36,46 +37,102 @@ def json_stream(text):
 
 
 def stop_processes(processes):
-    # Signal groups even when their leader exited: a child may still be alive.
+    # As a Linux subreaper, this process owns orphaned test grandchildren too.
     handlers = {sig: signal.signal(sig, signal.SIG_IGN) for sig in (signal.SIGTERM, signal.SIGINT)}
-    for sig in (signal.SIGTERM, signal.SIGKILL):
+    try:
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            for process in processes:
+                try:
+                    os.killpg(process.pid, sig)
+                except ProcessLookupError:
+                    pass
+            if sig == signal.SIGTERM:
+                end = time.monotonic() + 1
+                while time.monotonic() < end and any(p.poll() is None for p in processes):
+                    time.sleep(.02)
+        end = time.monotonic() + 5
         for process in processes:
             try:
-                os.killpg(process.pid, sig)
-            except ProcessLookupError:
-                pass
-        if sig == signal.SIGTERM:
-            end = time.monotonic() + 1
-            while time.monotonic() < end and any(p.poll() is None for p in processes):
+                process.wait(timeout=max(.01, end-time.monotonic()))
+            except subprocess.TimeoutExpired as error:
+                raise Failure('killed child did not exit within cleanup deadline') from error
+        # Direct children were reaped above; collect adopted members of each
+        # command's process group without consuming unrelated child statuses.
+        for process in processes:
+            while True:
+                try:
+                    pid, _ = os.waitpid(-process.pid, os.WNOHANG)
+                except ChildProcessError:
+                    break
+                if pid:
+                    continue
+                if time.monotonic() >= end:
+                    raise Failure('test descendant did not exit within cleanup deadline')
                 time.sleep(.02)
-    for process in processes:
-        process.wait()
-    for sig, handler in handlers.items():
-        signal.signal(sig, handler)
+    finally:
+        for sig, handler in handlers.items():
+            signal.signal(sig, handler)
 
 
 def supervise(commands, deadline):
-    """File-backed independent streams cannot block on unconsumed pipe output."""
-    processes, files = [], []
+    """Record each complete invocation; file streams cannot block on pipe output."""
+    # PR_SET_CHILD_SUBREAPER is Linux-specific, as is this race worker. Adopt
+    # test grandchildren if Go exits first, avoiding orphan zombies on failure.
+    if time.monotonic() >= deadline:
+        raise Failure('shared discovery/test deadline already exceeded')
+    libc = ctypes.CDLL(None, use_errno=True)
+    libc.prctl.argtypes = [ctypes.c_int] + [ctypes.c_ulong] * 4
+    if libc.prctl(36, 1, 0, 0, 0) != 0:
+        raise Failure('cannot enable Linux child-subreaper cleanup')
+    processes, files, started, durations, monitors, pending = [], [], [], [], [], []
     try:
         for command, output, env in commands:
             handle = open(output, 'w', encoding='utf-8')
             files.append(handle)
             print('command:', json.dumps(command), flush=True)
+            started.append(time.monotonic())
             processes.append(subprocess.Popen(command, stdout=handle, env=env,
                                               start_new_session=True))
+            durations.append(None)
+            monitors.append(open(output, 'rb') if 'test' in command and '-json' in command else None)
+            pending.append(b'')
         while True:
+            # Go continues other packages after a test fails. Inspect complete
+            # JSON lines live so the first failure stops both commands promptly.
+            for index, monitor in enumerate(monitors):
+                if monitor is None:
+                    continue
+                pending[index] += monitor.read()
+                lines = pending[index].split(b'\n')
+                pending[index] = lines.pop()
+                for line in lines:
+                    if not line:
+                        continue
+                    try:
+                        record = json.loads(line)
+                    except ValueError as error:
+                        raise Failure('malformed live Go JSON') from error
+                    if not isinstance(record, dict):
+                        raise Failure('invalid live Go JSON record')
+                    if record.get('Action') in ('fail', 'build-fail'):
+                        raise Failure('live Go failure: ' + str(record.get('Package')) + '/' + str(record.get('Test', '')))
+
             statuses = [p.poll() for p in processes]
+            for index, status in enumerate(statuses):
+                if status is not None and durations[index] is None:
+                    durations[index] = time.monotonic()-started[index]
+                    print('command terminal:', index, 'status:', status,
+                          'invocation seconds:', round(durations[index], 3), flush=True)
             if any(s is not None and s != 0 for s in statuses):
                 raise Failure(f'child command failed: {statuses}')
             if all(s == 0 for s in statuses):
-                return
+                return durations
             if time.monotonic() >= deadline:
                 raise Failure('shared discovery/test deadline exceeded')
             time.sleep(.05)
     finally:
         stop_processes(processes)
-        for handle in files:
+        for handle in files + [m for m in monitors if m is not None]:
             handle.close()
 
 
@@ -226,7 +283,7 @@ def verdict(event, ref, needs):
         raise Failure('unsupported gate event/ref')
     if not isinstance(needs, dict) or set(needs) != set(expected):
         raise Failure('missing/unexpected required job results')
-    if any(needs[j].get('result') != result for j, result in expected.items()):
+    if any(not isinstance(needs[j], dict) or needs[j].get('result') != result for j, result in expected.items()):
         raise Failure('required job result did not succeed or intentionally skip')
 
 
@@ -241,13 +298,15 @@ def run(index, out, seconds):
         quota, period = quota_file.read_text().split()
         if quota != 'max':
             cpus = min(cpus, max(1, int(quota) // int(period)))
-    cli_cpus = max(1, cpus - 1)
+    ordinary_cpus = max(1, cpus // 2)
+    cli_cpus = max(1, cpus - ordinary_cpus)
     source = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
     if os.environ.get('GITHUB_SHA', source) != source:
         raise Failure('checkout differs from event SHA')
-    supervise([(['go', 'list', '-json', './...'], out / 'packages.json', env)], deadline)
+    phases = {}
+    phases['package_discovery_seconds'] = supervise([(['go', 'list', '-json', './...'], out / 'packages.json', env)], deadline)[0]
     packages = metadata((out / 'packages.json').read_text())
-    supervise([(['go', 'test', '-race', '-short', '-json', '-list', '^(Test|Fuzz|Example)', CLI], out / 'listing.json', env)], deadline)
+    phases['cli_listing_race_build_testmain_seconds'] = supervise([(['go', 'test', '-race', '-short', '-json', '-list', '^(Test|Fuzz|Example)', CLI], out / 'listing.json', env)], deadline)[0]
     names = listed_names((out / 'listing.json').read_text())
     hints = json.loads((ROOT / 'scripts/go_shard_hints.json').read_text())
     ordinary = sorted(set(packages) - {CLI})
@@ -255,31 +314,34 @@ def run(index, out, seconds):
     catalog = {'source': source, 'packages': packages, 'cli': names,
                'assignments': [{'packages': package_bins[i], 'cli': cli_bins[i]} for i in range(2)]}
     manifest = {'shard': index, 'catalog': catalog, 'catalog_sha256': digest(catalog), 'success': False,
-                'settings': {'cpus': cpus, 'cli_cpus': cli_cpus, 'ordinary_cpus': 1, 'package_p': 1,
-                             'ordinary_parallel': 1, 'cli_parallel': cli_cpus, 'deadline_seconds': seconds}}
+                'phases': phases,
+                'settings': {'cpus': cpus, 'cli_cpus': cli_cpus, 'ordinary_cpus': ordinary_cpus, 'package_p': 1,
+                             'ordinary_parallel': ordinary_cpus, 'cli_parallel': cli_cpus, 'deadline_seconds': seconds}}
     path = out / 'manifest.json'
     path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + '\n')
     print('effective catalog:', json.dumps(catalog, sort_keys=True), flush=True)
     common = ['go', 'test', '-race', '-short', '-count=1', '-json', '-timeout', '20m', '-p', '1']
-    other_env = dict(env, GOMAXPROCS='1')
+    other_env = dict(env, GOMAXPROCS=str(ordinary_cpus))
     cli_env = dict(env, GOMAXPROCS=str(cli_cpus))
-    commands = [(common + ['-parallel', '1'] + package_bins[index], out / 'ordinary.json', other_env),
+    commands = [(common + ['-parallel', str(ordinary_cpus)] + package_bins[index], out / 'ordinary.json', other_env),
                 (common + ['-parallel', str(cli_cpus), '-run', selector(cli_bins[index]), CLI], out / 'cli.json', cli_env)]
     # Ensure total argv+environment fits execve; selectors also have a per-argument cap.
     for command, _, child_env in commands:
         size = sum(len(v.encode()) + 1 for v in command) + sum(len((k+'='+v).encode()) + 1 for k, v in child_env.items())
         if size > os.sysconf('SC_ARG_MAX') // 2:
             raise Failure('command/environment exceeds conservative execve budget')
+    durations = []
     if cpus == 1:
         for command in commands:
-            supervise([command], deadline)
+            durations.extend(supervise([command], deadline))
     else:
-        supervise(commands, deadline)
+        durations = supervise(commands, deadline)
+    phases['ordinary_invocation_seconds'], phases['cli_invocation_seconds'] = durations
     p = coverage((out / 'ordinary.json').read_text(), {n: packages[n] for n in package_bins[index]})
     c = coverage((out / 'cli.json').read_text(), {CLI: True}, cli_bins[index])
     if index == 0:
-        supervise([(['go', 'vet', './...'], out / 'vet.txt', env)], deadline)
-    manifest.update(success=True, coverage={'packages': p['packages'], 'cli': c['cli']})
+        phases['vet_seconds'] = supervise([(['go', 'vet', './...'], out / 'vet.txt', env)], deadline)[0]
+    manifest.update(success=True, phases=phases, coverage={'packages': p['packages'], 'cli': c['cli']})
     path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + '\n')
 
 
@@ -292,6 +354,8 @@ def main():
     parser.add_argument('--output', type=Path, default=Path('shard-results'))
     parser.add_argument('--seconds', type=int, default=1500)
     args = parser.parse_args()
+    if args.seconds <= 0:
+        parser.error('--seconds must be positive')
     def interrupted(signum, frame):
         raise Failure(f'cancelled by signal {signum}')
     for sig in (signal.SIGTERM, signal.SIGINT):
