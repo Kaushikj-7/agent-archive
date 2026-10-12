@@ -386,7 +386,9 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 		p.scan(ctx, reg)
 	}
 	if remote, ok := store.(state.StagedReadback); ok {
-		holds, err := local.ResumeStagedReleases(ctx, remote, opts.CollectorGuard)
+		scoped, closeSchedule := local.WithReadBudget(ctx, (&sessionScan{opts: opts}).readBudget())
+		holds, err := scoped.ResumeStagedReleases(ctx, remote, opts.CollectorGuard)
+		closeSchedule()
 		for id, hold := range holds {
 			addError(p.result.Errors, id, hold)
 		}

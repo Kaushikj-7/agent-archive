@@ -152,12 +152,7 @@ func (s *sessionScan) publishPending(ctx context.Context, pending state.PendingP
 	if err := s.upload(pending); err != nil {
 		return outcomeSkipped, err
 	}
-	if s.reg.StagedImportSHA256 != "" && pending.History == nil {
-		if err := s.verifyImportPublication(pending); err != nil {
-			return outcomeSkipped, err
-		}
-	}
-	if pending.Selection != nil || pending.StagedSelection != nil {
+	if (s.reg.StagedImportSHA256 != "" && pending.History == nil) || pending.Selection != nil || pending.StagedSelection != nil {
 		if err := s.verifyImportPublication(pending); err != nil {
 			return outcomeSkipped, err
 		}

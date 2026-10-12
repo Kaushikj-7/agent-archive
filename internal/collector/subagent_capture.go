@@ -171,6 +171,12 @@ func materializeSubagentCandidates(ctx context.Context, local *state.Store, opts
 }
 
 func materializeSubagentCandidate(ctx context.Context, local *state.Store, candidate state.SubagentCandidate, opts Options, now time.Time) error {
+	if candidate.StagedImportSHA256 != "" {
+		scoped, closeScope := local.WithReadBudget(ctx, (&sessionScan{opts: opts}).readBudget())
+		defer closeScope()
+		local = scoped
+	}
+
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -318,10 +324,6 @@ func checkSubagentRegistrationConflict(local *state.Store, candidate state.Subag
 
 // Registration is durable before hook evidence, and the candidate remains
 // retryable until both writes complete. Replaying either write is safe.
-func persistSubagentCandidate(local *state.Store, candidate state.SubagentCandidate, reg archive.SessionRegistration) error {
-	return persistSubagentCandidateContext(context.Background(), local, candidate, reg)
-}
-
 func persistSubagentCandidateContext(ctx context.Context, local *state.Store, candidate state.SubagentCandidate, reg archive.SessionRegistration) error {
 	if err := local.SaveRegistration(reg); err != nil {
 		return err

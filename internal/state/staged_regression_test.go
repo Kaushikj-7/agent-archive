@@ -15,7 +15,7 @@ import (
 )
 
 func TestStagedFactoryRejectsRedigestedMetadataIdentity(t *testing.T) {
-	for _, field := range []string{"native", "project", "harness", "parent", "capture", "filter", "adapter-name", "adapter-version"} {
+	for _, field := range []string{"native", "project", "harness", "harness-version", "harness-mode", "parent", "capture", "filter", "adapter-name", "adapter-version"} {
 		t.Run(field, func(t *testing.T) {
 			s, p, _ := stagedPreparedFixture(t, true)
 			p.StagedSelection = nil
@@ -31,6 +31,10 @@ func TestStagedFactoryRejectsRedigestedMetadataIdentity(t *testing.T) {
 				m.ProjectID += "-other"
 			case "harness":
 				m.Harness.Name = "claude"
+			case "harness-version":
+				m.Harness.Version = "other"
+			case "harness-mode":
+				m.Harness.Mode = "other"
 			case "parent":
 				m.ParentSessionID = "other"
 			case "capture":

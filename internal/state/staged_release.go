@@ -341,6 +341,12 @@ func (s *Store) ResumeStagedReleases(ctx context.Context, remote StagedReadback,
 	if !cfg.SupportsStagedSelection() || guard == nil {
 		return holds, ErrReadySelectionFrozen
 	}
+	if s.resourceBudget == nil {
+		reader, closeReader := s.WithImportResultScope(ctx)
+		defer closeReader()
+		return reader.ResumeStagedReleases(ctx, remote, guard)
+	}
+
 	var cursor struct {
 		After string `json:"after"`
 	}
@@ -360,15 +366,10 @@ func (s *Store) ResumeStagedReleases(ctx context.Context, remote StagedReadback,
 			continue
 		}
 		id := stage.Registration.ArchiveSessionID
-		published, err := s.LoadPublishedStateContext(ctx, id)
+		reader, closeOwner := s.WithReadBudget(ctx, s.resourceBudget)
+		err := reader.resumeStagedOwner(ctx, id, remote, guard)
+		closeOwner()
 		if err != nil {
-			holds[id] = err
-			continue
-		}
-		if !published.TypedStagedPublished() {
-			continue
-		}
-		if err := s.VerifyAndBeginStagedRelease(ctx, id, remote, guard); err != nil {
 			holds[id] = err
 		}
 	}
@@ -627,4 +628,15 @@ func (s *Store) refuseTypedStagedRetirement(id string) error {
 		return ErrReadySelectionFrozen
 	}
 	return nil
+}
+
+func (s *Store) resumeStagedOwner(ctx context.Context, id string, remote StagedReadback, guard *local.CollectorGuard) error {
+	published, err := s.LoadPublishedStateContext(ctx, id)
+	if err != nil {
+		return err
+	}
+	if !published.TypedStagedPublished() {
+		return nil
+	}
+	return s.VerifyAndBeginStagedRelease(ctx, id, remote, guard)
 }

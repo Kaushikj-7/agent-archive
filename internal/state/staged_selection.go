@@ -404,7 +404,7 @@ func stagedMetadataMatches(metadata archive.Metadata, bundle archive.SourceBundl
 		metadata.SessionID == bundle.ArchiveSessionID &&
 		metadata.NativeSessionID == bundle.NativeSessionID &&
 		metadata.ProjectID == bundle.ProjectID &&
-		metadata.Harness.Name == bundle.Capture.Harness.Name &&
+		metadata.Harness == bundle.Capture.Harness &&
 		metadata.ParentSessionID == bundle.ParentSessionID &&
 		metadata.NativeChild == bundle.NativeChild &&
 		metadata.CapturedAt.Equal(bundle.Capture.CapturedAt) &&

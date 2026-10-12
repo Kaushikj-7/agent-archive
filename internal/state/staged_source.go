@@ -77,7 +77,10 @@ func (w *stagedCountWriter) Write(p []byte) (int, error) {
 // without constructing a second self-marshaled proof byte slice. The outer
 // decoder's captured three-owner reservation includes this <=16KiB encoding.
 func boundedStagedProofDigest(value any) (string, error) {
-	if _, err := agentmeta.JSONWireBound(context.Background(), value, 16<<10); err != nil {
+	return boundedStagedWireDigest(context.Background(), value, 16<<10)
+}
+func boundedStagedWireDigest(ctx context.Context, value any, limit int64) (string, error) {
+	if _, err := agentmeta.JSONWireBound(ctx, value, limit); err != nil {
 		return "", err
 	}
 	writer := &stagedJSONDigestWriter{sum: sha256.New()}

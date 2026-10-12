@@ -20,6 +20,7 @@ type stagedChildFailureStore struct {
 	*storagetest.MemoryStore
 	childMetadata string
 	failChild     bool
+	sourceReads   map[string]int
 }
 
 func (s *stagedChildFailureStore) Put(ctx context.Context, key string, data []byte) error {
@@ -29,10 +30,25 @@ func (s *stagedChildFailureStore) Put(ctx context.Context, key string, data []by
 	return s.MemoryStore.Put(ctx, key, data)
 }
 
+func (s *stagedChildFailureStore) GetLimited(ctx context.Context, key string, limit int64) ([]byte, error) {
+	if s.sourceReads == nil {
+		s.sourceReads = make(map[string]int)
+	}
+	s.sourceReads[key]++
+	return s.MemoryStore.GetLimited(ctx, key, limit)
+}
+
 // Real Run, imported candidate persistence and immutable staged transcripts
 // exercise parent-first recovery. The batch record is the exact durable
 // confirmation seam; no candidate alone substitutes for a child request.
 func TestStagedParentFirstRestartContinuesChildAfterNativeDeletion(t *testing.T) {
+	stagedParentFirstRestartControl(t, false)
+}
+func TestStagedGroupUsesOnePrecommitReadbackTriplet(t *testing.T) {
+	stagedParentFirstRestartControl(t, true)
+}
+func stagedParentFirstRestartControl(t *testing.T, assertReadbacks bool) {
+	t.Helper()
 	store := newTestStore(t)
 	cfg, _, err := config.Load(store.Home())
 	if err != nil {
@@ -141,5 +157,22 @@ func TestStagedParentFirstRestartContinuesChildAfterNativeDeletion(t *testing.T)
 	}
 	if _, found, err = store.LoadImportStage(t.Context(), reg); err != nil || found {
 		t.Fatalf("child stage after release: %v %v", found, err)
+	}
+	if assertReadbacks {
+		for _, bundle := range []archive.SourceBundle{parentBundle, childBundle} {
+			compressed, err := archive.BuildCompressedSource(bundle)
+			if err != nil {
+				t.Fatal(err)
+			}
+			key, err := archive.SourceObjectKey(bundle, compressed.SHA256)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// One upload verification plus the private release factory's mandatory
+			// verification, each metadata/source/metadata. No duplicate outer triplet.
+			if remote.sourceReads[key] != 2 {
+				t.Fatalf("source readbacks: got %d want 2", remote.sourceReads[key])
+			}
+		}
 	}
 }

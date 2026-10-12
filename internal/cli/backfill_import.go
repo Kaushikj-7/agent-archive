@@ -117,6 +117,7 @@ type registeredImport struct {
 // release ends the watch and drops the locks registration held. It is
 // called once, whatever registerImportLocked returned.
 func (r *registeredImport) release() {
+	defer r.batch.CloseStagedResults()
 	for i := len(r.releases) - 1; i >= 0; i-- {
 		r.releases[i]()
 	}
@@ -188,6 +189,7 @@ func registerImportLocked(env Env, stdout, stderr io.Writer, home string, plan b
 		return reg, err
 	}
 	batch, admittedAt, plan := commit.batch, commit.admittedAt, commit.plan
+	defer func() { reg.batch = batch }()
 	reg.added, reg.plan, reg.changed = commit.added, commit.plan, commit.changed
 	stopConfirmation()
 	if err := env.checkpoint("committed"); err != nil {
@@ -345,6 +347,7 @@ func finishInterruptedBatch(env Env, stdout io.Writer, home string, plan backfil
 		return nil
 	}
 	last = latest
+	defer last.CloseStagedResults()
 	store, err := state.Open(home)
 	if err != nil {
 		return err

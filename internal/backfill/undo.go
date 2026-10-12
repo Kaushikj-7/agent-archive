@@ -1136,6 +1136,10 @@ func importUndoRegistrations(store *state.Store, regs []archive.SessionRegistrat
 			return nil, err
 		}
 		for _, stage := range stages {
+			if stage.TypedSelection && stage.Registration.InBatch(batchID) {
+				closePage()
+				return nil, state.ErrReadySelectionFrozen
+			}
 			reg := stage.Registration
 			if reg.InBatch(batchID) && !seen[reg.ArchiveSessionID] {
 				reg.StagedImportSHA256 = stage.SHA256
