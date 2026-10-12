@@ -164,6 +164,31 @@ class CandidateCampaignTest(unittest.TestCase):
 
 
 class CadenceTest(unittest.TestCase):
+    def test_pr_scope_keeps_required_verify_and_full_non_pr_path(self):
+        workflow = (ROOT / '.github/workflows/levenshtein.yml').read_text()
+        verify = jobs(workflow)['verify']
+        self.assertIsNone(job_key(verify, 'if'))
+        self.assertNotIn('paths:', workflow)
+        self.assertNotIn('paths-ignore:', workflow)
+        checkout = next(step for step in steps(verify) if 'path: app' in step)
+        self.assertIn("fetch-depth: ${{ github.event_name != 'pull_request' && 1 || 0 }}", checkout)
+        staging = next(step for step in steps(verify) if 'id: stage' in step)
+        self.assertEqual(step_key(staging, 'if'), "github.event_name == 'pull_request'")
+        self.assertIn("PYTHONDONTWRITEBYTECODE: '1'", staging)
+        self.assertIn('python3 -B ', staging)
+        self.assertIn('--run pre-merge --pr-scope', staging)
+        execute = next(step for step in steps(verify) if 'name: Verify\n' in step)
+        self.assertIsNone(step_key(execute, 'if'))
+        self.assertIn('run=pre-merge', execute)
+        self.assertRegex(execute, r'if \[\[ "\$EVENT" == pull_request \]\]; then[\s\S]*?run="\$PR_RUN"\n          fi')
+        self.assertIn('./levenshtein/verify "$run" --source "$source" --jobs 4', execute)
+        self.assertNotIn('|| true', execute)
+
+    def test_scoping_helper_suite_is_a_mandatory_pr_gate(self):
+        linux = jobs((ROOT / '.github/workflows/test.yml').read_text())['linux-race']
+        step = next(step for step in steps(linux) if 'python3 -B scripts/test_scope_native_verify.py' in step)
+        self.assertIsNone(step_key(step, 'if'))
+
     def test_pr_and_candidate_linux_steps_select_the_correct_fixture_sizes(self):
         linux = jobs((ROOT / '.github/workflows/test.yml').read_text())['linux-race']
         race = [step for step in steps(linux) if 'run: go test -race ' in step]

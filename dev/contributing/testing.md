@@ -119,6 +119,16 @@ configuration keeps Dagger for local runs, main pushes, nightly audits, and
 exact release candidates. Go build caches are not restored between CI runs,
 and vulnerability checks continue querying current advisory data.
 
+For PRs, the staging helper can omit `actionlint` and `zizmor` when the event
+base, actual PR head, and tested merge prove that workflow inputs are unchanged.
+The four Go checks still run in full. Changes anywhere under `.github` or
+`scripts`, to `levenshtein.json`, or to relevant root tool/configuration files
+run the complete checks. Missing history, unexpected ancestry, dirty source,
+symlinks, or an unsupported configuration also retain the complete run.
+The required `verify` job remains present, and its summary identifies workflow
+checks as **NOT RUN** when scoped, with the compared commits. Main, nightly,
+manual, release-candidate and direct local verification keep all six checks.
+
 The [cold comparison](https://github.com/wangjohn/agent-archive/actions/runs/38217730599)
 used identical deduplicated source and pinned checks on fresh `ubuntu-24.04`
 workers. Native preparation plus verification took 178 seconds versus 268
