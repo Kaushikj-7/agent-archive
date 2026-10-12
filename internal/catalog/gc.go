@@ -34,6 +34,11 @@ func (w *Writer) Collect(ctx context.Context, barrier Barrier) error {
 	if barrier == nil {
 		return errors.New("complete writer barrier is required")
 	}
+	owned, ownBarrier := barrier.(heldCoordinator)
+	// Reject foreign durable ownership before Hold can mutate its coordinator.
+	if ownBarrier && owned.coordinator.writer.store != w.store {
+		return errors.New("catalog barrier belongs to another destination")
+	}
 	clock, err := w.preflightClock(ctx)
 	if err != nil {
 		return err
@@ -45,7 +50,6 @@ func (w *Writer) Collect(ctx context.Context, barrier Barrier) error {
 	if release == nil {
 		return errors.New("writer barrier did not provide held ownership")
 	}
-	owned, ownBarrier := barrier.(heldCoordinator)
 	if !ownBarrier {
 		defer release()
 	}
@@ -54,9 +58,6 @@ func (w *Writer) Collect(ctx context.Context, barrier Barrier) error {
 	coordinator := w.Coordinator()
 	var ownRelease func()
 	if ownBarrier {
-		if owned.coordinator.writer.store != w.store {
-			return errors.New("catalog barrier belongs to another destination")
-		}
 		ownRelease = release
 	} else {
 		seal, e := coordinator.Seal(ctx)
