@@ -2,9 +2,12 @@
 """Stage tracked declared inputs for PR native checks; this is not a sandbox."""
 import argparse
 import json
+import os
 from pathlib import Path, PurePosixPath
 import shutil
 import subprocess
+
+import scope_native_verify as scope
 
 
 def literal(value):
@@ -74,15 +77,36 @@ def main():
     parser.add_argument('--destination', type=Path, required=True)
     parser.add_argument('--shared', type=Path, required=True)
     parser.add_argument('--run', default='pre-merge')
+    parser.add_argument('--pr-scope', action='store_true', help='prove unchanged PR workflow inputs before selecting a generated Go-only run')
     args = parser.parse_args()
     # The pinned planner validates configuration before the consumer copies it.
     plan = json.loads(subprocess.check_output([str(args.shared.resolve() / 'verify'), args.run,
                                               '--source', str(args.source.resolve()), '--dry-run']))
     config = json.loads((args.source / 'levenshtein.json').read_text())
+    run, reason = args.run, 'full run requested'
+    if args.pr_scope and args.run == 'pre-merge':
+        try:
+            event = json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text())
+        except (KeyError, ValueError, OSError):
+            event = {}
+        run, reason = scope.decision(args.source, config, event, os.environ.get('GITHUB_SHA', ''))
     stage(args.source, args.destination, config, plan)
-    subprocess.run([str(args.shared.resolve() / 'verify'), args.run,
+    # Preserve the original config/plan validation and staging before adding an
+    # isolated generated run. Original definitions and run options stay intact.
+    if run == scope.SCOPED_RUN:
+        scope.add_run(config)
+        (args.destination / 'levenshtein.json').write_text(json.dumps(config, indent=2) + '\n')
+    subprocess.run([str(args.shared.resolve() / 'verify'), run,
                     '--source', str(args.destination.resolve()), '--dry-run'], check=True,
                    stdout=subprocess.DEVNULL)
+    if args.pr_scope:
+        print(scope.summarize(run, reason), end='')
+        if os.environ.get('GITHUB_STEP_SUMMARY'):
+            with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+                summary.write(scope.summarize(run, reason))
+        if os.environ.get('GITHUB_OUTPUT'):
+            with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+                output.write(f'run={run}\n')
 
 
 if __name__ == '__main__':

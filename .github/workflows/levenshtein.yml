@@ -34,6 +34,8 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: app
+          # Put the truthy depth first: a PR's zero must not fall back to one.
+          fetch-depth: ${{ github.event_name != 'pull_request' && 1 || 0 }}
           persist-credentials: false
       # Pinned to a reviewed Levenshtein commit. Adopt new shared checks by
       # updating this SHA, never a moving branch.
@@ -49,10 +51,24 @@ jobs:
         with:
           go-version-file: levenshtein/.go-version
           cache: false
+      - name: Stage PR inputs and select checks
+        if: github.event_name == 'pull_request'
+        id: stage
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+          NO_COLOR: '1'
+          XDG_CACHE_HOME: ${{ runner.temp }}/native-xdg
+          GOCACHE: ${{ runner.temp }}/native-go-build
+          GOMODCACHE: ${{ runner.temp }}/native-go-mod
+        run: |
+          python3 -B ./app/scripts/stage_native_verify.py --source ./app \
+            --destination "$RUNNER_TEMP/native-source" --shared ./levenshtein \
+            --run pre-merge --pr-scope
       - name: Verify
         env:
           EVENT: ${{ github.event_name }}
           NO_COLOR: '1'
+          PR_RUN: ${{ steps.stage.outputs.run }}
         run: |
           run=pre-merge
           if [[ "$EVENT" == schedule ]]; then
@@ -66,9 +82,8 @@ jobs:
             export GOCACHE="$RUNNER_TEMP/native-go-build"
             export GOMODCACHE="$RUNNER_TEMP/native-go-mod"
             export XDG_CACHE_HOME="$RUNNER_TEMP/native-xdg"
-            python3 ./app/scripts/stage_native_verify.py --source ./app \
-              --destination "$RUNNER_TEMP/native-source" --shared ./levenshtein --run "$run"
             source="$RUNNER_TEMP/native-source"
+            run="$PR_RUN"
           fi
           ./levenshtein/verify "$run" --source "$source" --jobs 4 \
             --cache-dir "$RUNNER_TEMP/verification"
