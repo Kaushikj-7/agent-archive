@@ -90,11 +90,6 @@ func (a codexAdapter) Hints(ctx context.Context, root string) HintBatch {
 	return batch
 }
 
-func indexHints(ctx context.Context, root string) ([]string, int, int64, string) {
-	hints, queries, bytes, outcome, _ := indexHintsDetailed(ctx, root)
-	return hints, queries, bytes, outcome
-}
-
 // indexHintsDetailed returns the original attempt's refusal for synthetic
 // diagnostics. The bounded read, metrics, cleanup and public outcome stay the
 // same; diagnostic consumers must not issue a second read to infer its cause.

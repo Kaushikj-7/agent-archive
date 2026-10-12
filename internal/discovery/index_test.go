@@ -266,3 +266,10 @@ func (a *diagnosticHintAdapter) Hints(ctx context.Context, root string) HintBatc
 	}
 	return batch
 }
+
+// indexHints keeps the four-result synthetic test seam without an unused
+// production wrapper. It delegates to the same original-attempt reader.
+func indexHints(ctx context.Context, root string) ([]string, int, int64, string) {
+	hints, queries, bytes, outcome, _ := indexHintsDetailed(ctx, root)
+	return hints, queries, bytes, outcome
+}
