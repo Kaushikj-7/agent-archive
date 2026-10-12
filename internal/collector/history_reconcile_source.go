@@ -25,7 +25,7 @@ func (r providerReader) revisions(ctx context.Context, adapter agentapi.Transcri
 	if !ok {
 		return agentapi.Wrap(agentapi.Unavailable, errors.New("historical revision reader unavailable"))
 	}
-	limits := agentapi.ReadLimits{RawBytes: maxRawBytes(maxBytes), RecordBytes: recordLimit, SubagentMetadata: r.subagentMetadata}
+	limits := agentapi.ReadLimits{RawBytes: maxRawBytes(r.harness, maxBytes), RecordBytes: recordLimit, SubagentMetadata: r.subagentMetadata}
 	snap, err := pass.Read(ctx, r.ref, limits)
 	if err != nil {
 		return err
@@ -52,7 +52,7 @@ func (r providerReader) revisions(ctx context.Context, adapter agentapi.Transcri
 		return agentapi.Wrap(agentapi.Limit, errors.New("historical candidate count exceeded"))
 	}
 	// Raw, retained records, and filtered bytes have independent aggregate bounds.
-	rawLeft, filteredLeft := int64(128<<20), int64(128<<20)
+	rawLeft, filteredLeft := maxRawBytes(r.harness, maxBytes), int64(128<<20)
 	recordsLeft := archive.MaxHistoryRecords
 	for _, ref := range refs {
 		if err := ctx.Err(); err != nil {
@@ -61,7 +61,7 @@ func (r providerReader) revisions(ctx context.Context, adapter agentapi.Transcri
 		if ref.Kind != archive.SourceKindFile || len(ref.Path) > 4096 || len(ref.Key) > 4096 {
 			return agentapi.Wrap(agentapi.Unsafe, errors.New("invalid historical candidate locator"))
 		}
-		limits.RawBytes = min(maxRawBytes(maxBytes), rawLeft)
+		limits.RawBytes = min(maxRawBytes(r.harness, maxBytes), rawLeft)
 		limits.Records = recordsLeft
 		limits.FilteredBytes = min(maxBytes, filteredLeft)
 		if limits.RawBytes <= 0 || filteredLeft <= 0 || recordsLeft <= 0 {

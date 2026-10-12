@@ -91,7 +91,7 @@ func TestRetentionReductionShowsImpactBeforeConfirmation(t *testing.T) {
 		t.Fatal(err)
 	}
 	env.Now = func() time.Time { return now.Add(45 * 24 * time.Hour) }
-	output := setupRun(t, env, "retention\n30\nn\n", 0)
+	output := setupRun(t, env, "retention\ncustom\n30\nn\n", 0)
 	if !setupContainsText(output, "1 session captured on or before "+now.Add(15*24*time.Hour).Format(time.DateOnly)+" will be eligible for deletion.") {
 		t.Fatal(output)
 	}
@@ -153,7 +153,7 @@ func TestShortSetupAndReviewEdits(t *testing.T) {
 		prefix string
 	}{
 		{"accept", "y\n", 1, 90, defaultPrefix},
-		{"retention", "edit\nretention\n30\ny\n", 1, 30, defaultPrefix},
+		{"retention", "edit\nretention\ncustom\n30\ny\n", 1, 30, defaultPrefix},
 		{"folder", "edit\nprefix\n../invalid\narchive/\ny\n", 2, 90, "archive/"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -212,7 +212,7 @@ func TestReviewEditCancellationDoesNotInstall(t *testing.T) {
 			home := t.TempDir()
 			env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
 			input := s3SetupInput("bucket", "us-east-1", "profile", true, false, false, t.TempDir())
-			input = strings.TrimSuffix(input, "y\n") + "edit\nretention\n30\n" + tc.ending
+			input = strings.TrimSuffix(input, "y\n") + "edit\nretention\ncustom\n30\n" + tc.ending
 			setupRun(t, env, input, tc.code)
 			if _, found, err := config.Load(home); err != nil || found {
 				t.Fatalf("installed without confirmation: found=%v err=%v", found, err)

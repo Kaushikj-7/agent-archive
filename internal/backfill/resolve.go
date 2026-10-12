@@ -19,14 +19,19 @@ type resolution struct {
 	// root is the project root, in the spelling it is registered under. It is
 	// also set for the skips that have a would-be root (excluded, home,
 	// temporary), so --project can match them.
-	root string
-	kind ProjectKind
+	historical *archive.HistoricalProjectProof
+	root       string
+	kind       ProjectKind
 	// included is set when a configured, included project owns the directory.
 	included bool
 	skip     SkipReason
 	outcome  sourcefacts.RecoveryOutcome
-	proof    *archive.ProjectResolution
-	current  *resolutionCheck
+	// cause names the missing witness evidence behind an inventory outcome;
+	// gap is the per-app gap that blocked recorded recovery (either outcome).
+	cause   DiagnosticDetail
+	gap     *recoveryGap
+	proof   *archive.ProjectResolution
+	current *resolutionCheck
 }
 
 // resolver applies the spec's project resolution rules. It never runs git:
@@ -51,15 +56,20 @@ type resolver struct {
 	worktreeStores          []string
 	cache                   map[string]resolution
 	recovery                *sourcefacts.RecoveryResolver
-	recoverySourcesCurrent  func() bool
+	recoverySourcesCurrent  func(harness, archive.ProjectResolution) bool
 	recoverySourcesReset    func(context.Context)
 	databaseRecoveryCurrent func(context.Context) bool
-	recoveryInventoryBudget bool
-	inventoryCurrent        func(context.Context) bool
-	mappingRecovery         *sourcefacts.RecoveryResolver
-	workspaceReset          func()
-	requireWitnessFormats   func(string)
-	proposedRootEligible    func(string) bool
+	// recoveryGaps are the witness inventory's gaps, per app. gapRecovery
+	// holds the resolver, over gapProjects, for sessions a gap blocks, keyed
+	// by whether the blocking gap is a budget (see recoveryFor).
+	recoveryGaps          recoveryGaps
+	gapRecovery           map[bool]*sourcefacts.RecoveryResolver
+	gapProjects           []archive.ProjectActivation
+	inventoryAdded        func(context.Context) (addedSources, bool)
+	mappingRecovery       *sourcefacts.RecoveryResolver
+	workspaceReset        func()
+	requireWitnessFormats func(string)
+	proposedRootEligible  func(string) bool
 }
 
 func newResolver(env Environment, cfg config.Config, filters Filters) *resolver {
@@ -136,20 +146,29 @@ func withinAny(path string, roots []string) bool {
 	return false
 }
 
-// resolve maps a session's working directory to a project, applying the
-// spec's rules in order; the first that matches wins.
-func (r *resolver) resolveEvidence(ctx context.Context, cwd, key string) resolution {
-	recovery := r.recovery
-	if r.mappingRecovery != nil && r.filters.ProjectMappings[filepath.Clean(cwd)] != "" {
-		recovery = r.mappingRecovery
+// resolveSessionEvidence maps a session's working directory to a project,
+// applying the spec's rules in order (the first that matches wins), then
+// recovery. Only the gaps that can affect a session of app h block its
+// recorded recovery (recoveryGaps.blocking).
+func (r *resolver) resolveSessionEvidence(ctx context.Context, h harness, cwd, key string) resolution {
+	if id := r.filters.HistoricalMappings[filepath.Clean(cwd)]; id != "" {
+		return r.resolveHistorical(cwd, id)
 	}
-	cacheKey := cwd + "\x00" + r.env.resolved(cwd) + "\x00" + key + "\x00" + recovery.Context
+	recovery, gap := r.recoveryFor(ctx, h)
+	if r.mappingRecovery != nil && r.filters.ProjectMappings[filepath.Clean(cwd)] != "" {
+		recovery, gap = r.mappingRecovery, nil
+	}
+	// The app is part of the key: admission validity depends on it.
+	cacheKey := cwd + "\x00" + r.env.resolved(cwd) + "\x00" + key + "\x00" + recovery.Context + "\x00" + string(h)
+	if gap != nil {
+		cacheKey += "\x00" + gap.Agent + "\x00" + string(gap.Cause)
+	}
 	if cached, ok := r.cache[cacheKey]; ok && !r.env.exists(cwd) {
 		return cached
 	}
 	res := r.resolveUncached(cwd)
 	// Existing filesystem evidence and nearest configured ownership take precedence.
-	if !r.env.exists(cwd) && (res.skip == SkipWorktreeUnresolved || (!r.env.exists(cwd) && !res.included && res.kind == ProjectKindDirectory && res.skip == "" && (key != "" || r.filters.ProjectMappings[filepath.Clean(cwd)] != ""))) {
+	if r.needsRepositoryRecovery(cwd, key, res) {
 		if r.hasRepositoryEvidence(cwd) {
 			return resolution{skip: SkipWorktreeUnresolved}
 		}
@@ -165,7 +184,7 @@ func (r *resolver) resolveEvidence(ctx context.Context, cwd, key string) resolut
 			}, valid: func() bool {
 				if !checked {
 					checked = true
-					valid = !r.env.exists(cwd) && r.env.exists(proof.Root) && !r.hasRepositoryEvidence(cwd) && (proof.Method == "explicit_mapping" || r.recoverySourcesCurrent == nil || r.recoverySourcesCurrent()) && recovery.CurrentSlice(proof)
+					valid = !r.env.exists(cwd) && r.env.exists(proof.Root) && !r.hasRepositoryEvidence(cwd) && (proof.Method == "explicit_mapping" || r.recoverySourcesCurrent == nil || r.recoverySourcesCurrent(h, proof)) && recovery.CurrentSlice(proof)
 				}
 				return valid
 			}}
@@ -180,7 +199,7 @@ func (r *resolver) resolveEvidence(ctx context.Context, cwd, key string) resolut
 			res = resolution{root: proof.Root, kind: r.kindOf(proof.Root), included: configured && owner.included, proof: &visibleProof, current: check}
 		}
 		if outcome != "" {
-			res = resolution{skip: SkipWorktreeUnresolved, outcome: outcome}
+			res = unrecovered(gap, outcome)
 		}
 		if outcome == sourcefacts.RecoveryBudgetExhausted || outcome == sourcefacts.RecoveryInventoryUnavailable {
 			return res
@@ -188,6 +207,20 @@ func (r *resolver) resolveEvidence(ctx context.Context, cwd, key string) resolut
 	}
 	r.cache[cacheKey] = res
 	return res
+}
+
+// unrecovered is a failed recovery. The outcome a blocking gap produces
+// carries that gap, and an inventory outcome names its cause.
+func unrecovered(gap *recoveryGap, outcome sourcefacts.RecoveryOutcome) resolution {
+	var blocking *recoveryGap
+	var cause DiagnosticDetail
+	if gap != nil && outcome == gap.blockedOutcome() {
+		blocking = gap
+		if outcome == sourcefacts.RecoveryInventoryUnavailable {
+			cause = gap.Cause
+		}
+	}
+	return resolution{skip: SkipWorktreeUnresolved, outcome: outcome, gap: blocking, cause: cause}
 }
 
 func (r *resolver) resolve(cwd string) resolution {
@@ -200,6 +233,9 @@ func (r *resolver) resolve(cwd string) resolution {
 }
 
 func (r *resolver) resolveUncached(cwd string) resolution {
+	if id := r.filters.HistoricalMappings[filepath.Clean(cwd)]; id != "" {
+		return r.resolveHistorical(cwd, id)
+	}
 	// Rule 1: the working directory. Without one there is no project.
 	if cwd == "" || !filepath.IsAbs(cwd) {
 		return resolution{skip: SkipProjectUnknown}
@@ -215,10 +251,22 @@ func (r *resolver) resolveUncached(cwd string) resolution {
 	// Rules 3 and 4: a worktree folds into its repository; a repository is
 	// its own project. The repository then goes through rule 2 itself, so a
 	// worktree outside its repository lands in the configured project, or is
-	// excluded with it.
+	// excluded with it. A repository in a temporary directory (a throwaway
+	// clone, or a worktree of one) is not a project: rule 6 takes it, so
+	// adding it never captures every later session there. A worktree in a
+	// temporary directory of a repository elsewhere still folds into it.
 	repo, found, skip := r.repository(dir)
 	if skip != "" {
 		return resolution{skip: skip}
+	}
+	if found && r.temporaryRepository(repo) {
+		if res, ok := r.configured(repo); ok {
+			return res
+		}
+		// The repository, not the session's folder in it, is what
+		// --include-temp adds: one project per clone, as before rule 6
+		// took them, and a worktree of the clone kept elsewhere joins it.
+		return r.tempRule(repo)
 	}
 	if found {
 		if res, ok := r.configured(repo); ok {
@@ -242,10 +290,7 @@ func (r *resolver) resolveUncached(cwd string) resolution {
 
 	// Rule 6: temporary directories.
 	if withinAny(dir, r.temps) {
-		if r.filters.IncludeTemp {
-			return resolution{root: dir, kind: ProjectKindTemporary}
-		}
-		return resolution{root: dir, kind: ProjectKindTemporary, skip: SkipTemporaryDirectory}
+		return r.tempRule(dir)
 	}
 
 	// Rule 7: home and everything above it.
@@ -301,6 +346,29 @@ func (r *resolver) isWorkspaceFolder(resolved string) bool {
 		}
 	}
 	return false
+}
+
+// temporaryRepository reports whether repo, a repository root, is in a
+// temporary directory, so rule 6 takes it rather than rule 4. A temporary
+// directory that holds home (a container or sandbox whose HOME is under
+// /tmp) does not make the person's own repositories in home temporary.
+func (r *resolver) temporaryRepository(repo string) bool {
+	inHome := local.PathWithin(repo, r.home) || local.PathWithin(repo, r.homeRaw)
+	for _, temp := range r.temps {
+		if local.PathWithin(repo, temp) && (!inHome || !r.homeOrAbove(temp)) {
+			return true
+		}
+	}
+	return false
+}
+
+// tempRule is rule 6 for dir, a session folder (or a repository) in a
+// temporary directory: skipped, or with --include-temp its own project.
+func (r *resolver) tempRule(dir string) resolution {
+	if r.filters.IncludeTemp {
+		return resolution{root: dir, kind: ProjectKindTemporary}
+	}
+	return resolution{root: dir, kind: ProjectKindTemporary, skip: SkipTemporaryDirectory}
 }
 
 // configured applies rule 2 to dir.
@@ -500,4 +568,51 @@ func (r *resolver) hasRepositoryEvidence(cwd string) bool {
 		path = parent
 	}
 	return true
+}
+
+func (r *resolver) resolveHistorical(cwd, id string) resolution {
+	if skip := r.historicalSourceRestriction(cwd); skip != "" {
+		return resolution{skip: skip}
+	}
+	original, canonical := filepath.Clean(cwd), r.env.resolved(cwd)
+	project, found := r.cfg.HistoricalProject(id)
+	enabled, permission := project.HistoricalPermission(r.cfg.DestinationID())
+	if !found || !permission || !enabled {
+		return resolution{skip: SkipExcludedProject}
+	}
+	return resolution{current: &resolutionCheck{reset: func(context.Context) {}, valid: func() bool { return r.env.resolved(cwd) == canonical }}, kind: ProjectKindHistorical, included: true, historical: &archive.HistoricalProjectProof{Version: 1, ProjectID: id, DestinationID: r.cfg.DestinationID(), OriginalCwd: original, CanonicalCwd: canonical, Label: project.Label}}
+}
+
+func (r *resolver) needsRepositoryRecovery(cwd, key string, res resolution) bool {
+	return !r.env.exists(cwd) && (res.skip == SkipWorktreeUnresolved || (!r.env.exists(cwd) && !res.included && res.kind == ProjectKindDirectory && res.skip == "" && (key != "" || r.filters.ProjectMappings[filepath.Clean(cwd)] != "")))
+}
+
+func (r *resolver) historicalSourceRestriction(cwd string) SkipReason {
+	if !validMappingPath(cwd) {
+		return SkipProjectUnknown
+	}
+	original, canonical := filepath.Clean(cwd), r.env.resolved(cwd)
+	for _, rule := range r.cfg.Archive.Projects {
+		if !rule.Included && (local.PathWithin(original, filepath.Clean(rule.Root)) || local.PathWithin(canonical, r.env.resolved(rule.Root))) {
+			return SkipExcludedProject
+		}
+	}
+	for _, path := range uniquePaths(original, canonical) {
+		if r.homeOrAbove(path) {
+			if result := r.homeRule(path); result.skip != "" {
+				return result.skip
+			}
+		}
+		if r.temporaryRepository(path) && !r.filters.IncludeTemp {
+			return SkipTemporaryDirectory
+		}
+	}
+	return ""
+}
+
+// NewHistoricalSourcePolicy binds original source restrictions before staging.
+// It grants no native capture and does not require repository lookup.
+func NewHistoricalSourcePolicy(env Environment, cfg config.Config, filters Filters) func(string) bool {
+	resolver := newResolver(env, cfg, filters)
+	return func(cwd string) bool { return resolver.historicalSourceRestriction(cwd) == "" }
 }

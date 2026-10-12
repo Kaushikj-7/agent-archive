@@ -21,10 +21,14 @@ Add another machine
 \e[2mOK Save pairing file
    /Users/alex/agent-archive-pairing-laptop.txt\e[0m
 
+Pairing · Transfer prepared
+
+Pairing · File delivered locally · Receiver completion unconfirmed
 1. Transfer the pairing file
 Saved to: /Users/alex/agent-archive-pairing-laptop.txt
 Expires in 15 minutes.
-
+Expiry prevents opening this bundle; it does not revoke storage access or delete transferred files.
+Deliver the code separately from the file or text.
 Send this file to laptop (for example using AirDrop). Save it in Downloads there, then run:
   agent-archive setup --pair-file "$HOME"/Downloads/agent-archive-pairing-laptop.txt
 If you save it elsewhere, use that path with --pair-file.
@@ -47,18 +51,20 @@ The first three characters of each word work (yo- for yo-yo).
 Deliver the code separately from the pairing file. Avoid recording or screen sharing.
 Press Enter to hide.
 
-\e[2J\e[H\e[?1049lFinish setup on laptop before closing this pairing.
+\e[2J\e[H\e[?1049lPairing · Code available · Receiver completion unconfirmed
+Finish setup on laptop. That machine confirms when its configuration is saved.
 
 ? Pairing
 
   1) Show code again
 
-  [Enter] I'm finished
+  [Enter] Close transfer
+          instructions
   [q] Cancel pairing
 
 > Choose: done
-\e[2mOK I'm finished\e[0m
+\e[2mOK Close transfer instructions\e[0m
 
-Transfer finished. The other machine confirms when setup succeeds.
+Transfer instructions closed. Receiver completion is unconfirmed on this machine.
 Delete any saved pairing files when no longer needed.
 [exit 0]

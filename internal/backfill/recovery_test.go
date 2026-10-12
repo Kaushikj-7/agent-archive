@@ -159,8 +159,9 @@ func TestRecoveredImportRechecksEvidenceBeforeRegistration(t *testing.T) {
 			t.Fatal(p.Imported())
 		}
 		if changeSource {
+			// A shorter rewrite: an append alone would still be current.
 			source := tr.path(filepath.Join("home", codexFile(id)))
-			if err := os.WriteFile(source, []byte(body+"\n"), 0600); err != nil {
+			if err := os.Truncate(source, 1); err != nil {
 				t.Fatal(err)
 			}
 		} else {

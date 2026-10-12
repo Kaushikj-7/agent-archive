@@ -38,6 +38,11 @@ func (s *Store) WithReadBudget(ctx context.Context, budget *agentapi.NativeReadB
 
 var errStateBudget = agentapi.ReadBudgetLimit(errors.New("local state exceeds shared data budget"))
 
+// errStateFileUnstable refuses a local state file that is not a regular file
+// or grew while it was read. Unlike errStateBudget it is no memory refusal,
+// so a pending publication that meets it still requires recovery.
+var errStateFileUnstable = errors.New("local state file is not a stable regular file")
+
 func (s *Store) readBudgeted(path string, value any, retain bool) error {
 	if s.resourceBudget == nil {
 		return local.Read(path, value)
@@ -65,7 +70,7 @@ func (s *Store) readBudgeted(path string, value any, retain bool) error {
 	}
 	n := info.Size()
 	if !info.Mode().IsRegular() || n < 0 {
-		return errStateBudget
+		return errStateFileUnstable
 	}
 	// Serialized input and decoded logical data coexist during Unmarshal.
 	if !s.resourceBudget.Reserve(n) {
@@ -87,7 +92,7 @@ func (s *Store) readBudgeted(path string, value any, retain bool) error {
 	}
 	var extra [1]byte
 	if count, err := f.Read(extra[:]); count != 0 || !errors.Is(err, io.EOF) {
-		return errStateBudget
+		return errStateFileUnstable
 	}
 	if err := s.resourceContext.Err(); err != nil {
 		return err
@@ -110,7 +115,11 @@ func (s *Store) writeCompact(path string, value any) error {
 	if !s.resourceBudget.Reserve(scratch) {
 		return errStateBudget
 	}
-	n, err := jsonwire.Bound(s.resourceContext, value, s.resourceBudget.Available()-1)
+	available := s.resourceBudget.Available()
+	n, err := jsonwire.Bound(s.resourceContext, value, available-1)
+	if errors.Is(err, jsonwire.ErrLimit) {
+		s.resourceBudget.Refuse(available + 1)
+	}
 	s.resourceBudget.Release(scratch)
 	if err != nil {
 		return errors.Join(errStateBudget, err)
@@ -166,11 +175,15 @@ func (s *Store) summaryBudgeted(p publishedState) (PublishedSummary, error) {
 			return PublishedSummary{}, errStateBudget
 		}
 		ctx := s.resourceContext
+		available := s.resourceBudget.Available()
 		size, err := jsonwire.Bound(ctx, struct {
 			Active     archive.SourceReference  `json:"active"`
 			CapturedAt time.Time                `json:"captured_at"`
 			History    *archive.RevisionHistory `json:"history,omitempty"`
-		}{metadata.SourceBundle, metadata.CapturedAt, metadata.History}, s.resourceBudget.Available()/2)
+		}{metadata.SourceBundle, metadata.CapturedAt, metadata.History}, available/2)
+		if errors.Is(err, jsonwire.ErrLimit) {
+			s.resourceBudget.Refuse(available + 2)
+		}
 		s.resourceBudget.Release(scratch)
 		if err != nil {
 			return PublishedSummary{}, errors.Join(errStateBudget, err)

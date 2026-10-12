@@ -182,7 +182,23 @@ func materializeSubagentCandidate(ctx context.Context, local *state.Store, candi
 		return err
 	}
 	reg := assembleSubagentRegistration(parent, candidate)
-	reg, err = validateCandidateTranscript(ctx, local, candidate, parent, reg, opts, now)
+	if candidate.StagedImportSHA256 != "" {
+		reg.StagedImportSHA256 = candidate.StagedImportSHA256
+		stage, found, loadErr := local.LoadImportStage(ctx, reg)
+		if loadErr != nil {
+			return loadErr
+		}
+		if !found {
+			return state.ErrDurableStorageRecovery
+		}
+		reg = stage.Registration
+		reg.StagedImportSHA256 = candidate.StagedImportSHA256
+		if reg.ParentSessionID != parent.ArchiveSessionID || reg.ParentNativeSessionID != parent.NativeSessionID {
+			return state.ErrDurableStorageRecovery
+		}
+	} else {
+		reg, err = validateCandidateTranscript(ctx, local, candidate, parent, reg, opts, now)
+	}
 	if err != nil {
 		return err
 	}
@@ -197,7 +213,7 @@ func admittedSubagentParent(local *state.Store, candidate state.SubagentCandidat
 	if err != nil {
 		return archive.SessionRegistration{}, err
 	}
-	if !found || parent.NativeSessionID != candidate.ParentNativeSessionID || parent.ProjectID != candidate.ProjectID || parent.ProjectRoot != candidate.ProjectRoot || archive.CanonicalHarness(parent.Harness.Name) != archive.CanonicalHarness(candidate.Harness.Name) || (opts.AcceptSession != nil && !opts.AcceptSession(parent)) {
+	if !found || parent.NativeSessionID != candidate.ParentNativeSessionID || parent.ProjectID != candidate.ProjectID || parent.ProjectRoot != candidate.ProjectRoot || !parent.HistoricalProject.Equal(candidate.HistoricalProject) || archive.CanonicalHarness(parent.Harness.Name) != archive.CanonicalHarness(candidate.Harness.Name) || (opts.AcceptSession != nil && !opts.AcceptSession(parent)) {
 		return archive.SessionRegistration{}, rejectSubagentCandidate(local, candidate, "subagent_parent_ownership_unavailable")
 	}
 	return parent, nil
@@ -214,7 +230,7 @@ func assembleSubagentRegistration(parent archive.SessionRegistration, candidate 
 		proofCopy := *parent.CodexAdmission
 		proof = &proofCopy
 	}
-	return archive.SessionRegistration{CodexAdmission: proof, DiscoveryCwd: parent.DiscoveryCwd,
+	return archive.SessionRegistration{HistoricalProject: parent.HistoricalProject, CodexAdmission: proof, DiscoveryCwd: parent.DiscoveryCwd,
 		ArchiveSessionID: candidate.ArchiveSessionID, NativeSessionID: candidate.NativeSessionID,
 		ProjectID: parent.ProjectID, ProjectRoot: parent.ProjectRoot, RepoKey: parent.RepoKey, Replay: parent.Replay, Harness: parent.Harness,
 		TranscriptPath: candidate.TranscriptPath, RegisteredAt: candidate.ObservedAt,
@@ -498,4 +514,25 @@ func announceSubagent(local *state.Store, reg archive.SessionRegistration, child
 		return err
 	}
 	return local.SaveRequest(reg.ParentSessionID, "subagent-published", publishedAt, evidence)
+}
+
+// ReadImportSubagentBundle validates the child on its filtered snapshot before
+// its parent import admits the durable source selection.
+func ReadImportSubagentBundle(ctx context.Context, parent archive.SessionRegistration, candidate state.SubagentCandidate, opts Options) (archive.SessionRegistration, archive.SourceBundle, error) {
+	reg := assembleSubagentRegistration(parent, candidate)
+	adapter, err := sourceAdapter(opts.Sources, reg.Harness.Name)
+	if err != nil {
+		return reg, archive.SourceBundle{}, err
+	}
+	source, _ := newSourceReader(reg, opts)
+	filtered, _, err := source.Filter(ctx, adapter, min(opts.maxTranscriptBytes(), state.MaxImportStageBytes))
+	if err != nil {
+		return reg, archive.SourceBundle{}, err
+	}
+	if err := CheckImportedSubagent(filtered, parent.NativeSessionID, candidate.AgentID, parent.SessionStartedAt, candidate.ObservedAt); err != nil {
+		return reg, archive.SourceBundle{}, err
+	}
+	reg.SessionStartedAt = filtered.NativeStartAt
+	bundle, err := archive.NewSourceBundle(reg, adapter, filtered, candidate.ObservedAt, nil)
+	return reg, bundle, err
 }

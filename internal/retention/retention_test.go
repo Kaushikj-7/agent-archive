@@ -183,6 +183,17 @@ func TestSweepDeletesWholeSessionPastRetentionWindow(t *testing.T) {
 	meta := fetchMetadata(t, store, "s1")
 
 	past := t0.Add(91 * 24 * time.Hour)
+	forever, err := Sweep(context.Background(), local, store, agreeing(Options{Now: func() time.Time { return past }, SessionMaxAge: 0}))
+	if err != nil || len(forever.DeletedSessions) != 0 || len(forever.PrunedSessions) != 0 {
+		t.Fatalf("forever expired evidence: %+v %v", forever, err)
+	}
+	regsForever, err := local.LoadRegistrations()
+	if err != nil || len(regsForever) != 1 {
+		t.Fatalf("forever lost ownership: %v %v", regsForever, err)
+	}
+	if _, err := store.Get(context.Background(), meta.SourceBundle.Key); err != nil {
+		t.Fatal("forever lost active source", err)
+	}
 	result, err := Sweep(context.Background(), local, store, agreeing(Options{Now: func() time.Time { return past }, SessionMaxAge: 90 * 24 * time.Hour}))
 	if err != nil {
 		t.Fatal(err)

@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
 )
@@ -98,6 +99,43 @@ func TestFilesChangingMidScan(t *testing.T) {
 	}
 	if c := candidate(t, p, "stays"); c.Skip != "" {
 		t.Fatalf("stays: %q", c.Skip)
+	}
+}
+
+// A Codex rollout is too large only past the Codex raw limit capture uses,
+// not the general one: planning refuses no rollout capture would read.
+func TestCodexTooLargeFollowsTheCodexRawLimit(t *testing.T) {
+	t.Parallel()
+	tr := newTree(t)
+	repo := tr.repo("home/repo")
+	start := fixedNow.Add(-24 * time.Hour)
+	const within, over = "11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"
+	withinPath := tr.write(filepath.Join("home", codexFile(within)), codexTranscript(within, within, repo, start))
+	overPath := tr.write(filepath.Join("home", codexFile(over)), codexTranscript(over, over, repo, start))
+	env := tr.env()
+	env.Open = func(path string) (io.ReadCloser, error) {
+		size := int64(0)
+		switch path {
+		case withinPath:
+			size = collector.DefaultMaxRawTranscriptBytes + 1
+		case overPath:
+			size = archive.MaxCodexRawTranscriptBytes + 1
+		}
+		if size > 0 {
+			if err := os.Truncate(path, size); err != nil {
+				return nil, err
+			}
+		}
+		return os.Open(path)
+	}
+	p := plan(t, env, nil, config.Config{}, Filters{})
+	// It grew while being planned, as the general limit would have made it
+	// too large: it is read again, never refused for its size.
+	if c := candidate(t, p, within); c.Skip != SkipSourceChanged {
+		t.Fatalf("a Codex rollout under the Codex raw limit: %q", c.Skip)
+	}
+	if c := candidate(t, p, over); c.Skip != SkipTooLarge {
+		t.Fatalf("over the Codex raw limit: %q", c.Skip)
 	}
 }
 

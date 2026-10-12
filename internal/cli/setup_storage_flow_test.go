@@ -117,7 +117,7 @@ func TestCreateS3BackAndFallbackNeverCreate(t *testing.T) {
 		creator := &fakeCreator{privacy: verifiedPrivate}
 		var cfg credentials.Config
 		var out bytes.Buffer
-		_, made, err := createS3Bucket(newPrompter(strings.NewReader(choice+"\n"), &out), &cfg, createEnv("us-east-1", creator, fakeBuckets{}, nil), "us-east-1", false)
+		_, made, err := createS3Bucket(newPrompter(strings.NewReader(choice+"\n"), &out), &cfg, createEnv(t, "us-east-1", creator, fakeBuckets{}, nil), "us-east-1", false)
 		if made || len(creator.calls) != 0 || (choice == "back" && !errors.Is(err, errChooseStorageAgain)) || (choice == "existing" && err != nil) {
 			t.Fatalf("%s made=%v err=%v calls=%v", choice, made, err, creator.calls)
 		}
@@ -150,7 +150,7 @@ func TestS3CustomizationRequiresConfirmationBeforeOpeningCreator(t *testing.T) {
 	sequentialNames(t)
 	creator := &fakeCreator{privacy: verifiedPrivate}
 	var opened []string
-	env := createEnv("us-east-1", creator, fakeBuckets{}, &opened)
+	env := createEnv(t, "us-east-1", creator, fakeBuckets{}, &opened)
 	cfg := credentials.Config{AWSProfile: "work"}
 	var out bytes.Buffer
 	_, _, err := createS3Bucket(newPrompter(strings.NewReader("c\nname\nmy-archive\n"), &out), &cfg, env, "us-east-1", false)
@@ -184,7 +184,7 @@ func TestS3ExistingFallbackUsesTheChangedCreationProfile(t *testing.T) {
 	for _, missingCredentials := range []bool{false, true} {
 		sequentialNames(t)
 		creator := &fakeCreator{privacy: verifiedPrivate}
-		env := createEnv("us-east-1", creator, fakeBuckets{regionErr: errAccessDenied, listErr: errAccessDenied}, nil)
+		env := createEnv(t, "us-east-1", creator, fakeBuckets{regionErr: errAccessDenied, listErr: errAccessDenied}, nil)
 		env.AWSProfiles = func() ([]AWSProfile, error) {
 			return []AWSProfile{{Name: "east", Region: "us-east-1", NoCredentials: missingCredentials}, {Name: "west", Region: "us-west-2"}}, nil
 		}
@@ -203,7 +203,7 @@ func TestS3ExistingFallbackUsesTheChangedCreationProfile(t *testing.T) {
 func TestS3ExistingFallbackPromptsForMalformedChangedProfileRegion(t *testing.T) {
 	sequentialNames(t)
 	creator := &fakeCreator{privacy: verifiedPrivate}
-	env := createEnv("us-east-1", creator, fakeBuckets{regionErr: errAccessDenied, listErr: errAccessDenied}, nil)
+	env := createEnv(t, "us-east-1", creator, fakeBuckets{regionErr: errAccessDenied, listErr: errAccessDenied}, nil)
 	env.AWSProfiles = func() ([]AWSProfile, error) {
 		return []AWSProfile{{Name: "east", Region: "us-east-1"}, {Name: "west", Region: "malformed"}}, nil
 	}
@@ -256,7 +256,7 @@ func TestCreateS3DeletionGoesDirectlyToExistingBucketSelection(t *testing.T) {
 	creator := &fakeCreator{block: []error{errCreateDenied}}
 	finder := fakeBuckets{names: []string{"saved"}, regions: map[string]string{"saved": "us-east-1"}}
 	var cfg credentials.Config
-	out, err := runCreate(t, createEnv("us-east-1", creator, finder, nil), &cfg, "\n\ndelete\nagent-archive-1\n1\n")
+	out, err := runCreate(t, createEnv(t, "us-east-1", creator, finder, nil), &cfg, "\n\ndelete\nagent-archive-1\n1\n")
 	if err != nil || cfg.Bucket != "saved" || strings.Join(creator.calls, ",") != "create agent-archive-1 us-east-1,block agent-archive-1,delete agent-archive-1" || strings.Contains(out, "Review settings and retry") {
 		t.Fatalf("cfg=%+v err=%v calls=%v\n%s", cfg, err, creator.calls, out)
 	}
@@ -265,7 +265,7 @@ func TestCreateS3DeletionGoesDirectlyToExistingBucketSelection(t *testing.T) {
 func TestCreateS3MissingCredentialsDefaultsToChoosingAProfile(t *testing.T) {
 	sequentialNames(t)
 	creator := &fakeCreator{}
-	env := createEnv("us-east-1", creator, fakeBuckets{}, nil)
+	env := createEnv(t, "us-east-1", creator, fakeBuckets{}, nil)
 	env.AWSProfiles = func() ([]AWSProfile, error) {
 		return []AWSProfile{{Name: "bare", NoCredentials: true}, {Name: "ready", Region: "us-west-2"}}, nil
 	}

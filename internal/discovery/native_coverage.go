@@ -15,6 +15,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/codexmeta"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 )
 
 const maxCoverageRequests = 256
@@ -34,8 +35,21 @@ const (
 // coverageInventory is bounded REQUESTED evidence, not a global native index.
 // Enumerating stores only directory digests and requested matching facts. A
 // second shared streaming pass validates ALL entry fingerprints before complete
-// evidence becomes usable. Stamp comparison has the ordinary filesystem model:
+// evidence becomes usable. A rollout's fingerprint is its membership only (see
+// memberFingerprint), so appends by running sessions cannot fail every epoch;
+// validation instead rechecks each rollout's header identity against the
+// recorded candidates. Stamp comparison has the ordinary filesystem model:
 // same-stamp out-of-band rewrites and changes after observation are not detected.
+//
+// Proofs are double-buffered. A completed, unfailed epoch's per-request
+// candidates move into coverageRequest.Proven when the following epoch starts,
+// and stay usable (see proven) while later epochs observe and validate, until
+// a newer epoch completes unfailed and replaces them. A proof is a past
+// observation either way: consumers reopen every candidate and recheck its
+// header identity. Listing a locator for the request that the proof in use
+// does not hold, or rereading a different identity at one it does, retires
+// that proof (see observe), so a new lineage member is not hidden behind a
+// proof once any pass has seen it.
 type coverageInventory struct {
 	Version      int                          `json:"version"`
 	Epoch        uint64                       `json:"epoch"`
@@ -51,6 +65,10 @@ type coverageInventory struct {
 	proofEpoch   uint64
 	reserveFacts func(int64) bool
 	Failed       bool `json:"failed,omitempty"`
+	// MemberChecks records that this epoch's validation marks candidate
+	// membership. A validating checkpoint from an earlier writer lacks the
+	// marks, so finishing it would drop every candidate it already validated.
+	MemberChecks bool `json:"member_checks,omitempty"`
 }
 
 type coverageRequest struct {
@@ -61,12 +79,22 @@ type coverageRequest struct {
 	CompleteEpoch  uint64                       `json:"complete_epoch,omitempty"`
 	Overflow       bool                         `json:"overflow,omitempty"`
 	Candidates     map[string]coverageCandidate `json:"candidates"`
+	// ProvenEpoch is the last epoch that completed unfailed with this request
+	// covered, and Proven the member candidates it validated; 0 means no
+	// retained proof. They outlive that epoch (see restart).
+	ProvenEpoch uint64                       `json:"proven_epoch,omitempty"`
+	Proven      map[string]coverageCandidate `json:"proven,omitempty"`
 }
 
 type coverageCandidate struct {
 	Source   SourceDescriptor        `json:"source"`
 	Stamp    Fingerprint             `json:"stamp"`
 	Identity codexmeta.CodexIdentity `json:"identity"`
+	// Member records that this epoch's validation listed the locator and
+	// reread the same identity. Restored cache facts can name a rollout that
+	// has since been renamed into archived_sessions/; such a candidate is not
+	// a member and is dropped when validation completes.
+	Member bool `json:"member,omitempty"`
 }
 
 type coverageDirectory struct {
@@ -94,6 +122,20 @@ func entryFingerprint(name string, info os.FileInfo) string {
 		identity = fmt.Sprintf("%d:%d", stat.Dev, stat.Ino)
 	}
 	raw := fmt.Sprintf("%s\x00%s\x00%d\x00%d\x00%d", name, identity, info.Mode(), info.Size(), info.ModTime().UnixNano())
+	sum := sha256.Sum256([]byte(raw))
+	return hex.EncodeToString(sum[:])
+}
+
+// memberFingerprint identifies a rollout file's directory membership: its
+// name, file identity and type. Size and modification time are left out so an
+// append by a running Codex session does not fail the whole-home proof; the
+// validation pass rechecks that rollout's header identity instead.
+func memberFingerprint(name string, info os.FileInfo) string {
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return ""
+	}
+	raw := fmt.Sprintf("member\x00%s\x00%d:%d\x00%d", name, stat.Dev, stat.Ino, info.Mode())
 	sum := sha256.Sum256([]byte(raw))
 	return hex.EncodeToString(sum[:])
 }
@@ -129,7 +171,7 @@ func (c *coverageInventory) validate(roots []string) error {
 		return errors.New("native coverage byte limit")
 	}
 	for _, request := range c.Requests {
-		if request.byteBound() > maxCoverageRequestBytes || len(request.Candidates) > 64 {
+		if request.byteBound() > maxCoverageRequestBytes || len(request.Candidates) > 64 || len(request.Proven) > 64 {
 			return errors.New("native coverage request limit")
 		}
 	}
@@ -143,6 +185,9 @@ func (c *coverageInventory) validate(roots []string) error {
 	}
 	if err := c.validateCompleteProof(); err != nil {
 		return err
+	}
+	if c.Phase == coverageValidate && !c.MemberChecks {
+		c.Failed = true
 	}
 	if c.Phase == coverageComplete && !c.Failed {
 		c.proofEpoch = c.Epoch
@@ -198,10 +243,29 @@ func (c *coverageInventory) request(id string) bool {
 	return true
 }
 
-func (c *coverageInventory) observe(source SourceDescriptor, stamp Fingerprint, id codexmeta.CodexIdentity) bool {
+// observe records a candidate for the requests it claims. listed reports
+// live evidence (a directory listing, or a header just read), as opposed to a
+// fact restored from the observation cache, which can name a locator that no
+// longer exists. Live evidence that disagrees with a proof, this epoch's
+// complete one or the retained one, retires that proof in every phase.
+func (c *coverageInventory) observe(source SourceDescriptor, stamp Fingerprint, id codexmeta.CodexIdentity, listed bool) bool {
 	changed := false
 	for key, request := range c.Requests {
-		if key != id.ThreadID && key != id.RolloutID || c.Phase != coverageObserve || request.TargetEpoch > c.Epoch {
+		if key != id.ThreadID && key != id.RolloutID {
+			continue
+		}
+		if listed && request.ProvenEpoch != 0 && !holds(request.Proven, source.Locator, id) {
+			request.ProvenEpoch, request.Proven = 0, nil
+			c.factBound = 0
+			c.Requests[key] = request
+			changed = true
+		}
+		if listed && c.Phase == coverageComplete && request.CompleteEpoch == c.Epoch && !holds(request.Candidates, source.Locator, id) {
+			request.CompleteEpoch = 0
+			c.Requests[key] = request
+			changed = true
+		}
+		if c.Phase != coverageObserve || request.TargetEpoch > c.Epoch {
 			continue
 		}
 		if _, present := request.Candidates[source.Locator]; !present && len(request.Candidates) >= 64 {
@@ -210,7 +274,7 @@ func (c *coverageInventory) observe(source SourceDescriptor, stamp Fingerprint, 
 			c.Requests[key] = request
 			continue
 		}
-		candidate := coverageCandidate{source, stamp, id}
+		candidate := coverageCandidate{Source: source, Stamp: stamp, Identity: id}
 		added := candidate.byteBound() + 6*int64(len(source.Locator)) + 16
 		prior := int64(0)
 		if old, found := request.Candidates[source.Locator]; found {
@@ -228,6 +292,12 @@ func (c *coverageInventory) observe(source SourceDescriptor, stamp Fingerprint, 
 		c.Requests[key] = request
 	}
 	return changed
+}
+
+// holds reports that a proof's candidates include locator with identity id.
+func holds(candidates map[string]coverageCandidate, locator string, id codexmeta.CodexIdentity) bool {
+	candidate, found := candidates[locator]
+	return found && reflect.DeepEqual(candidate.Identity, id)
 }
 
 func coverageKey(d directory) string { return filepath.Join(d.Root, d.Path) }
@@ -279,6 +349,7 @@ func (c *coverageInventory) beginValidation() {
 		return
 	}
 	c.Phase = coverageValidate
+	c.MemberChecks = true
 	c.Validation = nil
 	for _, entry := range c.Directories {
 		if !entry.Complete {
@@ -319,6 +390,34 @@ func (c *coverageInventory) validateBatch(d directory, b coverageBatch, complete
 	c.Directories[key] = prior
 }
 
+// checkMember fails validation unless a rollout's identity, read at
+// validation time, agrees with the candidates its observation recorded for
+// every request that epoch covers. Membership digests omit rollout sizes and
+// times, so this is what detects a header rewritten in place mid-epoch.
+func (c *coverageInventory) checkMember(locator string, id *codexmeta.CodexIdentity) {
+	if c.Phase != coverageValidate || c.Failed {
+		return
+	}
+	if id != nil && (id.ThreadID == "" || id.RolloutID == "" || identityByteBound(*id) > 4096) {
+		id = nil // Observe never records such an identity as a candidate.
+	}
+	for key, request := range c.Requests {
+		if request.TargetEpoch > c.Epoch || request.Overflow {
+			continue
+		}
+		matches := id != nil && (id.ThreadID == key || id.RolloutID == key)
+		candidate, recorded := request.Candidates[locator]
+		if matches != recorded || matches && !reflect.DeepEqual(candidate.Identity, *id) {
+			c.Failed = true
+			return
+		}
+		if matches && !candidate.Member {
+			candidate.Member = true
+			request.Candidates[locator] = candidate
+		}
+	}
+}
+
 func (c *coverageInventory) finishValidation() bool {
 	if c.Phase != coverageValidate || len(c.Validation) != 0 {
 		return false
@@ -339,6 +438,16 @@ func (c *coverageInventory) finishValidation() bool {
 			request.AttemptEpoch = c.Epoch
 		}
 		if request.TargetEpoch <= c.Epoch && !request.Overflow && !c.Failed {
+			// Every listed rollout claiming this key was recorded and marked, so
+			// an unmarked candidate names a locator that is no longer listed.
+			for locator, candidate := range request.Candidates {
+				if !candidate.Member {
+					delete(request.Candidates, locator)
+					c.factBound = 0
+				}
+			}
+		}
+		if request.TargetEpoch <= c.Epoch && !request.Overflow && !c.Failed {
 			request.CompleteEpoch = c.Epoch
 		} else {
 			request.CompleteEpoch = 0
@@ -348,16 +457,29 @@ func (c *coverageInventory) finishValidation() bool {
 	return !c.Failed
 }
 
+// restart begins the next epoch. An epoch that completed unfailed becomes the
+// retained proof of each request it covered, replacing the older one; a
+// request it did not cover (overflowed, or requested mid-epoch) keeps none.
+// After a failed epoch, retained proofs stay as they were.
 func (c *coverageInventory) restart() {
+	proved := c.Phase == coverageComplete && !c.Failed && c.proofEpoch == c.Epoch
+	finished := c.Epoch
 	c.factBound = 0
 	c.Epoch++
 	c.proofEpoch = 0
 	c.Phase = coverageObserve
 	c.Failed = false
+	c.MemberChecks = false
 	c.Directories = map[string]coverageDirectory{}
 	c.Validation = nil
 	c.FinalOffset = 0
 	for key, request := range c.Requests {
+		switch {
+		case proved && request.CompleteEpoch == finished && !request.Overflow:
+			request.ProvenEpoch, request.Proven = finished, request.Candidates
+		case proved:
+			request.ProvenEpoch, request.Proven = 0, nil
+		}
 		request.Candidates = map[string]coverageCandidate{}
 		request.CompleteEpoch = 0
 		request.Overflow = false
@@ -387,6 +509,9 @@ func advanceCoverageValidation(ctx context.Context, c *catalog, h *Health, adapt
 			coverage.Validation = coverage.Validation[1:]
 			continue
 		}
+		if !checkCoverageMembers(ctx, c, h, adapter, o.Rollouts, batch.Entries) {
+			break // this batch is validated again on a later run
+		}
 		h.Entries += len(batch.Entries)
 		coverage.validateBatch(d, *batch.coverage, batch.Complete)
 		if batch.Complete {
@@ -399,6 +524,45 @@ func advanceCoverageValidation(ctx context.Context, c *catalog, h *Health, adapt
 	if coverage.Phase == coverageValidate && len(coverage.Validation) == 0 {
 		finishCoverageDirectoryCheck(ctx, coverage, h, deadline, o)
 	}
+}
+
+// checkCoverageMembers rechecks each rollout in a validation batch against
+// the requested candidates. A rollout whose stamp still matches its cached
+// observation reuses that identity; a changed one has its header read again.
+// It reports false, without failing coverage, when the probe budget is spent
+// or a header read raced a write, so the batch is validated again later.
+func checkCoverageMembers(ctx context.Context, c *catalog, h *Health, adapter SourceAdapter, rollouts *CodexRolloutLookup, entries []SourceEntry) bool {
+	for _, entry := range entries {
+		if entry.Source.Locator == "" {
+			continue
+		}
+		if prior, hit := c.Cache[entry.Source.Locator]; hit && prior.SourceFingerprint == entry.CoverageFingerprint && prior.Size == entry.Fingerprint.Size && prior.Mtime == entry.Fingerprint.Mtime {
+			c.Coverage.checkMember(entry.Source.Locator, prior.Observation.Identity)
+			continue
+		}
+		if !discoveryProbeAvailable(h, rollouts) {
+			return false
+		}
+		const headerCharge = int64(sourcefacts.HeaderBytes + 128<<10)
+		if rollouts != nil && !rollouts.readBudget.ReserveUnscoped(headerCharge) {
+			return false
+		}
+		observation := adapter.Inspect(ctx, entry.Source)
+		if rollouts != nil {
+			rollouts.readBudget.ReleaseUnscoped(headerCharge)
+			rollouts.probes++
+		}
+		h.Probes++
+		h.Bytes += observation.Bytes
+		h.NativeReadBytes += observation.NativeReadBytes
+		h.NativeReadOperations += observation.NativeReadOperations
+		if ctx.Err() != nil || observation.Outcome == outcomeChanged {
+			// An append raced the header read; read it again next pass.
+			return false
+		}
+		c.Coverage.checkMember(entry.Source.Locator, observation.Identity)
+	}
+	return true
 }
 
 func finishCoverageDirectoryCheck(ctx context.Context, c *coverageInventory, h *Health, deadline time.Time, o Options) {
@@ -462,11 +626,44 @@ func (c *coverageInventory) validateCompleteRequests() error {
 		if request.CompleteEpoch != 0 && (request.CompleteEpoch != c.Epoch || request.TargetEpoch > c.Epoch || request.Overflow) {
 			return errors.New("native coverage request proof inconsistent")
 		}
+		// A retained proof comes from an earlier, unfailed attempt that covered
+		// this request, and holds only candidates that attempt marked members.
+		if request.ProvenEpoch == 0 && request.Proven != nil || request.ProvenEpoch != 0 && (request.ProvenEpoch >= c.Epoch || request.ProvenEpoch > request.AttemptEpoch || request.TargetEpoch > request.ProvenEpoch) {
+			return errors.New("native coverage retained proof inconsistent")
+		}
+		for path, candidate := range request.Proven {
+			if !candidate.Member || !c.validCandidate(id, path, candidate) {
+				return errors.New("native coverage retained proof inconsistent")
+			}
+		}
 		for path, candidate := range request.Candidates {
-			if path != candidate.Source.Locator || candidate.Source.Kind != "" || !slices.Contains(c.Roots, candidate.Source.Root) || !filepath.IsAbs(path) || filepath.Clean(path) != path || (!local.PathWithin(path, filepath.Join(candidate.Source.Root, "sessions")) && !local.PathWithin(path, filepath.Join(candidate.Source.Root, "archived_sessions"))) || candidate.Identity.ThreadID != id && candidate.Identity.RolloutID != id {
+			if !c.validCandidate(id, path, candidate) {
 				return errors.New("native coverage candidate proof inconsistent")
 			}
 		}
 	}
 	return nil
+}
+
+func (c *coverageInventory) validCandidate(id, path string, candidate coverageCandidate) bool {
+	return path == candidate.Source.Locator && candidate.Source.Kind == "" && slices.Contains(c.Roots, candidate.Source.Root) && filepath.IsAbs(path) && filepath.Clean(path) == path && (local.PathWithin(path, filepath.Join(candidate.Source.Root, "sessions")) || local.PathWithin(path, filepath.Join(candidate.Source.Root, "archived_sessions"))) && (candidate.Identity.ThreadID == id || candidate.Identity.RolloutID == id)
+}
+
+// proven returns the candidates a coverage proof establishes for id, and the
+// epoch that proved them: the current epoch once it completed unfailed, and
+// otherwise the request's retained proof (see restart). A request the
+// completed current epoch did not cover has no proof, and neither does one
+// whose current epoch overflowed.
+func (c *coverageInventory) proven(id string) (map[string]coverageCandidate, uint64, bool) {
+	if c == nil {
+		return nil, 0, false
+	}
+	request, present := c.Requests[id]
+	if !present || request.Overflow {
+		return nil, 0, false
+	}
+	if c.Phase == coverageComplete && c.proofEpoch == c.Epoch && !c.Failed {
+		return request.Candidates, c.Epoch, request.CompleteEpoch == c.Epoch
+	}
+	return request.Proven, request.ProvenEpoch, request.ProvenEpoch != 0
 }

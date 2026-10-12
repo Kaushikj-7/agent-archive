@@ -1,7 +1,6 @@
 package collector
 
 import (
-	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -44,11 +43,14 @@ func TestExternalRenameIntegrityCompressionRespectsSharedPressure(t *testing.T) 
 			}
 			provider.label = archive.SessionLabel{State: archive.SessionLabelPresent, Name: "Deferred rename", Source: archive.SessionLabelDatabase, Contract: codex.LabelContract}
 			budget := agentapi.NewNativeReadBudget(64 << 10)
-			opts.CodexRollouts = recoveryBudgetLookup{CodexRolloutLookup: &reconciliationLookup{}, budget: budget}
+			// Complete coverage proves the transcript deleted, not renamed.
+			opts.CodexRollouts = recoveryBudgetLookup{CodexRolloutLookup: &reconciliationLookup{set: agentapi.CodexRolloutSet{Complete: true}}, budget: budget}
 			now = now.Add(time.Hour)
 			remote.keys = nil
 			result, err := Run(t.Context(), local, remote, opts)
-			if err != nil || !errors.Is(result.Errors[reg.ArchiveSessionID], agentapi.ErrReadBudget) || len(result.Published) != 0 || len(remote.keys) != 0 {
+			// Pressure from a pass ledger smaller than the session's own share
+			// defers the session to a later pass; it neither publishes nor fails.
+			if err != nil || result.Deferred[reg.ArchiveSessionID] != DeferredReadBudget || len(result.Errors) != 0 || len(result.Published) != 0 || len(remote.keys) != 0 {
 				t.Fatalf("name verification did not refuse shared compression pressure: result=%+v err=%v writes=%v", result, err, remote.keys)
 			}
 			if budget.Available() != 64<<10 {

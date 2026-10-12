@@ -1,14 +1,19 @@
 $ agent-archive setup --yes --apps codex --codex-discovery on --codex-capture-scope included-projects --provider s3 --bucket team-archive --aws-profile work --region us-east-1 --project ~/src/web-app
   ✓ Codex hooks: ~/.codex/hooks.json
   ✓ Background job: launchctl responds
+
+Storage · Verification
+Account → Storage → Verification
 Checking your storage connection…
 ✓ Connected to your storage.
+  ! Bucket privacy not verified: public-access settings could not be read.
+    Make sure public access is off: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
   · Codex capture: Automatic discovery plus hooks when approved.
   · Codex scope: Included projects only.
   · Exceptions: None configured.
   · Codex sources: /Users/alex/.codex.
   · Starts: After local consent, outside pause or exclusion.
-  · History: Old sessions require deliberate backfill.
+  · History: Last 7 days of included projects imported at setup; older sessions require backfill.
   · Copies: Qualifying recent native copies may be captured.
   · Hooks: Optional for discovery; approval and observation are separate.
 Apps: Codex. Projects: 1. Storage: Amazon S3 bucket team-archive.
@@ -22,12 +27,10 @@ Installed the agent-archive skill, which lets your agents look up and pull in pa
 To remove the agent skills and keep them off, run agent-archive setup --no-skills.
 
 Next, in each app
-  Codex: start a supported new task in an included project; automatic discovery
-  does not require hook approval.
-  Optional hook capture: Codex: run /hooks and approve the archive hooks, then
-  start a new session (or /clear).
-Sessions already open are not captured. Start a new one in an included project.
-Import sessions from before setup with agent-archive backfill.
+  Codex: automatic discovery captures supported tasks that start from now on in
+  an included project; no hook approval needed.
+  Optional hook capture: Codex: run /hooks and approve the archive hooks; they
+  capture sessions that start after that (or after /clear).
 Check progress with agent-archive status.
   · Another machine: agent-archive machines pair
 [exit 0]

@@ -77,6 +77,12 @@ type sessionScan struct {
 	warnings []error
 	// gap is the capture gap the scan ended in, if it did (see block).
 	gap state.BlockedReason
+	// sizeLimit names the limit a size-limit gap stopped at, when known.
+	sizeLimit *state.SizeLimitGap
+	// lastRead is the source read whose observation a ceiling refusal uses:
+	// either the read this scan went on from or the read that was refused.
+	// The gap is recorded at its state (see overCeiling).
+	lastRead *sourceRead
 	// subagentRunning reports that the scan ended waiting for a resumed
 	// subagent to stop again (see errSubagentRunning).
 	subagentRunning bool
@@ -131,7 +137,7 @@ func (s *sessionScan) run() (sessionOutcome, error) {
 	if err := s.checkRetainedHistory(); err != nil {
 		return outcomeSkipped, err
 	}
-	if s.reg.CaptureFrozen {
+	if s.maintainsRetainedOnly() {
 		outcome, err := s.maintainFrozen()
 		if err != nil {
 			return outcome, err
@@ -212,6 +218,12 @@ func (s *sessionScan) resume() (outcome sessionOutcome, handled bool, err error)
 		}
 		return regenerateMetadata(s)
 	}
+	if s.reg.StagedImportSHA256 != "" && pending.History == nil {
+		pending, err = s.resumeStagedPolicy(pending)
+		if err != nil {
+			return outcomeSkipped, true, err
+		}
+	}
 	if pending.History != nil {
 		outcome, err := s.resumeHistory(pending)
 		return outcome, true, err
@@ -251,10 +263,11 @@ func (s *sessionScan) resume() (outcome sessionOutcome, handled bool, err error)
 
 // sourceRead is what reading the session's source produced.
 type sourceRead struct {
-	filterLease *int
-	adapter     agentapi.TranscriptFilter
-	filtered    archive.FilteredTranscript
-	observed    sourceState
+	stagedRevisions []archive.SourceBundle
+	filterLease     *int
+	adapter         agentapi.TranscriptFilter
+	filtered        archive.FilteredTranscript
+	observed        sourceState
 	// outcome is the scan's outcome when the read ended it.
 	outcome sessionOutcome
 }
@@ -262,6 +275,27 @@ type sourceRead struct {
 // read reads and filters the session's source. ok is false when the scan
 // ends here: nothing to read yet, or a recorded gap, or an error.
 func (s *sessionScan) read() (read sourceRead, ok bool, err error) {
+	if s.reg.StagedImportSHA256 != "" {
+		if _, _, published := s.published.LastPublished(); !published {
+			return s.readImportStage()
+		}
+		// A crash after local acknowledgement can leave preparation behind. Its
+		// removal still requires the complete remotely verified publication.
+		if _, found, err := s.local.LoadImportStage(s.ctx, s.reg); err != nil {
+			return read, false, err
+		} else if found {
+			key, err := archive.MetadataObjectKey(s.reg.Harness.Name, s.id())
+			if err != nil {
+				return read, false, err
+			}
+			if err := s.verifyImportPublication(state.PendingPublication{MetadataKey: key, MetadataBytes: s.published.Metadata()}); err != nil {
+				return read, false, err
+			}
+			if err := s.local.RemoveImportStage(s.id()); err != nil {
+				return read, false, err
+			}
+		}
+	}
 	reader, available := newSourceReader(s.reg, s.opts)
 	if !available {
 		// Not an error: a Cursor desktop chat is registered at its first
@@ -285,6 +319,13 @@ func (s *sessionScan) read() (read sourceRead, ok bool, err error) {
 		read.filterLease = s.nativeFilterLease(mark)
 	}
 	if err != nil {
+		if s.overSessionCeiling(err) && !read.observed.observation.Present {
+			// The gap is recorded at the state the source is in, so an
+			// unchanged source is not read again to reach it.
+			if observed, signatureErr := reader.Signature(s.ctx); signatureErr == nil {
+				read.observed = observed
+			}
+		}
 		read.outcome, err = s.readFailed(read, err)
 		return read, false, err
 	}
@@ -312,12 +353,25 @@ func (s *sessionScan) read() (read sourceRead, ok bool, err error) {
 	if err := s.persistCodexBinding(read.observed.binding); err != nil {
 		return read, false, err
 	}
+	if err := s.followRelocatedRollout(read.observed.relocated); err != nil {
+		return read, false, err
+	}
+	s.lastRead = &read
 	return read, true, nil
 }
 
 // readFailed turns a failed read into the scan's end: a recorded gap for a
 // condition retrying cannot fix, otherwise the error.
 func (s *sessionScan) readFailed(read sourceRead, err error) (sessionOutcome, error) {
+	if s.overSessionCeiling(err) {
+		// Use the same pending-upload guard as a refusal after the read:
+		// superseding an unattempted publication must not leave its upload
+		// owed behind a terminal gap. Keep this read's exact observation.
+		s.lastRead = &read
+		return s.overCeiling(err)
+	}
+	// A refusal under others' pressure ends the scan here; pass.scan defers
+	// it (sessionScan.overCeiling), as any refusal after the read.
 	if agentapi.HasFailure(err, agentapi.Cleanup) || agentapi.HasFailure(err, agentapi.Changed) || agentapi.HasFailure(err, agentapi.Unavailable) || errors.Is(err, agentapi.ErrReadBudget) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return outcomeSkipped, err
 	}
@@ -325,10 +379,12 @@ func (s *sessionScan) readFailed(read sourceRead, err error) (sessionOutcome, er
 	case errors.Is(err, errTranscriptTooLarge):
 		// The file will not shrink by retrying: record the gap once and
 		// keep the last published snapshot instead of failing every pass.
+		s.sizeLimit = sizeLimitOf(err, read.observed, s.reg.Harness.Name, s.opts.maxTranscriptBytes())
 		return s.blockThenRemember(state.BlockedReasonTranscriptTooLarge, read)
 	case errors.Is(err, errRecordTooLarge):
 		// Likewise one record too long to read: a gap recorded once, the
 		// last published snapshot kept, cleared when the file changes.
+		s.sizeLimit = sizeLimitOf(err, read.observed, s.reg.Harness.Name, s.opts.maxTranscriptBytes())
 		return s.blockThenRemember(state.BlockedReasonRecordTooLarge, read)
 	case errors.Is(err, os.ErrNotExist):
 		// The application deleted its own transcript. Retention keeps
@@ -343,7 +399,7 @@ func (s *sessionScan) readFailed(read sourceRead, err error) (sessionOutcome, er
 	// Unsafe format: never upload; the last published snapshot, if any,
 	// remains untouched and readable.
 	err = fmt.Errorf("filter transcript: %w", err)
-	if rememberErr := rememberFailedRead(s.local, s.reg, read.adapter, read.observed, s.opts, err, "", s.publishedLastHead()); rememberErr != nil {
+	if rememberErr := rememberFailedRead(s.local, s.reg, read.adapter, read.observed, s.opts, err, "", nil, s.publishedLastHead()); rememberErr != nil {
 		return outcomeSkipped, errors.Join(err, rememberErr)
 	}
 	return outcomeSkipped, err
@@ -638,10 +694,15 @@ func (s *sessionScan) publish(read sourceRead, candidate archive.SourceBundle) (
 		proof := s.scanSignature(read.observed, candidate)
 		frozenSignature = &proof
 	}
+	expectedImportMetadata := ""
+	if s.reg.StagedImportSHA256 != "" && s.published.Summary().Published {
+		expectedImportMetadata = metadataSHA(s.published.Metadata())
+	}
 	pending := state.PendingPublication{
-		ScanSignature: frozenSignature,
-		SkillEvidence: string(s.opts.skillEvidence()),
-		Bundle:        candidate, SourceKey: rendered.source.Key, MetadataKey: rendered.metadataKey,
+		ImportExpectedMetadataSHA256: expectedImportMetadata,
+		ScanSignature:                frozenSignature,
+		SkillEvidence:                string(s.opts.skillEvidence()),
+		Bundle:                       candidate, SourceKey: rendered.source.Key, MetadataKey: rendered.metadataKey,
 		SourceSHA256: rendered.source.SHA256, SourceBytes: rendered.sourceBytes, MetadataBytes: rendered.metadata,
 		RequestToken: s.req.Token, ReadyAt: readyAt, Attempted: !readyAt.After(s.now),
 	}
@@ -709,7 +770,7 @@ func renderPublication(ctx context.Context, parser agentapi.TranscriptParser, pa
 	analysis, parseErr := agentapi.Analyze(ctx, parser, candidate)
 	metadata, buildErr := archive.BuildMetadataWithAnalysis(candidate, analysis, parseErr, opts.MachineID, reg.SessionStartedAt, now, source, archive.ParserInfo{Version: parserVersion})
 	metadata.ApplyRegistrationProvenance(reg)
-	metadata.ApplyProjectName(reg.ProjectRoot)
+	applyProjectName(&metadata, reg, opts)
 	metadata.ApplyRepoKey(opts.repoKeyOr(reg, priorRepoKey))
 	metadata.ApplyGitHead(reg)
 	metadata.ApplyReplay(reg)
@@ -765,4 +826,44 @@ func (s *sessionScan) completeRequest(what string) error {
 		return fmt.Errorf("%s: %w", what, err)
 	}
 	return nil
+}
+
+func (s *sessionScan) hasRetainedPublication() bool {
+	_, _, found := s.published.LastPublished()
+	return found
+}
+
+func applyProjectName(m *archive.Metadata, reg archive.SessionRegistration, opts Options) {
+	if reg.HistoricalProject == nil {
+		m.ApplyProjectName(reg.ProjectRoot)
+		return
+	}
+	m.ProjectName = opts.historicalProjectName(reg)
+}
+
+func (opts Options) historicalProjectName(reg archive.SessionRegistration) string {
+	label := reg.HistoricalProject.Label
+	if opts.HistoricalProjectLabel != nil {
+		if current := opts.HistoricalProjectLabel(reg.ProjectID); current != "" {
+			label = current
+		}
+	}
+	return label
+}
+
+func (s *sessionScan) validateHistoricalSnapshot() error {
+	if s.reg.HistoricalProject == nil {
+		return nil
+	}
+	if err := s.reg.ValidateHistoricalProject(); err != nil {
+		return err
+	}
+	if s.reg.StagedImportSHA256 == "" {
+		return errors.New("historical import has no frozen source-set proof")
+	}
+	return nil
+}
+
+func (s *sessionScan) maintainsRetainedOnly() bool {
+	return s.reg.CaptureFrozen || s.reg.HistoricalProject != nil && s.hasRetainedPublication()
 }

@@ -134,7 +134,13 @@ func (f Filter) filterLeased(ctx context.Context, in agentapi.NativeInput, c age
 		if !budget.Reserve(countScratch) {
 			return nil, agentapi.ReadBudgetLimit(errors.New("native encoding preflight exceeds shared budget"))
 		}
-		n, err := jsonwire.Bound(ctx, value, budget.Available()/2)
+		available := budget.Available()
+		n, err := jsonwire.Bound(ctx, value, available/2)
+		if errors.Is(err, jsonwire.ErrLimit) {
+			// The encoding and its retained copy need more than all that
+			// remains, beside the scratch still held.
+			budget.Refuse(available + 2)
+		}
 		budget.Release(countScratch)
 		if err != nil {
 			return nil, agentapi.ReadBudgetLimit(err)

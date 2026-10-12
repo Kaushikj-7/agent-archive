@@ -26,6 +26,8 @@ type keyIssuer struct {
 	group   string
 	account string
 	bucket  cloudflare.BucketRef
+	// beforeCleanupDelete can veto deletion after exact provider lineage is established.
+	beforeCleanupDelete func(context.Context, string) error
 }
 
 func newKeyIssuer(home string, cfg config.Config, env Env, p *prompter, api cloudflare.API) (*keyIssuer, error) {
@@ -172,6 +174,9 @@ func (i *keyIssuer) cleanupWithContext(ctx context.Context, s *issuance.Slot) {
 		}
 	}
 	if err != nil || metadata.Name != s.ProviderName || !cloudflare.ExactBucketPolicy(metadata, i.account, i.bucket, s.PermissionID) || !config.ValidMachineID(metadata.ID) || (s.ProviderID != "" && s.ProviderID != metadata.ID) {
+		return
+	}
+	if i.beforeCleanupDelete != nil && i.beforeCleanupDelete(ctx, metadata.ID) != nil {
 		return
 	}
 	s.ProviderID = metadata.ID

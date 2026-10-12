@@ -55,6 +55,9 @@ type Plan struct {
 	// Importing the rest is still allowed; a run after the permissions are
 	// fixed imports what was missed.
 	UnreadableStores []string
+	// RecoveryEvidenceGaps are the apps whose recovery witness evidence was
+	// incomplete, with the sessions each blocked or was recovered without.
+	RecoveryEvidenceGaps []RecoveryEvidenceGap
 
 	// resolvedHome is Home with symlinks resolved; roots are resolved paths.
 	resolvedHome string
@@ -71,6 +74,10 @@ type Plan struct {
 	// nested holds, for each project the plan adds that would capture its
 	// subfolders, the folders inside it the import keeps out (see nested.go).
 	nested map[string]nestedFolders
+	// policyConfig is the committed configuration the recovery policy was
+	// bound against (bindRecoveryPolicy), so AdmitRecovery can bind it again
+	// for the sessions it keeps.
+	policyConfig *config.Config
 }
 
 // Destination names the bucket imports go to.
@@ -119,6 +126,16 @@ type work struct {
 	workspaceCurrent func(context.Context) bool
 	proposedWitness  bool
 	validated        bool
+	// sourceRewritten is set when a change to the source was not a pure
+	// append (see appendedOnly); appendWitness is an appended source's header
+	// resolution, kept only as recovery evidence. evidenceOnly marks a witness
+	// that can make a recovery ambiguous but cannot propose a destination.
+	sourceRewritten bool
+	appendWitness   *resolution
+	evidenceOnly    bool
+	// addedSource marks an evidence-only witness from a transcript added
+	// while planning (addedWitnesses); its renewal accepts appends.
+	addedSource bool
 }
 
 // subagentWork is one subagent transcript of an imported parent.
@@ -181,11 +198,16 @@ func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg con
 	if err != nil {
 		return Plan{}, err
 	}
+	cfg, err = historicalConfig(cfg, filters)
+	if err != nil {
+		return Plan{}, err
+	}
 	now := env.now()
 	items, r, unread, workers, err := preparePlanWork(ctx, env, cfg, filters)
 	if err != nil {
 		return Plan{}, err
 	}
+	env.HistoricalSourceAllowed = func(cwd string) bool { return r.historicalSourceRestriction(cwd) == "" }
 
 	if env.PrepareCodexProof != nil {
 		var ids []string
@@ -247,6 +269,8 @@ func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg con
 		projectFilter:     projectFilter,
 		codexArchivedOnly: unread.codexArchivedOnly,
 		cursorIncomplete:  unread.cursorIncomplete,
+		// Decisions are final here; database-only chats never use recorded recovery.
+		RecoveryEvidenceGaps: summarizeRecoveryGaps(r.recoveryGaps, items),
 	}
 
 	if err := planCursorDatabase(ctx, env, state, r, projectFilter, since, until, workers, &plan); err != nil {
@@ -301,9 +325,15 @@ func preparePlanWork(ctx context.Context, env Environment, cfg config.Config, fi
 	if err := validateProjectMappings(env, cfg, filters.ProjectMappings); err != nil {
 		return nil, nil, unread, workers, err
 	}
+	for _, w := range items {
+		inventory.ownContent(w.t.path, w.t.sourceInfo)
+	}
 	r := newResolver(env, cfg, filters)
-	r.inventoryCurrent = inventory.current
+	r.inventoryAdded = inventory.added
 	var cursorCandidates []string
+	for cwd := range filters.HistoricalMappings {
+		cursorCandidates = append(cursorCandidates, cwd)
+	}
 	for _, p := range cfg.Archive.Projects {
 		cursorCandidates = append(cursorCandidates, p.Root)
 	}
@@ -315,6 +345,13 @@ func preparePlanWork(ctx context.Context, env Environment, cfg config.Config, fi
 		// A settled rewrite during discovery or Git lookup cannot become a new
 		// baseline for attribution from the earlier header.
 		w.checkSource(env)
+		if w.appendedOnly() {
+			// The session itself stays source_changed; its unchanged header
+			// remains clone evidence for other sessions (appendWitness).
+			res := r.resolve(w.t.cwd)
+			w.appendWitness = &res
+			continue
+		}
 		if w.sourceChanged || w.vanished {
 			continue
 		}
@@ -331,11 +368,11 @@ func preparePlanWork(ctx context.Context, env Environment, cfg config.Config, fi
 		return nil, nil, unread, workers, err
 	}
 
-	dbWitnesses, dbIncomplete, err := prepareCursorRecoveryWitnesses(ctx, env, r, items, unread)
+	dbWitnesses, dbGaps, err := prepareCursorRecoveryWitnesses(ctx, env, r, items, unread)
 	if err != nil {
 		return nil, nil, unread, workers, err
 	}
-	prepareRecoveryInventory(ctx, r, append(slices.Clone(items), dbWitnesses...), unread, dbIncomplete)
+	prepareRecoveryInventory(ctx, r, append(slices.Clone(items), dbWitnesses...), unread, dbGaps)
 	for _, w := range items {
 		if w.t.cursorSlug != "" || w.vanished || w.sourceChanged || w.tooLarge {
 			continue
@@ -344,12 +381,15 @@ func preparePlanWork(ctx context.Context, env Environment, cfg config.Config, fi
 		if w.sourceChanged || w.vanished {
 			continue
 		}
-		w.res = r.resolveEvidence(ctx, w.t.cwd, w.t.repoKey)
+		w.res = r.resolveSessionEvidence(ctx, w.t.harness, w.t.cwd, w.t.repoKey)
 		w.checkSource(env)
 		if w.t.sourceInfo != nil && w.res.current != nil {
 			base := w.res.current
+			// The session's own source may only have grown: its header, which
+			// recovery used, comes from leading records an append cannot change.
 			w.res.current = &resolutionCheck{reset: base.reset, valid: func() bool {
-				return w.sourceCurrent(env) && base.valid()
+				current, err := env.lstat(w.t.path)
+				return (w.matchesSource(current, err) || appendedSource(w.t.sourceInfo, current, err)) && base.valid()
 			}}
 		}
 	}
@@ -419,7 +459,7 @@ func classifyPlanWork(ctx context.Context, env Environment, state ArchiveState, 
 			sessions[key] = append(sessions[key], w)
 		}
 		w.filtered = !harnessMatches(filters.Harnesses, string(w.t.harness)) || !projectMatches(env, projectFilter, w.res.root)
-		w.tooLarge = w.tooLarge || w.t.size > collector.DefaultMaxRawTranscriptBytes
+		w.tooLarge = w.tooLarge || w.t.size > collector.MaxRawTranscriptBytes(string(w.t.harness))
 	}
 	for _, group := range sessions {
 		markPendingHistory(group)
@@ -510,7 +550,7 @@ func finalizePlanWork(ctx context.Context, env Environment, items []*work, unrea
 		}
 	}
 	if err := forEach(ctx, workers, subagents, func(s *subagentWork) {
-		if s.sub.Bytes > collector.DefaultMaxRawTranscriptBytes {
+		if s.sub.Bytes > collector.MaxRawTranscriptBytes(string(s.parent.t.harness)) {
 			s.skipped = true
 			return
 		}
@@ -562,13 +602,14 @@ func decidePlanCandidates(items []*work, since, until, now time.Time) []*work {
 			w.filtered = true
 		}
 		w.c.ProjectRoot, w.c.ProjectKind, w.c.ProjectIncluded = w.res.root, w.res.kind, w.res.included
+		w.c.HistoricalProject = w.res.historical
 		w.c.ProjectResolution = w.res.proof
 		if w.res.current != nil {
 			w.c.projectResolutionCurrent = w.res.current.valid
 			w.c.projectResolutionReset = w.res.current.reset
 		}
 		w.c.Skip = w.reason(now)
-		w.c.Diagnostic = candidateDiagnostic(w.c.Skip, w.res.outcome)
+		w.c.Diagnostic = candidateDiagnostic(w.c.Skip, w.res.outcome, w.res.cause)
 		if w.c.Skip == "" {
 			parents = append(parents, w)
 		}
@@ -619,10 +660,13 @@ func (w *work) checkSource(env Environment) {
 		w.vanished = true
 		return
 	}
-	if err == nil && current.Size() > collector.DefaultMaxRawTranscriptBytes {
+	if err == nil && current.Size() > collector.MaxRawTranscriptBytes(string(w.t.harness)) {
 		w.tooLarge = true
 	}
-	w.sourceChanged = w.sourceChanged || !w.matchesSource(current, err)
+	if !w.matchesSource(current, err) {
+		w.sourceChanged = true
+		w.sourceRewritten = w.sourceRewritten || !appendedSource(w.t.sourceInfo, current, err)
+	}
 }
 
 // sourceCurrent compares with the observation that produced the native header.
@@ -685,13 +729,15 @@ func runAdapter(ctx context.Context, env Environment, w *work) {
 		}
 		info, statErr := env.lstat(w.t.path)
 		switch {
+		case errors.Is(err, agentapi.ErrHistorySourceExcluded):
+			w.res.skip = SkipExcludedHistory
 		case isNotExist(err) || isNotExist(statErr):
 			w.vanished = true
 		case agentapi.HasFailure(err, agentapi.Changed):
 			w.sourceChanged = true
 		case errors.Is(err, archive.ErrRelatedHistory) || agentapi.HasFailure(err, agentapi.Unavailable) || agentapi.HasFailure(err, agentapi.Limit):
 			w.t.capturePending = true
-		case errors.Is(err, archive.ErrRecordTooLarge) || (statErr == nil && info.Size() > collector.DefaultMaxRawTranscriptBytes):
+		case errors.Is(err, archive.ErrRecordTooLarge) || (statErr == nil && info.Size() > collector.MaxRawTranscriptBytes(string(w.t.harness))):
 			// One record over the limit, or a file that grew past it since
 			// discovery: the collector blocks it as too large.
 			w.tooLarge = true

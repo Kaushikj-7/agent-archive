@@ -1,6 +1,6 @@
 # Privacy filter rules
 
-> **Status: implemented** (filter 15). The user-facing summary is
+> **Status: implemented** (filter 18). The user-facing summary is
 > [privacy](../../docs/security/privacy.md); what changed in each filter
 > version is in the [filter changelog](privacy-filter-changelog.md).
 

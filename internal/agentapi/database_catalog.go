@@ -13,7 +13,11 @@ type DatabaseChat struct {
 	CreatedAt   time.Time
 	Folder      string
 	WorkspaceID string
-	Malformed   bool
+	// WorkspaceIdentifier reports that the native record carried a workspace
+	// reference at all, even one that names no local folder or ID (a remote
+	// or unknown URI shape). Such a chat is not known to be folderless.
+	WorkspaceIdentifier bool
+	Malformed           bool
 }
 
 // DatabaseCatalog retains only compact planning metadata, never raw message content.

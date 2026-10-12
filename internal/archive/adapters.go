@@ -51,6 +51,35 @@ var ErrRecordTooLarge = &FilterError{Reason: "record exceeds the record size lim
 // record's size (about 175 MiB for a 63 MiB record).
 const MaxRecordBytes = 64 * 1024 * 1024
 
+// MaxRawTranscriptBytes is the raw transcript size past which the collector,
+// with its default limits, records a transcript as too large without reading
+// it: four times the filtered ceiling (collector.DefaultMaxRawTranscriptBytes).
+const MaxRawTranscriptBytes int64 = 4 * MaxRecordBytes
+
+// MaxCodexRawTranscriptBytes is the same ceiling for one Codex thread, a
+// single rollout or every rollout its history spans: twice the general one.
+// A Codex rollout keeps every tool call's full output, which the filter
+// drops, so a multi-day thread passes 256 MiB within days while what the
+// archive keeps of it stays under the filtered ceiling (a 190 MB rollout on
+// the owner's machine, growing about 27 MB a day, kept 31 MB). At that
+// ratio the filtered ceiling (64 MiB) is reached first, near 400 MB of
+// rollout, so this limit stops only threads unusually heavy in tool
+// output. Reading streams a record at a time, so memory follows the longest
+// record and what is kept, not this size; time follows what is kept too
+// (the redaction of kept text dominates: 32 s for that rollout).
+const MaxCodexRawTranscriptBytes int64 = 2 * MaxRawTranscriptBytes
+
+// MaxRawTranscriptBytesFor is the default raw transcript limit for harness:
+// MaxCodexRawTranscriptBytes for Codex, MaxRawTranscriptBytes otherwise.
+// Every reader that admits, plans or captures a transcript uses it, so none
+// refuses what capture accepts.
+func MaxRawTranscriptBytesFor(harness string) int64 {
+	if harness == HarnessCodex {
+		return MaxCodexRawTranscriptBytes
+	}
+	return MaxRawTranscriptBytes
+}
+
 // DefaultParserVersion is the source parser version reported by this bounded
 // foundation. The parser is intentionally partial until fixture coverage proves
 // a given native format more completely.

@@ -62,24 +62,6 @@ func TestSetupFirstRunDecliningAsksAppsAndProjectsSeparately(t *testing.T) {
 	}
 }
 
-// The import offer comes after the steps that say how to check capture, and
-// setup --yes, which never offers it, still ends with the same steps.
-func TestSetupOffersImportAfterNextSteps(t *testing.T) {
-	t.Parallel()
-	f := newImportOfferFixture(t)
-	out := f.runSetup(t, setupImportAnswers("n"))
-	saved := strings.Index(out, "Setup complete")
-	steps := strings.Index(out, "Check progress with agent-archive status.")
-	offer := strings.Index(out, "Import these sessions?")
-	another := strings.Index(out, "Another machine:")
-	if saved < 0 || steps < saved || offer < steps || another < offer {
-		t.Fatalf("order saved=%d steps=%d offer=%d another=%d:\n%s", saved, steps, offer, another, out)
-	}
-	if !setupContainsText(out, "Not imported.") || len(importedSessions(t, f.home)) != 0 {
-		t.Fatalf("declining still imported:\n%s", out)
-	}
-}
-
 // The storage instructions are short and point at the bucket guide, and
 // the manual path is unchanged: the instructions come back to the menu.
 func TestSetupStorageInstructionsPointAtTheBucketGuide(t *testing.T) {

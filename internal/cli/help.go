@@ -49,6 +49,8 @@ would be before upload. With several workers each record is written as its
 session finishes. A session that cannot be exported is an error record on
 its own line; the others are still printed, and the exit code is 1.
 Nothing is uploaded or written.
+  --revision REVISION_ID     With one archive SESSION_ID and full detail,
+                             export this exact parent native revision
   --detail metadata|full     metadata prints no conversation text and, for
                              the archive, reads only sidecars (default full)
   --ids-from -               Read session IDs or transcript paths from stdin,
@@ -184,7 +186,7 @@ report next to the plan. A plan expires five minutes after creation.
        agent-archive setup --yes [--provider r2|s3 ...] [--project DIR ...]
                [--codex-discovery on|off]
                [--codex-capture-scope included-projects|all-projects]
-               [--prefix PREFIX] [--retention-days DAYS]
+               [--prefix PREFIX] [--retention-days DAYS | --keep-forever]
                [--require-skill-use | --no-require-skill-use]
                [--skill-evidence none|metadata|body] [--no-skills | --skills]
                [--allow-network-home]
@@ -237,6 +239,8 @@ An interrupted setup is recovered on the next run.
                         agent-archive/). May be changed alone with --yes
   --retention-days DAYS Keep sessions for 1 to 36500 days (default: saved,
                         else 90)
+  --keep-forever        Disable automatic whole-session expiry; conflicts with
+                        --retention-days. Provider lifecycle rules still apply.
   --require-skill-use   Capture only sessions that use skills
   --no-require-skill-use
                         Capture sessions with or without skills (default:
@@ -453,6 +457,12 @@ q. Nothing is asked when AGENT_ARCHIVE_NONINTERACTIVE is on, as it is inside
 coding agents: give a SESSION_ID.
   --harness NAME        The session's app, if the same SESSION_ID exists under
                         more than one
+  --revisions           List active and preserved native revision IDs, capture
+                        times and provenance; --json prints the inventory
+  --revision REVISION_ID
+                        Read one exact parent revision identifier (see
+                        --revisions), without resolving children; summary
+                        is rederived
   --transcript          Download and verify the source bundle, and print the
                         conversation: prompts, replies, one line per tool call
   --full                With --transcript, also print tool results and shell
@@ -618,6 +628,9 @@ unless --to is given.
   --harness NAME        claude, codex, or cursor
   --file PATH           Render a native transcript directly (needs --harness);
                         works for sessions the archive never captured
+  --revision REVISION_ID
+                        Read this exact parent native revision; requires a
+                        SESSION_ID and --source archive (no local/latest)
   --source auto|local|archive
                         Where the content comes from: auto (default) reads
                         this machine's transcript when there is one, else the
@@ -659,6 +672,16 @@ Example: claude "$(agent-archive handoff --latest --harness codex)"
 Example: agent-archive handoff SESSION_ID --to claude --worktree
 Example: agent-archive handoff SESSION_ID --to codex -- --model o3
 `,
+	"historical-project": `Usage: agent-archive historical-project list
+       agent-archive historical-project rename PROJECT_ID LABEL
+       agent-archive historical-project enable PROJECT_ID
+       agent-archive historical-project disable PROJECT_ID
+
+Manage stable historical project identities without authorizing native capture.
+Enable and disable affect permission in the current destination. Rename changes
+only the display label. Introduce an identity with a confirmed mapping-file
+import.
+`,
 	"backfill": `Usage: agent-archive backfill [options]
        agent-archive backfill history
        agent-archive backfill undo [IMPORT_ID] [--project DIR] [--yes]
@@ -670,8 +693,12 @@ per app, and why any session is not imported; nothing is written until you
 confirm. Live repositories can be proposed for matching deleted worktrees.
 Projects the import needs are added to capture. Prints project
 folders, counts, and recovery reasons, never conversation content.
+After confirmation, filtered evidence is staged before admission; uploads can
+finish after native files disappear. Staging shares a 1 GiB quota with pending
+publication. History reports admitted and remotely verified uploads separately.
   --harness NAME        Only claude, codex, or cursor (repeatable)
   --project DIR         Only this project; it need not still exist (repeatable)
+  --mapping-file FILE          Bounded JSON project assignments
   --map-project OLD=ROOT Exact missing cwd to included root (repeatable)
   --since DATE|TIME|AGE Sessions started on or after this local day (list's
                         --since uses UTC): a date (2026-09-01), an RFC 3339
@@ -684,8 +711,8 @@ folders, counts, and recovery reasons, never conversation content.
   --dry-run             Print the plan and exit; nothing is written
   --json                With --dry-run, print the plan as JSON
   --yes                 Skip the confirmation (required without a terminal)
-  --background          Register the sessions and exit; the background
-                        collector uploads them
+  --background          Stage and register sessions, then exit; the background
+                        collector verifies and uploads them
 See agent-archive help backfill history and agent-archive help backfill undo.
 Example: agent-archive backfill --dry-run --since 30d
 `,
@@ -693,11 +720,17 @@ Example: agent-archive backfill --dry-run --since 30d
 
 List past imports, oldest first: each import's IMPORT_ID, when it started,
 how many sessions and projects it added, and its upload state (waiting,
-uploaded, interrupted, or undone). Reads this machine's records only.
+uploaded, interrupted, or undone). Waiting counts sessions not in the archive
+yet; archived sessions that are rechecking (a re-scan is still owed) or
+updating (newer work is still to upload) are counted after it.
+Reads this machine's records only.
 Example: agent-archive backfill history
 `,
 	"backfill undo": `Usage: agent-archive backfill undo [IMPORT_ID] [--project DIR] [--yes]
                                 [--restore-retention]
+
+Historical identities and destination permissions remain explicit settings;
+use historical-project disable PROJECT_ID to stop their retained maintenance.
 
 Remove the latest import, or the import IMPORT_ID from backfill history: its
 sessions are deleted from the bucket and this machine, and the projects it added

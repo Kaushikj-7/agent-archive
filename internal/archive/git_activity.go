@@ -482,11 +482,11 @@ func mcpGitEvents(server, tool string, call NormalizedToolCall) []GitEvent {
 		if !shaPattern.MatchString(sha) {
 			return nil
 		}
-		event := GitEvent{Kind: GitEventCommit, Source: GitEventSourceMCP, SHA: sha, Branch: validBranch(firstString(call.Input, "branch"))}
+		var repository string
 		if repoPartPattern.MatchString(owner) && repoPartPattern.MatchString(name) {
-			event.Repository = owner + "/" + name
+			repository = owner + "/" + name
 		}
-		return []GitEvent{event}
+		return []GitEvent{{Kind: GitEventCommit, Source: GitEventSourceMCP, SHA: sha, Branch: validBranch(firstString(call.Input, "branch")), Repository: repository}}
 	}
 	return nil
 }

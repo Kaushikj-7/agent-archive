@@ -40,6 +40,9 @@ Choose Cloudflare R2 or Amazon S3 for private archive storage. Setup will guide 
 
 \e[1mStep 2 of 3 · Connect storage\e[0m
 
+\e[1mStorage · Account\e[0m
+\e[2mAccount → Storage → Verification\e[0m
+
 ? Where should your archive live?
 
   1) Cloudflare R2 (default)
@@ -50,12 +53,18 @@ Choose Cloudflare R2 or Amazon S3 for private archive storage. Setup will guide 
 › Choose [1]:
 \e[2m✓ Provider Amazon S3\e[0m
 
+\e[1mStorage · Account\e[0m
+\e[2mAccount → Storage → Verification\e[0m
+
 ? AWS profile
 
   [:back] Back to storage options
 
 › Answer:
 \e[2m✓ AWS profile work\e[0m
+
+\e[1mStorage · Storage\e[0m
+\e[2mAccount → Storage → Verification\e[0m
 
 ? Which bucket should sessions be stored in?
 
@@ -69,8 +78,12 @@ Choose Cloudflare R2 or Amazon S3 for private archive storage. Setup will guide 
 
 Bucket team-archive is in us-east-1; using that region.
 
+\e[1mStorage · Verification\e[0m
+\e[2mAccount → Storage → Verification\e[0m
 Checking your storage connection…
 \e[32m✓\e[0m Connected to your storage.
+  \e[33m!\e[0m Bucket privacy not verified: public-access settings could not be read.
+    Make sure public access is off: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
 
 \e[1mStep 3 of 3 · Review and start\e[0m
   Apps      Codex, Claude Code, Cursor
@@ -85,7 +98,7 @@ Checking your storage connection…
     not be read
     Make sure public access is off:
     https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
-  \e[33m!\e[0m History import is separate.
+  \e[33m!\e[0m Setup imports the last 7 days of included projects; older history is separate.
   \e[33m!\e[0m Sensitive text may remain after filtering.
 
 ? Start archiving?
@@ -114,7 +127,8 @@ Checking your storage connection…
   Codex sources  /Users/alex/.codex
   Starts         After local consent, outside pause or
                  exclusion
-  History        Old sessions require deliberate backfill
+  History        Last 7 days of included projects imported
+                 at setup; older sessions require backfill
   Copies         Qualifying recent native copies may be
                  captured
   Hooks          Optional for discovery; approval and
@@ -160,7 +174,7 @@ Checking your storage connection…
     not be read
     Make sure public access is off:
     https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
-  \e[33m!\e[0m History import is separate.
+  \e[33m!\e[0m Setup imports the last 7 days of included projects; older history is separate.
   \e[33m!\e[0m Sensitive text may remain after filtering.
 
 ? Start archiving?
@@ -176,37 +190,23 @@ Checking your storage connection…
 \e[2m✓ Start archiving\e[0m
 
 \e[32m✓\e[0m Setup complete · Automatic capture is on
+Imported 2 sessions from the last 7 days (Claude Code 2). Uploading in the background.
 Installed /handoff, which continues a session in another agent: ~/.claude/skills/handoff/SKILL.md, ~/.agents/skills/handoff/SKILL.md
 Installed the agent-archive skill, which lets your agents look up and pull in past sessions: ~/.claude/skills/agent-archive/SKILL.md, ~/.agents/skills/agent-archive/SKILL.md
 To remove the agent skills and keep them off, run \e[36magent-archive setup --no-skills\e[0m.
 
 \e[1mNext, in each app\e[0m
-  Codex: start a supported new task in an included project;
-  automatic discovery does not require hook approval.
+  Codex: automatic discovery captures supported tasks that
+  start from now on in an included project; no hook approval
+  needed.
   Optional hook capture: Codex: run \e[36m/hooks\e[0m and approve the
-  archive hooks, then start a new session (or \e[36m/clear\e[0m).
-  Claude Code: nothing to approve; start a new session (or
-  \e[36m/clear\e[0m).
-  Cursor: nothing to approve; start a new Agent chat.
-Sessions already open are not captured. Start a new one in an included project.
+  archive hooks; they capture sessions that start after that
+  (or after \e[36m/clear\e[0m).
+  Claude Code: nothing to approve; hooks capture sessions
+  that start from now on (or after \e[36m/clear\e[0m).
+  Cursor: nothing to approve; hooks capture Agent chats that
+  start from now on.
 Check progress with \e[36magent-archive status\e[0m.
-
-\e[1mOptional · Import past sessions\e[0m
-
-Looking for past sessions in these projects… 2 found.
-
-? Import these sessions?
-
-  Found 2 sessions in 2 selected projects.
-  90-day retention applies.
-
-  1) Import 2 sessions (default)
-  2) Skip for now
-
-› Choose [1]:
-\e[2m✓ Skip for now\e[0m
-
-Not imported. Setup is complete. Import them later with \e[36magent-archive backfill\e[0m.
   \e[2m·\e[0m Another machine: agent-archive machines pair
 
 ? More next steps?

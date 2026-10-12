@@ -44,6 +44,21 @@ const (
 	executionVSCode codexExecutionSource = "vscode"
 )
 
+// codexThreadSource names the native thread_source values capture understands.
+// Codex serializes any other feature-defined source as its own string; those
+// stay unsupported until their ownership is known.
+type codexThreadSource string
+
+const (
+	threadUser     codexThreadSource = "user"
+	threadSubagent codexThreadSource = "subagent"
+	// threadAgentCreated is a top-level thread the Codex app opens for a task
+	// another thread's agent handed off. It carries no parent, spawn edge or
+	// agent markers, Codex lists and names it like a user thread, and the user
+	// continues it there, so it is captured as one.
+	threadAgentCreated codexThreadSource = "agent_created_thread"
+)
+
 type codexTaskEvent string
 
 const (
@@ -158,9 +173,9 @@ func (m CodexMeta) FormatOutcome() Outcome {
 		return outcome
 	}
 	if present(m.ThreadSource) {
-		var thread string
+		var thread codexThreadSource
 		_ = json.Unmarshal(m.ThreadSource, &thread)
-		if thread != "user" && (thread != "subagent" || !facts.Child) {
+		if !supportedThreadSource(thread, facts.Child) {
 			return UnsupportedExecution
 		}
 	}
@@ -174,6 +189,21 @@ func (m CodexMeta) FormatOutcome() Outcome {
 		return UnsupportedProducer
 	}
 	return NativeFormat
+}
+
+// supportedThreadSource admits a subagent source only for a child thread and
+// an agent-created one only for a top-level thread, whose identity the
+// relationship checks validate as they do a user thread's.
+func supportedThreadSource(thread codexThreadSource, child bool) bool {
+	switch thread {
+	case threadUser:
+		return true
+	case threadSubagent:
+		return child
+	case threadAgentCreated:
+		return !child
+	}
+	return false
 }
 
 // ValidCodexVersion bounds the recorded diagnostic token without interpreting

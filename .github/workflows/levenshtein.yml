@@ -41,7 +41,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: wangjohn/levenshtein
-          ref: b8b8ee429de80d44c00ae7c8020662de89f927c6
+          ref: 6f799f72befb925d10f2ef01a7c9a46725fa714d
           path: levenshtein
           persist-credentials: false
       # The native vulnerability scan must analyze the compiler used for releases.

@@ -10,6 +10,7 @@ Capture
   · Identity recovery: complete
   · Projects: ~/src/web-app
   · Skill evidence: metadata
+  · Retention: 90 days
 
 Storage
   ✓ s3://team-archive/agent-archive/
@@ -34,6 +35,7 @@ Details
   Last scan:     2026-09-25T12:00:00Z
   Last publish:  2026-09-25T12:00:00Z
   Skill evidence: metadata
+  Retention:     90 days
   Codex: published; source verified (published_source_verified; 1 session(s)); hooks installed
     Automatic discovery: no supported task observed in last scan.
     Last attempt: 2026-09-25T12:00:00Z; registered 0 in that scan.

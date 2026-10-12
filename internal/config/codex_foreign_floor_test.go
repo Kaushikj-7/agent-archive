@@ -190,7 +190,7 @@ func TestCodexReconciliationErrorPreservesCallerAndPriorSlices(t *testing.T) {
 
 func TestCodexFloorRollbackSnapshotKeepsFenceWithoutReopeningConsent(t *testing.T) {
 	current, at := blanketConfig(t)
-	rolled := Config{MachineID: current.MachineID, Harnesses: current.Harnesses, Archive: current.Archive}
+	rolled := Config{RetentionDays: 90, MachineID: current.MachineID, Harnesses: current.Harnesses, Archive: current.Archive}
 	PreserveWriterFence(&rolled, current)
 	home := t.TempDir()
 	if err := Save(home, rolled); err != nil {

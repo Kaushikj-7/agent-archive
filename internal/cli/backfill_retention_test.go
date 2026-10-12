@@ -51,7 +51,7 @@ func TestBackfillEditWithRetentionOff(t *testing.T) {
 		t.Fatal(err)
 	}
 	out, errOut, code := f.importRun(t, strings.NewReader("edit\ny\n"), true, "--background")
-	if code != 0 || !strings.Contains(out, "Retention is off, so no session is deleted") {
+	if code != 0 || !strings.Contains(out, "Keep forever: there is no automatic expiry to extend") {
 		t.Fatalf("code %d\n%s\n%s", code, out, errOut)
 	}
 	if cfg, _, _ = config.Load(f.data); cfg.RetentionDays != 0 {
@@ -283,5 +283,35 @@ func TestBackfillUndoRestoreRetentionRejectsProject(t *testing.T) {
 	_, errOut, code := f.undoRun(t, nil, false, "--yes", "--restore-retention", "--project", f.userHome)
 	if code != 2 || !strings.Contains(errOut, "--restore-retention") {
 		t.Fatalf("code %d: %s", code, errOut)
+	}
+}
+
+func TestBackfillForeverImportUndoKeepsPolicyUntilExplicitRestore(t *testing.T) {
+	f, _ := newImportFixture(t)
+	backdateTranscripts(t, f)
+	out, errOut, code := f.importRun(t, strings.NewReader("edit\nforever\ny\n"), true, "--background")
+	if code != 0 || !strings.Contains(out, "no automatic expiry") {
+		t.Fatalf("import %d %s\n%s", code, errOut, out)
+	}
+	batch, _ := loadBatch(t, f.data)
+	if batch.Retention == nil || batch.Retention.From != 90 || batch.Retention.To != 0 {
+		t.Fatalf("journal %+v", batch.Retention)
+	}
+	addOldHookSession(t, f, 200)
+	out, errOut, code = f.undoRun(t, nil, false, "--yes")
+	if code != 0 || !strings.Contains(out, "Retention stays at Keep forever") || !strings.Contains(out, "deletes 1 session") {
+		t.Fatalf("undo %d %s\n%s", code, errOut, out)
+	}
+	cfg, _, err := config.Load(f.data)
+	if err != nil || cfg.RetentionDays != 0 || !cfg.RetentionProtection {
+		t.Fatalf("undo shortened policy %+v %v", cfg, err)
+	}
+	out, errOut, code = f.undoRun(t, nil, false, batch.ID, "--yes", "--restore-retention")
+	if code != 0 || !strings.Contains(out, "Restored retention to 90 days") {
+		t.Fatalf("restore %d %s\n%s", code, errOut, out)
+	}
+	cfg, _, err = config.Load(f.data)
+	if err != nil || cfg.RetentionDays != 90 || !cfg.RetentionProtection {
+		t.Fatalf("restore %+v %v", cfg, err)
 	}
 }

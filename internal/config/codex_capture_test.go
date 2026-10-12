@@ -13,7 +13,7 @@ import (
 func blanketConfig(t *testing.T) (Config, time.Time) {
 	t.Helper()
 	at := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
-	c := Config{MachineID: "test", Harnesses: []string{"codex"}, Archive: archive.Config{Enabled: true}, Discovery: &DiscoveryConfig{Enabled: true, CodexHomes: []string{"/approved"}}}
+	c := Config{RetentionDays: 90, MachineID: "test", Harnesses: []string{"codex"}, Archive: archive.Config{Enabled: true}, Discovery: &DiscoveryConfig{Enabled: true, CodexHomes: []string{"/approved"}}}
 	setTestCodexScope(&c, CodexAllProjects)
 	if e := ReconcileDiscovery(&c, Config{}, at); e != nil {
 		t.Fatal(e)
@@ -122,7 +122,7 @@ func TestCodexFenceSurvivesDisableSkillEditsAndRollback(t *testing.T) {
 	if e := Save(home, c); e != nil {
 		t.Fatal(e)
 	}
-	legacy := Config{MachineID: "test", Archive: archive.Config{Enabled: true}}
+	legacy := Config{RetentionDays: 90, MachineID: "test", Archive: archive.Config{Enabled: true}}
 	if e := Save(home, legacy); e != nil {
 		t.Fatal(e)
 	}

@@ -337,7 +337,7 @@ func (r *runner) verifyStorage(firstKey cloudflare.S3Credentials) {
 		}
 		defer func() {
 			// Final cleanup retries this namespace if this deletion fails.
-			_ = first.Delete(context.WithoutCancel(ctx), key)
+			_ = deleteScratchObject(ctx, first, key, 45*time.Second)
 		}()
 		_, err := first.Get(ctx, key)
 		return err
@@ -376,6 +376,13 @@ func (r *runner) verifyStorage(firstKey cloudflare.S3Credentials) {
 		return nil
 	})
 	r.verifyRevocation()
+}
+
+// deleteScratchObject permits cleanup after interruption, but bounds response-body reads.
+func deleteScratchObject(ctx context.Context, store *storage.S3Store, key string, timeout time.Duration) error {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
+	defer cancel()
+	return store.Delete(cleanupCtx, key)
 }
 
 func (r *runner) verifyRevocation() {

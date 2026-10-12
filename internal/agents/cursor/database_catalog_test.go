@@ -22,3 +22,31 @@ func TestComposerMessagesCountedAsTheReaderCountsThem(t *testing.T) {
 		}
 	}
 }
+
+// A workspaceIdentifier in any shape is recorded, even when it names no local
+// folder or ID, so the chat is not mistaken for one without folder evidence.
+func TestComposerRecordsWorkspaceIdentifierPresence(t *testing.T) {
+	t.Parallel()
+	const head = `{"_v":18,"composerId":"a","fullConversationHeadersOnly":[{"bubbleId":"m"}]`
+	cases := []struct {
+		name    string
+		extra   string
+		folder  string
+		present bool
+	}{
+		{name: "absent", extra: ``, folder: "", present: false},
+		{name: "null", extra: `,"workspaceIdentifier":null`, folder: "", present: false},
+		{name: "local", extra: `,"workspaceIdentifier":{"uri":"file:///work/site"}`, folder: "/work/site", present: true},
+		{name: "remote_uri_object", extra: `,"workspaceIdentifier":{"uri":{"scheme":"vscode-remote","path":"/srv/x"}}`, folder: "", present: true},
+		{name: "remote_uri_string", extra: `,"workspaceIdentifier":{"uri":"vscode-remote://ssh-remote+h/srv/x"}`, folder: "", present: true},
+		{name: "unknown_uri_shape", extra: `,"workspaceIdentifier":{"uri":7}`, folder: "", present: true},
+		{name: "unknown_shape", extra: `,"workspaceIdentifier":"x"`, folder: "", present: true},
+		{name: "empty_object", extra: `,"workspaceIdentifier":{}`, folder: "", present: true},
+	}
+	for _, tc := range cases {
+		c, ok := decodeComposerData("composerData:a", []byte(head+tc.extra+`}`))
+		if !ok || c.chat.Folder != tc.folder || c.chat.WorkspaceIdentifier != tc.present || c.chat.WorkspaceID != "" {
+			t.Errorf("%s: ok %v chat %+v, want folder %q present %v", tc.name, ok, c.chat, tc.folder, tc.present)
+		}
+	}
+}

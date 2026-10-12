@@ -62,12 +62,12 @@ func TestAllCodexScopeSupportsZeroProjectsAndDiscoveryOff(t *testing.T) {
 				t.Fatal("discovery consent lost its independent native-start floor")
 			}
 			assertCodexFloorWriter(t, home)
-			for _, row := range []string{"Codex scope: All current and future projects (Codex only)", "Starts: After local consent", "History: Old sessions", "Copies: Qualifying recent native copies"} {
+			for _, row := range []string{"Codex scope: All current and future projects (Codex only)", "Starts: After local consent", "History: Last 7 days of included projects imported at setup", "Copies: Qualifying recent native copies"} {
 				if !strings.Contains(output, row) {
 					t.Fatalf("missing concise consent row %q: %s", row, output)
 				}
 			}
-			if !strings.Contains(output, "Start a supported new Codex task in any non-excluded project") {
+			if !setupContainsText(output, "start from now on in any non-excluded current or future project") && !strings.Contains(output, "Codex hooks capture supported tasks in any non-excluded project.") {
 				t.Fatalf("all-mode next step required an included project: %s", output)
 			}
 			before := cfg.CodexCapture

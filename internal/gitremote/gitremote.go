@@ -98,26 +98,74 @@ func RepoKey(ctx context.Context, root string, run Runner) string {
 // entry (Git exit 1 with no output) establishes no origin. run is nil for
 // ExecRunner; it must respect ctx. Remote URLs never leave this function.
 func ProjectKey(ctx context.Context, root string, run Runner) (string, bool) {
+	key, known, _ := projectKey(ctx, root, run)
+	return key, known
+}
+
+// projectKey also reports whether Git read an origin value it could not
+// normalize (a local path, file:// URL or unparsable remote). Only such an
+// origin is keyless evidence; a failed read is unknown and may hide any key.
+//
+// A checkout can carry several remote.origin.url values, and `--get` reports
+// only the last. Every value is read, NUL-separated, within the same output
+// bound and Timeout. A value that normalizes is the identity, so a trailing
+// local path cannot make a checkout with a real origin keyless; the checkout
+// is keyless only when no value normalizes and some value is nonempty. Values
+// that name different keys are neither keyless nor known: no single key is
+// proven, so the identity stays unknown and blocks recovery (the strict
+// choice).
+func projectKey(ctx context.Context, root string, run Runner) (key string, known, nonportable bool) {
 	if root == "" || !filepath.IsAbs(root) || ctx.Err() != nil {
-		return "", false
+		return "", false, false
 	}
 	if run == nil {
 		run = ExecRunner
 	}
 	ctx, cancel := context.WithTimeout(ctx, Timeout)
 	defer cancel()
-	out, err := run(ctx, root, "-C", root, "config", "--get", "remote.origin.url")
+	out, err := run(ctx, root, "-C", root, "config", "-z", "--get-all", "remote.origin.url")
 	if ctx.Err() != nil {
-		return "", false
+		return "", false, false
 	}
 	if err != nil {
 		var status interface{ ExitCode() int }
 		missing := errors.As(err, &status) && status.ExitCode() == 1 && len(out) == 0
-		return "", missing
+		return "", missing, false
 	}
-	raw := strings.TrimSpace(strings.SplitN(string(out), "\n", 2)[0])
-	key := archive.RepoKey(raw)
-	return key, raw == "" || key != ""
+	return originValuesKey(originValues(out))
+}
+
+// originValues splits `config -z --get-all` output into values. Each value is
+// read as a single `--get` value was: its first line, trimmed.
+func originValues(out []byte) []string {
+	values := strings.Split(string(out), "\x00")
+	if len(values) > 1 && values[len(values)-1] == "" {
+		values = values[:len(values)-1] // the last value's terminator
+	}
+	for i, v := range values {
+		values[i] = strings.TrimSpace(strings.SplitN(v, "\n", 2)[0])
+	}
+	return values
+}
+
+// originValuesKey classifies a checkout's origin values (see projectKey).
+func originValuesKey(values []string) (key string, known, nonportable bool) {
+	unnamed := false
+	for _, raw := range values {
+		k := archive.RepoKey(raw)
+		switch {
+		case k == "":
+			unnamed = unnamed || raw != ""
+		case key == "":
+			key = k
+		case key != k:
+			return "", false, false
+		}
+	}
+	if key != "" {
+		return key, true, false
+	}
+	return "", !unnamed, unnamed
 }
 
 // ProjectRoot returns Git's checkout top level, or empty when it cannot be

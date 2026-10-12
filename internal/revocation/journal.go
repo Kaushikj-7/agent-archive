@@ -154,7 +154,8 @@ func Load(home, id string) (Journal, error) {
 	if j.OperationID != id {
 		return j, errors.New("revocation operation ID mismatch")
 	}
-	return j, j.Validate()
+	err = j.Validate()
+	return j, err
 }
 
 // Record changes an outcome while preserving independently confirmed success.

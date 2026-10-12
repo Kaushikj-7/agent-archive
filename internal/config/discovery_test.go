@@ -25,7 +25,7 @@ const (
 func discoveryConfig(t *testing.T) (Config, time.Time) {
 	t.Helper()
 	at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
-	cfg := Config{Harnesses: []string{"codex"}, SkillEvidence: SkillEvidenceMetadata, Archive: archive.Config{Enabled: true, Projects: []archive.ProjectActivation{{Root: "/included", Included: true, ActivatedAt: at}}}, Discovery: &DiscoveryConfig{Enabled: true, CodexHomes: []string{"/synthetic/codex"}}}
+	cfg := Config{RetentionDays: 90, Harnesses: []string{"codex"}, SkillEvidence: SkillEvidenceMetadata, Archive: archive.Config{Enabled: true, Projects: []archive.ProjectActivation{{Root: "/included", Included: true, ActivatedAt: at}}}, Discovery: &DiscoveryConfig{Enabled: true, CodexHomes: []string{"/synthetic/codex"}}}
 	if err := ReconcileDiscovery(&cfg, Config{}, at); err != nil {
 		t.Fatal(err)
 	}

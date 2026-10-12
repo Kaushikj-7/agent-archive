@@ -37,6 +37,24 @@ type DiagnosticSummary struct {
 	Count int `json:"count"`
 }
 
+// Diagnostic details for recovery outcomes and skips. Recovery outcome details
+// reuse the sourcefacts outcome codes so JSON output is unchanged.
+const (
+	DetailRecoveryBudget                               = DiagnosticDetail(sourcefacts.RecoveryBudgetExhausted)
+	DetailInventoryUnavailable                         = DiagnosticDetail(sourcefacts.RecoveryInventoryUnavailable)
+	DetailRecoveryExcluded                             = DiagnosticDetail(sourcefacts.RecoveryExcluded)
+	DetailRecoveryAmbiguous                            = DiagnosticDetail(sourcefacts.RecoveryAmbiguous)
+	DetailRepositoryUnavailable                        = DiagnosticDetail(sourcefacts.RecoveryRepositoryUnavailable)
+	DetailMappingConflict                              = DiagnosticDetail(sourcefacts.RecoveryMappingConflict)
+	DetailSubtreeUnavailable                           = DiagnosticDetail(sourcefacts.RecoverySubtreeUnavailable)
+	DetailRecoveryUnavailable                          = DiagnosticDetail(sourcefacts.RecoveryUnavailable)
+	DetailWorktreeEvidenceUnavailable DiagnosticDetail = "worktree_evidence_unavailable"
+	DetailHistoryLookupPending        DiagnosticDetail = "history_lookup_pending"
+	DetailSourceChanged               DiagnosticDetail = "source_changed"
+	DetailSourceInspectionUnavailable DiagnosticDetail = "source_inspection_unavailable"
+	DetailSourceSizeLimit             DiagnosticDetail = "source_size_limit"
+)
+
 type diagnosticDescription struct {
 	action DiagnosticAction
 	text   string
@@ -44,39 +62,71 @@ type diagnosticDescription struct {
 
 // The finite vocabulary bounds rendering even when thousands of sources fail.
 var diagnosticDescriptions = map[DiagnosticDetail]diagnosticDescription{
-	DiagnosticDetail(sourcefacts.RecoveryBudgetExhausted):       {ActionRetry, "Project recovery reached its resource limit; retry the plan."},
-	DiagnosticDetail(sourcefacts.RecoveryInventoryUnavailable):  {ActionRetry, "Configured repository evidence is unavailable or changed; check repository access and Git, then retry."},
-	DiagnosticDetail(sourcefacts.RecoveryExcluded):              {ActionReviewProject, "Recorded repository identity matches an excluded project; review the exclusion."},
-	DiagnosticDetail(sourcefacts.RecoveryAmbiguous):             {ActionReviewMapping, "Recorded repository identity matches multiple configured repositories; review an exact --map-project assignment."},
-	DiagnosticDetail(sourcefacts.RecoveryRepositoryUnavailable): {ActionReviewProject, "Recorded repository identity is missing or has no matching configured repository; review the project and an exact --map-project assignment."},
-	DiagnosticDetail(sourcefacts.RecoveryMappingConflict):       {ActionReviewMapping, "The mapping conflicts with configured ownership or recorded repository identity; review the assignment."},
-	DiagnosticDetail(sourcefacts.RecoverySubtreeUnavailable):    {ActionReviewMapping, "Repository identity cannot prove the original subtree's ownership; review project scope."},
-	DiagnosticDetail(sourcefacts.RecoveryUnavailable):           {ActionReviewProject, "The original project evidence cannot be used safely; review the project."},
-	"worktree_evidence_unavailable":                             {ActionReviewProject, "The worktree cannot be followed to its repository; review the checkout and project."},
-	"history_lookup_pending":                                    {ActionAwaitSupport, "Related history remains pending; current selection and dependencies have not been inspected by backfill."},
-	"source_changed":                                            {ActionRetry, "The source changed during planning; retry after it settles."},
-	"source_inspection_unavailable":                             {ActionReviewSource, "The source could not be safely inspected or filtered; check source access and format support."},
-	"source_size_limit":                                         {ActionAwaitSupport, "The source exceeds the supported size limit."},
+	// Most recovery limits are fixed (configured roots, dependency stamps,
+	// Cursor catalog rows), so the same plan reaches them again; retrying
+	// clears only a timeout. An exact mapping bypasses the shared inventory.
+	DetailRecoveryBudget:              {ActionReviewMapping, "Project recovery reached a fixed work or time limit. Retrying helps only if Git or the disk was slow; otherwise review an exact --map-project assignment."},
+	DetailInventoryUnavailable:        {ActionRetry, "Configured repository evidence is unavailable or changed; check repository access and Git, then retry."},
+	DetailRecoveryExcluded:            {ActionReviewProject, "Recorded repository identity matches an excluded project; review the exclusion."},
+	DetailRecoveryAmbiguous:           {ActionReviewMapping, "Recorded repository identity matches multiple configured repositories; review an exact --map-project assignment."},
+	DetailRepositoryUnavailable:       {ActionReviewProject, "Recorded repository identity is missing or has no matching configured repository; review the project and an exact --map-project assignment."},
+	DetailMappingConflict:             {ActionReviewMapping, "The mapping conflicts with configured ownership or recorded repository identity; review the assignment."},
+	DetailSubtreeUnavailable:          {ActionReviewMapping, "Repository identity cannot prove the original subtree's ownership; review project scope."},
+	DetailRecoveryUnavailable:         {ActionReviewProject, "The original project evidence cannot be used safely; review the project."},
+	DetailWorktreeEvidenceUnavailable: {ActionReviewProject, "The worktree cannot be followed to its repository; review the checkout and project."},
+	DetailHistoryLookupPending:        {ActionAwaitSupport, "Related history remains pending; current selection and dependencies have not been inspected by backfill."},
+	DetailSourceChanged:               {ActionRetry, "The source changed during planning; retry after it settles."},
+	DetailSourceInspectionUnavailable: {ActionReviewSource, "The source could not be safely inspected or filtered; check source access and format support."},
+	DetailSourceSizeLimit:             {ActionAwaitSupport, "The source exceeds the supported size limit."},
+	// Recovery gap causes replace project_inventory_unavailable when other
+	// sessions' evidence, not configured repository evidence, is what could
+	// not be observed (see recoveryGaps).
+	CauseCursorDatabaseUnavailable:   {ActionRetry, "Recovery was blocked because Cursor's chat database could not be fully read, so a Cursor chat may name another clone of this repository; retry when Cursor is idle."},
+	CauseCursorChatFolderUnavailable: {ActionReviewSource, "Recovery was blocked because a Cursor chat's workspace folder could not be determined, so it may be another clone of this repository; check Cursor's workspaceStorage, then retry."},
+	CauseNativeInventoryChanged:      {ActionRetry, "Recovery was blocked because session files changed while planning; retry after the agents are idle."},
+	CauseNativeStoreUnreadable:       {ActionReviewSource, "Recovery was blocked because an agent's session store could not be fully listed, so an unseen session may name another clone of this repository; check its access, then retry."},
+	CauseWitnessLimit:                {ActionReviewMapping, "Recovery was blocked because sessions name more repository checkouts than backfill compares (1,024), so retrying will not help; review an exact --map-project assignment."},
+	CauseSessionFolderUnknown:        {ActionReviewSource, "Recovery was blocked because another session's folder could not be determined, so it may be another clone of this repository; review that session's source."},
 }
 
-func candidateDiagnostic(skip SkipReason, outcome sourcefacts.RecoveryOutcome) *Diagnostic {
+// Recovery gap causes name which non-configured witness evidence was missing.
+// The set is finite and never carries a path, an agent name or a native ID.
+const (
+	CauseCursorDatabaseUnavailable   DiagnosticDetail = "cursor_database_unavailable"
+	CauseCursorChatFolderUnavailable DiagnosticDetail = "cursor_chat_folder_unavailable"
+	CauseNativeInventoryChanged      DiagnosticDetail = "native_inventory_changed"
+	CauseNativeStoreUnreadable       DiagnosticDetail = "native_store_unreadable"
+	CauseSessionFolderUnknown        DiagnosticDetail = "session_folder_unknown"
+	// CauseWitnessLimit is the fixed limit on distinct witness roots. It is not
+	// a budget: retrying observes the same roots.
+	CauseWitnessLimit DiagnosticDetail = "project_witness_limit"
+	// CauseRecoveryBudget reuses the budget outcome's detail and text.
+	CauseRecoveryBudget = DetailRecoveryBudget
+)
+
+// candidateDiagnostic explains skip. cause, when set, names the missing
+// witness evidence behind an inventory-unavailable recovery outcome.
+func candidateDiagnostic(skip SkipReason, outcome sourcefacts.RecoveryOutcome, cause DiagnosticDetail) *Diagnostic {
 	var detail DiagnosticDetail
 	switch skip {
 	case SkipWorktreeUnresolved:
 		detail = DiagnosticDetail(outcome)
+		if outcome == sourcefacts.RecoveryInventoryUnavailable && cause != "" {
+			detail = cause
+		}
 		if detail == "" {
-			detail = "worktree_evidence_unavailable"
+			detail = DetailWorktreeEvidenceUnavailable
 		}
 	case SkipRelatedHistory:
-		detail = "history_lookup_pending"
+		detail = DetailHistoryLookupPending
 	case SkipSourceChanged:
-		detail = "source_changed"
+		detail = DetailSourceChanged
 	case SkipUnsafeFormat:
-		detail = "source_inspection_unavailable"
+		detail = DetailSourceInspectionUnavailable
 	case SkipTooLarge:
-		detail = "source_size_limit"
+		detail = DetailSourceSizeLimit
 	case "", SkipAlreadyArchived, SkipDuplicateSession, SkipRegisteredNotAdmitted,
-		SkipRemovedByUndo, SkipRemovedByRetention, SkipFilteredOut, SkipExcludedProject,
+		SkipRemovedByUndo, SkipRemovedByRetention, SkipFilteredOut, SkipExcludedProject, SkipExcludedHistory,
 		SkipHomeDirectory, SkipAboveHome, SkipTemporaryDirectory, SkipProjectUnknown,
 		SkipIdentityMismatch, SkipEmpty, SkipStartUnknown, SkipStartInFuture:
 		return nil
@@ -184,10 +234,10 @@ func candidateDisposition(c Candidate) string {
 		return "duplicate_candidate"
 	case SkipAlreadyArchived:
 		return "already_archived"
-	case SkipExcludedProject, SkipFilteredOut, SkipHomeDirectory, SkipAboveHome, SkipTemporaryDirectory, SkipRemovedByUndo, SkipRemovedByRetention:
+	case SkipExcludedProject, SkipExcludedHistory, SkipFilteredOut, SkipHomeDirectory, SkipAboveHome, SkipTemporaryDirectory, SkipRemovedByUndo, SkipRemovedByRetention:
 		return "excluded"
 	case SkipWorktreeUnresolved:
-		if c.Diagnostic != nil && c.Diagnostic.Detail == DiagnosticDetail(sourcefacts.RecoveryExcluded) {
+		if c.Diagnostic != nil && c.Diagnostic.Detail == DetailRecoveryExcluded {
 			return "excluded"
 		}
 	case SkipRegisteredNotAdmitted, SkipProjectUnknown, SkipIdentityMismatch,

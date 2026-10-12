@@ -252,3 +252,15 @@ belong to the external tool.
   bundle while the full pass reports it; one error record per missing input
   without stopping the rest; an invalid sidecar as an error record at both
   details; the bound; usage errors; not set up.
+
+### Explicit native revision selection
+
+`agent-archive eval export SESSION_ID --revision REVISION_ID --detail full`
+selects one exact parent rollout UUID from validated metadata history. Selection
+requires one explicit archive ID; metadata-only, batch/stdin and local discovery
+inputs are usage errors. The record carries optional `revision_id`, and its
+capture time, filter and harness provenance come from verified selected bytes.
+Derived fields are rebuilt from that revision rather than copied from active
+metadata. Current children are neither resolved nor included. Unknown IDs or
+invalid history produce an error record and an operational failure without an
+active fallback. Ordinary exports omit `revision_id` and retain their contract.

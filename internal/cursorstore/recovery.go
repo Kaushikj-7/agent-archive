@@ -10,7 +10,9 @@ import (
 
 // ReadRecovery reads settled in-place evidence without preparing a snapshot.
 // Header observations and all query payloads share the caller's epoch budget.
-// Live WAL sources require a fresh settled observation and are never copied.
+// Live WAL sources require a fresh settled observation and are never copied:
+// one whose -wal holds frames is Locked, and one whose -wal is empty (with or
+// without -shm) is read immutably and checked afterwards (see settled).
 func ReadRecovery(ctx context.Context, path string, budget agentapi.RecoveryReadBudget, read func(context.Context, *sql.DB) error) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -27,7 +29,18 @@ func ReadRecovery(ctx context.Context, path string, budget agentapi.RecoveryRead
 		return err
 	}
 	if src.live {
-		return NotChecked(Locked)
+		settled, ok := src.settled()
+		if !ok {
+			// Frames in the -wal are only safely read through Cursor's
+			// shared-memory index, which a settled observation can't vouch
+			// for: immutable would ignore them.
+			return NotChecked(Locked)
+		}
+		// settled and the post-read check each read the -shm header.
+		if err := budget.Charge(0, 2*shmHeaderSize); err != nil {
+			return err
+		}
+		src = settled
 	}
 	return readInPlace(ctx, src, Options{}, func(ctx context.Context, db *sql.DB) error {
 		// Native decoding and payload preflights require one row per exact key.

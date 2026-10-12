@@ -44,6 +44,7 @@ type setupOptions struct {
 	pairFile                 string
 	prefix                   string
 	prefixSupplied           bool
+	keepForever              bool
 	retentionDays            int
 	retentionSupplied        bool
 	requireSkillUse          bool
@@ -135,6 +136,7 @@ func setupFlags(fs *commandFlags, args []string) (setupOptions, bool) {
 	fs.StringVar(&opts.pairFile, "pair-file", "", "read a pairing bundle from PATH, or - for stdin")
 	var projects, projectRepos projectList
 	fs.StringVar(&opts.prefix, "prefix", "", "folder inside the bucket")
+	fs.BoolVar(&opts.keepForever, "keep-forever", false, "disable automatic whole-session expiry")
 	fs.IntVar(&opts.retentionDays, "retention-days", 0, "keep sessions for 1 to 36500 days")
 	fs.BoolVar(&opts.requireSkillUse, "require-skill-use", false, "capture only sessions that use skills")
 	fs.BoolVar(&opts.noRequireSkillUse, "no-require-skill-use", false, "capture sessions with or without skills")
@@ -194,6 +196,10 @@ func setupFlags(fs *commandFlags, args []string) (setupOptions, bool) {
 			opts.storageFlagsSupplied = true
 		}
 	})
+	if opts.keepForever && opts.retentionSupplied {
+		fs.usageError("--keep-forever and --retention-days are mutually exclusive")
+		return opts, false
+	}
 	if err := validateProjectScopeOptions(opts); err != nil {
 		fs.usageError("%s", err)
 		return opts, false
@@ -203,7 +209,7 @@ func setupFlags(fs *commandFlags, args []string) (setupOptions, bool) {
 
 // given reports whether any answer flag was passed.
 func (o setupOptions) given() bool {
-	return o.codexCaptureScope != "" || o.codexDiscovery != "" || o.prefixSupplied || o.retentionSupplied || o.requireSkillSupplied || o.noRequireSkillSupplied || o.storageFlagsSupplied || o.apps != "" || len(o.projects) > 0 || len(o.projectRepos) > 0 || o.hasProjectScope() || o.skillEvidence != ""
+	return o.keepForever || o.codexCaptureScope != "" || o.codexDiscovery != "" || o.prefixSupplied || o.retentionSupplied || o.requireSkillSupplied || o.noRequireSkillSupplied || o.storageFlagsSupplied || o.apps != "" || len(o.projects) > 0 || len(o.projectRepos) > 0 || o.hasProjectScope() || o.skillEvidence != ""
 }
 
 // setupWithoutQuestions is setup --yes: the answers come from opts, the
@@ -366,6 +372,23 @@ func reviewWithoutQuestions(home string, existing, cfg config.Config, p *prompte
 	return nil
 }
 
+func (opts setupOptions) applyRetentionAnswer(cfg *config.Config) error {
+	if opts.keepForever && opts.retentionSupplied {
+		return errors.New("--keep-forever and --retention-days are mutually exclusive")
+	}
+	if opts.keepForever {
+		cfg.RetentionDays = 0
+		cfg.RetentionProtection = true
+	}
+	if opts.retentionSupplied {
+		if opts.retentionDays < 1 || opts.retentionDays > 36500 {
+			return errors.New("--retention-days must be between 1 and 36500; use --keep-forever for no automatic expiry")
+		}
+		cfg.RetentionDays = opts.retentionDays
+	}
+	return nil
+}
+
 // setupAnswers is the configuration setup --yes saves, before its storage
 // is checked: existing with the flags' answers. secret carries a new R2
 // access key ID, if one was given; its secret is read once the answers
@@ -375,11 +398,8 @@ func setupAnswers(existing config.Config, opts setupOptions, home, userHome stri
 	if err := validateProjectScopeOptions(opts); err != nil {
 		return cfg, credentials.R2Credentials{}, err
 	}
-	if opts.retentionSupplied {
-		if opts.retentionDays < 1 || opts.retentionDays > 36500 {
-			return cfg, credentials.R2Credentials{}, errors.New("--retention-days must be between 1 and 36500")
-		}
-		cfg.RetentionDays = opts.retentionDays
+	if err := opts.applyRetentionAnswer(&cfg); err != nil {
+		return cfg, credentials.R2Credentials{}, err
 	}
 	if opts.prefixSupplied {
 		if strings.TrimSpace(opts.prefix) == "" {
@@ -446,7 +466,7 @@ func setupAnswers(existing config.Config, opts setupOptions, home, userHome stri
 	problems = append(problems, setupProjects(&cfg, opts.projects, userHome)...)
 	secret, storageProblems := setupStorageFromFlags(&cfg, opts, env)
 	problems = append(problems, storageProblems...)
-	if cfg.RetentionDays <= 0 {
+	if cfg.RetentionDays == 0 && !cfg.RetentionProtection {
 		cfg.RetentionDays = defaultRetentionDays
 	}
 	return cfg, secret, answersError(problems)

@@ -26,6 +26,9 @@ func collectCoverageDirectory(t *testing.T, c *coverageInventory, root, path str
 			t.Fatal("missing all-entry digest")
 		}
 		if validation {
+			if !checkCoverageMembers(t.Context(), &catalog{Coverage: c, Cache: map[string]cached{}}, &Health{}, adapter, nil, batch.Entries) {
+				t.Fatal("member probe refused")
+			}
 			c.validateBatch(d, *batch.coverage, batch.Complete)
 		} else {
 			c.recordBatch(d, *batch.coverage, batch.Continuation, batch.Complete, true)
@@ -88,12 +91,12 @@ func TestCoverageNeedsWholeRequestedEpochAndValidation(t *testing.T) {
 	if !c.request("thread") {
 		t.Fatal("request refused")
 	}
-	c.observe(SourceDescriptor{Locator: "early"}, Fingerprint{}, codexmeta.CodexIdentity{ThreadID: "thread"})
+	c.observe(SourceDescriptor{Locator: "early"}, Fingerprint{}, codexmeta.CodexIdentity{ThreadID: "thread"}, true)
 	if len(c.Requests["thread"].Candidates) != 0 {
 		t.Fatal("midround fact claimed fresh coverage")
 	}
 	c.restart()
-	c.observe(SourceDescriptor{Root: root, Locator: filepath.Join(root, "sessions", "current")}, Fingerprint{}, codexmeta.CodexIdentity{ThreadID: "thread"})
+	c.observe(SourceDescriptor{Root: root, Locator: filepath.Join(root, "sessions", "current")}, Fingerprint{}, codexmeta.CodexIdentity{ThreadID: "thread"}, true)
 	collectCoverageDirectory(t, c, root, "sessions", false)
 	collectCoverageDirectory(t, c, root, "archived_sessions", false)
 	if c.Requests["thread"].CompleteEpoch != 0 {
@@ -126,7 +129,7 @@ func TestCoverageRequestAndCandidateOverflowNeverCertifiesAbsence(t *testing.T) 
 	}
 	c.restart()
 	for i := range 65 {
-		c.observe(SourceDescriptor{Locator: fmt.Sprintf("/synthetic/%d", i)}, Fingerprint{}, codexmeta.CodexIdentity{ThreadID: "thread-0"})
+		c.observe(SourceDescriptor{Locator: fmt.Sprintf("/synthetic/%d", i)}, Fingerprint{}, codexmeta.CodexIdentity{ThreadID: "thread-0"}, true)
 	}
 	if !c.Requests["thread-0"].Overflow || len(c.Requests["thread-0"].Candidates) != 64 {
 		t.Fatal(c.Requests["thread-0"])

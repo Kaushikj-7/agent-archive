@@ -1,5 +1,15 @@
 # Codex retained history reader
 
+Status: implemented retained-history reader and lifecycle contract (#336, #341,
+#348, #355), reconciled 2026-10-11 at `db2ccd3e`. Native lookup, ownership,
+child admission and maintenance are covered by code and synthetic tests. The
+broader [historical recovery plan](../proposals/historical-backfill-recovery.md)
+now includes historical-only ownership and bounded bulk mappings merged in
+[#433](https://github.com/wangjohn/agent-archive/pull/433) (`18ca0c48`,
+2026-10-12). Fragment artifacts (step 6b) and remaining combined acceptance
+work stay open; the [backfill contract](backfill.md#historical-only-ownership-and-bounded-mapping-files)
+defines the implemented historical identity and destination policy.
+
 A stable Codex thread is distinct from its physical rollout revisions, root
 conversation, parent and fork relation. The source provider consumes injected
 `CodexRolloutLookup` catalog evidence; it never enumerates a home directory per
@@ -43,6 +53,42 @@ Physical candidates count before header validity; filesystem fingerprints includ
 subdirectories and unrelated entries and retain a separate18432-entry traversal
 ceiling. Aliases of one canonical home share acquisition while every approved
 home spelling remains fenced.
+
+Requested coverage runs in epochs: observe every directory, then validate every
+directory's membership digest and each rollout's header identity, then
+complete. Only a completed, unfailed epoch proves a requested thread's
+candidate set (`Complete`). A completed epoch restarts when the next pass loads
+it, so proofs are double-buffered: on restart each request the epoch covered
+keeps that epoch's member candidates as its retained proof, which serves the
+thread while later epochs run. A newer unfailed epoch replaces it; one that did
+not cover the request (it overflowed) drops it; a failed epoch leaves it. A
+proof is a past observation: consumers reopen every candidate and recheck its
+identity, and a candidate moved or rewritten since fails that read and is
+retried. What a proof can miss is a rollout created later, so live evidence
+retires it: when a listing or current-row header read finds a locator claiming
+the thread that the proof in use (this epoch's or retained) does not hold, or
+another identity at one it does, that request has no proof until a newer epoch
+completes. Restored observation-cache facts, which can name vanished locators,
+never retire a proof. Live evidence arrives only as listings reach a
+directory, so a retained proof can still lack a segment created after it. The
+set marks such a proof `Retained`: a source signature may use it to recognize
+an unchanged lineage, but a read without a current locator does not choose a
+lineage tip from it, and waits for a proof completed in its own pass; the
+collector reports that wait as deferred (waiting for history coverage), not
+as a failure. A proof completed in the current pass can also lack a segment
+created after its directory was listed earlier in the epoch; such a read
+chooses the older tip, history already captured, and the next listing of that
+directory changes the lineage and causes a recapture. A discovery checkpoint that misses its pass deadline
+hands its catalog to the lookup, whose close writes it without that deadline,
+so an epoch that completed just before is not lost. Checkpoints accept a retained proof only from an earlier
+attempt that covered the request, with every candidate marked a member.
+
+Source signatures hash the set's lineage token: the revision the same current
+locator, candidates and candidate observations would carry if complete. The
+pass-local revision that `Check` compares still includes completeness, but a
+coverage change alone never makes an unchanged session look changed to the
+scan-skip check. A new segment, a changed candidate set or changed candidate
+stamps still change the token.
 
 The full view binds lazy acquisition to the owner's constructor-approved
 canonical root set and fences every supplied alias spelling. A changed or
@@ -97,10 +143,15 @@ Appends beyond the captured prefix are allowed; replacements and prefix rewrites
 are retryable changes. This permits continuously active chats to make progress.
 
 A pass owns at most 64 open dependencies, depth 64 and one million records per
-materialized graph. The shared 128 MiB charge includes captured input extents,
-immutable ancestor-prefix byte caches, bounded prefix summaries and reserved
-borrowed scanner buffers. One ancestor prefix of at most 32 MiB may be cached
-per open physical file when the remaining budget permits it. Descendants reuse
+materialized graph. The shared pass charge (agentapi.PassReadBudget, 256 MiB)
+includes cached headers, immutable ancestor-prefix byte caches, bounded prefix
+summaries and line buffers grown only as far as the longest record read. A
+rollout read through its descriptor is not charged for its length. Cached
+ancestor prefixes total at most 16 MiB per pass, within the remaining budget.
+A thread's rollouts may total archive.MaxCodexRawTranscriptBytes (512 MiB);
+past that the source reports a raw-limit failure with the sizes and an
+observation, which the collector records once as a named size-limit gap.
+Descendants reuse
 its bytes and validated ordinal summary. The provider still reads and hashes
 the native prefix once per completed descendant capture; it does not use file
 stamps as proof that cached bytes remained unchanged. Changed dependencies evict

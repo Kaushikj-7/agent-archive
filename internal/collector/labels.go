@@ -128,7 +128,7 @@ func (p *pass) observeLabels(ctx context.Context) {
 }
 
 func (p *pass) labelEligible(reg archive.SessionRegistration) bool {
-	if reg.CaptureFrozen || reg.Imported() || p.unreadable[reg.ArchiveSessionID] || (p.opts.AcceptSession != nil && !p.opts.AcceptSession(reg)) {
+	if reg.HistoricalProject != nil || reg.CaptureFrozen || reg.Imported() || p.unreadable[reg.ArchiveSessionID] || (p.opts.AcceptSession != nil && !p.opts.AcceptSession(reg)) {
 		return false
 	}
 	if p.local.GenerationCaptureAllowed(reg) != nil {

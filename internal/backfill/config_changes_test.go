@@ -239,3 +239,19 @@ func TestUndoRestoresRetentionAndCountsWhatItDeletes(t *testing.T) {
 		t.Fatalf("restored: %+v %v", plan.RestoreRetention, err)
 	}
 }
+
+func TestImportForeverJournalAndUndo(t *testing.T) {
+	cfg := config.Config{RetentionDays: 90}
+	changes, err := ApplyToConfig(&cfg, Plan{RetentionDays: 0}, fixedNow)
+	if err != nil || changes.Retention == nil || changes.Retention.From != 90 || changes.Retention.To != 0 || cfg.RetentionDays != 0 || !cfg.RetentionProtection {
+		t.Fatalf("raise %+v %+v %v", cfg, changes, err)
+	}
+	plan := UndoPlan{RestoreRetention: changes.Retention}
+	plan.ApplyToConfig(&cfg)
+	if cfg.RetentionDays != 90 || !cfg.RetentionProtection {
+		t.Fatalf("restore loses fence %+v", cfg)
+	}
+	if date, expires := (Plan{RetentionDays: 0}).ExpiresOn(); expires || date != "" {
+		t.Fatalf("forever expiry %q %v", date, expires)
+	}
+}

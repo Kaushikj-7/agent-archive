@@ -117,6 +117,17 @@ func (f Filter) Refilter(ctx context.Context, b archive.SourceBundle, _ time.Tim
 	return sourceio.RefilterJSONL(ctx, f, b)
 }
 
+// RefilterBounded applies current privacy rules within the retained output allowance.
+func (f Filter) RefilterBounded(ctx context.Context, b archive.SourceBundle, _ time.Time, limits agentapi.ReadLimits) (archive.FilteredTranscript, error) {
+	return sourceio.RefilterJSONL(ctx, boundedRetainedFilter{archive.CaptureBoundary{RetainedRecords: limits.Records, RetainedBytes: int(limits.FilteredBytes)}}, b)
+}
+
+type boundedRetainedFilter struct{ boundary archive.CaptureBoundary }
+
+func (f boundedRetainedFilter) FilterJSONL(r io.Reader) (archive.FilteredTranscript, error) {
+	return nativecodec.FilterClaudeRetainedBounded(r, f.boundary)
+}
+
 // MetadataReads counts eligible optional attachment observations for structural tests.
 var MetadataReads atomic.Int64
 

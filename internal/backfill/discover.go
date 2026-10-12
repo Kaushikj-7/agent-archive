@@ -38,6 +38,8 @@ type transcript struct {
 type unreadable struct {
 	// folders counts folders inside an app's store.
 	folders int
+	// folderAgents are the apps with at least one unreadable folder.
+	folderAgents map[string]bool
 	// stores are the apps whose store root could not be listed, so none, or
 	// for Codex's archived_sessions only the archived, of their sessions were
 	// found.
@@ -101,6 +103,12 @@ func enumerateDiscovery(ctx context.Context, env Environment, purpose agentapi.D
 			return unread, e
 		}
 		unread.folders += report.UnreadableFolders
+		if report.UnreadableFolders > 0 {
+			if unread.folderAgents == nil {
+				unread.folderAgents = map[string]bool{}
+			}
+			unread.folderAgents[name] = true
+		}
 		if report.StoreUnreadable {
 			unread.stores[name] = true
 		}

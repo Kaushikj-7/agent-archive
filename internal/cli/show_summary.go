@@ -17,6 +17,7 @@ import (
 // the sidecar's own fields plus `linked_session_availability`.
 type sessionView struct {
 	archive.Metadata
+	SelectedRevisionID string                      `json:"selected_revision_id,omitempty"`
 	LinkedAvailability []reader.LinkedAvailability `json:"linked_session_availability,omitempty"`
 }
 
@@ -49,6 +50,9 @@ func renderSessionSummary(w io.Writer, view sessionView, opts summaryOptions) {
 	s := opts.Style
 	width := lineWidth(s)
 	terminal.Println(w, s.bold(ellipsize(summaryTitle(m), width)))
+	if view.SelectedRevisionID != "" {
+		terminal.Println(w, s.dim("Parent revision: "+archive.DisplayLine(view.SelectedRevisionID)))
+	}
 	context := ellipsize(strings.Join(summaryContext(m, opts), " · "), width-16)
 	if status := summaryStatus(m, s); status != "" {
 		gap := max(width-visibleWidth(context)-visibleWidth(status), 2)
@@ -100,6 +104,9 @@ func renderSessionSummary(w io.Writer, view sessionView, opts summaryOptions) {
 		command := "agent-archive show " + shellWord(id)
 		if harness := archive.DisplayLine(m.Harness.Name); harness != "" {
 			command += " --harness " + shellWord(harness)
+		}
+		if view.SelectedRevisionID != "" {
+			command += " --revision " + shellWord(archive.DisplayLine(view.SelectedRevisionID))
 		}
 		terminal.Println(w)
 		terminal.Printf(w, "  %s %s\n", s.dim("Transcript:"), s.cmd(cut(command+" --transcript", 14)))

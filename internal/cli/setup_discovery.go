@@ -133,7 +133,7 @@ func codexConsentRows(cfg config.Config) []reviewRow {
 		{label: "Exceptions", values: exceptions, detail: "Nearest explicit project rule wins"},
 		{label: "Codex sources", values: sources},
 		{label: "Starts", values: []string{"After local consent, outside pause or exclusion"}},
-		{label: "History", values: []string{"Old sessions require deliberate backfill"}},
+		{label: "History", values: []string{"Last 7 days of included projects imported at setup; older sessions require backfill"}},
 		{label: "Copies", values: []string{"Qualifying recent native copies may be captured"}},
 		{label: "Hooks", values: []string{hooks}},
 	}

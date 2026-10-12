@@ -222,8 +222,7 @@ func TestNativeRevisionReconciliationChangedCancellationAndLimits(t *testing.T) 
 				defer func() { _ = snapshot.Close() }()
 				limits := agentapi.ReadLimits{Records: 1, FilteredBytes: 128 << 20}
 				if scenario == scenarioFiltered0 {
-					limits.Records = archive.MaxHistoryRecords
-					limits.FilteredBytes = 1
+					limits = agentapi.ReadLimits{Records: archive.MaxHistoryRecords, FilteredBytes: 1}
 				}
 				_, err = read.adapter.Filter(scan.ctx, snapshot.Input(), agentapi.FilterContext{Limits: limits})
 				if err == nil {

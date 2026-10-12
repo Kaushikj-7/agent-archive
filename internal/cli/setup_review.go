@@ -107,10 +107,7 @@ func reviewRows(cfg config.Config, discoveries map[string]applicationDiscovery, 
 	if machine != "" {
 		rows = append(rows, reviewRow{label: "Machine", values: []string{machine}})
 	}
-	days := fmt.Sprintf("%d days", cfg.RetentionDays)
-	if cfg.RetentionDays == 1 {
-		days = "1 day"
-	}
+	days := config.RetentionLabel(cfg.RetentionDays)
 	return append(rows, reviewRow{label: "Keep for", values: []string{days}})
 }
 
@@ -352,7 +349,7 @@ func renderSetupReview(p *prompter, m *setupReviewModel, details bool) {
 			terminal.Println(p.out, p.style.hang("    ", line))
 		}
 	}
-	p.warn("History import is separate.")
+	p.warn("Setup imports the last 7 days of included projects; older history is separate.")
 	p.warn("Sensitive text may remain after filtering.")
 	p.renderer().block(m.implications)
 }
@@ -601,7 +598,7 @@ func printReviewPrivacy(p *prompter, cfg config.Config) {
 	case report.Reason == r2PrivacyUnreadable:
 		// Every R2 bucket reads this way, and nothing setup can do changes
 		// it, so it is a reminder rather than a warning.
-		p.note("Check that public access is disabled for the bucket in the Cloudflare dashboard.")
+		p.note("Bucket privacy not verified. Check that public access is disabled for the bucket in the Cloudflare dashboard.")
 	default:
 		p.warn("Bucket privacy not verified: "+privacyReasonText(report.Reason)+".", "Make sure public access is off: "+report.GuidanceURL)
 	}
@@ -809,7 +806,11 @@ func editSetupReview(available []string, p *prompter, draft *setupDraft, userHom
 		}
 		config.SetSkillEvidence(&draft.Config, config.SkillEvidence(mode))
 	case "retention":
+		draft.RetentionEdited = true
 		draft.Config.RetentionDays, err = p.setupRetentionDays(draft.Config.RetentionDays)
+		if draft.Config.RetentionDays == 0 {
+			draft.Config.RetentionProtection = true
+		}
 	case "storage":
 		draft.Step = 1
 	case "prefix":

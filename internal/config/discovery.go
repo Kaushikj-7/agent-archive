@@ -73,7 +73,10 @@ func underlyingSkillEvidence(mode SkillEvidence) SkillEvidence {
 }
 
 func prepareDiscoveryConfig(c *Config) error {
-	if (c.SchemaVersion > 5 && c.SchemaVersion != 7) || (c.SchemaVersion == 7 && !c.DurableStorageProtection) || (c.SchemaVersion == 5 && !c.CodexHistoryProtection) || (c.SchemaVersion == 4 && !c.GenerationProtection) || (c.SchemaVersion == 3 && c.CodexCapture == nil) {
+	if err := ValidateRetentionDays(c.RetentionDays); err != nil {
+		return err
+	}
+	if unsupportedPreparedWriter(*c) {
 		return errors.New("configuration requires a newer agent-archive writer")
 	}
 	if c.Discovery != nil {
@@ -108,10 +111,50 @@ func prepareDiscoveryConfig(c *Config) error {
 	if c.DurableStorageProtection {
 		c.SchemaVersion = 7
 	}
+	if c.RetentionProtection {
+		c.SchemaVersion = 8
+	}
+	if c.ImportStagingProtection {
+		c.SchemaVersion = 9
+	}
+	if c.HistoricalProjectProtection {
+		c.SchemaVersion = 10
+	}
 	return validateDiscoveryConfig(*c)
 }
 
 func validateDiscoveryConfig(c Config) error {
+	var err error
+	c, err = peelHistoricalProjectProtection(c)
+	if err != nil {
+		return err
+	}
+	c, err = peelImportStagingProtection(c)
+	if err != nil {
+		return err
+	}
+	if c.RetentionProtection {
+		if c.SchemaVersion != 8 {
+			return errors.New("retention protection requires schema 8")
+		}
+		c.RetentionProtection = false
+		c.SchemaVersion = 1
+		if c.Discovery != nil {
+			c.SchemaVersion = 2
+		}
+		if c.CodexCapture != nil {
+			c.SchemaVersion = 3
+		}
+		if c.GenerationProtection {
+			c.SchemaVersion = 4
+		}
+		if c.CodexHistoryProtection {
+			c.SchemaVersion = 5
+		}
+		if c.DurableStorageProtection {
+			c.SchemaVersion = 7
+		}
+	}
 	if c.DurableStorageProtection {
 		if c.SchemaVersion != 7 {
 			return errors.New("durable storage protection requires schema 7")
@@ -398,6 +441,42 @@ func (c Config) DiscoveryGeneration(agent, root string, started, now time.Time) 
 	return "", false
 }
 
+// DiscoveryStartFloor is the earliest native start discovery admits for
+// agent under any current authorization (DiscoveryGeneration and
+// CodexDiscoveryGeneration refuse every session that started before it):
+// the earliest project floor, or, for Codex in all-projects scope, the
+// later of the capture and source floors, since admission needs both. ok
+// is false when no current authorization of agent has a known floor.
+func (c Config) DiscoveryStartFloor(agent string) (time.Time, bool) {
+	if c.Discovery == nil || !c.Discovery.Enabled {
+		return time.Time{}, false
+	}
+	if agent == "codex" && c.EffectiveCodexCaptureScope() == CodexAllProjects {
+		capture, source := c.CodexCapture.Authorization, c.CodexCapture.SourceAuthorization
+		if capture == nil || source == nil || capture.DestinationID != c.DestinationID() || source.DestinationID != c.DestinationID() {
+			return time.Time{}, false
+		}
+		captureFloor, sourceFloor := discoveryNativeStartFloor(*capture), discoveryNativeStartFloor(*source)
+		if captureFloor.IsZero() || sourceFloor.IsZero() {
+			return time.Time{}, false
+		}
+		if captureFloor.After(sourceFloor) {
+			return captureFloor, true
+		}
+		return sourceFloor, true
+	}
+	var earliest time.Time
+	for _, a := range c.Discovery.Authorizations {
+		if a.Agent != agent || a.DestinationID != c.DestinationID() {
+			continue
+		}
+		if floor := discoveryNativeStartFloor(a); !floor.IsZero() && (earliest.IsZero() || floor.Before(earliest)) {
+			earliest = floor
+		}
+	}
+	return earliest, !earliest.IsZero()
+}
+
 // Legacy retained history can only narrow permission to its earliest surviving
 // interval. Activation or observation times cannot recover an empty history.
 func discoveryNativeStartFloor(a DiscoveryAuthorization) time.Time {
@@ -461,4 +540,80 @@ func validateDiscoveryPayload(d *DiscoveryConfig) error {
 		}
 	}
 	return nil
+}
+
+// peelImportStagingProtection validates the capability before checking every
+// underlying policy floor. Staging does not grant legacy permission migration.
+func peelImportStagingProtection(c Config) (Config, error) {
+	if c.SchemaVersion > 9 || (c.SchemaVersion == 9 && !c.ImportStagingProtection) {
+		return c, errors.New("configuration requires a newer agent-archive writer")
+	}
+	if !c.ImportStagingProtection {
+		return c, nil
+	}
+	if c.SchemaVersion != 9 {
+		return c, errors.New("import staging protection requires schema 9")
+	}
+	c.ImportStagingProtection = false
+	c.SchemaVersion = 1
+	if c.Discovery != nil {
+		c.SchemaVersion = 2
+	}
+	if c.CodexCapture != nil {
+		c.SchemaVersion = 3
+	}
+	if c.GenerationProtection {
+		c.SchemaVersion = 4
+	}
+	if c.CodexHistoryProtection {
+		c.SchemaVersion = 5
+	}
+	if c.DurableStorageProtection {
+		c.SchemaVersion = 7
+	}
+	if c.RetentionProtection {
+		c.SchemaVersion = 8
+	}
+	return c, nil
+}
+
+// peelHistoricalProjectProtection preserves every underlying writer floor.
+func peelHistoricalProjectProtection(c Config) (Config, error) {
+	if c.SchemaVersion > 10 || c.SchemaVersion == 10 && !c.HistoricalProjectProtection {
+		return c, errors.New("configuration requires a newer agent-archive writer")
+	}
+	if !c.HistoricalProjectProtection {
+		return c, nil
+	}
+	if c.SchemaVersion != 10 {
+		return c, errors.New("historical project protection requires schema 10")
+	}
+	c.HistoricalProjectProtection = false
+	c.SchemaVersion = 1
+	if c.Discovery != nil {
+		c.SchemaVersion = 2
+	}
+	if c.CodexCapture != nil {
+		c.SchemaVersion = 3
+	}
+	if c.GenerationProtection {
+		c.SchemaVersion = 4
+	}
+	if c.CodexHistoryProtection {
+		c.SchemaVersion = 5
+	}
+	if c.DurableStorageProtection {
+		c.SchemaVersion = 7
+	}
+	if c.RetentionProtection {
+		c.SchemaVersion = 8
+	}
+	if c.ImportStagingProtection {
+		c.SchemaVersion = 9
+	}
+	return c, nil
+}
+
+func unsupportedPreparedWriter(c Config) bool {
+	return (c.SchemaVersion > 5 && c.SchemaVersion != 7 && c.SchemaVersion != 8 && c.SchemaVersion != 9 && c.SchemaVersion != 10) || (c.SchemaVersion == 10 && !c.HistoricalProjectProtection) || (c.SchemaVersion == 9 && !c.ImportStagingProtection) || (c.SchemaVersion == 8 && !c.RetentionProtection) || (c.SchemaVersion == 7 && !c.DurableStorageProtection) || (c.SchemaVersion == 5 && !c.CodexHistoryProtection) || (c.SchemaVersion == 4 && !c.GenerationProtection) || (c.SchemaVersion == 3 && c.CodexCapture == nil)
 }

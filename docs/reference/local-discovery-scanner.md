@@ -107,7 +107,7 @@ unknown future semantics, detect every imported/recently copied native file, or
 guarantee that future transcript bodies remain readable. Bodies still pass
 through the existing filter/collector rules, which may reject or omit unfamiliar
 content. Successful publication and read-back verify the retained archive,
-not completeness for unknown representations. The [pinned evidence](../../dev/proposals/local-session-discovery-evidence.md)
+not completeness for unknown representations. The [pinned evidence](../../dev/proposals/implemented/local-session-discovery-evidence.md)
 and synthetic fixtures document what was actually inspected and exercised.
 
 ## Measured operating envelope
@@ -170,6 +170,20 @@ interrupted leading starts cannot indefinitely starve later starts. It conveys
 no permission or identity authority; every replay checks the original evidence
 and current policy, and expired or revoked intents are removed even when their
 working directory is no longer available.
+
+When a scan refuses a top-level session as `start_not_authorized` and it
+started within 8 days before the earliest discovery start floor
+(`config.DiscoveryStartFloor`), the scan records it in
+`discovery-refused-starts.json` once it passes the same native admission
+proof an admitted session needs (at most 16 proofs per pass; a provisional or
+rejected session is not recorded): native ID, start time and rollout path, at
+most 256 sessions, written atomically and only when it changed. A later scan
+that reaches the session and admits it, finds it archived or removed (a
+removal lookup that fails keeps it), or finds its project excluded drops it,
+as does a scan that finds its rollout file gone. Status reads this file instead of the catalog for the pre-setup line
+([setup](../getting-started/setup.md#after-setup)), and checks each session
+against registrations and removal records itself, so an import clears the line
+without waiting for a scan.
 
 `discovery-health.json` is an atomically written, versioned summary capped at
 16 KiB. It contains aggregate counts, bounded observed format/version summaries,

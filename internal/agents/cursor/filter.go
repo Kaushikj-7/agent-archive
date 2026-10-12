@@ -7,6 +7,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agents/nativecodec"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/sourceio"
+	"io"
 	"time"
 )
 
@@ -67,6 +68,27 @@ func (f Filter) Refilter(ctx context.Context, b archive.SourceBundle, at time.Ti
 		return sourceio.RefilterText(ctx, b, at, f.FilterText)
 	}
 	return sourceio.RefilterJSONL(ctx, f, b)
+}
+
+// RefilterBounded applies current privacy rules within the retained output allowance.
+func (f Filter) RefilterBounded(ctx context.Context, b archive.SourceBundle, at time.Time, limits agentapi.ReadLimits) (archive.FilteredTranscript, error) {
+	if len(b.NativeText) > 0 {
+		if limits.FilteredBytes > 0 && len(b.NativeText[0].Content) > int(limits.FilteredBytes) {
+			return archive.FilteredTranscript{}, archive.ErrRecordTooLarge
+		}
+		out, err := sourceio.RefilterText(ctx, b, at, f.FilterText)
+		if limits.FilteredBytes > 0 && out.Boundary.RetainedBytes > int(limits.FilteredBytes) {
+			return archive.FilteredTranscript{}, archive.ErrRecordTooLarge
+		}
+		return out, err
+	}
+	return sourceio.RefilterJSONL(ctx, boundedRetainedFilter{archive.CaptureBoundary{RetainedRecords: limits.Records, RetainedBytes: int(limits.FilteredBytes)}}, b)
+}
+
+type boundedRetainedFilter struct{ boundary archive.CaptureBoundary }
+
+func (f boundedRetainedFilter) FilterJSONL(r io.Reader) (archive.FilteredTranscript, error) {
+	return nativecodec.FilterCursorRetainedBounded(r, f.boundary)
 }
 
 // EvidenceExtends compares retained native facts under unchanged codec versions.

@@ -460,6 +460,8 @@ func (s *Store) forgetSession(archiveSessionID string, key agentmeta.SessionKey,
 		s.supersededPath(archiveSessionID),
 		s.refreshSkipPath(archiveSessionID),
 		filepath.Join(s.SessionDir(archiveSessionID), "verification.json"),
+		filepath.Join(s.home, importStageRelative(archiveSessionID)),
+		filepath.Join(s.home, importCancelRelative(archiveSessionID)),
 	}
 
 	// The session's own candidate is gone (removed above, under this lock),
@@ -489,6 +491,12 @@ func (s *Store) forgetSession(archiveSessionID string, key agentmeta.SessionKey,
 			}
 		}
 		remove := os.Remove
+		if path == filepath.Join(s.home, importStageRelative(archiveSessionID)) {
+			remove = func(string) error { return s.RemoveImportStage(archiveSessionID) }
+		}
+		if path == filepath.Join(s.home, importCancelRelative(archiveSessionID)) {
+			remove = func(string) error { return s.removeImportCancellation(archiveSessionID) }
+		}
 		if path == s.registrationPath(archiveSessionID) {
 			remove = func(path string) error { return s.removeRegistrationWithRevision(path, revision) }
 		}

@@ -9,6 +9,8 @@ Included-project scope captures new sessions in explicitly included projects.
 Codex also offers an explicit all-current-and-future-projects scope, subject to
 exclusions. Claude Code and Cursor remain project scoped. Review
 [Codex source and scope consent](#automatic-codex-discovery) before choosing it.
+When it finishes, setup imports the sessions of the last 7 days in the
+projects and apps you chose ([after setup](#after-setup)).
 [Backfill](../guides/backfill.md) imports older sessions only when you choose it.
 
 ```sh
@@ -25,6 +27,25 @@ projects your apps have sessions in. Choose "Show setup instructions" at the
 storage prompt for a link to the [bucket guide](bucket.md). Setup asks questions, so it needs a terminal: without one it
 stops before asking anything and changes nothing. Its prompt sequence is not
 a scripting API; to script it, use [`setup --yes`](#set-up-without-questions).
+
+### Interrupted storage creation
+
+If setup stops after requesting a bucket, rerun `agent-archive setup`. Private
+resource receipts survive draft changes and record whether creation was confirmed
+or its outcome remains unknown. Setup offers to connect the bucket as existing
+storage, choose other storage, or inspect resource details. Connecting still asks
+for credentials and verifies access; it does not establish ownership.
+
+An unknown creation is never retried for the same bucket automatically. Inspect
+the named account and bucket in the provider console. S3 receipts record the
+creation profile, which can change accounts; a profile name is not ownership proof.
+Bucket cleanup instructions remain pending because setup cannot verify ownership
+or manual deletion. Check bucket contents and other machines before deleting it.
+
+Unused guided R2 keys can be explicitly revoked after confirmation, using a fresh
+management token. Setup verifies exact provider key lineage and permissions before
+deleting, protects active and saved-draft credentials, and retains unsuccessful
+cleanup for retry. Bootstrap and management tokens are not stored in receipts.
 
 Setup groups each question, explanation, choices and shortcuts together. On a
 supported terminal, the answered question becomes a short receipt. Yes/No receipts
@@ -61,9 +82,10 @@ makes the same checks, for the apps it would include, and checks the
 credential store (the Keychain, or on Linux the credentials folder) when it
 stores in R2.
 
-Setup captures **new** sessions within the scope you approve: included projects by default, or all non-excluded projects for Codex when explicitly chosen. To import
-conversations already on this machine, run [`agent-archive
-backfill`](../guides/backfill.md) afterwards.
+Setup captures **new** sessions within the scope you approve: included projects by default, or all non-excluded projects for Codex when explicitly chosen. It also
+imports the last 7 days of sessions in the included projects
+([after setup](#after-setup)). To import older conversations already on this
+machine, run [`agent-archive backfill`](../guides/backfill.md) afterwards.
 
 ## 1. Apps and projects
 
@@ -108,6 +130,12 @@ choice separately from whether automatic discovery is enabled; see
 
 ## 2. Storage
 
+Within Step 2, **Account → Storage → Verification** shows the current work.
+Account covers provider access; Storage covers the destination and archive
+credentials; Verification checks connectivity and reports bucket privacy
+separately. Back and Retry return to the stage being edited, preserving valid
+existing-bucket answers within the run.
+
 Setup suggests S3 when your shell sets `AWS_PROFILE` or your AWS settings
 already have a profile with credentials, and R2 otherwise.
 
@@ -125,7 +153,8 @@ and during error recovery. See the [bucket guide](bucket.md) for credentials
 and permissions.
 
 S3 setup enables and reads back all four Block Public Access settings. It
-prints a narrower runtime policy, but does not create IAM identities or keys.
+offers **View archive permissions** for a narrower runtime policy, but does
+not create IAM identities or keys.
 The creation profile remains the default archive profile; choose **Choose
 another archive profile** to switch after attaching the policy yourself.
 
@@ -160,7 +189,7 @@ clear answer to the request, setup says the bucket may exist and to check
 the S3 console; it deletes nothing in that case. If the bucket was created
 but Block Public Access could not be turned on, setup does not use it: it
 offers to try again, to delete the empty bucket (after you type its name),
-or to stop. When it succeeds, setup prints the runtime policy for the new
+or to stop. When it succeeds, setup offers **View archive permissions** for the new
 bucket (not for a folder name with characters other than letters, digits
 and `. _ - /`; it says so and points at the guide) and asks which AWS
 profile archiving should use. The profile that created the bucket is the
@@ -209,7 +238,7 @@ Step 3 of 3 · Review and start
 
   ✓ Storage connected
   ✓ Bucket is private
-  ! History import is separate.
+  ! Setup imports the last 7 days of included projects; older history is separate.
   ! Sensitive text may remain after filtering.
 ```
 
@@ -253,8 +282,7 @@ hooks moving to another file.
 At "Start archiving?", enter the number for "Edit a setting" to adjust apps, projects, session scope, retention, storage,
 the folder inside the bucket, or the AWS region. The folder inside the
 bucket (the prefix) is `agent-archive/` unless you change it. Retention is
-a whole number of days from 1 to 36,500; there is no "keep forever" (36,500
-days is about a century). Storage changes are checked
+a whole number of days from 1 to 36,500, or `forever` to disable automatic whole-session expiry. Provider lifecycle rules and explicit deletion still apply. Storage changes are checked
 again before starting. If the connection test fails, setup says why and
 how to fix it; see [when setup's storage check
 fails](../guides/troubleshooting.md#when-setups-storage-check-fails).
@@ -316,6 +344,7 @@ agent-archive setup --yes --provider s3 --bucket BUCKET --aws-profile PROFILE \
 - `--prefix PREFIX` sets the folder inside the bucket, including when changing
   only that setting on an existing installation.
 - `--retention-days DAYS` sets retention from 1 to 36500 days.
+- `--keep-forever` disables automatic whole-session expiry and conflicts with `--retention-days`. The default remains 90 days. Guided retention offers **90 days**, **Custom duration**, and **Keep forever**, starting from the saved preference. Custom duration also accepts `forever`. This preference applies to existing and future sessions owned by this installation; provider lifecycle rules and explicit deletion still apply.
 - `--require-skill-use` captures only sessions that use skills;
   `--no-require-skill-use` captures sessions with or without skills. Omitted
   settings keep their saved values (fresh setup captures both).
@@ -572,16 +601,21 @@ from loading its own job into your real launchd or systemd user manager: stub
 
 ## After setup
 
-After "Setup complete", setup says, with one line per app, what to do next:
+After "Setup complete", setup says, with one line per app, what it needs and
+which sessions it captures from now on. A session already open in an
+included project, started in the last 7 days, is not lost: setup imports it
+([below](#sessions-from-the-last-7-days)), and the collector keeps it
+current.
 
-- **Codex:** start a supported new task within the reviewed Codex scope: an included
-  project in included-project mode, or any non-excluded project in all-projects mode.
-  Interactive setup reviews automatic discovery and Codex scope; fresh scripts
-  specify both choices explicitly. Hook
-  capture remains available with `/hooks` approval, and is required when
-  discovery is disabled or the native producer is unsupported.
-- **Claude Code:** nothing to approve; start a new session.
-- **Cursor:** nothing to approve; start a new Agent chat.
+- **Codex:** automatic discovery captures supported tasks that start within the
+  reviewed Codex scope: an included project in included-project mode, or any
+  non-excluded project in all-projects mode. Interactive setup reviews
+  automatic discovery and Codex scope; fresh scripts specify both choices
+  explicitly. Hook capture remains available with `/hooks` approval, and is
+  required when discovery is disabled or the native producer is unsupported.
+- **Claude Code:** nothing to approve; hooks capture sessions that start from
+  now on (or after `/clear`).
+- **Cursor:** nothing to approve; hooks capture Agent chats that start from now on.
 
 Setup's closing lines also name the agent skills it installed (`/handoff` and
 `agent-archive`) and the opt-out, `--no-skills`. Unlike Codex's hooks, a skill
@@ -592,10 +626,12 @@ as "pull in the auth session from Codex" ([agent skills](../guides/agent-skills.
 Claude Code asks before it first uses the skill and before the commands it
 runs.
 
-Sessions already open are not captured: capture needs a provable fresh
-start, so only a new session in an included project counts. In Codex and
-Claude Code, `/clear` also starts one; in Cursor, only a new chat does. Setup finishes without waiting for it. Check
-progress with:
+Hooks and discovery need a provable fresh start, so they admit only sessions
+that start after setup in an included project. In Codex and Claude Code,
+`/clear` also starts one; in Cursor, only a new chat does. Sessions that
+started before setup are covered by its import instead, within its limits
+below. Setup finishes
+without waiting for either. Check progress with:
 
 ```sh
 agent-archive status
@@ -605,36 +641,54 @@ agent-archive status --json
 What each status line means is in
 [troubleshooting](../guides/troubleshooting.md#reading-status).
 
-Once it has said how to check capture, setup offers to import the past
-sessions of the projects you chose, when they have some on this machine that
-aren't in the archive yet:
+If you set up Codex discovery before setup imported the last 7 days, or a
+session in those days was not imported, `status` says so under Codex, once
+discovery has scanned it:
 
 ```text
-Optional · Import past sessions
-
-Looking for past sessions in these projects… 214 found.
-
-? Import these sessions?
-
-  Found 214 sessions in 3 selected projects.
-  90-day retention applies.
-
-  1) Import 214 sessions (default)
-  2) Skip for now
-
-› Choose [1]:
+! 1 Codex session from the 7 days before setup was not captured.
+  Import it with agent-archive backfill --since 2026-09-28.
 ```
 
-Yes runs the same import as `agent-archive backfill --project DIR` for each
-chosen project, with the same checks, and uploads the sessions; it ends with
-the import's ID, and `agent-archive backfill undo ID` removes them again (see
-[backfill](../guides/backfill.md)). If the import stops or fails, setup
-stays done and prints the `agent-archive backfill` command that finishes
-it. No changes
-nothing; you can run `agent-archive backfill` any time. Setup skips the offer
-while capture is paused, when there is nothing to import, and with `--yes`,
-which asks nothing and mentions `agent-archive backfill` in its next steps
-instead.
+The date is the local day 7 days before discovery was first enabled for Codex.
+The count is top-level Codex sessions that started from that day until
+discovery was enabled, that discovery refused for starting before it, and that
+are not archived; the line goes away once they are imported. Claude Code and
+Cursor have no such line: their hooks see no session from before they were
+installed, unless one runs a hook later, which status lists as a session
+skipped for starting before the project's activation.
+
+### Sessions from the last 7 days
+
+Sessions that started before setup, the one you may be running setup from
+among them, are imported instead. Right after "Setup complete", without a
+question, setup imports the sessions of the last 7 days (the same days as
+`agent-archive backfill --since 7d`) in the included projects, for the apps
+you chose:
+
+```text
+✓ Setup complete · Automatic capture is on
+Imported 3 sessions from the last 7 days (Codex 2, Claude Code 1). Uploading in the background.
+211 older sessions: run agent-archive backfill to import them.
+```
+
+The import registers the sessions and leaves the upload to the background
+collector, as `agent-archive backfill --yes --background` does. It is an
+ordinary import: `agent-archive backfill history` lists it and
+`agent-archive backfill undo ID` removes its sessions again (see
+[backfill](../guides/backfill.md)). It never adds a project: a session in a
+folder you did not include, a temporary folder, or a worktree that no longer
+exists is left to `backfill`, which asks first. The second line appears only
+when the same projects have older sessions that are not in the archive.
+
+Setup says nothing about importing when there is nothing to import, and skips
+it while capture is paused. `setup --yes` imports the same way. If the import
+fails, or a collector pass is still running after about 20 seconds, setup is
+still complete and says so:
+
+```text
+Recent sessions were not imported: <reason>. Run agent-archive backfill --since 7d to retry.
+```
 
 Setup's storage check and installed hooks establish configuration, not a captured session. After `agent-archive sync` or the next background pass, check that the app's Capture row says **archived, verified**, then confirm the session appears in `agent-archive list` and `agent-archive show SESSION_ID`. An overall `Ready` state alone does not establish that this app published a new session and had it read back. For a short route through the check, see [first successful capture](../README.md#first-successful-capture).
 
@@ -722,7 +776,8 @@ created while paused stay excluded. Recognizable imports, forks and spawned-agen
 records stay unsupported. A recently copied native session that has indistinguishable
 supported metadata may qualify; discovery does not attest where execution occurred.
 Project exclusions, destination consent, deduplication and privacy filtering still
-apply. Deliberate backfill remains the way to include older history.
+apply. Setup's [7-day import](#sessions-from-the-last-7-days) and deliberate
+backfill are the ways to include earlier history.
 
 Ordinary `agent-archive status` leads Codex with discovery state and scope;
 absent optional hooks are healthy, while broken owned hooks remain actionable.
@@ -753,3 +808,16 @@ format of existing sessions. Structural checks cannot prove that an unknown
 future producer preserves all current semantics, and these rules do not claim
 desktop GUI acceptance. See the [format contract](../reference/local-discovery-scanner.md#codex-format-compatibility)
 for supported profiles and limits.
+
+### Interrupted resource creation
+
+Guided storage creation records a private receipt before sending each bucket
+creation request. Receipts survive removing a setup draft. A request without a
+durably recorded response is uncertain: it does not prove that a bucket exists
+or that setup owns it. Check your provider account before retrying or deleting
+such a bucket. S3 receipts identify the creation profile, not a verified AWS
+account identity. R2 archive keys use the existing issuance ledger; receipts and
+ledger records contain identifiers and credential references, never setup tokens
+or credential values. Old drafts remain readable and have no inferred receipts.
+Setup withholds new bucket creation if existing receipts cannot be read or the
+receipt limit is reached; preserve and reconcile that history before retrying.

@@ -6,7 +6,7 @@ Expires: 2026-09-25T12:05:00Z
 Digest: HASH
 Unreferenced source deletion candidates (1):
   sessions/codex/MACHINE_ID/source.HASH.jsonl.gz (16 bytes, filter )
-Still-current older-filter sessions (0; never planned for deletion):
+Live older-filter source references (0; never planned for deletion):
 Pause every uploading machine before apply. A versioned bucket also retains noncurrent versions and delete markers until an administrator removes them.
 [exit 0]
 $ agent-archive purge apply /Users/alex/.agent-archive/purge-plans/MACHINE_ID.json

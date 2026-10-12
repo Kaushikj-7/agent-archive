@@ -40,6 +40,9 @@ Step 1 of 3 · Choose what to capture
 
 Step 2 of 3 · Connect storage
 
+Storage · Account
+Account → Storage → Verification
+
 ? Where should your archive live?
 
   1) Cloudflare R2 (default)
@@ -50,12 +53,18 @@ Step 2 of 3 · Connect storage
 › Choose [1]:
 ✓ Provider Amazon S3
 
+Storage · Account
+Account → Storage → Verification
+
 ? AWS profile
 
   [:back] Back to storage options
 
 › Answer:
 ✓ AWS profile work
+
+Storage · Storage
+Account → Storage → Verification
 
 ? Which bucket should sessions be stored in?
 
@@ -69,8 +78,12 @@ Step 2 of 3 · Connect storage
 
 Bucket team-archive is in us-east-1; using that region.
 
+Storage · Verification
+Account → Storage → Verification
 Checking your storage connection…
 ✓ Connected to your storage.
+  ! Bucket privacy not verified: public-access settings could not be read.
+    Make sure public access is off: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
 
 Step 3 of 3 · Review and start
   Apps      Codex, Claude Code, Cursor
@@ -85,7 +98,7 @@ Step 3 of 3 · Review and start
     not be read
     Make sure public access is off:
     https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
-  ! History import is separate.
+  ! Setup imports the last 7 days of included projects; older history is separate.
   ! Sensitive text may remain after filtering.
 
 ? Start archiving?
@@ -114,7 +127,8 @@ Full settings and privacy
   Codex sources  /Users/alex/.codex
   Starts         After local consent, outside pause or
                  exclusion
-  History        Old sessions require deliberate backfill
+  History        Last 7 days of included projects imported
+                 at setup; older sessions require backfill
   Copies         Qualifying recent native copies may be
                  captured
   Hooks          Optional for discovery; approval and
@@ -160,7 +174,7 @@ Step 3 of 3 · Review and start
     not be read
     Make sure public access is off:
     https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
-  ! History import is separate.
+  ! Setup imports the last 7 days of included projects; older history is separate.
   ! Sensitive text may remain after filtering.
 
 ? Start archiving?
@@ -176,37 +190,23 @@ Step 3 of 3 · Review and start
 ✓ Start archiving
 
 ✓ Setup complete · Automatic capture is on
+Imported 2 sessions from the last 7 days (Claude Code 2). Uploading in the background.
 Installed /handoff, which continues a session in another agent: ~/.claude/skills/handoff/SKILL.md, ~/.agents/skills/handoff/SKILL.md
 Installed the agent-archive skill, which lets your agents look up and pull in past sessions: ~/.claude/skills/agent-archive/SKILL.md, ~/.agents/skills/agent-archive/SKILL.md
 To remove the agent skills and keep them off, run agent-archive setup --no-skills.
 
 Next, in each app
-  Codex: start a supported new task in an included project;
-  automatic discovery does not require hook approval.
+  Codex: automatic discovery captures supported tasks that
+  start from now on in an included project; no hook approval
+  needed.
   Optional hook capture: Codex: run /hooks and approve the
-  archive hooks, then start a new session (or /clear).
-  Claude Code: nothing to approve; start a new session (or
-  /clear).
-  Cursor: nothing to approve; start a new Agent chat.
-Sessions already open are not captured. Start a new one in an included project.
+  archive hooks; they capture sessions that start after that
+  (or after /clear).
+  Claude Code: nothing to approve; hooks capture sessions
+  that start from now on (or after /clear).
+  Cursor: nothing to approve; hooks capture Agent chats that
+  start from now on.
 Check progress with agent-archive status.
-
-Optional · Import past sessions
-
-Looking for past sessions in these projects… 2 found.
-
-? Import these sessions?
-
-  Found 2 sessions in 2 selected projects.
-  90-day retention applies.
-
-  1) Import 2 sessions (default)
-  2) Skip for now
-
-› Choose [1]:
-✓ Skip for now
-
-Not imported. Setup is complete. Import them later with agent-archive backfill.
   · Another machine: agent-archive machines pair
 
 ? More next steps?

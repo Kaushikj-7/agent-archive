@@ -32,6 +32,9 @@ func newUndoFixture(t *testing.T) *undoFixture {
 	if err := os.Chmod(home, 0700); err != nil {
 		t.Fatal(err)
 	}
+	if err := config.Save(home, config.Config{RetentionDays: 90}); err != nil {
+		t.Fatal(err)
+	}
 	store, err := state.Open(home)
 	if err != nil {
 		t.Fatal(err)

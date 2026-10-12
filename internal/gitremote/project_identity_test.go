@@ -99,7 +99,9 @@ func TestProjectIdentityTracksBranchConditionalConfiguration(t *testing.T) {
 	if identityEvidenceCurrent(id) {
 		t.Fatal("branch conditional origin changed without invalidating cached identity")
 	}
-	if changed := observeProjectIdentity(t.Context(), root); !changed.Known || changed.Key != archive.RepoKey("https://example.test/acme/branch") {
+	// The include adds a second origin URL naming another repository. No
+	// single key is proven, so the identity is unknown, not keyless.
+	if changed := observeProjectIdentity(t.Context(), root); changed.Known || changed.Root != "" || changed.Key != "" {
 		t.Fatalf("changed identity: %+v", changed)
 	}
 }
@@ -448,6 +450,45 @@ func TestProjectIdentityTraversalLimitIsBudgetExhaustion(t *testing.T) {
 			}}
 			if id := observer.Lookup(t.Context(), root); id.Known || !id.BudgetExhausted {
 				t.Fatal("bounded traversal must remain a budget retry", id)
+			}
+		})
+	}
+}
+
+// Only an origin Git printed but no repository key can name is a keyless
+// checkout (Root set, not Known). A failed origin read may hide any key, so it
+// must not look like one: recovery treats keyless proposed roots as non-owning.
+func TestProjectIdentityKeylessOnlyForNonportableOrigin(t *testing.T) {
+	git := gitOrSkip(t)
+	clone := initRepo(t, git, filepath.Join(t.TempDir(), "deleted-worktree"))
+	top := ProjectRoot(t.Context(), clone, nil)
+	if id := observeProjectIdentity(t.Context(), clone); id.Known || id.Key != "" || id.BudgetExhausted || top == "" || id.Root != top || id.ObservationScope == "" {
+		t.Fatalf("local-path origin: %+v", id)
+	}
+	for _, tc := range []struct {
+		name   string
+		out    string
+		err    error
+		root   bool
+		budget bool
+	}{
+		{name: "nonportable", out: "/synthetic/deleted-worktree\n", root: true},
+		{name: "config failure", err: projectExitStatusError(128)},
+		{name: "failed with output", out: "/synthetic/x\n", err: projectExitStatusError(1)},
+		{name: "not installed", err: exec.ErrNotFound},
+		{name: "output limit", out: "/synthetic/", err: ErrOutputLimit, budget: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			run := func(_ context.Context, _ string, args ...string) ([]byte, error) {
+				if args[2] == "rev-parse" {
+					return []byte(root + "\n"), nil
+				}
+				return []byte(tc.out), tc.err
+			}
+			id := (&IdentityObserver{Run: run}).Lookup(t.Context(), root)
+			if id.Known || id.Key != "" || (tc.root && id.Root != root) || (!tc.root && id.Root != "") || id.BudgetExhausted != tc.budget {
+				t.Fatalf("%+v", id)
 			}
 		})
 	}

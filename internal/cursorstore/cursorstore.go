@@ -132,9 +132,20 @@ type source struct {
 	// strayWAL is set when the only side file is an empty -wal, which SQLite
 	// can leave when Cursor quits just as a reader opens the database. An
 	// empty -wal holds no frames to replay, so the file is read as closed.
+	// settled sets it for a live source whose -wal is empty too, with shm
+	// recording that its -shm existed.
 	strayWAL bool
-	before   os.FileInfo
-	header   []byte
+	// emptyWAL is set on a live source whose -wal was empty: the database
+	// file alone held every committed write when it was resolved.
+	emptyWAL bool
+	// shm is set when a source read as closed (settled) had a -shm file,
+	// which the check afterwards then requires still to be there.
+	shm bool
+	// shmHeader is the -shm's wal-index header (both copies) when a settled
+	// source was resolved; the check afterwards requires it unchanged.
+	shmHeader []byte
+	before    os.FileInfo
+	header    []byte
 }
 
 // resolve follows link to the real database and decides how it may be read.
@@ -163,6 +174,10 @@ type source struct {
 // is ever deleted. A WAL database whose only side file is such an empty -wal
 // is read as closed (it has nothing to replay), and the check afterwards
 // requires the -wal to be still empty and still the only side file.
+//
+// A live source whose -wal is empty is marked emptyWAL. Read and the Reader
+// still read it as live; ReadRecovery, which never reads a live WAL, reads
+// it as closed instead (see settled).
 //
 // An empty link is a system with no known location for the database
 // (the native provider's database location): ErrNoDatabase, as if Cursor were not
@@ -205,6 +220,7 @@ func resolve(link string) (source, error) {
 		return source{}, NotChecked(Locked)
 	case wal && sides["-wal"] && sides["-shm"]:
 		src.live = true
+		src.emptyWAL = emptyFile(path + "-wal")
 	case wal && len(sides) == 1 && emptyFile(path+"-wal"):
 		src.strayWAL = true
 	default:
@@ -228,9 +244,39 @@ func dsn(path string, live bool) string {
 	return (&url.URL{Scheme: "file", Path: path, RawQuery: query.Encode()}).String()
 }
 
+// settled is a live source whose -wal is empty, to be read as closed: the
+// database file alone holds every committed write, so it is opened
+// immutable (which ignores the -wal and -shm and takes no lock) and checked
+// afterwards as a stray -wal is, with the -shm still required to be there.
+// Cursor left such a pair when it quit without removing them (or has the
+// database open but has written nothing since its last truncating
+// checkpoint); a write that lands during the read fills the -wal, or, when
+// checkpointed and truncated, changes the database file, and the check
+// afterwards fails. Such a checkpoint can leave the file's size and header
+// as they were (a WAL commit changes the header's change counter only when
+// it changes page 1), so its modification time is what shows it. A file
+// system whose timestamps are coarse (Linux mtime can advance only once per
+// kernel tick) can leave that time as it was, so the -shm's wal-index header
+// is compared too: every write transaction changes it, and a checkpoint that
+// restarts the -wal changes its salts. ok is false for any other source,
+// and for one whose -shm header cannot be read.
+func (s source) settled() (source, bool) {
+	if !s.live || !s.emptyWAL {
+		return source{}, false
+	}
+	header, ok := shmHeader(s.path)
+	if !ok {
+		return source{}, false
+	}
+	s.live, s.emptyWAL, s.strayWAL, s.shm, s.shmHeader = false, false, true, true, header
+	return s, true
+}
+
 // unchanged is the check after an immutable read: the file is the same one,
 // with the same size, modification time, and header, and still no side file
-// (or, for a stray -wal, still only that -wal, still empty).
+// (or, for a stray -wal, still that -wal, still empty, with no journal and a
+// -shm only if one was there before, with the same wal-index header when a
+// settled source recorded it).
 func (s source) unchanged() bool {
 	after, err := os.Stat(s.path)
 	headerAfter, ok := sqliteHeader(s.path)
@@ -238,9 +284,14 @@ func (s source) unchanged() bool {
 		!os.SameFile(s.before, after) || !bytes.Equal(s.header, headerAfter) {
 		return false
 	}
+	if s.shmHeader != nil {
+		if after, ok := shmHeader(s.path); !ok || !bytes.Equal(s.shmHeader, after) {
+			return false
+		}
+	}
 	sides := existingSideFiles(s.path)
 	if s.strayWAL {
-		return len(sides) == 1 && emptyFile(s.path+"-wal")
+		return sides["-wal"] && sides["-shm"] == s.shm && !sides["-journal"] && emptyFile(s.path+"-wal")
 	}
 	return len(sides) == 0
 }
@@ -300,6 +351,13 @@ func query(ctx context.Context, dsn string, read func(context.Context, *sql.DB) 
 
 // sqliteHeader reads the 100-byte database header; ok is false for a file
 // that is not a SQLite database.
+//
+// It opens the file read-only and takes no lock, but closing any descriptor
+// of a file releases every POSIX advisory (fcntl) lock this process holds on
+// it. It must not run while this process holds a SQLite connection that locks
+// the same database; readInPlace checks only after its connection is closed,
+// and an immutable connection takes no lock. shmHeader has the same caveat
+// for the -shm.
 func sqliteHeader(path string) (header []byte, ok bool) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -311,6 +369,37 @@ func sqliteHeader(path string) (header []byte, ok bool) {
 		return nil, false
 	}
 	if !bytes.Equal(header[:16], []byte("SQLite format 3\x00")) {
+		return nil, false
+	}
+	return header, true
+}
+
+// shmHeaderSize is the -shm's wal-index header: two 48-byte copies of the
+// WAL index header, which SQLite updates on every write transaction and
+// every restart of the -wal.
+const shmHeaderSize = 96
+
+// shmHeader reads the first shmHeaderSize bytes of path's -shm without
+// changing it: a regular file (not a link), opened O_RDONLY, with no lock
+// taken, no mapping and nothing written. ok is false for a missing, shorter
+// or replaced -shm. The same-process lock caveat of sqliteHeader applies.
+func shmHeader(path string) (header []byte, ok bool) {
+	name := path + "-shm"
+	info, err := os.Lstat(name)
+	if err != nil || !info.Mode().IsRegular() {
+		return nil, false
+	}
+	f, err := os.Open(name)
+	if err != nil {
+		return nil, false
+	}
+	defer func() { _ = f.Close() }()
+	opened, err := f.Stat()
+	if err != nil || !os.SameFile(info, opened) {
+		return nil, false
+	}
+	header = make([]byte, shmHeaderSize)
+	if _, err := io.ReadFull(f, header); err != nil {
 		return nil, false
 	}
 	return header, true

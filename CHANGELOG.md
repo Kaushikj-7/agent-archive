@@ -6,6 +6,78 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Import complete sessions from vanished repositories into stable historical-only
+  projects with bounded `backfill --mapping-file` assignments. Historical imports
+  freeze filtered evidence without adding live capture roots. Rename or disable
+  their destination-bound permission with `historical-project`; pairing preserves
+  local policy. Native deletion, privacy/parser maintenance, retention and exact
+  undo keep ownership and capture age. A permanent v10 fence refuses older writers.
+- Validate original Codex thread cwd and producer facts independently of selected
+  physical revisions, accept trusted native-home platform aliases for complete
+  related-history imports, and reject remote metadata that omits retained history.
+
+- Capture Codex threads the Codex app opens for a task another thread's agent
+  handed off (`thread_source: "agent_created_thread"`). They are top-level
+  threads, named and listed by Codex like your own, and were failing on every
+  pass with "source unavailable". Rollouts already seen are read again once.
+- Follow a Codex rollout that Codex moved into `archived_sessions/` (or back)
+  by its thread ID: the session's recorded location moves with it instead of
+  leaving a "transcript missing" gap, and unchanged content is not uploaded
+  again. This also works while Codex's thread index still names the old
+  location.
+- Add an explicit Keep forever choice in setup and `--keep-forever` for
+  scripted setup; new installations still default to 90 days. Pairing and
+  imports preserve this per-machine preference. It disables automatic
+  whole-session expiry, while privacy cleanup, explicit deletion and provider
+  lifecycle rules still apply. Choosing it installs a permanent compatibility
+  fence: older binaries refuse the configuration, even after switching back
+  to finite retention. Upgrade installed hooks and collectors before using it.
+- Report failed or short JSON output writes, including status and normalized
+  transcripts. Reject nonregular or invalid UTF-8 feedback input without
+  blocking on named pipes. Publish handoff files privately and atomically,
+  preserving existing files on errors and refusing symlink targets.
+- Reject invalid purge and machine-listing flags before setup or credentials.
+  Remote object reads and listing pages have a two-minute budget covering
+  retries and stalled bodies; interactive selection and whole archive scans
+  have no shared deadline. Interrupts cancel command reads while the pager
+  retains its own signal behavior.
+- Protect active and preserved revision sources during purge and selective archive
+  cleanup. Invalid or missing history references block deletion; old-filter live
+  evidence must be replaced through verified privacy publication first.
+- Stop reporting Codex sessions whose history coverage is not complete yet,
+  or whose source changed while being read, as failed: `sync` counts them by
+  reason ("8 waiting for Codex history coverage") and `status` lists them as
+  rechecking, while real failures are still listed. `backfill history` counts
+  as waiting only sessions not in the archive yet, and counts uploaded ones
+  with a re-scan or newer work owed apart (`uploaded · 2 rechecking`). A
+  source error can now carry a fixed, content-free cause ("source unavailable:
+  Codex history coverage incomplete"). A session still put off after 24
+  hours of passes is reported as failed again, until a pass reads it.
+- Keep `handoff` within `--max-bytes` for long sessions: once the existing
+  trimming is not enough, older exchanges keep only their last agent message,
+  then all tool output is dropped, then every exchange but the last is
+  condensed to its prompt and counts. Markdown still over the limit because of
+  one oversized part, or of several hundred exchanges, is cut at a line with
+  a marker, keeping the last exchange.
+- Clarify storage onboarding with Account, Storage, and Verification stages.
+  Keep valid existing-bucket answers when going back, show S3 archive
+  permissions on request, and report privacy separately from connectivity.
+- Resume interrupted storage setup from durable resource receipts, prevent
+  ambiguous duplicate creation, track manual bucket cleanup, and explicitly
+  revoke unused guided keys while protecting active and draft credentials.
+
+- Preserve private, durable bucket creation receipts across interrupted setup and
+  abandoned drafts, including uncertain provider outcomes. Archive keys continue
+  to use the existing issuance ledger.
+- Show pairing delivery and receiver setup as separate progress stages. Closing
+  source transfer instructions no longer implies receiver success. Cancellation
+  and expiry explain bundle and credential effects, including local S3 profiles.
+
+- Stop titling Codex desktop sessions with injected open-page context such as
+  `<external_codex_apps_open_page>{"page_id":null}</external_codex_apps_open_page>`.
+  Sessions captured before that context was filtered now take their title from
+  the first real prompt when their metadata refreshes.
+
 - Preserve settled capture and source bytes when cached native naming reads are
   unavailable and the same observation uses an equivalent timezone offset.
 
@@ -32,6 +104,13 @@ follow [Semantic Versioning](https://semver.org/).
 
 
 ### Added
+
+- List retained native revision IDs with `show SESSION_ID --revisions`, including
+  capture times and recorded provenance in human or JSON output. Select one exact
+  parent revision with `--revision` in show, archive-only handoff, or a single
+  full-detail eval export. Selected summaries and provenance come from verified
+  retained evidence; unknown IDs and invalid history fail without an active
+  fallback. Selection excludes children, and retained history remains bounded.
 
 - Capture native Codex children without a stop hook or archived parent. Children
   keep their own identity, creation, task evidence, consent and activity. Historical
@@ -91,6 +170,19 @@ follow [Semantic Versioning](https://semver.org/).
   coverage remains tracked for release testing.
 
 ### Fixed
+
+- Preserve confirmed backfill evidence before registering sessions, including
+  selected Codex history and native children. Imports can finish after native
+  files disappear; background recovery verifies remote sources and metadata
+  before reporting completion. Private filtered staging has a shared 1 GiB
+  quota, resumable admission, current-policy filtering, and journalled cancel
+  and undo cleanup. History distinguishes staged/admitted from remotely verified
+  sessions. Staging rechecks native identity before admission. Dry-run creates
+  no staging and reports incomplete JSON writes as failures. Oversized selected
+  sources and encoded journals fail before admission, within the collector's
+  recovery memory allowance.
+  Imports also finish skipped candidates promptly when their project proof or
+  authorization changes after identity reservation and before staging.
 
 - Validate a Codex fork's first own task during import and ongoing capture,
   and protect every qualified history import from older writers. Discovery

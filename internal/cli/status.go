@@ -1,10 +1,8 @@
 package cli
 
 import (
-	"bytes"
 	"cmp"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -41,6 +39,10 @@ type appStatus struct {
 	// Discovery health is independent of hook execution and publication verification.
 	CodexCaptureScope string            `json:"codex_capture_scope,omitempty"`
 	Discovery         *discovery.Health `json:"discovery,omitempty"`
+	// PreSetupSessions are sessions from the 7 days before discovery's
+	// start floor that discovery refused and that are not archived. Absent
+	// when there are none.
+	PreSetupSessions  *preSetupSessions `json:"pre_setup_sessions,omitempty"`
 	PublishedSessions int               `json:"published_sessions"`
 	VerifiedSessions  int               `json:"verified_sessions"`
 	Configured        bool              `json:"configured"`
@@ -65,14 +67,17 @@ type appStatus struct {
 	CaptureGaps []archive.CaptureGap `json:"capture_gaps,omitempty"`
 	// SessionsWithCaptureGaps counts the distinct sessions behind
 	// CaptureGaps: one session can record several gaps.
-	SessionsWithCaptureGaps int       `json:"sessions_with_capture_gaps,omitempty"`
-	Installed               bool      `json:"installed"`
-	InstalledVersion        string    `json:"installed_version,omitempty"`
-	VersionSource           string    `json:"installed_version_source,omitempty"`
-	VersionObservedAt       time.Time `json:"installed_version_observed_at,omitzero"`
-	VersionKind             string    `json:"installed_version_kind,omitempty"`
-	VersionState            string    `json:"installed_version_state"`
-	VersionSupport          string    `json:"installed_version_support"`
+	SessionsWithCaptureGaps int `json:"sessions_with_capture_gaps,omitempty"`
+	// SizeLimitedSessions lists the sessions whose capture stopped at a
+	// size limit, with the limit when it was recorded.
+	SizeLimitedSessions []sizeLimitedSession `json:"size_limited_sessions,omitempty"`
+	Installed           bool                 `json:"installed"`
+	InstalledVersion    string               `json:"installed_version,omitempty"`
+	VersionSource       string               `json:"installed_version_source,omitempty"`
+	VersionObservedAt   time.Time            `json:"installed_version_observed_at,omitzero"`
+	VersionKind         string               `json:"installed_version_kind,omitempty"`
+	VersionState        string               `json:"installed_version_state"`
+	VersionSupport      string               `json:"installed_version_support"`
 	// VersionSupportReason is set when VersionSupport is unverified. Verified
 	// captures report the harness's own version (Codex cli_version, Claude
 	// Code record version, Cursor hook cursor_version) in HarnessVersions; the
@@ -139,6 +144,9 @@ const (
 	// uploadingFailing: the last pass recorded an issue for the session
 	// (Issue names its kind).
 	uploadingFailing uploadingState = "failing"
+	// uploadingRechecking: the last pass put off its scan without a failure
+	// (Deferred names why) and the next pass retries it.
+	uploadingRechecking uploadingState = "rechecking"
 )
 
 // uploadingSession is one top-level session with work not yet published.
@@ -148,6 +156,7 @@ type uploadingSession struct {
 	Project          string         `json:"project"`
 	State            uploadingState `json:"state"`
 	Issue            string         `json:"issue,omitempty"`
+	Deferred         string         `json:"deferred,omitempty"`
 	Imported         bool           `json:"imported,omitempty"`
 }
 
@@ -173,7 +182,13 @@ type projectCaptureStatus struct {
 	automaticCapture bool
 }
 
+type statusRetention struct {
+	Days            int  `json:"retention_days"`
+	AutomaticExpiry bool `json:"automatic_expiry"`
+}
+
 type statusView struct {
+	Retention                  *statusRetention                  `json:"retention,omitempty"`
 	IdentityRecovery           *state.SessionIndexRecoveryStatus `json:"identity_recovery,omitempty"`
 	MachineRegistrationPending bool                              `json:"machine_registration_pending,omitempty"`
 	PrivacyEvidence            storage.PrivacyReport             `json:"privacy_evidence"`
@@ -276,16 +291,7 @@ func runStatusCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		return 1
 	}
 	if *jsonOut {
-		var encoded bytes.Buffer
-		encoder := json.NewEncoder(&encoded)
-		encoder.SetIndent("", "  ")
-		if err := encoder.Encode(view); err != nil {
-			terminal.Println(stderr, err)
-			return 1
-		}
-		// Errors and names in the view can come from the bucket.
-		terminal.Print(stdout, string(archive.DisplayJSON(encoded.Bytes())))
-		return 0
+		return printJSON(stdout, stderr, view)
 	}
 	// The style is the terminal's, not the pager buffer's.
 	sc := statusScreen{style: styleFor(stdout), now: env.now(), home: view.userHome, verbose: *verbose}
@@ -336,9 +342,49 @@ func blockedReasonDetail(reason state.BlockedReason) string {
 	case state.BlockedReasonTranscriptRewritten:
 		return "The current transcript cannot prove extension of retained history. Automatic capture resumes only if extension can be proved. To preserve this history and capture current activity under a new linked ID, preview agent-archive recover SESSION_ID, then explicitly confirm it."
 	case state.BlockedReasonTranscriptTooLarge:
-		// Permanent for the current transcript: the general wording below.
+		// Permanent for the current transcript: the general wording below,
+		// or sizeLimitDetail when the limit is known.
 	}
 	return "The current transcript can no longer be captured; the last published snapshot, if any, stays retained."
+}
+
+// sizeLimitDetail explains a size-limit gap whose limit was recorded: which
+// limit, how far over it the session is, and how to go on capturing.
+func sizeLimitDetail(harness, archiveSessionID string, limit state.SizeLimitGap) string {
+	label := collector.SizeLimitLabel(harness, limit)
+	over := ""
+	if limit.SizeBytes > 0 {
+		over = " at " + formatBytes(limit.SizeBytes)
+	}
+	var what string
+	switch limit.Kind {
+	case state.SizeLimitRaw:
+		what = fmt.Sprintf("The transcript%s is over the %s limit on what a pass reads.", over, label)
+	case state.SizeLimitFiltered:
+		what = fmt.Sprintf("What the archive keeps of the transcript%s is over the %s limit.", over, label)
+	case state.SizeLimitRecord:
+		what = fmt.Sprintf("One record in the transcript is over the %s limit.", label)
+	case state.SizeLimitReadBudget:
+		what = fmt.Sprintf("Reading the transcript%s needs more than the %s one session may use in a pass.", over, label)
+	default:
+		what = fmt.Sprintf("The transcript is over the %s limit.", label)
+	}
+	return what + " Capture stopped at the last published snapshot, which stays retained and readable. To keep capturing the work, continue it in a new session: agent-archive handoff " + archiveSessionID + " carries this one's context there."
+}
+
+// formatBytes words a byte count in MB, as file sizes are usually shown.
+func formatBytes(n int64) string {
+	return fmt.Sprintf("%.1f MB", float64(n)/1e6)
+}
+
+// sizeLimitedSession is one session status APP lists as stopped at a size
+// limit.
+type sizeLimitedSession struct {
+	ArchiveSessionID string `json:"archive_session_id"`
+	// Limit is the limit it stopped at, as SizeLimitLabel words it, or ""
+	// when the gap was recorded without one.
+	Limit     string `json:"limit,omitempty"`
+	SizeBytes int64  `json:"size_bytes,omitempty"`
 }
 
 // readBackProgress summarises how much of an app's evidence is verified:
@@ -405,6 +451,7 @@ func readStatus(env Env) (view statusView, err error) {
 	for _, name := range cfg.Harnesses {
 		view.Apps = append(view.Apps, sessions.appStatus(name, cfg, home, view.Collector.SessionIssues))
 	}
+	readPreSetupSessions(&view, cfg, home, store, sessions.regs, env.now())
 	for _, name := range cfg.ImportedHarnesses {
 		if len(cfg.Harnesses) == 0 || slices.Contains(cfg.Harnesses, name) {
 			continue
@@ -453,6 +500,7 @@ func readConfiguredStatus(view *statusView, cfg config.Config, home string, env 
 		view.Warnings = append(view.Warnings, "Machine registration pending; the collector retries independently of capture.")
 	}
 	view.configured = true
+	view.Retention = &statusRetention{Days: cfg.RetentionDays, AutomaticExpiry: cfg.RetentionDays != 0}
 	view.SkillEvidence = string(cfg.EffectiveSkillEvidence())
 	view.AgentSkillsDisabled = cfg.NoSkills
 	view.Background = "unknown"
@@ -538,6 +586,9 @@ type statusSessions struct {
 	skip  func(id string, err error)
 	// owed is what each accepted or imported session still owes.
 	owed map[string]state.Outstanding
+	// deferred is why the last pass put off each deferred session's scan
+	// (state.Status.DeferredSessions).
+	deferred map[string]string
 }
 
 // readSessionStatus reads the collector's status, the pending count, and the
@@ -630,7 +681,7 @@ func readSessionStatus(view *statusView, cfg config.Config, home string, store *
 	if len(batches) > 0 {
 		view.LastImport = batches[len(batches)-1].ID
 	}
-	return statusSessions{store: store, regs: regs, skip: skip, owed: owed}
+	return statusSessions{store: store, regs: regs, skip: skip, owed: owed, deferred: view.Collector.DeferredSessions}
 }
 
 // appStatus is one configured app's capture evidence: its sessions, per
@@ -774,9 +825,13 @@ func (s statusSessions) addUploading(app *appStatus, project *projectCaptureStat
 		ArchiveSessionID: reg.ArchiveSessionID, Project: reg.ProjectRoot, StartedAt: reg.SessionStartedAt,
 		State: uploadingPending, Imported: reg.Imported(),
 	}
-	switch issue := issues[reg.ArchiveSessionID]; {
+	switch issue, deferred := issues[reg.ArchiveSessionID], s.deferred[reg.ArchiveSessionID]; {
 	case issue != "":
 		session.State, session.Issue = uploadingFailing, issue
+	case deferred != "" && o.Scan:
+		// The last pass put its scan off; the scan journal says it is still
+		// owed, so the reason still applies.
+		session.State, session.Deferred = uploadingRechecking, deferred
 	case !o.Published:
 		session.State = uploadingFirst
 	}
@@ -842,7 +897,18 @@ func (s statusSessions) addSession(app *appStatus, pair *projectCaptureStatus, r
 			s.skip(reg.ArchiveSessionID, e)
 			return
 		}
-		app.CaptureGaps = append(app.CaptureGaps, archive.CaptureGap{Code: string(reason), Detail: blockedReasonDetail(reason)})
+		detail := blockedReasonDetail(reason)
+		if reason == state.BlockedReasonTranscriptTooLarge || reason == state.BlockedReasonRecordTooLarge {
+			var label string
+			var size int64
+			if signature, found, err := s.store.LoadScanSignature(reg.ArchiveSessionID); err == nil && found && signature.Blocked == reason && signature.SizeLimit != nil {
+				detail = sizeLimitDetail(reg.Harness.Name, reg.ArchiveSessionID, *signature.SizeLimit)
+				label = collector.SizeLimitLabel(reg.Harness.Name, *signature.SizeLimit)
+				size = signature.SizeLimit.SizeBytes
+			}
+			app.SizeLimitedSessions = append(app.SizeLimitedSessions, sizeLimitedSession{ArchiveSessionID: reg.ArchiveSessionID, Limit: label, SizeBytes: size})
+		}
+		app.CaptureGaps = append(app.CaptureGaps, archive.CaptureGap{Code: string(reason), Detail: detail})
 	}
 	if found {
 		if cacheStatus != state.CacheStatusBlocked {
@@ -1340,18 +1406,21 @@ func importedSessionCounts(cfg config.Config, regs []archive.SessionRegistration
 // the one definition state.Outstanding gives, for a caller that has not
 // listed the queued requests.
 func importPending(store *state.Store, cfg config.Config, reg archive.SessionRegistration) (bool, error) {
+	owed, err := importOutstanding(store, cfg, reg)
+	return owed.Pending(), err
+}
+
+// importOutstanding is what an imported session still owes under cfg (see
+// state.Outstanding), or nothing for a session cfg does not publish.
+func importOutstanding(store *state.Store, cfg config.Config, reg archive.SessionRegistration) (state.Outstanding, error) {
 	if !cfg.AcceptSession(reg) {
-		return false, nil
+		return state.Outstanding{}, nil
 	}
 	_, requested, err := store.LoadRequest(reg.ArchiveSessionID)
 	if err != nil {
-		return false, err
+		return state.Outstanding{}, err
 	}
-	owed, err := store.Outstanding(reg, requested)
-	if err != nil {
-		return false, err
-	}
-	return owed.Pending(), nil
+	return store.Outstanding(reg, requested)
 }
 
 const (
@@ -1654,6 +1723,9 @@ func (sc statusScreen) captureRows(view statusView) []statusRow {
 	}
 	rows = append(rows, statusRow{mark: sc.info(), cells: []string{"Projects: " + projects}})
 	rows = append(rows, statusRow{mark: sc.info(), cells: []string{"Skill evidence: " + view.SkillEvidence}})
+	if view.Retention != nil {
+		rows = append(rows, statusRow{mark: sc.info(), cells: []string{"Retention: " + config.RetentionLabel(view.Retention.Days)}})
+	}
 	if view.AgentSkillsDisabled {
 		rows = append(rows, statusRow{mark: sc.info(), cells: []string{"Agent skills: turned off; " + sc.style.cmd("agent-archive setup --skills") + " turns them on"}})
 	}
@@ -1710,6 +1782,7 @@ func (sc statusScreen) appRow(app appStatus, limit int) statusRow {
 	if discoveryEnabled(app) && app.Hooks != "installed" && !optionalCodexHooks(app) {
 		row.notes = append(row.notes, statusNote{s.warnMark(), "Capture hooks need attention: " + hooksLabel(app.Hooks) + "; run agent-archive status --verbose for details."})
 	}
+	row.notes = append(row.notes, sc.preSetupNotes(app)...)
 
 	if sc.verbose {
 		row.notes = append(row.notes, statusNote{sc.info(), appProgress(sc.now, app)})
@@ -1872,6 +1945,9 @@ func (sc statusScreen) uploadingNotes(app appStatus, limit int) []statusNote {
 			text += "   " + issueWhat(session.Issue)
 		case uploadingFirst:
 			text += "   waiting for its first upload"
+		case uploadingRechecking:
+			// Not a failure: the next pass retries it.
+			text += "   " + deferredReasonWhat(session.Deferred)
 		case uploadingPending:
 			// The usual state: nothing to add.
 		}
@@ -2572,6 +2648,9 @@ func printStatusDetails(out io.Writer, view statusView) {
 	}
 	terminal.Printf(out, "  Projects:      %d included\n  Pending:       %d session(s)\n  Last scan:     %s\n  Last publish:  %s\n", len(view.Projects), view.Collector.PendingCount, formatTimeOrNever(view.Collector.LastScanAt), formatTimeOrNever(view.Collector.LastPublishedAt))
 	terminal.Printf(out, "  Skill evidence: %s\n", view.SkillEvidence)
+	if view.Retention != nil {
+		terminal.Printf(out, "  Retention:     %s\n", config.RetentionLabel(view.Retention.Days))
+	}
 	if view.ImportedSessions > 0 {
 		imported := fmt.Sprintf("%d session(s), %d waiting to upload", view.ImportedSessions, view.ImportedPending)
 		if view.ImportedWithIssues > 0 {
