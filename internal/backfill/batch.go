@@ -427,7 +427,7 @@ func (b *Batch) reconcileStagedSources(store *state.Store) error {
 		return nil
 	}
 	for after := ""; ; {
-		stages, next, err := store.ImportStages(context.Background(), after, 50)
+		stages, next, closePage, err := store.ImportStagesOwned(context.Background(), after, 50)
 		if err != nil {
 			return err
 		}
@@ -436,6 +436,7 @@ func (b *Batch) reconcileStagedSources(store *state.Store) error {
 				b.StagedSessions = addUnique(b.StagedSessions, stage.Registration.ArchiveSessionID)
 			}
 		}
+		closePage()
 		if next == "" {
 			break
 		}

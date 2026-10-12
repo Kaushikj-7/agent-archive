@@ -75,6 +75,9 @@ func (s *sessionScan) block(reason state.BlockedReason, candidate *archive.Sourc
 // context; admission derives an invocation context for this serial lifecycle.
 func (s *sessionScan) publishPending(ctx context.Context, pending state.PendingPublication) (sessionOutcome, error) {
 	if pending.StagedSelection != nil {
+		if s.opts.CollectorGuard == nil {
+			return outcomeSkipped, state.ErrReadySelectionFrozen
+		}
 		if authority, ok := s.remote.(interface{ CatalogMetadataAuthority() bool }); ok && authority.CatalogMetadataAuthority() {
 			return outcomeSkipped, state.ErrReadySelectionFrozen
 		}

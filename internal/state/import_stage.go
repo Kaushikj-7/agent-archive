@@ -114,7 +114,14 @@ func (s *Store) ImportStages(ctx context.Context, after string, limit int) (stag
 		if errors.Is(err, os.ErrNotExist) {
 			var receipt stagedReleaseReceipt
 			if e := s.readStagedControl(entry.Name(), "release.json", &receipt); e == nil {
-				stages = append(stages, ImportStage{Version: 2, TypedSelection: true, ReleaseOnly: true, SHA256: receipt.Selection.StageSHA256, Registration: archive.SessionRegistration{ArchiveSessionID: entry.Name()}})
+				if s.resourceBudget == nil {
+					return nil, "", ErrReadySelectionFrozen
+				}
+				descriptor := ImportStage{Version: 2, TypedSelection: true, ReleaseOnly: true, SHA256: receipt.Selection.StageSHA256, Registration: archive.SessionRegistration{ArchiveSessionID: entry.Name()}}
+				if err := s.retainImportDescriptor(ctx, descriptor); err != nil {
+					return nil, "", err
+				}
+				stages = append(stages, descriptor)
 				continue
 			} else if !errors.Is(e, os.ErrNotExist) {
 				return nil, "", e
@@ -133,11 +140,25 @@ func (s *Store) ImportStages(ctx context.Context, after string, limit int) (stag
 		if err != nil || !info.Mode().IsRegular() || info.Size() > maxPendingHistoryBytes {
 			return nil, "", errors.Join(ErrDurableStorageRecovery, err)
 		}
-		scratch, closeScratch := s.WithReadBudget(ctx, agentapi.NewNativeReadBudget(128<<20))
+		pageBudget := s.resourceBudget
+		if pageBudget == nil {
+			pageBudget = agentapi.NewNativeReadBudget(128 << 20)
+		}
+		scratch, closeScratch := s.WithReadBudget(ctx, pageBudget)
 		stage, found, err := scratch.loadPreparedImportStage(ctx, entry.Name())
 		if err != nil || !found {
 			closeScratch()
 			return nil, "", errors.Join(ErrDurableStorageRecovery, err)
+		}
+		if stage.TypedSelection && s.resourceBudget == nil {
+			closeScratch()
+			return nil, "", ErrReadySelectionFrozen
+		}
+		stage.Bundle = archive.SourceBundle{}
+		stage.Preserved = nil
+		if err := s.retainImportDescriptor(ctx, stage); err != nil {
+			closeScratch()
+			return nil, "", err
 		}
 		closeScratch()
 
@@ -174,7 +195,8 @@ func (s *Store) ResumeImportAdmissions(ctx context.Context) error {
 	if err := s.readImportControl("import-stage-cursor.json", &cursor); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return errors.Join(ErrDurableStorageRecovery, err)
 	}
-	stages, next, err := s.ImportStages(ctx, cursor.After, 50)
+	stages, next, closePage, err := s.ImportStagesOwned(ctx, cursor.After, 50)
+	defer closePage()
 	if err != nil {
 		return err
 	}
@@ -300,6 +322,11 @@ func (p ImportStage) Validate(ctx context.Context, reg archive.SessionRegistrati
 	if p.TypedSelection && (reg.Origin != archive.SessionOriginImport || reg.ImportBatch.Recorded() == "" || len(p.Preserved) != 0 || p.Bundle.History != nil || reg.HistoricalProject != nil || reg.Harness.Name == "cursor" || len(p.Children) > 64) {
 		return ErrReadySelectionFrozen
 	}
+	if p.TypedSelection {
+		if _, err := agentmeta.JSONWireBound(ctx, p.Children, 64<<10); err != nil {
+			return errors.Join(ErrDurableStorageCapacity, err)
+		}
+	}
 	return p.validateOwner(reg)
 }
 
@@ -350,6 +377,12 @@ func (s *Store) SaveImportSourceSet(ctx context.Context, reg archive.SessionRegi
 		}
 		stage.Version = 2
 		stage.TypedSelection = true
+		if len(children) > 64 {
+			return "", ErrDurableStorageCapacity
+		}
+		if _, err := agentmeta.JSONWireBound(ctx, children, 64<<10); err != nil {
+			return "", errors.Join(ErrDurableStorageCapacity, err)
+		}
 	}
 
 	digest, err := stage.digest(ctx)
@@ -692,6 +725,20 @@ func (s *Store) removeImportCancellation(id string) error {
 // CancelImportStage journals unadmitted cleanup while protecting admitted owners.
 func (s *Store) CancelImportStage(ctx context.Context, reg archive.SessionRegistration) error {
 	return config.WithImportStaging(s.home, func(g config.DurableStorageGuard) error {
+		cfg, present, err := config.Load(s.home)
+		if err != nil {
+			return err
+		}
+		if present && cfg.StagedSelectionProtection {
+			stage, found, err := s.LoadImportStage(ctx, reg)
+			if err != nil {
+				return err
+			}
+			if found && stage.TypedSelection {
+				return ErrReadySelectionFrozen
+			}
+		}
+
 		admitted, found, err := s.LoadRegistration(reg.ArchiveSessionID)
 		if err != nil {
 			return err
@@ -702,6 +749,9 @@ func (s *Store) CancelImportStage(ctx context.Context, reg archive.SessionRegist
 		stage, found, err := s.LoadImportStage(ctx, reg)
 		if err != nil || !found {
 			return err
+		}
+		if stage.TypedSelection {
+			return ErrReadySelectionFrozen
 		}
 		if err := s.writeDurableGuard(ctx, g, importCancelRelative(reg.ArchiveSessionID), importCancellation{SHA256: stage.SHA256}); err != nil {
 			return err
@@ -757,13 +807,15 @@ func (s *Store) preparedImportChildren(ctx context.Context, stage ImportStage) (
 		}
 		scratch, closeScratch := s.WithReadBudget(ctx, agentapi.NewNativeReadBudget(128<<20))
 		prepared, found, err := scratch.loadPreparedImportStage(ctx, child.ArchiveSessionID)
-		closeScratch()
 		if err != nil {
+			closeScratch()
 			return nil, err
 		}
 		if !found || prepared.SHA256 != child.StagedImportSHA256 || prepared.Registration.ParentSessionID != stage.Registration.ArchiveSessionID || !prepared.Registration.InBatch(stage.Registration.ImportBatch.Recorded()) {
+			closeScratch()
 			return nil, ErrDurableStorageRecovery
 		}
+		closeScratch()
 		children = append(children, child)
 	}
 	return children, nil
@@ -809,4 +861,38 @@ func (p *ImportStage) UnmarshalJSON(raw []byte) error {
 	}
 	*p = ImportStage(next)
 	return nil
+}
+
+// retainImportDescriptor transfers the bounded descriptor/roster into the
+// caller's captured page owner before releasing the full-stage read scratch.
+func (s *Store) retainImportDescriptor(ctx context.Context, stage ImportStage) error {
+	n, err := agentmeta.JSONWireBound(ctx, stage, 128<<20)
+	if err != nil {
+		return errors.Join(ErrDurableStorageCapacity, err)
+	}
+	if s.resourceBudget == nil {
+		return nil
+	}
+	reservation := s.resourceBudget.Reservation()
+	if !reservation.Reserve(n) {
+		return errStateBudget
+	}
+	*s.resourceReleases = append(*s.resourceReleases, func() { reservation.Release(n) })
+	return nil
+}
+
+// ImportStagesOwned returns one captured page. The close must follow all
+// descriptor/roster use; ordinary ImportStages retains its legacy API.
+func (s *Store) ImportStagesOwned(ctx context.Context, after string, limit int) ([]ImportStage, string, func(), error) {
+	budget := s.resourceBudget
+	if budget == nil {
+		budget = agentapi.NewNativeReadBudget(128 << 20)
+	}
+	read, closePage := s.WithReadBudget(ctx, budget)
+	stages, next, err := read.ImportStages(ctx, after, limit)
+	if err != nil {
+		closePage()
+		return nil, "", func() {}, err
+	}
+	return stages, next, closePage, nil
 }

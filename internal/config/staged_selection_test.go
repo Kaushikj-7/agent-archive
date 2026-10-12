@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
+	"github.com/wangjohn/agent-archive/internal/archive"
 )
 
 // The raw protocol is usable by the prior decoder too: its rejection is a
@@ -36,12 +39,28 @@ func TestStagedSelectionRawWriterFencePreservesOrdinary(t *testing.T) {
 			return strings.Replace(s, `"staged-selection-v13"`, `"publication-composition-v12"`, 1)
 		},
 		func(s string) string {
-			return strings.Replace(s, `"machine_id":"synthetic"`, `"machine_id":"synthetic","storage":{"archive_format":"catalog-v4"}`, 1)
+			return strings.Replace(s, `"machine_id":"synthetic"`, `"machine_id":"synthetic","storage":{"ArchiveFormat":"catalog-v4"}`, 1)
 		},
 	} {
 		var rejected Config
 		if err := json.Unmarshal([]byte(mutate(raw)), &rejected); err == nil {
 			t.Fatal("unsupported staging configuration accepted")
 		}
+	}
+}
+
+func TestStagedWriterFenceSurvivesActualSaveRollback(t *testing.T) {
+	home := t.TempDir()
+	cfg := Config{MachineID: "synthetic", RetentionDays: 90, Archive: archive.Config{Enabled: true}, DurableStorageProtection: true, PublicationCompositionProtection: true, ImportStagingProtection: true, StagedSelectionProtection: true}
+	if err := SaveWithCatalog(home, cfg, agentmeta.Builtins()); err != nil {
+		t.Fatal(err)
+	}
+	rollback := Config{MachineID: "synthetic", RetentionDays: 90}
+	if err := SaveWithCatalog(home, rollback, agentmeta.Builtins()); err != nil {
+		t.Fatal(err)
+	}
+	loaded, found, err := Load(home)
+	if err != nil || !found || loaded.SchemaVersion != 13 || !loaded.StagedSelectionProtection || loaded.Archive.Enabled {
+		t.Fatalf("rollback stripped staged floor: %#v %v", loaded, err)
 	}
 }

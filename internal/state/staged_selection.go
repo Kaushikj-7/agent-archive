@@ -26,6 +26,9 @@ type StagedSelection struct {
 }
 
 func (q *StagedSelection) UnmarshalJSON(raw []byte) error {
+	if len(raw) > 16<<10 {
+		return ErrDurableStorageRecovery
+	}
 	if err := strictStagedKeys(raw, []string{"version", "stage_sha256", "roster_sha256", "covered_token", "had_request", "proof", "sha256"}); err != nil {
 		return err
 	}
@@ -48,13 +51,36 @@ func (q *StagedSelection) UnmarshalJSON(raw []byte) error {
 }
 
 func (q *StagedSelection) validateDigest() error {
-	if q == nil || q.Version != 3 || q.Core.Version != 3 || q.Core.Purpose != "staged-import" || q.Core.SHA256 != "" || !readyDigestValid(q.StageSHA256) || !readyDigestValid(q.RosterSHA256) || !readyDigestValid(q.SHA256) || q.HadRequest != (q.CoveredToken != "") {
+	if err := q.validateProofShape(); err != nil {
+		return err
+	}
+	copy := *q
+	copy.SHA256 = ""
+	digest, err := boundedStagedProofDigest(copy)
+	if err != nil || digest != q.SHA256 {
 		return ErrDurableStorageRecovery
 	}
-	v := *q
-	v.SHA256 = ""
-	raw, err := json.Marshal(v)
-	if err != nil || readySHA(raw) != q.SHA256 {
+	return nil
+}
+func (q *StagedSelection) validateProofShape() error {
+	if q == nil || q.Version != 3 || q.Core.Version != 3 || q.Core.Purpose != "staged-import" || q.Core.SHA256 != "" || q.HadRequest != (q.CoveredToken != "") || len(q.CoveredToken) > 128 || len(q.Core.DestinationID) == 0 || len(q.Core.DestinationID) > 128 {
+		return ErrDurableStorageRecovery
+	}
+	for _, digest := range []string{q.StageSHA256, q.RosterSHA256, q.SHA256, q.Core.BundleSHA256, q.Core.MetadataSHA256, q.Core.SourceSetSHA256, q.Core.BindingSHA256, q.Core.AdmissionContext, q.Core.PolicyContext} {
+		if !readyDigestValid(digest) {
+			return ErrDurableStorageRecovery
+		}
+	}
+	switch q.Core.Predecessor {
+	case ReadyPredecessorAbsent, ReadyPredecessorUnknown:
+		if q.Core.PredecessorSHA256 != "" {
+			return ErrDurableStorageRecovery
+		}
+	case ReadyPredecessorPresent:
+		if !readyDigestValid(q.Core.PredecessorSHA256) {
+			return ErrDurableStorageRecovery
+		}
+	default:
 		return ErrDurableStorageRecovery
 	}
 	return nil
@@ -93,7 +119,7 @@ func (p PendingPublication) validateStagedShape() error {
 
 func (s *Store) stagedContext(ctx context.Context, id string) (config.Config, archive.SessionRegistration, ImportStage, error) {
 	cfg, err := s.inspectDurableReadRoots()
-	if err != nil || !cfg.SupportsStagedSelection() {
+	if err != nil || !cfg.SupportsStagedSelection() || cfg.Paused || !cfg.Archive.Enabled {
 		return cfg, archive.SessionRegistration{}, ImportStage{}, errors.Join(ErrReadySelectionFrozen, err)
 	}
 	reg, found, err := s.LoadRegistration(id)
@@ -151,16 +177,21 @@ func (s *Store) FreezeStagedSelection(ctx context.Context, id string, p PendingP
 	if err != nil {
 		return p, err
 	}
+	if err := s.validateExactStagedSource(ctx, stage, p); err != nil {
+		return p, err
+	}
 	q.Core.BundleSHA256, err = s.readyDigest(ctx, p.Bundle)
 	if err != nil {
 		return p, err
 	}
 	var metadata archive.Metadata
-	if err = json.Unmarshal(p.MetadataBytes, &metadata); err != nil {
+	scratch, closeScratch := s.WithReadBudget(ctx, s.resourceBudget)
+	defer closeScratch()
+	if err = scratch.unmarshalOwned(p.MetadataBytes, &metadata); err != nil {
 		return p, err
 	}
 	refs, err := metadata.SourceReferences()
-	if err != nil || len(refs) != 1 || refs[0] != p.SourceReference() {
+	if err != nil || len(refs) != 1 || refs[0] != p.SourceReference() || !stagedMetadataMatches(metadata, p.Bundle) {
 		return p, ErrDurableStorageRecovery
 	}
 	q.Core.SourceSetSHA256, err = s.readyDigest(ctx, refs)
@@ -195,11 +226,14 @@ func (s *Store) validateStagedSelection(ctx context.Context, p PendingPublicatio
 	if err != nil {
 		return err
 	}
-	if p.SkillEvidence != string(cfg.EffectiveSkillEvidence()) {
+	if p.SkillEvidence != string(cfg.EffectiveSkillEvidence()) || stage.SkillEvidence != cfg.EffectiveSkillEvidence() || stage.Bundle.Capture.FilterVersion != archive.FilterVersion {
 		return ErrReadySelectionFrozen
 	}
 	if cfg.DestinationID() != q.Core.DestinationID || stage.SHA256 != q.StageSHA256 || !readySelectionOwnerMatches(reg, p.Bundle) {
 		return ErrDurableStorageRecovery
+	}
+	if err := s.validateExactStagedSource(ctx, stage, p); err != nil {
+		return err
 	}
 	checks := []struct {
 		value any
@@ -216,11 +250,13 @@ func (s *Store) validateStagedSelection(ctx context.Context, p PendingPublicatio
 		return errors.Join(ErrDurableStorageRecovery, err)
 	}
 	var metadata archive.Metadata
-	if err = json.Unmarshal(p.MetadataBytes, &metadata); err != nil {
+	scratch, closeScratch := s.WithReadBudget(ctx, s.resourceBudget)
+	defer closeScratch()
+	if err = scratch.unmarshalOwned(p.MetadataBytes, &metadata); err != nil {
 		return err
 	}
 	refs, err := metadata.SourceReferences()
-	if err != nil || len(refs) != 1 || refs[0] != p.SourceReference() {
+	if err != nil || len(refs) != 1 || refs[0] != p.SourceReference() || !stagedMetadataMatches(metadata, p.Bundle) {
 		return ErrDurableStorageRecovery
 	}
 	got, err := s.readyDigest(ctx, refs)
@@ -277,16 +313,22 @@ func (p *Published) validateStagedPublished(ctx context.Context, next *published
 	if err != nil || !cfg.SupportsStagedSelection() || cfg.DestinationID() != q.Core.DestinationID {
 		return errors.Join(ErrDurableStorageRecovery, err)
 	}
-	bundle, err := p.store.readyDigest(ctx, next.LastPublished.Bundle)
+	retained, _, found := next.resolveLastPublished()
+	if !found {
+		return ErrDurableStorageRecovery
+	}
+	bundle, err := p.store.readyDigest(ctx, retained)
 	if err != nil || bundle != q.Core.BundleSHA256 {
 		return errors.Join(ErrDurableStorageRecovery, err)
 	}
 	var metadata archive.Metadata
-	if err := json.Unmarshal(next.MetadataBytes, &metadata); err != nil {
+	scratch, closeScratch := p.store.WithReadBudget(ctx, p.store.resourceBudget)
+	defer closeScratch()
+	if err := scratch.unmarshalOwned(next.MetadataBytes, &metadata); err != nil {
 		return ErrDurableStorageRecovery
 	}
 	refs, err := metadata.SourceReferences()
-	if err != nil || len(refs) != 1 || next.LastPublished.Source == nil || refs[0] != *next.LastPublished.Source || metadata.SessionID != p.id || metadata.NativeChild != next.LastPublished.Bundle.NativeChild {
+	if err != nil || len(refs) != 1 || next.LastPublished.Source == nil || refs[0] != *next.LastPublished.Source || !stagedMetadataMatches(metadata, retained) {
 		return ErrDurableStorageRecovery
 	}
 	set, err := p.store.readyDigest(ctx, refs)
@@ -294,7 +336,7 @@ func (p *Published) validateStagedPublished(ctx context.Context, next *published
 		return errors.Join(ErrDurableStorageRecovery, err)
 	}
 	reg, found, err := p.store.LoadRegistration(p.id)
-	if err != nil || !found || reg.StagedImportSHA256 != q.StageSHA256 || !readySelectionOwnerMatches(reg, next.LastPublished.Bundle) {
+	if err != nil || !found || reg.StagedImportSHA256 != q.StageSHA256 || !readySelectionOwnerMatches(reg, retained) {
 		return errors.Join(ErrDurableStorageRecovery, err)
 	}
 	admission, err := p.store.readyDigest(ctx, reg)
@@ -353,4 +395,20 @@ func rejectStagedNullAliases(raw []byte, names []string) error {
 		}
 	}
 	return nil
+}
+
+// Metadata must describe the exact retained source, including its privacy and
+// adapter epoch. A recomputed digest cannot authorize a different identity.
+func stagedMetadataMatches(metadata archive.Metadata, bundle archive.SourceBundle) bool {
+	return metadata.SchemaVersion == archive.MetadataSchemaVersion &&
+		metadata.SessionID == bundle.ArchiveSessionID &&
+		metadata.NativeSessionID == bundle.NativeSessionID &&
+		metadata.ProjectID == bundle.ProjectID &&
+		metadata.Harness.Name == bundle.Capture.Harness.Name &&
+		metadata.ParentSessionID == bundle.ParentSessionID &&
+		metadata.NativeChild == bundle.NativeChild &&
+		metadata.CapturedAt.Equal(bundle.Capture.CapturedAt) &&
+		metadata.FilterVersion == bundle.Capture.FilterVersion &&
+		metadata.Adapter.Name == bundle.Capture.AdapterName &&
+		metadata.Adapter.Version == bundle.Capture.AdapterVersion
 }

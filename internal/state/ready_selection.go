@@ -463,7 +463,7 @@ func (s *Store) checkSelectingPendingRemoval(id string) error {
 		return nil
 	}
 	if pending.StagedSelection != nil {
-		return s.checkStagedPendingRemoval(pending)
+		return ErrReadySelectionFrozen
 	}
 	if pending.Selection == nil {
 		return nil

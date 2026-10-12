@@ -14,7 +14,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
-func stagedSelectionFixture(t *testing.T, request bool) (*Store, PendingPublication, *local.CollectorGuard) {
+func stagedPreparedFixture(t *testing.T, request bool) (*Store, PendingPublication, *local.CollectorGuard) {
 	t.Helper()
 	s, p := readySelectionFixture(t)
 	p.Selection = nil
@@ -23,12 +23,33 @@ func stagedSelectionFixture(t *testing.T, request bool) (*Store, PendingPublicat
 	if err != nil {
 		t.Fatal(err)
 	}
+	cfg.Archive.Enabled = true
 	cfg.ImportStagingProtection = true
 	cfg.StagedSelectionProtection = true
 	if err = config.Save(s.Home(), cfg); err != nil {
 		t.Fatal(err)
 	}
 	cfg, _, err = config.Load(s.Home())
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Bundle.Capture.FilterVersion = archive.FilterVersion
+	source, err := archive.BuildCompressedSource(p.Bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.SourceBytes, p.SourceSHA256 = source.Bytes, source.SHA256
+	p.SourceKey, err = archive.SourceObjectKey(p.Bundle, source.SHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var metadata archive.Metadata
+	if err = json.Unmarshal(p.MetadataBytes, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	metadata.FilterVersion = p.Bundle.Capture.FilterVersion
+	metadata.SourceBundle = p.SourceReference()
+	p.MetadataBytes, err = json.Marshal(metadata)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,18 +85,47 @@ func stagedSelectionFixture(t *testing.T, request bool) (*Store, PendingPublicat
 	if err = s.SavePending(reg.ArchiveSessionID, p); err != nil {
 		t.Fatal(err)
 	}
-	published, err := s.LoadPublishedState(reg.ArchiveSessionID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = published.SaveReadyPublication(p, p.ReadyAt); err != nil {
-		t.Fatal(err)
-	}
 	guard, err := local.LockCollectorGuard(s.Home())
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { guard.Release() })
+	return s, p, guard
+}
+
+func stagedSelectionFixture(t *testing.T, request bool) (*Store, PendingPublication, *local.CollectorGuard) {
+	t.Helper()
+	s, p, guard := stagedPreparedFixture(t, request)
+	published, err := s.LoadPublishedState(p.Bundle.ArchiveSessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := published.SaveReadyPublication(p, p.ReadyAt); err != nil {
+		t.Fatal(err)
+	}
+	return s, p, guard
+}
+
+// Controlled valid detached-snapshot seam isolates release regressions from
+// the independent SameAsBundle save bug in frozen 2e. Same source in both arms.
+func stagedDetachedFixture(t *testing.T) (*Store, PendingPublication, *local.CollectorGuard) {
+	t.Helper()
+	s, p, guard := stagedPreparedFixture(t, true)
+	published, err := s.LoadPublishedState(p.Bundle.ArchiveSessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, err := published.nextBudgeted(p.Bundle, p.ReadyAt, CacheStatusPublished, "", p.MetadataBytes, nil, ptrStagedSource(p))
+	if err != nil {
+		t.Fatal(err)
+	}
+	next.LastPublished.SameAsBundle = false
+	next.LastPublished.Bundle = p.Bundle
+	next.LastPublished.StagedSelection = p.StagedSelection
+	next.PublicationVersion = 3
+	if err := published.write(next); err != nil {
+		t.Fatal(err)
+	}
 	return s, p, guard
 }
 
@@ -284,4 +334,9 @@ func TestStagedReleaseRefusesCatalogBeforeAnyRead(t *testing.T) {
 	if _, found, err := s.LoadPending(p.Bundle.ArchiveSessionID); err != nil || !found {
 		t.Fatal("catalog refusal lost pending", err)
 	}
+}
+
+func ptrStagedSource(p PendingPublication) *archive.SourceReference {
+	ref := p.SourceReference()
+	return &ref
 }

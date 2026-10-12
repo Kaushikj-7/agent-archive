@@ -284,11 +284,6 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	if err := local.ResumeImportAdmissions(ctx); err != nil {
 		return Result{Errors: map[string]error{"staged-imports": err}}, err
 	}
-	if remote, ok := store.(state.StagedReadback); ok {
-		if err := local.ResumeStagedReleases(ctx, remote, opts.CollectorGuard); err != nil {
-			return Result{Errors: map[string]error{"staged-releases": err}}, err
-		}
-	}
 	// Recovery can finish cancellation or establish selected admissions. Report
 	// their current obligations, rather than the pre-recovery orphan snapshot.
 	durableObligations, durableErr := local.DurableStorageObligations()
@@ -389,6 +384,18 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 			continue
 		}
 		p.scan(ctx, reg)
+	}
+	if remote, ok := store.(state.StagedReadback); ok {
+		holds, err := local.ResumeStagedReleases(ctx, remote, opts.CollectorGuard)
+		for id, hold := range holds {
+			addError(p.result.Errors, id, hold)
+		}
+		if ctx.Err() != nil {
+			return p.result, ctx.Err()
+		}
+		if err != nil {
+			addError(p.result.Errors, "staged-releases", err)
+		}
 	}
 	return p.result, p.saveStatus()
 }

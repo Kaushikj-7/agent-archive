@@ -10,7 +10,9 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
 )
@@ -141,8 +143,12 @@ func (s *Store) VerifyAndBeginStagedRelease(ctx context.Context, id string, remo
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	read := *s
-	read.resourceContext = ctx
+	budget := s.resourceBudget
+	if budget == nil {
+		budget = agentapi.NewNativeReadBudget(128 << 20)
+	}
+	read, closeRead := s.WithReadBudget(ctx, budget)
+	defer closeRead()
 	return read.verifyAndBeginStagedRelease(ctx, id, remote, guard)
 }
 
@@ -229,6 +235,9 @@ func (s *Store) finishStagedRelease(ctx context.Context, id string, q *StagedSel
 	}
 	stage, staged, err := s.loadPreparedImportStage(ctx, id)
 	if err != nil {
+		return err
+	}
+	if err := s.validateFinalStagedAuthority(ctx, id, q, pending, found, stage, staged); err != nil {
 		return err
 	}
 	if staged && (!stage.TypedSelection || stage.SHA256 != q.StageSHA256) {
@@ -320,43 +329,50 @@ func (s *Store) removeExactStagedPending(ctx context.Context, g config.DurableSt
 
 // ResumeStagedReleases visits one bounded page following the existing admission
 // cursor. Receipt-only entries survive payload unlink and remain explicit owners.
-func (s *Store) ResumeStagedReleases(ctx context.Context, remote StagedReadback, guard *local.CollectorGuard) error {
+func (s *Store) ResumeStagedReleases(ctx context.Context, remote StagedReadback, guard *local.CollectorGuard) (map[string]error, error) {
+	holds := make(map[string]error)
 	cfg, present, err := config.Load(s.home)
 	if err != nil {
-		return err
+		return holds, err
 	}
 	if !present || !cfg.StagedSelectionProtection {
-		return nil
+		return holds, nil
 	}
 	if !cfg.SupportsStagedSelection() || guard == nil {
-		return ErrReadySelectionFrozen
+		return holds, ErrReadySelectionFrozen
 	}
 	var cursor struct {
 		After string `json:"after"`
 	}
 	if err := s.readImportControl("import-stage-cursor.json", &cursor); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
+		return holds, err
 	}
-	stages, _, err := s.ImportStages(ctx, cursor.After, 50)
+	stages, _, closePage, err := s.ImportStagesOwned(ctx, cursor.After, 50)
+	defer closePage()
 	if err != nil {
-		return err
+		return holds, err
 	}
 	for _, stage := range stages {
+		if err := ctx.Err(); err != nil {
+			return holds, err
+		}
 		if !stage.TypedSelection {
 			continue
 		}
-		published, err := s.LoadPublishedStateContext(ctx, stage.Registration.ArchiveSessionID)
+		id := stage.Registration.ArchiveSessionID
+		published, err := s.LoadPublishedStateContext(ctx, id)
 		if err != nil {
-			return err
+			holds[id] = err
+			continue
 		}
 		if !published.TypedStagedPublished() {
 			continue
 		}
-		if err := s.VerifyAndBeginStagedRelease(ctx, stage.Registration.ArchiveSessionID, remote, guard); err != nil {
-			return err
+		if err := s.VerifyAndBeginStagedRelease(ctx, id, remote, guard); err != nil {
+			holds[id] = err
 		}
 	}
-	return nil
+	return holds, nil
 }
 
 type stagedReleaseState struct {
@@ -453,6 +469,9 @@ func (s *Store) checkStagedChildHandoffs(ctx context.Context, stage ImportStage,
 		if committed.state.LastPublished == nil || committed.state.LastPublished.StagedSelection == nil || committed.state.LastPublished.StagedSelection.StageSHA256 != child.StagedImportSHA256 {
 			return ErrReadySelectionFrozen
 		}
+		if err := s.requireStagedReleaseProgress(child.ArchiveSessionID, committed.state.LastPublished.StagedSelection); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -516,4 +535,96 @@ func (s *Store) readStagedControl(id, name string, value any) (err error) {
 	err = errors.Join(s.durableContext().Err(), home.Check())
 	keep = err == nil
 	return err
+}
+
+func (s *Store) validateFinalStagedAuthority(ctx context.Context, id string, q *StagedSelection, pending PendingPublication, found bool, stage ImportStage, staged bool) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	cfg, present, err := config.Load(s.home)
+	if err != nil || !present || !cfg.SupportsStagedSelection() || cfg.Paused || !cfg.Archive.Enabled {
+		return errors.Join(ErrReadySelectionFrozen, err)
+	}
+	reg, registered, err := s.LoadRegistration(id)
+	if err != nil || !registered || !cfg.AcceptSession(reg) || reg.StagedImportSHA256 != q.StageSHA256 {
+		return errors.Join(ErrReadySelectionFrozen, err)
+	}
+	admission, err := s.readyDigest(ctx, reg)
+	if err != nil || admission != q.Core.AdmissionContext {
+		return errors.Join(ErrReadySelectionFrozen, err)
+	}
+	published, err := s.LoadPublishedStateContext(ctx, id)
+	if err != nil || !published.TypedStagedPublished() || *published.state.LastPublished.StagedSelection != *q {
+		return errors.Join(ErrReadySelectionFrozen, err)
+	}
+	retained, _, ok := published.state.resolveLastPublished()
+	if !ok {
+		return ErrDurableStorageRecovery
+	}
+	policy := PendingPublication{Bundle: retained, SkillEvidence: string(cfg.EffectiveSkillEvidence())}
+	digest, err := s.readyDigest(ctx, readyPolicy(policy))
+	if err != nil || digest != q.Core.PolicyContext || retained.Capture.FilterVersion != archive.FilterVersion {
+		return errors.Join(ErrReadySelectionFrozen, err)
+	}
+	if found {
+		current, present, err := s.LoadPendingContext(ctx, id)
+		if err != nil || !present || current.StagedSelection == nil || *current.StagedSelection != *q {
+			return errors.Join(ErrReadySelectionFrozen, err)
+		}
+		if err := s.validateStagedSelection(ctx, current); err != nil {
+			return err
+		}
+		binding, err := s.readyBinding(ctx, pending)
+		if err != nil || binding != q.Core.BindingSHA256 {
+			return errors.Join(ErrReadySelectionFrozen, err)
+		}
+	}
+	if staged {
+		return s.validateFinalStagedRoster(ctx, stage, q, cfg)
+	}
+	return nil
+}
+func (s *Store) validateFinalStagedRoster(ctx context.Context, stage ImportStage, q *StagedSelection, cfg config.Config) error {
+	if !stage.TypedSelection || stage.SHA256 != q.StageSHA256 || stage.SkillEvidence != cfg.EffectiveSkillEvidence() {
+		return ErrReadySelectionFrozen
+	}
+	roster, err := s.readyDigest(ctx, stage.Children)
+	if err != nil || roster != q.RosterSHA256 {
+		return errors.Join(ErrReadySelectionFrozen, err)
+	}
+	bundle, err := s.readyDigest(ctx, stage.Bundle)
+	if err != nil || bundle != q.Core.BundleSHA256 {
+		return errors.Join(ErrReadySelectionFrozen, err)
+	}
+	return nil
+}
+func (s *Store) refuseTypedStagedRetirement(id string) error {
+	cfg, present, err := config.Load(s.home)
+	if err != nil {
+		return err
+	}
+	if !present || !cfg.StagedSelectionProtection {
+		return nil
+	}
+	stage, found, err := s.loadPreparedImportStage(s.durableContext(), id)
+	if err != nil {
+		return err
+	}
+	if found && stage.TypedSelection {
+		return ErrReadySelectionFrozen
+	}
+	var receipt stagedReleaseReceipt
+	if err := s.readStagedControl(id, "release.json", &receipt); err == nil {
+		return ErrReadySelectionFrozen
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	published, err := s.LoadPublishedState(id)
+	if err != nil {
+		return err
+	}
+	if published.TypedStagedPublished() {
+		return ErrReadySelectionFrozen
+	}
+	return nil
 }

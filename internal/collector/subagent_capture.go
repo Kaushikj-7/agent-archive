@@ -205,7 +205,7 @@ func materializeSubagentCandidate(ctx context.Context, local *state.Store, candi
 	if err := checkSubagentRegistrationConflict(local, candidate, reg); err != nil {
 		return err
 	}
-	return persistSubagentCandidate(local, candidate, reg)
+	return persistSubagentCandidateContext(ctx, local, candidate, reg)
 }
 
 func admittedSubagentParent(local *state.Store, candidate state.SubagentCandidate, opts Options) (archive.SessionRegistration, error) {
@@ -319,10 +319,28 @@ func checkSubagentRegistrationConflict(local *state.Store, candidate state.Subag
 // Registration is durable before hook evidence, and the candidate remains
 // retryable until both writes complete. Replaying either write is safe.
 func persistSubagentCandidate(local *state.Store, candidate state.SubagentCandidate, reg archive.SessionRegistration) error {
+	return persistSubagentCandidateContext(context.Background(), local, candidate, reg)
+}
+
+func persistSubagentCandidateContext(ctx context.Context, local *state.Store, candidate state.SubagentCandidate, reg archive.SessionRegistration) error {
 	if err := local.SaveRegistration(reg); err != nil {
 		return err
 	}
 	if candidate.Origin == archive.SessionOriginImport {
+		if candidate.StagedImportSHA256 != "" {
+			stage, found, err := local.LoadImportStage(ctx, reg)
+			if err != nil {
+				return err
+			}
+			if !found {
+				return state.ErrDurableStorageRecovery
+			}
+			if stage.TypedSelection {
+				if err := local.SaveRequest(reg.ArchiveSessionID, "backfill", reg.AdmittedAt); err != nil {
+					return err
+				}
+			}
+		}
 		// No SubagentStop fired for a subagent backfill found.
 		return local.AcknowledgeSubagentCandidate(candidate)
 	}
