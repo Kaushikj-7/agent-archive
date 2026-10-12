@@ -26,6 +26,42 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
+  native-release-vulnerabilities:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out product
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: app
+          persist-credentials: false
+      - name: Check out pinned scanner
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: wangjohn/levenshtein
+          ref: 6f799f72befb925d10f2ef01a7c9a46725fa714d
+          path: levenshtein
+          persist-credentials: false
+      - name: Install product release compiler
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: app/go.mod
+          cache: false
+      - name: Stage and scan with the release compiler
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+          NO_COLOR: '1'
+          GOENV: 'off'
+          GOTOOLCHAIN: local
+          GOCACHE: ${{ runner.temp }}/release-vuln-build
+          GOMODCACHE: ${{ runner.temp }}/release-vuln-mod
+          XDG_CACHE_HOME: ${{ runner.temp }}/release-vuln-xdg
+        run: |
+          python3 -B ./app/scripts/stage_release_vulnerability_scan.py --source ./app \
+            --destination "$RUNNER_TEMP/release-vuln-source" --shared ./levenshtein
+          ./levenshtein/verify native-release-vulnerabilities \
+            --source "$RUNNER_TEMP/release-vuln-source" --jobs 1 \
+            --cache-dir "$RUNNER_TEMP/release-vuln-verification"
   verify:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
