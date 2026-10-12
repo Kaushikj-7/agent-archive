@@ -99,7 +99,7 @@ func stagedPreparedFixture(t *testing.T, request bool) (*Store, PendingPublicati
 		}
 		p.RequestToken = req.Token
 	}
-	p, err = s.FreezeStagedSelection(t.Context(), reg.ArchiveSessionID, p, "absent", nil)
+	p, err = s.FreezeStagedSelection(t.Context(), reg.ArchiveSessionID, p, ReadyPredecessorAbsent, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
