@@ -29,7 +29,8 @@ do not establish current-main performance acceptance.
 | #379 selected reads, #381 discovery, #377 cache maintenance, #385 search/browser | #460 | Native/provider/operator, full-size and matched-performance qualification. |
 | #382 concurrent show/lookup | #460, original latency benchmark #465, release note #468 | Matched output/performance qualification. |
 | #384 transactional catalog and #391 migration/bounded reads | #460, preserved measured/year-window controls #464/#466 | Provider atomicity/clock, durable global writer barriers and cutover qualification; full-load/peak-memory acceptance. |
-| #375 prepared stats, #380 ranking, #383 stats selection | Original PRs remain open with historical stacked bases; related reader selection exists on main | Complete unique-source/control accounting before reconciliation or duplicate closure. Old-base mergeability is not current-main readiness. |
+| #383 stats selection | Source-superseded by #460; original year-window benchmark preserved in #466 | Full-window and matched-performance qualification remain open. |
+| #375 prepared stats, #380 ranking | #375 reconciled onto current main as an open draft; surviving ranking work has standalone draft #470 while original #380 remains open | Complete remaining unique-source/control accounting and integration, fresh independent review and current-head CI. Draft source and old-base mergeability do not establish readiness or matched performance. |
 
 The [default listing contract](../maintainers/list-performance.md) now
 distinguishes legacy header enumeration and private summary reuse from
