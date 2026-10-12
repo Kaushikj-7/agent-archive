@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
+	"github.com/wangjohn/agent-archive/internal/archive"
 )
 
 // These small fixtures exercise the same admission preflight as the real-size
