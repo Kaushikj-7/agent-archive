@@ -90,11 +90,15 @@ it is blocked (`TestHookRegistersOnTimeWhenTheRepoKeyLookupHangs`).
 
 The `verify` job (`levenshtein.yml`) runs the shared checks from
 [wangjohn/levenshtein](https://github.com/wangjohn/levenshtein) at the
-commit that workflow pins, in a Linux container: Go lint (staticcheck and
-more) and vet, HTTP and SQL rules, `go.mod` hygiene, `govulncheck`,
+commit that workflow pins, in a Linux container: Go lint (staticcheck,
+HTTP-body and SQL-close rules, and more) and vet, `go.mod` hygiene, `govulncheck`,
 `actionlint`, and `zizmor` for the workflows. `levenshtein.json` picks the
-checks. Run the same thing from a sibling checkout of Levenshtein at the
-pinned commit (it needs Docker):
+checks. The full lint selection includes `bodyclose` and `sqlclosecheck`;
+separate `go-http` and `go-sql` checks would repeat those analyses. Keep those
+rules in the full lint selection when updating the pin.
+
+Run the same thing from a sibling checkout of Levenshtein at the pinned
+commit (it needs Docker):
 
 ```sh
 ../levenshtein/verify pre-merge --source .

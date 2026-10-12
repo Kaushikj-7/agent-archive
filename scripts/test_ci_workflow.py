@@ -155,11 +155,16 @@ class GitIdentityCompatibilityTest(unittest.TestCase):
 class LevenshteinSharedChecksTest(unittest.TestCase):
     def test_all_required_checks_use_the_pinned_shared_container(self):
         config = json.loads((ROOT / 'levenshtein.json').read_text())
-        expected = {'lint', 'vet', 'http', 'sql', 'modules', 'vulnerabilities',
+        expected = {'lint', 'vet', 'modules', 'vulnerabilities',
                     'workflow-lint', 'workflow-security'}
         self.assertEqual(set(config['checks']), expected)
         for name in ('pre-merge', 'main'):
             self.assertEqual(set(config['runs'][name]['checks']), expected)
+        # The pinned full go-lint selection includes bodyclose and sqlclosecheck.
+        # A per-check selection override could silently drop those analyses now
+        # that they no longer run as separate go-http and go-sql checks.
+        self.assertEqual(config['checks']['lint'],
+                         {'kind': 'go-lint', 'target': 'archive', 'environment': 'go'})
         self.assertEqual(config['checks']['vulnerabilities']['kind'], 'go-vuln')
         for name, check in config['checks'].items():
             self.assertEqual(config['environments'][check['environment']],
