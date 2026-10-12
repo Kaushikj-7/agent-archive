@@ -115,6 +115,8 @@ type SourceRevisionCandidates interface {
 // OwnTaskFacts contains the first owned native task observation, never permission.
 // Seen with Native false refuses a later task as replacement evidence.
 type OwnTaskFacts struct {
+	// Refusal is a fixed metadata validation code, never native content.
+	Refusal        SourceCause
 	Seen           bool
 	Native         bool
 	LocalExecution bool

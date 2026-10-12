@@ -11,13 +11,14 @@ import (
 )
 
 // buildBackfillPlan owns the same trusted lookup used by continuous capture.
-func buildBackfillPlan(ctx context.Context, env Env, home, userHome string, cfg config.Config, filters backfill.Filters) (plan backfill.Plan, err error) {
+func buildBackfillPlan(ctx context.Context, env Env, home, userHome string, cfg config.Config, filters backfill.Filters, progress func(backfill.PlanningProgress)) (plan backfill.Plan, err error) {
 	lookup, _, err := passCodexRollouts(ctx, state.OpenReadOnly(home), cfg, env)
 	if err != nil {
 		return plan, err
 	}
 	defer func() { err = errors.Join(err, lookup.Close()) }()
 	native := env.backfillEnvironment(userHome, cfg)
+	native.Progress = progress
 	native.CodexRollouts = lookup
 	native.PrepareCodexProof = func(ctx context.Context, ids []string) error {
 		if len(ids) == 0 {

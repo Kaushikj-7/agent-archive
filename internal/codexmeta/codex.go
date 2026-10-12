@@ -260,24 +260,30 @@ func ValidCodexExecutionSource(value string) bool {
 // NativeFirstTask checks the first task_started, distinguishing Codex's built
 // in migrated-history events. Callers must not skip a rejected first event.
 func NativeFirstTask(line []byte) (seen, native bool) {
+	seen, native, _ = NativeFirstTaskReason(line)
+	return seen, native
+}
+
+// NativeFirstTaskReason adds a fixed refusal code without retaining native values.
+func NativeFirstTaskReason(line []byte) (seen, native bool, reason string) {
 	var envelope struct {
 		Type    string          `json:"type"`
 		Payload json.RawMessage `json:"payload"`
 	}
 	if json.Unmarshal(line, &envelope) != nil {
-		return true, false
+		return true, false, "own_task_malformed"
 	}
 	if envelope.Type != "event_msg" {
-		return false, false
+		return false, false, ""
 	}
 	var kind struct {
 		Type codexTaskEvent `json:"type"`
 	}
 	if json.Unmarshal(envelope.Payload, &kind) != nil || kind.Type == "" {
-		return true, false
+		return true, false, "own_task_malformed"
 	}
 	if kind.Type != taskStarted && kind.Type != turnStarted {
-		return false, false
+		return false, false, ""
 	}
 	// This IS the first start even when its identity fields have invalid JSON
 	// types. A later native-looking resume must never repair inherited history.
@@ -287,9 +293,25 @@ func NativeFirstTask(line []byte) (seen, native bool) {
 		StartedAt  json.RawMessage `json:"started_at"`
 	}
 	if json.Unmarshal(envelope.Payload, &task) != nil {
-		return true, false
+		return true, false, "own_task_malformed"
 	}
-	return true, uuid.MatchString(task.TurnID) && (task.RootTurnID == nil || (uuid.MatchString(*task.RootTurnID) && strings.EqualFold(*task.RootTurnID, task.TurnID))) && !taskStartedAt(task.StartedAt).IsZero()
+	if !uuid.MatchString(task.TurnID) {
+		return true, false, "own_task_turn_id_invalid"
+	}
+	// Codex attributes descendant turns to the originating root-thread turn.
+	// Equality holds for root turns, not for independently executed child turns.
+	// Ownership comes from the reader's own-history boundary, not attribution.
+	// https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/protocol/src/protocol.rs
+	if task.RootTurnID != nil && !uuid.MatchString(*task.RootTurnID) {
+		return true, false, "own_task_root_turn_invalid"
+	}
+	if len(task.StartedAt) == 0 || string(task.StartedAt) == "null" {
+		return true, false, "own_task_started_at_missing"
+	}
+	if taskStartedAt(task.StartedAt).IsZero() {
+		return true, false, "own_task_started_at_invalid"
+	}
+	return true, true, ""
 }
 
 func taskStartedAt(raw json.RawMessage) time.Time {

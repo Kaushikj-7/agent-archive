@@ -57,7 +57,7 @@ func (SourceProvider) OpenPass(ctx context.Context, e agentapi.SourceEnvironment
 		return nil, err
 	}
 	if shared, ok := e.CodexRollouts.(agentapi.CodexRolloutResourceBudget); ok && shared.NativeReadBudget() != nil && e.ReadBudget != nil && e.ReadBudget != shared.NativeReadBudget() {
-		return nil, errors.Join(sourceFailure(agentapi.Unavailable, "source and lookup require the same charge ledger"), legacy.Close())
+		return nil, errors.Join(sourceRefusal(agentapi.Unavailable, agentapi.CauseSourceAndLookupRequireTheSameChargeLedger, "source and lookup require the same charge ledger"), legacy.Close())
 	}
 	if e.ReadBudget == nil {
 		if shared, ok := e.CodexRollouts.(agentapi.CodexRolloutResourceBudget); ok {
@@ -103,6 +103,11 @@ type relatedSourcePass struct {
 	closeErr     error
 }
 
+// sourceRefusal attaches a fixed, content-free reason for import diagnostics.
+func sourceRefusal(kind agentapi.FailureKind, cause agentapi.SourceCause, message string) error {
+	return agentapi.WithCause(sourceFailure(kind, message), cause)
+}
+
 func sourceFailure(kind agentapi.FailureKind, message string) error {
 	return agentapi.Wrap(kind, errors.New(message))
 }
@@ -115,7 +120,7 @@ func (p *relatedSourcePass) open(ctx context.Context, ref agentapi.SourceRef) (*
 		return nil, err
 	}
 	if len(ref.Path) > 8192 || len(ref.Key) > 4096 {
-		return nil, sourceFailure(agentapi.Limit, "rollout locator limit")
+		return nil, sourceRefusal(agentapi.Limit, agentapi.CauseRolloutLocatorLimit, "rollout locator limit")
 	}
 	if ref.Kind != archive.SourceKindFile {
 		return nil, sourceFailure(agentapi.Unsafe, "invalid rollout kind")
@@ -136,7 +141,7 @@ func (p *relatedSourcePass) open(ctx context.Context, ref agentapi.SourceRef) (*
 		}
 	}
 	if len(p.files) >= archive.MaxHistorySpans {
-		return nil, sourceFailure(agentapi.Limit, "shared rollout file limit")
+		return nil, sourceRefusal(agentapi.Limit, agentapi.CauseSharedRolloutFileLimit, "shared rollout file limit")
 	}
 	f, err := transcriptio.Open(p.env.Files, ref.Path, p.env.Policy)
 	if err != nil {
@@ -164,7 +169,7 @@ func (p *relatedSourcePass) open(ctx context.Context, ref agentapi.SourceRef) (*
 	reader := bufio.NewReaderSize(io.NewSectionReader(f, 0, min(f.Length(), int64(64<<10)+1)), 4096)
 	line, err := reader.ReadBytes('\n')
 	if err != nil || len(line) > 64<<10 {
-		return fail(sourceFailure(agentapi.Unavailable, "rollout metadata incomplete"))
+		return fail(sourceRefusal(agentapi.Unavailable, agentapi.CauseRolloutMetadataIncomplete, "rollout metadata incomplete"))
 	}
 	meta, _, found, err := codexmeta.ParseCodexMeta(line)
 	if err != nil || !found {
@@ -272,7 +277,7 @@ func (p *relatedSourcePass) selectSource(ctx context.Context, ref agentapi.Sourc
 	selected := sourceSelection{leaf: seed, thread: seed.identity.ThreadID, headers: []*rolloutFile{seed}}
 	if p.env.CodexRollouts == nil {
 		if seed.identity.RolloutID != seed.identity.ThreadID || seed.identity.HistoryBase != nil {
-			return selected, errors.Join(sourceFailure(agentapi.Unavailable, "current rollout evidence unavailable"), archive.ErrRelatedHistory)
+			return selected, errors.Join(sourceRefusal(agentapi.Unavailable, agentapi.CauseCurrentRolloutEvidenceUnavailable, "current rollout evidence unavailable"), archive.ErrRelatedHistory)
 		}
 		return selected, nil
 	}
@@ -281,7 +286,7 @@ func (p *relatedSourcePass) selectSource(ctx context.Context, ref agentapi.Sourc
 		return selected, err
 	}
 	if len(set.Revision) > 4096 || len(set.Candidates) > archive.MaxHistorySpans {
-		return selected, sourceFailure(agentapi.Limit, "rollout candidate limit")
+		return selected, sourceRefusal(agentapi.Limit, agentapi.CauseRolloutCandidateLimit, "rollout candidate limit")
 	}
 	for _, candidate := range set.Candidates {
 		if len(candidate.Path) > 8192 || len(candidate.Key) > 4096 || candidate.Kind != archive.SourceKindFile {
@@ -415,7 +420,7 @@ func (p *relatedSourcePass) graph(ctx context.Context, leaf *rolloutFile, set ag
 		}
 		seen[id.RolloutID] = true
 		if len(reversed) >= archive.MaxHistorySpans {
-			return nil, sourceFailure(agentapi.Limit, "rollout history depth limit")
+			return nil, sourceRefusal(agentapi.Limit, agentapi.CauseRolloutHistoryDepthLimit, "rollout history depth limit")
 		}
 		start := uint64(0)
 		if id.HistoryBase != nil {
@@ -426,7 +431,7 @@ func (p *relatedSourcePass) graph(ctx context.Context, leaf *rolloutFile, set ag
 			break
 		}
 		if p.env.CodexRollouts == nil {
-			return nil, errors.Join(sourceFailure(agentapi.Unavailable, "history dependency unavailable"), archive.ErrRelatedHistory)
+			return nil, errors.Join(sourceRefusal(agentapi.Unavailable, agentapi.CauseHistoryDependencyUnavailable, "history dependency unavailable"), archive.ErrRelatedHistory)
 		}
 		refs, err := p.env.CodexRollouts.Rollout(ctx, id.HistoryBase.RolloutID)
 		if err != nil {
@@ -491,7 +496,7 @@ func (p *relatedSourcePass) Signature(ctx context.Context, ref agentapi.SourceRe
 		return p.observation(ctx, selection, []physicalSpan{{file: selection.leaf, end: selection.leaf.boundary}})
 	}
 	if p.env.RequireConfinedHistory && p.env.Policy.Root == "" {
-		return agentapi.SourceObservation{}, sourceFailure(agentapi.Unavailable, "related history requires admitted confined source home")
+		return agentapi.SourceObservation{}, sourceRefusal(agentapi.Unavailable, agentapi.CauseRelatedHistoryRequiresAdmittedConfinedSourceHome, "related history requires admitted confined source home")
 	}
 	spans, err := p.graph(ctx, selection.leaf, selection.set)
 	if err != nil {
@@ -598,7 +603,7 @@ func (p *relatedSourcePass) readSelection(ctx context.Context, limits agentapi.R
 
 func (p *relatedSourcePass) readHistorySelection(ctx context.Context, limits agentapi.ReadLimits, selection sourceSelection) (agentapi.SourceSnapshot, error) {
 	if p.env.RequireConfinedHistory && p.env.Policy.Root == "" {
-		return nil, sourceFailure(agentapi.Unavailable, "related history requires admitted confined source home")
+		return nil, sourceRefusal(agentapi.Unavailable, agentapi.CauseRelatedHistoryRequiresAdmittedConfinedSourceHome, "related history requires admitted confined source home")
 	}
 	fail := p.readFailure
 	spans, err := p.graph(ctx, selection.leaf, selection.set)
@@ -614,9 +619,9 @@ func (p *relatedSourcePass) readHistorySelection(ctx context.Context, limits age
 		// an unchanged lineage is not read again to reach it.
 		observed, err := p.observation(ctx, selection, spans)
 		if err != nil {
-			return fail(errors.Join(agentapi.RawLimit(size, rawLimit, nil), err))
+			return fail(errors.Join(agentapi.WithCause(agentapi.RawLimit(size, rawLimit, nil), agentapi.CauseAggregateHistoryByteLimit), err))
 		}
-		return fail(agentapi.RawLimit(size, rawLimit, &observed))
+		return fail(agentapi.WithCause(agentapi.RawLimit(size, rawLimit, &observed), agentapi.CauseAggregateHistoryByteLimit))
 	}
 	limit := limits.RecordBytes
 	if limit <= 0 || limit > archive.MaxRecordBytes {
@@ -666,7 +671,7 @@ func (s *historySnapshot) validate(ctx context.Context) error {
 			continue
 		}
 		if facts.ForkID != "" && facts.ForkOrdinal == nil {
-			return sourceFailure(agentapi.Unavailable, "fork ownership boundary unavailable")
+			return sourceRefusal(agentapi.Unavailable, agentapi.CauseForkOwnershipBoundaryUnavailable, "fork ownership boundary unavailable")
 		}
 		for _, boundary := range []*uint64{facts.ForkOrdinal, facts.SubagentOrdinal} {
 			if boundary != nil && (s.history.OwnStart == nil || *boundary > *s.history.OwnStart) {
@@ -689,7 +694,7 @@ func (s *historySnapshot) validate(ctx context.Context) error {
 		}
 		count += facts.records
 		if count > archive.MaxHistoryRecords {
-			return sourceFailure(agentapi.Limit, "history record limit")
+			return sourceRefusal(agentapi.Limit, agentapi.CauseHistoryRecordLimit, "history record limit")
 		}
 		span.digest, span.endOrdinal = facts.digest, facts.endOrdinal
 		next := facts.endOrdinal
@@ -827,7 +832,7 @@ func (p *relatedSourcePass) ordinary(ctx context.Context, limits agentapi.ReadLi
 		return nil, agentapi.RawLimit(f.file.Length(), rawLimit, &o)
 	}
 	if !p.reserve(ordinaryScratch) {
-		return nil, agentapi.ReadBudgetLimit(errors.New("ordinary native scratch budget exhausted"))
+		return nil, agentapi.WithCause(agentapi.ReadBudgetLimit(errors.New("ordinary native scratch budget exhausted")), agentapi.CauseOrdinaryNativeScratchBudgetExhausted)
 	}
 	transferred := false
 	defer func() {
@@ -957,7 +962,7 @@ func (f ordinaryFile) Records(ctx context.Context, tail bool, windowBytes, recor
 	}
 	charge := max(int64(4096), min(f.s.length, max(recordBytes, windowBytes))) + max(windowBytes, 0) + 64<<10
 	if !f.s.owner.reserve(charge) {
-		return transcriptio.RecordWindow{}, sourceFailure(agentapi.Unavailable, "native record window budget exhausted")
+		return transcriptio.RecordWindow{}, sourceRefusal(agentapi.Unavailable, agentapi.CauseNativeRecordWindowBudgetExhausted, "native record window budget exhausted")
 	}
 	defer f.s.owner.release(charge)
 	return f.FileInput.Records(ctx, tail, windowBytes, recordBytes, visit)
@@ -999,7 +1004,7 @@ func (s *ordinarySnapshot) check(ctx context.Context) error {
 func bindingFacts(f *rolloutFile, home string, own *uint64) (archive.CodexSourceBinding, error) {
 	_, created, found, err := codexmeta.ParseCodexMeta(f.header)
 	if err != nil || !found || created.IsZero() {
-		return archive.CodexSourceBinding{}, sourceFailure(agentapi.Unavailable, "native creation evidence unavailable")
+		return archive.CodexSourceBinding{}, sourceRefusal(agentapi.Unavailable, agentapi.CauseNativeCreationEvidenceUnavailable, "native creation evidence unavailable")
 	}
 	var source string
 	rawSource := f.meta.Source
@@ -1063,10 +1068,10 @@ func (p *relatedSourcePass) ValidateSourceAdmission(ctx context.Context, ref age
 		return err
 	}
 	if selection.legacyOrdinary && (admission.Binding != nil || !admission.NativeCreatedAt.IsZero()) {
-		return sourceFailure(agentapi.Unavailable, "legacy compatibility requires unbound admission")
+		return sourceRefusal(agentapi.Unavailable, agentapi.CauseLegacyCompatibilityRequiresUnboundAdmission, "legacy compatibility requires unbound admission")
 	}
 	if p.env.RequireConfinedHistory && p.env.Policy.Root == "" && hasRelated(selection.leaf) {
-		return sourceFailure(agentapi.Unavailable, "related admission requires confined source home")
+		return sourceRefusal(agentapi.Unavailable, agentapi.CauseRelatedAdmissionRequiresConfinedSourceHome, "related admission requires confined source home")
 	}
 	spans, err := p.graph(ctx, selection.leaf, selection.set)
 	if err != nil {
@@ -1227,7 +1232,7 @@ func (s *historySnapshot) validateSpan(ctx context.Context, span *physicalSpan) 
 			return facts, sourceFailure(agentapi.Unsafe, "noncontiguous history ordinal")
 		}
 		if facts.endOrdinal == math.MaxUint64 {
-			return facts, sourceFailure(agentapi.Limit, "history ordinal overflow")
+			return facts, sourceRefusal(agentapi.Limit, agentapi.CauseHistoryOrdinalOverflow, "history ordinal overflow")
 		}
 		if facts.taskOwned && !facts.firstTask.Seen && facts.endOrdinal >= facts.taskBoundary {
 			facts.firstTask = ownTaskFacts(line, localExecutionShape(span.file))
@@ -1235,7 +1240,7 @@ func (s *historySnapshot) validateSpan(ctx context.Context, span *physicalSpan) 
 		facts.endOrdinal++
 		facts.records++
 		if facts.records > archive.MaxHistoryRecords {
-			return facts, sourceFailure(agentapi.Limit, "history record limit")
+			return facts, sourceRefusal(agentapi.Limit, agentapi.CauseHistoryRecordLimit, "history record limit")
 		}
 	}
 	copy(facts.digest[:], h.Sum(nil))
@@ -1292,7 +1297,7 @@ func (s *historySnapshot) RevisionCandidates(ctx context.Context) ([]agentapi.So
 			return nil
 		}
 		if len(out) >= archive.MaxHistorySpans {
-			return sourceFailure(agentapi.Limit, "historical candidate limit")
+			return sourceRefusal(agentapi.Limit, agentapi.CauseHistoricalCandidateLimit, "historical candidate limit")
 		}
 		seen[ref.Path] = true
 		out = append(out, ref)
@@ -1327,7 +1332,7 @@ func (s *ordinarySnapshot) RevisionCandidates(ctx context.Context) ([]agentapi.S
 			continue
 		}
 		if len(out) >= archive.MaxHistorySpans {
-			return nil, sourceFailure(agentapi.Limit, "historical candidate limit")
+			return nil, sourceRefusal(agentapi.Limit, agentapi.CauseHistoricalCandidateLimit, "historical candidate limit")
 		}
 		seen[ref.Path] = true
 		out = append(out, ref)
@@ -1349,7 +1354,7 @@ func (p *relatedSourcePass) historyBindingFacts(ctx context.Context, selection s
 			return archive.CodexSourceBinding{}, err
 		}
 		if len(refs) > archive.MaxHistorySpans {
-			return archive.CodexSourceBinding{}, sourceFailure(agentapi.Limit, "original fact candidate limit")
+			return archive.CodexSourceBinding{}, sourceRefusal(agentapi.Limit, agentapi.CauseOriginalFactCandidateLimit, "original fact candidate limit")
 		}
 		for _, ref := range refs {
 			candidate, err := p.open(ctx, ref)
@@ -1414,7 +1419,7 @@ func (p *relatedSourcePass) historyBindingFacts(ctx context.Context, selection s
 }
 
 func ownTaskFacts(line []byte, local bool) agentapi.OwnTaskFacts {
-	seen, native := codexmeta.NativeFirstTask(line)
+	seen, native, reason := codexmeta.NativeFirstTaskReason(line)
 	if !seen {
 		return agentapi.OwnTaskFacts{}
 	}
@@ -1424,7 +1429,7 @@ func ownTaskFacts(line []byte, local bool) agentapi.OwnTaskFacts {
 		} `json:"payload"`
 	}
 	_ = json.Unmarshal(line, &event)
-	return agentapi.OwnTaskFacts{Seen: true, Native: native, LocalExecution: local, StartedAt: codexmeta.FirstTaskAt(line), TurnID: event.Payload.TurnID}
+	return agentapi.OwnTaskFacts{Refusal: agentapi.SourceCause(reason), Seen: true, Native: native, LocalExecution: local, StartedAt: codexmeta.FirstTaskAt(line), TurnID: event.Payload.TurnID}
 }
 
 func localExecutionShape(f *rolloutFile) bool {
@@ -1626,7 +1631,7 @@ func (p *relatedSourcePass) chargedBoundary(f *transcriptio.Snapshot) (int64, er
 	}
 	charge := min(f.Length(), int64(archive.MaxRecordBytes)) + 64<<10
 	if !p.reserve(charge) {
-		return 0, sourceFailure(agentapi.Unavailable, "native boundary scratch budget exhausted")
+		return 0, sourceRefusal(agentapi.Unavailable, agentapi.CauseNativeBoundaryScratchBudgetExhausted, "native boundary scratch budget exhausted")
 	}
 	defer p.release(charge)
 	return transcriptio.CompleteJSONLBoundary(f, f.Length(), archive.MaxRecordBytes)

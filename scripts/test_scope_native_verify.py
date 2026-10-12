@@ -19,6 +19,10 @@ class ScopeTest(unittest.TestCase):
         self.source = Path(self.temp.name) / 'source'
         self.source.mkdir()
         self.git('init', '-q', '-b', 'main')
+        # Waiting for commit/merge does not wait for detached housekeeping.
+        # Keep all writers inside these synchronous fixture subprocesses.
+        self.git('config', 'maintenance.auto', 'false')
+        self.git('config', 'gc.auto', '0')
         self.git('config', 'user.name', 'Scope fixture')
         self.git('config', 'user.email', 'scope@example.invalid')
         self.config = json.loads((Path(__file__).resolve().parent.parent / 'levenshtein.json').read_text())
@@ -73,6 +77,22 @@ class ScopeTest(unittest.TestCase):
         self.write('docs/example.md', 'docs\n')
         self.merge()
         self.assertEqual(self.selected(), scope.SCOPED_RUN)
+
+    def test_fixture_commits_do_not_launch_background_maintenance(self):
+        # A commit can return while detached maintenance still writes packs,
+        # racing TemporaryDirectory cleanup. Force eligible tasks and inspect
+        # real Git children instead of relying on cleanup timing.
+        self.git('config', 'maintenance.loose-objects.enabled', 'true')
+        self.git('config', 'maintenance.loose-objects.auto', '-1')
+        trace = Path(self.temp.name) / 'git-trace.jsonl'
+        with patch.dict(os.environ, GIT_TRACE2_EVENT=str(trace)):
+            self.write('internal/main.go', 'changed\n')
+            self.merge()
+        self.assertEqual(self.selected(), scope.SCOPED_RUN)
+        children = [json.loads(line).get('argv', []) for line in trace.read_text().splitlines()
+                    if json.loads(line).get('event') == 'child_start']
+        self.assertFalse([argv for argv in children
+                          if 'maintenance' in argv or 'gc' in argv], children)
 
     def test_each_relevant_category_forces_full_run(self):
         for path in ('.github/workflows/a.yml', '.github/actions/a/action.yml', 'levenshtein.json',
@@ -191,7 +211,8 @@ class ScopeTest(unittest.TestCase):
     def test_shallow_history_falls_back(self):
         self.merge()
         clone = Path(self.temp.name) / 'shallow'
-        subprocess.run(['git', 'clone', '-q', '--depth=1', self.source.as_uri(), str(clone)], check=True)
+        subprocess.run(['git', '-c', 'maintenance.auto=false', '-c', 'gc.auto=0',
+                        'clone', '-q', '--depth=1', self.source.as_uri(), str(clone)], check=True)
         self.assertEqual(self.selected(source=clone), 'pre-merge')
 
     def test_git_errors_and_malformed_records_fall_back(self):

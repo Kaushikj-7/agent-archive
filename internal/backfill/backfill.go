@@ -73,6 +73,9 @@ const (
 	// SkipWorktreeUnresolved means the session ran in a Git worktree that no
 	// longer exists and cannot be mapped to its repository.
 	SkipWorktreeUnresolved SkipReason = "worktree_unresolved"
+	// SkipIndexRecovery means local identity bookkeeping cannot yet prove whether
+	// this session was previously admitted. It cannot be selected for import.
+	SkipIndexRecovery SkipReason = "session_index_pending"
 	// SkipIdentityMismatch means the session IDs inside the transcript do not
 	// match the file (or the Cursor chat's key).
 	SkipIdentityMismatch SkipReason = "identity_mismatch"
@@ -99,7 +102,7 @@ const (
 var skipOrder = []SkipReason{
 	SkipAlreadyArchived, SkipDuplicateSession, SkipRegisteredNotAdmitted, SkipRemovedByUndo, SkipRemovedByRetention,
 	SkipFilteredOut, SkipExcludedProject, SkipExcludedHistory, SkipHomeDirectory, SkipAboveHome, SkipTemporaryDirectory,
-	SkipProjectUnknown, SkipWorktreeUnresolved, SkipIdentityMismatch, SkipRelatedHistory, SkipSourceChanged,
+	SkipProjectUnknown, SkipWorktreeUnresolved, SkipIndexRecovery, SkipIdentityMismatch, SkipRelatedHistory, SkipSourceChanged,
 	SkipEmpty, SkipUnsafeFormat, SkipTooLarge, SkipStartUnknown, SkipStartInFuture,
 }
 
@@ -285,6 +288,10 @@ const (
 // through collector.FilterTranscriptFile, the collector's own filter, which
 // reads transcripts from the real file system whatever is injected here.
 type Environment struct {
+	// Progress receives serialized planning updates, including from workers.
+	// It must return promptly and must not change planning inputs.
+	Progress func(PlanningProgress)
+
 	HistoricalSourceAllowed   func(string) bool
 	RepositoryIdentity        sourcefacts.RepositoryLookup
 	RepositoryIdentityCurrent func(sourcefacts.RepositoryIdentity) bool
