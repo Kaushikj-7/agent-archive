@@ -17,6 +17,7 @@ import (
 // JournalVersion2 is mandatory so prior decoders cannot ignore this authority.
 type ReadySelection struct {
 	Version           int    `json:"version"`
+	BundleSHA256      string `json:"bundle_sha256"`
 	MetadataSHA256    string `json:"metadata_sha256"`
 	SourceSetSHA256   string `json:"source_set_sha256"`
 	BindingSHA256     string `json:"binding_sha256"`
@@ -40,16 +41,20 @@ func (s *Store) readyDigest(ctx context.Context, value any) (string, error) {
 	if !reservation.Reserve(scratch) {
 		return "", errStateBudget
 	}
-	limit := min(int64(maxPendingHistoryBytes), reservation.Available())
+	available := min(int64(maxPendingHistoryBytes)*2, reservation.Available())
+	limit := available / 2
 	n, err := agentmeta.JSONWireBound(ctx, value, limit)
+	if errors.Is(err, agentmeta.ErrJSONWireLimit) {
+		reservation.Refuse(available + 2)
+	}
 	reservation.Release(scratch)
 	if err != nil {
 		return "", errors.Join(errStateBudget, err)
 	}
-	if !reservation.Reserve(n) {
+	if !reservation.Reserve(n + n) {
 		return "", errStateBudget
 	}
-	defer reservation.Release(n)
+	defer reservation.Release(n + n)
 	raw, err := json.Marshal(value)
 	if err != nil {
 		return "", err
@@ -73,7 +78,7 @@ func (p PendingPublication) validateReadySelectionShape() error {
 	if q.Version != 2 || q.Purpose != "capture" || q.DestinationID == "" || len(q.DestinationID) > 128 || p.MetadataOnly || p.History != nil || p.Bundle.History != nil || p.ImportExpectedMetadataSHA256 != "" || len(p.ImportRetired) != 0 {
 		return ErrReadySelectionFrozen
 	}
-	for _, h := range []string{q.MetadataSHA256, q.SourceSetSHA256, q.BindingSHA256, q.AdmissionContext, q.PolicyContext, q.SHA256} {
+	for _, h := range []string{q.BundleSHA256, q.MetadataSHA256, q.SourceSetSHA256, q.BindingSHA256, q.AdmissionContext, q.PolicyContext, q.SHA256} {
 		if !readyDigestValid(h) {
 			return ErrDurableStorageRecovery
 		}
@@ -151,6 +156,10 @@ func (s *Store) FreezeReadySelection(ctx context.Context, id string, p PendingPu
 	if err != nil || len(refs) != 1 || refs[0] != p.SourceReference() {
 		return p, errors.Join(ErrDurableStorageRecovery, err)
 	}
+	p.Selection.BundleSHA256, err = s.readyDigest(ctx, p.Bundle)
+	if err != nil {
+		return p, err
+	}
 	p.Selection.SourceSetSHA256, err = s.readyDigest(ctx, refs)
 	if err != nil {
 		return p, err
@@ -215,6 +224,10 @@ func (s *Store) validateReadySelection(ctx context.Context, p PendingPublication
 	if err != nil || policy != p.Selection.PolicyContext {
 		return errors.Join(ErrDurableStorageRecovery, err)
 	}
+	bundleDigest, err := s.readyDigest(ctx, p.Bundle)
+	if err != nil || bundleDigest != p.Selection.BundleSHA256 {
+		return errors.Join(ErrDurableStorageRecovery, err)
+	}
 	binding, err := s.readyBinding(ctx, p)
 	if err != nil || binding != p.Selection.BindingSHA256 || readySHA(p.MetadataBytes) != p.Selection.MetadataSHA256 {
 		return errors.Join(ErrDurableStorageRecovery, err)
@@ -253,6 +266,9 @@ func (s *Store) ValidateReadySelection(ctx context.Context, p PendingPublication
 func (q *ReadySelection) UnmarshalJSON(raw []byte) error {
 	if len(raw) > 16<<10 {
 		return ErrDurableStorageRecovery
+	}
+	if err := rejectDuplicateAuthorityKeys(raw, []string{"version", "bundle_sha256", "metadata_sha256", "source_set_sha256", "binding_sha256", "destination_id", "admission_context", "policy_context", "predecessor", "predecessor_sha256", "purpose", "sha256"}); err != nil {
+		return err
 	}
 	type plain ReadySelection
 	var next plain
@@ -321,7 +337,7 @@ func (p *Published) preserveReadyPublished(next *publishedState) error {
 		if next.LastPublished.Selection.MetadataSHA256 != readySHA(next.MetadataBytes) {
 			return ErrReadySelectionFrozen
 		}
-		return next.LastPublished.Selection.validateProofDigest()
+		return p.validateReadyPublished(next)
 	}
 	return nil
 }
@@ -381,6 +397,47 @@ func (s *Store) checkSelectingPendingRemoval(id string) error {
 	}
 	if published.state.LastPublished == nil || published.state.LastPublished.Selection == nil || *published.state.LastPublished.Selection != *pending.Selection {
 		return ErrReadySelectionFrozen
+	}
+	return nil
+}
+
+// validateReadyPublished applies the existing acknowledged metadata/snapshot
+// checks to the candidate state, then binds the full retained bundle and set.
+func (p *Published) validateReadyPublished(next *publishedState) error {
+	q := next.LastPublished.Selection
+	if err := (PendingPublication{JournalVersion: 2, Selection: q}).validateReadySelectionShape(); err != nil {
+		return err
+	}
+	if err := q.validateProofDigest(); err != nil {
+		return err
+	}
+	ctx := p.store.durableContext()
+	read, closeRead := p.store.WithReadBudget(ctx, p.store.resourceBudget)
+	defer closeRead()
+	view := &Published{store: read, id: p.id, state: *next, found: true}
+	metadata, found, err := view.LastPublishedMetadata()
+	if err != nil || !found {
+		return errors.Join(ErrDurableStorageRecovery, err)
+	}
+	refs, err := metadata.SourceReferences()
+	if err != nil || len(refs) != 1 || next.LastPublished.Source == nil || *next.LastPublished.Source != refs[0] {
+		return errors.Join(ErrDurableStorageRecovery, err)
+	}
+	set, err := read.readyDigest(ctx, refs)
+	if err != nil || set != q.SourceSetSHA256 {
+		return errors.Join(ErrDurableStorageRecovery, err)
+	}
+	bundle, _, found := view.LastPublished()
+	if !found {
+		return ErrDurableStorageRecovery
+	}
+	digest, err := read.readyDigest(ctx, bundle)
+	if err != nil || digest != q.BundleSHA256 || metadata.NativeChild != bundle.NativeChild {
+		return errors.Join(ErrDurableStorageRecovery, err)
+	}
+	cfg, err := read.inspectDurableReadRoots()
+	if err != nil || cfg.DestinationID() != q.DestinationID {
+		return errors.Join(ErrDurableStorageRecovery, err)
 	}
 	return nil
 }

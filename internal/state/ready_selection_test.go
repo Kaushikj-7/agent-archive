@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -200,5 +202,108 @@ func TestReadySelectionRecomputedProofCannotReplacePendingOwner(t *testing.T) {
 	got, err := os.ReadFile(s.pendingPath(id))
 	if err != nil || !bytes.Equal(raw, got) {
 		t.Fatal("replacement changed pending evidence")
+	}
+}
+
+func TestReadySelectionCaseAliasAuthorityRefusal(t *testing.T) {
+	_, p := readySelectionFixture(t)
+	raw, err := json.Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"JOURNAL_VERSION", `journal_versi\u006fn`} {
+		duplicate := append([]byte(`{"`+key+`":2,`), raw[1:]...)
+		if json.Unmarshal(duplicate, &PendingPublication{}) == nil {
+			t.Fatal("case/escaped authority duplicate accepted")
+		}
+	}
+	proof, err := json.Marshal(p.Selection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	duplicate := append([]byte(`{"VERSION":2,`), proof[1:]...)
+	if json.Unmarshal(duplicate, &ReadySelection{}) == nil {
+		t.Fatal("inner authority duplicate accepted")
+	}
+}
+
+func TestReadySelectionDigestChargesBothEncoderViews(t *testing.T) {
+	s := newTestStore(t)
+	value := strings.Repeat("x", 96<<10)
+	raw, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, extra := range []int64{-1, 0} {
+		limit := int64(32<<10) + 2*int64(len(raw)) + extra
+		budget := agentapi.NewNativeReadBudget(limit)
+		read, closeRead := s.WithReadBudget(t.Context(), budget)
+		_, err = read.readyDigest(t.Context(), value)
+		closeRead()
+		if (extra < 0) != (err != nil) {
+			t.Fatalf("two-view allowance extra=%d err=%v", extra, err)
+		}
+		if budget.Available() != limit {
+			t.Fatal("digest retained scratch or encoder reservation")
+		}
+	}
+}
+
+func TestReadyPublishedRefAndDetachedBodyCorruptionRefuse(t *testing.T) {
+	s, p := readySelectionFixture(t)
+	id := p.Bundle.ArchiveSessionID
+	published, err := s.LoadPublishedState(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = published.SaveReadyPublication(p, p.ReadyAt); err != nil {
+		t.Fatal(err)
+	}
+	if err = published.Save(p.Bundle, p.ReadyAt, CacheStatusRateLimited); err != nil {
+		t.Fatal(err)
+	}
+	original, err := os.ReadFile(s.publishedPath(id))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, change := range []func(*publishedState){
+		func(next *publishedState) {
+			source := *next.LastPublished.Source
+			source.SHA256 = strings.Repeat("0", 64)
+			next.LastPublished.Source = &source
+		},
+		func(next *publishedState) { next.LastPublished.Bundle.NativeSessionID = "foreign" },
+		func(next *publishedState) {
+			next.LastPublished.Bundle.NativeRecords = []map[string]any{{"content": "foreign"}}
+		},
+	} {
+		next := published.state
+		snapshot := *next.LastPublished
+		next.LastPublished = &snapshot
+		change(&next)
+		if err = published.write(next); err == nil {
+			t.Fatal("changed acknowledged source/body accepted")
+		}
+		raw, e := os.ReadFile(s.publishedPath(id))
+		if e != nil || !bytes.Equal(raw, original) {
+			t.Fatal("failed write changed published evidence")
+		}
+		raw, e = json.Marshal(next)
+		if e != nil {
+			t.Fatal(e)
+		}
+		if e = os.WriteFile(s.publishedPath(id), raw, 0600); e != nil {
+			t.Fatal(e)
+		}
+		if _, e = s.LoadPublishedState(id); e == nil {
+			t.Fatal("corrupt retained selecting snapshot read successfully")
+		}
+		got, e := os.ReadFile(s.publishedPath(id))
+		if e != nil || !bytes.Equal(got, raw) {
+			t.Fatal("corrupt evidence lost")
+		}
+		if e = os.WriteFile(s.publishedPath(id), original, 0600); e != nil {
+			t.Fatal(e)
+		}
 	}
 }
