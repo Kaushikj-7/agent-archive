@@ -45,7 +45,8 @@ the opt-in ordinary-ready selecting authority under the distinct
 `publication-composition-v12` fence. It does not complete the broader historical,
 private, staged publication or legacy-provenance work in #352/#356/#406, qualify
 providers, or supply a fragment consumer. The [fragment foundation](../specs/codex-fragments.md)
-is a proposed schema only; decoder/privacy-context consumer, lifecycle/import
+is a proposed schema and test-only transport contract; production decoder,
+privacy-context consumer, lifecycle/import
 and the contribution/enrichment journal for complete repair and exact undo
 remain dependent work.
 
