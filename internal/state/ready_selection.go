@@ -16,6 +16,8 @@ import (
 // ReadyPredecessor records the frozen remote predecessor observation.
 type ReadyPredecessor string
 
+// ReadyPredecessorAbsent, ReadyPredecessorPresent, and ReadyPredecessorUnknown
+// retain the exact predecessor wire states.
 const (
 	ReadyPredecessorAbsent  ReadyPredecessor = "absent"
 	ReadyPredecessorPresent ReadyPredecessor = "present"
@@ -318,6 +320,7 @@ func (s *Store) ValidateReadySelection(ctx context.Context, p PendingPublication
 	return s.validateReadySelection(ctx, p)
 }
 
+// UnmarshalJSON decodes a bounded descriptor and refuses unknown or duplicate fields.
 func (q *ReadySelection) UnmarshalJSON(raw []byte) error {
 	if len(raw) > 16<<10 {
 		return ErrDurableStorageRecovery

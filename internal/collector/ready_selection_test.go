@@ -39,7 +39,7 @@ func TestRunReadySelectionRetryKeepsExactProducerAuthority(t *testing.T) {
 		t.Fatal("failed metadata attempt was acknowledged")
 	}
 	pending, found, err := local.LoadPending("session-1")
-	if err != nil || !found || pending.JournalVersion != 2 || pending.Selection == nil || pending.Selection.Predecessor != "absent" {
+	if err != nil || !found || pending.JournalVersion != 2 || pending.Selection == nil || pending.Selection.Predecessor != state.ReadyPredecessorAbsent {
 		t.Fatalf("actual producer did not retain selecting journal: %+v %v", pending.Selection, err)
 	}
 	exact := bytes.Clone(pending.MetadataBytes)
@@ -73,7 +73,7 @@ func TestRunReadySelectionRetryKeepsExactProducerAuthority(t *testing.T) {
 func TestReadySelectionUnknownPredecessorNeverBecomesAbsent(t *testing.T) {
 	remote := storagetest.NewMemoryStore()
 	scan := &sessionScan{ctx: context.Background(), remote: remote}
-	p := state.PendingPublication{MetadataKey: "sessions/codex/synthetic/metadata.json", Selection: &state.ReadySelection{Predecessor: "unknown", MetadataSHA256: metadataSHA([]byte("exact"))}}
+	p := state.PendingPublication{MetadataKey: "sessions/codex/synthetic/metadata.json", Selection: &state.ReadySelection{Predecessor: state.ReadyPredecessorUnknown, MetadataSHA256: metadataSHA([]byte("exact"))}}
 	selected, err := scan.checkReadySelectionRemote(p)
 	if selected || !errors.Is(err, errHistoryMetadataConflict) {
 		t.Fatalf("unknown missing predecessor became absent: %v %v", selected, err)
