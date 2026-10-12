@@ -285,8 +285,11 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	if durableErr != nil {
 		return Result{Errors: map[string]error{"durable-storage": durableErr}}, durableErr
 	}
-	if err := local.ResumeImportAdmissions(ctx); err != nil {
-		return Result{Errors: map[string]error{"staged-imports": err}}, err
+	admission, closeAdmission := local.WithReadBudget(ctx, (&sessionScan{opts: opts}).readBudget())
+	admissionErr := admission.ResumeImportAdmissions(ctx)
+	closeAdmission()
+	if admissionErr != nil {
+		return Result{Errors: map[string]error{"staged-imports": admissionErr}}, admissionErr
 	}
 	// Recovery can finish cancellation or establish selected admissions. Report
 	// their current obligations, rather than the pre-recovery orphan snapshot.

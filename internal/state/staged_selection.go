@@ -347,17 +347,6 @@ func (p *Published) validateStagedPublished(ctx context.Context, next *published
 	return nil
 }
 
-func (s *Store) checkStagedPendingRemoval(pending PendingPublication) error {
-	published, err := s.LoadPublishedStateContext(s.durableContext(), pending.Bundle.ArchiveSessionID)
-	if err != nil {
-		return err
-	}
-	if published.state.LastPublished == nil || published.state.LastPublished.StagedSelection == nil || *published.state.LastPublished.StagedSelection != *pending.StagedSelection {
-		return ErrReadySelectionFrozen
-	}
-	return s.requireStagedReleaseProgress(pending.Bundle.ArchiveSessionID, pending.StagedSelection)
-}
-
 // Closed typed authority uses exact key spelling and rejects null/missing keys.
 func strictStagedKeys(raw []byte, keys []string) error {
 	if err := rejectDuplicateAuthorityKeys(raw, keys); err != nil {

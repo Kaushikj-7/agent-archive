@@ -188,6 +188,7 @@ func materializeSubagentCandidate(ctx context.Context, local *state.Store, candi
 		return err
 	}
 	reg := assembleSubagentRegistration(parent, candidate)
+	var prepared *preparedSubagentSelection
 	if candidate.StagedImportSHA256 != "" {
 		reg.StagedImportSHA256 = candidate.StagedImportSHA256
 		stage, found, loadErr := local.LoadImportStage(ctx, reg)
@@ -199,6 +200,7 @@ func materializeSubagentCandidate(ctx context.Context, local *state.Store, candi
 		}
 		reg = stage.Registration
 		reg.StagedImportSHA256 = candidate.StagedImportSHA256
+		prepared = &preparedSubagentSelection{typed: stage.TypedSelection}
 		if reg.ParentSessionID != parent.ArchiveSessionID || reg.ParentNativeSessionID != parent.NativeSessionID {
 			return state.ErrDurableStorageRecovery
 		}
@@ -211,7 +213,7 @@ func materializeSubagentCandidate(ctx context.Context, local *state.Store, candi
 	if err := checkSubagentRegistrationConflict(local, candidate, reg); err != nil {
 		return err
 	}
-	return persistSubagentCandidateContext(ctx, local, candidate, reg)
+	return persistSubagentCandidateContext(ctx, local, candidate, reg, prepared)
 }
 
 func admittedSubagentParent(local *state.Store, candidate state.SubagentCandidate, opts Options) (archive.SessionRegistration, error) {
@@ -322,27 +324,26 @@ func checkSubagentRegistrationConflict(local *state.Store, candidate state.Subag
 	return nil
 }
 
+// This fact is created only after actual LoadImportStage owner validation in
+// materializeSubagentCandidate. It is private and grants no release authority.
+type preparedSubagentSelection struct{ typed bool }
+
 // Registration is durable before hook evidence, and the candidate remains
 // retryable until both writes complete. Replaying either write is safe.
-func persistSubagentCandidateContext(ctx context.Context, local *state.Store, candidate state.SubagentCandidate, reg archive.SessionRegistration) error {
+func persistSubagentCandidateContext(ctx context.Context, local *state.Store, candidate state.SubagentCandidate, reg archive.SessionRegistration, prepared *preparedSubagentSelection) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := local.SaveRegistration(reg); err != nil {
 		return err
 	}
 	if candidate.Origin == archive.SessionOriginImport {
-		if candidate.StagedImportSHA256 != "" {
-			stage, found, err := local.LoadImportStage(ctx, reg)
-			if err != nil {
+		if prepared != nil && prepared.typed {
+			if err := local.SaveRequest(reg.ArchiveSessionID, "backfill", reg.AdmittedAt); err != nil {
 				return err
 			}
-			if !found {
-				return state.ErrDurableStorageRecovery
-			}
-			if stage.TypedSelection {
-				if err := local.SaveRequest(reg.ArchiveSessionID, "backfill", reg.AdmittedAt); err != nil {
-					return err
-				}
-			}
 		}
+
 		// No SubagentStop fired for a subagent backfill found.
 		return local.AcknowledgeSubagentCandidate(candidate)
 	}
