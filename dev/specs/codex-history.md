@@ -6,8 +6,10 @@ child admission and maintenance are covered by code and synthetic tests. The
 broader [historical recovery plan](../proposals/historical-backfill-recovery.md)
 now includes historical-only ownership and bounded bulk mappings merged in
 [#433](https://github.com/wangjohn/agent-archive/pull/433) (`18ca0c48`,
-2026-10-12). Fragment artifacts (step 6b) and remaining combined acceptance
-work stay open; the [backfill contract](backfill.md#historical-only-ownership-and-bounded-mapping-files)
+2026-10-12). The [fragment foundation](codex-fragments.md) is a proposed schema
+and contract only; no fragment reader or import route is shipped. Fragment
+artifacts (step 6b) and remaining combined acceptance work stay open; the
+[backfill contract](backfill.md#historical-only-ownership-and-bounded-mapping-files)
 defines the implemented historical identity and destination policy.
 
 A stable Codex thread is distinct from its physical rollout revisions, root
