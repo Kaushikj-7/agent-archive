@@ -49,9 +49,7 @@ func showExactIDCandidate(store storage.ObjectStore, harness, query string) bool
 // because the caller has something to do with one session (--transcript or
 // --json), when it returns the chosen session. Off a terminal they print the
 // candidates and exit 1.
-func resolveShowQuery(store storage.ObjectStore, env showQueryDependencies, stdin io.Reader, stdout, stderr io.Writer, harness, query string, cfgProjects map[string]string, noPager, pickOne bool) (showLookup, int) {
-	ctx, stopReads := readCommandContext(env)
-	defer stopReads()
+func resolveShowQuery(ctx context.Context, store storage.ObjectStore, env showQueryDependencies, stdin io.Reader, stdout, stderr io.Writer, harness, query string, cfgProjects map[string]string, noPager, pickOne bool) (showLookup, int) {
 	// Full archive IDs use the direct-read path. With --harness, a short ID
 	// or title would otherwise be mistaken for a literal object key.
 	if showExactIDCandidate(store, harness, query) {

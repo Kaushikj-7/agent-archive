@@ -142,7 +142,9 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	if full {
 		listLimit = 0
 	}
-	listed, full, err := readListCandidates(env, store, opts, listLimit, listOpts, full, stderr)
+	ctx, stopReads := readCommandContext(env)
+	defer stopReads()
+	listed, full, err := readListCandidates(catalog.WithReadView(ctx), env, store, opts, listLimit, listOpts, full, stderr)
 	stopList()
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: list: %v\n", err)
@@ -630,7 +632,7 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	if sessionID == "" {
 		return runBareShow(ctx, env, store, cfg, stdin, stdout, stderr, *harness, *jsonOut, *noPager)
 	}
-	lookup, code := resolveShowQuery(store, env, stdin, stdout, stderr, *harness, sessionID, summary.Projects, *noPager, *transcript || *jsonOut)
+	lookup, code := resolveShowQuery(ctx, store, env, stdin, stdout, stderr, *harness, sessionID, summary.Projects, *noPager, *transcript || *jsonOut)
 	if code != 0 {
 		return code
 	}

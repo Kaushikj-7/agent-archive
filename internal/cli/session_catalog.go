@@ -106,16 +106,16 @@ func catalogCandidateSessions(ctx context.Context, env metadataCacheDependencies
 
 // readListCandidates retains selected reads for simple bounded listings and
 // uses the summary catalog where exhaustive metadata used to be necessary.
-func readListCandidates(env metadataCacheDependencies, store storage.ObjectStore, opts listOptions, limit int, readOpts reader.ListOptions, full bool, stderr io.Writer) (reader.RecentResult, bool, error) {
+func readListCandidates(ctx context.Context, env metadataCacheDependencies, store storage.ObjectStore, opts listOptions, limit int, readOpts reader.ListOptions, full bool, stderr io.Writer) (reader.RecentResult, bool, error) {
 	needsCatalog := opts.filter.Model != "" || opts.filter.Skill != "" || opts.filter.SkillSHA256 != "" || opts.filter.RequireCompleteCoverage
 	if !opts.jsonOut && (full || needsCatalog) {
 		// Complete summaries preserve child hints, scope tiers and ambiguity.
-		sessions, used, err := catalogSessions(env, store, opts, stderr, "list", nil)
+		sessions, used, err := catalogSessionsInContext(ctx, env, store, opts, stderr, "list", nil)
 		if used {
 			return reader.RecentResult{Sessions: sessions, Complete: true, TotalMatched: len(sessions)}, true, err
 		}
 	}
-	listed, err := reader.ListRecent(context.Background(), store, archiveSessionsPrefix, opts.filter, limit, readOpts)
+	listed, err := reader.ListRecent(ctx, store, archiveSessionsPrefix, opts.filter, limit, readOpts)
 	return listed, full, err
 }
 
