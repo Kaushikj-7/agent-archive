@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/agents/nativecodec"
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/jsonwire"
 	"github.com/wangjohn/agent-archive/internal/sourceio"
 	"io"
 	"sync"
@@ -83,7 +83,7 @@ func (Filter) MeaningfulRevisionRecord(b archive.SourceBundle, i int) bool {
 
 func retainedEncoder(ctx context.Context, limits agentapi.ReadLimits) func(map[string]any) ([]byte, error) {
 	return func(value map[string]any) ([]byte, error) {
-		n, err := jsonwire.Bound(ctx, value, limits.FilteredBytes)
+		n, err := agentmeta.JSONWireBound(ctx, value, limits.FilteredBytes)
 		if err != nil {
 			return nil, agentapi.ReadBudgetLimit(err)
 		}
@@ -135,8 +135,8 @@ func (f Filter) filterLeased(ctx context.Context, in agentapi.NativeInput, c age
 			return nil, agentapi.ReadBudgetLimit(errors.New("native encoding preflight exceeds shared budget"))
 		}
 		available := budget.Available()
-		n, err := jsonwire.Bound(ctx, value, available/2)
-		if errors.Is(err, jsonwire.ErrLimit) {
+		n, err := agentmeta.JSONWireBound(ctx, value, available/2)
+		if errors.Is(err, agentmeta.ErrJSONWireLimit) {
 			// The encoding and its retained copy need more than all that
 			// remains, beside the scratch still held.
 			budget.Refuse(available + 2)
@@ -168,7 +168,7 @@ func (f Filter) filterLeased(ctx context.Context, in agentapi.NativeInput, c age
 		actual := int64(len(data))
 		if actual > n {
 			budget.Release(n + ordinalBytes)
-			return nil, agentapi.ReadBudgetLimit(jsonwire.ErrLimit)
+			return nil, agentapi.ReadBudgetLimit(agentmeta.ErrJSONWireLimit)
 		}
 		budget.Release(n - actual)
 		total += actual + ordinalBytes

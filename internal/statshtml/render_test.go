@@ -415,9 +415,8 @@ func TestRendererImportBoundary(t *testing.T) {
 			path != "github.com/wangjohn/agent-archive/internal/stats" &&
 			path != "github.com/wangjohn/agent-archive/internal/agentmeta" &&
 			path != "github.com/wangjohn/agent-archive/internal/codexmeta" &&
-			path != "github.com/wangjohn/agent-archive/internal/jsonwire" &&
 			path != "github.com/wangjohn/agent-archive/internal/statsfmt" {
-			t.Errorf("internal/statshtml reaches %s; only internal/stats, internal/statsfmt, internal/archive and its pure agentmeta/jsonwire/codexmeta dependencies are allowed", path)
+			t.Errorf("internal/statshtml reaches %s; only internal/stats, internal/statsfmt, internal/archive and its pure agentmeta/codexmeta dependencies are allowed", path)
 		}
 	}
 }

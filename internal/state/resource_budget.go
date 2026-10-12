@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/jsonwire"
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
@@ -116,8 +116,8 @@ func (s *Store) writeCompact(path string, value any) error {
 		return errStateBudget
 	}
 	available := s.resourceBudget.Available()
-	n, err := jsonwire.Bound(s.resourceContext, value, available-1)
-	if errors.Is(err, jsonwire.ErrLimit) {
+	n, err := agentmeta.JSONWireBound(s.resourceContext, value, available-1)
+	if errors.Is(err, agentmeta.ErrJSONWireLimit) {
 		s.resourceBudget.Refuse(available + 1)
 	}
 	s.resourceBudget.Release(scratch)
@@ -176,12 +176,12 @@ func (s *Store) summaryBudgeted(p publishedState) (PublishedSummary, error) {
 		}
 		ctx := s.resourceContext
 		available := s.resourceBudget.Available()
-		size, err := jsonwire.Bound(ctx, struct {
+		size, err := agentmeta.JSONWireBound(ctx, struct {
 			Active     archive.SourceReference  `json:"active"`
 			CapturedAt time.Time                `json:"captured_at"`
 			History    *archive.RevisionHistory `json:"history,omitempty"`
 		}{metadata.SourceBundle, metadata.CapturedAt, metadata.History}, available/2)
-		if errors.Is(err, jsonwire.ErrLimit) {
+		if errors.Is(err, agentmeta.ErrJSONWireLimit) {
 			s.resourceBudget.Refuse(available + 2)
 		}
 		s.resourceBudget.Release(scratch)

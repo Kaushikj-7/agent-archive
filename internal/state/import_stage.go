@@ -17,7 +17,6 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
-	"github.com/wangjohn/agent-archive/internal/jsonwire"
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
@@ -47,7 +46,7 @@ func importStageRelative(id string) string {
 func (p ImportStage) digest(ctx context.Context) (string, error) {
 	p.SHA256 = ""
 	p.Registration.StagedImportSHA256 = ""
-	if _, err := jsonwire.Bound(ctx, p, maxPendingHistoryBytes); err != nil {
+	if _, err := agentmeta.JSONWireBound(ctx, p, maxPendingHistoryBytes); err != nil {
 		return "", errors.Join(ErrDurableStorageCapacity, err)
 	}
 	raw, err := json.Marshal(p)
@@ -356,7 +355,7 @@ func validateImportStageCapacity(ctx context.Context, stage ImportStage) error {
 
 // Explicit bounds keep capacity arithmetic testable without changing shared limits.
 func validateImportStageCapacityWithin(ctx context.Context, stage ImportStage, maxBytes, allowance int64) error {
-	n, err := jsonwire.Bound(ctx, stage, maxBytes)
+	n, err := agentmeta.JSONWireBound(ctx, stage, maxBytes)
 	if err != nil {
 		return errors.Join(ErrDurableStorageCapacity, err)
 	}
@@ -364,7 +363,7 @@ func validateImportStageCapacityWithin(ctx context.Context, stage ImportStage, m
 	for _, bundle := range append([]archive.SourceBundle{stage.Bundle}, stage.Preserved...) {
 		retained += int64(bundle.Capture.Boundary.RetainedBytes)
 		for _, row := range bundle.NativeRecords {
-			size, err := jsonwire.Bound(ctx, row, maxBytes)
+			size, err := agentmeta.JSONWireBound(ctx, row, maxBytes)
 			if err != nil {
 				return errors.Join(ErrDurableStorageCapacity, err)
 			}

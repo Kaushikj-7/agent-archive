@@ -8,7 +8,7 @@ import (
 	"os"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
-	"github.com/wangjohn/agent-archive/internal/jsonwire"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
@@ -133,9 +133,9 @@ func (l *CodexRolloutLookup) writeCatalogWithin(ctx context.Context, path string
 	}
 	available := l.readBudget.Available()
 	limit := min(available-1, maxCatalogBytes)
-	n, err := jsonwire.Bound(ctx, c, limit)
-	overCap := errors.Is(err, jsonwire.ErrLimit) && limit == maxCatalogBytes
-	if errors.Is(err, jsonwire.ErrLimit) && !overCap {
+	n, err := agentmeta.JSONWireBound(ctx, c, limit)
+	overCap := errors.Is(err, agentmeta.ErrJSONWireLimit) && limit == maxCatalogBytes
+	if errors.Is(err, agentmeta.ErrJSONWireLimit) && !overCap {
 		l.readBudget.Refuse(available + 1)
 	}
 	l.readBudget.Release(countScratch)
@@ -166,7 +166,7 @@ func (l *CodexRolloutLookup) retainObservation(ctx context.Context, entry cached
 	if !l.readBudget.ReserveUnscoped(countScratch) {
 		return false
 	}
-	n, err := jsonwire.Bound(ctx, entry, l.readBudget.Available())
+	n, err := agentmeta.JSONWireBound(ctx, entry, l.readBudget.Available())
 	l.readBudget.ReleaseUnscoped(countScratch)
 	return err == nil && l.reserveCatalog(n)
 }

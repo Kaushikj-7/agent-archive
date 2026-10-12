@@ -18,7 +18,6 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
-	"github.com/wangjohn/agent-archive/internal/jsonwire"
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
@@ -913,7 +912,7 @@ func generationSourceDigest(ctx context.Context, bundle archive.SourceBundle, bu
 	}
 	available := budget.Available()
 	largest, err := archive.SourceEncodingLineBound(ctx, bundle, available)
-	if errors.Is(err, jsonwire.ErrLimit) {
+	if errors.Is(err, agentmeta.ErrJSONWireLimit) {
 		budget.Refuse(available + 1)
 	}
 	budget.Release(preflight)

@@ -19,7 +19,6 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/codexmeta"
 	"github.com/wangjohn/agent-archive/internal/config"
-	"github.com/wangjohn/agent-archive/internal/jsonwire"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 	"github.com/wangjohn/agent-archive/internal/state"
@@ -524,8 +523,8 @@ func (l *CodexRolloutLookup) revisionDigest(ctx context.Context, value any) (str
 		return "", errCatalogBudget
 	}
 	available := l.readBudget.Available()
-	n, err := jsonwire.Bound(ctx, value, available/2)
-	if errors.Is(err, jsonwire.ErrLimit) {
+	n, err := agentmeta.JSONWireBound(ctx, value, available/2)
+	if errors.Is(err, agentmeta.ErrJSONWireLimit) {
 		l.readBudget.Refuse(available + 2)
 	}
 	l.readBudget.Release(scratch)

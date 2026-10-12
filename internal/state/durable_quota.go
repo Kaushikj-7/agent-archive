@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
-	"github.com/wangjohn/agent-archive/internal/jsonwire"
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
@@ -368,9 +368,9 @@ func (s *Store) writeDurableGuard(ctx context.Context, g config.DurableStorageGu
 		}
 		limit = min(limit, s.resourceBudget.Available()-1)
 	}
-	n, err := jsonwire.Bound(ctx, p, limit)
+	n, err := agentmeta.JSONWireBound(ctx, p, limit)
 	if s.resourceBudget != nil {
-		if errors.Is(err, jsonwire.ErrLimit) && limit < durableStorageQuota/2-1 {
+		if errors.Is(err, agentmeta.ErrJSONWireLimit) && limit < durableStorageQuota/2-1 {
 			// Memory, not the disk quota, refused the encoding.
 			s.resourceBudget.Refuse(limit + 2)
 		}
