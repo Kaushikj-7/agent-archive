@@ -3,6 +3,7 @@ package reader
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -275,7 +276,7 @@ func TestHistoricalListingModelPagesAndFixture(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err = model.List(ctx, "sessions/"); err != context.Canceled {
+	if _, err = model.List(ctx, "sessions/"); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancel=%v", err)
 	}
 }
