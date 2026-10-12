@@ -5,12 +5,14 @@ Interactive import separates the plan from the current question. Enter skips a s
 
 `agent-archive backfill` imports the Claude Code, Codex, and Cursor sessions
 already on this machine. Run it after [setup](../getting-started/setup.md), which
-itself offers to import the past sessions of the projects you chose (an
-import like `backfill --project DIR`, listed in `backfill history` and undone
-with `backfill undo`); run `backfill` for anything else. With
+itself imports the last 7 days of sessions in the projects you chose (an
+import like `backfill --since 7d --project DIR`, listed in `backfill history`
+and undone with `backfill undo`; see [setup](../getting-started/setup.md#sessions-from-the-last-7-days));
+run `backfill` for older sessions and anything else. With
 no options it imports every session it finds, but first it shows each project
-with its session count per app, what it will skip and why, and the date
-retention will delete the imported sessions. Nothing changes until you answer
+with its session count per app, what it will skip and why, and an estimated
+finite-retention expiry date or **no automatic expiry** for Keep forever.
+Nothing changes until you answer
 `y`.
 
 ```sh
@@ -22,6 +24,12 @@ agent-archive backfill undo          # remove the latest import from the bucket
 agent-archive backfill undo ID --project DIR
 ```
 
+In `backfill history`, an import's UPLOAD column counts as **waiting** only
+the sessions not in the archive yet. Sessions already uploaded are counted
+after it: **rechecking** when only a re-scan is still owed (a Codex session
+waiting for its history coverage, say), **updating** when newer work is still
+to upload, as in `uploaded · 2 rechecking` or `3 waiting · 1 updating`.
+
 Ctrl-C while the plan is being made stops it and changes nothing. Ctrl-C
 during registration or upload stops after the session in flight; run
 `backfill` again with the same options to finish the import, or let the
@@ -30,6 +38,31 @@ stopping. A second Ctrl-C, or closing the terminal (SIGHUP), SIGTERM or SIGQUIT,
 quits at once, after removing the private copy of Cursor's database backfill
 may have made; a copy a killed backfill leaves is removed by the next
 `backfill` command of any kind.
+
+## Durable import and recovery
+
+After confirmation, backfill stores the selected privacy-filtered evidence in
+private local staging before admitting each session. Setup's recent import and
+`--background` use the same protection. Once staged, an import can finish even
+if the apps delete their native files. A source that disappears before staging
+finishes is reported for retry; it is not counted as admitted.
+
+Staging and pending publication share a 1 GiB local quota. Foreground imports
+upload completed groups to free capacity; setup and background imports preserve
+completed work and report a capacity error so you can retry after the collector
+makes room. Each selected revision set and its encoded staging journal has a
+32 MiB upper bound; each child has a separate journal under the same quota.
+Encoded expansion and recovery work for large records can lower the practical
+input limit. A source that exceeds these bounds is rejected before admission;
+completed groups stay recoverable. `backfill history` distinguishes staged/admitted sessions from
+remotely verified uploads. Uploaded means the collector has read back the
+selected remote sources and metadata and committed its local completion state.
+
+Pausing keeps referenced evidence for retry. Updated privacy rules are applied
+again before staged evidence is published. Canceling before admission removes
+unreferenced evidence, with a cleanup journal if interrupted; canceling after
+admission keeps evidence for recovery. Undo removes that import's owned staging
+along with its sessions. Dry-run writes no staging or admission state.
 
 ## What gets imported
 
@@ -49,7 +82,9 @@ may have made; a copy a killed backfill leaves is removed by the next
   afterwards. Their subagent chats are not imported yet; the plan says how
   many there are.
 - Sessions run from your home directory or a temporary directory are skipped
-  unless you pass `--include-home` or `--include-temp`.
+  unless you pass `--include-home` or `--include-temp`. A Git repository in a
+  temporary directory, such as a throwaway clone an agent made to review a
+  pull request, counts as temporary too.
 - A plain folder that isn't a repository (say `~/code`, where you once ran an
   agent) becomes a project that captures new sessions anywhere under it
   that no nearer project owns; the plan says so under its row. Repositories
@@ -74,11 +109,15 @@ may have made; a copy a killed backfill leaves is removed by the next
   with an age is finished by the same age on a later day too. When the
   latest import was interrupted and a run with other options would start a
   new one, the plan says so and prints the command that finishes it.
-- Retention applies to imports from the day they are imported, so a whole
-  import expires on one day. Choose `edit` at the prompt to keep them longer.
-  Retention applies to the whole archive, so `edit` only raises it; shorten
-  it in setup. Undoing the import can put the earlier retention back; see
-  [undo](#undo).
+- Finite retention starts a new window for imported old sessions rather than
+  aging them from their native start date. The plan estimates expiry from the
+  import day; later meaningful captures, including preserved revisions, can
+  extend it, and pending publication can postpone deletion. Choose `edit` to
+  keep sessions longer or select `forever` for no automatic whole-session expiry.
+  This changes the owning machine's policy for all its sessions, so `edit` only
+  raises retention; shorten it in setup. Provider lifecycle rules, privacy and
+  superseded-source cleanup, and explicit deletion still apply. Undoing the
+  import can put the earlier retention back; see [undo](#undo).
 - Claude Code deletes its own transcripts after 30 days by default. To keep
   more history for backfill, set `"cleanupPeriodDays"` in
   `~/.claude/settings.json`.
@@ -109,13 +148,17 @@ Sessions captured by hooks in an excluded project stop uploading; they are not
 deleted.
 
 If the import raised retention (`edit` at the prompt), undo offers to put the
-shorter retention back. That applies to the whole archive, so the next
-collector pass deletes every session older than it, hook-captured sessions
-and other imports' included. The undo plan says how many, and the question
+shorter retention back. That applies to all sessions owned by this machine,
+so later collector passes may delete other eligible old sessions, including
+hook-captured sessions and other imports. The undo plan says how many, and the question
 you answer names them. With `--yes` undo leaves retention as it is and prints
 the command that restores it: `agent-archive backfill undo ID --yes
 --restore-retention`. A `--project` undo never changes retention, and neither
-does undo when retention was changed after the import.
+does undo when retention was changed after the import. This includes an import
+that raised finite retention to Keep forever: default `--yes` undo keeps forever.
+Only explicit `--restore-retention` restores the earlier finite policy; its
+preview counts other eligible sessions using meaningful capture age and pending
+work, and the compatibility fence remains installed.
 
 Undo refuses, and changes nothing, when it cannot tell its sessions from
 another import's (an earlier import whose file is missing had the same ID).
@@ -187,11 +230,108 @@ database-only candidates separately. These counts cover enumerated candidates,
 not unreadable stores. Duplicate candidates are not proof of identical bytes.
 A repeated observation of a selected file does not make that file a discarded duplicate. Known recovery
 exclusions count as excluded while preserving the primary skip code.
-`logical_history_pending` is true: dependencies, logical sessions, and retained
-revisions have not been reconciled. Related histories keep their existing pending
-skip; backfill has not inspected their current selection or missing dependencies.
+`logical_history_pending` remains true while comprehensive dependency/session/
+revision accounting is unfinished. The flag describes remaining comprehensive inventory reconciliation, not a
+blanket refusal of supported complete histories. Complete native children, forks
+and selected physical revisions use the validated shared history reader and
+durable staging; missing or ambiguous dependencies remain unresolved.
 Summaries contain no transcript paths, native IDs, remote URLs, or content.
 
 File and database-only candidates receive the same diagnostic details. For
 `unsafe_format`, the `source_inspection_unavailable` detail asks you to review
 source access and format support; the skip alone cannot prove which is missing.
+
+## Historical-only projects
+
+When the repository is gone, assign complete supported sessions to an explicit
+historical project. This imports reviewed evidence without adding a live project,
+installing hooks, or including future chats. Storage must already be configured;
+its live project list may be empty. Git and an existing checkout are not required.
+
+Create a stable random 128-bit ID once, keep it with your mapping file, and reuse
+it across imports and paired machines. For example, `openssl rand -hex 16` prints
+an ID. Labels are display names and do not determine ownership. A mapping file
+looks like this (replace the example ID and paths):
+
+```json
+{
+  "schema_version": 1,
+  "historical_projects": [
+    {"id": "11111111111111111111111111111111", "label": "Retired service"}
+  ],
+  "mappings": [
+    {"cwd": "/old/service", "historical_project_id": "11111111111111111111111111111111"},
+    {"cwd": "/old/worktree", "configured_root": "/current/repository"}
+  ]
+}
+```
+
+Each mapping has one exact absolute original cwd and exactly one target. A
+`configured_root` must already be an existing included live project, just like
+`--map-project`; its existing live ownership rules still apply. Historical IDs
+must be 32 lowercase hexadecimal characters. Definitions can introduce an absent
+identity or permission for the current destination. Existing labels and disabled
+permissions are preserved. Definitions for projects with no admitted sessions do
+not create permissions.
+
+```sh
+agent-archive backfill --mapping-file mappings.json --dry-run --json
+agent-archive backfill --mapping-file mappings.json
+agent-archive historical-project list
+agent-archive historical-project rename 11111111111111111111111111111111 "Retired API"
+agent-archive historical-project disable 11111111111111111111111111111111
+agent-archive historical-project enable 11111111111111111111111111111111
+```
+
+Review the assignments, historical IDs, labels and counts before confirming.
+The text preview shows up to 128 assignments; JSON shows all assignments. The
+file is limited to 4 MiB, 16,384 mappings and 16,384 project definitions. Unknown
+fields, duplicate JSON fields, conflicting cleaned cwds, invalid labels and
+multiple targets are refused before discovery. Inline `--map-project` keeps its
+128-mapping limit and merges with the file under the same conflict rule.
+Field names must use the exact lowercase schema spelling. Supplying both target
+fields is invalid even when one is an empty string.
+
+Rerun with the same semantic assignments to resume an interrupted batch. Ordering,
+filename and display labels do not change its canonical ownership digest. Changing
+a target starts a different batch; changing configuration while confirmation is
+pending requires a new preview. Mapping-file paths and private source cwds are
+not published or stored in the batch journal. `--project DIR` remains a live
+project output filter and does not select historical project IDs.
+
+Explicit exclusions and original source location restrictions also apply to required
+physical ancestors. A complete history requiring an excluded or restricted dependency is refused as
+`excluded_history`; it is not flattened into a partial session. Home, temporary
+and above-home restrictions still apply to the original cwd.
+Both original and canonical paths must pass these restrictions, so a symlink
+from a temporary directory still requires `--include-temp`.
+Missing dependencies or ambiguous histories remain unresolved; fragment import
+is still unavailable.
+
+After confirmation, filtered staging survives native source deletion before the
+first upload or after a restart. Subsequent publication, privacy filtering,
+parser upgrades and local handoff reads use retained evidence only. A transcript
+that later grows, or a repository that reappears, cannot extend the historical
+import. Rename changes the displayed project name without changing the ID or
+capture age. Disable stops admission and publication in the current destination;
+re-enable restores only that exact permission. Switching storage never republishes
+these imports into the new destination.
+
+Pairing carries historical IDs, labels and the source destination's import
+permission, without original cwds or mapping assignments. The recipient preserves
+its own existing labels and enabled/disabled decisions for the same destination.
+It must supply its own reviewed source mappings. These settings do not authorize
+live capture on either machine.
+
+Retention uses the import's capture/admission age. Keep forever disables automatic
+whole-session expiry; disabled permissions still expire under finite retention.
+Exact batch undo and purge remove the owned sessions and staged/remote evidence.
+**Undo retains historical project identities and destination permissions as
+explicit configuration**, including identities shared by another import. Use
+`historical-project disable ID` to stop their retained maintenance. Undo does not
+claim sessions owned by another batch or change live capture configuration.
+
+The first committed historical permission installs the permanent
+`historical-projects-v10` writer fence. Upgrade installed hooks and collectors
+before using it; earlier writers refuse rather than discard import-only ownership.
+The fence remains after disable, undo, expiry or setup rollback.

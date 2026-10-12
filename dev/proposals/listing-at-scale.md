@@ -1,7 +1,14 @@
 # Archive listing at scale: implementation plan
 
 Prepared 2026-09-30 against `main` at `dc443c7`. Status: phases 1
-and 2 implemented; phase 3 planned; phase 4 needs its own spec before any code.
+and 2 implemented; phase 3 partially covered; phase 4 partially implemented.
+Reconciled 2026-10-11 at `db2ccd3e`. The current
+[listing contract](../maintainers/list-performance.md) specifies indexed bounded
+metadata reads (#320), with 10k/20k correctness and operation-count coverage.
+`internal/reader/list_index_bench_test.go` has a 10k benchmark; the full original
+1k/10k/100k cold/warm measurement matrix is not recorded. Fresh LIST header
+enumeration still grows with archive size, so the original constant-cost index
+goal remains open. The phase designs below preserve the original plan.
 Each phase lands before the next one starts. Each phase's PR updates its
 status line below.
 
@@ -9,8 +16,8 @@ status line below.
 | --- | --- | --- |
 | 1 | Parallel range listing | Implemented in [#219](https://github.com/wangjohn/agent-archive/pull/219) |
 | 2 | `AGENT_ARCHIVE_TRACE` timings | Implemented in [#225](https://github.com/wangjohn/agent-archive/pull/225) |
-| 3 | Listing benchmark at 1k, 10k and 100k sessions | Planned |
-| 4 | Index read whose cost doesn't grow with the archive (spec first) | Planned after 1–3 and the session-finding picker work |
+| 3 | Listing benchmark at 1k, 10k and 100k sessions | Partial: 10k benchmark exists; full measurement matrix pending. |
+| 4 | Index read whose cost doesn't grow with the archive (spec first) | Partial: bounded metadata bodies implemented; proportional LIST headers remain. |
 
 ## Problem
 

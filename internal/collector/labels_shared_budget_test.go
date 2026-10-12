@@ -53,7 +53,7 @@ func TestLabelContextAndNativeSourceShareDefaultPassBudget(t *testing.T) {
 		if decoded <= 0 {
 			t.Fatal("native signature preceded retained label context")
 		}
-		if b.Available() > (128<<20)-decoded {
+		if b.Available() > agentapi.PassReadBudget-decoded {
 			t.Errorf("borrowed label context bypassed native ledger: decoded=%d available=%d", decoded, b.Available())
 		}
 	}}
@@ -61,7 +61,7 @@ func TestLabelContextAndNativeSourceShareDefaultPassBudget(t *testing.T) {
 	if result, err := Run(t.Context(), local, remote, opts); err != nil || len(result.Errors) != 0 {
 		t.Fatal(result, err)
 	}
-	if ledger == nil || ledger.Available() != 128<<20 {
+	if ledger == nil || ledger.Available() != agentapi.PassReadBudget {
 		t.Fatal("pass did not release all borrowed label/native owners")
 	}
 }

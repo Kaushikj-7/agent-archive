@@ -1,6 +1,47 @@
 # Historical backfill recovery: implementation plan
 
-Status: planned; not implemented. Prepared 2026-10-06 against `f0dca28b1191`.
+Status: partially implemented; remaining milestones remain gated. Prepared
+2026-10-06 against `f0dca28b1191`; historical-only ownership and bounded bulk
+mappings merged 2026-10-12 in
+[#433](https://github.com/wangjohn/agent-archive/pull/433) (`18ca0c48`).
+
+Step 4a now stages the selected filtered source set, including preserved Codex
+revisions and qualified children, before admission. A bounded SHA-256 journal
+links identity, selection, privacy context, destination and batch ownership to
+registration. Recovery scans at most 50 session directories per cursor slice;
+explicit foreground recovery drains slices. Staging and publication share the
+1 GiB quota with reserved cancellation controls. Native deletion, admission
+crashes, remote readback failures, quota retry, privacy replacement, pause,
+cancellation and undo have synthetic lifecycle coverage. The writer capability
+is fenced as `import-staging-v9` only with staging-aware mutation paths.
+
+This completes the pre-admission staging gap on top of existing source-set
+publication and revision maintenance; it does not establish live provider,
+platform or signed release acceptance. Step 6a now implements historical-only
+destinations and bulk mappings. Fragment import and remaining scale/release
+gates below remain separate work.
+
+## Current implementation and remaining scope
+
+Diagnostics (#345), portable Git recovery (#347), shared rollout lookup (#348),
+history lifecycle (#341), first-run recovery (#349), and native child/history
+capture (#355) have landed. Later recovery fixes (#387, #393–#395, #397–#398,
+#403, #408, #410, #417) harden inventory, per-app isolation, admission and paths.
+See `internal/backfill`, `internal/discovery`, `internal/collector/history_*.go`
+and [the retained-history contract](../specs/codex-history.md).
+
+Steps 1–5 now have substantial implementation; this does not establish every
+original completion gate. Historical-only ownership without a live checkout
+and bounded bulk mappings (step 6a) are implemented under the contract below.
+A separately versioned fragment artifact and lifecycle (step 6b), and the full
+portability/provider/older-writer acceptance matrix (step 7), remain open.
+
+The gap descriptions and delivery gates below preserve the reviewed starting
+point; claims that all related histories are pending, all history writes are
+fenced, or historical ownership is still missing describe that baseline, not
+current behavior. The current step 6a section records its implemented behavior;
+the remaining delivery gates do not imply completed platform acceptance.
+
 
 Staff review: revised 2026-10-06. The sequence below incorporates the findings
 from an architecture and lifecycle review. Implementation can begin with
@@ -432,29 +473,44 @@ resume, rerun, continued capture and exact undo ownership.
 
 ### Step 6a: historical-only ownership and bulk mappings
 
-Keep exact `--map-project` for existing configured destinations. Add a bounded
-reviewable mapping-file workflow for many original cwds, with conflict checks
-and a canonical digest included in batch resume identity. Any new flags below
-are design work, not commands available today; define their names/help during
-implementation and update the CLI contract together.
+Implemented in [#433](https://github.com/wangjohn/agent-archive/pull/433)
+(`18ca0c48`, 2026-10-12). The implementation was reconciled against main
+`b7435197` (including #430 streaming read accounting, per-session ceilings
+and named size gaps) and adds
+strict bounded mapping JSON, separate opaque historical identities and
+destination permissions, frozen private dependency cwd evidence, retained-only
+publication/local reads and permanent v10 compatibility protection. Existing
+staging/history foundations are reused. Original-vs-selected-revision admission
+and remote history-presence verification receive narrow prerequisite repairs.
+Undo retains historical identities and import permissions as explicit settings;
+it removes only batch-owned sessions/evidence. The operational contract is in
+the [backfill spec](../specs/backfill.md#historical-only-ownership-and-bounded-mapping-files).
+Fragment work in 6b and platform/provider release acceptance remain open.
 
-Add an explicit historical project destination for sessions whose original
+Exact `--map-project` remains available for existing configured destinations.
+`--mapping-file FILE` adds bounded, reviewable assignments for many original
+cwds, with conflict checks and a canonical digest included in batch resume
+identity. The CLI help, reference and backfill guide document these commands.
+
+An explicit historical project destination supports sessions whose original
 repository is gone or cannot be automatically attributed. It stores an
 import-only ownership proof and display identity independent of a live path.
 The import preview shows the assignments before confirmation. It grants no
 watcher, hook, discovery or future-project inclusion; an explicit source or
-project exclusion still wins. Registration acceptance and retention must support
-this proof without pretending the destination is an existing configured root.
+project exclusion still wins. Registration acceptance and retention support
+this proof independently of an existing configured root.
 
-Define paired-machine reconciliation of this project identity and its
-destination-scoped import permission. A display-label change cannot change
-ownership; moving to another destination requires the existing destination
+Paired machines reconcile this project identity and its destination-scoped
+import permission, preserving local labels and enabled/disabled decisions.
+A display-label change cannot change ownership; moving to another destination
+requires the existing destination
 policy rather than silently republishing there. Home/temp/above-home source
 restrictions remain applicable; historical attribution cannot bypass them.
 
-Tests: complete history with no live repository/no Git, first-time configuration,
-bulk mapping conflicts, exclusions, pairing, label changes, policy disable/re-enable,
-destination changes, interruption, retention and exact batch undo.
+Synthetic tests cover complete history with no live repository/no Git, first-time
+configuration, bulk mapping conflicts, exclusions, pairing, label changes,
+policy disable/re-enable, destination changes, interruption, retention and
+exact batch undo.
 
 ### Step 6b: fragment readers, lifecycle and import
 

@@ -8,7 +8,10 @@ first. For removing the entire archive, use the [uninstall guide](../getting-sta
 ## Shell cleanup recipe
 
 `show` prints a session's filter version (`filter_version` in `show --json`). To remove the older copies now,
-delete from the bucket the source objects no session's metadata points at.
+delete from the bucket the source objects no session's metadata points at,
+including its preserved revisions. Referenced older-filter revisions must be
+replaced through verified privacy publication before unreferenced cleanup can
+remove their objects.
 Pause every machine that uploads to the bucket first, so no publication is in
 flight: a new source is uploaded before the metadata that points at it.
 This needs the [AWS CLI](https://aws.amazon.com/cli/) and `jq`, and
@@ -188,27 +191,61 @@ purge_prepare() {
       echo "Cannot read $meta; nothing deleted." >&2; return 1
     fi
     jq -Rs . "$purge_dir/meta.$n" >> "$purge_dir/snapshots" || return 1
-    # Require the source in this session, a decimal filter version, and a machine ID.
+    # Validate the complete active/preserved set before classifying any source.
     if ! jq -ser --arg dir "${meta%metadata.json}" --arg p "$prefix" '
+        def uuid: type == "string" and test("^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$");
+        def captured_time:
+          if type != "string" then false else
+            [try (capture("^(?<year>[0-9]{4})-(?<month>0[1-9]|1[0-2])-(?<day>0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](\\.[0-9]+)?(Z|[+-]([01][0-9]|2[0-3]):[0-5][0-9])$") |
+              (.year | tonumber) as $y | (.month | tonumber) as $m |
+              (.day | tonumber) as $d |
+              ($d <= ([31, (if $y % 4 == 0 and ($y % 100 != 0 or $y % 400 == 0) then 29 else 28 end),
+                31,30,31,30,31,31,30,31,30,31][$m - 1]))) catch false] | .[0] // false
+          end;
+        def reference($base):
+          type == "object" and (.key | type) == "string" and
+          (.key | startswith($base)) and
+          (.key | ltrimstr($base) | test("^source\\.[0-9a-f]{64}\\.jsonl\\.gz$"));
         if length == 1 and (.[0] | type) == "object" then .[0]
         else error("metadata must contain one object") end |
-        .source_bundle.key as $s | .filter_version as $v | .machine_id as $m |
-        if ($s | type) == "string" and ($s | startswith(($dir | ltrimstr($p)))) and
-           ($s | ltrimstr(($dir | ltrimstr($p))) |
-             test("^source\\.[0-9a-f]{64}\\.jsonl\\.gz$")) and
-           ($s | explode | all(.[]; . >= 32)) and
+        ($dir | ltrimstr($p)) as $base |
+        .filter_version as $v | .machine_id as $m |
+        if .schema_version == 1 and .history == null then [.source_bundle]
+        elif .schema_version == 2 and ($base | startswith("sessions/codex/")) and
+          (.history | type) == "object" and (.history.current_revision | uuid) and
+          (.history.preserved == null or (.history.preserved | type) == "array") and
+          ((.history.preserved // []) | length <= 64) and
+          all((.history.preserved // [])[];
+            (.revision_id | uuid) and (.captured_at | captured_time) and
+            (.captured_at | startswith("0001-") | not) and
+            ((if .source_schema_version == null then 0 else .source_schema_version end) as $sv | $sv == 0 or $sv == 2 or $sv == 3)) and
+          ([.history.current_revision, (.history.preserved // [])[].revision_id] |
+            length == (unique | length)) then
+          [.source_bundle, (.history.preserved // [])[].source] |
+          if all(.[]; (.sha256 | type) == "string" and
+              (.sha256 | test("^[0-9a-f]{64}$")) and
+              (.sha256 as $sha | .key | endswith("source." + $sha + ".jsonl.gz")) and
+              (.compressed_bytes | type) == "number" and .compressed_bytes > 0 and
+              .compressed_bytes == (.compressed_bytes | floor))
+          then . else error("invalid history source reference") end
+        else error("unsupported or invalid metadata history") end |
+        . as $refs |
+        if all($refs[]; reference($base)) and
+           ([$refs[].key] | length == (unique | length)) and
            ($v | tostring | test("^[0-9]+$")) and
            ($m | type) == "string" and ($m | length > 0) then
-          [$s, ($v | tostring), $m] | @tsv
+          $refs[] | [.key, ($v | tostring), $m] | @tsv
         else error("invalid metadata") end
       ' "$purge_dir/meta.$n" > "$purge_dir/fields.$n"; then
       echo "Invalid $meta; nothing deleted." >&2; return 1
     fi
+    while IFS="$(printf '\t')" read -r source version owner; do
+      if ! grep -Fxq -- "$prefix$source" "$purge_dir/keys"; then
+        echo "Referenced source missing for $meta; nothing deleted." >&2; return 1
+      fi
+      printf '%s%s\n' "$prefix" "$source" >> "$purge_dir/current" || return 1
+    done < "$purge_dir/fields.$n"
     IFS="$(printf '\t')" read -r source version owner < "$purge_dir/fields.$n" || return 1
-    if ! grep -Fxq -- "$prefix$source" "$purge_dir/keys"; then
-      echo "Current source missing for $meta; nothing deleted." >&2; return 1
-    fi
-    printf '%s%s\n' "$prefix" "$source" >> "$purge_dir/current" || return 1
     if { [ "$mode" = old ] && [ "$version" -lt "$selector" ]; } ||
        { [ "$mode" = machine ] && [ "$owner" = "$selector" ]; }; then
       printf '%s\n' "$meta" >> "$purge_dir/selected" || return 1

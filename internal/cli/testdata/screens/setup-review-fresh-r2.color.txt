@@ -30,6 +30,9 @@ Choose Cloudflare R2 or Amazon S3 for private archive storage. Setup will guide 
 
 \e[1mStep 2 of 3 · Connect storage\e[0m
 
+\e[1mStorage · Account\e[0m
+\e[2mAccount → Storage → Verification\e[0m
+
 ? Where should your archive live?
 
   1) Cloudflare R2 (default)
@@ -40,6 +43,9 @@ Choose Cloudflare R2 or Amazon S3 for private archive storage. Setup will guide 
 › Choose [1]: r2-existing
 \e[2m✓ Provider Cloudflare R2\e[0m
 
+\e[1mStorage · Account\e[0m
+\e[2mAccount → Storage → Verification\e[0m
+
 ? R2 account ID or bucket URL
 
   Find the account ID or S3 endpoint in Cloudflare Dashboard > Storage &
@@ -49,6 +55,9 @@ Choose Cloudflare R2 or Amazon S3 for private archive storage. Setup will guide 
 
 › Account: 0123456789abcdef0123456789abcdef
 \e[2m✓ R2 account ID or bucket URL 0123456789abcdef0123456789abcdef\e[0m
+
+\e[1mStorage · Storage\e[0m
+\e[2mAccount → Storage → Verification\e[0m
 
 ? Bucket name
 
@@ -70,8 +79,11 @@ Choose Cloudflare R2 or Amazon S3 for private archive storage. Setup will guide 
 \e[2m✓ Credential received\e[0m
 
 
+\e[1mStorage · Verification\e[0m
+\e[2mAccount → Storage → Verification\e[0m
 Checking your storage connection…
 \e[32m✓\e[0m Connected to your storage.
+  \e[2m·\e[0m Bucket privacy not verified. Check that public access is disabled for the bucket in the Cloudflare dashboard.
 
 \e[1mStep 3 of 3 · Review and start\e[0m
   Apps      Claude Code
@@ -81,7 +93,7 @@ Checking your storage connection…
   Keep for  90 days
   ✓ Storage connected
   ! Bucket privacy unknown · check public access in the Cloudflare dashboard
-  \e[33m!\e[0m History import is separate.
+  \e[33m!\e[0m Setup imports the last 7 days of included projects; older history is separate.
   \e[33m!\e[0m Sensitive text may remain after filtering.
 
 ? Start archiving?

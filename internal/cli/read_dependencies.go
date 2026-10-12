@@ -20,6 +20,11 @@ type readOnlyStoreDependencies interface {
 	openStore(config.Config) (storage.ObjectStore, error)
 }
 
+type browseReadDependencies interface {
+	metadataCacheDependencies
+	interrupts() (<-chan os.Signal, func())
+}
+
 type metadataCacheDependencies interface {
 	readHome() (string, error)
 }
@@ -36,6 +41,7 @@ type terminalSizeDependencies interface {
 }
 
 type sessionSelectionDependencies interface {
+	interrupts() (<-chan os.Signal, func())
 	metadataCacheDependencies
 	terminalSizeDependencies
 	scopeDependencies
@@ -137,6 +143,7 @@ type handoffOptionsDependencies interface {
 }
 
 type handoffTargetDependencies interface {
+	interrupts() (<-chan os.Signal, func())
 	handoffResolverDependencies
 	currentSessionDependencies
 	workingDirDependencies

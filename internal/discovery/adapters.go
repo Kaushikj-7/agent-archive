@@ -58,6 +58,7 @@ const (
 	outcomeOwnTaskRejected Outcome = "own_task_rejected"
 	outcomeIncomplete      Outcome = "incomplete_metadata"
 	outcomeRelatedHistory  Outcome = Outcome(codexmeta.RelatedHistoryPending)
+	outcomeUnsupportedExec Outcome = Outcome(codexmeta.UnsupportedExecution)
 	outcomeUnavailable     Outcome = "source_unavailable"
 	outcomeChanged         Outcome = "source_changed"
 )
@@ -87,9 +88,14 @@ type SourceEntry struct {
 	unknownMetadata bool
 	// CoverageFingerprint includes every directory entry, even non-rollouts.
 	CoverageFingerprint string
-	Source              SourceDescriptor
-	Fingerprint         Fingerprint
-	Directory           string
+	// memberFingerprint replaces CoverageFingerprint in the coverage digest of
+	// a rollout file. It omits size and modification time, so an active rollout
+	// appended between observation and validation keeps its membership; its
+	// header identity is revalidated instead (see checkCoverageMembers).
+	memberFingerprint string
+	Source            SourceDescriptor
+	Fingerprint       Fingerprint
+	Directory         string
 }
 
 // SourceBatch carries a durable enumeration cookie and at most 256 entries.
@@ -165,7 +171,11 @@ func (a codexAdapter) Enumerate(ctx context.Context, root, path string, cookie i
 		if entry.CoverageFingerprint == "" {
 			b.coverage.Unavailable = true
 		}
-		b.coverage.Entries = append(b.coverage.Entries, entry.CoverageFingerprint)
+		fingerprint := entry.CoverageFingerprint
+		if entry.memberFingerprint != "" {
+			fingerprint = entry.memberFingerprint
+		}
+		b.coverage.Entries = append(b.coverage.Entries, fingerprint)
 	}
 	return b, nil
 }
@@ -189,7 +199,7 @@ func (a codexAdapter) Describe(root, path, name string) SourceEntry {
 	if local.PathWithin(loc, filepath.Join(root, "archived_sessions")) {
 		priority = 1
 	}
-	return SourceEntry{CoverageFingerprint: entryFingerprint(name, info), Source: SourceDescriptor{Priority: priority, Kind: archive.SourceKindFile, StableKey: sourcefacts.RolloutID(name), Locator: loc, Root: root}, Fingerprint: Fingerprint{Size: info.Size(), Mtime: info.ModTime().UnixNano()}}
+	return SourceEntry{CoverageFingerprint: entryFingerprint(name, info), memberFingerprint: memberFingerprint(name, info), Source: SourceDescriptor{Priority: priority, Kind: archive.SourceKindFile, StableKey: sourcefacts.RolloutID(name), Locator: loc, Root: root}, Fingerprint: Fingerprint{Size: info.Size(), Mtime: info.ModTime().UnixNano()}}
 }
 
 func (a codexAdapter) Inspect(ctx context.Context, source SourceDescriptor) Observation {

@@ -3,7 +3,6 @@ package collector
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -17,7 +16,7 @@ import (
 // version, and the collector has no other way to tell which one it has
 // until it tries. Any other adapter, or any other kind of filter failure,
 // is returned as-is with no retry. A transcript whose filtered records come
-// to more than maxBytes, or whose raw file is more than maxRawBytes(maxBytes),
+// to more than maxBytes, or whose raw file is more than maxRawBytes for it,
 // yields an error wrapping errTranscriptTooLarge.
 var errTranscriptTooLarge = errors.New("transcript exceeds collection limit")
 
@@ -30,7 +29,7 @@ var errRecordTooLarge = transcriptio.ErrRecordTooLarge
 // the filter drops.
 func checkFilteredSize(filtered archive.FilteredTranscript, maxBytes int64) error {
 	if size := int64(filtered.Boundary.RetainedBytes); size > maxBytes {
-		return fmt.Errorf("%w of %d bytes after filtering (%d bytes)", errTranscriptTooLarge, maxBytes, size)
+		return &filteredLimitError{size: size, limit: maxBytes}
 	}
 	return nil
 }
@@ -47,14 +46,14 @@ type transcriptFileInfo struct {
 func filterSnapshot(ctx context.Context, file agentapi.FileInput, adapter archive.Adapter, reg archive.SessionRegistration, maxBytes int64) (archive.FilteredTranscript, transcriptFileInfo, error) {
 	stamp := file.Stamp()
 	stat := transcriptFileInfo{Size: stamp.Size, Mtime: stamp.ModifiedAt.UnixNano()}
-	if stamp.Size > maxRawBytes(maxBytes) {
-		return archive.FilteredTranscript{}, stat, errTranscriptTooLarge
+	if limit := maxRawBytes(reg.Harness.Name, maxBytes); stamp.Size > limit {
+		return archive.FilteredTranscript{}, stat, errors.Join(errTranscriptTooLarge, &agentapi.RawLimitError{Size: stamp.Size, Limit: limit})
 	}
 	f, ok := adapter.(agentapi.TranscriptFilter)
 	if !ok {
 		return archive.FilteredTranscript{}, stat, errors.New("native filter input port required")
 	}
-	out, err := f.Filter(ctx, agentapi.NativeInput{File: file}, agentapi.FilterContext{StartedAt: reg.SessionStartedAt, Limits: agentapi.ReadLimits{RawBytes: maxRawBytes(maxBytes), RecordBytes: recordLimit}})
+	out, err := f.Filter(ctx, agentapi.NativeInput{File: file}, agentapi.FilterContext{StartedAt: reg.SessionStartedAt, Limits: agentapi.ReadLimits{RawBytes: maxRawBytes(reg.Harness.Name, maxBytes), RecordBytes: recordLimit}})
 	if err != nil {
 		return out, stat, translateSourceError(err)
 	}

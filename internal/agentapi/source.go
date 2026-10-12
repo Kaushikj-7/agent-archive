@@ -2,6 +2,7 @@ package agentapi
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -26,6 +27,8 @@ type SourceSemantics struct {
 
 // SourceEnvironment supplies narrow read dependencies and local database location.
 type SourceEnvironment struct {
+	// HistorySourceAllowed vetoes excluded physical dependencies before retention.
+	HistorySourceAllowed func(string) bool
 	// RequireConfinedHistory is set by capture callers. Read-only source facts
 	// remain independent of capture authority and may use explicit inputs.
 	RequireConfinedHistory bool
@@ -200,3 +203,6 @@ type RecoverySourcePass interface {
 type CodexRegisteredRolloutLookup interface {
 	RegisteredThread(context.Context, string) (CodexRolloutSet, error)
 }
+
+// ErrHistorySourceExcluded refuses complete import when a required source is excluded.
+var ErrHistorySourceExcluded = errors.New("required history source is excluded")

@@ -451,7 +451,8 @@ func readSingleMetadata(t *testing.T, mem *storagetest.MemoryStore) (archive.Met
 				return archive.Metadata{}, err
 			}
 			var metadata archive.Metadata
-			return metadata, json.Unmarshal(data, &metadata)
+			err = json.Unmarshal(data, &metadata)
+			return metadata, err
 		}
 	}
 	t.Fatal("no metadata sidecar in store")

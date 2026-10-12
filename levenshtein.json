@@ -9,8 +9,7 @@
     "workflows": {"dir": ".", "workspace": ".", "inputs": [".github"]}
   },
   "environments": {
-    "go": {"executor": "dagger"},
-    "release-go": {"executor": "native"}
+    "go": {"executor": "dagger"}
   },
   "checks": {
     "lint": {"kind": "go-lint", "target": "archive", "environment": "go"},
@@ -18,7 +17,7 @@
     "http": {"kind": "go-http", "target": "archive", "environment": "go"},
     "sql": {"kind": "go-sql", "target": "archive", "environment": "go"},
     "modules": {"kind": "go-mod", "target": "archive", "environment": "go"},
-    "vulnerabilities": {"kind": "go-vuln", "target": "archive", "environment": "release-go"},
+    "vulnerabilities": {"kind": "go-vuln", "target": "archive", "environment": "go"},
     "workflow-lint": {"kind": "workflow-lint", "target": "workflows", "environment": "go"},
     "workflow-security": {"kind": "workflow-security", "target": "workflows", "environment": "go"}
   },

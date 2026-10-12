@@ -12,7 +12,7 @@ import (
 
 func TestDurableStorageGuardExpiresAndPersistsActualFloor(t *testing.T) {
 	home := durableTestHome(t)
-	if e := Save(home, Config{MachineID: "synthetic", GenerationProtection: true, CodexHistoryProtection: true, CodexNameLookup: CodexNameLookupNative}); e != nil {
+	if e := Save(home, Config{RetentionDays: 90, MachineID: "synthetic", GenerationProtection: true, CodexHistoryProtection: true, CodexNameLookup: CodexNameLookupNative}); e != nil {
 		t.Fatal(e)
 	}
 	var retained DurableStorageGuard
@@ -29,7 +29,7 @@ func TestDurableStorageGuardExpiresAndPersistsActualFloor(t *testing.T) {
 	if e := retained.CheckHome(home); e == nil {
 		t.Fatal("expired guard accepted")
 	}
-	if e := Save(home, Config{MachineID: "rollback"}); e != nil {
+	if e := Save(home, Config{RetentionDays: 90, MachineID: "rollback"}); e != nil {
 		t.Fatal(e)
 	}
 	cfg, _, e := Load(home)
@@ -63,7 +63,7 @@ func TestDurableStorageRefusesMissingUnknownAndSetupConfig(t *testing.T) {
 		})
 	}
 	home := durableTestHome(t)
-	if e := Save(home, Config{MachineID: "synthetic"}); e != nil {
+	if e := Save(home, Config{RetentionDays: 90, MachineID: "synthetic"}); e != nil {
 		t.Fatal(e)
 	}
 	if e := os.WriteFile(filepath.Join(home, "setup-transaction.json"), []byte("owed"), 0600); e != nil {
@@ -105,7 +105,7 @@ func durableTestHome(t *testing.T) string {
 
 func TestDurableStorageGuardRejectsReplacedConfig(t *testing.T) {
 	home := durableTestHome(t)
-	if err := Save(home, Config{MachineID: "synthetic"}); err != nil {
+	if err := Save(home, Config{RetentionDays: 90, MachineID: "synthetic"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := WithDurableStorage(home, func(g DurableStorageGuard) error {
@@ -136,7 +136,7 @@ func assertOldWriterRefusesDurableStorage(t *testing.T, binary string) {
 	if err := os.Mkdir(home, 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := Save(home, Config{MachineID: "synthetic-old-storage-writer", Archive: archive.Config{Enabled: true}}); err != nil {
+	if err := Save(home, Config{RetentionDays: 90, MachineID: "synthetic-old-storage-writer", Archive: archive.Config{Enabled: true}}); err != nil {
 		t.Fatal(err)
 	}
 	if out, err := pause(home); err != nil {
@@ -200,7 +200,7 @@ func TestDurableStorageBinaryRefusesFutureCompositionConfiguration(t *testing.T)
 	if err := os.Mkdir(home, 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := Save(home, Config{MachineID: "synthetic-storage-writer", Archive: archive.Config{Enabled: true}}); err != nil {
+	if err := Save(home, Config{RetentionDays: 90, MachineID: "synthetic-storage-writer", Archive: archive.Config{Enabled: true}}); err != nil {
 		t.Fatal(err)
 	}
 	if out, err := pause(home); err != nil {

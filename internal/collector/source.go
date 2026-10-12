@@ -21,7 +21,10 @@ import (
 
 // sourceState carries a provider observation and legacy equality facts.
 type sourceState struct {
-	binding     *archive.CodexSourceBinding
+	binding *archive.CodexSourceBinding
+	// relocated is where an unbound Codex registration's rollout was read
+	// from when Codex had renamed it (see agentapi.SourceRelocation).
+	relocated   string
 	kind        archive.SourceKind
 	file        transcriptFileInfo
 	cursor      cursorstore.Signature
@@ -94,7 +97,11 @@ func newSourceReader(reg archive.SessionRegistration, opts Options) (sourceReade
 	if reg.ReadsTranscriptFile() && reg.TranscriptPath == "" {
 		return nil, false
 	}
-	return providerReader{
+	var allowed func(string) bool
+	if reg.HistoricalProject != nil {
+		allowed = opts.HistoricalSourceAllowed
+	}
+	return providerReader{historicalSourceAllowed: allowed,
 		ref: sourceRef(reg), harness: reg.Harness.Name, startedAt: reg.SessionStartedAt,
 		subagentMetadata: reg.ParentSessionID != "", sources: opts.Sources,
 		passes: opts.sourcePasses, resourceOwner: opts.retainedOwner, database: opts.CursorDatabase, rollouts: opts.CodexRollouts, pendingRollouts: opts.PendingCodexRollouts,
@@ -106,18 +113,19 @@ func newSourceReader(reg archive.SessionRegistration, opts Options) (sourceReade
 // providerReader keeps only read dependencies; boxing whole registrations and
 // collector options would allocate their unrelated policy fields per source.
 type providerReader struct {
-	pendingRollouts  func() agentapi.CodexRolloutLookup
-	resourceOwner    *sessionScan
-	admission        agentapi.SourceAdmission
-	rollouts         agentapi.CodexRolloutLookup
-	ref              agentapi.SourceRef
-	harness          string
-	startedAt        time.Time
-	subagentMetadata bool
-	sources          agentapi.SourcesLookup
-	passes           *sourcePassSet
-	database         string
-	discovery        *archive.SessionRegistration
+	historicalSourceAllowed func(string) bool
+	pendingRollouts         func() agentapi.CodexRolloutLookup
+	resourceOwner           *sessionScan
+	admission               agentapi.SourceAdmission
+	rollouts                agentapi.CodexRolloutLookup
+	ref                     agentapi.SourceRef
+	harness                 string
+	startedAt               time.Time
+	subagentMetadata        bool
+	sources                 agentapi.SourcesLookup
+	passes                  *sourcePassSet
+	database                string
+	discovery               *archive.SessionRegistration
 }
 
 // discoveryRegistration retains only discovery authority for strict native reads.
@@ -200,7 +208,7 @@ func (r providerReader) binding() (agentapi.SourceProvider, agentapi.TranscriptF
 }
 
 func (r providerReader) pass(ctx context.Context, p agentapi.SourceProvider, key string) (agentapi.SourcePass, func() error, error) {
-	if r.passes != nil {
+	if r.passes != nil && r.historicalSourceAllowed == nil {
 		pass, err := r.passes.get(ctx, sourcePassKey{name: key, root: r.discoveryRoot(), discovery: r.discovery != nil, legacy: r.harness == archive.HarnessCodex && r.admission.Binding == nil && (r.discovery == nil || r.discovery.Origin != archive.SessionOriginDiscovery)}, p)
 		if err != nil {
 			return nil, nil, err
@@ -209,6 +217,7 @@ func (r providerReader) pass(ctx context.Context, p agentapi.SourceProvider, key
 		return pass, func() error { r.passes.active--; return nil }, nil
 	}
 	env := sourceEnvironment(r.discovery, r.database)
+	env.HistorySourceAllowed = r.historicalSourceAllowed
 	env.CodexRollouts = r.rollouts
 	if r.resourceOwner != nil {
 		env.ReadBudget = r.resourceOwner.readBudget()
@@ -292,7 +301,7 @@ func (r providerReader) Filter(ctx context.Context, adapter archive.Adapter, max
 		return out, observed, err
 	}
 	defer func() { err = errors.Join(err, closePass()) }()
-	limits := agentapi.ReadLimits{RawBytes: maxRawBytes(maxBytes), RecordBytes: recordLimit, SubagentMetadata: r.subagentMetadata}
+	limits := agentapi.ReadLimits{RawBytes: maxRawBytes(r.harness, maxBytes), RecordBytes: recordLimit, SubagentMetadata: r.subagentMetadata}
 	snap, err := p.Read(ctx, r.ref, limits)
 	if err != nil {
 		if o, ok := agentapi.ErrorObservation(err); ok {
@@ -315,6 +324,11 @@ func (r providerReader) Filter(ctx context.Context, adapter archive.Adapter, max
 	observed.binding, err = r.snapshotBinding(ctx, snap)
 	if err != nil {
 		return out, observed, err
+	}
+	if relocation, ok := snap.(agentapi.SourceRelocation); ok && r.admission.Binding == nil {
+		if moved, relocated := relocation.RelocatedFrom(r.ref); relocated {
+			observed.relocated = moved.Path
+		}
 	}
 
 	out, err = r.filterOwned(ctx, f, in, agentapi.FilterContext{Filename: filepath.Base(r.ref.Path), StartedAt: r.startedAt, Limits: limits})
@@ -404,7 +418,7 @@ func checkCursorChatSize(c cursorstore.Composer, maxBytes int64) error {
 			return errRecordTooLarge
 		}
 	}
-	if CursorChatSize(c) > maxRawBytes(maxBytes) {
+	if CursorChatSize(c) > maxRawBytes(archive.HarnessCursor, maxBytes) {
 		return errTranscriptTooLarge
 	}
 	return nil
@@ -475,6 +489,21 @@ type sourcePassSet struct {
 	passes       map[sourcePassKey]agentapi.SourcePass
 }
 
+// releaseCaches drops the open source passes' idle caches when budget has
+// less than need free (see pass.scan).
+func (s *sourcePassSet) releaseCaches(budget *agentapi.NativeReadBudget, need int64) error {
+	if s == nil || budget.Available() >= need {
+		return nil
+	}
+	var err error
+	for _, pass := range s.passes {
+		if caches, ok := pass.(interface{ ReleaseCaches() error }); ok {
+			err = errors.Join(err, caches.ReleaseCaches())
+		}
+	}
+	return err
+}
+
 func (s *sourcePassSet) get(ctx context.Context, key sourcePassKey, p agentapi.SourceProvider) (agentapi.SourcePass, error) {
 	if key.name == "codex" {
 		if provider, ok := s.env.CodexRollouts.(agentapi.CodexRolloutSliceProvider); ok {
@@ -539,7 +568,7 @@ func (s *sourcePassSet) get(ctx context.Context, key sourcePassKey, p agentapi.S
 }
 
 func openCursorPass(_ []archive.SessionRegistration, opts *Options) func() error {
-	budget := agentapi.NewNativeReadBudget(128 << 20)
+	budget := agentapi.NewNativeReadBudget(agentapi.PassReadBudget)
 	if shared, ok := opts.CodexRollouts.(agentapi.CodexRolloutResourceBudget); ok && shared.NativeReadBudget() != nil {
 		budget = shared.NativeReadBudget()
 	}
@@ -569,7 +598,7 @@ func openCursorPass(_ []archive.SessionRegistration, opts *Options) func() error
 // left to be retried. The size limits in force are recorded too, so raising
 // one reads the chat again, and so is the gap (blocked) a size limit
 // recorded, for status.
-func rememberFailedRead(local *state.Store, reg archive.SessionRegistration, adapter archive.Adapter, observed sourceState, opts Options, failure error, blocked state.BlockedReason, publishedLastHead string) error {
+func rememberFailedRead(local *state.Store, reg archive.SessionRegistration, adapter archive.Adapter, observed sourceState, opts Options, failure error, blocked state.BlockedReason, limit *state.SizeLimitGap, publishedLastHead string) error {
 	if !observed.observation.Present {
 		return nil
 	}
@@ -587,7 +616,7 @@ func rememberFailedRead(local *state.Store, reg archive.SessionRegistration, ada
 		SourceSignature: signaturePointer(observed), SourceKind: observed.kind, CursorLastUpdatedAt: observed.cursor.LastUpdatedAt,
 		CursorHeaderCount: observed.cursor.HeaderCount, CursorLastBubbleID: observed.cursor.LastBubbleID,
 		CursorMessageRows: observed.cursor.MessageRows, CursorLastMessageHash: observed.cursor.LastMessageHash,
-		Failed: true, FailedError: message, FailedMaxBytes: opts.maxTranscriptBytes(), FailedRecordLimit: recordLimit,
+		Failed: true, FailedError: message, FailedMaxBytes: opts.maxTranscriptBytes(), FailedRecordLimit: recordLimit, FailedRawLimit: opts.maxRawBytes(reg.Harness.Name), SizeLimit: limit,
 		Blocked: blocked, PublishedLastHead: publishedLastHead,
 	})
 }
@@ -677,7 +706,10 @@ func sourceAdmission(reg archive.SessionRegistration) agentapi.SourceAdmission {
 	if reg.Origin == archive.SessionOriginDiscovery {
 		cwd = reg.DiscoveryCwd
 	}
-	if reg.CodexBinding != nil {
+	if reg.HistoricalProject != nil {
+		cwd = reg.HistoricalProject.OriginalCwd
+	}
+	if reg.CodexBinding != nil && reg.HistoricalProject == nil {
 		cwd = ""
 	}
 	createdAt := time.Time{}

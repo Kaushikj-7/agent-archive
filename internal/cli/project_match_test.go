@@ -162,6 +162,10 @@ func TestSetupYesRepoSelectionAndExplicitPathsAreIndependent(t *testing.T) {
 	}
 }
 
+// The cap is what this test checks, not speed: its candidates live in the
+// run's own temporary folder (TestMain), history scanning reads no temporary
+// directory of the machine's, and the deadline is far off, so a loaded
+// machine cannot turn the cap into a timeout.
 func TestProjectMatcherCapsCandidatesAndPreservesPartialMatches(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
@@ -175,9 +179,9 @@ func TestProjectMatcherCapsCandidatesAndPreservesPartialMatches(t *testing.T) {
 		cfg.Archive.Projects = append(cfg.Archive.Projects, archive.ProjectActivation{Root: root, Included: true})
 	}
 	var calls atomic.Int32
-	env := Env{WorkingDir: func() (string, error) { return "", nil }, LookupEnv: func(string) (string, bool) { return "", false }, repoKeyContext: func(context.Context, string) string { calls.Add(1); return key }}
+	env := Env{BackfillTempDirs: []string{}, projectMatchTimeout: time.Hour, WorkingDir: func() (string, error) { return "", nil }, LookupEnv: func(string) (string, bool) { return "", false }, repoKeyContext: func(context.Context, string) string { calls.Add(1); return key }}
 	got := matchProjects(context.Background(), env, home, cfg, []projectMatchRequest{{RepoKey: key}})
-	if !got.Capped || !got.Incomplete || len(got.Roots[0]) != 128 || calls.Load() != 128 {
+	if !got.Capped || !got.Incomplete || got.TimedOut || len(got.Roots[0]) != 128 || calls.Load() != 128 {
 		t.Fatalf("got %+v calls %d", got, calls.Load())
 	}
 }
@@ -198,7 +202,7 @@ func TestProjectMatcherFindsRelocatedRepositoryInHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 	key := archive.RepoKey("https://user:synthetic-secret@example.test/acme/repo.git")
-	env := Env{WorkingDir: func() (string, error) { return "", nil }, LookupEnv: func(string) (string, bool) { return "", false }, repoKeyContext: func(context.Context, string) string { return key }}
+	env := Env{BackfillTempDirs: []string{}, WorkingDir: func() (string, error) { return "", nil }, LookupEnv: func(string) (string, bool) { return "", false }, repoKeyContext: func(context.Context, string) string { return key }}
 	got := matchProjects(context.Background(), env, home, config.Config{}, []projectMatchRequest{{RepoKey: key}})
 	if got.Incomplete || len(got.Roots[0]) != 1 || got.Roots[0][0] != local.CanonicalPath(root) {
 		t.Fatalf("got %+v", got)

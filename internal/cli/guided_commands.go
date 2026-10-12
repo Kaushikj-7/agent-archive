@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"errors"
 	"github.com/wangjohn/agent-archive/internal/terminal"
 	"io"
 	"strconv"
@@ -45,17 +44,15 @@ func (p *prompter) guidedDefault(question, def string) (string, error) {
 
 // guidedRetention keeps the existing bounds on a standalone import edit.
 func (p *prompter) guidedRetention(def int) (int, error) {
-	value, err := p.guidedText(promptModel{Question: "Keep sessions for how many days?", Default: strconv.Itoa(def), Validate: func(value string) error {
-		days, err := strconv.Atoi(value)
-		if err != nil || days <= 0 || days > 36500 {
-			return errors.New("enter a number of days between 1 and 36500")
-		}
-		return nil
-	}})
+	value := strconv.Itoa(def)
+	if def == 0 {
+		value = "forever"
+	}
+	answer, err := p.guidedText(promptModel{Question: "Keep sessions for how many days?", Default: value, Validate: func(value string) error { _, err := parseRetentionAnswer(value); return err }})
 	if err != nil {
 		return 0, err
 	}
-	return strconv.Atoi(value)
+	return parseRetentionAnswer(answer)
 }
 
 // guidedRows aligns human records and switches to labeled fields when a table

@@ -2,14 +2,20 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	awscreds "github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/wangjohn/agent-archive/internal/cloudflare"
+	"github.com/wangjohn/agent-archive/internal/storage"
 	_ "github.com/wangjohn/agent-archive/internal/testutil/golden" // registers -update for go test ./... -update
 )
 
@@ -142,5 +148,91 @@ func TestPersistenceFailureDoesNotStopCleanup(t *testing.T) {
 				t.Fatal("report persistence failure was not retained as a run failure")
 			}
 		})
+	}
+}
+
+// stalledCleanupBody models headers arriving while the DELETE body never finishes.
+// release allows the before-fix variant to unwind without leaking a goroutine.
+type stalledCleanupBody struct {
+	ctx     context.Context
+	reading chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (b *stalledCleanupBody) Read([]byte) (int, error) {
+	b.once.Do(func() { close(b.reading) })
+	select {
+	case <-b.ctx.Done():
+		return 0, b.ctx.Err()
+	case <-b.release:
+		return 0, io.EOF
+	}
+}
+
+func (*stalledCleanupBody) Close() error { return nil }
+
+func TestDeferredObjectCleanupBoundsBodyAndReachesResourceCleanup(t *testing.T) {
+	r, requests := cleanupFixture(t)
+	parent, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	r.ctx = parent
+	cancel() // Cleanup must still issue its DELETE after interruption.
+	reading, release := make(chan struct{}), make(chan struct{})
+	requestContext := make(chan context.Context, 1)
+	transport := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requestContext <- req.Context()
+		return &http.Response{StatusCode: http.StatusForbidden, Request: req,
+			Header: http.Header{"Content-Type": []string{"application/xml"}},
+			Body:   &stalledCleanupBody{ctx: req.Context(), reading: reading, release: release}}, nil
+	})}
+	cfg := aws.Config{Region: "auto", HTTPClient: transport,
+		Credentials: awscreds.NewStaticCredentialsProvider("synthetic-id", "synthetic-secret", "")}
+	store, err := storage.NewS3Store(storage.S3StoreOptions{Provider: "r2",
+		Client: storage.NewClient(cfg, "https://synthetic.invalid", true, 1), Bucket: "aa-accept-one"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		var deleteErr error
+		r.execute(func() {
+			defer func() {
+				deleteErr = deleteScratchObject(parent, store, "outside-archive/synthetic", 100*time.Millisecond)
+			}()
+		})
+		done <- deleteErr
+	}()
+	// Release the synthetic response and join even if a broken implementation hangs.
+	defer func() {
+		close(release)
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Error("cleanup worker did not exit after releasing synthetic body")
+		}
+	}()
+	select {
+	case <-reading:
+	case <-time.After(time.Second):
+		t.Fatal("DELETE response body was not read")
+	}
+	ctx := <-requestContext
+	select {
+	case err := <-done:
+		// Put the result back so the deferred join has a completed worker to observe.
+		done <- err
+		if _, ok := ctx.Deadline(); !ok {
+			t.Fatal("interruption-independent DELETE has no deadline")
+		}
+		if err == nil || !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			t.Fatalf("stalled body did not terminate at cleanup deadline: err=%v context=%v", err, ctx.Err())
+		}
+	case <-time.After(time.Second):
+		t.Fatal("stalled DELETE prevented final resource cleanup")
+	}
+	assertCompleteCleanup(t, r, *requests)
+	if !r.failed() {
+		t.Fatal("interrupted acceptance must remain a failure after cleanup")
 	}
 }

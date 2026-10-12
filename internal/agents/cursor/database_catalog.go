@@ -169,6 +169,7 @@ func decodeComposerData(key string, value []byte) (composer, bool) {
 	// The rest is read only for a chat that is counted.
 	var createdAt time.Time
 	var folder, workspaceID string
+	workspaceIdentifier := false
 	if counted {
 		if raw, ok := present("createdAt"); ok {
 			var ms float64
@@ -177,6 +178,9 @@ func decodeComposerData(key string, value []byte) (composer, bool) {
 			}
 		}
 		if raw, ok := present("workspaceIdentifier"); ok {
+			// Present in any shape: a reference this release cannot resolve
+			// (a remote URI, an unknown shape) still names a workspace.
+			workspaceIdentifier = true
 			var ws map[string]json.RawMessage
 			if json.Unmarshal(raw, &ws) == nil {
 				folder = composerWorkspaceFolder(ws["uri"])
@@ -190,12 +194,13 @@ func decodeComposerData(key string, value []byte) (composer, bool) {
 	}
 	return composer{
 		chat: agentapi.DatabaseChat{
-			ID:          id,
-			KeyID:       keyID,
-			CreatedAt:   createdAt,
-			Folder:      folder,
-			WorkspaceID: workspaceID,
-			Malformed:   malformed,
+			ID:                  id,
+			KeyID:               keyID,
+			CreatedAt:           createdAt,
+			Folder:              folder,
+			WorkspaceID:         workspaceID,
+			WorkspaceIdentifier: workspaceIdentifier,
+			Malformed:           malformed,
 		},
 		counted:   counted,
 		subagents: subagents,

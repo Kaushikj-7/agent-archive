@@ -341,11 +341,12 @@ type ProjectResolution struct {
 // SessionStartedAt is when the conversation began. It is not the capture
 // boundary: project activation and the storage destination compare Admitted().
 type SessionRegistration struct {
-	ProjectResolution  *ProjectResolution   `json:"project_resolution,omitempty"`
-	CodexBinding       *CodexSourceBinding  `json:"codex_binding,omitempty"`
-	CodexCandidatePath string               `json:"codex_candidate_path,omitempty"`
-	CodexAdmission     *CodexAdmissionProof `json:"codex_admission,omitempty"`
-	ArchiveSessionID   string               `json:"archive_session_id"`
+	HistoricalProject  *HistoricalProjectProof `json:"historical_project,omitempty"`
+	ProjectResolution  *ProjectResolution      `json:"project_resolution,omitempty"`
+	CodexBinding       *CodexSourceBinding     `json:"codex_binding,omitempty"`
+	CodexCandidatePath string                  `json:"codex_candidate_path,omitempty"`
+	CodexAdmission     *CodexAdmissionProof    `json:"codex_admission,omitempty"`
+	ArchiveSessionID   string                  `json:"archive_session_id"`
 	// PreviousGenerationID links recovery generations independently of subagents.
 	PreviousGenerationID string `json:"previous_generation_id,omitempty"`
 	// CaptureFrozen forbids further native capture; retained privacy maintenance remains.
@@ -408,6 +409,8 @@ type SessionRegistration struct {
 	// ImportBatch is the backfill run that registered the session. Whether
 	// a registration belongs to an import is InBatch's to say.
 	ImportBatch ImportBatch `json:"import_batch,omitzero"`
+	// StagedImportSHA256 selects durably filtered pre-admission evidence.
+	StagedImportSHA256 string `json:"staged_import_sha256,omitempty"`
 	// DestinationID is config.DestinationID of the storage destination the
 	// session was admitted into. Set once, at registration, by hooks and
 	// backfill; a subagent copies its parent's. Empty on older
@@ -470,8 +473,8 @@ func (r SessionRegistration) Validate() error {
 	if strings.TrimSpace(r.ArchiveSessionID) == "" || strings.TrimSpace(r.NativeSessionID) == "" {
 		return errors.New("archive and native session IDs are required")
 	}
-	if strings.TrimSpace(r.ProjectID) == "" || strings.TrimSpace(r.ProjectRoot) == "" {
-		return errors.New("project ID and project root are required")
+	if err := r.validateProjectOwnership(); err != nil {
+		return err
 	}
 	if strings.TrimSpace(r.Harness.Name) == "" {
 		return errors.New("harness name is required")

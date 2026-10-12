@@ -94,7 +94,7 @@ func TestBackfillErrorPathReconciles(t *testing.T) {
 	imports := filepath.Join(f.data, "imports")
 	f.env.backfillHoldSteps = 3
 	f.env.backfillCheckpoint = func(step string) error {
-		if step == "committed" {
+		if step == "staged" {
 			return os.Chmod(imports, 0o500)
 		}
 		return nil
@@ -144,7 +144,7 @@ func TestBackfillBatchRebuiltFromRegistrations(t *testing.T) {
 	imports := filepath.Join(f.data, "imports")
 	f.env.backfillHoldSteps = 3
 	f.env.backfillCheckpoint = func(step string) error {
-		if step == "committed" {
+		if step == "staged" {
 			return os.Chmod(imports, 0o500)
 		}
 		return nil

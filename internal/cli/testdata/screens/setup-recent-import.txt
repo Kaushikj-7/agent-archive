@@ -1,0 +1,125 @@
+$ agent-archive setup
+Checking installed applications...
+  ✓ Claude Code hooks: ~/.claude/settings.json
+  ✓ Background job: launchctl responds
+Choose Cloudflare R2 or Amazon S3 for private archive storage. Setup will guide you through connecting your account.
+
+Step 1 of 3 · Choose what to capture
+
+? Capture sessions from Claude Code?
+
+  1) Yes (default)
+  2) No
+
+› Choose [1]:
+✓ Capture sessions from Claude Code Yes
+
+? Which projects?
+
+  Found 1 projects:
+  1) ~/src/web-app · this folder · 3 sessions · today
+
+  1) All 1 found projects (default)
+  2) Choose specific projects
+
+  [p] Add a project path
+  [r] Retry search
+
+› Choose [1]:
+✓ Projects All 1 found projects
+
+Step 2 of 3 · Connect storage
+
+Storage · Account
+Account → Storage → Verification
+
+? Where should your archive live?
+
+  1) Cloudflare R2 (default)
+  2) Amazon S3
+
+  [h] Setup instructions
+
+› Choose [1]: s3-existing
+✓ Provider Amazon S3
+
+Storage · Account
+Account → Storage → Verification
+
+? AWS profile
+
+  [:back] Back to storage options
+
+› Answer: work
+✓ AWS profile work
+
+Storage · Storage
+Account → Storage → Verification
+
+? Which bucket should sessions be stored in?
+
+  1) photos
+  2) team-archive
+  Enter a number or bucket name.
+  [:back] Back to storage options
+
+› Choose: 2
+✓ team-archive
+
+Bucket team-archive is in us-east-1; using that region.
+
+Storage · Verification
+Account → Storage → Verification
+Checking your storage connection…
+✓ Connected to your storage.
+  ! Bucket privacy not verified: public-access settings could not be read.
+    Make sure public access is off: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
+
+Step 3 of 3 · Review and start
+  Apps      Claude Code
+  Projects  ~/src/web-app
+  Skills    Metadata, including user folders
+  Storage   s3://team-archive/agent-archive/
+  Keep for  90 days
+  ✓ Storage connected
+  ! Bucket privacy unknown · public-access settings could not be read
+    Make sure public access is off:
+    https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
+  ! Setup imports the last 7 days of included projects; older history is separate.
+  ! Sensitive text may remain after filtering.
+
+? Start archiving?
+
+  1) Start archiving (default)
+  2) Edit a setting
+
+  [d] Full settings and privacy
+  [q] Cancel; keep draft
+  [m] Name this machine
+
+› Choose [1]:
+✓ Start archiving
+
+✓ Setup complete · Automatic capture is on
+Imported 2 sessions from the last 7 days (Claude Code 2). Uploading in the background.
+1 older session: run agent-archive backfill to import it.
+Installed /handoff, which continues a session in another agent: ~/.claude/skills/handoff/SKILL.md
+Installed the agent-archive skill, which lets your agents look up and pull in past sessions: ~/.claude/skills/agent-archive/SKILL.md
+To remove the agent skills and keep them off, run agent-archive setup --no-skills.
+
+Next, in each app
+  Claude Code: nothing to approve; hooks capture sessions that start from now on
+  (or after /clear).
+Check progress with agent-archive status.
+  · Another machine: agent-archive machines pair
+
+? More next steps?
+
+  1) Finish setup (default)
+
+  [d] Machine transfer details
+
+› Choose [1]:
+✓ Finish setup
+
+[exit 0]

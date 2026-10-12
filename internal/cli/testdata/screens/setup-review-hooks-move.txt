@@ -14,14 +14,24 @@ Checking installed applications...
 › Choose [1]: 3
 ✓ How long sessions are kept
 
-? Keep sessions for how many days?
+? How long should sessions be kept?
 
-› Days [90]: 90
-✓ Retention 90
+  Provider lifecycle rules and explicit deletion still apply.
+
+  1) 90 days (default)
+  2) Custom duration
+  3) Keep forever
+
+› Choose [1]: 90-days
+✓ Retention 90 days
 
 
+Storage · Verification
+Account → Storage → Verification
 Checking your storage connection…
 ✓ Connected to your storage.
+  ! Bucket privacy not verified: public-access settings could not be read.
+    Make sure public access is off: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
 
 Review your changes
   Apps      Codex
@@ -34,7 +44,7 @@ Review your changes
   ! Bucket privacy unknown · public-access settings could not be read
     Make sure public access is off:
     https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
-  ! History import is separate.
+  ! Setup imports the last 7 days of included projects; older history is separate.
   ! Sensitive text may remain after filtering.
 
   ! Codex hooks move to ~/codex-elsewhere/hooks.json from ~/.codex/hooks.json.

@@ -12,7 +12,7 @@ Total: 1 session, 1 KB,
        started 2026-09-20.
 
 If you continue:
-  • Retention is off, so these sessions are kept until you delete them.
+  • Keep forever: these sessions have no automatic expiry. Provider lifecycle rules and explicit deletion still apply.
   • Undo any time with `agent-archive backfill undo`.
 
 --- mixed, filtered, retention ---

@@ -13,7 +13,7 @@ affects.
 | Parser | per-agent `Parser.Version()` / `archive.DefaultParserVersion` | metadata `parser.version` | 0.21.0 | How metadata is derived from a source changes: counts, turns, models, skills, gaps, titles, session names, branch, linked pull requests, tools used, end time, tokens (per model too), tool errors, MCP calls, git activity, the repository key (derived from the project's git origin, not the source). |
 | Source schema | `archive.SourceSchemaVersion` / `HistorySourceSchemaVersion` | source header `schema_version` | 2 | The source bundle's line format changes. Readers refuse other versions. |
 | Metadata schema | `archive.MetadataSchemaVersion` / `HistoryMetadataSchemaVersion` | metadata `schema_version` | 1 | The metadata sidecar changes incompatibly. Optional fields don't bump it. |
-| Codex parser | `codex.Parser.Version()` | metadata `parser.version` | 0.26.0 | Codex identity, ownership or metadata interpretation changes. |
+| Codex parser | `codex.Parser.Version()` | metadata `parser.version` | 0.27.0 | Codex identity, ownership or metadata interpretation changes. |
 | History source schema | `archive.HistorySourceSchemaVersion` | source header `schema_version` | 3 | The self-contained Codex history manifest or record envelopes change. |
 | History metadata schema | `archive.HistoryMetadataSchemaVersion` | metadata `schema_version` | 2 | Preserved native revision references change incompatibly. |
 | Machine record | `machines.SchemaVersion` | `machines/<machine_id>.json` and `machines --json` | 1 | Informational registry format changes incompatibly; independent of session schemas and filtering. |
@@ -155,3 +155,31 @@ and `native_child` remains observable while their parent archive link is pending
 The new parser version also rechecks older naming-era child caches before
 migrating their retained ownership headers. Claude and the common parser remain
 0.21.0, Cursor remains 0.20.0, adapter 0.18.0 and privacy filter 18.
+
+Codex parser 0.27.0 applies filter 16's injected-context rule to user text a
+filter 15 or earlier source retained, so a leading open-page wrapper is neither
+a prompt nor the title, and the title falls through to the next real prompt.
+The bump makes existing sessions refresh their metadata from the retained
+source without a new source upload. Filter, adapter and other parsers are unchanged.
+
+Confirmed import staging uses the incompatible configuration fence
+`{version: 9, writer: import-staging-v9}` and sticky
+`import_staging_protection`. It dominates retention's version 8 fence while
+preserving retention protection and every underlying authorization floor.
+Only staging-aware writers accept version 9: the earlier retention-only writer
+refuses it before mutation because it cannot preserve the registration's staged
+source digest. This adds private admission/publication journal fields; published
+source, metadata, filter and adapter versions remain unchanged.
+
+Historical-only project permission installs the incompatible permanent
+`{version: 10, writer: historical-projects-v10}` configuration capability.
+Private historical ownership proof is version 1 and staged source-set proof
+includes every private dependency cwd. The historical scan-source contract is
+version 4. Existing source line formats, metadata schemas, filter/adapter output
+and parser algorithms remain unchanged: historical display names are explicit
+configuration applied at publication, not native derivation. Pairing schema 1
+adds an optional bounded historical-project whitelist; strict older receivers
+refuse the unknown section. No native path or mapping is portable in that section.
+All lower policy floors, protections and published older-writer refusal controls
+remain mandatory. Native macOS/old-release and provider acceptance are recorded
+separately from synthetic Linux tests and cross-compilation.

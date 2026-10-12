@@ -46,6 +46,187 @@ func TestRecoverySourceInventoryRenewsWithoutBodyReads(t *testing.T) {
 	}
 }
 
+func appendRecord(t *testing.T, path, record string) {
+	t.Helper()
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(record); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The inventory checks membership, not content: a transcript a work item owns
+// may grow in place, while every other membership change still invalidates.
+func TestRecoverySourceInventoryToleratesOwnedAppendsOnly(t *testing.T) {
+	const header = `{"cwd":"/work"}` + "\n"
+	grow := func(t *testing.T, _ *tree, file string) {
+		t.Helper()
+		appendRecord(t, file, `{"more":1}`+"\n")
+	}
+	for _, tc := range []struct {
+		name    string
+		unowned bool
+		mutate  func(t *testing.T, tr *tree, file string)
+		current bool
+	}{
+		{name: "unchanged", mutate: func(*testing.T, *tree, string) {}, current: true},
+		{name: "owned append", mutate: grow, current: true},
+		{name: "unowned append", unowned: true, mutate: grow},
+		{name: "added transcript", mutate: func(_ *testing.T, tr *tree, _ string) { tr.write("home/store/added.jsonl", header) }},
+		{name: "removed transcript", mutate: func(t *testing.T, _ *tree, file string) {
+			t.Helper()
+			if err := os.Remove(file); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "replaced transcript", mutate: func(t *testing.T, tr *tree, file string) {
+			t.Helper()
+			// A larger file under a new inode is a replacement, not an append.
+			next := tr.write("home/next.jsonl", header+`{"more":1}`+"\n")
+			if err := os.Rename(next, file); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "replaced transcript, directory time restored", mutate: func(t *testing.T, tr *tree, file string) {
+			t.Helper()
+			dir, err := os.Lstat(filepath.Dir(file))
+			if err != nil {
+				t.Fatal(err)
+			}
+			next := tr.write("home/next.jsonl", header+`{"more":1}`+"\n")
+			if err := os.Rename(next, file); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chtimes(filepath.Dir(file), dir.ModTime(), dir.ModTime()); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "truncated transcript", mutate: func(t *testing.T, _ *tree, file string) {
+			t.Helper()
+			if err := os.Truncate(file, 1); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "same-size rewrite", mutate: func(t *testing.T, _ *tree, file string) {
+			t.Helper()
+			if err := os.Chtimes(file, time.Now(), time.Now().Add(time.Hour)); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "mode change", mutate: func(t *testing.T, _ *tree, file string) {
+			t.Helper()
+			if err := os.Chmod(file, 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tr := newTree(t)
+			dir := tr.mkdir("home/store")
+			file := tr.write("home/store/source.jsonl", header)
+			inv := newRecoverySourceInventory(tr.env())
+			seen := inv.environment()
+			if _, err := seen.ReadDir(dir); err != nil {
+				t.Fatal(err)
+			}
+			info, err := seen.Lstat(file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !tc.unowned {
+				inv.ownContent(file, info)
+			}
+			tc.mutate(t, tr, file)
+			if got := inv.current(t.Context()); got != tc.current {
+				t.Fatalf("current = %v, want %v", got, tc.current)
+			}
+		})
+	}
+}
+
+// Ownership requires the same regular file that produced the item's header.
+func TestRecoverySourceInventoryOwnershipRequiresObservedFile(t *testing.T) {
+	tr := newTree(t)
+	file := tr.write("home/store/source.jsonl", "{}\n")
+	other := tr.write("home/store/other.jsonl", "{}\n")
+	dir := tr.path("home/store")
+	inv := newRecoverySourceInventory(tr.env())
+	seen := inv.environment()
+	if _, err := seen.Lstat(file); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := seen.ReadDir(dir); err != nil {
+		t.Fatal(err)
+	}
+	otherInfo, err := os.Lstat(other)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dirInfo, err := os.Lstat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inv.ownContent(file, otherInfo)
+	inv.ownContent(dir, dirInfo)
+	inv.ownContent(tr.path("home/unobserved.jsonl"), otherInfo)
+	if len(inv.appendable) != 0 {
+		t.Fatal("ownership granted without the observed regular file", inv.appendable)
+	}
+}
+
+// A running agent appending to its own transcript during planning or before
+// confirmation must not make recovery unavailable for other sessions; the
+// appended session itself still gets its per-file source_changed treatment.
+func TestFirstRunRecoveryToleratesAppendedTranscript(t *testing.T) {
+	tr, env, cfg, root, goneID := firstRunRecoveryFixture(t, false)
+	busyID := "00000000-0000-0000-0000-000000000055"
+	body := strings.Replace(codexTranscript(busyID, busyID, root, fixedNow.Add(-time.Hour)), `"source":"cli"`, `"git":{"repository_url":"https://example.test/acme/repo"},"source":"cli"`, 1)
+	busy := tr.write(filepath.Join("home", codexFile(busyID)), body)
+	record := fmt.Sprintf(`{"type":"response_item","timestamp":%q,"payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"keep going"}]}}`+"\n", fixedNow.Format(time.RFC3339))
+	store := filepath.Join(env.Home, ".codex", "sessions")
+	storeStats := 0
+	env.Lstat = func(path string) (fs.FileInfo, error) {
+		if path == store {
+			storeStats++
+			// The first store stat is discovery; the second begins the plan's
+			// inventory renewal, after every header observation.
+			if storeStats == 2 {
+				appendRecord(t, busy, record)
+			}
+		}
+		return os.Lstat(path)
+	}
+	p := plan(t, env, nil, cfg, Filters{Harnesses: []string{"codex"}})
+	if storeStats < 2 {
+		t.Fatal("inventory renewal did not run during planning")
+	}
+	if c := candidate(t, p, goneID); c.ProjectRoot != root || c.ProjectResolution == nil {
+		t.Fatalf("appended transcript disabled recovery for another session: %+v", c)
+	}
+	if c := candidate(t, p, busyID); c.Skip != SkipSourceChanged {
+		t.Fatalf("appended session lost its per-file treatment: %+v", c)
+	}
+	appendRecord(t, busy, record)
+	if err := p.CheckRecovery(t.Context()); err != nil {
+		t.Fatal("appended transcript invalidated confirmation", err)
+	}
+	// A new session in the destination the plan already witnessed names no
+	// new clone; one in a new clone of the same repository does.
+	addRepoRollout(tr, "00000000-0000-0000-0000-000000000077", root)
+	if err := p.CheckRecovery(t.Context()); err != nil {
+		t.Fatal("added transcript in a witnessed root invalidated confirmation", err)
+	}
+	addRepoRollout(tr, "00000000-0000-0000-0000-000000000078", tr.repo("home/clone"))
+	if err := p.CheckRecovery(t.Context()); err == nil {
+		t.Fatal("added transcript naming a competing clone escaped renewal")
+	}
+}
+
 func TestRecoverySourceInventoryBoundsAndHonorsCancellation(t *testing.T) {
 	tr := newTree(t)
 	inv := newRecoverySourceInventory(tr.env())

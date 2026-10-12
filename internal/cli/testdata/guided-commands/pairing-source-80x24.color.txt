@@ -31,17 +31,18 @@ The first three characters of each word work (yo- for yo-yo).
 Deliver the code separately from the pairing file. Avoid recording or screen sharing.
 Press Enter to hide.
 
-\e[2J\e[H\e[?1049lFinish setup on laptop before closing this pairing.
+\e[2J\e[H\e[?1049lPairing · Code available · Receiver completion unconfirmed
+Finish setup on laptop. That machine confirms when its configuration is saved.
 
 ? Pairing
 
   1) Show code again
 
-  [Enter] I'm finished
+  [Enter] Close transfer instructions
   [q] Cancel pairing
 
 › Choose: done
-\e[8A\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[8A\e[2m✓ I'm finished\e[0m
+\e[8A\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[8A\e[2m✓ Close transfer instructions\e[0m
 
-Transfer finished. The other machine confirms when setup succeeds.
+Transfer instructions closed. Receiver completion is unconfirmed on this machine.
 Delete any saved pairing files when no longer needed.

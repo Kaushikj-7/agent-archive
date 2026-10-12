@@ -16,6 +16,7 @@ OK Credential received
 > Credential:
 OK Credential received
 
+Pairing · Review settings
 Pairing destination
 
 AWS profile/settings transfer from
@@ -45,7 +46,7 @@ Step 3 of 3 · Review and start
     be read
     Make sure public access is off:
     https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
-  ! History import is separate.
+  ! Setup imports the last 7 days of included projects; older history is separate.
   ! Sensitive text may remain after filtering.
 
 ? Review pairing settings
@@ -64,23 +65,30 @@ OK Save the displayed destination
   ✓ Codex hooks: ~/.codex/hooks.json
   ✓ Background job: launchctl
     responds
+Pairing · Check storage
+
+Storage · Verification
+Account → Storage → Verification
 Checking your storage connection…
 ✓ Connected to your storage.
+  ! Bucket privacy not verified: public-access settings could not be read.
+    Make sure public access is off: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
   · Codex capture: Automatic discovery plus hooks when approved.
   · Codex scope: Included projects only.
   · Exceptions: None configured.
   · Codex sources: /Users/alex/.codex.
   · Starts: After local consent, outside pause or exclusion.
-  · History: Old sessions require deliberate backfill.
+  · History: Last 7 days of included projects imported at setup; older sessions require backfill.
   · Copies: Qualifying recent native copies may be captured.
   · Hooks: Optional for discovery; approval and observation are separate.
 Apps: Codex. Projects: 1. Storage: Amazon S3 bucket synthetic.
 Skill evidence: metadata. User-level skill roots outside selected projects may be scanned.
   ! Bucket privacy not verified: public-access settings could not be read.
     Make sure public access is off: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
-OK laptop is connected. Paired with studio.
+Pairing · Save configuration
+OK Paired successfully · laptop is connected. Paired with studio.
 AWS profile/settings transfer.
-You can finish on the source machine and delete the pairing file.
+Configuration saved here. The source does not receive automatic confirmation; close its transfer instructions and delete your pairing file copies.
 
 ✓ Setup complete · Automatic capture is on
 Installed /handoff, which continues a session in another agent: ~/.agents/skills/handoff/SKILL.md
@@ -88,20 +96,16 @@ Installed the agent-archive skill, which lets your agents look up and pull in pa
 To remove the agent skills and keep them off, run agent-archive setup --no-skills.
 
 Next, in each app
-  Codex: start a supported new task
-  in an included project; automatic
-  discovery does not require hook
-  approval.
+  Codex: automatic discovery
+  captures supported tasks that
+  start from now on in an included
+  project; no hook approval needed.
   Optional hook capture: Codex: run
   /hooks and approve the archive
-  hooks, then start a new session
-  (or /clear).
-Sessions already open are not captured. Start a new one in an included project.
+  hooks; they capture sessions that
+  start after that (or after
+  /clear).
 Check progress with agent-archive status.
-
-Optional · Import past sessions
-
-Looking for past sessions in these projects… none to import.
   · Another machine: agent-archive machines pair
 
 ? More next steps?

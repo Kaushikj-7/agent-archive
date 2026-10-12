@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"bufio"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/config"
 	"strconv"
 	"strings"
 )
@@ -59,18 +61,85 @@ func (p *prompter) setupYesNo(question string, def bool) (bool, error) {
 	return setupAffirmed(answer), err
 }
 
+func parseRetentionAnswer(value string) (int, error) {
+	if strings.EqualFold(strings.TrimSpace(value), "forever") {
+		return 0, nil
+	}
+	n, err := strconv.Atoi(value)
+	if err != nil || n < 1 || n > config.MaxRetentionDays {
+		return 0, fmt.Errorf("enter 1 to 36500 days, or forever")
+	}
+	return n, nil
+}
+
+type retentionChoice string
+
+const (
+	retentionChoiceDefault retentionChoice = "90-days"
+	retentionChoiceCustom  retentionChoice = "custom"
+	retentionChoiceForever retentionChoice = "forever"
+)
+
 func (p *prompter) setupRetentionDays(def int) (int, error) {
-	answer, err := p.guidedText(promptModel{Question: "Keep sessions for how many days?", Label: "Days", Default: strconv.Itoa(def), Receipt: "Retention", Validate: func(value string) error {
-		n, e := strconv.Atoi(value)
-		if e != nil || n < 1 || n > 36500 {
-			return fmt.Errorf("enter a number of days between 1 and 36500")
+	choice := retentionChoiceCustom
+	switch def {
+	case 90:
+		choice = retentionChoiceDefault
+	case 0:
+		choice = retentionChoiceForever
+	}
+	custom := "Custom duration"
+	if choice == retentionChoiceCustom {
+		custom += " (" + config.RetentionLabel(def) + ")"
+	}
+	legacyDays := 0
+	answer, err := p.guidedChoice(promptModel{ReadAnswer: func(in *bufio.Reader) (string, error) {
+		legacyDays = 0
+		raw, err := in.ReadString('\n')
+		// Menu indices 1–3 select the visible choices. Existing duration
+		// answers such as 90 or 30 remain valid without an extra question.
+		if n, parseErr := strconv.Atoi(strings.TrimSpace(raw)); parseErr == nil && n > 3 && n <= config.MaxRetentionDays {
+			legacyDays = n
+			return string(retentionChoiceCustom), err
 		}
-		return nil
-	}})
+		return raw, err
+	}, ResolveReceipt: func(key string) string {
+		if legacyDays != 0 {
+			return config.RetentionLabel(legacyDays)
+		}
+		switch retentionChoice(key) {
+		case retentionChoiceDefault:
+			return "90 days"
+		case retentionChoiceForever:
+			return "Keep forever"
+		case retentionChoiceCustom:
+			return custom
+		}
+		return key
+	}, Question: "How long should sessions be kept?", Default: string(choice), Receipt: "Retention", Primary: []option{{string(retentionChoiceDefault), "90 days"}, {string(retentionChoiceCustom), custom}, {string(retentionChoiceForever), "Keep forever"}}, Helpers: []string{"Provider lifecycle rules and explicit deletion still apply."}})
 	if err != nil {
 		return 0, err
 	}
-	return strconv.Atoi(answer)
+	if legacyDays != 0 {
+		return legacyDays, nil
+	}
+	switch retentionChoice(answer) {
+	case retentionChoiceDefault:
+		return 90, nil
+	case retentionChoiceForever:
+		return 0, nil
+	case retentionChoiceCustom:
+		// Ask for the duration below.
+	}
+	value := strconv.Itoa(def)
+	if def == 0 {
+		value = "forever"
+	}
+	answer, err = p.guidedText(promptModel{Question: "Keep sessions for how many days?", Label: "Days or forever", Default: value, Receipt: "Retention", Validate: func(value string) error { _, err := parseRetentionAnswer(value); return err }})
+	if err != nil {
+		return 0, err
+	}
+	return parseRetentionAnswer(answer)
 }
 
 // Storage field actions use a reserved prefix so valid bucket/profile names

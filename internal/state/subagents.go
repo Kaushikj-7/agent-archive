@@ -1,6 +1,7 @@
 package state
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,16 +19,17 @@ import (
 // SubagentCandidate is local operational state written by a bounded hook.
 // TranscriptPath is never copied into an archive bundle or metadata sidecar.
 type SubagentCandidate struct {
-	ArchiveSessionID       string          `json:"archive_session_id"`
-	NativeSessionID        string          `json:"native_session_id"`
-	ParentArchiveSessionID string          `json:"parent_archive_session_id"`
-	ParentNativeSessionID  string          `json:"parent_native_session_id"`
-	ProjectID              string          `json:"project_id"`
-	ProjectRoot            string          `json:"project_root"`
-	Harness                archive.Harness `json:"harness"`
-	AgentID                string          `json:"agent_id"`
-	TranscriptPath         string          `json:"transcript_path"`
-	ObservedAt             time.Time       `json:"observed_at"`
+	HistoricalProject      *archive.HistoricalProjectProof `json:"historical_project,omitempty"`
+	ArchiveSessionID       string                          `json:"archive_session_id"`
+	NativeSessionID        string                          `json:"native_session_id"`
+	ParentArchiveSessionID string                          `json:"parent_archive_session_id"`
+	ParentNativeSessionID  string                          `json:"parent_native_session_id"`
+	ProjectID              string                          `json:"project_id"`
+	ProjectRoot            string                          `json:"project_root"`
+	Harness                archive.Harness                 `json:"harness"`
+	AgentID                string                          `json:"agent_id"`
+	TranscriptPath         string                          `json:"transcript_path"`
+	ObservedAt             time.Time                       `json:"observed_at"`
 	// Origin is who found the subagent: a SubagentStop hook (empty or
 	// SessionOriginHook) or backfill (SessionOriginImport). Only a hook
 	// candidate carries a SubagentStop lifecycle event.
@@ -37,7 +39,8 @@ type SubagentCandidate struct {
 	// through archive.SanitizeSubagentType, or empty when unknown. It is
 	// informational and local: status reports it, it is never uploaded, and
 	// it never decides anything.
-	AgentType string `json:"agent_type,omitempty"`
+	AgentType          string `json:"agent_type,omitempty"`
+	StagedImportSHA256 string `json:"staged_import_sha256,omitempty"`
 }
 
 var (
@@ -58,9 +61,10 @@ func (s *Store) subagentCandidatePath(id string) string {
 // a later event to replace the path or ownership established by the first.
 // AgentType is not part of ownership: the first non-empty one is kept.
 func (s *Store) SaveSubagentCandidate(candidate SubagentCandidate) error {
-	if !safeFileComponent(candidate.ArchiveSessionID) || candidate.NativeSessionID == "" || !safeFileComponent(candidate.ParentArchiveSessionID) || candidate.ParentNativeSessionID == "" || candidate.ProjectID == "" || candidate.ProjectRoot == "" || candidate.Harness.Name == "" || candidate.AgentID == "" || candidate.TranscriptPath == "" || candidate.ObservedAt.IsZero() {
+	if !safeFileComponent(candidate.ArchiveSessionID) || candidate.NativeSessionID == "" || !safeFileComponent(candidate.ParentArchiveSessionID) || candidate.ParentNativeSessionID == "" || candidate.ProjectID == "" || !candidate.validProjectOwnership() || candidate.Harness.Name == "" || candidate.AgentID == "" || candidate.TranscriptPath == "" || candidate.ObservedAt.IsZero() {
 		return ErrSubagentCandidateIncomplete
 	}
+
 	if _, err := agentmeta.NewSessionKey(candidate.Harness.Name, candidate.NativeSessionID); err != nil {
 		return err
 	}
@@ -83,6 +87,12 @@ func (s *Store) SaveSubagentCandidate(candidate SubagentCandidate) error {
 			}
 			if prior.NativeSessionID != merged.NativeSessionID || prior.ParentArchiveSessionID != merged.ParentArchiveSessionID || prior.ParentNativeSessionID != merged.ParentNativeSessionID || prior.ProjectID != merged.ProjectID || prior.ProjectRoot != merged.ProjectRoot || archive.CanonicalHarness(prior.Harness.Name) != archive.CanonicalHarness(merged.Harness.Name) || prior.AgentID != merged.AgentID || prior.TranscriptPath != merged.TranscriptPath {
 				return nil, false, ErrSubagentCandidateConflict
+			}
+			if prior.StagedImportSHA256 != "" {
+				if merged.StagedImportSHA256 != "" && merged.StagedImportSHA256 != prior.StagedImportSHA256 {
+					return nil, false, ErrSubagentCandidateConflict
+				}
+				merged.StagedImportSHA256 = prior.StagedImportSHA256
 			}
 			if prior.ObservedAt.After(merged.ObservedAt) {
 				merged.ObservedAt = prior.ObservedAt
@@ -152,6 +162,13 @@ func subagentLockName(id string) string {
 
 // RemoveSubagentCandidate removes one subagent candidate, under its lock.
 func (s *Store) RemoveSubagentCandidate(id string) error {
+	return s.removeSubagentCandidateContext(context.Background(), id)
+}
+
+func (s *Store) removeSubagentCandidateContext(ctx context.Context, id string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	unlock, err := s.lockSubagentCandidate(id)
 	if err != nil {
 		return err
@@ -161,7 +178,7 @@ func (s *Store) RemoveSubagentCandidate(id string) error {
 	if err != nil {
 		return err
 	}
-	return s.pruneAcknowledgedPackedCandidate(id)
+	return s.pruneAcknowledgedPackedCandidateContext(ctx, id)
 }
 
 // AcknowledgeSubagentCandidate marks a candidate handled. A later stop may
@@ -196,6 +213,10 @@ func (s *Store) AcknowledgeSubagentCandidate(expected SubagentCandidate) error {
 }
 
 func (s *Store) pruneAcknowledgedPackedCandidate(id string) error {
+	return s.pruneAcknowledgedPackedCandidateContext(context.Background(), id)
+}
+
+func (s *Store) pruneAcknowledgedPackedCandidateContext(ctx context.Context, id string) error {
 	var marker sessionIndexMarker
 	err := readRecoveryJSON(filepath.Join(s.home, sessionIndexMarkerFile), &marker)
 	if errors.Is(err, os.ErrNotExist) || (err == nil && marker.Version != 2) {
@@ -207,7 +228,7 @@ func (s *Store) pruneAcknowledgedPackedCandidate(id string) error {
 	if exists(s.registrationPath(id)) {
 		return nil // Admitted children retain their exact packed ownership.
 	}
-	return s.removePackedIdentities(map[string]bool{id: true})
+	return s.removePackedIdentitiesContext(ctx, map[string]bool{id: true})
 }
 
 // removeSubagentCandidate removes a candidate and then its lock file, under
@@ -318,4 +339,11 @@ func (s *Store) subagentCandidatesForSession(id string) ([]string, error) {
 		}
 	}
 	return ids, nil
+}
+
+func (candidate SubagentCandidate) validProjectOwnership() bool {
+	if candidate.HistoricalProject == nil {
+		return candidate.ProjectRoot != ""
+	}
+	return candidate.Origin == archive.SessionOriginImport && candidate.ProjectRoot == "" && candidate.ProjectID == candidate.HistoricalProject.ProjectID && candidate.StagedImportSHA256 != ""
 }

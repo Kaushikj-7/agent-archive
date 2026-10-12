@@ -8,6 +8,8 @@ import (
 	"io"
 	"os"
 	"strings"
+	"syscall"
+	"unicode/utf8"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
@@ -116,7 +118,21 @@ func feedbackEventID() (string, error) {
 }
 
 func readFeedbackFile(path string) ([]byte, error) {
-	file, err := os.Open(path)
+	return readFeedbackFileWithOpen(path, func(path string) (*os.File, error) {
+		return os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	})
+}
+
+func readFeedbackFileWithOpen(path string, open func(string) (*os.File, error)) ([]byte, error) {
+	// Follow symlinks as before, but never block opening a substituted FIFO.
+	before, err := os.Stat(path)
+	if err != nil {
+		return nil, fmt.Errorf("inspect --file: %w", err)
+	}
+	if !before.Mode().IsRegular() {
+		return nil, errors.New("--file must name a regular file")
+	}
+	file, err := open(path)
 	if err != nil {
 		return nil, fmt.Errorf("read --file: %w", err)
 	}
@@ -125,7 +141,7 @@ func readFeedbackFile(path string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("inspect --file: %w", err)
 	}
-	if !info.Mode().IsRegular() {
+	if !info.Mode().IsRegular() || !os.SameFile(before, info) {
 		return nil, errors.New("--file must name a regular file")
 	}
 	content, err := io.ReadAll(io.LimitReader(file, maxFeedbackBytes+1))
@@ -134,6 +150,9 @@ func readFeedbackFile(path string) ([]byte, error) {
 	}
 	if len(content) > maxFeedbackBytes {
 		return nil, fmt.Errorf("--file exceeds %d bytes", maxFeedbackBytes)
+	}
+	if !utf8.Valid(content) {
+		return nil, errors.New("--file must contain valid UTF-8 text")
 	}
 	if strings.TrimSpace(string(content)) == "" {
 		return nil, errors.New("--file is empty")

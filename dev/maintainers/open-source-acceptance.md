@@ -129,3 +129,22 @@ and its [evidence template](acceptance/native-session-name-comparison-template.m
 record UUID-matched observations separately for each producer, storage form and
 lookup mode. The follow-up package and disposable lookup timing probes do not
 establish real title parity or desktop coexistence.
+
+## CLI reliability and retention release follow-up
+
+The [CLI reliability and keep forever implementation plan](../proposals/cli-reliability-and-retention.md)
+has A–G implementation on `main`. Its [dated implementation evidence](acceptance/cli-reliability-and-retention-2026-10-11.md)
+records actual code/tests and exact-SHA CI; it does not fill the pending provider,
+signed-release or actual-app results above. On 2026-10-11 the latest promoted
+release remains v0.1.1 with macOS assets only. Current-checkout and source-build
+checks do not establish acceptance for a new published release.
+
+For each disposable S3 and R2 record, execute the
+[retention, pairing, transition and native-loss protocol](acceptance/cli-retention-live-protocol.md)
+alongside this sheet. It supplies prerequisites, commands, observable pass
+conditions and separate pending result cells. Record supported macOS/Linux
+architecture coverage separately; the Linux MinIO/systemd harness establishes
+only its documented source-build coverage. Keep every result pending until the
+final release bytes and that provider's behavior have actually been exercised.
+The maintainer's go/no-go requires both this sheet and the extension, including
+any missing platform, app or compatibility evidence.

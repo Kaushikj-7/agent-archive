@@ -115,3 +115,73 @@ func TestExistingWorktreeWithMissingGitDir(t *testing.T) {
 		t.Fatalf("got %+v", got)
 	}
 }
+
+// A repository in a temporary directory, such as a throwaway clone an agent
+// made to review a pull request, is temporary (rule 6), not a project of its
+// own (rule 4): adding it would capture every later session there. A
+// configured project still owns it (rule 2), and a linked worktree in a
+// temporary directory of a repository elsewhere still folds into that
+// repository (rule 3). The repository, not the session's folder in it, is
+// the would-be root, so --include-temp adds one project per clone and a
+// worktree of the clone kept elsewhere joins it. The temporary root is
+// matched through a symlinked spelling too, as /tmp is a link to
+// /private/tmp on macOS. A temporary root that holds home (a sandbox or
+// container whose HOME is under /tmp) leaves the repositories in home
+// ordinary projects.
+//
+// Regression: backfill --dry-run proposed adding /private/tmp clones,
+// 2026-10-08.
+func TestRepositoryInTemporaryDirectory(t *testing.T) {
+	tr := newTree(t)
+	clone := tr.repo("tmp/pr331-review/checkout")
+	tr.mkdir("tmp/pr331-review/checkout/internal/cli")
+	home := tr.repo("home/agent-archive")
+	wt := tr.worktree("home/agent-archive", "tmp/review-wt", "review-wt")
+	tempRepo := tr.repo("tmp/scratch-repo")
+	tempRepoWT := tr.worktree("tmp/scratch-repo", "home/scratch-wt", "scratch-wt")
+	homeTempClone := tr.repo("home/tmp/clone")
+	gone := filepath.Join(tr.path("tmp"), "fb-local-progression-review", "pkg")
+	alias := tr.path("tmp-link")
+	if err := os.Symlink(tr.path("tmp"), alias); err != nil {
+		t.Fatal(err)
+	}
+	cloneSub := filepath.Join(clone, "internal", "cli")
+	viaAlias := filepath.Join(alias, "pr331-review", "checkout", "internal", "cli")
+	configured := config.Config{Archive: archive.Config{Projects: []archive.ProjectActivation{project(clone, true)}}}
+	configuredTempRepo := config.Config{Archive: archive.Config{Projects: []archive.ProjectActivation{project(tempRepo, true)}}}
+	include := Filters{IncludeTemp: true}
+	cases := []struct {
+		name    string
+		temps   []string
+		cfg     config.Config
+		filters Filters
+		cwd     string
+		want    resolution
+	}{
+		{"clone is temporary", nil, config.Config{}, Filters{}, cloneSub, resolution{root: clone, kind: ProjectKindTemporary, skip: SkipTemporaryDirectory}},
+		{"clone with --include-temp", nil, config.Config{}, include, cloneSub, resolution{root: clone, kind: ProjectKindTemporary}},
+		{"clone root", nil, config.Config{}, Filters{}, clone, resolution{root: clone, kind: ProjectKindTemporary, skip: SkipTemporaryDirectory}},
+		{"temporary root given as a symlink", []string{alias}, config.Config{}, Filters{}, viaAlias, resolution{root: clone, kind: ProjectKindTemporary, skip: SkipTemporaryDirectory}},
+		{"configured clone stays a project", nil, configured, Filters{}, cloneSub, resolution{root: clone, kind: ProjectKindTemporary, included: true}},
+		{"worktree of a repository elsewhere folds into it", nil, config.Config{}, Filters{}, wt, resolution{root: home, kind: ProjectKindRepository}},
+		{"worktree of a temporary repository is temporary", nil, config.Config{}, Filters{}, tempRepoWT, resolution{root: tempRepo, kind: ProjectKindTemporary, skip: SkipTemporaryDirectory}},
+		{"worktree of a temporary repository joins it with --include-temp", nil, config.Config{}, include, tempRepoWT, resolution{root: tempRepo, kind: ProjectKindTemporary}},
+		{"worktree of a configured temporary repository", nil, configuredTempRepo, Filters{}, tempRepoWT, resolution{root: tempRepo, kind: ProjectKindTemporary, included: true}},
+		{"temporary root holding home", []string{tr.root}, config.Config{}, Filters{}, home, resolution{root: home, kind: ProjectKindRepository}},
+		{"temporary root in home", []string{tr.path("home/tmp")}, config.Config{}, Filters{}, homeTempClone, resolution{root: homeTempClone, kind: ProjectKindTemporary, skip: SkipTemporaryDirectory}},
+		{"temporary root holding home, clone outside home", []string{tr.root}, config.Config{}, Filters{}, cloneSub, resolution{root: clone, kind: ProjectKindTemporary, skip: SkipTemporaryDirectory}},
+		{"temporary repository itself", nil, config.Config{}, include, tempRepo, resolution{root: tempRepo, kind: ProjectKindTemporary}},
+		{"missing clone folder", nil, config.Config{}, Filters{}, gone, resolution{root: gone, kind: ProjectKindTemporary, skip: SkipTemporaryDirectory}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env := tr.env()
+			if tc.temps != nil {
+				env.TempDirs = tc.temps
+			}
+			if got := newResolver(env, tc.cfg, tc.filters).resolve(tc.cwd); got != tc.want {
+				t.Fatalf("resolve(%q) = %+v, want %+v", tc.cwd, got, tc.want)
+			}
+		})
+	}
+}

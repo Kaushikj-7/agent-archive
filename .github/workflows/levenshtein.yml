@@ -1,7 +1,6 @@
 name: Levenshtein
 # Shared lint and security checks from wangjohn/levenshtein, run in its pinned
-# Linux container, except govulncheck uses the release Go compiler natively
-# on this Linux runner. levenshtein.json selects the checks for each run. Run the
+# Linux container. levenshtein.json selects the checks for each run. Run the
 # same thing locally from a sibling checkout of Levenshtein:
 #
 #   ../levenshtein/verify pre-merge --source .
@@ -41,22 +40,14 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: wangjohn/levenshtein
-          ref: b8b8ee429de80d44c00ae7c8020662de89f927c6
+          ref: 6f799f72befb925d10f2ef01a7c9a46725fa714d
           path: levenshtein
           persist-credentials: false
-      # The native vulnerability scan must analyze the compiler used for releases.
-      # Levenshtein obtains its own pinned launcher toolchain internally.
-      - name: Set up the release Go compiler
+      - name: Set up Go for the Levenshtein launcher
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: app/go.mod
+          go-version-file: levenshtein/.go-version
           cache: false
-      - name: Require Go 1.27.2 for the native vulnerability scan
-        env:
-          GOTOOLCHAIN: local
-        run: |
-          go version
-          go version | grep -q ' go1\.27\.2 ' || { echo "expected release compiler go1.27.2" >&2; exit 1; }
       - name: Verify
         env:
           EVENT: ${{ github.event_name }}

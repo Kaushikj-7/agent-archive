@@ -184,6 +184,8 @@ writes nothing; the storage check writes a test object), then
 `transcripts_unreadable`),
 `cursor_database_newer_format`, `cursor_subagents_not_imported`,
 `subagents_skipped`, `unreadable_folders`, and `unreadable_stores`.
+Plans whose recovery evidence was incomplete also include optional
+`recovery_evidence_gaps` (see [Recorded project recovery](#recorded-project-recovery)).
 
 Plans with diagnostic details also include optional `diagnostics` (bounded
 aggregate records with the winning primary `skip`, typed `detail`, `action`,
@@ -508,7 +510,14 @@ matching rule wins.
    allocation. This bounds
    payload read into the process, not SQLite page I/O. Recovery reads only
    settled in-place transactions, with no backup or failure-signature reads;
-   live WAL, unavailable capability and exhausted budgets keep it pending.
+   a live WAL with frames in `-wal`, unavailable capability and exhausted
+   budgets keep it pending. A WAL database whose `-wal` is empty (with or
+   without `-shm`, as Cursor can leave both after quitting) is settled: it is
+   read with `immutable=1` and rejected as `changed_during_read` unless the
+   file, its header and its side files (`-wal` still empty, `-shm` still
+   present or absent as before, no `-journal`) are unchanged afterwards.
+   Frames in `-wal` are never read for recovery: `immutable=1` would ignore
+   them, and nothing checkpoints or rewrites Cursor's side files.
    Native recovery requires a non-partial unique binary index on the exact key
    column with the native default binary comparisons; explicit collations and
    unknown schemas cannot establish payload length bounds.
@@ -517,8 +526,24 @@ matching rule wins.
    Unsettled sources can renew at most eight bounded evidence epochs per plan;
    exhausted renewal leaves admission pending with the instruction to rerun.
    File membership/header observations renew through at most 65,536 observed
-   native paths per slice, including directory and absent-store stamps; changed
-   or larger inventories require a new plan and keep automatic recovery pending.
+   native paths per slice, including directory and absent-store stamps; larger
+   inventories, and removed, replaced or rewritten observed paths, require a new
+   plan and keep automatic recovery pending. Membership that only grew (a
+   directory stamp moved, an absent path appeared) is judged by the transcripts
+   added (see [Recorded project recovery](#recorded-project-recovery)).
+   The inventory checks membership, not content: added, removed or replaced
+   paths (file identity), mode changes, truncation and same-size rewrites change
+   it, but a transcript growing in place does not when a planned session owns
+   that file (its header came from that same file). Running agents append to
+   their transcripts, and header facts come from complete leading records that
+   an append cannot change; a header no complete record decided already keeps
+   recovery unavailable. The owning session's own source observation still
+   skips it as `source_changed` and still governs its witness renewal, but
+   that check only runs for imported sessions' sources and for the witness a
+   recovery relies on: a same-inode rewrite that grows any other owned
+   transcript is not detected. Agents append rather than rewrite in place, so
+   this limit is accepted. Paths no session owns keep the full size and
+   modification-time comparison.
    Known plain-folder and absent-cwd ownership is also renewed, so a newly
    created checkout cannot evade clone evidence. This is an observation boundary,
    not an atomic filesystem snapshot.
@@ -526,7 +551,23 @@ matching rule wins.
    when archive state or output filters hide their sessions.
    Pending or oversized sources cannot
    alone propose destinations; malformed or incomplete evidence cannot certify
-   uniqueness. Exact mappings continue to require configured targets.
+   uniqueness. One exception applies to proposed (not yet configured) roots
+   only: when Git reports a checkout top level and prints an origin that yields
+   no repository key (for example a clone whose origin is a local path to a
+   deleted worktree), that root cannot own any recorded key and is non-owning
+   rather than unknown, so it does not make recovery unavailable for other
+   sessions. It must still be a keyless checkout at the same top level when
+   evidence is renewed. A proposed root that Git could not observe, whose
+   origin read failed, or whose observation exhausted its budget, still blocks, and every configured root
+   keeps the strict rule ([Recorded project recovery](#recorded-project-recovery)).
+   Exact mappings continue to require configured targets.
+   A Cursor database chat with no folder evidence at all (no folder, no
+   workspace reference, no message folder; for example a subagent composer)
+   is a non-witness, not incomplete evidence: it names no root, so it cannot
+   hide a clone. A chat whose workspace reference cannot be read, whose
+   `workspaceIdentifier` is present in any shape this release cannot resolve
+   to a local folder (a remote URI, an unknown shape), or whose messages name
+   several folders, still makes the inventory incomplete.
    The plan displays selected proposed roots as projects it will add through the
    ordinary batch/config transaction. Hidden roots remain recovery evidence
    without becoming new capture roots. Evidence Context/digest binds the union;
@@ -535,7 +576,15 @@ matching rule wins.
    stale evidence. Neither planning nor automatic discovery uses uncommitted
    proposed roots as capture authorization.
 4. **Repository.** If walking up finds a `.git` directory, use its parent.
-   The walk stops at home.
+   The walk stops at home. A repository inside a temporary directory (rule
+   6), reached directly or through one of its worktrees, is not a project:
+   the session is temporary under rule 6. Such repositories are mostly
+   throwaway clones an agent made, say to review a pull request, and adding
+   one would capture every later session there. A configured project still
+   owns it (rule 2), and a worktree in a temporary directory of a repository
+   elsewhere still folds into that repository (rule 3). A temporary
+   directory that holds home (a container or sandbox whose `HOME` is under
+   `/tmp`) does not make the repositories in home temporary.
 5. **Desktop app workspaces.** Anything under
    `~/Library/Application Support/Claude/scratch-workspaces/` (Claude desktop
    scratch chats) or `~/Documents/Codex/` (Codex desktop's dated workspaces,
@@ -550,9 +599,12 @@ matching rule wins.
    configured project is already in Documents is the folder's own symlink
    resolved, as before.
 6. **Temporary directories.** `/tmp`, `/private/tmp`, `/var/folders`, and
-   `$TMPDIR` are skipped with `temporary_directory`. With `--include-temp`,
-   each directory becomes its own project. These sessions are mostly tool
-   runs whose folders are gone.
+   `$TMPDIR` are skipped with `temporary_directory`, under both their given
+   and symlink-resolved spellings (`/tmp` is `/private/tmp` on macOS), and so
+   is a repository in one (rule 4). With `--include-temp`, each session's
+   directory becomes its own project, except that a repository in one
+   becomes one project at its root, which its worktrees join wherever they
+   are. These sessions are mostly tool runs whose folders are gone.
 7. **Home and above.** Home is skipped with `home_directory`. With
    `--include-home`, it becomes a project, and unless home is already
    included, the plan warns that it will then capture every future session
@@ -765,7 +817,10 @@ the variables still finds them. A session in two of these folders is a
   - If Cursor quits in the instant between the side-file check and the open,
     SQLite can leave an empty `-wal` behind. That is harmless (an empty WAL
     has nothing to replay), and the reader never deletes files next to
-    Cursor's database.
+    Cursor's database. Such a database is listed as closed. One with an empty
+    `-wal` and a `-shm` is listed as running (in place, `readonly_shm`), and
+    the recovery evidence pass reads it as closed (see recorded-repository
+    recovery above), so leftover side files don't lock recovery.
 
 ## Skip reasons
 
@@ -820,6 +875,45 @@ an import), and `started_at_source`. All three are omitted for hook sessions,
 so existing metadata is byte-identical and the parser version stays the same.
 The source bundle doesn't change either: a transcript hashes the same whether
 a hook or backfill registered it.
+
+## Durable evidence for confirmed imports
+
+Confirmed imports freeze selected, privacy-filtered evidence before registration.
+The private staging journal records the selected source set, immutable native and
+archive identity, destination, policy context, and child ownership. Registration
+selects its checksum atomically. A staging or quota failure leaves that candidate
+unadmitted; completed groups remain recoverable. Dry-run creates no staging.
+
+Import staging shares the 1 GiB durable publication quota, including atomic
+replacement allowance. Each stage reserves bounded control space for cancellation.
+Selected revision sets have a 32 MiB retained input allowance, and each serialized
+journal has a conservative 32 MiB encoded allowance, including identity and child
+context. Each qualified child has its own bounded journal; the shared 1 GiB quota
+also bounds their aggregate staging. Admission preflights the largest record or
+text and refilter output against the shared 128 MiB recovery budget. Encoded
+expansion and large-record scratch can lower the accepted input size; these are
+upper bounds, not a promise that every 32 MiB transcript fits. An oversized
+selection remains unadmitted instead of producing a journal the collector cannot
+read. Scheduled admission recovery visits at most 50 session
+directories per group and persists its cursor. Foreground backfill can publish a
+completed group to free capacity; setup and `--background` leave a resumable capacity
+error for later collection and retry.
+
+Native deletion after preparation does not remove selected evidence. Recovery
+rechecks current destination, exclusions and pause, and reapplies current privacy
+rules to retained evidence. History publication uses the existing revision journal:
+verified immutable sources precede metadata, and verified metadata and source
+readback precede local completion and staging removal. The history display reports
+staged/admitted progress separately from remotely verified sessions.
+
+Cancellation before admission journals and cleans unreferenced preparation.
+Admitted staging survives cancellation, pause and upload failure. Undo includes
+selected preparations that crashed before registration and records removal before
+releasing their bytes. Unknown or damaged obligations remain protected for recovery.
+
+Import staging permanently enables the `import-staging-v9` writer fence. Earlier
+mutating binaries must refuse the installation before updating registrations or
+publication state. A later finite retention preference does not remove this fence.
 
 ## Registration and concurrency
 
@@ -954,7 +1048,7 @@ results the file lacks. Phase 2 still imports only chats that have no file:
    checked" with a reason, and is retried on the next pass.
 4. **`modernc.org/sqlite`, a pure-Go driver,** already added for the phase-1
    count (v1.46.1, the newest release that supports the `go 1.24.0` floor;
-   builds use `toolchain go1.27.1`). It keeps CI and tests free of
+   builds use `toolchain go1.27.2`). It keeps CI and tests free of
    cgo. `mattn/go-sqlite3` would also work, because release builds already
    use cgo. Shelling out to `/usr/bin/sqlite3` is rejected because its output
    and version are uncontrolled.
@@ -1127,10 +1221,161 @@ mapping. Live filesystem ownership and nearest configured rules take precedence.
 The discovery catalog checkpoints an incomplete configured-root sweep. Each
 pass allows at most 128 identity lookups; completed sweeps refresh next pass,
 and cached prefix metadata is validated before a resumed sweep. Unavailable
-entries cannot certify uniqueness. Bounded Git config origin names identify
+entries cannot certify uniqueness. Backfill's proposed roots are the only
+exception: a proposed root whose completed, within-budget lookup found a
+checkout top level and an origin value that yields no repository key is
+non-owning; a failed origin read is unknown, not keyless. Every
+`remote.origin.url` value is read (`git config --get` reports only the last):
+the checkout is keyless only when no value yields a key; a value that yields
+one is the checkout's key wherever it appears; values that yield different
+keys leave the identity unknown, neither keyless nor matched. It cannot match a
+recorded key, so a match elsewhere stays unique among the identifiable roots.
+It has no dependency stamps, so every admission slice observes it again
+(sharing the coalesced semantic sweep) and requires the same keyless top level
+and observer scope; gaining a key or becoming unobservable invalidates the proof.
+Unobserved or budget-exhausted proposed roots, and all configured roots, remain
+uncertainty. A keyless origin that is a `url.insteadOf` shorthand for the same
+repository is the accepted residual: it is never normalized, so it could not
+match the recorded key even if configured. Bounded Git config origin names identify
 metadata dependencies; no partial Git configuration parser interprets remotes.
 Source and Git reads run outside admission locks. Under-lock scope digests and
 permission generations reject configuration changes.
+
+Backfill's uniqueness proof is over the clone roots its evidence names: the
+configured roots plus the live repository roots of every observed session, from
+every app, before output filters. Evidence that could name a root but was not
+observed (an unreadable store or folder, a session whose folder is unknown or
+unreadable, a native inventory that changed other than by added transcripts,
+an added transcript whose folder cannot be told, an unavailable or unsettled Cursor
+database, an exhausted budget, more than 1,024 distinct witness roots) is a
+recorded gap. Evidence that names no root (a Cursor chat with no folder,
+workspace reference or message folder) cannot be a clone and is not a gap. Gaps are kept as a finite set of (app, cause)
+values and isolated by app: a gap blocks recorded-key recovery only for the
+sessions of the app whose evidence is missing, and a gap that cannot be
+attributed to one app (a native inventory that changed other than by added
+transcripts, the 1,024-root bound, an unreadable folder of unknown app) blocks
+every app. A gap in another app's
+evidence does not block. This holds with or without `--harness`: an app the
+filter leaves out still contributes the witnesses it observed (they can make a
+recovery ambiguous or name its destination), and its gaps block only its own
+sessions, which the filter hides anyway.
+
+Admitting past another app's gap is safe within the documented residuals. The
+proof was never a census of every clone on disk: a clone no agent ever ran in
+is already invisible, and another app's gap widens that set only by clones
+known solely to that app's sessions. Configured roots, including exclusions,
+are enumerated by repository lookups independent of every app store, so no gap
+can hide capture policy, and a clone nested in an excluded root resolves to
+that root and is never a witness. The only wrong outcome is recovering a
+session into one included checkout of its own repository, configured or
+proposed, when it actually ran in a second, unconfigured clone known only to
+the app with the gap, instead of leaving it unresolved. It is never an
+excluded root, a root inside one, or a root no witness could propose; it is
+the same residual as a keyless clone and a
+`url.insteadOf` origin. The plan reports it: `recovery_evidence_gaps` in JSON
+(each `app`, `cause`, and the `blocked` and `recovered_without` session counts
+by app) and a "Project recovery evidence" note in text. An app's own gaps
+still block its sessions as defense in depth. Witnesses from an incomplete
+Cursor database epoch remain clone evidence but cannot propose a destination,
+because they cannot be renewed; such an epoch needs no renewal at admission.
+A complete epoch that changes between the plan and confirmation (its settled
+stamps differ, or a renewed read of an unsettled database differs) is isolated
+the same way at admission. It blocks Cursor's own recoveries, recoveries of
+unknown app, and any recovery whose destination rests on Cursor database
+evidence: an unconfigured destination with no current witness from another
+source that could propose it on its own. It does not block another app's
+recovery into a configured root or into a destination that current evidence
+from another source can propose. Such a proof used Cursor's chats only as
+possible clones, and a change can at most remove one (the proof stays
+unique) or add one (a second checkout known only to Cursor, the residual
+above).
+A native transcript that was only appended to after its header was read (same
+file, same mode, larger size) keeps its own `source_changed` skip but stays
+clone evidence that cannot propose a destination, and further appends renew
+it; a truncation, replacement or other rewrite is still a gap. Header facts
+come from leading complete records, so an append cannot change them. An
+in-place rewrite that grows the file is indistinguishable from an append by
+file metadata; that is the accepted residual of the rule. The candidate
+diagnostic names the highest-priority blocking cause instead of
+`project_inventory_unavailable`: `project_budget_exhausted`,
+`project_witness_limit` (retrying cannot help; an exact `--map-project`
+can), `native_store_unreadable`, `cursor_database_unavailable`,
+`native_inventory_changed`, `cursor_chat_folder_unavailable`, then
+`session_folder_unknown`. Exact mappings and configured-path ownership do not
+depend on the witness inventory.
+
+Running agents keep creating transcripts while a plan is made and confirmed
+(a review agent in a temporary clone starts a rollout every minute), and a new
+transcript can only add evidence: it cannot take away a clone another
+transcript named. So a native inventory whose only change is added membership
+does not fail every recorded recovery. The plan keeps the entry names of each
+folder it listed (within the 65,536-observation bound), and each app's own
+discovery runs again over a view of its stores in which a folder whose stamp
+did not move shows only its entries on the way to one that did (or to an
+absent path that now exists, or a folder the plan could not list in full):
+only changed and new folders are listed again, in full, and observations the
+renewal just took are not repeated, so the work follows what changed rather
+than the size of the stores. At most 4,096 entries the plan did not list are
+walked, and the headers of transcripts the plan did not observe are read with
+discovery's header readers, at most 64 transcripts and 16 MiB together; past
+any of these bounds (including a header the byte bound would cut short) the
+change is unattributed and blocks every app, as before. A folder that cannot
+be listed leaves its app's store incomplete. A transcript added under another
+of an app's roots with the name of one already there (a Codex rollout copied
+to `archived_sessions`) is judged by its own header rather than hidden behind
+the copy discovery prefers; it can only add evidence. Another spelling of an
+observed transcript (a symlinked store) is told by file identity against the
+observed transcripts of the same name. A listed store that is a symlink
+(`archived_sessions` or `projects` linked to another disk) is also stamped
+through the link, before it is listed: the link's own stamp does not move when
+the folder it names gains entries. That folder stays strict (replaced, removed
+or no longer named fails every recovery); a link that named no folder (a file,
+nothing, a link loop) was listed as nothing or as the app's unreadable store,
+and is listed again only once it names something else. Each
+added transcript is judged by the root its folder resolves to, with committed
+configuration only:
+
+- A folder that is not an existing, unconfigured repository root (a configured
+  project, a plain or temporary folder, a deleted folder) names no clone that
+  could compete with a recorded key and is ignored, as the witness inventory
+  ignores it.
+- A root the witness inventory already holds adds nothing; a new Cursor chat in
+  a project folder a planned chat was found in names that folder's root.
+- A new root found while planning joins the inventory as evidence that cannot
+  propose a destination, so the recovery resolver reads its key and a clone of
+  the same repository makes the recovery ambiguous; its renewal accepts
+  appends. Found after planning (confirmation or an admission slice), the new
+  root's key is read and every recorded-key recovery of that key fails; a
+  keyless root (as a proposed root above) or a repository without a key
+  matches none.
+- An added transcript whose folder cannot be told (no folder, a header that is
+  not understood or whose IDs disagree, a Cursor project folder no planned chat
+  had, a root whose key cannot be read), and a store that can no longer be
+  listed in full, is a `native_inventory_changed` gap of that app, isolated
+  like any other per-app gap. After planning it blocks that app's
+  recorded-key recoveries and recoveries of unknown app.
+
+Removed, replaced or rewritten observed transcripts and directories stay
+strict for every app. An entry removed from a listed directory that discovery
+never observed (not a transcript of the store's layout) was never evidence.
+
+Confirmation admits recovered sessions one by one. A session whose project or
+source evidence is no longer current when the import is confirmed (its own
+transcript changed, its proof's evidence changed, or a new clone of its
+repository appeared) is left out as `source_changed`, as planning leaves out a
+transcript that changed while it was read, and the rest of the confirmed plan
+is imported: a strict subset of what was confirmed. The configuration change
+is recomputed for what is left: a proposed project only the left-out sessions
+needed is not added, and every remaining proof is bound to that configuration
+(`PolicyContext`). The import says how many were left out and to run backfill
+again (setup names its own retry command). Confirmation still refuses, with
+nothing changed, when no session would be left or when the check ran out of
+time or was cancelled, since a session that read as changed then may only have
+run out of time. It also refuses when a dropped proposed project nests with a
+plain folder the import still adds (one inside the other): the plan decided
+what to keep out of that folder with the dropped project as a project of its
+own, so without it the folder would capture what the plan never checked.
+Admission slices already skip a stale session per session.
 
 `--map-project OLD_CWD=CONFIGURED_ROOT` is exact and invocation-local, with at
 most 128 mappings and 4,096 bytes per absolute path. The first equals sign is
@@ -1195,6 +1440,13 @@ project resolution: at most `max(1024, 2 * configured_roots * 129)` dependency
 rechecks and canonical-path resolver invocations per discovery pass (at most
 1024 roots). Two maximum-sized inventories leave room to validate a resumed
 prefix and admit a recovered source. Further candidates remain retryable.
+Planning validates the inventory prefix once per allowance, not once per
+candidate: later candidates reuse entries already validated or observed in
+the same pass, so the prefix costs at most `128 * configured_roots` rechecks
+however many sessions are planned. A failed freshness check, or a new
+allowance, makes the next candidate revalidate the prefix; admission still
+rechecks every entry. A recovery limit that remains is reported without a
+promise that retrying clears it.
 `repository_metadata_operations` reports those invocation units; a canonical
 path invocation may perform multiple filesystem probes. Import resets this
 allowance per short hold, with one common inventory check for its candidates.
@@ -1203,3 +1455,59 @@ separate 1024-root bound above. No-context programmatic import callers get a
 30-second validation deadline per slice. Filesystem proof checks cannot
 prevent a change after their final observation; the next admission slice or
 pass refreshes the evidence.
+
+## Historical-only ownership and bounded mapping files
+
+Step 6a, merged in [#433](https://github.com/wangjohn/agent-archive/pull/433)
+(`18ca0c48`), adds `--mapping-file FILE`, strict JSON schema 1, bounded to 4 MiB and
+16,384 mappings/definitions. Each exact absolute original cwd targets either an
+already included `configured_root` or an opaque `historical_project_id`.
+`historical_projects` definitions supply stable 32-character lowercase hex IDs
+and bounded labels. Duplicate fields, conflicting normalized cwds, ambiguous
+null/multiple targets and invalid UTF-8 are refused before source discovery.
+Existing repeatable `--map-project` remains compatible and capped at 128.
+Assignments are normalized and hashed canonically; target type and immutable ID
+participate, label/order/filename do not. Batch destination binding supplies the
+independent destination component. Confirmation fingerprints current policy.
+Text previews show bounded assignments and explicit historical-only project rows;
+JSON previews expose all requested assignments, without transcript locators.
+
+Historical identity and destination-scoped permissions live separately from
+`Archive.Projects`. Only admitted identities receive new permissions; disabled
+local decisions and labels are never changed by importing assignments. The
+`historical-project list|rename|enable|disable` command manages explicit policy
+under setup/collector/hooks locks. Setup preserves committed identities and
+policy. Pairing transfers bounded IDs, labels and current-destination decisions,
+never original cwds or native mappings, and preserves recipient decisions.
+
+A private version-1 historical proof binds ID, destination, original/canonical
+cwd and bounded physical dependency cwd evidence. `ProjectRoot` is empty. It is
+import-only, mutually exclusive with live Codex consent, and bound by durable
+staging. Every admission/publication checks current exclusions against this
+frozen evidence, including exclusions introduced after native deletion. Required
+excluded physical ancestors refuse complete import as `excluded_history`; the
+complete-history validator is unchanged. Original source location restrictions
+remain in effect. Supported complete native revisions use original thread
+creation/producer/cwd facts independently of selected physical revision facts.
+
+Initial publication uses the existing staged source set. Once published, every
+maintenance and local-read path uses retained sources; native growth or recovery
+cannot extend ownership. Privacy, parser and display updates preserve capture
+age and alternative revision references. Exact readback rejects remote metadata
+that omits a locally published history manifest. Retention checks ownership and
+current destination independently of publication permission, so disabled imports
+still expire under finite retention and remain under Keep forever.
+Historical protection with disabled future discovery skips unsolicited native
+inventory. Independently admitted live owners still request qualified coverage;
+explicitly enabled discovery and explicit import staging retain their native reads.
+
+Exact batch undo/purge removes only owned sessions and evidence. Historical
+identities and permissions remain explicit configuration, including shared
+identities; undo does not alter them or any live capture policy. A path-based
+`--project` filter cannot select the empty historical root. The permanent
+`historical-projects-v10` writer capability composes all lower protections and
+survives disable, expiry, undo and rollback. Earlier writers refuse mutation.
+See the [mapping schema](../../schemas/backfill-mapping.schema.json),
+[policy schema](../../schemas/historical-projects.schema.json),
+[private proof schema](../../schemas/historical-project-proof.schema.json), and
+[guide](../../docs/guides/backfill.md#historical-only-projects).

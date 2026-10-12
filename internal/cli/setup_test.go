@@ -300,7 +300,7 @@ func TestSetupSchedulerFailureRestoresExistingFiles(t *testing.T) {
 		}
 		return nil
 	}
-	output := setupRun(t, env, "retention\n120\ny\n", 1)
+	output := setupRun(t, env, "retention\ncustom\n120\ny\n", 1)
 	if !strings.Contains(output, "restored") {
 		t.Fatal(output)
 	}

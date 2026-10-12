@@ -211,7 +211,7 @@ func TestSetupCompleteTranscriptMatrix(t *testing.T) {
 				f.pastSession(t, "one", "src/web-app", screenNow.Add(-2*time.Hour))
 				f.pastSession(t, "two", "src/長い-project-with-a-long-name", screenNow.Add(-time.Hour))
 				out := &promptScreen{caps: promptCapabilities{Color: color, Width: size[0], Height: size[1]}}
-				input := strings.NewReader("\nincluded-projects\n\ns3-existing\nwork\n2\ndetails\nstart\nskip\ndone\n")
+				input := strings.NewReader("\nincluded-projects\n\ns3-existing\nwork\n2\ndetails\nstart\ndone\n")
 				if code := Run([]string{"setup"}, input, out, out, f.env); code != 0 {
 					t.Fatalf("exit %d\n%s", code, out.String())
 				}
@@ -221,7 +221,7 @@ func TestSetupCompleteTranscriptMatrix(t *testing.T) {
 					t.Fatalf("config %+v", cfg)
 				}
 				text := f.normalize(out.String())
-				if !strings.Contains(text, "Setup complete") || !strings.Contains(text, "Optional · Import past sessions") || !setupContainsText(text, "Found 2 sessions in 2 selected projects") || strings.Contains(text, "To set up another machine with this storage") {
+				if !strings.Contains(text, "Setup complete") || !setupContainsText(text, "Imported 2 sessions from the last 7 days (Claude Code 2). Uploading in the background.") || strings.Contains(text, "To set up another machine with this storage") {
 					t.Fatal(text)
 				}
 				golden.Check(t, filepath.Join("testdata", "setup-transcripts", fmt.Sprintf("%dx%d-color-%t.txt", size[0], size[1], color)), []byte(strings.ReplaceAll(text, "\x1b", "\\e")))
@@ -323,7 +323,7 @@ func TestSetupReviewProjectsIncludesCurrentFolderAfterSkippedCaptureStep(t *test
 			f.env.WorkingDir = func() (string, error) { return current, nil }
 			input := "storage\n\n"
 			if entry == "retention" {
-				input = "retention\n90\n"
+				input = "retention\n90-days\n"
 			}
 			if entry == "continue" {
 				cfg := mustLoadConfig(t, f.home)

@@ -96,6 +96,9 @@ func refilterBundleBounded(ctx context.Context, reg archive.SessionRegistration,
 	if err != nil {
 		return archive.SourceBundle{}, err
 	}
+	if reg.StagedImportSHA256 != "" {
+		filtered.Format = bundle.Capture.SourceFormat
+	}
 	refiltered, err := archive.NewSourceBundle(reg, adapter, filtered, bundle.Capture.CapturedAt, bundle.SupplementalEvidence)
 	if err != nil {
 		return archive.SourceBundle{}, err

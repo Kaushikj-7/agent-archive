@@ -56,12 +56,15 @@ func TestDeletedWorktreeResolverRetainsUnavailableAndAmbiguousEvidence(t *testin
 	}
 }
 
+// untrustedDetail stands in for source text that must never be rendered.
+const untrustedDetail DiagnosticDetail = "untrusted transcript content"
+
 func TestDiagnosticsAreBoundedContentFreeAndJSONOptional(t *testing.T) {
 	p := Plan{Filters: Filters{Harnesses: []string{"codex"}}}
 	for range 5000 {
-		p.Candidates = append(p.Candidates, Candidate{Harness: "codex", NativeSessionID: "private-native-id", TranscriptPath: "/private/native/locator.jsonl", SourceKey: "credential-secret", Skip: SkipWorktreeUnresolved, Diagnostic: candidateDiagnostic(SkipWorktreeUnresolved, sourcefacts.RecoveryAmbiguous)})
+		p.Candidates = append(p.Candidates, Candidate{Harness: "codex", NativeSessionID: "private-native-id", TranscriptPath: "/private/native/locator.jsonl", SourceKey: "credential-secret", Skip: SkipWorktreeUnresolved, Diagnostic: candidateDiagnostic(SkipWorktreeUnresolved, sourcefacts.RecoveryAmbiguous, noGapCause)})
 	}
-	p.Candidates = append(p.Candidates, Candidate{Skip: SkipWorktreeUnresolved, Diagnostic: &Diagnostic{Detail: "untrusted transcript content"}})
+	p.Candidates = append(p.Candidates, Candidate{Skip: SkipWorktreeUnresolved, Diagnostic: &Diagnostic{Detail: untrustedDetail}})
 	var text, structured bytes.Buffer
 	RenderText(&text, p)
 	if err := RenderJSON(&structured, p); err != nil {
@@ -115,7 +118,7 @@ func TestInventoryCountsPhysicalCandidatesWithoutOverlappingRoles(t *testing.T) 
 	if total != 5 || a.UniqueCandidateFiles != 5 || a.DatabaseCandidates != 1 || a.Dispositions["duplicate_candidate"] != 1 || a.Dispositions["unresolved"] != 1 || !a.LogicalHistoryPending {
 		t.Fatalf("%+v", a)
 	}
-	if d := candidateDiagnostic(SkipRelatedHistory, ""); d.Detail != "history_lookup_pending" || d.Action != ActionAwaitSupport {
+	if d := candidateDiagnostic(SkipRelatedHistory, "", noGapCause); d.Detail != DetailHistoryLookupPending || d.Action != ActionAwaitSupport {
 		t.Fatal(d)
 	}
 }
@@ -169,7 +172,7 @@ func TestDatabaseCandidateDiagnosticsFollowWinningSkip(t *testing.T) {
 // Recorded exclusion evidence must be reflected without changing the primary skip.
 func TestInventoryRetainsRecoveryExclusion(t *testing.T) {
 	t.Parallel()
-	c := Candidate{TranscriptPath: "/synthetic/excluded", Skip: SkipWorktreeUnresolved, Diagnostic: candidateDiagnostic(SkipWorktreeUnresolved, sourcefacts.RecoveryExcluded)}
+	c := Candidate{TranscriptPath: "/synthetic/excluded", Skip: SkipWorktreeUnresolved, Diagnostic: candidateDiagnostic(SkipWorktreeUnresolved, sourcefacts.RecoveryExcluded, noGapCause)}
 	p := Plan{Candidates: []Candidate{c}}
 	a := p.InventoryAccounting()
 	if a.UniqueCandidateFiles != 1 || a.Dispositions["excluded"] != 1 || a.Dispositions["unresolved"] != 0 || p.Candidates[0].Skip != SkipWorktreeUnresolved {
@@ -209,7 +212,7 @@ func TestUnsafeDiagnosticDoesNotInventUnsupportedFormat(t *testing.T) {
 	w := &work{t: &transcript{}, c: Candidate{StartedAt: fixedNow.Add(-time.Hour)}}
 	runAdapter(t.Context(), Environment{}, w)
 	decidePlanCandidates([]*work{w}, time.Time{}, time.Time{}, fixedNow)
-	if w.c.Skip != SkipUnsafeFormat || w.c.Diagnostic == nil || w.c.Diagnostic.Detail != "source_inspection_unavailable" || w.c.Diagnostic.Action != ActionReviewSource {
+	if w.c.Skip != SkipUnsafeFormat || w.c.Diagnostic == nil || w.c.Diagnostic.Detail != DetailSourceInspectionUnavailable || w.c.Diagnostic.Action != ActionReviewSource {
 		t.Fatalf("%+v", w.c)
 	}
 	var output bytes.Buffer

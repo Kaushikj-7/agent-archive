@@ -148,6 +148,14 @@ type Env struct {
 	// backfillHoldSteps, when positive (only in tests), caps the steps
 	// registration takes per hold of hooks.lock, to force several holds.
 	backfillHoldSteps int
+	// importCollectorWait, set only by tests, is given how long an import
+	// would wait for collector.lock (backfillCollectorWait for backfill,
+	// setupImportCollectorWait for setup) and returns the wait to use.
+	importCollectorWait func(wait time.Duration) time.Duration
+	// projectMatchTimeout, set only by tests, replaces matchProjects'
+	// deadline (projectMatchDeadline), so a test of what the matcher finds
+	// does not race the clock on a loaded machine.
+	projectMatchTimeout time.Duration
 	// exitOnSignal, set only by tests, stands in for exitOnSignal (the
 	// function) when a signal stops backfill at once.
 	exitOnSignal func(os.Signal)
@@ -559,6 +567,7 @@ Inspect history
 
 Import history
   agent-archive backfill    Import sessions already on this machine
+  agent-archive historical-project  Manage historical project permissions
 
 Switch agents
   agent-archive handoff     Continue a session in another coding agent
@@ -650,6 +659,8 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 		return runFeedbackCommand(args[1:], stdout, stderr, env)
 	case "handoff":
 		return runHandoffCommand(args[1:], stdin, stdout, stderr, env)
+	case "historical-project":
+		return runHistoricalProjects(args[1:], stdout, stderr, env)
 	case "backfill":
 		return runBackfillCommand(args[1:], stdin, stdout, stderr, env)
 	case "purge":

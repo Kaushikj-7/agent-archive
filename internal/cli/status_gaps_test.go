@@ -49,6 +49,47 @@ func TestStatusReportsTheRecordSizeLimitAsAGap(t *testing.T) {
 	}
 }
 
+// A session stopped at a size limit whose limit was recorded is listed by
+// status APP with that limit and its size, and its gap says which limit and
+// how to go on capturing.
+func TestStatusAppListsSessionsStoppedAtASizeLimit(t *testing.T) {
+	t.Parallel()
+	now := time.Now().UTC()
+	env, home, _, _ := publishedThroughSync(t, now)
+	reg, _ := onlyRegistration(t, home)
+	store, err := state.Open(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle, publishedAt, found, err := store.LoadLastPublished(reg.ArchiveSessionID)
+	if err != nil || !found {
+		t.Fatalf("setup: %v", err)
+	}
+	if err := statetest.SaveBlocked(store, reg.ArchiveSessionID, bundle, publishedAt, state.BlockedReasonTranscriptTooLarge); err != nil {
+		t.Fatal(err)
+	}
+	limit := state.SizeLimitGap{Kind: state.SizeLimitRaw, LimitBytes: 512 << 20, SizeBytes: 600_000_000}
+	if err := store.SaveScanSignature(reg.ArchiveSessionID, state.ScanSignature{Failed: true, Blocked: state.BlockedReasonTranscriptTooLarge, SizeLimit: &limit}); err != nil {
+		t.Fatal(err)
+	}
+	view, err := readStatus(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := view.Apps[0]
+	if len(app.SizeLimitedSessions) != 1 || app.SizeLimitedSessions[0] != (sizeLimitedSession{ArchiveSessionID: reg.ArchiveSessionID, Limit: "Codex raw 512 MiB", SizeBytes: 600_000_000}) {
+		t.Fatalf("listed = %+v", app.SizeLimitedSessions)
+	}
+	gaps := app.CaptureGaps
+	if len(gaps) != 1 || gaps[0].Code != "transcript_too_large" || !strings.Contains(gaps[0].Detail, "at 600.0 MB is over the Codex raw 512 MiB limit") || !strings.Contains(gaps[0].Detail, "agent-archive handoff "+reg.ArchiveSessionID) {
+		t.Fatalf("gaps = %+v", gaps)
+	}
+	var out strings.Builder
+	if code := runStatusCommand([]string{"codex", "--no-pager"}, &out, os.Stderr, env); code != 0 || !strings.Contains(out.String(), "Stopped at a size limit") || !strings.Contains(out.String(), reg.ArchiveSessionID+"  600.0 MB, over the Codex raw 512 MiB limit") {
+		t.Fatalf("status codex exit=%d output=%s", code, out.String())
+	}
+}
+
 // Regression: pre-release review, carried over from agent-skills (e371b6a).
 func TestBlockedCaptureIsNotPendingAndStatusReportsGap(t *testing.T) {
 	t.Parallel()

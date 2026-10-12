@@ -7,7 +7,7 @@
   Keep for  90 days
   ✓ Storage connected
   ✓ Bucket is private
-  \e[33m!\e[0m History import is separate.
+  \e[33m!\e[0m Setup imports the last 7 days of included projects; older history is separate.
   \e[33m!\e[0m Sensitive text may remain after filtering.
 
 ? Start archiving?
@@ -52,7 +52,7 @@
   Keep for  90 days
   ✓ Storage connected
   ✓ Bucket is private
-  \e[33m!\e[0m History import is separate.
+  \e[33m!\e[0m Setup imports the last 7 days of included projects; older history is separate.
   \e[33m!\e[0m Sensitive text may remain after filtering.
 
 ? Start archiving?

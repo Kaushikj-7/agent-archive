@@ -136,6 +136,23 @@ func storageCheckEnv(store storage.ObjectStore, openErr error) Env {
 	}
 }
 
+// storageCheckLine isolates the spinner/connection lines from the surrounding
+// stage heading and independent privacy result, covered by screen fixtures.
+func storageCheckLine(text string) string {
+	start := strings.Index(text, "\r")
+	if start < 0 {
+		start = strings.Index(text, "Checking your storage connection…")
+	}
+	if start < 0 {
+		return text
+	}
+	text = text[start:]
+	if end := strings.Index(text, "Connected to your storage.\n"); end >= 0 {
+		text = text[:end+len("Connected to your storage.\n")]
+	}
+	return text
+}
+
 // On a terminal that redraws, the check's line resolves in place: the
 // spinner is cleared and ✓ takes its line, with only the ✓ colored.
 func TestStorageCheckSpinnerResolvesToCheckMark(t *testing.T) {
@@ -146,7 +163,7 @@ func TestStorageCheckSpinnerResolvesToCheckMark(t *testing.T) {
 	if err := runStorageCheck(p, &cfg, storageCheckEnv(storagetest.NewMemoryStore(), nil)); err != nil {
 		t.Fatal(err)
 	}
-	written := out.String()
+	written := storageCheckLine(out.String())
 	if !strings.HasSuffix(written, "\r\x1b[K\x1b[32m✓\x1b[0m Connected to your storage.\n") {
 		t.Errorf("wrote %q, want the spinner's line cleared, then ✓", written)
 	}
@@ -170,12 +187,12 @@ func TestStorageCheckSpinnerStopsOnError(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "no credentials") {
 		t.Fatalf("err = %v", err)
 	}
-	written := out.String()
+	written := storageCheckLine(out.String())
 	if !strings.HasSuffix(written, "\r\x1b[K") || strings.Contains(written, "\n") {
 		t.Errorf("wrote %q, want only the spinner, its line cleared", written)
 	}
 	time.Sleep(2 * spinnerInterval)
-	if out.String() != written {
+	if storageCheckLine(out.String()) != written {
 		t.Errorf("the spinner wrote %q after the check failed", strings.TrimPrefix(out.String(), written))
 	}
 }
@@ -187,14 +204,14 @@ func TestStorageCheckWithoutATerminalPrintsPlainLines(t *testing.T) {
 	var ok bytes.Buffer
 	cfg := config.Config{}
 	must(t, runStorageCheck(styledPrompter("", &ok, textStyle{}), &cfg, storageCheckEnv(storagetest.NewMemoryStore(), nil)))
-	if got, want := ok.String(), "Checking your storage connection…\n✓ Connected to your storage.\n"; got != want {
+	if got, want := storageCheckLine(ok.String()), "Checking your storage connection…\n✓ Connected to your storage.\n"; got != want {
 		t.Errorf("wrote %q, want %q", got, want)
 	}
 	var failed bytes.Buffer
 	if err := runStorageCheck(styledPrompter("", &failed, textStyle{}), &cfg, storageCheckEnv(nil, errors.New("no credentials"))); err == nil {
 		t.Fatal("the check passed")
 	}
-	if got, want := failed.String(), "Checking your storage connection…\n\n"; got != want {
+	if got, want := storageCheckLine(failed.String()), "Checking your storage connection…\n\n"; got != want {
 		t.Errorf("wrote %q, want %q", got, want)
 	}
 }
@@ -257,7 +274,7 @@ func TestStorageCheckSkipsSpinnerForCredentialProcess(t *testing.T) {
 	p := styledPrompter("", &out, textStyle{color: true, live: true})
 	cfg := config.Config{Storage: credentials.Config{Provider: credentials.ProviderS3, AWSProfile: "work", Bucket: "team-archive", Region: "us-east-1"}}
 	must(t, runStorageCheck(p, &cfg, env))
-	if got, want := out.String(), "Checking your storage connection…\n\x1b[32m✓\x1b[0m Connected to your storage.\n"; got != want {
+	if got, want := storageCheckLine(out.String()), "Checking your storage connection…\n\x1b[32m✓\x1b[0m Connected to your storage.\n"; got != want {
 		t.Errorf("wrote %q, want %q", got, want)
 	}
 }

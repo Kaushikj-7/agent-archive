@@ -68,10 +68,13 @@ type cursorRecoveryEpoch struct {
 	works    []*work
 	complete bool
 	budget   bool
-	digest   [32]byte
-	paths    []string
-	stamps   []recoveryFileStamp
-	settled  bool
+	// gaps names known causes of incompleteness; an incomplete epoch without
+	// one is an unavailable database (see cursorRecoveryGaps).
+	gaps    recoveryGaps
+	digest  [32]byte
+	paths   []string
+	stamps  []recoveryFileStamp
+	settled bool
 }
 
 // readCursorRecoveryEpoch validates supported database candidates before any
@@ -88,6 +91,7 @@ func readCursorRecoveryEpoch(ctx context.Context, env Environment, r *resolver, 
 		return epoch, nil
 	}
 	if unread.cursorIncomplete {
+		epoch.gaps.add(string(harnessCursor), CauseNativeStoreUnreadable)
 		return epoch, nil
 	}
 	res, err := env.CursorRecoveryDatabase(ctx, cursorRecoveryRows, cursorRecoveryBytes)
@@ -124,7 +128,7 @@ func readCursorRecoveryEpoch(ctx context.Context, env Environment, r *resolver, 
 		epoch.budget = budget.exhausted
 		return epoch, nil
 	}
-	epoch.complete, err = observeCursorRecoveryWorks(ctx, env, r, works, budget)
+	epoch.complete, epoch.gaps, err = observeCursorRecoveryWorks(ctx, env, r, works, budget)
 	if err != nil {
 		return epoch, err
 	}
@@ -139,7 +143,7 @@ func readCursorRecoveryEpoch(ctx context.Context, env Environment, r *resolver, 
 // prepareCursorRecoveryWitnesses makes one prefilter evidence observation,
 // then validates settled database/side-state/workspace stamps per admission
 // slice. Virtual/unsettled sources require one renewed bounded epoch instead.
-func prepareCursorRecoveryWitnesses(ctx context.Context, env Environment, r *resolver, items []*work, unread unreadable) ([]*work, bool, error) {
+func prepareCursorRecoveryWitnesses(ctx context.Context, env Environment, r *resolver, items []*work, unread unreadable) ([]*work, recoveryGaps, error) {
 	relevant := false
 	for _, w := range items {
 		if !env.exists(w.t.cwd) && (archive.IsRepoKey(w.t.repoKey) || r.filters.ProjectMappings[filepath.Clean(w.t.cwd)] != "") {
@@ -148,16 +152,27 @@ func prepareCursorRecoveryWitnesses(ctx context.Context, env Environment, r *res
 		}
 	}
 	if !relevant {
-		return nil, false, nil
+		return nil, nil, nil
 	}
 	epoch, err := readCursorRecoveryEpoch(ctx, env, r, unread)
 	if err != nil {
-		return nil, false, err
+		return nil, nil, err
+	}
+	gaps := cursorRecoveryGaps(epoch)
+	for _, w := range epoch.works {
+		// An incomplete epoch cannot be renewed: its chats stay clone evidence
+		// but cannot propose a destination.
+		w.evidenceOnly = !epoch.complete
 	}
 	renewals := 0
 	r.databaseRecoveryCurrent = func(ctx context.Context) bool {
-		if !epoch.complete || ctx.Err() != nil {
+		if ctx.Err() != nil {
 			return false
+		}
+		if !epoch.complete {
+			// The Cursor gap was accepted at planning for the recoveries it does
+			// not block (Cursor's own stay blocked); there is nothing to renew.
+			return true
 		}
 		if epoch.settled {
 			current, ok := recoveryStamps(env, epoch.paths)
@@ -170,8 +185,25 @@ func prepareCursorRecoveryWitnesses(ctx context.Context, env Environment, r *res
 		renewed, err := readCursorRecoveryEpoch(ctx, env, r, unread)
 		return err == nil && renewed.complete && renewed.digest == epoch.digest
 	}
-	r.recoveryInventoryBudget = epoch.budget
-	return epoch.works, !epoch.complete, nil
+	return epoch.works, gaps, nil
+}
+
+// cursorRecoveryGaps is empty for a complete epoch. An incomplete one names its
+// known causes, the budget when it was reached, and otherwise an unavailable
+// database (locked, unreadable, unsettled or holding unusable rows).
+func cursorRecoveryGaps(epoch cursorRecoveryEpoch) recoveryGaps {
+	if epoch.complete {
+		return nil
+	}
+	var gaps recoveryGaps
+	gaps.merge(epoch.gaps)
+	if epoch.budget {
+		gaps.add(string(harnessCursor), CauseRecoveryBudget)
+	}
+	if len(gaps) == 0 {
+		gaps.add(string(harnessCursor), CauseCursorDatabaseUnavailable)
+	}
+	return gaps
 }
 
 type cursorRecoveryReadBudget struct {
@@ -222,6 +254,7 @@ func cursorRecoveryDigest(works []*work) [32]byte {
 		CreatedAt   time.Time  `json:"created_at"`
 		Folder      string     `json:"folder"`
 		WorkspaceID string     `json:"workspace_id"`
+		Workspace   bool       `json:"workspace"`
 		Malformed   bool       `json:"malformed"`
 		Root        string     `json:"root"`
 		Skip        SkipReason `json:"skip"`
@@ -235,7 +268,7 @@ func cursorRecoveryDigest(works []*work) [32]byte {
 	}
 	facts := make([]fact, 0, len(works))
 	for _, w := range works {
-		facts = append(facts, fact{ID: w.chat.ID, KeyID: w.chat.KeyID, CreatedAt: w.chat.CreatedAt, Folder: w.chat.Folder, WorkspaceID: w.chat.WorkspaceID, Malformed: w.chat.Malformed, Root: w.res.root, Skip: w.res.skip, Unsafe: w.unsafe, Empty: w.empty, Large: w.tooLarge, Vanished: w.vanished, Duplicate: w.duplicate, Mismatch: w.t.identityMismatch, Validated: w.validated})
+		facts = append(facts, fact{ID: w.chat.ID, KeyID: w.chat.KeyID, CreatedAt: w.chat.CreatedAt, Folder: w.chat.Folder, WorkspaceID: w.chat.WorkspaceID, Workspace: w.chat.WorkspaceIdentifier, Malformed: w.chat.Malformed, Root: w.res.root, Skip: w.res.skip, Unsafe: w.unsafe, Empty: w.empty, Large: w.tooLarge, Vanished: w.vanished, Duplicate: w.duplicate, Mismatch: w.t.identityMismatch, Validated: w.validated})
 	}
 	sort.Slice(facts, func(i, j int) bool {
 		a, _ := json.Marshal(facts[i])
@@ -256,11 +289,17 @@ func cursorRecoveryWorkspacePaths(env Environment, chats []CursorDatabaseChat) [
 	return paths
 }
 
-func observeCursorRecoveryWorks(ctx context.Context, env Environment, r *resolver, works []*work, budget *cursorRecoveryReadBudget) (bool, error) {
+// observeCursorRecoveryWorks resolves each chat's folder. A chat without any
+// folder evidence (cursorChatFolderless) is a non-witness, not a gap. A chat
+// whose workspace reference or folder cannot be resolved stays a gap: that
+// evidence could name a second clone.
+func observeCursorRecoveryWorks(ctx context.Context, env Environment, r *resolver, works []*work, budget *cursorRecoveryReadBudget) (bool, recoveryGaps, error) {
 	complete := !budget.exhausted
+	var gaps recoveryGaps
 	workspaceEnv := env
 	var workspaceErr error
-	workspaceEnv.ReadFile = recoveryWorkspaceReader(ctx, env, budget, &complete, &workspaceErr)
+	workspaceRead := true
+	workspaceEnv.ReadFile = recoveryWorkspaceReader(ctx, env, budget, &workspaceRead, &workspaceErr)
 	for _, w := range works {
 		if w.vanished || w.duplicate || w.unsafe || w.tooLarge || w.t.identityMismatch || w.empty {
 			complete = false
@@ -269,14 +308,16 @@ func observeCursorRecoveryWorks(ctx context.Context, env Environment, r *resolve
 		folder := cursorChatFolder(workspaceEnv, w.chat, w.messageFolders)
 		w.t.cwd = folder
 		w.res = r.resolve(folder)
-		if w.res.skip == SkipProjectUnknown {
+		if !workspaceRead || (w.res.skip == SkipProjectUnknown && !cursorChatFolderless(w.chat, w.messageFolders)) {
 			complete = false
+			workspaceRead = true
+			gaps.add(string(harnessCursor), CauseCursorChatFolderUnavailable)
 		}
 	}
 	if err := ctx.Err(); err != nil {
-		return false, err
+		return false, nil, err
 	}
-	return complete, workspaceErr
+	return complete, gaps, workspaceErr
 }
 
 func settleCursorRecoveryEpoch(env Environment, epoch *cursorRecoveryEpoch, before, allBefore []recoveryFileStamp, stable, allStable bool) {

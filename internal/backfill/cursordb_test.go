@@ -250,12 +250,15 @@ func TestCursorDatabaseReader(t *testing.T) {
 				byID[c.ID] = c
 			}
 			for id, w := range map[string]CursorDatabaseChat{
-				"a":        {ID: "a", KeyID: "a", CreatedAt: sept10},
-				"b":        {ID: "b", KeyID: "b", CreatedAt: sept10.AddDate(0, 0, 11), Folder: "/work/site", WorkspaceID: "w"},
-				"c":        {ID: "c", KeyID: "c", Folder: "/work/other dir"},
-				"d":        {ID: "d", KeyID: "d"},
-				"ws-empty": {ID: "ws-empty", KeyID: "ws-empty"},
-				"k2":       {ID: "k2", KeyID: "k2"},
+				"a": {ID: "a", KeyID: "a", CreatedAt: sept10},
+				"b": {ID: "b", KeyID: "b", CreatedAt: sept10.AddDate(0, 0, 11), Folder: "/work/site", WorkspaceID: "w", WorkspaceIdentifier: true},
+				"c": {ID: "c", KeyID: "c", Folder: "/work/other dir", WorkspaceIdentifier: true},
+				// A remote or unknown reference resolves to no folder but is recorded.
+				"d":         {ID: "d", KeyID: "d", WorkspaceIdentifier: true},
+				"ws-empty":  {ID: "ws-empty", KeyID: "ws-empty", WorkspaceIdentifier: true},
+				"ws-list":   {ID: "ws-list", KeyID: "ws-list", WorkspaceIdentifier: true},
+				"ws-no-uri": {ID: "ws-no-uri", KeyID: "ws-no-uri", WorkspaceID: "x", WorkspaceIdentifier: true},
+				"k2":        {ID: "k2", KeyID: "k2"},
 			} {
 				if got := byID[id]; !reflect.DeepEqual(got, w) {
 					t.Errorf("%s: %+v, want %+v", id, got, w)
@@ -698,6 +701,9 @@ func TestCursorWriterProcess(t *testing.T) {
 		}
 		fmt.Println("ok")
 	}
+	if err := in.Err(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // TestCursorDatabaseReaderLive reads a WAL database in place while Cursor
@@ -745,6 +751,57 @@ func TestCursorDatabaseReaderStaleSideFiles(t *testing.T) {
 		t.Fatalf("%+v", res)
 	}
 	assertUnchanged(t, dir, before)
+}
+
+// TestCursorRecoveryReaderSettledSideFiles: the -wal and -shm a quit Cursor
+// left behind after checkpointing everything (the -wal empty) don't make the
+// recovery inventory locked: the catalog and each chat are read, and nothing
+// beside the database changes. Frames left in the -wal still lock it.
+func TestCursorRecoveryReaderSettledSideFiles(t *testing.T) {
+	t.Parallel()
+	for _, frames := range []bool{false, true} {
+		t.Run(fmt.Sprintf("frames=%v", frames), func(t *testing.T) {
+			t.Parallel()
+			env := newTree(t).env()
+			path := env.cursorStateDatabase()
+			w := startCursorWriter(t, path, true)
+			w.do("full:a", "checkpoint")
+			if frames {
+				w.do("full:b")
+			}
+			w.kill()
+			dir := filepath.Dir(path)
+			before := snapshotDir(t, dir)
+			if _, ok := before["state.vscdb-shm"]; !ok {
+				t.Fatal("the killed writer left no -shm file")
+			}
+			if wal, ok := before["state.vscdb-wal"]; !ok || (wal.size == 0) == frames {
+				t.Fatalf("-wal %+v present %v", wal, ok)
+			}
+			res, err := CursorRecoveryDatabaseReaderFor(env)(t.Context(), cursorRecoveryRows, cursorRecoveryBytes)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if frames {
+				if res.Checked || res.Reason != CursorUncheckedLocked {
+					t.Fatalf("checked %v, reason %q", res.Checked, res.Reason)
+				}
+				assertUnchanged(t, dir, before)
+				return
+			}
+			if !res.Checked || !reflect.DeepEqual(chatIDs(res), []string{"a"}) {
+				t.Fatalf("%+v", res)
+			}
+			c, snap, err := res.ReadRecoverySnapshot(t.Context(), "a", &cursorRecoveryReadBudget{remaining: cursorRecoveryBytes, rows: cursorRecoveryRecords})
+			if err != nil || len(c.Composer) == 0 || len(c.Bubbles) != 2 {
+				t.Fatal(c, err)
+			}
+			if err := errors.Join(snap.Close(), res.Close()); err != nil {
+				t.Fatal(err)
+			}
+			assertUnchanged(t, dir, before)
+		})
+	}
 }
 
 // TestCursorDatabaseReaderJournal: a rollback-journal database with a write

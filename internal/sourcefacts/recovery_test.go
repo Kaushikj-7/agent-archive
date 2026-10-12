@@ -525,3 +525,57 @@ func TestSemanticRecoveryRejectsChangedObserverScope(t *testing.T) {
 		t.Fatal("changed observer must invalidate the epoch, not exhaust its budget")
 	}
 }
+
+func TestRecoveryKeylessProposedRootIsNonOwning(t *testing.T) {
+	key := archive.RepoKey("https://example.test/acme/repo")
+	projects := []archive.ProjectActivation{{Root: "/a", Included: true}, {Root: "/proposed", Included: true}}
+	for _, tc := range []struct {
+		name     string
+		proposed bool
+		id       RepositoryIdentity
+		want     RecoveryOutcome
+	}{
+		{"proposed keyless checkout", true, RepositoryIdentity{Root: "/proposed"}, ""},
+		{"configured keyless checkout", false, RepositoryIdentity{Root: "/proposed"}, RecoveryInventoryUnavailable},
+		{"proposed unobserved", true, RepositoryIdentity{}, RecoveryInventoryUnavailable},
+		{"proposed budget", true, RepositoryIdentity{Root: "/proposed", BudgetExhausted: true}, RecoveryBudgetExhausted},
+		{"proposed clone", true, RepositoryIdentity{Root: "/proposed", Key: key, Known: true}, RecoveryAmbiguous},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fresh := tc.id
+			r := NewRecoveryResolver(projects, nil, filepath.Clean, func(_ context.Context, root string) RepositoryIdentity {
+				if root == "/a" {
+					return RepositoryIdentity{Root: "/a", Key: key, Known: true}
+				}
+				return fresh
+			}, nil)
+			if tc.proposed {
+				r.Proposed = map[string]bool{"/proposed": true}
+			}
+			proof, outcome := r.Recover(t.Context(), "/gone", key)
+			if outcome != tc.want || (outcome == "" && proof.Root != "/a") {
+				t.Fatalf("%s: %+v", outcome, proof)
+			}
+			if outcome != "" {
+				return
+			}
+			r.ResetValidationContext(t.Context())
+			if !r.CurrentSlice(proof) {
+				t.Fatal("unchanged keyless proposed root rejected")
+			}
+			for name, changed := range map[string]RepositoryIdentity{
+				"gained the recorded key": {Root: "/proposed", Key: key, Known: true},
+				"moved its top level":     {Root: "/elsewhere"},
+				"changed observer scope":  {Root: "/proposed", ObservationScope: "other"},
+				"became unobservable":     {},
+				"exhausted its budget":    {Root: "/proposed", BudgetExhausted: true},
+			} {
+				fresh = changed
+				r.ResetValidationContext(t.Context())
+				if r.CurrentSlice(proof) {
+					t.Fatalf("proposed root that %s kept the unique match", name)
+				}
+			}
+		})
+	}
+}

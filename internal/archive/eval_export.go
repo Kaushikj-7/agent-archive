@@ -49,6 +49,7 @@ const (
 // metadata sidecar, a filtered source bundle), so it carries nothing the
 // archive does not already hold. See dev/specs/eval-export.md.
 type EvalExport struct {
+	RevisionID    string           `json:"revision_id,omitempty"`
 	SchemaVersion int              `json:"schema_version"`
 	Record        string           `json:"record"`
 	Source        EvalExportSource `json:"source"`

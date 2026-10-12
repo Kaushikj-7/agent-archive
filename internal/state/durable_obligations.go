@@ -19,6 +19,8 @@ const (
 	GenerationRecoveryStorage DurableStorageNamespace = "generation-recovery"
 	// PendingHistoryStorage holds current history stages, including source-only leftovers.
 	PendingHistoryStorage DurableStorageNamespace = "pending-history"
+	// ImportAdmissionStorage identifies durable preparation and cancellation journals.
+	ImportAdmissionStorage DurableStorageNamespace = "import-admission"
 	// PublicationEvidenceStorage holds opaque original publication evidence.
 	PublicationEvidenceStorage DurableStorageNamespace = "publication-evidence"
 	// UnavailableStorage holds obligations whose runtime owner is not installed.
@@ -162,6 +164,7 @@ func (s *Store) DurableStorageObligations() (out []DurableStorageObligation, err
 					err = errors.Join(err, ErrDurableStorageRecovery)
 					continue
 				}
+				out, err = appendImportStageObligation(out, err, home.Root, base, entry.Name())
 				path := filepath.Join(base, entry.Name())
 				namespace := PublicationEvidenceStorage
 				if base == "sessions" {
@@ -234,4 +237,22 @@ func unavailableStorageObligations(root *os.Root, remaining *int) (out []Durable
 		}
 	}
 	return out, err
+}
+
+func importStageObligation(root *os.Root, base, id string) ([]DurableStorageObligation, error) {
+	if base == "sessions" {
+		present, x := rootHasEntries(root, filepath.Join(base, id, "import-stage"))
+		if x != nil {
+			return nil, x
+		}
+		if present {
+			return []DurableStorageObligation{{SessionID: id, Namespace: ImportAdmissionStorage}}, nil
+		}
+	}
+	return nil, nil
+}
+
+func appendImportStageObligation(out []DurableStorageObligation, previous error, root *os.Root, base, id string) ([]DurableStorageObligation, error) {
+	next, err := importStageObligation(root, base, id)
+	return append(out, next...), errors.Join(previous, err)
 }

@@ -21,8 +21,11 @@ func nativeScannerCharge(ctx context.Context, file agentapi.FileInput, limits ag
 	}
 	defer budget.Release(countScratch)
 	length := file.Length()
-	if length < 0 || limits.RawBytes > 0 && length > limits.RawBytes {
+	if length < 0 {
 		return 0, errFilterBudget
+	}
+	if limits.RawBytes > 0 && length > limits.RawBytes {
+		return 0, agentapi.RawLimit(length, limits.RawBytes, nil)
 	}
 	maxRecord := limits.RecordBytes
 	if maxRecord <= 0 {
@@ -80,7 +83,11 @@ func (r *leasedHistoryInput) Next(ctx context.Context) (agentapi.NativeRecord, b
 	if err != nil || !more || row.Kind != agentapi.CodexHistoryHeader || row.History == nil {
 		return row, more, err
 	}
-	n, err := jsonwire.Bound(ctx, row.History, r.budget.Available())
+	available := r.budget.Available()
+	n, err := jsonwire.Bound(ctx, row.History, available)
+	if errors.Is(err, jsonwire.ErrLimit) {
+		r.budget.Refuse(available + 1)
+	}
 	if err != nil {
 		return agentapi.NativeRecord{}, false, errors.Join(errFilterBudget, err)
 	}

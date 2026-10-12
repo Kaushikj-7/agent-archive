@@ -315,6 +315,9 @@ func TestWriterProcess(t *testing.T) {
 		}
 		fmt.Println("ok")
 	}
+	if err := in.Err(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // mustWrite writes a test file, reporting a failure to the test.

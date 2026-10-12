@@ -41,9 +41,14 @@ func (o *IdentityObserver) Lookup(ctx context.Context, root string) sourcefacts.
 		return sourcefacts.RepositoryIdentity{BudgetExhausted: true}
 	}
 	if top != "" {
-		key, known := ProjectKey(ctx, root, o.shortRunner())
+		key, known, nonportable := projectKey(ctx, root, o.shortRunner())
 		if !known {
-			return sourcefacts.RepositoryIdentity{Root: top, Key: key, Known: known, ObservationScope: scope, BudgetExhausted: o.budget}
+			if !nonportable || o.budget {
+				// A failed origin read may hide any key; it is not a keyless checkout.
+				return sourcefacts.RepositoryIdentity{BudgetExhausted: o.budget}
+			}
+			// Git printed an origin no repository key can name: a keyless checkout.
+			return sourcefacts.RepositoryIdentity{Root: top, ObservationScope: scope}
 		}
 		dependencies, semantic, ok := o.projectDependencies(ctx, root, top)
 		if !ok {

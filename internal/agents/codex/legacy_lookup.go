@@ -38,7 +38,7 @@ func (p *relatedSourcePass) genericLegacySignature(ctx context.Context, ref agen
 	if err != nil {
 		return observation, err
 	}
-	sum := sha256.Sum256([]byte(observation.Signature.Token + "\x00" + set.Revision))
+	sum := sha256.Sum256([]byte(observation.Signature.Token + "\x00" + set.LineageToken()))
 	observation.Signature.Token = hex.EncodeToString(sum[:])
 	return observation, p.env.CodexRollouts.Check(ctx, ref.Key, set.Revision)
 }
@@ -58,7 +58,7 @@ func (p *relatedSourcePass) genericLegacyRead(ctx context.Context, ref agentapi.
 	if err := p.env.CodexRollouts.Check(ctx, ref.Key, set.Revision); err != nil {
 		return nil, errors.Join(err, snapshot.Close())
 	}
-	return &registeredLegacySnapshot{SourceSnapshot: snapshot, owner: p, ref: ref, revision: set.Revision, ctx: ctx}, nil
+	return &registeredLegacySnapshot{SourceSnapshot: snapshot, owner: p, ref: ref, revision: set.Revision, lineage: set.LineageToken(), ctx: ctx}, nil
 }
 
 type registeredLegacySnapshot struct {
@@ -66,12 +66,15 @@ type registeredLegacySnapshot struct {
 	owner    *relatedSourcePass
 	ref      agentapi.SourceRef
 	revision string
-	ctx      context.Context
+	// lineage is the token genericLegacySignature hashes, so the signature a
+	// read records matches the next pass's Signature of an unchanged source.
+	lineage string
+	ctx     context.Context
 }
 
 func (s *registeredLegacySnapshot) Observation() agentapi.SourceObservation {
 	observation := s.SourceSnapshot.Observation()
-	sum := sha256.Sum256([]byte(observation.Signature.Token + "\x00" + s.revision))
+	sum := sha256.Sum256([]byte(observation.Signature.Token + "\x00" + s.lineage))
 	observation.Signature.Token = hex.EncodeToString(sum[:])
 	return observation
 }
@@ -100,6 +103,21 @@ func (f registeredLegacyInput) Check() error {
 // a modern binding from optional/missing legacy producer or task evidence. The
 // wrapped ordinary input still checks its exact prefix and real lookup token.
 type legacyOrdinarySnapshot struct{ agentapi.SourceSnapshot }
+
+// RelocatedFrom reports the rollout this snapshot read when the lookup found
+// the registered rollout renamed: the same physical rollout ID and thread,
+// at another locator the source pass opened under its confinement policy.
+func (s legacyOrdinarySnapshot) RelocatedFrom(registered agentapi.SourceRef) (agentapi.SourceRef, bool) {
+	ordinary, ok := s.SourceSnapshot.(*ordinarySnapshot)
+	if !ok || ordinary.source == nil {
+		return agentapi.SourceRef{}, false
+	}
+	read := ordinary.source.ref
+	id := ordinary.source.identity
+	rollout := codexmeta.RolloutID(registered.Path)
+	moved := read.Path != registered.Path && rollout != "" && id.RolloutID == rollout && id.ThreadID == registered.Key
+	return read, moved
+}
 
 func (s legacyOrdinarySnapshot) ValidateAdmission(ctx context.Context, a agentapi.SourceAdmission) error {
 	if a.Binding != nil || !a.NativeCreatedAt.IsZero() {

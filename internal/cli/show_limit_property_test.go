@@ -74,10 +74,12 @@ func randomTranscript(r *rand.Rand) archive.Transcript {
 			case 0, 1:
 				step = archive.TranscriptStep{Kind: archive.TranscriptStepText, Text: randomText(r, randomSize(r, 6000))}
 			case 2, 3:
-				tool := &archive.HandoffToolCall{Name: []string{"Bash", "Read", "exec_command", "Edit"}[r.Intn(4)], Summary: randomText(r, r.Intn(80)), IsError: r.Intn(9) == 0}
+				name, summary, isError := []string{"Bash", "Read", "exec_command", "Edit"}[r.Intn(4)], randomText(r, r.Intn(80)), r.Intn(9) == 0
+				var result string
 				if r.Intn(2) == 0 {
-					tool.Result = randomText(r, randomSize(r, 2000))
+					result = randomText(r, randomSize(r, 2000))
 				}
+				tool := &archive.HandoffToolCall{Name: name, Summary: summary, IsError: isError, Result: result}
 				step = archive.TranscriptStep{Kind: archive.TranscriptStepTool, Tool: tool}
 			case 4:
 				step = archive.TranscriptStep{Kind: archive.TranscriptStepShell, Text: randomText(r, randomSize(r, 8000)), Output: randomText(r, randomSize(r, 2000))}

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/trace"
@@ -37,6 +38,37 @@ func ReadLocalBundle(ctx context.Context, home string, reg archive.SessionRegist
 	published, publishedErr := store.LoadPublishedState(reg.ArchiveSessionID)
 	if errors.Is(publishedErr, state.ErrDurableStorageRecovery) {
 		return archive.SourceBundle{}, publishedErr
+	}
+	if reg.StagedImportSHA256 != "" && (publishedErr != nil || !published.Summary().Published) {
+		stage, found, err := store.LoadImportStage(ctx, reg)
+		if err != nil {
+			return archive.SourceBundle{}, err
+		}
+		if !found {
+			return archive.SourceBundle{}, state.ErrDurableStorageRecovery
+		}
+		adapter, err := sourceAdapter(sources, reg.Harness.Name)
+		if err != nil {
+			return archive.SourceBundle{}, err
+		}
+		return refilterBundleBounded(ctx, reg, adapter, stage.Bundle, agentapi.ReadLimits{FilteredBytes: DefaultMaxTranscriptBytes, RecordBytes: archive.MaxRecordBytes})
+	}
+	if reg.HistoricalProject != nil {
+		if err := reg.ValidateHistoricalProject(); err != nil {
+			return archive.SourceBundle{}, err
+		}
+		if publishedErr != nil {
+			return archive.SourceBundle{}, publishedErr
+		}
+		bundle, _, found := published.LastPublished()
+		if !found {
+			return archive.SourceBundle{}, state.ErrDurableStorageRecovery
+		}
+		adapter, err := sourceAdapter(sources, reg.Harness.Name)
+		if err != nil {
+			return archive.SourceBundle{}, err
+		}
+		return refilterBundleBounded(ctx, reg, adapter, bundle, agentapi.ReadLimits{FilteredBytes: DefaultMaxTranscriptBytes, RecordBytes: archive.MaxRecordBytes})
 	}
 	source, ok := newSourceReader(reg, Options{CursorDatabase: cursorDatabase, Sources: sources})
 	if !ok {
@@ -85,6 +117,10 @@ func LastActivities(ctx context.Context, regs []archive.SessionRegistration, dat
 	}
 	groups := map[sourcePassKey][]archive.SessionRegistration{}
 	for _, reg := range regs {
+		if reg.HistoricalProject != nil {
+			out[reg.ArchiveSessionID] = reg.Admitted()
+			continue
+		}
 		key := sourcePassKey{name: reg.Harness.Name, discovery: reg.Origin == archive.SessionOriginDiscovery}
 		if key.discovery {
 			key.root = reg.DiscoveryRoot
@@ -170,4 +206,96 @@ func sourceAdapter(sources agentapi.SourcesLookup, name string) (agentapi.Transc
 		return nil, fmt.Errorf("source filter unavailable for %s", name)
 	}
 	return f, nil
+}
+
+// ReadImportSourceSelection freezes the selected source set and its binding from the same
+// source handle, so admission can freeze ownership without a second native read.
+func ReadImportSourceSelection(ctx context.Context, reg archive.SessionRegistration, at time.Time, opts Options) (archive.SourceBundle, []archive.SourceBundle, *archive.CodexSourceBinding, error) {
+	var binding *archive.CodexSourceBinding
+	bundle, preserved, err := readImportSourceSet(ctx, reg, at, opts, &binding)
+	return bundle, preserved, binding, err
+}
+
+func readImportSourceSet(ctx context.Context, reg archive.SessionRegistration, at time.Time, opts Options, selected **archive.CodexSourceBinding) (archive.SourceBundle, []archive.SourceBundle, error) {
+	adapter, err := sourceAdapter(opts.Sources, reg.Harness.Name)
+	if err != nil {
+		return archive.SourceBundle{}, nil, err
+	}
+	source, ok := newSourceReader(reg, opts)
+	if !ok {
+		return archive.SourceBundle{}, nil, ErrNoTranscript
+	}
+	filtered, observed, err := source.Filter(ctx, adapter, state.MaxImportStageBytes)
+	if err != nil {
+		return archive.SourceBundle{}, nil, err
+	}
+	if err := validateImportSelection(ctx, reg, filtered, opts.Sources); err != nil {
+		return archive.SourceBundle{}, nil, err
+	}
+	if selected != nil {
+		*selected = observed.binding
+	}
+	bundle, err := archive.NewSourceBundle(reg, adapter, filtered, at, nil)
+	if err != nil {
+		return bundle, nil, err
+	}
+	if reg.Harness.Name != archive.HarnessCodex || observed.binding == nil || (bundle.History == nil && opts.CodexRollouts == nil) {
+		return bundle, nil, nil
+	}
+	provider, ok := source.(providerReader)
+	if !ok {
+		return bundle, nil, errors.New("import revision reader unavailable")
+	}
+	preserved := []archive.SourceBundle{}
+	remaining := state.MaxImportStageBytes - int64(bundle.Capture.Boundary.RetainedBytes)
+	seen := map[string]bool{revisionID(bundle): true}
+	err = provider.revisions(ctx, adapter, observed, state.MaxImportStageBytes, bundle.History != nil, func(part archive.FilteredTranscript, binding *archive.CodexSourceBinding) error {
+		owner := reg
+		owner.CodexBinding = binding
+		prior, err := archive.NewSourceBundle(owner, adapter, part, at, nil)
+		if err != nil {
+			return err
+		}
+		id := revisionID(prior)
+		if seen[id] {
+			return nil
+		}
+		seen[id] = true
+		n := int64(prior.Capture.Boundary.RetainedBytes)
+		if n > remaining {
+			return agentapi.ErrReadBudget
+		}
+		remaining -= n
+		preserved = append(preserved, prior)
+		return nil
+	})
+	return bundle, preserved, err
+}
+
+// Reuse each integration's planning identity and conversation rules against the
+// fresh snapshot. A stable descriptor alone does not prove that a replaced path
+// still belongs to the native session selected in the confirmed plan.
+func validateImportSelection(ctx context.Context, reg archive.SessionRegistration, filtered archive.FilteredTranscript, sources agentapi.SourcesLookup) error {
+	imports, ok := sources.(agentapi.ImportsLookup)
+	if !ok {
+		return errors.New("import inspection capability unavailable")
+	}
+	inspector, ok := imports.LookupImport(reg.Harness.Name)
+	if !ok {
+		return errors.New("import inspection unavailable for selected harness")
+	}
+	inspection, err := inspector.InspectImport(ctx, agentapi.ImportInspectionRequest{
+		Session: agentapi.NativeSession{Agent: agentmeta.ID(reg.Harness.Name), NativeID: reg.NativeSessionID},
+		Source:  sourceRef(reg), Header: agentapi.NativeHeader{NativeID: reg.NativeSessionID, StartedAt: reg.SessionStartedAt}, Filtered: filtered,
+	})
+	if err != nil {
+		return err
+	}
+	if inspection.IdentityMismatch || filtered.LocalIdentity.ID != "" && filtered.LocalIdentity.ID != reg.NativeSessionID {
+		return errors.New("selected import source native identity changed; replan the import")
+	}
+	if !inspection.Conversation {
+		return errors.New("selected import source no longer contains a conversation; replan the import")
+	}
+	return nil
 }

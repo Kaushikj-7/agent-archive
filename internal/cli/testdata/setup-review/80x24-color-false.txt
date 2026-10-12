@@ -7,7 +7,7 @@ Step 3 of 3 · Review and start
   Keep for  90 days
   ✓ Storage connected
   ✓ Bucket is private
-  ! History import is separate.
+  ! Setup imports the last 7 days of included projects; older history is separate.
   ! Sensitive text may remain after filtering.
 
 ? Start archiving?
@@ -47,7 +47,7 @@ Step 3 of 3 · Review and start
   Keep for  90 days
   ✓ Storage connected
   ✓ Bucket is private
-  ! History import is separate.
+  ! Setup imports the last 7 days of included projects; older history is separate.
   ! Sensitive text may remain after filtering.
 
 ? Start archiving?

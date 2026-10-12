@@ -7,10 +7,12 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/sourcefacts"
@@ -38,9 +40,19 @@ const (
 // keeps `pause` out (it takes that lock), so collection cannot be paused
 // while registration runs; each hold still rereads the configuration.
 type Registration struct {
+	// HistoricalSourcePolicy binds reviewed source-location restrictions to current config.
+	HistoricalSourcePolicy func(config.Config) func(string) bool
 	// Context bounds outside-lock repository validation; nil gets 30 seconds per slice.
-	Context    context.Context
-	Sources    agentapi.SourcesLookup
+	Context context.Context
+	Sources agentapi.SourcesLookup
+	// DurableSources is mandatory for production confirmed imports.
+	DurableSources       bool
+	CodexRollouts        agentapi.CodexRolloutLookup
+	ConfiguredCodexHomes []string
+	// AfterStage observes a durable preparation boundary before admission.
+	AfterStage func(string) error
+	// OnCapacity may publish a completed group outside hooks.lock before retry.
+	OnCapacity func(context.Context) error
 	Home       string
 	Store      *state.Store
 	Batch      string
@@ -113,6 +125,9 @@ type parentWork struct {
 	repoKey              string
 	repoKeyChecked       bool
 	projectEvidenceStale bool
+	stagedSHA256         string
+	stagedChildren       map[string]state.SubagentCandidate
+	stageObsolete        bool
 }
 
 // Run registers every candidate, in order.
@@ -138,7 +153,7 @@ func (r Registration) Run(candidates []Candidate) (RegistrationResult, error) {
 	}
 	for i := 0; i < len(works); {
 		if ctx.Err() != nil || (r.Stop != nil && r.Stop()) {
-			return result, ErrStopped
+			return result, errors.Join(ErrStopped, r.cancelPrepared(works))
 		}
 		if err := r.checkChats(works[i:]); err != nil {
 			return result, err
@@ -165,10 +180,20 @@ func (r Registration) Run(candidates []Candidate) (RegistrationResult, error) {
 			}
 		}
 		cancelValidation()
-		if ctx.Err() != nil || (r.Stop != nil && r.Stop()) {
-			return result, ErrStopped
+		if err := r.stageGroup(ctx, works[i:i+min(limit, len(works)-i)]); err != nil {
+			if ctx.Err() != nil || (r.Stop != nil && r.Stop()) {
+				return result, errors.Join(ErrStopped, err, r.cancelPrepared(works))
+			}
+			return result, err
 		}
+		if ctx.Err() != nil || (r.Stop != nil && r.Stop()) {
+			return result, errors.Join(ErrStopped, r.cancelPrepared(works))
+		}
+		groupStart := i
 		err := r.hold(works, &i, &result)
+		if cleanupErr := r.cleanObsoleteStages(ctx, works[groupStart:groupStart+min(limit, len(works)-groupStart)]); err == nil {
+			err = cleanupErr
+		}
 		if flushErr := flush(); err == nil {
 			err = flushErr
 		}
@@ -227,6 +252,10 @@ func (r Registration) resolveRepoKeys(works []*parentWork, repoKeys map[string]s
 		limit = r.MaxHoldSteps
 	}
 	for _, w := range works[:min(limit, len(works))] {
+		if w.c.HistoricalProject != nil {
+			w.repoKeyChecked = true
+			continue
+		}
 		if w.repoKeyChecked {
 			continue
 		}
@@ -303,6 +332,11 @@ func (r Registration) step(cfg config.Config, w *parentWork, result *Registratio
 		w.id, _, err = r.Store.EnsureArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(c.Harness)), NativeID: c.NativeSessionID})
 		return false, err
 	}
+	if r.DurableSources && w.stagedSHA256 == "" {
+		// Reservation can outlive its project proof or authorization. Finish
+		// rejected work even when it no longer qualifies for staging.
+		return r.skip(cfg, w, result)
+	}
 	if w.next < len(c.Subagents) {
 		sub := c.Subagents[w.next]
 		w.next++
@@ -320,7 +354,9 @@ func (r Registration) step(cfg config.Config, w *parentWork, result *Registratio
 		return true, err
 	}
 	reg, err := r.Store.RegisterReservedSession(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(c.Harness)), NativeID: c.NativeSessionID}, w.id, func(id string) archive.SessionRegistration {
-		return r.registration(c, id, w.repoKey)
+		reg := r.registration(c, id, w.repoKey)
+		reg.StagedImportSHA256 = w.stagedSHA256
+		return reg
 	})
 	if err != nil {
 		return true, fmt.Errorf("register an imported session: %w", err)
@@ -358,11 +394,11 @@ func (r Registration) skip(cfg config.Config, w *parentWork, result *Registratio
 	}
 	if c.SourceKind == archive.SourceKindCursorSQLite {
 		// Checked before the hold (checkChats), never under hooks.lock.
-		if w.chatGone {
+		if w.stagedSHA256 == "" && w.chatGone {
 			result.Gone++
 			return true, nil
 		}
-	} else if !regularFile(c.TranscriptPath) {
+	} else if w.stagedSHA256 == "" && !regularFile(c.TranscriptPath) {
 		result.Gone++
 		return true, nil
 	}
@@ -377,6 +413,9 @@ func (r Registration) skip(cfg config.Config, w *parentWork, result *Registratio
 		}
 		if registered {
 			result.AlreadyArchived++
+			if w.stagedSHA256 != "" {
+				w.stageObsolete = true
+			}
 			return true, nil
 		}
 	}
@@ -391,7 +430,7 @@ func (r Registration) skip(cfg config.Config, w *parentWork, result *Registratio
 // keeps the link evidence for the parent's request. The collector validates
 // and registers the child.
 func (r Registration) subagent(w *parentWork, sub Subagent) error {
-	if !regularFile(sub.Path) {
+	if !r.DurableSources && !regularFile(sub.Path) {
 		return nil
 	}
 	c := w.c
@@ -404,12 +443,18 @@ func (r Registration) subagent(w *parentWork, sub Subagent) error {
 		// A hook registered this subagent already.
 		return err
 	}
-	if err := r.Store.SaveSubagentCandidate(state.SubagentCandidate{
-		ArchiveSessionID: childID, NativeSessionID: childNativeID,
-		ParentArchiveSessionID: w.id, ParentNativeSessionID: c.NativeSessionID,
-		ProjectID: archive.ProjectID(c.ProjectRoot), ProjectRoot: c.ProjectRoot, Harness: archive.Harness{Name: c.Harness},
-		AgentID: sub.AgentID, TranscriptPath: sub.Path, ObservedAt: r.AdmittedAt, Origin: archive.SessionOriginImport,
-	}); err != nil {
+	candidate := state.SubagentCandidate{HistoricalProject: c.HistoricalProject,
+		ArchiveSessionID: childID, NativeSessionID: childNativeID, ParentArchiveSessionID: w.id, ParentNativeSessionID: c.NativeSessionID,
+		ProjectID: c.ProjectIdentity(), ProjectRoot: c.ProjectRoot, Harness: archive.Harness{Name: c.Harness}, AgentID: sub.AgentID, TranscriptPath: sub.Path, ObservedAt: r.AdmittedAt, Origin: archive.SessionOriginImport,
+	}
+	if r.DurableSources {
+		staged, ok := w.stagedChildren[sub.AgentID]
+		if !ok {
+			return errors.New("missing staged imported child")
+		}
+		candidate = staged
+	}
+	if err := r.Store.SaveSubagentCandidate(candidate); err != nil {
 		return fmt.Errorf("record a subagent: %w", err)
 	}
 	link, err := archive.NewLinkedSessionEvidence(childID, archive.LinkedSessionPending, r.AdmittedAt)
@@ -434,10 +479,10 @@ func (r Registration) registration(c Candidate, archiveID, repoKey string) archi
 		repoKey = c.ProjectResolution.RecordedRepoKey
 	}
 	return archive.SessionRegistration{
-		CodexBinding: c.CodexBinding, ProjectResolution: c.ProjectResolution, NativeChild: c.NativeChild, NativeRootSessionID: c.RootNativeID, ParentNativeSessionID: c.ParentNativeID, NativeSourceHome: c.NativeHome,
+		HistoricalProject: c.HistoricalProject, CodexBinding: c.CodexBinding, ProjectResolution: c.ProjectResolution, NativeChild: c.NativeChild, NativeRootSessionID: c.RootNativeID, ParentNativeSessionID: c.ParentNativeID, NativeSourceHome: c.NativeHome,
 		ArchiveSessionID: archiveID,
 		NativeSessionID:  c.NativeSessionID,
-		ProjectID:        archive.ProjectID(c.ProjectRoot),
+		ProjectID:        c.ProjectIdentity(),
 		ProjectRoot:      c.ProjectRoot,
 		RepoKey:          repoKey,
 		Harness:          archive.Harness{Name: c.Harness},
@@ -492,4 +537,179 @@ func observeSource(ctx context.Context, sources agentapi.SourcesLookup, environm
 func regularFile(path string) bool {
 	info, err := os.Lstat(path)
 	return err == nil && info.Mode().IsRegular()
+}
+
+// stage reads selected native evidence outside hooks.lock and freezes it before
+// the atomic registration can reference it. Capacity or filtering failure leaves
+// the reservation unadmitted and safe to retry.
+func (r Registration) stage(ctx context.Context, w *parentWork) error {
+	reg := r.registration(w.c, w.id, w.repoKey)
+	if existing, found, err := r.Store.LoadImportStage(ctx, reg); err != nil {
+		return err
+	} else if found {
+		w.stagedSHA256 = existing.SHA256
+		w.c.CodexBinding = existing.Registration.CodexBinding
+		w.c.TranscriptPath = existing.Registration.TranscriptPath
+		w.stagedChildren = map[string]state.SubagentCandidate{}
+		for _, child := range existing.Children {
+			w.stagedChildren[child.AgentID] = child
+		}
+		return nil
+	}
+	cfg, found, err := config.Load(r.Home)
+	if err != nil || !found {
+		return errors.Join(errors.New("load import policy"), err)
+	}
+	if !cfg.AcceptSession(reg) {
+		w.projectEvidenceStale = true
+		return nil
+	}
+	var sourceAllowed func(string) bool
+	if reg.HistoricalProject != nil {
+		if r.HistoricalSourcePolicy == nil {
+			return errors.New("historical import requires reviewed original source restrictions")
+		}
+		sourceAllowed = r.HistoricalSourcePolicy(cfg)
+	}
+	bundle, preserved, selectedBinding, err := collector.ReadImportSourceSelection(ctx, reg, r.AdmittedAt, collector.Options{HistoricalSourceAllowed: func(cwd string) bool {
+		canonical := local.CanonicalPath(cwd)
+		if sourceAllowed != nil && !sourceAllowed(cwd) {
+			return false
+		}
+		if reg.HistoricalProject != nil {
+			for _, path := range uniquePaths(filepath.Clean(cwd), canonical) {
+				if !slices.Contains(reg.HistoricalProject.SourceCwds, path) {
+					reg.HistoricalProject.SourceCwds = append(reg.HistoricalProject.SourceCwds, path)
+				}
+			}
+			if len(reg.HistoricalProject.SourceCwds) > 2*archive.MaxHistorySpans {
+				return false
+			}
+		}
+		return true
+	}, Sources: r.Sources, CursorDatabase: r.CursorDatabase, CodexRollouts: r.CodexRollouts, ConfiguredCodexHomes: r.ConfiguredCodexHomes})
+	if err != nil {
+		return fmt.Errorf("stage imported evidence before admission: %w", err)
+	}
+	if selectedBinding != nil {
+		reg.CodexBinding = selectedBinding
+		reg.TranscriptPath = selectedBinding.Path
+		w.c.CodexBinding = selectedBinding
+		w.c.TranscriptPath = selectedBinding.Path
+	}
+	children := []state.SubagentCandidate{}
+	w.stagedChildren = map[string]state.SubagentCandidate{}
+	for _, sub := range w.c.Subagents {
+		childNative := w.c.NativeSessionID + ":subagent:" + sub.AgentID
+		childID, _, err := r.Store.EnsureArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(w.c.Harness)), NativeID: childNative})
+		if err != nil {
+			return err
+		}
+		candidate := state.SubagentCandidate{HistoricalProject: reg.HistoricalProject, ArchiveSessionID: childID, NativeSessionID: childNative, ParentArchiveSessionID: w.id, ParentNativeSessionID: w.c.NativeSessionID, ProjectID: reg.ProjectID, ProjectRoot: reg.ProjectRoot, Harness: reg.Harness, AgentID: sub.AgentID, TranscriptPath: sub.Path, ObservedAt: r.AdmittedAt, Origin: archive.SessionOriginImport}
+		childDigest, err := r.stageSelectedChild(ctx, reg, candidate, cfg.EffectiveSkillEvidence())
+		if err != nil {
+			return err
+		}
+		candidate.StagedImportSHA256 = childDigest
+		w.stagedChildren[sub.AgentID] = candidate
+		children = append(children, candidate)
+	}
+	digest, err := r.Store.SaveImportSourceSet(ctx, reg, bundle, preserved, cfg.EffectiveSkillEvidence(), children...)
+	if err != nil {
+		return fmt.Errorf("persist imported evidence before admission: %w", err)
+	}
+	w.stagedSHA256 = digest
+	if r.AfterStage != nil {
+		return r.AfterStage(w.id)
+	}
+	return nil
+}
+
+func (r Registration) stageSelectedChild(ctx context.Context, parent archive.SessionRegistration, candidate state.SubagentCandidate, mode config.SkillEvidence) (string, error) {
+	owner := parent
+	owner.ArchiveSessionID, owner.NativeSessionID = candidate.ArchiveSessionID, candidate.NativeSessionID
+	owner.ParentSessionID = parent.ArchiveSessionID
+	if stage, found, err := r.Store.LoadImportStage(ctx, owner); err != nil {
+		return "", err
+	} else if found {
+		return stage.SHA256, nil
+	}
+	reg, bundle, err := collector.ReadImportSubagentBundle(ctx, parent, candidate, collector.Options{Sources: r.Sources, CursorDatabase: r.CursorDatabase})
+	if err != nil {
+		return "", fmt.Errorf("stage imported child: %w", err)
+	}
+	return r.Store.SaveImportStage(ctx, reg, bundle, mode)
+}
+
+func (r Registration) cancelPrepared(works []*parentWork) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	for _, w := range works {
+		if w.stagedSHA256 == "" {
+			if err := r.cancelUnlinkedChildren(ctx, w); err != nil {
+				return err
+			}
+			continue
+		}
+		reg := r.registration(w.c, w.id, w.repoKey)
+		reg.StagedImportSHA256 = w.stagedSHA256
+		if err := r.Store.CancelImportStage(ctx, reg); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// A stop can interrupt a group's preparation before its parent journal exists.
+// Each completed child still has its own cancellation journal and exact owner.
+func (r Registration) cancelUnlinkedChildren(ctx context.Context, w *parentWork) error {
+	for _, child := range w.stagedChildren {
+		reg := r.registration(w.c, child.ArchiveSessionID, w.repoKey)
+		reg.NativeSessionID = child.NativeSessionID
+		reg.ParentSessionID = w.id
+		reg.StagedImportSHA256 = child.StagedImportSHA256
+		if err := r.Store.CancelImportStage(ctx, reg); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r Registration) stageGroup(ctx context.Context, works []*parentWork) error {
+	if r.DurableSources {
+		for _, w := range works {
+			if w.id != "" && w.stagedSHA256 == "" && !w.projectEvidenceStale {
+				if err := r.stage(ctx, w); err != nil {
+					if !errors.Is(err, state.ErrDurableStorageCapacity) || r.OnCapacity == nil {
+						return err
+					}
+					if recoveryErr := r.OnCapacity(ctx); recoveryErr != nil {
+						return errors.Join(err, recoveryErr)
+					}
+					if err := r.stage(ctx, w); err != nil {
+						return err
+					}
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func (r Registration) cleanObsoleteStages(ctx context.Context, works []*parentWork) (err error) {
+	for _, w := range works {
+		if w.stageObsolete {
+			reg := r.registration(w.c, w.id, w.repoKey)
+			reg.StagedImportSHA256 = w.stagedSHA256
+			stage, found, e := r.Store.LoadImportStage(ctx, reg)
+			if e == nil && found {
+				e = r.Store.DropUnadmittedImportStage(ctx, stage)
+			}
+			if err == nil {
+				err = e
+			}
+			w.stageObsolete = false
+		}
+	}
+	return err
 }

@@ -29,7 +29,7 @@ type revisionStage struct {
 }
 
 func (s *sessionScan) reconcileRevisions(read sourceRead, active archive.SourceBundle) (*revisionPlan, error) {
-	if s.reg.Harness.Name != archive.HarnessCodex || read.observed.binding == nil || (active.History == nil && s.opts.CodexRollouts == nil) {
+	if !s.canReconcileRevisions(read, active) {
 		return nil, nil
 	}
 	r, ok := newSourceReader(s.reg, s.opts)
@@ -87,6 +87,9 @@ func (s *sessionScan) reconcileRevisions(read sourceRead, active archive.SourceB
 		if err := planner.add(s.ctx, previous); err != nil {
 			return nil, err
 		}
+	}
+	if read.observed.observation.Signature.Provider == "import-stage" {
+		return s.reconcileStagedRevisions(read, planner, plan)
 	}
 	err = provider.revisions(s.ctx, read.adapter, read.observed, s.opts.maxTranscriptBytes(), active.History != nil, func(filtered archive.FilteredTranscript, binding *archive.CodexSourceBinding) error {
 		return s.addNativeRevision(&planner, filtered, binding, metadata, cached, previous)
@@ -402,4 +405,21 @@ func (p *revisionPlanner) dropCoveredLegacyStage(bundle archive.SourceBundle) {
 		}
 		return
 	}
+}
+
+func (s *sessionScan) reconcileStagedRevisions(read sourceRead, planner revisionPlanner, plan *revisionPlan) (*revisionPlan, error) {
+	for _, staged := range read.stagedRevisions {
+		filtered, err := s.refilterRetained(read.adapter, staged)
+		if err != nil {
+			return nil, err
+		}
+		if err := planner.add(s.ctx, filtered); err != nil {
+			return nil, err
+		}
+	}
+	return plan, nil
+}
+
+func (s *sessionScan) canReconcileRevisions(read sourceRead, active archive.SourceBundle) bool {
+	return s.reg.Harness.Name == archive.HarnessCodex && read.observed.binding != nil && (active.History != nil || s.opts.CodexRollouts != nil)
 }

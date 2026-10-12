@@ -582,6 +582,9 @@ func handleSessionActivity(store *state.Store, event agentapi.LifecycleEvent, no
 	if err != nil || !found {
 		return err
 	}
+	if reg.HistoricalProject != nil {
+		return nil
+	}
 	if archive.CanonicalHarness(reg.Harness.Name) != string(key.Agent) || reg.NativeSessionID != key.NativeID {
 		return nil
 	}
@@ -618,6 +621,9 @@ func handleSessionStop(store *state.Store, event agentapi.LifecycleEvent, now ti
 	reg, found, err := store.LoadRegistration(id)
 	if err != nil || !found {
 		return err
+	}
+	if reg.HistoricalProject != nil {
+		return nil
 	}
 	if archive.CanonicalHarness(reg.Harness.Name) != string(key.Agent) || reg.NativeSessionID != key.NativeID {
 		return errSessionIdentityConflict
@@ -860,7 +866,7 @@ func continueHookSession(store *state.Store, cfg config.Config, event agentapi.L
 		return true, nil
 	}
 	updated, err := store.UpdateRegistration(existingID, func(existing *archive.SessionRegistration) error {
-		if !cfg.AcceptSession(*existing) || ((blanket || existing.CodexAdmission != nil) && !codexContinuationAccepted(cfg, event, *existing)) {
+		if existing.HistoricalProject != nil || !cfg.AcceptSession(*existing) || ((blanket || existing.CodexAdmission != nil) && !codexContinuationAccepted(cfg, event, *existing)) {
 			return errContinuationDeclined
 		}
 		if archive.CanonicalHarness(existing.Harness.Name) != string(key.Agent) || existing.NativeSessionID != key.NativeID {
@@ -1034,7 +1040,7 @@ func gitStartAllowed(cfg config.Config, event agentapi.LifecycleEvent, owner arc
 
 // gitStopAllowed preserves admitted physical ownership across permission edits.
 func gitStopAllowed(cfg config.Config, event agentapi.LifecycleEvent, reg archive.SessionRegistration, owner archive.ProjectActivation, owned bool) bool {
-	if !cfg.AcceptSession(reg) || reg.ParentSessionID != "" {
+	if reg.HistoricalProject != nil || !cfg.AcceptSession(reg) || reg.ParentSessionID != "" {
 		return false
 	}
 	if string(event.Session.Agent) == "codex" && (reg.CodexAdmission != nil || cfg.EffectiveCodexCaptureScope() == config.CodexAllProjects) {

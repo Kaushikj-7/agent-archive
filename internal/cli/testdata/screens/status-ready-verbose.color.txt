@@ -10,6 +10,7 @@ $ agent-archive status --verbose
   \e[2m·\e[0m Identity recovery: complete
   \e[2m·\e[0m Projects: ~/src/web-app
   \e[2m·\e[0m Skill evidence: metadata
+  \e[2m·\e[0m Retention: 90 days
 
 \e[1mStorage\e[0m
   \e[32m✓\e[0m s3://team-archive/agent-archive/
@@ -34,6 +35,7 @@ $ agent-archive status --verbose
   Last scan:     2026-09-25T12:00:00Z
   Last publish:  2026-09-25T12:00:00Z
   Skill evidence: metadata
+  Retention:     90 days
   Codex: published; source verified (published_source_verified; 1 session(s)); hooks installed
     Automatic discovery: no supported task observed in last scan.
     Last attempt: 2026-09-25T12:00:00Z; registered 0 in that scan.

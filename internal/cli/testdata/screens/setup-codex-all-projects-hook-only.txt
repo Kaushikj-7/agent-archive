@@ -1,8 +1,13 @@
 $ agent-archive setup --yes --apps codex --provider s3 --bucket team-archive --aws-profile work --region us-east-1 --codex-discovery off --codex-capture-scope all-projects
   ✓ Codex hooks: ~/.codex/hooks.json
   ✓ Background job: launchctl responds
+
+Storage · Verification
+Account → Storage → Verification
 Checking your storage connection…
 ✓ Connected to your storage.
+  ! Bucket privacy not verified: public-access settings could not be read.
+    Make sure public access is off: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
   ! Codex scope expands to all current and future projects (Codex only).
     New admissions start after this local consent; old history and paused or excluded starts remain out of scope.
   · Codex capture: Approved hooks only; automatic discovery off.
@@ -10,7 +15,7 @@ Checking your storage connection…
   · Exceptions: None configured.
   · Codex sources: Automatic discovery off.
   · Starts: After local consent, outside pause or exclusion.
-  · History: Old sessions require deliberate backfill.
+  · History: Last 7 days of included projects imported at setup; older sessions require backfill.
   · Copies: Qualifying recent native copies may be captured.
   · Hooks: Hook-only capture requires approval; observation is separate.
 Apps: Codex. Projects: 0. Storage: Amazon S3 bucket team-archive.
@@ -24,10 +29,9 @@ Installed the agent-archive skill, which lets your agents look up and pull in pa
 To remove the agent skills and keep them off, run agent-archive setup --no-skills.
 
 Next, in each app
-  Codex: run /hooks and approve the archive hooks, then start a new session (or
-  /clear).
-Sessions already open are not captured. Start a supported new Codex task in any non-excluded project.
-Import sessions from before setup with agent-archive backfill.
+  Codex: run /hooks and approve the archive hooks; they capture sessions that
+  start after that (or after /clear).
+Codex hooks capture supported tasks in any non-excluded project.
 Check progress with agent-archive status.
   · Another machine: agent-archive machines pair
 [exit 0]

@@ -334,7 +334,7 @@ func TestReviewHintIsNotRepeatedAfterAnEdit(t *testing.T) {
 	f := newScreenFixture(t)
 	f.withApps(t, "claude")
 	f.inWebApp(t)
-	out := f.setupOutput("", "", "s3-existing", "work", "2", "edit", "retention", "30", "")
+	out := f.setupOutput("", "", "s3-existing", "work", "2", "edit", "retention", "custom", "30", "")
 	if n := strings.Count(out, "\n  Edit a setting adds projects, drops apps"); n != 0 {
 		t.Fatalf("the review showed the hint %d times, want zero (actions are in the question):\n%s", n, out)
 	}

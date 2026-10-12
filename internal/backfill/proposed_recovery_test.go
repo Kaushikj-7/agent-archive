@@ -284,10 +284,16 @@ func TestFirstRunRecoveryFilteredClaudeLocatorCannotProposeDestination(t *testin
 
 func TestFirstRunRecoveryUnknownFileOwnershipCannotCertifyUniqueness(t *testing.T) {
 	tr, env, cfg, _, goneID := firstRunRecoveryFixture(t, false)
-	tr.write(filepath.Join("home", claudeFile("unknown", "unknown")), claudeTranscript("unknown", "", fixedNow))
+	// A Codex session whose folder is unknown is a gap in Codex's own
+	// evidence, so it still blocks Codex recoveries.
+	unknown := "00000000-0000-0000-0000-000000000033"
+	tr.write(filepath.Join("home", codexFile(unknown)), codexTranscript(unknown, unknown, "", fixedNow))
 	p := plan(t, env, nil, cfg, Filters{Harnesses: []string{"codex"}})
 	if c := candidate(t, p, goneID); c.ProjectResolution != nil || c.Skip == "" {
 		t.Fatalf("unknown live ownership certified uniqueness: %+v", c)
+	}
+	if c := candidate(t, p, goneID); c.Diagnostic == nil || c.Diagnostic.Detail != CauseSessionFolderUnknown {
+		t.Fatalf("cause not named: %+v", c.Diagnostic)
 	}
 }
 

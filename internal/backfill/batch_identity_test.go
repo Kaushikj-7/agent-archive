@@ -148,8 +148,9 @@ func TestImportBatchComparedOnlyThroughInBatch(t *testing.T) {
 	t.Parallel()
 	// file -> why it reads the recorded ID.
 	recordedAllowed := map[string]string{
-		"internal/backfill/batch.go": "lists the IDs in use, so a new import picks another",
-		"internal/backfill/undo.go":  "names the import a kept project belongs to",
+		"internal/backfill/batch.go":     "lists the IDs in use, so a new import picks another",
+		"internal/backfill/undo.go":      "names the import a kept project belongs to",
+		"internal/state/import_stage.go": "locates the confirmed batch journal; membership still uses InBatch",
 	}
 	membership := map[string]bool{"Contains": true, "ContainsFunc": true, "Index": true, "IndexFunc": true, "EqualFold": true, "Compare": true, "HasPrefix": true, "HasSuffix": true}
 	skipDirs := map[string]bool{"testdata": true, "vendor": true}

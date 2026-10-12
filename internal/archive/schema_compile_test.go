@@ -38,3 +38,34 @@ func compileSchema(t *testing.T, name string) *jsonschema.Schema {
 	}
 	return schema
 }
+
+func TestHistoricalSchemasCompileAndRejectControlLabels(t *testing.T) {
+	t.Parallel()
+	for _, fixture := range []struct {
+		name string
+		data string
+	}{
+		{"backfill-mapping.schema.json", `{"schema_version":1,"historical_projects":[{"id":"11111111111111111111111111111111","label":"Retired"}],"mappings":[{"cwd":"/retired","historical_project_id":"11111111111111111111111111111111"}]}`},
+		{"historical-project-proof.schema.json", `{"version":1,"project_id":"11111111111111111111111111111111","destination_id":"1111111111111111111111111111111111111111111111111111111111111111","original_cwd":"/retired","canonical_cwd":"/retired","label":"Retired"}`},
+		{"historical-projects.schema.json", `{"schema_version":{"version":10,"writer":"historical-projects-v10"},"historical_project_protection":true,"historical_projects":[{"id":"11111111111111111111111111111111","label":"Retired","permissions":[]}]}`},
+	} {
+		t.Run(fixture.name, func(t *testing.T) {
+			t.Parallel()
+			schema := compileSchema(t, fixture.name)
+			valid, err := jsonschema.UnmarshalJSON(strings.NewReader(fixture.data))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := schema.Validate(valid); err != nil {
+				t.Fatal(err)
+			}
+			invalid, err := jsonschema.UnmarshalJSON(strings.NewReader(strings.Replace(fixture.data, "Retired", `bad\nlabel`, 1)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if schema.Validate(invalid) == nil {
+				t.Fatal("control characters accepted in historical label")
+			}
+		})
+	}
+}
