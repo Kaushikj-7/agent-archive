@@ -48,6 +48,12 @@ func TestGuidedFullCommandTranscripts(t *testing.T) {
 			ascii  bool
 		}{{80, 24, false}, {100, 30, false}, {60, 20, false}, {36, 20, true}} {
 			for _, color := range []bool{false, true} {
+				if testing.Short() && color != (size.width == 100 || size.ascii) {
+					// Keep every flow and size, with plain and colored Unicode
+					// plus the narrow ASCII screen. Full mode keeps both colors
+					// at every size, including their presentation interactions.
+					continue
+				}
 				name := fmt.Sprintf("%s-%dx%d", flow, size.width, size.height)
 				if color {
 					name += ".color"

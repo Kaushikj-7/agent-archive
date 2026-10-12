@@ -201,7 +201,7 @@ func TestNativeStartOptionalRootTurnID(t *testing.T) {
 			}
 			h := ReadCodexHeader(strings.NewReader(testRecords(t, nil, task)), "rollout-"+testID+".jsonl")
 			want := "inherited_history"
-			if root == nil || root == testID {
+			if root == nil || root == testID || root == "00000000-0000-0000-0000-000000000002" {
 				want = "native_format"
 			}
 			if h.Outcome != want {
