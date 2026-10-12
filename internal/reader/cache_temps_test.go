@@ -1,6 +1,7 @@
 package reader
 
 import (
+	"context"
 	"encoding/hex"
 	"os"
 	"path/filepath"
@@ -11,9 +12,9 @@ import (
 )
 
 // A listing killed between writing a cache file's temporary copy and
-// renaming it left the temporary file for good. Opening the cache now
+// renaming it left the temporary file for good. Bounded maintenance now
 // removes stale ones, and leaves one that may belong to a write in progress.
-func TestOpeningTheCacheRemovesStaleTemporaryFiles(t *testing.T) {
+func TestCacheMaintenanceRemovesStaleTemporaryFiles(t *testing.T) {
 	home := t.TempDir()
 	dir := filepath.Join(home, "cache", "metadata")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -33,9 +34,11 @@ func TestOpeningTheCacheRemovesStaleTemporaryFiles(t *testing.T) {
 	if err := os.Chtimes(stale, old, old); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := OpenMetadataCache(home); err != nil {
+	cache, err := OpenMetadataCache(home)
+	if err != nil {
 		t.Fatal(err)
 	}
+	cache.maintain(context.Background())
 	if _, err := os.Stat(stale); !os.IsNotExist(err) {
 		t.Fatalf("stale temporary file left behind: %v", err)
 	}

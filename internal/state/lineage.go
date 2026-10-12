@@ -437,6 +437,9 @@ func (s *Store) forgetSession(archiveSessionID string, key agentmeta.SessionKey,
 	if err := s.CheckDurableSessionRead(archiveSessionID); err != nil {
 		return err
 	}
+	if err := s.checkCatalogPendingRemoval(archiveSessionID); err != nil {
+		return err
+	}
 	if withCandidates {
 		if err := s.removeSubagentCandidatesForSession(archiveSessionID); err != nil {
 			return fmt.Errorf("remove linked subagent candidates: %w", err)

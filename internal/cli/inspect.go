@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/catalog"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/storage"
@@ -141,7 +142,7 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	if full {
 		listLimit = 0
 	}
-	listed, err := listRecentWithInterrupts(env, store, opts.filter, listLimit, listOpts)
+	listed, full, err := readListCandidates(env, store, opts, listLimit, listOpts, full, stderr)
 	stopList()
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: list: %v\n", err)
@@ -192,7 +193,7 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 // elsewhere), and for a table, the sessions the search finds.
 func listChoices(scope sessionScope, format listFormatOptions, browsing bool, sessions []archive.Metadata, limit int, view func(sessionScope) listView, words string) *scopeChoices {
 	if browsing {
-		return newScopeChoices(scope, format, false, browseSearchRows(archiveRows(sessions, limit, format), view, words))
+		return pagedArchiveChoices(scope, format, sessions, limit, view, words)
 	}
 	return newScopeChoices(scope, format, true, func(s sessionScope) scopeView {
 		v := view(s)
@@ -622,9 +623,12 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		return 1
 	}
 
+	ctx, stopReads := readCommandContext(env)
+	defer stopReads()
+	ctx = catalog.WithReadView(ctx)
 	summary := summaryOptions{Now: env.now(), Style: styleFor(stdout), Projects: projectLabels(cfg), Hints: true}
 	if sessionID == "" {
-		return runBareShow(env, store, cfg, stdin, stdout, stderr, *harness, *jsonOut, *noPager)
+		return runBareShow(ctx, env, store, cfg, stdin, stdout, stderr, *harness, *jsonOut, *noPager)
 	}
 	lookup, code := resolveShowQuery(store, env, stdin, stdout, stderr, *harness, sessionID, summary.Projects, *noPager, *transcript || *jsonOut)
 	if code != 0 {
@@ -634,22 +638,26 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		return 0
 	}
 	sessionID, *harness = lookup.SessionID, lookup.Harness
-	ctx, stopReads := readCommandContext(env)
-	defer stopReads()
 
 	stopShow := startActivity(stdout, "Loading session…")
-	key, err := locateMetadataKey(ctx, store, *harness, sessionID)
-	if err != nil {
-		stopShow()
-		terminal.Printf(stderr, "agent-archive: show: %v\n", err)
-		return 1
+	selected := lookup.Metadata
+	if selected.Key == "" {
+		selected, err = locateShowMetadata(ctx, store, *harness, sessionID)
+		if err != nil {
+			stopShow()
+			terminal.Printf(stderr, "agent-archive: show: %v\n", err)
+			return 1
+		}
 	}
-
+	key := selected.Key
 	if *revisions {
 		return readRevisionInventory(ctx, store, key, stdout, stderr, *jsonOut, stopShow)
 	}
 	if !*transcript {
-		view, err := loadShowSummarySelection(ctx, store, key, *revision, parsersFor(env))
+		view := metadataWithLinks(ctx, store, selected.Metadata)
+		if *revision != "" {
+			view, err = loadShowSummarySelection(ctx, store, key, *revision, parsersFor(env))
+		}
 		if err != nil {
 			stopShow()
 			terminal.Printf(stderr, "agent-archive: show: %v\n", err)
@@ -671,32 +679,32 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	}
 
 	return printSessionTranscript(ctx, store, env, stdout, stderr, key, sessionID, stopShow, stopReads, sessionTranscriptOptions{
-		revision: *revision, summary: summary, full: *full, json: *jsonOut, normalized: *normalized, noPager: *noPager, maxBytes: *maxBytes,
+		revision: *revision, selected: &selected, summary: summary, full: *full, json: *jsonOut, normalized: *normalized, noPager: *noPager, maxBytes: *maxBytes,
 	})
 }
 
 // runBareShow is `show` with no SESSION_ID on a terminal: the browser, or with
 // --json one session picked in it and printed as its sidecar.
-func runBareShow(env showCommandDependencies, store storage.ObjectStore, cfg config.Config, stdin io.Reader, stdout, stderr io.Writer, harness string, jsonOut, noPager bool) int {
+func runBareShow(ctx context.Context, env showCommandDependencies, store storage.ObjectStore, cfg config.Config, stdin io.Reader, stdout, stderr io.Writer, harness string, jsonOut, noPager bool) int {
 	if jsonOut {
-		row, selected, code := selectArchivedSession(env, store, cfg, stdin, stdout, stderr, harness, "show", "Show")
+		row, selected, code := selectArchivedSession(ctx, env, store, cfg, stdin, stdout, stderr, harness, "show", "Show")
 		if code != 0 || !selected {
 			return code
 		}
 		ctx, stopReads := readCommandContext(env)
 		defer stopReads()
-		view, err := readSessionView(ctx, store, row.HarnessKey, row.SessionID)
+		view, err := readSessionView(catalog.NewReadView(ctx), store, row.HarnessKey, row.SessionID)
 		if err != nil {
 			terminal.Printf(stderr, "agent-archive: show: %v\n", err)
 			return 1
 		}
 		return printJSON(stdout, stderr, view)
 	}
-	choices, ok, code := findBrowseSessions(env, store, cfg, stdout, stderr, harness, "show")
+	choices, ok, code := findBrowseSessions(ctx, env, store, cfg, stdout, stderr, harness, "show")
 	if !ok {
 		return code
 	}
-	_, _, code = runBrowser(context.Background(), env, newPrompter(stdin, stdout), stdout, stderr, browserSpec{Mode: browseSessions, Choices: choices, Command: "show", Store: store, NoPager: noPager})
+	_, _, code = runBrowser(ctx, env, newPrompter(stdin, stdout), stdout, stderr, browserSpec{Mode: browseSessions, Choices: choices, Command: "show", Store: store, NoPager: noPager})
 	return code
 }
 
@@ -716,6 +724,7 @@ func checkShowMaxBytes(fs *commandFlags, maxBytes int, transcript bool) int {
 
 // sessionTranscriptOptions are the show flags that shape a transcript.
 type sessionTranscriptOptions struct {
+	selected   *reader.MetadataLookup
 	revision   string
 	summary    summaryOptions
 	full       bool
@@ -733,7 +742,11 @@ func printSessionTranscript(ctx context.Context, store storage.ObjectStore, env 
 	var bundle archive.SourceBundle
 	var err error
 	if opts.revision == "" {
-		view, bundle, err = loadVerifiedSession(ctx, store, key)
+		if opts.selected != nil {
+			view, bundle, err = loadVerifiedMetadata(ctx, store, *opts.selected)
+		} else {
+			view, bundle, err = loadVerifiedSession(ctx, store, key)
+		}
 	}
 	if opts.revision != "" {
 		var metadata archive.Metadata

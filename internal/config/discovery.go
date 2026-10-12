@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/destination"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"reflect"
 	"slices"
@@ -120,11 +121,18 @@ func prepareDiscoveryConfig(c *Config) error {
 	if c.HistoricalProjectProtection {
 		c.SchemaVersion = 10
 	}
+	if c.Storage.EffectiveArchiveFormat() == destination.FormatCatalogV4 {
+		c.SchemaVersion = 11
+	}
 	return validateDiscoveryConfig(*c)
 }
 
 func validateDiscoveryConfig(c Config) error {
 	var err error
+	c, err = peelCatalogProtection(c)
+	if err != nil {
+		return err
+	}
 	c, err = peelHistoricalProjectProtection(c)
 	if err != nil {
 		return err
@@ -615,5 +623,46 @@ func peelHistoricalProjectProtection(c Config) (Config, error) {
 }
 
 func unsupportedPreparedWriter(c Config) bool {
-	return (c.SchemaVersion > 5 && c.SchemaVersion != 7 && c.SchemaVersion != 8 && c.SchemaVersion != 9 && c.SchemaVersion != 10) || (c.SchemaVersion == 10 && !c.HistoricalProjectProtection) || (c.SchemaVersion == 9 && !c.ImportStagingProtection) || (c.SchemaVersion == 8 && !c.RetentionProtection) || (c.SchemaVersion == 7 && !c.DurableStorageProtection) || (c.SchemaVersion == 5 && !c.CodexHistoryProtection) || (c.SchemaVersion == 4 && !c.GenerationProtection) || (c.SchemaVersion == 3 && c.CodexCapture == nil)
+	return (c.SchemaVersion > 5 && c.SchemaVersion != 7 && c.SchemaVersion != 8 && c.SchemaVersion != 9 && c.SchemaVersion != 10 && c.SchemaVersion != 11) || (c.SchemaVersion == 11 && c.Storage.EffectiveArchiveFormat() != destination.FormatCatalogV4) || (c.SchemaVersion == 10 && !c.HistoricalProjectProtection) || (c.SchemaVersion == 9 && !c.ImportStagingProtection) || (c.SchemaVersion == 8 && !c.RetentionProtection) || (c.SchemaVersion == 7 && !c.DurableStorageProtection) || (c.SchemaVersion == 5 && !c.CodexHistoryProtection) || (c.SchemaVersion == 4 && !c.GenerationProtection) || (c.SchemaVersion == 3 && c.CodexCapture == nil)
+}
+
+// peelCatalogProtection keeps catalog configuration distinct from the permanent
+// historical-project schema10 writer and validates every underlying capability.
+func peelCatalogProtection(c Config) (Config, error) {
+	format := c.Storage.EffectiveArchiveFormat()
+	if format != destination.FormatLegacy && format != destination.FormatCatalogV4 {
+		return c, errors.New("unsupported archive format")
+	}
+	if format != destination.FormatCatalogV4 {
+		return c, nil
+	}
+	if c.SchemaVersion != 11 {
+		return c, errors.New("catalog protection requires schema 11")
+	}
+	c.SchemaVersion = 1
+	if c.Discovery != nil {
+		c.SchemaVersion = 2
+	}
+	if c.CodexCapture != nil {
+		c.SchemaVersion = 3
+	}
+	if c.GenerationProtection {
+		c.SchemaVersion = 4
+	}
+	if c.CodexHistoryProtection {
+		c.SchemaVersion = 5
+	}
+	if c.DurableStorageProtection {
+		c.SchemaVersion = 7
+	}
+	if c.RetentionProtection {
+		c.SchemaVersion = 8
+	}
+	if c.ImportStagingProtection {
+		c.SchemaVersion = 9
+	}
+	if c.HistoricalProjectProtection {
+		c.SchemaVersion = 10
+	}
+	return c, nil
 }

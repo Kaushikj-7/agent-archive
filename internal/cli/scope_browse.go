@@ -60,8 +60,9 @@ type scopeChoice struct {
 // directory's scope, or all projects, and which one now. `a` switches between
 // the two. The other one is built only when it is asked for.
 type scopeChoices struct {
-	scope   sessionScope
-	rowsFor scopeRowsFunc
+	loadOlder *browserLoadAction
+	scope     sessionScope
+	rowsFor   scopeRowsFunc
 	// format is the table's options before they are laid out for the rows.
 	format listFormatOptions
 	built  [2]*scopeChoice

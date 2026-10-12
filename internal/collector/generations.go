@@ -109,6 +109,9 @@ func (s *sessionScan) maintainFrozen() (sessionOutcome, error) {
 			return s.resumeHistory(pending)
 		}
 		if pending.Bundle.Capture.FilterVersion != archive.FilterVersion || pending.Bundle.Capture.AdapterVersion != adapter.Version() || !sourceEvidenceWithinPolicy(pending.Bundle.SupplementalEvidence, s.opts.skillEvidence()) {
+			if pending.Catalog != nil {
+				return outcomeSkipped, state.ErrCatalogJournalFrozen
+			}
 			// Stronger privacy supersedes a retained-history maintenance retry.
 			// Rebuild below from the last acknowledged publication, without native
 			// input and without carrying the discarded retry's newer age forward.

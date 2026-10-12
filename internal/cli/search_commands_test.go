@@ -550,11 +550,9 @@ func TestListBrowserHidesSubagents(t *testing.T) {
 	}
 }
 
-// An exact short ID wins before the tiers in every command: a session in
-// another project, or in the archive only, is the answer over an in-scope
-// title that mentions its ID, so a candidate table's Next line takes the row
-// it names.
-func TestExactShortIDWinsOverTheScopeInEveryCommand(t *testing.T) {
+// List and handoff retain exact short-ID precedence. Show combines the ID
+// candidate with title matches, then applies the scope tiers.
+func TestShortIDPrecedenceInListHandoffAndShow(t *testing.T) {
 	t.Parallel()
 	f := newPickerFixture(t)
 	f.addArchivedWith(t, "abcd1234", "The real one", "billing", nil)
@@ -577,7 +575,7 @@ func TestExactShortIDWinsOverTheScopeInEveryCommand(t *testing.T) {
 	if got := namedIDs(out, "abcd1234", "wxyz9999"); !sameStrings(got, []string{"abcd1234"}) {
 		t.Fatalf("list listed %v:\n%s", got, out)
 	}
-	if out, _, code := a.runShow(t, "abcd1234", "--json"); code != 0 || !strings.Contains(out, `"session_id": "abcd1234"`) {
+	if out, _, code := a.runShow(t, "abcd1234", "--json"); code != 0 || !strings.Contains(out, `"session_id": "wxyz9999"`) {
 		t.Fatalf("show: code=%d\n%s", code, out)
 	}
 }

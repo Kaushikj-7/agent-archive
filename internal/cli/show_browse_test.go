@@ -56,7 +56,7 @@ const detailsPrompt = "[t] transcript  [Enter/b] back to list  [q] quit"
 func TestBrowserBackReturnsToList(t *testing.T) {
 	t.Parallel()
 	out, errOut, _, _ := browse(t, "1\nb\n1\n\nq\n")
-	if errOut != "agent-archive: list: query requires an exhaustive metadata scan.\n" {
+	if errOut != "" {
 		t.Fatalf("stderr: %s", errOut)
 	}
 	if n := strings.Count(out, "Enter number"); n != 3 {

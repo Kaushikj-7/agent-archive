@@ -9,13 +9,14 @@
     "workflows": {"dir": ".", "workspace": ".", "inputs": [".github"]}
   },
   "environments": {
-    "go": {"executor": "dagger"}
+    "go": {"executor": "dagger"},
+    "release-go": {"executor": "native"}
   },
   "checks": {
     "lint": {"kind": "go-lint", "target": "archive", "environment": "go"},
     "vet": {"kind": "go-vet", "target": "archive", "environment": "go"},
     "modules": {"kind": "go-mod", "target": "archive", "environment": "go"},
-    "vulnerabilities": {"kind": "go-vuln", "target": "archive", "environment": "go"},
+    "vulnerabilities": {"kind": "go-vuln", "target": "archive", "environment": "release-go"},
     "workflow-lint": {"kind": "workflow-lint", "target": "workflows", "environment": "go"},
     "workflow-security": {"kind": "workflow-security", "target": "workflows", "environment": "go"}
   },

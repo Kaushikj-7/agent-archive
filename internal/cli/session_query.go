@@ -216,7 +216,22 @@ type sessionSearch struct {
 // before any of them. A scope that is off, or names no project, has no
 // in-scope tiers.
 func searchSessions(sessions []archive.Metadata, q sessionQuery, scope sessionScope, fields func(archive.Metadata) sessionFields) sessionSearch {
-	matched := matchPool(sessions, q, fields)
+	return searchMatchedSessions(matchPool(sessions, q, fields), scope)
+}
+
+// searchShowSessions combines short identity prefixes and text matches before
+// applying the existing scope tiers. Full IDs keep their direct lookup path.
+func searchShowSessions(sessions []archive.Metadata, q sessionQuery, scope sessionScope, fields func(archive.Metadata) sessionFields) sessionSearch {
+	var matched []archive.Metadata
+	for _, m := range sessions {
+		if q.matches(fields(m)) || len(exactIDWins([]archive.Metadata{m}, q, fields)) > 0 {
+			matched = append(matched, m)
+		}
+	}
+	return searchMatchedSessions(matched, scope)
+}
+
+func searchMatchedSessions(matched []archive.Metadata, scope sessionScope) sessionSearch {
 	var top, subagents []archive.Metadata
 	for _, m := range matched {
 		if !m.IsChild() {

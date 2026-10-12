@@ -532,7 +532,11 @@ spend it has, marked `+`), and says how many more there are;
   `backfill` shows on the day it was imported. `--hook-captured` leaves
   imports out; `--imported` shows only them.
 - **Subagents.** A subagent's tokens and cost count with its parent session,
-  which is one session; the share they used is shown separately.
+  which is one session; the share they used is shown separately. Descendants
+  of sessions in the fetched capture window are retained even when their own
+  capture time falls outside it. Harness, model and replay filters still apply
+  to each session. An ancestor outside that window is not added; a session
+  without its parent in the filtered inventory keeps its existing orphan rules.
 - **Scope.** This archive only: every session in your bucket, including
   those from other machines that share it, and nothing that was never captured.
 - **MCP.** Claude Code and Cursor only; Codex MCP calls are not recorded.

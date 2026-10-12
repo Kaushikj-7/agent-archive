@@ -71,8 +71,42 @@ func (s *sessionScan) block(reason state.BlockedReason, candidate *archive.Sourc
 // metadata (or, for a metadata-only publication that carries no source
 // bytes, a check of the recorded source then metadata), the superseded
 // source in the ledger, the new published state, the covered request, and
-// finally the removal of the pending file.
+// finally the removal of the pending file. ctx must be the original scan
+// context; admission derives an invocation context for this serial lifecycle.
 func (s *sessionScan) publishPending(pending state.PendingPublication) (sessionOutcome, error) {
+	ctx := s.ctx
+	if remote, ok := s.remote.(storage.CatalogPublisher); ok && remote.CatalogMetadataAuthority() {
+		if pending.Catalog == nil {
+			id, revision, err := remote.FreezeCatalogMutation(ctx, pending.MetadataKey)
+			if err != nil {
+				return outcomeSkipped, err
+			}
+			pending.Catalog = &state.CatalogPublication{Protocol: 10, ID: id, ExpectedRevision: revision}
+			if err = s.local.SavePending(s.id(), pending); err != nil {
+				return outcomeSkipped, err
+			}
+		}
+	} else if pending.Catalog != nil {
+		return outcomeSkipped, errors.New("catalog pending publication requires catalog destination")
+	}
+
+	if remote, ok := s.remote.(storage.CatalogLifecycle); ok && pending.Catalog != nil {
+		var settled bool
+		var err error
+		originalCtx := ctx
+		var admittedCtx context.Context
+		pending, admittedCtx, settled, err = s.beginCatalogJournal(ctx, pending, remote)
+		if err != nil {
+			return outcomeSkipped, err
+		}
+		ctx = admittedCtx
+		s.ctx = ctx
+		defer func() { remote.EndPublicationAttempt(pending.Catalog.ID); s.ctx = originalCtx }()
+		if settled {
+			return s.acknowledgePublication(pending, false)
+		}
+	}
+
 	if err := s.checkHistoryPublication(pending); err != nil {
 		return outcomeSkipped, err
 	}
@@ -118,7 +152,7 @@ func (s *sessionScan) publishPending(pending state.PendingPublication) (sessionO
 // acknowledgePublication follows verified exact readback. A committed privacy
 // retry keeps its journal until the all-reference successor replaces it durably.
 func (s *sessionScan) acknowledgePublication(pending state.PendingPublication, keepPending bool) (sessionOutcome, error) {
-	if err := listingindex.PublishRevision(s.ctx, s.remote, pending.MetadataKey, pending.MetadataBytes); err != nil {
+	if err := s.publishListingRevision(pending); err != nil {
 		s.warn(fmt.Errorf("listing maintenance pending: %w", err))
 	} else if err := s.local.RemoveListingRepair(s.id()); err != nil {
 		s.warn(err)
@@ -197,8 +231,15 @@ func (s *sessionScan) acknowledgePublication(pending state.PendingPublication, k
 			return outcomeSkipped, fmt.Errorf("complete published request: %w", err)
 		}
 	}
+	if !keepPending && pending.Catalog != nil && s.ctx.Value(catalogSettledKey{}) != true {
+		if remote, ok := s.remote.(storage.CatalogLifecycle); ok {
+			if err := remote.CompletePublication(s.ctx, pending.Catalog.ID, pending.MetadataBytes); err != nil {
+				return outcomeSkipped, err
+			}
+		}
+	}
 	if !keepPending {
-		if err := s.local.RemovePending(s.id()); err != nil {
+		if err := s.removeCompletedCatalogJournal(pending); err != nil {
 			return outcomeSkipped, err
 		}
 	}
@@ -257,19 +298,21 @@ func (s *sessionScan) upload(pending state.PendingPublication) error {
 		} else if committed {
 			return s.verifyHistoryReadback(pending)
 		}
-		return s.remote.Put(s.ctx, pending.MetadataKey, pending.MetadataBytes)
+		return s.publicationRemote(pending).Put(s.ctx, pending.MetadataKey, pending.MetadataBytes)
 	}
 	if !pending.CarriesNoSource() && s.reg.StagedImportSHA256 != "" {
 		return s.uploadImportPending(pending)
 	}
 	if !pending.CarriesNoSource() {
-		if err := storage.PutSourceThenMetadataIndexed(s.ctx, s.remote, pending.SourceKey, pending.MetadataKey, pending.SourceBytes, pending.MetadataBytes, s.opts.Retry, nil); err != nil {
+		if err := storage.PutSourceThenMetadataIndexed(s.ctx, s.publicationRemote(pending), pending.SourceKey, pending.MetadataKey, pending.SourceBytes, pending.MetadataBytes, s.opts.Retry, nil); err != nil {
 			return fmt.Errorf("publish: %w", err)
 		}
 		return nil
 	}
-	err := storage.PutMetadataForSourceIndexed(s.ctx, s.remote, pending.SourceKey, pending.SourceSHA256, pending.SourceSize, pending.MetadataKey, pending.MetadataBytes, s.opts.Retry, nil)
-	if errors.Is(err, storage.ErrNotFound) || errors.Is(err, storage.ErrChecksumMismatch) {
+	err := storage.PutMetadataForSourceIndexed(s.ctx, s.publicationRemote(pending), pending.SourceKey, pending.SourceSHA256, pending.SourceSize, pending.MetadataKey, pending.MetadataBytes, s.opts.Retry, nil)
+	if pending.Catalog == nil && (errors.Is(err, storage.ErrNotFound) || errors.Is(err, storage.ErrChecksumMismatch)) {
+		// Catalog journal owners retain their exact recovery proof on source
+		// failure. Only legacy pending work can be dropped here.
 		// The recorded source is not in storage as recorded, and without its
 		// bytes this publication can never succeed. Dropping it keeps it from
 		// holding back normal capture; the metadata still points at whatever
@@ -364,5 +407,19 @@ func (s *sessionScan) uploadImportPending(pending state.PendingPublication) erro
 		}
 	}
 
-	return s.remote.Put(s.ctx, pending.MetadataKey, pending.MetadataBytes)
+	return s.publicationRemote(pending).Put(s.ctx, pending.MetadataKey, pending.MetadataBytes)
+}
+
+func (s *sessionScan) publicationRemote(p state.PendingPublication) storage.ObjectStore {
+	if remote, ok := s.remote.(storage.CatalogPublisher); ok && remote.CatalogMetadataAuthority() && p.Catalog != nil {
+		return remote.Publication(p.Catalog.ID, p.MetadataKey, p.Catalog.ExpectedRevision)
+	}
+	return s.remote
+}
+
+func (s *sessionScan) publishListingRevision(p state.PendingPublication) error {
+	if remote, ok := s.remote.(storage.CatalogPublisher); ok && remote.CatalogMetadataAuthority() {
+		return nil
+	}
+	return listingindex.PublishRevision(s.ctx, s.remote, p.MetadataKey, p.MetadataBytes)
 }

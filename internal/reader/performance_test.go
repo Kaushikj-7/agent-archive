@@ -300,7 +300,7 @@ func cacheFiles(t *testing.T, home string) []string {
 		if err != nil {
 			return err
 		}
-		if !entry.IsDir() {
+		if !entry.IsDir() && entry.Name() != maintenanceFile {
 			name, err := filepath.Rel(root, path)
 			if err != nil {
 				return err

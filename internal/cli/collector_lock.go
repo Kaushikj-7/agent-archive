@@ -8,6 +8,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/destination"
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
@@ -38,6 +39,23 @@ var collectLockStuckAfter = 2 * collectHardDeadline
 // lockCollector takes collector.lock without waiting and records holder.
 func lockCollector(home, holder string, now time.Time) (func(), error) {
 	return recordCollectorLock(home, holder, now, func() (func(), error) { return local.Lock(home) })
+}
+
+func lockCollectorGuard(home, holder string, now time.Time, format destination.ArchiveFormat) (*local.CollectorGuard, func(), error) {
+	if format != destination.FormatCatalogV4 {
+		unlock, err := lockCollector(home, holder, now)
+		return nil, unlock, err
+	}
+	var guard *local.CollectorGuard
+	unlock, err := recordCollectorLock(home, holder, now, func() (func(), error) {
+		var e error
+		guard, e = local.LockCollectorGuard(home)
+		if e != nil {
+			return nil, e
+		}
+		return guard.Release, nil
+	})
+	return guard, unlock, err
 }
 
 // lockCollectorWait is lockCollector, waiting up to wait for the lock.

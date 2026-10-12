@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/listingindex"
@@ -26,82 +28,228 @@ type RecentResult struct {
 }
 
 // ListRecent proves coverage from fresh canonical headers before choosing bodies.
-// Unsupported predicates and incomplete indexes use the exhaustive cache reader.
+// Unsupported predicates, incomplete indexes, and nonpositive limits use the
+// exhaustive cache reader for compatibility. SelectMetadata supports indexed
+// unlimited queries.
 func ListRecent(ctx context.Context, store storage.ObjectStore, prefix string, filter Filter, limit int, opts ListOptions) (RecentResult, error) {
+	if CatalogAuthority(store) {
+		order := CaptureOrder
+		if opts.ActivityOrder {
+			order = ActivityOrder
+		}
+		return SelectMetadata(ctx, store, prefix, MetadataQuery{Filter: filter, Limit: limit, Order: order, TopLevelOnly: opts.TopLevelOnly}, opts)
+	}
+	if limit <= 0 {
+		if opts.CompatibilityScan != nil {
+			opts.CompatibilityScan("query requires an exhaustive metadata scan")
+		}
+		return listRecentFullWithHeaders(ctx, store, prefix, filter, limit, opts, nil)
+	}
+	order := CaptureOrder
+	if opts.ActivityOrder {
+		order = ActivityOrder
+	}
+	return SelectMetadata(ctx, store, prefix, MetadataQuery{Filter: filter, Limit: limit, Order: order, TopLevelOnly: opts.TopLevelOnly}, opts)
+}
+
+// QueryOrder selects the ordering used before applying the query limit.
+type QueryOrder uint8
+
+const (
+	// CaptureOrder sorts newest capture first, with identity ties.
+	CaptureOrder QueryOrder = iota
+	// ActivityOrder sorts newest activity first, then capture and identity.
+	ActivityOrder
+)
+
+// MetadataQuery selects metadata from fresh headers before downloading bodies.
+// A nonpositive Limit selects every matching session.
+type MetadataQuery struct {
+	Filter       Filter     `json:"Filter"`
+	Limit        int        `json:"Limit"`
+	Order        QueryOrder `json:"Order"`
+	TopLevelOnly bool       `json:"TopLevelOnly"`
+	// IncludeRootChildren retains descendants of date-matched sessions even
+	// outside the capture bounds. Other predicates still apply to each member.
+	// Stats uses this to keep complete root accounting; ancestors are not added.
+	IncludeRootChildren bool `json:"IncludeRootChildren"`
+}
+
+// SelectMetadata proves discovery coverage and supports unlimited date queries.
+// Unsupported predicates and incomplete summaries use the exhaustive reader.
+func SelectMetadata(ctx context.Context, store storage.ObjectStore, prefix string, query MetadataQuery, opts ListOptions) (RecentResult, error) {
+	if CatalogAuthority(store) {
+		opts.Cache.maintain(ctx)
+		opts.ActivityOrder = query.Order == ActivityOrder
+		opts.TopLevelOnly = query.TopLevelOnly
+		opts.includeRootChildren = query.IncludeRootChildren
+		return selectCatalogMetadata(ctx, store, prefix, query, opts)
+	}
+	filter, limit := query.Filter, query.Limit
+	opts.ActivityOrder, opts.TopLevelOnly = query.Order == ActivityOrder, query.TopLevelOnly
+	opts.includeRootChildren = query.IncludeRootChildren
+	var snapshot *HeaderSnapshot
+	opts.Cache.maintain(ctx)
 	fallback := func(reason string) (RecentResult, error) {
 		if opts.CompatibilityScan != nil {
 			opts.CompatibilityScan(reason)
 		}
-		return listRecentFull(ctx, store, prefix, filter, limit, opts)
+		return listRecentFullWithHeaders(ctx, store, prefix, filter, limit, opts, snapshot)
 	}
 	getter, ok := store.(storage.VersionedGetter)
-	if !ok || limit <= 0 || filter.Model != "" || filter.Skill != "" || filter.SkillSHA256 != "" || filter.RequireCompleteCoverage {
+	if !ok || filter.Model != "" || filter.Skill != "" || filter.SkillSHA256 != "" || filter.RequireCompleteCoverage {
 		return fallback("query requires an exhaustive metadata scan")
 	}
-	objects, err := store.List(ctx, listPrefixFor(prefix, filter.Harness))
+	headers, err := discoverHeaders(ctx, store, prefix, filter, opts.Cache)
 	if err != nil {
 		return RecentResult{}, err
 	}
-	if opts.Cache != nil {
-		opts.Cache.evictUnlisted(opts.Cache.keys(listPrefixFor(prefix, filter.Harness)), objects)
+	snapshot = &headers
+	if headers.incompleteReason != "" {
+		return fallback(headers.incompleteReason)
 	}
-	hints, err := listRevisionHeaders(ctx, store)
-	if err != nil {
-		return RecentResult{}, err
-	}
-	revisions := make(map[string]listingindex.Revision)
-	for _, hint := range hints {
-		r, err := listingindex.ParseRevision(hint.Key)
+	objects := headers.Canonical
+	selectionFilter := filter
+	if query.IncludeRootChildren {
+		objects, err = selectRootChildHeaders(objects, headers.Revisions, filter)
 		if err != nil {
-			return fallback("listing index contains an unsupported or damaged entry; run list --rebuild-index")
+			return fallback(err.Error())
 		}
-		key := r.MetadataKey + "\x00" + r.ETag
-		if prior, exists := revisions[key]; exists && !prior.SameSummary(r) {
-			return fallback("listing index has conflicting revision summaries")
-		}
-		revisions[key] = r
+		selectionFilter.From, selectionFilter.To = time.Time{}, time.Time{}
 	}
-	selected, result, err := selectListingRevisions(objects, revisions, filter, limit, opts)
+	selected, result, err := selectListingRevisions(objects, headers.Revisions, selectionFilter, limit, opts)
 	if err != nil {
 		return fallback(err.Error())
 	}
-	for _, r := range selected {
-		data, cached := opts.Cache.get(r.MetadataKey, r.ETag)
-		if cached && storage.SHA256Hex(data) != r.Hash {
-			cached = false
+	reads := readSelected(ctx, getter, selected, opts)
+	for _, read := range reads {
+		if read.Err != nil {
+			return RecentResult{}, read.Err
 		}
-		if !cached {
-			var validator string
-			data, validator, err = getter.GetVersioned(ctx, r.MetadataKey)
-			if err != nil {
-				return RecentResult{}, fmt.Errorf("incomplete listing: selected metadata %q changed or cannot be read; retry or use --limit 0: %w", r.MetadataKey, err)
-			}
-			if validator != r.ETag || storage.SHA256Hex(data) != r.Hash {
-				return RecentResult{}, fmt.Errorf("incomplete listing: metadata %q changed during query; retry or use --limit 0", r.MetadataKey)
-			}
-		}
-		if opts.BodyRead != nil {
-			opts.BodyRead(r.MetadataKey, cached)
-		}
-		metadata, err := decodeMetadata(r.MetadataKey, data)
-		if err != nil {
-			return RecentResult{}, err
-		}
-		if err := r.ValidateMetadata(data); err != nil {
-			return RecentResult{}, fmt.Errorf("incomplete listing: invalid revision summary for %q", r.MetadataKey)
-		}
-		if !cached {
-			opts.Cache.putVerified(r.MetadataKey, r.ETag, data)
-		}
-		result.Sessions = append(result.Sessions, metadata)
+		result.Sessions = append(result.Sessions, read.Metadata)
+	}
+	if err := ctx.Err(); err != nil {
+		return RecentResult{}, err
 	}
 	return result, nil
 }
 
-func listRecentFull(ctx context.Context, store storage.ObjectStore, prefix string, filter Filter, limit int, opts ListOptions) (RecentResult, error) {
-	all, err := ListMetadataWithOptions(ctx, store, prefix, filter, opts)
+// selectedRead occupies the same slot as its revision in selection order.
+type selectedRead struct {
+	Metadata archive.Metadata
+	Cached   bool
+	Err      error
+}
+
+// readSelected stops assigning work on failure and joins every started read.
+// In-flight reads retain the caller context: an internal cancellation must not
+// hide an earlier selected revision's real error. Progress runs serially on
+// the caller as reads finish; BodyRead runs in selection order after the join.
+func readSelected(ctx context.Context, getter storage.VersionedGetter, revisions []listingindex.Revision, opts ListOptions) []selectedRead {
+	return readSelectedRows(ctx, len(revisions), opts, func(i int) (selectedRead, bool) {
+		return readSelectedRevision(ctx, getter, revisions[i], opts.Cache)
+	}, func(i int) string { return revisions[i].MetadataKey })
+}
+
+// readSelectedRows shares the bounded scheduler while each authority supplies
+// its exact selected-body reader. Progress runs on the caller as reads finish;
+// selected body observers run in order after every worker has joined.
+func readSelectedRows(ctx context.Context, count int, opts ListOptions, read func(int) (selectedRead, bool), key func(int) string) []selectedRead {
+	reads := make([]selectedRead, count)
+	observed := make([]bool, count)
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	completed := make(chan struct{}, count)
+	next, failed := 0, false
+	for range min(listConcurrency, count) {
+		wg.Go(func() {
+			for {
+				mu.Lock()
+				if failed || ctx.Err() != nil || next == count {
+					mu.Unlock()
+					return
+				}
+				i := next
+				next++
+				mu.Unlock()
+				reads[i], observed[i] = read(i)
+				completed <- struct{}{}
+				if reads[i].Err != nil {
+					mu.Lock()
+					failed = true
+					mu.Unlock()
+					return
+				}
+			}
+		})
+	}
+	go func() {
+		wg.Wait()
+		close(completed)
+	}()
+	finished := 0
+	for range completed {
+		finished++
+		if opts.Progress != nil {
+			opts.Progress(finished, count)
+		}
+	}
+	for i := range next {
+		if observed[i] && opts.BodyRead != nil {
+			opts.BodyRead(key(i), reads[i].Cached)
+		}
+	}
+	return reads[:next]
+}
+
+func readSelectedRevision(ctx context.Context, getter storage.VersionedGetter, r listingindex.Revision, cache *MetadataCache) (selectedRead, bool) {
+	data, cached := cache.get(r.MetadataKey, r.ETag)
+	if cached && storage.SHA256Hex(data) != r.Hash {
+		cached = false
+	}
+	if !cached {
+		var validator string
+		var err error
+		data, validator, err = getter.GetVersioned(ctx, r.MetadataKey)
+		if err != nil {
+			return selectedRead{Err: fmt.Errorf("incomplete listing: selected metadata %q changed or cannot be read; retry or use --limit 0: %w", r.MetadataKey, err)}, false
+		}
+		if validator != r.ETag || storage.SHA256Hex(data) != r.Hash {
+			return selectedRead{Err: fmt.Errorf("incomplete listing: metadata %q changed during query; retry or use --limit 0", r.MetadataKey)}, false
+		}
+	}
+	metadata, err := decodeMetadata(r.MetadataKey, data)
+	if err != nil {
+		return selectedRead{Cached: cached, Err: err}, true
+	}
+	if err := r.ValidateMetadata(data); err != nil {
+		return selectedRead{Cached: cached, Err: fmt.Errorf("incomplete listing: invalid revision summary for %q", r.MetadataKey)}, true
+	}
+	if !cached {
+		cache.putVerified(r.MetadataKey, r.ETag, data)
+	}
+	return selectedRead{Metadata: metadata, Cached: cached}, true
+}
+
+func listRecentFullWithHeaders(ctx context.Context, store storage.ObjectStore, prefix string, filter Filter, limit int, opts ListOptions, snapshot *HeaderSnapshot) (RecentResult, error) {
+	var all []archive.Metadata
+	var err error
+	readFilter := filter
+	if opts.includeRootChildren {
+		readFilter.From, readFilter.To = time.Time{}, time.Time{}
+	}
+	if snapshot == nil {
+		all, err = ListMetadataWithOptions(ctx, store, prefix, readFilter, opts)
+	} else {
+		all, err = listMetadataFromHeaders(ctx, store, readFilter, opts, snapshot.Canonical, snapshot.knownCanonical)
+	}
 	if err != nil {
 		return RecentResult{}, err
+	}
+	if opts.includeRootChildren {
+		all = SelectRootChildren(all, filter, func(m archive.Metadata) (string, string, time.Time) {
+			return m.SessionID, m.ParentSessionID, m.CapturedAt
+		})
 	}
 	allChildren := make(map[string]int)
 	for _, m := range all {
@@ -256,7 +404,7 @@ func cleanupRevisionHeaders(ctx context.Context, store storage.ObjectStore, lega
 }
 
 // selectListingRevisions proves canonical coverage and applies summary predicates before body reads.
-func selectListingRevisions(objects []storage.Object, revisions map[string]listingindex.Revision, filter Filter, limit int, opts ListOptions) ([]listingindex.Revision, RecentResult, error) {
+func selectListingRevisions(objects []storage.Object, revisions map[RevisionID]listingindex.Revision, filter Filter, limit int, opts ListOptions) ([]listingindex.Revision, RecentResult, error) {
 	var selected, all []listingindex.Revision
 	allChildren := make(map[string]int)
 	scopedHidden, allHidden := 0, 0
@@ -264,7 +412,7 @@ func selectListingRevisions(objects []storage.Object, revisions map[string]listi
 		if !isMetadataKey(obj.Key) {
 			continue
 		}
-		r, exists := revisions[obj.Key+"\x00"+obj.ETag]
+		r, exists := revisions[RevisionID{Key: obj.Key, ETag: obj.ETag}]
 		if obj.ETag == "" || !exists {
 			return nil, RecentResult{}, errors.New("listing index does not cover current metadata; run list --rebuild-index")
 		}
@@ -314,7 +462,7 @@ func selectListingRevisions(objects []storage.Object, revisions map[string]listi
 		}
 		return a.MetadataKey < b.MetadataKey
 	})
-	if len(selected) > limit {
+	if limit > 0 && len(selected) > limit {
 		selected = selected[:limit]
 	}
 	return selected, result, nil
@@ -322,13 +470,9 @@ func selectListingRevisions(objects []storage.Object, revisions map[string]listi
 
 // listRevisionHeaders reads discovery summaries without downloading hint bodies.
 func listRevisionHeaders(ctx context.Context, store storage.ObjectStore) ([]storage.Object, error) {
-	v2, err := store.List(ctx, listingindex.V2Prefix)
+	objects, _, err := listHeaderGroups(ctx, store, "", nil, false, listingindex.V3Prefix)
 	if err != nil {
 		return nil, err
 	}
-	v3, err := store.List(ctx, listingindex.V3Prefix)
-	if err != nil {
-		return nil, err
-	}
-	return append(v2, v3...), nil
+	return append(objects[1], objects[2]...), nil
 }

@@ -85,6 +85,9 @@ func runBrowser(ctx context.Context, env sessionBrowserDependencies, p *prompter
 	if keys != nil {
 		defer keys.close()
 	}
+	if spec.LoadOlder == nil {
+		spec.LoadOlder = spec.Choices.loadOlder
+	}
 	list := &sessionPicker{older: spec.LoadOlder, boundedNotice: spec.Notice, env: env, clear: redraw, keys: keys, verb: spec.Verb, filter: spec.Query, filtering: spec.Query != "" && keys != nil}
 	var err error
 	if spec.Mode == browseSessions {

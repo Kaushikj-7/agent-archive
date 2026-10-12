@@ -16,6 +16,9 @@ import (
 // resumeStricterHistory resolves exact remote status before preparing any
 // replacement. Unknown status keeps the attempted descriptor and its evidence.
 func (s *sessionScan) resumeStricterHistory(p state.PendingPublication) (sessionOutcome, error) {
+	if p.Catalog != nil {
+		return outcomeSkipped, state.ErrCatalogJournalFrozen
+	}
 	committed, err := s.checkFrozenHistoryMetadata(p)
 	if err != nil {
 		return outcomeSkipped, err
@@ -136,6 +139,7 @@ func (s *sessionScan) stricterHistorySuccessor(p state.PendingPublication, commi
 		return state.PendingPublication{}, errors.New("stricter successor exceeds input limit")
 	}
 	next := p
+	next.Catalog = nil
 	// A retained policy successor did not consume native input under this
 	// policy. Preserve its pending native-read obligation, never a settled proof.
 	next.ScanSignature = nil

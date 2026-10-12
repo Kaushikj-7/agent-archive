@@ -35,6 +35,7 @@ seven-day import and the status prompt for existing installations. See the
 | [Release remediation](release-remediation.md) | Implementation record; disposable provider/per-app acceptance and release sign-off remain open. |
 | [Native name comparisons](../maintainers/native-session-name-comparisons.md) | Partial sandbox evidence; native UI acceptance blocked. |
 | [Published-release acceptance](../maintainers/open-source-acceptance.md) | Maintainer runbook for candidate/provider/app checks; implementation does not imply a passing release gate. |
+| [Archive catalog performance](cli-performance.md) | Catalog implementation source composed in ROOT407; final source/runtime/combined stack and native/provider/operator acceptance remain pending. |
 
 ## Implemented designs
 

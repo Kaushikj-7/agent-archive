@@ -72,15 +72,15 @@ const (
 // says what to do with sessions a replay tool ran; its zero value includes
 // them, so only a caller that asks hides them.
 type Filter struct {
-	Harness                 string
-	Model                   string
-	Skill                   string
-	SkillSHA256             string
-	From                    time.Time
-	To                      time.Time
-	RequireCompleteCoverage bool
-	SkillUsage              SkillUsage
-	Replays                 ReplayFilter
+	Harness                 string       `json:"Harness"`
+	Model                   string       `json:"Model"`
+	Skill                   string       `json:"Skill"`
+	SkillSHA256             string       `json:"SkillSHA256"`
+	From                    time.Time    `json:"From"`
+	To                      time.Time    `json:"To"`
+	RequireCompleteCoverage bool         `json:"RequireCompleteCoverage"`
+	SkillUsage              SkillUsage   `json:"SkillUsage"`
+	Replays                 ReplayFilter `json:"Replays"`
 }
 
 // ReplayFilter selects by whether a session is a replay (archive.Replay).
@@ -138,6 +138,8 @@ const listConcurrency = 8
 // ListOptions tunes ListMetadataWithOptions. The zero value reads every
 // matching sidecar from the store.
 type ListOptions struct {
+	includeRootChildren bool
+
 	// ScopeMatch tests only identity summaries before body selection.
 	ScopeMatch func(archive.Metadata) bool
 
@@ -148,6 +150,7 @@ type ListOptions struct {
 	// CompatibilityScan explains why the exhaustive reader was required.
 	CompatibilityScan func(string)
 	// BodyRead observes successful selected metadata or cache body reads.
+	// Indexed reads invoke it serially in selection order after workers join.
 	BodyRead func(key string, cached bool)
 
 	// Cache, when set, serves a sidecar whose listed ETag is unchanged from
@@ -162,6 +165,7 @@ type ListOptions struct {
 	// (served from the cache or downloaded), with how many are done of how
 	// many the listing has. It is called from several goroutines at once, so
 	// it must be safe for that, and it must not block.
+	// Indexed selection invokes it serially on the caller as reads finish.
 	Progress func(done, total int)
 }
 
@@ -181,6 +185,10 @@ type ListOptions struct {
 // a sequential read would. A listing split into ranges fails with the error
 // of the first range to fail, which need not be the lowest in key order.
 func ListMetadataWithOptions(ctx context.Context, store storage.ObjectStore, prefix string, filter Filter, options ListOptions) ([]archive.Metadata, error) {
+	options.Cache.maintain(ctx)
+	if CatalogAuthority(store) {
+		return catalogMetadata(ctx, store, prefix, filter, options)
+	}
 	span := trace.Start("list metadata")
 	defer span.End()
 	listPrefix := listPrefixFor(prefix, filter.Harness)
@@ -192,6 +200,14 @@ func ListMetadataWithOptions(ctx context.Context, store storage.ObjectStore, pre
 	if err != nil {
 		return nil, err
 	}
+	return listMetadataFromHeaders(ctx, store, filter, options, objects, known)
+}
+
+// listMetadataFromHeaders consumes one complete canonical listing, including
+// when an indexed query must fall back after discovery.
+func listMetadataFromHeaders(ctx context.Context, store storage.ObjectStore, filter Filter, options ListOptions, objects []storage.Object, known []string) ([]archive.Metadata, error) {
+	span := trace.Start("read metadata headers")
+	defer span.End()
 	sidecars := make([]storage.Object, 0, len(objects))
 	for _, object := range objects {
 		if strings.HasSuffix(object.Key, "/metadata.json") {
@@ -200,12 +216,13 @@ func ListMetadataWithOptions(ctx context.Context, store storage.ObjectStore, pre
 	}
 	span.Count("keys", len(objects))
 	span.Count("sidecars", len(sidecars))
+	// Complete fresh headers establish deletion independently of whether the
+	// remaining bodies can be read. A later read error must not retain an
+	// absent session's cached metadata.
+	options.Cache.evictUnlisted(known, sidecars)
 	loaded, skipped, err := readSidecars(ctx, store, sidecars, options.Cache, options.Progress)
 	if err != nil {
 		return nil, err
-	}
-	if options.Cache != nil {
-		options.Cache.evictUnlisted(known, sidecars)
 	}
 	if options.Skipped != nil {
 		for _, s := range skipped {
@@ -377,52 +394,140 @@ func decodeMetadata(key string, data []byte) (archive.Metadata, error) {
 	return metadata, nil
 }
 
-// FindMetadataKeys returns the metadata sidecar keys under prefix that
-// belong to one archive session ID, in key order. A caller that only has the
-// ID does not know its harness segment, so the sidecar key is tried under
-// each harness this build publishes (Harnesses) with a direct read, and only
-// if none exists is the prefix listed — a listing is proportional to the whole
-// archive, three reads are not. It returns keys only; the probe reads are not
-// kept. More than one result means the same ID was published under more than
-// one harness, which a caller should treat as ambiguous. A read error other
-// than not-found is returned rather than falling back.
+// MetadataLookup retains the decoded metadata alongside its object key.
+type MetadataLookup struct {
+	Key      string
+	Metadata archive.Metadata
+}
+
+type metadataProbe struct {
+	key     string
+	data    []byte
+	fetched bool
+	err     error
+}
+
+// FindMetadata returns matching sidecars in key order, retaining probe reads.
+// Several results mean an ambiguous ID. Known harnesses are probed before the
+// listing fallback for unknown archived harnesses. Decode failures return the
+// discovered keys alongside the error, so callers can still report ambiguity.
+func (f *MetadataFinder) FindMetadata(ctx context.Context, store storage.ObjectStore, prefix, archiveSessionID string) ([]MetadataLookup, error) {
+	probes, err := f.findMetadata(ctx, store, prefix, archiveSessionID)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]MetadataLookup, len(probes))
+	var firstErr error
+	for i, probe := range probes {
+		result[i].Key = probe.key
+		data := probe.data
+		if !probe.fetched {
+			data, err = store.Get(ctx, probe.key)
+			if err != nil {
+				err = fmt.Errorf("read metadata %q: %w", probe.key, err)
+			}
+		}
+		if err == nil {
+			result[i].Metadata, err = decodeMetadata(probe.key, data)
+		}
+		if firstErr == nil {
+			firstErr = err
+		}
+		err = nil
+	}
+	return result, firstErr
+}
+
+// FindMetadataKeys returns matching sidecar keys in key order. It preserves
+// existence-only lookup for callers that do not need decoded metadata.
 func FindMetadataKeys(ctx context.Context, store storage.ObjectStore, prefix, archiveSessionID string) ([]string, error) {
 	return defaultFinder.FindMetadataKeys(ctx, store, prefix, archiveSessionID)
 }
 
-// FindMetadataKeys probes known identities, then lists for unknown archived agents.
+// FindMetadataKeys is the compatibility key-only view of metadata discovery.
 func (f *MetadataFinder) FindMetadataKeys(ctx context.Context, store storage.ObjectStore, prefix, archiveSessionID string) ([]string, error) {
+	probes, err := f.findMetadata(ctx, store, prefix, archiveSessionID)
+	if err != nil {
+		return nil, err
+	}
+	var keys []string
+	for _, probe := range probes {
+		keys = append(keys, probe.key)
+	}
+	return keys, nil
+}
+
+func (f *MetadataFinder) findMetadata(ctx context.Context, store storage.ObjectStore, prefix, archiveSessionID string) ([]metadataProbe, error) {
 	if archiveSessionID == "" || strings.Contains(archiveSessionID, "/") {
 		return nil, fmt.Errorf("invalid archive session ID %q", archiveSessionID)
 	}
 	if _, err := archive.MetadataObjectKey("probe", archiveSessionID); err != nil {
 		return nil, fmt.Errorf("invalid archive session ID %q", archiveSessionID)
 	}
-	var keys []string
-	for _, harness := range f.harnesses {
-		key := strings.TrimPrefix(listPrefixFor(prefix, harness)+archiveSessionID+"/metadata.json", "/")
-		if _, err := store.Get(ctx, key); err == nil {
-			keys = append(keys, key)
-		} else if !errors.Is(err, storage.ErrNotFound) {
-			return nil, fmt.Errorf("read metadata %q: %w", key, err)
-		}
-	}
-	if len(keys) > 0 {
-		sort.Strings(keys)
-		return keys, nil
-	}
-	objects, err := store.List(ctx, prefix)
-	if err != nil {
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	suffix := "/" + archiveSessionID + "/metadata.json"
-	for _, object := range objects {
-		if strings.HasSuffix(object.Key, suffix) {
-			keys = append(keys, object.Key)
+	probes := make([]metadataProbe, len(f.harnesses))
+	var next atomic.Int64
+	var workers sync.WaitGroup
+	for range min(8, len(probes)) {
+		workers.Go(func() {
+			for {
+				i := int(next.Add(1) - 1)
+				if i >= len(probes) {
+					return
+				}
+				key := strings.TrimPrefix(listPrefixFor(prefix, f.harnesses[i])+archiveSessionID+"/metadata.json", "/")
+				probes[i].key = key
+				if err := ctx.Err(); err != nil {
+					probes[i].err = err
+					continue
+				}
+				probes[i].data, probes[i].err = store.Get(ctx, key)
+				probes[i].fetched = true
+			}
+		})
+	}
+	workers.Wait()
+	var found []metadataProbe
+	for _, probe := range probes {
+		if probe.err == nil {
+			found = append(found, probe)
+		} else if !errors.Is(probe.err, storage.ErrNotFound) {
+			return nil, fmt.Errorf("read metadata %q: %w", probe.key, probe.err)
 		}
 	}
-	sort.Strings(keys)
-	return keys, nil
+	if len(found) == 0 && CatalogAuthority(store) {
+		summaries, err := CatalogSummaries(ctx, store, Filter{})
+		if err != nil {
+			return nil, err
+		}
+		for _, summary := range summaries {
+			if summary.SessionID == archiveSessionID {
+				key, err := archive.MetadataObjectKey(summary.Harness.Name, summary.SessionID)
+				if err != nil {
+					return nil, err
+				}
+				found = append(found, metadataProbe{key: key})
+			}
+		}
+		sort.Slice(found, func(i, j int) bool { return found[i].key < found[j].key })
+		return found, nil
+	}
+	if len(found) == 0 {
+		objects, err := store.List(ctx, prefix)
+		if err != nil {
+			return nil, err
+		}
+		suffix := "/" + archiveSessionID + "/metadata.json"
+		for _, object := range objects {
+			if strings.HasSuffix(object.Key, suffix) {
+				found = append(found, metadataProbe{key: object.Key})
+			}
+		}
+	}
+	sort.Slice(found, func(i, j int) bool { return found[i].key < found[j].key })
+	return found, nil
 }
 
 // eligibilityParserVersion is the lowest parser version whose observed_none
@@ -691,15 +796,24 @@ func sourceHarnessMatches(source, active archive.Harness, preserved bool) bool {
 // RefreshAndLoad retries once after rereading metadata, covering the normal
 // metadata-pointer refresh race after old source cleanup.
 func RefreshAndLoad(ctx context.Context, store storage.ObjectStore, metadataKey string, limits Limits) (archive.Metadata, archive.SourceBundle, error) {
-	for attempt := range 2 {
-		m, err := ReadMetadata(ctx, store, metadataKey)
-		if err != nil {
-			return archive.Metadata{}, archive.SourceBundle{}, err
-		}
-		b, err := LoadSource(ctx, store, m, limits)
-		if !errors.Is(err, ErrRefreshRequired) || attempt == 1 {
-			return m, b, err
-		}
+	metadata, err := ReadMetadata(ctx, store, metadataKey)
+	if err != nil {
+		return archive.Metadata{}, archive.SourceBundle{}, err
 	}
-	return archive.Metadata{}, archive.SourceBundle{}, ErrRefreshRequired
+	return RefreshAndLoadMetadata(ctx, store, metadataKey, metadata, limits)
+}
+
+// RefreshAndLoadMetadata verifies source bytes using already-read metadata and
+// retries once with fresh metadata when the referenced source has disappeared.
+func RefreshAndLoadMetadata(ctx context.Context, store storage.ObjectStore, metadataKey string, metadata archive.Metadata, limits Limits) (archive.Metadata, archive.SourceBundle, error) {
+	bundle, err := LoadSource(ctx, store, metadata, limits)
+	if !errors.Is(err, ErrRefreshRequired) {
+		return metadata, bundle, err
+	}
+	metadata, err = ReadMetadata(ctx, store, metadataKey)
+	if err != nil {
+		return archive.Metadata{}, archive.SourceBundle{}, err
+	}
+	bundle, err = LoadSource(ctx, store, metadata, limits)
+	return metadata, bundle, err
 }

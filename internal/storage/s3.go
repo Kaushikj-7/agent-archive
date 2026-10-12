@@ -22,18 +22,21 @@ import (
 	"github.com/aws/smithy-go"
 	"github.com/aws/smithy-go/logging"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
+	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
+	"github.com/wangjohn/agent-archive/internal/destination"
 )
 
 // S3Store is an ObjectStore backed by Amazon S3 or a compatible endpoint such
 // as Cloudflare R2. The SDK client is injected so tests can use a fake HTTP
 // server without credentials or a bucket administrator account.
 type S3Store struct {
-	provider    string
-	client      *s3.Client
-	bucket      string
-	prefix      string
-	maxGetBytes int64
+	provider         string
+	client           *s3.Client
+	bucket           string
+	prefix           string
+	maxGetBytes      int64
+	catalogNamespace string
 }
 
 // S3StoreOptions configures a store. Client must be constructed with the
@@ -72,6 +75,29 @@ func NewS3Store(options S3StoreOptions) (*S3Store, error) {
 	return &S3Store{provider: strings.ToLower(strings.TrimSpace(options.Provider)), client: options.Client, bucket: options.Bucket, prefix: strings.Trim(options.Prefix, "/"), maxGetBytes: maxGetBytes}, nil
 }
 
+// CatalogNamespace is set only by the configured constructor, which binds the
+// immutable provider/endpoint/bucket/prefix through the existing credential-free
+// config identity. Arbitrary injected clients/resolvers remain process-scoped.
+func (s *S3Store) CatalogNamespace() string { return s.catalogNamespace }
+
+func configuredCatalogNamespace(cfg credentials.Config, client *s3.Client) string {
+	options := client.Options()
+	resolver, admitted := options.EndpointResolverV2.(*configuredCatalogEndpointResolver)
+	if !admitted || resolver == nil || resolver.EndpointResolverV2 == nil {
+		return ""
+	}
+	// Bind the actual SDK endpoint too: named AWS profiles may supply an
+	// endpoint override beyond the application's configured destination ID.
+	return SHA256Hex([]byte(config.DestinationID(cfg) + "\x00" + options.Region + "\x00" + aws.ToString(options.BaseEndpoint)))
+}
+
+// This private marker is installed only after the restricted configured loaders
+// succeed. Their pinned SDK configuration sources cannot install legacy resolvers.
+// Public NewClient and arbitrary SDK clients receive no configured authority.
+type configuredCatalogEndpointResolver struct {
+	s3.EndpointResolverV2
+}
+
 // NewClient constructs an S3 client for AWS or an S3-compatible endpoint.
 // For R2 callers should pass region "auto", an endpoint supplied by
 // Cloudflare, and a static credentials provider from internal/credentials.
@@ -91,10 +117,17 @@ func NewS3Store(options S3StoreOptions) (*S3Store, error) {
 // no supported checksum" into the middle of a command's output. Failures
 // reach the caller as errors, which Diagnose explains.
 func NewClient(cfg aws.Config, endpoint string, pathStyle bool, maxAttempts int) *s3.Client {
+	return newClient(cfg, endpoint, pathStyle, maxAttempts, nil)
+}
+
+func newClient(cfg aws.Config, endpoint string, pathStyle bool, maxAttempts int, resolver s3.EndpointResolverV2) *s3.Client {
 	if maxAttempts <= 0 {
 		maxAttempts = 3
 	}
 	return s3.NewFromConfig(cfg, func(options *s3.Options) {
+		if resolver != nil {
+			options.EndpointResolverV2 = resolver
+		}
 		if endpoint != "" {
 			options.BaseEndpoint = aws.String(strings.TrimRight(endpoint, "/"))
 		}
@@ -508,6 +541,9 @@ var (
 // small so CLI setup can perform its synthetic round trip without knowing SDK
 // credential details.
 func NewConfiguredStore(ctx context.Context, cfg credentials.Config, keychain credentials.CredentialStore) (*S3Store, error) {
+	if err := CheckConfiguredArchiveFormat(cfg); err != nil {
+		return nil, err
+	}
 	var awsCfg aws.Config
 	var endpoint string
 	var err error
@@ -526,8 +562,27 @@ func NewConfiguredStore(ctx context.Context, cfg credentials.Config, keychain cr
 	if err != nil {
 		return nil, err
 	}
-	client := NewClient(awsCfg, endpoint, true, 3)
-	return NewS3Store(S3StoreOptions{Provider: cfg.Provider, Client: client, Bucket: cfg.Bucket, Prefix: cfg.Prefix})
+	// LoadAWSConfig uses only profile/region/logger options; LoadR2Config builds
+	// a fresh static-credential config. Neither admits an injected legacy resolver.
+	// Keep this marker construction here, after those exact vetted loaders.
+	resolver := &configuredCatalogEndpointResolver{EndpointResolverV2: s3.NewDefaultEndpointResolverV2()}
+	client := newClient(awsCfg, endpoint, true, 3, resolver)
+	store, err := NewS3Store(S3StoreOptions{Provider: cfg.Provider, Client: client, Bucket: cfg.Bucket, Prefix: cfg.Prefix})
+	if err != nil {
+		return nil, err
+	}
+	store.catalogNamespace = configuredCatalogNamespace(cfg, client)
+	return store, nil
+}
+
+// CheckConfiguredArchiveFormat refuses unqualified formats before credentials
+// are opened. Reviewed provider qualification must update this admission gate
+// as well as the exact constructed provider's CatalogAtomicQualification.
+func CheckConfiguredArchiveFormat(cfg credentials.Config) error {
+	if cfg.EffectiveArchiveFormat() != destination.FormatLegacy {
+		return ErrAtomicCatalogUnqualified
+	}
+	return nil
 }
 
 // ListBucketNames returns the names of every bucket the client's
