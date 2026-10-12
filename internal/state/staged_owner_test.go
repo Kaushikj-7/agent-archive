@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
@@ -26,12 +27,32 @@ func TestStagedAdmissionChildCannotEscapeCapturedPageBudget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	parent.ArchiveSessionID = "z-parent"
-	parent.NativeSessionID = "native-parent"
+	// Use a separate fresh store: the template owner is never reinterpreted.
+	s = newTestStore(t)
+	if err = config.Save(s.Home(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	nativeParent, nativeChild := "native-one", "native-two"
+	parentID, _, err := s.EnsureArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.Codex, NativeID: nativeParent})
+	if err != nil {
+		t.Fatal(err)
+	}
+	childID, _, err := s.EnsureArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.Codex, NativeID: nativeChild})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// These state-only synthetic owners may exchange roles, preserving each
+	// actual reservation's native key while guaranteeing the lexical boundary.
+	if parentID < childID {
+		parentID, childID = childID, parentID
+		nativeParent, nativeChild = nativeChild, nativeParent
+	}
+	parent.ArchiveSessionID = parentID
+	parent.NativeSessionID = nativeParent
 	parent.StagedImportSHA256 = ""
 	child := parent
-	child.ArchiveSessionID = "a-child"
-	child.NativeSessionID = "native-child"
+	child.ArchiveSessionID = childID
+	child.NativeSessionID = nativeChild
 	child.ParentSessionID = parent.ArchiveSessionID
 	child.ParentNativeSessionID = parent.NativeSessionID
 	child.SubagentID = "agent-one"
@@ -60,10 +81,22 @@ func TestStagedAdmissionChildCannotEscapeCapturedPageBudget(t *testing.T) {
 	}
 	cursor := struct {
 		After string `json:"after"`
-	}{"y"}
+	}{childID + "z"}
 	if err = local.Write(filepath.Join(s.Home(), "import-stage-cursor.json"), cursor); err != nil {
 		t.Fatal(err)
 	}
+	if !(childID < cursor.After && cursor.After < parentID) {
+		t.Fatal("actual child/cursor/parent lexical boundary")
+	}
+	page, _, closePage, pageErr := s.ImportStagesOwned(t.Context(), cursor.After, 50)
+	if pageErr != nil {
+		t.Fatal(pageErr)
+	}
+	if len(page) != 1 || page[0].Registration.ArchiveSessionID != parentID {
+		closePage()
+		t.Fatal("actual page must contain only parent, child outside")
+	}
+	closePage()
 	budget := agentapi.NewNativeReadBudget(512 << 10)
 	read, closeRead := s.WithReadBudget(t.Context(), budget)
 	defer closeRead()
