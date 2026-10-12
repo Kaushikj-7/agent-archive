@@ -230,11 +230,103 @@ database-only candidates separately. These counts cover enumerated candidates,
 not unreadable stores. Duplicate candidates are not proof of identical bytes.
 A repeated observation of a selected file does not make that file a discarded duplicate. Known recovery
 exclusions count as excluded while preserving the primary skip code.
-`logical_history_pending` is true: dependencies, logical sessions, and retained
-revisions have not been reconciled. Related histories keep their existing pending
-skip; backfill has not inspected their current selection or missing dependencies.
+`logical_history_pending` remains true while comprehensive dependency/session/
+revision accounting is unfinished. The flag describes remaining comprehensive inventory reconciliation, not a
+blanket refusal of supported complete histories. Complete native children, forks
+and selected physical revisions use the validated shared history reader and
+durable staging; missing or ambiguous dependencies remain unresolved.
 Summaries contain no transcript paths, native IDs, remote URLs, or content.
 
 File and database-only candidates receive the same diagnostic details. For
 `unsafe_format`, the `source_inspection_unavailable` detail asks you to review
 source access and format support; the skip alone cannot prove which is missing.
+
+## Historical-only projects
+
+When the repository is gone, assign complete supported sessions to an explicit
+historical project. This imports reviewed evidence without adding a live project,
+installing hooks, or including future chats. Storage must already be configured;
+its live project list may be empty. Git and an existing checkout are not required.
+
+Create a stable random 128-bit ID once, keep it with your mapping file, and reuse
+it across imports and paired machines. For example, `openssl rand -hex 16` prints
+an ID. Labels are display names and do not determine ownership. A mapping file
+looks like this (replace the example ID and paths):
+
+```json
+{
+  "schema_version": 1,
+  "historical_projects": [
+    {"id": "11111111111111111111111111111111", "label": "Retired service"}
+  ],
+  "mappings": [
+    {"cwd": "/old/service", "historical_project_id": "11111111111111111111111111111111"},
+    {"cwd": "/old/worktree", "configured_root": "/current/repository"}
+  ]
+}
+```
+
+Each mapping has one exact absolute original cwd and exactly one target. A
+`configured_root` must already be an existing included live project, just like
+`--map-project`; its existing live ownership rules still apply. Historical IDs
+must be 32 lowercase hexadecimal characters. Definitions can introduce an absent
+identity or permission for the current destination. Existing labels and disabled
+permissions are preserved. Definitions for projects with no admitted sessions do
+not create permissions.
+
+```sh
+agent-archive backfill --mapping-file mappings.json --dry-run --json
+agent-archive backfill --mapping-file mappings.json
+agent-archive historical-project list
+agent-archive historical-project rename 11111111111111111111111111111111 "Retired API"
+agent-archive historical-project disable 11111111111111111111111111111111
+agent-archive historical-project enable 11111111111111111111111111111111
+```
+
+Review the assignments, historical IDs, labels and counts before confirming.
+The text preview shows up to 128 assignments; JSON shows all assignments. The
+file is limited to 4 MiB, 16,384 mappings and 16,384 project definitions. Unknown
+fields, duplicate JSON fields, conflicting cleaned cwds, invalid labels and
+multiple targets are refused before discovery. Inline `--map-project` keeps its
+128-mapping limit and merges with the file under the same conflict rule.
+
+Rerun with the same semantic assignments to resume an interrupted batch. Ordering,
+filename and display labels do not change its canonical ownership digest. Changing
+a target starts a different batch; changing configuration while confirmation is
+pending requires a new preview. Mapping-file paths and private source cwds are
+not published or stored in the batch journal. `--project DIR` remains a live
+project output filter and does not select historical project IDs.
+
+Explicit exclusions and original source location restrictions also apply to required
+physical ancestors. A complete history requiring an excluded or restricted dependency is refused as
+`excluded_history`; it is not flattened into a partial session. Home, temporary
+and above-home restrictions still apply to the original cwd. Missing dependencies
+or ambiguous histories remain unresolved; fragment import is still unavailable.
+
+After confirmation, filtered staging survives native source deletion before the
+first upload or after a restart. Subsequent publication, privacy filtering,
+parser upgrades and local handoff reads use retained evidence only. A transcript
+that later grows, or a repository that reappears, cannot extend the historical
+import. Rename changes the displayed project name without changing the ID or
+capture age. Disable stops admission and publication in the current destination;
+re-enable restores only that exact permission. Switching storage never republishes
+these imports into the new destination.
+
+Pairing carries historical IDs, labels and the source destination's import
+permission, without original cwds or mapping assignments. The recipient preserves
+its own existing labels and enabled/disabled decisions for the same destination.
+It must supply its own reviewed source mappings. These settings do not authorize
+live capture on either machine.
+
+Retention uses the import's capture/admission age. Keep forever disables automatic
+whole-session expiry; disabled permissions still expire under finite retention.
+Exact batch undo and purge remove the owned sessions and staged/remote evidence.
+**Undo retains historical project identities and destination permissions as
+explicit configuration**, including identities shared by another import. Use
+`historical-project disable ID` to stop their retained maintenance. Undo does not
+claim sessions owned by another batch or change live capture configuration.
+
+The first committed historical permission installs the permanent
+`historical-projects-v10` writer fence. Upgrade installed hooks and collectors
+before using it; earlier writers refuse rather than discard import-only ownership.
+The fence remains after disable, undo, expiry or setup rollback.

@@ -567,6 +567,7 @@ Inspect history
 
 Import history
   agent-archive backfill    Import sessions already on this machine
+  agent-archive historical-project  Manage historical project permissions
 
 Switch agents
   agent-archive handoff     Continue a session in another coding agent
@@ -658,6 +659,8 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 		return runFeedbackCommand(args[1:], stdout, stderr, env)
 	case "handoff":
 		return runHandoffCommand(args[1:], stdin, stdout, stderr, env)
+	case "historical-project":
+		return runHistoricalProjects(args[1:], stdout, stderr, env)
 	case "backfill":
 		return runBackfillCommand(args[1:], stdin, stdout, stderr, env)
 	case "purge":

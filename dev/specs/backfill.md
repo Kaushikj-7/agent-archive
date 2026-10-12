@@ -1455,3 +1455,55 @@ separate 1024-root bound above. No-context programmatic import callers get a
 30-second validation deadline per slice. Filesystem proof checks cannot
 prevent a change after their final observation; the next admission slice or
 pass refreshes the evidence.
+
+## Historical-only ownership and bounded mapping files
+
+Step 6a adds `--mapping-file FILE`, strict JSON schema 1, bounded to 4 MiB and
+16,384 mappings/definitions. Each exact absolute original cwd targets either an
+already included `configured_root` or an opaque `historical_project_id`.
+`historical_projects` definitions supply stable 32-character lowercase hex IDs
+and bounded labels. Duplicate fields, conflicting normalized cwds, ambiguous
+null/multiple targets and invalid UTF-8 are refused before source discovery.
+Existing repeatable `--map-project` remains compatible and capped at 128.
+Assignments are normalized and hashed canonically; target type and immutable ID
+participate, label/order/filename do not. Batch destination binding supplies the
+independent destination component. Confirmation fingerprints current policy.
+Text previews show bounded assignments and explicit historical-only project rows;
+JSON previews expose all requested assignments, without transcript locators.
+
+Historical identity and destination-scoped permissions live separately from
+`Archive.Projects`. Only admitted identities receive new permissions; disabled
+local decisions and labels are never changed by importing assignments. The
+`historical-project list|rename|enable|disable` command manages explicit policy
+under setup/collector/hooks locks. Setup preserves committed identities and
+policy. Pairing transfers bounded IDs, labels and current-destination decisions,
+never original cwds or native mappings, and preserves recipient decisions.
+
+A private version-1 historical proof binds ID, destination, original/canonical
+cwd and bounded physical dependency cwd evidence. `ProjectRoot` is empty. It is
+import-only, mutually exclusive with live Codex consent, and bound by durable
+staging. Every admission/publication checks current exclusions against this
+frozen evidence, including exclusions introduced after native deletion. Required
+excluded physical ancestors refuse complete import as `excluded_history`; the
+complete-history validator is unchanged. Original source location restrictions
+remain in effect. Supported complete native revisions use original thread
+creation/producer/cwd facts independently of selected physical revision facts.
+
+Initial publication uses the existing staged source set. Once published, every
+maintenance and local-read path uses retained sources; native growth or recovery
+cannot extend ownership. Privacy, parser and display updates preserve capture
+age and alternative revision references. Exact readback rejects remote metadata
+that omits a locally published history manifest. Retention checks ownership and
+current destination independently of publication permission, so disabled imports
+still expire under finite retention and remain under Keep forever.
+
+Exact batch undo/purge removes only owned sessions and evidence. Historical
+identities and permissions remain explicit configuration, including shared
+identities; undo does not alter them or any live capture policy. A path-based
+`--project` filter cannot select the empty historical root. The permanent
+`historical-projects-v10` writer capability composes all lower protections and
+survives disable, expiry, undo and rollback. Earlier writers refuse mutation.
+See the [mapping schema](../../schemas/backfill-mapping.schema.json),
+[policy schema](../../schemas/historical-projects.schema.json),
+[private proof schema](../../schemas/historical-project-proof.schema.json), and
+[guide](../../docs/guides/backfill.md#historical-only-projects).

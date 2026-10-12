@@ -213,7 +213,7 @@ func admittedSubagentParent(local *state.Store, candidate state.SubagentCandidat
 	if err != nil {
 		return archive.SessionRegistration{}, err
 	}
-	if !found || parent.NativeSessionID != candidate.ParentNativeSessionID || parent.ProjectID != candidate.ProjectID || parent.ProjectRoot != candidate.ProjectRoot || archive.CanonicalHarness(parent.Harness.Name) != archive.CanonicalHarness(candidate.Harness.Name) || (opts.AcceptSession != nil && !opts.AcceptSession(parent)) {
+	if !found || parent.NativeSessionID != candidate.ParentNativeSessionID || parent.ProjectID != candidate.ProjectID || parent.ProjectRoot != candidate.ProjectRoot || !parent.HistoricalProject.Equal(candidate.HistoricalProject) || archive.CanonicalHarness(parent.Harness.Name) != archive.CanonicalHarness(candidate.Harness.Name) || (opts.AcceptSession != nil && !opts.AcceptSession(parent)) {
 		return archive.SessionRegistration{}, rejectSubagentCandidate(local, candidate, "subagent_parent_ownership_unavailable")
 	}
 	return parent, nil
@@ -230,7 +230,7 @@ func assembleSubagentRegistration(parent archive.SessionRegistration, candidate 
 		proofCopy := *parent.CodexAdmission
 		proof = &proofCopy
 	}
-	return archive.SessionRegistration{CodexAdmission: proof, DiscoveryCwd: parent.DiscoveryCwd,
+	return archive.SessionRegistration{HistoricalProject: parent.HistoricalProject, CodexAdmission: proof, DiscoveryCwd: parent.DiscoveryCwd,
 		ArchiveSessionID: candidate.ArchiveSessionID, NativeSessionID: candidate.NativeSessionID,
 		ProjectID: parent.ProjectID, ProjectRoot: parent.ProjectRoot, RepoKey: parent.RepoKey, Replay: parent.Replay, Harness: parent.Harness,
 		TranscriptPath: candidate.TranscriptPath, RegisteredAt: candidate.ObservedAt,

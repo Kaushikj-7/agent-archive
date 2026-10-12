@@ -30,7 +30,7 @@ func nativeCodexSubagentStop(store *state.Store, cfg config.Config, parent archi
 	if err != nil || !found {
 		return err
 	}
-	if !nativeStopRelationshipMatches(parent, child) || !cfg.AcceptSession(child) {
+	if parent.HistoricalProject != nil || child.HistoricalProject != nil || !nativeStopRelationshipMatches(parent, child) || !cfg.AcceptSession(child) {
 		return nil
 	}
 	if _, removed, err := store.Removal("codex", child.NativeSessionID); err != nil {

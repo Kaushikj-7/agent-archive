@@ -252,3 +252,25 @@ it. Older writers must understand the outer writer identity before mutation;
 a numeric schema bump alone does not protect against permissive legacy decoders.
 
 Choosing Keep forever installs a sticky compatibility fence: older binaries refuse this configuration before writing. Changing back to finite retention retains that fence; upgrade all installed hooks and collectors before using this option. Retention is per machine; pairing copies the current choice but later changes do not propagate. Already deleted sessions are not restored.
+
+## Historical import permissions
+
+`historical_projects` is separate from `archive.projects`. Each entry has an
+opaque stable `id`, mutable `label`, and `permissions` containing exact
+`destination_id` and `enabled` decisions. No entry contains a live root or
+future-capture permission. The collection is bounded to 16,384 identities, with
+at most 128 destination decisions each. Use `historical-project list`, `rename`,
+`enable` and `disable` to manage current-destination policy; new identities are
+introduced by a confirmed mapping-file import. See the
+[historical-only guide](../guides/backfill.md#historical-only-projects) and
+[JSON schema](../../schemas/historical-projects.schema.json).
+
+The sticky `historical_project_protection` capability writes
+`{"version":10,"writer":"historical-projects-v10"}` as the outer
+`schema_version`. It preserves all underlying staging, retention, durable
+storage, history, generation and native consent floors. Removing or disabling
+all identities cannot downgrade this protection. Ordinary setup keeps committed
+historical identities and decisions; pairing cannot overwrite a local disabled
+permission. Destination changes retain previous permissions without granting new
+ones. A historical import never turns an empty live project list into legacy
+catch-all capture authorization.

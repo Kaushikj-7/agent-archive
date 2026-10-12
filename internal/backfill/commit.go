@@ -79,6 +79,25 @@ var ErrRetentionShortened = errors.New("an import only raises retention; shorten
 // cfg is left as it was when it returns an error.
 func ApplyToConfig(cfg *config.Config, p Plan, admittedAt time.Time) (ConfigChanges, error) {
 	var retention *RetentionChange
+	policyFilters := p.Filters
+	policyFilters.HistoricalMappings = map[string]string{}
+	needed := map[string]bool{}
+	for _, candidate := range p.Imported() {
+		if candidate.HistoricalProject != nil {
+			policyFilters.HistoricalMappings[candidate.HistoricalProject.OriginalCwd] = candidate.ProjectIdentity()
+			needed[candidate.ProjectIdentity()] = true
+		}
+	}
+	policyFilters.HistoricalProjects = nil
+	for _, definition := range p.Filters.HistoricalProjects {
+		if needed[definition.ID] {
+			policyFilters.HistoricalProjects = append(policyFilters.HistoricalProjects, definition)
+		}
+	}
+	next, err := historicalConfig(*cfg, policyFilters)
+	if err != nil {
+		return ConfigChanges{}, err
+	}
 	if err := config.ValidateRetentionDays(p.RetentionDays); err != nil {
 		return ConfigChanges{}, err
 	}
@@ -92,8 +111,13 @@ func ApplyToConfig(cfg *config.Config, p Plan, admittedAt time.Time) (ConfigChan
 			cfg.RetentionProtection = true
 		}
 	}
+	cfg.HistoricalProjects = next.HistoricalProjects
+	cfg.HistoricalProjectProtection = next.HistoricalProjectProtection
 	changes := ConfigChanges{ProjectIDs: []string{}, Apps: []string{}, KeptOut: []string{}, Retention: retention}
 	for _, c := range p.Imported() {
+		if c.HistoricalProject != nil {
+			continue
+		}
 		if c.ProjectIncluded || slices.ContainsFunc(cfg.Archive.Projects, func(existing archive.ProjectActivation) bool { return existing.Root == c.ProjectRoot }) {
 			continue
 		}

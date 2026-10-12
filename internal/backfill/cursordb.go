@@ -458,6 +458,7 @@ func appendCursorDatabaseChats(env Environment, r *resolver, projectFilter []str
 				w.filtered = true
 			}
 		}
+		w.c.HistoricalProject = w.res.historical
 		w.c.ProjectRoot, w.c.ProjectKind, w.c.ProjectIncluded = w.res.root, w.res.kind, w.res.included
 		if w.res.root != "" {
 			w.c.ProjectExists = env.exists(w.res.root)

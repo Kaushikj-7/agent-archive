@@ -283,7 +283,7 @@ func (p ImportStage) Validate(ctx context.Context, reg archive.SessionRegistrati
 }
 
 func (p ImportStage) validateOwner(reg archive.SessionRegistration) error {
-	if reg.StagedImportSHA256 != "" && reg.StagedImportSHA256 != p.SHA256 || p.Registration.ArchiveSessionID != reg.ArchiveSessionID || p.Registration.NativeSessionID != reg.NativeSessionID || p.Registration.Harness.Name != reg.Harness.Name || p.Registration.ProjectID != reg.ProjectID || p.Registration.ProjectRoot != reg.ProjectRoot || !sameImportParentProof(p.Registration, reg) || p.Registration.DestinationID != reg.DestinationID || !p.Registration.InBatch(reg.ImportBatch.Recorded()) || p.Bundle.ArchiveSessionID != reg.ArchiveSessionID || p.Bundle.NativeSessionID != reg.NativeSessionID || p.Bundle.ProjectID != reg.ProjectID || p.Bundle.Capture.Harness.Name != reg.Harness.Name {
+	if reg.StagedImportSHA256 != "" && reg.StagedImportSHA256 != p.SHA256 || p.Registration.ArchiveSessionID != reg.ArchiveSessionID || p.Registration.NativeSessionID != reg.NativeSessionID || p.Registration.Harness.Name != reg.Harness.Name || p.Registration.ProjectID != reg.ProjectID || p.Registration.ProjectRoot != reg.ProjectRoot || !sameHistoricalProjectProof(p.Registration, reg) || !sameImportParentProof(p.Registration, reg) || p.Registration.DestinationID != reg.DestinationID || !p.Registration.InBatch(reg.ImportBatch.Recorded()) || p.Bundle.ArchiveSessionID != reg.ArchiveSessionID || p.Bundle.NativeSessionID != reg.NativeSessionID || p.Bundle.ProjectID != reg.ProjectID || p.Bundle.Capture.Harness.Name != reg.Harness.Name {
 		return ErrDurableStorageRecovery
 	}
 	if len(p.Preserved) > archive.MaxHistorySpans {
@@ -724,4 +724,11 @@ func sameImportParentProof(staged, current archive.SessionRegistration) bool {
 		staged.ParentNativeSessionID == current.ParentNativeSessionID &&
 		staged.NativeRootSessionID == current.NativeRootSessionID &&
 		current.CodexBinding != nil && current.CodexBinding.PreservesFacts(staged.CodexBinding)
+}
+
+func sameHistoricalProjectProof(a, b archive.SessionRegistration) bool {
+	if a.HistoricalProject == nil || b.HistoricalProject == nil {
+		return a.HistoricalProject == nil && b.HistoricalProject == nil
+	}
+	return a.HistoricalProject.Equal(b.HistoricalProject)
 }

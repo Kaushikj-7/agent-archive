@@ -744,7 +744,7 @@ func replayRegistrationMatches(store *state.Store, cfg config.Config, intent adm
 	if err != nil || !found {
 		return false, err
 	}
-	return replayProjectMatches(cfg, intent, reg) &&
+	return reg.HistoricalProject == nil && replayProjectMatches(cfg, intent, reg) &&
 		archive.CanonicalHarness(reg.Harness.Name) == archive.CanonicalHarness(intent.Harness) && reg.NativeSessionID == intent.NativeSessionID && cfg.AcceptSession(reg), nil
 }
 

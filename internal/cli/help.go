@@ -672,6 +672,16 @@ Example: claude "$(agent-archive handoff --latest --harness codex)"
 Example: agent-archive handoff SESSION_ID --to claude --worktree
 Example: agent-archive handoff SESSION_ID --to codex -- --model o3
 `,
+	"historical-project": `Usage: agent-archive historical-project list
+       agent-archive historical-project rename PROJECT_ID LABEL
+       agent-archive historical-project enable PROJECT_ID
+       agent-archive historical-project disable PROJECT_ID
+
+Manage stable historical project identities without authorizing native capture.
+Enable and disable affect permission in the current destination. Rename changes
+only the display label. Introduce an identity with a confirmed mapping-file
+import.
+`,
 	"backfill": `Usage: agent-archive backfill [options]
        agent-archive backfill history
        agent-archive backfill undo [IMPORT_ID] [--project DIR] [--yes]
@@ -688,6 +698,7 @@ finish after native files disappear. Staging shares a 1 GiB quota with pending
 publication. History reports admitted and remotely verified uploads separately.
   --harness NAME        Only claude, codex, or cursor (repeatable)
   --project DIR         Only this project; it need not still exist (repeatable)
+  --mapping-file FILE          Bounded JSON project assignments
   --map-project OLD=ROOT Exact missing cwd to included root (repeatable)
   --since DATE|TIME|AGE Sessions started on or after this local day (list's
                         --since uses UTC): a date (2026-09-01), an RFC 3339
@@ -717,6 +728,9 @@ Example: agent-archive backfill history
 `,
 	"backfill undo": `Usage: agent-archive backfill undo [IMPORT_ID] [--project DIR] [--yes]
                                 [--restore-retention]
+
+Historical identities and destination permissions remain explicit settings;
+use historical-project disable PROJECT_ID to stop their retained maintenance.
 
 Remove the latest import, or the import IMPORT_ID from backfill history: its
 sessions are deleted from the bucket and this machine, and the projects it added

@@ -205,6 +205,7 @@ func parseBackfillOptions(args []string, stderr io.Writer, env Env) (backfillCom
 	fs.Var(&harnesses, "harness", "only sessions from this app (claude, codex, cursor); repeatable")
 	fs.Var(&projects, "project", "only sessions in this project directory; repeatable")
 	fs.Var(&mappings, "map-project", "map exact missing OLD_CWD=CONFIGURED_ROOT for this import; repeatable")
+	mappingFile := fs.String("mapping-file", "", "bounded JSON file assigning exact original cwds to configured or historical projects")
 	since := fs.String("since", "", "only sessions started on or after this local date (YYYY-MM-DD)")
 	until := fs.String("until", "", "only sessions started on or before this local date (YYYY-MM-DD)")
 	includeHome := fs.Bool("include-home", false, "import sessions run from the home directory")
@@ -240,6 +241,12 @@ func parseBackfillOptions(args []string, stderr io.Writer, env Env) (backfillCom
 		Harnesses:       harnesses, Projects: projects, Since: sinceDay, Until: untilDay,
 		SinceArg: relativeTimeArg(*since), UntilArg: relativeTimeArg(*until),
 		IncludeHome: *includeHome, IncludeTemp: *includeTemp, IncludeRemoved: *includeRemoved,
+	}
+	if *mappingFile != "" {
+		if err := readBackfillMappingFile(*mappingFile, &filters); err != nil {
+			return usageError(err.Error())
+		}
+		filters.MappingFile = *mappingFile
 	}
 	filters, err = filters.Canonicalize(env.agentRegistry())
 	if err != nil {
@@ -817,4 +824,23 @@ func (s archiveState) Classify(harness, nativeSessionID string) (backfill.SkipRe
 		return backfill.SkipRemovedByUndo, nil
 	}
 	return backfill.SkipRemovedByRetention, nil
+}
+
+func readBackfillMappingFile(path string, filters *backfill.Filters) error {
+	before, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if !before.Mode().IsRegular() || before.Size() > backfill.MappingFileLimit {
+		return errors.New("mapping file must be a regular file of at most 4 MiB")
+	}
+	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return err
+	}
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() || !os.SameFile(before, info) {
+		return errors.Join(errors.New("mapping file changed before opening"), err, file.Close())
+	}
+	return errors.Join(backfill.ReadMappingFile(file, filters), file.Close())
 }

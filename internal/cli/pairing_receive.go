@@ -322,6 +322,15 @@ func pairingCaptureSettings(p *prompter, payload pairing.Payload, cfg, existing 
 			terminal.Printf(p.out, "Handoff %s arguments: %s\n", agent, strings.Join(quoted, " "))
 		}
 	}
+	var historical []config.HistoricalProject
+	for _, project := range payload.HistoricalProjects {
+		historical = append(historical, config.HistoricalProject{ID: project.ID, Label: project.Label, Permissions: []config.HistoricalProjectPermission{{DestinationID: cfg.DestinationID(), Enabled: project.Enabled}}})
+		terminal.Printf(p.out, "Historical project %s [%s]: import-only permission for this destination. Local decisions are preserved.\n", project.Label, project.ID)
+	}
+	cfg.HistoricalProjects = config.ReconcileHistoricalProjects(existing.HistoricalProjects, historical)
+	if len(cfg.HistoricalProjects) > 0 {
+		cfg.HistoricalProjectProtection = true
+	}
 	cfg.Archive.Projects, err = pairScope(p, payload, existing, userHome, env, opts.yes)
 	if err != nil {
 		return cfg, err

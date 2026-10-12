@@ -3,6 +3,8 @@ package backfill
 import (
 	"context"
 	"errors"
+	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
@@ -34,6 +36,19 @@ func filterImportSource(ctx context.Context, env Environment, w *work, started t
 		budget = shared.NativeReadBudget()
 	}
 	environment := agentapi.SourceEnvironment{ReadBudget: budget, CodexRollouts: env.CodexRollouts, RequireConfinedHistory: true, Files: sourcefacts.RootOpener{Root: root}, Policy: transcriptio.OpenPolicy{Root: root, RejectSymlinks: true}}
+	if w.res.historical != nil {
+		environment.HistorySourceAllowed = func(cwd string) bool {
+			if env.HistoricalSourceAllowed != nil && !env.HistoricalSourceAllowed(cwd) {
+				return false
+			}
+			for _, path := range uniquePaths(filepath.Clean(cwd), env.resolved(cwd)) {
+				if !slices.Contains(w.res.historical.SourceCwds, path) {
+					w.res.historical.SourceCwds = append(w.res.historical.SourceCwds, path)
+				}
+			}
+			return len(w.res.historical.SourceCwds) <= 2*archive.MaxHistorySpans
+		}
+	}
 	pass, err := provider.OpenPass(ctx, environment)
 	if err != nil {
 		return out, release, err

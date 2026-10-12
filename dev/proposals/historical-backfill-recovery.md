@@ -468,6 +468,17 @@ resume, rerun, continued capture and exact undo ownership.
 
 ### Step 6a: historical-only ownership and bulk mappings
 
+Implementation contract reconciled against main `7cfcc565`: this change adds
+strict bounded mapping JSON, separate opaque historical identities and
+destination permissions, frozen private dependency cwd evidence, retained-only
+publication/local reads and permanent v10 compatibility protection. Existing
+staging/history foundations are reused. Original-vs-selected-revision admission
+and remote history-presence verification receive narrow prerequisite repairs.
+Undo retains historical identities and import permissions as explicit settings;
+it removes only batch-owned sessions/evidence. The operational contract is in
+the [backfill spec](../specs/backfill.md#historical-only-ownership-and-bounded-mapping-files).
+Fragment work in 6b and platform/provider release acceptance remain open.
+
 Keep exact `--map-project` for existing configured destinations. Add a bounded
 reviewable mapping-file workflow for many original cwds, with conflict checks
 and a canonical digest included in batch resume identity. Any new flags below

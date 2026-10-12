@@ -246,6 +246,9 @@ func registerImportLocked(env Env, stdout, stderr io.Writer, home string, plan b
 		onCapacity = importCapacityDrain(env, stdout, home, store, lookup, readHomes, interrupt.requested)
 	}
 	registration := backfill.Registration{
+		HistoricalSourcePolicy: func(current config.Config) func(string) bool {
+			return backfill.NewHistoricalSourcePolicy(env.backfillEnvironment(plan.Home, current), current, plan.Filters)
+		},
 		OnCapacity:     onCapacity,
 		DurableSources: true, CodexRollouts: lookup, ConfiguredCodexHomes: readHomes,
 		AfterStage: func(id string) error {
@@ -487,6 +490,7 @@ func commitAdmitted(ctx context.Context, env Env, home string, plan backfill.Pla
 	}
 	previous := cfg
 	previous.Archive.Projects = slices.Clone(cfg.Archive.Projects)
+	previous.HistoricalProjects = slices.Clone(cfg.HistoricalProjects)
 	changes, err := backfill.ApplyToConfig(&cfg, plan, admittedAt)
 	if err != nil {
 		return batch, admittedAt, 0, fmt.Errorf("%w. Nothing was changed", err)
@@ -979,7 +983,7 @@ func importCapacityDrain(env Env, stdout io.Writer, home string, store *state.St
 		if err != nil {
 			return err
 		}
-		result, err := collector.Run(ctx, store, remote, collector.Options{Sources: env.agentRegistry(), Parsers: parsersFor(env), Decoders: env.agentRegistry(), MachineID: current.MachineID, Now: env.Now, AcceptSession: current.AcceptSession, SkillEvidence: current.EffectiveSkillEvidence(), RequireSkillUse: current.RequireSkillUse, CursorDatabase: env.cursorDatabase(), CodexRollouts: lookup, ConfiguredCodexHomes: readHomes, RepoKey: env.repoKey, Stop: stop})
+		result, err := collector.Run(ctx, store, remote, collector.Options{Sources: env.agentRegistry(), Parsers: parsersFor(env), Decoders: env.agentRegistry(), MachineID: current.MachineID, Now: env.Now, AcceptSession: current.AcceptSession, HistoricalProjectLabel: current.HistoricalProjectLabel, SkillEvidence: current.EffectiveSkillEvidence(), RequireSkillUse: current.RequireSkillUse, CursorDatabase: env.cursorDatabase(), CodexRollouts: lookup, ConfiguredCodexHomes: readHomes, RepoKey: env.repoKey, Stop: stop})
 		if err != nil {
 			return err
 		}

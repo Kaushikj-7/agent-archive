@@ -73,6 +73,8 @@ const (
 // private file elsewhere; see destination.Config.R2CredentialRef)
 // and S3 credentials are resolved through the named AWS profile.
 type Config struct {
+	HistoricalProjects          []HistoricalProject `json:"historical_projects,omitempty"`
+	HistoricalProjectProtection bool                `json:"historical_project_protection,omitempty"`
 	// CodexNameLookup selects files (default) or explicitly opted-in native startup.
 	CodexNameLookup CodexNameLookup     `json:"codex_name_lookup,omitempty"`
 	CodexCapture    *CodexCaptureConfig `json:"codex_capture,omitempty"`
@@ -287,6 +289,9 @@ func decodeLoadedConfig(data []byte, readErr error, name string, c agentmeta.Cat
 	if err := cfg.ValidateSpares(); err != nil {
 		return Config{}, false, false, err
 	}
+	if err := cfg.ValidateHistoricalProjects(); err != nil {
+		return Config{}, false, false, err
+	}
 	if err := cfg.ValidateMachine(); err != nil {
 		return Config{}, false, false, err
 	}
@@ -324,6 +329,12 @@ func SaveWithCatalog(home string, cfg Config, c agentmeta.Catalog) error {
 		return err
 	}
 	if err := cfg.ValidateSpares(); err != nil {
+		return err
+	}
+	if len(cfg.HistoricalProjects) > 0 {
+		cfg.HistoricalProjectProtection = true
+	}
+	if err := cfg.ValidateHistoricalProjects(); err != nil {
 		return err
 	}
 	if err := cfg.ValidateMachine(); err != nil {
@@ -415,6 +426,9 @@ func (c Config) AcceptSession(r archive.SessionRegistration) bool {
 	if !c.acceptsHarness(r) {
 		return false
 	}
+	if r.HistoricalProject != nil {
+		return c.AcceptHistoricalProject(r)
+	}
 	admitted := r.Admitted()
 	if r.CodexAdmission != nil && r.Harness.Name == "codex" && !r.Imported() && r.CodexAdmission.Generation != "" && r.CodexAdmission.Revision != "" && filepath.IsAbs(r.CodexAdmission.Cwd) && slices.Contains(c.Harnesses, "codex") && c.Archive.Enabled && r.ProjectID == archive.ProjectID(r.ProjectRoot) {
 		if c.EffectiveCodexCaptureScope() == CodexIncludedProjects {
@@ -439,7 +453,7 @@ func (c Config) AcceptSession(r archive.SessionRegistration) bool {
 			return p.ActivatedAt.IsZero() || !admitted.Before(p.ActivatedAt)
 		}
 	}
-	return c.CodexCapture == nil && len(c.Archive.Projects) == 0 // older programmatic configurations
+	return !c.HistoricalProjectProtection && c.CodexCapture == nil && len(c.Archive.Projects) == 0 // older programmatic configurations
 }
 
 // InCurrentDestination reports whether a registration published to the

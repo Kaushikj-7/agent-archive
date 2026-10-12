@@ -7,6 +7,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
@@ -39,6 +40,8 @@ const (
 // keeps `pause` out (it takes that lock), so collection cannot be paused
 // while registration runs; each hold still rereads the configuration.
 type Registration struct {
+	// HistoricalSourcePolicy binds reviewed source-location restrictions to current config.
+	HistoricalSourcePolicy func(config.Config) func(string) bool
 	// Context bounds outside-lock repository validation; nil gets 30 seconds per slice.
 	Context context.Context
 	Sources agentapi.SourcesLookup
@@ -249,6 +252,10 @@ func (r Registration) resolveRepoKeys(works []*parentWork, repoKeys map[string]s
 		limit = r.MaxHoldSteps
 	}
 	for _, w := range works[:min(limit, len(works))] {
+		if w.c.HistoricalProject != nil {
+			w.repoKeyChecked = true
+			continue
+		}
 		if w.repoKeyChecked {
 			continue
 		}
@@ -436,9 +443,9 @@ func (r Registration) subagent(w *parentWork, sub Subagent) error {
 		// A hook registered this subagent already.
 		return err
 	}
-	candidate := state.SubagentCandidate{
+	candidate := state.SubagentCandidate{HistoricalProject: c.HistoricalProject,
 		ArchiveSessionID: childID, NativeSessionID: childNativeID, ParentArchiveSessionID: w.id, ParentNativeSessionID: c.NativeSessionID,
-		ProjectID: archive.ProjectID(c.ProjectRoot), ProjectRoot: c.ProjectRoot, Harness: archive.Harness{Name: c.Harness}, AgentID: sub.AgentID, TranscriptPath: sub.Path, ObservedAt: r.AdmittedAt, Origin: archive.SessionOriginImport,
+		ProjectID: c.ProjectIdentity(), ProjectRoot: c.ProjectRoot, Harness: archive.Harness{Name: c.Harness}, AgentID: sub.AgentID, TranscriptPath: sub.Path, ObservedAt: r.AdmittedAt, Origin: archive.SessionOriginImport,
 	}
 	if r.DurableSources {
 		staged, ok := w.stagedChildren[sub.AgentID]
@@ -472,10 +479,10 @@ func (r Registration) registration(c Candidate, archiveID, repoKey string) archi
 		repoKey = c.ProjectResolution.RecordedRepoKey
 	}
 	return archive.SessionRegistration{
-		CodexBinding: c.CodexBinding, ProjectResolution: c.ProjectResolution, NativeChild: c.NativeChild, NativeRootSessionID: c.RootNativeID, ParentNativeSessionID: c.ParentNativeID, NativeSourceHome: c.NativeHome,
+		HistoricalProject: c.HistoricalProject, CodexBinding: c.CodexBinding, ProjectResolution: c.ProjectResolution, NativeChild: c.NativeChild, NativeRootSessionID: c.RootNativeID, ParentNativeSessionID: c.ParentNativeID, NativeSourceHome: c.NativeHome,
 		ArchiveSessionID: archiveID,
 		NativeSessionID:  c.NativeSessionID,
-		ProjectID:        archive.ProjectID(c.ProjectRoot),
+		ProjectID:        c.ProjectIdentity(),
 		ProjectRoot:      c.ProjectRoot,
 		RepoKey:          repoKey,
 		Harness:          archive.Harness{Name: c.Harness},
@@ -557,7 +564,30 @@ func (r Registration) stage(ctx context.Context, w *parentWork) error {
 		w.projectEvidenceStale = true
 		return nil
 	}
-	bundle, preserved, selectedBinding, err := collector.ReadImportSourceSelection(ctx, reg, r.AdmittedAt, collector.Options{Sources: r.Sources, CursorDatabase: r.CursorDatabase, CodexRollouts: r.CodexRollouts, ConfiguredCodexHomes: r.ConfiguredCodexHomes})
+	var sourceAllowed func(string) bool
+	if reg.HistoricalProject != nil {
+		if r.HistoricalSourcePolicy == nil {
+			return errors.New("historical import requires reviewed original source restrictions")
+		}
+		sourceAllowed = r.HistoricalSourcePolicy(cfg)
+	}
+	bundle, preserved, selectedBinding, err := collector.ReadImportSourceSelection(ctx, reg, r.AdmittedAt, collector.Options{HistoricalSourceAllowed: func(cwd string) bool {
+		canonical := local.CanonicalPath(cwd)
+		if sourceAllowed != nil && !sourceAllowed(cwd) {
+			return false
+		}
+		if reg.HistoricalProject != nil {
+			for _, path := range uniquePaths(filepath.Clean(cwd), canonical) {
+				if !slices.Contains(reg.HistoricalProject.SourceCwds, path) {
+					reg.HistoricalProject.SourceCwds = append(reg.HistoricalProject.SourceCwds, path)
+				}
+			}
+			if len(reg.HistoricalProject.SourceCwds) > 2*archive.MaxHistorySpans {
+				return false
+			}
+		}
+		return true
+	}, Sources: r.Sources, CursorDatabase: r.CursorDatabase, CodexRollouts: r.CodexRollouts, ConfiguredCodexHomes: r.ConfiguredCodexHomes})
 	if err != nil {
 		return fmt.Errorf("stage imported evidence before admission: %w", err)
 	}
@@ -575,7 +605,7 @@ func (r Registration) stage(ctx context.Context, w *parentWork) error {
 		if err != nil {
 			return err
 		}
-		candidate := state.SubagentCandidate{ArchiveSessionID: childID, NativeSessionID: childNative, ParentArchiveSessionID: w.id, ParentNativeSessionID: w.c.NativeSessionID, ProjectID: reg.ProjectID, ProjectRoot: reg.ProjectRoot, Harness: reg.Harness, AgentID: sub.AgentID, TranscriptPath: sub.Path, ObservedAt: r.AdmittedAt, Origin: archive.SessionOriginImport}
+		candidate := state.SubagentCandidate{HistoricalProject: reg.HistoricalProject, ArchiveSessionID: childID, NativeSessionID: childNative, ParentArchiveSessionID: w.id, ParentNativeSessionID: w.c.NativeSessionID, ProjectID: reg.ProjectID, ProjectRoot: reg.ProjectRoot, Harness: reg.Harness, AgentID: sub.AgentID, TranscriptPath: sub.Path, ObservedAt: r.AdmittedAt, Origin: archive.SessionOriginImport}
 		childDigest, err := r.stageSelectedChild(ctx, reg, candidate, cfg.EffectiveSkillEvidence())
 		if err != nil {
 			return err

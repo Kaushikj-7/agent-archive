@@ -33,7 +33,11 @@ import (
 // local.Lock(home) around Run; Run itself does not acquire it, so it stays
 // simple to call directly from tests.
 type Options struct {
-	labelReadObserver func(int64)
+	// HistoricalSourceAllowed vetoes explicitly excluded native dependencies at staging.
+	HistoricalSourceAllowed func(string) bool
+	// HistoricalProjectLabel resolves mutable display state without filesystem access.
+	HistoricalProjectLabel func(string) string
+	labelReadObserver      func(int64)
 	// Labels supplies optional bounded native metadata for existing retained sessions.
 	Labels           agentapi.LabelsLookup
 	LabelEnvironment agentapi.LabelEnvironment

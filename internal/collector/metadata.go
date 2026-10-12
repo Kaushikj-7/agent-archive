@@ -75,7 +75,13 @@ func regenerateMetadata(s *sessionScan) (outcome sessionOutcome, handled bool, e
 	}
 	prior := last.metadata
 	sameParser := prior.Parser.Version == s.parserVersion()
-	if sameParser && !last.legacy {
+	projectLabel := prior.ProjectName
+	if s.reg.HistoricalProject != nil {
+		preview := prior
+		applyProjectName(&preview, s.reg, s.opts)
+		projectLabel = preview.ProjectName
+	}
+	if sameParser && !last.legacy && projectLabel == prior.ProjectName {
 		return outcomeSkipped, false, nil
 	}
 	// The metadata must describe the source actually uploaded last, as
@@ -109,7 +115,7 @@ func regenerateMetadata(s *sessionScan) (outcome sessionOutcome, handled bool, e
 	if err := s.published.CacheMetadata(last.encoded); err != nil {
 		return outcomeSkipped, false, err
 	}
-	if sameParser {
+	if sameParser && projectLabel == prior.ProjectName {
 		// The same parser over the same retained source yields the same
 		// result, including a failed parse: nothing to rebuild.
 		return outcomeSkipped, false, nil
@@ -124,7 +130,12 @@ func regenerateMetadata(s *sessionScan) (outcome sessionOutcome, handled bool, e
 	if err != nil || !changed {
 		return outcomeSkipped, false, err
 	}
-	pending := state.PendingPublication{SkillEvidence: string(s.opts.skillEvidence()), MetadataOnly: true, Bundle: last.bundle, SourceKey: source.ref.Key, MetadataKey: key, SourceSHA256: source.ref.SHA256, SourceBytes: source.bytes, SourceSize: source.ref.CompressedBytes, MetadataBytes: metadataBytes, ReadyAt: s.now, Attempted: true}
+	pending := state.PendingPublication{ImportExpectedMetadataSHA256: func() string {
+		if s.reg.StagedImportSHA256 != "" {
+			return metadataSHA(last.encoded)
+		}
+		return ""
+	}(), SkillEvidence: string(s.opts.skillEvidence()), MetadataOnly: true, Bundle: last.bundle, SourceKey: source.ref.Key, MetadataKey: key, SourceSHA256: source.ref.SHA256, SourceBytes: source.bytes, SourceSize: source.ref.CompressedBytes, MetadataBytes: metadataBytes, ReadyAt: s.now, Attempted: true}
 	if err := s.local.SavePending(s.id(), pending); err != nil {
 		return outcomeSkipped, false, err
 	}
@@ -145,7 +156,7 @@ func (s *sessionScan) refreshedMetadata(last lastPublication, source archive.Sou
 	}
 	next, buildErr := archive.BuildMetadataWithAnalysis(last.bundle, analysis, parseErr, s.opts.MachineID, s.reg.SessionStartedAt, s.now, source, archive.ParserInfo{Version: s.parserVersion()})
 	next.ApplyRegistrationProvenance(s.reg)
-	next.ApplyProjectName(s.reg.ProjectRoot)
+	applyProjectName(&next, s.reg, s.opts)
 	next.ApplyRepoKey(s.opts.repoKeyOr(s.reg, func() string { return prior.RepoKey }))
 	next.ApplyGitHead(s.reg)
 	next.ApplyReplay(s.reg)
@@ -268,7 +279,7 @@ type refreshSource struct {
 // (rotated, oversize, unsafe) reports no change: regeneration is then the
 // only way the summary can move.
 func (s *sessionScan) liveTranscriptChanged(lastPublished archive.SourceBundle) bool {
-	if s.reg.CaptureFrozen {
+	if s.reg.CaptureFrozen || s.reg.HistoricalProject != nil {
 		return false
 	}
 	source, ok := newSourceReader(s.reg, s.opts)

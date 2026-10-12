@@ -76,7 +76,7 @@ func prepareDiscoveryConfig(c *Config) error {
 	if err := ValidateRetentionDays(c.RetentionDays); err != nil {
 		return err
 	}
-	if (c.SchemaVersion > 5 && c.SchemaVersion != 7 && c.SchemaVersion != 8 && c.SchemaVersion != 9) || (c.SchemaVersion == 9 && !c.ImportStagingProtection) || (c.SchemaVersion == 8 && !c.RetentionProtection) || (c.SchemaVersion == 7 && !c.DurableStorageProtection) || (c.SchemaVersion == 5 && !c.CodexHistoryProtection) || (c.SchemaVersion == 4 && !c.GenerationProtection) || (c.SchemaVersion == 3 && c.CodexCapture == nil) {
+	if unsupportedPreparedWriter(*c) {
 		return errors.New("configuration requires a newer agent-archive writer")
 	}
 	if c.Discovery != nil {
@@ -117,11 +117,18 @@ func prepareDiscoveryConfig(c *Config) error {
 	if c.ImportStagingProtection {
 		c.SchemaVersion = 9
 	}
+	if c.HistoricalProjectProtection {
+		c.SchemaVersion = 10
+	}
 	return validateDiscoveryConfig(*c)
 }
 
 func validateDiscoveryConfig(c Config) error {
 	var err error
+	c, err = peelHistoricalProjectProtection(c)
+	if err != nil {
+		return err
+	}
 	c, err = peelImportStagingProtection(c)
 	if err != nil {
 		return err
@@ -568,4 +575,45 @@ func peelImportStagingProtection(c Config) (Config, error) {
 		c.SchemaVersion = 8
 	}
 	return c, nil
+}
+
+// peelHistoricalProjectProtection preserves every underlying writer floor.
+func peelHistoricalProjectProtection(c Config) (Config, error) {
+	if c.SchemaVersion > 10 || c.SchemaVersion == 10 && !c.HistoricalProjectProtection {
+		return c, errors.New("configuration requires a newer agent-archive writer")
+	}
+	if !c.HistoricalProjectProtection {
+		return c, nil
+	}
+	if c.SchemaVersion != 10 {
+		return c, errors.New("historical project protection requires schema 10")
+	}
+	c.HistoricalProjectProtection = false
+	c.SchemaVersion = 1
+	if c.Discovery != nil {
+		c.SchemaVersion = 2
+	}
+	if c.CodexCapture != nil {
+		c.SchemaVersion = 3
+	}
+	if c.GenerationProtection {
+		c.SchemaVersion = 4
+	}
+	if c.CodexHistoryProtection {
+		c.SchemaVersion = 5
+	}
+	if c.DurableStorageProtection {
+		c.SchemaVersion = 7
+	}
+	if c.RetentionProtection {
+		c.SchemaVersion = 8
+	}
+	if c.ImportStagingProtection {
+		c.SchemaVersion = 9
+	}
+	return c, nil
+}
+
+func unsupportedPreparedWriter(c Config) bool {
+	return (c.SchemaVersion > 5 && c.SchemaVersion != 7 && c.SchemaVersion != 8 && c.SchemaVersion != 9 && c.SchemaVersion != 10) || (c.SchemaVersion == 10 && !c.HistoricalProjectProtection) || (c.SchemaVersion == 9 && !c.ImportStagingProtection) || (c.SchemaVersion == 8 && !c.RetentionProtection) || (c.SchemaVersion == 7 && !c.DurableStorageProtection) || (c.SchemaVersion == 5 && !c.CodexHistoryProtection) || (c.SchemaVersion == 4 && !c.GenerationProtection) || (c.SchemaVersion == 3 && c.CodexCapture == nil)
 }

@@ -159,6 +159,14 @@ func privacyPublicationVerified(home string, cfg config.Config, store *state.Sto
 	if err != nil || record.Outcome != verificationOutcomeVerified || record.VerifiedAt.IsZero() || record.ConfigurationID != sessionVerificationConfigurationID(cfg, reg) || record.SourceSHA256 != current.SourceBundle.SHA256 {
 		return false
 	}
+	publishedAuthority, authorityErr := store.LoadPublishedState(reg.ArchiveSessionID)
+	if authorityErr != nil {
+		return false
+	}
+	var localAuthority archive.Metadata
+	if json.Unmarshal(publishedAuthority.Metadata(), &localAuthority) != nil || (localAuthority.History == nil) != (current.History == nil) {
+		return false
+	}
 	if current.History != nil {
 		set, err := current.SourceSetDigest()
 		raw, marshalErr := json.Marshal(current)
@@ -400,11 +408,14 @@ func verifyPublication(ctx context.Context, cfg config.Config, remote storage.Ob
 	if metadata.MachineID != cfg.MachineID {
 		return "", fmt.Errorf("%w: metadata ownership does not match this machine", errVerificationMismatch)
 	}
+	var expectedMetadata archive.Metadata
+	if err := json.Unmarshal(published.Metadata(), &expectedMetadata); err != nil {
+		return "", err
+	}
+	if (metadata.History == nil) != (expectedMetadata.History == nil) {
+		return "", fmt.Errorf("%w: remote history presence differs from local publication", errVerificationMismatch)
+	}
 	if metadata.History != nil {
-		var expectedMetadata archive.Metadata
-		if err := json.Unmarshal(published.Metadata(), &expectedMetadata); err != nil {
-			return "", err
-		}
 		expectedDigest, err := expectedMetadata.SourceSetDigest()
 		if err != nil {
 			return "", err

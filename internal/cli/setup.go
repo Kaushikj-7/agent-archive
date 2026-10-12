@@ -390,6 +390,8 @@ func reviewedSetupConfig(existing config.Config, draft setupDraft) config.Config
 	if cfg.RetentionDays == 0 && !cfg.RetentionProtection {
 		cfg.RetentionDays = defaultRetentionDays
 	}
+	cfg.HistoricalProjects = config.ReconcileHistoricalProjects(existing.HistoricalProjects, cfg.HistoricalProjects)
+	cfg.HistoricalProjectProtection = cfg.HistoricalProjectProtection || existing.HistoricalProjectProtection
 	cfg.ImportedHarnesses = carriedImportedHarnesses(existing.ImportedHarnesses, cfg.Harnesses, draft.StopImported)
 	return cfg
 }

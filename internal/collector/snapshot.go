@@ -53,6 +53,23 @@ func ReadLocalBundle(ctx context.Context, home string, reg archive.SessionRegist
 		}
 		return refilterBundleBounded(ctx, reg, adapter, stage.Bundle, agentapi.ReadLimits{FilteredBytes: DefaultMaxTranscriptBytes, RecordBytes: archive.MaxRecordBytes})
 	}
+	if reg.HistoricalProject != nil {
+		if err := reg.ValidateHistoricalProject(); err != nil {
+			return archive.SourceBundle{}, err
+		}
+		if publishedErr != nil {
+			return archive.SourceBundle{}, publishedErr
+		}
+		bundle, _, found := published.LastPublished()
+		if !found {
+			return archive.SourceBundle{}, state.ErrDurableStorageRecovery
+		}
+		adapter, err := sourceAdapter(sources, reg.Harness.Name)
+		if err != nil {
+			return archive.SourceBundle{}, err
+		}
+		return refilterBundleBounded(ctx, reg, adapter, bundle, agentapi.ReadLimits{FilteredBytes: DefaultMaxTranscriptBytes, RecordBytes: archive.MaxRecordBytes})
+	}
 	source, ok := newSourceReader(reg, Options{CursorDatabase: cursorDatabase, Sources: sources})
 	if !ok {
 		return archive.SourceBundle{}, ErrNoTranscript
@@ -100,6 +117,10 @@ func LastActivities(ctx context.Context, regs []archive.SessionRegistration, dat
 	}
 	groups := map[sourcePassKey][]archive.SessionRegistration{}
 	for _, reg := range regs {
+		if reg.HistoricalProject != nil {
+			out[reg.ArchiveSessionID] = reg.Admitted()
+			continue
+		}
 		key := sourcePassKey{name: reg.Harness.Name, discovery: reg.Origin == archive.SessionOriginDiscovery}
 		if key.discovery {
 			key.root = reg.DiscoveryRoot

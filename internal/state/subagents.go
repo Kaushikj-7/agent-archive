@@ -19,16 +19,17 @@ import (
 // SubagentCandidate is local operational state written by a bounded hook.
 // TranscriptPath is never copied into an archive bundle or metadata sidecar.
 type SubagentCandidate struct {
-	ArchiveSessionID       string          `json:"archive_session_id"`
-	NativeSessionID        string          `json:"native_session_id"`
-	ParentArchiveSessionID string          `json:"parent_archive_session_id"`
-	ParentNativeSessionID  string          `json:"parent_native_session_id"`
-	ProjectID              string          `json:"project_id"`
-	ProjectRoot            string          `json:"project_root"`
-	Harness                archive.Harness `json:"harness"`
-	AgentID                string          `json:"agent_id"`
-	TranscriptPath         string          `json:"transcript_path"`
-	ObservedAt             time.Time       `json:"observed_at"`
+	HistoricalProject      *archive.HistoricalProjectProof `json:"historical_project,omitempty"`
+	ArchiveSessionID       string                          `json:"archive_session_id"`
+	NativeSessionID        string                          `json:"native_session_id"`
+	ParentArchiveSessionID string                          `json:"parent_archive_session_id"`
+	ParentNativeSessionID  string                          `json:"parent_native_session_id"`
+	ProjectID              string                          `json:"project_id"`
+	ProjectRoot            string                          `json:"project_root"`
+	Harness                archive.Harness                 `json:"harness"`
+	AgentID                string                          `json:"agent_id"`
+	TranscriptPath         string                          `json:"transcript_path"`
+	ObservedAt             time.Time                       `json:"observed_at"`
 	// Origin is who found the subagent: a SubagentStop hook (empty or
 	// SessionOriginHook) or backfill (SessionOriginImport). Only a hook
 	// candidate carries a SubagentStop lifecycle event.
@@ -60,9 +61,10 @@ func (s *Store) subagentCandidatePath(id string) string {
 // a later event to replace the path or ownership established by the first.
 // AgentType is not part of ownership: the first non-empty one is kept.
 func (s *Store) SaveSubagentCandidate(candidate SubagentCandidate) error {
-	if !safeFileComponent(candidate.ArchiveSessionID) || candidate.NativeSessionID == "" || !safeFileComponent(candidate.ParentArchiveSessionID) || candidate.ParentNativeSessionID == "" || candidate.ProjectID == "" || candidate.ProjectRoot == "" || candidate.Harness.Name == "" || candidate.AgentID == "" || candidate.TranscriptPath == "" || candidate.ObservedAt.IsZero() {
+	if !safeFileComponent(candidate.ArchiveSessionID) || candidate.NativeSessionID == "" || !safeFileComponent(candidate.ParentArchiveSessionID) || candidate.ParentNativeSessionID == "" || candidate.ProjectID == "" || !candidate.validProjectOwnership() || candidate.Harness.Name == "" || candidate.AgentID == "" || candidate.TranscriptPath == "" || candidate.ObservedAt.IsZero() {
 		return ErrSubagentCandidateIncomplete
 	}
+
 	if _, err := agentmeta.NewSessionKey(candidate.Harness.Name, candidate.NativeSessionID); err != nil {
 		return err
 	}
@@ -337,4 +339,11 @@ func (s *Store) subagentCandidatesForSession(id string) ([]string, error) {
 		}
 	}
 	return ids, nil
+}
+
+func (candidate SubagentCandidate) validProjectOwnership() bool {
+	if candidate.HistoricalProject == nil {
+		return candidate.ProjectRoot != ""
+	}
+	return candidate.Origin == archive.SessionOriginImport && candidate.ProjectRoot == "" && candidate.ProjectID == candidate.HistoricalProject.ProjectID && candidate.StagedImportSHA256 != ""
 }
