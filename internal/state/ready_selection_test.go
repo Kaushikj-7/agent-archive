@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"maps"
 	"os"
 	"strings"
 	"testing"
@@ -150,9 +151,7 @@ func TestReadySelectionWireRefusesAmbiguousAndUnversionedAuthority(t *testing.T)
 	}
 	for _, version := range []json.RawMessage{nil, []byte(`null`), []byte(`1`)} {
 		copyFields := map[string]json.RawMessage{}
-		for k, v := range fields {
-			copyFields[k] = v
-		}
+		maps.Copy(copyFields, fields)
 		if version == nil {
 			delete(copyFields, "journal_version")
 		} else {

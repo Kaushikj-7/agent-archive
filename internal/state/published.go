@@ -3,6 +3,7 @@ package state
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -395,6 +396,21 @@ func PublishedStateLoads() int64 { return publishedStateLoads.Load() }
 // LoadPublishedState reads a session's published state. A session with none
 // yet yields an empty one (Found reports false) that saves create.
 func (s *Store) LoadPublishedState(archiveSessionID string) (*Published, error) {
+	return s.loadPublishedStateContext(s.durableContext(), archiveSessionID)
+}
+
+// LoadPublishedStateContext inherits the invocation context without creating a
+// different resource scope or releasing the caller's retained decoded owner.
+func (s *Store) LoadPublishedStateContext(ctx context.Context, archiveSessionID string) (*Published, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	read := *s
+	read.resourceContext = ctx
+	return read.loadPublishedStateContext(ctx, archiveSessionID)
+}
+
+func (s *Store) loadPublishedStateContext(ctx context.Context, archiveSessionID string) (*Published, error) {
 	if !safeFileComponent(archiveSessionID) {
 		return nil, errors.New("archive session ID is not a safe file name component")
 	}
@@ -407,7 +423,7 @@ func (s *Store) LoadPublishedState(archiveSessionID string) (*Published, error) 
 		return nil, fmt.Errorf("read published state %q: %w", archiveSessionID, s.afterLoss(archiveSessionID, err))
 	}
 	if found && p.state.PublicationVersion == 2 {
-		if err := p.preserveReadyPublished(&p.state); err != nil {
+		if err := p.preserveReadyPublished(ctx, &p.state); err != nil {
 			return nil, err
 		}
 	}
@@ -428,7 +444,7 @@ func (s *Store) LoadPublishedState(archiveSessionID string) (*Published, error) 
 }
 
 func (p *Published) write(next publishedState) error {
-	if err := p.preserveReadyPublished(&next); err != nil {
+	if err := p.preserveReadyPublished(p.store.durableContext(), &next); err != nil {
 		return err
 	}
 	summary, err := p.store.summaryBudgeted(next)

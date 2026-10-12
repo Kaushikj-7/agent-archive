@@ -908,6 +908,21 @@ func (s *Store) SavePending(id string, pending PendingPublication) error {
 // A supported legacy collector pass may quarantine damaged ordinary state.
 // Protected state stays present and returns ErrDurableStorageRecovery instead.
 func (s *Store) LoadPending(id string) (PendingPublication, bool, error) {
+	return s.loadPendingContext(s.durableContext(), id)
+}
+
+// LoadPendingContext keeps the supplied context through all selected journal
+// reads and validation while borrowing the current resource reservation owner.
+func (s *Store) LoadPendingContext(ctx context.Context, id string) (PendingPublication, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return PendingPublication{}, false, err
+	}
+	read := *s
+	read.resourceContext = ctx
+	return read.loadPendingContext(ctx, id)
+}
+
+func (s *Store) loadPendingContext(ctx context.Context, id string) (PendingPublication, bool, error) {
 	if !safeFileComponent(id) {
 		return PendingPublication{}, false, errors.New("archive session ID is not a safe file name component")
 	}
@@ -955,7 +970,7 @@ func (s *Store) LoadPending(id string) (PendingPublication, bool, error) {
 			return PendingPublication{}, true, err
 		}
 		if protected {
-			if err := s.validateReadablePending(pending); err != nil {
+			if err := s.validateReadablePendingContext(ctx, pending); err != nil {
 				return PendingPublication{}, true, errors.Join(ErrDurableStorageRecovery, err)
 			}
 		}

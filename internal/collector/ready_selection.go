@@ -25,15 +25,15 @@ func (s *sessionScan) freezeOrdinaryReadySelection(ctx context.Context, p *state
 	if err != nil {
 		return err
 	}
-	predecessor := "unknown"
+	predecessor := state.ReadyPredecessorUnknown
 	var raw []byte
 	if found {
-		predecessor = "present"
+		predecessor = state.ReadyPredecessorPresent
 		raw = s.published.Metadata()
 	} else {
 		_, e := s.historyGet(p.MetadataKey, historyMetadataLimit)
 		if errors.Is(e, storage.ErrNotFound) {
-			predecessor = "absent"
+			predecessor = state.ReadyPredecessorAbsent
 		} else if e != nil {
 			return e
 		}
@@ -50,7 +50,7 @@ func (s *sessionScan) freezeOrdinaryReadySelection(ctx context.Context, p *state
 func (s *sessionScan) checkReadySelectionRemote(p state.PendingPublication) (bool, error) {
 	raw, err := s.historyGet(p.MetadataKey, historyMetadataLimit)
 	if errors.Is(err, storage.ErrNotFound) {
-		if p.Selection.Predecessor == "absent" {
+		if p.Selection.Predecessor == state.ReadyPredecessorAbsent {
 			return false, nil
 		}
 		return false, errHistoryMetadataConflict
@@ -62,7 +62,7 @@ func (s *sessionScan) checkReadySelectionRemote(p state.PendingPublication) (boo
 	if digest == p.Selection.MetadataSHA256 {
 		return true, nil
 	}
-	if p.Selection.Predecessor == "present" && digest == p.Selection.PredecessorSHA256 {
+	if p.Selection.Predecessor == state.ReadyPredecessorPresent && digest == p.Selection.PredecessorSHA256 {
 		return false, nil
 	}
 	return false, errHistoryMetadataConflict
