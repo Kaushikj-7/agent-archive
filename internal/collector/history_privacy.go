@@ -351,8 +351,7 @@ func (s *sessionScan) prepareRetainedHistoryWork() (sessionOutcome, bool, error)
 	// A newly resolved native parent changes every retained source header. Reuse
 	// sequential maintenance against the original authority before native
 	// reconciliation can combine old-parent inputs with a new-parent sidecar.
-	parentResolved := nativeParentResolved(s.reg, bundle)
-	needed := parentResolved || nativeChildMarkerPending(s.reg, bundle) || bundle.Capture.FilterVersion != archive.FilterVersion || bundle.Capture.AdapterVersion != adapter.Version() || !sourceEvidenceWithinPolicy(bundle.SupplementalEvidence, s.opts.skillEvidence()) || authority.Parser.Version != s.parserVersion() || (s.reg.RetainedOnly()) && s.req.Token != "" || headFingerprint(s.reg.LastHead) != s.publishedLastHead()
+	needed := s.retainedHistoryMaintenanceNeeded(authority, bundle, adapter.Version())
 	for _, revision := range authority.History.Preserved {
 		needed = needed || revision.FilterVersion != archive.FilterVersion
 	}
@@ -368,6 +367,11 @@ func (s *sessionScan) prepareRetainedHistoryWork() (sessionOutcome, bool, error)
 		return outcomeSkipped, true, err
 	}
 	return outcomeSkipped, true, archive.ErrHistoryMutationPending
+}
+
+func (s *sessionScan) retainedHistoryMaintenanceNeeded(authority archive.Metadata, bundle archive.SourceBundle, adapterVersion string) bool {
+	projectRenamed := s.reg.HistoricalProject != nil && authority.ProjectName != s.opts.historicalProjectName(s.reg)
+	return projectRenamed || nativeParentResolved(s.reg, bundle) || nativeChildMarkerPending(s.reg, bundle) || bundle.Capture.FilterVersion != archive.FilterVersion || bundle.Capture.AdapterVersion != adapterVersion || !sourceEvidenceWithinPolicy(bundle.SupplementalEvidence, s.opts.skillEvidence()) || authority.Parser.Version != s.parserVersion() || s.reg.RetainedOnly() && s.req.Token != "" || headFingerprint(s.reg.LastHead) != s.publishedLastHead()
 }
 
 func (s *sessionScan) prepareStricterHistoryInput(metadata archive.Metadata, input state.HistoryInput, others []state.HistoryInput, adapter agentapi.TranscriptFilter, ceiling config.SkillEvidence, total *int) (archive.SourceBundle, archive.SourceReference, state.PendingSource, error) {

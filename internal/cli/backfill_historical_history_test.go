@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/state"
@@ -14,6 +15,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -116,6 +118,44 @@ func TestHistoricalRevisedHistoryKeepsAllSourcesWithoutNativeCheckout(t *testing
 	if len(cfg.Archive.Projects) != 0 || regs[0].HistoricalProject == nil || len(regs[0].HistoricalProject.SourceCwds) < 2 {
 		t.Fatal("history lacks independent source ownership", regs[0])
 	}
+	var renameOut, renameErr bytes.Buffer
+	if code := Run([]string{"historical-project", "rename", regs[0].ProjectID, "Renamed historical revision"}, nil, &renameOut, &renameErr, env); code != 0 {
+		t.Fatalf("rename %d %s", code, renameErr.String())
+	}
+	for range 5 {
+		result, err := runOnePass(env, true)
+		must(t, err)
+		for _, issue := range result.Errors {
+			if !errors.Is(issue, archive.ErrHistoryMutationPending) {
+				t.Fatalf("rename retained revision: %+v", result)
+			}
+		}
+	}
+	renamed, err := reader.ReadMetadata(t.Context(), cloud, key)
+	must(t, err)
+	if renamed.ProjectName != "Renamed historical revision" || renamed.ProjectID != metadata.ProjectID || !renamed.CapturedAt.Equal(metadata.CapturedAt) || renamed.SourceBundle != metadata.SourceBundle || !reflect.DeepEqual(renamed.History, metadata.History) {
+		t.Fatal("rename changed history ownership or failed to update label")
+	}
+	for range 2 {
+		result, err := runOnePass(env, true)
+		must(t, err)
+		if len(result.Errors) != 0 || len(result.Published) != 0 {
+			t.Fatalf("renamed retained history did not settle: %+v", result)
+		}
+	}
+	signature, found, err := local.LoadScanSignature(regs[0].ArchiveSessionID)
+	must(t, err)
+	if !found || !signature.Frozen || signature.PublishedProjectName != renamed.ProjectName {
+		t.Fatal("renamed history lacks a label-bound idle signature")
+	}
+	cfg = mustLoadConfig(t, home)
+	loads := state.PublishedStateLoads()
+	idle, err := collector.Run(t.Context(), local, cloud, collector.Options{Sources: env.agentRegistry(), Parsers: parsersFor(env), MachineID: cfg.MachineID, Now: env.Now, AcceptSession: cfg.AcceptSession, HistoricalProjectLabel: cfg.HistoricalProjectLabel, SkillEvidence: cfg.EffectiveSkillEvidence()})
+	must(t, err)
+	if len(idle.Errors) != 0 || len(idle.Published) != 0 || state.PublishedStateLoads() != loads {
+		t.Fatal("settled renamed history decoded retained sources or republished")
+	}
+	metadata = renamed
 	published, err := local.LoadPublishedState(regs[0].ArchiveSessionID)
 	must(t, err)
 	if _, err := verifyPublication(t.Context(), cfg, cloud, regs[0], published); err != nil {
