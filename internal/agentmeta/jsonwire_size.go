@@ -1,6 +1,6 @@
-// Package jsonwire preflights a bounded JSON wire reservation without encoding
+// JSONWireBound preflights a bounded JSON wire reservation without encoding
 // a complete document. Allocator and map/slice overhead are measured separately.
-package jsonwire
+package agentmeta
 
 import (
 	"context"
@@ -12,35 +12,35 @@ import (
 	"unicode/utf8"
 )
 
-// ErrLimit refuses an encoded value beyond its prospective reservation.
-var ErrLimit = errors.New("JSON wire size exceeds reservation limit")
+// ErrJSONWireLimit refuses an encoded value beyond its prospective reservation.
+var ErrJSONWireLimit = errors.New("JSON wire size exceeds reservation limit")
 
-// ErrUnsupported refuses unknown encoding behavior or excessive nesting.
-var ErrUnsupported = errors.New("unsupported JSON preflight value")
+// ErrJSONWireUnsupported refuses unknown encoding behavior or excessive nesting.
+var ErrJSONWireUnsupported = errors.New("unsupported JSON preflight value")
 
-// Bound counts an upper bound for encoding/json output. Omitted struct fields
+// JSONWireBound counts an upper bound for encoding/json output. Omitted struct fields
 // are included, making this conservative without guessing a heap multiplier.
 // Custom marshalers are refused except the explicit bounded wire types below.
-func Bound(ctx context.Context, value any, limit int64) (int64, error) {
-	c := counter{ctx: ctx, left: limit}
+func JSONWireBound(ctx context.Context, value any, limit int64) (int64, error) {
+	c := jsonWireCounter{ctx: ctx, left: limit}
 	err := c.value(reflect.ValueOf(value), 0)
 	return limit - c.left, err
 }
 
-type counter struct {
+type jsonWireCounter struct {
 	ctx  context.Context
 	left int64
 }
 
-func (c *counter) add(n int64) error {
+func (c *jsonWireCounter) add(n int64) error {
 	if n < 0 || n > c.left {
-		return ErrLimit
+		return ErrJSONWireLimit
 	}
 	c.left -= n
 	return nil
 }
 
-func (c *counter) text(s string) error {
+func (c *jsonWireCounter) text(s string) error {
 	if err := c.add(2); err != nil {
 		return err
 	}
@@ -71,12 +71,12 @@ func (c *counter) text(s string) error {
 	return nil
 }
 
-func (c *counter) value(v reflect.Value, depth int) error {
+func (c *jsonWireCounter) value(v reflect.Value, depth int) error {
 	if err := c.ctx.Err(); err != nil {
 		return err
 	}
 	if depth > 128 {
-		return ErrUnsupported
+		return ErrJSONWireUnsupported
 	}
 	if !v.IsValid() {
 		return c.add(4)
@@ -105,13 +105,13 @@ func (c *counter) value(v reflect.Value, depth int) error {
 	case reflect.Struct:
 		return c.structure(v, depth)
 	case reflect.Invalid, reflect.Complex64, reflect.Complex128, reflect.Chan, reflect.Func, reflect.UnsafePointer:
-		return ErrUnsupported
+		return ErrJSONWireUnsupported
 	default:
-		return ErrUnsupported
+		return ErrJSONWireUnsupported
 	}
 }
 
-func (c *counter) special(v reflect.Value) (bool, error) {
+func (c *jsonWireCounter) special(v reflect.Value) (bool, error) {
 	// ImportBatch is the archive's one bounded string wrapper. Keep this helper
 	// standard-library-only and size its recorded field without invoking its
 	// marshaler (or accepting arbitrary custom encoding behavior).
@@ -129,7 +129,7 @@ func (c *counter) special(v reflect.Value) (bool, error) {
 		}
 		id := batch.FieldByName("id")
 		if !id.IsValid() || id.Kind() != reflect.String {
-			return true, ErrUnsupported
+			return true, ErrJSONWireUnsupported
 		}
 		return true, c.text(id.String())
 	}
@@ -148,13 +148,13 @@ func (c *counter) special(v reflect.Value) (bool, error) {
 		case json.RawMessage:
 			return true, c.rawMessage(x)
 		case json.Marshaler:
-			return true, ErrUnsupported
+			return true, ErrJSONWireUnsupported
 		}
 	}
 	return false, nil
 }
 
-func (c *counter) sequence(v reflect.Value, depth int) error {
+func (c *jsonWireCounter) sequence(v reflect.Value, depth int) error {
 	if v.Kind() == reflect.Slice {
 		if v.IsNil() {
 			return c.add(4)
@@ -162,7 +162,7 @@ func (c *counter) sequence(v reflect.Value, depth int) error {
 		if v.Type().Elem().Kind() == reflect.Uint8 {
 			groups := (int64(v.Len()) + 2) / 3
 			if c.left < 2 || groups > (c.left-2)/4 {
-				return ErrLimit
+				return ErrJSONWireLimit
 			}
 			return c.add(2 + groups*4)
 		}
@@ -180,15 +180,15 @@ func (c *counter) sequence(v reflect.Value, depth int) error {
 
 }
 
-func (c *counter) object(v reflect.Value, depth int) error {
+func (c *jsonWireCounter) object(v reflect.Value, depth int) error {
 	if v.IsNil() {
 		return c.add(4)
 	}
 	if v.Type().Key().Kind() != reflect.String {
-		return ErrUnsupported
+		return ErrJSONWireUnsupported
 	}
 	if int64(v.Len()) > (c.left-2)/2 {
-		return ErrLimit
+		return ErrJSONWireLimit
 	}
 	if err := c.add(2 + int64(v.Len())*2); err != nil {
 		return err
@@ -206,7 +206,7 @@ func (c *counter) object(v reflect.Value, depth int) error {
 
 }
 
-func (c *counter) structure(v reflect.Value, depth int) error {
+func (c *jsonWireCounter) structure(v reflect.Value, depth int) error {
 	if err := c.add(2); err != nil {
 		return err
 	}
@@ -242,7 +242,7 @@ func (c *counter) structure(v reflect.Value, depth int) error {
 	return nil
 }
 
-func (c *counter) rawMessage(x json.RawMessage) error {
+func (c *jsonWireCounter) rawMessage(x json.RawMessage) error {
 	if x == nil {
 		return c.add(4)
 	}

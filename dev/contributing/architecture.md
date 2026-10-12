@@ -48,7 +48,7 @@ flowchart LR
 | Package | Owns |
 | --- | --- |
 | `agentmeta` | Standard-library-only canonical identities, aliases and immutable catalogs; unknown archive names remain representable. |
-| `jsonwire` | Standard-library-only JSON wire sizing without encoding a document or accessing native, local or remote state. Archive may use this pure helper; stats consumers reach it only through archive. |
+| `agentmeta` wire sizing | Standard-library-only JSON wire sizing at the existing pure metadata boundary, without encoding a document or accessing native, local or remote state. Archive and operational callers share one counter; stats consumers reach it only through archive. |
 | `agentapi` | Pure narrow operation contracts for launch/runtime, lifecycle, hooks, source/filter/parser/preview, purpose-specific discovery, native projects/catalogs and read-only transcript-path recognition, skills and capability/version evidence. Shared consumers request only their operation. |
 | `agents/claude`, `agents/codex`, `agents/cursor` | Native vocabulary, formats, argv/environment, locations, ownership and bounded interpretation. Pure codecs and planners never perform shared capture/publication or apply setup transactions. Source implementations own serial native reads. |
 | `agents/builtin` | Immutable production operation bindings and precomputed runtime/cleanup projections; composition does no filesystem, version or executable probing. CLI composition injects narrow lookups into real consumers. |

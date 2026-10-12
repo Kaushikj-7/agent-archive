@@ -8,7 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/wangjohn/agent-archive/internal/jsonwire"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"io"
 )
 
@@ -155,12 +155,12 @@ func SourceEncodingLineBound(ctx context.Context, bundle SourceBundle, limit int
 	if err := validateBundle(bundle); err != nil {
 		return 0, err
 	}
-	largest, err := jsonwire.Bound(ctx, sourceHeader(bundle), limit)
+	largest, err := agentmeta.JSONWireBound(ctx, sourceHeader(bundle), limit)
 	if err != nil {
 		return 0, err
 	}
 	check := func(value any) error {
-		n, err := jsonwire.Bound(ctx, value, limit)
+		n, err := agentmeta.JSONWireBound(ctx, value, limit)
 		largest = max(largest, n)
 		return err
 	}

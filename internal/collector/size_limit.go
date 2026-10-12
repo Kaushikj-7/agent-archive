@@ -10,7 +10,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/jsonwire"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/state"
 )
 
@@ -96,7 +96,7 @@ func (s *sessionScan) sharedPressure(err error) bool {
 
 // onlyReadBudget reports a refusal of the read ledger and nothing a
 // deferral would hide: every failure err joins is such a refusal, or the
-// sizing that led to one (jsonwire.ErrLimit), with no change, cleanup
+// sizing that led to one (agentmeta.ErrJSONWireLimit), with no change, cleanup
 // failure or cancellation, and no deferral already.
 func onlyReadBudget(err error) bool {
 	if agentapi.HasFailure(err, agentapi.Cleanup) || agentapi.HasFailure(err, agentapi.Changed) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
@@ -125,7 +125,7 @@ func readBudgetParts(err error) (refused, other bool) {
 	if errors.Is(err, agentapi.ErrReadBudget) {
 		return true, false
 	}
-	if errors.Is(err, jsonwire.ErrLimit) {
+	if errors.Is(err, agentmeta.ErrJSONWireLimit) {
 		return false, false
 	}
 	if wrapped := errors.Unwrap(err); wrapped != nil {

@@ -6,7 +6,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/jsonwire"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
@@ -32,7 +32,7 @@ func (s *sessionScan) readImportStage() (read sourceRead, ok bool, err error) {
 	reservation := b.Reservation()
 	largest := int64(0)
 	for _, row := range stage.Bundle.NativeRecords {
-		n, err := jsonwire.Bound(s.ctx, row, reservation.Available())
+		n, err := agentmeta.JSONWireBound(s.ctx, row, reservation.Available())
 		if err != nil {
 			return read, false, err
 		}
