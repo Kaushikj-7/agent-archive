@@ -17,7 +17,9 @@ import (
 // A source below the ordinary capture ceiling could previously be admitted
 // with a journal too large for the scheduled recovery reader's decode budget.
 func TestImportStagingSizeBoundPrecedesAdmission(t *testing.T) {
-	// Sequential: these fixtures intentionally approach the shared memory limit.
+	// Full mode keeps the real 32 MiB admission/recovery regression. Short mode
+	// covers recovery after deletion with smaller admitted evidence; exact
+	// capacity boundaries are exercised by state tests with explicit limits.
 	for _, tc := range []struct {
 		name  string
 		rows  int
@@ -27,13 +29,20 @@ func TestImportStagingSizeBoundPrecedesAdmission(t *testing.T) {
 		{name: "oversized remains unadmitted", rows: 800},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			if testing.Short() && !tc.admit {
+				t.Skip("real 32 MiB rejection is retained in the full suite; state tests cover scaled capacity boundaries")
+			}
+			rows := tc.rows
+			if testing.Short() {
+				rows = 8
+			}
 			r, c, cfg := stagingFixture(t)
 			file, err := os.OpenFile(c.TranscriptPath, os.O_APPEND|os.O_WRONLY, 0600)
 			if err != nil {
 				t.Fatal(err)
 			}
 			encoder := json.NewEncoder(file)
-			for range tc.rows {
+			for range rows {
 				if err := encoder.Encode(map[string]any{"type": "user", "sessionId": c.NativeSessionID, "message": map[string]any{"role": "user", "content": strings.Repeat("synthetic transcript content ", 2200)}}); err != nil {
 					t.Fatal(err)
 				}
@@ -63,7 +72,11 @@ func TestImportStagingSizeBoundPrecedesAdmission(t *testing.T) {
 				t.Fatalf("near-bound source was not admitted: %+v %v", result, err)
 			}
 			info, err := os.Stat(filepath.Join(r.Home, "sessions", result.Sessions[0], "import-stage", "stage.json"))
-			if err != nil || info.Size() < 31<<20 || info.Size() > state.MaxImportStageBytes {
+			minimum := int64(31 << 20)
+			if testing.Short() {
+				minimum = 400 << 10
+			}
+			if err != nil || info.Size() < minimum || info.Size() > state.MaxImportStageBytes {
 				t.Fatalf("fixture did not exercise the journal boundary: %v %v", info, err)
 			}
 			if err := os.Remove(c.TranscriptPath); err != nil {
@@ -79,6 +92,9 @@ func TestImportStagingSizeBoundPrecedesAdmission(t *testing.T) {
 }
 
 func TestImportStagingAccountsForEncodedTextAndRefilterScratch(t *testing.T) {
+	if testing.Short() {
+		t.Skip("real recovery allowance regressions retained in full mode; state tests cover encoded expansion and refilter scratch")
+	}
 	// Sequential: these fixtures intentionally approach the shared memory limit.
 	for _, tc := range []struct {
 		name    string

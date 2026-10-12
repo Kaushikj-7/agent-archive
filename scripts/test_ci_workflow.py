@@ -4,6 +4,7 @@ The job runs nightly or on demand. Its stable name identifies the systemd
 backstop, and its pinned image prevents an unreviewed systemd upgrade.
 Read without PyYAML, like test_release_assets.py.
 """
+import ast
 from pathlib import Path
 import re
 import unittest
@@ -39,6 +40,37 @@ def job_key(text, key):
     if not match:
         return None
     return re.sub(r'\s+#.*$', '', match.group(1)).strip().strip('\'"')
+
+
+def condition_matches(expression, event, ref='', suite=''):
+    """Evaluate only the small boolean condition grammar used by these jobs."""
+    values = {'github.event_name': event, 'github.ref': ref, 'inputs.suite': suite}
+    for key, value in values.items():
+        expression = expression.replace(key, repr(value))
+    tree = ast.parse(expression.replace('&&', ' and ').replace('||', ' or '), mode='eval')
+
+    def value(node):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return node.value
+        if isinstance(node, ast.BoolOp):
+            items = [value(item) for item in node.values]
+            if isinstance(node.op, ast.And):
+                return all(items)
+            if isinstance(node.op, ast.Or):
+                return any(items)
+        if isinstance(node, ast.Compare) and len(node.ops) == 1 and isinstance(node.ops[0], ast.Eq):
+            return value(node.left) == value(node.comparators[0])
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                and node.func.id == 'startsWith' and len(node.args) == 2 and not node.keywords):
+            return value(node.args[0]).startswith(value(node.args[1]))
+        raise AssertionError(f'unsupported CI condition: {expression}')
+
+    return bool(value(tree.body))
+
+
+def step_key(text, key):
+    match = re.search(rf'(?m)^        {re.escape(key)}:(.*)$', text)
+    return match.group(1).strip() if match else None
 
 
 class RealSystemdJobTest(unittest.TestCase):
@@ -114,12 +146,12 @@ class CandidateCampaignTest(unittest.TestCase):
         self.assertIn('go test -race -timeout 20m ./...', workflow)
         self.assertIn('github.event.pull_request.number || github.ref', workflow)
 
-    def test_extended_conditions_preserve_main_nightly_dispatch_and_add_candidate_campaign(self):
+    def test_extended_conditions_preserve_nightly_dispatch_and_candidate_campaign(self):
         workflow = EXTENDED_YML.read_text()
         conditions = {name: job_key(text, 'if') for name, text in jobs(workflow).items()}
         expected = {
-            'linux-race': "(github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'linux'))",
-            'macos-full': "github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'macos'))",
+            'linux-race': "github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'linux'))",
+            'macos-full': "(github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release-candidate/')) || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'macos'))",
         }
         for name, suite in (('fuzz', 'fuzz'), ('real-systemd', 'systemd')):
             expected[name] = "(github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release-candidate/')) || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == '" + suite + "'))"
@@ -129,6 +161,82 @@ class CandidateCampaignTest(unittest.TestCase):
         self.assertIn('-fuzztime 30s -fuzzminimizetime 2s', jobs(workflow)['fuzz'])
         self.assertIn('test "$found" -ge 24', jobs(workflow)['fuzz'])
         self.assertIn('AGENT_ARCHIVE_REAL_SYSTEMD:', jobs(workflow)['real-systemd'])
+
+
+class CadenceTest(unittest.TestCase):
+    def test_pr_and_candidate_linux_steps_select_the_correct_fixture_sizes(self):
+        linux = jobs((ROOT / '.github/workflows/test.yml').read_text())['linux-race']
+        race = [step for step in steps(linux) if 'run: go test -race ' in step]
+        perf = [step for step in steps(linux) if 'AGENT_ARCHIVE_PERF:' in step]
+        self.assertEqual(len(race), 2)
+        self.assertEqual(len(perf), 1)
+        for event, ref, short, full in (
+                ('pull_request', 'refs/pull/1/merge', True, False),
+                ('push', 'refs/heads/release-candidate/final', False, True),
+                ('push', 'refs/heads/main', False, False),
+                ('push', 'refs/heads/feature', False, False),
+                ('workflow_dispatch', 'refs/heads/main', False, False)):
+            with self.subTest(event=event, ref=ref):
+                selected = [step for step in race if condition_matches(step_key(step, 'if'), event, ref)]
+                self.assertEqual(any('run: go test -race -short -timeout 20m ./...' in step for step in selected), short)
+                self.assertEqual(any('run: go test -race -timeout 20m ./...' in step for step in selected), full)
+                self.assertEqual(condition_matches(step_key(perf[0], 'if'), event, ref), full)
+        self.assertNotIn('-short', perf[0])
+        self.assertIn("AGENT_ARCHIVE_PERF: '1'", perf[0])
+        for package in ('collector', 'archive', 'agents/nativecodec', 'capture'):
+            self.assertIn('./internal/' + package, perf[0])
+        for script in ('test_purge_recipe.py', 'test_release_candidate.py', 'test_ci_workflow.py'):
+            step = next(step for step in steps(linux) if script in step)
+            self.assertIsNone(step_key(step, 'if'))
+        vet = next(step for step in steps(linux) if 'run: go vet ./...' in step)
+        self.assertIsNone(step_key(vet, 'if'))
+
+    def test_extended_event_matrix_and_full_size_backstops(self):
+        workflow = EXTENDED_YML.read_text()
+        self.assertIn("    branches: ['release-candidate/**']", workflow)
+        self.assertIn('  schedule:', workflow)
+        self.assertIn('options: [all, macos, linux, fuzz, systemd]', workflow)
+        found = jobs(workflow)
+        all_jobs = set(found)
+        for event, ref, suite, expected in (
+                ('pull_request', 'refs/pull/1/merge', '', set()),
+                ('push', 'refs/heads/main', '', set()),
+                ('push', 'refs/heads/feature', '', set()),
+                ('push', 'refs/heads/release-candidate/final', '', all_jobs - {'linux-race'}),
+                ('schedule', 'refs/heads/main', '', all_jobs),
+                ('workflow_dispatch', 'refs/heads/main', 'all', all_jobs),
+                ('workflow_dispatch', 'refs/heads/main', 'linux', {'linux-race'}),
+                ('workflow_dispatch', 'refs/heads/main', 'macos', {'macos-full'}),
+                ('workflow_dispatch', 'refs/heads/main', 'fuzz', {'fuzz'}),
+                ('workflow_dispatch', 'refs/heads/main', 'systemd', {'real-systemd'}),
+                ('workflow_dispatch', 'refs/heads/main', 'unknown', set())):
+            with self.subTest(event=event, ref=ref, suite=suite):
+                actual = {name for name, text in found.items()
+                          if condition_matches(job_key(text, 'if'), event, ref, suite)}
+                self.assertEqual(actual, expected)
+        for name in ('linux-race', 'macos-full'):
+            self.assertIn('run: go test -race -timeout 20m ./...', found[name])
+            self.assertNotIn('-short', found[name])
+            perf = next(step for step in steps(found[name]) if 'AGENT_ARCHIVE_PERF:' in step)
+            self.assertIn("AGENT_ARCHIVE_PERF: '1'", perf)
+            self.assertIn('./internal/agents/nativecodec', perf)
+            self.assertIsNone(step_key(perf, 'if'))
+
+    def test_native_smoke_retains_build_and_runs_short_race_tests(self):
+        smoke = (ROOT / 'scripts/test_macos_smoke.sh').read_text()
+        self.assertIn('go build ./...', smoke)
+        self.assertEqual(len(re.findall(r'go test -race -short ', smoke)), 3)
+        self.assertNotRegex(smoke, r'go test -race (?!-short)')
+        self.assertIn('macOS smoke test missing:', smoke)
+        self.assertIn('CGO_ENABLED', smoke)
+
+    def test_daily_vulnerability_audit_remains_fresh(self):
+        workflow = (ROOT / '.github/workflows/levenshtein.yml').read_text()
+        self.assertIn('  schedule:', workflow)
+        self.assertRegex(workflow, r'if \[\[ "\$EVENT" == schedule \]\]; then\n            run=main')
+        config = (ROOT / 'levenshtein.json').read_text()
+        self.assertIn('"rerun_checks": true', config)
+        self.assertIn('"vulnerabilities"', config)
 
 
 class GitIdentityCompatibilityTest(unittest.TestCase):

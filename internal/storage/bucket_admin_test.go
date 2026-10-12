@@ -321,7 +321,9 @@ func TestCreateBucketCredentialsCheckDoesNotUseAnS3OnlyEndpoint(t *testing.T) {
 				stsIdentity(rec)
 				return rec.Result(), nil
 			}
-			return http.DefaultClient.Do(r)
+			// Parallel httptest server cleanup closes the default transport's
+			// idle connections, so use this server's isolated transport.
+			return s3.Client().Do(r)
 		}),
 	}
 	// The S3 client alone is pointed at the fake server, as an S3-only

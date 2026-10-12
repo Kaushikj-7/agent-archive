@@ -351,7 +351,12 @@ func (s *Store) SaveImportSourceSet(ctx context.Context, reg archive.SessionRegi
 // decode reservation, then reserves three largest-record owners and two output
 // owners while applying current privacy rules.
 func validateImportStageCapacity(ctx context.Context, stage ImportStage) error {
-	n, err := jsonwire.Bound(ctx, stage, MaxImportStageBytes)
+	return validateImportStageCapacityWithin(ctx, stage, MaxImportStageBytes, 128<<20)
+}
+
+// Explicit bounds keep capacity arithmetic testable without changing shared limits.
+func validateImportStageCapacityWithin(ctx context.Context, stage ImportStage, maxBytes, allowance int64) error {
+	n, err := jsonwire.Bound(ctx, stage, maxBytes)
 	if err != nil {
 		return errors.Join(ErrDurableStorageCapacity, err)
 	}
@@ -359,7 +364,7 @@ func validateImportStageCapacity(ctx context.Context, stage ImportStage) error {
 	for _, bundle := range append([]archive.SourceBundle{stage.Bundle}, stage.Preserved...) {
 		retained += int64(bundle.Capture.Boundary.RetainedBytes)
 		for _, row := range bundle.NativeRecords {
-			size, err := jsonwire.Bound(ctx, row, MaxImportStageBytes)
+			size, err := jsonwire.Bound(ctx, row, maxBytes)
 			if err != nil {
 				return errors.Join(ErrDurableStorageCapacity, err)
 			}
@@ -373,7 +378,7 @@ func validateImportStageCapacity(ctx context.Context, stage ImportStage) error {
 	for scanner < largest+1 {
 		scanner *= 2
 	}
-	remaining := (128 << 20) - n - 3*largest - scanner
+	remaining := allowance - n - 3*largest - scanner
 	if retained > remaining/2 || remaining <= 0 {
 		return errors.Join(ErrDurableStorageCapacity, errors.New("selected import evidence exceeds the durable recovery memory allowance"))
 	}
