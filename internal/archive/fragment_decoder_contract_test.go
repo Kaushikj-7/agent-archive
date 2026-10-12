@@ -17,10 +17,21 @@ import (
 // This test-only checker exercises transport and cross-line rules that a line
 // schema cannot express. It deliberately retains no fragment records and is not
 // a production streaming decoder, privacy filter, authority proof or consumer.
-type fragmentContractLimits struct{ header, record, total int64 }
+type fragmentContractLimits struct {
+	header int64
+	record int64
+	total  int64
+}
 
-func checkFragmentContract(ctx context.Context, source io.ReadCloser, schema *jsonschema.Schema, limits fragmentContractLimits) error {
-	defer source.Close()
+type fragmentContractKind string
+
+const (
+	fragmentContractHeader fragmentContractKind = "fragment_header"
+	fragmentContractRecord fragmentContractKind = "fragment_record"
+)
+
+func checkFragmentContract(ctx context.Context, source io.ReadCloser, schema *jsonschema.Schema, limits fragmentContractLimits) (err error) {
+	defer func() { err = errors.Join(err, source.Close()) }()
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -28,7 +39,7 @@ func checkFragmentContract(ctx context.Context, source io.ReadCloser, schema *js
 	if err != nil {
 		return err
 	}
-	defer z.Close()
+	defer func() { err = errors.Join(err, z.Close()) }()
 	total := fragmentContractCeiling(limits.total, 64<<20)
 	raw, err := io.ReadAll(io.LimitReader(fragmentContextReader{ctx, z}, total+1))
 	if err != nil {
@@ -60,7 +71,7 @@ func checkFragmentContract(ctx context.Context, source io.ReadCloser, schema *js
 		if err := fragmentUniqueKeys(decoder, 0); err != nil {
 			return err
 		}
-		if _, err := decoder.Token(); err != io.EOF {
+		if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
 			return errors.New("fragment line has trailing JSON")
 		}
 		value, err := jsonschema.UnmarshalJSON(bytes.NewReader(line))
@@ -71,10 +82,10 @@ func checkFragmentContract(ctx context.Context, source io.ReadCloser, schema *js
 			return errors.New("fragment line violates schema")
 		}
 		var envelope struct {
-			Kind    string  `json:"kind"`
-			Thread  string  `json:"thread_id"`
-			Count   uint64  `json:"record_count"`
-			Ordinal *uint64 `json:"ordinal"`
+			Kind    fragmentContractKind `json:"kind"`
+			Thread  string               `json:"thread_id"`
+			Count   uint64               `json:"record_count"`
+			Ordinal *uint64              `json:"ordinal"`
 			Record  struct {
 				Type    string `json:"type"`
 				Payload struct {
@@ -86,13 +97,13 @@ func checkFragmentContract(ctx context.Context, source io.ReadCloser, schema *js
 			return err
 		}
 		if i == 0 {
-			if envelope.Kind != "fragment_header" {
+			if envelope.Kind != fragmentContractHeader {
 				return errors.New("fragment must start with header")
 			}
 			thread, count = envelope.Thread, envelope.Count
 			continue
 		}
-		if envelope.Kind != "fragment_record" {
+		if envelope.Kind != fragmentContractRecord {
 			return errors.New("fragment must contain exactly one header")
 		}
 		if envelope.Record.Type == "session_meta" && envelope.Record.Payload.ID != thread {
@@ -182,7 +193,6 @@ func fragmentContractGzip(t *testing.T, raw string) []byte {
 
 func TestFragmentCrossLineContract(t *testing.T) {
 	t.Parallel()
-	schema := compileSchema(t, "codex-fragment.schema.json")
 	header := func(n int) string {
 		return strings.Replace(fragmentHeaderFixture, `"record_count":2`, `"record_count":`+strconv.Itoa(n), 1)
 	}
@@ -194,8 +204,9 @@ func TestFragmentCrossLineContract(t *testing.T) {
 	}
 	valid := header(3) + "\n" + record("9007199254740993") + "\n" + record("") + "\n" + record("18446744073709551615") + "\n"
 	for _, tc := range []struct {
-		name, raw string
-		valid     bool
+		name  string
+		raw   string
+		valid bool
 	}{
 		{"unknown_ordinal_preserves_known_order", valid, true},
 		{"record_before_header", record("0") + "\n" + header(1) + "\n", false},
@@ -213,6 +224,8 @@ func TestFragmentCrossLineContract(t *testing.T) {
 		{"identity_agrees", header(1) + "\n" + `{"kind":"fragment_record","record":{"type":"session_meta","payload":{"id":"11111111-1111-4111-8111-111111111111"}}}` + "\n", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			schema := compileSchema(t, "codex-fragment.schema.json")
 			err := checkFragmentContract(context.Background(), io.NopCloser(bytes.NewReader(fragmentContractGzip(t, tc.raw))), schema, fragmentContractLimits{})
 			if (err == nil) != tc.valid {
 				t.Fatalf("valid=%v: %v", tc.valid, err)
@@ -223,7 +236,6 @@ func TestFragmentCrossLineContract(t *testing.T) {
 
 func TestFragmentTransportAndCeilings(t *testing.T) {
 	t.Parallel()
-	schema := compileSchema(t, "codex-fragment.schema.json")
 	raw := fragmentHeaderFixture + "\n" + fragmentRecordFixture + "\n" + strings.Replace(fragmentRecordFixture, "9007199254740993", "9007199254740994", 1) + "\n"
 	encoded := fragmentContractGzip(t, raw)
 	corrupt := bytes.Clone(encoded)
@@ -243,6 +255,8 @@ func TestFragmentTransportAndCeilings(t *testing.T) {
 		{"trailing_transport_data", append(bytes.Clone(encoded), []byte("unexpected")...), fragmentContractLimits{}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			schema := compileSchema(t, "codex-fragment.schema.json")
 			err := checkFragmentContract(context.Background(), io.NopCloser(bytes.NewReader(tc.encoded)), schema, tc.limits)
 			if (err == nil) != tc.valid {
 				t.Fatalf("valid=%v: %v", tc.valid, err)
@@ -258,8 +272,9 @@ func TestFragmentTransportAndCeilings(t *testing.T) {
 
 type fragmentCloseProbe struct {
 	io.Reader
-	closed bool
-	cancel context.CancelFunc
+	closed   bool
+	cancel   context.CancelFunc
+	closeErr error
 }
 
 func (r *fragmentCloseProbe) Read(p []byte) (int, error) {
@@ -270,7 +285,17 @@ func (r *fragmentCloseProbe) Read(p []byte) (int, error) {
 	return n, err
 }
 
-func (r *fragmentCloseProbe) Close() error { r.closed = true; return nil }
+func (r *fragmentCloseProbe) Close() error { r.closed = true; return r.closeErr }
+
+func TestFragmentCloseFailureIsNotSuccessfulContract(t *testing.T) {
+	t.Parallel()
+	raw := fragmentHeaderFixture + "\n" + fragmentRecordFixture + "\n" + strings.Replace(fragmentRecordFixture, "9007199254740993", "9007199254740994", 1) + "\n"
+	failure := errors.New("synthetic fragment input close failure")
+	input := &fragmentCloseProbe{Reader: bytes.NewReader(fragmentContractGzip(t, raw)), closeErr: failure}
+	if err := checkFragmentContract(t.Context(), input, compileSchema(t, "codex-fragment.schema.json"), fragmentContractLimits{}); !errors.Is(err, failure) || !input.closed {
+		t.Fatalf("close failure=%v closed=%v", err, input.closed)
+	}
+}
 
 func TestFragmentCancellationClosesInput(t *testing.T) {
 	t.Parallel()
