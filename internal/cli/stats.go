@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/stats"
 	"github.com/wangjohn/agent-archive/internal/statsfmt"
@@ -159,9 +160,9 @@ func runStatsCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 	// JSON and the web page keep the engine's default lists, the top few by
 	// spend or use, unless --json --all asks for every row.
 	textPage := !*jsonOut && !htmlFlags.html
-	computed := stats.Compute(sessions, stats.Options{
+	computed, prepared := computeStats(sessions, stats.Options{
 		Now: now, Days: windowDays, Location: loc, PriceTable: table, By: grouping, AllRows: textPage || *all, MCPServerNames: cfg.MCPServerNames,
-	})
+	}, screen)
 	filters := statsFiltersOf(opts)
 	if *jsonOut {
 		return printJSON(stdout, stderr, statsDocument{
@@ -177,7 +178,7 @@ func runStatsCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 	// have something: w moves on. Nothing at all is the message below.
 	if screen && len(sessions) > 0 {
 		start := statsBrowserStart{
-			inputs:  statsInputs{sessions: sessions, now: now, location: loc, prices: table, filters: filters, mcpServerNames: cfg.MCPServerNames},
+			inputs:  statsInputs{hasSessions: true, prepared: prepared, now: now, location: loc, filters: filters, mcpServerNames: cfg.MCPServerNames},
 			windows: windows, window: windowIndex, first: computed, view: view,
 		}
 		if code, ran := runStatsBrowser(env, stdin, stdout, stderr, start); ran {
@@ -565,4 +566,14 @@ func sameZone(a, b *time.Location, now time.Time) bool {
 		}
 	}
 	return true
+}
+
+// computeStats prepares interactive windows once; static output uses the
+// one-shot engine wrapper. Prices and location are fixed for this command.
+func computeStats(sessions []archive.Metadata, opts stats.Options, screen bool) (stats.Stats, *stats.Prepared) {
+	if !screen {
+		return stats.Compute(sessions, opts), nil
+	}
+	prepared := stats.Prepare(sessions, stats.PrepareOptions{Location: opts.Location, PriceTable: opts.PriceTable})
+	return prepared.Compute(opts), prepared
 }

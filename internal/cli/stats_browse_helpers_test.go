@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"github.com/wangjohn/agent-archive/internal/stats"
 	"io"
 	"os"
 	"strings"
@@ -59,7 +60,7 @@ func screenInputs(tb testing.TB) statsInputs {
 	for _, s := range statsFixtureSessions() {
 		sessions = append(sessions, s.build())
 	}
-	return statsInputs{sessions: sessions, now: statsNow, location: statsNow.Location()}
+	return statsInputs{hasSessions: len(sessions) > 0, prepared: stats.Prepare(sessions, stats.PrepareOptions{Location: statsNow.Location()}), now: statsNow, location: statsNow.Location()}
 }
 
 // runScreen shows the interactive screen with the keys of chunks, as
