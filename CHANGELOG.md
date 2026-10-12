@@ -6,6 +6,9 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Show planning progress during backfill and setup's recent-session import:
+  a running count of sessions found, then completed/total counts and a percentage
+  while checking sessions. Each step is named on live terminals.
 - Import complete sessions from vanished repositories into stable historical-only
   projects with bounded `backfill --mapping-file` assignments. Historical imports
   freeze filtered evidence without adding live capture roots. Rename or disable

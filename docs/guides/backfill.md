@@ -24,6 +24,12 @@ agent-archive backfill undo          # remove the latest import from the bucket
 agent-archive backfill undo ID --project DIR
 ```
 
+While planning on a live terminal, backfill shows the current step and progress
+counts. Discovery shows a running count of sessions found; once transcript checking
+starts, it shows completed/total sessions and a percentage.
+These counts include sessions examined before date and project filters are applied;
+the finished plan shows how many will actually be imported.
+
 In `backfill history`, an import's UPLOAD column counts as **waiting** only
 the sessions not in the archive yet. Sessions already uploaded are counted
 after it: **rechecking** when only a re-scan is still owed (a Codex session
