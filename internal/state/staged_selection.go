@@ -75,6 +75,7 @@ func (s *Store) stagedContext(ctx context.Context, id string) (config.Config, ar
 // It never promotes a legacy stage or obtains evidence from native sources.
 func (s *Store) FreezeStagedSelection(ctx context.Context,id string,p PendingPublication,predecessor string,previous []byte) (PendingPublication,error) {
  if p.StagedSelection != nil || p.Selection != nil || p.JournalVersion != 0 || p.Catalog != nil { return p,ErrReadySelectionFrozen }
+ if err := s.validateReadablePendingContext(ctx,p); err != nil { return p,err }
  cfg,reg,stage,err := s.stagedContext(ctx,id); if err != nil { return p,err }
  if !readySelectionOwnerMatches(reg,p.Bundle) || p.Bundle.History != nil || p.History != nil || p.MetadataOnly { return p,ErrReadySelectionFrozen }
  request,found,err := s.LoadRequest(id); if err != nil { return p,err }
