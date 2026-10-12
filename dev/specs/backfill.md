@@ -1496,6 +1496,9 @@ age and alternative revision references. Exact readback rejects remote metadata
 that omits a locally published history manifest. Retention checks ownership and
 current destination independently of publication permission, so disabled imports
 still expire under finite retention and remain under Keep forever.
+Historical protection with disabled future discovery skips unsolicited native
+inventory. Independently admitted live owners still request qualified coverage;
+explicitly enabled discovery and explicit import staging retain their native reads.
 
 Exact batch undo/purge removes only owned sessions and evidence. Historical
 identities and permissions remain explicit configuration, including shared

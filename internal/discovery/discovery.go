@@ -144,6 +144,11 @@ type Options struct {
 // before any storage initialization. Each admission revalidates permissions
 // under hooks.lock, never holding it while reading source files.
 func Run(ctx context.Context, store *state.Store, cfg config.Config, o Options) (Health, error) {
+	// Historical ownership does not start future native inventory. Registered
+	// capture owners still request their qualified coverage through PrepareRegistered.
+	if cfg.HistoricalProjectProtection && (cfg.Discovery == nil || !cfg.Discovery.Enabled) {
+		return Health{}, nil
+	}
 	return runWithAdapters(ctx, store, cfg, o, registeredAdapters())
 }
 

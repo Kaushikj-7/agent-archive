@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,6 +17,40 @@ import (
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
+
+func TestHistoricalOnlyCollectorDoesNotStartNativeInventory(t *testing.T) {
+	t.Parallel()
+	fixture, _, mapping := newHistoricalOnlyFixture(t)
+	cfg := mustLoadConfig(t, fixture.data)
+	cfg.Harnesses = nil
+	must(t, config.Save(fixture.data, cfg))
+	_, stderr, code := fixture.importRun(t, nil, false, "--yes", "--background", "--mapping-file", mapping)
+	if code != 0 {
+		t.Fatalf("historical import %d %s", code, stderr)
+	}
+	native := filepath.Join(fixture.userHome, ".codex", "sessions")
+	must(t, os.MkdirAll(native, 0700))
+	const id = "11111111-1111-4111-8111-111111111111"
+	header, err := json.Marshal(map[string]any{"type": "session_meta", "payload": map[string]any{"id": id, "cwd": filepath.Join(fixture.userHome, "vanished-service"), "timestamp": fixture.env.now().Add(-time.Hour).Format(time.RFC3339Nano), "cli_version": "0.160.0", "originator": "codex_cli_rs", "source": "cli"}})
+	must(t, err)
+	must(t, os.WriteFile(filepath.Join(native, "rollout-"+id+".jsonl"), append(header, '\n'), 0600))
+	catalog := filepath.Join(fixture.data, "discovery-catalog.json")
+	before, beforeErr := os.ReadFile(catalog)
+	if beforeErr != nil && !os.IsNotExist(beforeErr) {
+		t.Fatal(beforeErr)
+	}
+	for range 2 {
+		result, err := runOnePass(fixture.env, true)
+		must(t, err)
+		if len(result.Errors) > 0 {
+			t.Fatal(result.Errors)
+		}
+	}
+	after, afterErr := os.ReadFile(catalog)
+	if os.IsNotExist(beforeErr) != os.IsNotExist(afterErr) || afterErr != nil && !os.IsNotExist(afterErr) || !bytes.Equal(before, after) {
+		t.Fatal("historical-only collector started or advanced native discovery inventory")
+	}
+}
 
 type historicalImportCheckpoint string
 
