@@ -70,7 +70,7 @@ than every full body.
 
 ## Large metadata and writer version
 
-The catalog uses writer protocol 10 and the exact `catalog-v4-v10` configuration
+The catalog uses writer protocol 10 and the exact `catalog-v4-v11` configuration
 fence. Protocol numbers describe the wire format, independently of PR numbering.
 Heads, admission records, pending journals and migration checkpoints reject older
 protocol 9 state before admission. This format is opt-in and is not deployed here.

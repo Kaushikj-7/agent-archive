@@ -693,8 +693,6 @@ func runBareShow(ctx context.Context, env showCommandDependencies, store storage
 		if code != 0 || !selected {
 			return code
 		}
-		ctx, stopReads := readCommandContext(env)
-		defer stopReads()
 		view, err := readSessionView(catalog.NewReadView(ctx), store, row.HarnessKey, row.SessionID)
 		if err != nil {
 			terminal.Printf(stderr, "agent-archive: show: %v\n", err)

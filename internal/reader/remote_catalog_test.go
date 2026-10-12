@@ -269,3 +269,21 @@ func TestRemoteAuthenticatedCountOverflowRefusesSelection(t *testing.T) {
 		t.Fatal("oversized authenticated count exposed selection", err)
 	}
 }
+
+func TestFindMetadataPrefixCatalogRespectsCallerNamespace(t *testing.T) {
+	remote, legacy := remoteReaderFixture(t, 2)
+	for _, store := range []storage.ObjectStore{remote, legacy} {
+		matched := 0
+		result, err := FindMetadataPrefix(t.Context(), store, "sessions/codex", "", Filter{}, ListOptions{}, func(archive.Metadata) bool {
+			matched++
+			return true
+		})
+		if err != nil || len(result) != 0 || matched != 0 {
+			t.Fatal("caller prefix admitted another harness", len(result), matched, err)
+		}
+		result, err = FindMetadataPrefix(t.Context(), store, "sessions/claude", "", Filter{}, ListOptions{})
+		if err != nil || len(result) != 2 {
+			t.Fatal("caller prefix excluded its own harness", len(result), err)
+		}
+	}
+}

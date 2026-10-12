@@ -201,3 +201,64 @@ func TestCollectorGuardRemovalInventoryBoundsAndCrashTemporaries(t *testing.T) {
 		t.Fatal("over-capacity inventory accepted")
 	}
 }
+
+func TestCollectorGuardJournalRetirementJoinsReleaseThroughSync(t *testing.T) {
+	home := t.TempDir()
+	guard, err := LockCollectorGuard(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	origin, err := guard.Origin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	journal := CatalogJournal{Owner: strings.Repeat("a", 32), Origin: origin, Destination: "private", SessionID: "session", MutationID: "mutation", SHA256: strings.Repeat("b", 64)}
+	if err := guard.RecordJournalRemoval(journal); err != nil {
+		t.Fatal(err)
+	}
+	retiring := make(chan struct{})
+	finish := make(chan struct{})
+	removed := make(chan error, 1)
+	go func() {
+		removed <- guard.removeJournalRemoval(journal, func(path string) error {
+			close(retiring)
+			<-finish
+			return removeCatalogJournalTombstone(path)
+		})
+	}()
+	defer func() {
+		close(finish)
+		if err := <-removed; err != nil {
+			t.Error("verified tombstone retirement failed", err)
+		}
+		guard.Release()
+	}()
+	select {
+	case <-retiring:
+	case <-time.After(time.Second):
+		t.Fatal("retirement did not reach verified unlink")
+	}
+	released := make(chan struct{})
+	go func() { guard.Release(); close(released) }()
+	deadline := time.Now().Add(time.Second)
+	for {
+		guard.mu.Lock()
+		held := guard.held
+		guard.mu.Unlock()
+		if !held {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("release did not close admission")
+		}
+		runtime.Gosched()
+	}
+	select {
+	case <-released:
+		t.Fatal("flock released before tombstone unlink and sync")
+	default:
+	}
+	if _, err := LockCollectorGuard(home); !errors.Is(err, ErrBusy) {
+		t.Fatal("retirement lost originating flock", err)
+	}
+}

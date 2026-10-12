@@ -138,7 +138,7 @@ func resolveShowQuery(ctx context.Context, store storage.ObjectStore, env showQu
 	if !pickOne {
 		spec = browserSpec{Mode: browseSessions, Choices: choices, Query: words, Command: "show", Store: store, NoPager: noPager}
 	}
-	row, picked, code := runBrowser(context.Background(), env, newPrompter(stdin, stdout), stdout, stderr, spec)
+	row, picked, code := runBrowser(ctx, env, newPrompter(stdin, stdout), stdout, stderr, spec)
 	if code != 0 {
 		return showLookup{}, code
 	}

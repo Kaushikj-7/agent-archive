@@ -48,7 +48,7 @@ retain tombstones; a fifth bounded receipt tree retains mutation digests and
 unique committed revisions. Persist the frozen mutation ID and expected session
 revision in guarded `PendingPublication.commit` before any upload. Prior durable
 writers reject the reserved `commit` field, and catalog destination configs use
-the forward writer fence `catalog-v4-v10`. Legacy config/state remains readable.
+the forward writer fence `catalog-v4-v11`. Legacy config/state remains readable.
 
 `catalog.Store` resolves canonical metadata reads to the current identity entry,
 including bounded history reads and validators. It never writes canonical

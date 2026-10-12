@@ -102,10 +102,22 @@ func (p *JournalRemoval) Journal(g *CollectorGuard) (CatalogJournal, error) {
 
 // RemoveJournalRemoval retires a tombstone only after remote receipt removal.
 func (g *CollectorGuard) RemoveJournalRemoval(j CatalogJournal) error {
+	return g.removeJournalRemoval(j, removeCatalogJournalTombstone)
+}
+
+func (g *CollectorGuard) removeJournalRemoval(j CatalogJournal, retire func(string) error) error {
+	done, err := g.BeginOperation(j.Origin)
+	if err != nil {
+		return err
+	}
+	defer done()
 	if _, err := g.ProveJournalRemoval(j); err != nil {
 		return err
 	}
-	path := g.completionPath(j.SessionID)
+	return retire(g.completionPath(j.SessionID))
+}
+
+func removeCatalogJournalTombstone(path string) error {
 	if err := os.Remove(path); err != nil {
 		return err
 	}

@@ -17,7 +17,7 @@ import (
 func FindMetadataPrefix(ctx context.Context, store storage.ObjectStore, prefix, idPrefix string, filter Filter, opts ListOptions, matchers ...func(archive.Metadata) bool) ([]archive.Metadata, error) {
 	opts.Cache.maintain(ctx)
 	if CatalogAuthority(store) {
-		return catalogPrefix(ctx, store, idPrefix, filter, opts, matchers...)
+		return catalogPrefix(ctx, store, prefix, idPrefix, filter, opts, matchers...)
 	}
 	idPrefix = strings.ToLower(idPrefix)
 	canonicalPrefix := listPrefixFor(prefix, filter.Harness)
@@ -76,7 +76,7 @@ func FindMetadataPrefix(ctx context.Context, store storage.ObjectStore, prefix, 
 	return result, nil
 }
 
-func catalogPrefix(ctx context.Context, store storage.ObjectStore, idPrefix string, filter Filter, opts ListOptions, matchers ...func(archive.Metadata) bool) ([]archive.Metadata, error) {
+func catalogPrefix(ctx context.Context, store storage.ObjectStore, prefix, idPrefix string, filter Filter, opts ListOptions, matchers ...func(archive.Metadata) bool) ([]archive.Metadata, error) {
 	snapshot, err := catalog.OpenSnapshot(ctx, store, nil)
 	if err != nil {
 		return nil, err
@@ -88,7 +88,7 @@ func catalogPrefix(ctx context.Context, store storage.ObjectStore, idPrefix stri
 	var selected []catalog.Row
 	for _, row := range rows {
 		m := row.Entry.Summary
-		if !matches(m, filter) {
+		if !strings.HasPrefix(row.Key, canonicalCatalogPrefix(prefix)) || !matches(m, filter) {
 			continue
 		}
 		include := strings.HasPrefix(strings.ToLower(m.SessionID), strings.ToLower(idPrefix))
