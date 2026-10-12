@@ -60,8 +60,8 @@ func appendRecord(t *testing.T, path, record string) {
 	}
 }
 
-// The inventory checks membership, not content: a transcript a work item owns
-// may grow in place, while every other membership change still invalidates.
+// Owned growth renews its original inspected prefix; all other observed changes
+// preserve the inventory's strict invalidation and added-membership rules.
 func TestRecoverySourceInventoryToleratesOwnedAppendsOnly(t *testing.T) {
 	const header = `{"cwd":"/work"}` + "\n"
 	grow := func(t *testing.T, _ *tree, file string) {
@@ -77,6 +77,12 @@ func TestRecoverySourceInventoryToleratesOwnedAppendsOnly(t *testing.T) {
 		{name: "unchanged", mutate: func(*testing.T, *tree, string) {}, current: true},
 		{name: "owned append", mutate: grow, current: true},
 		{name: "unowned append", unowned: true, mutate: grow},
+		{name: "owned growing header rewrite", mutate: func(t *testing.T, _ *tree, file string) {
+			t.Helper()
+			if err := os.WriteFile(file, []byte(`{"cwd":"/different-longer-clone"}`+"\n"+`{"more":1}`+"\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}},
 		{name: "added transcript", mutate: func(_ *testing.T, tr *tree, _ string) { tr.write("home/store/added.jsonl", header) }},
 		{name: "removed transcript", mutate: func(t *testing.T, _ *tree, file string) {
 			t.Helper()
@@ -143,6 +149,16 @@ func TestRecoverySourceInventoryToleratesOwnedAppendsOnly(t *testing.T) {
 				t.Fatal(err)
 			}
 			if !tc.unowned {
+				f, err := seen.open(file)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := io.Copy(io.Discard, f); err != nil {
+					t.Fatal(err)
+				}
+				if err := f.Close(); err != nil {
+					t.Fatal(err)
+				}
 				inv.ownContent(file, info)
 			}
 			tc.mutate(t, tr, file)

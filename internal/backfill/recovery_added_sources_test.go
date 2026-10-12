@@ -77,8 +77,20 @@ func TestAddedTranscriptsAfterPlanningBlockOnlyCompetingClones(t *testing.T) {
 		{name: "plain folder", current: true, change: func(_ *testing.T, tr *tree, _ string) {
 			addedRollout(tr, addedID, tr.mkdir("home/notes"), "")
 		}},
-		{name: "temporary clone", current: true, change: func(_ *testing.T, tr *tree, _ string) {
+		{name: "temporary clone", change: func(_ *testing.T, tr *tree, _ string) {
 			addRepoRollout(tr, addedID, tr.repo("tmp/review"))
+		}},
+		{name: "plain temporary folder", current: true, change: func(_ *testing.T, tr *tree, _ string) {
+			addedRollout(tr, addedID, tr.mkdir("tmp/notes"), "")
+		}},
+		{name: "temporary other repository", current: true, change: func(_ *testing.T, tr *tree, _ string) {
+			addedRollout(tr, addedID, tr.repo("tmp/other"), addedOtherURL)
+		}},
+		{name: "temporary keyless clone", current: true, change: func(_ *testing.T, tr *tree, _ string) {
+			addedRollout(tr, addedID, tr.repo("tmp/keyless"), "")
+		}},
+		{name: "temporary unknown clone", change: func(_ *testing.T, tr *tree, _ string) {
+			addRepoRollout(tr, addedID, tr.repo("tmp/unknown"))
 		}},
 		{name: "deleted folder", current: true, change: func(_ *testing.T, tr *tree, _ string) {
 			addRepoRollout(tr, addedID, tr.path("home/.codex/worktrees/other-deleted/repo"))
