@@ -240,7 +240,7 @@ func (s *sessionScan) publishExactTypedStage(stage state.ImportStage, adapter ag
 	if err := s.freezeOrdinaryReadySelection(s.ctx, &pending); err != nil {
 		return outcomeSkipped, err
 	}
-	if err := s.savePending(&pending); err != nil {
+	if err := s.local.SavePending(s.id(), pending); err != nil {
 		return outcomeSkipped, err
 	}
 	return s.publishPending(s.ctx, pending)
