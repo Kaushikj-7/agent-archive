@@ -271,12 +271,9 @@ func (i *recoverySourceInventory) compareBound(ctx context.Context, remaining in
 		case !sameRecoveryMember(before.info, info, i.owned(path)):
 			return false, false
 		case i.owned(path) && info.Size() > before.info.Size():
-			prefix := i.appendable[path]
-			if ctx.Err() != nil || prefix.bytes <= 0 || prefix.bytes > headScanLimit || prefix.bytes > remaining {
-				return false, false
-			}
-			remaining -= prefix.bytes
-			if !i.prefixCurrent(ctx, path, info, prefix) {
+			var current bool
+			remaining, current = i.renewGrowingPrefix(ctx, path, info, remaining)
+			if !current {
 				return false, false
 			}
 		}
@@ -310,6 +307,17 @@ func (i *recoverySourceInventory) compareBound(ctx context.Context, remaining in
 		}
 	}
 	return len(i.moved) > 0, ctx.Err() == nil
+}
+
+// renewGrowingPrefix reserves the original header before its single bounded
+// renewal read. A refused reservation performs no I/O and cannot certify growth.
+func (i *recoverySourceInventory) renewGrowingPrefix(ctx context.Context, path string, info fs.FileInfo, remaining int64) (int64, bool) {
+	prefix := i.appendable[path]
+	if ctx.Err() != nil || prefix.bytes <= 0 || prefix.bytes > headScanLimit || prefix.bytes > remaining {
+		return remaining, false
+	}
+	remaining -= prefix.bytes
+	return remaining, i.prefixCurrent(ctx, path, info, prefix)
 }
 
 func (i *recoverySourceInventory) owned(path string) bool {
