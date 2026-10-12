@@ -30,8 +30,9 @@ suite across two Ubuntu workers for each pull request. Each worker discovers all
 packages and CLI top-level tests, fuzz seeds and executable examples, assigns
 ordinary packages once and CLI names to disjoint bins, and retains complete
 subtest trees. Timing hints only rank discovered units; new units are assigned
-and logged. The workers overlap bounded ordinary-package and CLI processes,
-then vet runs once. Each worker records its source, catalog, assignment and
+and logged. The assigned native Git identity package runs first on a quiet worker because
+its observers have fixed 500 ms deadlines. The workers then overlap bounded
+ordinary-package and CLI processes; vet runs once. Each worker records its source, catalog, assignment and
 terminal coverage; the stable required `linux-race` verdict reconciles both
 artifacts and fails on any missing, failed or cancelled worker. All Linux
 Python gates, including purge, staging, scope and shard-runner regressions, run

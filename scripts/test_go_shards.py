@@ -1,5 +1,7 @@
 """Behavior checks for discovery, complete coverage and bounded process cleanup."""
 import copy
+import contextlib
+import io
 import json
 import os
 from pathlib import Path
@@ -9,6 +11,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 import run_go_shard as runner
 
@@ -118,6 +121,59 @@ class GateTest(unittest.TestCase):
             paths[1].unlink()
             with self.assertRaises(runner.Failure):
                 runner.reconcile(directory)
+
+
+class RunPlanTest(unittest.TestCase):
+    def test_complete_runner_executes_each_package_once_and_reconciles_both_bins(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root/'scripts').mkdir()
+            (root/'scripts/go_shard_hints.json').write_text(json.dumps({'packages': {runner.GIT_IDENTITY: 10000}, 'cli': {}}))
+            bindir = root/'bin';bindir.mkdir()
+            command_log = root/'commands.jsonl'
+            fake = bindir/'go'
+            fake.write_text('#!'+sys.executable+'\n'+r'''import json,os,re,sys
+args=sys.argv[1:]
+cli='github.com/wangjohn/agent-archive/internal/cli'
+git='github.com/wangjohn/agent-archive/internal/gitremote'
+packages={cli:True,git:True,'ordinary/a':False,'ordinary/b':False}
+with open(os.environ['TASK_COMMAND_LOG'],'a') as f:f.write(json.dumps({'args':args,'cpu':os.environ.get('GOMAXPROCS')})+'\n')
+def emit(action,package,**kw):print(json.dumps(dict(Action=action,Package=package,**kw)),flush=True)
+if args[0]=='list':
+ for name,has_tests in packages.items():print(json.dumps(dict(ImportPath=name,Dir='/fixture',TestGoFiles=['x_test.go'] if has_tests else [])))
+elif '-list' in args:
+ for name in ['TestA','FuzzB','Example']:emit('output',cli,Output=name+'\n')
+ emit('pass',cli)
+elif args[0]=='vet':print('vet complete')
+elif '-run' in args:
+ pattern=args[args.index('-run')+1]
+ for name in ['TestA','FuzzB','Example']:
+  if re.fullmatch(pattern,name):
+   if name!='Example':emit('pass',cli,Test=name+'/child')
+   emit('pass',cli,Test=name)
+ emit('pass',cli)
+else:
+ for package in [arg for arg in args if arg in packages]:
+  if not packages[package]:
+   emit('output',package,Output='? '+package+' [no test files]\n');emit('skip',package)
+  else:emit('pass',package,Test='TestGit');emit('pass',package)
+''')
+            fake.chmod(0o755)
+            with mock.patch.object(runner, 'ROOT', root), mock.patch.object(runner.subprocess, 'check_output', return_value='head\n'), mock.patch.dict(os.environ, {'PATH': str(bindir)+os.pathsep+os.environ['PATH'], 'GITHUB_SHA': 'head', 'TASK_COMMAND_LOG': str(command_log)}), contextlib.redirect_stdout(io.StringIO()):
+                for index in (0, 1):runner.run(index, root/str(index), 30)
+                runner.reconcile(root)
+            calls = [json.loads(line) for line in command_log.read_text().splitlines()]
+            executed = [call for call in calls if call['args'][0]=='test' and '-list' not in call['args']]
+            for package in (runner.GIT_IDENTITY, 'ordinary/a', 'ordinary/b'):
+                self.assertEqual(sum(package in call['args'] for call in executed), 1)
+            git_call = next(call for call in executed if runner.GIT_IDENTITY in call['args'])
+            self.assertNotIn('-run', git_call['args'])
+            self.assertEqual(sum(runner.CLI in call['args'] for call in executed), 2)
+            first = json.loads((root/'0/manifest.json').read_text())
+            self.assertEqual(first['settings']['isolated_packages'], [runner.GIT_IDENTITY])
+            self.assertIn('git_identity_invocation_seconds', first['phases'])
+            self.assertIn('vet_seconds', first['phases'])
+            self.assertFalse((root/'0/ordinary.json').exists(), 'empty batch must not default to testing the module root')
 
 
 class ProcessTest(unittest.TestCase):

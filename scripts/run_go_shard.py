@@ -17,6 +17,7 @@ import time
 
 ROOT = Path(__file__).resolve().parent.parent
 CLI = 'github.com/wangjohn/agent-archive/internal/cli'
+GIT_IDENTITY = 'github.com/wangjohn/agent-archive/internal/gitremote'
 
 
 class Failure(RuntimeError):
@@ -321,23 +322,44 @@ def run(index, out, seconds):
     path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + '\n')
     print('effective catalog:', json.dumps(catalog, sort_keys=True), flush=True)
     common = ['go', 'test', '-race', '-short', '-count=1', '-json', '-timeout', '20m', '-p', '1']
+    # Native Git observers have fixed 500ms process deadlines. The overlapping
+    # workload exposed timeout failures; run this assigned package first with
+    # the full worker budget, without changing its assertions or deadlines.
+    isolated = [n for n in package_bins[index] if n == GIT_IDENTITY]
+    overlapping = [n for n in package_bins[index] if n != GIT_IDENTITY]
+    isolated_commands = [(common + ['-parallel', str(cpus)] + isolated,
+                          out / 'git-identity.json', dict(env, GOMAXPROCS=str(cpus)))] if isolated else []
     other_env = dict(env, GOMAXPROCS=str(ordinary_cpus))
+    if not overlapping:
+        cli_cpus = cpus
     cli_env = dict(env, GOMAXPROCS=str(cli_cpus))
-    commands = [(common + ['-parallel', str(ordinary_cpus)] + package_bins[index], out / 'ordinary.json', other_env),
-                (common + ['-parallel', str(cli_cpus), '-run', selector(cli_bins[index]), CLI], out / 'cli.json', cli_env)]
-    # Ensure total argv+environment fits execve; selectors also have a per-argument cap.
-    for command, _, child_env in commands:
+    commands = []
+    if overlapping:
+        commands.append((common + ['-parallel', str(ordinary_cpus)] + overlapping,
+                         out / 'ordinary.json', other_env))
+    commands.append((common + ['-parallel', str(cli_cpus), '-run', selector(cli_bins[index]), CLI],
+                     out / 'cli.json', cli_env))
+    # Validate every command before executing any selected tests.
+    for command, _, child_env in isolated_commands + commands:
         size = sum(len(v.encode()) + 1 for v in command) + sum(len((k+'='+v).encode()) + 1 for k, v in child_env.items())
         if size > os.sysconf('SC_ARG_MAX') // 2:
             raise Failure('command/environment exceeds conservative execve budget')
+    manifest['settings'].update(isolated_packages=isolated, cli_cpus=cli_cpus, cli_parallel=cli_cpus)
+    path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + '\n')
+    if isolated_commands:
+        phases['git_identity_invocation_seconds'] = supervise(isolated_commands, deadline)[0]
     durations = []
     if cpus == 1:
         for command in commands:
             durations.extend(supervise([command], deadline))
     else:
         durations = supervise(commands, deadline)
-    phases['ordinary_invocation_seconds'], phases['cli_invocation_seconds'] = durations
-    p = coverage((out / 'ordinary.json').read_text(), {n: packages[n] for n in package_bins[index]})
+    if overlapping:
+        phases['ordinary_invocation_seconds'] = durations[0]
+    phases['cli_invocation_seconds'] = durations[-1]
+    ordinary_text = '\n'.join((out / filename).read_text() for filename in
+                              (['git-identity.json'] if isolated else []) + (['ordinary.json'] if overlapping else []))
+    p = coverage(ordinary_text, {n: packages[n] for n in package_bins[index]})
     c = coverage((out / 'cli.json').read_text(), {CLI: True}, cli_bins[index])
     if index == 0:
         phases['vet_seconds'] = supervise([(['go', 'vet', './...'], out / 'vet.txt', env)], deadline)[0]
