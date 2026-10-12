@@ -2,10 +2,15 @@ package backfill
 
 import (
 	"context"
+	"crypto/sha256"
 	"io"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"testing"
+
+	"github.com/wangjohn/agent-archive/internal/sourcefacts"
+	"github.com/wangjohn/agent-archive/internal/transcriptio"
 )
 
 func TestRecoverySourceInventoryHeaderRenewalBound(t *testing.T) {
@@ -90,4 +95,40 @@ func TestRecoverySourceInventoryPrefixCancellation(t *testing.T) {
 func (i *recoverySourceInventory) currentBound(ctx context.Context, remaining int64) bool {
 	grown, ok := i.compareBound(ctx, remaining)
 	return ok && !grown
+}
+
+func TestRecoveryPrefixSnapshotRejectsReplacedStrictLocator(t *testing.T) {
+	for _, replace := range []bool{false, true} {
+		t.Run(map[bool]string{false: "unchanged", true: "same-inode-symlink"}[replace], func(t *testing.T) {
+			root := t.TempDir()
+			path := filepath.Join(root, "source.jsonl")
+			data := []byte("header\ntail\n")
+			if err := os.WriteFile(path, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			snapshot, err := transcriptio.Open(sourcefacts.RootOpener{Root: root}, path, transcriptio.OpenPolicy{Root: root, RejectSymlinks: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if err := snapshot.Close(); err != nil {
+					t.Error(err)
+				}
+			})
+			info := snapshot.SourceInfo()
+			if replace {
+				moved := filepath.Join(root, "retained.jsonl")
+				if err := os.Rename(path, moved); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(moved, path); err != nil {
+					t.Fatal(err)
+				}
+			}
+			prefix := recoveryHeaderPrefix{bytes: int64(len(data)), sum: sha256.Sum256(data), root: root}
+			if got := recoveryPrefixSnapshotCurrent(t.Context(), snapshot, info, prefix); got == replace {
+				t.Fatalf("current = %v, replacement = %v", got, replace)
+			}
+		})
+	}
 }

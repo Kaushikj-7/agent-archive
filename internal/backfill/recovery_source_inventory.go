@@ -325,11 +325,15 @@ func (i *recoverySourceInventory) prefixCurrent(ctx context.Context, path string
 	if err != nil {
 		return false
 	}
-	h := sha256.New()
-	n, readErr := io.CopyN(h, snapshot.Reader(ctx), prefix.bytes)
-	checkErr := snapshot.Check()
+	return recoveryPrefixSnapshotCurrent(ctx, snapshot, info, prefix)
+}
+
+// recoveryPrefixSnapshotCurrent renews strict locator policy on both sides of
+// the single bounded prefix read, including a replacement during that read.
+func recoveryPrefixSnapshotCurrent(ctx context.Context, snapshot *transcriptio.Snapshot, info fs.FileInfo, prefix recoveryHeaderPrefix) bool {
+	checkErr := snapshot.CheckPrefix(ctx, prefix.bytes, prefix.sum)
 	closeErr := snapshot.Close()
-	return ctx.Err() == nil && readErr == nil && checkErr == nil && closeErr == nil && n == prefix.bytes && transcriptio.SameObservation(info, snapshot.SourceInfo()) && string(h.Sum(nil)) == string(prefix.sum[:])
+	return ctx.Err() == nil && checkErr == nil && closeErr == nil && transcriptio.SameObservation(info, snapshot.SourceInfo())
 }
 
 // sameRecoveryDirectory reports the same directory, whatever its entries.
