@@ -26,6 +26,15 @@ func keptTranscript(n int) string {
 	return b.String()
 }
 
+// Keep full-size memory regressions in the default suite; short mode exercises
+// the same gap, retry, and pending-upload transitions with smaller evidence.
+func sizeFixtureScale() int {
+	if testing.Short() {
+		return 16
+	}
+	return 1
+}
+
 // TestSessionOverItsReadShareIsANamedGapOnce: a session that needs more than
 // one session's share of a pass is recorded as a size-limit gap naming that
 // limit, once: the next pass skips it without reading it, and the pass's
@@ -34,9 +43,11 @@ func keptTranscript(n int) string {
 // Not parallel: it lowers sessionReadCeiling and counts transcriptFilters.
 func TestSessionOverItsReadShareIsANamedGapOnce(t *testing.T) {
 	previous := sessionReadCeiling
-	sessionReadCeiling = 36 << 20
+	scale := sizeFixtureScale()
+	ceiling := int64(36<<20) / int64(scale)
+	sessionReadCeiling = ceiling
 	t.Cleanup(func() { sessionReadCeiling = previous })
-	path := writeTranscript(t, t.TempDir(), "large.jsonl", keptTranscript(40<<20))
+	path := writeTranscript(t, t.TempDir(), "large.jsonl", keptTranscript((40<<20)/scale))
 	local := newTestStore(t)
 	if err := local.SaveRegistration(registration(t, path)); err != nil {
 		t.Fatal(err)
@@ -54,11 +65,11 @@ func TestSessionOverItsReadShareIsANamedGapOnce(t *testing.T) {
 		t.Fatalf("blocked=%v reason=%q err=%v", blocked, reason, err)
 	}
 	signature, _, err := local.LoadScanSignature("session-1")
-	if err != nil || signature.SizeLimit == nil || signature.SizeLimit.Kind != state.SizeLimitReadBudget || signature.SizeLimit.LimitBytes != 36<<20 || signature.SizeLimit.SizeBytes != 0 {
+	if err != nil || signature.SizeLimit == nil || signature.SizeLimit.Kind != state.SizeLimitReadBudget || signature.SizeLimit.LimitBytes != ceiling || signature.SizeLimit.SizeBytes != 0 {
 		t.Fatalf("gap does not name the read limit: %+v err=%v", signature.SizeLimit, err)
 	}
 	status, err := local.LoadStatus()
-	if err != nil || len(status.LastErrors) != 1 || !strings.Contains(status.LastErrors[0], "(per-session read memory 36 MiB)") || !IsSizeLimitProblem(status.LastErrors[0]) {
+	if err != nil || len(status.LastErrors) != 1 || !strings.Contains(status.LastErrors[0], "(per-session read memory "+limitBytes(ceiling)+")") || !IsSizeLimitProblem(status.LastErrors[0]) {
 		t.Fatalf("status problem: %q err=%v", status.LastErrors, err)
 	}
 	filters := transcriptFilters.Load()
@@ -69,12 +80,12 @@ func TestSessionOverItsReadShareIsANamedGapOnce(t *testing.T) {
 	if len(again.Errors) != 0 || len(again.Skipped) != 1 || transcriptFilters.Load() != filters {
 		t.Fatalf("an unchanged gap was read again: %#v filters %d -> %d", again, filters, transcriptFilters.Load())
 	}
-	if status, err := local.LoadStatus(); err != nil || len(status.LastErrors) != 1 || !strings.Contains(status.LastErrors[0], "per-session read memory 36 MiB") {
+	if status, err := local.LoadStatus(); err != nil || len(status.LastErrors) != 1 || !strings.Contains(status.LastErrors[0], "per-session read memory "+limitBytes(ceiling)) {
 		t.Fatalf("second pass status: %q err=%v", status.LastErrors, err)
 	}
 	// Within its share, the same session is captured.
 	sessionReadCeiling = previous
-	if err := local.SaveRegistration(registration(t, writeTranscript(t, t.TempDir(), "large.jsonl", keptTranscript(40<<20)))); err != nil {
+	if err := local.SaveRegistration(registration(t, writeTranscript(t, t.TempDir(), "large.jsonl", keptTranscript((40<<20)/scale)))); err != nil {
 		t.Fatal(err)
 	}
 	captured, err := Run(context.Background(), local, remote, opts)
@@ -95,24 +106,25 @@ func TestSessionOverItsReadShareIsANamedGapOnce(t *testing.T) {
 func TestPendingUploadOverItsShareDefersThenEscalates(t *testing.T) {
 	previous := sessionReadCeiling
 	t.Cleanup(func() { sessionReadCeiling = previous })
-	for _, ceiling := range []int64{96 << 20, 36 << 20} {
+	scale := sizeFixtureScale()
+	for _, ceiling := range []int64{(96 << 20) / int64(scale), (36 << 20) / int64(scale)} {
 		sessionReadCeiling = previous
-		pendingUploadOverCeiling(t, ceiling)
+		pendingUploadOverCeiling(t, ceiling, scale)
 	}
 }
 
-func pendingUploadOverCeiling(t *testing.T, ceiling int64) {
+func pendingUploadOverCeiling(t *testing.T, ceiling int64, scale int) {
 	t.Helper()
 	local := newTestStore(t)
 	dir := t.TempDir()
-	reg := registration(t, writeTranscript(t, dir, "large.jsonl", keptTranscript(1<<20)))
+	reg := registration(t, writeTranscript(t, dir, "large.jsonl", keptTranscript((1<<20)/scale)))
 	now := reg.RegisteredAt.Add(time.Hour)
 	remote := storagetest.NewMemoryStore()
 	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return now }, MinUploadInterval: time.Hour}
 	publishOnce(t, local, remote, reg, &opts)
 	// The transcript grows; its next publication waits, pending, for the
 	// upload interval.
-	writeTranscript(t, dir, "large.jsonl", keptTranscript(40<<20))
+	writeTranscript(t, dir, "large.jsonl", keptTranscript((40<<20)/scale))
 	now = now.Add(time.Minute)
 	if result, err := Run(t.Context(), local, remote, opts); err != nil || len(result.Waiting) != 1 {
 		t.Fatalf("fixture: %#v %v", result, err)
