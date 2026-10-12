@@ -132,12 +132,7 @@ func selectHandoffSession(env handoffSelectDependencies, home string, opts hando
 	picker := handoffPicker{localLabels: make(map[localLabelKey]localLabelResult), ctx: context.Background(), env: env, home: home, harness: opts.harness, source: opts.source, archiveRead: err == nil}
 	format := listFormatOptions{Now: env.now(), Projects: projectLabels(cfg), Style: styleFor(stdout), GroupByProject: true, Numbered: true, DimID: true, Children: childCounts(archived),
 		NarrowHint: "Narrow with --harness, or name a session: agent-archive handoff SESSION_ID."}
-	choices := newScopeChoices(scope, format, false, func(s sessionScope) scopeView {
-		picker.scope = s
-		rows, total, truncated := picker.rows(regs, archived, defaultListLimit)
-		return scopeView{rows: formatHandoffRows(rows, format), total: total, truncated: truncated, hidden: handoffHiddenSubagents(picker, s, archived),
-			search: handoffSearch(picker, s, regs, archived, format)}
-	})
+	choices := pagedHandoffChoices(scope, format, picker, regs, archived)
 	stop()
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: handoff: note: the archive could not be read, so only this machine's sessions are listed: %v\n", err)
@@ -151,6 +146,27 @@ func selectHandoffSession(env handoffSelectDependencies, home string, opts hando
 		return "", "", false, code
 	}
 	return row.SessionID, row.HarnessKey, selected, 0
+}
+
+// pagedHandoffChoices exposes older rows only after an explicit request. The
+// archive universe and search remain complete; local labels retain their existing
+// initial bound and are read farther only when the visible table expands.
+func pagedHandoffChoices(scope sessionScope, format listFormatOptions, picker handoffPicker, regs []archive.SessionRegistration, archived []archive.Metadata) *scopeChoices {
+	limit := defaultListLimit
+	choices := newScopeChoices(scope, format, false, func(s sessionScope) scopeView {
+		picker.scope = s
+		rows, total, truncated := picker.rows(regs, archived, limit)
+		return scopeView{rows: formatHandoffRows(rows, format), total: total, truncated: truncated, hidden: handoffHiddenSubagents(picker, s, archived),
+			search: handoffSearch(picker, s, regs, archived, format)}
+	})
+	choices.loadOlder = &browserLoadAction{Label: "Older sessions", Available: func() bool {
+		return choices.shown().truncated
+	}, Load: func() (bool, error) {
+		limit += defaultListLimit
+		choices.built = [2]*scopeChoice{}
+		return choices.shown().truncated, nil
+	}}
+	return choices
 }
 
 // handoffSearch lists the sessions of a scope for the filter to search: every
