@@ -124,6 +124,9 @@ func prepareDiscoveryConfig(c *Config) error {
 	if c.Storage.EffectiveArchiveFormat() == destination.FormatCatalogV4 {
 		c.SchemaVersion = 11
 	}
+	if c.PublicationCompositionProtection {
+		c.SchemaVersion = 12
+	}
 	return validateDiscoveryConfig(*c)
 }
 
@@ -615,7 +618,7 @@ func peelHistoricalProjectProtection(c Config) (Config, error) {
 }
 
 func unsupportedPreparedWriter(c Config) bool {
-	return (c.SchemaVersion > 5 && c.SchemaVersion != 7 && c.SchemaVersion != 8 && c.SchemaVersion != 9 && c.SchemaVersion != 10 && c.SchemaVersion != 11) || (c.SchemaVersion == 11 && c.Storage.EffectiveArchiveFormat() != destination.FormatCatalogV4) || (c.SchemaVersion == 10 && !c.HistoricalProjectProtection) || (c.SchemaVersion == 9 && !c.ImportStagingProtection) || (c.SchemaVersion == 8 && !c.RetentionProtection) || (c.SchemaVersion == 7 && !c.DurableStorageProtection) || (c.SchemaVersion == 5 && !c.CodexHistoryProtection) || (c.SchemaVersion == 4 && !c.GenerationProtection) || (c.SchemaVersion == 3 && c.CodexCapture == nil)
+	return (c.SchemaVersion > 5 && c.SchemaVersion != 7 && c.SchemaVersion != 8 && c.SchemaVersion != 9 && c.SchemaVersion != 10 && c.SchemaVersion != 11 && c.SchemaVersion != 12) || (c.SchemaVersion == 12 && (!c.PublicationCompositionProtection || !c.DurableStorageProtection)) || (c.SchemaVersion == 11 && c.Storage.EffectiveArchiveFormat() != destination.FormatCatalogV4) || (c.SchemaVersion == 10 && !c.HistoricalProjectProtection) || (c.SchemaVersion == 9 && !c.ImportStagingProtection) || (c.SchemaVersion == 8 && !c.RetentionProtection) || (c.SchemaVersion == 7 && !c.DurableStorageProtection) || (c.SchemaVersion == 5 && !c.CodexHistoryProtection) || (c.SchemaVersion == 4 && !c.GenerationProtection) || (c.SchemaVersion == 3 && c.CodexCapture == nil)
 }
 
 // peelCatalogProtection keeps catalog configuration distinct from the permanent
@@ -662,6 +665,10 @@ func peelCatalogProtection(c Config) (Config, error) {
 // peelProtectedWriterLayers validates catalog, historical and import fences in order.
 func peelProtectedWriterLayers(c Config) (Config, error) {
 	var err error
+	c, err = peelPublicationProtection(c)
+	if err != nil {
+		return c, err
+	}
 	c, err = peelCatalogProtection(c)
 	if err != nil {
 		return c, err
@@ -673,6 +680,45 @@ func peelProtectedWriterLayers(c Config) (Config, error) {
 	c, err = peelImportStagingProtection(c)
 	if err != nil {
 		return c, err
+	}
+	return c, nil
+}
+
+func peelPublicationProtection(c Config) (Config, error) {
+	if !c.PublicationCompositionProtection {
+		return c, nil
+	}
+	if c.SchemaVersion != 12 || !c.DurableStorageProtection {
+		return c, errors.New("publication composition requires protected schema 12")
+	}
+	c.PublicationCompositionProtection = false
+	c.SchemaVersion = 1
+	if c.Discovery != nil {
+		c.SchemaVersion = 2
+	}
+	if c.CodexCapture != nil {
+		c.SchemaVersion = 3
+	}
+	if c.GenerationProtection {
+		c.SchemaVersion = 4
+	}
+	if c.CodexHistoryProtection {
+		c.SchemaVersion = 5
+	}
+	if c.DurableStorageProtection {
+		c.SchemaVersion = 7
+	}
+	if c.RetentionProtection {
+		c.SchemaVersion = 8
+	}
+	if c.ImportStagingProtection {
+		c.SchemaVersion = 9
+	}
+	if c.HistoricalProjectProtection {
+		c.SchemaVersion = 10
+	}
+	if c.Storage.EffectiveArchiveFormat() == destination.FormatCatalogV4 {
+		c.SchemaVersion = 11
 	}
 	return c, nil
 }

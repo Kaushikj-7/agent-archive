@@ -3,6 +3,7 @@ package state
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -11,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -76,6 +78,7 @@ func (r BlockedReason) Recoverable() bool { return r == BlockedReasonTranscriptM
 // when that happened, and why the bundle is in the state it's in. It is the
 // JSON of published/<id>.json.
 type publishedState struct {
+	PublicationVersion int `json:"publication_version,omitempty"`
 	// Summary restates, ahead of everything else in the file, the few facts
 	// a caller that is not scanning the session needs (see
 	// LoadPublishedSummary), so they can be read without decoding the source
@@ -232,6 +235,7 @@ func (p publishedState) summaryFromMetadata(m archive.Metadata) PublishedSummary
 }
 
 type publishedSnapshot struct {
+	Selection   *ReadySelection      `json:"selection_commit,omitempty"`
 	Bundle      archive.SourceBundle `json:"bundle"`
 	PublishedAt time.Time            `json:"published_at"`
 	// Source is the source object this publication's metadata points at:
@@ -276,7 +280,7 @@ func (p publishedState) detachedLastPublished() *publishedSnapshot {
 	if p.LastPublished == nil || !p.LastPublished.SameAsBundle {
 		return p.LastPublished
 	}
-	return &publishedSnapshot{Bundle: p.Bundle, PublishedAt: p.LastPublished.PublishedAt, Source: p.LastPublished.Source}
+	return &publishedSnapshot{Bundle: p.Bundle, PublishedAt: p.LastPublished.PublishedAt, Source: p.LastPublished.Source, Selection: p.LastPublished.Selection}
 }
 
 // lastPublishedSource returns the source reference of the last publication,
@@ -392,6 +396,21 @@ func PublishedStateLoads() int64 { return publishedStateLoads.Load() }
 // LoadPublishedState reads a session's published state. A session with none
 // yet yields an empty one (Found reports false) that saves create.
 func (s *Store) LoadPublishedState(archiveSessionID string) (*Published, error) {
+	return s.loadPublishedStateContext(s.durableContext(), archiveSessionID)
+}
+
+// LoadPublishedStateContext inherits the invocation context without creating a
+// different resource scope or releasing the caller's retained decoded owner.
+func (s *Store) LoadPublishedStateContext(ctx context.Context, archiveSessionID string) (*Published, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	read := *s
+	read.resourceContext = ctx
+	return read.loadPublishedStateContext(ctx, archiveSessionID)
+}
+
+func (s *Store) loadPublishedStateContext(ctx context.Context, archiveSessionID string) (*Published, error) {
 	if !safeFileComponent(archiveSessionID) {
 		return nil, errors.New("archive session ID is not a safe file name component")
 	}
@@ -402,6 +421,11 @@ func (s *Store) LoadPublishedState(archiveSessionID string) (*Published, error) 
 		// In a collector pass a corrupt file was moved aside: reported once,
 		// then the session is one that never published (quarantineInPass).
 		return nil, fmt.Errorf("read published state %q: %w", archiveSessionID, s.afterLoss(archiveSessionID, err))
+	}
+	if found && p.state.PublicationVersion == 2 {
+		if err := p.preserveReadyPublished(ctx, &p.state); err != nil {
+			return nil, err
+		}
 	}
 	p.found = found
 	// Derive from the decoded source authority once per work scan, including
@@ -420,6 +444,9 @@ func (s *Store) LoadPublishedState(archiveSessionID string) (*Published, error) 
 }
 
 func (p *Published) write(next publishedState) error {
+	if err := p.preserveReadyPublished(p.store.durableContext(), &next); err != nil {
+		return err
+	}
 	summary, err := p.store.summaryBudgeted(next)
 	if err != nil {
 		return err
@@ -499,6 +526,8 @@ func (s *Store) LoadPublishedSummary(archiveSessionID string) (summary Published
 // published state file. ok is false when there is none to trust: no file,
 // an older file without one, or anything unexpected, all of which the
 // caller answers with a full decode.
+var errSelectingPublishedFullDecode = errors.New("selecting publication requires full validated decode")
+
 func readLeadingSummary(reader io.Reader) (summary PublishedSummary, ok bool, err error) {
 	decoder := json.NewDecoder(bufio.NewReaderSize(reader, 4096))
 	if token, err := decoder.Token(); err != nil || token != json.Delim('{') {
@@ -508,8 +537,12 @@ func readLeadingSummary(reader io.Reader) (summary PublishedSummary, ok bool, er
 	if err != nil {
 		return summary, false, err
 	}
-	if key == "publication_version" {
-		return summary, false, ErrDurableStorageRecovery
+	if name, ok := key.(string); ok && strings.EqualFold(name, "publication_version") {
+		var version int
+		if decoder.Decode(&version) != nil || version != 2 {
+			return summary, false, ErrDurableStorageRecovery
+		}
+		return summary, false, errSelectingPublishedFullDecode
 	}
 	if key != "summary" {
 		return summary, false, nil
