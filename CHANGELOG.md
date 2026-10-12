@@ -13,7 +13,8 @@ follow [Semantic Versioning](https://semver.org/).
   local policy. Native deletion, privacy/parser maintenance, retention and exact
   undo keep ownership and capture age. A permanent v10 fence refuses older writers.
 - Validate original Codex thread cwd and producer facts independently of selected
-  physical revisions, and reject remote metadata that omits retained history.
+  physical revisions, accept trusted native-home platform aliases for complete
+  related-history imports, and reject remote metadata that omits retained history.
 
 - Capture Codex threads the Codex app opens for a task another thread's agent
   handed off (`thread_source: "agent_created_thread"`). They are top-level

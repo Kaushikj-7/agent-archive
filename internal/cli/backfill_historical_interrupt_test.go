@@ -256,7 +256,24 @@ func TestHistoricalCursorTranscriptUsesExplicitGoneWorkspace(t *testing.T) {
 
 func TestHistoricalNativeChildPublishesOwnEvidenceWithoutLiveRepository(t *testing.T) {
 	t.Parallel()
+	for _, aliased := range []bool{false, true} {
+		t.Run(fmt.Sprintf("aliased-home-%t", aliased), func(t *testing.T) {
+			t.Parallel()
+			historicalNativeChildPublishesOwnEvidence(t, aliased)
+		})
+	}
+}
+
+func historicalNativeChildPublishesOwnEvidence(t *testing.T, aliased bool) {
+	t.Helper()
 	fixture, bucket, mapping := newHistoricalOnlyFixture(t)
+	if aliased {
+		alias := filepath.Join(t.TempDir(), "home")
+		must(t, os.Symlink(fixture.userHome, alias))
+		fixture.userHome = alias
+		fixture.env.UserHomeDir = func() (string, error) { return alias, nil }
+		mapping = writeHistoricalMapping(t, filepath.Join(alias, "vanished-service"))
+	}
 	must(t, os.RemoveAll(filepath.Join(fixture.userHome, ".claude")))
 	at := fixture.env.now().Add(-time.Hour)
 	const child = "11111111-1111-4111-8111-111111111111"
@@ -268,7 +285,7 @@ func TestHistoricalNativeChildPublishesOwnEvidenceWithoutLiveRepository(t *testi
 	native := filepath.Join(fixture.userHome, ".codex")
 	must(t, os.MkdirAll(filepath.Join(native, "sessions"), 0700))
 	must(t, os.WriteFile(filepath.Join(native, "sessions", "rollout-"+child+".jsonl"), append(append(header, '\n'), []byte(body)...), 0600))
-	_, stderr, code := fixture.importRun(t, nil, false, "--yes", "--background", "--harness", "codex", "--mapping-file", mapping)
+	stdout, stderr, code := fixture.importRun(t, nil, false, "--yes", "--background", "--harness", "codex", "--mapping-file", mapping)
 	if code != 0 {
 		t.Fatalf("native child import %d %s", code, stderr)
 	}
@@ -277,7 +294,12 @@ func TestHistoricalNativeChildPublishesOwnEvidenceWithoutLiveRepository(t *testi
 	regs, err := local.LoadRegistrations()
 	must(t, err)
 	if len(regs) != 1 || !regs[0].NativeChild || regs[0].HistoricalProject == nil || regs[0].ProjectRoot != "" {
-		t.Fatal("native child historical admission lost", regs)
+		t.Fatal("native child historical admission lost", regs, stdout, stderr)
+	}
+	canonicalHome, err := filepath.EvalSymlinks(native)
+	must(t, err)
+	if regs[0].NativeSourceHome != canonicalHome || regs[0].HistoricalProject.OriginalCwd != cwd {
+		t.Fatal("native home normalization changed original historical ownership", regs[0])
 	}
 	must(t, os.RemoveAll(native))
 	for range 4 {

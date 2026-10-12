@@ -31,6 +31,15 @@ func filterImportSource(ctx context.Context, env Environment, w *work, started t
 		return out, release, errors.New("native source capability unavailable")
 	}
 	root := w.c.NativeHome
+	// Discovery may spell a trusted home through a platform alias, while the
+	// shared rollout lookup supplies canonical locators. Rebase only the home;
+	// descendant symlinks remain visible to the confined source opener.
+	relative, err := filepath.Rel(root, ref.Path)
+	if err != nil {
+		return out, release, err
+	}
+	root = env.resolved(root)
+	ref.Path = filepath.Join(root, relative)
 	var budget *agentapi.NativeReadBudget
 	if shared, ok := env.CodexRollouts.(agentapi.CodexRolloutResourceBudget); ok {
 		budget = shared.NativeReadBudget()
