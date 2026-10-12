@@ -68,7 +68,7 @@ func TestLegacyNativeChildMigrationRefusesChangedAuthorityWithoutWrites(t *testi
 		t.Run(string(name), func(t *testing.T) {
 			t.Parallel()
 			scan, p := privacyJournal(t)
-			if outcome, err := scan.publishPending(p); err != nil || outcome != outcomePublished {
+			if outcome, err := scan.publishPending(scan.ctx, p); err != nil || outcome != outcomePublished {
 				t.Fatal(outcome, err)
 			}
 			facts := *scan.reg.CodexBinding
@@ -88,7 +88,7 @@ func TestLegacyNativeChildMigrationRefusesChangedAuthorityWithoutWrites(t *testi
 				facts.Version = 2
 			}
 			before := snapshotMtimes(t, scan.local.Home())
-			if _, err := scan.run(); err == nil {
+			if _, err := scan.run(scan.ctx); err == nil {
 				t.Fatal("changed authority allowed legacy migration", name)
 			}
 			if !reflect.DeepEqual(before, snapshotMtimes(t, scan.local.Home())) {

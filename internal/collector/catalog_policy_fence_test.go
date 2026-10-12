@@ -169,7 +169,7 @@ func TestCatalogStricterHistoryPreservesCommittedAndUncommittedJournal(t *testin
 				t.Fatal(err)
 			}
 			scan.remote, scan.opts.CollectorGuard, scan.opts.SkillEvidence = remote, guard, config.SkillEvidenceNone
-			if _, err = scan.resumeHistory(pending); !errors.Is(err, state.ErrCatalogJournalFrozen) {
+			if _, err = scan.resumeHistory(scan.ctx, pending); !errors.Is(err, state.ErrCatalogJournalFrozen) {
 				t.Fatal("stricter policy did not fence", err)
 			}
 			if _, err = scan.resumeStagedPolicy(pending); !errors.Is(err, state.ErrCatalogJournalFrozen) {

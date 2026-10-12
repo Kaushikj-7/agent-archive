@@ -186,7 +186,7 @@ func TestFrozenGenerationPrivacyAndParserMaintenanceNeverReadsNative(t *testing.
 	}
 	opts.SkillEvidence = config.SkillEvidenceNone
 	scan := newSessionScan(context.Background(), s, cloud, frozen, state.Request{}, published, at.Add(3*time.Hour), opts)
-	outcome, err := scan.run()
+	outcome, err := scan.run(scan.ctx)
 	if err != nil || outcome != outcomePublished {
 		t.Fatalf("privacy maintenance %v %v", outcome, err)
 	}
@@ -197,7 +197,7 @@ func TestFrozenGenerationPrivacyAndParserMaintenanceNeverReadsNative(t *testing.
 		t.Fatal(err)
 	}
 	scan = newSessionScan(context.Background(), s, cloud, frozen, state.Request{}, published, at.Add(4*time.Hour), opts)
-	outcome, err = scan.run()
+	outcome, err = scan.run(scan.ctx)
 	if err != nil || outcome != outcomePublished {
 		t.Fatalf("parser maintenance %v %v", outcome, err)
 	}

@@ -585,7 +585,7 @@ func (p *pass) scan(ctx context.Context, reg archive.SessionRegistration) {
 	// too, so one large session cannot leave the others without room, and
 	// its own excess is told from pressure others put on the ledger.
 	defer budget.BeginScope(sessionReadCeiling)()
-	scopedLocal, closeLocal := p.local.WithReadBudget(p.ctx, budget)
+	scopedLocal, closeLocal := p.local.WithReadBudget(ctx, budget)
 	p.local = scopedLocal
 	defer func() { closeLocal(); p.local = priorLocal }()
 	id := reg.ArchiveSessionID
@@ -630,7 +630,7 @@ func (p *pass) scan(ctx context.Context, reg archive.SessionRegistration) {
 	}
 	scan := newSessionScan(ctx, p.local, p.remote, reg, req, published, p.now, p.opts)
 	defer scan.releaseRetained()
-	outcome, err := scan.run()
+	outcome, err := scan.run(ctx)
 	if err != nil && p.ctx.Err() == nil {
 		outcome, err = scan.overCeiling(err)
 	}

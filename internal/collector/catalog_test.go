@@ -172,7 +172,7 @@ func TestFrozenHistoryUsesCatalogAuthority(t *testing.T) {
 	}
 	// Default legacy machinery cannot replay a catalog mutation descriptor.
 	scan.remote = cloud
-	if _, err = scan.publishPending(pending); err == nil {
+	if _, err = scan.publishPending(scan.ctx, pending); err == nil {
 		t.Fatal("legacy destination admitted catalog pending")
 	}
 }

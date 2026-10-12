@@ -44,10 +44,11 @@ func TestCatalogPendingFenceReadLeaseEndsWithCheck(t *testing.T) {
 			}
 			const pressure = int64(1)
 			budget := agentapi.NewNativeReadBudget(2*int64(len(raw)) + pressure)
-			if !budget.Reserve(pressure) {
+			reservation := budget.Reservation()
+			if !reservation.Reserve(pressure) {
 				t.Fatal("independent owner reservation")
 			}
-			defer budget.Release(pressure)
+			defer reservation.Release(pressure)
 			scoped, closeScope := s.WithReadBudget(t.Context(), budget)
 			defer closeScope()
 			for range 2 {

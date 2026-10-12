@@ -57,10 +57,11 @@ func TestExactLegacyPendingRemovalFitsOneWireView(t *testing.T) {
 	const scratch = int64(32 << 10)
 	const pressure = int64(1)
 	budget := agentapi.NewNativeReadBudget(int64(len(raw)) + 2*scratch + pressure)
-	if !budget.Reserve(pressure) {
+	reservation := budget.Reservation()
+	if !reservation.Reserve(pressure) {
 		t.Fatal("independent owner reservation")
 	}
-	defer budget.Release(pressure)
+	defer reservation.Release(pressure)
 	scoped, closeScope := s.WithReadBudget(t.Context(), budget)
 	defer closeScope()
 	if err := scoped.RemoveExactLegacyPending("owned", pending); err != nil {

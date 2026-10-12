@@ -106,7 +106,7 @@ func (s *sessionScan) maintainFrozen() (sessionOutcome, error) {
 		return outcomeSkipped, err
 	} else if found {
 		if pending.History != nil {
-			return s.resumeHistory(pending)
+			return s.resumeHistory(s.ctx, pending)
 		}
 		if pending.Bundle.Capture.FilterVersion != archive.FilterVersion || pending.Bundle.Capture.AdapterVersion != adapter.Version() || !sourceEvidenceWithinPolicy(pending.Bundle.SupplementalEvidence, s.opts.skillEvidence()) {
 			if pending.Catalog != nil {
@@ -118,7 +118,7 @@ func (s *sessionScan) maintainFrozen() (sessionOutcome, error) {
 			if err := s.local.RemovePending(s.id()); err != nil {
 				return outcomeSkipped, err
 			}
-		} else if _, err := s.publishPending(pending); err != nil {
+		} else if _, err := s.publishPending(s.ctx, pending); err != nil {
 			return outcomeSkipped, err
 		}
 	}
@@ -163,7 +163,7 @@ func (s *sessionScan) maintainFrozen() (sessionOutcome, error) {
 		if err := s.local.SavePending(s.id(), pending); err != nil {
 			return outcomeSkipped, err
 		}
-		outcome, err := s.publishPending(pending)
+		outcome, err := s.publishPending(s.ctx, pending)
 		if err != nil {
 			return outcome, err
 		}

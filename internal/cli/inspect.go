@@ -1011,13 +1011,6 @@ func listingReadOptions(env listCommandDependencies, scope sessionScope, opts li
 	}
 }
 
-// listRecentWithInterrupts releases the read listener before the browser or pager.
-func listRecentWithInterrupts(env listCommandDependencies, store storage.ObjectStore, filter reader.Filter, limit int, opts reader.ListOptions) (reader.RecentResult, error) {
-	ctx, stopReads := readCommandContext(env)
-	defer stopReads()
-	return reader.ListRecent(ctx, store, archiveSessionsPrefix, filter, limit, opts)
-}
-
 // rebuildListingIndex reports explicit index maintenance progress and resumable failure.
 func rebuildListingIndex(env listCommandDependencies, store storage.ObjectStore, stderr io.Writer) bool {
 	ctx, stopReads := readCommandContext(env)

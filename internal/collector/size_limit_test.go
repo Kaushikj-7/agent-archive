@@ -272,7 +272,7 @@ func TestOverCeilingReadAndBuildRespectPendingUpload(t *testing.T) {
 		if pending && c.read {
 			// The new hook request supersedes the unattempted publication,
 			// so resume lets the scan proceed to the source read.
-			if _, handled, err := scan.resume(); err != nil || handled {
+			if _, handled, err := scan.resume(scan.ctx); err != nil || handled {
 				t.Fatalf("superseding pending upload: handled=%v err=%v", handled, err)
 			}
 		}

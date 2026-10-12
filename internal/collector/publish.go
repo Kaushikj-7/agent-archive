@@ -73,8 +73,7 @@ func (s *sessionScan) block(reason state.BlockedReason, candidate *archive.Sourc
 // source in the ledger, the new published state, the covered request, and
 // finally the removal of the pending file. ctx must be the original scan
 // context; admission derives an invocation context for this serial lifecycle.
-func (s *sessionScan) publishPending(pending state.PendingPublication) (sessionOutcome, error) {
-	ctx := s.ctx
+func (s *sessionScan) publishPending(ctx context.Context, pending state.PendingPublication) (sessionOutcome, error) {
 	if remote, ok := s.remote.(storage.CatalogPublisher); ok && remote.CatalogMetadataAuthority() {
 		if pending.Catalog == nil {
 			id, revision, err := remote.FreezeCatalogMutation(ctx, pending.MetadataKey)

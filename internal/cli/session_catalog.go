@@ -9,13 +9,6 @@ import (
 	"io"
 )
 
-// catalogSessions supplies the existing CLI matcher with typed projections.
-// Paging happens after the final matcher, so exact IDs, configured labels and
-// scope fallback cannot be lost to a reader-side candidate limit.
-func catalogSessions(env metadataCacheDependencies, store storage.ObjectStore, opts listOptions, stderr io.Writer, command string, words []string) ([]archive.Metadata, bool, error) {
-	return catalogSessionsInContext(context.Background(), env, store, opts, stderr, command, words)
-}
-
 func catalogSessionsInContext(ctx context.Context, env metadataCacheDependencies, store storage.ObjectStore, opts listOptions, stderr io.Writer, command string, words []string) ([]archive.Metadata, bool, error) {
 	sessions, used, _, err := catalogCandidateSessions(ctx, env, store, opts, stderr, command, words, nil)
 	return sessions, used, err

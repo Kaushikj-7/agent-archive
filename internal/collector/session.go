@@ -127,12 +127,11 @@ const (
 
 func (s *sessionScan) id() string { return s.reg.ArchiveSessionID }
 
-func (s *sessionScan) run() (sessionOutcome, error) {
-	ctx := s.ctx
+func (s *sessionScan) run(ctx context.Context) (sessionOutcome, error) {
 	if err := s.prepareRetainedOwnership(); err != nil {
 		return outcomeSkipped, err
 	}
-	if outcome, handled, err := s.prepareRetainedHistoryWork(); handled || err != nil {
+	if outcome, handled, err := s.prepareRetainedHistoryWork(ctx); handled || err != nil {
 		return outcome, err
 	}
 	if err := s.checkRetainedHistory(); err != nil {
@@ -148,7 +147,7 @@ func (s *sessionScan) run() (sessionOutcome, error) {
 	if err := s.local.GenerationCaptureAllowed(s.reg); err != nil {
 		return outcomeSkipped, err
 	}
-	if outcome, handled, err := s.resume(); handled || err != nil {
+	if outcome, handled, err := s.resume(ctx); handled || err != nil {
 		return outcome, err
 	}
 	read, ok, err := s.read()
@@ -173,7 +172,7 @@ func (s *sessionScan) run() (sessionOutcome, error) {
 		if settled, err := s.settleRevisionCandidate(read, &candidate); settled || err != nil {
 			return outcomeSkipped, err
 		}
-		return s.publish(read, candidate)
+		return s.publish(ctx, read, candidate)
 	}
 	if err := archive.CheckHistoryMutation(candidate, archive.Metadata{}); err != nil {
 		return outcomeSkipped, err
@@ -185,7 +184,7 @@ func (s *sessionScan) run() (sessionOutcome, error) {
 	if blocked || err != nil {
 		return outcomeSkipped, err
 	}
-	outcome, err := s.publish(read, candidate)
+	outcome, err := s.publish(ctx, read, candidate)
 	if err != nil || outcome != outcomePublished || s.rewritten == nil {
 		return outcome, err
 	}
@@ -201,7 +200,7 @@ func (s *sessionScan) run() (sessionOutcome, error) {
 
 // resume retries a pending publication, or runs the metadata refresh when
 // there is none. handled reports that the scan ends here.
-func (s *sessionScan) resume() (outcome sessionOutcome, handled bool, err error) {
+func (s *sessionScan) resume(ctx context.Context) (outcome sessionOutcome, handled bool, err error) {
 	// A publication that may already have reached storage is immutable local
 	// work. Retry its exact bytes before considering later transcript changes.
 	pending, havePending, err := s.local.LoadPending(s.id())
@@ -226,7 +225,7 @@ func (s *sessionScan) resume() (outcome sessionOutcome, handled bool, err error)
 		}
 	}
 	if pending.History != nil {
-		outcome, err := s.resumeHistory(pending)
+		outcome, err := s.resumeHistory(ctx, pending)
 		return outcome, true, err
 	}
 	if pendingSkillMode(pending.SkillEvidence) != s.opts.skillEvidence() {
@@ -267,7 +266,7 @@ func (s *sessionScan) resume() (outcome sessionOutcome, handled bool, err error)
 		s.readyAt = pending.ReadyAt
 		return outcomeRateLimited, true, nil
 	}
-	outcome, err = s.publishPending(pending)
+	outcome, err = s.publishPending(ctx, pending)
 	return outcome, true, err
 }
 
@@ -666,7 +665,7 @@ func (s *sessionScan) guard(ctx context.Context, read sourceRead, candidate arch
 
 // publish renders candidate's publication and decides what happens to it:
 // declined by policy, held back by the upload interval, or published now.
-func (s *sessionScan) publish(read sourceRead, candidate archive.SourceBundle) (sessionOutcome, error) {
+func (s *sessionScan) publish(ctx context.Context, read sourceRead, candidate archive.SourceBundle) (sessionOutcome, error) {
 	var err error
 	candidate, err = s.finishNativeFilter(&read, candidate)
 	if err != nil {
@@ -725,7 +724,7 @@ func (s *sessionScan) publish(read sourceRead, candidate archive.SourceBundle) (
 		return outcomeSkipped, fmt.Errorf("persist pending publication: %w", err)
 	}
 	if pending.History != nil {
-		outcome, err := s.resumeHistory(pending)
+		outcome, err := s.resumeHistory(ctx, pending)
 		if err != nil || outcome != outcomePublished {
 			return outcome, err
 		}
@@ -738,7 +737,7 @@ func (s *sessionScan) publish(read sourceRead, candidate archive.SourceBundle) (
 		s.readyAt = readyAt
 		return outcomeRateLimited, nil
 	}
-	outcome, err := s.publishPending(pending)
+	outcome, err := s.publishPending(ctx, pending)
 	if err != nil || outcome != outcomePublished {
 		return outcome, err
 	}

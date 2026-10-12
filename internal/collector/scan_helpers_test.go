@@ -21,7 +21,7 @@ func processSession(ctx context.Context, local *state.Store, store storage.Objec
 	if err != nil {
 		return outcomeSkipped, fmt.Errorf("load published cache: %w", err)
 	}
-	return newSessionScan(ctx, local, store, reg, req, published, now, opts).run()
+	return newSessionScan(ctx, local, store, reg, req, published, now, opts).run(ctx)
 }
 
 // blockSession is sessionScan.block for one session outside a scan, at a

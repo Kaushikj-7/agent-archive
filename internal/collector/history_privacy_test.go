@@ -24,7 +24,7 @@ import (
 func privacyJournal(t *testing.T) (*sessionScan, state.PendingPublication) {
 	t.Helper()
 	scan, _ := reconciliationFixture(t)
-	if _, err := scan.run(); !errors.Is(err, archive.ErrHistoryMutationPending) {
+	if _, err := scan.run(scan.ctx); !errors.Is(err, archive.ErrHistoryMutationPending) {
 		t.Fatal(err)
 	}
 	p, found, err := scan.local.LoadPending(scan.id())
@@ -147,7 +147,7 @@ func TestStricterHistoryPriorStagesAllOriginalsAndLeavesRequestsOwed(t *testing.
 	if err != nil || len(objects) != 0 {
 		t.Fatal("stricter preparation uploaded", err)
 	}
-	if outcome, err := scan.publishPending(next); err != nil || outcome != outcomePublished {
+	if outcome, err := scan.publishPending(scan.ctx, next); err != nil || outcome != outcomePublished {
 		t.Fatal("prepared successor failed", err)
 	}
 	assertCompleteHistory(t, scan, next, scan.remote)
@@ -541,7 +541,7 @@ func TestCommittedHistoryMaintenanceObligationSurvivesMissingOriginalRestart(t *
 	if _, err := scan.local.StagePendingSource(scan.id(), original.Reference, packed.Bytes); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := scan.resumeHistory(p); !errors.Is(err, archive.ErrHistoryMutationPending) {
+	if _, err := scan.resumeHistory(scan.ctx, p); !errors.Is(err, archive.ErrHistoryMutationPending) {
 		t.Fatal(err)
 	}
 	next, found, err := scan.local.LoadPending(scan.id())

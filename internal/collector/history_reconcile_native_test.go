@@ -148,7 +148,7 @@ func TestRunRevisionReconciliationStaysPendingWithoutAcknowledgement(t *testing.
 				t.Fatal(err)
 			}
 			scan.req = req
-			outcome, err := scan.run()
+			outcome, err := scan.run(scan.ctx)
 			if outcome != outcomeSkipped || err == nil {
 				t.Fatal("reconciliation settled", outcome, err)
 			}
@@ -303,7 +303,7 @@ func TestNativeRevisionReconciliationOrdinaryAppendAndUnchangedCost(t *testing.T
 	a := lookup.refs[revisionThread][0]
 	lookup.set.Current = &a
 	lookup.set.Candidates = []agentapi.SourceRef{a}
-	outcome, err := scan.run()
+	outcome, err := scan.run(scan.ctx)
 	if err != nil || outcome != outcomePublished {
 		t.Fatal("ordinary initial publication", outcome, err)
 	}

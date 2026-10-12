@@ -1,6 +1,7 @@
 package collector
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -305,7 +306,7 @@ func (s *sessionScan) retainedManifestInputs(metadata archive.Metadata, pending 
 // prepareRetainedHistoryWork runs before the temporary mutation fence, enabling
 // only private preparation and exact already-committed acknowledgement. Actual
 // publication, retention and generation changes still require checkpoint 5.
-func (s *sessionScan) prepareRetainedHistoryWork() (sessionOutcome, bool, error) {
+func (s *sessionScan) prepareRetainedHistoryWork(ctx context.Context) (sessionOutcome, bool, error) {
 	if len(s.published.Metadata()) == 0 {
 		return outcomeSkipped, false, nil
 	}
@@ -332,7 +333,7 @@ func (s *sessionScan) prepareRetainedHistoryWork() (sessionOutcome, bool, error)
 		if p.History == nil {
 			return outcomeSkipped, true, errors.New("ordinary pending journal cannot replace retained history")
 		}
-		outcome, err := s.resumeHistory(p)
+		outcome, err := s.resumeHistory(ctx, p)
 		if err == nil && (s.reg.RetainedOnly()) {
 			err = s.recordFrozenSignature()
 		}
