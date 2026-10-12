@@ -11,7 +11,44 @@ concurrency:
 # Every action is pinned to a full commit SHA (a tag can be moved); the
 # comment names the release it is. Dependabot proposes updates.
 jobs:
-  linux-race:
+  linux-short:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The Go version is pinned here rather than read from go.mod, so CI
+      # never depends on how setup-go picks a toolchain. It must match
+      # go.mod's toolchain line; the next step checks that.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.2'
+          cache: false
+      - name: Require Go 1.27.2 (go.mod's toolchain line)
+        run: |
+          go version
+          go version | grep -q ' go1\.27\.2 ' || { echo "expected go1.27.2, matching go.mod's toolchain line" >&2; exit 1; }
+      - name: Discovered race-short shard
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: python3 scripts/run_go_shard.py --shard "$SHARD" --output shard-results
+      - name: Preserve catalog and execution evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: go-shard-${{ matrix.shard }}
+          path: shard-results
+          if-no-files-found: error
+          retention-days: 7
+
+  linux-full:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release-candidate/')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -29,24 +66,25 @@ jobs:
         run: |
           go version
           go version | grep -q ' go1\.27\.2 ' || { echo "expected go1.27.2, matching go.mod's toolchain line" >&2; exit 1; }
-      # internal/cli takes 275 to 427 seconds under the race detector on CI
-      # runners, too close to go test's default of 10 minutes a package.
-      - name: Pull-request race suite (short fixtures)
-        if: github.event_name == 'pull_request'
-        run: go test -race -short -timeout 20m ./...
       - name: Candidate race suite (full fixtures)
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release-candidate/')
         run: go test -race -timeout 20m ./...
       # The run above uses the race detector, under which the wall-clock
       # assertions of the performance tests are skipped (the detector slows
       # filtering by an order of magnitude). This plain run makes them count,
       # on candidates at their documented size. See dev/contributing/testing.md.
       - name: Performance assertions (no race detector)
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release-candidate/')
         run: go test -v -p 1 -count=1 -run 'StayFast|FiveMegabyte|TestCursorOverlappingHooksRegisterOnce' ./internal/collector ./internal/archive ./internal/agents/nativecodec ./internal/capture
         env:
           AGENT_ARCHIVE_PERF: '1'
       - run: go vet ./...
+
+  script-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - run: python3 scripts/test_release_signing.py
       - run: python3 scripts/test_release_assets.py
       - run: python3 scripts/test_release_candidate.py
@@ -61,6 +99,32 @@ jobs:
       # Static and fake-Docker checks of the Linux live acceptance scripts;
       # the live run itself needs privileged Docker and is not run in CI.
       - run: python3 scripts/test_linux_acceptance.py
+
+      - run: python3 scripts/test_go_shards.py
+
+  # Keep this required check stable and fail closed when a worker fails/skips.
+  linux-race:
+    if: always()
+    needs: [linux-short, linux-full, script-tests]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Require complete event-specific worker results
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: python3 scripts/run_go_shard.py --verdict
+      - name: Download both successful shard catalogs
+        if: github.event_name == 'pull_request'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: go-shard-*
+          path: shard-evidence
+      - name: Reconcile actual source and exhaustive shard coverage
+        if: github.event_name == 'pull_request'
+        run: python3 scripts/run_go_shard.py --reconcile shard-evidence
 
   git-identity-compatibility:
     runs-on: ubuntu-24.04
