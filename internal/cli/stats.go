@@ -575,5 +575,6 @@ func computeStats(sessions []archive.Metadata, opts stats.Options, screen bool) 
 		return stats.Compute(sessions, opts), nil
 	}
 	prepared := stats.Prepare(sessions, stats.PrepareOptions{Location: opts.Location, PriceTable: opts.PriceTable})
-	return prepared.Compute(opts), prepared
+	computed := prepared.Compute(opts)
+	return computed, prepared
 }
