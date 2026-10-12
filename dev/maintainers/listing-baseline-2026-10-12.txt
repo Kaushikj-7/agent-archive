@@ -4,7 +4,7 @@ Go1.27.2; synthetic private fixtures; single run on shared host; modeled costs a
 goos: linux
 goarch: amd64
 pkg: github.com/wangjohn/agent-archive/internal/reader
-cpu: AMD EPYC 9V74 80-Core Processor                
+cpu: AMD EPYC 9V74 80-Core Processor
 BenchmarkReaderScale/sessions=800/limit=1/cache=cold-5         	       1	  10326082 ns/op	       734.0 GET-B/op	         1.000 GET/op	    523120 LIST-header-B/op	         3.000 LIST/op	    486615 cacheOpen-ns/op	         1.000 peak-reads	 3424664 B/op	   17793 allocs/op
 BenchmarkReaderScale/sessions=800/limit=1/cache=warm-5         	       1	   7139050 ns/op	         0 GET-B/op	         0 GET/op	    523120 LIST-header-B/op	         3.000 LIST/op	     37256 cacheOpen-ns/op	         1.000 peak-reads	 3417352 B/op	   17807 allocs/op
 BenchmarkReaderScale/sessions=800/limit=1/cache=changed-5      	       1	  13002479 ns/op	       734.0 GET-B/op	         1.000 GET/op	    818240 LIST-header-B/op	         3.000 LIST/op	    222446 cacheOpen-ns/op	         1.000 peak-reads	 5473984 B/op	   33039 allocs/op
@@ -61,7 +61,7 @@ ok  	github.com/wangjohn/agent-archive/internal/reader	237.760s
 goos: linux
 goarch: amd64
 pkg: github.com/wangjohn/agent-archive/internal/cli
-cpu: AMD EPYC 9V74 80-Core Processor                
+cpu: AMD EPYC 9V74 80-Core Processor
 BenchmarkCommandScale/sessions=800/limit=1/cache=cold-5         	       1	   7236385 ns/op	       734.0 GET-B/op	         1.000 GET/op	    523120 LIST-header-B/op	         3.000 LIST/op	         1.000 peak-reads	 3474816 B/op	   18261 allocs/op
 BenchmarkCommandScale/sessions=800/limit=1/cache=warm-5         	       1	   5707687 ns/op	         0 GET-B/op	         0 GET/op	    523120 LIST-header-B/op	         3.000 LIST/op	         1.000 peak-reads	 3425528 B/op	   17899 allocs/op
 BenchmarkCommandScale/sessions=800/limit=1/cache=changed-5      	       1	   9285618 ns/op	       734.0 GET-B/op	         1.000 GET/op	    818240 LIST-header-B/op	         3.000 LIST/op	         1.000 peak-reads	 5489832 B/op	   33144 allocs/op

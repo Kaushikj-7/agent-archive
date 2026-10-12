@@ -124,7 +124,8 @@ listed prefix (a `--harness` listing counts only that harness's), or with
 Measured source: `3878e73f43a2c372a63773b6ba0b436057606d5f`, Go 1.27.2,
 Linux/amd64, AMD EPYC 9V74, benchmark concurrency setting 5. The source includes
 normal merges of main `e1436e35` and compiler regression parent `d8d0f2cf`.
-The [raw benchmark output](listing-baseline-2026-10-12.txt) records the full
+The [benchmark output transcript](listing-baseline-2026-10-12.txt), with CPU-label
+trailing spaces removed from the retained original raw source, records the full
 27 reader and 27 CLI.Run scale cases (800/10k/50k, limit 1/50/all,
 cold/warm/changed), latency, first-screen and command-read probes, and the
 21-case historical listing matrix below. Later evidence/documentation commits
