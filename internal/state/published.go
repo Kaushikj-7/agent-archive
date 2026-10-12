@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -509,6 +510,8 @@ func (s *Store) LoadPublishedSummary(archiveSessionID string) (summary Published
 // published state file. ok is false when there is none to trust: no file,
 // an older file without one, or anything unexpected, all of which the
 // caller answers with a full decode.
+var errSelectingPublishedFullDecode = errors.New("selecting publication requires full validated decode")
+
 func readLeadingSummary(reader io.Reader) (summary PublishedSummary, ok bool, err error) {
 	decoder := json.NewDecoder(bufio.NewReaderSize(reader, 4096))
 	if token, err := decoder.Token(); err != nil || token != json.Delim('{') {
@@ -518,8 +521,12 @@ func readLeadingSummary(reader io.Reader) (summary PublishedSummary, ok bool, er
 	if err != nil {
 		return summary, false, err
 	}
-	if key == "publication_version" {
-		return summary, false, ErrDurableStorageRecovery
+	if name, ok := key.(string); ok && strings.EqualFold(name, "publication_version") {
+		var version int
+		if decoder.Decode(&version) != nil || version != 2 {
+			return summary, false, ErrDurableStorageRecovery
+		}
+		return summary, false, errSelectingPublishedFullDecode
 	}
 	if key != "summary" {
 		return summary, false, nil

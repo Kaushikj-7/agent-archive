@@ -71,6 +71,9 @@ func (p *PendingPublication) UnmarshalJSON(data []byte) error {
 }
 
 func (p *publishedState) UnmarshalJSON(data []byte) error {
+	if err := rejectDuplicateAuthorityKeys(data, []string{"publication_version", "last_published"}); err != nil {
+		return err
+	}
 	type publishedJSON publishedState
 	wire := struct {
 		*publishedJSON
@@ -186,5 +189,18 @@ func rejectDuplicateAuthorityKeys(data []byte, names []string) error {
 			seen[key] = true
 		}
 	}
+	return nil
+}
+
+func (p *publishedSnapshot) UnmarshalJSON(data []byte) error {
+	if err := rejectDuplicateAuthorityKeys(data, []string{"selection_commit"}); err != nil {
+		return err
+	}
+	type plain publishedSnapshot
+	var next plain
+	if err := json.Unmarshal(data, &next); err != nil {
+		return err
+	}
+	*p = publishedSnapshot(next)
 	return nil
 }
