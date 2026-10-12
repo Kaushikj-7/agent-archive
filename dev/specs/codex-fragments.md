@@ -1,7 +1,8 @@
 # Codex fragment foundation
 
-Status: proposed format and executable schema checks only (step 6B1), reconciled
-against `e1436e356d7c74e4f8cf2c5b26713766564e59f1` on 2026-10-12. No fragment
+Status: proposed format, executable schema checks and test-only transport/cross-line
+contract fixtures, reconciled against
+`4a2ca72a83d93c84ff340f5009a8f601410fb214` on 2026-10-12. No fragment
 decoder, native filter route, registration, publisher or user option is shipped.
 The [recovery proposal](../proposals/historical-backfill-recovery.md#step-6b-fragment-readers-lifecycle-and-import)
 tracks the dependent work. The [complete-history contract](codex-history.md)
@@ -34,7 +35,11 @@ absence means unknown, not zero. Known ordinals must increase strictly across th
 artifact, including across records with unknown ordinals. Gaps are allowed and
 do not establish raw-prefix agreement, ancestry or contiguous coverage. Never
 invent ordinals from retained-array positions. Header `record_count` is between
-1 and 1,000,000. Missing evidence has 1–64 unique entries; an available dependency
+1 and 1,000,000. Both `record_count` and `ordinal` use unsigned decimal integer
+JSON tokens: fractional, exponent and negative forms are refused, even when
+their mathematical values satisfy the line schema's integer constraint. Exact
+values, including the full uint64 ordinal range, must survive decoding. Missing
+evidence has 1–64 unique entries; an available dependency
 UUID may accompany a content-free reason. A reason is not permission to read or
 retain the dependency. Do not disclose a forbidden dependency locator or content.
 
@@ -129,3 +134,20 @@ through filtering/staging; changed or unavailable proof requires retry or refusa
 Synthetic schema tests establish only the proposed line contract. They do not
 establish fragment archival, native app support, provider acceptance, downgrade
 safety, step 7 coverage or a published release.
+
+The test-only checker in `internal/archive/fragment_decoder_contract_test.go`
+exercises UTF-8 framing, duplicate keys, header/count/order/identity agreement,
+newline framing, gzip corruption, caller ceilings and cancellation cleanup. It buffers bounded
+uncompressed fixture input and exposes no production API or retained records.
+It is not the production streaming decoder or the shared read-budget/resource
+proof required above. Its synthetic privacy case demonstrates that a supported,
+structurally valid message can still contain secret or hidden instruction text;
+schema validation and transport acceptance cannot authorize retention or display.
+
+Current Codex preview derives ordinary titles and activity, while the history
+filter requires complete validated spans. Neither is an incomplete consumer.
+The native filter input context carries filename/time/read limits, not a fragment
+source-root/content-authority proof. Ready source publication authority likewise
+does not establish that proof or fragment maintenance/repair ownership. Gate 2
+still requires a production bounded decoder, positively initialized context-proven
+filter and explicit incomplete consumer together; later lifecycle gates remain.
