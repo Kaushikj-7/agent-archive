@@ -140,13 +140,9 @@ func TestStagedMaterializationFitsOneValidatedStageView(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			parentInfo, err := os.Stat(filepath.Join(store.Home(), "registrations", parent.ArchiveSessionID+".json"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			// Parent registration remains owned while the three stage wire views and
-			// typed digest scratch coexist; the child payload exceeds that scratch.
-			limit := parentInfo.Size() + 3*info.Size() + int64(32<<10)
+			// The three charged stage wire views and typed digest scratch coexist.
+			// A child payload larger than the scratch distinguishes a second full read.
+			limit := 3*info.Size() + int64(32<<10)
 			if mode == "refuses-before-first-view" {
 				limit--
 			}
