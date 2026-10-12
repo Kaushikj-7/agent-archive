@@ -6,6 +6,9 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Read linked child metadata and known-harness show probes concurrently, and
+  reuse selected parent metadata for summaries and verified transcripts.
+
 - Show planning progress during backfill and setup's recent-session import:
   a running count of sessions found, then completed/total counts and a percentage
   while checking sessions. Each step is named on live terminals.
