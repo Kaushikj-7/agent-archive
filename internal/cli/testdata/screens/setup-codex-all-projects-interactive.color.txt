@@ -119,6 +119,7 @@ To remove the agent skills and keep them off, run \e[36magent-archive setup --no
   any non-excluded current or future project; no hook approval needed.
   Optional hook capture: Codex: run \e[36m/hooks\e[0m and approve the archive hooks; they
   capture sessions that start after that (or after \e[36m/clear\e[0m).
+Setup's recent import only covers explicitly included projects. Review earlier Codex sessions in other projects with \e[36magent-archive backfill --since 7d\e[0m.
 Check progress with \e[36magent-archive status\e[0m.
   \e[2m·\e[0m Another machine: agent-archive machines pair
 

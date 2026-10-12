@@ -477,6 +477,9 @@ func TestSetupSharedDestinationTransitions(t *testing.T) {
 			if err := os.WriteFile(path, prior, 0640); err != nil {
 				t.Fatal(err)
 			}
+			if err := os.Chmod(path, 0640); err != nil {
+				t.Fatal(err)
+			}
 			secondPath := path
 			if kind == setupTransitionAliasSwitch {
 				secondPath = filepath.Join(userHome, "alias")
@@ -637,6 +640,9 @@ func TestSetupNativeOwnerSwitchKeepsExistingMode(t *testing.T) {
 			if err := os.WriteFile(path, nil, 0640); err != nil {
 				t.Fatal(err)
 			}
+			if err := os.Chmod(path, 0640); err != nil {
+				t.Fatal(err)
+			}
 			nextPath := path
 			if alias {
 				nextPath += "-alias"
@@ -707,6 +713,9 @@ func TestSetupNativeAliasRetirementRefusesDeletion(t *testing.T) {
 			home, userHome := t.TempDir(), t.TempDir()
 			path := filepath.Join(userHome, "settings")
 			if err := os.WriteFile(path, nil, 0640); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(path, 0640); err != nil {
 				t.Fatal(err)
 			}
 			nextPath := path + "-alias"

@@ -119,6 +119,7 @@ Next, in each app
   any non-excluded current or future project; no hook approval needed.
   Optional hook capture: Codex: run /hooks and approve the archive hooks; they
   capture sessions that start after that (or after /clear).
+Setup's recent import only covers explicitly included projects. Review earlier Codex sessions in other projects with agent-archive backfill --since 7d.
 Check progress with agent-archive status.
   · Another machine: agent-archive machines pair
 
