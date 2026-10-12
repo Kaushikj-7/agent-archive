@@ -252,6 +252,9 @@ func stagedGroupAuthorityFiles(t *testing.T, store *state.Store, parent, child a
 func assertStagedGroupAuthorityFiles(t *testing.T, store *state.Store, parent, child archive.SessionRegistration, before map[string][]byte) {
 	t.Helper()
 	after := stagedGroupAuthorityFiles(t, store, parent, child)
+	if len(after) != len(before) {
+		t.Fatal("authority inventory changed under pressure")
+	}
 	for path, raw := range before {
 		if (raw == nil) != (after[path] == nil) || !bytes.Equal(raw, after[path]) {
 			t.Fatalf("authority changed under pressure: %s", path)
