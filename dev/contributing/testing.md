@@ -111,7 +111,8 @@ and vulnerability checks continue querying current advisory data.
 The [cold comparison](https://github.com/wangjohn/agent-archive/actions/runs/38217730599)
 used identical deduplicated source and pinned checks on fresh `ubuntu-24.04`
 workers. Native preparation plus verification took 178 seconds versus 268
-seconds for Dagger; deliberately failing Go/workflow probes reported identical
+seconds for Dagger, with a [repeat](https://github.com/wangjohn/agent-archive/actions/runs/38218241080)
+at 182 versus 335 seconds; deliberately failing Go/workflow probes reported identical
 diagnostics. These are verification timings, not a promise about total PR
 feedback. Check durations overlap, and Dagger client CPU omits engine work;
 the shorter same-class runner duration is the compute-cost comparison.
