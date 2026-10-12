@@ -31,8 +31,8 @@ const (
 	fragmentContractRecord fragmentContractKind = "fragment_record"
 )
 
-func checkFragmentContract(ctx context.Context, source io.ReadCloser, schema *jsonschema.Schema, limits fragmentContractLimits) (resultErr error) {
-	defer func() { resultErr = errors.Join(resultErr, source.Close()) }()
+func checkFragmentContract(ctx context.Context, source io.ReadCloser, schema *jsonschema.Schema, limits fragmentContractLimits) (err error) {
+	defer func() { err = errors.Join(err, source.Close()) }()
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -40,7 +40,7 @@ func checkFragmentContract(ctx context.Context, source io.ReadCloser, schema *js
 	if err != nil {
 		return err
 	}
-	defer func() { resultErr = errors.Join(resultErr, z.Close()) }()
+	defer func() { err = errors.Join(err, z.Close()) }()
 	total := fragmentContractCeiling(limits.total, 64<<20)
 	raw, err := io.ReadAll(io.LimitReader(fragmentContextReader{ctx, z}, total+1))
 	if err != nil {
@@ -197,7 +197,6 @@ func fragmentContractGzip(t *testing.T, raw string) []byte {
 
 func TestFragmentCrossLineContract(t *testing.T) {
 	t.Parallel()
-	schema := compileSchema(t, "codex-fragment.schema.json")
 	header := func(n int) string {
 		return strings.Replace(fragmentHeaderFixture, `"record_count":2`, `"record_count":`+strconv.Itoa(n), 1)
 	}
@@ -237,6 +236,7 @@ func TestFragmentCrossLineContract(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
+			schema := compileSchema(t, "codex-fragment.schema.json")
 			err := checkFragmentContract(context.Background(), io.NopCloser(bytes.NewReader(fragmentContractGzip(t, tc.raw))), schema, fragmentContractLimits{})
 			if (err == nil) != tc.valid {
 				t.Fatalf("valid=%v: %v", tc.valid, err)
@@ -247,7 +247,6 @@ func TestFragmentCrossLineContract(t *testing.T) {
 
 func TestFragmentTransportAndCeilings(t *testing.T) {
 	t.Parallel()
-	schema := compileSchema(t, "codex-fragment.schema.json")
 	raw := fragmentHeaderFixture + "\n" + fragmentRecordFixture + "\n" + strings.Replace(fragmentRecordFixture, "9007199254740993", "9007199254740994", 1) + "\n"
 	encoded := fragmentContractGzip(t, raw)
 	corrupt := bytes.Clone(encoded)
@@ -268,6 +267,7 @@ func TestFragmentTransportAndCeilings(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
+			schema := compileSchema(t, "codex-fragment.schema.json")
 			err := checkFragmentContract(context.Background(), io.NopCloser(bytes.NewReader(tc.encoded)), schema, tc.limits)
 			if (err == nil) != tc.valid {
 				t.Fatalf("valid=%v: %v", tc.valid, err)
@@ -297,6 +297,16 @@ func (r *fragmentCloseProbe) Read(p []byte) (int, error) {
 }
 
 func (r *fragmentCloseProbe) Close() error { r.closed = true; return r.closeErr }
+
+func TestFragmentCloseFailureIsNotSuccessfulContract(t *testing.T) {
+	t.Parallel()
+	raw := fragmentHeaderFixture + "\n" + fragmentRecordFixture + "\n" + strings.Replace(fragmentRecordFixture, "9007199254740993", "9007199254740994", 1) + "\n"
+	failure := errors.New("synthetic fragment input close failure")
+	input := &fragmentCloseProbe{Reader: bytes.NewReader(fragmentContractGzip(t, raw)), closeErr: failure}
+	if err := checkFragmentContract(t.Context(), input, compileSchema(t, "codex-fragment.schema.json"), fragmentContractLimits{}); !errors.Is(err, failure) || !input.closed {
+		t.Fatalf("close failure=%v closed=%v", err, input.closed)
+	}
+}
 
 func TestFragmentCancellationClosesInput(t *testing.T) {
 	t.Parallel()
@@ -339,16 +349,5 @@ func TestFragmentCloseErrorsPreserveCancellation(t *testing.T) {
 	err := checkFragmentContract(ctx, input, schema, fragmentContractLimits{})
 	if !errors.Is(err, context.Canceled) || !errors.Is(err, closeErr) || !input.closed {
 		t.Fatalf("cancellation/close error=%v closed=%v", err, input.closed)
-	}
-}
-
-func TestFragmentCloseFailureRefusesSuccessfulInput(t *testing.T) {
-	t.Parallel()
-	closeErr := errors.New("synthetic input close failure")
-	raw := strings.Replace(fragmentHeaderFixture, `"record_count":2`, `"record_count":1`, 1) + "\n" + fragmentRecordFixture + "\n"
-	input := &fragmentCloseProbe{Reader: bytes.NewReader(fragmentContractGzip(t, raw)), closeErr: closeErr}
-	err := checkFragmentContract(context.Background(), input, compileSchema(t, "codex-fragment.schema.json"), fragmentContractLimits{})
-	if !errors.Is(err, closeErr) || !input.closed {
-		t.Fatalf("close error=%v closed=%v", err, input.closed)
 	}
 }
