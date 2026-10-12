@@ -78,6 +78,14 @@ class NativeStageTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'new directory'):
             self.stage()
 
+    def test_git_failure_does_not_fall_back_to_copying_workspace(self):
+        import shutil
+        self.tracked('cmd/main.go')
+        shutil.rmtree(self.source / '.git')
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.stage()
+        self.assertFalse((self.root / 'staged').exists())
+
 
 if __name__ == '__main__':
     unittest.main()

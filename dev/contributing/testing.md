@@ -90,12 +90,31 @@ it is blocked (`TestHookRegistersOnTimeWhenTheRepoKeyLookupHangs`).
 
 The `verify` job (`levenshtein.yml`) runs the shared checks from
 [wangjohn/levenshtein](https://github.com/wangjohn/levenshtein) at the
-commit that workflow pins, in a Linux container: Go lint (staticcheck,
+commit that workflow pins, on Linux: Go lint (staticcheck,
 HTTP-body and SQL-close rules, and more) and vet, `go.mod` hygiene, `govulncheck`,
 `actionlint`, and `zizmor` for the workflows. `levenshtein.json` picks the
 checks. The full lint selection includes `bodyclose` and `sqlclosecheck`;
 separate `go-http` and `go-sql` checks would repeat those analyses. Keep those
 rules in the full lint selection when updating the pin.
+
+PRs run the pinned tools natively with Go from Levenshtein's `.go-version`,
+Linux amd64 build settings, and cgo enabled. `scripts/stage_native_verify.py`
+copies the tracked inputs selected by the pinned planner into a fresh temporary
+root, preserving relative paths and excluding private files and symlinks.
+This keeps unrelated packages such as `scripts/acceptance/cloudflare` outside
+the analysis, just as the container does. Native tools still have normal host
+filesystem access; staging is not a container sandbox. The checked-in
+configuration keeps Dagger for local runs, main pushes, nightly audits, and
+exact release candidates. Go build caches are not restored between CI runs,
+and vulnerability checks continue querying current advisory data.
+
+The [cold comparison](https://github.com/wangjohn/agent-archive/actions/runs/38217730599)
+used identical deduplicated source and pinned checks on fresh `ubuntu-24.04`
+workers. Native preparation plus verification took 178 seconds versus 268
+seconds for Dagger; deliberately failing Go/workflow probes reported identical
+diagnostics. These are verification timings, not a promise about total PR
+feedback. Check durations overlap, and Dagger client CPU omits engine work;
+the shorter same-class runner duration is the compute-cost comparison.
 
 Run the same thing from a sibling checkout of Levenshtein at the pinned
 commit (it needs Docker):
