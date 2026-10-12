@@ -45,3 +45,47 @@ func BenchmarkCompute50kProjects(b *testing.B) {
 		})
 	}
 }
+
+// The original accounting and prepared path use the same archive and windows;
+// preparation is measured separately and included in the one-shot benchmark.
+func BenchmarkPrepared50kSessions(b *testing.B) {
+	sessions, _ := randomArchive(rand.New(rand.NewPCG(7, 7)), 50_000)
+	opts := Options{Now: time.Date(2026, time.September, 20, 12, 0, 0, 0, newYork), Location: newYork, Days: 400, By: GroupWeek}
+	b.Run("original", func(b *testing.B) {
+		b.ReportAllocs()
+		for range b.N {
+			legacyCompute(sessions, opts)
+		}
+	})
+	b.Run("prepare", func(b *testing.B) {
+		b.ReportAllocs()
+		for range b.N {
+			Prepare(sessions, PrepareOptions{Location: newYork})
+		}
+	})
+	b.Run("window", func(b *testing.B) {
+		p := Prepare(sessions, PrepareOptions{Location: newYork})
+		b.ReportAllocs()
+		b.ResetTimer()
+		for range b.N {
+			p.Compute(opts)
+		}
+	})
+	for _, prepared := range []bool{false, true} {
+		b.Run(fmt.Sprintf("repeatedWindows/prepared=%v", prepared), func(b *testing.B) {
+			p := Prepare(sessions, PrepareOptions{Location: newYork})
+			b.ReportAllocs()
+			b.ResetTimer()
+			for range b.N {
+				for _, days := range []int{7, 30, 90} {
+					opts.Days = days
+					if prepared {
+						p.Compute(opts)
+					} else {
+						legacyCompute(sessions, opts)
+					}
+				}
+			}
+		})
+	}
+}
