@@ -2,6 +2,7 @@ package collector
 
 import (
 	"errors"
+	"strings"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/state"
@@ -67,27 +68,12 @@ func (s *sessionScan) freezeRevisionPublication(p *state.PendingPublication) err
 		history.Sources = append(history.Sources, stage)
 	}
 	history.Inputs = append(history.Inputs, state.HistoryInput{Reference: p.SourceReference(), RevisionID: s.revisions.Current, CapturedAt: p.Bundle.Capture.CapturedAt, FilterVersion: p.Bundle.Capture.FilterVersion, SourceSchemaVersion: p.Bundle.SchemaVersion})
-	inputs := s.revisions.historyInputs()
-	for i := range final.History.Preserved {
-		revision := &final.History.Preserved[i]
-		if revision.FilterVersion == "" || revision.SourceSchemaVersion == 0 {
-			raw, err := s.historyGet(revision.Source.Key, int64(revision.Source.CompressedBytes))
-			if err != nil {
-				return err
-			}
-			bundle, err := s.decodeRevision(final, revision.RevisionID, raw)
-			if err != nil {
-				return err
-			}
-			revision.FilterVersion, revision.SourceSchemaVersion = bundle.Capture.FilterVersion, bundle.SchemaVersion
-		}
-		inputs[i].FilterVersion, inputs[i].SourceSchemaVersion = revision.FilterVersion, revision.SourceSchemaVersion
-		history.Inputs = append(history.Inputs, inputs[i])
+	if err := s.freezePreservedHistoryInputs(&final, history); err != nil {
+		return err
 	}
-	for i := range history.Inputs {
-		parent := final.ParentSessionID
-		history.Inputs[i].ParentSessionID = &parent
-	}
+	// Only the current staged source was built from the final header.
+	parent := p.Bundle.ParentSessionID
+	history.Inputs[0].ParentSessionID = &parent
 	if found {
 		refs, err := previous.SourceReferences()
 		if err != nil {
@@ -236,4 +222,35 @@ func (s *sessionScan) reactivatedRevision(candidate archive.SourceBundle) (archi
 		}
 	}
 	return archive.SourceBundle{}, false, nil
+}
+
+// freezePreservedHistoryInputs records each immutable source's original parent
+// before preparation can apply the output envelope's resolved parent.
+func (s *sessionScan) freezePreservedHistoryInputs(final *archive.Metadata, history *state.PendingHistory) error {
+	inputs := s.revisions.historyInputs()
+	for i := range final.History.Preserved {
+		revision := &final.History.Preserved[i]
+		inputs[i].FilterVersion, inputs[i].SourceSchemaVersion = revision.FilterVersion, revision.SourceSchemaVersion
+		mark := len(s.retainedReleases)
+		bundle, err := s.loadHistoryInput(*final, inputs[i])
+		if err != nil {
+			return err
+		}
+		keep := len(s.retainedReleases)
+		if len(bundle.ParentSessionID) > 4096 {
+			return state.ErrDurableStorageRecovery
+		}
+		if err := s.retainCharge(int64(len(bundle.ParentSessionID)+len(bundle.Capture.FilterVersion)) + 32); err != nil {
+			return err
+		}
+		parent := strings.Clone(bundle.ParentSessionID)
+		inputs[i].ParentSessionID = &parent
+		if revision.FilterVersion == "" || revision.SourceSchemaVersion == 0 {
+			revision.FilterVersion, revision.SourceSchemaVersion = strings.Clone(bundle.Capture.FilterVersion), bundle.SchemaVersion
+		}
+		inputs[i].FilterVersion, inputs[i].SourceSchemaVersion = revision.FilterVersion, revision.SourceSchemaVersion
+		s.keepRetainedFrom(mark, keep)
+		history.Inputs = append(history.Inputs, inputs[i])
+	}
+	return nil
 }
