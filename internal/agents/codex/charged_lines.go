@@ -24,23 +24,25 @@ const lineReaderScratch int64 = 4096
 // longer than limit is archive.ErrRecordTooLarge. Parsed values stay outside
 // this charge.
 type chargedLineReader struct {
-	p          *relatedSourcePass
-	in         *bufio.Reader
-	limit      int64
-	line       []byte
-	lineCharge int64
-	charged    bool
-	done       bool
+	p           *relatedSourcePass
+	reservation *agentapi.NativeReadReservation
+	in          *bufio.Reader
+	limit       int64
+	line        []byte
+	lineCharge  int64
+	charged     bool
+	done        bool
 	// err is the failure that ended the records: it is returned again,
 	// never a later record past a refused or oversized one.
 	err error
 }
 
 func (p *relatedSourcePass) newChargedLineReader(r io.Reader, limit int64) (*chargedLineReader, error) {
-	if !p.reserve(lineReaderScratch) {
+	reservation := p.env.ReadBudget.Reservation()
+	if !p.reserve(reservation, lineReaderScratch) {
 		return nil, agentapi.ReadBudgetLimit(errors.New("native scanner scratch budget exhausted"))
 	}
-	return &chargedLineReader{p: p, in: bufio.NewReaderSize(r, int(lineReaderScratch)), limit: max(limit, 0), charged: true}, nil
+	return &chargedLineReader{p: p, reservation: reservation, in: bufio.NewReaderSize(r, int(lineReaderScratch)), limit: max(limit, 0), charged: true}, nil
 }
 
 // next returns the next record without its line ending, and false at the
@@ -105,12 +107,12 @@ func (c *chargedLineReader) grow(needed int) error {
 		return nil
 	}
 	capacity := min(c.limit+1, max(int64(needed), 2*int64(cap(c.line))))
-	if !c.p.reserve(capacity) {
+	if !c.p.reserve(c.reservation, capacity) {
 		return agentapi.ReadBudgetLimit(errors.New("native record buffer budget exhausted"))
 	}
 	grown := make([]byte, len(c.line), capacity)
 	copy(grown, c.line)
-	c.p.release(c.lineCharge)
+	c.p.release(c.reservation, c.lineCharge)
 	c.lineCharge = capacity
 	c.line = grown
 	return nil
@@ -122,7 +124,7 @@ func (c *chargedLineReader) close() {
 		return
 	}
 	c.charged = false
-	c.p.release(c.lineCharge + lineReaderScratch)
+	c.p.release(c.reservation, c.lineCharge+lineReaderScratch)
 	c.lineCharge = 0
 	c.line = nil
 	c.in = nil

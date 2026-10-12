@@ -179,6 +179,7 @@ func validateGenerationSuccessor(old, reg archive.SessionRegistration, pending P
 // A decodable journal must not redirect preserved metadata or carry bytes
 // belonging to another generation, even when its registration is intact.
 func validateGenerationPublication(reg archive.SessionRegistration, pending PendingPublication, budget *agentapi.NativeReadBudget, ctx context.Context) error {
+	reservation := budget.Reservation()
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -206,10 +207,10 @@ func validateGenerationPublication(reg archive.SessionRegistration, pending Pend
 		return errors.New("recovery publication metadata key differs from registration")
 	}
 	n := int64(len(pending.MetadataBytes))
-	if !budget.Reserve(n) {
+	if !reservation.Reserve(n) {
 		return errStateBudget
 	}
-	defer budget.Release(n)
+	defer reservation.Release(n)
 	var metadata archive.Metadata
 	if json.Unmarshal(pending.MetadataBytes, &metadata) != nil || !generationMetadataMatches(reg, pending, metadata) {
 		return errors.New("recovery publication metadata differs from its fixed source")
@@ -906,29 +907,30 @@ func (w *generationDigestWriter) Write(data []byte) (int, error) {
 // Validation streams the canonical gzip into a digest, retaining no second
 // compressed publication. Encoder and compressor scratch share the caller lease.
 func generationSourceDigest(ctx context.Context, bundle archive.SourceBundle, budget *agentapi.NativeReadBudget) (generationDigest, error) {
+	reservation := budget.Reservation()
 	const preflight = 32 << 10
-	if !budget.Reserve(preflight) {
+	if !reservation.Reserve(preflight) {
 		return generationDigest{}, errStateBudget
 	}
-	available := budget.Available()
+	available := reservation.Available()
 	largest, err := archive.SourceEncodingLineBound(ctx, bundle, available)
 	if errors.Is(err, agentmeta.ErrJSONWireLimit) {
-		budget.Refuse(available + 1)
+		reservation.Refuse(available + 1)
 	}
-	budget.Release(preflight)
+	reservation.Release(preflight)
 	if err != nil {
 		return generationDigest{}, err
 	}
 	const compressor = 1 << 20
-	if largest > (budget.Available()-compressor)/2 {
-		budget.Refuse(2*largest + compressor)
+	if largest > (reservation.Available()-compressor)/2 {
+		reservation.Refuse(2*largest + compressor)
 		return generationDigest{}, errStateBudget
 	}
 	scratch := 2*largest + compressor
-	if !budget.Reserve(scratch) {
+	if !reservation.Reserve(scratch) {
 		return generationDigest{}, errStateBudget
 	}
-	defer budget.Release(scratch)
+	defer reservation.Release(scratch)
 	writer := &generationDigestWriter{ctx: ctx, Hash: sha256.New()}
 	if err := archive.CompressSource(writer, bundle); err != nil {
 		return generationDigest{}, err

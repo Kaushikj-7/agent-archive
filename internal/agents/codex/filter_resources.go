@@ -15,11 +15,12 @@ import (
 // Check verifies the snapshot contract before the codec's second read. This
 // additional I/O is measured; no native content is memoized or persisted here.
 func nativeScannerCharge(ctx context.Context, file agentapi.FileInput, limits agentapi.ReadLimits, budget *agentapi.NativeReadBudget) (int64, error) {
+	reservation := budget.Reservation()
 	const countScratch = 32 << 10
-	if !budget.Reserve(countScratch) {
+	if !reservation.Reserve(countScratch) {
 		return 0, errFilterBudget
 	}
-	defer budget.Release(countScratch)
+	defer reservation.Release(countScratch)
 	length := file.Length()
 	if length < 0 {
 		return 0, errFilterBudget
@@ -73,9 +74,9 @@ func nativeScannerCharge(ctx context.Context, file agentapi.FileInput, limits ag
 var errFilterBudget = agentapi.ReadBudgetLimit(errors.New("native filtered work exceeds shared data budget"))
 
 type leasedHistoryInput struct {
-	input  agentapi.RecordInput
-	budget *agentapi.NativeReadBudget
-	owned  *int64
+	input       agentapi.RecordInput
+	owned       *int64
+	reservation *agentapi.NativeReadReservation
 }
 
 func (r *leasedHistoryInput) Next(ctx context.Context) (agentapi.NativeRecord, bool, error) {
@@ -83,15 +84,15 @@ func (r *leasedHistoryInput) Next(ctx context.Context) (agentapi.NativeRecord, b
 	if err != nil || !more || row.Kind != agentapi.CodexHistoryHeader || row.History == nil {
 		return row, more, err
 	}
-	available := r.budget.Available()
+	available := r.reservation.Available()
 	n, err := agentmeta.JSONWireBound(ctx, row.History, available)
 	if errors.Is(err, agentmeta.ErrJSONWireLimit) {
-		r.budget.Refuse(available + 1)
+		r.reservation.Refuse(available + 1)
 	}
 	if err != nil {
 		return agentapi.NativeRecord{}, false, errors.Join(errFilterBudget, err)
 	}
-	if !r.budget.Reserve(n) {
+	if !r.reservation.Reserve(n) {
 		return agentapi.NativeRecord{}, false, errFilterBudget
 	}
 	*r.owned += n

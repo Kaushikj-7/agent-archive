@@ -16,8 +16,9 @@ func TestRetainedLeasePressureReleaseCancellationAndCorruption(t *testing.T) {
 		t.Fatal(err)
 	}
 	budget := agentapi.NewNativeReadBudget(256 << 10)
+	reservation := budget.Reservation()
 	pressure := int64(224 << 10)
-	if !budget.Reserve(pressure) {
+	if !reservation.Reserve(pressure) {
 		t.Fatal("reserve")
 	}
 	_, release, err := DecodeReferencedSourceLeased(t.Context(), metadata, data, Limits{}, budget)
@@ -29,7 +30,7 @@ func TestRetainedLeasePressureReleaseCancellationAndCorruption(t *testing.T) {
 	if used != pressure {
 		t.Fatalf("refusal leaked %d", used)
 	}
-	budget.Release(pressure)
+	reservation.Release(pressure)
 	bundle, release, err := DecodeReferencedSourceLeased(t.Context(), metadata, data, Limits{}, budget)
 	if err != nil || bundle.NativeSessionID != want.NativeSessionID {
 		t.Fatalf("small useful progress %#v %v", bundle, err)
@@ -62,5 +63,39 @@ func TestRetainedLeasePressureReleaseCancellationAndCorruption(t *testing.T) {
 	used, _ = budget.Charged()
 	if used != 0 {
 		t.Fatalf("failure leaked %d", used)
+	}
+}
+
+// Decoded output can outlive the session that created it. Releasing its lease
+// while another session is full must leave that session's ceiling unchanged.
+func TestRetainedSourcePriorLeaseReleasePreservesCurrentScope(t *testing.T) {
+	metadata, _, store := fixture(t)
+	data, err := store.Get(t.Context(), metadata.SourceBundle.Key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	budget := agentapi.NewNativeReadBudget(256 << 10)
+	_, release, err := DecodeReferencedSourceLeased(t.Context(), metadata, data, Limits{}, budget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	priorUsed, _ := budget.Charged()
+	if priorUsed <= 0 {
+		t.Fatal("fixture holds no decoded lease")
+	}
+	end := budget.BeginScope(10)
+	defer end()
+	current := budget.Reservation()
+	if !current.Reserve(10) {
+		t.Fatal("current reserve")
+	}
+	release()
+	release()
+	if current.Reserve(1) || !budget.ScopeExceeded() {
+		t.Fatal("prior decoded lease freed the current owner's ceiling")
+	}
+	current.Release(10)
+	if used, _ := budget.Charged(); used != 0 {
+		t.Fatal("leases leaked", used)
 	}
 }
