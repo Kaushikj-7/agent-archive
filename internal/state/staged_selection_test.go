@@ -8,7 +8,9 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
@@ -16,20 +18,46 @@ import (
 
 func stagedPreparedFixture(t *testing.T, request bool) (*Store, PendingPublication, *local.CollectorGuard) {
 	t.Helper()
-	s, p := readySelectionFixture(t)
-	p.Selection = nil
-	p.JournalVersion = 0
+	s := newTestStore(t)
+	var p PendingPublication
 	cfg, _, err := config.Load(s.Home())
 	if err != nil {
 		t.Fatal(err)
 	}
 	cfg.Archive.Enabled = true
+	cfg.DurableStorageProtection = true
+	cfg.PublicationCompositionProtection = true
 	cfg.ImportStagingProtection = true
 	cfg.StagedSelectionProtection = true
 	if err = config.Save(s.Home(), cfg); err != nil {
 		t.Fatal(err)
 	}
 	cfg, _, err = config.Load(s.Home())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Fresh actual planning reservation: no ordinary owner is registered first.
+	id, _, err := s.EnsureArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.Codex, NativeID: "native-owned"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg := registration(t)
+	reg.ArchiveSessionID = id
+	reg.NativeSessionID = "native-owned"
+	reg.ProjectID = "project"
+	reg.Harness = archive.Harness{Name: "codex"}
+	reg.DestinationID = cfg.DestinationID()
+	reg.Origin = archive.SessionOriginImport
+	reg.ImportBatch = archive.NewImportBatch("synthetic-batch")
+	at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	reg.AdmittedAt = at
+	p = PendingPublication{Bundle: archive.SourceBundle{SchemaVersion: archive.SourceSchemaVersion, ArchiveSessionID: id, NativeSessionID: reg.NativeSessionID, ProjectID: reg.ProjectID, Capture: archive.SourceCapture{Harness: reg.Harness, AdapterName: "synthetic", FilterVersion: archive.FilterVersion, CapturedAt: at}, NativeRecords: []map[string]any{{"content": strings.Repeat("x", 96<<10)}}}, ReadyAt: at, Attempted: true, SkillEvidence: string(cfg.EffectiveSkillEvidence())}
+	p.MetadataKey, err = archive.MetadataObjectKey(reg.Harness.Name, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	initialMetadata := archive.Metadata{SchemaVersion: archive.MetadataSchemaVersion, SessionID: id, NativeSessionID: reg.NativeSessionID, ProjectID: reg.ProjectID, Harness: reg.Harness, CapturedAt: at, FilterVersion: archive.FilterVersion, Adapter: archive.AdapterInfo{Name: "synthetic"}}
+	p.MetadataBytes, err = json.Marshal(initialMetadata)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,19 +81,12 @@ func stagedPreparedFixture(t *testing.T, request bool) (*Store, PendingPublicati
 	if err != nil {
 		t.Fatal(err)
 	}
-	reg, _, err := s.LoadRegistration(p.Bundle.ArchiveSessionID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	reg.Origin = archive.SessionOriginImport
-	reg.ImportBatch = archive.NewImportBatch("synthetic-batch")
-	reg.AdmittedAt = p.ReadyAt
 	digest, err := s.SaveImportStage(t.Context(), reg, p.Bundle, cfg.EffectiveSkillEvidence())
 	if err != nil {
 		t.Fatal(err)
 	}
 	reg.StagedImportSHA256 = digest
-	if err = s.SaveRegistration(reg); err != nil {
+	if _, err = s.RegisterReservedSession(agentmeta.SessionKey{Agent: agentmeta.Codex, NativeID: reg.NativeSessionID}, reg.ArchiveSessionID, func(string) archive.SessionRegistration { return reg }); err != nil {
 		t.Fatal(err)
 	}
 	if request {
