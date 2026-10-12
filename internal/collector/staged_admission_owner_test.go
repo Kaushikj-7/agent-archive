@@ -38,9 +38,9 @@ func stagedUnadmittedGroupFixture(t *testing.T) (*state.Store, archive.SessionRe
 	}
 	at := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 	parentPath := writeTranscript(t, store.Home(), "parent.jsonl", `{"type":"assistant","sessionId":"parent-native","timestamp":"2026-01-01T00:01:00Z","message":{"role":"assistant","content":"parent"}}`+"\n")
-	// Synthetic imported child has its own retained native ID, matching the
-	// selected registration. Parent linkage remains separate explicit evidence.
-	childPath := writeTranscript(t, store.Home(), "parent-native:subagent:agent-1.jsonl", `{"type":"assistant","sessionId":"parent-native:subagent:agent-1","agentId":"agent-1","timestamp":"2026-01-01T00:02:00Z","message":{"role":"assistant","content":"`+strings.Repeat("c", 96<<10)+`"}}`+"\n")
+	// Real-shaped Claude child records name the parent session and child agent.
+	// Use the dedicated child producer, as actual backfill staging does.
+	childPath := writeTranscript(t, store.Home(), "agent-agent-1.jsonl", `{"type":"assistant","sessionId":"parent-native","agentId":"agent-1","timestamp":"2026-01-01T00:02:00Z","message":{"role":"assistant","content":"`+strings.Repeat("c", 96<<10)+`"}}`+"\n")
 	parent := archive.SessionRegistration{ArchiveSessionID: "a-parent", NativeSessionID: "parent-native", ProjectID: "project", ProjectRoot: "/project", Harness: archive.Harness{Name: "claude"}, TranscriptPath: parentPath, SessionStartedAt: at.Add(-time.Hour), RegisteredAt: at, AdmittedAt: at, Origin: archive.SessionOriginImport, ImportBatch: archive.NewImportBatch("confirmed-group"), DestinationID: cfg.DestinationID()}
 	child := parent
 	child.ArchiveSessionID = "z-child"
@@ -50,15 +50,16 @@ func stagedUnadmittedGroupFixture(t *testing.T) (*state.Store, archive.SessionRe
 	child.SubagentID = "agent-1"
 	child.TranscriptPath = childPath
 	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "synthetic", Now: func() time.Time { return at }, AcceptSession: cfg.AcceptSession, SkillEvidence: cfg.EffectiveSkillEvidence(), Retry: storage.RetryPolicy{MaxAttempts: 1}}
-	childBundle, preserved, _, err := ReadImportSourceSelection(t.Context(), child, at, opts)
-	if err != nil || len(preserved) != 0 {
-		t.Fatalf("child selection: %v", err)
+	candidate := state.SubagentCandidate{ArchiveSessionID: child.ArchiveSessionID, NativeSessionID: child.NativeSessionID, ParentArchiveSessionID: parent.ArchiveSessionID, ParentNativeSessionID: parent.NativeSessionID, ProjectID: parent.ProjectID, ProjectRoot: parent.ProjectRoot, Harness: parent.Harness, AgentID: child.SubagentID, TranscriptPath: childPath, ObservedAt: at, Origin: archive.SessionOriginImport}
+	child, childBundle, err := ReadImportSubagentBundle(t.Context(), parent, candidate, opts)
+	if err != nil {
+		t.Fatalf("dedicated child selection: %v", err)
 	}
 	childSHA, err := store.SaveImportStage(t.Context(), child, childBundle, cfg.EffectiveSkillEvidence())
 	if err != nil {
 		t.Fatal(err)
 	}
-	candidate := state.SubagentCandidate{ArchiveSessionID: child.ArchiveSessionID, NativeSessionID: child.NativeSessionID, ParentArchiveSessionID: parent.ArchiveSessionID, ParentNativeSessionID: parent.NativeSessionID, ProjectID: parent.ProjectID, ProjectRoot: parent.ProjectRoot, Harness: parent.Harness, AgentID: child.SubagentID, TranscriptPath: childPath, ObservedAt: at, Origin: archive.SessionOriginImport, StagedImportSHA256: childSHA}
+	candidate.StagedImportSHA256 = childSHA
 	parentBundle, preserved, _, err := ReadImportSourceSelection(t.Context(), parent, at, opts)
 	if err != nil || len(preserved) != 0 {
 		t.Fatalf("parent selection: %v", err)
