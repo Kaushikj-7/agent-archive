@@ -431,7 +431,12 @@ func TestFitStagesNeverGrowWithThePrefix(t *testing.T) {
 		}
 		return words(rng.IntN(4))
 	}
-	for n := range 300 {
+	cases := 300
+	if testing.Short() {
+		// Keep every stage and prefix in both formats for a fixed seed prefix.
+		cases = 60
+	}
+	for n := range cases {
 		h := Handoff{Version: HandoffVersion, Session: HandoffSession{Harness: "codex"}, FullRecordPath: "/data/handoffs/p.md"}
 		for range 1 + rng.IntN(8) {
 			prompt := text()

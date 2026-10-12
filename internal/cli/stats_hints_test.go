@@ -219,14 +219,19 @@ func TestStatsAllInHintsFitTheTerminal(t *testing.T) {
 	s := realisticStats()
 	s.Projects = nil
 	s.Models = nil
-	for i := range statsMaxListRows + 12345 {
+	extraProjects, extraGroups := 12345, 100000
+	if testing.Short() {
+		// Still cut both lists, with a four-digit omission count to wrap.
+		extraProjects, extraGroups = 1234, 1234
+	}
+	for i := range statsMaxListRows + extraProjects {
 		name := fmt.Sprintf("p%05d", i)
 		s.Projects = append(s.Projects, stats.Project{Name: name, Sessions: 1, Tokens: i64(1000), Cost: usd(float64(1000 - i%900))})
 		s.Models = append(s.Models, stats.ModelRow{Label: "m" + name, Sessions: 1, Tokens: 1000, Priced: true, Cost: usd(1)})
 	}
 	s.TotalProjects = len(s.Projects)
-	rows := make([]stats.Group, 0, statsMaxGroupRows+100000)
-	for i := range statsMaxGroupRows + 100000 {
+	rows := make([]stats.Group, 0, statsMaxGroupRows+extraGroups)
+	for i := range statsMaxGroupRows + extraGroups {
 		rows = append(rows, stats.Group{Key: fmt.Sprintf("g%d", i), Sessions: 1})
 	}
 	type mode struct {
@@ -241,6 +246,9 @@ func TestStatsAllInHintsFitTheTerminal(t *testing.T) {
 		widths = append(widths, w)
 	}
 	widths = append(widths, 111, 120, 137, 160, 200, 250)
+	if testing.Short() {
+		widths = statsMatrixWidths()
+	}
 	for _, tc := range []struct {
 		name string
 		page statsPage

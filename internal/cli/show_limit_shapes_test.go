@@ -58,18 +58,26 @@ func codexMessage(role, text string) string {
 // valid UTF-8, and is valid JSON with --json.
 func TestShowTranscriptStaysWithinTheLimitForEveryShapeOfSession(t *testing.T) {
 	t.Parallel()
+	promptRepeats, exchanges, steps := 200000, 4000, 20000
+	longSteps, stepRepeats, toolExchanges, resultRepeats := 30, 20000, 60, 1200
+	if testing.Short() {
+		// Keep every shape and output mode, with multi-byte content still
+		// large enough to exercise the default limit and protected-tail cuts.
+		promptRepeats, exchanges, steps = 20000, 2200, 5000
+		longSteps, stepRepeats, toolExchanges, resultRepeats = 6, 4000, 8, 400
+	}
 	shapes := map[string]func(project string) string{
 		// One prompt that is megabytes of multi-byte text.
 		"one huge prompt": func(p string) string {
 			return codexLines(p, func(line func(string)) {
-				line(codexMessage("user", strings.Repeat("é世🙂 ", 200000)))
+				line(codexMessage("user", strings.Repeat("é世🙂 ", promptRepeats)))
 				line(codexMessage("assistant", "ok"))
 			})
 		},
 		// Thousands of exchanges, each tiny.
 		"thousands of tiny exchanges": func(p string) string {
 			return codexLines(p, func(line func(string)) {
-				for i := range 4000 {
+				for i := range exchanges {
 					line(codexMessage("user", fmt.Sprintf("q%d", i)))
 					line(codexMessage("assistant", "a"))
 				}
@@ -80,7 +88,7 @@ func TestShowTranscriptStaysWithinTheLimitForEveryShapeOfSession(t *testing.T) {
 		"one exchange of thousands of steps": func(p string) string {
 			return codexLines(p, func(line func(string)) {
 				line(codexMessage("user", "hi"))
-				for i := range 20000 {
+				for i := range steps {
 					line(codexMessage("assistant", fmt.Sprintf("step %d some words here", i)))
 				}
 			})
@@ -89,19 +97,19 @@ func TestShowTranscriptStaysWithinTheLimitForEveryShapeOfSession(t *testing.T) {
 		"long steps in the newest exchange": func(p string) string {
 			return codexLines(p, func(line func(string)) {
 				line(codexMessage("user", "hi"))
-				for range 30 {
-					line(codexMessage("assistant", strings.Repeat("é🙂 ", 20000)))
+				for range longSteps {
+					line(codexMessage("assistant", strings.Repeat("é🙂 ", stepRepeats)))
 				}
 			})
 		},
 		// Long tool results, which --full prints.
 		"long tool results": func(p string) string {
 			return codexLines(p, func(line func(string)) {
-				for i := range 60 {
+				for i := range toolExchanges {
 					line(codexMessage("user", fmt.Sprintf("q%d", i)))
 					for j := range 3 {
 						line(fmt.Sprintf(`{"type":"function_call","name":"exec_command","call_id":"c%d_%d","arguments":"{\"cmd\":\"ls\"}"}`, i, j))
-						out, _ := json.Marshal(strings.Repeat("line of 🙂 output\n", 1200))
+						out, _ := json.Marshal(strings.Repeat("line of 🙂 output\n", resultRepeats))
 						line(fmt.Sprintf(`{"type":"function_call_output","call_id":"c%d_%d","output":%s}`, i, j, out))
 					}
 					line(codexMessage("assistant", "done"))

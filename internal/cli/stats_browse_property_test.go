@@ -142,6 +142,14 @@ func TestStatsInteractiveWindowsEqualStaticRunsForEveryShape(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, at := range moments {
+			if testing.Short() {
+				// Keep New Year in each zone plus its DST transition; UTC has
+				// the ordinary September run. All shapes and window cycles stay.
+				season := map[string]int{"UTC": 9, "America/New_York": 3, "Australia/Lord_Howe": 10}[zone]
+				if at.month != 1 && at.month != season {
+					continue
+				}
+			}
 			now := time.Date(at.year, time.Month(at.month), at.day, at.hour, at.minute, 0, 0, loc)
 			for _, shape := range statsShapes() {
 				var metas []archive.Metadata
@@ -245,8 +253,16 @@ func TestStatsScreenNeverExceedsTheTerminalWhateverTheNames(t *testing.T) {
 	t.Parallel()
 	inputs := hostileInputs()
 	filters := statsFilters{Harness: "claude", Model: "日本語日本語日本語日本語日本語日本語\x1b[31m" + strings.Repeat("m", 300)}
-	for _, width := range []int{1, 20, 39, 40, 59, 60, 79, 80, 100, 120, 250} {
-		for _, height := range []int{1, 2, 5, 24, 60} {
+	widths := []int{1, 20, 39, 40, 59, 60, 79, 80, 100, 120, 250}
+	heights := []int{1, 2, 5, 24, 60}
+	if testing.Short() {
+		// Retain degenerate, footer-only and normal-height frames, all
+		// views, color, hostile names and layout threshold neighbors.
+		widths = []int{1, 39, 40, 41, 59, 60, 61, 79, 80, 81, 119, 120, 121, 250}
+		heights = []int{1, 2, 24}
+	}
+	for _, width := range widths {
+		for _, height := range heights {
 			// Color adds escape sequences to every row: one height is enough.
 			colors := []bool{false}
 			if height == 24 {
