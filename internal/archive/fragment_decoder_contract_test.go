@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
@@ -65,6 +66,9 @@ func checkFragmentContract(ctx context.Context, source io.ReadCloser, schema *js
 		}
 		if int64(len(line)) > ceiling || len(bytes.TrimSpace(line)) == 0 {
 			return errors.New("fragment line exceeds ceiling or is blank")
+		}
+		if !utf8.Valid(line) {
+			return errors.New("fragment line must be UTF-8")
 		}
 		decoder := json.NewDecoder(bytes.NewReader(line))
 		decoder.UseNumber()
@@ -212,6 +216,11 @@ func TestFragmentCrossLineContract(t *testing.T) {
 		{"record_before_header", record("0") + "\n" + header(1) + "\n", false},
 		{"duplicate_header", header(1) + "\n" + header(1) + "\n", false},
 		{"missing_record", header(2) + "\n" + record("0") + "\n", false},
+		{"fractional_count_token", strings.Replace(header(1), `"record_count":1`, `"record_count":1.0`, 1) + "\n" + record("0") + "\n", false},
+		{"exponent_count_token", strings.Replace(header(1), `"record_count":1`, `"record_count":1e0`, 1) + "\n" + record("0") + "\n", false},
+		{"fractional_ordinal_token", header(1) + "\n" + record("1.0") + "\n", false},
+		{"exponent_ordinal_token", header(1) + "\n" + record("1e0") + "\n", false},
+		{"negative_zero_ordinal_token", header(1) + "\n" + record("-0") + "\n", false},
 		{"surplus_record", header(1) + "\n" + record("0") + "\n" + record("1") + "\n", false},
 		{"blank_line", header(1) + "\n\n" + record("0") + "\n", false},
 		{"unterminated_record", header(1) + "\n" + record("0"), false},
@@ -220,6 +229,8 @@ func TestFragmentCrossLineContract(t *testing.T) {
 		{"duplicate_header_key", strings.Replace(header(1), `"record_count":1`, `"record_count":1,"record_count":1`, 1) + "\n" + record("0") + "\n", false},
 		{"escaped_duplicate_nested_key", header(1) + "\n" + strings.Replace(record("0"), `"text":"Synthetic surviving prompt"`, `"text":"Synthetic surviving prompt","\u0074ext":"Synthetic surviving prompt"`, 1) + "\n", false},
 		{"trailing_json", header(1) + "\n" + record("0") + " {}\n", false},
+		{"unicode_text", header(1) + "\n" + strings.Replace(record("0"), "Synthetic surviving prompt", "Synthetic \ufffd café 世界", 1) + "\n", true},
+		{"invalid_utf8_text", header(1) + "\n" + strings.Replace(record("0"), "Synthetic surviving prompt", "invalid\xfftext", 1) + "\n", false},
 		{"identity_conflict", header(1) + "\n" + `{"kind":"fragment_record","record":{"type":"session_meta","payload":{"id":"22222222-2222-4222-8222-222222222222"}}}` + "\n", false},
 		{"identity_agrees", header(1) + "\n" + `{"kind":"fragment_record","record":{"type":"session_meta","payload":{"id":"11111111-1111-4111-8111-111111111111"}}}` + "\n", true},
 	} {
