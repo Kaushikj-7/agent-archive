@@ -114,6 +114,7 @@ type Snapshot struct {
 	path     string
 	file     File
 	stamp    Stamp
+	policy   OpenPolicy
 	closed   bool
 	closeErr error
 }
@@ -142,6 +143,7 @@ func Open(files Opener, p string, policy OpenPolicy) (*Snapshot, error) {
 			if err != nil {
 				return nil, err
 			}
+			policy.Root = root
 			if !local.PathWithin(canonical, root) {
 				return nil, fmt.Errorf("transcript is outside its store")
 			}
@@ -160,7 +162,7 @@ func Open(files Opener, p string, policy OpenPolicy) (*Snapshot, error) {
 			}
 			return nil, err
 		}
-		return &Snapshot{files: files, path: p, file: f, stamp: Stamp{opened.Size(), opened.ModTime(), opened}}, nil
+		return &Snapshot{files: files, path: p, file: f, stamp: Stamp{opened.Size(), opened.ModTime(), opened}, policy: policy}, nil
 	}
 	f, err := files.OpenRegular(path)
 	if err != nil {
@@ -273,6 +275,15 @@ func (s *Snapshot) CheckPrefix(ctx context.Context, length int64, digest [32]byt
 			return err
 		}
 		named, err := s.files.Lstat(s.path)
+		if err == nil && (s.policy.RejectSymlinks || s.policy.Root != "") && !named.Mode().IsRegular() {
+			return ErrChanged
+		}
+		if err == nil && s.policy.Root != "" {
+			resolved, resolveErr := s.files.EvalSymlinks(s.path)
+			if resolveErr != nil || !local.PathWithin(resolved, s.policy.Root) {
+				return ErrChanged
+			}
+		}
 		if err == nil && named.Mode()&fs.ModeSymlink != 0 {
 			var resolved string
 			resolved, err = s.files.EvalSymlinks(s.path)
