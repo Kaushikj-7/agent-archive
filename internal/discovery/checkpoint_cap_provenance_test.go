@@ -31,4 +31,3 @@ func TestOverCapCheckpointCannotReportDurableSuccess(t *testing.T) {
   t.Fatalf("unwritten pending checkpoint reported success: %v", err)
  }
 }
-
