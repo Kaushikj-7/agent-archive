@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/jsonwire"
 )
 
 // These small fixtures exercise the same admission preflight as the real-size
@@ -15,14 +15,14 @@ func TestImportStageCapacityEncodedBoundary(t *testing.T) {
 	t.Parallel()
 	for _, content := range []string{strings.Repeat("synthetic ", 128), strings.Repeat("<>&\u2028界", 128)} {
 		stage := ImportStage{Bundle: archive.SourceBundle{NativeText: []archive.TextTranscript{{Content: content}}}}
-		n, err := jsonwire.Bound(t.Context(), stage, MaxImportStageBytes)
+		n, err := agentmeta.JSONWireBound(t.Context(), stage, MaxImportStageBytes)
 		if err != nil {
 			t.Fatal(err)
 		}
 		for _, delta := range []int64{-1, 0, 1} {
 			err := validateImportStageCapacityWithin(t.Context(), stage, n+delta, 1<<20)
 			if delta < 0 {
-				if !errors.Is(err, ErrDurableStorageCapacity) || !errors.Is(err, jsonwire.ErrLimit) {
+				if !errors.Is(err, ErrDurableStorageCapacity) || !errors.Is(err, agentmeta.ErrJSONWireLimit) {
 					t.Fatalf("encoded bound %d: %v", n+delta, err)
 				}
 			} else if err != nil {
@@ -35,14 +35,14 @@ func TestImportStageCapacityEncodedBoundary(t *testing.T) {
 	plain := ImportStage{Bundle: archive.SourceBundle{NativeText: []archive.TextTranscript{{Content: strings.Repeat("x", 1024)}}}}
 	encoded := plain
 	encoded.Bundle.NativeText = []archive.TextTranscript{{Content: strings.Repeat("<", 1024)}}
-	limit, err := jsonwire.Bound(t.Context(), plain, MaxImportStageBytes)
+	limit, err := agentmeta.JSONWireBound(t.Context(), plain, MaxImportStageBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := validateImportStageCapacityWithin(t.Context(), plain, limit, 1<<20); err != nil {
 		t.Fatal(err)
 	}
-	if err := validateImportStageCapacityWithin(t.Context(), encoded, limit, 1<<20); !errors.Is(err, jsonwire.ErrLimit) || !errors.Is(err, ErrDurableStorageCapacity) {
+	if err := validateImportStageCapacityWithin(t.Context(), encoded, limit, 1<<20); !errors.Is(err, agentmeta.ErrJSONWireLimit) || !errors.Is(err, ErrDurableStorageCapacity) {
 		t.Fatalf("encoded expansion admitted: %v", err)
 	}
 }
@@ -68,7 +68,7 @@ func TestImportStageCapacityRefilterBoundary(t *testing.T) {
 			retained *= 2
 		}
 		stage := ImportStage{Bundle: bundle, Preserved: preservedBundles}
-		n, err := jsonwire.Bound(t.Context(), stage, MaxImportStageBytes)
+		n, err := agentmeta.JSONWireBound(t.Context(), stage, MaxImportStageBytes)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -76,7 +76,7 @@ func TestImportStageCapacityRefilterBoundary(t *testing.T) {
 		for _, delta := range []int64{-1, 0, 1} {
 			err := validateImportStageCapacityWithin(t.Context(), stage, n, allowance+delta)
 			if delta < 0 {
-				if !errors.Is(err, ErrDurableStorageCapacity) || errors.Is(err, jsonwire.ErrLimit) {
+				if !errors.Is(err, ErrDurableStorageCapacity) || errors.Is(err, agentmeta.ErrJSONWireLimit) {
 					t.Fatalf("preserved=%v refilter allowance %d: %v", preserved, allowance+delta, err)
 				}
 			} else if err != nil {

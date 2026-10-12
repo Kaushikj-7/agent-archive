@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/jsonwire"
 	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
@@ -156,9 +156,9 @@ func (s *sessionScan) refilterRetainedFor(reg archive.SessionRegistration, adapt
 	var sizingErr error
 	for _, record := range bundle.NativeRecords {
 		available := reservation.Available()
-		n, err := jsonwire.Bound(s.ctx, record, available)
+		n, err := agentmeta.JSONWireBound(s.ctx, record, available)
 		if err != nil {
-			if errors.Is(err, jsonwire.ErrLimit) {
+			if errors.Is(err, agentmeta.ErrJSONWireLimit) {
 				reservation.Refuse(available + 1)
 			}
 			sizingErr = err
@@ -263,7 +263,7 @@ func (s *sessionScan) compressSource(bundle archive.SourceBundle) (archive.Compr
 	}
 	available := reservation.Available()
 	largest, err := archive.SourceEncodingLineBound(s.ctx, bundle, available)
-	if errors.Is(err, jsonwire.ErrLimit) {
+	if errors.Is(err, agentmeta.ErrJSONWireLimit) {
 		reservation.Refuse(available + 1)
 	}
 	reservation.Release(preflightScratch)
@@ -316,8 +316,8 @@ func (s *sessionScan) marshalRetained(value any) ([]byte, error) {
 		return nil, errRetainedBudget
 	}
 	available := reservation.Available()
-	n, err := jsonwire.Bound(s.ctx, value, available/2)
-	if errors.Is(err, jsonwire.ErrLimit) {
+	n, err := agentmeta.JSONWireBound(s.ctx, value, available/2)
+	if errors.Is(err, agentmeta.ErrJSONWireLimit) {
 		reservation.Refuse(available + 2)
 	}
 	reservation.Release(scratch)

@@ -1,4 +1,4 @@
-package jsonwire
+package agentmeta
 
 import (
 	"context"
@@ -14,8 +14,8 @@ import (
 )
 
 func TestSizingImportBoundary(t *testing.T) {
-	direct, all := importgraph.Imports(t, "github.com/wangjohn/agent-archive/internal/jsonwire")
-	importgraph.Forbid(t, "internal/jsonwire", direct, "os", "os/exec", "io/fs", "path/filepath", "net", "net/http", "math/rand", "math/rand/v2")
+	direct, all := importgraph.Imports(t, "github.com/wangjohn/agent-archive/internal/agentmeta")
+	importgraph.Forbid(t, "internal/agentmeta", direct, "os", "os/exec", "io/fs", "path/filepath", "net", "net/http", "math/rand", "math/rand/v2")
 	for _, path := range all {
 		if strings.HasPrefix(path, "github.com/wangjohn/agent-archive/") {
 			t.Errorf("pure JSON sizing reaches operational dependency %s", path)
@@ -39,34 +39,34 @@ func TestBoundSupportsActualWireTypes(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		n, err := Bound(t.Context(), v, 1<<20)
+		n, err := JSONWireBound(t.Context(), v, 1<<20)
 		if err != nil {
 			t.Fatalf("%T: %v", v, err)
 		}
 		if n < int64(len(raw)) {
 			t.Fatalf("%T bound %d smaller than wire %d: %s", v, n, len(raw), raw)
 		}
-		if _, err := Bound(t.Context(), v, n-1); !errors.Is(err, ErrLimit) {
+		if _, err := JSONWireBound(t.Context(), v, n-1); !errors.Is(err, ErrJSONWireLimit) {
 			t.Fatalf("%T undersized bound: %v", v, err)
 		}
 	}
 }
 
 func TestBoundRefusesUnboundedValuesAndCancellation(t *testing.T) {
-	if _, err := Bound(t.Context(), arbitraryMarshaler{}, 1024); !errors.Is(err, ErrUnsupported) {
+	if _, err := JSONWireBound(t.Context(), arbitraryMarshaler{}, 1024); !errors.Is(err, ErrJSONWireUnsupported) {
 		t.Fatal(err)
 	}
 	cycle := map[string]any{}
 	cycle["self"] = cycle
-	if _, err := Bound(t.Context(), cycle, 1<<20); !errors.Is(err, ErrUnsupported) {
+	if _, err := JSONWireBound(t.Context(), cycle, 1<<20); !errors.Is(err, ErrJSONWireUnsupported) {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if _, err := Bound(ctx, "data", 100); !errors.Is(err, context.Canceled) {
+	if _, err := JSONWireBound(ctx, "data", 100); !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
 	}
-	if _, err := Bound(t.Context(), "data", -1); !errors.Is(err, ErrLimit) {
+	if _, err := JSONWireBound(t.Context(), "data", -1); !errors.Is(err, ErrJSONWireLimit) {
 		t.Fatal(err)
 	}
 }
@@ -78,7 +78,7 @@ func FuzzStringBound(f *testing.F) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		n, err := Bound(t.Context(), s, 6*int64(len(s))+2)
+		n, err := JSONWireBound(t.Context(), s, 6*int64(len(s))+2)
 		if err != nil || n < int64(len(raw)) {
 			t.Fatalf("bound %d wire %d error %v", n, len(raw), err)
 		}

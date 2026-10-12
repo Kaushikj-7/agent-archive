@@ -8,9 +8,9 @@ import (
 	"io"
 	"os"
 
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
-	"github.com/wangjohn/agent-archive/internal/jsonwire"
 )
 
 // RemoveExactLegacyPending acknowledges an already-owned ordinary transaction.
@@ -75,7 +75,7 @@ func (s *Store) exactLegacyPendingWire(ctx context.Context, expected PendingPubl
 		}
 		limit = min(limit, reservation.Available()-1)
 	}
-	n, err := jsonwire.Bound(ctx, expected, limit)
+	n, err := agentmeta.JSONWireBound(ctx, expected, limit)
 	if s.resourceBudget != nil {
 		reservation.Release(scratch)
 	}
