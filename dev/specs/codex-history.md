@@ -4,7 +4,11 @@ Status: implemented retained-history reader and lifecycle contract (#336, #341,
 #348, #355), reconciled 2026-10-11 at `db2ccd3e`. Native lookup, ownership,
 child admission and maintenance are covered by code and synthetic tests. The
 broader [historical recovery plan](../proposals/historical-backfill-recovery.md)
-still has historical-only ownership, fragment artifacts and acceptance work.
+now includes historical-only ownership and bounded bulk mappings merged in
+[#433](https://github.com/wangjohn/agent-archive/pull/433) (`18ca0c48`,
+2026-10-12). Fragment artifacts (step 6b) and remaining combined acceptance
+work stay open; the [backfill contract](backfill.md#historical-only-ownership-and-bounded-mapping-files)
+defines the implemented historical identity and destination policy.
 
 A stable Codex thread is distinct from its physical rollout revisions, root
 conversation, parent and fork relation. The source provider consumes injected

@@ -11,11 +11,14 @@ published release or current remote PR activity. Recent merged work establishes
 implementation progress; an open plan alone does not establish someone is
 actively working on it. Code and user documentation remain the current contract.
 
+Historical-only ownership status reconciled 2026-10-12 after #433 merged as
+`18ca0c48`; fragment and combined acceptance work remain open.
+
 ## Remaining implementation
 
 | Proposal | Implemented | Remaining |
 | --- | --- | --- |
-| [Historical backfill recovery](historical-backfill-recovery.md) | Diagnostics, portable recovery, rollout lookup, history lifecycle and native child capture; recent recovery hardening. | Historical-only ownership/bulk mappings, fragment artifact/lifecycle, full acceptance matrix. |
+| [Historical backfill recovery](historical-backfill-recovery.md) | Diagnostics, portable recovery, rollout lookup, history lifecycle and native child capture; recovery hardening; historical-only ownership and bounded bulk mappings (#433). | Fragment artifact/lifecycle (6b) and the remaining combined acceptance matrix. |
 | [Archive listing at scale](listing-at-scale.md) | Parallel listing, tracing, bounded metadata-body reads; 10k benchmark and 10k/20k operation-count coverage. | Full 1k/10k/100k measurement matrix and an index that bounds LIST header cost. |
 | [Cloud capture](cloud-capture.md) | No cloud collector/push or vendor pull implementation. | Proposed, unscheduled; requires producer probes and runtime/authentication design. |
 

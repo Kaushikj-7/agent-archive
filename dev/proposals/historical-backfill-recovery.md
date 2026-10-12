@@ -1,8 +1,9 @@
 # Historical backfill recovery: implementation plan
 
 Status: partially implemented; remaining milestones remain gated. Prepared
-2026-10-06 against `f0dca28b1191`; historical-only implementation updated
-2026-10-12 against main `b7435197`.
+2026-10-06 against `f0dca28b1191`; historical-only ownership and bounded bulk
+mappings merged 2026-10-12 in
+[#433](https://github.com/wangjohn/agent-archive/pull/433) (`18ca0c48`).
 
 Step 4a now stages the selected filtered source set, including preserved Codex
 revisions and qualified children, before admission. A bounded SHA-256 journal
@@ -472,8 +473,10 @@ resume, rerun, continued capture and exact undo ownership.
 
 ### Step 6a: historical-only ownership and bulk mappings
 
-Implementation contract reconciled against main `b7435197` (including #430 streaming read accounting, per-session ceilings
-and named size gaps): this change adds
+Implemented in [#433](https://github.com/wangjohn/agent-archive/pull/433)
+(`18ca0c48`, 2026-10-12). The implementation was reconciled against main
+`b7435197` (including #430 streaming read accounting, per-session ceilings
+and named size gaps) and adds
 strict bounded mapping JSON, separate opaque historical identities and
 destination permissions, frozen private dependency cwd evidence, retained-only
 publication/local reads and permanent v10 compatibility protection. Existing

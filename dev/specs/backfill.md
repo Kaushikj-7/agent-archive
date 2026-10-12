@@ -1458,7 +1458,8 @@ pass refreshes the evidence.
 
 ## Historical-only ownership and bounded mapping files
 
-Step 6a adds `--mapping-file FILE`, strict JSON schema 1, bounded to 4 MiB and
+Step 6a, merged in [#433](https://github.com/wangjohn/agent-archive/pull/433)
+(`18ca0c48`), adds `--mapping-file FILE`, strict JSON schema 1, bounded to 4 MiB and
 16,384 mappings/definitions. Each exact absolute original cwd targets either an
 already included `configured_root` or an opaque `historical_project_id`.
 `historical_projects` definitions supply stable 32-character lowercase hex IDs
