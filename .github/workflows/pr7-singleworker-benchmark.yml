@@ -1,0 +1,110 @@
+name: PR7 single-worker cold comparison
+on:
+  push:
+    branches: ['codex/ci-speedup-07-benchmark-20261012']
+permissions:
+  contents: read
+jobs:
+  single-worker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      PRODUCTION_HEAD: 4de7ee6a4fcad3b40b93ecd267b4f7d63a337a64
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Verify comparison source and record runner
+        run: |
+          mkdir benchmark-results
+          test "$(git rev-parse HEAD^)" = "$PRODUCTION_HEAD"
+          test "$(git diff --name-only "$PRODUCTION_HEAD" HEAD)" = '.github/workflows/pr7-singleworker-benchmark.yml'
+          {
+            git rev-parse HEAD
+            git rev-parse "$PRODUCTION_HEAD"
+            git rev-parse "$PRODUCTION_HEAD^{tree}"
+            uname -a
+            lscpu
+            cat /sys/fs/cgroup/cpu.max
+            python3 -c 'import os; print("CPU affinity:", sorted(os.sched_getaffinity(0)))'
+          } > benchmark-results/source-runner.txt
+          cat benchmark-results/source-runner.txt
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.2'
+          cache: false
+      - name: Require Go 1.27.2
+        run: |
+          go version | tee benchmark-results/go-version.txt
+          go version | grep -q ' go1\.27\.2 '
+          go env -json > benchmark-results/go-env.json
+      - name: Original serial race-short, vet, and all required script fixtures
+        run: |
+          python3 - <<'PY'
+          import json, pathlib, subprocess, sys, time
+          out = pathlib.Path('benchmark-results')
+          fixtures = [
+              'test_release_signing.py', 'test_release_assets.py',
+              'test_release_candidate.py', 'test_install.py',
+              'test_install_from_source.py', 'test_purge_recipe.py',
+              'test_ci_workflow.py', 'test_stage_native_verify.py',
+              'test_scope_native_verify.py', 'test_measure_hook.py',
+              'test_linux_acceptance.py', 'test_go_shards.py',
+          ]
+          commands = [
+              ('race-short', ['go', 'test', '-race', '-short', '-count=1', '-json', '-timeout', '20m', './...']),
+              ('vet', ['go', 'vet', './...']),
+          ] + [(f, ['python3'] + (['-B'] if f == 'test_scope_native_verify.py' else []) + ['scripts/' + f]) for f in fixtures]
+          phases = []
+          for name, command in commands:
+              print('command:', json.dumps(command), flush=True)
+              start = time.monotonic()
+              with (out / (name + '.log')).open('w') as stream:
+                  result = subprocess.run(command, stdout=stream, stderr=subprocess.STDOUT)
+              phase = {'phase': name, 'command': command, 'seconds': time.monotonic()-start, 'exit_code': result.returncode}
+              phases.append(phase)
+              (out / 'phases.json').write_text(json.dumps(phases, indent=2) + '\n')
+              print(json.dumps(phase), flush=True)
+              if result.returncode:
+                  print((out / (name + '.log')).read_text()[-20000:])
+                  sys.exit(result.returncode)
+          PY
+      - name: Summarize whole-suite execution evidence
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import json, pathlib
+          out = pathlib.Path('benchmark-results')
+          source = out / 'race-short.log'
+          terminals, test_terminals, cli = [], [], []
+          malformed = []
+          if source.exists():
+              for line in source.read_text().splitlines():
+                  try:
+                      event = json.loads(line)
+                  except ValueError:
+                      malformed.append(line)
+                      continue
+                  if event.get('Action') in ('pass', 'skip', 'fail', 'build-fail'):
+                      if event.get('Test'):
+                          test_terminals.append(event)
+                          if event.get('Package', '').endswith('/internal/cli') and '/' not in event['Test']:
+                              cli.append(event)
+                      else:
+                          terminals.append(event)
+          report = {'package_terminals': terminals, 'test_terminals': test_terminals,
+                    'cli_top_level_terminals': cli, 'non_json_lines': malformed,
+                    'slowest_packages': sorted(terminals, key=lambda e: e.get('Elapsed', 0), reverse=True)[:30],
+                    'slowest_cli_tests': sorted(cli, key=lambda e: e.get('Elapsed', 0), reverse=True)[:30]}
+          (out / 'execution.json').write_text(json.dumps(report, indent=2) + '\n')
+          print(json.dumps({k: v for k, v in report.items() if k in ('slowest_packages', 'slowest_cli_tests')}, indent=2))
+          PY
+      - name: Preserve cold comparison evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pr7-singleworker-benchmark
+          path: benchmark-results
+          if-no-files-found: error
+          retention-days: 7
