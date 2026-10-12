@@ -177,10 +177,10 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		return 0
 	}
 	if browsing {
-		_, _, code := runBrowser(context.Background(), env, newPrompter(stdin, stdout), stdout, stderr, browserSpec{Mode: browseSessions, Choices: choices, Query: words, Command: "list", Store: store, NoPager: opts.noPager})
+		_, _, code := runBrowser(ctx, env, newPrompter(stdin, stdout), stdout, stderr, browserSpec{Mode: browseSessions, Choices: choices, Query: words, Command: "list", Store: store, NoPager: opts.noPager})
 		return code
 	}
-	if err := withPager(context.Background(), stdout, stderr, env, opts.noPager, func(w io.Writer) error {
+	if err := withPager(ctx, stdout, stderr, env, opts.noPager, func(w io.Writer) error {
 		return printListTable(w, choices.shown())
 	}); err != nil {
 		terminal.Printf(stderr, "agent-archive: list: %v\n", err)

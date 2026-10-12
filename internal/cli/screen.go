@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"io"
 	"os"
 	"sync"
@@ -53,10 +54,15 @@ type altScreen struct {
 	// before the process exits, so what must stay in the scrollback (the
 	// files stats saved) is still printed.
 	afterSignal func()
+	cancelReads context.CancelFunc
 }
 
 func enterAltScreen(out io.Writer, env altScreenDependencies) *altScreen {
-	s := &altScreen{out: out, exit: env.exit}
+	return enterAltScreenWithReadCancel(out, env, nil)
+}
+
+func enterAltScreenWithReadCancel(out io.Writer, env altScreenDependencies, cancel context.CancelFunc) *altScreen {
+	s := &altScreen{out: out, exit: env.exit, cancelReads: cancel}
 	if !env.interactive(out) {
 		return s
 	}
@@ -148,6 +154,9 @@ func (s *altScreen) hide() {
 
 // exitForSignal restores the screen and exits as sig would have.
 func (s *altScreen) exitForSignal(sig os.Signal) {
+	if s.cancelReads != nil {
+		s.cancelReads()
+	}
 	s.leave()
 	s.mu.Lock()
 	after := s.afterSignal
