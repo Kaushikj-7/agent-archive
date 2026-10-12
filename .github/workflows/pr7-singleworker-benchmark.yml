@@ -13,12 +13,12 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 2
+          fetch-depth: 3
           persist-credentials: false
       - name: Verify comparison source and record runner
         run: |
           mkdir benchmark-results
-          test "$(git rev-parse HEAD^)" = "$PRODUCTION_HEAD"
+          git merge-base --is-ancestor "$PRODUCTION_HEAD" HEAD
           test "$(git diff --name-only "$PRODUCTION_HEAD" HEAD)" = '.github/workflows/pr7-singleworker-benchmark.yml'
           {
             git rev-parse HEAD
@@ -26,7 +26,7 @@ jobs:
             git rev-parse "$PRODUCTION_HEAD^{tree}"
             uname -a
             lscpu
-            cat /sys/fs/cgroup/cpu.max
+            python3 -c 'from pathlib import Path; names = ("/sys/fs/cgroup/cpu.max", "/sys/fs/cgroup/cpu/cpu.cfs_quota_us", "/sys/fs/cgroup/cpu/cpu.cfs_period_us"); [print(name + ":", Path(name).read_text().strip() if Path(name).exists() else "absent") for name in names]'
             python3 -c 'import os; print("CPU affinity:", sorted(os.sched_getaffinity(0)))'
           } > benchmark-results/source-runner.txt
           cat benchmark-results/source-runner.txt
