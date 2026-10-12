@@ -338,11 +338,12 @@ func (s *sessionScan) addPendingRevision(planner *revisionPlanner) error {
 // checkStageEvidence reserves retained records and encoded bytes independently of
 // compressed disk size, including cached/pending inputs absent from native reads.
 func (p *revisionPlanner) checkStageEvidence(ctx context.Context, bundle archive.SourceBundle) (int, error) {
+	reservation := p.budget.Reservation()
 	const countScratch = 32 << 10
-	if !p.budget.Reserve(countScratch) {
+	if !reservation.Reserve(countScratch) {
 		return 0, errRetainedBudget
 	}
-	defer p.budget.Release(countScratch)
+	defer reservation.Release(countScratch)
 	recordsLeft, bytesLeft := archive.MaxHistoryRecords, 128<<20
 	for _, stage := range p.plan.Sources {
 		recordsLeft -= len(stage.Bundle.NativeRecords)

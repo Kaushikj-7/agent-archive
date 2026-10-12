@@ -189,14 +189,15 @@ func TestRolloutOverSessionCeilingIsTheSessionsOwn(t *testing.T) {
 		t.Fatal("memory refusal reported as an unsafe source format")
 	}
 	shared := agentapi.NewNativeReadBudget(passLedger)
+	reservation := shared.Reservation()
 	held := shared.Available() - (1 << 20)
-	if !shared.Reserve(held) {
+	if !reservation.Reserve(held) {
 		t.Fatal("reserve")
 	}
 	if err := read(shared, sessionCeiling); !errors.Is(err, agentapi.ErrReadBudget) || errors.Is(err, errScopeExceeded) {
 		t.Fatalf("under others' pressure: %v", err)
 	}
-	shared.Release(held)
+	reservation.Release(held)
 	if err := read(shared, sessionCeiling); err != nil {
 		t.Fatal("retry with the ledger free", err)
 	}

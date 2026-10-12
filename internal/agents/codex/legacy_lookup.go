@@ -130,10 +130,11 @@ func (p *relatedSourcePass) validateGenericLegacyInput(input agentapi.NativeInpu
 	if input.File == nil {
 		return sourceFailure(agentapi.Unsafe, "legacy source is not a file")
 	}
-	if !p.reserve(sourceHeaderCharge) {
+	reservation := p.env.ReadBudget.Reservation()
+	if !p.reserve(reservation, sourceHeaderCharge) {
 		return sourceFailure(agentapi.Limit, "legacy metadata scratch budget exhausted")
 	}
-	defer p.release(sourceHeaderCharge)
+	defer p.release(reservation, sourceHeaderCharge)
 	raw := make([]byte, min(input.File.Length(), int64(64<<10)+1))
 	n, err := input.File.ReadAt(raw, 0)
 	if err != nil && !errors.Is(err, io.EOF) {

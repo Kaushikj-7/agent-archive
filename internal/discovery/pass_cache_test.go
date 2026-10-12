@@ -37,17 +37,18 @@ func TestMetadataInventoryIsNoSessionsCharge(t *testing.T) {
 	}
 	end()
 	end = budget.BeginScope(1 << 20)
+	reservation := budget.Reservation()
 	defer end()
-	if !budget.Reserve(512 << 10) {
+	if !reservation.Reserve(512 << 10) {
 		t.Fatal("reserve")
 	}
 	if err := view.close(); err != nil {
 		t.Fatal(err)
 	}
-	if budget.Reserve(600<<10) || !budget.ScopeExceeded() {
+	if reservation.Reserve(600<<10) || !budget.ScopeExceeded() {
 		t.Fatal("releasing the inventory lowered a later session's count")
 	}
-	budget.Release(512 << 10)
+	reservation.Release(512 << 10)
 }
 
 // What the lookup keeps for its whole life stops at maxCatalogBytes,

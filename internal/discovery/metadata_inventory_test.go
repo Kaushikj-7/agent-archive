@@ -1047,6 +1047,7 @@ func TestMetadataEnumerationPressurePreservesLimitAndCleanup(t *testing.T) {
 	for _, shared := range []bool{false, true} {
 		t.Run(strconv.FormatBool(shared), func(t *testing.T) {
 			lookup, _, _ := metadataFixture(t, 1)
+			reservation := lookup.readBudget.Reservation()
 			view := lookup.MetadataInventory().(*metadataInventory)
 			if err := view.start(t.Context()); err != nil {
 				t.Fatal(err)
@@ -1054,7 +1055,7 @@ func TestMetadataEnumerationPressurePreservesLimitAndCleanup(t *testing.T) {
 			var external int64
 			if shared {
 				external = lookup.readBudget.Available()
-				if !lookup.readBudget.Reserve(external) {
+				if !reservation.Reserve(external) {
 					t.Fatal("shared pressure reserve failed")
 				}
 			} else if !view.reserve(metadataBytes - view.charge - view.headerBytes) {
@@ -1083,7 +1084,7 @@ func TestMetadataEnumerationPressurePreservesLimitAndCleanup(t *testing.T) {
 			if err := slice.Close(); err != nil {
 				t.Fatal(err)
 			}
-			lookup.readBudget.Release(external)
+			reservation.Release(external)
 			if err := lookup.CloseReadOnly(); err != nil {
 				t.Fatal(err)
 			}

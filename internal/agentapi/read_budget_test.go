@@ -9,38 +9,42 @@ func TestReadScopeCeilingIsTheOwnersOwn(t *testing.T) {
 	t.Parallel()
 	b := NewNativeReadBudget(100)
 	end := b.BeginScope(40)
-	if !b.Reserve(30) || b.ScopeExceeded() {
+	reservation := b.Reservation()
+	if !reservation.Reserve(30) || b.ScopeExceeded() {
 		t.Fatal("within the scope")
 	}
 	if got := b.Available(); got != 10 {
 		t.Fatalf("available %d, want the scope's 10", got)
 	}
-	if b.Reserve(11) || !b.ScopeExceeded() {
+	if reservation.Reserve(11) || !b.ScopeExceeded() {
 		t.Fatal("over the scope's ceiling must refuse and say so")
 	}
 	if used, _ := b.Charged(); used != 30 {
 		t.Fatalf("a refusal charged: %d", used)
 	}
-	b.Release(30)
+	reservation.Release(30)
 	end()
 	if b.ScopeExceeded() {
 		t.Fatal("an ended scope is still reported")
 	}
-	if !b.Reserve(90) {
+	prior := b.Reservation()
+	if !prior.Reserve(90) {
 		t.Fatal("without a scope the shared limit alone applies")
 	}
-	b.Release(90)
+	prior.Release(90)
 }
 
 func TestReadScopeTellsSharedPressureFromItsOwn(t *testing.T) {
 	t.Parallel()
 	b := NewNativeReadBudget(100)
-	if !b.Reserve(80) { // held by the pass, before the scope began
+	prior := b.Reservation()
+	if !prior.Reserve(80) { // held by the pass, before the scope began
 		t.Fatal("reserve")
 	}
 	end := b.BeginScope(50)
+	reservation := b.Reservation()
 	defer end()
-	if b.Reserve(30) || b.ScopeExceeded() {
+	if reservation.Reserve(30) || b.ScopeExceeded() {
 		t.Fatal("a refusal by the shared limit is not the scope's own")
 	}
 	if got := b.Available(); got != 20 {
@@ -52,11 +56,11 @@ func TestReadScopeTellsSharedPressureFromItsOwn(t *testing.T) {
 	}
 	// The pass's earlier charge ending inside the scope never makes the
 	// scope's own count negative.
-	b.Release(80)
-	if !b.Reserve(50) || b.Reserve(1) || !b.ScopeExceeded() {
+	prior.Release(80)
+	if !reservation.Reserve(50) || reservation.Reserve(1) || !b.ScopeExceeded() {
 		t.Fatal("scope ceiling after an earlier owner released")
 	}
-	b.Release(50)
+	reservation.Release(50)
 }
 
 func TestReadScopeRefuseMarksOnlyPastTheCeiling(t *testing.T) {
@@ -79,14 +83,16 @@ func TestNestedReadScopeRestores(t *testing.T) {
 	b := NewNativeReadBudget(100)
 	outer := b.BeginScope(60)
 	inner := b.BeginScope(10)
-	if b.Reserve(11) || !b.ScopeExceeded() {
+	reservation := b.Reservation()
+	if reservation.Reserve(11) || !b.ScopeExceeded() {
 		t.Fatal("inner ceiling")
 	}
 	inner()
-	if b.ScopeExceeded() || !b.Reserve(50) {
+	reservation = b.Reservation()
+	if b.ScopeExceeded() || !reservation.Reserve(50) {
 		t.Fatal("outer scope not restored")
 	}
-	b.Release(50)
+	reservation.Release(50)
 	outer()
 }
 
@@ -107,19 +113,20 @@ func TestUnscopedCacheIsNoSessionsCharge(t *testing.T) {
 	t.Parallel()
 	b := NewNativeReadBudget(100)
 	end := b.BeginScope(40)
+	reservation := b.Reservation()
 	defer end()
 	if !b.ReserveUnscoped(50) || b.Available() != 40 {
 		t.Fatal("a pass cache counted toward the scope", b.Available())
 	}
-	if !b.Reserve(30) {
+	if !reservation.Reserve(30) {
 		t.Fatal("reserve")
 	}
 	// Releasing the cache does not lower the scope's own count.
 	b.ReleaseUnscoped(50)
-	if b.Reserve(11) || !b.ScopeExceeded() {
+	if reservation.Reserve(11) || !b.ScopeExceeded() {
 		t.Fatal("the cache release lowered the session's count")
 	}
-	b.Release(30)
+	reservation.Release(30)
 	other := NewNativeReadBudget(100)
 	endOther := other.BeginScope(40)
 	defer endOther()
@@ -135,11 +142,12 @@ func TestScopePressuredIsSharedRefusalOnly(t *testing.T) {
 		t.Fatal("reserve")
 	}
 	end := b.BeginScope(50)
+	reservation := b.Reservation()
 	defer end()
 	if b.ScopePressured() {
 		t.Fatal("pressured before any refusal")
 	}
-	if b.Reserve(21) || !b.ScopePressured() || b.ScopeExceeded() {
+	if reservation.Reserve(21) || !b.ScopePressured() || b.ScopeExceeded() {
 		t.Fatal("a shared refusal was not pressure")
 	}
 	b.ReleaseUnscoped(80)

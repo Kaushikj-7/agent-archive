@@ -52,15 +52,17 @@ func (s *sessionScan) releaseRetainedAfter(mark int) {
 
 func (s *sessionScan) retainCharge(n int64) error {
 	b := s.readBudget()
-	if !b.Reserve(n) {
+	reservation := b.Reservation()
+	if !reservation.Reserve(n) {
 		return errRetainedBudget
 	}
-	s.retainedReleases = append(s.retainedReleases, func() { b.Release(n) })
+	s.retainedReleases = append(s.retainedReleases, func() { reservation.Release(n) })
 	return nil
 }
 
 func (s *sessionScan) historyGet(key string, limit int64) ([]byte, error) {
 	b := s.readBudget()
+	reservation := b.Reservation()
 	// Sidecars are mutable: stat provides a bounded allocation ceiling, never
 	// authority. Exact bytes/schema/predecessor checks still run after GET.
 	if statter, ok := s.remote.(storage.ObjectStatter); ok && strings.HasSuffix(key, "/metadata.json") {
@@ -80,17 +82,17 @@ func (s *sessionScan) historyGet(key string, limit int64) ([]byte, error) {
 	if limit <= 0 || limit > historyCompressedLimit {
 		return nil, errRetainedBudget
 	}
-	if !b.Reserve(limit) {
+	if !reservation.Reserve(limit) {
 		return nil, errRetainedBudget
 	}
 	data, err := historyLimitedGet(s.ctx, s.remote, key, limit)
 	if err != nil {
-		b.Release(limit)
+		reservation.Release(limit)
 		return nil, err
 	}
 	n := int64(len(data))
-	b.Release(limit - n)
-	s.retainedReleases = append(s.retainedReleases, func() { b.Release(n) })
+	reservation.Release(limit - n)
+	s.retainedReleases = append(s.retainedReleases, func() { reservation.Release(n) })
 	return data, nil
 }
 
@@ -100,15 +102,16 @@ func (s *sessionScan) historyStage(stage state.PendingSource) ([]byte, error) {
 		return nil, errRetainedBudget
 	}
 	b := s.readBudget()
-	if !b.Reserve(n) {
+	reservation := b.Reservation()
+	if !reservation.Reserve(n) {
 		return nil, errRetainedBudget
 	}
 	data, err := s.local.ReadPendingSource(s.id(), stage)
 	if err != nil {
-		b.Release(n)
+		reservation.Release(n)
 		return nil, err
 	}
-	s.retainedReleases = append(s.retainedReleases, func() { b.Release(n) })
+	s.retainedReleases = append(s.retainedReleases, func() { reservation.Release(n) })
 	return data, nil
 }
 
@@ -144,25 +147,26 @@ func (s *sessionScan) refilterRetainedFor(reg archive.SessionRegistration, adapt
 		return refilterBundle(s.ctx, reg, adapter, bundle)
 	}
 	b := s.readBudget()
+	reservation := b.Reservation()
 	const preflightScratch = 32 << 10
-	if !b.Reserve(preflightScratch) {
+	if !reservation.Reserve(preflightScratch) {
 		return archive.SourceBundle{}, errRetainedBudget
 	}
 	largest := int64(0)
 	var sizingErr error
 	for _, record := range bundle.NativeRecords {
-		available := b.Available()
+		available := reservation.Available()
 		n, err := jsonwire.Bound(s.ctx, record, available)
 		if err != nil {
 			if errors.Is(err, jsonwire.ErrLimit) {
-				b.Refuse(available + 1)
+				reservation.Refuse(available + 1)
 			}
 			sizingErr = err
 			break
 		}
 		largest = max(largest, n)
 	}
-	b.Release(preflightScratch)
+	reservation.Release(preflightScratch)
 	if sizingErr != nil {
 		return archive.SourceBundle{}, errors.Join(errRetainedBudget, sizingErr)
 	}
@@ -172,15 +176,15 @@ func (s *sessionScan) refilterRetainedFor(reg archive.SessionRegistration, adapt
 	}
 	// Three distinct row owners, plus the scanner, are temporary. Check additions
 	// against available capacity before forming the sum.
-	if largest > (b.Available()-scanner)/3 {
-		b.Refuse(3*largest + scanner)
+	if largest > (reservation.Available()-scanner)/3 {
+		reservation.Refuse(3*largest + scanner)
 		return archive.SourceBundle{}, errRetainedBudget
 	}
 	scratch := largest + largest + largest + scanner
-	if !b.Reserve(scratch) {
+	if !reservation.Reserve(scratch) {
 		return archive.SourceBundle{}, errRetainedBudget
 	}
-	defer b.Release(scratch)
+	defer reservation.Release(scratch)
 	if leased, ok := adapter.(agentapi.LeasedTranscriptRefilter); ok {
 		mark := len(s.retainedReleases)
 		filtered, release, err := leased.RefilterLeased(s.ctx, bundle, reg.SessionStartedAt, b)
@@ -207,34 +211,34 @@ func (s *sessionScan) refilterRetainedFor(reg archive.SessionRegistration, adapt
 		read := sourceRead{filtered: filtered, filterLease: &mark}
 		return s.finishNativeFilter(&read, out)
 	}
-	capBytes := min(int64(32<<20), max(int64(0), (b.Available()-(64<<10))/2))
+	capBytes := min(int64(32<<20), max(int64(0), (reservation.Available()-(64<<10))/2))
 	if capBytes <= 0 {
-		b.Refuse(64<<10 + 2)
+		reservation.Refuse(64<<10 + 2)
 		return archive.SourceBundle{}, errRetainedBudget
 	}
 	// Accumulated records and decoded output each have an independently
 	// enforced ceiling. The codec borrows encoder scratch per safe row,
 	// leaving headroom rather than reserving a whole second output for it.
 
-	if !b.Reserve(capBytes) {
+	if !reservation.Reserve(capBytes) {
 		return archive.SourceBundle{}, errRetainedBudget
 	}
-	defer b.Release(capBytes)
-	if !b.Reserve(capBytes) {
+	defer reservation.Release(capBytes)
+	if !reservation.Reserve(capBytes) {
 		return archive.SourceBundle{}, errRetainedBudget
 	}
 	out, err := refilterBundleBounded(s.ctx, reg, adapter, bundle, agentapi.ReadLimits{Records: archive.MaxHistoryRecords, FilteredBytes: capBytes, ReadBudget: b})
 	if err != nil {
-		b.Release(capBytes)
+		reservation.Release(capBytes)
 		return archive.SourceBundle{}, errors.Join(errRetainedBudget, err)
 	}
 	n := int64(out.Capture.Boundary.RetainedBytes)
 	if n < 0 || n > capBytes {
-		b.Release(capBytes)
+		reservation.Release(capBytes)
 		return archive.SourceBundle{}, errRetainedBudget
 	}
-	b.Release(capBytes - n)
-	s.retainedReleases = append(s.retainedReleases, func() { b.Release(n) })
+	reservation.Release(capBytes - n)
+	s.retainedReleases = append(s.retainedReleases, func() { reservation.Release(n) })
 	return out, nil
 }
 
@@ -248,32 +252,33 @@ func (s *sessionScan) compressSource(bundle archive.SourceBundle) (archive.Compr
 		return archive.CompressedSource{}, err
 	}
 	b := s.readBudget()
+	reservation := b.Reservation()
 	// Gzip/flate uses a 64KiB window, bounded hash/token tables and block writer.
 	// One MiB covers their logical fixed scratch for the supported Go toolchain;
 	// allocator headers and pooled capacity are measured separately.
 	const compressorScratch = 1 << 20
 	const preflightScratch = 32 << 10
-	if !b.Reserve(preflightScratch) {
+	if !reservation.Reserve(preflightScratch) {
 		return archive.CompressedSource{}, errRetainedBudget
 	}
-	available := b.Available()
+	available := reservation.Available()
 	largest, err := archive.SourceEncodingLineBound(s.ctx, bundle, available)
 	if errors.Is(err, jsonwire.ErrLimit) {
-		b.Refuse(available + 1)
+		reservation.Refuse(available + 1)
 	}
-	b.Release(preflightScratch)
+	reservation.Release(preflightScratch)
 	if err != nil {
 		return archive.CompressedSource{}, errors.Join(errRetainedBudget, err)
 	}
-	if largest > (b.Available()-compressorScratch)/2 {
-		b.Refuse(2*largest + compressorScratch)
+	if largest > (reservation.Available()-compressorScratch)/2 {
+		reservation.Refuse(2*largest + compressorScratch)
 		return archive.CompressedSource{}, errRetainedBudget
 	}
 	scratch := largest + largest + compressorScratch
-	if !b.Reserve(scratch) {
+	if !reservation.Reserve(scratch) {
 		return archive.CompressedSource{}, errRetainedBudget
 	}
-	defer b.Release(scratch)
+	defer reservation.Release(scratch)
 	mark := len(s.retainedReleases)
 	output := &retainedOutput{scan: s}
 	if err := archive.CompressSource(output, bundle); err != nil {
@@ -305,38 +310,39 @@ func (w *retainedOutput) Write(data []byte) (int, error) {
 
 func (s *sessionScan) marshalRetained(value any) ([]byte, error) {
 	b := s.readBudget()
+	reservation := b.Reservation()
 	const scratch = 32 << 10
-	if !b.Reserve(scratch) {
+	if !reservation.Reserve(scratch) {
 		return nil, errRetainedBudget
 	}
-	available := b.Available()
+	available := reservation.Available()
 	n, err := jsonwire.Bound(s.ctx, value, available/2)
 	if errors.Is(err, jsonwire.ErrLimit) {
-		b.Refuse(available + 2)
+		reservation.Refuse(available + 2)
 	}
-	b.Release(scratch)
+	reservation.Release(scratch)
 	if err != nil {
 		return nil, errors.Join(errRetainedBudget, err)
 	}
-	if !b.Reserve(n) {
+	if !reservation.Reserve(n) {
 		return nil, errRetainedBudget
 	}
-	defer b.Release(n)
-	if !b.Reserve(n) {
+	defer reservation.Release(n)
+	if !reservation.Reserve(n) {
 		return nil, errRetainedBudget
 	}
 	data, err := json.Marshal(value)
 	if err != nil {
-		b.Release(n)
+		reservation.Release(n)
 		return nil, err
 	}
 	actual := int64(len(data))
 	if actual > n {
-		b.Release(n)
+		reservation.Release(n)
 		return nil, errRetainedBudget
 	}
-	b.Release(n - actual)
-	s.retainedReleases = append(s.retainedReleases, func() { b.Release(actual) })
+	reservation.Release(n - actual)
+	s.retainedReleases = append(s.retainedReleases, func() { reservation.Release(actual) })
 	return data, nil
 }
 

@@ -56,6 +56,7 @@ func (s *Store) LabelRevision(id string) (string, string, error) {
 
 // LoadLabelPublication enforces an aggregate caller budget before a one-time context decode.
 func (s *Store) LoadLabelPublication(id string, budget int64) (*Published, int64, error) {
+	reservation := s.resourceBudget.Reservation()
 	if !safeFileComponent(id) {
 		return nil, 0, errors.New("invalid label state identity")
 	}
@@ -79,16 +80,16 @@ func (s *Store) LoadLabelPublication(id string, budget int64) (*Published, int64
 		if err := s.resourceContext.Err(); err != nil {
 			return nil, 0, err
 		}
-		if !s.resourceBudget.Reserve(info.Size()) {
+		if !reservation.Reserve(info.Size()) {
 			return nil, 0, errStateBudget
 		}
-		defer s.resourceBudget.Release(info.Size())
-		if !s.resourceBudget.Reserve(info.Size()) {
+		defer reservation.Release(info.Size())
+		if !reservation.Reserve(info.Size()) {
 			return nil, 0, errStateBudget
 		}
 		defer func() {
 			if !keep {
-				s.resourceBudget.Release(info.Size())
+				reservation.Release(info.Size())
 			}
 		}()
 	}
@@ -112,7 +113,7 @@ func (s *Store) LoadLabelPublication(id string, budget int64) (*Published, int64
 			return nil, int64(len(data)), err
 		}
 		keep = true
-		*s.resourceReleases = append(*s.resourceReleases, func() { s.resourceBudget.Release(info.Size()) })
+		*s.resourceReleases = append(*s.resourceReleases, func() { reservation.Release(info.Size()) })
 	}
 	return p, int64(len(data)), nil
 }

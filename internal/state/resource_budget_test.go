@@ -22,8 +22,9 @@ func TestLocalBudgetRefusalPreservesPendingAndIndependentProgress(t *testing.T) 
 		t.Fatal(err)
 	}
 	budget := agentapi.NewNativeReadBudget(2 * int64(len(raw)))
+	reservation := budget.Reservation()
 	pressure := int64(1)
-	if !budget.Reserve(pressure) {
+	if !reservation.Reserve(pressure) {
 		t.Fatal("pressure reservation")
 	}
 	scoped, closeScope := s.WithReadBudget(t.Context(), budget)
@@ -38,7 +39,7 @@ func TestLocalBudgetRefusalPreservesPendingAndIndependentProgress(t *testing.T) 
 	if len(s.QuarantinedFiles()) != 0 {
 		t.Fatal("valid work quarantined")
 	}
-	budget.Release(pressure)
+	reservation.Release(pressure)
 	scoped, closeScope = s.WithReadBudget(t.Context(), budget)
 	p, found, err := scoped.LoadPending("owed")
 	if err != nil || !found || p.RequestToken != "newer-request" {
