@@ -107,10 +107,24 @@ func TestStagedRunScheduledReleaseRespectsCapturedPassBudget(t *testing.T) {
 	store, p, opts, remote := stagedCommittedOwnerFixture(t)
 	budget := agentapi.NewNativeReadBudget(128 << 20)
 	pressure := budget.Reservation()
-	if !pressure.Reserve((128 << 20) - 512) {
-		t.Fatal("captured independent pressure")
+	pressureApplied := false
+	originalNow := opts.Now
+	// Run invokes Now after initial admission and generation recovery. Apply
+	// independent pressure at that actual boundary to target scheduled release.
+	opts.Now = func() time.Time {
+		if !pressureApplied {
+			if !pressure.Reserve((128 << 20) - 512) {
+				t.Fatal("captured scheduled pressure after admission")
+			}
+			pressureApplied = true
+		}
+		return originalNow()
 	}
-	defer pressure.Release((128 << 20) - 512)
+	defer func() {
+		if pressureApplied {
+			pressure.Release((128 << 20) - 512)
+		}
+	}()
 	opts.CodexRollouts = recoveryBudgetLookup{budget: budget}
 	pendingPath := filepath.Join(store.Home(), "pending", p.Bundle.ArchiveSessionID+".json")
 	stagePath := filepath.Join(store.Home(), "sessions", p.Bundle.ArchiveSessionID, "import-stage", "stage.json")
@@ -124,6 +138,9 @@ func TestStagedRunScheduledReleaseRespectsCapturedPassBudget(t *testing.T) {
 	}
 	result, err := Run(t.Context(), store, remote, opts)
 	defer closeStagedControlResult(result)
+	if !pressureApplied {
+		t.Fatal("actual post-admission timing boundary not reached")
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
