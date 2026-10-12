@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
@@ -61,5 +62,68 @@ func TestPublishedFullLoadRetainsDecoderRefusals(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// Root containment applies to the unbudgeted public load too: neither a final
+// file symlink nor a replaced published directory may import outside evidence.
+func TestPublishedFullLoadRejectsEscapedFile(t *testing.T) {
+	for _, directory := range []bool{false, true} {
+		t.Run(map[bool]string{false: "file", true: "directory"}[directory], func(t *testing.T) {
+			s := newTestStore(t)
+			outside := t.TempDir()
+			data := []byte(`{"bundle":{},"status":"blocked","blocked_reason":"transcript_missing"}`)
+			target := filepath.Join(outside, "session-1.json")
+			if err := os.WriteFile(target, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			if directory {
+				published := filepath.Dir(s.publishedPath("session-1"))
+				if err := os.Remove(published); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(outside, published); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.Symlink(target, s.publishedPath("session-1")); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.LoadPublishedState("session-1"); err == nil {
+				t.Fatal("outside published state accepted")
+			}
+			after, err := os.ReadFile(target)
+			if err != nil || !bytes.Equal(after, data) {
+				t.Fatalf("outside evidence changed: %v", err)
+			}
+		})
+	}
+}
+
+func TestPublishedFullLoadStableRegularFileControls(t *testing.T) {
+	s := newTestStore(t)
+	p, err := s.LoadPublishedState("session-1")
+	if err != nil || p.found {
+		t.Fatalf("missing state changed: %v", err)
+	}
+	if err := os.Mkdir(s.publishedPath("session-1"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.LoadPublishedState("session-1"); !errors.Is(err, errStateFileUnstable) {
+		t.Fatalf("nonregular state accepted: %v", err)
+	}
+	if err := os.Remove(s.publishedPath("session-1")); err != nil {
+		t.Fatal(err)
+	}
+	data := []byte(`{"bundle":{},"status":"blocked","blocked_reason":"transcript_missing"}`)
+	contained := filepath.Join(s.Home(), "contained.json")
+	if err := os.WriteFile(contained, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join("..", "contained.json"), s.publishedPath("session-1")); err != nil {
+		t.Fatal(err)
+	}
+	p, err = s.LoadPublishedState("session-1")
+	if err != nil || !p.found || p.state.Status != CacheStatusBlocked {
+		t.Fatalf("contained regular state refused: %v", err)
 	}
 }

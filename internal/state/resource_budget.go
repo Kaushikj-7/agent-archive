@@ -49,14 +49,11 @@ func (s *Store) readBudgeted(path string, value any, retain bool) error {
 		if _, published := value.(*publishedState); !published {
 			return local.Read(path, value)
 		}
-		data, err := os.ReadFile(path)
-		if err != nil {
+	}
+	if s.resourceBudget != nil {
+		if err := s.resourceContext.Err(); err != nil {
 			return err
 		}
-		return decodeStateJSON(data, value)
-	}
-	if err := s.resourceContext.Err(); err != nil {
-		return err
 	}
 	owner, err := os.OpenRoot(s.home)
 	if err != nil {
@@ -66,6 +63,9 @@ func (s *Store) readBudgeted(path string, value any, retain bool) error {
 	rel, err := filepath.Rel(s.home, path)
 	if err != nil {
 		return err
+	}
+	if !filepath.IsLocal(rel) {
+		return errStateFileUnstable
 	}
 	f, err := owner.Open(rel)
 	if err != nil {
@@ -102,13 +102,15 @@ func (s *Store) readBudgeted(path string, value any, retain bool) error {
 	if count, err := f.Read(extra[:]); count != 0 || !errors.Is(err, io.EOF) {
 		return errStateFileUnstable
 	}
-	if err := s.resourceContext.Err(); err != nil {
-		return err
+	if s.resourceBudget != nil {
+		if err := s.resourceContext.Err(); err != nil {
+			return err
+		}
 	}
 	if err := decodeStateJSON(data, value); err != nil {
 		return err
 	}
-	if retain {
+	if retain && s.resourceBudget != nil {
 		keep = true
 		*s.resourceReleases = append(*s.resourceReleases, func() { reservation.Release(n) })
 	}
