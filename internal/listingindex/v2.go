@@ -210,6 +210,18 @@ func PutRevision(ctx context.Context, store storage.ObjectStore, r Revision) err
 	if r.Key != canonicalKey {
 		return errors.New("legacy listing encodings are read-only; rebuild the index")
 	}
+	fullKey := r.Key
+	if keyer, ok := store.(interface{ ObjectKey(string) string }); ok {
+		fullKey = keyer.ObjectKey(r.Key)
+	}
+	if len(fullKey) > 1024 {
+		return errors.New("listing entry exceeds full object key limit")
+	}
+	for component := range strings.SplitSeq(fullKey, "/") {
+		if len(component) > revisionComponentLimit {
+			return errors.New("listing entry exceeds full object component limit")
+		}
+	}
 	return store.Put(ctx, r.Key, nil)
 }
 
