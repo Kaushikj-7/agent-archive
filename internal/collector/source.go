@@ -97,7 +97,11 @@ func newSourceReader(reg archive.SessionRegistration, opts Options) (sourceReade
 	if reg.ReadsTranscriptFile() && reg.TranscriptPath == "" {
 		return nil, false
 	}
-	return providerReader{
+	var allowed func(string) bool
+	if reg.HistoricalProject != nil {
+		allowed = opts.HistoricalSourceAllowed
+	}
+	return providerReader{historicalSourceAllowed: allowed,
 		ref: sourceRef(reg), harness: reg.Harness.Name, startedAt: reg.SessionStartedAt,
 		subagentMetadata: reg.ParentSessionID != "", sources: opts.Sources,
 		passes: opts.sourcePasses, resourceOwner: opts.retainedOwner, database: opts.CursorDatabase, rollouts: opts.CodexRollouts, pendingRollouts: opts.PendingCodexRollouts,
@@ -109,18 +113,19 @@ func newSourceReader(reg archive.SessionRegistration, opts Options) (sourceReade
 // providerReader keeps only read dependencies; boxing whole registrations and
 // collector options would allocate their unrelated policy fields per source.
 type providerReader struct {
-	pendingRollouts  func() agentapi.CodexRolloutLookup
-	resourceOwner    *sessionScan
-	admission        agentapi.SourceAdmission
-	rollouts         agentapi.CodexRolloutLookup
-	ref              agentapi.SourceRef
-	harness          string
-	startedAt        time.Time
-	subagentMetadata bool
-	sources          agentapi.SourcesLookup
-	passes           *sourcePassSet
-	database         string
-	discovery        *archive.SessionRegistration
+	historicalSourceAllowed func(string) bool
+	pendingRollouts         func() agentapi.CodexRolloutLookup
+	resourceOwner           *sessionScan
+	admission               agentapi.SourceAdmission
+	rollouts                agentapi.CodexRolloutLookup
+	ref                     agentapi.SourceRef
+	harness                 string
+	startedAt               time.Time
+	subagentMetadata        bool
+	sources                 agentapi.SourcesLookup
+	passes                  *sourcePassSet
+	database                string
+	discovery               *archive.SessionRegistration
 }
 
 // discoveryRegistration retains only discovery authority for strict native reads.
@@ -203,7 +208,7 @@ func (r providerReader) binding() (agentapi.SourceProvider, agentapi.TranscriptF
 }
 
 func (r providerReader) pass(ctx context.Context, p agentapi.SourceProvider, key string) (agentapi.SourcePass, func() error, error) {
-	if r.passes != nil {
+	if r.passes != nil && r.historicalSourceAllowed == nil {
 		pass, err := r.passes.get(ctx, sourcePassKey{name: key, root: r.discoveryRoot(), discovery: r.discovery != nil, legacy: r.harness == archive.HarnessCodex && r.admission.Binding == nil && (r.discovery == nil || r.discovery.Origin != archive.SessionOriginDiscovery)}, p)
 		if err != nil {
 			return nil, nil, err
@@ -212,6 +217,7 @@ func (r providerReader) pass(ctx context.Context, p agentapi.SourceProvider, key
 		return pass, func() error { r.passes.active--; return nil }, nil
 	}
 	env := sourceEnvironment(r.discovery, r.database)
+	env.HistorySourceAllowed = r.historicalSourceAllowed
 	env.CodexRollouts = r.rollouts
 	if r.resourceOwner != nil {
 		env.ReadBudget = r.resourceOwner.readBudget()
@@ -700,7 +706,10 @@ func sourceAdmission(reg archive.SessionRegistration) agentapi.SourceAdmission {
 	if reg.Origin == archive.SessionOriginDiscovery {
 		cwd = reg.DiscoveryCwd
 	}
-	if reg.CodexBinding != nil {
+	if reg.HistoricalProject != nil {
+		cwd = reg.HistoricalProject.OriginalCwd
+	}
+	if reg.CodexBinding != nil && reg.HistoricalProject == nil {
 		cwd = ""
 	}
 	createdAt := time.Time{}

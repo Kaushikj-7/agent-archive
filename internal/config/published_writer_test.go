@@ -175,7 +175,9 @@ func publishedWriterProtectedFixtures() []publishedWriterProtectedFixture {
 	stagedFinite, stagedForever := publishedWriterFiniteControl(), forever
 	stagedFinite.ImportStagingProtection = true
 	stagedForever.ImportStagingProtection = true
+	historical, _ := historicalPolicyFixture()
 	return []publishedWriterProtectedFixture{
+		{name: "historical-projects", cfg: historical, writer: historicalProjectWriter},
 		{name: "consent-disabled-finite", cfg: disabled, writer: discoveryWriter},
 		{name: "consent-enabled-finite", cfg: enabled, writer: discoveryWriter},
 		{name: "forever", cfg: forever, writer: retentionWriter},

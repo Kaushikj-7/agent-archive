@@ -3,6 +3,8 @@ package backfill
 import (
 	"context"
 	"errors"
+	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
@@ -29,11 +31,34 @@ func filterImportSource(ctx context.Context, env Environment, w *work, started t
 		return out, release, errors.New("native source capability unavailable")
 	}
 	root := w.c.NativeHome
+	// Discovery may spell a trusted home through a platform alias, while the
+	// shared rollout lookup supplies canonical locators. Rebase only the home;
+	// descendant symlinks remain visible to the confined source opener.
+	relative, err := filepath.Rel(root, ref.Path)
+	if err != nil {
+		return out, release, err
+	}
+	root = env.resolved(root)
+	ref.Path = filepath.Join(root, relative)
 	var budget *agentapi.NativeReadBudget
 	if shared, ok := env.CodexRollouts.(agentapi.CodexRolloutResourceBudget); ok {
 		budget = shared.NativeReadBudget()
 	}
-	environment := agentapi.SourceEnvironment{ReadBudget: budget, CodexRollouts: env.CodexRollouts, RequireConfinedHistory: true, Files: sourcefacts.RootOpener{Root: root}, Policy: transcriptio.OpenPolicy{Root: root, RejectSymlinks: true}}
+	var sourceAllowed func(string) bool
+	if w.res.historical != nil {
+		sourceAllowed = func(cwd string) bool {
+			if env.HistoricalSourceAllowed != nil && !env.HistoricalSourceAllowed(cwd) {
+				return false
+			}
+			for _, path := range uniquePaths(filepath.Clean(cwd), env.resolved(cwd)) {
+				if !slices.Contains(w.res.historical.SourceCwds, path) {
+					w.res.historical.SourceCwds = append(w.res.historical.SourceCwds, path)
+				}
+			}
+			return len(w.res.historical.SourceCwds) <= 2*archive.MaxHistorySpans
+		}
+	}
+	environment := agentapi.SourceEnvironment{HistorySourceAllowed: sourceAllowed, ReadBudget: budget, CodexRollouts: env.CodexRollouts, RequireConfinedHistory: true, Files: sourcefacts.RootOpener{Root: root}, Policy: transcriptio.OpenPolicy{Root: root, RejectSymlinks: true}}
 	pass, err := provider.OpenPass(ctx, environment)
 	if err != nil {
 		return out, release, err

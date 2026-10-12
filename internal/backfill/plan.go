@@ -198,11 +198,16 @@ func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg con
 	if err != nil {
 		return Plan{}, err
 	}
+	cfg, err = historicalConfig(cfg, filters)
+	if err != nil {
+		return Plan{}, err
+	}
 	now := env.now()
 	items, r, unread, workers, err := preparePlanWork(ctx, env, cfg, filters)
 	if err != nil {
 		return Plan{}, err
 	}
+	env.HistoricalSourceAllowed = func(cwd string) bool { return r.historicalSourceRestriction(cwd) == "" }
 
 	if env.PrepareCodexProof != nil {
 		var ids []string
@@ -326,6 +331,9 @@ func preparePlanWork(ctx context.Context, env Environment, cfg config.Config, fi
 	r := newResolver(env, cfg, filters)
 	r.inventoryAdded = inventory.added
 	var cursorCandidates []string
+	for cwd := range filters.HistoricalMappings {
+		cursorCandidates = append(cursorCandidates, cwd)
+	}
 	for _, p := range cfg.Archive.Projects {
 		cursorCandidates = append(cursorCandidates, p.Root)
 	}
@@ -594,6 +602,7 @@ func decidePlanCandidates(items []*work, since, until, now time.Time) []*work {
 			w.filtered = true
 		}
 		w.c.ProjectRoot, w.c.ProjectKind, w.c.ProjectIncluded = w.res.root, w.res.kind, w.res.included
+		w.c.HistoricalProject = w.res.historical
 		w.c.ProjectResolution = w.res.proof
 		if w.res.current != nil {
 			w.c.projectResolutionCurrent = w.res.current.valid
@@ -720,6 +729,8 @@ func runAdapter(ctx context.Context, env Environment, w *work) {
 		}
 		info, statErr := env.lstat(w.t.path)
 		switch {
+		case errors.Is(err, agentapi.ErrHistorySourceExcluded):
+			w.res.skip = SkipExcludedHistory
 		case isNotExist(err) || isNotExist(statErr):
 			w.vanished = true
 		case agentapi.HasFailure(err, agentapi.Changed):

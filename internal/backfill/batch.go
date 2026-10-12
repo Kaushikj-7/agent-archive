@@ -98,7 +98,7 @@ type BatchFilters struct {
 func (p Plan) BatchFilters() BatchFilters {
 	f := p.Filters
 	out := BatchFilters{
-		Harnesses: []string{}, ProjectIDs: []string{}, MappingDigest: mappingDigest(f.ProjectMappings),
+		Harnesses: []string{}, ProjectIDs: []string{}, MappingDigest: f.mappingDigest(),
 		Since: f.Since, Until: f.Until, SinceArg: f.SinceArg, UntilArg: f.UntilArg,
 		IncludeHome: f.IncludeHome, IncludeTemp: f.IncludeTemp, IncludeRemoved: f.IncludeRemoved,
 	}
@@ -183,18 +183,22 @@ func sameBound(day, arg, otherDay, otherArg string) bool {
 // the configured root with project, the plan's own spelling; ok is false
 // when one of them is no longer configured.
 func (f BatchFilters) Flags(p Plan, projectRoot func(id string) (string, bool)) (flags string, ok bool) {
-	if f.MappingDigest != "" && f.MappingDigest != mappingDigest(p.Filters.ProjectMappings) {
+	if f.MappingDigest != "" && f.MappingDigest != p.Filters.mappingDigest() {
 		return "", false
 	}
 	var out []string
 	if f.MappingDigest != "" {
-		keys := make([]string, 0, len(p.Filters.ProjectMappings))
-		for old := range p.Filters.ProjectMappings {
-			keys = append(keys, old)
-		}
-		sort.Strings(keys)
-		for _, old := range keys {
-			out = append(out, "--map-project "+shellWord(old+"="+p.Filters.ProjectMappings[old]))
+		if p.Filters.BulkMappings {
+			return "", false // Bulk input stays private; rerun with the same reviewed assignments.
+		} else {
+			keys := make([]string, 0, len(p.Filters.ProjectMappings))
+			for old := range p.Filters.ProjectMappings {
+				keys = append(keys, old)
+			}
+			sort.Strings(keys)
+			for _, old := range keys {
+				out = append(out, "--map-project "+shellWord(old+"="+p.Filters.ProjectMappings[old]))
+			}
 		}
 	}
 	for _, h := range f.Harnesses {

@@ -126,7 +126,7 @@ func candidateDiagnostic(skip SkipReason, outcome sourcefacts.RecoveryOutcome, c
 	case SkipTooLarge:
 		detail = DetailSourceSizeLimit
 	case "", SkipAlreadyArchived, SkipDuplicateSession, SkipRegisteredNotAdmitted,
-		SkipRemovedByUndo, SkipRemovedByRetention, SkipFilteredOut, SkipExcludedProject,
+		SkipRemovedByUndo, SkipRemovedByRetention, SkipFilteredOut, SkipExcludedProject, SkipExcludedHistory,
 		SkipHomeDirectory, SkipAboveHome, SkipTemporaryDirectory, SkipProjectUnknown,
 		SkipIdentityMismatch, SkipEmpty, SkipStartUnknown, SkipStartInFuture:
 		return nil
@@ -234,7 +234,7 @@ func candidateDisposition(c Candidate) string {
 		return "duplicate_candidate"
 	case SkipAlreadyArchived:
 		return "already_archived"
-	case SkipExcludedProject, SkipFilteredOut, SkipHomeDirectory, SkipAboveHome, SkipTemporaryDirectory, SkipRemovedByUndo, SkipRemovedByRetention:
+	case SkipExcludedProject, SkipExcludedHistory, SkipFilteredOut, SkipHomeDirectory, SkipAboveHome, SkipTemporaryDirectory, SkipRemovedByUndo, SkipRemovedByRetention:
 		return "excluded"
 	case SkipWorktreeUnresolved:
 		if c.Diagnostic != nil && c.Diagnostic.Detail == DetailRecoveryExcluded {

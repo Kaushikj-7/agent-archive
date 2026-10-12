@@ -18,6 +18,9 @@ import (
 // The caller closes the returned data lease
 // after the preview and any returned publication have finished their consumers.
 func PrepareGenerationRecovery(ctx context.Context, reg archive.SessionRegistration, at time.Time, opts Options) (builder func(archive.SessionRegistration, string) (archive.SessionRegistration, state.PendingPublication, error), release func(), resultErr error) {
+	if reg.HistoricalProject != nil {
+		return nil, func() {}, errors.New("historical imports cannot recover native continuation; preview a new explicit import")
+	}
 	if reg.IsChild() || !reg.ReadsTranscriptFile() {
 		return nil, func() {}, errors.New("recovery supports top-level transcript files only; start a fresh parent session for subagent recovery")
 	}
@@ -92,7 +95,7 @@ func PrepareGenerationRecovery(ctx context.Context, reg archive.SessionRegistrat
 // may republish it with its original capture age; no native source or current
 // skill inventory is observed, even if the live transcript grew or vanished.
 func (s *sessionScan) maintainFrozen() (sessionOutcome, error) {
-	if err := s.local.FrozenGeneration(s.reg); err != nil {
+	if err := s.retainedOnlyAuthority(); err != nil {
 		return outcomeSkipped, err
 	}
 	adapter, err := sourceAdapter(s.opts.Sources, s.reg.Harness.Name)
@@ -148,7 +151,12 @@ func (s *sessionScan) maintainFrozen() (sessionOutcome, error) {
 		if rendered.declined {
 			return outcomeSkipped, errors.New("frozen history maintenance cannot decline an existing publication")
 		}
-		pending := state.PendingPublication{SkillEvidence: string(s.opts.skillEvidence()), Bundle: filtered, SourceKey: rendered.source.Key, SourceSHA256: rendered.source.SHA256, SourceBytes: rendered.sourceBytes, MetadataKey: rendered.metadataKey, MetadataBytes: rendered.metadata, ReadyAt: s.now, Attempted: true}
+		pending := state.PendingPublication{ImportExpectedMetadataSHA256: func() string {
+			if s.reg.StagedImportSHA256 != "" {
+				return metadataSHA(s.published.Metadata())
+			}
+			return ""
+		}(), SkillEvidence: string(s.opts.skillEvidence()), Bundle: filtered, SourceKey: rendered.source.Key, SourceSHA256: rendered.source.SHA256, SourceBytes: rendered.sourceBytes, MetadataKey: rendered.metadataKey, MetadataBytes: rendered.metadata, ReadyAt: s.now, Attempted: true}
 		if err := s.local.SavePending(s.id(), pending); err != nil {
 			return outcomeSkipped, err
 		}
@@ -170,7 +178,7 @@ func (s *sessionScan) maintainFrozen() (sessionOutcome, error) {
 // its token; requests and publication/scan journals still force maintenance.
 func (p *pass) unchangedFrozenSinceLastScan(reg archive.SessionRegistration) (bool, state.ScanSignature, error) {
 	var signature state.ScanSignature
-	if err := p.local.FrozenGeneration(reg); err != nil {
+	if err := p.retainedSignatureAuthority(reg); err != nil {
 		return false, signature, err
 	}
 	if owed, err := p.linkOwed(reg); err != nil || owed {
@@ -180,12 +188,23 @@ func (p *pass) unchangedFrozenSinceLastScan(reg archive.SessionRegistration) (bo
 	if err != nil || !found || !signature.Frozen || signature.SourceSetVersion != sourceSetVersion(reg) || signature.Failed {
 		return false, signature, err
 	}
+	if reg.HistoricalProject != nil && signature.PublishedProjectName != p.opts.historicalProjectName(reg) {
+		return false, signature, nil
+	}
 	adapterVersion, known := harnessAdapterVersion(p.opts.Sources, reg.Harness.Name)
 	if !known || signature.ParserVersion != p.opts.parserVersionFor(reg.Harness.Name) || signature.FilterVersion != archive.FilterVersion || signature.AdapterVersion != adapterVersion || pendingSkillMode(signature.SkillEvidence) != p.opts.skillEvidence() || signature.PublishedLastHead != headFingerprint(reg.LastHead) {
 		return false, signature, nil
 	}
 	unchanged, _, err := p.owesNothing(reg.ArchiveSessionID, false)
 	return unchanged, signature, err
+}
+
+func (p *pass) retainedSignatureAuthority(reg archive.SessionRegistration) error {
+	if reg.HistoricalProject == nil {
+		return p.local.FrozenGeneration(reg)
+	}
+	s := sessionScan{reg: reg}
+	return s.validateHistoricalSnapshot()
 }
 
 func (s *sessionScan) recordFrozenSignature() error {
@@ -202,13 +221,22 @@ func (s *sessionScan) recordFrozenSignature() error {
 	if !known {
 		return nil
 	}
+	projectName := ""
+	if s.reg.HistoricalProject != nil {
+		var metadata archive.Metadata
+		if err := s.unmarshalRetained(s.published.Metadata(), &metadata); err != nil {
+			return err
+		}
+		projectName = metadata.ProjectName
+	}
 	summary := s.published.Summary()
 	return s.local.SaveScanSignature(s.id(), state.ScanSignature{
 		SourceSetDigest: summary.SourceSetDigest, CurrentRevision: summary.CurrentRevision,
 		SourceSchemaVersion: summary.SourceSchemaVersion, MetadataSchemaVersion: summary.MetadataSchemaVersion,
 		SourceSetComplete: summary.SourceSetComplete, MeaningfulCapturedAt: summary.MeaningfulCapturedAt,
-		SourceSetVersion: sourceSetVersion(s.reg),
-		Frozen:           true, SkillEvidence: string(s.opts.skillEvidence()),
+		SourceSetVersion:     sourceSetVersion(s.reg),
+		PublishedProjectName: projectName,
+		Frozen:               true, SkillEvidence: string(s.opts.skillEvidence()),
 		ParserVersion: s.parserVersion(), FilterVersion: archive.FilterVersion,
 		AdapterVersion: adapterVersion, PublishedLastHead: s.publishedLastHead(),
 	})
@@ -262,4 +290,11 @@ func generationRecoveryBuilder(ctx context.Context, owner *sessionScan, filtered
 		returned = true
 		return latest, pending, nil
 	}, closeData
+}
+
+func (s *sessionScan) retainedOnlyAuthority() error {
+	if s.reg.HistoricalProject != nil {
+		return s.reg.ValidateHistoricalProject()
+	}
+	return s.local.FrozenGeneration(s.reg)
 }

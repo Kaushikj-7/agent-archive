@@ -224,6 +224,7 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (result collector.Resu
 		SupplementalEvidence:     skillObserver(env, cfg.EffectiveSkillEvidence()),
 		SkillEvidence:            cfg.EffectiveSkillEvidence(),
 		AcceptSession:            cfg.AcceptSession,
+		HistoricalProjectLabel:   cfg.HistoricalProjectLabel,
 		Now:                      env.Now,
 		RequireSkillUse:          cfg.RequireSkillUse,
 		Progress:                 pass.progress,

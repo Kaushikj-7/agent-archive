@@ -170,3 +170,16 @@ Only staging-aware writers accept version 9: the earlier retention-only writer
 refuses it before mutation because it cannot preserve the registration's staged
 source digest. This adds private admission/publication journal fields; published
 source, metadata, filter and adapter versions remain unchanged.
+
+Historical-only project permission installs the incompatible permanent
+`{version: 10, writer: historical-projects-v10}` configuration capability.
+Private historical ownership proof is version 1 and staged source-set proof
+includes every private dependency cwd. The historical scan-source contract is
+version 4. Existing source line formats, metadata schemas, filter/adapter output
+and parser algorithms remain unchanged: historical display names are explicit
+configuration applied at publication, not native derivation. Pairing schema 1
+adds an optional bounded historical-project whitelist; strict older receivers
+refuse the unknown section. No native path or mapping is portable in that section.
+All lower policy floors, protections and published older-writer refusal controls
+remain mandatory. Native macOS/old-release and provider acceptance are recorded
+separately from synthetic Linux tests and cross-compilation.

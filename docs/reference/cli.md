@@ -45,6 +45,7 @@ Inspect history
 
 Import history
   agent-archive backfill    Import sessions already on this machine
+  agent-archive historical-project  Manage historical project permissions
 
 Switch agents
   agent-archive handoff     Continue a session in another coding agent
@@ -793,6 +794,7 @@ finish after native files disappear. Staging shares a 1 GiB quota with pending
 publication. History reports admitted and remotely verified uploads separately.
   --harness NAME        Only claude, codex, or cursor (repeatable)
   --project DIR         Only this project; it need not still exist (repeatable)
+  --mapping-file FILE          Bounded JSON project assignments
   --map-project OLD=ROOT Exact missing cwd to included root (repeatable)
   --since DATE|TIME|AGE Sessions started on or after this local day (list's
                         --since uses UTC): a date (2026-09-01), an RFC 3339
@@ -821,6 +823,7 @@ Example: agent-archive backfill --dry-run --since 30d
 | `--include-temp` | no value | — |
 | `--json` | no value | — |
 | `--map-project` | a value; repeatable | — |
+| `--mapping-file` | a value | — |
 | `--project` | a value; repeatable | — |
 | `--since` | a value | — |
 | `--until` | a value | — |
@@ -852,6 +855,9 @@ Guide: [Undo an import](../guides/backfill.md#undo).
 Usage: agent-archive backfill undo [IMPORT_ID] [--project DIR] [--yes]
                                 [--restore-retention]
 
+Historical identities and destination permissions remain explicit settings;
+use historical-project disable PROJECT_ID to stop their retained maintenance.
+
 Remove the latest import, or the import IMPORT_ID from backfill history: its
 sessions are deleted from the bucket and this machine, and the projects it added
 are excluded from capture. Shows what it will do and asks first.
@@ -872,6 +878,24 @@ Example: agent-archive backfill undo --project ~/src/old-experiment
 | `--project` | a value | — |
 | `--restore-retention` | no value | — |
 | `--yes` | no value | — |
+
+## agent-archive historical-project
+
+Guide: [Import existing sessions](../guides/backfill.md#historical-only-projects).
+
+```text
+Usage: agent-archive historical-project list
+       agent-archive historical-project rename PROJECT_ID LABEL
+       agent-archive historical-project enable PROJECT_ID
+       agent-archive historical-project disable PROJECT_ID
+
+Manage stable historical project identities without authorizing native capture.
+Enable and disable affect permission in the current destination. Rename changes
+only the display label. Introduce an identity with a confirmed mapping-file
+import.
+```
+
+No flags.
 
 ## agent-archive handoff
 

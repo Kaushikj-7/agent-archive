@@ -21,7 +21,7 @@ func (p *pass) skipUnchanged(reg archive.SessionRegistration, req state.Request)
 	var unchanged bool
 	var signature state.ScanSignature
 	var err error
-	if reg.CaptureFrozen {
+	if reg.RetainedOnly() {
 		unchanged, signature, err = p.unchangedFrozenSinceLastScan(reg)
 	} else {
 		unchanged, signature, err = p.unchangedSinceLastScan(reg)
@@ -325,6 +325,9 @@ func missingSource(reg archive.SessionRegistration) *sourceState {
 }
 
 func sourceSetVersion(reg archive.SessionRegistration) int {
+	if reg.HistoricalProject != nil {
+		return 4
+	}
 	if reg.Harness.Name == "codex" {
 		if reg.NativeChild || reg.CodexBinding.RequiresOwnTask() {
 			return 3 // Revalidate first-task creation evidence for related native owners.

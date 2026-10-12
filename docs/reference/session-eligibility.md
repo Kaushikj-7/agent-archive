@@ -73,3 +73,19 @@ members, with nested children removed before their selected parents. Children
 keep their own source, so removing a parent does not break child readback. Undo
 keeps a project included while another batch has independently imported native
 children there, including children whose parent link has resolved.
+
+## Historical-only imports
+
+A confirmed mapping-file import can admit complete supported evidence without a
+live checkout or Git. Its separate historical project proof requires an enabled
+import permission for the exact destination and selected imported app. Explicit
+original/canonical cwd and required-history-source exclusions still win. Home,
+temporary and above-home restrictions apply before assignment. The proof grants
+no hooks, discovery, watchers or future-project inclusion.
+
+Admission freezes filtered staging. First publication can recover after native
+source deletion; later capture uses retained evidence only, preserving capture
+age through privacy/parser/label maintenance. Disabling permission stops new
+admission and publication, while finite retention and explicit undo/purge retain
+their deletion authority. Re-enable applies only to the recorded destination.
+An existing ordinary archive owner is never reassigned by a historical mapping.

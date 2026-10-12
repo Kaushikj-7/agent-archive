@@ -4,6 +4,7 @@ package pairing
 
 import (
 	"errors"
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"path"
 	"regexp"
@@ -48,28 +49,29 @@ type Exclusion struct {
 // Payload contains only explicitly transferable settings and provenance.
 // R2 secrets remain in memory until a receiver stages them in its store.
 type Payload struct {
-	Kind            config.MachineAssignmentKind `json:"kind,omitempty"`
-	SlotID          string                       `json:"slot_id,omitempty"`
-	Version         int                          `json:"version"`
-	PairingID       string                       `json:"pairing_id"`
-	RecipientID     string                       `json:"recipient_id"`
-	IssuerID        string                       `json:"issuer_id"`
-	IssuerName      string                       `json:"issuer_name"`
-	Name            string                       `json:"name"`
-	CreatedAt       time.Time                    `json:"created_at"`
-	ExpiresAt       time.Time                    `json:"expires_at"`
-	Storage         Storage                      `json:"storage"`
-	AccessKeyID     string                       `json:"access_key_id,omitempty"`
-	SecretAccessKey string                       `json:"secret_access_key,omitempty"`
-	Apps            []string                     `json:"apps"`
-	RetentionDays   int                          `json:"retention_days"`
-	RequireSkillUse bool                         `json:"require_skill_use"`
-	SkillEvidence   string                       `json:"skill_evidence"`
-	NoSkills        bool                         `json:"no_skills"`
-	HandoffArgs     map[string][]string          `json:"handoff_args,omitempty"`
-	HandoffDefault  map[string]string            `json:"handoff_default,omitempty"`
-	Inclusions      []Inclusion                  `json:"inclusions"`
-	Exclusions      []Exclusion                  `json:"exclusions,omitempty"`
+	Kind               config.MachineAssignmentKind `json:"kind,omitempty"`
+	SlotID             string                       `json:"slot_id,omitempty"`
+	Version            int                          `json:"version"`
+	PairingID          string                       `json:"pairing_id"`
+	RecipientID        string                       `json:"recipient_id"`
+	IssuerID           string                       `json:"issuer_id"`
+	IssuerName         string                       `json:"issuer_name"`
+	Name               string                       `json:"name"`
+	CreatedAt          time.Time                    `json:"created_at"`
+	ExpiresAt          time.Time                    `json:"expires_at"`
+	Storage            Storage                      `json:"storage"`
+	AccessKeyID        string                       `json:"access_key_id,omitempty"`
+	SecretAccessKey    string                       `json:"secret_access_key,omitempty"`
+	Apps               []string                     `json:"apps"`
+	RetentionDays      int                          `json:"retention_days"`
+	RequireSkillUse    bool                         `json:"require_skill_use"`
+	SkillEvidence      string                       `json:"skill_evidence"`
+	NoSkills           bool                         `json:"no_skills"`
+	HandoffArgs        map[string][]string          `json:"handoff_args,omitempty"`
+	HandoffDefault     map[string]string            `json:"handoff_default,omitempty"`
+	HistoricalProjects []HistoricalProject          `json:"historical_projects,omitempty"`
+	Inclusions         []Inclusion                  `json:"inclusions"`
+	Exclusions         []Exclusion                  `json:"exclusions,omitempty"`
 }
 
 var idPattern = regexp.MustCompile(`^[a-f0-9]{32}$`)
@@ -172,6 +174,16 @@ func (p Payload) validateApplications() error {
 
 func (p Payload) validateScopes() error {
 	bad := invalidSettings()
+	if len(p.HistoricalProjects) > 16384 {
+		return errors.New("too many historical projects")
+	}
+	historical := map[string]bool{}
+	for _, project := range p.HistoricalProjects {
+		if !ValidID(project.ID) || !archive.ValidHistoricalProjectLabel(project.Label) || historical[project.ID] {
+			return errors.New("invalid or duplicate historical project")
+		}
+		historical[project.ID] = true
+	}
 	if len(p.Inclusions) > 128 || len(p.Exclusions) > 128 {
 		return bad
 	}
@@ -237,4 +249,12 @@ func validExclusion(exc Exclusion, scopes map[string]bool) bool {
 		return false
 	}
 	return true
+}
+
+// HistoricalProject transfers opaque identity and current-destination import policy.
+// Native paths and source assignments remain private to each machine.
+type HistoricalProject struct {
+	ID      string `json:"id"`
+	Label   string `json:"label"`
+	Enabled bool   `json:"enabled"`
 }

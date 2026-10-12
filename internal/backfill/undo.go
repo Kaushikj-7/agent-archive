@@ -162,6 +162,9 @@ func PlanUndo(env Environment, store *state.Store, cfg config.Config, batches []
 		},
 	}
 	inProject := func(root string) bool {
+		if root == "" {
+			return p.Project == ""
+		}
 		return p.Project == "" || root == p.Project || env.resolved(root) == p.Project
 	}
 
@@ -556,6 +559,9 @@ func (b *Batch) RecordKept(kept []KeptProject) {
 // when its subagents publish (a link-only change), and a parser upgrade
 // republishes everything, neither of which is a resume.
 func resumedSinceImport(env Environment, store *state.Store, reg archive.SessionRegistration, req state.Request) (resumed, unknown bool, err error) {
+	if reg.HistoricalProject != nil {
+		return false, false, nil
+	}
 	if reg.SourceKind == archive.SourceKindCursorSQLite && !reg.AdmittedAt.IsZero() {
 		observed, err := observeSource(context.Background(), env.Sources, agentapi.SourceEnvironment{Database: env.cursorStateDatabase()}, reg.Harness.Name, agentapi.SourceRef{Kind: reg.SourceKind, Key: reg.SourceKey})
 		if fatalSourceFailure(err) {

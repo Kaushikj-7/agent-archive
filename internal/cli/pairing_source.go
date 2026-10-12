@@ -407,7 +407,7 @@ func sourcePairingPayload(cfg config.Config, name, userHome string, expiry time.
 	if err != nil {
 		return pairing.Payload{}, err
 	}
-	p := pairing.Payload{Version: 1, PairingID: id, RecipientID: recipient, IssuerID: cfg.MachineID, IssuerName: issuerName, Name: name, CreatedAt: now, ExpiresAt: now.Add(expiry), Apps: cfg.Harnesses, RetentionDays: cfg.RetentionDays, RequireSkillUse: cfg.RequireSkillUse, SkillEvidence: string(cfg.EffectiveSkillEvidence()), NoSkills: cfg.NoSkills, HandoffArgs: cfg.Handoff.Args, HandoffDefault: cfg.Handoff.DefaultTo, Storage: storage, AccessKeyID: key.AccessKeyID, SecretAccessKey: key.SecretAccessKey, Inclusions: inclusions, Exclusions: exclusions}
+	p := pairing.Payload{Version: 1, PairingID: id, RecipientID: recipient, IssuerID: cfg.MachineID, IssuerName: issuerName, Name: name, CreatedAt: now, ExpiresAt: now.Add(expiry), Apps: cfg.Harnesses, RetentionDays: cfg.RetentionDays, RequireSkillUse: cfg.RequireSkillUse, SkillEvidence: string(cfg.EffectiveSkillEvidence()), NoSkills: cfg.NoSkills, HandoffArgs: cfg.Handoff.Args, HandoffDefault: cfg.Handoff.DefaultTo, Storage: storage, AccessKeyID: key.AccessKeyID, SecretAccessKey: key.SecretAccessKey, Inclusions: inclusions, Exclusions: exclusions, HistoricalProjects: exportHistoricalPairing(cfg)}
 	return p, p.Validate()
 }
 
@@ -791,4 +791,14 @@ func printPairingTransfer(out io.Writer, path string, printed bool, ledger pairi
 		terminal.Printf(out, "On %s, run:\n  agent-archive setup --pair\n", ledger.Name)
 		terminal.Println(out, "Paste the pairing text when asked for a pairing file or text.")
 	}
+}
+
+func exportHistoricalPairing(cfg config.Config) []pairing.HistoricalProject {
+	var out []pairing.HistoricalProject
+	for _, project := range cfg.HistoricalProjects {
+		if enabled, found := project.HistoricalPermission(cfg.DestinationID()); found {
+			out = append(out, pairing.HistoricalProject{ID: project.ID, Label: project.Label, Enabled: enabled})
+		}
+	}
+	return out
 }

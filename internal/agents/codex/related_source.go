@@ -121,7 +121,10 @@ func (p *relatedSourcePass) open(ctx context.Context, ref agentapi.SourceRef) (*
 		return nil, sourceFailure(agentapi.Unsafe, "invalid rollout kind")
 	}
 	if old := p.files[ref.Path]; old != nil {
-		if err := old.file.Check(); err == nil && old.checkHeader(ctx) == nil {
+		if !p.historySourceAllowed(old.meta.Cwd) {
+			return nil, agentapi.Wrap(agentapi.Unsafe, agentapi.ErrHistorySourceExcluded)
+		}
+		if old.currentHeader(ctx) {
 			return old, nil
 		}
 		if old.refs > 0 {
@@ -166,6 +169,9 @@ func (p *relatedSourcePass) open(ctx context.Context, ref agentapi.SourceRef) (*
 	meta, _, found, err := codexmeta.ParseCodexMeta(line)
 	if err != nil || !found {
 		return fail(sourceFailure(agentapi.FormatMismatch, "invalid rollout metadata"))
+	}
+	if !p.historySourceAllowed(meta.Cwd) {
+		return fail(agentapi.Wrap(agentapi.Unsafe, agentapi.ErrHistorySourceExcluded))
 	}
 	if meta.HistoryMode != "" && meta.HistoryMode != codexmeta.CodexHistoryLegacy && meta.HistoryMode != codexmeta.CodexHistoryPaginated {
 		return fail(sourceFailure(agentapi.Unsafe, "unsupported history mode"))
@@ -729,10 +735,10 @@ func (s *historySnapshot) ValidateAdmission(ctx context.Context, a agentapi.Sour
 	if err != nil {
 		return err
 	}
-	if !validAdmissionFacts(s.selection.leaf, facts, a) {
-		return sourceFailure(agentapi.Unsafe, "source admission facts changed")
+	if err := s.owner.checkHistoryAdmissionFacts(ctx, s.selection, s.spans, facts, a); err != nil {
+		return err
 	}
-	if a.NativeID != s.selection.thread || a.Cwd != "" && a.Cwd != s.selection.leaf.meta.Cwd {
+	if a.NativeID != s.selection.thread || a.Cwd != "" && a.Cwd != facts.Cwd {
 		return sourceFailure(agentapi.Unsafe, "source admission identity changed")
 	}
 	return s.check(ctx)
@@ -1086,8 +1092,8 @@ func (p *relatedSourcePass) ValidateSourceAdmission(ctx context.Context, ref age
 	if err != nil {
 		return err
 	}
-	if selection.thread != admission.NativeID || admission.Cwd != "" && facts.Cwd != admission.Cwd || !validAdmissionFacts(selection.leaf, facts, admission) {
-		return sourceFailure(agentapi.Unsafe, "source admission facts changed")
+	if err := p.checkHistoryAdmissionFacts(ctx, selection, spans, facts, admission); err != nil {
+		return err
 	}
 	if p.env.CodexRollouts != nil {
 		return p.env.CodexRollouts.Check(ctx, selection.thread, selection.set.Revision)
@@ -1502,8 +1508,8 @@ func (s *historySnapshot) AdmissionEvidence(ctx context.Context, admission agent
 	if err != nil {
 		return agentapi.AdmissionEvidence{}, err
 	}
-	if admission.NativeID != s.selection.thread || admission.Cwd != "" && admission.Cwd != s.selection.leaf.meta.Cwd || !validAdmissionFacts(s.selection.leaf, binding, admission) {
-		return agentapi.AdmissionEvidence{}, sourceFailure(agentapi.Unsafe, "source admission facts changed")
+	if err := s.owner.checkHistoryAdmissionFacts(ctx, s.selection, s.spans, binding, admission); err != nil {
+		return agentapi.AdmissionEvidence{}, err
 	}
 	task, err := s.gatherOwnTask(ctx)
 	if err != nil {
@@ -1633,4 +1639,75 @@ func (p *relatedSourcePass) readFailure(err error) (agentapi.SourceSnapshot, err
 		return nil, err
 	}
 	return nil, errors.Join(err, p.evict())
+}
+
+// Initial producer facts belong to the original thread, independently of the
+// producer that emitted the selected physical revision. Each remains bound to
+// its own validated header; neither can replace native creation or ownership.
+func (p *relatedSourcePass) checkHistoryAdmissionFacts(ctx context.Context, selection sourceSelection, spans []physicalSpan, facts archive.CodexSourceBinding, admission agentapi.SourceAdmission) error {
+	physical := admission
+	physical.InitialProducerVersion, physical.InitialProducerOriginator = "", ""
+	if selection.thread != admission.NativeID || admission.Cwd != "" && admission.Cwd != facts.Cwd || !validAdmissionFacts(selection.leaf, facts, physical) {
+		return sourceFailure(agentapi.Unsafe, "source admission facts changed")
+	}
+	if admission.InitialProducerVersion == "" && admission.InitialProducerOriginator == "" {
+		return nil
+	}
+	var original *rolloutFile
+	for _, span := range spans {
+		if span.file.identity.ThreadID == selection.thread && span.file.identity.RolloutID == selection.thread {
+			original = span.file
+			break
+		}
+	}
+	if original == nil {
+		for _, file := range p.files {
+			if file.identity.ThreadID == selection.thread && file.identity.RolloutID == selection.thread {
+				if original != nil && original.ref.Path != file.ref.Path {
+					return sourceFailure(agentapi.Unsafe, "original native identity ambiguous")
+				}
+				original = file
+			}
+		}
+	}
+	if original == nil && p.env.CodexRollouts != nil {
+		refs, err := p.env.CodexRollouts.Rollout(ctx, selection.thread)
+		if err != nil {
+			return err
+		}
+		if len(refs) > archive.MaxHistorySpans {
+			return sourceFailure(agentapi.Limit, "original fact candidate limit")
+		}
+		for _, ref := range refs {
+			file, err := p.open(ctx, ref)
+			if err != nil {
+				return err
+			}
+			if file.identity.ThreadID == selection.thread && file.identity.RolloutID == selection.thread {
+				if original != nil && original.ref.Path != file.ref.Path {
+					return sourceFailure(agentapi.Unsafe, "original native identity ambiguous")
+				}
+				original = file
+			}
+		}
+	}
+	if original == nil {
+		return sourceFailure(agentapi.Unsafe, "original producer facts unavailable")
+	}
+	if !originalProducerMatches(original, admission) {
+		return sourceFailure(agentapi.Unsafe, "original producer facts changed")
+	}
+	return original.checkHeader(ctx)
+}
+
+func (p *relatedSourcePass) historySourceAllowed(cwd string) bool {
+	return p.env.HistorySourceAllowed == nil || p.env.HistorySourceAllowed(cwd)
+}
+
+func (f *rolloutFile) currentHeader(ctx context.Context) bool {
+	return f.file.Check() == nil && f.checkHeader(ctx) == nil
+}
+
+func originalProducerMatches(original *rolloutFile, admission agentapi.SourceAdmission) bool {
+	return (admission.InitialProducerVersion == "" || admission.InitialProducerVersion == original.meta.Version) && (admission.InitialProducerOriginator == "" || admission.InitialProducerOriginator == original.meta.Originator)
 }

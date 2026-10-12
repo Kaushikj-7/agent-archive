@@ -137,7 +137,7 @@ func (s *sessionScan) run() (sessionOutcome, error) {
 	if err := s.checkRetainedHistory(); err != nil {
 		return outcomeSkipped, err
 	}
-	if s.reg.CaptureFrozen {
+	if s.maintainsRetainedOnly() {
 		outcome, err := s.maintainFrozen()
 		if err != nil {
 			return outcome, err
@@ -770,7 +770,7 @@ func renderPublication(ctx context.Context, parser agentapi.TranscriptParser, pa
 	analysis, parseErr := agentapi.Analyze(ctx, parser, candidate)
 	metadata, buildErr := archive.BuildMetadataWithAnalysis(candidate, analysis, parseErr, opts.MachineID, reg.SessionStartedAt, now, source, archive.ParserInfo{Version: parserVersion})
 	metadata.ApplyRegistrationProvenance(reg)
-	metadata.ApplyProjectName(reg.ProjectRoot)
+	applyProjectName(&metadata, reg, opts)
 	metadata.ApplyRepoKey(opts.repoKeyOr(reg, priorRepoKey))
 	metadata.ApplyGitHead(reg)
 	metadata.ApplyReplay(reg)
@@ -826,4 +826,44 @@ func (s *sessionScan) completeRequest(what string) error {
 		return fmt.Errorf("%s: %w", what, err)
 	}
 	return nil
+}
+
+func (s *sessionScan) hasRetainedPublication() bool {
+	_, _, found := s.published.LastPublished()
+	return found
+}
+
+func applyProjectName(m *archive.Metadata, reg archive.SessionRegistration, opts Options) {
+	if reg.HistoricalProject == nil {
+		m.ApplyProjectName(reg.ProjectRoot)
+		return
+	}
+	m.ProjectName = opts.historicalProjectName(reg)
+}
+
+func (opts Options) historicalProjectName(reg archive.SessionRegistration) string {
+	label := reg.HistoricalProject.Label
+	if opts.HistoricalProjectLabel != nil {
+		if current := opts.HistoricalProjectLabel(reg.ProjectID); current != "" {
+			label = current
+		}
+	}
+	return label
+}
+
+func (s *sessionScan) validateHistoricalSnapshot() error {
+	if s.reg.HistoricalProject == nil {
+		return nil
+	}
+	if err := s.reg.ValidateHistoricalProject(); err != nil {
+		return err
+	}
+	if s.reg.StagedImportSHA256 == "" {
+		return errors.New("historical import has no frozen source-set proof")
+	}
+	return nil
+}
+
+func (s *sessionScan) maintainsRetainedOnly() bool {
+	return s.reg.CaptureFrozen || s.reg.HistoricalProject != nil && s.hasRetainedPublication()
 }

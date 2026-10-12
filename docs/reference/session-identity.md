@@ -83,3 +83,22 @@ home: the complete-snapshot rollback guidance above still applies.
 New automatic admission honors retention and undo removal records. Deliberate
 backfill remains the way to include removed history explicitly. Repeated
 admission preserves original identity, origin, destination and admission times.
+
+## Historical project identity
+
+A historical project uses an explicitly supplied random 128-bit opaque ID,
+independent of any filesystem root, repository key or display label. Its imported
+session keeps the ordinary qualified agent/native archive identity and exact batch
+provenance. A private version-1 `historical_project` proof binds the project ID,
+destination, original and canonical cwd, and bounded required-source cwd evidence.
+Its live `project_root` is empty; the proof cannot coexist with live Codex consent
+or generation recovery authority. Source-set staging binds every proof field.
+These private paths are not source headers or metadata. Published project IDs
+remain opaque; historical labels provide the project name.
+
+Permissions are destination-scoped. Label changes preserve ownership and capture
+age. Exclusions apply to retained dependency evidence even after native deletion.
+Historical imports never recapture growth from the native session. Their local
+handoff reads use retained evidence; native transcript recovery is refused.
+Paired machines reconcile IDs and exact destination decisions, preserving local
+labels and disabled policy and transferring no native source assignments.

@@ -19,8 +19,9 @@ type resolution struct {
 	// root is the project root, in the spelling it is registered under. It is
 	// also set for the skips that have a would-be root (excluded, home,
 	// temporary), so --project can match them.
-	root string
-	kind ProjectKind
+	historical *archive.HistoricalProjectProof
+	root       string
+	kind       ProjectKind
 	// included is set when a configured, included project owns the directory.
 	included bool
 	skip     SkipReason
@@ -150,6 +151,9 @@ func withinAny(path string, roots []string) bool {
 // recovery. Only the gaps that can affect a session of app h block its
 // recorded recovery (recoveryGaps.blocking).
 func (r *resolver) resolveSessionEvidence(ctx context.Context, h harness, cwd, key string) resolution {
+	if id := r.filters.HistoricalMappings[filepath.Clean(cwd)]; id != "" {
+		return r.resolveHistorical(cwd, id)
+	}
 	recovery, gap := r.recoveryFor(ctx, h)
 	if r.mappingRecovery != nil && r.filters.ProjectMappings[filepath.Clean(cwd)] != "" {
 		recovery, gap = r.mappingRecovery, nil
@@ -164,7 +168,7 @@ func (r *resolver) resolveSessionEvidence(ctx context.Context, h harness, cwd, k
 	}
 	res := r.resolveUncached(cwd)
 	// Existing filesystem evidence and nearest configured ownership take precedence.
-	if !r.env.exists(cwd) && (res.skip == SkipWorktreeUnresolved || (!r.env.exists(cwd) && !res.included && res.kind == ProjectKindDirectory && res.skip == "" && (key != "" || r.filters.ProjectMappings[filepath.Clean(cwd)] != ""))) {
+	if r.needsRepositoryRecovery(cwd, key, res) {
 		if r.hasRepositoryEvidence(cwd) {
 			return resolution{skip: SkipWorktreeUnresolved}
 		}
@@ -229,6 +233,9 @@ func (r *resolver) resolve(cwd string) resolution {
 }
 
 func (r *resolver) resolveUncached(cwd string) resolution {
+	if id := r.filters.HistoricalMappings[filepath.Clean(cwd)]; id != "" {
+		return r.resolveHistorical(cwd, id)
+	}
 	// Rule 1: the working directory. Without one there is no project.
 	if cwd == "" || !filepath.IsAbs(cwd) {
 		return resolution{skip: SkipProjectUnknown}
@@ -561,4 +568,51 @@ func (r *resolver) hasRepositoryEvidence(cwd string) bool {
 		path = parent
 	}
 	return true
+}
+
+func (r *resolver) resolveHistorical(cwd, id string) resolution {
+	if skip := r.historicalSourceRestriction(cwd); skip != "" {
+		return resolution{skip: skip}
+	}
+	original, canonical := filepath.Clean(cwd), r.env.resolved(cwd)
+	project, found := r.cfg.HistoricalProject(id)
+	enabled, permission := project.HistoricalPermission(r.cfg.DestinationID())
+	if !found || !permission || !enabled {
+		return resolution{skip: SkipExcludedProject}
+	}
+	return resolution{current: &resolutionCheck{reset: func(context.Context) {}, valid: func() bool { return r.env.resolved(cwd) == canonical }}, kind: ProjectKindHistorical, included: true, historical: &archive.HistoricalProjectProof{Version: 1, ProjectID: id, DestinationID: r.cfg.DestinationID(), OriginalCwd: original, CanonicalCwd: canonical, Label: project.Label}}
+}
+
+func (r *resolver) needsRepositoryRecovery(cwd, key string, res resolution) bool {
+	return !r.env.exists(cwd) && (res.skip == SkipWorktreeUnresolved || (!r.env.exists(cwd) && !res.included && res.kind == ProjectKindDirectory && res.skip == "" && (key != "" || r.filters.ProjectMappings[filepath.Clean(cwd)] != "")))
+}
+
+func (r *resolver) historicalSourceRestriction(cwd string) SkipReason {
+	if !validMappingPath(cwd) {
+		return SkipProjectUnknown
+	}
+	original, canonical := filepath.Clean(cwd), r.env.resolved(cwd)
+	for _, rule := range r.cfg.Archive.Projects {
+		if !rule.Included && (local.PathWithin(original, filepath.Clean(rule.Root)) || local.PathWithin(canonical, r.env.resolved(rule.Root))) {
+			return SkipExcludedProject
+		}
+	}
+	for _, path := range uniquePaths(original, canonical) {
+		if r.homeOrAbove(path) {
+			if result := r.homeRule(path); result.skip != "" {
+				return result.skip
+			}
+		}
+		if r.temporaryRepository(path) && !r.filters.IncludeTemp {
+			return SkipTemporaryDirectory
+		}
+	}
+	return ""
+}
+
+// NewHistoricalSourcePolicy binds original source restrictions before staging.
+// It grants no native capture and does not require repository lookup.
+func NewHistoricalSourcePolicy(env Environment, cfg config.Config, filters Filters) func(string) bool {
+	resolver := newResolver(env, cfg, filters)
+	return func(cwd string) bool { return resolver.historicalSourceRestriction(cwd) == "" }
 }

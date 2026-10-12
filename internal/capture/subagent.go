@@ -27,7 +27,7 @@ func handleSubagentStop(store *state.Store, cfg config.Config, event agentapi.Li
 	if err != nil {
 		return err
 	}
-	if !found || archive.CanonicalHarness(parent.Harness.Name) != archive.CanonicalHarness(harness) || !cfg.AcceptSession(parent) {
+	if !found || parent.HistoricalProject != nil || archive.CanonicalHarness(parent.Harness.Name) != archive.CanonicalHarness(harness) || !cfg.AcceptSession(parent) {
 		return nil
 	}
 

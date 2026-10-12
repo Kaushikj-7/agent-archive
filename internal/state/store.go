@@ -140,6 +140,9 @@ func (s *Store) SaveRegistration(reg archive.SessionRegistration) error {
 	if err := reg.Validate(); err != nil {
 		return err
 	}
+	if reg.HistoricalProject != nil && reg.StagedImportSHA256 == "" {
+		return errors.New("historical import registration requires frozen source-set proof")
+	}
 	if !safeFileComponent(reg.ArchiveSessionID) {
 		return errors.New("archive session ID is not a safe file name component")
 	}
@@ -338,6 +341,9 @@ func (s *Store) registerUnderLock(key agentmeta.SessionKey, id string, build fun
 	if err := reg.Validate(); err != nil {
 		return archive.SessionRegistration{}, false, err
 	}
+	if reg.HistoricalProject != nil && reg.StagedImportSHA256 == "" {
+		return archive.SessionRegistration{}, false, errors.New("historical import registration requires frozen source-set proof")
+	}
 	// Replacement staging remains blind; the locked check protects immutable
 	// admission proof before committing the staged registration.
 	err := s.writeUnderLock(lockedWrite{
@@ -407,7 +413,7 @@ func (s *Store) mergeAdmissionRegistration(key agentmeta.SessionKey, reg archive
 		if err := json.Unmarshal(current.data, &existing); err != nil {
 			return reg, err
 		}
-		if existing.NativeSessionID != key.NativeID || agentmeta.Canonical(agentmeta.Builtins(), existing.Harness.Name) != string(key.Agent) || existing.ProjectRoot != reg.ProjectRoot || existing.DestinationID != "" && existing.DestinationID != reg.DestinationID {
+		if existing.NativeSessionID != key.NativeID || agentmeta.Canonical(agentmeta.Builtins(), existing.Harness.Name) != string(key.Agent) || existing.ProjectRoot != reg.ProjectRoot || existing.ProjectID != reg.ProjectID || (existing.HistoricalProject == nil) != (reg.HistoricalProject == nil) || existing.DestinationID != "" && existing.DestinationID != reg.DestinationID {
 			return reg, ErrSessionIdentityConflict
 		}
 		if existing.TranscriptPath == "" && existing.ReadsTranscriptFile() && reg.ReadsTranscriptFile() {
@@ -1249,6 +1255,8 @@ func (s *Store) ScanPending(id string) (bool, error) {
 // Anything that invalidates the assertion removes the token (see
 // RemoveScanSignature's callers).
 type ScanSignature struct {
+	// PublishedProjectName invalidates a retained historical signature after a label change.
+	PublishedProjectName string `json:"published_project_name,omitempty"`
 	// PublishedLabel identifies retained safe native name evidence, independently of lookup time.
 	PublishedLabel string `json:"published_label,omitempty"`
 	// A settled complete authority token carries only compact acknowledged facts.

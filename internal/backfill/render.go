@@ -31,8 +31,10 @@ var harnessNames = func() map[string]string {
 
 // ProjectSummary is one project row of the plan: the sessions it imports.
 type ProjectSummary struct {
-	Root string
-	Kind ProjectKind
+	HistoricalProjectID string
+	HistoricalLabel     string
+	Root                string
+	Kind                ProjectKind
 	// Included is set when the project is already configured and included.
 	Included  bool
 	Exists    bool
@@ -91,10 +93,18 @@ func (p Plan) Projects() []ProjectSummary {
 	byRoot := map[string]*ProjectSummary{}
 	var order []*ProjectSummary
 	for _, c := range p.Imported() {
-		s, ok := byRoot[c.ProjectRoot]
+		key := c.ProjectRoot
+		if c.HistoricalProject != nil {
+			key = "historical:" + c.ProjectIdentity()
+		}
+		s, ok := byRoot[key]
 		if !ok {
-			s = &ProjectSummary{Root: c.ProjectRoot, Kind: c.ProjectKind, Included: c.ProjectIncluded, Exists: c.ProjectExists, Sessions: map[string]int{}}
-			byRoot[c.ProjectRoot] = s
+			var historicalID, historicalLabel string
+			if c.HistoricalProject != nil {
+				historicalID, historicalLabel = c.ProjectIdentity(), c.HistoricalProject.Label
+			}
+			s = &ProjectSummary{HistoricalProjectID: historicalID, HistoricalLabel: historicalLabel, Root: c.ProjectRoot, Kind: c.ProjectKind, Included: c.ProjectIncluded, Exists: c.ProjectExists, Sessions: map[string]int{}}
+			byRoot[key] = s
 			order = append(order, s)
 		}
 		s.Sessions[c.Harness]++
@@ -158,7 +168,7 @@ func (p Plan) SubagentsSkipped() int {
 // hooks installed, so their new sessions are not captured.
 func (p Plan) AppsWithoutHooks() []string {
 	out := []string{}
-	if len(p.Harnesses) == 0 {
+	if len(p.Harnesses) == 0 && !slices.ContainsFunc(p.Imported(), func(c Candidate) bool { return c.HistoricalProject != nil }) {
 		// An older configuration without an app list accepts every app.
 		return out
 	}
@@ -206,6 +216,7 @@ func RenderText(w io.Writer, p Plan) {
 		return
 	}
 	renderPlanIntro(w, p)
+	renderMappingAssignments(w, p)
 	renderProjectTable(w, p, projects)
 	renderPlanTotals(w, p, projects)
 	renderSkipped(w, p)
@@ -361,7 +372,9 @@ func (p Plan) renderRow(w io.Writer, width int, s ProjectSummary) {
 		cells = append(cells, countCell(s.Sessions[h]))
 	}
 	status := "will be added"
-	if s.Included {
+	if s.HistoricalProjectID != "" {
+		status = "historical only"
+	} else if s.Included {
 		status = "already included"
 	}
 	terminal.Printf(w, "%-*s%6s  %5s  %6s  %5d  %s\n", width, p.rowLabel(s), cells[0], cells[1], cells[2], s.Total(), status)
@@ -375,6 +388,8 @@ func (p Plan) renderRow(w io.Writer, width int, s ProjectSummary) {
 		terminal.Printf(w, "  %s: %d sessions\n", agentLabel(name), s.Sessions[name])
 	}
 	switch s.Kind {
+	case ProjectKindHistorical:
+		terminal.Println(w, "  Confirmed imported evidence only. No future hooks or discovery are included.")
 	case ProjectKindScratch:
 		if p.isCodexWorkspaces(s.Root) {
 			terminal.Println(w, "  Chats in the workspaces Codex creates for them. New ones will be captured too.")
@@ -450,6 +465,9 @@ func (p Plan) renderSubfolderNote(w io.Writer, s ProjectSummary) {
 }
 
 func (p Plan) rowLabel(s ProjectSummary) string {
+	if s.HistoricalProjectID != "" {
+		return s.HistoricalLabel + " [" + s.HistoricalProjectID + "] (historical only)"
+	}
 	label := p.display(s.Root)
 	if s.Kind == ProjectKindScratch {
 		label = "Claude desktop scratch chats"
@@ -484,6 +502,7 @@ var skipLabels = map[SkipReason]string{
 	SkipRemovedByUndo:         "removed earlier by undo",
 	SkipRemovedByRetention:    "removed earlier by retention",
 	SkipFilteredOut:           "not matching the filters",
+	SkipExcludedHistory:       "whose complete history requires an excluded source",
 	SkipExcludedProject:       "in projects excluded in setup",
 	SkipHomeDirectory:         "run from the home folder",
 	SkipAboveHome:             "run from / or /Users, above the home folder",
@@ -716,7 +735,9 @@ func FormatSize(n int64) string {
 
 // planJSON is `backfill --dry-run --json`.
 type planJSON struct {
-	Diagnostics []DiagnosticSummary `json:"diagnostics,omitempty"`
+	Assignments   []mappingEntry      `json:"assignments,omitempty"`
+	MappingDigest string              `json:"mapping_digest,omitempty"`
+	Diagnostics   []DiagnosticSummary `json:"diagnostics,omitempty"`
 	// RecoveryEvidenceGaps names, per app and cause, the incomplete recovery
 	// evidence that blocked sessions or that sessions were recovered without.
 	RecoveryEvidenceGaps []RecoveryEvidenceGap `json:"recovery_evidence_gaps,omitempty"`
@@ -769,18 +790,21 @@ type projectStatus string
 const (
 	projectStatusWillBeAdded     projectStatus = "will_be_added"
 	projectStatusAlreadyIncluded projectStatus = "already_included"
+	projectStatusHistoricalOnly  projectStatus = "historical_only"
 )
 
 type projectJSON struct {
-	Root           string         `json:"root"`
-	Kind           ProjectKind    `json:"kind"`
-	Status         projectStatus  `json:"status"`
-	Exists         bool           `json:"exists"`
-	Sessions       map[string]int `json:"sessions"`
-	Subagents      int            `json:"subagents"`
-	Bytes          int64          `json:"bytes"`
-	FirstStartedAt time.Time      `json:"first_started_at"`
-	LastStartedAt  time.Time      `json:"last_started_at"`
+	HistoricalProjectID string         `json:"historical_project_id,omitempty"`
+	HistoricalLabel     string         `json:"historical_label,omitempty"`
+	Root                string         `json:"root"`
+	Kind                ProjectKind    `json:"kind"`
+	Status              projectStatus  `json:"status"`
+	Exists              bool           `json:"exists"`
+	Sessions            map[string]int `json:"sessions"`
+	Subagents           int            `json:"subagents"`
+	Bytes               int64          `json:"bytes"`
+	FirstStartedAt      time.Time      `json:"first_started_at"`
+	LastStartedAt       time.Time      `json:"last_started_at"`
 	// CapturesSubfolders is set when adding the project makes hooks capture
 	// new sessions in folders under it that no nearer project owns.
 	CapturesSubfolders bool `json:"captures_subfolders"`
@@ -797,7 +821,7 @@ type projectJSON struct {
 // `backfill --dry-run --json`. It holds project roots, which are paths, but
 // never a transcript path, a native or archive session ID, or content.
 func RenderJSON(w io.Writer, p Plan) error {
-	out := planJSON{
+	out := planJSON{Assignments: p.mappingAssignments(), MappingDigest: p.Filters.mappingDigest(),
 		Destination: p.Destination,
 		Filters: filtersJSON{
 			Harnesses: []string{}, Projects: []string{},
@@ -834,7 +858,9 @@ func RenderJSON(w io.Writer, p Plan) error {
 	out.ExpiresOn, _ = p.ExpiresOn()
 	for _, s := range p.Projects() {
 		status := projectStatusWillBeAdded
-		if s.Included {
+		if s.HistoricalProjectID != "" {
+			status = projectStatusHistoricalOnly
+		} else if s.Included {
 			status = projectStatusAlreadyIncluded
 		}
 		sessions := map[string]int{}
@@ -843,7 +869,7 @@ func RenderJSON(w io.Writer, p Plan) error {
 		}
 		maps.Copy(sessions, s.Sessions)
 		out.Projects = append(out.Projects, projectJSON{
-			Root: s.Root, Kind: s.Kind, Status: status, Exists: s.Exists,
+			HistoricalProjectID: s.HistoricalProjectID, HistoricalLabel: s.HistoricalLabel, Root: s.Root, Kind: s.Kind, Status: status, Exists: s.Exists,
 			Sessions: sessions, Subagents: s.Subagents, Bytes: s.Bytes,
 			FirstStartedAt: s.FirstStart.UTC(), LastStartedAt: s.LastStart.UTC(),
 			CapturesSubfolders: s.CapturesSubfolders(), KeptOut: append([]string{}, s.KeptOut...), KeptOutUnchecked: append([]string{}, s.KeptOutUnchecked...), KeptOutComplete: s.NestedComplete,
@@ -891,4 +917,35 @@ func presentationAgents(names []string) []string {
 		}
 	}
 	return append(ordered, sortedAgentKeys(extras)...)
+}
+
+func (p Plan) mappingAssignments() []mappingEntry {
+	var assignments []mappingEntry
+	for cwd, root := range p.Filters.ProjectMappings {
+		assignments = append(assignments, mappingEntry{Cwd: cwd, ConfiguredRoot: root})
+	}
+	for cwd, id := range p.Filters.HistoricalMappings {
+		assignments = append(assignments, mappingEntry{Cwd: cwd, HistoricalProjectID: id})
+	}
+	slices.SortFunc(assignments, func(a, b mappingEntry) int { return strings.Compare(a.Cwd, b.Cwd) })
+	return assignments
+}
+
+func renderMappingAssignments(w io.Writer, p Plan) {
+	assignments := p.mappingAssignments()
+	if len(assignments) == 0 {
+		return
+	}
+	terminal.Printf(w, "Exact original cwd assignments (%d; digest %s):\n", len(assignments), p.Filters.mappingDigest())
+	for _, assignment := range assignments[:min(128, len(assignments))] {
+		target := assignment.ConfiguredRoot
+		if assignment.HistoricalProjectID != "" {
+			target = "historical " + assignment.HistoricalProjectID
+		}
+		terminal.Printf(w, "  %s → %s\n", p.display(assignment.Cwd), target)
+	}
+	if len(assignments) > 128 {
+		terminal.Println(w, "  Remaining assignments are in the reviewed mapping file. Use --dry-run --json for the complete assignment preview before confirming.")
+	}
+	terminal.Println(w)
 }

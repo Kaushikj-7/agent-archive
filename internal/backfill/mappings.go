@@ -31,23 +31,29 @@ func ParseProjectMappings(values []string) (map[string]string, error) {
 }
 
 func validateProjectMappings(env Environment, cfg config.Config, mappings map[string]string) error {
-	if len(mappings) > 128 {
+	if len(mappings) > MappingCountLimit {
 		return errors.New("too many project mappings")
 	}
+	included := map[string]bool{}
+	for _, project := range cfg.Archive.Projects {
+		if project.Included {
+			included[filepath.Clean(project.Root)] = true
+		}
+	}
+	observed := map[string]bool{}
 	for old, target := range mappings {
 		if !filepath.IsAbs(old) || !filepath.IsAbs(target) || len(old) > 4096 || len(target) > 4096 || strings.ContainsAny(old+target, "\x00\r\n") {
 			return errors.New("invalid project mapping")
 		}
-		matched := false
-		for _, p := range cfg.Archive.Projects {
-			if filepath.Clean(p.Root) == filepath.Clean(target) && p.Included {
-				matched = true
-			}
+		target = filepath.Clean(target)
+		if observed[target] {
+			continue
 		}
 		info, err := env.stat(target)
-		if !matched || err != nil || !info.IsDir() {
+		if !included[target] || err != nil || !info.IsDir() {
 			return errors.New("--map-project target must be an existing included configured root")
 		}
+		observed[target] = true
 	}
 	return nil
 }

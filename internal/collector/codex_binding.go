@@ -283,6 +283,9 @@ func (s *sessionScan) validateMigrationHome(cfg config.Config, binding *archive.
 // Upgrade only the same acknowledged owner using its admitted binding;
 // current native files cannot license this retained maintenance.
 func (s *sessionScan) prepareRetainedOwnership() error {
+	if err := s.validateHistoricalSnapshot(); err != nil {
+		return err
+	}
 	if err := s.recoverReferenceAuthority(); err != nil {
 		return err
 	}
