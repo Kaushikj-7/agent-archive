@@ -234,6 +234,7 @@ func (p publishedState) summaryFromMetadata(m archive.Metadata) PublishedSummary
 }
 
 type publishedSnapshot struct {
+	StagedSelection *StagedSelection `json:"staged_commit3,omitempty"`
 	Selection   *ReadySelection      `json:"selection_commit,omitempty"`
 	Bundle      archive.SourceBundle `json:"bundle"`
 	PublishedAt time.Time            `json:"published_at"`
@@ -406,6 +407,9 @@ func (s *Store) LoadPublishedState(archiveSessionID string) (*Published, error) 
 		// then the session is one that never published (quarantineInPass).
 		return nil, fmt.Errorf("read published state %q: %w", archiveSessionID, s.afterLoss(archiveSessionID, err))
 	}
+	if found && p.state.PublicationVersion == 3 {
+		if err := p.preserveStagedPublished(&p.state); err != nil { return nil,err }
+	}
 	if found && p.state.PublicationVersion == 2 {
 		if err := p.preserveReadyPublished(&p.state); err != nil {
 			return nil, err
@@ -428,6 +432,7 @@ func (s *Store) LoadPublishedState(archiveSessionID string) (*Published, error) 
 }
 
 func (p *Published) write(next publishedState) error {
+	if err := p.preserveStagedPublished(&next); err != nil { return err }
 	if err := p.preserveReadyPublished(&next); err != nil {
 		return err
 	}
@@ -523,7 +528,7 @@ func readLeadingSummary(reader io.Reader) (summary PublishedSummary, ok bool, er
 	}
 	if name, ok := key.(string); ok && strings.EqualFold(name, "publication_version") {
 		var version int
-		if decoder.Decode(&version) != nil || version != 2 {
+		if decoder.Decode(&version) != nil || (version != 2 && version != 3) {
 			return summary, false, ErrDurableStorageRecovery
 		}
 		return summary, false, errSelectingPublishedFullDecode

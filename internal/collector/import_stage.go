@@ -92,7 +92,7 @@ func (s *sessionScan) resumeStagedPolicy(p state.PendingPublication) (state.Pend
 	}
 	// Frozen catalog ownership cannot be reused for changed policy bytes. Keep
 	// the journal and every source until exact owner recovery settles it.
-	if p.Catalog != nil || p.Selection != nil {
+	if p.Catalog != nil || p.Selection != nil || p.StagedSelection != nil {
 		return p, state.ErrCatalogJournalFrozen
 	}
 	current, err := s.historyGet(p.MetadataKey, historyMetadataLimit)

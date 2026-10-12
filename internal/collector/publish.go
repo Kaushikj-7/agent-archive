@@ -74,6 +74,10 @@ func (s *sessionScan) block(reason state.BlockedReason, candidate *archive.Sourc
 // finally the removal of the pending file. ctx must be the original scan
 // context; admission derives an invocation context for this serial lifecycle.
 func (s *sessionScan) publishPending(ctx context.Context, pending state.PendingPublication) (sessionOutcome, error) {
+	if pending.StagedSelection != nil {
+		if authority,ok := s.remote.(interface{CatalogMetadataAuthority() bool}); ok && authority.CatalogMetadataAuthority() { return outcomeSkipped,state.ErrReadySelectionFrozen }
+		if pending.Catalog != nil { return outcomeSkipped,state.ErrReadySelectionFrozen }
+	}
 	if err := pending.ValidateReadySlot(s.id()); err != nil {
 		return outcomeSkipped, err
 	}
@@ -146,7 +150,7 @@ func (s *sessionScan) publishPending(ctx context.Context, pending state.PendingP
 			return outcomeSkipped, err
 		}
 	}
-	if pending.Selection != nil {
+	if pending.Selection != nil || pending.StagedSelection != nil {
 		if err := s.verifyImportPublication(pending); err != nil {
 			return outcomeSkipped, err
 		}
@@ -216,6 +220,11 @@ func (s *sessionScan) acknowledgePublication(pending state.PendingPublication, k
 	if err := s.local.RemoveRefreshSkip(s.id()); err != nil {
 		return outcomeSkipped, err
 	}
+	if pending.StagedSelection != nil {
+		if keepPending { return outcomeSkipped,state.ErrReadySelectionFrozen }
+		if err := s.releaseTypedStage(); err != nil { return outcomeSkipped,err }
+		return outcomePublished,nil
+	}
 	if pending.RequestToken != "" {
 		if _, err := s.local.CompleteRequest(s.id(), pending.RequestToken); err != nil {
 			return outcomeSkipped, fmt.Errorf("complete published request: %w", err)
@@ -246,7 +255,7 @@ func (s *sessionScan) upload(pending state.PendingPublication) error {
 	if err := s.local.SaveListingRepair(s.id(), state.ListingRepair{MetadataKey: pending.MetadataKey, DestinationID: s.reg.DestinationID}); err != nil {
 		return fmt.Errorf("journal listing repair: %w", err)
 	}
-	if pending.Selection != nil {
+	if pending.Selection != nil || pending.StagedSelection != nil {
 		return s.uploadReadySelection(pending)
 	}
 	if pending.History != nil {

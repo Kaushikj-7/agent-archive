@@ -766,6 +766,7 @@ type CatalogPublication struct {
 
 type PendingPublication struct {
 	JournalVersion int                 `json:"journal_version,omitempty"`
+	StagedSelection *StagedSelection `json:"staged_commit3,omitempty"`
 	Selection      *ReadySelection     `json:"selection_commit,omitempty"`
 	Catalog        *CatalogPublication `json:"commit,omitempty"`
 	// ImportExpectedMetadataSHA256 freezes staged imports' predecessor. Retired
@@ -816,6 +817,7 @@ func (s *Store) pendingPath(id string) string {
 // validateComplete is the supported transaction structure shared by writes
 // and protected reads. History validation keeps its separate budget ownership.
 func (pending PendingPublication) validateComplete() error {
+	if err := pending.validateStagedShape(); err != nil { return err }
 	if err := pending.validateReadySelectionShape(); err != nil {
 		return err
 	}
@@ -853,6 +855,7 @@ func (s *Store) validateReadablePending(pending PendingPublication) error {
 }
 
 func (s *Store) validateReadablePendingContext(ctx context.Context, pending PendingPublication) error {
+	if err := s.validateStagedSelection(ctx, pending); err != nil { return err }
 	if err := s.validateReadySelection(ctx, pending); err != nil {
 		return err
 	}
