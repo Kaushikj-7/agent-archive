@@ -2,7 +2,8 @@
 
 Prepared 2026-09-30 against `main` at `dc443c7`. Status: phases 1
 and 2 implemented; phase 3's historical synthetic matrix recorded in #451;
-phase 4 partially implemented. Matched measurements with the repaired command
+phase 4 has default-v3 bounded bodies and a gated opt-in catalog implementation.
+Matched measurements with the repaired command
 output-validation harness remain pending.
 Reconciled 2026-10-11 at `db2ccd3e`. The current
 [listing contract](../maintainers/list-performance.md) specifies indexed bounded
@@ -14,7 +15,14 @@ Its modeled latency and measured local costs remain separate; the retained
 samples used the historical discard-writer harness and do not qualify current
 main or a matched comparison with the repaired harness. Fresh LIST header
 enumeration still grows with archive size, so the original constant-cost index
-goal remains open. The phase designs below preserve the original plan.
+goal remains open for the default legacy format. The opt-in catalog-v4 source
+landed in [#460](https://github.com/wangjohn/agent-archive/pull/460), with bounded
+tree reads for eligible queries and complete-summary fallback for complex ones.
+Production S3/R2 construction and migration still refuse unqualified providers;
+provider atomicity/clock, global writer/cutover authority, full-load and matched
+performance acceptance remain gates. See [catalog migration and query](../catalog/migration-and-query.md)
+and the [provider release gate](../catalog/provider-qualification.md).
+The phase designs below preserve the original plan.
 Each phase lands before the next one starts. Each phase's PR updates its
 status line below.
 
@@ -23,7 +31,7 @@ status line below.
 | 1 | Parallel range listing | Implemented in [#219](https://github.com/wangjohn/agent-archive/pull/219) |
 | 2 | `AGENT_ARCHIVE_TRACE` timings | Implemented in [#225](https://github.com/wangjohn/agent-archive/pull/225) |
 | 3 | Listing benchmark at 1k, 10k and 100k sessions | Historical synthetic matrix recorded in #451; matched repaired-harness measurements pending. |
-| 4 | Index read whose cost doesn't grow with the archive (spec first) | Partial: bounded metadata bodies implemented; proportional LIST headers remain. |
+| 4 | Index read whose cost doesn't grow with the archive (spec first) | Default v3 bounds metadata bodies but retains proportional LIST headers. Opt-in catalog tree reads implemented in #460; production qualification and activation remain gated. |
 
 ## Problem
 
