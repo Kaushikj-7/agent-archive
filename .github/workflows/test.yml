@@ -31,12 +31,18 @@ jobs:
           go version | grep -q ' go1\.27\.2 ' || { echo "expected go1.27.2, matching go.mod's toolchain line" >&2; exit 1; }
       # internal/cli takes 275 to 427 seconds under the race detector on CI
       # runners, too close to go test's default of 10 minutes a package.
-      - run: go test -race -timeout 20m ./...
+      - name: Pull-request race suite (short fixtures)
+        if: github.event_name == 'pull_request'
+        run: go test -race -short -timeout 20m ./...
+      - name: Candidate race suite (full fixtures)
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release-candidate/')
+        run: go test -race -timeout 20m ./...
       # The run above uses the race detector, under which the wall-clock
       # assertions of the performance tests are skipped (the detector slows
       # filtering by an order of magnitude). This plain run makes them count,
-      # at their documented size. See dev/contributing/testing.md.
+      # on candidates at their documented size. See dev/contributing/testing.md.
       - name: Performance assertions (no race detector)
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release-candidate/')
         run: go test -v -p 1 -count=1 -run 'StayFast|FiveMegabyte|TestCursorOverlappingHooksRegisterOnce' ./internal/collector ./internal/archive ./internal/agents/nativecodec ./internal/capture
         env:
           AGENT_ARCHIVE_PERF: '1'
@@ -127,7 +133,7 @@ jobs:
   macos-smoke:
     # Compile every Darwin/cgo package, then exercise the native Keychain,
     # launchd, terminal, and setup paths before merging. The full race suite
-    # runs on main and nightly in extended.yml.
+    # runs on candidates and nightly in extended.yml.
     runs-on: macos-14
     timeout-minutes: 15
     steps:

@@ -12,7 +12,7 @@ go build ./...
 
 # The Keychain round-trip remains opt-in; the package's other tests fail closed
 # instead of reaching a real login Keychain.
-go test -race -count=1 -timeout 10m \
+go test -race -short -count=1 -timeout 10m \
   ./internal/credentials \
   ./internal/scheduler/launchd \
   ./internal/scheduler/host \
@@ -38,7 +38,7 @@ cli_tests=(
 
 # -run silently passes when a name disappears. Require every selected test to
 # exist before starting the focused CLI run.
-listed="$(go test -race -list '^Test' ./internal/cli)"
+listed="$(go test -race -short -list '^Test' ./internal/cli)"
 for test_name in "${cli_tests[@]}"; do
   if ! grep -Fxq "$test_name" <<< "$listed"; then
     echo "macOS smoke test missing: $test_name" >&2
@@ -47,4 +47,4 @@ for test_name in "${cli_tests[@]}"; do
 done
 
 pattern="^($(IFS='|'; echo "${cli_tests[*]}"))$"
-go test -race -count=1 -timeout 10m -run "$pattern" ./internal/cli
+go test -race -short -count=1 -timeout 10m -run "$pattern" ./internal/cli

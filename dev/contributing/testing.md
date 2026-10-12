@@ -4,7 +4,8 @@ What CI checks, run locally from the repository root (the
 [Levenshtein checks](#levenshtein-checks) below run too):
 
 ```sh
-go test -race -timeout 20m ./...                         # internal/cli alone takes 4.5 to 7 minutes in CI
+go test -race -short -timeout 20m ./...                  # the pull-request race suite
+go test -race -timeout 20m ./...                         # exhaustive fixtures: nightly and candidates
 go vet ./...
 golangci-lint run --disable=revive                       # v2.14.0; the blocking lint run
 golangci-lint run --enable-only=revive --new-from-merge-base=origin/main   # doc comments, new code only
@@ -23,14 +24,22 @@ python3 scripts/test_measure_hook.py                     # synthetic hook benchm
 VERSION=dev ./scripts/build-release.sh                   # the release build (CI runs it on a release tag)
 ```
 
-CI's [Test workflow](../../.github/workflows/test.yml) runs the full race
-suite, performance assertions, vet, and script tests on Ubuntu for each pull
-request. On macOS it builds all production packages with cgo and runs the
-focused Keychain, launchd, terminal, and CLI smoke suite above. macOS
-golangci-lint also runs on each pull request: the first pass blocks, and
+CI's [Test workflow](../../.github/workflows/test.yml) runs the short race
+suite, vet, and all script tests on Ubuntu for each pull request. On macOS it builds all production packages with cgo and runs the
+focused Keychain, launchd, terminal, and CLI smoke suite above in short mode.
+macOS golangci-lint also runs on each pull request: the first pass blocks, and
 revive's doc-comment rule checks only code the pull request adds or changes.
 All jobs use Go 1.27.2 exactly (go.mod's `toolchain` line). A new push to a
 pull request cancels that pull request's older Test and Levenshtein runs.
+
+Short mode scales large rendering, statistics, collector, and codec fixtures
+while retaining race checks and logical assertions. It deliberately omits real
+32 MiB import admission/rejection and oversized journal encoding/refilter
+integration, and scales fixtures that exceed the former 128 MiB source cap.
+Default non-short tests remain exhaustive. Full nightly and exact-commit
+candidate coverage is required for these size regressions; dispatch the full
+Linux or macOS suite before merging a risky change. A previous nightly or PR
+merge-ref run cannot replace validation of the final release candidate SHA.
 
 The Git identity compatibility job separately runs isolated native Git tests on
 pinned upstream Git 2.30.2 and 2.39.2, and the runner's current Git. It logs exact
@@ -42,14 +51,15 @@ A run-owned `release-candidate/**` branch push runs the same Test jobs and
 Levenshtein `verify` against the pushed commit, plus Extended `macos-full`,
 `fuzz`, and `real-systemd`. This provides an automatic final integration
 campaign when manual dispatch is unavailable. Extended skips its duplicate
-Linux suite on these branches because Test runs full Linux race coverage.
+Linux suite on these branches because Test runs full non-short Linux race
+coverage and plain full-size performance assertions. Extended supplies full
+non-short macOS race coverage and plain full-size performance assertions.
 Test, Levenshtein and Extended disable setup-go's shared module/build cache
 for every trigger, so candidate validation cannot restore executable build
 state from another run. Go still verifies downloaded modules against go.sum;
 fresh runners may take longer while downloading and compiling dependencies.
-Main and nightly behavior remains as described below, and concurrency groups
-keep each candidate branch separate from main. Candidate pushes cannot start
-the tag-only signing workflow or the manual promotion workflow. Record the
+Concurrency groups keep each candidate branch separate from other runs.
+Candidate pushes cannot start the tag-only signing workflow or the manual promotion workflow. Record the
 exact pushed SHA and all three run URLs; missing, skipped, queued, timed-out,
 or failed required jobs leave readiness pending. Push a fresh candidate ref
 at the final main commit after merges if merge commits or squash changed the
@@ -57,10 +67,10 @@ previously tested SHA. These campaigns do not establish live provider, app,
 architecture, or signed-installer acceptance; see [releasing](../maintainers/releasing.md).
 
 The [Extended workflow](../../.github/workflows/extended.yml) runs the full
-Linux and macOS race suites after a merge to `main`; it keeps only the newest
-main run during a burst of merges. Nightly it reruns the full macOS suite and
-runs the fuzz and real-systemd jobs. Dispatch it manually on a selected ref
-to run all jobs or one suite before merging a change to those paths. The
+non-short Linux and macOS race suites and full-size plain performance assertions
+nightly, alongside the fuzz and real-systemd jobs. It does not run after every
+merge to `main`; candidate pushes run macOS, fuzz, and real-systemd as above.
+Dispatch it manually on a selected ref to run all jobs or one suite before merging a change to those paths. The
 Keychain code needs cgo and Xcode's command line tools on macOS; elsewhere a
 stub is built. The `real-systemd` job runs the Linux scheduler against a real
 systemd user manager on Ubuntu (see [below](#never-test-against-your-real-machine)).
@@ -73,10 +83,11 @@ stale [CLI reference](../../docs/reference/cli.md).
 
 Performance tests check what a pass costs on every run (published-state
 decodes and local writes, counted, not timed). Their wall-clock targets run
-only at full size in a plain build, which CI does in a step of its own:
+only at full size in a plain build, which CI runs nightly, on candidate pushes,
+and in manually dispatched full OS suites:
 
 ```sh
-AGENT_ARCHIVE_PERF=1 go test -v -p 1 -count=1 -run 'StayFast|FiveMegabyte|TestCursorOverlappingHooksRegisterOnce' ./internal/collector ./internal/archive ./internal/capture
+AGENT_ARCHIVE_PERF=1 go test -v -p 1 -count=1 -run 'StayFast|FiveMegabyte|TestCursorOverlappingHooksRegisterOnce' ./internal/collector ./internal/archive ./internal/agents/nativecodec ./internal/capture
 ```
 
 A test of a timeout or budget doesn't time the whole call: `-race` on a
