@@ -85,7 +85,12 @@ func hostileArchive(rng *rand.Rand, n int) []archive.Metadata {
 // document is the same for any ordering of the input.
 func TestHostileArchivesStayConsistent(t *testing.T) {
 	t.Parallel()
-	for seed := uint64(1); seed <= 60; seed++ {
+	seeds := uint64(60)
+	if testing.Short() {
+		// Keep the same seeded archives and all assertions for each seed.
+		seeds = 12
+	}
+	for seed := uint64(1); seed <= seeds; seed++ {
 		rng := rand.New(rand.NewPCG(seed, 99))
 		sessions := hostileArchive(rng, 30+rng.IntN(300))
 		for i, by := range []Grouping{GroupNone, GroupDay, GroupWeek, GroupMonth, GroupProject} {

@@ -155,7 +155,13 @@ func TestShowTranscriptTrimmingHoldsTheLimitForRandomSessions(t *testing.T) {
 	r := rand.New(rand.NewSource(20260929))
 	styles := []textStyle{{}, {color: true, width: 80}}
 	trimmedCases, floorCases := 0, 0
-	for i := range 90 {
+	cases, minTrimmed, minFloor := 90, 25, 8
+	if testing.Short() {
+		// A fixed prefix of the same seeded stream, with unchanged session
+		// sizes and checks (including Unicode, saved records and repeatability).
+		cases, minTrimmed, minFloor = 30, 8, 2
+	}
+	for i := range cases {
 		transcript := randomTranscript(r)
 		opts := transcriptOptions{summaryOptions: summaryOptions{Now: summaryNow, Location: time.UTC, Style: styles[r.Intn(2)]}, Full: r.Intn(2) == 0}
 		plain := opts
@@ -230,7 +236,7 @@ func TestShowTranscriptTrimmingHoldsTheLimitForRandomSessions(t *testing.T) {
 			t.Fatalf("%s: over the limit without a warning", label)
 		}
 	}
-	if trimmedCases < 25 || floorCases < 8 {
+	if trimmedCases < minTrimmed || floorCases < minFloor {
 		t.Fatalf("only %d trimmed and %d floor cases: the generator does not test enough", trimmedCases, floorCases)
 	}
 }
@@ -294,7 +300,13 @@ func TestShowTranscriptJSONTrimmingHoldsTheLimitForRandomSessions(t *testing.T) 
 	bundle := archive.SourceBundle{ArchiveSessionID: view.SessionID}
 	r := rand.New(rand.NewSource(20260930))
 	trimmedCases, floorCases := 0, 0
-	for i := range 90 {
+	cases, minTrimmed, minFloor := 90, 25, 8
+	if testing.Short() {
+		// A fixed prefix of the same seeded stream, with unchanged session
+		// sizes and checks (including Unicode, saved records and repeatability).
+		cases, minTrimmed, minFloor = 30, 8, 2
+	}
+	for i := range cases {
 		n := randomNormalized(r)
 		full, err := normalizedDocuments(view, n)
 		if err != nil {
@@ -376,7 +388,7 @@ func TestShowTranscriptJSONTrimmingHoldsTheLimitForRandomSessions(t *testing.T) 
 			}
 		}
 	}
-	if trimmedCases < 25 || floorCases < 8 {
+	if trimmedCases < minTrimmed || floorCases < minFloor {
 		t.Fatalf("only %d trimmed and %d floor cases: the generator does not test enough", trimmedCases, floorCases)
 	}
 }
