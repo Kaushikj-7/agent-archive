@@ -115,11 +115,8 @@ func (s *sessionScan) publishPending(ctx context.Context, pending state.PendingP
 		}
 	}
 
-	if err := s.checkHistoryPublication(pending); err != nil {
+	if err := s.checkPendingUploadInputs(pending); err != nil {
 		return outcomeSkipped, err
-	}
-	if !pending.CarriesNoSource() && !storage.VerifySHA256(pending.SourceBytes, pending.SourceSHA256) {
-		return outcomeSkipped, errors.New("pending source checksum does not match its persisted bytes")
 	}
 	// Marking it attempted rewrites the whole file, source bytes and bundle
 	// included, so it is done once: a retry of an attempted publication, or
@@ -464,6 +461,17 @@ func (s *sessionScan) recordPublicationRetirement(pending state.PendingPublicati
 			}
 			s.warn(fmt.Errorf("record superseded source for cleanup: %w", err))
 		}
+	}
+	return nil
+}
+
+// checkPendingUploadInputs preserves history admission before byte checksum checks.
+func (s *sessionScan) checkPendingUploadInputs(pending state.PendingPublication) error {
+	if err := s.checkHistoryPublication(pending); err != nil {
+		return err
+	}
+	if !pending.CarriesNoSource() && !storage.VerifySHA256(pending.SourceBytes, pending.SourceSHA256) {
+		return errors.New("pending source checksum does not match its persisted bytes")
 	}
 	return nil
 }

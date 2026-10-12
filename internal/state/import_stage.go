@@ -154,14 +154,9 @@ func (s *Store) ImportStages(ctx context.Context, after string, limit int) (stag
 		}
 		closeScratch()
 
-		var cancellation importCancellation
-		if e := s.readImportControl(importCancelRelative(entry.Name()), &cancellation); e == nil {
-			if cancellation.SHA256 != stage.SHA256 {
-				return nil, "", ErrDurableStorageRecovery
-			}
-			stage.Canceled = true
-		} else if !errors.Is(e, os.ErrNotExist) {
-			return nil, "", e
+		stage, err = s.applyImportStageCancellation(entry.Name(), stage)
+		if err != nil {
+			return nil, "", err
 		}
 		stage.Bundle = archive.SourceBundle{}
 		stage.Preserved = nil
@@ -1012,4 +1007,18 @@ func (s *Store) decodePreparedImportStage(ctx context.Context, id string, file i
 		}
 	}
 	return stage, stage.Validate(ctx, stage.Registration)
+}
+
+// applyImportStageCancellation verifies the exact captured selection before marking it.
+func (s *Store) applyImportStageCancellation(id string, stage ImportStage) (ImportStage, error) {
+	var cancellation importCancellation
+	if e := s.readImportControl(importCancelRelative(id), &cancellation); e == nil {
+		if cancellation.SHA256 != stage.SHA256 {
+			return stage, ErrDurableStorageRecovery
+		}
+		stage.Canceled = true
+	} else if !errors.Is(e, os.ErrNotExist) {
+		return stage, e
+	}
+	return stage, nil
 }
