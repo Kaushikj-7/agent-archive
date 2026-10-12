@@ -68,7 +68,9 @@ func stagedParentFirstRestartControl(t *testing.T, assertReadbacks bool) {
 	}
 	at := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 	parentPath := writeTranscript(t, store.Home(), "parent.jsonl", `{"type":"assistant","sessionId":"parent-native","timestamp":"2026-01-01T00:01:00Z","message":{"role":"assistant","content":"parent"}}`+"\n")
-	childPath := writeTranscript(t, store.Home(), "child.jsonl", `{"type":"assistant","sessionId":"parent-native","agentId":"agent-1","timestamp":"2026-01-01T00:02:00Z","message":{"role":"assistant","content":"child"}}`+"\n")
+	// Synthetic imported child has its own retained native ID, matching the
+	// selected registration. Parent linkage remains separate explicit evidence.
+	childPath := writeTranscript(t, store.Home(), "parent-native:subagent:agent-1.jsonl", `{"type":"assistant","sessionId":"parent-native:subagent:agent-1","agentId":"agent-1","timestamp":"2026-01-01T00:02:00Z","message":{"role":"assistant","content":"child"}}`+"\n")
 	parent := archive.SessionRegistration{ArchiveSessionID: "a-parent", NativeSessionID: "parent-native", ProjectID: "project", ProjectRoot: "/project", Harness: archive.Harness{Name: "claude"}, TranscriptPath: parentPath, SessionStartedAt: at.Add(-time.Hour), RegisteredAt: at, AdmittedAt: at, Origin: archive.SessionOriginImport, ImportBatch: archive.NewImportBatch("confirmed-group"), DestinationID: cfg.DestinationID()}
 	child := parent
 	child.ArchiveSessionID = "z-child"
