@@ -76,6 +76,7 @@ func (r BlockedReason) Recoverable() bool { return r == BlockedReasonTranscriptM
 // when that happened, and why the bundle is in the state it's in. It is the
 // JSON of published/<id>.json.
 type publishedState struct {
+	PublicationVersion int `json:"publication_version,omitempty"`
 	// Summary restates, ahead of everything else in the file, the few facts
 	// a caller that is not scanning the session needs (see
 	// LoadPublishedSummary), so they can be read without decoding the source
@@ -232,6 +233,7 @@ func (p publishedState) summaryFromMetadata(m archive.Metadata) PublishedSummary
 }
 
 type publishedSnapshot struct {
+	Selection   *ReadySelection      `json:"selection_commit,omitempty"`
 	Bundle      archive.SourceBundle `json:"bundle"`
 	PublishedAt time.Time            `json:"published_at"`
 	// Source is the source object this publication's metadata points at:
@@ -276,7 +278,7 @@ func (p publishedState) detachedLastPublished() *publishedSnapshot {
 	if p.LastPublished == nil || !p.LastPublished.SameAsBundle {
 		return p.LastPublished
 	}
-	return &publishedSnapshot{Bundle: p.Bundle, PublishedAt: p.LastPublished.PublishedAt, Source: p.LastPublished.Source}
+	return &publishedSnapshot{Bundle: p.Bundle, PublishedAt: p.LastPublished.PublishedAt, Source: p.LastPublished.Source, Selection: p.LastPublished.Selection}
 }
 
 // lastPublishedSource returns the source reference of the last publication,
@@ -403,6 +405,11 @@ func (s *Store) LoadPublishedState(archiveSessionID string) (*Published, error) 
 		// then the session is one that never published (quarantineInPass).
 		return nil, fmt.Errorf("read published state %q: %w", archiveSessionID, s.afterLoss(archiveSessionID, err))
 	}
+	if found && p.state.PublicationVersion == 2 {
+		if err := p.preserveReadyPublished(&p.state); err != nil {
+			return nil, err
+		}
+	}
 	p.found = found
 	// Derive from the decoded source authority once per work scan, including
 	// older compact summaries missing the newer source-set/age fields.
@@ -420,6 +427,9 @@ func (s *Store) LoadPublishedState(archiveSessionID string) (*Published, error) 
 }
 
 func (p *Published) write(next publishedState) error {
+	if err := p.preserveReadyPublished(&next); err != nil {
+		return err
+	}
 	summary, err := p.store.summaryBudgeted(next)
 	if err != nil {
 		return err

@@ -765,7 +765,9 @@ type CatalogPublication struct {
 }
 
 type PendingPublication struct {
-	Catalog *CatalogPublication `json:"commit,omitempty"`
+	JournalVersion int                 `json:"journal_version,omitempty"`
+	Selection      *ReadySelection     `json:"selection_commit,omitempty"`
+	Catalog        *CatalogPublication `json:"commit,omitempty"`
 	// ImportExpectedMetadataSHA256 freezes staged imports' predecessor. Retired
 	// privacy sources become cleanup obligations only after successor readback.
 	ImportExpectedMetadataSHA256 string                    `json:"import_expected_metadata_sha256,omitempty"`
@@ -814,6 +816,9 @@ func (s *Store) pendingPath(id string) string {
 // validateComplete is the supported transaction structure shared by writes
 // and protected reads. History validation keeps its separate budget ownership.
 func (pending PendingPublication) validateComplete() error {
+	if err := pending.validateReadySelectionShape(); err != nil {
+		return err
+	}
 	if pending.Catalog != nil && (pending.Catalog.ID == "" || len(pending.Catalog.ID) > 128 || len(pending.Catalog.ExpectedRevision) > 128) {
 		return errors.New("invalid catalog publication")
 	}
@@ -848,6 +853,9 @@ func (s *Store) validateReadablePending(pending PendingPublication) error {
 }
 
 func (s *Store) validateReadablePendingContext(ctx context.Context, pending PendingPublication) error {
+	if err := s.validateReadySelection(ctx, pending); err != nil {
+		return err
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -1007,6 +1015,9 @@ func (s *Store) HasPending(id string) (owed bool, err error) {
 func (s *Store) RemovePending(id string) error {
 	if !safeFileComponent(id) {
 		return errors.New("archive session ID is not a safe file name component")
+	}
+	if err := s.checkSelectingPendingRemoval(id); err != nil {
+		return err
 	}
 	if err := s.checkCatalogPendingRemoval(id); err != nil {
 		return err
