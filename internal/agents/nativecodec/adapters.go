@@ -536,14 +536,18 @@ func filterRecordsWithOutput(format string, knownTypes map[string]bool, lead map
 		return archive.FilteredTranscript{}, err
 	}
 	filteredLead.writeTo(&result, addGap, omittedKeys.add)
+	addOutputKeyGaps(omittedKeys, deniedKeys, addGap)
+	sort.SliceStable(result.Gaps, func(i, j int) bool { return result.Gaps[i].Code < result.Gaps[j].Code })
+	return result, nil
+}
+
+func addOutputKeyGaps(omittedKeys, deniedKeys keyNameSet, addGap func(string, int, string)) {
 	if detail := omittedKeys.detail("omitted keys: "); detail != "" {
 		addGap("unknown_field_omitted", 0, detail)
 	}
 	if detail := deniedKeys.detail(deniedToolArgumentIntro); detail != "" {
 		addGap("sensitive_or_hidden_field_omitted", 0, detail)
 	}
-	sort.SliceStable(result.Gaps, func(i, j int) bool { return result.Gaps[i].Code < result.Gaps[j].Code })
-	return result, nil
 }
 
 func cursorRoleRecord(format, kind string, raw map[string]any) bool {
