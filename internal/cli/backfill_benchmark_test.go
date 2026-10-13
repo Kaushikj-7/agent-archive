@@ -227,7 +227,11 @@ func TestBackfillCommandMeasurement(t *testing.T) {
 			}
 		}
 		if scenario == commandScenarioLarge && i == 0 {
-			tool := `{"type":"response_item","payload":{"type":"function_call_output","call_id":"synthetic","output":"` + strings.Repeat("x", 8192) + `"}}` + "\n"
+			// Large native tool results exceed the existing 64-KiB string cap.
+			// This keeps retained output admissible while all 210 MiB of raw
+			// source must still be read, filtered and verified. Small records
+			// would instead accumulate beyond the filtered transcript limit.
+			tool := `{"type":"response_item","payload":{"type":"function_call_output","call_id":"synthetic","output":"` + strings.Repeat("x", 1<<20) + `"}}` + "\n"
 			target := int64(210 << 20)
 			if os.Getenv("AA_BACKFILL_SMALL") == "1" {
 				target = 1 << 20
@@ -378,7 +382,7 @@ func TestBackfillCommandMeasurement(t *testing.T) {
 	}
 	sort.Strings(normalized)
 	digest := sha256.Sum256([]byte(strings.Join(normalized, "\n")))
-	result := map[string]any{"fixture_version": 5, "prime_attempts": primeAttempts, "prime_cache_supported": primeCacheSupported, "prime_cache_hits": primeHits, "state": stateName, "trace": os.Getenv("AA_BACKFILL_TRACE") == "1", "scenario": scenario, "mode": mode, "sessions": count, "selected": len(expected), "imported": imported, "skipped": skipped, "input_bytes": inputBytes, "elapsed_seconds": elapsed.Seconds(), "checkpoint_offsets": checkpoints, "command_cpu_seconds": cpuAfter - cpuBefore, "command_peak_rss_at_return_bytes": commandRSS, "allocated_bytes": after.TotalAlloc - before.TotalAlloc, "gc_cycles": after.NumGC - before.NumGC, "artifact_sha256": hex.EncodeToString(digest[:]), "toolchain": runtime.Version(), "logical_cpus": runtime.NumCPU(), "gomaxprocs": runtime.GOMAXPROCS(0), "planning_workers": 1, "default_adapter_workers": min(8, max(2, runtime.NumCPU()/2)), "byte_budget": 128 << 20}
+	result := map[string]any{"fixture_version": 6, "prime_attempts": primeAttempts, "prime_cache_supported": primeCacheSupported, "prime_cache_hits": primeHits, "state": stateName, "trace": os.Getenv("AA_BACKFILL_TRACE") == "1", "scenario": scenario, "mode": mode, "sessions": count, "selected": len(expected), "imported": imported, "skipped": skipped, "input_bytes": inputBytes, "elapsed_seconds": elapsed.Seconds(), "checkpoint_offsets": checkpoints, "command_cpu_seconds": cpuAfter - cpuBefore, "command_peak_rss_at_return_bytes": commandRSS, "allocated_bytes": after.TotalAlloc - before.TotalAlloc, "gc_cycles": after.NumGC - before.NumGC, "artifact_sha256": hex.EncodeToString(digest[:]), "toolchain": runtime.Version(), "logical_cpus": runtime.NumCPU(), "gomaxprocs": runtime.GOMAXPROCS(0), "planning_workers": 1, "default_adapter_workers": min(8, max(2, runtime.NumCPU()/2)), "byte_budget": 128 << 20}
 	raw, e := json.Marshal(result)
 	must(t, e)
 	if os.Getenv("AA_BACKFILL_TRACE") == "1" {
