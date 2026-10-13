@@ -235,9 +235,10 @@ func (p publishedState) summaryFromMetadata(m archive.Metadata) PublishedSummary
 }
 
 type publishedSnapshot struct {
-	Selection   *ReadySelection      `json:"selection_commit,omitempty"`
-	Bundle      archive.SourceBundle `json:"bundle"`
-	PublishedAt time.Time            `json:"published_at"`
+	StagedSelection *StagedSelection     `json:"staged_commit3,omitempty"`
+	Selection       *ReadySelection      `json:"selection_commit,omitempty"`
+	Bundle          archive.SourceBundle `json:"bundle"`
+	PublishedAt     time.Time            `json:"published_at"`
 	// Source is the source object this publication's metadata points at:
 	// exactly the key, digest, and size that were uploaded. The next
 	// publication names the object it supersedes from it. Rebuilding that
@@ -422,6 +423,11 @@ func (s *Store) loadPublishedStateContext(ctx context.Context, archiveSessionID 
 		// then the session is one that never published (quarantineInPass).
 		return nil, fmt.Errorf("read published state %q: %w", archiveSessionID, s.afterLoss(archiveSessionID, err))
 	}
+	if found && p.state.PublicationVersion == 3 {
+		if err := p.preserveStagedPublished(ctx, &p.state); err != nil {
+			return nil, err
+		}
+	}
 	if found && p.state.PublicationVersion == 2 {
 		if err := p.preserveReadyPublished(ctx, &p.state); err != nil {
 			return nil, err
@@ -444,6 +450,9 @@ func (s *Store) loadPublishedStateContext(ctx context.Context, archiveSessionID 
 }
 
 func (p *Published) write(next publishedState) error {
+	if err := p.preserveStagedPublished(p.store.durableContext(), &next); err != nil {
+		return err
+	}
 	if err := p.preserveReadyPublished(p.store.durableContext(), &next); err != nil {
 		return err
 	}
@@ -539,7 +548,7 @@ func readLeadingSummary(reader io.Reader) (summary PublishedSummary, ok bool, er
 	}
 	if name, ok := key.(string); ok && strings.EqualFold(name, "publication_version") {
 		var version int
-		if decoder.Decode(&version) != nil || version != 2 {
+		if decoder.Decode(&version) != nil || (version != 2 && version != 3) {
 			return summary, false, ErrDurableStorageRecovery
 		}
 		return summary, false, errSelectingPublishedFullDecode

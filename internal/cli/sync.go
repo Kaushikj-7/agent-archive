@@ -107,6 +107,7 @@ func runSyncCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	// done (or not all of it) goes to stderr, with exit 1.
 	stopScan := startActivity(stdout, "Scanning sessions…")
 	result, err := runOnePass(env, false)
+	defer result.CloseStagedResults()
 	stopScan()
 	if err != nil {
 		switch {
