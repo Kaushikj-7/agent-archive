@@ -6,6 +6,11 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Open supported catalog list/show browsers using bounded repository pages.
+  Older sessions advances each scope independently; complete archive search
+  starts when filtering and reports loading or read failures. Cancelling a
+  search or page read joins its provider work before selection or exit.
+
 - Add complete scoped catalog construction and resumable `migrate --scoped-picker`
   upgrades, with verified activation and a permanent stronger writer fence.
   Production S3/R2 qualification and credential authority remain required.

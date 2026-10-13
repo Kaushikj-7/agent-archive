@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -26,12 +27,14 @@ type scopeView struct {
 	// numbered as rows number it (more of them, past a limit), and a subagent
 	// has none; the browser keeps rows' own numbers for the rows it holds
 	// (withTableNumbers).
-	search func() []listRow
+	search        func() []listRow
+	searchContext func(context.Context) ([]listRow, error)
 	// searchNote is the footer's line about the matches elsewhere of the
 	// words the browser opens with, which the filter shows only while it
 	// holds those words; searchWords says them.
-	searchNote  string
-	searchWords string
+	searchNote   string
+	searchWords  string
+	searchNotice string
 	// nothing is set when the view holds nothing though it has rows: the
 	// words the browser opens with match none of them, so the browser opens
 	// on all projects as it does for a scope with no session.
@@ -61,9 +64,11 @@ type scopeChoice struct {
 // directory's scope, or all projects, and which one now. `a` switches between
 // the two. The other one is built only when it is asked for.
 type scopeChoices struct {
-	loadOlder *browserLoadAction
-	scope     sessionScope
-	rowsFor   scopeRowsFunc
+	ctx            context.Context
+	rowsForContext func(context.Context, sessionScope) scopeView
+	loadOlder      *browserLoadAction
+	scope          sessionScope
+	rowsFor        scopeRowsFunc
 	// format is the table's options before they are laid out for the rows.
 	format listFormatOptions
 	built  [2]*scopeChoice
@@ -135,6 +140,14 @@ func (c *scopeChoices) toggle() {
 
 // choice builds choice i once.
 func (c *scopeChoices) choice(i int) *scopeChoice {
+	ctx := c.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return c.choiceContext(ctx, i)
+}
+
+func (c *scopeChoices) choiceContext(ctx context.Context, i int) *scopeChoice {
 	if built := c.built[i]; built != nil {
 		return built
 	}
@@ -142,7 +155,12 @@ func (c *scopeChoices) choice(i int) *scopeChoice {
 	if i == viewAll {
 		scope = scope.everything()
 	}
-	view := c.rowsFor(scope)
+	var view scopeView
+	if c.rowsForContext != nil {
+		view = c.rowsForContext(ctx, scope)
+	} else {
+		view = c.rowsFor(scope)
+	}
 	format, constants := c.format.withColumns(view.rows)
 	format.HiddenSubagents, format.Note = view.hidden, view.note
 	c.built[i] = &scopeChoice{scopeView: view, format: format, heading: c.heading(i, view, constants), constants: constants}

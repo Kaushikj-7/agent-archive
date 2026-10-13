@@ -144,6 +144,19 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	}
 	ctx, stopReads := readCommandContext(env)
 	defer stopReads()
+	if browsing && q.empty() {
+		format := listFormatOptions{Now: env.now(), Projects: projectLabels(cfg), Style: styleFor(stdout), GroupByProject: true, Numbered: true, Verbose: opts.verbose}
+		choices, used, e := boundedArchiveChoices(catalog.WithReadView(ctx), env, store, opts, scope, format, stderr, "list")
+		if used {
+			stopList()
+			if e != nil {
+				terminal.Printf(stderr, "agent-archive: list: %v\n", e)
+				return 1
+			}
+			_, _, code := runBrowser(ctx, env, newPrompter(stdin, stdout), stdout, stderr, browserSpec{Mode: browseSessions, Choices: choices, Command: "list", Store: store, NoPager: opts.noPager})
+			return code
+		}
+	}
 	listed, full, err := readListCandidates(catalog.WithReadView(ctx), env, store, opts, listLimit, listOpts, full, stderr)
 	stopList()
 	if err != nil {
@@ -690,7 +703,7 @@ func runBareShow(ctx context.Context, env showCommandDependencies, store storage
 		if code != 0 || !selected {
 			return code
 		}
-		view, err := readSessionView(catalog.NewReadView(ctx), store, row.HarnessKey, row.SessionID)
+		view, err := readPickerSessionView(ctx, store, row)
 		if err != nil {
 			terminal.Printf(stderr, "agent-archive: show: %v\n", err)
 			return 1

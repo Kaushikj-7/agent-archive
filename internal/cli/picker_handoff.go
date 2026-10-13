@@ -15,7 +15,6 @@ import (
 	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
-	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
 type handoffPickerSelection struct {
@@ -85,14 +84,14 @@ func boundedHandoffChoices(ctx context.Context, env handoffSelectDependencies, s
 	state.buffer, state.next, state.remoteDone = first.Rows, first.Next, !first.More
 	state.view.RemotePages = 1
 	var operationErr error
-	choices := &scopeChoices{scope: scope.only(), format: format}
+	choices := &scopeChoices{ctx: ctx, scope: scope.only(), format: format}
 	if scope.Label == "" || scope.All {
 		choices.current = viewAll
 	}
 	var archived []archive.Metadata
 	var searchLoaded bool
-	choices.rowsFor = func(s sessionScope) scopeView {
-		v, e := model.First(ctx, s)
+	choices.rowsForContext = func(readCtx context.Context, s sessionScope) scopeView {
+		v, e := model.First(readCtx, s)
 		if e != nil {
 			operationErr = e
 			return scopeView{incomplete: true, total: -1, truncated: true, note: fmt.Sprintf("Could not load sessions: %v", e)}
@@ -112,13 +111,12 @@ func boundedHandoffChoices(ctx context.Context, env handoffSelectDependencies, s
 		if v.Incomplete {
 			note = "Local eligibility is incomplete; Older sessions continues the scan."
 		}
-		return scopeView{rows: out, total: v.Total, truncated: v.More, note: note, incomplete: v.Incomplete, search: func() []listRow {
+		return scopeView{rows: out, total: v.Total, truncated: v.More, note: note, incomplete: v.Incomplete, searchNotice: "Local-only search labels are limited to the first 50 eligible rows.", searchContext: func(searchCtx context.Context) ([]listRow, error) {
+			p.ctx = searchCtx
 			if !searchLoaded {
-				archived, e = reader.ListMetadataWithOptions(ctx, store, archiveSessionsPrefix, reader.Filter{Harness: opts.harness, Replays: reader.ReplaysHidden}, reader.ListOptions{Cache: listCache(env, false), Skipped: warnSkippedSidecar(stderr, "handoff")})
+				archived, e = reader.ListMetadataWithOptions(searchCtx, store, archiveSessionsPrefix, reader.Filter{Harness: opts.harness, Replays: reader.ReplaysHidden}, reader.ListOptions{Cache: listCache(env, false), Skipped: warnSkippedSidecar(stderr, "handoff")})
 				if e != nil {
-					operationErr = e
-					terminal.Printf(stderr, "agent-archive: handoff: search failed: %v\n", e)
-					return nil
+					return nil, e
 				}
 				sortByActivity(archived)
 				searchLoaded = true
@@ -130,11 +128,9 @@ func boundedHandoffChoices(ctx context.Context, env handoffSelectDependencies, s
 			result := formatHandoffRows(r, format)
 			// Search-only archive selections acquire exact refs in the captured view.
 			for i := range result {
-				batch, e := snapshot.PickerLookup(ctx, []catalog.PickerIdentity{{Harness: result[i].HarnessKey, SessionID: result[i].SessionID}})
+				batch, e := snapshot.PickerLookup(searchCtx, []catalog.PickerIdentity{{Harness: result[i].HarnessKey, SessionID: result[i].SessionID}})
 				if e != nil {
-					operationErr = e
-					terminal.Printf(stderr, "agent-archive: handoff: search failed: %v\n", e)
-					return nil
+					return nil, e
 				}
 				sel := &handoffPickerSelection{model: model, snapshot: snapshot, store: store, reg: r[i].reg}
 				if len(batch.Results) == 1 && batch.Results[0].Found {
@@ -147,21 +143,19 @@ func boundedHandoffChoices(ctx context.Context, env handoffSelectDependencies, s
 				children := formatSessionRows(s.filter(subagentSessions(archived)), format)
 				for i := range children {
 					children[i].Index = 0
-					batch, lookupErr := snapshot.PickerLookup(ctx, []catalog.PickerIdentity{{Harness: children[i].HarnessKey, SessionID: children[i].SessionID}})
+					batch, lookupErr := snapshot.PickerLookup(searchCtx, []catalog.PickerIdentity{{Harness: children[i].HarnessKey, SessionID: children[i].SessionID}})
 					if lookupErr != nil {
-						operationErr = lookupErr
-						return nil
+						return nil, lookupErr
 					}
 					if len(batch.Results) != 1 || !batch.Results[0].Found {
-						operationErr = errors.New("search selection no longer exists; refresh")
-						return nil
+						return nil, errors.New("search selection no longer exists; refresh")
 					}
 					item := batch.Results[0].Item
 					children[i].pickerSelection = &handoffPickerSelection{model: model, item: &item, snapshot: snapshot, store: store}
 				}
 				result = append(result, children...)
 			}
-			return result
+			return result, searchCtx.Err()
 		}}
 	}
 	initial := choices.shown()
@@ -174,21 +168,22 @@ func boundedHandoffChoices(ctx context.Context, env handoffSelectDependencies, s
 		choices.fellBack = true
 		_ = choices.shown()
 	}
-	choices.loadOlder = &browserLoadAction{Label: "Older sessions", Available: func() bool { return choices.shown().truncated }, Load: func() (bool, error) {
+	choices.loadOlder = &browserLoadAction{Label: "Older sessions", Available: func() bool { return choices.shown().truncated }, LoadContext: func(operationCtx context.Context) (bool, error) {
 		s := choices.scope
 		if choices.current == viewAll {
 			s = s.everything()
 		}
-		_, e := model.Older(ctx, s)
+		view, e := model.Older(operationCtx, s)
 		if e != nil {
 			return false, e
 		}
 		choices.built[choices.current] = nil
-		return choices.shown().truncated, nil
+		return view.More, nil
 	}}
-	// PR6 consumes this model directly and replaces synchronous search with an
-	// error-bearing operation. Until then cancellation/failure forbids selection.
-	model.searchError = func() error { return operationErr }
+	choices.loadOlder.Load = func() (bool, error) { return choices.loadOlder.LoadContext(ctx) }
+	// Search failure belongs to the browser operation, rather than poisoning
+	// valid browse selections after the filter is cancelled.
+	model.searchError = func() error { return nil }
 	return choices, model, snapshot, true, operationErr
 }
 
@@ -266,12 +261,12 @@ func boundedLocalHandoffChoices(ctx context.Context, env handoffSelectDependenci
 		return nil, nil, err
 	}
 	var loadErr error
-	c := &scopeChoices{scope: scope.only(), format: format}
+	c := &scopeChoices{ctx: ctx, scope: scope.only(), format: format}
 	if scope.All || scope.Label == "" {
 		c.current = viewAll
 	}
-	c.rowsFor = func(s sessionScope) scopeView {
-		v, err := m.First(ctx, s)
+	c.rowsForContext = func(readCtx context.Context, s sessionScope) scopeView {
+		v, err := m.First(readCtx, s)
 		if err != nil {
 			loadErr = err
 			return scopeView{incomplete: true, total: -1, truncated: true}
@@ -288,7 +283,8 @@ func boundedLocalHandoffChoices(ctx context.Context, env handoffSelectDependenci
 		if v.Incomplete {
 			note += " Local eligibility is incomplete; Older sessions continues the scan."
 		}
-		return scopeView{rows: out, total: v.Total, truncated: v.More, incomplete: v.Incomplete, note: note, search: func() []listRow {
+		return scopeView{rows: out, total: v.Total, truncated: v.More, incomplete: v.Incomplete, note: note, searchNotice: "Local-only search labels are limited to the first 50 eligible rows.", searchContext: func(searchCtx context.Context) ([]listRow, error) {
+			p.ctx = searchCtx
 			p.scope = s
 			p.readLimit = handoffTitleScanLimit
 			p.localLabels = m.labels
@@ -297,7 +293,7 @@ func boundedLocalHandoffChoices(ctx context.Context, env handoffSelectDependenci
 			for i, row := range rows {
 				result[i].pickerSelection = &handoffPickerSelection{model: m, reg: row.reg}
 			}
-			return result
+			return result, searchCtx.Err()
 		}}
 	}
 	initial := c.shown()
@@ -309,18 +305,19 @@ func boundedLocalHandoffChoices(ctx context.Context, env handoffSelectDependenci
 		c.fellBack = true
 		_ = c.shown()
 	}
-	c.loadOlder = &browserLoadAction{Label: "Older sessions", Available: func() bool { return c.shown().truncated }, Load: func() (bool, error) {
+	c.loadOlder = &browserLoadAction{Label: "Older sessions", Available: func() bool { return c.shown().truncated }, LoadContext: func(operationCtx context.Context) (bool, error) {
 		s := c.scope
 		if c.current == viewAll {
 			s = s.everything()
 		}
-		_, err := m.Older(ctx, s)
+		view, err := m.Older(operationCtx, s)
 		if err != nil {
 			return false, err
 		}
 		c.built[c.current] = nil
-		return c.shown().truncated, nil
+		return view.More, nil
 	}}
-	m.searchError = func() error { return loadErr }
+	c.loadOlder.Load = func() (bool, error) { return c.loadOlder.LoadContext(ctx) }
+	m.searchError = func() error { return nil }
 	return c, m, loadErr
 }

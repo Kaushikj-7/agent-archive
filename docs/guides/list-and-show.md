@@ -185,6 +185,15 @@ records): `{"label": "agent-archive", "all_projects": false,
 run inside a project now returns only its sessions, a script that reads every
 session passes `--all-projects`. See [JSON output](../reference/json-output.md).
 
+For supported scoped catalog formats, an ordinary interactive list or bare
+show reads bounded repository pages. Each scope keeps its own Older sessions
+position. A first page does not load complete summaries or transcripts; the
+complete archive search starts only when you type filter words. Loading and
+search failures appear in the browser, and a failed search does not substitute
+only the rows already displayed. Esc clears a search or cancels a page read;
+line mode accepts Enter or `cancel` during a page read. Named projects and
+advanced filters retain the complete compatibility reader.
+
 ## Browsing on a terminal
 
 The list and bare-show browsers offer **Older sessions** when the initial table

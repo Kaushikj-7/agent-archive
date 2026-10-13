@@ -25,8 +25,9 @@ const (
 // and `a`, the `/` filter, paging and scrolling) is the same code for every
 // caller.
 type browserLoadAction struct {
-	Label string
-	Load  func() (bool, error)
+	Label       string
+	Load        func() (bool, error)
+	LoadContext func(context.Context) (bool, error)
 	// Available, when set, follows the currently shown scope.
 	Available func() bool
 }
@@ -99,7 +100,8 @@ func runBrowser(ctx context.Context, env sessionBrowserDependencies, p *prompter
 	if spec.LoadOlder == nil {
 		spec.LoadOlder = spec.Choices.loadOlder
 	}
-	list := &sessionPicker{older: spec.LoadOlder, boundedNotice: spec.Notice, env: env, clear: redraw, keys: keys, verb: spec.Verb, filter: spec.Query, filtering: spec.Query != "" && keys != nil}
+	list := &sessionPicker{ctx: ctx, older: spec.LoadOlder, boundedNotice: spec.Notice, env: env, clear: redraw, keys: keys, verb: spec.Verb, filter: spec.Query, filtering: spec.Query != "" && keys != nil}
+	defer list.stopOperations()
 	var err error
 	if spec.Mode == browseSessions {
 		b := &sessionBrowser{env: env, prompt: p, stdout: stdout, stderr: stderr, store: spec.Store, format: spec.Choices.format, noPager: spec.NoPager, screen: screen, keys: keys, list: list}

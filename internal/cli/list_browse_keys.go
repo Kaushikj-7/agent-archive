@@ -80,6 +80,7 @@ type listScreen struct {
 func (l *sessionPicker) pickKeys(p *prompter, stdout io.Writer, rows []listRow, totalMatched int, truncated bool, format listFormatOptions, action string) (listRow, bool, error) {
 	question := p.promptText("Enter number (or unique short SESSION_ID) to "+action+", or q to quit", true, nil, -1, ": ")
 	if l.emptyWithoutAction(rows) {
+		l.prepareSearch(rows)
 		v := l.view(rows, totalMatched, truncated, format)
 		if err := printSessionGroups(stdout, v.groups, v.format); err != nil {
 			return listRow{}, false, err
@@ -98,6 +99,7 @@ func (l *sessionPicker) pickKeys(p *prompter, stdout io.Writer, rows []listRow, 
 		if !first && l.clear != nil {
 			l.clear()
 		}
+		l.prepareSearch(rows)
 		v := l.view(rows, totalMatched, truncated, format)
 		screen := l.filterScreen(stdout, v, prompt())
 		var frame bytes.Buffer
@@ -122,7 +124,8 @@ func (l *sessionPicker) pickKeys(p *prompter, stdout io.Writer, rows []listRow, 
 		terminal.Print(stdout, frame.String())
 		notice = ""
 		for {
-			k, err := l.keys.next()
+			k, err := l.nextBrowserKey()
+			l.prepareSearch(rows)
 			if err != nil {
 				if errors.Is(err, io.EOF) {
 					return listRow{}, false, nil
