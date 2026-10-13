@@ -87,6 +87,10 @@ func pickerScopeQuery(s sessionScope, harness string, limit int) (catalog.Picker
 	return catalog.PickerQuery{Scope: scope, Membership: catalog.PickerHandoff, Harness: harness, Limit: limit}, nil
 }
 
+func (m *pickerModel) relevantRegistration(reg archive.SessionRegistration) bool {
+	return topLevelRegistration(reg) && reg.Replay == nil && (m.harness == "" || archive.CanonicalHarness(reg.Harness.Name) == archive.CanonicalHarness(m.harness))
+}
+
 // prepare classifies every relevant registration exactly, including uploaded
 // copies outside the first page and zero-prompt/child/replay copies.
 func (m *pickerModel) prepare(ctx context.Context) error {
@@ -102,9 +106,14 @@ func (m *pickerModel) prepare(ctx context.Context) error {
 	m.facts = map[pickerIdentity]*catalog.PickerItem{}
 	ids := []catalog.PickerIdentity{}
 	seen := map[pickerIdentity]bool{}
+	relevant := []archive.SessionRegistration{}
 	for _, reg := range m.regs {
 		id := pickerID(reg.Harness.Name, reg.ArchiveSessionID)
-		if !topLevelRegistration(reg) || reg.Replay != nil || (m.harness != "" && id.harness != archive.CanonicalHarness(m.harness)) || seen[id] {
+		if !m.relevantRegistration(reg) {
+			continue
+		}
+		relevant = append(relevant, reg)
+		if seen[id] {
 			continue
 		}
 		seen[id] = true
@@ -135,7 +144,7 @@ func (m *pickerModel) prepare(ctx context.Context) error {
 	}
 	if m.observeActivity != nil {
 		var err error
-		m.activity, err = m.observeActivity(ctx, m.regs)
+		m.activity, err = m.observeActivity(ctx, relevant)
 		if err != nil {
 			return err
 		}
@@ -197,13 +206,15 @@ func (m *pickerModel) state(s sessionScope) (*pickerScopeState, error) {
 	// canonical identities keep another harness with the same ID independent.
 	latest := map[pickerIdentity]int{}
 	for i, r := range m.regs {
-		latest[pickerID(r.Harness.Name, r.ArchiveSessionID)] = i
+		if m.relevantRegistration(r) {
+			latest[pickerID(r.Harness.Name, r.ArchiveSessionID)] = i
+		}
 	}
 	for i := range m.regs {
 		reg := &m.regs[i]
 		id := pickerID(reg.Harness.Name, reg.ArchiveSessionID)
 		item, classified := m.facts[id]
-		if !classified || latest[id] != i {
+		if !classified || !m.relevantRegistration(*reg) || latest[id] != i {
 			continue
 		}
 		md := registrationMetadata(*reg)

@@ -592,3 +592,25 @@ func TestPickerModelLabelCancellationDoesNotConsumeCandidate(t *testing.T) {
 		t.Fatalf("canceled first page was not retryable: %+v %v", v, err)
 	}
 }
+
+func TestPickerModelObservesOnlyEligibleFilteredRegistrations(t *testing.T) {
+	root := archive.SessionRegistration{ArchiveSessionID: "root", Harness: archive.Harness{Name: "codex"}}
+	child := root
+	child.SubagentID = "child"
+	other := archive.SessionRegistration{ArchiveSessionID: "other", Harness: archive.Harness{Name: "claude"}}
+	m := &pickerModel{archive: &modelArchive{facts: map[pickerIdentity]catalog.PickerItem{}}, source: "local", harness: "codex", regs: []archive.SessionRegistration{root, other, child}, pageSize: 50, labelBudget: 50, observeActivity: func(_ context.Context, regs []archive.SessionRegistration) (map[pickerIdentity]time.Time, error) {
+		if len(regs) != 1 || regs[0].Harness.Name != "codex" || regs[0].SubagentID != "" {
+			return nil, errors.New("irrelevant registration reached strict activity provider")
+		}
+		return map[pickerIdentity]time.Time{pickerID("codex", "root"): time.Unix(100, 0)}, nil
+	}, label: func(_ context.Context, reg archive.SessionRegistration, at time.Time) (archive.Metadata, bool, error) {
+		return archive.Metadata{SessionID: reg.ArchiveSessionID, Harness: reg.Harness, CapturedAt: at}, true, nil
+	}}
+	if err := m.prepare(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	v, err := m.First(t.Context(), sessionScope{All: true})
+	if err != nil || len(v.Rows) != 1 || v.Rows[0].row.reg.SubagentID != "" {
+		t.Fatalf("ineligible last registration replaced offered root: %+v %v", v, err)
+	}
+}
