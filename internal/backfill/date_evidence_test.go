@@ -14,7 +14,8 @@ import (
 // metadata, even though the valid ordinary case is eventually filtered out.
 func TestOldCodexHeadersRequireCompleteInspectionEvidence(t *testing.T) {
 	for _, tc := range []struct {
-		name, tail string
+		name       string
+		tail       string
 		skip       SkipReason
 		knownStart bool
 	}{

@@ -24,6 +24,8 @@ def main():
     parser.add_argument("--trace", action="store_true")
     parser.add_argument("--state", choices=["cold", "warm", "changed"], default="cold")
     args = parser.parse_args()
+    if args.samples < 1:
+        parser.error("--samples must be positive")
     args.output.mkdir(parents=True, exist_ok=True)
     scenarios = args.scenario or ["recent", "old", "large", "related", "ancestry", "tool-heavy", "retained-heavy"]
     for scenario in scenarios:
@@ -31,6 +33,8 @@ def main():
         for mode in modes:
             for index in range(args.samples):
                 env = os.environ.copy()
+                for name in ["AA_BACKFILL_TRACE", "AA_BACKFILL_SMALL"]:
+                    env.pop(name, None)
                 env.update(AA_BACKFILL_SCENARIO=scenario, AA_BACKFILL_MODE=mode, AA_BACKFILL_STATE=args.state)
                 if args.trace:
                     env["AA_BACKFILL_TRACE"] = "1"

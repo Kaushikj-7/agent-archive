@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -23,11 +24,60 @@ import (
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
+type commandScenarioKind string
+
+const (
+	commandScenarioRecent        commandScenarioKind = "recent"
+	commandScenarioOld           commandScenarioKind = "old"
+	commandScenarioLarge         commandScenarioKind = "large"
+	commandScenarioRelated       commandScenarioKind = "related"
+	commandScenarioAncestry      commandScenarioKind = "ancestry"
+	commandScenarioToolHeavy     commandScenarioKind = "tool-heavy"
+	commandScenarioRetainedHeavy commandScenarioKind = "retained-heavy"
+)
+
+type commandStateKind string
+
+const (
+	commandStateWarm    commandStateKind = "warm"
+	commandStateChanged commandStateKind = "changed"
+)
+
+// benchmarkTraceMetric reads one content-free integer aggregate. Missing
+// counters are zero, including on an original binary without cache support.
+func benchmarkTraceMetric(output, name string) int {
+	fields := strings.Fields(output)
+	for i, field := range fields {
+		if field == name && i+1 < len(fields) {
+			value, err := strconv.Atoi(strings.TrimSuffix(fields[i+1], ","))
+			if err == nil {
+				return value
+			}
+		}
+	}
+	return 0
+}
+
+func TestBenchmarkTraceMetricReadsOptionalAggregates(t *testing.T) {
+	for _, tc := range []struct {
+		output string
+		want   int
+	}{
+		{"original binary without cache metrics", 0},
+		{"native totals: inspection_cache_hits 1500, adapter_invocations 1", 1500},
+		{"native totals: inspection_cache_hits 1500", 1500},
+	} {
+		if got := benchmarkTraceMetric(tc.output, "inspection_cache_hits"); got != tc.want {
+			t.Fatalf("metric %d want %d in %q", got, tc.want, tc.output)
+		}
+	}
+}
+
 // TestBackfillCommandMeasurement is a subprocess entry point, not a timed Go
 // benchmark loop. Each sample gets a fresh synthetic home and deterministic
 // provider. Fixture construction and artifact verification are outside Run's timer.
 func TestBackfillCommandMeasurement(t *testing.T) {
-	scenario := os.Getenv("AA_BACKFILL_SCENARIO")
+	scenario := commandScenarioKind(os.Getenv("AA_BACKFILL_SCENARIO"))
 	if scenario == "" {
 		t.Skip("explicit benchmark subprocess only")
 	}
@@ -35,13 +85,13 @@ func TestBackfillCommandMeasurement(t *testing.T) {
 	if os.Getenv("AA_BACKFILL_SMALL") == "1" {
 		count = 12
 	}
-	if scenario == "tool-heavy" || scenario == "retained-heavy" {
+	if scenario == commandScenarioToolHeavy || scenario == commandScenarioRetainedHeavy {
 		count = 32
 	}
-	if scenario == "large" {
+	if scenario == commandScenarioLarge {
 		count = 32
 	}
-	if scenario == "related" || scenario == "ancestry" {
+	if scenario == commandScenarioRelated || scenario == commandScenarioAncestry {
 		count = 5
 	}
 	home, err := filepath.EvalSymlinks(t.TempDir())
@@ -68,20 +118,20 @@ func TestBackfillCommandMeasurement(t *testing.T) {
 	expected := map[string]bool{}
 	var inputBytes int64
 	var parentBytes int64
-	for i := 0; i < count; i++ {
+	for i := range count {
 		id := fmt.Sprintf("00000000-0000-4000-8000-%012d", i+1)
 		at := backfillNow.Add(-48 * time.Hour)
-		old := scenario == "old" && i%10 != 0 || scenario == "recent" && i%10 == 0 || (scenario == "related" || scenario == "ancestry") && i == 0
+		old := scenario == commandScenarioOld && i%10 != 0 || scenario == commandScenarioRecent && i%10 == 0 || (scenario == commandScenarioRelated || scenario == commandScenarioAncestry) && i == 0
 		if old {
 			at = backfillNow.Add(-30 * 24 * time.Hour)
 		}
 		meta := map[string]any{"id": id, "timestamp": at.UTC().Format(time.RFC3339Nano), "cwd": project, "source": "cli", "originator": "codex_cli_rs", "cli_version": "dev"}
-		if scenario == "related" && i > 0 {
+		if scenario == commandScenarioRelated && i > 0 {
 			meta["forked_from_id"] = "00000000-0000-4000-8000-000000000001"
 			meta["forked_from_ordinal_exclusive"] = 3
 		}
 		ordinal := 0
-		if scenario == "ancestry" && i > 0 {
+		if scenario == commandScenarioAncestry && i > 0 {
 			parent := "00000000-0000-4000-8000-000000000001"
 			meta["parent_thread_id"] = parent
 			meta["session_id"] = parent
@@ -105,9 +155,9 @@ func TestBackfillCommandMeasurement(t *testing.T) {
 		inputBytes += int64(n)
 		row := `{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Synthetic prompt"}]}}` + "\n"
 		rows := 1 + (i%8)*8
-		if scenario == "related" || scenario == "ancestry" {
+		if scenario == commandScenarioRelated || scenario == commandScenarioAncestry {
 			rows = 1
-			if i > 0 && scenario == "related" {
+			if i > 0 && scenario == commandScenarioRelated {
 				inherited := fmt.Sprintf(`{"type":"event_msg","payload":{"type":"task_started","turn_id":"00000000-0000-4000-8000-000000000001","started_at":%q}}`+"\n"+row, backfillNow.Add(-30*24*time.Hour).UTC().Format(time.RFC3339Nano))
 				n, e = f.WriteString(inherited)
 				must(t, e)
@@ -115,25 +165,25 @@ func TestBackfillCommandMeasurement(t *testing.T) {
 			}
 			row = fmt.Sprintf(`{"type":"event_msg","payload":{"type":"task_started","turn_id":%q,"started_at":%q}}`+"\n"+row, id, at.UTC().Format(time.RFC3339Nano))
 		}
-		if scenario == "ancestry" {
+		if scenario == commandScenarioAncestry {
 			row = fmt.Sprintf(`{"type":"event_msg","ordinal":%d,"payload":{"type":"task_started","turn_id":%q,"started_at":%q}}`+"\n"+`{"type":"response_item","ordinal":%d,"payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Synthetic own task"}]}}`+"\n", ordinal+1, id, at.UTC().Format(time.RFC3339Nano), ordinal+2)
 		}
-		for j := 0; j < rows; j++ {
+		for range rows {
 			n, e = f.WriteString(row)
 			must(t, e)
 			inputBytes += int64(n)
 		}
-		if scenario == "recent" || scenario == "old" || scenario == "tool-heavy" || scenario == "retained-heavy" {
+		if scenario == commandScenarioRecent || scenario == commandScenarioOld || scenario == commandScenarioToolHeavy || scenario == commandScenarioRetainedHeavy {
 			sizes := []int64{256 << 10, 256 << 10, 512 << 10, 1 << 20, 1 << 20, 1 << 20, 1 << 20, 2 << 20, 4 << 20, 8 << 20}
 			target := sizes[i%len(sizes)]
-			if scenario == "tool-heavy" || scenario == "retained-heavy" {
+			if scenario == commandScenarioToolHeavy || scenario == commandScenarioRetainedHeavy {
 				target = 4 << 20
 			}
 			if os.Getenv("AA_BACKFILL_SMALL") == "1" {
 				target /= 256
 			}
 			bulk := `{"type":"response_item","payload":{"type":"function_call_output","call_id":"synthetic","output":"` + strings.Repeat("synthetic tool stdout ", 800) + `"}}` + "\n"
-			if i%3 == 0 || scenario == "retained-heavy" {
+			if scenario == commandScenarioRetainedHeavy || i%3 == 0 && scenario != commandScenarioToolHeavy {
 				bulk = `{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"` + strings.Repeat("Synthetic retained explanation. ", 500) + `"}]}}` + "\n"
 			}
 			for wrote := int64(0); wrote < target; {
@@ -143,7 +193,7 @@ func TestBackfillCommandMeasurement(t *testing.T) {
 				inputBytes += int64(n)
 			}
 		}
-		if scenario == "large" && i == 0 {
+		if scenario == commandScenarioLarge && i == 0 {
 			tool := `{"type":"response_item","payload":{"type":"function_call_output","call_id":"synthetic","output":"` + strings.Repeat("x", 8192) + `"}}` + "\n"
 			target := int64(210 << 20)
 			if os.Getenv("AA_BACKFILL_SMALL") == "1" {
@@ -173,13 +223,33 @@ func TestBackfillCommandMeasurement(t *testing.T) {
 	} else {
 		args = append(args, "--dry-run")
 	}
-	stateName := os.Getenv("AA_BACKFILL_STATE")
-	if stateName == "warm" || stateName == "changed" {
-		var primeOut, primeErr bytes.Buffer
-		if code := Run([]string{"backfill", "--dry-run", "--since", "7d", "--harness", "codex", "--include-temp"}, nil, &primeOut, &primeErr, env); code != 0 {
-			t.Fatalf("prime %d: %s", code, primeErr.String())
+	stateName := commandStateKind(os.Getenv("AA_BACKFILL_STATE"))
+	primeAttempts, primeHits := 0, 0
+	primeCacheSupported := false
+	if stateName == commandStateWarm || stateName == commandStateChanged {
+		// Async bounded cache queues may drop observations in a large first
+		// pass. Verify full coverage outside the timer before naming it warm.
+		// An original binary has no cache counters and needs only page priming.
+		ordinary := scenario != commandScenarioRelated && scenario != commandScenarioAncestry
+		for attempt := range 8 {
+			var primeOut, primeErr bytes.Buffer
+			if code := Run([]string{"backfill", "--dry-run", "--since", "7d", "--harness", "codex", "--include-temp"}, nil, &primeOut, &primeErr, withTrace(env, "1")); code != 0 {
+				t.Fatalf("prime %d: %s", code, primeErr.String())
+			}
+			primeAttempts = attempt + 1
+			primeCacheSupported = benchmarkTraceMetric(primeErr.String(), "inspection_cache_lookups") > 0
+			primeHits = benchmarkTraceMetric(primeErr.String(), "inspection_cache_hits")
+			if !primeCacheSupported || !ordinary {
+				break
+			}
+			if primeHits == count && benchmarkTraceMetric(primeErr.String(), "adapter_invocations") == 0 && benchmarkTraceMetric(primeErr.String(), "filter_input_bytes") == 0 {
+				break
+			}
+			if primeAttempts == 8 {
+				t.Fatalf("cache priming incomplete: hits %d want %d: %s", primeHits, count, primeErr.String())
+			}
 		}
-		if stateName == "changed" {
+		if stateName == commandStateChanged {
 			f, e := os.OpenFile(filepath.Join(dir, "rollout-00000000-0000-4000-8000-000000000002.jsonl"), os.O_APPEND|os.O_WRONLY, 0600)
 			must(t, e)
 			n, e := f.WriteString(`{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Synthetic changed-file evidence"}]}}` + "\n")
@@ -223,6 +293,21 @@ func TestBackfillCommandMeasurement(t *testing.T) {
 	if !strings.Contains(stdout.String(), fmt.Sprintf("Total: %d sessions", len(expected))) {
 		t.Fatalf("unexpected plan counts: %s", stdout.String())
 	}
+	// Derive skip evidence from the actual rendered command rather than only
+	// reporting the fixture's expected count. All unselected fixtures are old.
+	wantSkipped := count - len(expected)
+	skipped := 0
+	for line := range strings.SplitSeq(stdout.String(), "\n") {
+		if strings.Contains(line, "not matching the filters") {
+			var label string
+			if _, err := fmt.Sscan(line, &skipped, &label); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if skipped != wantSkipped {
+		t.Fatalf("rendered date skips %d want %d: %s", skipped, wantSkipped, stdout.String())
+	}
 	imported := 0
 	var normalized []string
 	if mode == "import" {
@@ -243,6 +328,10 @@ func TestBackfillCommandMeasurement(t *testing.T) {
 			must(t, e)
 			raw, e := json.Marshal(map[string]any{"records": bundle.NativeRecords, "history": bundle.History, "text": bundle.NativeText, "started_at": reg.SessionStartedAt, "started_at_source": reg.StartedAtSource, "origin": reg.Origin, "format": bundle.Capture.SourceFormat})
 			must(t, e)
+			retained := bytes.Contains(raw, []byte("Synthetic retained explanation."))
+			if scenario == commandScenarioToolHeavy && retained || scenario == commandScenarioRetainedHeavy && !retained {
+				t.Fatalf("%s artifact has unexpected retained-output shape for %s", scenario, reg.NativeSessionID)
+			}
 			safe := strings.ReplaceAll(string(raw), project, "$PROJECT")
 			sessionDigest := sha256.Sum256([]byte(safe))
 			normalized = append(normalized, reg.NativeSessionID+":"+hex.EncodeToString(sessionDigest[:]))
@@ -256,7 +345,7 @@ func TestBackfillCommandMeasurement(t *testing.T) {
 	}
 	sort.Strings(normalized)
 	digest := sha256.Sum256([]byte(strings.Join(normalized, "\n")))
-	result := map[string]any{"fixture_version": 3, "state": stateName, "trace": os.Getenv("AA_BACKFILL_TRACE") == "1", "scenario": scenario, "mode": mode, "sessions": count, "selected": len(expected), "imported": imported, "skipped": count - len(expected), "input_bytes": inputBytes, "elapsed_seconds": elapsed.Seconds(), "checkpoint_offsets": checkpoints, "command_cpu_seconds": cpuAfter - cpuBefore, "command_peak_rss_at_return_bytes": commandRSS, "allocated_bytes": after.TotalAlloc - before.TotalAlloc, "gc_cycles": after.NumGC - before.NumGC, "artifact_sha256": hex.EncodeToString(digest[:]), "toolchain": runtime.Version(), "logical_cpus": runtime.NumCPU(), "planning_workers": 1, "default_adapter_workers": min(8, max(2, runtime.NumCPU()/2)), "byte_budget": 128 << 20}
+	result := map[string]any{"fixture_version": 4, "prime_attempts": primeAttempts, "prime_cache_supported": primeCacheSupported, "prime_cache_hits": primeHits, "state": stateName, "trace": os.Getenv("AA_BACKFILL_TRACE") == "1", "scenario": scenario, "mode": mode, "sessions": count, "selected": len(expected), "imported": imported, "skipped": skipped, "input_bytes": inputBytes, "elapsed_seconds": elapsed.Seconds(), "checkpoint_offsets": checkpoints, "command_cpu_seconds": cpuAfter - cpuBefore, "command_peak_rss_at_return_bytes": commandRSS, "allocated_bytes": after.TotalAlloc - before.TotalAlloc, "gc_cycles": after.NumGC - before.NumGC, "artifact_sha256": hex.EncodeToString(digest[:]), "toolchain": runtime.Version(), "logical_cpus": runtime.NumCPU(), "gomaxprocs": runtime.GOMAXPROCS(0), "planning_workers": 1, "default_adapter_workers": min(8, max(2, runtime.NumCPU()/2)), "byte_budget": 128 << 20}
 	raw, e := json.Marshal(result)
 	must(t, e)
 	if os.Getenv("AA_BACKFILL_TRACE") == "1" {

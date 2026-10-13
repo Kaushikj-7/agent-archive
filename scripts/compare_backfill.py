@@ -33,7 +33,12 @@ def main():
         candidate = after[key]
         if min(len(original), len(candidate)) < 5:
             raise SystemExit(f"At least five samples required: {key}")
-        for field in ["fixture_version", "toolchain", "planning_workers", "default_adapter_workers", "byte_budget", "sessions", "selected", "imported", "skipped", "input_bytes", "artifact_sha256"]:
+        indices = [{row["sample"] for row in rows} for rows in [original, candidate]]
+        if any(len(index) != len(rows) for index, rows in zip(indices, [original, candidate])):
+            raise SystemExit(f"Duplicate sample indices: {key}")
+        if indices[0] != indices[1]:
+            raise SystemExit(f"Unmatched sample indices: {key}")
+        for field in ["host", "logical_cpus", "gomaxprocs", "fixture_version", "toolchain", "planning_workers", "default_adapter_workers", "byte_budget", "sessions", "selected", "imported", "skipped", "input_bytes", "artifact_sha256"]:
             values = {row[field] for row in original + candidate}
             if len(values) != 1:
                 raise SystemExit(f"Non-equivalent {field}: {key}: {values}")

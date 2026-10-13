@@ -17,11 +17,26 @@ import (
 	"github.com/wangjohn/agent-archive/internal/transcriptio"
 )
 
-type planReadCounts struct{ bytes, reads atomic.Int64 }
+type planScenarioKind string
+
+const (
+	planScenarioRecent   planScenarioKind = "recent"
+	planScenarioOld      planScenarioKind = "old"
+	planScenarioLarge    planScenarioKind = "large"
+	planScenarioRetained planScenarioKind = "retained"
+	planScenarioTool     planScenarioKind = "tool"
+)
+
+type planReadCounts struct {
+	bytes atomic.Int64
+	reads atomic.Int64
+}
+
 type planCountedFiles struct {
 	transcriptio.OS
 	counts *planReadCounts
 }
+
 type planCountedFile struct {
 	transcriptio.File
 	counts *planReadCounts
@@ -33,6 +48,7 @@ func (f planCountedFile) ReadAt(p []byte, off int64) (int, error) {
 	f.counts.reads.Add(1)
 	return n, err
 }
+
 func (f planCountedFiles) OpenRegular(path string) (transcriptio.File, error) {
 	file, err := f.OS.OpenRegular(path)
 	if err != nil {
@@ -45,6 +61,7 @@ type planCountedSources struct {
 	agentapi.SourcesLookup
 	files planCountedFiles
 }
+
 type planCountedProvider struct {
 	agentapi.SourceProvider
 	files planCountedFiles
@@ -57,6 +74,7 @@ func (s planCountedSources) LookupSources(name string) (agentapi.SourceProvider,
 	}
 	return planCountedProvider{p, s.files}, f, true
 }
+
 func (p planCountedProvider) OpenPass(ctx context.Context, env agentapi.SourceEnvironment) (agentapi.SourcePass, error) {
 	env.Files = p.files
 	return p.SourceProvider.OpenPass(ctx, env)
@@ -79,8 +97,8 @@ func (r planCountedHeader) Read(p []byte) (int, error) {
 // are measured separately by scripts/measure_backfill.py. Large corpus creation
 // is explicit, outside the timer, and never occurs in ordinary test runs.
 func BenchmarkBuildPlan(b *testing.B) {
-	for _, scenario := range []string{"recent", "old", "large", "retained", "tool"} {
-		b.Run(scenario, func(b *testing.B) {
+	for _, scenario := range []planScenarioKind{planScenarioRecent, planScenarioOld, planScenarioLarge, planScenarioRetained, planScenarioTool} {
+		b.Run(string(scenario), func(b *testing.B) {
 			home := b.TempDir()
 			root := filepath.Join(home, "project")
 			if err := os.MkdirAll(filepath.Join(root, ".git"), 0700); err != nil {
@@ -91,15 +109,15 @@ func BenchmarkBuildPlan(b *testing.B) {
 				b.Fatal(err)
 			}
 			count := 1500
-			if scenario == "large" || scenario == "retained" || scenario == "tool" {
+			if scenario == planScenarioLarge || scenario == planScenarioRetained || scenario == planScenarioTool {
 				count = 32
 			}
 			expected := count
 			var total int64
-			for i := 0; i < count; i++ {
+			for i := range count {
 				id := fmt.Sprintf("00000000-0000-4000-8000-%012d", i+1)
 				at := fixedNow.Add(-48 * time.Hour)
-				if scenario == "old" && i%10 != 0 {
+				if scenario == planScenarioOld && i%10 != 0 {
 					at = fixedNow.Add(-30 * 24 * time.Hour)
 					expected--
 				}
@@ -113,17 +131,17 @@ func BenchmarkBuildPlan(b *testing.B) {
 				}
 				total += int64(n)
 				target := int64(256<<10) * (1 + int64(i%8))
-				if scenario == "large" {
+				if scenario == planScenarioLarge {
 					target = 1024
 					if i == 0 {
 						target = 210 << 20
 					}
 				}
-				if scenario == "retained" || scenario == "tool" {
+				if scenario == planScenarioRetained || scenario == planScenarioTool {
 					target = 4 << 20
 				}
 				row := `{"type":"response_item","payload":{"type":"function_call_output","output":"` + strings.Repeat("synthetic stdout ", 1024) + `"}}` + "\n"
-				if scenario == "retained" || i%3 == 0 && scenario != "large" {
+				if scenario == planScenarioRetained || i%3 == 0 && scenario != planScenarioLarge {
 					row = `{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"` + strings.Repeat("Synthetic explanation. ", 700) + `"}]}}` + "\n"
 				}
 				for wrote := int64(0); wrote < target; {
@@ -140,13 +158,14 @@ func BenchmarkBuildPlan(b *testing.B) {
 			}
 			counts := &planReadCounts{}
 			registry := builtin.NewBuiltins()
-			env := Environment{Home: home, Now: func() time.Time { return fixedNow }, Discovery: registry, Imports: registry, NativePaths: registry, Worktrees: registry, Workspaces: registry, Children: registry, DatabaseCatalogs: registry, Sources: planCountedSources{registry, planCountedFiles{counts: counts}}, Workers: 1}
-			env.Open = func(path string) (io.ReadCloser, error) {
-				file, err := os.Open(path)
-				if err != nil {
-					return nil, err
-				}
-				return planCountedHeader{file, counts}, nil
+			env := Environment{Home: home, Now: func() time.Time { return fixedNow }, Discovery: registry, Imports: registry, NativePaths: registry, Worktrees: registry, Workspaces: registry, Children: registry, DatabaseCatalogs: registry, Sources: planCountedSources{registry, planCountedFiles{counts: counts}}, Workers: 1,
+				Open: func(path string) (io.ReadCloser, error) {
+					file, err := os.Open(path)
+					if err != nil {
+						return nil, err
+					}
+					return planCountedHeader{file, counts}, nil
+				},
 			}
 			cfg := config.Config{}
 			b.ReportAllocs()
