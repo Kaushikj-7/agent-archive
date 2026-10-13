@@ -161,7 +161,7 @@ func readPickerSessionView(ctx context.Context, store storage.ObjectStore, row l
 		}
 		return metadataWithLinks(ctx, store, metadata), nil
 	}
-	return readSessionView(catalog.NewReadView(ctx), store, row.HarnessKey, row.SessionID)
+	return readSessionView(ctx, store, row.HarnessKey, row.SessionID)
 }
 
 func bindArchiveSearchRows(ctx context.Context, snapshot *catalog.Snapshot, store storage.ObjectStore, rows []listRow) error {
@@ -210,4 +210,11 @@ func runBoundedListBrowser(ctx context.Context, env listCommandDependencies, sto
 	}
 	_, _, code := runBrowser(ctx, env, newPrompter(stdin, stdout), stdout, stderr, browserSpec{Mode: browseSessions, Choices: choices, Command: "list", Store: store, NoPager: opts.noPager})
 	return true, code
+}
+
+func pickerSelectionContext(ctx context.Context, row listRow) context.Context {
+	if row.pickerSelection != nil && row.pickerSelection.item != nil {
+		return catalog.WithReadView(ctx)
+	}
+	return catalog.NewReadView(ctx)
 }

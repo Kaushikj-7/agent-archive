@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
@@ -152,5 +153,55 @@ func TestBoundedArchiveSearchLoadsOlderChildrenAndUncappedFieldsOnDemand(t *test
 	}
 	if rows[0].pickerSelection == nil || rows[0].pickerSelection.item == nil {
 		t.Fatal("search discarded immutable selection")
+	}
+}
+
+func TestBoundedBareShowKeepsSelectedParentAndLinkedChildInOneView(t *testing.T) {
+	a := newScopedArchive(t)
+	a.add(t, "bounded-linked-child", "Child", a.label, subagentOf(a.id))
+	parent := a.base
+	parent.LinkedSessions = []archive.LinkedSessionReference{{SessionID: "bounded-linked-child", Relationship: "subagent", Status: archive.LinkedSessionPublished}}
+	parentKey, _ := archive.MetadataObjectKey("codex", a.id)
+	raw, err := json.Marshal(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = a.mem.Put(t.Context(), parentKey, raw); err != nil {
+		t.Fatal(err)
+	}
+	remote := scopedPickerCatalog(t, a.mem)
+	entry, _, err := remote.Writer.Find(t.Context(), parentKey)
+	if err != nil || entry == nil {
+		t.Fatal(err)
+	}
+	childKey, _ := archive.MetadataObjectKey("codex", "bounded-linked-child")
+	var mutationErr error
+	hook := &bareSelectionStore{MeasuredStore: storagetest.NewMeasuredStore(remote.ObjectStore, 0), parentKey: entry.Metadata.Key, mutate: func() { mutationErr = remote.DeleteSession(t.Context(), childKey) }}
+	wrapped, err := catalog.Wrap(hook)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := &bareSelectionInput{Reader: strings.NewReader("1\n"), arm: func() { hook.armed.Store(true) }}
+	var output, stderr bytes.Buffer
+	env := a.env
+	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return wrapped, nil }
+	env.IsTerminal = func(stream any) bool { return stream == any(input) || stream == any(&output) }
+	if code := Run([]string{"show", "--json", "--harness", "codex"}, input, &output, &stderr, env); code != 0 {
+		t.Fatal(code, stderr.String())
+	}
+	start := strings.Index(output.String(), "{")
+	if start < 0 {
+		t.Fatal("selected JSON missing")
+	}
+	var got sessionView
+	if err = json.Unmarshal(output.Bytes()[start:], &got); err != nil {
+		t.Fatal(err)
+	}
+	if mutationErr != nil || !hook.mutated.Load() || len(got.LinkedAvailability) != 1 || got.LinkedAvailability[0].State != reader.LinkedStateMetadataAvailable {
+		t.Fatal("selected parent and children used different roots", mutationErr, got.LinkedAvailability)
+	}
+	fresh, err := readSessionView(catalog.NewReadView(t.Context()), remote, "codex", a.id)
+	if err != nil || len(fresh.LinkedAvailability) != 1 || fresh.LinkedAvailability[0].State != reader.LinkedStateUnavailableOrExpired {
+		t.Fatal("mutation did not produce the fresh-root oracle", err, fresh.LinkedAvailability)
 	}
 }

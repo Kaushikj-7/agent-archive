@@ -73,7 +73,7 @@ func (b *sessionBrowser) run(ctx context.Context, choices *scopeChoices) error {
 			return err
 		}
 		stop := startActivity(b.stdout, "Loading session…")
-		viewCtx := catalog.NewReadView(ctx)
+		viewCtx := pickerSelectionContext(ctx, row)
 		view, err := readPickerSessionView(viewCtx, b.store, row)
 		stop()
 		if err != nil {

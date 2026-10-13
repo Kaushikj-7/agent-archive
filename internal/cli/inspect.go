@@ -689,7 +689,7 @@ func runBareShow(ctx context.Context, env showCommandDependencies, store storage
 		if code != 0 || !selected {
 			return code
 		}
-		view, err := readPickerSessionView(ctx, store, row)
+		view, err := readPickerSessionView(pickerSelectionContext(ctx, row), store, row)
 		if err != nil {
 			terminal.Printf(stderr, "agent-archive: show: %v\n", err)
 			return 1
