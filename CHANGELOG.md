@@ -6,6 +6,10 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Keep exhaustive full CLI CI coverage within ordinary process deadlines by
+  partitioning compiled tests, fuzz seeds and examples, with source-bound raw
+  coverage checks and unchanged race, test and overall job limits.
+
 - Open supported catalog list/show browsers using bounded repository pages.
   Older sessions advances each scope independently; complete archive search
   starts when filtering and reports loading or read failures. Cancelling a
