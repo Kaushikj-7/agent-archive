@@ -20,6 +20,7 @@ type ownedReadFiles struct {
 	bytes  *int64
 	before func([]byte, int64)
 }
+
 type ownedReadFile struct {
 	transcriptio.File
 	bytes  *int64
@@ -33,6 +34,7 @@ func (f ownedReadFiles) OpenRegular(path string) (transcriptio.File, error) {
 	}
 	return ownedReadFile{file, f.bytes, f.before}, nil
 }
+
 func (f ownedReadFile) ReadAt(p []byte, off int64) (int, error) {
 	if f.before != nil {
 		f.before(p, off)
@@ -47,6 +49,7 @@ type ownedReadSources struct {
 	bytes  *int64
 	before func([]byte, int64)
 }
+
 type ownedReadProvider struct {
 	agentapi.SourceProvider
 	bytes  *int64
@@ -57,6 +60,7 @@ func (s ownedReadSources) LookupSources(name string) (agentapi.SourceProvider, a
 	provider, filter, ok := s.SourcesLookup.LookupSources(name)
 	return ownedReadProvider{provider, s.bytes, s.before}, filter, ok
 }
+
 func (p ownedReadProvider) OpenPass(ctx context.Context, env agentapi.SourceEnvironment) (agentapi.SourcePass, error) {
 	env.Files = ownedReadFiles{bytes: p.bytes, before: p.before}
 	return p.SourceProvider.OpenPass(ctx, env)

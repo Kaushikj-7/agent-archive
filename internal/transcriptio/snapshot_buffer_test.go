@@ -11,12 +11,27 @@ import (
 	"testing"
 )
 
+type bufferMutation string
+
+const (
+	bufferMutationUnchanged    bufferMutation = "unchanged"
+	bufferMutationRewrite      bufferMutation = "rewrite"
+	bufferMutationMode         bufferMutation = "mode"
+	bufferMutationReplace      bufferMutation = "replace"
+	bufferMutationSymlink      bufferMutation = "symlink"
+	bufferMutationAppend       bufferMutation = "append"
+	bufferMutationCancelBefore bufferMutation = "cancel-before"
+	bufferMutationCancelDuring bufferMutation = "cancel-during"
+	bufferMutationReadError    bufferMutation = "read-error"
+)
+
 type bufferOpener struct {
 	OS
 	read  func()
 	fault error
 	calls *int
 }
+
 type bufferFile struct {
 	File
 	read  func()
@@ -31,6 +46,7 @@ func (o bufferOpener) OpenRegular(path string) (File, error) {
 	}
 	return bufferFile{file, o.read, o.fault, o.calls}, nil
 }
+
 func (f bufferFile) ReadAt(p []byte, off int64) (int, error) {
 	*f.calls++
 	if f.fault != nil {
@@ -46,7 +62,7 @@ func (f bufferFile) ReadAt(p []byte, off int64) (int, error) {
 func TestPrefixBorrowedBufferPreservesReadAndMutationFailures(t *testing.T) {
 	t.Parallel()
 	for _, size := range []int{0, 7, 64 << 10} {
-		for _, change := range []string{"unchanged", "rewrite", "mode", "replace", "symlink", "append", "cancel-before", "cancel-during", "read-error"} {
+		for _, change := range []bufferMutation{bufferMutationUnchanged, bufferMutationRewrite, bufferMutationMode, bufferMutationReplace, bufferMutationSymlink, bufferMutationAppend, bufferMutationCancelBefore, bufferMutationCancelDuring, bufferMutationReadError} {
 			t.Run(fmt.Sprintf("%d/%s", size, change), func(t *testing.T) {
 				t.Parallel()
 				path := filepath.Join(t.TempDir(), "source")
@@ -60,24 +76,26 @@ func TestPrefixBorrowedBufferPreservesReadAndMutationFailures(t *testing.T) {
 				calls := 0
 				opener := bufferOpener{calls: &calls}
 				switch change {
-				case "read-error":
+				case bufferMutationUnchanged, bufferMutationCancelBefore:
+					// No mutation during reading.
+				case bufferMutationReadError:
 					opener.fault = fault
-				case "cancel-during":
+				case bufferMutationCancelDuring:
 					opener.read = cancel
-				case "rewrite":
+				case bufferMutationRewrite:
 					opener.read = func() {
 						rewritten := []byte(strings.Repeat("different source\n", 8193))
 						if err := os.WriteFile(path, rewritten, 0600); err != nil {
 							t.Fatal(err)
 						}
 					}
-				case "mode":
+				case bufferMutationMode:
 					opener.read = func() {
 						if err := os.Chmod(path, 0640); err != nil {
 							t.Fatal(err)
 						}
 					}
-				case "replace":
+				case bufferMutationReplace:
 					opener.read = func() {
 						if err := os.Rename(path, path+".old"); err != nil {
 							t.Fatal(err)
@@ -86,7 +104,7 @@ func TestPrefixBorrowedBufferPreservesReadAndMutationFailures(t *testing.T) {
 							t.Fatal(err)
 						}
 					}
-				case "symlink":
+				case bufferMutationSymlink:
 					opener.read = func() {
 						if err := os.Rename(path, path+".old"); err != nil {
 							t.Fatal(err)
@@ -95,7 +113,7 @@ func TestPrefixBorrowedBufferPreservesReadAndMutationFailures(t *testing.T) {
 							t.Fatal(err)
 						}
 					}
-				case "append":
+				case bufferMutationAppend:
 					opener.read = func() {
 						if err := os.WriteFile(path, append(append([]byte(nil), data...), []byte("appended\n")...), 0600); err != nil {
 							t.Fatal(err)
@@ -111,24 +129,24 @@ func TestPrefixBorrowedBufferPreservesReadAndMutationFailures(t *testing.T) {
 						t.Error(err)
 					}
 				})
-				if change == "cancel-before" {
+				if change == bufferMutationCancelBefore {
 					cancel()
 				}
 				err = snap.CheckPrefixBuffer(ctx, int64(len(data)), sha256.Sum256(data), make([]byte, size))
 				switch change {
-				case "unchanged", "append":
+				case bufferMutationUnchanged, bufferMutationAppend:
 					if err != nil {
 						t.Fatal(err)
 					}
-				case "cancel-before", "cancel-during":
+				case bufferMutationCancelBefore, bufferMutationCancelDuring:
 					if !errors.Is(err, context.Canceled) {
 						t.Fatalf("cancel: %v", err)
 					}
-				case "read-error":
+				case bufferMutationReadError:
 					if !errors.Is(err, fault) {
 						t.Fatalf("read failure: %v", err)
 					}
-				default:
+				case bufferMutationRewrite, bufferMutationMode, bufferMutationReplace, bufferMutationSymlink:
 					if !errors.Is(err, ErrChanged) {
 						t.Fatalf("mutation: %v", err)
 					}

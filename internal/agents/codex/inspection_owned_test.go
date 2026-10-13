@@ -16,7 +16,9 @@ type inspectionSnapshotDecorator struct {
 	agentapi.SourceSnapshot
 	agentapi.VerifiedImportSnapshot
 }
+
 type baseInspectionFilter = Filter
+
 type inspectionFilterDecorator struct{ baseInspectionFilter }
 
 func (inspectionFilterDecorator) InspectFilteredImport(context.Context, agentapi.NativeInput, agentapi.FilterContext) (agentapi.ImportSummary, error) {
@@ -224,6 +226,7 @@ type inspectionMutationFiles struct {
 	transcriptio.OS
 	before func([]byte, int64)
 }
+
 type inspectionMutationFile struct {
 	transcriptio.File
 	before func([]byte, int64)
@@ -236,6 +239,7 @@ func (f inspectionMutationFiles) OpenRegular(path string) (transcriptio.File, er
 	}
 	return inspectionMutationFile{file, f.before}, nil
 }
+
 func (f inspectionMutationFile) ReadAt(p []byte, off int64) (int, error) {
 	f.before(p, off)
 	return f.File.ReadAt(p, off)
