@@ -107,14 +107,18 @@ func TestBoundedArchiveSearchLoadsOlderChildrenAndUncappedFieldsOnDemand(t *test
 	for i := range 55 {
 		a.add(t, fmt.Sprintf("ordinary-%03d", i), fmt.Sprintf("Title %03d", i), a.label)
 	}
-	a.add(t, "older-parent", "older parent", a.label, func(m *archive.Metadata) { m.EndedAt = a.base.CapturedAt.Add(-2 * time.Hour); m.CapturedAt = m.EndedAt })
+	a.add(t, "older-parent", "older parent", a.label, func(m *archive.Metadata) {
+		at := a.base.CapturedAt.Add(-2 * time.Hour)
+		m.EndedAt = &at
+		m.CapturedAt = at
+	})
 	a.add(t, "older-child", "childneedle", a.label, func(m *archive.Metadata) {
 		m.ParentSessionID = "older-parent"
 		at := a.base.CapturedAt.Add(-2 * time.Hour)
 		m.EndedAt = &at
 		m.CapturedAt = at
 	})
-	a.add(t, "newest-long-title", strings.Repeat("uncapped ", 300)+"latefieldneedle", a.label, func(m *archive.Metadata) { m.EndedAt = a.base.CapturedAt.Add(time.Hour); m.CapturedAt = m.EndedAt })
+	a.add(t, "newest-long-title", strings.Repeat("uncapped ", 300)+"latefieldneedle", a.label, func(m *archive.Metadata) { at := a.base.CapturedAt.Add(time.Hour); m.EndedAt = &at; m.CapturedAt = at })
 	remote := scopedPickerCatalog(t, a.mem)
 	counts := &catalogListReads{MeasuredStore: storagetest.NewMeasuredStore(remote.ObjectStore, 0), paths: map[string]int{}}
 	wrapped, err := catalog.Wrap(counts)
