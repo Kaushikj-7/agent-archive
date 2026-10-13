@@ -392,8 +392,12 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 		}
 		p.scan(ctx, reg)
 	}
-	if err := p.resumeStagedReleases(ctx, local, store, opts); err != nil {
-		return p.result, err
+	// Do not start fresh staged work after ordinary recovery cancellation.
+	// Cancellation during actual staged release remains fatal inside the helper.
+	if ctx.Err() == nil {
+		if err := p.resumeStagedReleases(ctx, local, store, opts); err != nil {
+			return p.result, err
+		}
 	}
 	return p.result, p.saveStatus()
 }
