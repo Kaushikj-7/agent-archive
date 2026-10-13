@@ -52,6 +52,7 @@ func (s *catalogListReads) GetCatalogVersion(ctx context.Context, key string, li
 }
 
 func TestRealCLICatalogDefaultList50Bounded(t *testing.T) {
+	t.Parallel()
 	sizes := []int{128}
 	if !testing.Short() {
 		sizes = append(sizes, 512)
@@ -133,6 +134,7 @@ func TestRealCLICatalogDefaultList50Bounded(t *testing.T) {
 }
 
 func TestRealCLICatalogListNonMultiplePageLimit(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("full 1100-record/1050-selection integration; daily and exact candidates")
 	}
