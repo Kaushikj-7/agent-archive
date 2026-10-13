@@ -234,6 +234,9 @@ func archivedWithoutPrompt(m archive.Metadata) bool {
 }
 
 type localLabelKey struct {
+	harness string
+	registration string
+	policy string
 	sessionID string
 	active    time.Time
 }
@@ -360,7 +363,7 @@ func (p handoffPicker) rows(regs []archive.SessionRegistration, archived []archi
 // from its transcript as it is now. ok is false when the transcript cannot be
 // read or holds no prompt yet.
 func (p handoffPicker) localMetadata(reg archive.SessionRegistration, active time.Time) (archive.Metadata, bool) {
-	key := localLabelKey{sessionID: reg.ArchiveSessionID, active: active}
+	key := pickerLocalLabelKey(reg, active, p.source)
 	if result, ok := p.localLabels[key]; ok {
 		return result.metadata, result.hasPrompt
 	}
