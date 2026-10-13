@@ -191,7 +191,7 @@ func openMigration(ctx context.Context, source, target storage.ObjectStore, sour
 		return m, nil
 	}
 	// Never claim mixed namespace completeness, even before sealing or copying.
-	objects, err := target.List(ctx, "")
+	objects, err := m.destinationInventory(ctx, "", true)
 	if err != nil {
 		return nil, err
 	}
@@ -452,7 +452,7 @@ func (m *Migration) Verify(ctx context.Context) error {
 	if err = m.verifyScopedRoots(ctx, snapshot, verified); err != nil {
 		return err
 	}
-	objects, err := m.Destination.List(ctx, "sessions/")
+	objects, err := m.destinationInventory(ctx, "sessions/", false)
 	if err != nil {
 		return err
 	}
@@ -701,4 +701,39 @@ func (m *Migration) verifyScopedRoots(ctx context.Context, snapshot *Snapshot, v
 	}
 
 	return nil
+}
+
+func (m *Migration) destinationInventory(ctx context.Context, prefix string, initializing bool) ([]storage.Object, error) {
+	if m.State.Protocol != 11 {
+		return m.Destination.List(ctx, prefix)
+	}
+	lister, ok := m.Destination.(storage.PageLister)
+	if !ok {
+		return nil, errors.New("scoped construction requires bounded destination inventory")
+	}
+	cursor := ""
+	for {
+		page, err := lister.ListPage(ctx, prefix, cursor, 64)
+		if err != nil {
+			return nil, err
+		}
+		if initializing {
+			if page.Next != "" {
+				return nil, errors.New("scoped initialization contains unrelated inventory")
+			}
+			return page.Objects, nil
+		}
+		for _, object := range page.Objects {
+			if metadataKey(object.Key) {
+				return nil, errors.New("mixed legacy/catalog namespace cannot be activated")
+			}
+		}
+		if page.Next == "" {
+			return nil, nil
+		}
+		if page.Next == cursor {
+			return nil, errors.New("destination inventory did not advance")
+		}
+		cursor = page.Next
+	}
 }

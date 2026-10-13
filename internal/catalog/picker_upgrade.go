@@ -427,6 +427,13 @@ func (u *PickerUpgrade) FinishActivation(ctx context.Context) error {
 	if u.State.Phase != "active" {
 		return ErrAdmissionClosed
 	}
+	state, _, err := u.writer.Coordinator().read(ctx)
+	if err != nil {
+		return err
+	}
+	if state.Upgrade == nil && state.Seal == "" && state.Mode == admissionActive && state.Protocol == 11 && state.Proof == u.State.Proof && reflect.DeepEqual(state.PickerUpgradeReceipt, &u.State) {
+		return nil
+	}
 	h, etag, err := u.writer.Head(ctx)
 	if err != nil {
 		return err
