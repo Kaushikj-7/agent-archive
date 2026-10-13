@@ -21,6 +21,7 @@ import (
 )
 
 func TestRealCLIArchiveBrowsersStartWithoutFullArchiveReads(t *testing.T) {
+	t.Parallel()
 	a := newScopedArchive(t)
 	for i := range 105 {
 		a.addMetadata(t, fmt.Sprintf("browse-%03d", i), fmt.Sprintf("Title %03d", i), a.label)
@@ -30,6 +31,7 @@ func TestRealCLIArchiveBrowsersStartWithoutFullArchiveReads(t *testing.T) {
 	seed := scopedPickerCatalog(t, a.mem)
 	for _, command := range []string{"list", "show"} {
 		t.Run(command, func(t *testing.T) {
+			t.Parallel()
 			remote := cloneScopedFixtureCatalog(t, seed.ObjectStore)
 			counts := &catalogListReads{MeasuredStore: storagetest.NewMeasuredStore(remote.ObjectStore, 0), paths: map[string]int{}}
 			wrapped, err := catalog.Wrap(counts)
@@ -55,6 +57,7 @@ func TestRealCLIArchiveBrowsersStartWithoutFullArchiveReads(t *testing.T) {
 }
 
 func TestBoundedArchiveScopeContinuationsAreIndependentAndSelectionPinned(t *testing.T) {
+	t.Parallel()
 	a := newScopedArchive(t)
 	for i := range 130 {
 		project := a.label
@@ -109,6 +112,7 @@ func TestBoundedArchiveScopeContinuationsAreIndependentAndSelectionPinned(t *tes
 }
 
 func TestBoundedArchiveSearchLoadsOlderChildrenAndUncappedFieldsOnDemand(t *testing.T) {
+	t.Parallel()
 	a := newScopedArchive(t)
 	for i := range 55 {
 		a.addMetadata(t, fmt.Sprintf("ordinary-%03d", i), fmt.Sprintf("Title %03d", i), a.label)
@@ -163,6 +167,7 @@ func TestBoundedArchiveSearchLoadsOlderChildrenAndUncappedFieldsOnDemand(t *test
 }
 
 func TestBoundedBareShowKeepsSelectedParentAndLinkedChildInOneView(t *testing.T) {
+	t.Parallel()
 	a := newScopedArchive(t)
 	a.addMetadata(t, "bounded-linked-child", "Child", a.label, subagentOf(a.id))
 	parent := a.base
@@ -213,6 +218,7 @@ func TestBoundedBareShowKeepsSelectedParentAndLinkedChildInOneView(t *testing.T)
 }
 
 func TestBoundedArchiveRowsKeepActivityAgeAndUnambiguousShortIDs(t *testing.T) {
+	t.Parallel()
 	a := newScopedArchive(t)
 	active := a.env.now().Add(-5 * time.Minute)
 	captured := a.env.now().Add(-30 * 24 * time.Hour)
@@ -241,6 +247,7 @@ func TestBoundedArchiveRowsKeepActivityAgeAndUnambiguousShortIDs(t *testing.T) {
 }
 
 func TestBatchedScopedFixtureMatchesEagerUniverseAndKeepsMutationsPrivate(t *testing.T) {
+	t.Parallel()
 	a := newScopedArchive(t)
 	eager, batched := a, a
 	eager.mem, batched.mem = cloneScopedFixtureStore(t, a.mem), cloneScopedFixtureStore(t, a.mem)
@@ -346,6 +353,7 @@ func scopedFixtureEnv(t *testing.T, source scopedArchive) Env {
 }
 
 func TestScopedCatalogClonesKeepHeadCoordinatorAndBodiesPrivate(t *testing.T) {
+	t.Parallel()
 	a := newScopedArchive(t)
 	a.addMetadata(t, "clone-one", "Clone one", a.label)
 	seed := scopedPickerCatalog(t, a.mem)

@@ -61,6 +61,7 @@ func (w *browseRouteOutput) Write(p []byte) (int, error) {
 }
 
 func TestBareListUsesOneBoundedPageAndOlderReadsRemote(t *testing.T) {
+	t.Parallel()
 	a := newScopedArchive(t)
 	for i := range 130 {
 		a.addMetadata(t, fmt.Sprintf("route-%03d", i), fmt.Sprintf("RouteTitle%03d", i), a.label, func(m *archive.Metadata) {
