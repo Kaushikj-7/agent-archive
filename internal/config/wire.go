@@ -69,7 +69,7 @@ func (c Config) MarshalJSON() ([]byte, error) {
 		}
 	}
 	plain := configJSON(c)
-	if !c.ScopedPickerProtection && !c.SettledCursorSelectionProtection && !c.StagedSelectionProtection && !c.PublicationCompositionProtection && c.Storage.EffectiveArchiveFormat() != destination.FormatCatalogV4 && !c.HistoricalProjectProtection && c.Discovery == nil && !c.ImportStagingProtection && !c.RetentionProtection && c.CodexCapture == nil && !c.GenerationProtection && !c.CodexHistoryProtection && !c.DurableStorageProtection {
+	if !c.protectedWriterRequired() {
 		return json.Marshal(plain)
 	}
 	if err := validateDiscoveryConfig(c); err != nil {
@@ -116,6 +116,10 @@ func (c Config) MarshalJSON() ([]byte, error) {
 		SchemaVersion writerVersion `json:"schema_version"`
 		*configJSON
 	}{SchemaVersion: version, configJSON: &plain})
+}
+
+func (c Config) protectedWriterRequired() bool {
+	return c.ScopedPickerProtection || c.SettledCursorSelectionProtection || c.StagedSelectionProtection || c.PublicationCompositionProtection || c.Storage.EffectiveArchiveFormat() == destination.FormatCatalogV4 || c.HistoricalProjectProtection || c.Discovery != nil || c.ImportStagingProtection || c.RetentionProtection || c.CodexCapture != nil || c.GenerationProtection || c.CodexHistoryProtection || c.DurableStorageProtection
 }
 
 // UnmarshalJSON reads legacy numeric versions and the protected writer fence.
@@ -253,8 +257,8 @@ func validateWriterVersion(c Config, version writerVersion) error {
 		return err
 	}
 	if version.Version == 14 {
-		if !c.ScopedPickerProtection || c.Storage.EffectiveArchiveFormat() != destination.FormatCatalogV4 {
-			return errors.New("scoped picker requires catalog format and permanent protection")
+		if err := validateScopedWriterConfig(c); err != nil {
+			return err
 		}
 	} else if version.Version == 15 || version.Version == 13 {
 		if err := validateStagedWriterConfiguration(c, version); err != nil {
@@ -368,6 +372,14 @@ func validateScopedWriterMarker(c Config, version writerVersion) error {
 
 	return nil
 }
+
+func validateScopedWriterConfig(c Config) error {
+	if !c.ScopedPickerProtection || c.Storage.EffectiveArchiveFormat() != destination.FormatCatalogV4 {
+		return errors.New("scoped picker requires catalog format and permanent protection")
+	}
+	return nil
+}
+
 func validateStagedWriterConfiguration(c Config, version writerVersion) error {
 	switch version.Version {
 	case 15:

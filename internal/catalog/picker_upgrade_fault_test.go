@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/wangjohn/agent-archive/internal/storage"
@@ -11,7 +13,7 @@ import (
 
 type interruptedPickerStore struct {
 	*qualifiedStore
-	phase   string
+	phase   PickerUpgradePhase
 	blocked bool
 	fired   bool
 }
@@ -51,7 +53,7 @@ func TestPickerUpgradeRollbackRefusesPublicationAfterInitialHeadObservation(t *t
 		t.Fatal("rollback sealed a head changed after its initial observation")
 	}
 	state, _, err := w.Coordinator().read(t.Context())
-	if err != nil || state.Seal != "" || state.Upgrade != nil || u.State.Phase != "active" {
+	if err != nil || state.Seal != "" || state.Upgrade != nil || u.State.Phase != PickerUpgradeActive {
 		t.Fatal("failed rollback changed publication authority", state, err)
 	}
 	entry, _, err := w.Find(t.Context(), input.SessionKey)
@@ -63,7 +65,8 @@ func TestPickerUpgradeRollbackRefusesPublicationAfterInitialHeadObservation(t *t
 func TestPickerUpgradeRejectsSourceBranchesThatHideLiveIdentities(t *testing.T) {
 	t.Parallel()
 	w, store := fixture(t)
-	for _, id := range []string{"branch-first", "branch-second"} {
+	for i := range 65 {
+		id := fmt.Sprintf("branch-%03d", i)
 		if _, err := w.Commit(t.Context(), mutation(t, w, id)); err != nil {
 			t.Fatal(err)
 		}
@@ -72,14 +75,14 @@ func TestPickerUpgradeRejectsSourceBranchesThatHideLiveIdentities(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	leaf, err := w.readNode(t.Context(), h.Identity)
-	if err != nil || len(leaf.Leaves) != 2 {
-		t.Fatal(leaf, err)
+	rows, err := w.identityPage(t.Context(), h.Identity, "", 128)
+	if err != nil || len(rows) != 65 {
+		t.Fatal(rows, err)
 	}
 	// Both nodes are individually well-formed and checksum-valid. The branch
 	// lies about the referenced child's count and maximum key, hiding the
-	// second identity after a one-row construction page.
-	raw, err := json.Marshal(node{Count: 1, Children: []branch{{Max: leaf.Leaves[0].Key, Ref: h.Identity, Count: 1}}})
+	// final identity after both construction and verification page boundaries.
+	raw, err := json.Marshal(node{Count: 64, Children: []branch{{Max: rows[63].Key, Ref: h.Identity, Count: 64}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,6 +109,9 @@ func TestPickerUpgradeRejectsSourceBranchesThatHideLiveIdentities(t *testing.T) 
 	for {
 		done, stepErr := u.Step(t.Context(), 1)
 		if stepErr != nil {
+			if !strings.Contains(stepErr.Error(), "branch differs from referenced child") {
+				t.Fatal("refused for an unrelated reason", stepErr)
+			}
 			break
 		}
 		if done {
@@ -136,6 +142,7 @@ func (s *interruptedPickerStore) PutConditional(ctx context.Context, key string,
 	}
 	return etag, nil
 }
+
 func (s *interruptedPickerStore) GetCatalogVersion(ctx context.Context, key string, limit int64) ([]byte, storage.CatalogObjectVersion, error) {
 	if s.blocked {
 		return nil, storage.CatalogObjectVersion{}, errors.New("synthetic upgrade readback unavailable")
@@ -145,8 +152,8 @@ func (s *interruptedPickerStore) GetCatalogVersion(ctx context.Context, key stri
 
 func TestPickerUpgradeResumesEveryDurableCoordinatorPhase(t *testing.T) {
 	t.Parallel()
-	for _, phase := range []string{"draining", "building", "verified", "activating", "active"} {
-		t.Run(phase, func(t *testing.T) {
+	for _, phase := range []PickerUpgradePhase{PickerUpgradeDraining, PickerUpgradeBuilding, PickerUpgradeVerified, PickerUpgradeActivating, PickerUpgradeActive} {
+		t.Run(string(phase), func(t *testing.T) {
 			t.Parallel()
 			w, base := fixture(t)
 			input := mutation(t, w, "fault-scoped")

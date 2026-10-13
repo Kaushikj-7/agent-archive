@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/wangjohn/agent-archive/internal/destination"
 )
 
 func TestScopedPickerFenceCannotBeFlattenedIntoOlderConfiguration(t *testing.T) {
@@ -62,8 +64,7 @@ func TestScopedPickerReservationRefusesLayeredStagedConfiguration(t *testing.T) 
 
 func TestScopedPickerConfigurationComposesAndPreservesProtections(t *testing.T) {
 	t.Parallel()
-	c := Config{RetentionDays: 90, ScopedPickerProtection: true, StagedSelectionProtection: true, PublicationCompositionProtection: true, DurableStorageProtection: true, RetentionProtection: true, ImportStagingProtection: true, HistoricalProjectProtection: true, GenerationProtection: true, CodexHistoryProtection: true}
-	c.Storage.ArchiveFormat = "catalog-v4"
+	c := Config{RetentionDays: 90, ScopedPickerProtection: true, StagedSelectionProtection: true, PublicationCompositionProtection: true, DurableStorageProtection: true, RetentionProtection: true, ImportStagingProtection: true, HistoricalProjectProtection: true, GenerationProtection: true, CodexHistoryProtection: true, Storage: destination.Config{ArchiveFormat: destination.FormatCatalogV4}}
 	raw, err := json.Marshal(c)
 	if err != nil {
 		t.Fatal(err)
@@ -75,8 +76,7 @@ func TestScopedPickerConfigurationComposesAndPreservesProtections(t *testing.T) 
 	if decoded.SchemaVersion != 14 || !decoded.ScopedPickerProtection || !decoded.PublicationCompositionProtection || !decoded.DurableStorageProtection || !decoded.HistoricalProjectProtection || !decoded.StagedSelectionProtection || decoded.SupportsStagedSelection() {
 		t.Fatal(decoded)
 	}
-	next := Config{RetentionDays: 90}
-	next.Storage = c.Storage
+	next := Config{RetentionDays: 90, Storage: c.Storage}
 	PreserveWriterFence(&next, decoded)
 	raw, err = json.Marshal(next)
 	if err != nil {
@@ -89,8 +89,7 @@ func TestScopedPickerConfigurationComposesAndPreservesProtections(t *testing.T) 
 
 func TestScopedPickerLayeredConfigurationRejectsMissingLowerCapabilities(t *testing.T) {
 	t.Parallel()
-	c := Config{RetentionDays: 90, ScopedPickerProtection: true, StagedSelectionProtection: true, PublicationCompositionProtection: true, DurableStorageProtection: true, ImportStagingProtection: true}
-	c.Storage.ArchiveFormat = "catalog-v4"
+	c := Config{RetentionDays: 90, ScopedPickerProtection: true, StagedSelectionProtection: true, PublicationCompositionProtection: true, DurableStorageProtection: true, ImportStagingProtection: true, Storage: destination.Config{ArchiveFormat: destination.FormatCatalogV4}}
 	raw, err := json.Marshal(c)
 	if err != nil {
 		t.Fatal(err)
@@ -116,8 +115,7 @@ func TestScopedPickerLayeredConfigurationRejectsMissingLowerCapabilities(t *test
 			t.Fatal("accepted mixed or ambiguous scoped configuration", probe)
 		}
 	}
-	next := Config{RetentionDays: 90}
-	next.Storage = c.Storage
+	next := Config{RetentionDays: 90, Storage: c.Storage}
 	PreserveWriterFence(&next, c)
 	if !next.StagedSelectionProtection || !next.ScopedPickerProtection {
 		t.Fatal("removed sticky protections")
@@ -138,7 +136,7 @@ func TestScopedPickerCatalogRetainsSettledCursorFenceWithoutEnablingLegacySelect
 		t.Fatal(legacy, err)
 	}
 	catalog := legacy
-	catalog.Storage.ArchiveFormat = "catalog-v4"
+	catalog.Storage.ArchiveFormat = destination.FormatCatalogV4
 	catalog.ScopedPickerProtection = true
 	raw, err = json.Marshal(catalog)
 	if err != nil {
