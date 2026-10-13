@@ -2,6 +2,7 @@ import hashlib
 import json
 from pathlib import Path
 import tempfile
+import subprocess
 import unittest
 
 import go_cache_context as keys
@@ -34,7 +35,8 @@ class ContextTests(unittest.TestCase):
                 return json.dumps(self.go).encode()
             self.fail(f'unexpected command {argv}')
         return keys.runtime_context(fake_go, self.env, self.release,
-                                    compiler=lambda name: {'binary': keys.digest(name), 'version': keys.digest('1')})
+                                    compiler=lambda name: {'binary': keys.digest(name), 'version': keys.digest('1')},
+                                    toolchain=lambda go: {'go': keys.digest('driver'), 'compile': keys.digest('compiler')})
 
     def plan(self, context=None, pr=12, worker=0, source=None):
         source = source or {'tested': 'a'*40, 'tree': 'b'*40, 'dependency': 'c'*64}
@@ -49,6 +51,7 @@ class ContextTests(unittest.TestCase):
         self.assertEqual(first.prefix, new.prefix)
         for label, changed in [('experiment', {'go': dict(context['go'], GOEXPERIMENT='loopvar')}),
                                ('compiler', {'cc': {'binary': 'new', 'version': '1'}}),
+                               ('Go binary', {'toolchain': {'go': 'different'}}),
                                ('runner image', {'image': {'ImageOS': 'ubuntu24', 'ImageVersion': '20261002.1.0'}}),
                                ('OS image', {'os_release': 'new'}), ('schema', {'schema': 'new'}),
                                ('arch', {'go': dict(context['go'], GOARCH='arm64')}),
@@ -115,6 +118,54 @@ class ContextTests(unittest.TestCase):
         with self.assertRaises(keys.InvalidContext):
             keys.compiler_identity('ccache gcc', run, lambda name: str(binary))
 
+    def test_go_driver_and_build_tools_bytes_invalidate_without_version_change(self):
+        driver = self.root/'go'
+        driver.write_bytes(b'driver')
+        tools = self.root/'tools'
+        tools.mkdir()
+        for name in ('compile', 'asm', 'link', 'cgo', 'vet'):
+            (tools/name).write_bytes(name.encode())
+        go = dict(self.go, GOROOT=str(self.root), GOTOOLDIR=str(tools))
+        first = keys.toolchain_identity(go, lambda name: str(driver))
+        for name, path in [('go', driver), *[(n, tools/n) for n in first if n != 'go']]:
+            with self.subTest(binary=name):
+                old = path.read_bytes()
+                path.write_bytes(old+b'changed')
+                self.assertNotEqual(first[name], keys.toolchain_identity(go, lambda n: str(driver))[name])
+                path.write_bytes(old)
+
+    def test_pr_ancestry_rejects_shallow_foreign_or_unexpected_merge(self):
+        base, head, tested = 'a'*40, 'b'*40, 'c'*40
+        event = {'pull_request': {'number': 12, 'base': {'sha': base}, 'head': {'sha': head}}}
+        shallow = [False]
+        parents = [base+' '+head]
+        calls = []
+        def git(source, *args):
+            calls.append(args)
+            if args[:2] == ('rev-parse', '--verify'):
+                return args[2].split('^')[0].encode()+b'\n'
+            if args == ('rev-parse', '--is-shallow-repository'):
+                return b'true\n' if shallow[0] else b'false\n'
+            if args[:3] == ('show', '-s', '--format=%P'):
+                return parents[0].encode()+b'\n'
+            if args[:2] == ('merge-base', '--is-ancestor'):
+                return b''
+            if args[0] == 'merge-base':
+                return b'd'*40+b'\n'
+            self.fail(str(args))
+        keys.pr_ancestry(self.root, tested, event, 12, git)
+        self.assertIn(('merge-base', '--is-ancestor', head, tested), calls)
+        shallow[0] = True
+        with self.assertRaises(keys.InvalidContext):
+            keys.pr_ancestry(self.root, tested, event, 12, git)
+        shallow[0] = False
+        parents[0] = head+' '+base
+        with self.assertRaises(keys.InvalidContext):
+            keys.pr_ancestry(self.root, tested, event, 12, git)
+        parents[0] = base+' '+head
+        with self.assertRaises(keys.InvalidContext):
+            keys.pr_ancestry(self.root, tested, event, 13, git)
+
     def test_tracked_actual_bytes_modes_symlinks_and_both_module_inputs(self):
         # Fake Git supplies immutable metadata, real proof helper inspects fixture files.
         files = {'go.mod': b'module example\n', 'go.sum': b'example sum\n', 'main.go': b'package main\n'}
@@ -139,6 +190,7 @@ class ContextTests(unittest.TestCase):
         untracked[0] = b'internal/new.go\0'
         with self.assertRaises(keys.InvalidContext):
             keys.source_identity(self.root, 'a'*40, git)
+
         untracked[0] = b''
         for name in ('go.mod', 'go.sum'):
             with self.subTest(name=name):
@@ -159,6 +211,24 @@ class ContextTests(unittest.TestCase):
         (self.root/'main.go').symlink_to(self.root/'go.mod')
         with self.assertRaises(keys.InvalidContext):
             keys.source_identity(self.root, 'a'*40, git)
+
+    def test_actual_git_index_hidden_edit_cannot_pass_source_proof(self):
+        source = self.root/'source'
+        source.mkdir()
+        def git(*args):
+            return subprocess.check_output(['git', '-C', str(source), *args], stderr=subprocess.PIPE)
+        git('init', '-q')
+        for name, data in [('go.mod', 'module fixture\n'), ('go.sum', ''), ('main.go', 'package main\n')]:
+            (source/name).write_text(data)
+        git('add', '.')
+        git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'fixture')
+        tested = git('rev-parse', 'HEAD').decode().strip()
+        keys.source_identity(source, tested)
+        git('update-index', '--assume-unchanged', 'main.go')
+        (source/'main.go').write_text('package changed\n')
+        self.assertEqual(git('status', '--porcelain'), b'')
+        with self.assertRaises(keys.InvalidContext):
+            keys.source_identity(source, tested)
 
 
 if __name__ == "__main__":

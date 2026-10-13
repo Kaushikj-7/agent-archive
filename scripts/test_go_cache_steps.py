@@ -10,7 +10,7 @@ from test_ci_workflow import jobs
 from test_release_assets import steps
 
 from go_cache_context import CachePlan, InvalidContext
-from go_cache_steps import restore_result, verify_restored, worker_success, emit, main
+from go_cache_steps import restore_result, verify_restored, worker_success, emit, main, execute_modules
 PIN = "55cc8345863c7cc4c66a329aec7e433d2d1c52a9"
 
 
@@ -23,6 +23,47 @@ class PhaseTests(unittest.TestCase):
         self.plan = CachePlan(prefix+'a'*40, prefix,
                               (str(root/'pr-go-build'), str(root/'pr-go-modules')),
                               {'tested': 'b'*40, 'tree': 'a'*40, 'dependency': 'd'*64})
+
+    def test_module_commands_use_job_budget_instead_of_metadata_probe_deadline(self):
+        def slow_download(argv, **kwargs):
+            if kwargs['timeout'] <= 31:
+                raise TimeoutError('ordinary cold download exceeds metadata deadline')
+            return b'download completed'
+        with mock.patch('go_cache_steps.subprocess.check_output', side_effect=slow_download):
+            self.assertEqual(execute_modules(['go', 'mod', 'download']), b'download completed')
+
+    def test_paths_phase_cleans_before_any_source_or_toolchain_probe(self):
+        build, modules = map(Path, self.plan.paths)
+        build.mkdir()
+        (build/'old').write_text('partial')
+        env = {'GITHUB_EVENT_NAME': 'pull_request', 'PR_NUMBER': '42', 'SHARD': '0',
+               'GITHUB_WORKSPACE': self.temp.name, 'RUNNER_TEMP': self.temp.name,
+               'GOCACHE': str(build), 'GOMODCACHE': str(modules)}
+        with mock.patch.dict(os.environ, env, clear=True), \
+                mock.patch('sys.argv', ['go_cache_steps.py', 'paths']), \
+                mock.patch('go_cache_steps.source_identity') as source, \
+                mock.patch('go_cache_steps.runtime_context') as context:
+            self.assertEqual(main(), 0)
+        self.assertFalse((build/'old').exists())
+        self.assertTrue(modules.is_dir())
+        source.assert_not_called()
+        context.assert_not_called()
+
+    def test_paths_phase_rejects_symlink_owned_directory_before_tool_use(self):
+        build, modules = map(Path, self.plan.paths)
+        outside = Path(self.temp.name)/'outside'
+        outside.mkdir()
+        (outside/'keep').write_text('unrelated')
+        build.symlink_to(outside, target_is_directory=True)
+        env = {'GITHUB_EVENT_NAME': 'pull_request', 'PR_NUMBER': '42', 'SHARD': '0',
+               'GITHUB_WORKSPACE': self.temp.name, 'RUNNER_TEMP': self.temp.name,
+               'GOCACHE': str(build), 'GOMODCACHE': str(modules)}
+        with contextlib.redirect_stderr(io.StringIO()), mock.patch.dict(os.environ, env, clear=True), \
+                mock.patch('sys.argv', ['go_cache_steps.py', 'paths']), \
+                mock.patch('go_cache_steps.runtime_context') as context:
+            self.assertEqual(main(), 1)
+        self.assertEqual((outside/'keep').read_text(), 'unrelated')
+        context.assert_not_called()
 
     def test_silent_service_miss_discards_partial_state_then_verifies(self):
         build = Path(self.plan.paths[0])
@@ -124,6 +165,8 @@ class WorkflowTests(unittest.TestCase):
         short = self.workflows['test']['linux-short']
         self.assertIn("if: github.event_name == 'pull_request'", short)
         self.assertIn('shard: [0, 1]', short)
+        self.assertIn('fetch-depth: 0', short)
+        self.assertLess(short.index('scripts/go_cache_steps.py paths'), short.index('actions/setup-go@'))
 
     def test_cache_outcomes_never_gate_runner_and_saves_require_current_success(self):
         found = steps(self.workflows['test']['linux-short'])

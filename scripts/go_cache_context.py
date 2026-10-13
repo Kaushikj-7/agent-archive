@@ -20,7 +20,7 @@ import scope_native_verify as scope
 SCHEMA = 'aa-pr-go-v1'
 GO_FIELDS = ('GOVERSION GOOS GOARCH GOHOSTOS GOHOSTARCH GOAMD64 GOARM64 '
              'CGO_ENABLED GOEXPERIMENT GOFLAGS GOTOOLCHAIN CC CXX '
-             'CGO_CFLAGS CGO_CPPFLAGS CGO_CXXFLAGS CGO_LDFLAGS GOWORK').split()
+             'CGO_CFLAGS CGO_CPPFLAGS CGO_CXXFLAGS CGO_LDFLAGS GOWORK GOROOT GOTOOLDIR').split()
 SHA = re.compile(r'[0-9a-f]{40}')
 
 
@@ -34,6 +34,27 @@ def digest(value):
 
 def execute(argv):
     return subprocess.check_output(argv, stderr=subprocess.PIPE, timeout=30)
+
+
+def pr_ancestry(source, tested, event, pr_number, git=scope.git):
+    """Require the actual event base/head and tested merge before cache use."""
+    pr = event['pull_request']
+    if type(pr.get('number')) is not int or pr['number'] != pr_number:
+        raise InvalidContext('PR event ownership differs')
+    base, head = pr['base']['sha'], pr['head']['sha']
+    for sha in (base, head, tested):
+        if not isinstance(sha, str) or not SHA.fullmatch(sha):
+            raise InvalidContext('invalid event commit')
+        if git(source, 'rev-parse', '--verify', sha+'^{commit}').decode().strip() != sha:
+            raise InvalidContext('event commit unavailable')
+    if git(source, 'rev-parse', '--is-shallow-repository') != b'false\n':
+        raise InvalidContext('PR history unavailable')
+    if git(source, 'show', '-s', '--format=%P', tested).decode().strip().split() != [base, head]:
+        raise InvalidContext('tested source is not event merge')
+    if not SHA.fullmatch(git(source, 'merge-base', base, head).decode().strip()):
+        raise InvalidContext('PR histories disconnected')
+    for sha in (base, head):
+        git(source, 'merge-base', '--is-ancestor', sha, tested)
 
 
 def source_identity(source, tested, git=scope.git, matches=scope.working_input_matches,
@@ -87,8 +108,28 @@ def compiler_identity(command, run=execute, which=None):
             'version': hashlib.sha256(run([str(binary), '--version'])).hexdigest()}
 
 
+def toolchain_identity(go, which=shutil.which):
+    """Hash the actual Go driver and native build/vet tools, not only their version."""
+    selected = which('go')
+    if selected is None:
+        raise InvalidContext('Go executable unavailable')
+    paths = {'go': Path(selected)}
+    tool_root = Path(go['GOTOOLDIR'])
+    if not tool_root.is_absolute() or not Path(go['GOROOT']).is_absolute():
+        raise InvalidContext('Go toolchain paths unavailable')
+    for name in ('compile', 'asm', 'link', 'cgo', 'vet'):
+        paths[name] = tool_root/name
+    result = {}
+    for name, path in paths.items():
+        binary = path.resolve(strict=True)
+        if not binary.is_file():
+            raise InvalidContext('Go toolchain binary is not regular')
+        result[name] = hashlib.sha256(binary.read_bytes()).hexdigest()
+    return result
+
+
 def runtime_context(run=execute, env=None, os_release=Path('/etc/os-release'),
-                    compiler=compiler_identity):
+                    compiler=compiler_identity, toolchain=toolchain_identity):
     env = os.environ if env is None else env
     version = run(['go', 'version']).decode().strip()
     go = json.loads(run(['go', 'env', '-json', *GO_FIELDS]))
@@ -117,6 +158,7 @@ def runtime_context(run=execute, env=None, os_release=Path('/etc/os-release'),
             'runner_arch': env['RUNNER_ARCH'], 'image': image,
             'os_release': hashlib.sha256(release).hexdigest(),
             'cc': compiler(go['CC']), 'cxx': compiler(go['CXX']),
+            'toolchain': toolchain(go),
             'race': True, 'tags': [], 'schema': SCHEMA}
 
 
@@ -142,15 +184,20 @@ def owned_plan(namespace, worker, context, source, runner_temp):
             or not SHA.fullmatch(source['tested']) or not SHA.fullmatch(source['tree'])
             or not re.fullmatch(r'[0-9a-f]{64}', source['dependency'])):
         raise InvalidContext('invalid source proof outputs')
-    root = Path(runner_temp)
-    if (not root.is_absolute() or root.is_symlink() or root.resolve() != root
-            or any(char in str(root) for char in '\r\n')):
-        raise InvalidContext('runner temporary root is not canonical')
+    paths = owned_paths(runner_temp)
     prefix = f'{namespace}-w{worker}-{digest(context)}-{source["dependency"]}-'
     primary = prefix + source['tree']
     if len(primary) > 512 or not re.fullmatch(r'[a-zA-Z0-9-]+', primary):
         raise InvalidContext('unsafe or oversized cache key')
-    return CachePlan(primary, prefix, (str(root/'pr-go-build'), str(root/'pr-go-modules')), source)
+    return CachePlan(primary, prefix, paths, source)
+
+
+def owned_paths(runner_temp):
+    root = Path(runner_temp)
+    if (not root.is_absolute() or root.is_symlink() or root.resolve() != root
+            or any(char in str(root) for char in '\r\n')):
+        raise InvalidContext('runner temporary root is not canonical')
+    return (str(root/'pr-go-build'), str(root/'pr-go-modules'))
 
 
 def outputs(plan):
@@ -161,13 +208,17 @@ def outputs(plan):
 
 
 def prepare_paths(plan, clear=False):
-    roots = {Path(p).parent for p in plan.paths}
-    if len(roots) != 1 or [Path(p).name for p in plan.paths] != ['pr-go-build', 'pr-go-modules']:
+    prepare_owned_paths(plan.paths, clear)
+
+
+def prepare_owned_paths(paths, clear=False):
+    roots = {Path(p).parent for p in paths}
+    if len(roots) != 1 or [Path(p).name for p in paths] != ['pr-go-build', 'pr-go-modules']:
         raise InvalidContext('cache paths outside controlled directories')
     root = roots.pop()
     if not root.is_absolute() or root.resolve() != root:
         raise InvalidContext('cache root is not canonical')
-    for raw in plan.paths:
+    for raw in paths:
         path = Path(raw)
         if path.is_symlink() or (path.exists() and not path.is_dir()):
             raise InvalidContext('unsafe cache path')

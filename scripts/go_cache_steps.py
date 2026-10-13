@@ -12,14 +12,21 @@ import re
 import subprocess
 import sys
 
-from go_cache_context import (InvalidContext, cache_plan, digest, execute, outputs,
-                              prepare_paths, runtime_context, source_identity)
+from go_cache_context import (InvalidContext, cache_plan, digest, outputs, owned_paths,
+                              prepare_paths, prepare_owned_paths, pr_ancestry,
+                              runtime_context, source_identity)
 
 
 @dataclass(frozen=True)
 class Restore:
     state: str
     key: str = ""
+
+
+def execute_modules(argv):
+    # Downloads can exceed a metadata probe's 30 seconds on an ordinary cold
+    # runner. The hosted job's existing 30-minute deadline remains authoritative.
+    return subprocess.check_output(argv, stderr=subprocess.PIPE, timeout=1800)
 
 
 def restore_result(plan, outcome, matched, exact):
@@ -40,7 +47,7 @@ def restore_result(plan, outcome, matched, exact):
     raise InvalidContext('cache match violates exact or worker ownership contract')
 
 
-def verify_restored(plan, outcome, matched, exact, guard, command=execute):
+def verify_restored(plan, outcome, matched, exact, guard, command=execute_modules):
     result = restore_result(plan, outcome, matched, exact)
     prepare_paths(plan, clear=result.state in ('miss', 'error'))
     guard(plan.source)
@@ -71,7 +78,7 @@ def emit(values, output):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('phase', choices=('prepare', 'verify', 'complete'))
+    parser.add_argument('phase', choices=('paths', 'prepare', 'verify', 'complete'))
     args = parser.parse_args()
     env = os.environ
     try:
@@ -81,13 +88,22 @@ def main():
             raise InvalidContext('unsafe PR worker identifiers')
         source = Path(env['GITHUB_WORKSPACE']).resolve()
         runner_temp = Path(env['RUNNER_TEMP'])
+        paths = owned_paths(runner_temp)
+        if env.get('GOCACHE') != paths[0] or env.get('GOMODCACHE') != paths[1]:
+            raise InvalidContext('worker caches differ from controlled paths')
+        if args.phase == 'paths':
+            prepare_owned_paths(paths, clear=True)
+            return 0
         state_path = runner_temp/'pr-go-cache-plan.json'
+        event = json.loads(Path(env['GITHUB_EVENT_PATH']).read_text())
+        pr_ancestry(source, env['GITHUB_SHA'], event, int(env['PR_NUMBER']))
         current = source_identity(source, env['GITHUB_SHA'])
         context = runtime_context()
         plan = cache_plan(int(env['PR_NUMBER']), int(env['SHARD']), context, current, runner_temp)
         if env.get('GOCACHE') != plan.paths[0] or env.get('GOMODCACHE') != plan.paths[1]:
             raise InvalidContext('worker caches differ from saved paths')
         def guard(expected):
+            pr_ancestry(source, env['GITHUB_SHA'], event, int(env['PR_NUMBER']))
             if source_identity(source, env['GITHUB_SHA']) != expected:
                 raise InvalidContext('tracked source changed during cache execution')
         if args.phase == 'prepare':

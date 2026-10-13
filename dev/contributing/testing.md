@@ -168,13 +168,14 @@ and security advisories are never stored as verification evidence in a cache.
 Actual discovery and execution use `-count=1` regardless of cache outcome, and
 the required verdict always reconciles freshly generated artifacts.
 
-Keys include actual Go 1.27.2/native OS/architecture/CGO/flags, C/C++ compiler
-binary/version identities, runner image/version and OS metadata, both module
+Keys include actual Go 1.27.2 driver/build/vet tool bytes, native
+OS/architecture/CGO/flags, C/C++ compiler binary/version identities, runner image/version and OS metadata, both module
 files' bytes, PR number, worker and source tree. A single narrow restore prefix
 may reuse older source from the same PR/worker/dependency/build context; Go's
 input-derived compilation keys rebuild changed code. Context or dependency
 changes have no broad fallback. Missing/unsafe context fails explicitly. Actual
-tracked bytes/types/modes are checked before restore, after module verification
+event base/head/tested merge ancestry and tracked bytes/types/modes are checked
+before restore, after module verification
 and after successful execution, including index-hidden edits. Module download
 and `go mod verify` run on hits and misses. Source/checksum/discovery/test
 failures remain failures and cannot save. A missing or transport-failed restore
