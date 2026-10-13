@@ -373,3 +373,60 @@ func TestPickerCanonicalLookupPreservesAliasReferenceAndRejectsAmbiguity(t *test
 		t.Fatalf("delete alias %v %+v", err, batch)
 	}
 }
+
+func TestPickerRowsCarryIndexedParentCountsWithoutChildEnumeration(t *testing.T) {
+	_, w, store, _ := pickerReaderFixture(t)
+	publishPickerHarness(t, w, "actual-parent", "claude", nil)
+	publishPickerHarness(t, w, "ordinary-child", "claude", func(a *archive.Metadata) { a.ParentSessionID = "actual-parent" })
+	publishPickerHarness(t, w, "replay-child", "claude", func(a *archive.Metadata) { a.ParentSessionID = "actual-parent"; a.Replay = &archive.Replay{} })
+	meter := &pickerMeter{qualifiedStore: store}
+	s, err := OpenSnapshot(t.Context(), meter, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, err := s.PickerPage(t.Context(), PickerQuery{Scope: PickerScope{All: true}, Membership: "browse", Harness: "claude", Limit: 100}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, item := range page.Rows {
+		if item.Row.SessionID == "actual-parent" {
+			found = true
+			if item.Row.OrdinaryChildren != 1 || item.Row.ReplayChildren != 1 {
+				t.Fatalf("wrong indexed parent counts %+v", item.Row)
+			}
+		}
+		if item.Row.SessionID == "ordinary-child" || item.Row.SessionID == "replay-child" {
+			t.Fatal("child appeared in root page")
+		}
+	}
+	if !found || meter.metadata != 0 || meter.lists != 0 {
+		t.Fatalf("parent found=%v meter=%+v", found, meter)
+	}
+}
+
+func TestPickerScopeRangeCeilingCountsUniqueMemberships(t *testing.T) {
+	s, _, _, _ := pickerReaderFixture(t)
+	ids := make([]string, 32)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("project-%d", i)
+	}
+	q := PickerQuery{Scope: PickerScope{ProjectIDs: append(slices.Clone(ids), ids...)}, Membership: "browse", Limit: 1}
+	p, err := s.PickerPage(t.Context(), q, "")
+	if err != nil || len(p.Rows) != 1 || !p.More {
+		t.Fatalf("32 actual ranges %+v %v", p, err)
+	}
+	reordered := q
+	slices.Reverse(reordered.Scope.ProjectIDs)
+	if _, err = s.PickerPage(t.Context(), reordered, p.Next); err != nil {
+		t.Fatal("normalized request changed cursor binding", err)
+	}
+	q.Scope.ProjectIDs = append(q.Scope.ProjectIDs, "one-more-distinct")
+	if _, err = s.PickerPage(t.Context(), q, ""); !errors.Is(err, ErrPickerUnsupported) {
+		t.Fatal("33 actual ranges accepted", err)
+	}
+	q.Scope = PickerScope{RepoKey: testPickerRepo('a'), ProjectIDs: ids}
+	if _, err = s.PickerPage(t.Context(), q, ""); !errors.Is(err, ErrPickerUnsupported) {
+		t.Fatal("repository adds an actual range", err)
+	}
+}
