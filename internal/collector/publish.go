@@ -83,19 +83,10 @@ func (s *sessionScan) publishPending(ctx context.Context, pending state.PendingP
 	if err := s.local.ValidateReadySelection(ctx, pending); err != nil {
 		return outcomeSkipped, err
 	}
-	if remote, ok := s.remote.(storage.CatalogPublisher); ok && remote.CatalogMetadataAuthority() {
-		if pending.Catalog == nil {
-			id, revision, err := remote.FreezeCatalogMutation(ctx, pending.MetadataKey)
-			if err != nil {
-				return outcomeSkipped, err
-			}
-			pending.Catalog = &state.CatalogPublication{Protocol: 10, ID: id, ExpectedRevision: revision}
-			if err = s.local.SavePending(s.id(), pending); err != nil {
-				return outcomeSkipped, err
-			}
-		}
-	} else if pending.Catalog != nil {
-		return outcomeSkipped, errors.New("catalog pending publication requires catalog destination")
+	var freezeErr error
+	pending, freezeErr = s.freezeCatalogPending(ctx, pending)
+	if freezeErr != nil {
+		return outcomeSkipped, freezeErr
 	}
 
 	if remote, ok := s.remote.(storage.CatalogLifecycle); ok && pending.Catalog != nil {
@@ -474,4 +465,32 @@ func (s *sessionScan) checkPendingUploadInputs(pending state.PendingPublication)
 		return errors.New("pending source checksum does not match its persisted bytes")
 	}
 	return nil
+}
+
+func (s *sessionScan) freezeCatalogPending(ctx context.Context, pending state.PendingPublication) (state.PendingPublication, error) {
+	if remote, ok := s.remote.(storage.CatalogPublisher); ok && remote.CatalogMetadataAuthority() {
+		if pending.Catalog == nil {
+			id, revision, err := remote.FreezeCatalogMutation(ctx, pending.MetadataKey)
+			if err != nil {
+				return pending, err
+			}
+			protocol := uint64(10)
+			if current, ok := remote.(interface {
+				CatalogWriteProtocol(context.Context) (uint64, error)
+			}); ok {
+				protocol, err = current.CatalogWriteProtocol(ctx)
+				if err != nil {
+					return pending, err
+				}
+			}
+			pending.Catalog = &state.CatalogPublication{Protocol: protocol, ID: id, ExpectedRevision: revision}
+			if err = s.local.SavePending(s.id(), pending); err != nil {
+				return pending, err
+			}
+		}
+	} else if pending.Catalog != nil {
+		return pending, errors.New("catalog pending publication requires catalog destination")
+	}
+
+	return pending, nil
 }

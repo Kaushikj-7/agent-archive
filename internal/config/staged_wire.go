@@ -7,7 +7,8 @@ import (
 	"strings"
 )
 
-// Only the new authority is tightened; old configuration decoding is unchanged.
+// Protected staged and scoped authorities use exact selecting fields; older
+// configuration decoding remains unchanged.
 func checkStagedConfigAuthority(data []byte) error {
 	d := json.NewDecoder(bytes.NewReader(data))
 	token, err := d.Token()
@@ -31,14 +32,14 @@ func checkStagedConfigAuthority(data []byte) error {
 		if err = d.Decode(&value); err != nil {
 			return err
 		}
-		for _, name := range []string{"schema_version", "staged_selection_protection"} {
+		for _, name := range []string{"schema_version", "staged_selection_protection", "scoped_picker_protection"} {
 			if strings.EqualFold(key, name) {
 				seen[name]++
 				if name == "schema_version" {
 					schema = value
 					schemaExact = schemaExact && key == name
 				}
-				if name == "staged_selection_protection" {
+				if name == "staged_selection_protection" || name == "scoped_picker_protection" {
 					staged = true
 					if key != name || seen[name] != 1 || bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
 						return errors.New("invalid staged configuration authority")

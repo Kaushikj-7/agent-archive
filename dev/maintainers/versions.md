@@ -206,3 +206,11 @@ Only protocol 10/schema 4 is writable. Complete construction, transactional rows
 upgrade, paged reads and all existing writer protection composition must land
 before activating 14; frozen protocol-10 owners must drain under the destination
 seal first. See the [frozen contracts and consumer inventory](../proposals/bounded-repository-picker.md#pr-1-frozen-reservations-and-consumer-inventory).
+
+Scoped construction support consumes the exact protocol-11/schema-5 head and
+protocol-11 coordinator descriptors. Configuration version 14 composes existing
+protections under `scoped-picker-v1`. Catalog-to-catalog upgrades checkpoint their
+captured source, candidate roots, exact source validator and bounded progress in
+the coordinator CAS record. The upgrade seal excludes GC until configuration
+acknowledges activation; mixed activation states refuse protected writes. Scoped
+rollback retains the complete protocol-11 roots and permanent writer fence.

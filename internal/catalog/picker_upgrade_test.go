@@ -2,8 +2,13 @@ package catalog
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/state"
+	"os"
 	"testing"
 
 	"github.com/wangjohn/agent-archive/internal/destination"
@@ -290,5 +295,207 @@ func TestScopedCommitLostResponseRetainsExactReceipts(t *testing.T) {
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+func TestScopedStorePublicationCASRaceAndConflictKeepCompleteUniverse(t *testing.T) {
+	t.Parallel()
+	w, base := fixture(t)
+	completePickerUpgrade(t, w, base)
+	delayed := &pausedCASStore{qualifiedStore: base, reached: make(chan struct{}), resume: make(chan struct{})}
+	store, err := Wrap(delayed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := mutation(t, store.Writer, "scoped-publication")
+	raw, err := json.Marshal(first.Next.Summary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, err := store.BeginPublication(t.Context(), first.ID, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.EndPublicationAttempt(first.ID)
+	delayed.mu.Lock()
+	delayed.armed = true
+	delayed.mu.Unlock()
+	done := make(chan error, 1)
+	go func() { done <- store.Publication(first.ID, first.SessionKey, "").Put(ctx, first.SessionKey, raw) }()
+	<-delayed.reached
+	unrelated := mutation(t, w, "unrelated-scoped-race")
+	if _, err = w.Commit(t.Context(), unrelated); err != nil {
+		t.Fatal(err)
+	}
+	close(delayed.resume)
+	if err = <-done; err != nil {
+		t.Fatal(err)
+	}
+	if err = store.CompletePublication(ctx, first.ID, raw); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = w.Commit(t.Context(), first); err != nil {
+		t.Fatal("identical publication digest changed", err)
+	}
+	_, revision, err := w.Find(t.Context(), first.SessionKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first.ID = "new-conflicting-invocation"
+	first.ExpectedRevision = "stale-revision"
+	if _, err = w.Commit(t.Context(), first); !errors.Is(err, ErrConflict) {
+		t.Fatal(err)
+	}
+	first.ExpectedRevision = revision
+	if _, err = w.Commit(t.Context(), first); err != nil {
+		t.Fatal(err)
+	}
+	h, etag, err := w.Head(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	verifier := &PickerUpgrade{writer: w, State: PickerUpgradeState{Source: h, SourceETag: etag, Candidate: h, Copied: 2, Memberships: 24}}
+	if err = verifier.verify(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPickerUpgradeDrainsFrozenOldJournalAndPreservesCleanupReceipt(t *testing.T) {
+	t.Parallel()
+	store, provider, localStore, pending, guard, cfg := journalFixture(t)
+	j := *pending.Catalog.Recovery
+	_, settled, err := store.BeginJournalPublication(t.Context(), j.MutationID, pending.MetadataBytes, j, guard)
+	if err != nil || settled {
+		t.Fatal(settled, err)
+	}
+	var ctx context.Context
+	store.EndPublicationAttempt(j.MutationID)
+	u, err := OpenPickerUpgrade(t.Context(), provider, cfg, pickerCutover{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = u.Step(t.Context(), 1); !errors.Is(err, ErrAdmissionClosed) {
+		t.Fatal(err)
+	}
+	// Transfer only the persisted original journal, then complete its old digest.
+	ctx, settled, err = store.BeginJournalPublication(t.Context(), j.MutationID, pending.MetadataBytes, j, guard)
+	if err != nil || settled {
+		t.Fatal(settled, err)
+	}
+	if err = store.Put(ctx, pending.SourceKey, pending.SourceBytes); err != nil {
+		t.Fatal(err)
+	}
+	if err = store.Publication(j.MutationID, pending.MetadataKey, "").Put(ctx, pending.MetadataKey, pending.MetadataBytes); err != nil {
+		t.Fatal(err)
+	}
+	if err = store.CompletePublication(ctx, j.MutationID, pending.MetadataBytes); err != nil {
+		t.Fatal(err)
+	}
+	store.EndPublicationAttempt(j.MutationID)
+	for {
+		done, e := u.Step(t.Context(), 1)
+		if e != nil {
+			t.Fatal(e)
+		}
+		if done {
+			break
+		}
+	}
+	if err = u.Activate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err = u.FinishActivation(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	ctx, settled, err = store.BeginJournalPublication(t.Context(), j.MutationID, pending.MetadataBytes, j, guard)
+	if err != nil || !settled {
+		t.Fatal(settled, err)
+	}
+	defer store.EndPublicationAttempt(j.MutationID)
+	if err = store.Put(ctx, pending.SourceKey, pending.SourceBytes); !errors.Is(err, ErrAdmissionClosed) {
+		t.Fatal("old completed journal authorized new writes", err)
+	}
+	if err = guard.RecordJournalRemoval(j); err != nil {
+		t.Fatal(err)
+	}
+	if err = localStore.RemoveCatalogPending("journal", j, guard); err != nil {
+		t.Fatal(err)
+	}
+	proof, err := guard.ProveJournalRemoval(j)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = store.AcknowledgeJournalRemoval(t.Context(), proof, guard); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestScopedJournalUsesDistinctFrozenProtocol(t *testing.T) {
+	t.Parallel()
+	store, provider, _, pending, _, cfg := journalFixture(t)
+	u, err := OpenPickerUpgrade(t.Context(), provider, cfg, pickerCutover{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		done, e := u.Step(t.Context(), 2)
+		if e != nil {
+			t.Fatal(e)
+		}
+		if done {
+			break
+		}
+	}
+	if err = u.Activate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err = u.FinishActivation(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	home := t.TempDir()
+	if err = os.Chmod(home, 0700); err != nil {
+		t.Fatal(err)
+	}
+	localStore, err := state.Open(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = config.Save(home, config.Config{MachineID: "synthetic"}); err != nil {
+		t.Fatal(err)
+	}
+	guard, err := local.LockCollectorGuard(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer guard.Release()
+	origin, err := guard.Origin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending.Catalog.Protocol = 11
+	pending.Catalog.Recovery.Protocol = 11
+	pending.Catalog.Recovery.Origin = origin
+	digest, err := localStore.CatalogJournalDigest("journal", pending)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending.Catalog.Recovery.SHA256 = digest
+	if err = localStore.SavePending("journal", pending); err != nil {
+		t.Fatal(err)
+	}
+	j := *pending.Catalog.Recovery
+	ctx, settled, err := store.BeginJournalPublication(t.Context(), j.MutationID, pending.MetadataBytes, j, guard)
+	if err != nil || settled {
+		t.Fatal(settled, err)
+	}
+	defer store.EndPublicationAttempt(j.MutationID)
+	if err = store.Put(ctx, pending.SourceKey, pending.SourceBytes); err != nil {
+		t.Fatal(err)
+	}
+	if err = store.Publication(j.MutationID, pending.MetadataKey, "").Put(ctx, pending.MetadataKey, pending.MetadataBytes); err != nil {
+		t.Fatal(err)
+	}
+	if err = store.CompletePublication(ctx, j.MutationID, pending.MetadataBytes); err != nil {
+		t.Fatal(err)
 	}
 }
