@@ -260,6 +260,10 @@ func TestCursorDatabaseReader(t *testing.T) {
 				"ws-no-uri": {ID: "ws-no-uri", KeyID: "ws-no-uri", WorkspaceID: "x", WorkspaceIdentifier: true},
 				"k2":        {ID: "k2", KeyID: "k2"},
 			} {
+				w.CursorFacts = agentapi.CursorComposerFacts{VersionPresent: id != "k2", Version: 18, Relationships: agentapi.CursorRelationshipsAbsent}
+				if id == "k2" {
+					w.CursorFacts.Version = 0
+				}
 				if got := byID[id]; !reflect.DeepEqual(got, w) {
 					t.Errorf("%s: %+v, want %+v", id, got, w)
 				}

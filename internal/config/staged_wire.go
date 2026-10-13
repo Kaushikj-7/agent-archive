@@ -31,14 +31,14 @@ func checkStagedConfigAuthority(data []byte) error {
 		if err = d.Decode(&value); err != nil {
 			return err
 		}
-		for _, name := range []string{"schema_version", "staged_selection_protection"} {
+		for _, name := range []string{"schema_version", "staged_selection_protection", "settled_cursor_selection_protection"} {
 			if strings.EqualFold(key, name) {
 				seen[name]++
 				if name == "schema_version" {
 					schema = value
 					schemaExact = schemaExact && key == name
 				}
-				if name == "staged_selection_protection" {
+				if name == "staged_selection_protection" || name == "settled_cursor_selection_protection" {
 					staged = true
 					if key != name || seen[name] != 1 || bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
 						return errors.New("invalid staged configuration authority")

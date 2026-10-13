@@ -765,6 +765,7 @@ type CatalogPublication struct {
 }
 
 type PendingPublication struct {
+	CursorSelection *StagedSelection    `json:"cursor_commit4,omitempty"`
 	JournalVersion  int                 `json:"journal_version,omitempty"`
 	StagedSelection *StagedSelection    `json:"staged_commit3,omitempty"`
 	Selection       *ReadySelection     `json:"selection_commit,omitempty"`

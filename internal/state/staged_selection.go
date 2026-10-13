@@ -8,7 +8,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
+	"github.com/wangjohn/agent-archive/internal/agents/cursor"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 )
@@ -16,13 +18,15 @@ import (
 // StagedSelection is a separately mandatory codec; ordinary selection2 never
 // acquires staged meaning. Stage and request authority are derived by Store.
 type StagedSelection struct {
-	Version      int            `json:"version"`
-	StageSHA256  string         `json:"stage_sha256"`
-	RosterSHA256 string         `json:"roster_sha256"`
-	CoveredToken string         `json:"covered_token"`
-	HadRequest   bool           `json:"had_request"`
-	Core         ReadySelection `json:"proof"`
-	SHA256       string         `json:"sha256"`
+	CursorFacts       *cursor.SettledImportFacts `json:"cursor_facts,omitempty"`
+	CursorFactsSHA256 string                     `json:"cursor_facts_sha256,omitempty"`
+	Version           int                        `json:"version"`
+	StageSHA256       string                     `json:"stage_sha256"`
+	RosterSHA256      string                     `json:"roster_sha256"`
+	CoveredToken      string                     `json:"covered_token"`
+	HadRequest        bool                       `json:"had_request"`
+	Core              ReadySelection             `json:"proof"`
+	SHA256            string                     `json:"sha256"`
 }
 
 // UnmarshalJSON enforces the bounded, closed staged-selection proof codec.
@@ -30,7 +34,17 @@ func (q *StagedSelection) UnmarshalJSON(raw []byte) error {
 	if len(raw) > 16<<10 {
 		return ErrDurableStorageRecovery
 	}
-	if err := strictStagedKeys(raw, []string{"version", "stage_sha256", "roster_sha256", "covered_token", "had_request", "proof", "sha256"}); err != nil {
+	keys := []string{"version", "stage_sha256", "roster_sha256", "covered_token", "had_request", "proof", "sha256"}
+	var version struct {
+		Version int `json:"version"`
+	}
+	if json.Unmarshal(raw, &version) != nil {
+		return ErrDurableStorageRecovery
+	}
+	if version.Version == 4 {
+		keys = append(keys, "cursor_facts_sha256", "cursor_facts")
+	}
+	if err := strictStagedKeys(raw, keys); err != nil {
 		return err
 	}
 	type plain StagedSelection
@@ -65,7 +79,7 @@ func (q *StagedSelection) validateDigest() error {
 }
 
 func (q *StagedSelection) validateProofShape() error {
-	if q == nil || q.Version != 3 || q.Core.Version != 3 || q.Core.Purpose != "staged-import" || q.Core.SHA256 != "" || q.HadRequest != (q.CoveredToken != "") || len(q.CoveredToken) > 128 || len(q.Core.DestinationID) == 0 || len(q.Core.DestinationID) > 128 {
+	if q == nil || !q.validStagedProtocol() || q.Core.SHA256 != "" || q.HadRequest != (q.CoveredToken != "") || len(q.CoveredToken) > 128 || len(q.Core.DestinationID) == 0 || len(q.Core.DestinationID) > 128 {
 		return ErrDurableStorageRecovery
 	}
 	for _, digest := range []string{q.StageSHA256, q.RosterSHA256, q.SHA256, q.Core.BundleSHA256, q.Core.MetadataSHA256, q.Core.SourceSetSHA256, q.Core.BindingSHA256, q.Core.AdmissionContext, q.Core.PolicyContext} {
@@ -89,11 +103,14 @@ func (q *StagedSelection) validateProofShape() error {
 }
 
 func (p PendingPublication) validateStagedShape() error {
-	if p.StagedSelection == nil {
+	if p.StagedProof() == nil {
 		return nil
 	}
-	q := p.StagedSelection
-	if p.JournalVersion != 3 || p.Selection != nil || p.Catalog != nil || p.MetadataOnly || p.History != nil || p.Bundle.History != nil || p.ImportExpectedMetadataSHA256 != "" || len(p.ImportRetired) != 0 || p.RequestToken != q.CoveredToken {
+	q := p.StagedProof()
+	if p.CursorSelection != nil && p.StagedSelection != nil || (q.Version == 4 && p.CursorSelection == nil) || (q.Version == 3 && p.StagedSelection == nil) {
+		return ErrDurableStorageRecovery
+	}
+	if p.JournalVersion != q.Version || p.Selection != nil || p.Catalog != nil || p.MetadataOnly || p.History != nil || p.Bundle.History != nil || p.ImportExpectedMetadataSHA256 != "" || len(p.ImportRetired) != 0 || p.RequestToken != q.CoveredToken {
 		return ErrReadySelectionFrozen
 	}
 	if err := q.validateDigest(); err != nil {
@@ -125,12 +142,19 @@ func (s *Store) stagedContext(ctx context.Context, id string) (config.Config, ar
 		return cfg, archive.SessionRegistration{}, ImportStage{}, errors.Join(ErrReadySelectionFrozen, err)
 	}
 	reg, found, err := s.LoadRegistration(id)
-	if err != nil || !found || reg.StagedImportSHA256 == "" || reg.CaptureFrozen || reg.HistoricalProject != nil || reg.Harness.Name == "cursor" || !cfg.AcceptSession(reg) || reg.DestinationID != cfg.DestinationID() {
+	if err != nil || !found || reg.StagedImportSHA256 == "" || reg.CaptureFrozen || reg.HistoricalProject != nil || !cfg.AcceptSession(reg) || reg.DestinationID != cfg.DestinationID() {
 		return cfg, reg, ImportStage{}, errors.Join(ErrReadySelectionFrozen, err)
 	}
 	stage, found, err := s.LoadImportStage(ctx, reg)
-	if err != nil || !found || stage.Version != 2 || !stage.TypedSelection || len(stage.Preserved) != 0 || stage.Bundle.History != nil || len(stage.Children) > 64 {
+	if err != nil || !found || (stage.Version != 2 && stage.Version != 3) || !stage.TypedSelection || len(stage.Preserved) != 0 || stage.Bundle.History != nil || len(stage.Children) > 64 {
 		return cfg, reg, stage, errors.Join(ErrReadySelectionFrozen, err)
+	}
+	if reg.Harness.Name == archive.HarnessCursor {
+		if !cfg.SupportsSettledCursorSelection() || stage.Version != 3 || stage.validateCursorFacts(reg) != nil || s.validateSettledIndex(reg) != nil {
+			return cfg, reg, stage, ErrReadySelectionFrozen
+		}
+	} else if stage.Version != 2 {
+		return cfg, reg, stage, ErrReadySelectionFrozen
 	}
 	if _, err := agentmeta.JSONWireBound(ctx, stage.Children, 64<<10); err != nil {
 		return cfg, reg, stage, errors.Join(ErrDurableStorageCapacity, err)
@@ -141,7 +165,7 @@ func (s *Store) stagedContext(ctx context.Context, id string) (config.Config, ar
 // FreezeStagedSelection accepts only freshly prepared typed noncatalog stages.
 // It never promotes a legacy stage or obtains evidence from native sources.
 func (s *Store) FreezeStagedSelection(ctx context.Context, id string, p PendingPublication, predecessor ReadyPredecessor, previous []byte) (PendingPublication, error) {
-	if p.StagedSelection != nil || p.Selection != nil || p.JournalVersion != 0 || p.Catalog != nil {
+	if p.StagedProof() != nil || p.Selection != nil || p.JournalVersion != 0 || p.Catalog != nil {
 		return p, ErrReadySelectionFrozen
 	}
 	if err := s.validateReadablePendingContext(ctx, p); err != nil {
@@ -162,6 +186,16 @@ func (s *Store) FreezeStagedSelection(ctx context.Context, id string, p PendingP
 		return p, ErrDurableStorageRecovery
 	}
 	q := &StagedSelection{Version: 3, StageSHA256: stage.SHA256, CoveredToken: p.RequestToken, HadRequest: found, Core: ReadySelection{Version: 3, Purpose: "staged-import", DestinationID: cfg.DestinationID(), Predecessor: predecessor, MetadataSHA256: readySHA(p.MetadataBytes)}}
+	if stage.Version == 3 {
+		q.Version = 4
+		q.Core.Version = 4
+		q.Core.Purpose = "settled-cursor-import"
+		q.CursorFacts = stage.CursorFacts
+		q.CursorFactsSHA256, err = s.readyDigest(ctx, stage.CursorFacts)
+		if err != nil {
+			return p, err
+		}
+	}
 	predecessorView := p
 	predecessorView.Selection = &q.Core
 	if err := s.freezeReadyPredecessor(ctx, id, &predecessorView, previous); err != nil {
@@ -200,8 +234,8 @@ func (s *Store) FreezeStagedSelection(ctx context.Context, id string, p PendingP
 	if err != nil {
 		return p, err
 	}
-	p.JournalVersion = 3
-	p.StagedSelection = q
+	p.JournalVersion = q.Version
+	p.setStagedProof(q)
 	q.Core.BindingSHA256, err = s.readyBinding(ctx, p)
 	if err != nil {
 		return p, err
@@ -217,7 +251,7 @@ func (s *Store) validateStagedSelection(ctx context.Context, p PendingPublicatio
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if p.StagedSelection == nil {
+	if p.StagedProof() == nil {
 		return nil
 	}
 	if err := p.validateStagedShape(); err != nil {
@@ -229,10 +263,18 @@ func (s *Store) validateStagedSelection(ctx context.Context, p PendingPublicatio
 	if err := validateReadySourceKeys(p); err != nil {
 		return err
 	}
-	q := p.StagedSelection
+	q := p.StagedProof()
 	cfg, reg, stage, err := s.stagedContext(ctx, p.Bundle.ArchiveSessionID)
 	if err != nil {
 		return err
+	}
+	if stage.Version == 3 {
+		facts, err := s.readyDigest(ctx, stage.CursorFacts)
+		if err != nil || q.Version != 4 || q.CursorFacts == nil || stage.CursorFacts == nil || *q.CursorFacts != *stage.CursorFacts || facts != q.CursorFactsSHA256 {
+			return errors.Join(ErrDurableStorageRecovery, err)
+		}
+	} else if q.Version != 3 {
+		return ErrDurableStorageRecovery
 	}
 	if p.SkillEvidence != string(cfg.EffectiveSkillEvidence()) || stage.SkillEvidence != cfg.EffectiveSkillEvidence() || stage.Bundle.Capture.FilterVersion != archive.FilterVersion {
 		return ErrReadySelectionFrozen
@@ -286,34 +328,37 @@ func (p *Published) saveStagedPublication(pending PendingPublication, at time.Ti
 	if err != nil {
 		return err
 	}
-	proof := *pending.StagedSelection
-	next.LastPublished.StagedSelection = &proof
-	next.PublicationVersion = 3
+	proof := *pending.StagedProof()
+	next.LastPublished.setStagedProof(&proof)
+	next.PublicationVersion = proof.Version
 	return p.write(next)
 }
 
 func (p *Published) preserveStagedPublished(ctx context.Context, next *publishedState) error {
 	prior := p.state.LastPublished
-	if prior != nil && prior.StagedSelection != nil {
+	if prior != nil && prior.StagedProof() != nil {
 		if next.LastPublished == nil {
 			return ErrReadySelectionFrozen
 		}
-		if next.LastPublished.StagedSelection == nil {
-			if readySHA(next.MetadataBytes) != prior.StagedSelection.Core.MetadataSHA256 {
+		if next.LastPublished.StagedProof() == nil {
+			if readySHA(next.MetadataBytes) != prior.StagedProof().Core.MetadataSHA256 {
 				return ErrReadySelectionFrozen
 			}
-			proof := *prior.StagedSelection
-			next.LastPublished.StagedSelection = &proof
+			proof := *prior.StagedProof()
+			next.LastPublished.setStagedProof(&proof)
 		}
 	}
-	if next.LastPublished == nil || next.LastPublished.StagedSelection == nil {
+	if next.LastPublished == nil || next.LastPublished.StagedProof() == nil {
 		return nil
 	}
 	return p.validateStagedPublished(ctx, next)
 }
 
 func (p *Published) validateStagedPublished(ctx context.Context, next *publishedState) error {
-	q := next.LastPublished.StagedSelection
+	q := next.LastPublished.StagedProof()
+	if q == nil || next.LastPublished.CursorSelection != nil && next.LastPublished.StagedSelection != nil || q.Version == 4 && next.LastPublished.CursorSelection == nil || q.Version == 3 && next.LastPublished.StagedSelection == nil {
+		return ErrDurableStorageRecovery
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -324,7 +369,7 @@ func (p *Published) validateStagedPublished(ctx context.Context, next *published
 		return err
 	}
 	cfg, err := p.store.inspectDurableReadRoots()
-	if err != nil || !cfg.SupportsStagedSelection() || cfg.DestinationID() != q.Core.DestinationID {
+	if err != nil || !cfg.SupportsStagedSelection() || (q.Version == 4 && !cfg.SupportsSettledCursorSelection()) || cfg.DestinationID() != q.Core.DestinationID {
 		return errors.Join(ErrDurableStorageRecovery, err)
 	}
 	retained, _, found := next.resolveLastPublished()
@@ -353,11 +398,42 @@ func (p *Published) validateStagedPublished(ctx context.Context, next *published
 	if err != nil || !found || reg.StagedImportSHA256 != q.StageSHA256 || !readySelectionOwnerMatches(reg, retained) {
 		return errors.Join(ErrDurableStorageRecovery, err)
 	}
+	if q.Version == 4 {
+		if e := p.store.validateSettledIndex(reg); e != nil {
+			return e
+		}
+		factStage := ImportStage{Version: 3, TypedSelection: true, CursorFacts: q.CursorFacts}
+		if factStage.validateCursorFacts(reg) != nil {
+			return ErrDurableStorageRecovery
+		}
+		stage, present, e := p.store.LoadImportStage(ctx, reg)
+		if e != nil {
+			return e
+		}
+		if present {
+			if stage.Version != 3 || stage.SHA256 != q.StageSHA256 || stage.CursorFacts == nil || *stage.CursorFacts != *q.CursorFacts {
+				return ErrDurableStorageRecovery
+			}
+			stageBundle, e := p.store.readyDigest(ctx, stage.Bundle)
+			if e != nil || stageBundle != q.Core.BundleSHA256 {
+				return errors.Join(ErrDurableStorageRecovery, e)
+			}
+		} else {
+			var receipt stagedReleaseReceipt
+			if e := p.store.readStagedControl(p.id, stagedReleaseReceiptName, &receipt); e != nil || receipt.Version != 4 || !sameStagedSelection(receipt.Selection, *q) {
+				return errors.Join(ErrDurableStorageRecovery, e)
+			}
+		}
+		facts, err := p.store.readyDigest(ctx, q.CursorFacts)
+		if err != nil || facts != q.CursorFactsSHA256 {
+			return errors.Join(ErrDurableStorageRecovery, err)
+		}
+	}
 	admission, err := p.store.readyDigest(ctx, reg)
 	if err != nil || admission != q.Core.AdmissionContext {
 		return errors.Join(ErrDurableStorageRecovery, err)
 	}
-	next.PublicationVersion = 3
+	next.PublicationVersion = q.Version
 	return nil
 }
 
@@ -414,4 +490,74 @@ func stagedMetadataMatches(metadata archive.Metadata, bundle archive.SourceBundl
 		metadata.FilterVersion == bundle.Capture.FilterVersion &&
 		metadata.Adapter.Name == bundle.Capture.AdapterName &&
 		metadata.Adapter.Version == bundle.Capture.AdapterVersion
+}
+
+func (q *StagedSelection) validStagedProtocol() bool {
+	if q.Version == 3 {
+		return q.Core.Version == 3 && q.Core.Purpose == "staged-import" && q.CursorFactsSHA256 == "" && q.CursorFacts == nil
+	}
+	return q.Version == 4 && q.Core.Version == 4 && q.Core.Purpose == "settled-cursor-import" && readyDigestValid(q.CursorFactsSHA256) && q.CursorFacts != nil && settledCursorFactShape(*q.CursorFacts)
+}
+
+func settledCursorFactShape(f cursor.SettledImportFacts) bool {
+	c := f.Chat
+	return readyDigestValid(f.GlobalSHA256) && len(c.ID) > 0 && len(c.ID) <= 255 && len(c.KeyID) > 0 && len(c.KeyID) <= 255 && len(c.Folder) > 0 && len(c.Folder) <= 1024 && len(c.WorkspaceID) <= 255 && !c.Malformed && !c.CreatedAt.IsZero() && c.CursorFacts.VersionPresent && c.CursorFacts.Version == 18 && (c.CursorFacts.Relationships == agentapi.CursorRelationshipsAbsent && c.CursorFacts.ChildIDsSHA256 == "" || c.CursorFacts.Relationships == agentapi.CursorRelationshipsValid && readyDigestValid(c.CursorFacts.ChildIDsSHA256))
+}
+
+func sameStagedSelection(a, b StagedSelection) bool {
+	af, bf := a.CursorFacts, b.CursorFacts
+	a.CursorFacts = nil
+	b.CursorFacts = nil
+	if a != b {
+		return false
+	}
+	if af == nil || bf == nil {
+		return af == nil && bf == nil
+	}
+	ac, bc := *af, *bf
+	at, bt := ac.Chat.CreatedAt, bc.Chat.CreatedAt
+	ac.Chat.CreatedAt = time.Time{}
+	bc.Chat.CreatedAt = time.Time{}
+	return ac == bc && at.Equal(bt)
+}
+
+// StagedProof selects one mandatory staged authority; validators reject mixed fields.
+func (p PendingPublication) StagedProof() *StagedSelection {
+	if p.CursorSelection != nil {
+		return p.CursorSelection
+	}
+	return p.StagedSelection
+}
+func (p *PendingPublication) setStagedProof(q *StagedSelection) {
+	p.StagedSelection = nil
+	p.CursorSelection = nil
+	if q == nil {
+		return
+	}
+	if q.Version == 4 {
+		p.CursorSelection = q
+	} else {
+		p.StagedSelection = q
+	}
+}
+func (p *publishedSnapshot) StagedProof() *StagedSelection {
+	if p == nil {
+		return nil
+	}
+	if p.CursorSelection != nil {
+		return p.CursorSelection
+	}
+	return p.StagedSelection
+}
+func (p *publishedSnapshot) setStagedProof(q *StagedSelection) {
+	p.StagedSelection = nil
+	p.CursorSelection = nil
+	if q == nil {
+		return
+	}
+	if q.Version == 4 {
+		p.CursorSelection = q
+	} else {
+		p.StagedSelection = q
+	}
 }

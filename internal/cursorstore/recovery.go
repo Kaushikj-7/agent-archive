@@ -85,53 +85,68 @@ func ReadRecoveryComposer(ctx context.Context, path, id string, rawLimit, record
 			return err
 		}
 		defer func() { err = errors.Join(err, tx.Rollback()) }()
-		value, err := recoveryComposerValue(ctx, tx, id, rawLimit, recordLimit, budget)
-		if err != nil {
-			return err
-		}
-		_, ids, err := decodeHeaders(value)
-		if err != nil {
-			return err
-		}
-		lengths, err := recoveryBubbleLengths(ctx, tx, id, budget)
-		if err != nil {
-			return err
-		}
-		total := int64(len(value))
-		seen := map[string]bool{}
-		prefix := bubblePrefix(id)
-		for _, key := range ids {
-			n, present := lengths[key]
-			if !present {
-				continue
-			}
-			if rawLimit > 0 && n > rawLimit-total {
-				return agentapi.Wrap(agentapi.Limit, agentapi.ErrRawLimit)
-			}
-			total += n
-			if seen[key] {
-				continue
-			}
-			seen[key] = true
-			if recordLimit > 0 && n > recordLimit {
-				return agentapi.Wrap(agentapi.Limit, ErrRecordLimit)
-			}
-			if err := budget.Charge(1, int64(len(prefix+key))+n); err != nil {
-				return err
-			}
-		}
-		found, err := listedBubbles(ctx, tx, id, ids, lengths)
-		if err != nil {
-			return err
-		}
-		c = Composer{Composer: value, Bubbles: make([]Bubble, len(ids))}
-		for i, key := range ids {
-			_, present := lengths[key]
-			c.Bubbles[i] = Bubble{ID: key, Value: found[key], Missing: !present}
-		}
-		return nil
+		c, err = readRecoveryComposerTx(ctx, tx, id, rawLimit, recordLimit, budget, false)
+		return err
 	})
 	return c, err
+}
+
+func readRecoveryComposerTx(ctx context.Context, tx *sql.Tx, id string, rawLimit, recordLimit int64, budget agentapi.RecoveryReadBudget, reserveDecoded bool) (c Composer, err error) {
+	value, err := recoveryComposerValue(ctx, tx, id, rawLimit, recordLimit, budget)
+	if err != nil {
+		return c, err
+	}
+	if reserveDecoded {
+		if err := budget.Charge(0, 2*int64(len(value))+(32<<10)); err != nil {
+			return c, err
+		}
+	}
+	_, ids, err := decodeHeaders(value)
+	if err != nil {
+		return c, err
+	}
+	if reserveDecoded {
+		if err := budget.Charge(len(ids), 24*int64(len(ids))); err != nil {
+			return c, err
+		}
+	}
+	lengths, err := recoveryBubbleLengths(ctx, tx, id, budget)
+	if err != nil {
+		return c, err
+	}
+	total := int64(len(value))
+	seen := map[string]bool{}
+	prefix := bubblePrefix(id)
+	for _, key := range ids {
+		n, present := lengths[key]
+		if !present {
+			continue
+		}
+		if rawLimit > 0 && n > rawLimit-total {
+			return c, agentapi.Wrap(agentapi.Limit, agentapi.ErrRawLimit)
+		}
+		total += n
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		if recordLimit > 0 && n > recordLimit {
+			return c, agentapi.Wrap(agentapi.Limit, ErrRecordLimit)
+		}
+		if err := budget.Charge(1, int64(len(prefix+key))+n); err != nil {
+			return c, err
+		}
+	}
+	found, err := listedBubbles(ctx, tx, id, ids, lengths)
+	if err != nil {
+		return c, err
+	}
+	c = Composer{Composer: value, Bubbles: make([]Bubble, len(ids))}
+	for i, key := range ids {
+		_, present := lengths[key]
+		c.Bubbles[i] = Bubble{ID: key, Value: found[key], Missing: !present}
+	}
+	return c, nil
 }
 
 func recoveryComposerValue(ctx context.Context, tx *sql.Tx, id string, rawLimit, recordLimit int64, budget agentapi.RecoveryReadBudget) ([]byte, error) {

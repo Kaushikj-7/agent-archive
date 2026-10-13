@@ -73,6 +73,7 @@ const (
 // private file elsewhere; see destination.Config.R2CredentialRef)
 // and S3 credentials are resolved through the named AWS profile.
 type Config struct {
+	SettledCursorSelectionProtection bool                `json:"settled_cursor_selection_protection,omitempty"`
 	StagedSelectionProtection        bool                `json:"staged_selection_protection,omitempty"`
 	PublicationCompositionProtection bool                `json:"publication_composition_protection,omitempty"`
 	HistoricalProjects               []HistoricalProject `json:"historical_projects,omitempty"`

@@ -8,6 +8,7 @@ import (
 // DatabaseChat is compact native catalog evidence for a possible historical session.
 // KeyID is the native record locator; identity disagreement is not silently repaired.
 type DatabaseChat struct {
+	CursorFacts CursorComposerFacts
 	ID          string
 	KeyID       string
 	CreatedAt   time.Time
@@ -50,3 +51,20 @@ type DatabaseCatalogInspector interface {
 type DatabaseCatalogLookup interface {
 	LookupDatabaseCatalog(string) (DatabaseCatalogInspector, bool)
 }
+
+// CursorComposerFacts is comparable review data, never admission authority.
+type CursorComposerFacts struct {
+	VersionPresent bool
+	Version        int
+	Relationships  CursorRelationshipShape
+	ChildIDsSHA256 string
+}
+
+// CursorRelationshipShape distinguishes absent relationships from malformed input.
+type CursorRelationshipShape string
+
+const (
+	CursorRelationshipsAbsent    CursorRelationshipShape = "absent"
+	CursorRelationshipsValid     CursorRelationshipShape = "valid"
+	CursorRelationshipsMalformed CursorRelationshipShape = "malformed"
+)

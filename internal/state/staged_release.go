@@ -51,7 +51,7 @@ func (r *stagedReleaseReceipt) UnmarshalJSON(raw []byte) error {
 		return ErrDurableStorageRecovery
 	}
 	*r = stagedReleaseReceipt(next)
-	if r.Version != 3 || r.Selection.validateDigest() != nil {
+	if r.Version != r.Selection.Version || r.Selection.validateDigest() != nil {
 		return ErrDurableStorageRecovery
 	}
 	receiptCopy := *r
@@ -78,7 +78,7 @@ func (p *stagedReleaseProgress) UnmarshalJSON(raw []byte) error {
 		return ErrDurableStorageRecovery
 	}
 	*p = stagedReleaseProgress(next)
-	if p.Version != 3 || !readyDigestValid(p.ReceiptSHA256) || (p.Phase != stagedReleaseVerified && p.Phase != stagedReleaseLocalComplete && p.Phase != stagedReleaseReleased) {
+	if (p.Version != 3 && p.Version != 4) || !readyDigestValid(p.ReceiptSHA256) || (p.Phase != stagedReleaseVerified && p.Phase != stagedReleaseLocalComplete && p.Phase != stagedReleaseReleased) {
 		return ErrDurableStorageRecovery
 	}
 	return nil
@@ -97,7 +97,7 @@ func (s *Store) requireStagedReleaseProgress(id string, q *StagedSelection) erro
 	if err := s.readStagedControl(id, stagedReleaseProgressName, &progress); err != nil {
 		return errors.Join(ErrDurableStorageRecovery, err)
 	}
-	if receipt.Selection != *q || progress.ReceiptSHA256 != receipt.SHA256 || (progress.Phase != stagedReleaseLocalComplete && progress.Phase != stagedReleaseReleased) {
+	if !sameStagedSelection(receipt.Selection, *q) || progress.Version != receipt.Version || progress.ReceiptSHA256 != receipt.SHA256 || (progress.Phase != stagedReleaseLocalComplete && progress.Phase != stagedReleaseReleased) {
 		return ErrReadySelectionFrozen
 	}
 	return nil
@@ -127,7 +127,7 @@ func (s *Store) verifyStagedRemote(ctx context.Context, remote StagedReadback, p
 	if authority, ok := remote.(interface{ CatalogMetadataAuthority() bool }); ok && authority.CatalogMetadataAuthority() {
 		return ErrReadySelectionFrozen
 	}
-	if p.Catalog != nil || p.StagedSelection == nil {
+	if p.Catalog != nil || p.StagedProof() == nil {
 		return ErrReadySelectionFrozen
 	}
 	if err := s.stagedReadback(ctx, remote, p.MetadataKey, p.MetadataBytes); err != nil {
@@ -197,7 +197,7 @@ func (s *Store) verifyAndBeginStagedRelease(ctx context.Context, id string, remo
 		}
 	}
 	if !state.receiptFound {
-		state.receipt = stagedReleaseReceipt{Version: 3, Selection: *q}
+		state.receipt = stagedReleaseReceipt{Version: q.Version, Selection: *q}
 		state.receipt.SHA256, err = s.readyDigest(ctx, state.receipt)
 		if err != nil {
 			return err
@@ -207,7 +207,7 @@ func (s *Store) verifyAndBeginStagedRelease(ctx context.Context, id string, remo
 		}
 	}
 	if !state.progressFound {
-		state.progress = stagedReleaseProgress{Version: 3, ReceiptSHA256: state.receipt.SHA256, Phase: stagedReleaseVerified}
+		state.progress = stagedReleaseProgress{Version: q.Version, ReceiptSHA256: state.receipt.SHA256, Phase: stagedReleaseVerified}
 		if err = s.writeStagedControl(ctx, id, stagedReleaseProgressName, state.progress); err != nil {
 			return err
 		}
@@ -311,14 +311,14 @@ func (s *Store) removeCoveredStagedRequest(id string) (err error) {
 // TypedStagedPublished is a dispatch hint only; cleanup still performs the full
 // persisted proof/guard/readback checks above.
 func (p *Published) TypedStagedPublished() bool {
-	return p.state.LastPublished != nil && p.state.LastPublished.StagedSelection != nil
+	return p.state.LastPublished != nil && p.state.LastPublished.StagedProof() != nil
 }
 
 func (s *Store) removeExactStagedPending(ctx context.Context, g config.DurableStorageGuard, id string, p PendingPublication) error {
-	if p.StagedSelection == nil || p.Catalog != nil || p.Bundle.ArchiveSessionID != id {
+	if p.StagedProof() == nil || p.Catalog != nil || p.Bundle.ArchiveSessionID != id {
 		return ErrReadySelectionFrozen
 	}
-	if err := s.requireStagedReleaseProgress(id, p.StagedSelection); err != nil {
+	if err := s.requireStagedReleaseProgress(id, p.StagedProof()); err != nil {
 		return err
 	}
 	if err := s.validateExactLegacyPending(ctx, id, p); err != nil {
@@ -410,14 +410,14 @@ type stagedReleaseState struct {
 
 func (s *Store) loadStagedReleaseState(ctx context.Context, id string) (out stagedReleaseState, err error) {
 	published, err := s.LoadPublishedStateContext(ctx, id)
-	if err != nil || published.state.LastPublished == nil || published.state.LastPublished.StagedSelection == nil {
+	if err != nil || published.state.LastPublished == nil || published.state.LastPublished.StagedProof() == nil {
 		return out, errors.Join(ErrDurableStorageRecovery, err)
 	}
-	out.selection = published.state.LastPublished.StagedSelection
+	out.selection = published.state.LastPublished.StagedProof()
 	err = s.readStagedControl(id, stagedReleaseReceiptName, &out.receipt)
 	if err == nil {
 		out.receiptFound = true
-		if out.receipt.Selection != *out.selection {
+		if !sameStagedSelection(out.receipt.Selection, *out.selection) {
 			return out, ErrDurableStorageRecovery
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
@@ -426,7 +426,7 @@ func (s *Store) loadStagedReleaseState(ctx context.Context, id string) (out stag
 	err = s.readStagedControl(id, stagedReleaseProgressName, &out.progress)
 	if err == nil {
 		out.progressFound = true
-		if !out.receiptFound || out.progress.ReceiptSHA256 != out.receipt.SHA256 {
+		if !out.receiptFound || out.progress.Version != out.receipt.Version || out.progress.ReceiptSHA256 != out.receipt.SHA256 {
 			return out, ErrDurableStorageRecovery
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
@@ -444,7 +444,7 @@ func (s *Store) loadStagedReleaseState(ctx context.Context, id string) (out stag
 		return out, err
 	}
 	if out.pendingFound {
-		if out.pending.StagedSelection == nil || *out.pending.StagedSelection != *out.selection || out.pending.Catalog != nil {
+		if out.pending.StagedProof() == nil || !sameStagedSelection(*out.pending.StagedProof(), *out.selection) || out.pending.Catalog != nil {
 			return out, ErrDurableStorageRecovery
 		}
 	} else if !out.receiptFound || !out.progressFound || out.progress.Phase != stagedReleaseLocalComplete {
@@ -492,10 +492,10 @@ func (s *Store) checkStagedChildHandoffs(ctx context.Context, stage ImportStage,
 		if e != nil {
 			return e
 		}
-		if committed.state.LastPublished == nil || committed.state.LastPublished.StagedSelection == nil || committed.state.LastPublished.StagedSelection.StageSHA256 != child.StagedImportSHA256 {
+		if committed.state.LastPublished == nil || committed.state.LastPublished.StagedProof() == nil || committed.state.LastPublished.StagedProof().StageSHA256 != child.StagedImportSHA256 {
 			return ErrReadySelectionFrozen
 		}
-		if err := s.requireStagedReleaseProgress(child.ArchiveSessionID, committed.state.LastPublished.StagedSelection); err != nil {
+		if err := s.requireStagedReleaseProgress(child.ArchiveSessionID, committed.state.LastPublished.StagedProof()); err != nil {
 			return err
 		}
 	}
@@ -580,7 +580,7 @@ func (s *Store) validateFinalStagedAuthority(ctx context.Context, id string, q *
 		return errors.Join(ErrReadySelectionFrozen, err)
 	}
 	published, err := s.LoadPublishedStateContext(ctx, id)
-	if err != nil || !published.TypedStagedPublished() || *published.state.LastPublished.StagedSelection != *q {
+	if err != nil || !published.TypedStagedPublished() || !sameStagedSelection(*published.state.LastPublished.StagedProof(), *q) {
 		return errors.Join(ErrReadySelectionFrozen, err)
 	}
 	retained, _, ok := published.state.resolveLastPublished()
@@ -594,7 +594,7 @@ func (s *Store) validateFinalStagedAuthority(ctx context.Context, id string, q *
 	}
 	if found {
 		current, present, err := s.LoadPendingContext(ctx, id)
-		if err != nil || !present || current.StagedSelection == nil || *current.StagedSelection != *q {
+		if err != nil || !present || current.StagedProof() == nil || !sameStagedSelection(*current.StagedProof(), *q) {
 			return errors.Join(ErrReadySelectionFrozen, err)
 		}
 		if err := s.validateStagedSelection(ctx, current); err != nil {
@@ -612,6 +612,17 @@ func (s *Store) validateFinalStagedAuthority(ctx context.Context, id string, q *
 }
 
 func (s *Store) validateFinalStagedRoster(ctx context.Context, stage ImportStage, q *StagedSelection, cfg config.Config) error {
+	if stage.Version == 3 {
+		if q.Version != 4 || !cfg.SupportsSettledCursorSelection() {
+			return ErrReadySelectionFrozen
+		}
+		facts, err := s.readyDigest(ctx, stage.CursorFacts)
+		if err != nil || facts != q.CursorFactsSHA256 {
+			return errors.Join(ErrReadySelectionFrozen, err)
+		}
+	} else if q.Version != 3 {
+		return ErrReadySelectionFrozen
+	}
 	if !stage.TypedSelection || stage.SHA256 != q.StageSHA256 || stage.SkillEvidence != cfg.EffectiveSkillEvidence() {
 		return ErrReadySelectionFrozen
 	}

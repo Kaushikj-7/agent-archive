@@ -90,7 +90,7 @@ func readyDigestValid(h string) bool {
 }
 
 func (p PendingPublication) validateReadySelectionShape() error {
-	if p.StagedSelection != nil {
+	if p.StagedProof() != nil {
 		return p.validateStagedShape()
 	}
 	if p.JournalVersion == 0 && p.Selection == nil {
@@ -211,7 +211,7 @@ func (s *Store) freezeReadyPredecessor(ctx context.Context, id string, p *Pendin
 
 func (s *Store) readyBinding(ctx context.Context, p PendingPublication) (string, error) {
 	p.Selection = nil
-	p.StagedSelection = nil
+	p.setStagedProof(nil)
 	p.Catalog = nil
 	p.JournalVersion = 0
 	p.Attempted = false
@@ -221,7 +221,7 @@ func (s *Store) readyBinding(ctx context.Context, p PendingPublication) (string,
 }
 
 func (s *Store) validateReadySelection(ctx context.Context, p PendingPublication) error {
-	if p.StagedSelection != nil {
+	if p.StagedProof() != nil {
 		return s.validateStagedSelection(ctx, p)
 	}
 	if p.Selection == nil {
@@ -362,7 +362,7 @@ func (q *ReadySelection) validateProofDigest() error {
 // SaveReadyPublication records selecting proof together with the cache before
 // request acknowledgment and pending removal. No source body is duplicated.
 func (p *Published) SaveReadyPublication(pending PendingPublication, at time.Time) error {
-	if pending.StagedSelection != nil {
+	if pending.StagedProof() != nil {
 		return p.saveStagedPublication(pending, at)
 	}
 	if err := pending.ValidateReadySlot(p.id); err != nil {
@@ -428,12 +428,12 @@ func (s *Store) checkSelectingPendingWrite(ctx context.Context, id string, p Pen
 		return err
 	}
 	if !found {
-		if p.Selection != nil || p.StagedSelection != nil {
+		if p.Selection != nil || p.StagedProof() != nil {
 			return nil
 		}
 		return ErrReadySelectionFrozen
 	}
-	if old.StagedSelection != nil && (p.StagedSelection == nil || *old.StagedSelection != *p.StagedSelection) {
+	if old.StagedProof() != nil && (p.StagedProof() == nil || !sameStagedSelection(*old.StagedProof(), *p.StagedProof())) {
 		return ErrReadySelectionFrozen
 	}
 	if old.Selection != nil && (p.Selection == nil || *old.Selection != *p.Selection) {
@@ -462,7 +462,7 @@ func (s *Store) checkSelectingPendingRemoval(id string) error {
 	if !found {
 		return nil
 	}
-	if pending.StagedSelection != nil {
+	if pending.StagedProof() != nil {
 		return ErrReadySelectionFrozen
 	}
 	if pending.Selection == nil {
@@ -531,7 +531,7 @@ func readySelectionOwnerMatches(reg archive.SessionRegistration, bundle archive.
 // slot independently of the owner recorded inside its recomputable wire data.
 // Existing legacy publication wire keeps its current identity rules.
 func (p PendingPublication) ValidateReadySlot(id string) error {
-	if (p.Selection != nil || p.StagedSelection != nil || p.JournalVersion != 0) && id != p.Bundle.ArchiveSessionID {
+	if (p.Selection != nil || p.StagedProof() != nil || p.JournalVersion != 0) && id != p.Bundle.ArchiveSessionID {
 		return ErrDurableStorageRecovery
 	}
 	return nil
