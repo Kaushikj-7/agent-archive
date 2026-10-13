@@ -16,19 +16,23 @@ import (
 
 // filterImportSource validates native ownership on the same snapshot it filters.
 // Historical admission belongs to the import; ancestry supplies no permission.
-func filterImportSource(ctx context.Context, env Environment, w *work, started time.Time) (out archive.FilteredTranscript, release func(), err error) {
+func filterImportSource(ctx context.Context, env Environment, w *work, started time.Time, inspect bool) (out archive.FilteredTranscript, summary *agentapi.ImportSummary, release func(), err error) {
 	release = func() {}
 	ref := agentapi.SourceRef{Kind: w.c.SourceKind, Path: w.t.path, Key: w.c.SourceKey}
 	if ref.Kind == "" {
 		ref.Kind = archive.SourceKindFile
 	}
 	if string(w.t.harness) != "codex" || !w.c.NativeChild && !w.c.RelatedHistory || env.CodexRollouts == nil {
-		out, _, err = collector.FilterSource(ctx, string(w.t.harness), ref, started, env.Sources)
-		return out, release, err
+		if inspect {
+			out, summary, err = collector.InspectSource(ctx, string(w.t.harness), ref, started, env.Sources)
+		} else {
+			out, _, err = collector.FilterSource(ctx, string(w.t.harness), ref, started, env.Sources)
+		}
+		return out, summary, release, err
 	}
 	provider, filter, ok := env.Sources.LookupSources(string(w.t.harness))
 	if !ok {
-		return out, release, errors.New("native source capability unavailable")
+		return out, summary, release, errors.New("native source capability unavailable")
 	}
 	root := w.c.NativeHome
 	// Discovery may spell a trusted home through a platform alias, while the
@@ -36,7 +40,7 @@ func filterImportSource(ctx context.Context, env Environment, w *work, started t
 	// descendant symlinks remain visible to the confined source opener.
 	relative, err := filepath.Rel(root, ref.Path)
 	if err != nil {
-		return out, release, err
+		return out, summary, release, err
 	}
 	root = env.resolved(root)
 	ref.Path = filepath.Join(root, relative)
@@ -61,28 +65,28 @@ func filterImportSource(ctx context.Context, env Environment, w *work, started t
 	environment := agentapi.SourceEnvironment{HistorySourceAllowed: sourceAllowed, ReadBudget: budget, CodexRollouts: env.CodexRollouts, RequireConfinedHistory: true, Files: sourcefacts.RootOpener{Root: root}, Policy: transcriptio.OpenPolicy{Root: root, RejectSymlinks: true}}
 	pass, err := provider.OpenPass(ctx, environment)
 	if err != nil {
-		return out, release, err
+		return out, summary, release, err
 	}
 	defer func() { err = errors.Join(err, pass.Close()) }()
 	limits := agentapi.ReadLimits{RawBytes: collector.MaxRawTranscriptBytes(string(w.t.harness)), RecordBytes: archive.MaxRecordBytes, FilteredBytes: collector.DefaultMaxTranscriptBytes}
 	snapshot, err := pass.Read(ctx, ref, limits)
 	if err != nil {
-		return out, release, err
+		return out, summary, release, err
 	}
 	defer func() { err = errors.Join(err, snapshot.Close()) }()
 	admission, ok := snapshot.(agentapi.SourceAdmissionEvidence)
 	if !ok {
-		return out, release, agentapi.WithCause(agentapi.Wrap(agentapi.Unavailable, errors.New("native admission evidence unavailable")), agentapi.CauseNativeAdmissionEvidenceUnavailable)
+		return out, summary, release, agentapi.WithCause(agentapi.Wrap(agentapi.Unavailable, errors.New("native admission evidence unavailable")), agentapi.CauseNativeAdmissionEvidenceUnavailable)
 	}
 	evidence, err := admission.AdmissionEvidence(ctx, agentapi.SourceAdmission{NativeID: w.c.NativeSessionID, Cwd: w.t.cwd})
 	if err != nil {
-		return out, release, err
+		return out, summary, release, err
 	}
 	// Children and supported forks require their first own native task.
 	// Ordinary historical and paginated imports retain their compatibility.
 	if evidence.Binding.RequiresOwnTask() && !evidence.Task.ValidNativeCreation(evidence.Binding.NativeCreatedAt) {
 		cause := ownTaskRefusalCause(evidence.Task, evidence.Binding.NativeCreatedAt)
-		return out, release, agentapi.WithCause(agentapi.Wrap(agentapi.Unavailable, errors.New("native own task unavailable")), cause)
+		return out, summary, release, agentapi.WithCause(agentapi.Wrap(agentapi.Unavailable, errors.New("native own task unavailable")), cause)
 	}
 	if leased, ok := filter.(agentapi.LeasedTranscriptFilter); ok && leased.LeasedFilterFor(filter) {
 		out, release, err = leased.FilterLeased(ctx, snapshot.Input(), agentapi.FilterContext{Filename: ref.Path, StartedAt: started, Limits: limits}, environment.ReadBudget)
@@ -90,7 +94,7 @@ func filterImportSource(ctx context.Context, env Environment, w *work, started t
 		out, err = filter.Filter(ctx, snapshot.Input(), agentapi.FilterContext{Filename: ref.Path, StartedAt: started, Limits: limits})
 	}
 	if err != nil {
-		return out, release, err
+		return out, summary, release, err
 	}
 	binding := evidence.Binding
 	if binding.FirstNativeTaskAt.IsZero() && evidence.Task.Native {
@@ -100,7 +104,7 @@ func filterImportSource(ctx context.Context, env Environment, w *work, started t
 	w.c.NativeChild, w.c.ParentNativeID, w.c.RootNativeID = binding.Child, binding.ParentID, binding.RootID
 	w.c.NativeHome = binding.Home
 	w.t.metaStart = binding.NativeCreatedAt
-	return out, release, nil
+	return out, summary, release, nil
 }
 
 // ownTaskRefusalCause classifies an already rejected first own task.

@@ -179,6 +179,27 @@ func FilterSource(ctx context.Context, harness string, ref agentapi.SourceRef, s
 	return out, adapter, err
 }
 
+// InspectSource uses compact filtering when the actual injected filter supports
+// the observed input. Unsupported codecs and history retain FilterSource behavior.
+// Callers must also require an integration-owned summary interpreter.
+func InspectSource(ctx context.Context, harness string, ref agentapi.SourceRef, startedAt time.Time, sources agentapi.SourcesLookup) (archive.FilteredTranscript, *agentapi.ImportSummary, error) {
+	adapter, err := sourceAdapter(sources, harness)
+	if err != nil {
+		return archive.FilteredTranscript{}, nil, err
+	}
+	reg := archive.SessionRegistration{Harness: archive.Harness{Name: adapter.Name()}, TranscriptPath: ref.Path, SourceKind: ref.Kind, SourceKey: ref.Key, SessionStartedAt: startedAt}
+	source, _ := newSourceReader(reg, Options{Sources: sources})
+	var summary *agentapi.ImportSummary
+	out, _, err := source.(providerReader).filter(ctx, adapter, DefaultMaxTranscriptBytes, &summary)
+	if errors.Is(err, errRecordTooLarge) || errors.Is(err, errTranscriptTooLarge) {
+		return archive.FilteredTranscript{}, nil, errors.Join(archive.ErrRecordTooLarge, err)
+	}
+	if err != nil {
+		return out, nil, err
+	}
+	return out, summary, nil
+}
+
 // FilterTranscriptSnapshot filters the verified handle without reopening its path.
 // The caller owns the handle and must close it, including on cancellation.
 func FilterTranscriptSnapshot(ctx context.Context, snapshot agentapi.FileInput, harness string, startedAt time.Time, maxBytes int64, sources agentapi.SourcesLookup) (archive.FilteredTranscript, archive.Adapter, error) {
