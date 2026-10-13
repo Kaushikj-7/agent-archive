@@ -378,7 +378,7 @@ func (p *Published) validateStagedPublished(ctx context.Context, next *published
 		return err
 	}
 	cfg, err := p.store.inspectDurableReadRoots()
-	if err != nil || !cfg.SupportsStagedSelection() || (q.Version == 4 && !cfg.SupportsSettledCursorSelection()) || cfg.DestinationID() != q.Core.DestinationID {
+	if err != nil || stagedPublishedConfigMismatch(cfg, q) {
 		return errors.Join(ErrDurableStorageRecovery, err)
 	}
 	retained, _, found := next.resolveLastPublished()
@@ -612,4 +612,8 @@ func (p *Published) validatePublishedSettledStage(ctx context.Context, q *Staged
 
 func invalidPublishedStagedProof(next *publishedState, q *StagedSelection) bool {
 	return q == nil || next.LastPublished.CursorSelection != nil && next.LastPublished.StagedSelection != nil || q.Version == 4 && next.LastPublished.CursorSelection == nil || q.Version == 3 && next.LastPublished.StagedSelection == nil
+}
+
+func stagedPublishedConfigMismatch(cfg config.Config, q *StagedSelection) bool {
+	return !cfg.SupportsStagedSelection() || (q.Version == 4 && !cfg.SupportsSettledCursorSelection()) || cfg.DestinationID() != q.Core.DestinationID
 }
