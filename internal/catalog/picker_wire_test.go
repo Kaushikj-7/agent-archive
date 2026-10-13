@@ -3,6 +3,7 @@ package catalog
 import (
 	"encoding/hex"
 	"encoding/json"
+	"maps"
 	"reflect"
 	"testing"
 	"time"
@@ -44,10 +45,7 @@ func TestPickerWireRequiresExplicitNonNullFacts(t *testing.T) {
 	for name := range fields {
 		for _, mode := range []string{"missing", "null"} {
 			t.Run(name+"/"+mode, func(t *testing.T) {
-				changed := make(map[string]json.RawMessage, len(fields))
-				for k, v := range fields {
-					changed[k] = v
-				}
+				changed := maps.Clone(fields)
 				if mode == "missing" {
 					delete(changed, name)
 				} else {
@@ -121,28 +119,30 @@ func TestPickerScopePagesTrackClassificationAndOrderChanges(t *testing.T) {
 	check(exactRepo, "browse", []string{"alpha"})
 	// Root-to-child, child-to-replay-root and replay-to-native-child updates
 	// must remove every prior ordinary membership, regardless of scope.
-	for i, kind := range []string{"child", "replay", "native-child", "root"} {
-		a.ID = "transition-" + kind
+	for i, kind := range []pickerFixtureKind{pickerFixtureChild, pickerFixtureReplay, pickerFixtureNativeChild, pickerFixtureRoot} {
+		a.ID = "transition-" + string(kind)
 		a.ExpectedRevision = "initial-alpha"
 		if i > 0 {
-			a.ExpectedRevision = "transition-" + []string{"child", "replay", "native-child", "root"}[i-1]
+			a.ExpectedRevision = "transition-" + string([]pickerFixtureKind{pickerFixtureChild, pickerFixtureReplay, pickerFixtureNativeChild, pickerFixtureRoot}[i-1])
 		}
 		a = pickerMetadata(t, w, a, func(m *archive.Metadata) {
 			m.ParentSessionID = ""
 			m.NativeChild = false
 			m.Replay = nil
 			switch kind {
-			case "child":
+			case pickerFixtureRoot, pickerFixtureZero, pickerFixtureOverflow:
+				// These fixtures retain ordinary root classification.
+			case pickerFixtureChild:
 				m.ParentSessionID = "beta"
-			case "replay":
+			case pickerFixtureReplay:
 				m.Replay = &archive.Replay{}
-			case "native-child":
+			case pickerFixtureNativeChild:
 				m.NativeChild = true
 			}
 		})
 		h = pickerCandidate(t, w, h, a, a.ID)
 		want := []string{}
-		if kind == "root" {
+		if kind == pickerFixtureRoot {
 			want = append(want, "alpha")
 		}
 		check(exactRepo, "browse", want)

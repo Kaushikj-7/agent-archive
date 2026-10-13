@@ -94,7 +94,10 @@ func TestPickerCanonicalLookupPreservesAliasAmbiguity(t *testing.T) {
 		t.Fatal("deleted alias retained", count, err)
 	}
 	// Exact session-boundary prefix excludes adjacent IDs and same ID in another harness.
-	for _, other := range []struct{ harness, id string }{{"codex", "same"}, {"claude", "same-more"}} {
+	for _, other := range []struct {
+		harness string
+		id      string
+	}{{"codex", "same"}, {"claude", "same-more"}} {
 		m := pickerAliasMutation(t, w, other.harness, other.id)
 		h = pickerCandidate(t, w, h, m, m.ID)
 	}
@@ -105,14 +108,14 @@ func TestPickerCanonicalLookupPreservesAliasAmbiguity(t *testing.T) {
 }
 
 func TestPickerCanonicalLookupIncludesAllLiveClassifications(t *testing.T) {
-	t.Parallel()
+	// Subtests sequentially build one catalog and verify its shared parent counters.
 	w, _ := fixture(t)
 	h := CatalogHead{Protocol: 11, Schema: 5}
-	for _, kind := range []string{"zero", "child", "native-child", "replay", "overflow"} {
-		t.Run(kind, func(t *testing.T) {
-			m := mutation(t, w, kind)
-			if kind == "overflow" {
-				m = largeLinkedMutation(t, w, kind)
+	for _, kind := range []pickerFixtureKind{pickerFixtureZero, pickerFixtureChild, pickerFixtureNativeChild, pickerFixtureReplay, pickerFixtureOverflow} {
+		t.Run(string(kind), func(t *testing.T) {
+			m := mutation(t, w, string(kind))
+			if kind == pickerFixtureOverflow {
+				m = largeLinkedMutation(t, w, string(kind))
 			}
 			m = pickerMetadata(t, w, m, func(a *archive.Metadata) {
 				a.ProjectID = ""
@@ -120,16 +123,18 @@ func TestPickerCanonicalLookupIncludesAllLiveClassifications(t *testing.T) {
 				n := 0
 				a.Counts.Turns = &n
 				switch kind {
-				case "child":
+				case pickerFixtureRoot, pickerFixtureZero, pickerFixtureOverflow:
+					// These fixtures retain ordinary root classification.
+				case pickerFixtureChild:
 					a.ParentSessionID = "zero"
-				case "native-child":
+				case pickerFixtureNativeChild:
 					a.NativeChild = true
-				case "replay":
+				case pickerFixtureReplay:
 					a.Replay = &archive.Replay{}
 				}
 			})
-			h = pickerCandidate(t, w, h, m, "revision-"+kind)
-			lower, upper, err := PickerIdentityRange("claude", kind)
+			h = pickerCandidate(t, w, h, m, "revision-"+string(kind))
+			lower, upper, err := PickerIdentityRange("claude", string(kind))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -156,7 +161,7 @@ func TestPickerCanonicalLookupIncludesAllLiveClassifications(t *testing.T) {
 	rewritten.ID = "rewrite-zero"
 	h = pickerCandidate(t, w, h, rewritten, "rewritten-zero")
 	page, err = pickerIdentitySnapshot(w, h).Query(t.Context(), Query{Index: ProjectIndex, Lower: lower, Upper: upper}, "", 2)
-	if err != nil || len(page.Rows) != 1 || page.Rows[0].Entry.Picker.Revision != "rewritten-zero" || page.Rows[0].Entry.Picker.ProjectID != "changed-project" || page.Rows[0].Entry.Picker.PromptState != "positive" || page.Rows[0].Entry.Picker.OrdinaryChildren != 1 {
+	if err != nil || len(page.Rows) != 1 || page.Rows[0].Entry.Picker.Revision != "rewritten-zero" || page.Rows[0].Entry.Picker.ProjectID != "changed-project" || page.Rows[0].Entry.Picker.PromptState != PickerPromptsPositive || page.Rows[0].Entry.Picker.OrdinaryChildren != 1 {
 		t.Fatal("lookup rewrite lost facts/counters", err)
 	}
 	live := map[string]bool{}
@@ -207,7 +212,10 @@ func TestPickerCanonicalLookupCodecAndRangeRefuseCorruption(t *testing.T) {
 	if _, err = DecodePickerRow(key, full); err == nil {
 		t.Fatal("noncompact lookup envelope accepted")
 	}
-	for _, invalid := range []struct{ harness, id string }{{"", "session"}, {"claude", ""}, {"claude", "../session"}, {string([]byte{0xff}), "session"}, {"claude", strings.Repeat("s", 1024)}} {
+	for _, invalid := range []struct {
+		harness string
+		id      string
+	}{{"", "session"}, {"claude", ""}, {"claude", "../session"}, {string([]byte{0xff}), "session"}, {"claude", strings.Repeat("s", 1024)}} {
 		if _, _, err = PickerIdentityRange(invalid.harness, invalid.id); err == nil {
 			t.Fatal("invalid identity range accepted")
 		}
@@ -217,7 +225,7 @@ func TestPickerCanonicalLookupCodecAndRangeRefuseCorruption(t *testing.T) {
 		t.Fatal(err)
 	}
 	same, _, _ := PickerIdentityRange("claude", "session")
-	if lower != same || !(key >= lower && key < upper) || upper != strings.TrimSuffix(lower, "/")+"0" {
+	if lower != same || (key < lower || key >= upper) || upper != strings.TrimSuffix(lower, "/")+"0" {
 		t.Fatal("canonical range grammar mismatch")
 	}
 }

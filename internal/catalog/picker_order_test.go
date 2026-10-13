@@ -11,7 +11,11 @@ import (
 
 func TestPickerMembershipTieOrderMatchesSeparateRawComponents(t *testing.T) {
 	w, _ := fixture(t)
-	type ordered struct{ key, harness, session string }
+	type ordered struct {
+		key     string
+		harness string
+		session string
+	}
 	groups := map[string][]ordered{}
 	for _, repo := range []string{"", archive.RepoKey("https://example.com/ties")} {
 		for _, harness := range []string{"a", "a-", "a0", "claude", "claude-code", "Claude-Code"} {
