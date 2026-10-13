@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -76,7 +78,7 @@ func sourceEncodingFixture(records int, content string) SourceBundle {
 
 func TestSourceEncodingMatchesMarshalBytes(t *testing.T) {
 	for _, schema := range []int{SourceSchemaVersion, HistorySourceSchemaVersion} {
-		t.Run(fmt.Sprint(schema), func(t *testing.T) {
+		t.Run(strconv.Itoa(schema), func(t *testing.T) {
 			bundle := sourceEncodingFixture(3, "synthetic\ncontent\xff")
 			bundle.PreviousGenerationID = "previous"
 			bundle.NativeChild = true
@@ -193,8 +195,9 @@ func TestSourceEncodingSerializationFailurePreservesPrefix(t *testing.T) {
 
 type sourceEncodingFailureWriter struct {
 	bytes.Buffer
-	call, failAt int
-	err          error
+	call   int
+	failAt int
+	err    error
 }
 
 func (w *sourceEncodingFailureWriter) Write(p []byte) (int, error) {
@@ -212,10 +215,12 @@ func TestSourceEncodingWriterFailurePreservesBoundaries(t *testing.T) {
 	for call := 1; call <= 6; call++ {
 		want := &sourceEncodingFailureWriter{failAt: call, err: sentinel}
 		got := &sourceEncodingFailureWriter{failAt: call, err: sentinel}
-		if err := encodeSourceMarshalReference(want, bundle); err != sentinel {
+		// These sentinels have the concrete errorString type and no custom Is
+		// method; matching both type and errors.Is preserves exact identity.
+		if err := encodeSourceMarshalReference(want, bundle); !errors.Is(err, sentinel) || reflect.TypeOf(err) != reflect.TypeOf(sentinel) {
 			t.Fatalf("reference: %v", err)
 		}
-		if err := EncodeSource(got, bundle); err != sentinel {
+		if err := EncodeSource(got, bundle); !errors.Is(err, sentinel) || reflect.TypeOf(err) != reflect.TypeOf(sentinel) {
 			t.Fatalf("writer error wrapped or lost: %v", err)
 		}
 		if want.call != got.call || !bytes.Equal(want.Bytes(), got.Bytes()) {
@@ -232,7 +237,7 @@ func TestSourceEncodingRejectsShortWrites(t *testing.T) {
 			t.Fatalf("old encoder unexpectedly rejects short write: %v", err)
 		}
 		got := &sourceEncodingFailureWriter{failAt: call}
-		if err := EncodeSource(got, bundle); err != io.ErrShortWrite {
+		if err := EncodeSource(got, bundle); !errors.Is(err, io.ErrShortWrite) || reflect.TypeOf(err) != reflect.TypeOf(io.ErrShortWrite) {
 			t.Fatalf("write %d: got %v", call, err)
 		}
 		if got.call != call {
