@@ -13,6 +13,9 @@ import time
 
 ROOT = Path(__file__).resolve().parent.parent
 MODULE = 'github.com/wangjohn/agent-archive/'
+FULL_PERFORMANCE_COMMAND = ['go', 'test', '-v', '-json', '-p', '1', '-count=1', '-run',
+                            'StayFast|FiveMegabyte|TestCursorOverlappingHooksRegisterOnce',
+                            './internal/collector', './internal/archive', './internal/agents/nativecodec', './internal/capture']
 
 
 class Failure(RuntimeError):
@@ -187,6 +190,8 @@ def checked(command, output, deadline, env=None):
     old = {sig: signal.signal(sig, cancel) for sig in (signal.SIGTERM, signal.SIGINT)}
     process = None
     try:
+        if time.monotonic() >= deadline:
+            raise Failure('tier deadline already exceeded')
         with output.open('w') as handle:
             process = subprocess.Popen(command, stdout=handle, start_new_session=True, env=env)
             try:
@@ -197,14 +202,22 @@ def checked(command, output, deadline, env=None):
                 raise Failure('tier command failed')
         return output.read_text()
     finally:
-        if process:
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            process.wait()
-        for sig, handler in old.items():
-            signal.signal(sig, handler)
+        try:
+            # Cleanup must survive a second cancellation and has its own bound.
+            for sig in old:
+                signal.signal(sig, signal.SIG_IGN)
+            if process:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired as error:
+                    raise Failure('killed tier command did not exit within cleanup deadline') from error
+        finally:
+            for sig, handler in old.items():
+                signal.signal(sig, handler)
 
 
 def discover(packages, out, deadline, race=False):
@@ -292,8 +305,12 @@ def run_suite(tier, suite, out, extras=None, seconds=2400):
     if suite in ('linux', 'extra') or suite == 'macos' and tier == 'full':
         packages = extras['packages'] if suite == 'extra' else ['./...']
         if packages:
-            execute(common + (['-short'] if tier == 'daily' else []) + packages, 'race', tier == 'daily')
-            if tier == 'full':
+            if suite == 'macos' and tier == 'full':
+                import run_native_full
+                run_native_full.run(out, deadline, report, path)
+            else:
+                execute(common + (['-short'] if tier == 'daily' else []) + packages, 'race', tier == 'daily')
+            if tier == 'full' and suite != 'macos':
                 required = {}
                 children = {}
                 for entry in catalog()['restorations']:
@@ -319,7 +336,7 @@ def run_suite(tier, suite, out, extras=None, seconds=2400):
                 pattern = '^('+'|'.join(re.escape(n) for n in names)+')$'
                 execute(common+['-run', pattern, './'+pkg[len(MODULE):]], 'medium-'+pkg.rsplit('/',1)[1], selected={pkg:names}, children=children)
         if tier == 'full' and packages:
-            execute(['go', 'test', '-v', '-json', '-p', '1', '-count=1', '-run', 'StayFast|FiveMegabyte|TestCursorOverlappingHooksRegisterOnce', './internal/collector', './internal/archive', './internal/agents/nativecodec', './internal/capture'], 'performance', env=dict(os.environ, AGENT_ARCHIVE_PERF='1', AGENT_ARCHIVE_REAL_SYSTEMD='0'))
+            execute(FULL_PERFORMANCE_COMMAND, 'performance', env=dict(os.environ, AGENT_ARCHIVE_PERF='1', AGENT_ARCHIVE_REAL_SYSTEMD='0'))
     if suite == 'macos':
         execute(['bash','scripts/test_published_writer.sh'],'published-writer', selected={MODULE+'internal/config':['TestPublishedWriterRefusesProtectedConfiguration']})
     if suite == 'fuzz' or suite == 'extra' and extras['fuzz']:
@@ -350,6 +367,9 @@ def run_suite(tier, suite, out, extras=None, seconds=2400):
             if not any(selected.values()):
                 raise Failure('real systemd selection empty')
             execute(['go','test','-count=1','-json','-timeout','8m','-run',pattern,relative], 'systemd-'+pkg, selected=selected, env=dict(os.environ,AGENT_ARCHIVE_REAL_SYSTEMD='1'), real_manager=True)
+    if suite == 'macos' and tier == 'full':
+        import run_native_full
+        run_native_full.verify(out, report)
     report['success'] = True
     path.write_text(json.dumps(report,indent=2)+'\n')
 
@@ -448,4 +468,6 @@ def main():
 
 
 if __name__ == '__main__':
+    # Helpers import this module; share the script's Failure type and globals.
+    sys.modules['run_ci_tier'] = sys.modules[__name__]
     sys.exit(main())
