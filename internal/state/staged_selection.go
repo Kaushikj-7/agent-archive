@@ -259,7 +259,7 @@ func (s *Store) validateStagedSelectionWithSource(ctx context.Context, p Pending
 	if cfg.DestinationID() != q.Core.DestinationID || stage.SHA256 != q.StageSHA256 || !readySelectionOwnerMatches(reg, p.Bundle) {
 		return ErrDurableStorageRecovery
 	}
-	if _, err := s.validateStagedSourceForFactory(ctx, stage, p, fact); err != nil {
+	if err := s.validateStagedSourceWithFact(ctx, stage, p, fact); err != nil {
 		return err
 	}
 	checks := []struct {

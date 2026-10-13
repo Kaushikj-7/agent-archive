@@ -29,6 +29,14 @@ func (s *Store) validateExactStagedSource(ctx context.Context, stage ImportStage
 	return err
 }
 
+func (s *Store) validateStagedSourceWithFact(ctx context.Context, stage ImportStage, p PendingPublication, fact *validatedStagedSource) error {
+	if fact == nil {
+		return s.validateExactStagedSource(ctx, stage, p)
+	}
+	_, err := s.validateStagedSourceForFactory(ctx, stage, p, fact)
+	return err
+}
+
 // A fact is lexical to one factory invocation; external validation always recompresses.
 func (s *Store) validateStagedSourceForFactory(ctx context.Context, stage ImportStage, p PendingPublication, prior *validatedStagedSource) (*validatedStagedSource, error) {
 	original, err := s.readyDigest(ctx, stage.Bundle)
