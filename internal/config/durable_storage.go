@@ -109,7 +109,7 @@ func WithDurableStorage(home string, write func(DurableStorageGuard) error) (err
 			return err
 		}
 		verified, present, e := LoadRooted(held)
-		if e != nil || !present || !verified.DurableStorageProtection || (verified.SchemaVersion < 7 || verified.SchemaVersion > 13) {
+		if e != nil || !present || !verified.DurableStorageProtection || (verified.SchemaVersion < 7 || verified.SchemaVersion > 15 || verified.SchemaVersion == 14) {
 			return errors.Join(errors.New("durable storage protection was not persisted"), e)
 		}
 	}

@@ -63,8 +63,8 @@ func (s *sessionScan) freezeOrdinaryReadySelection(ctx context.Context, p *state
 // checkReadySelectionRemote never converts an unknown predecessor to absence.
 func (s *sessionScan) checkReadySelectionRemote(p state.PendingPublication) (bool, error) {
 	proof := p.Selection
-	if p.StagedSelection != nil {
-		proof = &p.StagedSelection.Core
+	if p.StagedProof() != nil {
+		proof = &p.StagedProof().Core
 	}
 	if proof == nil {
 		return false, state.ErrReadySelectionFrozen

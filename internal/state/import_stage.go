@@ -17,26 +17,29 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
+	"github.com/wangjohn/agent-archive/internal/agents/nativecapture"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/nativefacts"
 )
 
 // ImportStage freezes only privacy-filtered selected evidence before admission.
 // The registration atomically selects its digest; an interrupted preparation
 // cannot manufacture an admitted session.
 type ImportStage struct {
-	TypedSelection   bool                        `json:"typed_stage,omitempty"`
-	ReleaseOnly      bool                        `json:"-"`
-	Canceled         bool                        `json:"-"`
-	CancellationOnly bool                        `json:"-"`
-	Preserved        []archive.SourceBundle      `json:"preserved,omitempty"`
-	Children         []SubagentCandidate         `json:"children,omitempty"`
-	Version          int                         `json:"version"`
-	Registration     archive.SessionRegistration `json:"registration"`
-	Bundle           archive.SourceBundle        `json:"bundle"`
-	SHA256           string                      `json:"sha256"`
-	SkillEvidence    config.SkillEvidence        `json:"skill_evidence"`
+	CursorFacts      *nativefacts.SettledImportFacts `json:"settled_cursor_facts,omitempty"`
+	TypedSelection   bool                            `json:"typed_stage,omitempty"`
+	ReleaseOnly      bool                            `json:"-"`
+	Canceled         bool                            `json:"-"`
+	CancellationOnly bool                            `json:"-"`
+	Preserved        []archive.SourceBundle          `json:"preserved,omitempty"`
+	Children         []SubagentCandidate             `json:"children,omitempty"`
+	Version          int                             `json:"version"`
+	Registration     archive.SessionRegistration     `json:"registration"`
+	Bundle           archive.SourceBundle            `json:"bundle"`
+	SHA256           string                          `json:"sha256"`
+	SkillEvidence    config.SkillEvidence            `json:"skill_evidence"`
 }
 
 // MaxImportStageBytes bounds a selected journal below the shared recovery
@@ -170,7 +173,7 @@ func (s *Store) ImportStages(ctx context.Context, after string, limit int) (stag
 // agree. Native deletion cannot invalidate already staged selected evidence.
 func (s *Store) ResumeImportAdmissions(ctx context.Context) error {
 	if s.resourceBudget == nil {
-		cfg, present, err := config.Load(s.home)
+		cfg, present, err := s.loadConfig()
 		if err != nil {
 			return err
 		}
@@ -181,7 +184,7 @@ func (s *Store) ResumeImportAdmissions(ctx context.Context) error {
 		}
 	}
 
-	cfg, found, err := config.Load(s.home)
+	cfg, found, err := s.loadConfig()
 	if err != nil {
 		return err
 	}
@@ -228,8 +231,8 @@ func (s *Store) ResumeImportAdmissions(ctx context.Context) error {
 
 func (s *Store) resumePreparedImport(ctx context.Context, stage ImportStage) error {
 	if stage.TypedSelection {
-		cfg, present, err := config.Load(s.home)
-		if err != nil || !present || !cfg.SupportsStagedSelection() {
+		cfg, present, err := s.loadConfig()
+		if err != nil || !present || !cfg.SupportsStagedSelection() || (stage.Version == 3 && !cfg.SupportsSettledCursorSelection()) {
 			return errors.Join(ErrReadySelectionFrozen, err)
 		}
 	}
@@ -239,7 +242,7 @@ func (s *Store) resumePreparedImport(ctx context.Context, stage ImportStage) err
 	if reg.ParentSessionID != "" {
 		return nil
 	}
-	cfg, found, err := config.Load(s.home)
+	cfg, found, err := s.loadConfig()
 	if err != nil || !found {
 		return errors.Join(ErrDurableStorageRecovery, err)
 	}
@@ -267,8 +270,8 @@ func (s *Store) resumePreparedImport(ctx context.Context, stage ImportStage) err
 }
 
 func (s *Store) admitPreparedImport(ctx context.Context, stage ImportStage, reg archive.SessionRegistration, batchID string) error {
-	return config.WithImportStaging(s.home, func(g config.DurableStorageGuard) error {
-		current, present, e := config.Load(s.home)
+	return s.withImportStaging(ctx, func(g config.DurableStorageGuard) error {
+		current, present, e := s.loadConfig()
 		if e != nil || !present {
 			return errors.Join(ErrDurableStorageRecovery, e)
 		}
@@ -323,16 +326,24 @@ func (p ImportStage) Validate(ctx context.Context, reg archive.SessionRegistrati
 	if err != nil {
 		return err
 	}
-	if (p.Version != 1 && p.Version != 2) || p.TypedSelection != (p.Version == 2) || p.SHA256 != expected {
+	if (p.Version != 1 && p.Version != 2 && p.Version != 3) || p.TypedSelection != (p.Version == 2 || p.Version == 3) || p.SHA256 != expected {
 		return ErrDurableStorageRecovery
 	}
-	if p.TypedSelection && (reg.Origin != archive.SessionOriginImport || reg.ImportBatch.Recorded() == "" || len(p.Preserved) != 0 || p.Bundle.History != nil || reg.HistoricalProject != nil || reg.Harness.Name == "cursor" || len(p.Children) > 64) {
+	if p.TypedSelection && (reg.Origin != archive.SessionOriginImport || reg.ImportBatch.Recorded() == "" || len(p.Preserved) != 0 || p.Bundle.History != nil || reg.HistoricalProject != nil || (reg.Harness.Name == "cursor" && p.Version != 3) || len(p.Children) > 64) {
 		return ErrReadySelectionFrozen
 	}
 	if p.TypedSelection {
 		if _, err := agentmeta.JSONWireBound(ctx, p.Children, 64<<10); err != nil {
 			return errors.Join(ErrDurableStorageCapacity, err)
 		}
+	}
+	if p.Version == 3 {
+		if _, err := agentmeta.JSONWireBound(ctx, p.CursorFacts, 8<<10); err != nil {
+			return errors.Join(ErrDurableStorageCapacity, err)
+		}
+	}
+	if err := p.validateCursorFacts(reg); err != nil {
+		return err
 	}
 	return p.validateOwner(reg)
 }
@@ -375,7 +386,7 @@ func (s *Store) SaveImportSourceSet(ctx context.Context, reg archive.SessionRegi
 	}
 	version := 1
 	typedSelection := false
-	cfg, present, err := config.Load(s.home)
+	cfg, present, err := s.loadConfig()
 	if err != nil {
 		return "", err
 	}
@@ -394,6 +405,15 @@ func (s *Store) SaveImportSourceSet(ctx context.Context, reg archive.SessionRegi
 	}
 
 	stage := ImportStage{Version: version, TypedSelection: typedSelection, Registration: reg, Bundle: bundle, SkillEvidence: mode, Children: children, Preserved: preserved}
+	return s.savePreparedImportStage(ctx, reg, stage)
+}
+
+func (s *Store) savePreparedImportStage(ctx context.Context, reg archive.SessionRegistration, stage ImportStage) (string, error) {
+	closeWire, err := s.ownStageValidationWire(ctx, stage)
+	if err != nil {
+		return "", err
+	}
+	defer closeWire()
 	digest, err := stage.digest(ctx)
 	if err != nil {
 		return "", err
@@ -405,7 +425,16 @@ func (s *Store) SaveImportSourceSet(ctx context.Context, reg archive.SessionRegi
 	if err := validateImportStageCapacity(ctx, stage); err != nil {
 		return "", err
 	}
-	err = config.WithImportStaging(s.home, func(g config.DurableStorageGuard) error {
+	err = s.withImportStaging(ctx, func(g config.DurableStorageGuard) error {
+		if stage.Version == 3 {
+			if e := s.validateSettledIndex(reg); e != nil {
+				return e
+			}
+			cfg, present, e := s.loadConfig()
+			if e != nil || !present || !cfg.SupportsSettledCursorSelection() || cfg.Paused || !cfg.Archive.Enabled || !cfg.AcceptSession(reg) || reg.DestinationID != cfg.DestinationID() || stage.SkillEvidence != cfg.EffectiveSkillEvidence() {
+				return errors.Join(ErrReadySelectionFrozen, e)
+			}
+		}
 		existing, found, err := s.LoadImportStage(ctx, reg)
 		if err != nil {
 			return err
@@ -415,6 +444,14 @@ func (s *Store) SaveImportSourceSet(ctx context.Context, reg archive.SessionRegi
 				return ErrSessionIdentityConflict
 			}
 			return nil
+		}
+		if stage.Version == 3 {
+			if e := s.checkFreshSettledStage(ctx, g, reg, stage.SkillEvidence); e != nil {
+				return e
+			}
+			return s.writeDurableGuardChecked(ctx, g, importStageRelative(reg.ArchiveSessionID), stage, func(rename func() error) error {
+				return s.commitFreshSettledStage(ctx, g, reg, stage.SkillEvidence, rename)
+			})
 		}
 		return s.writeDurableGuard(ctx, g, importStageRelative(reg.ArchiveSessionID), stage)
 	})
@@ -470,7 +507,7 @@ func (s *Store) LoadImportStage(ctx context.Context, reg archive.SessionRegistra
 }
 
 func (s *Store) loadPreparedImportStage(ctx context.Context, id string) (stage ImportStage, found bool, err error) {
-	reservation := s.resourceBudget.Reservation()
+	reservation := s.readReservation()
 	if err := ctx.Err(); err != nil {
 		return stage, false, err
 	}
@@ -593,7 +630,7 @@ func (s *Store) removeImportFile(id, name string) (err error) {
 // ResumeAllImportAdmissions is explicit import recovery under setup/collector
 // ownership. Scheduled callers use the single-group method instead.
 func (s *Store) ResumeAllImportAdmissions(ctx context.Context) error {
-	cfg, found, err := config.Load(s.home)
+	cfg, found, err := s.loadConfig()
 	if err != nil {
 		return err
 	}
@@ -721,8 +758,8 @@ func (s *Store) removeImportCancellation(id string) error {
 
 // CancelImportStage journals unadmitted cleanup while protecting admitted owners.
 func (s *Store) CancelImportStage(ctx context.Context, reg archive.SessionRegistration) error {
-	return config.WithImportStaging(s.home, func(g config.DurableStorageGuard) error {
-		cfg, present, err := config.Load(s.home)
+	return s.withImportStaging(ctx, func(g config.DurableStorageGuard) error {
+		cfg, present, err := s.loadConfig()
 		if err != nil {
 			return err
 		}
@@ -853,11 +890,11 @@ func (p *ImportStage) UnmarshalJSON(raw []byte) error {
 		return err
 	}
 	var next plain
-	if header.TypedSelection || header.Version == 2 {
+	if header.TypedSelection || header.Version == 2 || header.Version == 3 {
 		if int64(len(raw)) > MaxImportStageBytes {
 			return ErrDurableStorageCapacity
 		}
-		if err := rejectStagedNullAliases(raw, []string{"version", "typed_stage", "sha256", "registration", "bundle", "children", "preserved", "skill_evidence"}); err != nil {
+		if err := rejectStagedNullAliases(raw, []string{"version", "typed_stage", "sha256", "registration", "bundle", "children", "preserved", "skill_evidence", "settled_cursor_facts"}); err != nil {
 			return err
 		}
 		decoder := json.NewDecoder(bytes.NewReader(raw))
@@ -865,7 +902,7 @@ func (p *ImportStage) UnmarshalJSON(raw []byte) error {
 		if err := decoder.Decode(&next); err != nil {
 			return ErrDurableStorageRecovery
 		}
-		if !next.TypedSelection || next.Version != 2 {
+		if !next.TypedSelection || (next.Version != 2 && next.Version != 3) {
 			return ErrDurableStorageRecovery
 		}
 	} else if err := json.Unmarshal(raw, &next); err != nil {
@@ -885,7 +922,7 @@ func (s *Store) retainImportDescriptor(ctx context.Context, stage ImportStage) e
 	if s.resourceBudget == nil {
 		return nil
 	}
-	reservation := s.resourceBudget.Reservation()
+	reservation := s.readReservation()
 	if !reservation.Reserve(n) {
 		return errStateBudget
 	}
@@ -928,7 +965,7 @@ func (s *Store) RetainImportID(ctx context.Context, id string) (string, error) {
 	if !safeFileComponent(id) || s.resourceBudget == nil {
 		return "", ErrDurableStorageRecovery
 	}
-	reservation := s.resourceBudget.Reservation()
+	reservation := s.readReservation()
 	n := int64(len(id))
 	if !reservation.Reserve(n) {
 		return "", errStateBudget
@@ -969,7 +1006,11 @@ func (s *Store) importStageAbsentDescriptor(ctx context.Context, id string) (Imp
 		if err != nil {
 			return ImportStage{}, false, err
 		}
-		descriptor := ImportStage{Version: 2, TypedSelection: true, ReleaseOnly: true, SHA256: receipt.Selection.StageSHA256, Registration: reg}
+		version := 2
+		if receipt.Selection.Version == 4 {
+			version = 3
+		}
+		descriptor := ImportStage{Version: version, TypedSelection: true, ReleaseOnly: true, SHA256: receipt.Selection.StageSHA256, Registration: reg}
 		if err := s.retainImportDescriptor(ctx, descriptor); err != nil {
 			return ImportStage{}, false, err
 		}
@@ -990,7 +1031,7 @@ func (s *Store) importStageAbsentDescriptor(ctx context.Context, id string) (Imp
 }
 
 // decodePreparedImportStage shares the enclosing captured ledger; it owns only digest scratch.
-func (s *Store) decodePreparedImportStage(ctx context.Context, id string, file io.Reader, size int64, reservation *agentapi.NativeReadReservation) (ImportStage, error) {
+func (s *Store) decodePreparedImportStage(ctx context.Context, id string, file io.Reader, size int64, reservation stateReservation) (ImportStage, error) {
 	var stage ImportStage
 	decoder := json.NewDecoder(io.LimitReader(file, maxPendingHistoryBytes+1))
 	if err := decoder.Decode(&stage); err != nil {
@@ -1009,7 +1050,7 @@ func (s *Store) decodePreparedImportStage(ctx context.Context, id string, file i
 			return stage, errStateBudget
 		}
 		defer reservation.Release(counterScratch)
-		cfg, present, e := config.Load(s.home)
+		cfg, present, e := s.loadConfig()
 		if e != nil || !present || !cfg.SupportsStagedSelection() || size > MaxImportStageBytes {
 			return stage, errors.Join(ErrReadySelectionFrozen, e)
 		}
@@ -1034,4 +1075,146 @@ func (s *Store) applyImportStageCancellation(id string, stage ImportStage) (Impo
 // inPreparedImportBatch compares attribution without exporting an operational batch token.
 func inPreparedImportBatch(reg, owner archive.SessionRegistration) bool {
 	return reg.InBatch(owner.ImportBatch.Recorded())
+}
+
+// SaveSettledCursorImportStage prepares only actual sealed settled captures.
+// Generic stage writers continue to refuse Cursor under the protected floor.
+func (s *Store) SaveSettledCursorImportStage(ctx context.Context, reg archive.SessionRegistration, expected *nativefacts.CaptureRequest, evidence *nativecapture.Proof) (digest string, err error) {
+	if s.resourceBudget == nil || !safeFileComponent(reg.ArchiveSessionID) {
+		return "", ErrReadySelectionFrozen
+	}
+	err = evidence.WithVerifiedCapture(ctx, reg, expected, s.resourceBudget, func(loanCtx context.Context, bundle archive.SourceBundle, facts nativefacts.SettledImportFacts) error {
+		lease, e := expected.Borrow()
+		if e != nil {
+			return e
+		}
+		defer lease.Close()
+		scoped, closeScoped := s.WithReadBudget(loanCtx, s.resourceBudget)
+		scoped.resourceReservation = func() stateReservation { return lease.Reservation() }
+		defer closeScoped()
+		cfg, present, e := scoped.loadConfig()
+		if e != nil || !present || !cfg.SupportsSettledCursorSelection() || cfg.Paused || !cfg.Archive.Enabled || !cfg.AcceptSession(reg) || reg.DestinationID != cfg.DestinationID() {
+			return errors.Join(ErrReadySelectionFrozen, e)
+		}
+		if e := scoped.validateSettledIndex(reg); e != nil {
+			return e
+		}
+		if !expected.MatchesPolicy(nativefacts.CapturePolicy{FilterVersion: archive.FilterVersion, SkillEvidence: nativefacts.CaptureSkillMode(cfg.EffectiveSkillEvidence())}) {
+			return ErrReadySelectionFrozen
+		}
+		stage := ImportStage{Version: 3, TypedSelection: true, Registration: reg, Bundle: bundle, CursorFacts: &facts, SkillEvidence: cfg.EffectiveSkillEvidence()}
+		digest, e = scoped.savePreparedImportStage(loanCtx, reg, stage)
+		return e
+	})
+	return digest, err
+}
+
+func (p ImportStage) validateCursorFacts(reg archive.SessionRegistration) error {
+	if p.Version != 3 {
+		if p.CursorFacts != nil {
+			return ErrDurableStorageRecovery
+		}
+		return nil
+	}
+	if unsupportedSettledStageOwner(p, reg) {
+		return ErrReadySelectionFrozen
+	}
+	facts := p.CursorFacts
+	chat := facts.Chat
+	if !readyDigestValid(facts.GlobalSHA256) || chat.ID != reg.NativeSessionID || chat.KeyID != reg.SourceKey || chat.CreatedAt.IsZero() || !chat.CreatedAt.Equal(reg.SessionStartedAt) || chat.Malformed || chat.Folder == "" || filepath.Clean(chat.Folder) != filepath.Clean(reg.ProjectRoot) {
+		return ErrDurableStorageRecovery
+	}
+	f := chat.CursorFacts
+	if (!f.VersionPresent || f.Version != 18) || (f.Relationships != agentapi.CursorRelationshipsAbsent && f.Relationships != agentapi.CursorRelationshipsValid) || f.Relationships == agentapi.CursorRelationshipsValid && !readyDigestValid(f.ChildIDsSHA256) || f.Relationships == agentapi.CursorRelationshipsAbsent && f.ChildIDsSHA256 != "" {
+		return ErrDurableStorageRecovery
+	}
+	return nil
+}
+
+func (s *Store) validateSettledIndex(reg archive.SessionRegistration) error {
+	key := agentmeta.SessionKey{Agent: agentmeta.ID(reg.Harness.Name), NativeID: reg.NativeSessionID}
+	if err := key.Validate(); err != nil {
+		return errors.Join(ErrSessionIdentityConflict, err)
+	}
+	entry, found, err := s.readQualifiedIndex(key)
+	if err != nil || !found || entry.validate(key) != nil || entry.ArchiveSessionID != reg.ArchiveSessionID {
+		return errors.Join(ErrSessionIdentityConflict, err)
+	}
+	return nil
+}
+
+// checkFreshSettledStage refuses occupied first-write slots; exact stage retries
+// are handled before this check. The final call is under the request lock.
+func (s *Store) checkFreshSettledStage(ctx context.Context, g config.DurableStorageGuard, reg archive.SessionRegistration, mode config.SkillEvidence) (err error) {
+	if err = ctx.Err(); err != nil {
+		return err
+	}
+	if err = g.CheckHome(s.home); err != nil {
+		return err
+	}
+	if err = s.validateSettledIndex(reg); err != nil {
+		return err
+	}
+	cfg, present, e := s.loadConfig()
+	if e != nil || !present || !cfg.SupportsSettledCursorSelection() || cfg.Paused || !cfg.Archive.Enabled || !cfg.AcceptSession(reg) || reg.DestinationID != cfg.DestinationID() || mode != cfg.EffectiveSkillEvidence() {
+		return errors.Join(ErrReadySelectionFrozen, e)
+	}
+	held, e := local.OpenRootedHome(s.home)
+	if e != nil {
+		return e
+	}
+	defer func() { err = errors.Join(err, held.Close()) }()
+	for _, directory := range []string{"registrations", "requests", "pending", "published"} {
+		_, e = held.Root.Lstat(filepath.Join(directory, reg.ArchiveSessionID+".json"))
+		if e == nil {
+			return ErrReadySelectionFrozen
+		}
+		if !errors.Is(e, os.ErrNotExist) {
+			return errors.Join(ErrReadySelectionFrozen, e)
+		}
+	}
+	for _, path := range []string{importStageRelative(reg.ArchiveSessionID), stagedControl(reg.ArchiveSessionID, stagedReleaseReceiptName), stagedControl(reg.ArchiveSessionID, stagedReleaseProgressName), importCancelRelative(reg.ArchiveSessionID)} {
+		_, e = held.Root.Lstat(path)
+		if e == nil {
+			return ErrReadySelectionFrozen
+		}
+		if !errors.Is(e, os.ErrNotExist) {
+			return errors.Join(ErrReadySelectionFrozen, e)
+		}
+	}
+	key := agentmeta.SessionKey{Agent: agentmeta.ID(reg.Harness.Name), NativeID: reg.NativeSessionID}
+	entry, found, e := s.readQualifiedIndex(key)
+	if e != nil || !found || entry.Absent || entry.validate(key) != nil || entry.ArchiveSessionID != reg.ArchiveSessionID || entry.Reservation == "" {
+		return errors.Join(ErrReadySelectionFrozen, ErrSessionIdentityConflict, e)
+	}
+	return held.Check()
+}
+
+func (s *Store) commitFreshSettledStage(ctx context.Context, g config.DurableStorageGuard, reg archive.SessionRegistration, mode config.SkillEvidence, rename func() error) (err error) {
+	// Existing private test seam models a writer overtaking the synced temp.
+	s.writeSynced()
+	held, e := local.OpenRootedHome(s.home)
+	if e != nil {
+		return e
+	}
+	defer func() { err = errors.Join(err, held.Close()) }()
+	unlock, e := local.RootedLockWait(held, requestLockName(reg.ArchiveSessionID), time.Second)
+	if e != nil {
+		return e
+	}
+	defer unlock()
+	if e = s.checkFreshSettledStage(ctx, g, reg, mode); e != nil {
+		return e
+	}
+	if e = held.Check(); e != nil {
+		return e
+	}
+	if e = g.CheckHome(s.home); e != nil {
+		return e
+	}
+	return rename()
+}
+
+func unsupportedSettledStageOwner(p ImportStage, reg archive.SessionRegistration) bool {
+	return p.CursorFacts == nil || !settledCursorFactShape(*p.CursorFacts) || (p.Bundle.ArchiveSessionID != "" && (!readySelectionOwnerMatches(reg, p.Bundle) || p.Bundle.Capture.Harness != reg.Harness || p.Bundle.PreviousGenerationID != "" || len(p.Bundle.LinkedSessions) != 0 || len(p.Bundle.SupplementalEvidence) != 0 || p.Bundle.Capture.SourceFormat != "cursor-composer")) || reg.Harness.Name != archive.HarnessCursor || reg.SourceKind != archive.SourceKindCursorSQLite || reg.SourceKey != reg.NativeSessionID || reg.ParentSessionID != "" || reg.NativeChild || reg.ParentNativeSessionID != "" || reg.NativeRootSessionID != "" || reg.NativeSourceHome != "" || reg.PreviousGenerationID != "" || reg.CaptureFrozen || reg.CodexBinding != nil || reg.CodexAdmission != nil || len(p.Children) != 0 || reg.HistoricalProject != nil
 }

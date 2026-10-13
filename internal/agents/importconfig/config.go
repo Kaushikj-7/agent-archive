@@ -5,9 +5,10 @@ package importconfig
 import (
 	"context"
 	"encoding/json"
-	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"slices"
 	"strings"
+
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 )
 
 // Provider is a native declaration, consumed through actual backfill injection.
@@ -57,4 +58,9 @@ func (p Provider) InspectImport(ctx context.Context, r agentapi.ImportInspection
 		out.StartedAt = r.Filtered.NativeStartAt
 	}
 	return out, ctx.Err()
+}
+
+// Cursor supplies the existing fixed Cursor historical interpretation policy.
+func Cursor() agentapi.ImportInspector {
+	return Provider{FileCreatedStart: true, ConversationTypes: []string{"user", "assistant", "message", "response_item", "tool_use", "tool_result", "tool_call"}}
 }

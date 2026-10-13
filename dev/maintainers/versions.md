@@ -206,3 +206,5 @@ Only protocol 10/schema 4 is writable. Complete construction, transactional rows
 upgrade, paged reads and all existing writer protection composition must land
 before activating 14; frozen protocol-10 owners must drain under the destination
 seal first. See the [frozen contracts and consumer inventory](../proposals/bounded-repository-picker.md#pr-1-frozen-reservations-and-consumer-inventory).
+
+The settled Cursor source candidate uses the distinct configuration capability `{version: 15, writer: settled-cursor-selection-v15}` with its existing permanent protections; it peels directly to staged13, skipping reserved picker14. Cursor stage3 and pending/published4 remain independent wire domains. This source candidate does not activate picker14 or catalog head protocol11/schema5. Its current-main qualification is pending; a possible future352 configuration16 is conditional and unreserved.
