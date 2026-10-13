@@ -157,12 +157,15 @@ func pickerCandidateBefore(a, b pickerCandidate) bool {
 		if !ar.CapturedAt.Equal(br.CapturedAt) {
 			return ar.CapturedAt.After(br.CapturedAt)
 		}
-		return ar.SessionKey < br.SessionKey
+		if ar.Harness != br.Harness {
+			return ar.Harness < br.Harness
+		}
+		return ar.SessionID < br.SessionID
 	}
 	return a.ordinal < b.ordinal
 }
 func (m *pickerModel) state(s sessionScope) (*pickerScopeState, error) {
-	q, err := pickerScopeQuery(s, m.harness, m.pageSize)
+	q, err := pickerScopeQuery(s, m.harness, min(100, m.pageSize+1))
 	if err != nil {
 		return nil, err
 	}
@@ -262,28 +265,8 @@ func (m *pickerModel) Older(ctx context.Context, s sessionScope) (modelPickerVie
 		if err = ctx.Err(); err != nil {
 			return modelPickerView{}, err
 		}
-		for len(st.buffer) == 0 && !st.remoteDone {
-			if pages >= pageBudget {
-				st.view.Incomplete = true
-				break
-			}
-			page, e := m.archive.PickerPage(ctx, st.query, st.next)
-			if e != nil {
-				return modelPickerView{}, e
-			}
-			pages++
-			st.view.RemotePages++
-			st.buffer = page.Rows
-			st.next = page.Next
-			st.remoteDone = !page.More
-			for len(st.buffer) > 0 && st.suppress[pickerID(st.buffer[0].Row.Harness, st.buffer[0].Row.SessionID)] {
-				st.buffer = st.buffer[1:]
-				st.view.Suppressed++
-			}
-		}
-		for len(st.buffer) > 0 && st.suppress[pickerID(st.buffer[0].Row.Harness, st.buffer[0].Row.SessionID)] {
-			st.buffer = st.buffer[1:]
-			st.view.Suppressed++
+		if err = m.fillRemote(ctx, st, &pages, pageBudget); err != nil {
+			return modelPickerView{}, err
 		}
 		if st.view.Incomplete {
 			break
@@ -302,32 +285,16 @@ func (m *pickerModel) Older(ctx context.Context, s sessionScope) (modelPickerVie
 		}
 		c := remote
 		if local {
-			c = st.locals[st.localPos]
-			if c.row.unbuilt != nil {
-				reg := *c.row.unbuilt
-				key := pickerLocalLabelKey(reg, c.row.active, m.source)
-				result, cached := m.labels[key]
-				if !cached {
-					if attempts >= m.labelBudget {
-						st.view.Incomplete = true
-						break
-					}
-					attempts++
-					st.view.LabelAttempts++
-					result.metadata, result.hasPrompt = m.label(ctx, reg, c.row.active)
-					if err = ctx.Err(); err != nil {
-						return modelPickerView{}, err
-					}
-					m.labels[key] = result
-				}
-				st.localPos++
-				if !result.hasPrompt {
-					continue
-				}
-				c.row.metadata = result.metadata
-				c.row.unbuilt = nil
-			} else {
-				st.localPos++
+			var accepted bool
+			c, accepted, err = m.materializeLocal(ctx, st, &attempts)
+			if err != nil {
+				return modelPickerView{}, err
+			}
+			if st.view.Incomplete {
+				break
+			}
+			if !accepted {
+				continue
 			}
 		} else {
 			st.buffer = st.buffer[1:]
@@ -341,6 +308,11 @@ func (m *pickerModel) Older(ctx context.Context, s sessionScope) (modelPickerVie
 		}
 		st.emitted[key] = true
 		st.view.Rows = append(st.view.Rows, c)
+	}
+	if !st.view.Incomplete {
+		if err = m.proveMore(ctx, st, &pages, pageBudget, &attempts); err != nil {
+			return modelPickerView{}, err
+		}
 	}
 	st.view.More = st.view.Incomplete || st.localPos < len(st.locals) || len(st.buffer) > 0 || !st.remoteDone
 	st.view.Empty = len(st.view.Rows) == 0 && !st.view.More
@@ -375,4 +347,91 @@ func pickerLocalLabelKey(reg archive.SessionRegistration, active time.Time, sour
 // Select preserves the opaque authority supplied with the offered candidate.
 func (m *pickerModel) Select(ctx context.Context, item catalog.PickerItem) (catalog.PickerHydration, error) {
 	return m.archive.HydratePicker(ctx, item.Reference)
+}
+
+func (st *pickerScopeState) suppressRemote() {
+	for len(st.buffer) > 0 && st.suppress[pickerID(st.buffer[0].Row.Harness, st.buffer[0].Row.SessionID)] {
+		st.buffer = st.buffer[1:]
+		st.view.Suppressed++
+	}
+}
+func (m *pickerModel) fillRemote(ctx context.Context, st *pickerScopeState, pages *int, budget int) error {
+	st.suppressRemote()
+	for len(st.buffer) == 0 && !st.remoteDone {
+		if *pages >= budget {
+			st.view.Incomplete = true
+			return nil
+		}
+		page, err := m.archive.PickerPage(ctx, st.query, st.next)
+		if err != nil {
+			return err
+		}
+		*pages++
+		st.view.RemotePages++
+		st.buffer = page.Rows
+		st.next = page.Next
+		st.remoteDone = !page.More
+		st.suppressRemote()
+	}
+	return nil
+}
+func (m *pickerModel) materializeLocal(ctx context.Context, st *pickerScopeState, attempts *int) (pickerCandidate, bool, error) {
+	c := st.locals[st.localPos]
+	if c.row.unbuilt == nil {
+		st.localPos++
+		return c, true, nil
+	}
+	reg := *c.row.unbuilt
+	key := pickerLocalLabelKey(reg, c.row.active, m.source)
+	result, cached := m.labels[key]
+	if !cached {
+		if *attempts >= m.labelBudget {
+			st.view.Incomplete = true
+			return c, false, nil
+		}
+		*attempts++
+		st.view.LabelAttempts++
+		result.metadata, result.hasPrompt = m.label(ctx, reg, c.row.active)
+		if err := ctx.Err(); err != nil {
+			return pickerCandidate{}, false, err
+		}
+		m.labels[key] = result
+	}
+	st.localPos++
+	if !result.hasPrompt {
+		return c, false, nil
+	}
+	c.row.metadata = result.metadata
+	c.row.unbuilt = nil
+	return c, true, nil
+}
+
+// proveMore retains one accepted lookahead. Unexamined native candidates or
+// refill budget exhaustion yield an incomplete continuation, never a claim
+// that an additional eligible row is known to exist.
+func (m *pickerModel) proveMore(ctx context.Context, st *pickerScopeState, pages *int, pageBudget int, attempts *int) error {
+	if err := m.fillRemote(ctx, st, pages, pageBudget); err != nil {
+		return err
+	}
+	if st.view.Incomplete || len(st.buffer) > 0 {
+		return nil
+	}
+	for st.localPos < len(st.locals) {
+		c, accepted, err := m.materializeLocal(ctx, st, attempts)
+		if err != nil {
+			return err
+		}
+		if st.view.Incomplete {
+			return nil
+		}
+		if accepted {
+			st.localPos--
+			// Materialized presentation is retained without losing original archive
+			// provenance or moving the local frontier past an unconsumed row.
+			st.locals = slices.Clone(st.locals)
+			st.locals[st.localPos] = c
+			return nil
+		}
+	}
+	return nil
 }
