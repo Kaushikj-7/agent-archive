@@ -199,12 +199,25 @@ must fence old direct admission APIs through that coordinator, not the head alon
 The permanent configuration capability is `{version: 14, writer: scoped-picker-v1}`
 with `scoped_picker_protection`; 13 is reserved separately by staged legacy
 publication (#479). Existing catalog configuration 11 and publication composition
-12 retain every lower protection and authorization floor. This reservation cannot
-be activated yet: current decoders explicitly refuse the new head/configuration,
-including mixed capabilities, before admission authorizes source/index writes.
-Only protocol 10/schema 4 is writable. Complete construction, transactional rows,
-upgrade, paged reads and all existing writer protection composition must land
-before activating 14; frozen protocol-10 owners must drain under the destination
-seal first. See the [frozen contracts and consumer inventory](../proposals/bounded-repository-picker.md#pr-1-frozen-reservations-and-consumer-inventory).
+12 retain every lower protection and authorization floor. Qualified source stores now support complete scoped construction and guarded
+activation; production S3/R2 atomic, clock and credential-cutover gates remain
+closed. Frozen protocol-10 owners must settle under the exact destination seal
+before the stronger writer contract activates. See the [frozen contracts and consumer inventory](../proposals/bounded-repository-picker.md#pr-1-frozen-reservations-and-consumer-inventory).
 
-The settled Cursor source candidate uses the distinct configuration capability `{version: 15, writer: settled-cursor-selection-v15}` with its existing permanent protections; it peels directly to staged13, skipping reserved picker14. Cursor stage3 and pending/published4 remain independent wire domains. This source candidate does not activate picker14 or catalog head protocol11/schema5. Its current-main qualification is pending; a possible future352 configuration16 is conditional and unreserved.
+Scoped construction support consumes the exact protocol-11/schema-5 head and
+protocol-11 coordinator descriptors. Configuration version 14 composes existing
+protections under `scoped-picker-v1`. Catalog-to-catalog upgrades checkpoint their
+captured source, candidate roots, exact source validator and bounded progress in
+the coordinator CAS record. The upgrade seal excludes GC until configuration
+acknowledges activation; mixed activation states refuse protected writes. Scoped
+rollback retains the complete protocol-11 roots and permanent writer fence.
+
+The settled Cursor source candidate uses the distinct configuration capability `{version: 15, writer: settled-cursor-selection-v15}` with its existing permanent protections; legacy configurations peel directly to staged13. Cursor stage3 and pending/published4 remain independent wire domains. This source candidate does not activate picker14 or catalog head protocol11/schema5. Its current-main qualification is pending; a possible future352 configuration16 is conditional and unreserved.
+
+Scoped catalog configuration 14 can remember settled Cursor protection 15 and
+staged protection 13 without enabling either legacy selection route. It retains
+all publication, durable-storage, import and authorization floors. Exact
+`scoped-picker-v1` capability and catalog format dominate these remembered flags;
+this is capability composition, not numeric version ordering. Prior settled
+writers refuse the scoped header, and remote coordinator protocol 11 permanently
+fences older catalog writers. Legacy settled configuration 15 remains unchanged.

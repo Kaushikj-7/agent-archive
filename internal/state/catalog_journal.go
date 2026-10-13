@@ -26,7 +26,7 @@ func (s *Store) catalogJournalDigest(ctx context.Context, id string, pending Pen
 	if err := pending.ValidateReadySlot(id); err != nil {
 		return "", err
 	}
-	if pending.Catalog == nil || pending.Catalog.Protocol != 10 {
+	if pending.Catalog == nil || (pending.Catalog.Protocol != 10 && pending.Catalog.Protocol != 11) {
 		return "", ErrDurableStorageRecovery
 	}
 	if err := s.validateReadablePendingContext(ctx, pending); err != nil {
@@ -92,7 +92,7 @@ func (s *Store) verifyCatalogJournal(id string, pending PendingPublication, guar
 		return "", ErrDurableStorageRecovery
 	}
 	origin, err := guard.Origin()
-	if err != nil || j.Validate() != nil || j.Origin != origin || j.Destination != destination || j.SessionID != id || j.MutationID != pending.Catalog.ID || j.ExpectedRevision != pending.Catalog.ExpectedRevision {
+	if err != nil || j.Validate() != nil || j.WriterProtocol() != pending.Catalog.Protocol || j.Origin != origin || j.Destination != destination || j.SessionID != id || j.MutationID != pending.Catalog.ID || j.ExpectedRevision != pending.Catalog.ExpectedRevision {
 		return "", errors.Join(ErrDurableStorageRecovery, err)
 	}
 	digest, err := s.CatalogJournalDigest(id, pending)
