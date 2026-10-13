@@ -14,7 +14,7 @@ const envTrace = "AGENT_ARCHIVE_TRACE"
 var tracedCommands = map[string]bool{
 	"machines": true, "status": true, "sync": true, "pause": true, "resume": true, "setup": true, "uninstall": true,
 	"list": true, "show": true, "stats": true, "feedback": true, "handoff": true, "backfill": true, "purge": true, "eval": true,
-	"recover": true, "historical-project": true, "migrate": true,
+	"recover": true, "migrate": true,
 }
 
 // startTrace begins recording when AGENT_ARCHIVE_TRACE is on (1, true, yes,

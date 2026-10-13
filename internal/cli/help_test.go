@@ -37,11 +37,11 @@ func TestHelpTextIsConsistent(t *testing.T) {
 	}
 }
 
-// backfill undo and backfill history have help of their own, whichever way
+// Backfill subcommands have help of their own, whichever way
 // it is asked for.
 func TestSubcommandHelp(t *testing.T) {
 	t.Parallel()
-	for _, sub := range []string{"undo", "history"} {
+	for _, sub := range []string{"undo", "history", "projects"} {
 		for _, args := range [][]string{{"backfill", sub, "--help"}, {"help", "backfill", sub}, {"backfill", sub, "-h"}} {
 			var out bytes.Buffer
 			if code := Run(args, nil, &out, nil, Env{}); code != 0 || !strings.HasPrefix(out.String(), "Usage: agent-archive backfill "+sub) {
@@ -104,6 +104,7 @@ func TestCommandsRejectUnknownArguments(t *testing.T) {
 		{[]string{"feedback", "SESSION", "--bogus"}, "agent-archive: feedback: unknown flag --bogus; run agent-archive feedback --help"},
 		{[]string{"backfill", "--bogus"}, "agent-archive: backfill: unknown flag --bogus; run agent-archive backfill --help"},
 		{[]string{"backfill", "--since", "yesterday"}, `agent-archive: backfill: --since: "yesterday" is not a date (2026-01-31), an RFC 3339 time, or an age (7d, 12h); run agent-archive backfill --help`},
+		{[]string{"backfill", "projects", "--bogus"}, "agent-archive: backfill projects: unknown flag --bogus; run agent-archive backfill projects --help"},
 		{[]string{"backfill", "undo", "--bogus"}, "agent-archive: backfill undo: unknown flag --bogus; run agent-archive backfill undo --help"},
 		{[]string{"status", "extra"}, `agent-archive: status: unknown app "extra"; choose one of codex, claude, cursor; run agent-archive status --help`},
 		{[]string{"status", "claude", "extra"}, `agent-archive: status: unexpected argument "extra"; run agent-archive status --help`},

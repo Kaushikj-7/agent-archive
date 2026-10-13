@@ -112,6 +112,9 @@ func runBackfillCommand(args []string, stdin io.Reader, stdout, stderr io.Writer
 	// temporary folder goes first, whatever this command is (history, undo,
 	// and --dry-run included). A copy in use is never removed.
 	cursorstore.RemoveStaleSnapshots()
+	if len(args) > 0 && args[0] == "projects" {
+		return runBackfillProjects(args[1:], stdout, stderr, env)
+	}
 	if len(args) > 0 && args[0] == "history" {
 		return runBackfillHistory(args[1:], stdout, stderr, env)
 	}
