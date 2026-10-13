@@ -59,12 +59,12 @@ func boundedArchiveChoices(ctx context.Context, env metadataCacheDependencies, s
 		return int(p.Total)
 	}
 	states[index] = &state{rows: page.Rows, next: page.Next, more: page.More, total: count(page)}
-	choices := &scopeChoices{ctx: ctx, scope: scope.only(), format: format, current: index}
+	choices := &scopeChoices{ctx: ctx, scope: scope.only(), format: format, current: index, validate: snapshot.ValidateContinuation}
 	var loadErr error
 	load := func(readCtx context.Context, s sessionScope, i int, older bool) error {
 		st := states[i]
 		if st != nil && !older {
-			return snapshot.ValidateContinuation(readCtx)
+			return readCtx.Err()
 		}
 		query, e := pickerScopeQuery(s, opts.filter.Harness, pageSize)
 		if e != nil {
@@ -114,16 +114,8 @@ func boundedArchiveChoices(ctx context.Context, env metadataCacheDependencies, s
 				return nil, e
 			}
 			result := archiveSearch(sessions, s, format)()
-			for j := range result {
-				batch, e := snapshot.PickerLookup(searchCtx, []catalog.PickerIdentity{{Harness: result[j].HarnessKey, SessionID: result[j].SessionID}})
-				if e != nil {
-					return nil, e
-				}
-				if len(batch.Results) != 1 || !batch.Results[0].Found {
-					return nil, errors.New("search selection no longer exists; refresh")
-				}
-				item := batch.Results[0].Item
-				result[j].pickerSelection = &handoffPickerSelection{item: &item, snapshot: snapshot, store: store}
+			if e := bindArchiveSearchRows(searchCtx, snapshot, store, result); e != nil {
+				return nil, e
 			}
 			return result, nil
 		}}
@@ -168,4 +160,32 @@ func readPickerSessionView(ctx context.Context, store storage.ObjectStore, row l
 		return metadataWithLinks(ctx, store, metadata), nil
 	}
 	return readSessionView(ctx, store, row.HarnessKey, row.SessionID)
+}
+
+func bindArchiveSearchRows(ctx context.Context, snapshot *catalog.Snapshot, store storage.ObjectStore, rows []listRow) error {
+	for start := 0; start < len(rows); start += 100 {
+		end := min(start+100, len(rows))
+		identities := make([]catalog.PickerIdentity, end-start)
+		for i := start; i < end; i++ {
+			identities[i-start] = catalog.PickerIdentity{Harness: rows[i].HarnessKey, SessionID: rows[i].SessionID}
+		}
+		batch, err := snapshot.PickerLookup(ctx, identities)
+		if err != nil {
+			return err
+		}
+		found := map[pickerIdentity]catalog.PickerItem{}
+		for _, r := range batch.Results {
+			if r.Found {
+				found[pickerID(r.Identity.Harness, r.Identity.SessionID)] = r.Item
+			}
+		}
+		for i := start; i < end; i++ {
+			item, ok := found[pickerID(rows[i].HarnessKey, rows[i].SessionID)]
+			if !ok {
+				return errors.New("search selection no longer exists; refresh")
+			}
+			rows[i].pickerSelection = &handoffPickerSelection{item: &item, snapshot: snapshot, store: store}
+		}
+	}
+	return ctx.Err()
 }

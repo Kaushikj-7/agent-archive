@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"time"
@@ -15,6 +16,7 @@ type browserOperationResult struct {
 	more       bool
 	err        error
 	generation uint64
+	panicValue any
 }
 type browserOperation struct {
 	cancel context.CancelFunc
@@ -34,8 +36,9 @@ func (l *sessionPicker) stopOperations() {
 	l.generation++
 	if op := l.operation; op != nil {
 		op.cancel()
-		<-op.done
+		result := <-op.done
 		l.operation = nil
+		result.checked()
 	}
 }
 
@@ -53,23 +56,17 @@ func (l *sessionPicker) prepareSearch(rows []listRow) {
 		generation := l.generation
 		op := &browserOperation{cancel: cancel, done: make(chan browserOperationResult, 1)}
 		l.operation = op
-		loader, legacy := l.searchContext, l.search
-		go func() {
-			var result []listRow
-			var err error
-			if loader != nil {
-				result, err = loader(ctx)
-			} else {
-				result = legacy()
-				err = ctx.Err()
-			}
-			op.done <- browserOperationResult{rows: result, err: err, generation: generation}
-		}()
+		loader := l.searchContext
+		go runBrowserRead(op.done, func() browserOperationResult {
+			result, err := loader(ctx)
+			return browserOperationResult{rows: result, err: err, generation: generation}
+		})
 	}
 	select {
 	case result := <-l.operation.done:
 		l.operation.cancel()
 		l.operation = nil
+		result.checked()
 		if result.generation != l.generation {
 			return
 		}
@@ -95,57 +92,53 @@ func (l *sessionPicker) loadOlder(p *prompter, stdout io.Writer) (bool, error) {
 	if loader.LoadContext == nil {
 		return loader.Load()
 	}
-	go func() {
-		var more bool
-		var err error
-		if loader.LoadContext != nil {
-			more, err = loader.LoadContext(ctx)
-		} else {
-			more, err = loader.Load()
+	go runBrowserRead(done, func() browserOperationResult {
+		more, err := loader.LoadContext(ctx)
+		return browserOperationResult{more: more, err: err}
+	})
+	joined := false
+	join := func() browserOperationResult { result := <-done; joined = true; result.checked(); return result }
+	defer func() {
+		cancel()
+		if !joined {
+			join()
 		}
-		done <- browserOperationResult{more: more, err: err}
 	}()
 	typedAhead := l.keys != nil && l.keys.buffered() || l.keys == nil && p.in.Buffered() > 0
 	terminal.Println(stdout, "Loading "+loader.Label+"… Esc cancels")
 	for {
 		select {
 		case result := <-done:
+			joined = true
+			result.checked()
 			return result.more, result.err
 		case <-ctx.Done():
 			cancel()
-			<-done
+			join()
 			return false, ctx.Err()
 		default:
 		}
 		if typedAhead {
 			select {
 			case result := <-done:
+				joined = true
+				result.checked()
 				return result.more, result.err
 			case <-ctx.Done():
 				cancel()
-				<-done
+				join()
 				return false, ctx.Err()
 			}
 		}
 		if l.keys == nil {
-			ready := p.in.Buffered() > 0
-			if !ready {
-				var err error
-				ready, err = browserLineReady(p.source)
-				if err != nil {
-					cancel()
-					<-done
-					return false, err
-				}
-			}
-			if !ready {
-				continue
-			}
-			answer, err := p.line("")
+			answer, complete, err := l.pollBrowserLine(p)
 			if err != nil {
 				cancel()
-				<-done
+				join()
 				return false, err
+			}
+			if !complete {
+				continue
 			}
 			switch strings.ToLower(strings.TrimSpace(answer)) {
 			case "q", "quit":
@@ -158,7 +151,7 @@ func (l *sessionPicker) loadOlder(p *prompter, stdout io.Writer) (bool, error) {
 			}
 			l.operationCanceled = true
 			cancel()
-			result := <-done
+			result := join()
 			if result.err != nil && !errors.Is(result.err, context.Canceled) {
 				return false, result.err
 			}
@@ -167,13 +160,13 @@ func (l *sessionPicker) loadOlder(p *prompter, stdout io.Writer) (bool, error) {
 		k, err := l.keys.nextWait(50 * time.Millisecond)
 		if err != nil {
 			cancel()
-			<-done
+			join()
 			return false, err
 		}
 		if k.kind == keyEscape || k.kind == keyEndOfInput || (k.kind == keyRune && (k.r == 'q' || k.r == 'a')) {
 			l.operationCanceled = true
 			cancel()
-			result := <-done
+			result := join()
 			if result.err != nil && !errors.Is(result.err, context.Canceled) {
 				return false, result.err
 			}
@@ -204,6 +197,7 @@ func (l *sessionPicker) waitSearch(rows []listRow) error {
 		case result := <-l.operation.done:
 			l.operation.cancel()
 			l.operation = nil
+			result.checked()
 			if result.generation != l.generation {
 				continue
 			}
@@ -231,16 +225,8 @@ func (l *sessionPicker) readBrowserLine(p *prompter, question string, rows []lis
 		if pending && l.operation == nil {
 			return "", true, nil
 		}
-		ready := p.in.Buffered() > 0
-		if !ready {
-			var err error
-			ready, err = browserLineReady(p.source)
-			if err != nil {
-				return "", false, err
-			}
-		}
-		if ready {
-			answer, err := p.line("")
+		answer, complete, err := l.pollBrowserLine(p)
+		if err != nil || complete {
 			return answer, false, err
 		}
 	}
@@ -252,6 +238,11 @@ func (l *sessionPicker) toggleScope(p *prompter, stdout io.Writer, choices *scop
 	if choices.rowsForContext != nil {
 		previous, target := l.older, 1-choices.current
 		l.older = &browserLoadAction{Label: "scope sessions", LoadContext: func(ctx context.Context) (bool, error) {
+			if choices.validate != nil {
+				if err := choices.validate(ctx); err != nil {
+					return false, err
+				}
+			}
 			choices.built[target] = nil
 			choices.choiceContext(ctx, target)
 			if err := ctx.Err(); err != nil {
@@ -270,4 +261,51 @@ func (l *sessionPicker) toggleScope(p *prompter, stdout io.Writer, choices *scop
 		choices.toggle()
 	}
 	return nil
+}
+
+// Worker panics return to the owning browser goroutine so its deferred terminal
+// restoration and resource cleanup run before the panic escapes.
+func runBrowserRead(done chan<- browserOperationResult, load func() browserOperationResult) {
+	var result browserOperationResult
+	defer func() { result.panicValue = recover(); done <- result }()
+	result = load()
+}
+func (r browserOperationResult) checked() {
+	if r.panicValue != nil {
+		panic(r.panicValue)
+	}
+}
+
+// pollBrowserLine reads at most one available byte, so a partial pipe line
+// cannot block operation completion, cancellation or terminal restoration.
+func (l *sessionPicker) pollBrowserLine(p *prompter) (string, bool, error) {
+	ready := p.in.Buffered() > 0
+	if !ready {
+		var err error
+		ready, err = browserLineReady(p.source)
+		if err != nil {
+			return "", false, err
+		}
+	}
+	if !ready {
+		return "", false, nil
+	}
+	b, err := p.in.ReadByte()
+	if err != nil {
+		if errors.Is(err, io.EOF) && l.lineInput != "" {
+			answer := l.lineInput
+			l.lineInput = ""
+			p.noteLineEcho(answer)
+			return strings.TrimSpace(answer), true, nil
+		}
+		return "", false, fmt.Errorf("no more input: %w", err)
+	}
+	l.lineInput += string(b)
+	if b != '\n' {
+		return "", false, nil
+	}
+	answer := l.lineInput
+	l.lineInput = ""
+	p.noteLineEcho(answer)
+	return strings.TrimSpace(answer), true, nil
 }

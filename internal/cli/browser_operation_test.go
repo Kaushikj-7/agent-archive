@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -99,5 +100,53 @@ func TestBrowserOlderAcceptsQuitAndJoinsSlowRead(t *testing.T) {
 				t.Fatal("provider worker outlived browser")
 			}
 		})
+	}
+}
+
+func TestBrowserWorkerPanicReturnsToOwnerAfterJoining(t *testing.T) {
+	l := &sessionPicker{filter: "needle", searchContext: func(context.Context) ([]listRow, error) { panic("synthetic read panic") }}
+	defer func() {
+		if recovered := recover(); recovered != "synthetic read panic" {
+			t.Fatalf("worker panic not returned to owner: %v", recovered)
+		}
+		if l.operation != nil {
+			t.Fatal("worker still owned after completion")
+		}
+		l.stopOperations()
+	}()
+	l.prepareSearch(nil)
+	_ = l.waitSearch(nil)
+}
+
+func TestBrowserSearchCompletionDoesNotWaitForPartialPipeLine(t *testing.T) {
+	input, output, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer input.Close()
+	defer output.Close()
+	gate := make(chan struct{})
+	l := &sessionPicker{filter: "needle", searchContext: func(context.Context) ([]listRow, error) { <-gate; return nil, nil }}
+	defer l.stopOperations()
+	p := newPrompter(input, io.Discard)
+	l.prepareSearch(nil)
+	writerDone := make(chan struct{})
+	go func() {
+		defer close(writerDone)
+		_, _ = output.Write([]byte("part"))
+		time.Sleep(10 * time.Millisecond)
+		close(gate)
+	}()
+	answer, redraw, err := l.readBrowserLine(p, "", nil)
+	<-writerDone
+	if err != nil || !redraw || answer != "" {
+		t.Fatal("search completion waited for a complete input line", answer, redraw, err)
+	}
+	if _, err = output.Write([]byte("ial\n")); err != nil {
+		t.Fatal(err)
+	}
+	answer, redraw, err = l.readBrowserLine(p, "", nil)
+	if err != nil || redraw || answer != "partial" {
+		t.Fatal("redraw lost pending input", answer, redraw, err)
 	}
 }

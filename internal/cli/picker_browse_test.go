@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/catalog"
@@ -98,5 +99,54 @@ func TestBoundedArchiveScopeContinuationsAreIndependentAndSelectionPinned(t *tes
 	}
 	if _, err = readPickerSessionView(t.Context(), remote, row); err == nil {
 		t.Fatal("pinned selected row silently substituted latest authority")
+	}
+}
+
+func TestBoundedArchiveSearchLoadsOlderChildrenAndUncappedFieldsOnDemand(t *testing.T) {
+	a := newScopedArchive(t)
+	for i := range 55 {
+		a.add(t, fmt.Sprintf("ordinary-%03d", i), fmt.Sprintf("Title %03d", i), a.label)
+	}
+	a.add(t, "older-parent", "older parent", a.label, func(m *archive.Metadata) { m.EndedAt = a.base.CapturedAt.Add(-2 * time.Hour); m.CapturedAt = m.EndedAt })
+	a.add(t, "older-child", "childneedle", a.label, func(m *archive.Metadata) {
+		m.ParentSessionID = "older-parent"
+		at := a.base.CapturedAt.Add(-2 * time.Hour)
+		m.EndedAt = &at
+		m.CapturedAt = at
+	})
+	a.add(t, "newest-long-title", strings.Repeat("uncapped ", 300)+"latefieldneedle", a.label, func(m *archive.Metadata) { m.EndedAt = a.base.CapturedAt.Add(time.Hour); m.CapturedAt = m.EndedAt })
+	remote := scopedPickerCatalog(t, a.mem)
+	counts := &catalogListReads{MeasuredStore: storagetest.NewMeasuredStore(remote.ObjectStore, 0), paths: map[string]int{}}
+	wrapped, err := catalog.Wrap(counts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	choices, used, err := boundedArchiveChoices(catalog.WithReadView(t.Context()), a.env, wrapped, listOptions{filter: reader.Filter{Replays: reader.ReplaysHidden}}, sessionScope{All: true}, listFormatOptions{Numbered: true}, io.Discard, "show")
+	if !used || err != nil {
+		t.Fatal(used, err)
+	}
+	initial := choices.shown().rows
+	for _, r := range initial {
+		if r.SessionID == "older-parent" || r.SessionID == "older-child" {
+			t.Fatal("older fixtures unexpectedly loaded initially")
+		}
+	}
+	if counts.paths["body"] != 0 || counts.Metrics().Lists != 0 {
+		t.Fatal("startup read complete archive")
+	}
+	universe, err := choices.shown().searchContext(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, matched := filterRows(withTableNumbers(initial, universe), parseSessionQuery("childneedle"))
+	if len(rows) != 2 || matched != 1 || rows[0].SessionID != "older-parent" || rows[1].SessionID != "older-child" || rows[1].Depth != 1 {
+		t.Fatalf("older parent grouping lost: %+v", rows)
+	}
+	rows, matched = filterRows(withTableNumbers(initial, universe), parseSessionQuery("latefieldneedle"))
+	if len(rows) != 1 || matched != 1 || rows[0].SessionID != "newest-long-title" {
+		t.Fatal("bounded display fields replaced full search", rows)
+	}
+	if rows[0].pickerSelection == nil || rows[0].pickerSelection.item == nil {
+		t.Fatal("search discarded immutable selection")
 	}
 }

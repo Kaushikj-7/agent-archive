@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -84,14 +85,14 @@ func boundedHandoffChoices(ctx context.Context, env handoffSelectDependencies, s
 	state.buffer, state.next, state.remoteDone = first.Rows, first.Next, !first.More
 	state.view.RemotePages = 1
 	var operationErr error
-	choices := &scopeChoices{ctx: ctx, scope: scope.only(), format: format}
+	choices := &scopeChoices{ctx: ctx, scope: scope.only(), format: format, validate: snapshot.ValidateContinuation}
 	if scope.Label == "" || scope.All {
 		choices.current = viewAll
 	}
 	var archived []archive.Metadata
 	var searchLoaded bool
 	choices.rowsForContext = func(readCtx context.Context, s sessionScope) scopeView {
-		v, e := model.First(readCtx, s)
+		v, e := pickerVisibleView(readCtx, model, s)
 		if e != nil {
 			operationErr = e
 			return scopeView{incomplete: true, total: -1, truncated: true, note: fmt.Sprintf("Could not load sessions: %v", e)}
@@ -111,7 +112,7 @@ func boundedHandoffChoices(ctx context.Context, env handoffSelectDependencies, s
 		if v.Incomplete {
 			note = "Local eligibility is incomplete; Older sessions continues the scan."
 		}
-		return scopeView{rows: out, total: v.Total, truncated: v.More, note: note, incomplete: v.Incomplete, searchNotice: "Local-only search labels are limited to the first 50 eligible rows.", searchContext: func(searchCtx context.Context) ([]listRow, error) {
+		return scopeView{rows: out, total: v.Total, truncated: v.More, note: note, incomplete: v.Incomplete, searchNotice: "Local-only search labels are limited to the first 50 picker rows.", searchContext: func(searchCtx context.Context) ([]listRow, error) {
 			p.ctx = searchCtx
 			if !searchLoaded {
 				archived, e = reader.ListMetadataWithOptions(searchCtx, store, archiveSessionsPrefix, reader.Filter{Harness: opts.harness, Replays: reader.ReplaysHidden}, reader.ListOptions{Cache: listCache(env, false), Skipped: warnSkippedSidecar(stderr, "handoff")})
@@ -172,6 +173,9 @@ func boundedHandoffChoices(ctx context.Context, env handoffSelectDependencies, s
 		s := choices.scope
 		if choices.current == viewAll {
 			s = s.everything()
+		}
+		if e := snapshot.ValidateContinuation(operationCtx); e != nil {
+			return false, e
 		}
 		view, e := model.Older(operationCtx, s)
 		if e != nil {
@@ -266,7 +270,7 @@ func boundedLocalHandoffChoices(ctx context.Context, env handoffSelectDependenci
 		c.current = viewAll
 	}
 	c.rowsForContext = func(readCtx context.Context, s sessionScope) scopeView {
-		v, err := m.First(readCtx, s)
+		v, err := pickerVisibleView(readCtx, m, s)
 		if err != nil {
 			loadErr = err
 			return scopeView{incomplete: true, total: -1, truncated: true}
@@ -283,7 +287,7 @@ func boundedLocalHandoffChoices(ctx context.Context, env handoffSelectDependenci
 		if v.Incomplete {
 			note += " Local eligibility is incomplete; Older sessions continues the scan."
 		}
-		return scopeView{rows: out, total: v.Total, truncated: v.More, incomplete: v.Incomplete, note: note, searchNotice: "Local-only search labels are limited to the first 50 eligible rows.", searchContext: func(searchCtx context.Context) ([]listRow, error) {
+		return scopeView{rows: out, total: v.Total, truncated: v.More, incomplete: v.Incomplete, note: note, searchNotice: "Local-only search labels are limited to the first 50 picker rows.", searchContext: func(searchCtx context.Context) ([]listRow, error) {
 			p.ctx = searchCtx
 			p.scope = s
 			p.readLimit = handoffTitleScanLimit
@@ -320,4 +324,14 @@ func boundedLocalHandoffChoices(ctx context.Context, env handoffSelectDependenci
 	c.loadOlder.Load = func() (bool, error) { return c.loadOlder.LoadContext(ctx) }
 	m.searchError = func() error { return nil }
 	return c, m, loadErr
+}
+
+// A rendered scope reuses the model's published immutable view. Validation
+// belongs to the asynchronous scope/Older action, not table reconstruction.
+func pickerVisibleView(ctx context.Context, m *pickerModel, scope sessionScope) (modelPickerView, error) {
+	raw, _ := json.Marshal(scope)
+	if st := m.states[string(raw)]; st != nil && st.started {
+		return clonePickerView(st.view), ctx.Err()
+	}
+	return m.First(ctx, scope)
 }

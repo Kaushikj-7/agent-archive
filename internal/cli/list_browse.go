@@ -421,6 +421,7 @@ type sessionPicker struct {
 	searchNotice  string
 	generation    uint64
 
+	lineInput         string
 	operationCanceled bool
 	operationQuit     bool
 	older             *browserLoadAction

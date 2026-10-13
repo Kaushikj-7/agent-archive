@@ -66,6 +66,7 @@ type scopeChoice struct {
 type scopeChoices struct {
 	ctx            context.Context
 	rowsForContext func(context.Context, sessionScope) scopeView
+	validate       func(context.Context) error
 	loadOlder      *browserLoadAction
 	scope          sessionScope
 	rowsFor        scopeRowsFunc
