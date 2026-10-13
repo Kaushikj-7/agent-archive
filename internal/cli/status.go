@@ -2926,6 +2926,13 @@ func discoveryProgress(now time.Time, app appStatus) string {
 	return strings.Join(parts, "; ")
 }
 
+func unknownDiscoveryArchiveLabel(app appStatus) string {
+	if app.ReadBackVerified && app.PublishedSessions > 0 && app.VerifiedSessions == app.PublishedSessions {
+		return "discovery unknown; archive verified at recorded time"
+	}
+	return "capture status unknown"
+}
+
 func (sc statusScreen) addCodexDiscoveryRow(row *statusRow, app appStatus) {
 	if app.Name != "codex" || app.Discovery == nil {
 		return
@@ -2935,7 +2942,7 @@ func (sc statusScreen) addCodexDiscoveryRow(row *statusRow, app appStatus) {
 	if !sc.verbose && discoveryEnabled(app) {
 		switch {
 		case len(app.Discovery.Errors) > 0 || app.Discovery.Outcomes["source_unavailable"] > 0:
-			row.cells[1] = "capture status unknown"
+			row.cells[1] = unknownDiscoveryArchiveLabel(app)
 		case app.Discovery.LastAttempt.IsZero():
 			row.cells[1] = "waiting for first scan"
 		case app.Discovery.Pending:
