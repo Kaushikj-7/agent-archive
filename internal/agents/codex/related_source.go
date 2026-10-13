@@ -821,6 +821,7 @@ type ordinarySnapshot struct {
 	length             int64
 	digest             [32]byte
 	longestRecord      int64
+	hashScratch        []byte
 	closed             bool
 	observed           agentapi.SourceObservation
 	headers            []*rolloutFile
@@ -851,7 +852,10 @@ func (p *relatedSourcePass) ordinary(ctx context.Context, limits agentapi.ReadLi
 		}
 	}()
 	h := &ordinaryDigest{Hash: sha256.New()}
-	n, err := io.Copy(h, io.LimitReader(f.file.Reader(ctx), f.boundary))
+	// One snapshot owns this scratch until Close. All ordinary hash operations
+	// use it serially, within the existing ordinaryScratch reservation.
+	buffer := make([]byte, max(1, min(ordinaryScratch, f.boundary)))
+	n, err := io.CopyBuffer(h, io.LimitReader(f.file.Reader(ctx), f.boundary), buffer)
 	trace.Add(trace.HashBytes, n)
 	if err != nil {
 		return nil, err
@@ -860,6 +864,7 @@ func (p *relatedSourcePass) ordinary(ctx context.Context, limits agentapi.ReadLi
 	out := &ordinarySnapshot{scratchCharge: ordinaryScratch, scratchReservation: reservation, owner: p, source: f, selection: selection, headers: selection.headerFiles(nil), ctx: ctx, length: f.boundary, observed: agentapi.SourceObservation{Signature: sourceio.FileSignature(stamp.Size, stamp.ModifiedAt.UnixNano()), Present: true, Empty: f.boundary == 0, Activity: stamp.ModifiedAt, Size: stamp.Size}}
 	copy(out.digest[:], h.Sum(nil))
 	out.longestRecord = max(h.longest, h.line)
+	out.hashScratch = buffer
 	if p.env.CodexRollouts != nil {
 		var err error
 		out.observed, err = p.observation(ctx, selection, []physicalSpan{{file: f, end: f.boundary}})
@@ -867,7 +872,7 @@ func (p *relatedSourcePass) ordinary(ctx context.Context, limits agentapi.ReadLi
 			return nil, err
 		}
 	}
-	if err := checkHeaders(ctx, out.headers); err != nil {
+	if err := out.checkHeaders(ctx); err != nil {
 		return nil, err
 	}
 	for _, header := range out.headers {
@@ -890,6 +895,7 @@ func (s *ordinarySnapshot) Close() error {
 		delete(s.owner.ordinaryLive, s)
 		s.owner.release(s.scratchReservation, s.scratchCharge)
 		s.scratchCharge = 0
+		s.hashScratch = nil
 		for _, header := range s.headers {
 			header.refs--
 		}
@@ -1036,7 +1042,7 @@ func (s *ordinarySnapshot) ValidateAdmission(ctx context.Context, a agentapi.Sou
 }
 
 func (s *ordinarySnapshot) check(ctx context.Context) error {
-	if err := s.source.file.CheckPrefix(ctx, s.length, s.digest); err != nil {
+	if err := s.source.file.CheckPrefixBuffer(ctx, s.length, s.digest, s.hashScratch); err != nil {
 		return sourceio.Classify(err)
 	}
 	if s.owner.env.CodexRollouts != nil {
@@ -1044,7 +1050,16 @@ func (s *ordinarySnapshot) check(ctx context.Context) error {
 			return sourceio.Classify(err)
 		}
 	}
-	return checkHeaders(ctx, s.headers)
+	return s.checkHeaders(ctx)
+}
+
+func (s *ordinarySnapshot) checkHeaders(ctx context.Context) error {
+	for _, header := range s.headers {
+		if err := header.file.CheckPrefixBuffer(ctx, int64(len(header.header)), header.headerDigest, s.hashScratch); err != nil {
+			return sourceio.Classify(err)
+		}
+	}
+	return nil
 }
 
 func bindingFacts(f *rolloutFile, home string, own *uint64) (archive.CodexSourceBinding, error) {

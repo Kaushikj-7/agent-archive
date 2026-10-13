@@ -76,6 +76,10 @@ func TestVerifiedFramingRemovesOneReadAndKeepsChecks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	owned := snap.(*ordinarySnapshot)
+	if int64(cap(owned.hashScratch)) > owned.scratchCharge || owned.scratchCharge != ordinaryScratch {
+		t.Fatalf("hash scratch exceeds exact owned charge: %d/%d", cap(owned.hashScratch), owned.scratchCharge)
+	}
 	file := snap.Input().File
 	start := readBytes
 	got, err := nativeScannerCharge(t.Context(), file, agentapi.ReadLimits{}, budget)

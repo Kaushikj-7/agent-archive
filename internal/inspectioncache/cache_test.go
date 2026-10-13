@@ -273,3 +273,80 @@ func TestCacheProductionDiskCapsAndDirectoryTraversalBound(t *testing.T) {
 		t.Fatal("unbounded cache directory accepted")
 	}
 }
+
+func TestWriterDefersDirectoryScansUntilBoundedBatchOrClose(t *testing.T) {
+	t.Parallel()
+	cache := New(filepath.Join(t.TempDir(), "inspection"))
+	// An unbuffered input synchronizes worker progress without timing assumptions:
+	// receipt of observation 31 follows its processing of observations 1 through 30.
+	writer := &Writer{cache: cache, ctx: t.Context(), queue: make(chan Observation), done: make(chan struct{})}
+	go writer.run()
+	observed := cacheTestObservation()
+	for i := range 31 {
+		entry := observed
+		entry.Key.SourceIdentity = fmt.Sprintf("synthetic-%d", i)
+		writer.queue <- entry
+	}
+	if _, err := os.Stat(cache.dir); !os.IsNotExist(err) {
+		t.Fatalf("partial batch rescanned directory: %v", err)
+	}
+	close(writer.queue)
+	<-writer.done
+	stats := writer.Stats()
+	if stats.Stored != 31 || stats.Failed != 0 {
+		t.Fatalf("partial close: %+v", stats)
+	}
+	for i := range 31 {
+		key := observed.Key
+		key.SourceIdentity = fmt.Sprintf("synthetic-%d", i)
+		if _, ok := cache.Lookup(t.Context(), key); !ok {
+			t.Fatalf("partial close omitted observation %d", i)
+		}
+	}
+}
+
+func TestWriterFlushesFullBatchesAndRechecksConcurrentDirectoryChanges(t *testing.T) {
+	t.Parallel()
+	cache := New(filepath.Join(t.TempDir(), "inspection"))
+	writer := &Writer{cache: cache, ctx: t.Context(), queue: make(chan Observation), done: make(chan struct{})}
+	go writer.run()
+	observed := cacheTestObservation()
+	for i := range 33 {
+		entry := observed
+		entry.Key.SourceIdentity = fmt.Sprintf("synthetic-%d", i)
+		writer.queue <- entry
+	}
+	// The next receive occurs only after the full preceding batch was persisted.
+	if stats := writer.Stats(); stats.Stored != 32 {
+		t.Fatalf("full batch: %+v", stats)
+	}
+	// Directory validation remains fresh for each batch; no inventory memoization.
+	if err := os.Mkdir(filepath.Join(cache.dir, "unexpected-directory"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	close(writer.queue)
+	<-writer.done
+	if stats := writer.Stats(); stats.Stored != 32 || stats.Failed != 1 {
+		t.Fatalf("fresh inventory: %+v", stats)
+	}
+}
+
+func TestWriterCancellationDiscardsPendingPartialBatch(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(t.Context())
+	cache := New(filepath.Join(t.TempDir(), "inspection"))
+	writer := &Writer{cache: cache, ctx: ctx, queue: make(chan Observation), done: make(chan struct{})}
+	go writer.run()
+	for range 2 {
+		writer.queue <- cacheTestObservation()
+	}
+	cancel()
+	close(writer.queue)
+	<-writer.done
+	if stats := writer.Stats(); stats.Stored != 0 || stats.Failed != 2 {
+		t.Fatalf("cancelled pending batch: %+v", stats)
+	}
+	if _, err := os.Stat(cache.dir); !os.IsNotExist(err) {
+		t.Fatalf("cancelled batch created cache: %v", err)
+	}
+}
