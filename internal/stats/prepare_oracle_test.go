@@ -320,3 +320,18 @@ func legacyMemberUsage(m *archive.Metadata) (byModel map[string]tokenSet, has, a
 	byModel[mainModel(m, NormalizeModel)] = set
 	return byModel, true, true
 }
+
+func (u *unit) members() []*archive.Metadata {
+	return append([]*archive.Metadata{u.root}, u.children...)
+}
+
+// sortedModels lists a map's model ids in a fixed order, so float sums do not
+// depend on map iteration.
+func sortedModels(byModel map[string]tokenSet) []string {
+	ids := make([]string, 0, len(byModel))
+	for id := range byModel {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
+}

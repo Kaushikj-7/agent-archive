@@ -503,9 +503,13 @@ including ones not uploaded yet, together with the archive's. A session that is
 both appears once. Subagent sessions and sessions with no prompt yet, on this
 machine or in the archive, are left out (one uploaded before its first prompt
 is listed once its transcript here has one), and `--harness` narrows the list
-(`--source local` or `--source archive` limits where it looks). At most 50 rows
-are listed; the filter below searches the rest. When the archive cannot be read (offline, say), the picker lists this
-machine's sessions and says why archived ones are missing.
+(`--source local` or `--source archive` limits where it looks). The newest 50 rows
+are listed initially. Press **o · Older sessions** to add up to 50 more
+rows in the current scope. The action disappears when that scope is complete
+and returns if `a` switches to a scope with more rows. The filter below
+searches the complete archived scope before older rows are loaded. When the
+archive cannot be read (offline, say), the picker lists this machine's sessions
+and says why archived ones are missing.
 
 *What a row shows.*
 

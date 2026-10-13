@@ -946,6 +946,10 @@ temporary launch files survive launch; later local handoffs clean owned files
 older than seven days, best effort. Cursor discovery is not automatic.
 
 
+After setup, the picker lists the newest 50 rows initially. Press o to add
+up to 50 older rows in the current scope; a switches to all projects or back.
+Archived search remains complete before older rows are loaded.
+
 After setup, continue a session in another coding agent. On a terminal, pick
 a session
 (this machine's, including ones not yet uploaded, and archived ones), then pick

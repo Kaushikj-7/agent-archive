@@ -27,6 +27,8 @@ const (
 type browserLoadAction struct {
 	Label string
 	Load  func() (bool, error)
+	// Available, when set, follows the currently shown scope.
+	Available func() bool
 }
 
 type browserSpec struct {

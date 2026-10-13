@@ -9,6 +9,10 @@ follow [Semantic Versioning](https://semver.org/).
 - Rank the default stats project list while retaining only the requested rows,
   reducing ranking work for archives with many projects.
 
+- In the handoff picker after setup, press `o` to list 50 older sessions
+  in the current scope. Archive search still includes older sessions before
+  they are listed; switching scopes restores the action when needed.
+
 - Read linked child metadata and known-harness show probes concurrently, and
   reuse selected parent metadata for summaries and verified transcripts.
 
