@@ -273,7 +273,7 @@ func TestScopedCommitLostResponseRetainsExactReceipts(t *testing.T) {
 	for _, unknown := range []bool{false, true} {
 		t.Run(strconv.FormatBool(unknown), func(t *testing.T) {
 			t.Parallel()
-			w, base := fixture(t)
+			_, base := fixture(t)
 			completePickerUpgrade(t, base)
 			s := &lostStore{qualifiedStore: base, failRead: unknown}
 			w, err := New(s)
