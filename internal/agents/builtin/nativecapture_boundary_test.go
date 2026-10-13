@@ -21,6 +21,7 @@ const captureDomainPath = "github.com/wangjohn/agent-archive/internal/agents/nat
 
 type capturePackage struct {
 	ImportPath     string   `json:"ImportPath"`
+	ForTest        string   `json:"ForTest"`
 	Dir            string   `json:"Dir"`
 	Export         string   `json:"Export"`
 	Name           string   `json:"Name"`
@@ -38,6 +39,7 @@ func TestNativeCaptureWholeSourceBoundary(t *testing.T) {
 	}
 	var pkgs []capturePackage
 	exports := map[string]string{}
+	variantImports := map[string]map[string]string{}
 	decoder := json.NewDecoder(strings.NewReader(string(raw)))
 	for {
 		var p capturePackage
@@ -49,6 +51,13 @@ func TestNativeCaptureWholeSourceBoundary(t *testing.T) {
 			t.Fatal(err)
 		}
 		exports[p.ImportPath] = p.Export
+		if p.ForTest != "" {
+			if variantImports[p.ForTest] == nil {
+				variantImports[p.ForTest] = map[string]string{}
+			}
+			plain, _, _ := strings.Cut(p.ImportPath, " [")
+			variantImports[p.ForTest][plain] = p.ImportPath
+		}
 		// Test variants supply test-only dependency exports. Canonical packages
 		// below already include their complete TestGoFiles and profile checks.
 		if strings.Contains(p.ImportPath, " [") || strings.HasSuffix(p.ImportPath, ".test") {
@@ -57,6 +66,7 @@ func TestNativeCaptureWholeSourceBoundary(t *testing.T) {
 		pkgs = append(pkgs, p)
 		if len(p.XTestGoFiles) > 0 {
 			external := p
+			external.ForTest = p.ImportPath
 			external.ImportPath += "_test"
 			external.GoFiles = append([]string(nil), p.XTestGoFiles...)
 			external.TestGoFiles = nil
@@ -66,13 +76,6 @@ func TestNativeCaptureWholeSourceBoundary(t *testing.T) {
 		}
 	}
 	fset := token.NewFileSet()
-	imp := importer.ForCompiler(fset, "gc", func(path string) (io.ReadCloser, error) {
-		file := exports[path]
-		if file == "" {
-			return nil, fmt.Errorf("missing compiled export for %s", path)
-		}
-		return os.Open(file)
-	})
 	for _, p := range pkgs {
 		if !strings.HasPrefix(p.ImportPath, "github.com/wangjohn/agent-archive/") {
 			continue
@@ -114,6 +117,23 @@ func TestNativeCaptureWholeSourceBoundary(t *testing.T) {
 		if len(parsed) == 0 {
 			continue
 		}
+		// Each test context has its own compiler-selected dependency variants.
+		// A fresh importer avoids reusing a production-only type from another
+		// package's context when external tests need test-exported methods.
+		testContext := p.ForTest
+		if testContext == "" {
+			testContext = p.ImportPath
+		}
+		imp := importer.ForCompiler(fset, "gc", func(path string) (io.ReadCloser, error) {
+			if variant := variantImports[testContext][path]; variant != "" {
+				path = variant
+			}
+			file := exports[path]
+			if file == "" {
+				return nil, fmt.Errorf("missing compiled export for %s", path)
+			}
+			return os.Open(file)
+		})
 		info := &types.Info{Uses: map[*ast.Ident]types.Object{}, Selections: map[*ast.SelectorExpr]*types.Selection{}}
 		cfg := types.Config{Importer: imp}
 		if _, err := cfg.Check(p.ImportPath, fset, parsed, info); err != nil {
