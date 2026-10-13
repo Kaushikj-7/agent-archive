@@ -482,13 +482,7 @@ func filterRecordsWithOutput(format string, knownTypes map[string]bool, lead map
 			continue
 		}
 		kind, _ := raw["type"].(string)
-		if inspect != nil {
-			if !isClaudeTitleRecord(raw) {
-				noteRecordTime(&result, raw)
-			}
-		} else {
-			noteOwnedNativeIdentity(&result, raw, kind, own)
-		}
+		noteOutputNativeIdentity(&result, raw, kind, own, inspect != nil)
 		if err := validateMetadataReserved(kind, line, validateMeta, beforeRecord); err != nil {
 			return archive.FilteredTranscript{}, err
 		}
@@ -542,14 +536,18 @@ func filterRecordsWithOutput(format string, knownTypes map[string]bool, lead map
 		return archive.FilteredTranscript{}, err
 	}
 	filteredLead.writeTo(&result, addGap, omittedKeys.add)
+	addOutputKeyGaps(omittedKeys, deniedKeys, addGap)
+	sort.SliceStable(result.Gaps, func(i, j int) bool { return result.Gaps[i].Code < result.Gaps[j].Code })
+	return result, nil
+}
+
+func addOutputKeyGaps(omittedKeys, deniedKeys keyNameSet, addGap func(string, int, string)) {
 	if detail := omittedKeys.detail("omitted keys: "); detail != "" {
 		addGap("unknown_field_omitted", 0, detail)
 	}
 	if detail := deniedKeys.detail(deniedToolArgumentIntro); detail != "" {
 		addGap("sensitive_or_hidden_field_omitted", 0, detail)
 	}
-	sort.SliceStable(result.Gaps, func(i, j int) bool { return result.Gaps[i].Code < result.Gaps[j].Code })
-	return result, nil
 }
 
 func cursorRoleRecord(format, kind string, raw map[string]any) bool {
@@ -836,6 +834,16 @@ func filteredReadComplete(err error, lines, recognized int) error {
 		return archive.ErrUnsafeSourceFormat
 	}
 	return nil
+}
+
+// noteOutputNativeIdentity keeps identical time evidence in both output modes.
+// Only the retained mode needs the unbounded native identifier collections.
+func noteOutputNativeIdentity(result *archive.FilteredTranscript, raw map[string]any, kind string, own func(string) bool, inspection bool) {
+	if !inspection {
+		noteOwnedNativeIdentity(result, raw, kind, own)
+	} else if !isClaudeTitleRecord(raw) {
+		noteRecordTime(result, raw)
+	}
 }
 
 func noteOwnedNativeIdentity(result *archive.FilteredTranscript, raw map[string]any, kind string, own func(string) bool) {

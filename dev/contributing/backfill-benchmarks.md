@@ -1,5 +1,9 @@
 # Backfill command measurements
 
+Run `python3 -B scripts/test_backfill_measurement.py` to verify sample matching
+and runner environment isolation. Comparisons require unique matched sample
+indices, the same host, CPU topology, and Go execution parallelism.
+
 The synthetic fixture under `internal/cli/backfill_benchmark_test.go` drives
 `Run` through a complete rendered dry-run or foreground confirmed import.
 It never uses a real home, native store, credential store, scheduler or bucket.
@@ -18,7 +22,7 @@ python3 scripts/compare_backfill.py /tmp/backfill-original/samples.jsonl /tmp/ba
 ```
 
 The clock is September 23, 2026 in California. Metadata headers occupy exactly
-1,024 bytes, including trailing JSON whitespace. Fixture version 3 has:
+1,024 bytes before the newline, including trailing JSON whitespace. Fixture version 4 has:
 
 - Recent and old corpora: 1,500 files, sizes cycling through 256 KiB, 256 KiB,
   512 KiB, 1 MiB, 1 MiB, 1 MiB, 1 MiB, 2 MiB, 4 MiB, 8 MiB, plus small records.
@@ -33,7 +37,11 @@ The clock is September 23, 2026 in California. Metadata headers occupy exactly
 
 `--small` scales corpus sizes for functional smoke checks. Large corpora run
 only through explicit measurements or Go benchmarks. `--scenario` selects an
-individual fixture. `--state warm` primes a dry-run outside the timer; import
+individual fixture. `--state warm` primes traced dry-runs outside the timer. Cache-aware ordinary corpora must
+prove all files hit the cache without adapter/filter reads, retrying at most
+eight times if the bounded writer dropped first-pass observations. Original
+binaries without cache counters prime filesystem pages only; results record
+cache support, hit count and prime attempts separately. Import
 archive/config state is fresh, so actual imports still publish. `--state changed`
 primes then appends one safe record to one file. Filesystem-page warmth is
 separate from inspection-cache warmth. `--trace` enables diagnostic metrics;

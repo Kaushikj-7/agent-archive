@@ -305,17 +305,23 @@ func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg con
 	if err := bindRecoveryPolicy(cfg, &plan); err != nil {
 		return Plan{}, err
 	}
-	if trace.Enabled() {
-		selected := 0
-		for _, candidate := range plan.Candidates {
-			if candidate.Skip == "" {
-				selected++
-			}
-		}
-		trace.Add(trace.SelectedSessions, int64(selected))
-		trace.Add(trace.SkippedSessions, int64(len(plan.Candidates)-selected))
-	}
+	tracePlanSelection(plan)
 	return plan, nil
+}
+
+// tracePlanSelection records the completed plan without retaining candidates.
+func tracePlanSelection(plan Plan) {
+	if !trace.Enabled() {
+		return
+	}
+	selected := 0
+	for _, candidate := range plan.Candidates {
+		if candidate.Skip == "" {
+			selected++
+		}
+	}
+	trace.Add(trace.SelectedSessions, int64(selected))
+	trace.Add(trace.SkippedSessions, int64(len(plan.Candidates)-selected))
 }
 
 // preparePlanWork performs local discovery, reads transcript heads, and maps
