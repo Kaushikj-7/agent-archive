@@ -78,6 +78,9 @@ func (s *Store) loadGenerationHead(key agentmeta.SessionKey) (generationHead, bo
 		return h, false, ErrSessionIndexRecoveryRequired
 	}
 	defer func() { _ = file.Close() }()
+	if err := s.retainIndexExtent(2*4097 + 32<<10); err != nil {
+		return h, false, err
+	}
 	data, err := io.ReadAll(io.LimitReader(file, 4097))
 	if err != nil || len(data) > 4096 {
 		return h, false, ErrSessionIndexRecoveryRequired
@@ -573,6 +576,10 @@ func (s *Store) generationRegistrationAllowed(key agentmeta.SessionKey, reg arch
 		if err != nil {
 			return ErrSessionIndexRecoveryRequired
 		}
+		if err := s.retainIndexExtent(2*4097 + 32<<10); err != nil {
+			_ = file.Close()
+			return err
+		}
 		data, readErr := io.ReadAll(io.LimitReader(file, 4097))
 		_ = file.Close()
 		var receipt generationRecovery
@@ -725,7 +732,7 @@ func (s *Store) FrozenGeneration(reg archive.SessionRegistration) error {
 	if err != nil || !found || h.Transition != "" || h.Active == reg.ArchiveSessionID && !h.Retired {
 		return ErrSessionIndexRecoveryRequired
 	}
-	n, found, err := readJSON[generationNode](s.generationNodePath(reg.ArchiveSessionID))
+	n, found, err := readIndexControlValue[generationNode](s, s.generationNodePath(reg.ArchiveSessionID))
 	if err != nil || !found || n.Version != 1 || n.Key != key || n.ID != reg.ArchiveSessionID || n.Previous != reg.PreviousGenerationID {
 		return fmt.Errorf("frozen generation has no lineage authority: %w", ErrSessionIdentityConflict)
 	}

@@ -79,7 +79,7 @@ func TestNativeCaptureWholeSourceBoundary(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, i := range f.Imports {
-				if strings.Trim(i.Path.Value, "\"") == captureDomainPath {
+				if captureBoundaryImport(strings.Trim(i.Path.Value, "\"")) {
 					t.Fatalf("unqualified build-profile domain import %s", filepath.Join(p.Dir, name))
 				}
 			}
@@ -115,12 +115,18 @@ func TestNativeCaptureWholeSourceBoundary(t *testing.T) {
 			}
 			fixture := captureFixtureAllowed(p.ImportPath, rel)
 			for _, i := range f.Imports {
-				if strings.Trim(i.Path.Value, "\"") == captureDomainPath && i.Name != nil && i.Name.Name == "." {
+				if captureBoundaryImport(strings.Trim(i.Path.Value, "\"")) && i.Name != nil && i.Name.Name == "." {
 					t.Errorf("domain dot import forbidden: %s", path)
 				}
 			}
 			for id, obj := range info.Uses {
 				if id.Pos() < f.Pos() || id.Pos() > f.End() {
+					continue
+				}
+				if captureAdapterConstructor(obj) {
+					if !captureAdapterReferenceAllowed(p.ImportPath, rel, fixture) {
+						t.Errorf("forbidden native capture adapter constructor %s at %s", obj.Name(), fset.Position(id.Pos()))
+					}
 					continue
 				}
 				if obj.Pkg() == nil || obj.Pkg().Path() != captureDomainPath || !obj.Exported() {
@@ -277,4 +283,80 @@ func (i captureProbeImporter) Import(path string) (*types.Package, error) {
 		return nil, fmt.Errorf("unexpected probe import %s", path)
 	}
 	return i.domain, nil
+}
+
+const captureCursorAdapterPath = "github.com/wangjohn/agent-archive/internal/agents/cursor"
+
+func captureBoundaryImport(path string) bool {
+	return path == captureDomainPath || path == captureCursorAdapterPath
+}
+
+func captureAdapterConstructor(obj types.Object) bool {
+	if obj.Pkg() == nil || obj.Pkg().Path() != captureCursorAdapterPath {
+		return false
+	}
+	function, ok := obj.(*types.Func)
+	if !ok {
+		return false
+	}
+	signature, ok := function.Type().(*types.Signature)
+	return ok && signature.Recv() == nil && (obj.Name() == "CaptureSettledRequest" || obj.Name() == "CaptureSettledImport")
+}
+
+func captureAdapterReferenceAllowed(pkg, file string, fixture bool) bool {
+	return fixture || pkg == captureCursorAdapterPath && file == "settled_import.go" || pkg == "github.com/wangjohn/agent-archive/internal/agents/builtin" && file == "registry.go"
+}
+
+func TestNativeCaptureAdapterWrapperTypedControls(t *testing.T) {
+	adapter := types.NewPackage(captureCursorAdapterPath, "cursor")
+	for _, name := range []string{"CaptureSettledRequest", "CaptureSettledImport"} {
+		adapter.Scope().Insert(types.NewFunc(token.NoPos, adapter, name, types.NewSignatureType(nil, nil, nil, types.NewTuple(), types.NewTuple(), false)))
+	}
+	adapter.MarkComplete()
+	for _, test := range []struct {
+		name   string
+		source string
+	}{
+		{name: "renamed-function-value", source: `package sample;import renamed "` + captureCursorAdapterPath + `";var ctor=renamed.CaptureSettledRequest`},
+		{name: "legacy-function-value", source: `package sample;import renamed "` + captureCursorAdapterPath + `";var ctor=renamed.CaptureSettledImport`},
+		{name: "direct-call", source: `package sample;import renamed "` + captureCursorAdapterPath + `";func use(){renamed.CaptureSettledRequest()}`},
+		{name: "dot-alias", source: `package sample;import . "` + captureCursorAdapterPath + `";var ctor=CaptureSettledRequest`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fset := token.NewFileSet()
+			file, err := parser.ParseFile(fset, "unlisted_test.go", test.source, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			info := &types.Info{Uses: map[*ast.Ident]types.Object{}}
+			cfg := types.Config{Importer: captureAdapterProbeImporter{adapter: adapter}}
+			if _, err = cfg.Check("sample", fset, []*ast.File{file}, info); err != nil {
+				t.Fatal(err)
+			}
+			seen := false
+			for _, obj := range info.Uses {
+				if captureAdapterConstructor(obj) {
+					seen = true
+					if captureAdapterReferenceAllowed("github.com/wangjohn/agent-archive/internal/state", "unlisted_test.go", false) {
+						t.Fatal("unlisted adapter constructor admitted")
+					}
+					if !captureAdapterReferenceAllowed("github.com/wangjohn/agent-archive/internal/state", "settled_firstsave_test.go", true) {
+						t.Fatal("designated fixture refused")
+					}
+				}
+			}
+			if !seen {
+				t.Fatal("typed constructor probe did not resolve actual adapter object")
+			}
+		})
+	}
+}
+
+type captureAdapterProbeImporter struct{ adapter *types.Package }
+
+func (i captureAdapterProbeImporter) Import(path string) (*types.Package, error) {
+	if path != captureCursorAdapterPath {
+		return nil, fmt.Errorf("unexpected adapter import %s", path)
+	}
+	return i.adapter, nil
 }

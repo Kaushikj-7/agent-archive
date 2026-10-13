@@ -76,7 +76,7 @@ func (e qualifiedSessionIndexEntry) validate(key agentmeta.SessionKey) error {
 
 func (s *Store) readQualifiedIndex(key agentmeta.SessionKey) (qualifiedSessionIndexEntry, bool, error) {
 	var entry qualifiedSessionIndexEntry
-	err := local.Read(qualifiedSessionIndexPath(s.home, key), &entry)
+	err := s.readIndexControlJSON(qualifiedSessionIndexPath(s.home, key), &entry)
 	if errors.Is(err, os.ErrNotExist) {
 		return s.packedSessionIndexEntry(key)
 	}

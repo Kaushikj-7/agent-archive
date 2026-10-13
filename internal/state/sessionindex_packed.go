@@ -55,18 +55,18 @@ func packedIndexPath(home, shard string) string {
 
 func (s *Store) packedSessionIndexEntry(key agentmeta.SessionKey) (qualifiedSessionIndexEntry, bool, error) {
 	var marker sessionIndexMarker
-	err := local.Read(filepath.Join(s.home, sessionIndexMarkerFile), &marker)
+	err := s.readIndexControlJSON(filepath.Join(s.home, sessionIndexMarkerFile), &marker)
 	if errors.Is(err, os.ErrNotExist) {
 		return qualifiedSessionIndexEntry{}, false, nil
 	}
 	if err != nil {
-		return qualifiedSessionIndexEntry{}, false, ErrSessionIndexRecoveryRequired
+		return qualifiedSessionIndexEntry{}, false, s.indexRecoveryError(err)
 	}
 	if marker.Version == 1 {
 		return qualifiedSessionIndexEntry{}, false, nil
 	}
 	if marker.Version != 2 || !safeFileComponent(marker.PackedEpoch) || marker.PackedRevision == "" || marker.PackedInventory == "" {
-		return qualifiedSessionIndexEntry{}, false, ErrSessionIndexRecoveryRequired
+		return qualifiedSessionIndexEntry{}, false, s.indexRecoveryError(err)
 	}
 	hash := packedIndexHash(key)
 	entry, found, err := s.readPackedEntry(hash, marker)
@@ -98,21 +98,21 @@ func (s *Store) packedSessionIndexEntry(key agentmeta.SessionKey) (qualifiedSess
 	}
 	// A packed reservation is usable only while its directly referenced durable
 	// candidate and parent still prove it. Removing either cannot revive a child.
-	candidate, present, err := readJSON[SubagentCandidate](s.subagentCandidatePath(entry.ArchiveSessionID))
+	candidate, present, err := readIndexControlValue[SubagentCandidate](s, s.subagentCandidatePath(entry.ArchiveSessionID))
 	if err != nil || !present {
-		return entry, false, ErrSessionIndexRecoveryRequired
+		return entry, false, s.indexRecoveryError(err)
 	}
 	actual, err := agentmeta.NewSessionKey(candidate.Harness.Name, candidate.NativeSessionID)
 	if err != nil || actual != key || candidate.ArchiveSessionID != entry.ArchiveSessionID {
-		return entry, false, ErrSessionIndexRecoveryRequired
+		return entry, false, s.indexRecoveryError(err)
 	}
 	parentKey, err := agentmeta.NewSessionKey(candidate.Harness.Name, candidate.ParentNativeSessionID)
 	if err != nil {
-		return entry, false, ErrSessionIndexRecoveryRequired
+		return entry, false, s.indexRecoveryError(err)
 	}
 	valid, err = s.matchingCandidateParent(parentKey, candidate.ParentArchiveSessionID)
 	if err != nil || !valid {
-		return entry, false, ErrSessionIndexRecoveryRequired
+		return entry, false, s.indexRecoveryError(err)
 	}
 	return entry, true, nil
 }
@@ -143,6 +143,7 @@ func (header packedIndexHeader) valid(marker sessionIndexMarker) bool {
 }
 
 type packedIndexReader struct {
+	store     *Store
 	file      *os.File
 	table     []byte
 	dataStart int64
@@ -173,6 +174,9 @@ func (s *Store) openPackedIndex(shard string, marker sessionIndexMarker) (*packe
 	if length <= 0 || length > 4096 {
 		return nil, ErrSessionIndexRecoveryRequired
 	}
+	if err := s.retainIndexExtent(3*int64(length) + (32 << 10)); err != nil {
+		return nil, err
+	}
 	data := make([]byte, length)
 	if _, err := io.ReadFull(file, data); err != nil {
 		return nil, ErrSessionIndexRecoveryRequired
@@ -180,6 +184,9 @@ func (s *Store) openPackedIndex(shard string, marker sessionIndexMarker) (*packe
 	var header packedIndexHeader
 	if json.Unmarshal(data, &header) != nil || !header.valid(marker) {
 		return nil, ErrSessionIndexRecoveryRequired
+	}
+	if err := s.retainIndexExtent(int64(header.Count * packedRecordIndexBytes)); err != nil {
+		return nil, err
 	}
 	table := make([]byte, header.Count*packedRecordIndexBytes)
 	if _, err := io.ReadFull(file, table); err != nil {
@@ -198,7 +205,7 @@ func (s *Store) openPackedIndex(shard string, marker sessionIndexMarker) (*packe
 		return nil, err
 	}
 	good = true
-	return &packedIndexReader{file: file, table: table, dataStart: start, dataBytes: header.Bytes, fallback: header.Fallback, epoch: header.Epoch, revision: header.Revision, inventory: header.Inventory}, nil
+	return &packedIndexReader{store: s, file: file, table: table, dataStart: start, dataBytes: header.Bytes, fallback: header.Fallback, epoch: header.Epoch, revision: header.Revision, inventory: header.Inventory}, nil
 }
 
 func validatePackedTable(table []byte, shard string, count, dataBytes int) error {
@@ -233,6 +240,11 @@ func validatePackedTable(table []byte, shard string, count, dataBytes int) error
 func (reader *packedIndexReader) entry(index int) (qualifiedSessionIndexEntry, error) {
 	row := reader.table[index*packedRecordIndexBytes : (index+1)*packedRecordIndexBytes]
 	length := int(binary.BigEndian.Uint32(row[40:44]))
+	if reader.store != nil {
+		if err := reader.store.retainIndexExtent(2*int64(length) + 32<<10); err != nil {
+			return qualifiedSessionIndexEntry{}, err
+		}
+	}
 	data := make([]byte, length)
 
 	rawOffset := binary.BigEndian.Uint64(row[32:40])
@@ -691,7 +703,7 @@ func packedOverlayAnchor(value string, marker sessionIndexMarker) (string, bool)
 
 func (s *Store) packedAnchorHealthy(hash string) bool {
 	var entry qualifiedSessionIndexEntry
-	if local.Read(filepath.Join(s.home, "sessions-v1", hash+".json"), &entry) != nil {
+	if s.readIndexControlJSON(filepath.Join(s.home, "sessions-v1", hash+".json"), &entry) != nil {
 		return false
 	}
 	key := agentmeta.SessionKey{Agent: entry.Agent, NativeID: entry.NativeID}
@@ -1130,6 +1142,9 @@ func packedExpiryProofPath(home string, key agentmeta.SessionKey) string {
 }
 
 func (s *Store) packedMissAllowed(_ agentmeta.SessionKey, marker sessionIndexMarker) error {
+	if s.resourceReservation != nil {
+		return s.checkOwnedPackedMiss(marker)
+	}
 	if !s.packedOverlaysHealthy(marker) {
 		return ErrSessionIndexRecoveryRequired
 	}
@@ -1227,7 +1242,7 @@ func (s *Store) clearPackedExpiryProofs() error {
 }
 
 func (s *Store) packedOverridesExpected(marker sessionIndexMarker) bool {
-	data, err := os.ReadFile(filepath.Join(s.home, "sessions-v1", packedOverlaySentinel))
+	data, err := s.readIndexRaw(filepath.Join(s.home, "sessions-v1", packedOverlaySentinel))
 	if err != nil {
 		return false
 	}
@@ -1267,7 +1282,7 @@ func (w lockedWrite) packedEpochValid() error {
 }
 
 func (s *Store) packedOverlaysHealthy(marker sessionIndexMarker) bool {
-	data, err := os.ReadFile(filepath.Join(s.home, "sessions-v1", packedOverlaySentinel))
+	data, err := s.readIndexRaw(filepath.Join(s.home, "sessions-v1", packedOverlaySentinel))
 	if err != nil {
 		return false
 	}

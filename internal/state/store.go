@@ -475,7 +475,7 @@ func (s *Store) LoadRegistrations() ([]archive.SessionRegistration, error) {
 // LoadRegistration returns one session's registration, if it has been saved.
 func (s *Store) LoadRegistration(archiveSessionID string) (archive.SessionRegistration, bool, error) {
 	var reg archive.SessionRegistration
-	err := local.Read(s.registrationPath(archiveSessionID), &reg)
+	err := s.readIndexControlJSON(s.registrationPath(archiveSessionID), &reg)
 	if errors.Is(err, os.ErrNotExist) {
 		return archive.SessionRegistration{}, false, nil
 	}
