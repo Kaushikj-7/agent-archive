@@ -88,3 +88,10 @@ func (w *Writer) writeFormat(ctx context.Context, state admissions) error {
 func headCoordinatorMatch(h CatalogHead, s admissions) bool {
 	return h.Protocol == s.Protocol && (h.Picker != nil) == (s.Picker != nil)
 }
+
+func (h CatalogHead) validateLiveEntry(entry *CatalogEntry) error {
+	if h.Protocol == 11 && entry != nil && entry.Picker == nil {
+		return errors.New("scoped live identity is missing exact picker facts")
+	}
+	return nil
+}

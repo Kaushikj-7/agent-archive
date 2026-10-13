@@ -588,3 +588,28 @@ this exact prefix: zero proves absence, one yields a unique pinned entry, and mo
 than one returns explicit ambiguity while fetching at most two rows as evidence.
 PR 4 owns that API and its captured-view/request budgets; PR 3 must construct and
 validate every additional lookup copy before activation.
+
+### PR 3 construction and activation boundary
+
+Qualified stores can now construct and activate complete protocol-11 catalogs.
+`OpenScopedMigration` uses the isolated legacy-source route while ordinary
+`OpenMigration` remains protocol 10. `OpenPickerUpgrade` is a distinct operation
+bound to its exact catalog source head, destination, reviewed protocol-11 proof
+and seal owner. Its coordinator CAS record retains the candidate roots and finite
+identity-page progress. The old active view remains readable while building;
+unknown owners and unresolved local publication evidence refuse progress.
+
+Construction verifies immutable bodies, retains revisions/tombstones/receipts and
+rebuilds every ordinary ordering copy, scoped membership and canonical identity
+copy. Verification checks each expected value and auxiliary cardinality to prove
+there are no extra or missing copies. Activation persists the stronger
+coordinator fence before one complete head CAS and keeps publication sealed until
+configuration version 14 is saved. Mixed states refuse protected writes.
+
+New protocol-11 pending descriptors carry an explicit journal protocol. Original
+protocol-10 journal fields and digest bytes are unchanged; their frozen owners
+drain before activation, and completed old journals permit only local cleanup.
+Scoped rollback preserves the original fully indexed data under the stronger
+head/coordinator/configuration fences and refuses any later head change.
+Production provider qualification is unchanged. Paged consumers and end-to-end
+bounded picker behavior remain the subsequent implementation slices.
