@@ -396,7 +396,7 @@ func TestNativeCaptureTypedAliasAndMethodValueControls(t *testing.T) {
 type captureProbeImporter struct{ domain *types.Package }
 
 func (i captureProbeImporter) Import(path string) (*types.Package, error) {
-	if path != captureDomainPath {
+	if path != i.domain.Path() {
 		return nil, fmt.Errorf("unexpected probe import %s", path)
 	}
 	return i.domain, nil
@@ -612,7 +612,7 @@ func captureAuthorityObjectAllowed(pkg, file string, obj types.Object, calls map
 				return false
 			}
 			for expression := range calls {
-				if expression.Pos() <= id.Pos() && id.End() <= expression.End() {
+				if captureExactCalleeIdent(expression, id) {
 					return true
 				}
 			}
@@ -627,7 +627,7 @@ func captureAuthorityObjectAllowed(pkg, file string, obj types.Object, calls map
 				return false
 			}
 			for expression := range calls {
-				if expression.Pos() <= id.Pos() && id.End() <= expression.End() {
+				if captureExactCalleeIdent(expression, id) {
 					return true
 				}
 			}
@@ -755,10 +755,10 @@ func captureDirectCallObject(file *ast.File, id *ast.Ident, function string, fin
 					return true
 				}
 				call, ok := ret.Results[0].(*ast.CallExpr)
-				if ok && call.Fun.Pos() <= id.Pos() && id.End() <= call.Fun.End() {
+				if ok && captureExactCalleeIdent(call.Fun, id) {
 					accepted = true
 				}
-			} else if call, ok := node.(*ast.CallExpr); ok && call.Fun.Pos() <= id.Pos() && id.End() <= call.Fun.End() {
+			} else if call, ok := node.(*ast.CallExpr); ok && captureExactCalleeIdent(call.Fun, id) {
 				accepted = true
 			}
 			return true
@@ -781,6 +781,7 @@ func TestNativeCaptureFinalIssuerCallControls(t *testing.T) {
 		{"extra-wrapper", `func AnotherCapture(){return issuer.New(),nil}`, false},
 		{"nested-mint", `func CaptureSettledCursor(){f:=func(){return issuer.New(),nil};_=f}`, false},
 		{"early-conditional-mint", `func CaptureSettledCursor(){if bad{return issuer.New(),nil};return nil,nil}`, false},
+		{"nested-factory-final-return", `func CaptureSettledCursor(){return func()func(){return issuer.New}()(),nil}`, false},
 		{"nonfinal-mint", `func CaptureSettledCursor(){p:=issuer.New();return p,nil}`, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -836,6 +837,85 @@ func TestNativeCaptureIgnoredClosedDomainDeclarationControls(t *testing.T) {
 			}
 			if err := captureOriginalAuthorityError(root, map[string]bool{dir: true}, map[string]bool{}); err == nil || !strings.Contains(err.Error(), "unqualified closed-domain profile source") {
 				t.Fatal("ignored issuer declaration escaped", err)
+			}
+		})
+	}
+}
+
+// Exact callee identity excludes identifiers inside function-literal bodies or
+// receiver expressions from becoming authority-bearing direct calls.
+func captureExactCalleeIdent(expression ast.Expr, id *ast.Ident) bool {
+	for {
+		parenthesized, ok := expression.(*ast.ParenExpr)
+		if !ok {
+			break
+		}
+		expression = parenthesized.X
+	}
+	switch callee := expression.(type) {
+	case *ast.Ident:
+		return callee == id
+	case *ast.SelectorExpr:
+		return callee.Sel == id
+	default:
+		return false
+	}
+}
+
+func TestNativeCaptureTypedHelperDirectCalleeControls(t *testing.T) {
+	sealed := types.NewPackage(captureSealedPath, "sealed")
+	reservationObject := types.NewTypeName(token.NoPos, sealed, "Reservation", nil)
+	reservation := types.NewNamed(reservationObject, types.NewStruct(nil, nil), nil)
+	sealed.Scope().Insert(reservationObject)
+	results := types.NewTuple(types.NewVar(token.NoPos, sealed, "", types.Typ[types.Int]))
+	for _, name := range []string{"Digest", "NewReservation"} {
+		sealed.Scope().Insert(types.NewFunc(token.NoPos, sealed, name, types.NewSignatureType(nil, nil, nil, types.NewTuple(), results, false)))
+	}
+	reservation.AddMethod(types.NewFunc(token.NoPos, sealed, "Reserve", types.NewSignatureType(types.NewVar(token.NoPos, sealed, "owner", types.NewPointer(reservation)), nil, nil, types.NewTuple(), results, false)))
+	sealed.MarkComplete()
+	for _, test := range []struct {
+		name, body, symbol string
+		allowed            bool
+	}{
+		{"direct-digest", `_ = issuer.Digest()`, "Digest", true},
+		{"parenthesized-digest", `_ = (issuer.Digest)()`, "Digest", true},
+		{"direct-reservation", `_ = issuer.NewReservation()`, "NewReservation", true},
+		{"direct-reserve", `_ = owner.Reserve()`, "Reserve", true},
+		{"digest-value", `_ = issuer.Digest`, "Digest", false},
+		{"digest-nested-factory", `_ = func()func()int{return issuer.Digest}()`, "Digest", false},
+		{"reservation-nested-factory", `_ = func()func()int{return issuer.NewReservation}()`, "NewReservation", false},
+		{"reserve-nested-factory", `_ = func()func()int{return owner.Reserve}()`, "Reserve", false},
+		{"reserve-method-expression", `_ = (*issuer.Reservation).Reserve`, "Reserve", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fset := token.NewFileSet()
+			file, err := parser.ParseFile(fset, "cursor.go", `package producer;import issuer "`+captureSealedPath+`";func use(owner *issuer.Reservation){`+test.body+`}`, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			info := &types.Info{Uses: map[*ast.Ident]types.Object{}}
+			cfg := types.Config{Importer: captureProbeImporter{domain: sealed}}
+			if _, err := cfg.Check(captureProducerPath, fset, []*ast.File{file}, info); err != nil {
+				t.Fatal(err)
+			}
+			calls := map[ast.Expr]bool{}
+			ast.Inspect(file, func(node ast.Node) bool {
+				if call, ok := node.(*ast.CallExpr); ok {
+					calls[call.Fun] = true
+				}
+				return true
+			})
+			found := false
+			for id, object := range info.Uses {
+				if object.Pkg() != nil && object.Pkg().Path() == captureSealedPath && object.Name() == test.symbol {
+					found = true
+					if captureAuthorityObjectAllowed(captureProducerPath, "cursor.go", object, calls, id) != test.allowed {
+						t.Fatal("typed direct callee policy changed")
+					}
+				}
+			}
+			if !found {
+				t.Fatal("probe has no resolved helper object")
 			}
 		})
 	}
