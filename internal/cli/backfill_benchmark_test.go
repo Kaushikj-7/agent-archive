@@ -60,6 +60,9 @@ func TestBackfillCommandMeasurement(t *testing.T) {
 	bucket := storagetest.NewMemoryStore()
 	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return bucket, nil }
 	env.repoKey = func(string) string { return "" }
+	if os.Getenv("AA_BACKFILL_TRACE") == "1" {
+		env.LookupEnv = func(name string) (string, bool) { return "1", name == envTrace }
+	}
 	dir := filepath.Join(userHome, ".codex", "sessions")
 	must(t, os.MkdirAll(dir, 0700))
 	expected := map[string]bool{}
@@ -78,6 +81,10 @@ func TestBackfillCommandMeasurement(t *testing.T) {
 		}
 		h, e := json.Marshal(map[string]any{"type": "session_meta", "payload": meta})
 		must(t, e)
+		if len(h) > 1024 {
+			t.Fatal("fixture header exceeds fixed framing")
+		}
+		h = append(h, bytes.Repeat([]byte(" "), 1024-len(h))...)
 		path := filepath.Join(dir, "rollout-"+id+".jsonl")
 		f, e := os.Create(path)
 		must(t, e)
@@ -146,6 +153,21 @@ func TestBackfillCommandMeasurement(t *testing.T) {
 	} else {
 		args = append(args, "--dry-run")
 	}
+	stateName := os.Getenv("AA_BACKFILL_STATE")
+	if stateName == "warm" || stateName == "changed" {
+		var primeOut, primeErr bytes.Buffer
+		if code := Run([]string{"backfill", "--dry-run", "--since", "7d", "--harness", "codex", "--include-temp"}, nil, &primeOut, &primeErr, env); code != 0 {
+			t.Fatalf("prime %d: %s", code, primeErr.String())
+		}
+		if stateName == "changed" {
+			f, e := os.OpenFile(filepath.Join(dir, "rollout-00000000-0000-4000-8000-000000000002.jsonl"), os.O_APPEND|os.O_WRONLY, 0600)
+			must(t, e)
+			n, e := f.WriteString(`{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Synthetic changed-file evidence"}]}}` + "\n")
+			must(t, e)
+			inputBytes += int64(n)
+			must(t, f.Close())
+		}
+	}
 	var stdout, stderr bytes.Buffer
 	var before, after runtime.MemStats
 	runtime.GC()
@@ -191,8 +213,11 @@ func TestBackfillCommandMeasurement(t *testing.T) {
 	}
 	sort.Strings(normalized)
 	digest := sha256.Sum256([]byte(strings.Join(normalized, "\n")))
-	result := map[string]any{"fixture_version": 2, "scenario": scenario, "mode": mode, "sessions": count, "selected": len(expected), "imported": imported, "skipped": count - len(expected), "input_bytes": inputBytes, "elapsed_seconds": elapsed.Seconds(), "allocated_bytes": after.TotalAlloc - before.TotalAlloc, "gc_cycles": after.NumGC - before.NumGC, "artifact_sha256": hex.EncodeToString(digest[:]), "toolchain": runtime.Version(), "logical_cpus": runtime.NumCPU(), "planning_workers": 1, "default_adapter_workers": min(8, max(2, runtime.NumCPU()/2)), "byte_budget": 128 << 20}
+	result := map[string]any{"fixture_version": 3, "state": stateName, "trace": os.Getenv("AA_BACKFILL_TRACE") == "1", "scenario": scenario, "mode": mode, "sessions": count, "selected": len(expected), "imported": imported, "skipped": count - len(expected), "input_bytes": inputBytes, "elapsed_seconds": elapsed.Seconds(), "allocated_bytes": after.TotalAlloc - before.TotalAlloc, "gc_cycles": after.NumGC - before.NumGC, "artifact_sha256": hex.EncodeToString(digest[:]), "toolchain": runtime.Version(), "logical_cpus": runtime.NumCPU(), "planning_workers": 1, "default_adapter_workers": min(8, max(2, runtime.NumCPU()/2)), "byte_budget": 128 << 20}
 	raw, e := json.Marshal(result)
 	must(t, e)
+	if os.Getenv("AA_BACKFILL_TRACE") == "1" {
+		fmt.Print(stderr.String())
+	}
 	fmt.Printf("AA_BACKFILL_RESULT %s\n", raw)
 }
