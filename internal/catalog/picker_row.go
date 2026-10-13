@@ -208,7 +208,12 @@ func PickerMembershipKeys(key string, r PickerRow) ([]string, error) {
 	if r.PromptState != "zero" {
 		memberships = append(memberships, "handoff")
 	}
-	order := r.Activity.UTC().Format("2006-01-02T15:04:05.000000000Z") + "/" + r.CapturedAt.UTC().Format("2006-01-02T15:04:05.000000000Z") + "/" + descendingIdentity(key)
+	// MetadataObjectKey permits no NUL in either raw component. Terminators
+	// preserve shorter-component ordering before inversion, unlike path slashes
+	// which can sort after a continuation byte such as '-'. The exact raw tuple
+	// uniquely determines the physical metadata identity.
+	identity := descendingIdentity(r.Harness + "\x00" + r.SessionID + "\x00")
+	order := r.Activity.UTC().Format("2006-01-02T15:04:05.000000000Z") + "/" + r.CapturedAt.UTC().Format("2006-01-02T15:04:05.000000000Z") + "/" + identity
 	var keys []string
 	for _, m := range memberships {
 		for _, scope := range scopes {

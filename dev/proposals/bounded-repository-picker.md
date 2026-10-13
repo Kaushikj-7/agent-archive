@@ -447,9 +447,14 @@ successor; no prefix without that boundary is a scope match.
 
 Canonical harness filtering must preserve the original harness/session tie
 discriminator used by the exhaustive caller oracle; aliases cannot silently
-change identity ordering. Order keys reuse `orderKeys` activity/capture timestamp formatting and
-`descendingIdentity(rawMetadataObjectKey)` exactly; range traversal uses
-the existing descending activity/capture and identity tie comparator. `MetadataObjectKey` preserves the exact raw harness
+change identity ordering. Order keys reuse `orderKeys` activity/capture timestamp
+formatting, followed by `descendingIdentity(rawHarness + NUL + sessionID + NUL)`.
+Validated identity components forbid NUL; the terminated tuple uniquely determines
+the physical metadata key and preserves component prefix ordering. Reverse range
+traversal matches the exhaustive comparator: activity/capture descending, then
+raw harness/session ascending. The tuple suffix is smaller than the previous
+full-path suffix and retains the existing 4096-byte key bound.
+`MetadataObjectKey` preserves the exact raw harness
 spelling; canonical harness normalization is only filter/group authority, never
 permission to substitute an exact source identity. RepoKey
 membership includes only validated nonempty RepoKeys. Project-any includes every
