@@ -169,8 +169,11 @@ func TestCodexCaptureReadAndRetentionLifecycle(t *testing.T) {
 	}
 	// Disabled discovery cannot admit another owner, but existing admitted
 	// sessions still catch up through the actual hook and collector paths.
+	cfg = mustLoadConfig(t, home)
 	previous := cfg
-	cfg.Discovery.Enabled = false
+	discoveryPolicy := *cfg.Discovery
+	discoveryPolicy.Enabled = false
+	cfg.Discovery = &discoveryPolicy
 	must(t, config.ReconcileDiscovery(&cfg, previous, now))
 	must(t, config.Save(home, cfg))
 	write(5, "", project, "DISABLED_SCOPE_NEVER_UPLOAD", at.Add(3*time.Minute))
@@ -206,8 +209,11 @@ func TestCodexCaptureReadAndRetentionLifecycle(t *testing.T) {
 	}
 	// Re-enable scanning over the still-present expired native files. Expiry
 	// must remove discovery ownership as well as both publication objects.
+	cfg = mustLoadConfig(t, home)
 	previous = cfg
-	cfg.Discovery.Enabled = true
+	discoveryPolicy = *cfg.Discovery
+	discoveryPolicy.Enabled = true
+	cfg.Discovery = &discoveryPolicy
 	must(t, config.ReconcileDiscovery(&cfg, previous, now))
 	must(t, config.Save(home, cfg))
 	for range 2 {
