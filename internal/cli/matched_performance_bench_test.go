@@ -298,8 +298,10 @@ func matchedValidateFrames(output []byte, fixture []archive.Metadata, env Env) e
 			}
 		}
 		footer := frames[n][23]
-		if visibleWidth(footer) > 80 || !strings.Contains(footer, fmt.Sprintf("w window %dd>", days)) || !strings.Contains(footer, "q quit") {
-			return errors.New("incorrect matched terminal footer")
+		browser := statsBrowser{view: view, windows: windows, window: n, page: pageOverview}
+		wantFooter := browser.lastRow(statsLayout{width: 80, height: 24, body: 23}, len(lines), max(len(lines)-23, 0))
+		if visibleWidth(footer) > 80 || footer != wantFooter {
+			return fmt.Errorf("incorrect matched terminal footer: %q", footer)
 		}
 	}
 	return nil
