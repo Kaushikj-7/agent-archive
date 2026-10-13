@@ -73,6 +73,39 @@ func TestBenchmarkTraceMetricReadsOptionalAggregates(t *testing.T) {
 	}
 }
 
+func benchmarkArtifactEvidence(bundle archive.SourceBundle, reg archive.SessionRegistration) ([]byte, error) {
+	return json.Marshal(map[string]any{"records": bundle.NativeRecords, "history": bundle.History, "ordinals": bundle.Ordinals, "text": bundle.NativeText, "started_at": reg.SessionStartedAt, "started_at_source": reg.StartedAtSource, "origin": reg.Origin, "format": bundle.Capture.SourceFormat})
+}
+
+// History ordinals are serialized separately from records and determine which
+// retained records belong to the selected task. Equal records and spans alone
+// cannot establish equivalent uploaded history artifacts.
+func TestBenchmarkArtifactEvidenceIncludesHistoryOrdinals(t *testing.T) {
+	const id = "00000000-0000-4000-8000-000000000001"
+	ownStart := uint64(3)
+	bundle := archive.SourceBundle{
+		SchemaVersion: archive.HistorySourceSchemaVersion, NativeSessionID: id,
+		Capture: archive.SourceCapture{Harness: archive.Harness{Name: "codex"}},
+		History: &archive.SourceHistory{ActiveRolloutID: id, ThreadID: id, OwnStart: &ownStart,
+			Spans: []archive.HistorySpan{{RolloutID: id, ThreadID: id, EndRecord: 2, EndOrdinal: 4}}},
+		NativeRecords: []map[string]any{{"type": "session_meta"}, {"type": "response_item"}},
+		Ordinals:      []uint64{0, 2},
+	}
+	must(t, bundle.ValidateHistory())
+	before, err := benchmarkArtifactEvidence(bundle, archive.SessionRegistration{})
+	must(t, err)
+	if bundle.OwnRecord(1) {
+		t.Fatal("initial ordinal unexpectedly belongs to the selected task")
+	}
+	bundle.Ordinals = []uint64{0, 3}
+	must(t, bundle.ValidateHistory())
+	after, err := benchmarkArtifactEvidence(bundle, archive.SessionRegistration{})
+	must(t, err)
+	if !bundle.OwnRecord(1) || bytes.Equal(before, after) {
+		t.Fatal("changed record ownership was absent from artifact evidence")
+	}
+}
+
 // TestBackfillCommandMeasurement is a subprocess entry point, not a timed Go
 // benchmark loop. Each sample gets a fresh synthetic home and deterministic
 // provider. Fixture construction and artifact verification are outside Run's timer.
@@ -326,7 +359,7 @@ func TestBackfillCommandMeasurement(t *testing.T) {
 			must(t, e)
 			bundle, e := reader.LoadSource(t.Context(), bucket, m, reader.Limits{})
 			must(t, e)
-			raw, e := json.Marshal(map[string]any{"records": bundle.NativeRecords, "history": bundle.History, "text": bundle.NativeText, "started_at": reg.SessionStartedAt, "started_at_source": reg.StartedAtSource, "origin": reg.Origin, "format": bundle.Capture.SourceFormat})
+			raw, e := benchmarkArtifactEvidence(bundle, reg)
 			must(t, e)
 			retained := bytes.Contains(raw, []byte("Synthetic retained explanation."))
 			if scenario == commandScenarioToolHeavy && retained || scenario == commandScenarioRetainedHeavy && !retained {
@@ -345,7 +378,7 @@ func TestBackfillCommandMeasurement(t *testing.T) {
 	}
 	sort.Strings(normalized)
 	digest := sha256.Sum256([]byte(strings.Join(normalized, "\n")))
-	result := map[string]any{"fixture_version": 4, "prime_attempts": primeAttempts, "prime_cache_supported": primeCacheSupported, "prime_cache_hits": primeHits, "state": stateName, "trace": os.Getenv("AA_BACKFILL_TRACE") == "1", "scenario": scenario, "mode": mode, "sessions": count, "selected": len(expected), "imported": imported, "skipped": skipped, "input_bytes": inputBytes, "elapsed_seconds": elapsed.Seconds(), "checkpoint_offsets": checkpoints, "command_cpu_seconds": cpuAfter - cpuBefore, "command_peak_rss_at_return_bytes": commandRSS, "allocated_bytes": after.TotalAlloc - before.TotalAlloc, "gc_cycles": after.NumGC - before.NumGC, "artifact_sha256": hex.EncodeToString(digest[:]), "toolchain": runtime.Version(), "logical_cpus": runtime.NumCPU(), "gomaxprocs": runtime.GOMAXPROCS(0), "planning_workers": 1, "default_adapter_workers": min(8, max(2, runtime.NumCPU()/2)), "byte_budget": 128 << 20}
+	result := map[string]any{"fixture_version": 5, "prime_attempts": primeAttempts, "prime_cache_supported": primeCacheSupported, "prime_cache_hits": primeHits, "state": stateName, "trace": os.Getenv("AA_BACKFILL_TRACE") == "1", "scenario": scenario, "mode": mode, "sessions": count, "selected": len(expected), "imported": imported, "skipped": skipped, "input_bytes": inputBytes, "elapsed_seconds": elapsed.Seconds(), "checkpoint_offsets": checkpoints, "command_cpu_seconds": cpuAfter - cpuBefore, "command_peak_rss_at_return_bytes": commandRSS, "allocated_bytes": after.TotalAlloc - before.TotalAlloc, "gc_cycles": after.NumGC - before.NumGC, "artifact_sha256": hex.EncodeToString(digest[:]), "toolchain": runtime.Version(), "logical_cpus": runtime.NumCPU(), "gomaxprocs": runtime.GOMAXPROCS(0), "planning_workers": 1, "default_adapter_workers": min(8, max(2, runtime.NumCPU()/2)), "byte_budget": 128 << 20}
 	raw, e := json.Marshal(result)
 	must(t, e)
 	if os.Getenv("AA_BACKFILL_TRACE") == "1" {

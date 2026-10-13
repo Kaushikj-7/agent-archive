@@ -22,7 +22,7 @@ python3 scripts/compare_backfill.py /tmp/backfill-original/samples.jsonl /tmp/ba
 ```
 
 The clock is September 23, 2026 in California. Metadata headers occupy exactly
-1,024 bytes before the newline, including trailing JSON whitespace. Fixture version 4 has:
+1,024 bytes before the newline, including trailing JSON whitespace. Fixture version 5 has:
 
 - Recent and old corpora: 1,500 files, sizes cycling through 256 KiB, 256 KiB,
   512 KiB, 1 MiB, 1 MiB, 1 MiB, 1 MiB, 2 MiB, 4 MiB, 8 MiB, plus small records.
@@ -50,7 +50,7 @@ compare tracing overhead separately from disabled-trace optimization runs.
 Each subprocess creates fixtures before the `Run` timer. Every confirmed sample
 uses fresh registration/archive state, then reads uploaded metadata and source
 bundles for the expected identities and verifies completed batch records.
-Normalized per-session hashes include records, text, history, start provenance,
+Normalized per-session hashes include records, text, history, history ordinals, start provenance,
 origin and source format. Hashes omit generated archive IDs and normalize the
 disposable project path. Only compact hashes survive verification.
 
