@@ -84,7 +84,7 @@ func pickerScopeQuery(s sessionScope, harness string, limit int) (catalog.Picker
 	if !scope.All {
 		scope.RepoKey, scope.ProjectIDs = s.RepoKey, slices.Clone(s.ProjectIDs)
 	}
-	return catalog.PickerQuery{Scope: scope, Membership: "handoff", Harness: harness, Limit: limit}, nil
+	return catalog.PickerQuery{Scope: scope, Membership: catalog.PickerHandoff, Harness: harness, Limit: limit}, nil
 }
 
 // prepare classifies every relevant registration exactly, including uploaded
