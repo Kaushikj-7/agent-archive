@@ -81,6 +81,9 @@ func (l *sessionPicker) pickKeys(p *prompter, stdout io.Writer, rows []listRow, 
 	question := p.promptText("Enter number (or unique short SESSION_ID) to "+action+", or q to quit", true, nil, -1, ": ")
 	if l.emptyWithoutAction(rows) {
 		l.prepareSearch(rows)
+		if l.invalidView != nil {
+			return listRow{}, false, l.invalidView
+		}
 		v := l.view(rows, totalMatched, truncated, format)
 		if err := printSessionGroups(stdout, v.groups, v.format); err != nil {
 			return listRow{}, false, err
@@ -100,6 +103,9 @@ func (l *sessionPicker) pickKeys(p *prompter, stdout io.Writer, rows []listRow, 
 			l.clear()
 		}
 		l.prepareSearch(rows)
+		if l.invalidView != nil {
+			return listRow{}, false, l.invalidView
+		}
 		v := l.view(rows, totalMatched, truncated, format)
 		screen := l.filterScreen(stdout, v, prompt())
 		var frame bytes.Buffer
@@ -126,6 +132,9 @@ func (l *sessionPicker) pickKeys(p *prompter, stdout io.Writer, rows []listRow, 
 		for {
 			k, err := l.nextBrowserKey()
 			l.prepareSearch(rows)
+			if err == nil {
+				err = l.invalidView
+			}
 			if err != nil {
 				if errors.Is(err, io.EOF) {
 					return listRow{}, false, nil
@@ -142,7 +151,10 @@ func (l *sessionPicker) pickKeys(p *prompter, stdout io.Writer, rows []listRow, 
 			} else {
 				typed, result = l.listKey(k, screen, typed)
 			}
-			if again := l.view(rows, totalMatched, truncated, format); again != v || l.start != screen.start || l.filtering && l.cursor != screen.cursor {
+			if l.invalidView != nil {
+				return listRow{}, false, l.invalidView
+			}
+			if again := l.view(rows, totalMatched, truncated, format); l.viewChanged(again, v, screen) {
 				// Measured again, so the next key of a burst (PgDn after
 				// PgDn, or after ↓) moves on from here.
 				v = again
@@ -622,4 +634,8 @@ func (l *sessionPicker) emptyWithoutAction(rows []listRow) bool {
 
 func (l *sessionPicker) activatesOlder(k key, typed string) bool {
 	return l.older != nil && !l.filtering && typed == "" && k.kind == keyRune && unicode.ToLower(k.r) == 'o'
+}
+
+func (l *sessionPicker) viewChanged(next, prior *pickerView, screen listScreen) bool {
+	return next != prior || l.start != screen.start || l.filtering && l.cursor != screen.cursor
 }

@@ -11,6 +11,7 @@ import (
 // scopeView is the rows one scope shows, before they are laid out.
 type scopeView struct {
 	incomplete bool
+	loadError  error
 	rows       []listRow
 	// total counts what the scope holds, or is -1 when it was not read to
 	// the end; truncated is set when rows is only the first part.

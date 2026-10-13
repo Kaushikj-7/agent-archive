@@ -96,19 +96,21 @@ func boundedArchiveChoices(ctx context.Context, env metadataCacheDependencies, s
 		}
 		if e := load(readCtx, s, i, false); e != nil {
 			loadErr = e
-			return scopeView{incomplete: true, total: -1, note: e.Error()}
+			return scopeView{incomplete: true, loadError: e, total: -1, note: e.Error()}
 		}
 		st := states[i]
-		rows := make([]listRow, 0, len(st.rows))
-		for _, item := range st.rows {
-			// Only bounded display facts are formatted here. Full matcher fields are
-			// supplied by the complete search loader, never by this projection.
+		// Format the complete loaded table together so short IDs remain
+		// unambiguous. Projection facts are presentation data only.
+		sessions := make([]archive.Metadata, len(st.rows))
+		for i, item := range st.rows {
+			sessions[i] = pickerPresentation(item.Row)
+		}
+		rows := formatSessionRows(sessions, format)
+		for i, item := range st.rows {
 			item := item
-			row := formatSessionRows([]archive.Metadata{pickerPresentation(item.Row)}, format)[0]
-			row.Index = len(rows) + 1
-			row.Children = int(item.Row.OrdinaryChildren)
-			row.pickerSelection = &handoffPickerSelection{item: &item, snapshot: snapshot, store: store}
-			rows = append(rows, row)
+			rows[i].When = relativeAge(format.Now, item.Row.Activity)
+			rows[i].Children = int(item.Row.OrdinaryChildren)
+			rows[i].pickerSelection = &handoffPickerSelection{item: &item, snapshot: snapshot, store: store}
 		}
 		return scopeView{rows: rows, total: st.total, truncated: st.more, hidden: -1, note: "Subagent count is not loaded; search includes archived subagents.", searchContext: func(searchCtx context.Context) ([]listRow, error) {
 			sessions, e := loadSessionsForBrowseContext(searchCtx, env, store, opts, stderr, command)

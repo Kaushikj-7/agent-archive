@@ -418,6 +418,7 @@ type sessionPicker struct {
 	searchContext func(context.Context) ([]listRow, error)
 	operation     *browserOperation
 	searchFailure error
+	invalidView   error
 	searchNotice  string
 	generation    uint64
 
@@ -629,6 +630,9 @@ func (l *sessionPicker) pickRows(p *prompter, stdout io.Writer, rows []listRow, 
 	notice := ""
 	for {
 		l.prepareSearch(rows)
+		if l.invalidView != nil {
+			return listRow{}, false, l.invalidView
+		}
 		v := l.view(rows, totalMatched, truncated, format)
 		l.shown = v.heading
 		pages, width, sized := l.pages(stdout, v.groups, v.format, len(v.rows), v.footer, question)
@@ -680,7 +684,7 @@ func (l *sessionPicker) pickRows(p *prompter, stdout io.Writer, rows []listRow, 
 			}
 			l.prepareSearch(rows)
 			answer = strings.TrimSpace(answer)
-			if l.older != nil && (strings.EqualFold(answer, "o") || strings.EqualFold(answer, "older")) {
+			if l.olderLine(answer) {
 				l.loadedOlder = true
 				return listRow{}, false, nil
 			}
@@ -1118,4 +1122,8 @@ func (l *sessionPicker) lineAnswer(answer string, onPage, rows []listRow, total 
 		l.setFilter(l.words() + " " + answer)
 	}
 	return row, matched, "", nil
+}
+
+func (l *sessionPicker) olderLine(answer string) bool {
+	return l.older != nil && (strings.EqualFold(answer, "o") || strings.EqualFold(answer, "older"))
 }

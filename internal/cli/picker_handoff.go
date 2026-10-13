@@ -96,7 +96,7 @@ func boundedHandoffChoices(ctx context.Context, env handoffSelectDependencies, s
 		v, e := pickerVisibleView(readCtx, model, s)
 		if e != nil {
 			operationErr = fmt.Errorf("build handoff picker rows: %w", e)
-			return scopeView{incomplete: true, total: -1, truncated: true, note: fmt.Sprintf("Could not load sessions: %v", e)}
+			return scopeView{incomplete: true, loadError: e, total: -1, truncated: true, note: fmt.Sprintf("Could not load sessions: %v", e)}
 		}
 		rows := make([]handoffPickerRow, len(v.Rows))
 		for i, c := range v.Rows {
@@ -229,7 +229,7 @@ func boundedLocalHandoffChoices(ctx context.Context, env handoffSelectDependenci
 		v, err := pickerVisibleView(readCtx, m, s)
 		if err != nil {
 			loadErr = err
-			return scopeView{incomplete: true, total: -1, truncated: true}
+			return scopeView{incomplete: true, loadError: err, total: -1, truncated: true}
 		}
 		rows := make([]handoffPickerRow, len(v.Rows))
 		for i, r := range v.Rows {

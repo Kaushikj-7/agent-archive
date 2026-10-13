@@ -205,3 +205,31 @@ func TestBoundedBareShowKeepsSelectedParentAndLinkedChildInOneView(t *testing.T)
 		t.Fatal("mutation did not produce the fresh-root oracle", err, fresh.LinkedAvailability)
 	}
 }
+
+func TestBoundedArchiveRowsKeepActivityAgeAndUnambiguousShortIDs(t *testing.T) {
+	a := newScopedArchive(t)
+	active := a.env.now().Add(-5 * time.Minute)
+	captured := a.env.now().Add(-30 * 24 * time.Hour)
+	for _, id := range []string{"collision-a", "collision-b"} {
+		a.add(t, id, id, a.label, func(m *archive.Metadata) { m.EndedAt = &active; m.CapturedAt = captured })
+	}
+	remote := scopedPickerCatalog(t, a.mem)
+	format := listFormatOptions{Now: a.env.now(), Numbered: true}
+	choices, used, err := boundedArchiveChoices(catalog.WithReadView(t.Context()), a.env, remote, listOptions{filter: reader.Filter{Replays: reader.ReplaysHidden}}, sessionScope{All: true}, format, io.Discard, "show")
+	if !used || err != nil {
+		t.Fatal(used, err)
+	}
+	found := map[string]listRow{}
+	for _, r := range choices.shown().rows {
+		found[r.SessionID] = r
+	}
+	for _, id := range []string{"collision-a", "collision-b"} {
+		r, ok := found[id]
+		if !ok || r.When != relativeAge(format.Now, active) || r.CapturedAt != formatTimeOrNever(captured) {
+			t.Fatal("activity display used capture time", r)
+		}
+	}
+	if found["collision-a"].ShortID == found["collision-b"].ShortID {
+		t.Fatal("loaded short IDs are ambiguous")
+	}
+}

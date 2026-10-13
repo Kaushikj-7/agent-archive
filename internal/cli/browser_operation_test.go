@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/catalog"
 )
 
 func waitPickerSearch(t *testing.T, l *sessionPicker, rows []listRow) {
@@ -175,6 +176,42 @@ func TestBrowserPendingSearchDoesNotSelectAnUnseenAdditionalNumber(t *testing.T)
 	_, picked, _, err := l.lineAnswer("2", nil, table, -1, true, listFormatOptions{Numbered: true})
 	if err != nil || picked || l.words() != "needle 2" {
 		t.Fatal("pending search allowed an undisplayed number", picked, l.words(), err)
+	}
+	l.stopOperations()
+}
+
+func TestBrowserScopeLoadFailureKeepsCurrentScopeAndReportsError(t *testing.T) {
+	failure := errors.New("scope page unavailable")
+	choices := &scopeChoices{scope: sessionScope{Label: "here"}, current: viewScope}
+	choices.built[viewScope] = &scopeChoice{scopeView: scopeView{rows: []listRow{{SessionID: "current"}}, total: 1}}
+	choices.rowsForContext = func(context.Context, sessionScope) scopeView {
+		return scopeView{incomplete: true, loadError: failure, total: -1}
+	}
+	p := newPrompter(strings.NewReader("a\nq\n"), io.Discard)
+	if _, err := p.line(""); err != nil {
+		t.Fatal(err)
+	}
+	l := &sessionPicker{}
+	if err := l.toggleScope(p, io.Discard, choices); !errors.Is(err, failure) {
+		t.Fatal("scope I/O error became an empty successful view", err)
+	}
+	if choices.current != viewScope || choices.shown().rows[0].SessionID != "current" {
+		t.Fatal("scope failure replaced current rows")
+	}
+	l.stopOperations()
+}
+
+func TestBrowserExpiredSearchCannotReturnToSelectableBrowseRows(t *testing.T) {
+	rows := []listRow{{SessionID: "displayed", Index: 1}}
+	l := &sessionPicker{filter: "needle", searchContext: func(context.Context) ([]listRow, error) { return nil, catalog.ErrStaleCursor }}
+	l.prepareSearch(rows)
+	if err := l.waitSearch(rows); !errors.Is(err, catalog.ErrStaleCursor) {
+		t.Fatal("expiry was not retained", err)
+	}
+	l.closeFilter()
+	_, picked, err := l.pickRows(newPrompter(strings.NewReader("1\n"), io.Discard), io.Discard, rows, -1, true, listFormatOptions{}, "show")
+	if picked || !errors.Is(err, catalog.ErrStaleCursor) {
+		t.Fatal("clearing search restored stale selectable rows", picked, err)
 	}
 	l.stopOperations()
 }

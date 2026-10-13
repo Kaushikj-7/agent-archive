@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/catalog"
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
@@ -38,6 +39,7 @@ func (l *sessionPicker) stopOperations() {
 		op.cancel()
 		result := <-op.done
 		l.operation = nil
+		l.noteSearchError(result.err)
 		result.checked()
 	}
 }
@@ -66,6 +68,7 @@ func (l *sessionPicker) prepareSearch(rows []listRow) {
 	case result := <-l.operation.done:
 		l.operation.cancel()
 		l.operation = nil
+		l.noteSearchError(result.err)
 		result.checked()
 		if result.generation != l.generation {
 			return
@@ -164,6 +167,7 @@ func (l *sessionPicker) waitSearch(rows []listRow) error {
 		case result := <-l.operation.done:
 			l.operation.cancel()
 			l.operation = nil
+			l.noteSearchError(result.err)
 			result.checked()
 			if result.generation != l.generation {
 				continue
@@ -176,7 +180,7 @@ func (l *sessionPicker) waitSearch(rows []listRow) error {
 			l.memo, l.cache, l.bottom = nil, nil, nil
 		}
 	}
-	return nil
+	return l.invalidView
 }
 
 // readBrowserLine services completed search reads while waiting for cooked
@@ -189,6 +193,9 @@ func (l *sessionPicker) readBrowserLine(p *prompter, question string, rows []lis
 		}
 		pending := l.operation != nil
 		l.prepareSearch(rows)
+		if l.invalidView != nil {
+			return "", false, l.invalidView
+		}
 		if pending && l.operation == nil {
 			return "", true, nil
 		}
@@ -211,10 +218,13 @@ func (l *sessionPicker) toggleScope(p *prompter, stdout io.Writer, choices *scop
 				}
 			}
 			choices.built[target] = nil
-			choices.choiceContext(ctx, target)
+			choice := choices.choiceContext(ctx, target)
 			if err := ctx.Err(); err != nil {
 				choices.built[target] = nil
 				return false, err
+			}
+			if choice.loadError != nil {
+				return false, choice.loadError
 			}
 			return true, nil
 		}}
@@ -321,4 +331,11 @@ func (l *sessionPicker) loadInput(p *prompter) (bool, error) {
 		}
 	}
 	return false, nil
+}
+
+// A changed or expired snapshot cannot regain valid status by clearing search.
+func (l *sessionPicker) noteSearchError(err error) {
+	if errors.Is(err, catalog.ErrStaleCursor) {
+		l.invalidView = err
+	}
 }
