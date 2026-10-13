@@ -482,13 +482,7 @@ func filterRecordsWithOutput(format string, knownTypes map[string]bool, lead map
 			continue
 		}
 		kind, _ := raw["type"].(string)
-		if inspect != nil {
-			if !isClaudeTitleRecord(raw) {
-				noteRecordTime(&result, raw)
-			}
-		} else {
-			noteOwnedNativeIdentity(&result, raw, kind, own)
-		}
+		noteOutputNativeIdentity(&result, raw, kind, own, inspect != nil)
 		if err := validateMetadataReserved(kind, line, validateMeta, beforeRecord); err != nil {
 			return archive.FilteredTranscript{}, err
 		}
@@ -836,6 +830,16 @@ func filteredReadComplete(err error, lines, recognized int) error {
 		return archive.ErrUnsafeSourceFormat
 	}
 	return nil
+}
+
+// noteOutputNativeIdentity keeps identical time evidence in both output modes.
+// Only the retained mode needs the unbounded native identifier collections.
+func noteOutputNativeIdentity(result *archive.FilteredTranscript, raw map[string]any, kind string, own func(string) bool, inspection bool) {
+	if !inspection {
+		noteOwnedNativeIdentity(result, raw, kind, own)
+	} else if !isClaudeTitleRecord(raw) {
+		noteRecordTime(result, raw)
+	}
 }
 
 func noteOwnedNativeIdentity(result *archive.FilteredTranscript, raw map[string]any, kind string, own func(string) bool) {
