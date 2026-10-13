@@ -66,6 +66,7 @@ type StreamingImportFilter interface {
 // SummaryImportInspector interprets compact facts under its native policy.
 // Membership-sensitive inspectors must decline unsupported intrinsic summaries.
 type SummaryImportInspector interface {
+	SummaryFor(ImportInspector) bool
 	SupportsImportSummary() bool
 	InspectImportSummary(context.Context, ImportInspectionRequest, ImportSummary) (ImportInspection, error)
 }

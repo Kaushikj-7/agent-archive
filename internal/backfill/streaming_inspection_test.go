@@ -11,6 +11,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agents/codex"
+	"github.com/wangjohn/agent-archive/internal/agents/importconfig"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 )
@@ -71,5 +72,80 @@ func TestStreamingInspectionPreservesWholeCandidatesAndDecoratorFallback(t *test
 				}
 			}
 		})
+	}
+}
+
+// Embedding an interpreter must not bypass its InspectImport override.
+type summaryInspection interface {
+	agentapi.ImportInspector
+	agentapi.SummaryImportInspector
+}
+
+type decoratedImportInspector struct {
+	summaryInspection
+	calls *atomic.Int64
+}
+
+func (p decoratedImportInspector) InspectImport(ctx context.Context, r agentapi.ImportInspectionRequest) (agentapi.ImportInspection, error) {
+	p.calls.Add(1)
+	out, err := p.summaryInspection.InspectImport(ctx, r)
+	out.Conversation = false
+	return out, err
+}
+
+type decoratedImports struct {
+	agentapi.ImportsLookup
+	calls *atomic.Int64
+}
+
+func (p decoratedImports) LookupImport(name string) (agentapi.ImportInspector, bool) {
+	inspector, ok := p.ImportsLookup.LookupImport(name)
+	if name == "codex" && ok {
+		return decoratedImportInspector{summaryInspection: inspector.(summaryInspection), calls: p.calls}, true
+	}
+	return inspector, ok
+}
+
+func TestStreamingInspectionPreservesInspectorOverride(t *testing.T) {
+	tr := newTree(t)
+	repo := tr.repo("home/repo")
+	const id = "00000000-0000-0000-0000-000000000001"
+	tr.write(filepath.Join("home", codexFile(id)), codexTranscript(id, id, repo, fixedNow.Add(-time.Hour)))
+	env := tr.env()
+	var inspected, filtered atomic.Int64
+	env.Imports = decoratedImports{env.Imports, &inspected}
+	got := plan(t, env, nil, config.Config{}, Filters{})
+	env.Sources = retainedInspectionSources{env.Sources, &filtered}
+	want := plan(t, env, nil, config.Config{}, Filters{})
+	if !reflect.DeepEqual(got.Candidates, want.Candidates) {
+		t.Fatalf("inspector override bypassed: summary=%+v retained=%+v", got.Candidates, want.Candidates)
+	}
+	if inspected.Load() != 2 {
+		t.Fatalf("override called %d times, want 2", inspected.Load())
+	}
+}
+
+type configuredImports struct{ agentapi.ImportsLookup }
+
+func (p configuredImports) LookupImport(name string) (agentapi.ImportInspector, bool) {
+	if name == "codex" {
+		return importconfig.Provider{PreferHeaderStart: true, NativeStart: true, ConversationTypes: []string{"event_msg"}}, true
+	}
+	return p.ImportsLookup.LookupImport(name)
+}
+
+func TestStreamingInspectionPreservesConfiguredConversationPolicy(t *testing.T) {
+	tr := newTree(t)
+	repo := tr.repo("home/repo")
+	const id = "00000000-0000-0000-0000-000000000001"
+	tr.write(filepath.Join("home", codexFile(id)), codexTranscript(id, id, repo, fixedNow.Add(-time.Hour)))
+	env := tr.env()
+	env.Imports = configuredImports{env.Imports}
+	got := plan(t, env, nil, config.Config{}, Filters{})
+	var calls atomic.Int64
+	env.Sources = retainedInspectionSources{env.Sources, &calls}
+	want := plan(t, env, nil, config.Config{}, Filters{})
+	if !reflect.DeepEqual(got.Candidates, want.Candidates) {
+		t.Fatalf("configured conversation policy changed: summary=%+v retained=%+v", got.Candidates, want.Candidates)
 	}
 }
