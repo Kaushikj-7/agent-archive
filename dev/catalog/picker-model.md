@@ -6,6 +6,10 @@ archive view. Each scope has its own local position, remote buffer, cursor,
 suppression set, emitted physical keys and visible prefix. Every operation checks
 the captured lifetime before publishing a prefix; an operation served entirely
 from buffered or local candidates obtains its own fresh head observation.
+The caller prefetches the initial page, so initial CLI setup makes two head
+observations around page/model construction, plus one per exact local identity
+lookup batch. This fixed CLI overhead is separate from the reader page API's
+one-observation cost and the registration-dependent native inventory work.
 Refresh requires a
 new archive view; cached scopes do not renew the ten-minute snapshot lifetime.
 

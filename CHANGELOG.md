@@ -6,6 +6,10 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Load the handoff picker from bounded repository pages on supported scoped
+  catalogs, merge current local activity, and continue native eligibility checks
+  with Older sessions. Changed or expired archive selections require refresh.
+
 - Add complete scoped catalog construction and resumable `migrate --scoped-picker`
   upgrades, with verified activation and a permanent stronger writer fence.
   Production S3/R2 qualification and credential authority remain required.

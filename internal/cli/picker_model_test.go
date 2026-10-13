@@ -85,14 +85,14 @@ func TestPickerModelAllPagesEqualExhaustiveUnion(t *testing.T) {
 						continue
 					}
 					key, _ := archive.MetadataObjectKey(md.Harness.Name, md.SessionID)
-					promptState := ""
+					promptState := catalog.PickerPromptsUnknown
 					if archivedWithoutPrompt(md) {
-						promptState = "zero"
+						promptState = catalog.PickerPromptsZero
 					}
 					r := catalog.PickerRow{SessionKey: key, SessionID: md.SessionID, Harness: md.Harness.Name, Activity: lastActivity(md), CapturedAt: md.CapturedAt, Root: true, Title: md.Title, ProjectID: md.ProjectID, PromptState: promptState}
 					item := catalog.PickerItem{Row: r}
 					a.facts[pickerID(md.Harness.Name, md.SessionID)] = item
-					if r.PromptState != "zero" {
+					if r.PromptState != catalog.PickerPromptsZero {
 						a.items = append(a.items, item)
 					}
 				}
@@ -352,7 +352,7 @@ func TestPickerModelZeroPromptRevivalSourcePolicy(t *testing.T) {
 	for _, source := range []string{"auto", "local", "archive"} {
 		t.Run(source, func(t *testing.T) {
 			reg := archive.SessionRegistration{ArchiveSessionID: "revive", Harness: archive.Harness{Name: "codex"}}
-			item := catalog.PickerItem{Row: catalog.PickerRow{SessionKey: "physical", SessionID: "revive", Harness: "codex", Root: true, PromptState: "zero", Activity: time.Unix(10, 0), CapturedAt: time.Unix(20, 0)}}
+			item := catalog.PickerItem{Row: catalog.PickerRow{SessionKey: "physical", SessionID: "revive", Harness: "codex", Root: true, PromptState: catalog.PickerPromptsZero, Activity: time.Unix(10, 0), CapturedAt: time.Unix(20, 0)}}
 			a := &modelArchive{facts: map[pickerIdentity]catalog.PickerItem{pickerID("codex", "revive"): item}}
 			m := &pickerModel{archive: a, regs: []archive.SessionRegistration{reg}, activity: map[pickerIdentity]time.Time{pickerID("codex", "revive"): time.Unix(30, 0)}, source: source, pageSize: 50, labelBudget: 50, label: func(_ context.Context, r archive.SessionRegistration, at time.Time) (archive.Metadata, bool) {
 				return archive.Metadata{SessionID: r.ArchiveSessionID, Harness: r.Harness, CapturedAt: at}, true

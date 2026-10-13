@@ -222,7 +222,7 @@ func (m *pickerModel) state(s sessionScope) (*pickerScopeState, error) {
 			continue
 		}
 		var unbuilt *archive.SessionRegistration
-		if item == nil || item.Row.PromptState == "zero" {
+		if item == nil || item.Row.PromptState == catalog.PickerPromptsZero {
 			if m.source == "archive" {
 				continue
 			}
