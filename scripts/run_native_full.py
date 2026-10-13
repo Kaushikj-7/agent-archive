@@ -15,7 +15,9 @@ def source_guard(source, out=None):
         raise tier.Failure('native source differs from tested commit')
     if scope.git(tier.ROOT, 'diff', '--cached', '--name-only', source, '--').strip():
         raise tier.Failure('native index differs from tested commit')
-    for raw_path in scope.records(scope.git(tier.ROOT, 'ls-files', '--others', '--exclude-standard', '-z')):
+    # Ignored files can still alter Go builds (for example go.work or an
+    # ignored directory containing Go packages), so inspect them as well.
+    for raw_path in scope.records(scope.git(tier.ROOT, 'ls-files', '--others', '-z')):
         path = scope.repository_path(raw_path)
         item = tier.ROOT/path
         # Runner logs and Python's import cache are the only generated inputs
@@ -35,7 +37,7 @@ def source_guard(source, out=None):
             raise tier.Failure('native tracked source differs from tested commit')
 
 
-def listing(text, packages):
+def listing(text, packages, require_cli=True):
     """Discover every runnable name and establish every package terminal."""
     shard.coverage(text, packages)
     names = {package: [] for package in packages}
@@ -49,7 +51,7 @@ def listing(text, packages):
                         or name == 'TestMain' or name in names[event['Package']]):
                     raise tier.Failure('invalid or duplicate native runnable name')
                 names[event['Package']].append(name)
-    if len(names[shard.CLI]) < 2:
+    if require_cli and len(names[shard.CLI]) < 2:
         raise tier.Failure('native CLI listing cannot form complete units')
     return {package: sorted(values) for package, values in names.items()}
 
@@ -99,6 +101,11 @@ def _verify(out, report, require_obligations):
         raise tier.Failure('native catalog/source/settings mismatch')
     packages = shard.metadata((out/'native-packages.json').read_text())
     discovered = listing((out/'native-list.jsonl').read_text(), packages)
+    performance_packages = [tier.MODULE+p[2:] for p in tier.FULL_PERFORMANCE_COMMAND if p.startswith('./')]
+    performance_names = listing((out/'native-performance-list.jsonl').read_text(),
+                                {p: packages[p] for p in performance_packages}, require_cli=False)
+    if catalog['performance_names'] != performance_names:
+        raise tier.Failure('native plain performance discovery mismatch')
     assignments = catalog['assignments']
     if (catalog['packages'] != packages or catalog['names'] != discovered or len(assignments) != 2
             or any(not unit or len(unit) != len(set(unit)) for unit in assignments)
@@ -144,11 +151,19 @@ def _verify(out, report, require_obligations):
         text = (out/name).read_text()
         if command[0] == 'bash':
             text = '\n'.join(line for line in text.splitlines() if line.startswith('{'))
-        proof = tier.body_evidence(text, short=False)
+        if name == 'published-writer.jsonl':
+            selected = {tier.MODULE+'internal/config': ['TestPublishedWriterRefusesProtectedConfiguration']}
+        else:
+            pattern = command[command.index('-run')+1]
+            selected = performance_names
+            if any(not re.search(pattern, test) for names in selected.values() for test in names):
+                raise tier.Failure('native plain performance discovery contains unselected body')
+            if not any(selected.values()):
+                raise tier.Failure('native performance selection is empty')
+        proof = coverage(text, {package: packages[package] for package in selected}, selected)
         if item['evidence'] != proof:
             raise tier.Failure('native full obligation raw body evidence mismatch')
-        if name == 'published-writer.jsonl':
-            tier.verify_selected(proof['actual'], {tier.MODULE+'internal/config': ['TestPublishedWriterRefusesProtectedConfiguration']})
+        tier.verify_selected(proof['actual'], selected)
 
 
 def _run(out, deadline, report, report_path):
@@ -160,9 +175,17 @@ def _run(out, deadline, report, report_path):
     text = tier.checked(['go', 'test', '-race', '-count=1', '-json', '-p', '1', '-timeout', '20m',
                          '-list', '^(Test|Fuzz|Example)', './...'], out/'native-list.jsonl', deadline, env)
     names = listing(text, packages)
+    # Plain builds may expose different tests than race builds. Discover the
+    # unchanged performance command in its own build/environment.
+    performance_command = list(tier.FULL_PERFORMANCE_COMMAND)
+    performance_command[performance_command.index('-run')] = '-list'
+    performance_packages = [tier.MODULE+p[2:] for p in performance_command if p.startswith('./')]
+    performance_text = tier.checked(performance_command, out/'native-performance-list.jsonl', deadline,
+                                    dict(env, AGENT_ARCHIVE_PERF='1'))
+    performance_names = listing(performance_text, {p: packages[p] for p in performance_packages}, require_cli=False)
     hints = json.loads((tier.ROOT/'scripts/go_shard_hints.json').read_text())['cli']
     catalog = {'source': report['source'], 'packages': packages, 'names': names,
-               'assignments': shard.partition(names[shard.CLI], hints)}
+               'assignments': shard.partition(names[shard.CLI], hints), 'performance_names': performance_names}
     cpus = max(1, min(4, os.cpu_count() or 1))
     env['GOMAXPROCS'] = str(cpus)
     report['native_full'] = {'catalog': catalog, 'catalog_sha256': shard.digest(catalog), 'cpus': cpus}

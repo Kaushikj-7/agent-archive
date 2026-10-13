@@ -140,7 +140,7 @@ class SourceProofTest(unittest.TestCase):
             def git(*args):
                 return subprocess.check_output(['git','-C',str(root),*args],stderr=subprocess.PIPE,text=True).strip()
             git('init','-q');git('config','user.name','CI fixture');git('config','user.email','ci@example.invalid')
-            (root/'file').write_text('tracked\n');git('add','.');git('commit','-qm','source');source=git('rev-parse','HEAD')
+            (root/'.gitignore').write_text('ignored/\ngo.work\n');(root/'file').write_text('tracked\n');git('add','.');git('commit','-qm','source');source=git('rev-parse','HEAD')
             with mock.patch.object(tier,'ROOT',root),mock.patch.dict(os.environ,{'GITHUB_SHA':source}):
                 native.source_guard(source)
                 git('update-index','--assume-unchanged','file');(root/'file').write_text('hidden\n')
@@ -154,6 +154,10 @@ class SourceProofTest(unittest.TestCase):
                 git('reset','-q','HEAD','added.go');(root/'added.go').unlink()
                 out=root/'evidence';out.mkdir();(out/'tier.json').write_text('{}')
                 native.source_guard(source,out)
+                for ignored in ('go.work', 'ignored/extra.go'):
+                    item=root/ignored;item.parent.mkdir(parents=True,exist_ok=True);item.write_text('unexpected input\n')
+                    with self.assertRaises(tier.Failure):native.source_guard(source,out)
+                    item.unlink()
                 (out/'extra.go').write_text('package fixture\n')
                 with self.assertRaises(tier.Failure):native.source_guard(source,out)
 
@@ -280,9 +284,14 @@ class ExecutionPlanTest(unittest.TestCase):
 
 
 class NativeFullTest(unittest.TestCase):
-    packages={native.shard.CLI:True,'ordinary/a':True,'ordinary/fileless':False}
+    packages={native.shard.CLI:True,'ordinary/a':True,'ordinary/fileless':False,
+              **{tier.MODULE+p:True for p in ('internal/collector','internal/archive','internal/agents/nativecodec','internal/capture','internal/config')}}
     names={native.shard.CLI:['TestA','TestChildHelper','FuzzSeed','ExampleCase'],
-           'ordinary/a':['TestFull'],'ordinary/fileless':[]}
+           'ordinary/a':['TestFull'],'ordinary/fileless':[],
+           tier.MODULE+'internal/collector':['TestStayFast'],tier.MODULE+'internal/archive':[],
+           tier.MODULE+'internal/agents/nativecodec':['TestFiveMegabyte'],
+           tier.MODULE+'internal/capture':['TestCursorOverlappingHooksRegisterOnce'],
+           tier.MODULE+'internal/config':['TestPublishedWriterRefusesProtectedConfiguration']}
 
     def listing(self):
         lines=[]
@@ -309,10 +318,20 @@ class NativeFullTest(unittest.TestCase):
     def test_native_units_discover_every_body_reconcile_raw_proof_and_preserve_full_obligations(self):
         import copy
         calls=[]
+        def performance_names(command, flag):
+            pattern=command[command.index(flag)+1]
+            selected={tier.MODULE+p[2:]:[n for n in self.names[tier.MODULE+p[2:]] if __import__('re').search(pattern,n)] for p in command if p.startswith('./')}
+            # A plain-only build-tagged test must be covered even when it is
+            # absent from the race listing.
+            selected[tier.MODULE+'internal/collector'].append('TestPlainOnlyStayFast')
+            return selected
         def checked(command,output,deadline,env):
             calls.append((command,deadline,env))
             if command[:2]==['go','list']:
                 text=events(*[{'ImportPath':p,'Dir':'/tmp','TestGoFiles':['x_test.go'] if has_tests else []} for p,has_tests in self.packages.items()])
+            elif output.name=='native-performance-list.jsonl':
+                selected=performance_names(command,'-list')
+                text=events(*[event for package,names in selected.items() for event in ([{'Action':'output','Package':package,'Output':name+'\n'} for name in names]+[{'Action':'pass','Package':package}])])
             elif '-list' in command:text=self.listing()
             elif output.name.startswith('native-'):
                 if '-run' in command:
@@ -321,8 +340,9 @@ class NativeFullTest(unittest.TestCase):
                 else:selected={p:n for p,n in self.names.items() if p!=native.shard.CLI}
                 text=self.body(selected)
             elif command[0]=='bash':
-                text=self.body({})+'\n'+events({'Action':'pass','Package':tier.MODULE+'internal/config','Test':'TestPublishedWriterRefusesProtectedConfiguration'})
-            else:text=self.body({})
+                text=self.body({tier.MODULE+'internal/config':['TestPublishedWriterRefusesProtectedConfiguration']})
+            else:
+                text=self.body(performance_names(command,'-run'))
             output.write_text(text);return text
         restorations={'restorations':[{'package':'internal/cli','test':'TestA','restore':'weekly','full_children':['full']}]}
         with tempfile.TemporaryDirectory() as d,mock.patch.object(native,'source_guard') as guard,mock.patch.object(tier,'git',return_value='a'*40),mock.patch.object(tier,'checked',side_effect=checked),mock.patch.object(tier,'catalog',return_value=restorations),mock.patch.dict(os.environ,{'GITHUB_SHA':'a'*40}),contextlib.redirect_stdout(io.StringIO()):
@@ -348,6 +368,14 @@ class NativeFullTest(unittest.TestCase):
             with self.assertRaises(tier.Failure):native.verify(out,bad)
             bad=copy.deepcopy(report);bad['invocations'][0]['command'].append('-short')
             with self.assertRaises(tier.Failure):native.verify(out,bad)
+            for name in ('performance.jsonl','published-writer.jsonl'):
+                log=out/name;good=log.read_text()
+                skipped=events(*[dict(record,Action='skip') if record.get('Test') and record['Action']=='pass' else record for record in [json.loads(line) for line in good.splitlines()]])
+                for text in ('', skipped, good+'\n'+events({'Action':'run','Package':tier.MODULE+'internal/config','Test':'TestUnassignedHelper/child'}, {'Action':'pass','Package':tier.MODULE+'internal/config','Test':'TestUnassignedHelper/child'})):
+                    bad=copy.deepcopy(report);log.write_text(text)
+                    next(i for i in bad['invocations'] if i['log']==name)['evidence']=tier.body_evidence(text,False)
+                    with self.assertRaises(tier.Failure):native.verify(out,bad)
+                log.write_text(good)
             log=out/'native-cli-0.jsonl';good=log.read_text();log.write_text(good+'\n'+events({'Action':'fail','Package':native.shard.CLI}))
             with self.assertRaises(tier.Failure):native.verify(out,report)
             log.write_text(good)
