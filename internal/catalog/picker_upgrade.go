@@ -34,8 +34,8 @@ func (u *PickerUpgradeState) validate(s admissions) error {
 	if u == nil {
 		return nil
 	}
-	if !exactHex(u.Owner, 24) || s.Seal != u.Owner || s.Hold != "" || s.GCLink != nil || s.Intent != nil || u.Proof == "" || len(u.Proof) > 4096 || len(u.SourceETag) > 4096 || len(u.ActivatedETag) > 4096 || u.Candidate.Receipts != u.Source.Receipts || u.Destination.EffectiveArchiveFormat() != destination.FormatCatalogV4 || len(u.Cursor) > 4096 || u.Source.Protocol != 10 || !u.Source.validFormat() || !u.Candidate.validFormat() || u.Candidate.Protocol != 11 || u.Source.validateReferences() != nil || u.Candidate.validateReferences() != nil {
-		return errCoordinatorDescriptor
+	if err := u.validateBinding(s); err != nil {
+		return err
 	}
 	switch u.Phase {
 	case "draining":
@@ -698,5 +698,13 @@ func (u *PickerUpgradeState) UnmarshalJSON(raw []byte) error {
 		}
 	}
 	*u = PickerUpgradeState(next)
+	return nil
+}
+
+func (u *PickerUpgradeState) validateBinding(s admissions) error {
+	if !exactHex(u.Owner, 24) || s.Seal != u.Owner || s.Hold != "" || s.GCLink != nil || s.Intent != nil || u.Proof == "" || len(u.Proof) > 4096 || len(u.SourceETag) > 4096 || len(u.ActivatedETag) > 4096 || u.Candidate.Receipts != u.Source.Receipts || u.Destination.EffectiveArchiveFormat() != destination.FormatCatalogV4 || len(u.Cursor) > 4096 || u.Source.Protocol != 10 || !u.Source.validFormat() || !u.Candidate.validFormat() || u.Candidate.Protocol != 11 || u.Source.validateReferences() != nil || u.Candidate.validateReferences() != nil {
+		return errCoordinatorDescriptor
+	}
+
 	return nil
 }
