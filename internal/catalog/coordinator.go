@@ -116,6 +116,14 @@ func (c *Coordinator) change(ctx context.Context, fn func(*admissions) error) er
 // owners are refused to prevent concurrent acknowledgement of another caller.
 // A new owner cannot cross a seal, including after process restart.
 func (c *Coordinator) Admit(ctx context.Context, owner, digest string, refs []ObjectRef) error {
+	if c.writer.readOnly {
+		return ErrReadOnly
+	}
+	// Check before admission can authorize source or index writes. Upgrade must
+	// seal and drain existing owners before replacing this protocol.
+	if _, _, err := c.writer.Head(ctx); err != nil {
+		return err
+	}
 	if owner == "" || len(owner) > 512 || digest == "" || len(refs) > 256 {
 		return errors.New("invalid catalog admission")
 	}
@@ -227,6 +235,9 @@ func (c *Coordinator) Release(ctx context.Context, owner string) error {
 // BeginPublication holds global pending/history admission through durable local
 // acknowledgement. Frozen metadata describes all active and preserved sources.
 func (s *Store) BeginPublication(ctx context.Context, id string, metadata []byte) (context.Context, error) {
+	if _, _, err := s.Writer.Head(ctx); err != nil {
+		return ctx, err
+	}
 	if id == "" || len(id) > 455 {
 		return ctx, errors.New("invalid publication identifier")
 	}

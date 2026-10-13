@@ -15,6 +15,9 @@ import (
 // The journal descriptor must already be durable before this admission CAS.
 // The completed result authorizes replay of local acknowledgement, never writes.
 func (s *Store) BeginJournalPublication(ctx context.Context, id string, raw []byte, journal local.CatalogJournal, guard *local.CollectorGuard) (context.Context, bool, error) {
+	if _, _, err := s.Writer.Head(ctx); err != nil {
+		return nil, false, err
+	}
 	if journal.Validate() != nil || journal.MutationID != id {
 		return nil, false, ErrAdmissionClosed
 	}

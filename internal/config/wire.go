@@ -27,6 +27,9 @@ const stagedSelectionWriter configWriter = "staged-selection-v13"
 
 const publicationCompositionWriter configWriter = "publication-composition-v12"
 
+// scopedPickerWriter reserves the permanent capability; construction is not yet supported.
+const scopedPickerWriter configWriter = "scoped-picker-v1"
+
 const catalogWriter configWriter = "catalog-v4-v11"
 
 const historicalProjectWriter configWriter = "historical-projects-v10"
@@ -120,12 +123,16 @@ func decodeConfig(data []byte, c *Config) (bool, error) {
 	}
 	plain := configJSON(*c)
 	wire := struct {
-		SchemaVersion json.RawMessage `json:"schema_version"`
-		RetentionDays json.RawMessage `json:"retention_days"`
+		SchemaVersion          json.RawMessage `json:"schema_version"`
+		RetentionDays          json.RawMessage `json:"retention_days"`
+		ScopedPickerProtection json.RawMessage `json:"scoped_picker_protection"`
 		*configJSON
 	}{configJSON: &plain}
 	if err := json.Unmarshal(data, &wire); err != nil {
 		return false, err
+	}
+	if len(wire.ScopedPickerProtection) != 0 {
+		return false, errors.New("scoped picker protection requires a writer with complete scoped catalog support; upgrade before opening this configuration")
 	}
 	if len(wire.RetentionDays) == 0 {
 		plain.RetentionDays = DefaultRetentionDays
@@ -197,6 +204,9 @@ func decodeConfigVersion(plain *configJSON, rawVersion json.RawMessage) (bool, e
 		if err := json.Unmarshal(raw, &plain.SchemaVersion); err != nil {
 			return false, err
 		}
+		if plain.SchemaVersion == 14 {
+			return false, errors.New("scoped picker configuration requires its permanent protected writer fence and complete scoped catalog support")
+		}
 	}
 	return fenced, nil
 }
@@ -206,8 +216,8 @@ func codexMarkerMatches(mode SkillEvidence, writer configWriter) bool {
 }
 
 func validateWriterVersion(c Config, version writerVersion) error {
-	if !supportedWriterVersion(version) {
-		return errors.New("configuration requires a supported writer fence")
+	if err := validateSupportedWriterVersion(version); err != nil {
+		return err
 	}
 	if version.Version == 13 {
 		if !c.StagedSelectionProtection || !c.PublicationCompositionProtection || !c.DurableStorageProtection || !c.ImportStagingProtection || c.Storage.EffectiveArchiveFormat() != destination.FormatLegacy {
@@ -255,6 +265,16 @@ func validateWriterVersion(c Config, version writerVersion) error {
 	return validateWriterFloors(c, version)
 }
 
+func validateSupportedWriterVersion(version writerVersion) error {
+	if version.Version == 14 || version.Writer == scopedPickerWriter {
+		return errors.New("scoped picker configuration requires complete scoped catalog support; upgrade before opening this configuration")
+	}
+	if !supportedWriterVersion(version) {
+		return errors.New("configuration requires a supported writer fence")
+	}
+	return nil
+}
+
 func supportedWriterVersion(v writerVersion) bool {
 	return (v.Version == 2 && (v.Writer == discoveryWriter || v.Writer == legacyDiscoveryWriter)) ||
 		(v.Version == 3 && (v.Writer == codexWriter || v.Writer == legacyCodexWriter)) ||
@@ -296,7 +316,7 @@ func validateWriterFloors(c Config, version writerVersion) error {
 
 func writerHasPermissionFloors(writer configWriter) bool {
 	switch writer {
-	case generationWriter, codexHistoryWriter, durableStorageWriter, retentionWriter, importStagingWriter, historicalProjectWriter, catalogWriter, publicationCompositionWriter, stagedSelectionWriter:
+	case generationWriter, codexHistoryWriter, durableStorageWriter, retentionWriter, importStagingWriter, historicalProjectWriter, catalogWriter, publicationCompositionWriter, stagedSelectionWriter, scopedPickerWriter:
 		return true
 	case legacyDiscoveryWriter, discoveryWriter, legacyCodexWriter, codexWriter:
 		return false

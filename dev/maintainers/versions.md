@@ -191,3 +191,18 @@ Published source/metadata schemas, filter/adapter/parser versions and permanent
 configuration capabilities remain unchanged. Schema-valid headers do not certify
 privacy. A future fragment writer capability must be coordinated separately;
 historical-projects-v10 already owns configuration version 10.
+
+Scoped repository picker reserves head protocol 11/schema 5 and the exact
+`Picker` descriptor `{Version: 1, RowSchema: 1, Capabilities: ["scoped-picker-v1"]}`.
+Coordinator protocol 11 is also reserved with the same exact descriptor; activation
+must fence old direct admission APIs through that coordinator, not the head alone.
+The permanent configuration capability is `{version: 14, writer: scoped-picker-v1}`
+with `scoped_picker_protection`; 13 is reserved separately by staged legacy
+publication (#479). Existing catalog configuration 11 and publication composition
+12 retain every lower protection and authorization floor. This reservation cannot
+be activated yet: current decoders explicitly refuse the new head/configuration,
+including mixed capabilities, before admission authorizes source/index writes.
+Only protocol 10/schema 4 is writable. Complete construction, transactional rows,
+upgrade, paged reads and all existing writer protection composition must land
+before activating 14; frozen protocol-10 owners must drain under the destination
+seal first. See the [frozen contracts and consumer inventory](../proposals/bounded-repository-picker.md#pr-1-frozen-reservations-and-consumer-inventory).
