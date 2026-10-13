@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -115,5 +116,51 @@ func TestVerifiedInspectionCacheRejectsSameSizeRestoredTimeRewrite(t *testing.T)
 	want := plan(t, env, nil, config.Config{}, Filters{})
 	if !reflect.DeepEqual(got, want) || after.Hits != before.Hits {
 		t.Fatalf("same-size restored stamp reused facts: got=%+v want=%+v counters=%+v/%+v", got, want, before, after)
+	}
+}
+
+func TestWarmInspectionCachePreservesActualFilterAndInspectorOverrides(t *testing.T) {
+	tr := newTree(t)
+	repo := tr.repo("home/repo")
+	const id = "00000000-0000-0000-0000-000000000001"
+	tr.write(filepath.Join("home", codexFile(id)), codexTranscript(id, id, repo, fixedNow.Add(-time.Hour)))
+	cache := inspectioncache.New(filepath.Join(t.TempDir(), "inspection"))
+	env := tr.env()
+	env.InspectionCache = cache
+	var observations []inspectioncache.Observation
+	env.ObserveInspection = func(observed inspectioncache.Observation) { observations = append(observations, observed) }
+	plan(t, env, nil, config.Config{}, Filters{})
+	if len(observations) != 1 {
+		t.Fatalf("ordinary observations = %d", len(observations))
+	}
+	if err := cache.StoreBatch(t.Context(), observations); err != nil {
+		t.Fatal(err)
+	}
+	for _, override := range []string{"filter", "inspector", "configured-inspector"} {
+		t.Run(override, func(t *testing.T) {
+			env := tr.env()
+			var calls atomic.Int64
+			switch override {
+			case "filter":
+				env.Sources = retainedInspectionSources{env.Sources, &calls}
+			case "inspector":
+				env.Imports = decoratedImports{env.Imports, &calls}
+			case "configured-inspector":
+				env.Imports = configuredImports{env.Imports}
+			}
+			want := plan(t, env, nil, config.Config{}, Filters{})
+			env.InspectionCache = cache
+			var observed []inspectioncache.Observation
+			env.ObserveInspection = func(o inspectioncache.Observation) { observed = append(observed, o) }
+			before := inspectioncache.OperationCounts()
+			got := plan(t, env, nil, config.Config{}, Filters{})
+			after := inspectioncache.OperationCounts()
+			if !reflect.DeepEqual(got, want) || after.Hits != before.Hits || len(observed) != 0 {
+				t.Fatalf("override bypassed: got=%+v want=%+v hits=%d observations=%d", got, want, after.Hits-before.Hits, len(observed))
+			}
+			if override != "configured-inspector" && calls.Load() != 2 {
+				t.Fatalf("actual override calls = %d", calls.Load())
+			}
+		})
 	}
 }

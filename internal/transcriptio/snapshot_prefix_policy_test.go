@@ -18,10 +18,11 @@ const (
 	prefixLocatorUnchanged    prefixLocatorMutation = "unchanged"
 	prefixLocatorAppend       prefixLocatorMutation = "append"
 	prefixLocatorFinalSymlink prefixLocatorMutation = "final-symlink"
+	prefixLocatorPermissions  prefixLocatorMutation = "permissions"
 )
 
 func TestSnapshotPrefixPreservesStrictRootLocator(t *testing.T) {
-	for _, mutation := range []prefixLocatorMutation{prefixLocatorUnchanged, prefixLocatorAppend, prefixLocatorFinalSymlink} {
+	for _, mutation := range []prefixLocatorMutation{prefixLocatorUnchanged, prefixLocatorAppend, prefixLocatorFinalSymlink, prefixLocatorPermissions} {
 		t.Run(string(mutation), func(t *testing.T) {
 			root := t.TempDir()
 			path := filepath.Join(root, "session.jsonl")
@@ -55,6 +56,10 @@ func TestSnapshotPrefixPreservesStrictRootLocator(t *testing.T) {
 				if err := errors.Join(writeErr, closeErr); err != nil {
 					t.Fatal(err)
 				}
+			case prefixLocatorPermissions:
+				if err := os.Chmod(path, 0000); err != nil {
+					t.Fatal(err)
+				}
 			case prefixLocatorFinalSymlink:
 				moved := filepath.Join(root, "retained.jsonl")
 				if err := os.Rename(path, moved); err != nil {
@@ -65,9 +70,9 @@ func TestSnapshotPrefixPreservesStrictRootLocator(t *testing.T) {
 				}
 			}
 			err = s.CheckPrefix(context.Background(), int64(len(data)), digest)
-			if mutation == prefixLocatorFinalSymlink {
+			if mutation == prefixLocatorFinalSymlink || mutation == prefixLocatorPermissions {
 				if !errors.Is(err, transcriptio.ErrChanged) {
-					t.Fatalf("new strict locator symlink: got %v, want ErrChanged", err)
+					t.Fatalf("changed locator or permissions: got %v, want ErrChanged", err)
 				}
 			} else if err != nil {
 				t.Fatalf("stable captured prefix: %v", err)

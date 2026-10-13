@@ -16,6 +16,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/trace"
+	"github.com/wangjohn/agent-archive/internal/transcriptio"
 )
 
 const (
@@ -96,13 +97,15 @@ func (c *Cache) Lookup(ctx context.Context, key Key) (agentapi.ImportSummary, bo
 	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0600 || info.Size() > maxEntryBytes {
 		return zero, false
 	}
-	file, err := os.Open(path)
+	// The entry may be replaced after Lstat; a nonblocking regular-file open
+	// keeps unavailable cache entries from waiting on a FIFO or device.
+	file, err := (transcriptio.OS{}).OpenRegularFile(path)
 	if err != nil {
 		return zero, false
 	}
 	defer file.Close()
 	opened, err := file.Stat()
-	if err != nil || !os.SameFile(info, opened) {
+	if err != nil || !os.SameFile(info, opened) || !opened.Mode().IsRegular() || opened.Mode().Perm() != 0600 || opened.Size() > maxEntryBytes {
 		return zero, false
 	}
 	data, err := io.ReadAll(io.LimitReader(file, maxEntryBytes+1))

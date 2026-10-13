@@ -75,6 +75,7 @@ type cacheFaultSources struct {
 	verify                   func() error
 	snapshotClose, passClose error
 	readFailure              error
+	proofFailure             error
 }
 
 func (s cacheFaultSources) LookupSources(name string) (agentapi.SourceProvider, agentapi.TranscriptFilter, bool) {
@@ -123,6 +124,9 @@ type cacheFaultSnapshot struct {
 }
 
 func (s cacheFaultSnapshot) ContentProof(ctx context.Context) (agentapi.SourceContentProof, error) {
+	if s.faults.proofFailure != nil {
+		return agentapi.SourceContentProof{}, s.faults.proofFailure
+	}
 	return s.proof.ContentProof(ctx)
 }
 func (s cacheFaultSnapshot) VerifyContent(ctx context.Context) error {
@@ -138,7 +142,7 @@ func (s cacheFaultSnapshot) Close() error {
 }
 
 func TestCacheNeverEmitsAfterProviderCleanupFailureAndRechecksHitContent(t *testing.T) {
-	for _, fault := range []string{"snapshot-close", "pass-close", "change-after-hit", "cancel-after-hit", "permission-before-hit", "missing-before-hit", "replace-after-hit"} {
+	for _, fault := range []string{"snapshot-close", "pass-close", "change-after-hit", "cancel-after-hit", "permission-before-hit", "missing-before-hit", "replace-after-hit", "permission-after-hit", "proof-failure"} {
 		t.Run(fault, func(t *testing.T) {
 			dir := t.TempDir()
 			id := "00000000-0000-4000-8000-000000000001"
@@ -152,11 +156,13 @@ func TestCacheNeverEmitsAfterProviderCleanupFailureAndRechecksHitContent(t *test
 			defer cancel()
 			faults := cacheFaultSources{base: testSources}
 			switch fault {
+			case "proof-failure":
+				faults.proofFailure = agentapi.Wrap(agentapi.Unavailable, errors.New("synthetic transient proof failure"))
 			case "snapshot-close":
 				faults.snapshotClose = agentapi.Wrap(agentapi.Cleanup, errors.New("synthetic snapshot close"))
 			case "pass-close":
 				faults.passClose = agentapi.Wrap(agentapi.Cleanup, errors.New("synthetic pass close"))
-			case "change-after-hit", "cancel-after-hit", "permission-before-hit", "missing-before-hit", "replace-after-hit":
+			case "change-after-hit", "cancel-after-hit", "permission-before-hit", "missing-before-hit", "replace-after-hit", "permission-after-hit":
 				_, _, observed, err := InspectSourceCached(ctx, "codex", ref, time.Time{}, testSources, cache)
 				if err != nil || observed == nil {
 					t.Fatalf("prime: %+v %v", observed, err)
@@ -164,7 +170,9 @@ func TestCacheNeverEmitsAfterProviderCleanupFailureAndRechecksHitContent(t *test
 				if err := cache.StoreBatch(ctx, []inspectioncache.Observation{*observed}); err != nil {
 					t.Fatal(err)
 				}
-				if fault == "replace-after-hit" {
+				if fault == "permission-after-hit" {
+					faults.verify = func() error { return os.Chmod(ref.Path, 0000) }
+				} else if fault == "replace-after-hit" {
 					faults.verify = func() error {
 						temp := ref.Path + ".replacement"
 						if err := os.WriteFile(temp, []byte(raw), 0600); err != nil {
