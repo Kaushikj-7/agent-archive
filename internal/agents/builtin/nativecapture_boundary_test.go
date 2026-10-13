@@ -259,7 +259,7 @@ func captureFixtureAllowed(pkg, file string) bool {
 		return captureFixtureFile(file) == captureFixtureImport
 	case capturePackageBuiltin:
 		return captureFixtureFile(file) == captureFixtureBinding
-	case capturePackageDomain, capturePackageCursor:
+	case capturePackageDomain, capturePackageCursor, capturePackageSealed, capturePackageProducer:
 		return false
 	default:
 		return false
@@ -479,6 +479,7 @@ func (i captureAdapterProbeImporter) Import(path string) (*types.Package, error)
 }
 
 const captureSealedPath = captureDomainPath + "/internal/sealed"
+
 const captureProducerPath = captureDomainPath + "/producer"
 
 func captureSourcePath(dir, name string) string {
@@ -494,6 +495,8 @@ func captureAuthorityImportAllowed(pkg, file, imported string) bool {
 		return pkg == captureDomainPath && captureAuthorityFile(file) == captureAuthorityProof || pkg == captureProducerPath && captureAuthorityFile(file) == captureAuthorityCursor
 	case capturePackageProducer:
 		return pkg == captureCursorAdapterPath && captureAuthorityFile(file) == captureAuthorityAdapter
+	case capturePackageDomain, capturePackageCursor, capturePackageState, capturePackageBackfill, capturePackageBuiltin:
+		return true
 	default:
 		return true
 	}
@@ -502,6 +505,7 @@ func captureAuthorityImportAllowed(pkg, file, imported string) bool {
 // Walk original source independently of go list: a directory with only ignored
 // profiles must not acquire authority merely because no package was selected.
 func captureScanOriginalAuthority(t *testing.T, packages []capturePackage) {
+	t.Helper()
 	selectedDirs := map[string]bool{}
 	selectedSources := map[string]bool{}
 	for _, pkg := range packages {
@@ -510,7 +514,6 @@ func captureScanOriginalAuthority(t *testing.T, packages []capturePackage) {
 			selectedSources[captureSourcePath(pkg.Dir, name)] = true
 		}
 	}
-	t.Helper()
 	root, err := filepath.Abs("../../..")
 	if err != nil {
 		t.Fatal(err)
@@ -570,7 +573,7 @@ func captureOriginalAuthorityError(root string, selectedDirs, selectedSources ma
 			if !captureAuthorityImportAllowed(pkg, entry.Name(), imported) {
 				return fmt.Errorf("forbidden issuer/producer import %s in %s", imported, path)
 			}
-			if (imported == captureSealedPath || imported == captureProducerPath) && spec.Name != nil && spec.Name.Name == "." {
+			if (capturePackagePath(imported) == capturePackageSealed || capturePackagePath(imported) == capturePackageProducer) && spec.Name != nil && spec.Name.Name == "." {
 				return fmt.Errorf("authority dot import in %s", path)
 			}
 		}
@@ -617,6 +620,8 @@ func captureAuthorityObjectAllowed(pkg, file string, obj types.Object, calls map
 				}
 			}
 			return false
+		case captureSymbolCursor, captureSymbolLoan, captureSymbolClose:
+			break
 		case captureSymbolNew, captureSymbolNewReservation, captureSymbolDigest:
 			fn, ok := obj.(*types.Func)
 			if !ok {
@@ -646,6 +651,8 @@ func captureCheckExports(t *testing.T, pkg *types.Package) {
 		allowed = map[string]bool{"Proof": true, "Reservation": true, "New": true, "NewReservation": true, "Digest": true}
 	case capturePackageProducer:
 		allowed = map[string]bool{"CaptureSettledCursor": true}
+	case capturePackageCursor, capturePackageState, capturePackageBackfill, capturePackageBuiltin:
+		return
 	default:
 		return
 	}
@@ -682,7 +689,8 @@ func captureCheckExports(t *testing.T, pkg *types.Package) {
 				t.Errorf("sealed %s is not concrete", typeName)
 				continue
 			}
-			for i := 0; i < named.NumMethods(); i++ {
+			methodCount := named.NumMethods()
+			for i := range methodCount {
 				name := named.Method(i).Name()
 				permitted := captureSymbolName(typeName) == captureSymbolProof && (captureSymbolName(name) == captureSymbolClose || captureSymbolName(name) == captureSymbolLoan) || captureSymbolName(typeName) == captureSymbolReservation && (captureSymbolName(name) == captureSymbolReserve || captureSymbolName(name) == captureSymbolRelease || captureSymbolName(name) == captureSymbolAvailable || captureSymbolName(name) == captureSymbolRefuse)
 				if named.Method(i).Exported() && !permitted {
@@ -717,8 +725,10 @@ func captureCheckExports(t *testing.T, pkg *types.Package) {
 
 func TestNativeCaptureIssuerImporterControls(t *testing.T) {
 	for _, test := range []struct {
-		pkg, file, imported string
-		allowed             bool
+		pkg      string
+		file     string
+		imported string
+		allowed  bool
 	}{
 		{captureDomainPath, "proof.go", captureSealedPath, true},
 		{captureProducerPath, "cursor.go", captureSealedPath, true},
@@ -772,8 +782,9 @@ func captureDirectCallObject(file *ast.File, id *ast.Ident, function string, fin
 
 func TestNativeCaptureFinalIssuerCallControls(t *testing.T) {
 	for _, test := range []struct {
-		name, body string
-		allowed    bool
+		name    string
+		body    string
+		allowed bool
 	}{
 		{"final-mint", `func CaptureSettledCursor(){return issuer.New(),nil}`, true},
 		{"renamed-final-mint", `func CaptureSettledCursor(){return renamed.New(),nil}`, true},
@@ -822,7 +833,12 @@ func TestNativeCaptureIgnoredOnlyDirectoryIssuerControl(t *testing.T) {
 }
 
 func TestNativeCaptureIgnoredClosedDomainDeclarationControls(t *testing.T) {
-	for _, test := range []struct{ name, dir, file, source string }{
+	for _, test := range []struct {
+		name   string
+		dir    string
+		file   string
+		source string
+	}{
 		{"ignored-exact-producer", "internal/agents/nativecapture/producer", "cursor.go", "//go:build unavailable_profile\n\npackage producer\nimport issuer \"" + captureSealedPath + "\"\nfunc CaptureSettledCursor(){return issuer.New(),nil}\n"},
 		{"ignored-hidden-sealed-export", "internal/agents/nativecapture/internal/sealed", "hidden.go", "//go:build unavailable_profile\n\npackage sealed\nvar ExportedIssuer any\n"},
 	} {
@@ -874,8 +890,10 @@ func TestNativeCaptureTypedHelperDirectCalleeControls(t *testing.T) {
 	reservation.AddMethod(types.NewFunc(token.NoPos, sealed, "Reserve", types.NewSignatureType(types.NewVar(token.NoPos, sealed, "owner", types.NewPointer(reservation)), nil, nil, types.NewTuple(), results, false)))
 	sealed.MarkComplete()
 	for _, test := range []struct {
-		name, body, symbol string
-		allowed            bool
+		name    string
+		body    string
+		symbol  string
+		allowed bool
 	}{
 		{"direct-digest", `_ = issuer.Digest()`, "Digest", true},
 		{"parenthesized-digest", `_ = (issuer.Digest)()`, "Digest", true},
