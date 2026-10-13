@@ -53,7 +53,11 @@ func (s *catalogListReads) GetCatalogVersion(ctx context.Context, key string, li
 }
 
 func TestRealCLICatalogDefaultList50Bounded(t *testing.T) {
-	for _, size := range []int{128, 512} {
+	sizes := []int{128}
+	if !testing.Short() {
+		sizes = append(sizes, 512)
+	}
+	for _, size := range sizes {
 		t.Run(strconv.Itoa(size), func(t *testing.T) {
 			a := newScopedArchive(t)
 			for i := range size {
@@ -132,6 +136,9 @@ func TestRealCLICatalogDefaultList50Bounded(t *testing.T) {
 }
 
 func TestRealCLICatalogListNonMultiplePageLimit(t *testing.T) {
+	if testing.Short() {
+		t.Skip("full 1100-record/1050-selection integration; daily and exact candidates")
+	}
 	for _, size := range []int{1100} {
 		t.Run(strconv.Itoa(size), func(t *testing.T) {
 			a := newScopedArchive(t)

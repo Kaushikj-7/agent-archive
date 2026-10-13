@@ -84,9 +84,22 @@ func TestRetainedHintsPruneWithoutResettingMigrationProof(t *testing.T) {
 }
 
 func TestRetainedHintsKeepTwoThousandWarmSourcesAndFreshProgress(t *testing.T) {
+	if testing.Short() {
+		t.Skip("full 2000 warm-source retention; weekly and exact candidates")
+	}
 	t.Parallel()
+	testRetainedHintsWarmSourcesAndFreshProgress(t, 2000)
+}
+
+func TestRetainedHintsKeepSmallWarmSourcesAndFreshProgress(t *testing.T) {
+	t.Parallel()
+	testRetainedHintsWarmSourcesAndFreshProgress(t, 64)
+}
+
+func testRetainedHintsWarmSourcesAndFreshProgress(t *testing.T, count int) {
+	t.Helper()
 	store, cfg, at, root := fixture(t)
-	for n := range 2000 {
+	for n := range count {
 		writeRollout(t, root, cfg.Archive.Projects[0].Root, at.Add(-time.Hour), n+1, "sessions")
 	}
 	adapter := &measuredCoverageAdapter{SourceAdapter: codexAdapter{supported: syntheticSupport}}
@@ -111,7 +124,7 @@ func TestRetainedHintsKeepTwoThousandWarmSourcesAndFreshProgress(t *testing.T) {
 	if adapter.headers != first {
 		t.Fatal("retention cap reread a fitting warm source set", adapter.headers-first)
 	}
-	writeRollout(t, root, cfg.Archive.Projects[0].Root, at.Add(-time.Hour), 2001, "sessions")
+	writeRollout(t, root, cfg.Archive.Projects[0].Root, at.Add(-time.Hour), count+1, "sessions")
 	finish()
 	if adapter.headers-first != 1 {
 		t.Fatal("fresh source failed to progress independently", adapter.headers-first)

@@ -13,49 +13,81 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 )
 
-// The first typed slice accepts exact retained evidence only. Transformations,
-// including refilter/enrichment, require a later derivation authority.
+// validatedStagedSource is successful same-call canonical evidence, never persisted.
+type validatedStagedSource struct {
+	bundleSHA  string
+	stageSHA   string
+	sourceSHA  string
+	sourceSize int
+	owner      string
+	policy     readyPolicyContext
+}
+
+// The first typed slice accepts exact retained evidence only; transformations remain refused.
 func (s *Store) validateExactStagedSource(ctx context.Context, stage ImportStage, p PendingPublication) error {
+	_, err := s.validateStagedSourceForFactory(ctx, stage, p, nil)
+	return err
+}
+
+func (s *Store) validateStagedSourceWithFact(ctx context.Context, stage ImportStage, p PendingPublication, fact *validatedStagedSource) error {
+	if fact == nil {
+		return s.validateExactStagedSource(ctx, stage, p)
+	}
+	_, err := s.validateStagedSourceForFactory(ctx, stage, p, fact)
+	return err
+}
+
+// A fact is lexical to one factory invocation; external validation always recompresses.
+func (s *Store) validateStagedSourceForFactory(ctx context.Context, stage ImportStage, p PendingPublication, prior *validatedStagedSource) (*validatedStagedSource, error) {
 	original, err := s.readyDigest(ctx, stage.Bundle)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	selected, err := s.readyDigest(ctx, p.Bundle)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if original != selected || stage.Bundle.Capture.FilterVersion != archive.FilterVersion || string(stage.SkillEvidence) != p.SkillEvidence {
-		return ErrReadySelectionFrozen
+		return nil, ErrReadySelectionFrozen
 	}
 	owner := s.resourceBudget.Reservation()
 	const compressorScratch int64 = 1 << 20
 	const counterScratch int64 = 32 << 10
 	if !owner.Reserve(counterScratch) {
-		return errStateBudget
+		return nil, errStateBudget
 	}
 	largest, err := archive.SourceEncodingLineBound(ctx, stage.Bundle, owner.Available())
 	owner.Release(counterScratch)
 	if err != nil {
-		return errors.Join(errStateBudget, err)
+		return nil, errors.Join(errStateBudget, err)
 	}
 	if largest > (owner.Available()-compressorScratch)/2 {
 		owner.Refuse(2*largest + compressorScratch)
-		return errStateBudget
+		return nil, errStateBudget
 	}
 	scratch := 2*largest + compressorScratch
 	if !owner.Reserve(scratch) {
-		return errStateBudget
+		return nil, errStateBudget
 	}
 	defer owner.Release(scratch)
+	if prior != nil {
+		if prior.bundleSHA != original || prior.stageSHA != stage.SHA256 || prior.sourceSHA != p.SourceSHA256 || prior.sourceSize != len(p.SourceBytes) || prior.owner != p.Bundle.ArchiveSessionID || prior.policy != readyPolicy(p) || readySHA(p.SourceBytes) != prior.sourceSHA {
+			return nil, ErrReadySelectionFrozen
+		}
+		return prior, ctx.Err()
+	}
 	sum := sha256.New()
 	wire := &stagedCountWriter{writer: sum, remaining: int64(len(p.SourceBytes))}
 	if err := archive.CompressSource(wire, stage.Bundle); err != nil {
-		return err
+		return nil, err
 	}
 	if wire.written != int64(len(p.SourceBytes)) || hex.EncodeToString(sum.Sum(nil)) != p.SourceSHA256 {
-		return ErrReadySelectionFrozen
+		return nil, ErrReadySelectionFrozen
 	}
-	return ctx.Err()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return &validatedStagedSource{bundleSHA: original, stageSHA: stage.SHA256, sourceSHA: p.SourceSHA256, sourceSize: len(p.SourceBytes), owner: p.Bundle.ArchiveSessionID, policy: readyPolicy(p)}, nil
 }
 
 type stagedCountWriter struct {

@@ -392,14 +392,19 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 		}
 		p.scan(ctx, reg)
 	}
-	// Do not start fresh staged work after ordinary recovery cancellation.
-	// Cancellation during actual staged release remains fatal inside the helper.
-	if ctx.Err() == nil {
-		if err := p.resumeStagedReleases(ctx, local, store, opts); err != nil {
-			return p.result, err
-		}
+	if err := p.resumeStagedReleasesIfActive(ctx, local, store, opts); err != nil {
+		return p.result, err
 	}
 	return p.result, p.saveStatus()
+}
+
+// resumeStagedReleasesIfActive skips fresh work after ordinary recovery ends.
+// The direct helper still treats cancellation during staged work as fatal.
+func (p *pass) resumeStagedReleasesIfActive(ctx context.Context, local *state.Store, store storage.ObjectStore, opts Options) error {
+	if ctx.Err() == nil {
+		return p.resumeStagedReleases(ctx, local, store, opts)
+	}
+	return nil
 }
 
 // resumeStagedReleases transfers diagnostic ownership before ending its read scope.

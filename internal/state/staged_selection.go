@@ -213,7 +213,8 @@ func (s *Store) FreezeStagedSelection(ctx context.Context, id string, p PendingP
 	if err != nil {
 		return p, err
 	}
-	if err := s.validateExactStagedSource(ctx, stage, p); err != nil {
+	sourceFact, err := s.validateStagedSourceForFactory(ctx, stage, p, nil)
+	if err != nil {
 		return p, err
 	}
 	q.Core.BundleSHA256, err = s.readyDigest(ctx, p.Bundle)
@@ -244,10 +245,29 @@ func (s *Store) FreezeStagedSelection(ctx context.Context, id string, p PendingP
 	if err != nil {
 		return p, err
 	}
-	return p, s.validateStagedSelection(ctx, p)
+	return p, s.finishStagedSelectionFactory(ctx, p, sourceFact)
+}
+
+func (s *Store) finishStagedSelectionFactory(ctx context.Context, p PendingPublication, fact *validatedStagedSource) error {
+	q := p.StagedProof()
+	if fact == nil || q == nil {
+		return ErrReadySelectionFrozen
+	}
+	request, found, err := s.LoadRequest(p.Bundle.ArchiveSessionID)
+	if err != nil {
+		return err
+	}
+	if found != q.HadRequest || found && request.Token != q.CoveredToken {
+		return ErrReadySelectionFrozen
+	}
+	return s.validateStagedSelectionWithSource(ctx, p, fact)
 }
 
 func (s *Store) validateStagedSelection(ctx context.Context, p PendingPublication) error {
+	return s.validateStagedSelectionWithSource(ctx, p, nil)
+}
+
+func (s *Store) validateStagedSelectionWithSource(ctx context.Context, p PendingPublication, fact *validatedStagedSource) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -282,7 +302,7 @@ func (s *Store) validateStagedSelection(ctx context.Context, p PendingPublicatio
 	if cfg.DestinationID() != q.Core.DestinationID || stage.SHA256 != q.StageSHA256 || !readySelectionOwnerMatches(reg, p.Bundle) {
 		return ErrDurableStorageRecovery
 	}
-	if err := s.validateExactStagedSource(ctx, stage, p); err != nil {
+	if err := s.validateStagedSourceWithFact(ctx, stage, p, fact); err != nil {
 		return err
 	}
 	checks := []struct {
