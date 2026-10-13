@@ -5,6 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/state"
+	"os"
 	"testing"
 
 	"github.com/wangjohn/agent-archive/internal/destination"
@@ -447,8 +451,29 @@ func TestScopedJournalUsesDistinctFrozenProtocol(t *testing.T) {
 	if err = u.FinishActivation(t.Context()); err != nil {
 		t.Fatal(err)
 	}
+	home := t.TempDir()
+	if err = os.Chmod(home, 0700); err != nil {
+		t.Fatal(err)
+	}
+	localStore, err = state.Open(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = config.Save(home, config.Config{MachineID: "synthetic"}); err != nil {
+		t.Fatal(err)
+	}
+	guard, err = local.LockCollectorGuard(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer guard.Release()
+	origin, err := guard.Origin()
+	if err != nil {
+		t.Fatal(err)
+	}
 	pending.Catalog.Protocol = 11
 	pending.Catalog.Recovery.Protocol = 11
+	pending.Catalog.Recovery.Origin = origin
 	digest, err := localStore.CatalogJournalDigest("journal", pending)
 	if err != nil {
 		t.Fatal(err)

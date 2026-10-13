@@ -9,9 +9,11 @@ import (
 )
 
 // Scoped format activation requires exhaustive construction under durable ownership.
-const scopedPickerProtocol = 11
-const scopedPickerSchema = 5
-const scopedPickerCapability = "scoped-picker-v1"
+const (
+	scopedPickerProtocol   = 11
+	scopedPickerSchema     = 5
+	scopedPickerCapability = "scoped-picker-v1"
+)
 
 var errScopedPickerUnavailable = errors.New("scoped catalog is incomplete or unavailable; complete the scoped catalog upgrade before modifying this destination")
 
@@ -26,12 +28,11 @@ type scopedPickerFormat struct {
 // using only the old roots and then reclaim its new indexed objects.
 func (h *CatalogHead) UnmarshalJSON(raw []byte) error {
 	type plainHead CatalogHead
-	var wire struct {
+	next := plainHead{}
+	wire := struct {
 		*plainHead
 		Picker json.RawMessage `json:"Picker"`
-	}
-	next := plainHead{}
-	wire.plainHead = &next
+	}{plainHead: &next}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&wire); err != nil {
