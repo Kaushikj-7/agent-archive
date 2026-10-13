@@ -210,6 +210,7 @@ jobs:
       - run: python3 scripts/test_linux_acceptance.py
 
       - run: python3 scripts/test_go_shards.py
+      - run: python3 -B scripts/test_generate_go_shard_hints.py
       - run: python3 scripts/test_ci_tiers.py
       - run: python3 -B scripts/test_go_cache_context.py
       - run: python3 -B scripts/test_go_cache_steps.py
