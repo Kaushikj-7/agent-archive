@@ -174,6 +174,12 @@ func TestHookFilesAreWrittenThroughSymlinks(t *testing.T) {
 	if err := os.WriteFile(target, original, 0644); err != nil {
 		t.Fatal(err)
 	}
+	must(t, os.Chmod(target, 0644))
+	initialInfo, err := os.Stat(target)
+	must(t, err)
+	if initialInfo.Mode().Perm() != 0644 {
+		t.Fatalf("initial target mode = %04o, want 0644", initialInfo.Mode().Perm())
+	}
 	link := filepath.Join(home, ".claude", "settings.json")
 	if err := os.Symlink("../dotfiles/settings.json", link); err != nil {
 		t.Fatal(err)

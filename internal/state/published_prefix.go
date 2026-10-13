@@ -14,7 +14,7 @@ import (
 // reader does not inspect arbitrary later body fields after a healthy manual
 // configuration downgrade with that mandatory header removed.
 func (s *Store) publishedPrefix(id string) (summary PublishedSummary, found, head bool, info os.FileInfo, err error) {
-	reservation := s.resourceBudget.Reservation()
+	reservation := s.readReservation()
 	home, err := local.OpenRootedHome(s.home)
 	if errors.Is(err, os.ErrNotExist) {
 		return summary, false, false, nil, nil

@@ -13,6 +13,19 @@ import (
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
+// PickerUpgradePhase identifies a durable scoped construction transition.
+type PickerUpgradePhase string
+
+// Scoped construction phases preserve their original checkpoint wire values.
+const (
+	PickerUpgradeDraining   PickerUpgradePhase = "draining"
+	PickerUpgradeBuilding   PickerUpgradePhase = "building"
+	PickerUpgradeVerified   PickerUpgradePhase = "verified"
+	PickerUpgradeActivating PickerUpgradePhase = "activating"
+	PickerUpgradeActive     PickerUpgradePhase = "active"
+	PickerUpgradeRollback   PickerUpgradePhase = "rollback"
+)
+
 // PickerUpgradeState is the coordinator's durable construction checkpoint. All
 // candidate roots stay under its seal until configuration acknowledges activation.
 // Captured source roots, immutable bodies and mutation receipts never change.
@@ -24,7 +37,7 @@ type PickerUpgradeState struct {
 	SourceETag    string             `json:"source_etag"`
 	Candidate     CatalogHead        `json:"candidate"`
 	Cursor        string             `json:"cursor"`
-	Phase         string             `json:"phase"`
+	Phase         PickerUpgradePhase `json:"phase"`
 	Copied        uint64             `json:"copied"`
 	Memberships   uint64             `json:"memberships"`
 	ActivatedETag string             `json:"activated_etag,omitempty"`
@@ -38,20 +51,20 @@ func (u *PickerUpgradeState) validate(s admissions) error {
 		return err
 	}
 	switch u.Phase {
-	case "draining":
+	case PickerUpgradeDraining:
 		if u.Copied != 0 || u.Cursor != "" || s.Protocol != 10 {
 			return errCoordinatorDescriptor
 		}
-	case "building", "verified":
+	case PickerUpgradeBuilding, PickerUpgradeVerified:
 		if len(s.Owners) != 0 || s.Protocol != 10 {
 			return errCoordinatorDescriptor
 		}
-	case "active", "rollback":
+	case PickerUpgradeActive, PickerUpgradeRollback:
 		if u.ActivatedETag == "" {
 			return errCoordinatorDescriptor
 		}
 		fallthrough
-	case "activating":
+	case PickerUpgradeActivating:
 		if len(s.Owners) != 0 || s.Protocol != 11 {
 			return errCoordinatorDescriptor
 		}
@@ -67,7 +80,9 @@ type PickerUpgrade struct {
 	authority CutoverAuthority
 	State     PickerUpgradeState
 }
+
 type pickerUpgradeKey struct{}
+
 type pickerUpgradeAuthority struct {
 	writer *Writer
 	owner  string
@@ -130,7 +145,7 @@ func OpenPickerUpgrade(ctx context.Context, store storage.ObjectStore, cfg desti
 	candidate.Capture = ObjectRef{}
 	candidate.Activity = ObjectRef{}
 	candidate.Project = ObjectRef{}
-	u := &PickerUpgrade{writer: w, authority: authority, State: PickerUpgradeState{Owner: owner, Destination: cfg, Proof: proof.ID, Source: h, SourceETag: etag, Candidate: candidate, Phase: "draining"}}
+	u := &PickerUpgrade{writer: w, authority: authority, State: PickerUpgradeState{Owner: owner, Destination: cfg, Proof: proof.ID, Source: h, SourceETag: etag, Candidate: candidate, Phase: PickerUpgradeDraining}}
 	err = u.save(ctx, nil, func(s *admissions) error {
 		if s.Protocol != 10 || s.Seal != "" || s.Hold != "" || s.Intent != nil || s.Upgrade != nil || s.GCLink != nil {
 			return ErrAdmissionClosed
@@ -231,7 +246,7 @@ func (u *PickerUpgrade) Step(ctx context.Context, pageSize int) (bool, error) {
 	if pageSize < 1 || pageSize > 128 {
 		return false, errors.New("upgrade page size must be between 1 and 128")
 	}
-	if u.State.Phase == "verified" || u.State.Phase == "activating" || u.State.Phase == "active" {
+	if u.State.Phase == PickerUpgradeVerified || u.State.Phase == PickerUpgradeActivating || u.State.Phase == PickerUpgradeActive {
 		return true, nil
 	}
 	starting := u.State
@@ -249,7 +264,7 @@ func (u *PickerUpgrade) Step(ctx context.Context, pageSize int) (bool, error) {
 	if !reflect.DeepEqual(state.Upgrade, &prior) || state.Seal != prior.Owner || len(state.Owners) != 0 {
 		return false, ErrAdmissionClosed
 	}
-	if prior.Phase == "draining" {
+	if prior.Phase == PickerUpgradeDraining {
 		h, etag, e := u.writer.Head(ctx)
 		if e != nil {
 			return false, e
@@ -260,7 +275,7 @@ func (u *PickerUpgrade) Step(ctx context.Context, pageSize int) (bool, error) {
 		u.State.Source = h
 		u.State.SourceETag = etag
 		u.State.Candidate.Receipts = h.Receipts
-		u.State.Phase = "building"
+		u.State.Phase = PickerUpgradeBuilding
 		if err = u.save(ctx, &prior, nil); err != nil {
 			u.State = prior
 			return false, err
@@ -283,20 +298,26 @@ func (u *PickerUpgrade) Step(ctx context.Context, pageSize int) (bool, error) {
 			u.State = prior
 			return false, err
 		}
-		u.State.Phase = "verified"
+		u.State.Phase = PickerUpgradeVerified
 	}
 	if err = u.save(ctx, &prior, nil); err != nil {
 		u.State = prior
 		return false, err
 	}
 	committed = true
-	return u.State.Phase == "verified", nil
+	return u.State.Phase == PickerUpgradeVerified, nil
 }
 
 // Verify independently checks source-to-candidate correspondence and the exact
 // auxiliary cardinalities. Each expected key is checked, so equal cardinality
 // also proves there are no extra keys. Verification retains only one page.
 func (u *PickerUpgrade) verify(ctx context.Context) error {
+	// The construction cursor relies on branch bounds. Independently validate
+	// those bounds against every referenced child before treating a paged walk
+	// or the advertised root cardinality as exhaustive source evidence.
+	if _, _, err := u.writer.validateIdentityBranches(ctx, u.State.Source.Identity, 0); err != nil {
+		return err
+	}
 	cursor := ""
 	var live, members uint64
 	counts := [3]uint64{}
@@ -341,6 +362,38 @@ func (u *PickerUpgrade) verify(ctx context.Context) error {
 	return u.unchanged(ctx)
 }
 
+func (w *Writer) validateIdentityBranches(ctx context.Context, ref ObjectRef, depth int) (string, string, error) {
+	if depth >= maxDepth {
+		return "", "", errors.New("catalog tree depth exceeded")
+	}
+	n, err := w.readNode(ctx, ref)
+	if err != nil {
+		return "", "", err
+	}
+	if len(n.Leaves) > 0 {
+		return n.Leaves[0].Key, n.Leaves[len(n.Leaves)-1].Key, nil
+	}
+	var first, last string
+	for i, child := range n.Children {
+		childNode, err := w.readNode(ctx, child.Ref)
+		if err != nil {
+			return "", "", err
+		}
+		low, high, err := w.validateIdentityBranches(ctx, child.Ref, depth+1)
+		if err != nil {
+			return "", "", err
+		}
+		if childNode.Count != child.Count || high != child.Max || low == "" || i > 0 && low <= last {
+			return "", "", errors.New("catalog identity branch differs from referenced child")
+		}
+		if i == 0 {
+			first = low
+		}
+		last = high
+	}
+	return first, last, nil
+}
+
 // Activate persists the stronger coordinator fence first, then commits one
 // complete head CAS. Mixed states stay sealed, resumable and refuse writes.
 func (u *PickerUpgrade) Activate(ctx context.Context) error {
@@ -350,10 +403,10 @@ func (u *PickerUpgrade) Activate(ctx context.Context) error {
 	if _, err := u.writer.preflightClock(ctx); err != nil {
 		return err
 	}
-	if u.State.Phase == "active" {
+	if u.State.Phase == PickerUpgradeActive {
 		return nil
 	}
-	if u.State.Phase == "verified" {
+	if u.State.Phase == PickerUpgradeVerified {
 		if err := u.verify(ctx); err != nil {
 			return err
 		}
@@ -376,13 +429,13 @@ func (u *PickerUpgrade) Activate(ctx context.Context) error {
 		candidate.PublicationWitness = HeadWitness{}
 		candidate.CommittedAt = time.Time{}
 		u.State.Candidate = candidate
-		u.State.Phase = "activating"
+		u.State.Phase = PickerUpgradeActivating
 		if err = u.save(ctx, &prior, func(s *admissions) error { s.Protocol = 11; s.Picker = pickerFormat(); return nil }); err != nil {
 			u.State = prior
 			return err
 		}
 	}
-	if u.State.Phase != "activating" {
+	if u.State.Phase != PickerUpgradeActivating {
 		return errors.New("upgrade must be completely verified before activation")
 	}
 	h, etag, err := u.writer.Head(ctx)
@@ -412,7 +465,7 @@ func (u *PickerUpgrade) Activate(ctx context.Context) error {
 		return u.Activate(ctx)
 	}
 	prior := u.State
-	u.State.Phase = "active"
+	u.State.Phase = PickerUpgradeActive
 	u.State.ActivatedETag = etag
 	err = u.save(ctx, &prior, func(s *admissions) error { s.Mode = admissionActive; s.Proof = u.State.Proof; return nil })
 	if err != nil {
@@ -424,7 +477,7 @@ func (u *PickerUpgrade) Activate(ctx context.Context) error {
 // FinishActivation acknowledges the protected local configuration save. Until
 // this explicit acknowledgement all writers and GC remain durably fenced.
 func (u *PickerUpgrade) FinishActivation(ctx context.Context) error {
-	if u.State.Phase != "active" {
+	if u.State.Phase != PickerUpgradeActive {
 		return ErrAdmissionClosed
 	}
 	state, _, err := u.writer.Coordinator().read(ctx)
@@ -462,19 +515,15 @@ func (u *PickerUpgrade) Rollback(ctx context.Context) error {
 	if err := u.checkProof(ctx); err != nil {
 		return err
 	}
-	if u.State.Phase != "active" && u.State.Phase != "rollback" {
+	if u.State.Phase != PickerUpgradeActive && u.State.Phase != PickerUpgradeRollback {
 		return errors.New("only activated scoped upgrade can roll back")
 	}
-	h, etag, err := u.writer.Head(ctx)
-	if err != nil {
+	if err := u.unchangedActivation(ctx); err != nil {
 		return err
 	}
-	if etag != u.State.ActivatedETag || h.Protocol != 11 || h.Identity != u.State.Candidate.Identity || h.Project != u.State.Candidate.Project {
-		return errors.New("catalog changed since scoped activation; rollback would forget publications")
-	}
 	prior := u.State
-	u.State.Phase = "rollback"
-	err = u.writer.Coordinator().change(ctx, func(s *admissions) error {
+	u.State.Phase = PickerUpgradeRollback
+	err := u.writer.Coordinator().change(ctx, func(s *admissions) error {
 		if len(s.Owners) != 0 || s.Hold != "" || s.GCLink != nil || s.Intent != nil {
 			return ErrAdmissionClosed
 		}
@@ -485,6 +534,12 @@ func (u *PickerUpgrade) Rollback(ctx context.Context) error {
 		} else if !reflect.DeepEqual(s.PickerUpgradeReceipt, &prior) || s.Seal != "" {
 			return ErrConflict
 		}
+		// Bind the exact-head check to this coordinator generation. A publisher
+		// that admits or completes afterward changes the generation and forces
+		// the seal CAS to retry both checks.
+		if err := u.unchangedActivation(ctx); err != nil {
+			return err
+		}
 		s.Seal = u.State.Owner
 		s.Upgrade = &u.State
 		return nil
@@ -493,6 +548,17 @@ func (u *PickerUpgrade) Rollback(ctx context.Context) error {
 		u.State = prior
 	}
 	return err
+}
+
+func (u *PickerUpgrade) unchangedActivation(ctx context.Context) error {
+	h, etag, err := u.writer.Head(ctx)
+	if err != nil {
+		return err
+	}
+	if etag != u.State.ActivatedETag || h.Protocol != 11 || h.Identity != u.State.Candidate.Identity || h.Project != u.State.Candidate.Project {
+		return errors.New("catalog changed since scoped activation; rollback would forget publications")
+	}
+	return nil
 }
 
 // PickerUpgradeCheckpoint exposes only the validated coordinator checkpoint for

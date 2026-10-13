@@ -56,7 +56,7 @@ func (s *Store) LabelRevision(id string) (string, string, error) {
 
 // LoadLabelPublication enforces an aggregate caller budget before a one-time context decode.
 func (s *Store) LoadLabelPublication(id string, budget int64) (*Published, int64, error) {
-	reservation := s.resourceBudget.Reservation()
+	reservation := s.readReservation()
 	if !safeFileComponent(id) {
 		return nil, 0, errors.New("invalid label state identity")
 	}
@@ -108,7 +108,7 @@ func (s *Store) LoadLabelPublication(id string, budget int64) (*Published, int64
 	if err := decodeStateJSON(data, &p.state); err != nil {
 		return nil, int64(len(data)), err
 	}
-	if p.state.PublicationVersion == 3 {
+	if p.state.PublicationVersion == 3 || p.state.PublicationVersion == 4 {
 		if err := p.preserveStagedPublished(s.durableContext(), &p.state); err != nil {
 			return nil, int64(len(data)), err
 		}
