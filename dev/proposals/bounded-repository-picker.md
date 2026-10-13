@@ -447,9 +447,16 @@ successor; no prefix without that boundary is a scope match.
 
 Canonical harness filtering must preserve the original harness/session tie
 discriminator used by the exhaustive caller oracle; aliases cannot silently
-change identity ordering. Order keys reuse `orderKeys` activity/capture timestamp formatting and
-`descendingIdentity(canonicalMetadataObjectKey)` exactly; range traversal uses
-the existing descending activity/capture and identity tie comparator. RepoKey
+change identity ordering. Order keys reuse `orderKeys` activity/capture timestamp
+formatting, followed by `descendingIdentity(rawHarness + NUL + sessionID + NUL)`.
+Validated identity components forbid NUL; the terminated tuple uniquely determines
+the physical metadata key and preserves component prefix ordering. Reverse range
+traversal matches the exhaustive comparator: activity/capture descending, then
+raw harness/session ascending. The tuple suffix is smaller than the previous
+full-path suffix and retains the existing 4096-byte key bound.
+`MetadataObjectKey` preserves the exact raw harness
+spelling; canonical harness normalization is only filter/group authority, never
+permission to substitute an exact source identity. RepoKey
 membership includes only validated nonempty RepoKeys. Project-any includes every
 matching ProjectID; project-missing includes only empty RepoKey. Global + project-any + either repo or project-missing, times two harness tiers
 and two memberships, is at most 12 memberships per session. Handoff excludes
@@ -527,3 +534,62 @@ count attempts including failures and expose partial/unknown state on its explic
 finite work budget. Complete archive search retains all matcher fields and child
 parent grouping through context/error-aware loading, with no loaded-page substitute
 on failure.
+
+### PR 2 consumed mutation and row codec
+
+The candidate protocol-11/schema-5 mutation path now derives `CatalogEntry.Picker`
+from checksum-verified full metadata, maintains its scoped Project memberships in
+that mutation's existing head CAS, and updates parent child aggregates in every
+copy without changing the metadata revision. `BuildPickerRow` and
+`PickerMembershipKeys` are shared construction helpers for the upgrade owner.
+A scoped candidate refuses a preexisting live identity missing its facts;
+construction must build the complete universe before activation. Protocol-10
+mutations refuse supplied Picker fields and continue emitting the old envelope.
+Head and coordinator operational decoding still refuse protocol 11; this slice
+cannot activate a new destination or bypass provider qualification.
+
+Picker Project values use the existing strict `CatalogEntry` envelope with its
+`metadata-v10` compact Summary and a bounded, strict Picker member. Identity and
+other order entries preserve the same facts during automatic overflow compaction.
+`DecodePickerRow` consumes this envelope in Project snapshot decoding and GC,
+validates exact scope/harness/membership/order correspondence, and reads no body.
+The Picker member is at most 8192 encoded bytes; each UTF-8 label prefix is at
+most 256 bytes; the complete compact picker envelope is at most 16384 bytes.
+The row schema is recorded in `schemas/catalog-picker-row.schema.json`; runtime
+also enforces byte limits and exact immutable checksum keys. Selected body
+verification recomputes metadata-derived facts while retaining separately
+validated live index child counts. A projection never authorizes source loading.
+Required row facts must be explicit and non-null, including empty labels and
+zero child counts; unknown prompts omit the count field. Selected picker rows
+match the exact compact projection of their pinned identity even when that
+identity fits inline, then gain full-body provenance only after verified hydration.
+
+
+### Canonical association lookup copy
+
+Every live scoped-format identity, including child/replay/known-zero roots and
+entries without ProjectID or RepoKey, additionally receives one Project leaf:
+`!picker-identity/v1/<canonical-harness-hex>/<session-id-hex>/<raw-session-key-hex>`.
+Hex is lowercase encoding of exact UTF-8 bytes. Harness group identity uses the
+existing `CanonicalHarness`; the session ID and raw metadata-object-key suffix
+retain exact identity. The raw metadata object key is at most 1024 bytes; the
+complete lookup key is at most 4096 bytes. Structural identities are never
+truncated. `PickerIdentityRange` validates nonempty safe identity components and
+returns the full prefix ending in `/`; its exclusive lexical upper bound replaces
+that trailing slash with `0`. This is one additional copy beyond the maximum
+twelve ordinary browse/handoff memberships (thirteen total picker copies).
+
+`PickerIdentityKey` and the same strict compact CatalogEntry/PickerRow decoder
+serve construction, mutation, snapshot and GC. Insertion, rewrite, deletion and
+parent aggregate updates maintain the lookup copy with all other roots in the
+same candidate CAS. Default Project ranges remain `project/..project0` and do not
+include these copies. Operational protocol-10 writes still emit no Picker fields,
+and protocol-11 activation remains refused in this slice.
+
+A canonical group may contain multiple physical raw-harness aliases. They remain
+separate entries with their exact pinned revision/reference/source identity;
+lookup must never silently choose or deduplicate them. The bounded reader counts
+this exact prefix: zero proves absence, one yields a unique pinned entry, and more
+than one returns explicit ambiguity while fetching at most two rows as evidence.
+PR 4 owns that API and its captured-view/request budgets; PR 3 must construct and
+validate every additional lookup copy before activation.
