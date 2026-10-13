@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"strings"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
@@ -13,6 +12,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/nativefacts"
+	"github.com/wangjohn/agent-archive/internal/wirepolicy"
 )
 
 // StagedSelection is a separately mandatory codec; ordinary selection2 never
@@ -422,41 +422,11 @@ func (p *Published) validateStagedPublished(ctx context.Context, next *published
 
 // Closed typed authority uses exact key spelling and rejects null/missing keys.
 func strictStagedKeys(raw []byte, keys []string) error {
-	if err := rejectDuplicateAuthorityKeys(raw, keys); err != nil {
-		return err
-	}
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &fields); err != nil || fields == nil {
-		return ErrDurableStorageRecovery
-	}
-	for _, key := range keys {
-		value, present := fields[key]
-		if !present || bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
-			return ErrDurableStorageRecovery
-		}
-	}
-	if len(fields) != len(keys) {
-		return ErrDurableStorageRecovery
-	}
-	return nil
+	return wirepolicy.StrictStagedKeys(raw, keys)
 }
 
 func rejectStagedNullAliases(raw []byte, names []string) error {
-	if err := rejectDuplicateAuthorityKeys(raw, names); err != nil {
-		return err
-	}
-	var fields map[string]json.RawMessage
-	if json.Unmarshal(raw, &fields) != nil {
-		return ErrDurableStorageRecovery
-	}
-	for key, value := range fields {
-		for _, name := range names {
-			if strings.EqualFold(key, name) && (key != name || bytes.Equal(bytes.TrimSpace(value), []byte("null"))) {
-				return ErrDurableStorageRecovery
-			}
-		}
-	}
-	return nil
+	return wirepolicy.RejectStagedNullAliases(raw, names)
 }
 
 // Metadata must describe the exact retained source, including its privacy and

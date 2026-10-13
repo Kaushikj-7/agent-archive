@@ -295,7 +295,7 @@ func qualificationRun(tb testing.TB, fixture qualificationFixture, home, command
 	return qualificationRunScoped(tb, fixture, home, command, state, registrations, nil)
 }
 
-func qualificationRunScoped(tb testing.TB, fixture qualificationFixture, home, command, state string, registrations int, configure func(*Env) sessionScope) qualificationResult {
+func qualificationRunScoped(tb testing.TB, fixture qualificationFixture, home, command, cacheState string, registrations int, configure func(*Env) sessionScope) qualificationResult {
 	tb.Helper()
 	meter := &qualificationMeter{MeasuredStore: storagetest.NewMeasuredStore(fixture.raw, 0), nonProjectRoots: map[string]bool{fixture.head.Identity.Key: true, fixture.head.Capture.Key: true, fixture.head.Activity.Key: true}}
 	remote, err := catalog.Wrap(meter)
@@ -303,7 +303,7 @@ func qualificationRunScoped(tb testing.TB, fixture qualificationFixture, home, c
 		tb.Fatal(err)
 	}
 	env := benchmarkEnv(tb, home, remote)
-	locals := qualificationRegistrations(tb, home, fixture.metadata, registrations, state == "native-labels")
+	locals := qualificationRegistrations(tb, home, fixture.metadata, registrations, cacheState == "native-labels")
 	env.WorkingDir = func() (string, error) { return qualificationProject, nil }
 	env.repoKey = func(string) string { return qualificationRepo }
 
@@ -365,6 +365,21 @@ func qualificationRunScoped(tb testing.TB, fixture qualificationFixture, home, c
 	close(stop)
 	<-joined
 	if code != 0 {
+		// Preserve original native I/O failures before a diagnostic retry. This
+		// runs only after the measured command has failed, never as a warmup.
+		native.mu.Lock()
+		originalNativeError := native.firstError
+		native.mu.Unlock()
+		tb.Logf("qualification original native error: %s", originalNativeError)
+		if len(locals) > 0 {
+			reg, found, loadErr := state.OpenReadOnly(home).LoadRegistration(locals[0].SessionID)
+			tb.Logf("qualification first local registration: found=%t error=%v", found, loadErr)
+			if found && loadErr == nil {
+				picker := handoffPicker{ctx: tb.Context(), env: env, home: home}
+				_, hasPrompt, retryErr := picker.buildLocalMetadataResult(reg, locals[0].CapturedAt)
+				tb.Logf("qualification diagnostic retry (not original failure): hasPrompt=%t error=%v", hasPrompt, retryErr)
+			}
+		}
 		tb.Fatalf("qualification Run %s failed: code=%d stderr=%s", command, code, stderr.String()+" synthetic frame="+screen.out.String())
 	}
 	if screen.first.ElapsedNS == 0 || screen.older.ElapsedNS == 0 {
@@ -376,7 +391,7 @@ func qualificationRunScoped(tb testing.TB, fixture qualificationFixture, home, c
 	if active != 0 {
 		tb.Fatal("native resources remain open")
 	}
-	result := qualificationResult{Format: qualificationFormat, Sessions: len(fixture.metadata), Registrations: registrations, Command: command, CacheState: state, FixtureSHA256: fixture.manifest, First: screen.first, Older: screen.older, InitialHeapInuse: initial, SampledPeakHeapInuse: max(initial, peak), NativeOpens: opens, NativeBytes: nativeBytes, NativeStats: nativeStats, NativeActivityRefs: nativeActivityRefs}
+	result := qualificationResult{Format: qualificationFormat, Sessions: len(fixture.metadata), Registrations: registrations, Command: command, CacheState: cacheState, FixtureSHA256: fixture.manifest, First: screen.first, Older: screen.older, InitialHeapInuse: initial, SampledPeakHeapInuse: max(initial, peak), NativeOpens: opens, NativeBytes: nativeBytes, NativeStats: nativeStats, NativeActivityRefs: nativeActivityRefs}
 	if qualificationFormat == 11 && configure == nil {
 		qualificationBudget(tb, result.First.Reads, fixture.height, registrations, 2, false)
 		qualificationBudget(tb, result.Older.Reads, fixture.height, registrations, 2, true)
@@ -680,6 +695,18 @@ type qualificationNativeMeter struct {
 	nativeReadMeter
 	stats        int
 	activityRefs int
+	firstError   string
+}
+
+func (m *qualificationNativeMeter) recordError(operation string, err error) {
+	if err == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.firstError == "" {
+		m.firstError = operation + ": " + err.Error()
+	}
 }
 
 func (m *qualificationNativeMeter) snapshot() (int64, int, int, int, int) {
@@ -710,7 +737,47 @@ func (p qualificationActivityProvider) Activities(ctx context.Context, e agentap
 
 func (p qualificationActivityProvider) OpenPass(ctx context.Context, e agentapi.SourceEnvironment) (agentapi.SourcePass, error) {
 	e.Files = qualificationFiles{base: e.Files, meter: p.meter}
-	return p.SourceProvider.OpenPass(ctx, e)
+	pass, err := p.SourceProvider.OpenPass(ctx, e)
+	if err != nil {
+		p.meter.recordError("OpenPass", err)
+		return pass, err
+	}
+	wrapped := qualificationSourcePass{SourcePass: pass, meter: p.meter}
+	if admission, ok := pass.(agentapi.SourceAdmissionSignature); ok {
+		return qualificationAdmissionPass{qualificationSourcePass: wrapped, SourceAdmissionSignature: admission}, nil
+	}
+	return wrapped, nil
+}
+
+type qualificationAdmissionPass struct {
+	qualificationSourcePass
+	agentapi.SourceAdmissionSignature
+}
+
+type qualificationSourcePass struct {
+	agentapi.SourcePass
+	meter *qualificationNativeMeter
+}
+
+func (p qualificationSourcePass) Read(ctx context.Context, ref agentapi.SourceRef, limits agentapi.ReadLimits) (agentapi.SourceSnapshot, error) {
+	snapshot, err := p.SourcePass.Read(ctx, ref, limits)
+	if err != nil {
+		p.meter.recordError("SourcePass.Read", err)
+	}
+	return snapshot, err
+}
+
+type qualificationParser struct {
+	agentapi.TranscriptParser
+	meter *qualificationNativeMeter
+}
+
+func (p qualificationParser) Parse(ctx context.Context, bundle archive.SourceBundle) (archive.Analysis, error) {
+	analysis, err := p.TranscriptParser.Parse(ctx, bundle)
+	if err != nil {
+		p.meter.recordError("Parser.Parse", err)
+	}
+	return analysis, err
 }
 
 type qualificationFiles struct {
@@ -739,6 +806,7 @@ func (f qualificationFiles) EvalSymlinks(path string) (string, error) {
 func (f qualificationFiles) OpenRegular(path string) (transcriptio.File, error) {
 	file, err := f.opener().OpenRegular(path)
 	if err != nil {
+		f.meter.recordError("OpenRegular", err)
 		return nil, err
 	}
 	m := &f.meter.nativeReadMeter
@@ -761,6 +829,9 @@ func qualificationRegistry(tb testing.TB, meter *qualificationNativeMeter) *buil
 		}
 		if _, ok = binding.Sources.(agentapi.ActivityProvider); ok {
 			binding.Sources = qualificationActivityProvider{SourceProvider: binding.Sources, meter: meter}
+		}
+		if binding.Parser != nil {
+			binding.Parser = qualificationParser{TranscriptParser: binding.Parser, meter: meter}
 		}
 		binding.Descriptor = agentmeta.Descriptor{ID: d.ID}
 		bindings = append(bindings, binding)
