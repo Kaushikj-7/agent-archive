@@ -521,6 +521,11 @@ func (s *Snapshot) visitRange(ctx context.Context, q Query, token snapshotCursor
 }
 
 func decodeRow(leaf item, index Index) (*Row, error) {
+	if index == ProjectIndex && pickerTreeKey(leaf.Key) {
+		if _, err := DecodePickerRow(leaf.Key, leaf.Value); err != nil {
+			return nil, err
+		}
+	}
 	var entry *CatalogEntry
 	if index == IdentityIndex {
 		r, err := decodeIdentityRecord(leaf.Value, leaf.Key)
