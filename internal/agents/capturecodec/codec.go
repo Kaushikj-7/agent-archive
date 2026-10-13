@@ -1,5 +1,5 @@
-// Package cursorcapturecodec composes fixed pure Cursor transformations for native capture.
-package cursorcapturecodec
+// Package capturecodec composes fixed pure Cursor transformations for native capture.
+package capturecodec
 
 import (
 	"context"

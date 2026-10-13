@@ -490,7 +490,7 @@ const captureSealedPath = captureDomainPath + "/internal/sealed"
 
 const captureProducerPath = captureDomainPath + "/producer"
 
-const captureCodecPath = "github.com/wangjohn/agent-archive/internal/agents/cursorcapturecodec"
+const captureCodecPath = "github.com/wangjohn/agent-archive/internal/agents/capturecodec"
 
 func captureSourcePath(dir, name string) string {
 	if filepath.IsAbs(name) {
@@ -1036,8 +1036,8 @@ func captureCodecObjectAllowed(pkg, file string, object types.Object, calls map[
 }
 
 func TestNativeCaptureCodecBridgeTypedImporterControls(t *testing.T) {
-	const codecPath = "github.com/wangjohn/agent-archive/internal/agents/cursorcapturecodec"
-	bridge := types.NewPackage(codecPath, "cursorcapturecodec")
+	const codecPath = "github.com/wangjohn/agent-archive/internal/agents/capturecodec"
+	bridge := types.NewPackage(codecPath, "capturecodec")
 	bridge.Scope().Insert(types.NewFunc(token.NoPos, bridge, "ValidateSettledMetadata", types.NewSignatureType(nil, nil, nil, types.NewTuple(), types.NewTuple(), false)))
 	bridge.MarkComplete()
 	for _, test := range []struct {
@@ -1080,7 +1080,7 @@ func TestNativeCaptureCodecBridgeTypedImporterControls(t *testing.T) {
 }
 
 func TestNativeCaptureCodecBridgeTypedValueControls(t *testing.T) {
-	bridge := types.NewPackage(captureCodecPath, "cursorcapturecodec")
+	bridge := types.NewPackage(captureCodecPath, "capturecodec")
 	bridge.Scope().Insert(types.NewFunc(token.NoPos, bridge, "ValidateSettledMetadata", types.NewSignatureType(nil, nil, nil, types.NewTuple(), types.NewTuple(), false)))
 	bridge.MarkComplete()
 	for _, test := range []struct {
@@ -1137,8 +1137,8 @@ func TestNativeCaptureCodecBridgeOriginalProfileControls(t *testing.T) {
 	}{
 		{"fixed-producer-import", "internal/agents/nativecapture/producer", "cursor.go", "package producer\nimport bridge \"" + captureCodecPath + "\"\nfunc use(){bridge.ValidateSettledMetadata()}\n", true, true},
 		{"ordinary-bridge-import", "internal/state", "import_stage.go", "package state\nimport bridge \"" + captureCodecPath + "\"\nfunc use(){bridge.ValidateSettledMetadata()}\n", true, false},
-		{"ignored-bridge-export", "internal/agents/cursorcapturecodec", "hidden.go", "//go:build unavailable_profile\n\npackage cursorcapturecodec\nvar Reader any\n", false, false},
-		{"effectful-bridge-dependency", "internal/agents/cursorcapturecodec", "codec.go", "package cursorcapturecodec\nimport \"os\"\nfunc use(){os.Getwd()}\n", true, false},
+		{"ignored-bridge-export", "internal/agents/capturecodec", "hidden.go", "//go:build unavailable_profile\n\npackage capturecodec\nvar Reader any\n", false, false},
+		{"effectful-bridge-dependency", "internal/agents/capturecodec", "codec.go", "package capturecodec\nimport \"os\"\nfunc use(){os.Getwd()}\n", true, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
