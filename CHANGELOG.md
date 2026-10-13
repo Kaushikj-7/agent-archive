@@ -6,6 +6,9 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Rank the default stats project list while retaining only the requested rows,
+  reducing ranking work for archives with many projects.
+
 - Read linked child metadata and known-harness show probes concurrently, and
   reuse selected parent metadata for summaries and verified transcripts.
 

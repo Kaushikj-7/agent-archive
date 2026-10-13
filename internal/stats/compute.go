@@ -388,16 +388,17 @@ func projects(current []*unit, topN int) ([]Project, int) {
 		}
 		byName[u.project].add(u)
 	}
-	out := make([]Project, 0, len(byName))
-	for _, name := range sortedKeys(byName) {
-		b := byName[name]
-		out = append(out, Project{Name: name, Sessions: b.sessions, Tokens: b.tokenTotal(), Cost: b.cost.cost()})
+	count := len(byName)
+	out := make(projectHeap, 0, min(topN, count))
+	for name, b := range byName {
+		row := Project{Name: name, Sessions: b.sessions, Tokens: b.tokenTotal(), Cost: b.cost.cost()}
+		if count <= topN {
+			out = append(out, row)
+		} else {
+			out.keep(row, topN)
+		}
 	}
-	sort.SliceStable(out, func(i, j int) bool { return projectBefore(out[i], out[j]) })
-	count := len(out)
-	if len(out) > topN {
-		out = out[:topN]
-	}
+	sort.Slice(out, func(i, j int) bool { return projectBefore(out[i], out[j]) })
 	return out, count
 }
 
