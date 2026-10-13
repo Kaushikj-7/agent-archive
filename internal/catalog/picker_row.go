@@ -69,8 +69,8 @@ func BuildPickerRow(key string, e CatalogEntry) (*PickerRow, error) {
 		return nil, errors.New("picker facts require full verified metadata")
 	}
 	m := e.Summary
-	canonical, err := archive.MetadataObjectKey(m.Harness.Name, m.SessionID)
-	if err != nil || key != canonical {
+	rawIdentity, err := archive.MetadataObjectKey(m.Harness.Name, m.SessionID)
+	if err != nil || key != rawIdentity {
 		return nil, errors.New("picker metadata identity mismatch")
 	}
 	if e.OrdinaryChildren > math.MaxInt64 || e.ReplayChildren > math.MaxInt64 {
@@ -98,6 +98,9 @@ func BuildPickerRow(key string, e CatalogEntry) (*PickerRow, error) {
 		return nil, err
 	}
 	if _, err = PickerMembershipKeys(key, *r); err != nil {
+		return nil, err
+	}
+	if _, err = PickerIdentityKey(*r); err != nil {
 		return nil, err
 	}
 	return r, nil
@@ -224,7 +227,7 @@ func PickerMembershipKeys(key string, r PickerRow) ([]string, error) {
 // DecodePickerRow validates a picker leaf envelope and exact membership key.
 // It requires no metadata-body reads.
 func DecodePickerRow(key string, raw []byte) (*PickerRow, error) {
-	if len(raw) > PickerEnvelopeBytes || !strings.HasPrefix(key, "!picker/v1/") {
+	if len(raw) > PickerEnvelopeBytes || !pickerTreeKey(key) {
 		return nil, errors.New("invalid picker namespace")
 	}
 	var e CatalogEntry
@@ -233,6 +236,16 @@ func DecodePickerRow(key string, raw []byte) (*PickerRow, error) {
 	}
 	if e.Picker == nil || e.SummaryOverflow != overflowMetadata {
 		return nil, errors.New("missing picker facts")
+	}
+	if strings.HasPrefix(key, "!picker-identity/") {
+		identity, err := PickerIdentityKey(*e.Picker)
+		if err != nil {
+			return nil, err
+		}
+		if identity != key {
+			return nil, errors.New("picker canonical identity key mismatch")
+		}
+		return e.Picker, nil
 	}
 	keys, err := PickerMembershipKeys(e.Picker.SessionKey, *e.Picker)
 	if err != nil {
@@ -278,4 +291,41 @@ func samePickerRow(a, b PickerRow) bool {
 	a.PromptCount = nil
 	b.PromptCount = nil
 	return a == b
+}
+
+// PickerIdentityRange addresses all physical raw identities for one canonical
+// harness/session association. The exclusive upper bound includes the complete
+// trailing-slash boundary; callers must treat multiple entries as ambiguity.
+func PickerIdentityRange(harness, sessionID string) (lower, upper string, err error) {
+	if !utf8.ValidString(harness) || !utf8.ValidString(sessionID) {
+		return "", "", errors.New("invalid picker canonical identity UTF-8")
+	}
+	canonical := archive.CanonicalHarness(harness)
+	identity, e := archive.MetadataObjectKey(canonical, sessionID)
+	if e != nil || canonical == "" || len(identity) > 1024 {
+		return "", "", errors.New("invalid picker canonical identity")
+	}
+	lower = "!picker-identity/v1/" + hex.EncodeToString([]byte(canonical)) + "/" + hex.EncodeToString([]byte(sessionID)) + "/"
+	return lower, strings.TrimSuffix(lower, "/") + "0", nil
+}
+
+// PickerIdentityKey preserves one exact raw identity within its canonical group.
+// Every live entry receives this copy, independent of browse eligibility/scope.
+func PickerIdentityKey(row PickerRow) (string, error) {
+	if err := row.validate(); err != nil {
+		return "", err
+	}
+	lower, _, err := PickerIdentityRange(row.CanonicalHarness, row.SessionID)
+	if err != nil {
+		return "", err
+	}
+	key := lower + hex.EncodeToString([]byte(row.SessionKey))
+	if len(key) > 4096 {
+		return "", errors.New("picker canonical identity key exceeds structural bound")
+	}
+	return key, nil
+}
+
+func pickerTreeKey(key string) bool {
+	return strings.HasPrefix(key, "!picker/") || strings.HasPrefix(key, "!picker-identity/")
 }
