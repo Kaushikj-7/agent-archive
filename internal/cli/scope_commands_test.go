@@ -63,6 +63,17 @@ func newScopedArchive(t *testing.T) scopedArchive {
 // directory's gets its project ID.
 func (a scopedArchive) add(t *testing.T, id, title, project string, change ...func(*archive.Metadata)) {
 	t.Helper()
+	a.addMetadata(t, id, title, project, change...)
+	// A listing reads the newest sessions from the index, which sync wrote.
+	if _, err := reader.RebuildIndex(context.Background(), a.mem, archiveSessionsPrefix); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// addMetadata writes the same sidecar as add. Bulk fixtures rebuild their
+// listing index once after all sidecars are present.
+func (a scopedArchive) addMetadata(t *testing.T, id, title, project string, change ...func(*archive.Metadata)) {
+	t.Helper()
 	m := a.base
 	m.SessionID, m.Title, m.ProjectName = id, title, project
 	m.ProjectID = archive.ProjectID("/elsewhere/" + project)
@@ -82,10 +93,6 @@ func (a scopedArchive) add(t *testing.T, id, title, project string, change ...fu
 		t.Fatal(err)
 	}
 	if err := a.mem.Put(context.Background(), key, encoded); err != nil {
-		t.Fatal(err)
-	}
-	// A listing reads the newest sessions from the index, which sync wrote.
-	if _, err := reader.RebuildIndex(context.Background(), a.mem, archiveSessionsPrefix); err != nil {
 		t.Fatal(err)
 	}
 }
