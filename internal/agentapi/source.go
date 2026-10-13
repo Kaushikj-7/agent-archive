@@ -222,3 +222,12 @@ type VerifiedContentSnapshot interface {
 	ContentProof(context.Context) (SourceContentProof, error)
 	VerifyContent(context.Context) error
 }
+
+// VerifiedRecordFraming supplies bounded framing measured over a snapshot's
+// complete captured bytes. Each call independently verifies those bytes against
+// the live source before returning the longest record (excluding newlines,
+// including an incomplete tail). Failure requires the ordinary framing path;
+// this receipt never substitutes for the filter's end-of-use verification.
+type VerifiedRecordFraming interface {
+	LongestVerifiedRecord(context.Context) (int64, error)
+}
