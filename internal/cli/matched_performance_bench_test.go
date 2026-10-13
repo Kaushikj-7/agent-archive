@@ -28,6 +28,28 @@ import (
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
+type matchedState string
+
+const (
+	matchedCold matchedState = "cold"
+	matchedWarm matchedState = "warm"
+)
+
+type matchedKind string
+
+const (
+	matchedList        matchedKind = "list"
+	matchedListText    matchedKind = "list-text"
+	matchedShowExact   matchedKind = "show-exact"
+	matchedShowShort   matchedKind = "show-short"
+	matchedShowParent  matchedKind = "show-parent"
+	matchedStats1      matchedKind = "stats1"
+	matchedStats7      matchedKind = "stats7"
+	matchedStats30     matchedKind = "stats30"
+	matchedStats90     matchedKind = "stats90"
+	matchedInteractive matchedKind = "interactive"
+)
+
 // BenchmarkMatchedCLI is a bounded, frozen comparison harness. It measures Run,
 // including captured output, but excludes setup, warmup and validation. The
 // large fixture is explicitly opt-in; it never selects the exhaustive matrix.
@@ -37,16 +59,16 @@ func BenchmarkMatchedCLI(b *testing.B) {
 		sizes = append(sizes, 10000)
 	}
 	for _, size := range sizes {
-		for _, state := range []string{"cold", "warm"} {
-			for _, kind := range []string{"list", "list-text"} {
+		for _, state := range []matchedState{matchedCold, matchedWarm} {
+			for _, kind := range []matchedKind{matchedList, matchedListText} {
 				limit := 50
 				b.Run(fmt.Sprintf("sessions=%d/%s%d/%s", size, kind, limit, state), func(b *testing.B) {
 					matchedBenchmark(b, size, state, kind, limit)
 				})
 			}
 		}
-		for _, state := range []string{"cold", "warm"} {
-			for _, kind := range []string{"show-exact", "show-short", "show-parent", "stats1", "stats7", "stats30", "stats90", "interactive"} {
+		for _, state := range []matchedState{matchedCold, matchedWarm} {
+			for _, kind := range []matchedKind{matchedShowExact, matchedShowShort, matchedShowParent, matchedStats1, matchedStats7, matchedStats30, matchedStats90, matchedInteractive} {
 				b.Run(fmt.Sprintf("sessions=%d/%s/%s", size, kind, state), func(b *testing.B) {
 					matchedBenchmark(b, size, state, kind, 0)
 				})
@@ -55,9 +77,10 @@ func BenchmarkMatchedCLI(b *testing.B) {
 	}
 }
 
-func matchedBenchmark(b *testing.B, size int, state, kind string, limit int) {
+func matchedBenchmark(b *testing.B, size int, state matchedState, kind matchedKind, limit int) {
+	b.Helper()
 	b.StopTimer()
-	mem, fixture := matchedFixture(b, size, strings.HasPrefix(kind, "stats") || kind == "interactive", kind == "show-parent")
+	mem, fixture := matchedFixture(b, size, strings.HasPrefix(string(kind), "stats") || kind == matchedInteractive, kind == matchedShowParent)
 	home := b.TempDir()
 	store := &matchedStore{MeasuredStore: storagetest.NewMeasuredStore(mem, 0)}
 	env := matchedEnv(b, home, store)
@@ -70,7 +93,7 @@ func matchedBenchmark(b *testing.B, size int, state, kind string, limit int) {
 		if err := os.RemoveAll(filepath.Join(home, "cache")); err != nil {
 			b.Fatal(err)
 		}
-		if state == "warm" {
+		if state == matchedWarm {
 			warmEnv := env
 			warmEnv.OpenStore = func(config.Config) (storage.ObjectStore, error) { return mem, nil }
 			output := &matchedScreen{}
@@ -94,7 +117,7 @@ func matchedBenchmark(b *testing.B, size int, state, kind string, limit int) {
 		b.Logf("output-sha256=%x", sha256.Sum256(output.Bytes()))
 		first += output.first
 	}
-	if kind == "interactive" {
+	if kind == matchedInteractive {
 		b.ReportMetric(float64(first.Nanoseconds())/float64(b.N), "usable-screen-ns/op")
 	}
 	storagetest.ReportReadMetrics(b, store.Metrics())
@@ -102,8 +125,8 @@ func matchedBenchmark(b *testing.B, size int, state, kind string, limit int) {
 
 // matchedInput gives warmup and the measured invocation the same terminal
 // contract, with independent fake keys so warmup cannot consume measured input.
-func matchedInput(env Env, kind string, output *matchedScreen) (Env, io.Reader) {
-	if kind != "interactive" {
+func matchedInput(env Env, kind matchedKind, output *matchedScreen) (Env, io.Reader) {
+	if kind != matchedInteractive {
 		return env, nil
 	}
 	in := strings.NewReader("")
@@ -122,24 +145,24 @@ func matchedEnv(tb testing.TB, home string, store storage.ObjectStore) Env {
 	return Env{Home: func() (string, error) { return home, nil }, UserHomeDir: func() (string, error) { return home, nil }, AccountHome: func() (string, error) { return home, nil }, TempDir: func() string { return home }, Now: func() time.Time { return storagetest.BenchmarkTime.Add(24 * time.Hour) }, LookupEnv: noEnv, OS: platform.Darwin, OpenStore: func(config.Config) (storage.ObjectStore, error) { return store, nil }, WorkingDir: func() (string, error) { return "", errors.New("no benchmark working directory") }, Interrupts: noInterrupts, repoKey: func(string) string { return "" }, IsTerminal: func(any) bool { return false }}
 }
 
-func matchedArgs(kind string, limit int) []string {
+func matchedArgs(kind matchedKind, limit int) []string {
 	switch kind {
-	case "list-text":
+	case matchedListText:
 		return []string{"list", "--all-projects"}
-	case "list":
+	case matchedList:
 		args := []string{"list", "--all-projects", "--json"}
 		if limit != 50 {
 			args = append(args, "--limit", strconv.Itoa(limit))
 		}
 		return args
-	case "show-exact", "show-parent":
+	case matchedShowExact, matchedShowParent:
 		return []string{"show", matchedID(1), "--json"}
-	case "show-short":
+	case matchedShowShort:
 		return []string{"show", "00000001", "--json"}
-	case "interactive":
+	case matchedInteractive:
 		return []string{"stats", "--days", "7"}
 	default:
-		return []string{"stats", "--days", strings.TrimPrefix(kind, "stats"), "--json", "--all"}
+		return []string{"stats", "--days", strings.TrimPrefix(string(kind), "stats"), "--json", "--all"}
 	}
 }
 
@@ -212,9 +235,9 @@ func matchedJSON(tb testing.TB, value any) []byte {
 	return raw
 }
 
-func matchedExpected(tb testing.TB, fixture []archive.Metadata, kind string) []byte {
+func matchedExpected(tb testing.TB, fixture []archive.Metadata, kind matchedKind) []byte {
 	tb.Helper()
-	if kind == "list-text" {
+	if kind == matchedListText {
 		sessions := append([]archive.Metadata(nil), fixture...)
 		sortByActivity(sessions)
 		view := listViews{sessions: sessions, full: true, limit: 50}.view
@@ -226,15 +249,15 @@ func matchedExpected(tb testing.TB, fixture []archive.Metadata, kind string) []b
 		}
 		return out.Bytes()
 	}
-	if strings.HasPrefix(kind, "show") {
+	if strings.HasPrefix(string(kind), "show") {
 		view := sessionView{Metadata: fixture[0]}
 		for _, link := range fixture[0].LinkedSessions {
 			view.LinkedAvailability = append(view.LinkedAvailability, reader.LinkedAvailability{SessionID: link.SessionID, State: reader.LinkedStateMetadataAvailable})
 		}
 		return matchedJSON(tb, view)
 	}
-	if strings.HasPrefix(kind, "stats") {
-		days, err := strconv.Atoi(strings.TrimPrefix(kind, "stats"))
+	if window, ok := strings.CutPrefix(string(kind), "stats"); ok {
+		days, err := strconv.Atoi(window)
 		if err != nil {
 			tb.Fatal(err)
 		}
@@ -244,17 +267,17 @@ func matchedExpected(tb testing.TB, fixture []archive.Metadata, kind string) []b
 	return nil
 }
 
-func matchedValidate(code int, output, diagnostic []byte, fixture []archive.Metadata, kind string, limit int, expected []byte, env Env) error {
+func matchedValidate(code int, output, diagnostic []byte, fixture []archive.Metadata, kind matchedKind, limit int, expected []byte, env Env) error {
 	if code != 0 || len(diagnostic) != 0 {
 		return fmt.Errorf("matched command exit=%d diagnostic-bytes=%d", code, len(diagnostic))
 	}
-	if kind == "list-text" {
+	if kind == matchedListText {
 		if !bytes.Equal(output, expected) {
 			return errors.New("incomplete or incorrect matched text listing")
 		}
 		return nil
 	}
-	if kind == "list" {
+	if kind == matchedList {
 		var doc listDocument
 		if err := json.Unmarshal(output, &doc); err != nil {
 			return err
@@ -271,7 +294,7 @@ func matchedValidate(code int, output, diagnostic []byte, fixture []archive.Meta
 		}
 		return nil
 	}
-	if kind == "interactive" {
+	if kind == matchedInteractive {
 		return matchedValidateFrames(output, fixture, env)
 	}
 	var got, want any
@@ -339,15 +362,15 @@ func (*matchedScreen) colorTerminal() bool { return false }
 
 // The same validators used after timing must reject successful partial output.
 func TestMatchedPerformanceRejectsPartialOutput(t *testing.T) {
-	for _, kind := range []string{"show-parent", "stats7", "list", "list-text", "interactive"} {
-		t.Run(kind, func(t *testing.T) {
-			mem, fixture := matchedFixture(t, 60, strings.HasPrefix(kind, "stats") || kind == "interactive", kind == "show-parent")
+	for _, kind := range []matchedKind{matchedShowParent, matchedStats7, matchedList, matchedListText, matchedInteractive} {
+		t.Run(string(kind), func(t *testing.T) {
+			mem, fixture := matchedFixture(t, 60, strings.HasPrefix(string(kind), "stats") || kind == matchedInteractive, kind == matchedShowParent)
 			env := matchedEnv(t, t.TempDir(), mem)
 			expected := matchedExpected(t, fixture, kind)
 			in := strings.NewReader("")
 			output := &matchedScreen{}
 			var diagnostic bytes.Buffer
-			if kind == "interactive" {
+			if kind == matchedInteractive {
 				env.IsTerminal = func(stream any) bool { return stream == any(in) || stream == any(output) }
 				env.TerminalSize = func(io.Writer) (int, int, bool) { return 80, 24, true }
 				env.openKeys = func(io.Reader) (keyTerminal, bool) { return newFakeKeys("w", "w", "q"), true }
@@ -362,24 +385,24 @@ func TestMatchedPerformanceRejectsPartialOutput(t *testing.T) {
 			if err := matchedValidate(0, output.Bytes(), []byte("warning"), fixture, kind, 50, expected, env); err == nil {
 				t.Fatal("accepted command warning")
 			}
-			if kind == "show-parent" || kind == "stats7" || kind == "list" {
+			if kind == matchedShowParent || kind == matchedStats7 || kind == matchedList {
 				var doc map[string]json.RawMessage
 				if err := json.Unmarshal(output.Bytes(), &doc); err != nil {
 					t.Fatal(err)
 				}
 				switch kind {
-				case "show-parent":
+				case matchedShowParent:
 					delete(doc, "linked_session_availability")
-				case "stats7":
+				case matchedStats7:
 					delete(doc, "coverage")
-				case "list":
+				case matchedList:
 					doc["sessions"] = json.RawMessage("[]")
 				}
 				partial := matchedJSON(t, doc)
 				if err := matchedValidate(0, partial, nil, fixture, kind, 50, expected, env); err == nil {
 					t.Fatal("accepted valid JSON with omitted results")
 				}
-				if kind == "list" {
+				if kind == matchedList {
 					var scoped listDocument
 					if err := json.Unmarshal(output.Bytes(), &scoped); err != nil {
 						t.Fatal(err)
@@ -402,7 +425,7 @@ func TestMatchedPerformanceRejectsPartialOutput(t *testing.T) {
 type matchedStore struct{ *storagetest.MeasuredStore }
 
 func (s *matchedStore) GetLimitedVersioned(ctx context.Context, key string, limit int64) ([]byte, string, error) {
-	data, etag, err := s.MeasuredStore.GetVersioned(ctx, key)
+	data, etag, err := s.GetVersioned(ctx, key)
 	if err != nil {
 		return nil, "", err
 	}
