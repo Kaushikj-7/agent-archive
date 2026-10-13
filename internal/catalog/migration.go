@@ -449,41 +449,8 @@ func (m *Migration) Verify(ctx context.Context) error {
 	if identity.Count != verified {
 		return errors.New("catalog has entries outside exhaustive source inventory")
 	}
-	if m.State.Protocol == 11 {
-		h := snapshot.head
-		verifier := &PickerUpgrade{writer: m.writer, State: PickerUpgradeState{Source: h, Candidate: h, SourceETag: snapshot.etag, Copied: verified}}
-		// Derive membership cardinality in bounded pages; verify below checks each
-		// expected leaf and total index cardinality against verified full bodies.
-		cursor := ""
-		for {
-			rows, e := m.writer.identityPage(ctx, h.Identity, cursor, 64)
-			if e != nil {
-				return e
-			}
-			for _, leaf := range rows {
-				var r record
-				if e = json.Unmarshal(leaf.Value, &r); e != nil {
-					return e
-				}
-				if r.Entry != nil {
-					if r.Entry.Picker == nil {
-						return errors.New("scoped migration identity lacks picker facts")
-					}
-					keys, e := PickerMembershipKeys(leaf.Key, *r.Entry.Picker)
-					if e != nil {
-						return e
-					}
-					verifier.State.Memberships += uint64(len(keys))
-				}
-				cursor = leaf.Key
-			}
-			if len(rows) < 64 {
-				break
-			}
-		}
-		if err = verifier.verify(ctx); err != nil {
-			return err
-		}
+	if err = m.verifyScopedRoots(ctx, snapshot, verified); err != nil {
+		return err
 	}
 	objects, err := m.Destination.List(ctx, "sessions/")
 	if err != nil {
@@ -709,4 +676,45 @@ func (m *Migration) rollbackScoped(ctx context.Context) error {
 	}
 	m.State.Phase = MigrationRollback
 	return m.save(ctx)
+}
+
+func (m *Migration) verifyScopedRoots(ctx context.Context, snapshot *Snapshot, verified uint64) error {
+	if m.State.Protocol == 11 {
+		h := snapshot.head
+		verifier := &PickerUpgrade{writer: m.writer, State: PickerUpgradeState{Source: h, Candidate: h, SourceETag: snapshot.etag, Copied: verified}}
+		// Derive membership cardinality in bounded pages; verify below checks each
+		// expected leaf and total index cardinality against verified full bodies.
+		cursor := ""
+		for {
+			rows, e := m.writer.identityPage(ctx, h.Identity, cursor, 64)
+			if e != nil {
+				return e
+			}
+			for _, leaf := range rows {
+				var r record
+				if e = json.Unmarshal(leaf.Value, &r); e != nil {
+					return e
+				}
+				if r.Entry != nil {
+					if r.Entry.Picker == nil {
+						return errors.New("scoped migration identity lacks picker facts")
+					}
+					keys, e := PickerMembershipKeys(leaf.Key, *r.Entry.Picker)
+					if e != nil {
+						return e
+					}
+					verifier.State.Memberships += uint64(len(keys))
+				}
+				cursor = leaf.Key
+			}
+			if len(rows) < 64 {
+				break
+			}
+		}
+		if err := verifier.verify(ctx); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }

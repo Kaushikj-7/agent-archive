@@ -399,7 +399,7 @@ func (c *Coordinator) Activate(ctx context.Context, owner, proof string) error {
 		return errors.New("cutover proof required")
 	}
 	return c.change(ctx, func(state *admissions) error {
-		if state.Seal != owner || len(state.Owners) != 0 || state.Hold != "" {
+		if state.Upgrade != nil || state.Seal != owner || len(state.Owners) != 0 || state.Hold != "" {
 			return ErrAdmissionClosed
 		}
 		state.Mode = admissionActive

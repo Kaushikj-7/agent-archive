@@ -6,6 +6,10 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Add complete scoped catalog construction and resumable `migrate --scoped-picker`
+  upgrades, with verified activation and a permanent stronger writer fence.
+  Production S3/R2 qualification and credential authority remain required.
+
 - Refuse reserved scoped-picker catalog and configuration formats before admitting
   writes; existing catalog formats and picker behavior remain supported.
 
