@@ -41,7 +41,7 @@ func TestBackfillCommandMeasurement(t *testing.T) {
 	if scenario == "large" {
 		count = 32
 	}
-	if scenario == "related" {
+	if scenario == "related" || scenario == "ancestry" {
 		count = 5
 	}
 	home, err := filepath.EvalSymlinks(t.TempDir())
@@ -67,10 +67,11 @@ func TestBackfillCommandMeasurement(t *testing.T) {
 	must(t, os.MkdirAll(dir, 0700))
 	expected := map[string]bool{}
 	var inputBytes int64
+	var parentBytes int64
 	for i := 0; i < count; i++ {
 		id := fmt.Sprintf("00000000-0000-4000-8000-%012d", i+1)
 		at := backfillNow.Add(-48 * time.Hour)
-		old := scenario == "old" && i%10 != 0 || scenario == "recent" && i%10 == 0 || scenario == "related" && i == 0
+		old := scenario == "old" && i%10 != 0 || scenario == "recent" && i%10 == 0 || (scenario == "related" || scenario == "ancestry") && i == 0
 		if old {
 			at = backfillNow.Add(-30 * 24 * time.Hour)
 		}
@@ -79,7 +80,18 @@ func TestBackfillCommandMeasurement(t *testing.T) {
 			meta["forked_from_id"] = "00000000-0000-4000-8000-000000000001"
 			meta["forked_from_ordinal_exclusive"] = 3
 		}
-		h, e := json.Marshal(map[string]any{"type": "session_meta", "payload": meta})
+		ordinal := 0
+		if scenario == "ancestry" && i > 0 {
+			parent := "00000000-0000-4000-8000-000000000001"
+			meta["parent_thread_id"] = parent
+			meta["session_id"] = parent
+			meta["root_thread_id"] = parent
+			meta["subagent_history_start_ordinal"] = 3
+			meta["source"] = map[string]any{"subagent": map[string]any{"thread_spawn": map[string]any{"parent_thread_id": parent, "depth": 1}}}
+			meta["history_base"] = map[string]any{"thread_id": parent, "end_ordinal_exclusive": 3, "end_byte_offset": parentBytes}
+			ordinal = 3
+		}
+		h, e := json.Marshal(map[string]any{"type": "session_meta", "ordinal": ordinal, "payload": meta})
 		must(t, e)
 		if len(h) > 1024 {
 			t.Fatal("fixture header exceeds fixed framing")
@@ -93,15 +105,18 @@ func TestBackfillCommandMeasurement(t *testing.T) {
 		inputBytes += int64(n)
 		row := `{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Synthetic prompt"}]}}` + "\n"
 		rows := 1 + (i%8)*8
-		if scenario == "related" {
+		if scenario == "related" || scenario == "ancestry" {
 			rows = 1
-			if i > 0 {
+			if i > 0 && scenario == "related" {
 				inherited := fmt.Sprintf(`{"type":"event_msg","payload":{"type":"task_started","turn_id":"00000000-0000-4000-8000-000000000001","started_at":%q}}`+"\n"+row, backfillNow.Add(-30*24*time.Hour).UTC().Format(time.RFC3339Nano))
 				n, e = f.WriteString(inherited)
 				must(t, e)
 				inputBytes += int64(n)
 			}
 			row = fmt.Sprintf(`{"type":"event_msg","payload":{"type":"task_started","turn_id":%q,"started_at":%q}}`+"\n"+row, id, at.UTC().Format(time.RFC3339Nano))
+		}
+		if scenario == "ancestry" {
+			row = fmt.Sprintf(`{"type":"event_msg","ordinal":%d,"payload":{"type":"task_started","turn_id":%q,"started_at":%q}}`+"\n"+`{"type":"response_item","ordinal":%d,"payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Synthetic own task"}]}}`+"\n", ordinal+1, id, at.UTC().Format(time.RFC3339Nano), ordinal+2)
 		}
 		for j := 0; j < rows; j++ {
 			n, e = f.WriteString(row)
@@ -141,6 +156,11 @@ func TestBackfillCommandMeasurement(t *testing.T) {
 				inputBytes += int64(n)
 			}
 		}
+		if i == 0 {
+			info, e := f.Stat()
+			must(t, e)
+			parentBytes = info.Size()
+		}
 		must(t, f.Close())
 		if !old {
 			expected[id] = true
@@ -172,7 +192,24 @@ func TestBackfillCommandMeasurement(t *testing.T) {
 	var before, after runtime.MemStats
 	runtime.GC()
 	runtime.ReadMemStats(&before)
+	type checkpoint struct {
+		First float64 `json:"first_seconds"`
+		Last  float64 `json:"last_seconds"`
+		Calls int     `json:"calls"`
+	}
+	checkpoints := map[string]checkpoint{}
 	start := time.Now()
+	env.backfillCheckpoint = func(step string) error {
+		value := checkpoints[step]
+		offset := time.Since(start).Seconds()
+		if value.Calls == 0 {
+			value.First = offset
+		}
+		value.Last = offset
+		value.Calls++
+		checkpoints[step] = value
+		return nil
+	}
 	code := Run(args, nil, &stdout, &stderr, env)
 	elapsed := time.Since(start)
 	runtime.ReadMemStats(&after)
@@ -200,7 +237,7 @@ func TestBackfillCommandMeasurement(t *testing.T) {
 			must(t, e)
 			bundle, e := reader.LoadSource(t.Context(), bucket, m, reader.Limits{})
 			must(t, e)
-			raw, e := json.Marshal(bundle.NativeRecords)
+			raw, e := json.Marshal(map[string]any{"records": bundle.NativeRecords, "history": bundle.History, "text": bundle.NativeText, "started_at": reg.SessionStartedAt, "started_at_source": reg.StartedAtSource, "origin": reg.Origin, "format": bundle.Capture.SourceFormat})
 			must(t, e)
 			normalized = append(normalized, reg.NativeSessionID+":"+strings.ReplaceAll(string(raw), project, "$PROJECT"))
 		}
@@ -213,7 +250,7 @@ func TestBackfillCommandMeasurement(t *testing.T) {
 	}
 	sort.Strings(normalized)
 	digest := sha256.Sum256([]byte(strings.Join(normalized, "\n")))
-	result := map[string]any{"fixture_version": 3, "state": stateName, "trace": os.Getenv("AA_BACKFILL_TRACE") == "1", "scenario": scenario, "mode": mode, "sessions": count, "selected": len(expected), "imported": imported, "skipped": count - len(expected), "input_bytes": inputBytes, "elapsed_seconds": elapsed.Seconds(), "allocated_bytes": after.TotalAlloc - before.TotalAlloc, "gc_cycles": after.NumGC - before.NumGC, "artifact_sha256": hex.EncodeToString(digest[:]), "toolchain": runtime.Version(), "logical_cpus": runtime.NumCPU(), "planning_workers": 1, "default_adapter_workers": min(8, max(2, runtime.NumCPU()/2)), "byte_budget": 128 << 20}
+	result := map[string]any{"fixture_version": 3, "state": stateName, "trace": os.Getenv("AA_BACKFILL_TRACE") == "1", "scenario": scenario, "mode": mode, "sessions": count, "selected": len(expected), "imported": imported, "skipped": count - len(expected), "input_bytes": inputBytes, "elapsed_seconds": elapsed.Seconds(), "checkpoint_offsets": checkpoints, "allocated_bytes": after.TotalAlloc - before.TotalAlloc, "gc_cycles": after.NumGC - before.NumGC, "artifact_sha256": hex.EncodeToString(digest[:]), "toolchain": runtime.Version(), "logical_cpus": runtime.NumCPU(), "planning_workers": 1, "default_adapter_workers": min(8, max(2, runtime.NumCPU()/2)), "byte_budget": 128 << 20}
 	raw, e := json.Marshal(result)
 	must(t, e)
 	if os.Getenv("AA_BACKFILL_TRACE") == "1" {

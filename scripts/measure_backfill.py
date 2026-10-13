@@ -19,15 +19,15 @@ def main():
     parser.add_argument("binary", type=Path)
     parser.add_argument("output", type=Path)
     parser.add_argument("--samples", type=int, default=5)
-    parser.add_argument("--scenario", action="append", choices=["recent", "old", "large", "related", "tool-heavy", "retained-heavy"])
+    parser.add_argument("--scenario", action="append", choices=["recent", "old", "large", "related", "ancestry", "tool-heavy", "retained-heavy"])
     parser.add_argument("--small", action="store_true")
     parser.add_argument("--trace", action="store_true")
     parser.add_argument("--state", choices=["cold", "warm", "changed"], default="cold")
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
-    scenarios = args.scenario or ["recent", "old", "large", "related", "tool-heavy", "retained-heavy"]
+    scenarios = args.scenario or ["recent", "old", "large", "related", "ancestry", "tool-heavy", "retained-heavy"]
     for scenario in scenarios:
-        modes = ["import"] if scenario in ["large", "related", "tool-heavy", "retained-heavy"] else ["plan", "import"]
+        modes = ["import"] if scenario in ["large", "related", "ancestry", "tool-heavy", "retained-heavy"] else ["plan", "import"]
         for mode in modes:
             for index in range(args.samples):
                 env = os.environ.copy()
