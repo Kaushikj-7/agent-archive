@@ -9,17 +9,22 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/destination"
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
+	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
 func runMigrateCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	fs := env.newCommandFlags("migrate", stderr)
+	scoped := fs.Bool("scoped-picker", false, "build complete scoped indexes in the current catalog-v4 destination")
 	format := fs.String("format", "", "destination format (catalog-v4)")
 	prefix := fs.String("prefix", "", "isolated destination prefix")
 	bucket := fs.String("bucket", "", "isolated destination bucket")
 	rollback := fs.Bool("rollback", false, "return to retained read-only legacy source, only if catalog has not changed")
 	if !fs.parseFlagsOnly(args) {
 		return 2
+	}
+	if *scoped && *format == "" && *prefix == "" && *bucket == "" {
+		return runPickerUpgrade(stdout, stderr, env, *rollback)
 	}
 	if *format != string(destination.FormatCatalogV4) || (*prefix == "" && *bucket == "") {
 		terminal.Println(stderr, "agent-archive: migrate: --format catalog-v4 and an isolated --prefix or --bucket are required")
@@ -59,13 +64,9 @@ func runMigrateCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	if !ok {
 		return fail(fmt.Errorf("reviewed credential cutover authority is unavailable; old write grants must be revoked and source kept read-only"))
 	}
-	sourceConfig := cfg
-	if cfg.Storage.EffectiveArchiveFormat() == destination.FormatCatalogV4 {
-		checkpoint, e := catalog.MigrationCheckpoint(ctx, target)
-		if e != nil {
-			return fail(e)
-		}
-		sourceConfig.Storage = checkpoint.Source
+	sourceConfig, err := migrationSourceConfig(ctx, target, cfg)
+	if err != nil {
+		return fail(err)
 	}
 	source, err := env.openStore(sourceConfig)
 	if err != nil {
@@ -76,7 +77,7 @@ func runMigrateCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		return fail(err)
 	}
 	defer unlock()
-	migration, err := catalog.OpenMigration(ctx, source, target, sourceConfig.Storage, targetConfig.Storage, authority)
+	migration, err := openMigrationForCLI(ctx, home, *scoped, source, target, sourceConfig.Storage, targetConfig.Storage, authority)
 	if err != nil {
 		return fail(err)
 	}
@@ -84,14 +85,7 @@ func runMigrateCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		if err = migration.Rollback(ctx); err != nil {
 			return fail(err)
 		}
-		cfg.Storage = migration.State.Source
-		cfg.Paused = true
-		cfg.SchemaVersion = config.SchemaVersion
-		if err = config.Save(home, cfg); err != nil {
-			return fail(err)
-		}
-		terminal.Println(stdout, "Rolled back to the retained read-only source. Collection remains paused.")
-		return 0
+		return saveMigrationRollback(home, cfg, migration, stdout, fail)
 	}
 	for {
 		done, e := migration.Step(ctx)
@@ -106,6 +100,7 @@ func runMigrateCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		return fail(err)
 	}
 	cfg.Storage = targetConfig.Storage
+	cfg.ScopedPickerProtection = cfg.ScopedPickerProtection || *scoped
 	if err = config.Save(home, cfg); err != nil {
 		return fail(err)
 	}
@@ -114,4 +109,59 @@ func runMigrateCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	}
 	terminal.Printf(stdout, "Activated catalog-v4 after exhaustive source and history verification (%d sessions). The original destination remains read-only.\n", migration.State.Copied)
 	return 0
+}
+
+func saveMigrationRollback(home string, cfg config.Config, migration *catalog.Migration, stdout io.Writer, fail func(error) int) int {
+	if migration.State.Protocol == 11 {
+		cfg.Storage = migration.State.Destination
+		cfg.ScopedPickerProtection = true
+	} else {
+		cfg.Storage = migration.State.Source
+	}
+	cfg.Paused = true
+	cfg.SchemaVersion = config.SchemaVersion
+	if err := config.Save(home, cfg); err != nil {
+		return fail(err)
+	}
+	if migration.State.Protocol == 11 {
+		terminal.Println(stdout, "Retained the original fully indexed catalog under its permanent scoped writer fence. Publication remains sealed and collection is paused.")
+	} else {
+		terminal.Println(stdout, "Rolled back to the retained read-only source. Collection remains paused.")
+	}
+
+	return 0
+}
+
+func migrationOpener(scoped bool) func(context.Context, storage.ObjectStore, storage.ObjectStore, destination.Config, destination.Config, catalog.CutoverAuthority) (*catalog.Migration, error) {
+	if scoped {
+		return catalog.OpenScopedMigration
+	}
+	return catalog.OpenMigration
+}
+
+func migrationSourceConfig(ctx context.Context, target storage.ObjectStore, cfg config.Config) (config.Config, error) {
+	sourceConfig := cfg
+	if cfg.Storage.EffectiveArchiveFormat() == destination.FormatCatalogV4 {
+		checkpoint, e := catalog.MigrationCheckpoint(ctx, target)
+		if e != nil {
+			return cfg, e
+		}
+		sourceConfig.Storage = checkpoint.Source
+	}
+
+	return sourceConfig, nil
+}
+
+func checkScopedMigrationPending(home string, scoped bool) error {
+	if scoped {
+		return ensurePickerPendingDrained(home)
+	}
+	return nil
+}
+
+func openMigrationForCLI(ctx context.Context, home string, scoped bool, source, target storage.ObjectStore, sourceConfig, targetConfig destination.Config, authority catalog.CutoverAuthority) (*catalog.Migration, error) {
+	if err := checkScopedMigrationPending(home, scoped); err != nil {
+		return nil, err
+	}
+	return migrationOpener(scoped)(ctx, source, target, sourceConfig, targetConfig, authority)
 }

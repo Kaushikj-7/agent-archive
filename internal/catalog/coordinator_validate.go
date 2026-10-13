@@ -21,8 +21,11 @@ func exactHex(value string, bytes int) bool {
 var errCoordinatorDescriptor = errors.New("invalid catalog coordinator descriptor")
 
 func (state admissions) validate() error {
-	if state.Protocol != 10 || state.Generation == 0 || state.Owners == nil || len(state.Owners) > 256 {
+	if !state.validFormat() || state.Generation == 0 || state.Owners == nil || len(state.Owners) > 256 {
 		return errCoordinatorDescriptor
+	}
+	if err := state.validatePickerUpgrade(); err != nil {
+		return err
 	}
 	if state.Mode != admissionCandidate && state.Mode != admissionActive && state.Mode != admissionRollback {
 		return errCoordinatorDescriptor
@@ -112,8 +115,26 @@ func (link gcLink) validateReleasedHead() error {
 	if decoder.Decode(&h) != nil || decoder.Decode(new(any)) != io.EOF {
 		return errCoordinatorDescriptor
 	}
-	if h.GCLease != "" || h.GCCoordinator != (gcCoordinatorWitness{}) || h.Protocol != 10 || h.Schema != 4 || h.Generation == 0 || !exactHex(h.Epoch, 24) || h.validateReferences() != nil {
+	if h.GCLease != "" || h.GCCoordinator != (gcCoordinatorWitness{}) || !h.validFormat() || h.Generation == 0 || !exactHex(h.Epoch, 24) || h.validateReferences() != nil {
 		return errCoordinatorDescriptor
 	}
 	return nil
+}
+
+func (state admissions) validatePickerUpgrade() error {
+	if state.PickerUpgradeReceipt != nil {
+		receipt := state.PickerUpgradeReceipt
+		if state.Protocol != 11 || receipt.Phase != PickerUpgradeActive || !exactHex(receipt.Owner, 24) || receipt.ActivatedETag == "" || !receipt.Candidate.validFormat() || receipt.Candidate.Protocol != 11 || receipt.Candidate.validateReferences() != nil {
+			return errCoordinatorDescriptor
+		}
+	}
+	if state.Upgrade != nil && state.Upgrade.validate(state) != nil {
+		return errCoordinatorDescriptor
+	}
+
+	return nil
+}
+
+func (state admissions) validFormat() bool {
+	return (state.Protocol == 10 && state.Picker == nil) || (state.Protocol == 11 && state.Picker.valid())
 }

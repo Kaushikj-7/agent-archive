@@ -916,7 +916,9 @@ requires an unchanged catalog and leaves collection paused.
   --format FORMAT  Destination format; only catalog-v4
   --prefix PREFIX  Isolated destination prefix (or use --bucket)
   --bucket BUCKET  Isolated destination bucket (or use --prefix)
-  --rollback       Return to retained source; leave collection paused
+  --scoped-picker  Build complete scoped indexes; uses the current catalog when
+                   destination options are omitted
+  --rollback       Retain the original data and leave collection paused
 ```
 
 | Flag | Takes | Default |
@@ -925,6 +927,7 @@ requires an unchanged catalog and leaves collection paused.
 | `--format` | a value | — |
 | `--prefix` | a value | — |
 | `--rollback` | no value | — |
+| `--scoped-picker` | no value | — |
 
 ## agent-archive handoff
 
