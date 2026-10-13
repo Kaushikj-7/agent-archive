@@ -46,7 +46,17 @@ func (s *Snapshot) ResolveRow(ctx context.Context, row Row) (Row, []byte, error)
 	if current == nil {
 		return Row{}, nil, errors.New("overflow row absent from snapshot")
 	}
-	expected, err := rowDigest(Row{Key: row.Key, Entry: *current})
+	pinned := current
+	if row.Entry.Picker != nil && current.Picker != nil {
+		if err := validateEntryReference(row.Entry); err != nil {
+			return Row{}, nil, err
+		}
+		// Picker leaves always use the compact envelope, even when the pinned
+		// identity fits inline. Compare that exact projection without changing
+		// the supplied row or discarding any caller-added summary fields.
+		pinned = compactEntry(current)
+	}
+	expected, err := rowDigest(Row{Key: row.Key, Entry: *pinned})
 	if err != nil {
 		return Row{}, nil, err
 	}

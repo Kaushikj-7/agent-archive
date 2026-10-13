@@ -549,3 +549,7 @@ The row schema is recorded in `schemas/catalog-picker-row.schema.json`; runtime
 also enforces byte limits and exact immutable checksum keys. Selected body
 verification recomputes metadata-derived facts while retaining separately
 validated live index child counts. A projection never authorizes source loading.
+Required row facts must be explicit and non-null, including empty labels and
+zero child counts; unknown prompts omit the count field. Selected picker rows
+match the exact compact projection of their pinned identity even when that
+identity fits inline, then gain full-body provenance only after verified hydration.

@@ -157,6 +157,21 @@ func (r *PickerRow) UnmarshalJSON(raw []byte) error {
 	if d.Decode(new(any)) != io.EOF {
 		return errors.New("trailing picker row bytes")
 	}
+	// Zero values are valid facts, so decoding into the typed row alone cannot
+	// distinguish an explicit value from an absent or null wire field.
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return err
+	}
+	for _, name := range []string{"Schema", "SessionKey", "SessionID", "Harness", "CanonicalHarness", "Metadata", "Revision", "ProjectID", "RepoKey", "Activity", "CapturedAt", "Name", "Title", "ProjectName", "Root", "Replay", "OrdinaryChildren", "ReplayChildren", "PromptState"} {
+		value, ok := fields[name]
+		if !ok || bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+			return errors.New("picker row requires explicit non-null facts")
+		}
+	}
+	if value, ok := fields["PromptCount"]; ok && (v.PromptState == "unknown" || bytes.Equal(bytes.TrimSpace(value), []byte("null"))) {
+		return errors.New("invalid picker prompt count field")
+	}
 	next := PickerRow(v)
 	if err := next.validate(); err != nil {
 		return err
