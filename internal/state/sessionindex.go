@@ -121,7 +121,7 @@ func (s *Store) matchingRegistration(key agentmeta.SessionKey, id string) (bool,
 			return false, err
 		}
 		if _, found, err := s.loadGenerationHead(key); err != nil || !found {
-			return false, ErrSessionIndexRecoveryRequired
+			return false, s.indexRecoveryError(err)
 		}
 	}
 	actual, err := registrationKey(reg)

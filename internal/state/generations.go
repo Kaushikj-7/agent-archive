@@ -730,11 +730,15 @@ func (s *Store) FrozenGeneration(reg archive.SessionRegistration) error {
 	}
 	h, found, err := s.loadGenerationHead(key)
 	if err != nil || !found || h.Transition != "" || h.Active == reg.ArchiveSessionID && !h.Retired {
-		return ErrSessionIndexRecoveryRequired
+		return s.indexRecoveryError(err)
 	}
 	n, found, err := readIndexControlValue[generationNode](s, s.generationNodePath(reg.ArchiveSessionID))
 	if err != nil || !found || n.Version != 1 || n.Key != key || n.ID != reg.ArchiveSessionID || n.Previous != reg.PreviousGenerationID {
-		return fmt.Errorf("frozen generation has no lineage authority: %w", ErrSessionIdentityConflict)
+		failure := fmt.Errorf("frozen generation has no lineage authority: %w", ErrSessionIdentityConflict)
+		if s.resourceReservation != nil {
+			return errors.Join(failure, err)
+		}
+		return failure
 	}
 	return nil
 }
