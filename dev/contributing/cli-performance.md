@@ -109,10 +109,10 @@ matched measurements of this repaired harness remain pending.
 `BenchmarkMatchedCLI` measures the same captured `CLI.Run` invocation that its
 validators inspect after timing. Its default fixture has 800 synthetic sessions;
 `AGENT_ARCHIVE_MATCHED_LARGE=1` adds 10,000. It covers actual default list-50 and
-text and JSON, cold and warm, exact/short-ID show, a parent with 50 direct
-children, one-shot JSON stats at 1/7/30/90 days, and cold interactive stats at
-7/30/90 days on an injected 80x24 terminal. Stats has 400 days of token metadata
-and 100 projects. There are no transcripts or provider calls.
+text and JSON, exact/short-ID show, a parent with 50 direct children, one-shot
+JSON stats at 1/7/30/90 days, and interactive stats at 7/30/90 days. Every case
+runs cold and warm; interactive stats uses an injected 80x24 terminal. Stats has
+400 days of token metadata and 100 projects. There are no transcripts or provider calls.
 
 ```sh
 go test ./internal/cli -run '^TestMatchedPerformanceRejectsPartialOutput$' -count=1
@@ -120,7 +120,15 @@ go test ./internal/cli -run '^$' -bench '^BenchmarkMatchedCLI$' -benchtime=1x -c
 AGENT_ARCHIVE_MATCHED_LARGE=1 go test ./internal/cli -run '^$' -bench '^BenchmarkMatchedCLI/sessions=10000/' -benchtime=1x -count=3
 ```
 
-List validation checks all selected metadata, ordering, counts and truncation.
+Cold removes the private disk cache before each invocation; warm first runs and
+validates the same command, outside timing and counters. Interactive warmup uses
+the same terminal dimensions and independent fake window/quit keys. Warm show
+measures the command after prior use without assuming that every show read is
+cacheable. Every measured call starts a fresh Run and reader; warm retains only
+the private disk cache. Neither state flushes the operating system page cache.
+
+List validation checks all selected metadata, ordering, counts, truncation and
+the absent project scope expected for this all-projects fixture.
 Show validation checks every metadata field and linked availability. One-shot
 stats validates the full JSON against exhaustive computation over the fixture;
 each interactive frame checks every visible body row against exhaustive

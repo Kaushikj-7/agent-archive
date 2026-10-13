@@ -45,10 +45,12 @@ func BenchmarkMatchedCLI(b *testing.B) {
 				})
 			}
 		}
-		for _, kind := range []string{"show-exact", "show-short", "show-parent", "stats1", "stats7", "stats30", "stats90", "interactive"} {
-			b.Run(fmt.Sprintf("sessions=%d/%s/cold", size, kind), func(b *testing.B) {
-				matchedBenchmark(b, size, "cold", kind, 0)
-			})
+		for _, state := range []string{"cold", "warm"} {
+			for _, kind := range []string{"show-exact", "show-short", "show-parent", "stats1", "stats7", "stats30", "stats90", "interactive"} {
+				b.Run(fmt.Sprintf("sessions=%d/%s/%s", size, kind, state), func(b *testing.B) {
+					matchedBenchmark(b, size, state, kind, 0)
+				})
+			}
 		}
 	}
 }
@@ -71,26 +73,22 @@ func matchedBenchmark(b *testing.B, size int, state, kind string, limit int) {
 		if state == "warm" {
 			warmEnv := env
 			warmEnv.OpenStore = func(config.Config) (storage.ObjectStore, error) { return mem, nil }
-			var output, diagnostic bytes.Buffer
-			code := Run(args, nil, &output, &diagnostic, warmEnv)
-			if err := matchedValidate(code, output.Bytes(), diagnostic.Bytes(), fixture, kind, limit, expected, env); err != nil {
+			output := &matchedScreen{}
+			var diagnostic bytes.Buffer
+			warmEnv, in := matchedInput(warmEnv, kind, output)
+			code := Run(args, in, output, &diagnostic, warmEnv)
+			if err := matchedValidate(code, output.Bytes(), diagnostic.Bytes(), fixture, kind, limit, expected, warmEnv); err != nil {
 				b.Fatalf("warmup: %v", err)
 			}
 		}
 		output := &matchedScreen{}
 		var diagnostic bytes.Buffer
-		var in io.Reader
-		if kind == "interactive" {
-			in = strings.NewReader("")
-			env.IsTerminal = func(stream any) bool { return stream == any(in) || stream == any(output) }
-			env.TerminalSize = func(io.Writer) (int, int, bool) { return 80, 24, true }
-			env.openKeys = func(io.Reader) (keyTerminal, bool) { return newFakeKeys("w", "w", "q"), true }
-		}
+		runEnv, in := matchedInput(env, kind, output)
 		b.StartTimer()
 		output.start = time.Now()
-		code := Run(args, in, output, &diagnostic, env)
+		code := Run(args, in, output, &diagnostic, runEnv)
 		b.StopTimer()
-		if err := matchedValidate(code, output.Bytes(), diagnostic.Bytes(), fixture, kind, limit, expected, env); err != nil {
+		if err := matchedValidate(code, output.Bytes(), diagnostic.Bytes(), fixture, kind, limit, expected, runEnv); err != nil {
 			b.Fatal(err)
 		}
 		b.Logf("output-sha256=%x", sha256.Sum256(output.Bytes()))
@@ -100,6 +98,19 @@ func matchedBenchmark(b *testing.B, size int, state, kind string, limit int) {
 		b.ReportMetric(float64(first.Nanoseconds())/float64(b.N), "usable-screen-ns/op")
 	}
 	storagetest.ReportReadMetrics(b, store.Metrics())
+}
+
+// matchedInput gives warmup and the measured invocation the same terminal
+// contract, with independent fake keys so warmup cannot consume measured input.
+func matchedInput(env Env, kind string, output *matchedScreen) (Env, io.Reader) {
+	if kind != "interactive" {
+		return env, nil
+	}
+	in := strings.NewReader("")
+	env.IsTerminal = func(stream any) bool { return stream == any(in) || stream == any(output) }
+	env.TerminalSize = func(io.Writer) (int, int, bool) { return 80, 24, true }
+	env.openKeys = func(io.Reader) (keyTerminal, bool) { return newFakeKeys("w", "w", "q"), true }
+	return env, in
 }
 
 func matchedEnv(tb testing.TB, home string, store storage.ObjectStore) Env {
@@ -249,7 +260,7 @@ func matchedValidate(code int, output, diagnostic []byte, fixture []archive.Meta
 			return err
 		}
 		want := min(len(fixture), limit)
-		if doc.Version != listSchemaVersion || doc.Limit != limit || doc.Returned != want || len(doc.Sessions) != want || !doc.TotalMatchedKnown || doc.TotalMatched == nil || *doc.TotalMatched != len(fixture) || doc.Truncated != (want < len(fixture)) {
+		if doc.Scope != nil || doc.Version != listSchemaVersion || doc.Limit != limit || doc.Returned != want || len(doc.Sessions) != want || !doc.TotalMatchedKnown || doc.TotalMatched == nil || *doc.TotalMatched != len(fixture) || doc.Truncated != (want < len(fixture)) {
 			return errors.New("incomplete matched listing")
 		}
 		for i, m := range doc.Sessions {
@@ -367,6 +378,16 @@ func TestMatchedPerformanceRejectsPartialOutput(t *testing.T) {
 				partial := matchedJSON(t, doc)
 				if err := matchedValidate(0, partial, nil, fixture, kind, 50, expected, env); err == nil {
 					t.Fatal("accepted valid JSON with omitted results")
+				}
+				if kind == "list" {
+					var scoped listDocument
+					if err := json.Unmarshal(output.Bytes(), &scoped); err != nil {
+						t.Fatal(err)
+					}
+					scoped.Scope = &listScope{}
+					if err := matchedValidate(0, matchedJSON(t, scoped), nil, fixture, kind, 50, expected, env); err == nil {
+						t.Fatal("accepted unexpected listing scope")
+					}
 				}
 			}
 		})
