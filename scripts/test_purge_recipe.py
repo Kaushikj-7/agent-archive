@@ -1,15 +1,21 @@
 """Execute every documented bucket-purge block against a disposable fake bucket."""
+import argparse
+import itertools
 import json
 import os
 from pathlib import Path
 import re
 import shutil
 import stat
+import sys
 import subprocess
 import tempfile
 import unittest
 
 DOCS = Path(__file__).resolve().parent.parent / 'docs'
+TIER = 'full'
+CASE_EVIDENCE = []
+
 RECIPE_PAGES = [DOCS / 'security' / 'archive-cleanup.md', DOCS / 'getting-started' / 'uninstall.md']
 
 FAKE_AWS = r'''#!/bin/sh
@@ -104,6 +110,50 @@ def recipe_blocks():
 def write_executable(path, body):
     path.write_text(body)
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
+
+
+def resume_cases(tier):
+    """Only reviewed repetitions move cadence; every mode retains failure/restart."""
+    full = [(prefix, mode, prepare, boundary)
+            for prefix in ('agent-archive/', 'nested/archive/', '')
+            for mode, prepare, count in [('unreferenced', 'unreferenced', 3),
+                                        ('machine', 'machine "$machine"', 6),
+                                        ('old', 'old 10', 4), ('all', 'all', 9)]
+            for boundary in range(1, count + (1 if mode == 'all' and not prefix else 0) + 1)]
+    if tier == 'full':
+        return full, []
+    selected = []
+    for case in full:
+        prefix, mode, prepare, boundary = case
+        count = {'unreferenced': 3, 'machine': 6, 'old': 4, 'all': 9}[mode]
+        maximum = count + (1 if mode == 'all' and not prefix else 0)
+        boundaries = {1, maximum} if tier == 'pr' else {1, (maximum+1)//2, maximum}
+        if boundary in boundaries and (tier == 'daily' or prefix == 'agent-archive/'):
+            selected.append(case)
+    return selected, [case for case in full if case not in selected]
+
+
+class EvidenceResult(unittest.TextTestResult):
+    def addSubTest(self, test, subtest, err):
+        super().addSubTest(test, subtest, err)
+        CASE_EVIDENCE.append({'test': test.id(), 'case': dict(subtest.params),
+                              'status': 'pass' if err is None else 'fail'})
+
+    def addSuccess(self, test):
+        super().addSuccess(test)
+        CASE_EVIDENCE.append({'test': test.id(), 'status': 'pass'})
+
+    def addSkip(self, test, reason):
+        super().addSkip(test, reason)
+        CASE_EVIDENCE.append({'test': test.id(), 'status': 'skip', 'reason': reason})
+
+    def addFailure(self, test, err):
+        super().addFailure(test, err)
+        CASE_EVIDENCE.append({'test': test.id(), 'status': 'fail'})
+
+    def addError(self, test, err):
+        super().addError(test, err)
+        CASE_EVIDENCE.append({'test': test.id(), 'status': 'fail'})
 
 
 class PurgeRecipeTest(unittest.TestCase):
@@ -555,38 +605,37 @@ exit 0
                             self.assertFalse(any(k.startswith(prefix) for k in remaining))
 
     def test_resume_every_deletion_boundary_in_fresh_shell(self):
+        selected, omitted = resume_cases(TIER)
         for shell in self.shells:
-            for prefix in ('agent-archive/', 'nested/archive/', ''):
-                for mode, prepare, count in [('unreferenced', 'unreferenced', 3),
-                                             ('machine', 'machine "$machine"', 6),
-                                             ('old', 'old 10', 4), ('all', 'all', 9)]:
-                    for boundary in range(1, count + (1 if mode == 'all' and not prefix else 0) + 1):
-                        with self.subTest(shell=shell, prefix=prefix, mode=mode, boundary=boundary):
-                            bucket = self.build(prefix, extra=['outside/keep'])
-                            before = self.keys(bucket)
-                            contents = {k: (bucket / k).read_bytes() for k in before}
-                            tail = r'''
+            for prefix, mode, prepare, boundary in omitted:
+                CASE_EVIDENCE.append({'test': self.id(), 'case': {'shell': shell, 'prefix': prefix, 'mode': mode, 'boundary': boundary}, 'status': 'NOT RUN', 'reason': TIER+' representative repeated boundaries'})
+            for prefix, mode, prepare, boundary in selected:
+                with self.subTest(shell=shell, prefix=prefix, mode=mode, boundary=boundary):
+                    bucket = self.build(prefix, extra=['outside/keep'])
+                    before = self.keys(bucket)
+                    contents = {k: (bucket / k).read_bytes() for k in before}
+                    tail = r'''
 original=$purge_dir
 purge_apply && exit 91
 unset FAKE_RM_FAIL_AT
 "$FAKE_SHELL" -c '. "$FAKE_HELPERS"; bucket=my-archive-bucket; prefix=$2; purge_resume "$1" && purge_apply' recovery "$original" "$prefix"
 '''
-                            names = ['list'] if mode == 'unreferenced' else ['list', {'machine':'machine', 'old':'old-sessions', 'all':'all'}[mode]]
-                            result = self.run_recipe(shell, prefix, names,
-                                env_extra={'FAKE_RM_FAIL_AT': str(boundary)}, tail=tail)
-                            self.assertEqual(result.returncode, 0, result.stderr)
-                            remaining = self.keys(bucket)
-                            if mode == 'unreferenced':
-                                expected = [k for k in before if not (k.endswith('.jsonl.gz') and
-                                    ('/cursor/cccc/' in k or '/claude/aaaa/source.a0' in k or '/claude/aaaa/source.a1' in k))]
-                            elif mode == 'all':
-                                expected = [k for k in before if not k.startswith(prefix)]
-                            else:
-                                dirs = ['claude/aaaa'] + (['cursor/dddd'] if mode == 'machine' else [])
-                                expected = [k for k in before if not any(k.startswith(f'{prefix}sessions/{d}/') for d in dirs)]
-                            self.assertEqual(remaining, expected)
-                            self.assertEqual({k: (bucket / k).read_bytes() for k in remaining},
-                                             {k: contents[k] for k in expected})
+                    names = ['list'] if mode == 'unreferenced' else ['list', {'machine':'machine', 'old':'old-sessions', 'all':'all'}[mode]]
+                    result = self.run_recipe(shell, prefix, names,
+                        env_extra={'FAKE_RM_FAIL_AT': str(boundary)}, tail=tail)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    remaining = self.keys(bucket)
+                    if mode == 'unreferenced':
+                        expected = [k for k in before if not (k.endswith('.jsonl.gz') and
+                            ('/cursor/cccc/' in k or '/claude/aaaa/source.a0' in k or '/claude/aaaa/source.a1' in k))]
+                    elif mode == 'all':
+                        expected = [k for k in before if not k.startswith(prefix)]
+                    else:
+                        dirs = ['claude/aaaa'] + (['cursor/dddd'] if mode == 'machine' else [])
+                        expected = [k for k in before if not any(k.startswith(f'{prefix}sessions/{d}/') for d in dirs)]
+                    self.assertEqual(remaining, expected)
+                    self.assertEqual({k: (bucket / k).read_bytes() for k in remaining},
+                                     {k: contents[k] for k in expected})
 
     def test_expired_and_single_use_attempts_need_reviewed_resume(self):
         for shell in self.shells:
@@ -882,4 +931,18 @@ mv() {
 
 
 if __name__ == '__main__':
-    unittest.main()
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument('--tier', choices=('pr', 'daily', 'full'), default='full')
+    parser.add_argument('--evidence', type=Path)
+    args, remaining = parser.parse_known_args()
+    TIER = args.tier
+    if os.environ.get('GITHUB_ACTIONS') == 'true' and (not shutil.which('jq') or not all(shutil.which(s) for s in ('bash','zsh'))):
+        raise SystemExit('CI purge requires jq, bash and zsh; missing prerequisites are not passes')
+    program = unittest.main(argv=[sys.argv[0], *remaining], exit=False,
+                            testRunner=unittest.TextTestRunner(resultclass=EvidenceResult))
+    if args.evidence:
+        source = subprocess.check_output(['git','-C',str(DOCS.parent),'rev-parse','HEAD'],text=True).strip()
+        args.evidence.parent.mkdir(parents=True,exist_ok=True)
+        args.evidence.write_text(json.dumps({'schema':1, 'source':source, 'tier':TIER,
+                                            'success':program.result.wasSuccessful(), 'cases':CASE_EVIDENCE},indent=2)+'\n')
+    sys.exit(not program.result.wasSuccessful())

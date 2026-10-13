@@ -104,11 +104,40 @@ class RealSystemdJobTest(unittest.TestCase):
         runs_on = job_key(self.job(), 'runs-on')
         self.assertIn(f'`{runs_on}`', TESTING_MD.read_text(), f'dev/contributing/testing.md should name {runs_on}')
 
+    def test_pr_real_manager_uses_the_validated_backstop_image(self):
+        pr = jobs((ROOT / '.github/workflows/test.yml').read_text())['linux-full']
+        self.assertIn('bash scripts/start_ci_systemd.sh', pr)
+        self.assertEqual(job_key(pr, 'runs-on'), job_key(self.job(), 'runs-on'))
+
+
+class PurgePrerequisiteTest(unittest.TestCase):
+    def test_every_purge_job_provisions_tools_before_running_bodies(self):
+        workflows = [(ROOT / '.github/workflows/test.yml', 'script-tests'),
+                     (EXTENDED_YML, 'linux-race'), (EXTENDED_YML, 'macos-full')]
+        for path, name in workflows:
+            with self.subTest(workflow=path.name, job=name):
+                job = jobs(path.read_text())[name]
+                job_steps = steps(job)
+                purge_index = next(i for i, step in enumerate(job_steps)
+                                   if 'python3 scripts/test_purge_recipe.py ' in step)
+                install_index = next(i for i, step in enumerate(job_steps)
+                                     if 'name: Install purge prerequisites' in step)
+                self.assertLess(install_index, purge_index)
+                install = job_steps[install_index]
+                self.assertIsNone(step_key(install, 'if'))
+                if job_key(job, 'runs-on').startswith('ubuntu-'):
+                    self.assertIn('sudo apt-get update', install)
+                    self.assertIn('sudo apt-get install --yes jq zsh', install)
+                else:
+                    self.assertIn('for tool in jq zsh;', install)
+                    self.assertIn('brew install "$tool"', install)
+
 
 class PublishedWriterJobTest(unittest.TestCase):
     def test_published_writer_runs_only_on_native_macos(self):
         found = jobs(EXTENDED_YML.read_text())
-        self.assertIn('bash scripts/test_published_writer.sh', found['macos-full'])
+        self.assertIn('--suite macos', found['macos-full'])
+        self.assertIn("execute(['bash','scripts/test_published_writer.sh']", (ROOT / 'scripts/run_ci_tier.py').read_text())
         self.assertRegex(job_key(found['macos-full'], 'runs-on'), r'^macos-')
         for name, text in found.items():
             if name != 'macos-full':
@@ -144,11 +173,11 @@ class CandidateCampaignTest(unittest.TestCase):
     def test_candidate_test_keeps_all_pr_gates(self):
         workflow = (ROOT / '.github/workflows/test.yml').read_text()
         self.assertIn('  pull_request:', workflow)
-        self.assertEqual(set(jobs(workflow)), {'linux-race', 'linux-short', 'linux-full', 'script-tests', 'git-identity-compatibility', 'macos-smoke', 'cross-build', 'lint'})
+        self.assertEqual(set(jobs(workflow)), {'linux-race', 'linux-short', 'linux-full', 'script-tests', 'git-identity-compatibility', 'macos-smoke', 'cross-build', 'lint', 'tier-plan'})
         for name, text in jobs(workflow).items():
             if name not in ('linux-race', 'linux-short', 'linux-full'):
                 self.assertIsNone(job_key(text, 'if'), name)
-        self.assertIn('go test -race -timeout 20m ./...', workflow)
+        self.assertIn('--tier full --suite linux', workflow)
         self.assertIn('github.event.pull_request.number || github.ref', workflow)
 
     def test_extended_conditions_preserve_nightly_dispatch_and_candidate_campaign(self):
@@ -162,9 +191,11 @@ class CandidateCampaignTest(unittest.TestCase):
             expected[name] = "(github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release-candidate/')) || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == '" + suite + "'))"
         self.assertEqual(conditions, expected)
         self.assertIn("github.event_name == 'push' && github.ref || github.run_id", workflow)
-        self.assertIn('go test -race -timeout 20m ./...', jobs(workflow)['macos-full'])
-        self.assertIn('-fuzztime 30s -fuzzminimizetime 2s', jobs(workflow)['fuzz'])
-        self.assertIn('test "$found" -ge 24', jobs(workflow)['fuzz'])
+        self.assertIn('--suite macos', jobs(workflow)['macos-full'])
+        self.assertIn('--suite fuzz', jobs(workflow)['fuzz'])
+        runner = (ROOT / 'scripts/run_ci_tier.py').read_text()
+        self.assertIn("duration = '5s' if tier == 'daily' else '30s'", runner)
+        self.assertIn('len(targets) < 24', runner)
         self.assertIn('AGENT_ARCHIVE_REAL_SYSTEMD:', jobs(workflow)['real-systemd'])
 
 
@@ -196,30 +227,22 @@ class CadenceTest(unittest.TestCase):
 
     def test_pr_and_candidate_linux_steps_select_the_correct_fixture_sizes(self):
         found = jobs((ROOT / '.github/workflows/test.yml').read_text())
-        for event, ref, short, full in (
-                ('pull_request', 'refs/pull/1/merge', True, False),
-                ('push', 'refs/heads/release-candidate/final', False, True),
-                ('push', 'refs/heads/main', False, False),
-                ('workflow_dispatch', 'refs/heads/main', False, False)):
-            self.assertEqual(condition_matches(job_key(found['linux-short'], 'if'), event, ref), short)
-            self.assertEqual(condition_matches(job_key(found['linux-full'], 'if'), event, ref), full)
-        self.assertIn('python3 scripts/run_go_shard.py --shard', found['linux-short'])
-        self.assertIn('fail-fast: false', found['linux-short'])
+        self.assertEqual(condition_matches(job_key(found['linux-short'],'if'),'pull_request'),True)
+        self.assertIsNone(job_key(found['linux-full'],'if'))
+        self.assertIn('--suite extra --extra-plan', found['linux-full'])
+        self.assertIn('--tier full --suite linux', found['linux-full'])
         self.assertIn('shard: [0, 1]', found['linux-short'])
-        self.assertIn('go test -race -timeout 20m ./...', found['linux-full'])
-        self.assertNotIn('-short', found['linux-full'])
-        perf = next(step for step in steps(found['linux-full']) if 'AGENT_ARCHIVE_PERF:' in step)
-        self.assertIn("AGENT_ARCHIVE_PERF: '1'", perf)
-        for package in ('collector', 'archive', 'agents/nativecodec', 'capture'):
-            self.assertIn('./internal/' + package, perf)
-        for script in ('test_purge_recipe.py', 'test_release_candidate.py', 'test_ci_workflow.py',
-                       'test_stage_native_verify.py', 'test_scope_native_verify.py', 'test_go_shards.py'):
-            step = next(step for step in steps(found['script-tests']) if script in step)
-            self.assertIsNone(step_key(step, 'if'))
-        self.assertEqual(job_key(found['linux-race'], 'if'), 'always()')
-        self.assertEqual(job_key(found['linux-race'], 'needs'), '[linux-short, linux-full, script-tests]')
+        self.assertIn('fail-fast: false', found['linux-short'])
+        self.assertIn('python3 scripts/run_go_shard.py --shard',found['linux-short'])
+        self.assertEqual(job_key(found['linux-race'],'if'),'always()')
+        self.assertEqual(job_key(found['linux-race'],'needs'),'[linux-short, linux-full, script-tests, macos-smoke, tier-plan]')
         self.assertIn('--verdict', found['linux-race'])
         self.assertIn('--reconcile', found['linux-race'])
+        self.assertIn('--tier "$tier" --evidence', found['script-tests'])
+        self.assertIn('fetch-depth: 0', found['tier-plan'])
+        for script in ('test_release_candidate.py','test_ci_workflow.py','test_stage_native_verify.py','test_scope_native_verify.py','test_go_shards.py','test_ci_tiers.py'):
+            step=next(step for step in steps(found['script-tests']) if script in step)
+            self.assertIsNone(step_key(step,'if'))
 
     def test_extended_event_matrix_and_full_size_backstops(self):
         workflow = EXTENDED_YML.read_text()
@@ -244,13 +267,13 @@ class CadenceTest(unittest.TestCase):
                 actual = {name for name, text in found.items()
                           if condition_matches(job_key(text, 'if'), event, ref, suite)}
                 self.assertEqual(actual, expected)
-        for name in ('linux-race', 'macos-full'):
-            self.assertIn('run: go test -race -timeout 20m ./...', found[name])
-            self.assertNotIn('-short', found[name])
-            perf = next(step for step in steps(found[name]) if 'AGENT_ARCHIVE_PERF:' in step)
-            self.assertIn("AGENT_ARCHIVE_PERF: '1'", perf)
-            self.assertIn('./internal/agents/nativecodec', perf)
-            self.assertIsNone(step_key(perf, 'if'))
+        for name,suite in (('linux-race','linux'),('macos-full','macos')):
+            self.assertIn('--suite '+suite+' --output tier-results',found[name])
+            self.assertIn('if-no-files-found: error',found[name])
+        runner=(ROOT/'scripts/run_ci_tier.py').read_text()
+        self.assertIn("['-short'] if tier == 'daily' else []",runner)
+        self.assertIn("AGENT_ARCHIVE_PERF='1'",runner)
+        self.assertIn("'-count=1'",runner)
 
     def test_native_smoke_retains_build_and_runs_short_race_tests(self):
         smoke = (ROOT / 'scripts/test_macos_smoke.sh').read_text()

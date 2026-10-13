@@ -15,5 +15,5 @@ curl --fail --location --silent --show-error --max-time 120 \
   --output "$archive_binary"
 printf '%s  %s\n' "$archive_sha" "$archive_binary" | shasum -a 256 --check
 chmod 700 "$archive_binary"
-AGENT_ARCHIVE_OLD_BINARY="$archive_binary" go test -count=1 -v -timeout 2m \
+AGENT_ARCHIVE_OLD_BINARY="$archive_binary" go test -count=1 -json -timeout 2m \
   -run '^TestPublishedWriterRefusesProtectedConfiguration$' ./internal/config

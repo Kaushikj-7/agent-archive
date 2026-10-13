@@ -1,0 +1,215 @@
+{
+  "schema": 1,
+  "daily_cron": "17 8 * * 1-6",
+  "weekly_cron": "17 8 * * 0",
+  "restorations": [
+    {
+      "package": "internal/archive",
+      "test": "TestFitStagesNeverGrowWithThePrefix",
+      "restore": "weekly",
+      "pr": "representative; full matrix/scale NOT RUN"
+    },
+    {
+      "package": "internal/collector",
+      "test": "TestSessionOverItsReadShareIsANamedGapOnce",
+      "restore": "weekly",
+      "pr": "representative; full matrix/scale NOT RUN"
+    },
+    {
+      "package": "internal/collector",
+      "test": "TestPendingUploadOverItsShareDefersThenEscalates",
+      "restore": "weekly",
+      "pr": "representative; full matrix/scale NOT RUN"
+    },
+    {
+      "package": "internal/discovery",
+      "test": "TestRetainedHintsKeepTwoThousandWarmSourcesAndFreshProgress",
+      "restore": "weekly",
+      "pr": "explicit skip; full scale NOT RUN",
+      "counterpart": "TestRetainedHintsKeepSmallWarmSourcesAndFreshProgress"
+    },
+    {
+      "package": "internal/discovery",
+      "test": "TestMetadataInventorySharesFiveSweepsAtPhysicalScale",
+      "restore": "weekly",
+      "pr": "explicit skip; full scale NOT RUN",
+      "counterpart": "TestMetadataInventorySmallerPhysicalScale"
+    },
+    {
+      "package": "internal/discovery",
+      "test": "TestMetadataInventorySharesFiveSweepsWithIndexedWAL",
+      "restore": "weekly",
+      "pr": "explicit skip; full scale NOT RUN",
+      "counterpart": "TestMetadataInventorySmallerIndexedScale"
+    },
+    {
+      "package": "internal/discovery",
+      "test": "TestMetadataInventoryMaximumCopiesAndJointCapacity",
+      "restore": "weekly",
+      "pr": "explicit skip; full scale NOT RUN",
+      "counterpart": "TestMetadataInventorySmallCopiesAndJointCapacity"
+    },
+    {
+      "package": "internal/statshtml",
+      "test": "TestHostileTextIsInertInEveryField",
+      "restore": "weekly",
+      "pr": "representative; full matrix/scale NOT RUN"
+    },
+    {
+      "package": "internal/stats",
+      "test": "TestTopProjectsBySpendNeverOmitADearerProject",
+      "restore": "weekly",
+      "pr": "representative; full matrix/scale NOT RUN"
+    },
+    {
+      "package": "internal/stats",
+      "test": "TestHostileArchivesStayConsistent",
+      "restore": "weekly",
+      "pr": "representative; full matrix/scale NOT RUN"
+    },
+    {
+      "package": "internal/cli",
+      "test": "TestRealCLICatalogDefaultList50Bounded",
+      "restore": "daily",
+      "pr": "128-record representative;512-record full scale NOT RUN",
+      "full_children": [
+        "128",
+        "512"
+      ],
+      "full_fixture": "128 and512 records; warm SQL overflow still2000linked references"
+    },
+    {
+      "package": "internal/cli",
+      "test": "TestRealCLICatalogListNonMultiplePageLimit",
+      "restore": "daily",
+      "pr": "representative or explicit skip; full body NOT RUN",
+      "full_children": [
+        "1100"
+      ],
+      "counterpart": "TestSnapshotBoundedRangeCountsCursorsAndBodyAuthority",
+      "counterpart_package": "internal/catalog",
+      "full_fixture": "1100 records /1050 selection, actual1000-page crossing"
+    },
+    {
+      "package": "internal/cli",
+      "test": "TestDefaultRepositoryScopeBodyBudgetAndEmptyFallback",
+      "restore": "weekly",
+      "pr": "representative; full matrix/scale NOT RUN"
+    },
+    {
+      "package": "internal/cli",
+      "test": "TestStatsReadsThousandsOfSessions",
+      "restore": "weekly",
+      "pr": "representative; full matrix/scale NOT RUN"
+    },
+    {
+      "package": "internal/cli",
+      "test": "TestStatsUsageRowsKeepNamesCountsAndCommandsTogether",
+      "restore": "weekly",
+      "pr": "representative; full matrix/scale NOT RUN"
+    },
+    {
+      "package": "internal/cli",
+      "test": "TestStatsInteractiveWindowsEqualStaticRunsForEveryShape",
+      "restore": "weekly",
+      "pr": "representative; full matrix/scale NOT RUN"
+    },
+    {
+      "package": "internal/cli",
+      "test": "TestStatsScreenNeverExceedsTheTerminalWhateverTheNames",
+      "restore": "weekly",
+      "pr": "representative; full matrix/scale NOT RUN"
+    },
+    {
+      "package": "internal/cli",
+      "test": "TestStatsAllInHintsFitTheTerminal",
+      "restore": "weekly",
+      "pr": "representative; full matrix/scale NOT RUN"
+    },
+    {
+      "package": "internal/cli",
+      "test": "TestGuidedFullCommandTranscripts",
+      "restore": "weekly",
+      "pr": "representative; full matrix/scale NOT RUN"
+    },
+    {
+      "package": "internal/cli",
+      "test": "TestShowTranscriptStaysWithinTheLimitForEveryShapeOfSession",
+      "restore": "weekly",
+      "pr": "representative; full matrix/scale NOT RUN"
+    },
+    {
+      "package": "internal/cli",
+      "test": "TestShowTranscriptTrimmingHoldsTheLimitForRandomSessions",
+      "restore": "weekly",
+      "pr": "representative; full matrix/scale NOT RUN"
+    },
+    {
+      "package": "internal/cli",
+      "test": "TestShowTranscriptJSONTrimmingHoldsTheLimitForRandomSessions",
+      "restore": "weekly",
+      "pr": "representative; full matrix/scale NOT RUN"
+    },
+    {
+      "package": "internal/backfill",
+      "test": "TestImportStagingSizeBoundPrecedesAdmission",
+      "restore": "weekly",
+      "pr": "8-row admitted recovery; real32MiB rejection NOT RUN",
+      "full_children": [
+        "near_limit_survives_native_deletion",
+        "oversized_remains_unadmitted"
+      ],
+      "counterpart": "TestImportStageCapacityEncodedBoundary",
+      "counterpart_package": "internal/state"
+    },
+    {
+      "package": "internal/backfill",
+      "test": "TestImportStagingAccountsForEncodedTextAndRefilterScratch",
+      "restore": "weekly",
+      "pr": "full body skip; state encoded/refilter capacity refusal counterparts execute",
+      "full_children": [
+        "encoded_expansion",
+        "refilter_scratch"
+      ],
+      "counterpart": "TestImportStageCapacityRefilterBoundary",
+      "counterpart_package": "internal/state"
+    },
+    {
+      "package": "internal/reader",
+      "test": "TestRemoteRootChildrenReusesOnlyCompleteSameRootSQL",
+      "restore": "daily",
+      "pr": "128-record representative;512-record full scale NOT RUN",
+      "full_children": [
+        "128",
+        "512"
+      ],
+      "full_fixture": "128 and512 records; warm SQL overflow still2000linked references"
+    },
+    {
+      "package": "internal/reader",
+      "test": "TestListRevisionBodyBudgetColdWarmAndExhaustiveOracle",
+      "restore": "weekly",
+      "pr": "representative; full matrix/scale NOT RUN"
+    },
+    {
+      "package": "internal/agents/codex",
+      "test": "TestRelatedMillionRecordLimit",
+      "restore": "daily",
+      "pr": "full physical stream NOT RUN; cached-prefix aggregate refusal/release/retry is a distinct PR proof",
+      "counterpart": "TestRelatedCachedRecordCountLimitIsTypedAndReleasesBudget",
+      "full_fixture": "archive.MaxHistoryRecords physical streaming boundary"
+    },
+    {
+      "package": "internal/agents/nativecodec",
+      "test": "TestDecodeSourceStreamsWithBoundedMemory",
+      "restore": "weekly",
+      "pr": "representative; full matrix/scale NOT RUN"
+    },
+    {
+      "package": "internal/agents/nativecodec",
+      "test": "TestLargeRecordMemoryCeiling",
+      "restore": "weekly",
+      "pr": "representative; full matrix/scale NOT RUN"
+    }
+  ]
+}

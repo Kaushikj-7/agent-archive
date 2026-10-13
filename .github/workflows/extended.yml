@@ -4,7 +4,8 @@ on:
     branches: ['release-candidate/**']
   schedule:
     # Off the hour, when GitHub's scheduled workflow queue is less crowded.
-    - cron: '17 8 * * *'
+    - cron: '17 8 * * 1-6'
+    - cron: '17 8 * * 0'
   workflow_dispatch:
     inputs:
       suite:
@@ -13,6 +14,9 @@ on:
         default: all
         type: choice
         options: [all, macos, linux, fuzz, systemd]
+env:
+  CI_SCHEDULE: ${{ github.event.schedule }}
+  CI_SUITE: ${{ inputs.suite || 'all' }}
 permissions:
   contents: read
 concurrency:
@@ -38,20 +42,41 @@ jobs:
         run: |
           go version
           go version | grep -q ' go1\.27\.2 ' || { echo "expected go1.27.2, matching go.mod's toolchain line" >&2; exit 1; }
-      - run: go test -race -timeout 20m ./...
-      - name: Performance assertions (no race detector)
-        run: go test -v -p 1 -count=1 -run 'StayFast|FiveMegabyte|TestCursorOverlappingHooksRegisterOnce' ./internal/collector ./internal/archive ./internal/agents/nativecodec ./internal/capture
-        env:
-          AGENT_ARCHIVE_PERF: '1'
+      - name: Actual source and tier race bodies
+        run: python3 scripts/run_ci_tier.py --suite linux --output tier-results
       - run: go vet ./...
       - run: python3 scripts/test_release_signing.py
       - run: python3 scripts/test_release_assets.py
       - run: python3 scripts/test_release_candidate.py
       - run: python3 scripts/test_install.py
       - run: python3 scripts/test_install_from_source.py
-      - run: python3 scripts/test_purge_recipe.py
+      - name: Install purge prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes jq zsh
+      - name: Tiered purge matrix
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: |
+          tier="$(python3 -B -c 'import os,sys; sys.path.insert(0,"scripts"); import run_ci_tier as t; print(t.resolve(os.environ["GITHUB_EVENT_NAME"],os.environ["GITHUB_REF"],os.environ.get("CI_SCHEDULE",""),os.environ.get("CI_SUITE","all")))')"
+          python3 scripts/test_purge_recipe.py --tier "$tier" --evidence "$RUNNER_TEMP/purge-tier.json"
       - run: python3 scripts/test_ci_workflow.py
       - run: python3 scripts/test_linux_acceptance.py
+      - run: python3 -B scripts/test_go_shards.py
+      - run: python3 -B scripts/test_ci_tiers.py
+      - run: python3 -B scripts/test_stage_native_verify.py
+      - run: python3 -B scripts/test_scope_native_verify.py
+      - run: python3 -B scripts/test_stage_release_vulnerability_scan.py
+      - run: python3 -B scripts/test_measure_hook.py
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: extended-linux-race-tier
+          path: |
+            tier-results
+            ${{ runner.temp }}/purge-tier.json
+          if-no-files-found: error
 
   macos-full:
     if: (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release-candidate/')) || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'macos'))
@@ -69,22 +94,36 @@ jobs:
         run: |
           go version
           go version | grep -q ' go1\.27\.2 ' || { echo "expected go1.27.2, matching go.mod's toolchain line" >&2; exit 1; }
-      - run: go test -race -timeout 20m ./...
-      - name: Performance assertions (no race detector)
-        run: go test -v -p 1 -count=1 -run 'StayFast|FiveMegabyte|TestCursorOverlappingHooksRegisterOnce' ./internal/collector ./internal/archive ./internal/agents/nativecodec ./internal/capture
-        env:
-          AGENT_ARCHIVE_PERF: '1'
+      - name: Native daily platform backstop or full macOS tier
+        run: python3 scripts/run_ci_tier.py --suite macos --output tier-results
       - run: go vet ./...
-      - name: Published old writer refuses protected consent
-        run: bash scripts/test_published_writer.sh
       - run: python3 scripts/test_release_signing.py
       - run: python3 scripts/test_release_assets.py
       - run: python3 scripts/test_release_candidate.py
       - run: python3 scripts/test_install.py
       - run: python3 scripts/test_install_from_source.py
-      - run: python3 scripts/test_purge_recipe.py
+      - name: Install purge prerequisites
+        run: |
+          for tool in jq zsh; do
+            if ! command -v "$tool" >/dev/null; then brew install "$tool"; fi
+          done
+      - name: Tiered purge matrix
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: |
+          tier="$(python3 -B -c 'import os,sys; sys.path.insert(0,"scripts"); import run_ci_tier as t; print(t.resolve(os.environ["GITHUB_EVENT_NAME"],os.environ["GITHUB_REF"],os.environ.get("CI_SCHEDULE",""),os.environ.get("CI_SUITE","all")))')"
+          python3 scripts/test_purge_recipe.py --tier "$tier" --evidence "$RUNNER_TEMP/purge-tier.json"
       - run: python3 scripts/test_ci_workflow.py
       - run: python3 scripts/test_linux_acceptance.py
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: extended-macos-full-tier
+          path: |
+            tier-results
+            ${{ runner.temp }}/purge-tier.json
+          if-no-files-found: error
 
   fuzz:
     # Plain go test in the PR workflow still runs every committed seed. The
@@ -100,19 +139,14 @@ jobs:
         with:
           go-version: '1.27.2'
           cache: false
-      - name: Fuzz each target for 30 seconds
-        run: |
-          found=0
-          for pkg in $(go list ./...); do
-            for target in $(go test -list '^Fuzz' "$pkg" | grep '^Fuzz' || true); do
-              found=$((found + 1))
-              echo "::group::$pkg $target"
-              go test "$pkg" -run '^$' -fuzz "^${target}\$" -fuzztime 30s -fuzzminimizetime 2s
-              echo "::endgroup::"
-            done
-          done
-          # Fail if discovery stops seeing the twenty-four targets present today.
-          test "$found" -ge 24
+      - name: Every discovered fuzz target at the selected tier
+        run: python3 scripts/run_ci_tier.py --suite fuzz --output tier-results
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: extended-fuzz-tier
+          path: tier-results
+          if-no-files-found: error
 
   real-systemd:
     # The real user manager is exercised only on a disposable CI runner.
@@ -132,28 +166,17 @@ jobs:
           go version
           go version | grep -q ' go1\.27\.2 ' || { echo "expected go1.27.2, matching go.mod's toolchain line" >&2; exit 1; }
       - name: Start the runner user's systemd user manager
-        run: |
-          uid="$(id -u)"
-          sudo loginctl enable-linger "$USER"
-          for _ in $(seq 1 60); do
-            [ -S "/run/user/$uid/bus" ] && break
-            sleep 0.5
-          done
-          test -S "/run/user/$uid/bus" || { echo "no user bus at /run/user/$uid/bus after enabling lingering" >&2; exit 1; }
-          echo "XDG_RUNTIME_DIR=/run/user/$uid" >> "$GITHUB_ENV"
-          echo "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus" >> "$GITHUB_ENV"
-          export XDG_RUNTIME_DIR="/run/user/$uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus"
-          systemctl --version | head -n 1
-          systemctl --user show-environment > /dev/null
-          loginctl show-user "$uid" --property=Linger
-      - name: Scheduler conformance suite against the real user manager
+        run: bash scripts/start_ci_systemd.sh
+      - name: Actual real-manager scheduler, setup, timer and uninstall bodies
         env:
           AGENT_ARCHIVE_REAL_SYSTEMD: '1'
-        run: go test -count=1 -v -run 'TestReal' ./internal/scheduler/systemd
-      - name: Setup, the timer's first run, and uninstall
-        env:
-          AGENT_ARCHIVE_REAL_SYSTEMD: '1'
-        run: go test -count=1 -v -timeout 8m -run 'TestRealSystemd' ./internal/cli
+        run: python3 scripts/run_ci_tier.py --suite systemd --output tier-results
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: extended-systemd-tier
+          path: tier-results
+          if-no-files-found: error
       - name: What the manager says, if a step failed
         if: failure()
         run: |

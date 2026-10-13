@@ -4,8 +4,8 @@ What CI checks, run locally from the repository root (the
 [Levenshtein checks](#levenshtein-checks) below run too):
 
 ```sh
-go test -race -short -timeout 20m ./...                  # the pull-request race suite
-go test -race -timeout 20m ./...                         # exhaustive fixtures: nightly and candidates
+go test -race -short -count=1 -timeout 20m ./...                  # the pull-request race suite
+go test -race -count=1 -timeout 20m ./...                         # exhaustive fixtures: weekly and candidates
 go vet ./...
 golangci-lint run --disable=revive                       # v2.14.0; the blocking lint run
 golangci-lint run --enable-only=revive --new-from-merge-base=origin/main   # doc comments, new code only
@@ -19,6 +19,7 @@ python3 scripts/test_install.py
 python3 scripts/test_install_from_source.py
 python3 scripts/test_purge_recipe.py                     # runs the bucket purge recipes in the docs
 python3 scripts/test_ci_workflow.py                      # Extended keeps the validated systemd image
+python3 scripts/test_ci_tiers.py                         # cadence, source proof and body evidence
 python3 scripts/test_go_shards.py                         # discovery, coverage, verdict, and process cleanup
 python3 scripts/test_measure_hook.py                     # synthetic hook benchmark effect/cleanup checks
 ./scripts/test_macos_smoke.sh                             # native macOS with cgo; the PR gate
@@ -36,8 +37,20 @@ ordinary-package and CLI processes; vet runs once. Each worker records its sourc
 terminal coverage; the stable required `linux-race` verdict reconciles both
 artifacts and fails on any missing, failed or cancelled worker. All Linux
 Python gates, including purge, staging, scope and shard-runner regressions, run
-in a parallel script job required by that verdict. Candidates instead run an
-unsharded full Linux race suite, plain full-size performance assertions and vet.
+in a parallel script job required by that verdict. A separate exact-source plan selects conservative full coverage for sensitive PR
+changes. Its proof compares the event base, actual head and tested merge, checks
+tracked bytes/types/modes, and includes both paths of renames and deletions.
+Catalog/recovery/archive/presentation/platform/purge families have explicit
+backstops; unmapped inputs, shared helpers, configuration or unavailable history
+select all full backstops. Shared archive metadata/history/limits also select
+all backstops. Required native and real-systemd coverage runs when
+selected; the real manager is started only on a disposable GitHub-hosted runner.
+The stable `linux-full` job now succeeds on PRs with actual full extra bodies or
+an explicit empty selection, whose evidence says no full bodies ran. The stable
+`linux-race` verdict requires this evidence and the native check as well as both
+representative shards and Python gates. An empty extra plan does not install Go.
+Candidates run an unsharded full Linux race suite, plain full-size performance
+assertions and vet.
 The runner's shared 25-minute deadline includes discovery and tests; cancellation
 and failure stop and reap both test process groups. CLI listing invokes TestMain
 before execution, and both shards have independent TestMain initialization and
@@ -66,10 +79,32 @@ Short mode scales large rendering, statistics, collector, and codec fixtures
 while retaining race checks and logical assertions. It deliberately omits real
 32 MiB import admission/rejection and oversized journal encoding/refilter
 integration, and scales fixtures that exceed the former 128 MiB source cap.
-Default non-short tests remain exhaustive. Full nightly and exact-commit
-candidate coverage is required for these size regressions; dispatch the full
-Linux or macOS suite before merging a risky change. A previous nightly or PR
+Default non-short tests remain exhaustive, and the Python purge runner defaults
+to `--tier full`. Weekly and exact-commit candidate runs restore full scale and
+matrices. Daily runs additionally restore the full catalog list50 /128+/512,
+same-root warm SQL /128+/512, actual CLI1100/1050 pagination and physical
+million-record related-history limit. The small cached-prefix history test pins
+aggregate refusal/release/retry; it does not prove million-record physical
+streaming. Metadata 16384, retained warm sources 2000 and physical/indexed
+five-sweep 1100*2 bodies restore weekly. The exact names and existing 32 MiB
+import/encoded-text/refilter restorations are in `scripts/ci_tiers.json`.
+Scaled-capacity state tests and smaller import recovery still run on every PR.
+Unknown tests run in the ordinary unrestricted short suite by default; the tier
+catalog does not filter them out. Statistics/property/geometry and all 28 privacy
+field combinations retain their existing PR coverage.
+
+Artifacts retain actual pass/skip identities, including skipped children and
+reasons. A scaled representative pass records its full scale as **NOT RUN**;
+a discovered skipped name is not a body pass. Selected daily full bodies must
+exist in dynamic discovery, pass without skipped children, and include required
+/512 or /1100 descendants. Ordinary unrestricted package execution uses actual
+terminals without another cold all-package listing. A previous scheduled or PR
 merge-ref run cannot replace validation of the final release candidate SHA.
+Dedicated real-manager verification permits only the existing
+`TestRealUserManagerConformance/UnreadableAndAbsentDefinitions` skip with its
+exact reason: a real manager cannot be put in a loaded state over damaged unit
+files. The fake-manager conformance suite covers that case. Artifacts retain
+the actual SKIP and reason; other skips and missing selected manager bodies fail.
 
 The Git identity compatibility job separately runs isolated native Git tests on
 pinned upstream Git 2.30.2 and 2.39.2, and the runner's current Git. It logs exact
@@ -96,15 +131,47 @@ at the final main commit after merges if merge commits or squash changed the
 previously tested SHA. These campaigns do not establish live provider, app,
 architecture, or signed-installer acceptance; see [releasing](../maintainers/releasing.md).
 
-The [Extended workflow](../../.github/workflows/extended.yml) runs the full
-non-short Linux and macOS race suites and full-size plain performance assertions
-nightly, alongside the fuzz and real-systemd jobs. It does not run after every
-merge to `main`; candidate pushes run macOS, fuzz, and real-systemd as above.
-Dispatch it manually on a selected ref to run all jobs or one suite before merging a change to those paths. The
-Keychain code needs cgo and Xcode's command line tools on macOS; elsewhere a
+The [Extended workflow](../../.github/workflows/extended.yml) uses separate
+daily `17 8 * * 1-6` and weekly `17 8 * * 0` cron events, avoiding a duplicate
+daily campaign on Sunday. Daily runs all Linux representative race bodies plus
+the four named full restorations, native Darwin platform smoke and the pinned
+published writer, actual systemd scheduler/setup/timer/uninstall, five seconds
+of mutations on every discovered fuzz target and expanded purge cases. Weekly
+runs complete default Linux and Darwin race suites, plain full-size performance
+assertions, exhaustive purge products and 30 seconds per fuzz target. Security
+advisory/workflow audits remain fresh daily in Levenshtein, including the
+separate release-compiler vulnerability scanner.
+
+Candidate pushes and manual `all` always select full coverage regardless of the
+calendar. Candidates supply Linux full coverage in Test, so Extended avoids
+running Linux twice; it supplies Darwin, fuzz and real systemd. Manual per-suite
+choices run that suite full. Separate scheduled/manual concurrency groups cannot
+be cancelled by a newer main push. Missing/failed/cancelled bodies or artifacts
+leave validation incomplete. The workflows retain source SHA, tier, commands,
+actual terminals and selected/not-run identities in artifacts. No dependency,
+compiled-test, result or advisory caches change with these tiers.
+
+Purge `--tier pr` retains every test method, bash/zsh where available and every
+privacy, wrong-prefix, ownership, preflight, corruption, pause, partial-deletion,
+crash and recovery failure class. It reduces only the repeated fresh-shell
+resume product to first/last boundaries in the ordinary prefix for every mode;
+other prefix protection and uncertain capsule refusal cases still run. Daily
+expands that product to all prefixes and first/middle/last boundaries. Weekly,
+candidate and no-option direct invocations keep every original combination,
+including the tenth all-prefix boundary for an empty prefix. Its evidence records
+omitted case tuples as **NOT RUN**, not passes. CI requires jq, bash and zsh rather
+than accepting an empty shell list or missing-tool skips.
+
+Large integration-only regressions may be detected up to 24 hours later; exhaustive
+scale regressions up to 7 days later. Conservative relevant PR backstops and full
+exact-source candidates reduce that risk. Feedback and allocated compute still
+need measurement on final settings; fixture durations cannot be added as savings.
+
+The Keychain code needs cgo and Xcode's command line tools on macOS; elsewhere a
 stub is built. The `real-systemd` job runs the Linux scheduler against a real
 systemd user manager on Ubuntu (see [below](#never-test-against-your-real-machine)).
-It is not a required pull-request check. `go test ./...` also checks the docs:
+The separate Extended job is a backstop; sensitive PRs also require its real
+manager bodies through the Test tier plan. `go test ./...` also checks the docs:
 `internal/doclinks` fails on a broken relative link or `#anchor` in any
 Markdown file, `TestDocsQuoteOnlyRealCommandsAndFlags` on an
 `agent-archive COMMAND --flag` quoted in the README, the docs, or an issue
@@ -113,7 +180,7 @@ stale [CLI reference](../../docs/reference/cli.md).
 
 Performance tests check what a pass costs on every run (published-state
 decodes and local writes, counted, not timed). Their wall-clock targets run
-only at full size in a plain build, which CI runs nightly, on candidate pushes,
+only at full size in a plain build, which CI runs weekly, on candidate pushes,
 and in manually dispatched full OS suites:
 
 ```sh
@@ -288,12 +355,12 @@ In Go tests, everything goes through injection:
   `AGENT_ARCHIVE_REAL_SYSTEMD=1`, because they change the running user's
   manager (units named `agent-archive-collector*` in `~/.config/systemd/user`,
   and the user's hook and skill files for the smoke); they refuse a machine that
-  already has such units. Extended CI runs them nightly or on demand in the
+  already has such units. Extended CI runs them daily or on demand in the
   `real-systemd` job on `ubuntu-24.04` (a virtual machine with systemd: it
   enables lingering for the runner user, sets `XDG_RUNTIME_DIR` and
   `DBUS_SESSION_BUS_ADDRESS`, and
   waits up to two and a half minutes for the timer's first run). That job is
-  a nightly or manually requested check, pinned to the image it was
+  a daily or manually requested check, pinned to the image it was
   validated on rather than `ubuntu-latest`, whose move to a new image would
   change the systemd version and defaults. Bump the pin
   deliberately, re-validating on the new image with
@@ -871,7 +938,8 @@ In `internal/termlaunch`:
 Their seeds come from the fixtures in `testdata/` and from
 `testdata/fuzz/<target>/`, and plain `go test` runs them on every pull request.
 The `fuzz` job in [Extended CI](../../.github/workflows/extended.yml) mutates
-all 24 targets for 30 seconds each nightly or on demand. For a change to
+every discovered target (at least the 24 currently known) for five seconds daily
+and 30 seconds weekly, on candidates or on demand. For a change to
 redaction or parsing, run the affected targets for a couple of minutes each,
 with fast minimization so a
 failure is reported promptly:

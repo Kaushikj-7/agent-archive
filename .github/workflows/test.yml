@@ -11,6 +11,30 @@ concurrency:
 # Every action is pinned to a full commit SHA (a tag can be moved); the
 # comment names the release it is. Dependabot proposes updates.
 jobs:
+  tier-plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      native: ${{ steps.plan.outputs.native }}
+      systemd: ${{ steps.plan.outputs.systemd }}
+      linux: ${{ steps.plan.outputs.linux }}
+      purge: ${{ steps.plan.outputs.purge }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Resolve exact-source tier and conservative extra coverage
+        id: plan
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: python3 -B scripts/run_ci_tier.py --plan --output "$RUNNER_TEMP/extra-plan.json"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ci-tier-plan
+          path: ${{ runner.temp }}/extra-plan.json
+          if-no-files-found: error
+
   linux-short:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
@@ -48,37 +72,51 @@ jobs:
           retention-days: 7
 
   linux-full:
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release-candidate/')
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # PR extras are distinct from the exhaustive representative shards.
+    needs: [tier-plan]
+    # This job also exercises the real manager for sensitive PRs.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # The Go version is pinned here rather than read from go.mod, so CI
-      # never depends on how setup-go picks a toolchain. It must match
-      # go.mod's toolchain line; the next step checks that.
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ci-tier-plan
+          path: ${{ runner.temp }}/tier-plan
+      - if: github.event_name != 'pull_request' || needs.tier-plan.outputs.linux == 'true'
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.27.2'
           cache: false
-      - name: Require Go 1.27.2 (go.mod's toolchain line)
-        run: |
-          go version
-          go version | grep -q ' go1\.27\.2 ' || { echo "expected go1.27.2, matching go.mod's toolchain line" >&2; exit 1; }
-      - name: Candidate race suite (full fixtures)
-        run: go test -race -timeout 20m ./...
-      # The run above uses the race detector, under which the wall-clock
-      # assertions of the performance tests are skipped (the detector slows
-      # filtering by an order of magnitude). This plain run makes them count,
-      # on candidates at their documented size. See dev/contributing/testing.md.
-      - name: Performance assertions (no race detector)
-        run: go test -v -p 1 -count=1 -run 'StayFast|FiveMegabyte|TestCursorOverlappingHooksRegisterOnce' ./internal/collector ./internal/archive ./internal/agents/nativecodec ./internal/capture
+      - name: Start real manager for required platform extra coverage
+        if: github.event_name == 'pull_request' && needs.tier-plan.outputs.systemd == 'true'
+        run: bash scripts/start_ci_systemd.sh
+      - name: Full candidate or conservative full PR extras
         env:
-          AGENT_ARCHIVE_PERF: '1'
-      - run: go vet ./...
+          AGENT_ARCHIVE_REAL_SYSTEMD: ${{ needs.tier-plan.outputs.systemd == 'true' && '1' || '0' }}
+          EVENT: ${{ github.event_name }}
+          FULL_LINUX: ${{ needs.tier-plan.outputs.linux }}
+        run: |
+          if [ "$EVENT" != pull_request ] || [ "$FULL_LINUX" = true ]; then go version | grep -q ' go1\.27\.2 '; fi
+          if [ "$EVENT" = pull_request ]; then
+            python3 scripts/run_ci_tier.py --tier full --suite extra --extra-plan "$RUNNER_TEMP/tier-plan/extra-plan.json" --output tier-results --seconds 3300
+          else
+            python3 scripts/run_ci_tier.py --tier full --suite linux --output tier-results
+            go vet ./...
+          fi
+      - name: Preserve actual full and extra body evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: go-full-tier
+          path: tier-results
+          if-no-files-found: error
+
 
   script-tests:
+    needs: [tier-plan]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -90,7 +128,24 @@ jobs:
       - run: python3 scripts/test_release_candidate.py
       - run: python3 scripts/test_install.py
       - run: python3 scripts/test_install_from_source.py
-      - run: python3 scripts/test_purge_recipe.py
+      - name: Install purge prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes jq zsh
+      - name: Representative purge or required full purge extras
+        env:
+          EVENT: ${{ github.event_name }}
+          FULL_PURGE: ${{ needs.tier-plan.outputs.purge }}
+        run: |
+          tier=pr
+          if [ "$EVENT" != pull_request ] || [ "$FULL_PURGE" = true ]; then tier=full; fi
+          python3 scripts/test_purge_recipe.py --tier "$tier" --evidence "$RUNNER_TEMP/purge-tier.json"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: purge-tier
+          path: ${{ runner.temp }}/purge-tier.json
+          if-no-files-found: error
       # Extended's real-systemd backstop keeps its name and validated image.
       - run: python3 scripts/test_ci_workflow.py
       - run: python3 scripts/test_stage_native_verify.py
@@ -102,11 +157,12 @@ jobs:
       - run: python3 scripts/test_linux_acceptance.py
 
       - run: python3 scripts/test_go_shards.py
+      - run: python3 scripts/test_ci_tiers.py
 
   # Keep this required check stable and fail closed when a worker fails/skips.
   linux-race:
     if: always()
-    needs: [linux-short, linux-full, script-tests]
+    needs: [linux-short, linux-full, script-tests, macos-smoke, tier-plan]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -126,6 +182,16 @@ jobs:
       - name: Reconcile actual source and exhaustive shard coverage
         if: github.event_name == 'pull_request'
         run: python3 scripts/run_go_shard.py --reconcile shard-evidence
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ci-tier-plan
+          path: ${{ runner.temp }}/tier-plan
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: go-full-tier
+          path: full-evidence
+      - name: Require actual full or explicit empty extra coverage
+        run: python3 scripts/run_ci_tier.py --verify --tier full --output full-evidence --extra-plan "$RUNNER_TEMP/tier-plan/extra-plan.json"
 
   git-identity-compatibility:
     runs-on: ubuntu-24.04
@@ -198,11 +264,12 @@ jobs:
           go test -p 2 -count=1 -v -run 'RecoveredImport|DeletedWorktree' ./internal/backfill
 
   macos-smoke:
+    needs: [tier-plan]
     # Compile every Darwin/cgo package, then exercise the native Keychain,
     # launchd, terminal, and setup paths before merging. The full race suite
-    # runs on candidates and nightly in extended.yml.
+    # runs on candidates and weekly in extended.yml.
     runs-on: macos-14
-    timeout-minutes: 15
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -215,8 +282,21 @@ jobs:
         run: |
           go version
           go version | grep -q ' go1\.27\.2 ' || { echo "expected go1.27.2, matching go.mod's toolchain line" >&2; exit 1; }
-      - name: Darwin build and focused race tests
-        run: ./scripts/test_macos_smoke.sh
+      - name: Native representative smoke or required full platform extras
+        env:
+          FULL_NATIVE: ${{ needs.tier-plan.outputs.native }}
+        run: |
+          if [ "$FULL_NATIVE" = true ]; then
+            python3 scripts/run_ci_tier.py --tier full --suite macos --output native-tier-results
+          else
+            ./scripts/test_macos_smoke.sh
+          fi
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always() && needs.tier-plan.outputs.native == 'true'
+        with:
+          name: native-full-tier
+          path: native-tier-results
+          if-no-files-found: error
 
   cross-build:
     # The Linux test sees linux/amd64, and macos-smoke sees Darwin with cgo.

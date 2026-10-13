@@ -12,7 +12,7 @@ go build ./...
 
 # The Keychain round-trip remains opt-in; the package's other tests fail closed
 # instead of reaching a real login Keychain.
-go test -race -short -count=1 -timeout 10m \
+go test -race -short -count=1 -json -timeout 10m \
   ./internal/credentials \
   ./internal/scheduler/launchd \
   ./internal/scheduler/host \
@@ -47,4 +47,4 @@ for test_name in "${cli_tests[@]}"; do
 done
 
 pattern="^($(IFS='|'; echo "${cli_tests[*]}"))$"
-go test -race -short -count=1 -timeout 10m -run "$pattern" ./internal/cli
+go test -race -short -count=1 -json -timeout 10m -run "$pattern" ./internal/cli
