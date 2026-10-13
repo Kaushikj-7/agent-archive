@@ -31,10 +31,22 @@ const (
 	CapacityDrainMicroseconds
 	// CapacityDrainPasses counts foreground capacity-drain collector calls.
 	CapacityDrainPasses
+	// InspectionCacheLookups counts bounded content-qualified cache lookups.
+	InspectionCacheLookups
+	// InspectionCacheHits counts reused successful intrinsic summaries.
+	InspectionCacheHits
+	// InspectionCacheQueued counts verified observations accepted by the command queue.
+	InspectionCacheQueued
+	// InspectionCacheDropped counts observations dropped by the bounded command queue.
+	InspectionCacheDropped
+	// InspectionCacheStored counts observations in successful persistence batches.
+	InspectionCacheStored
+	// InspectionCacheFailed counts observations in unavailable persistence batches.
+	InspectionCacheFailed
 	metricCount
 )
 
-var metricNames = [metricCount]string{"header_bytes", "hash_bytes", "filter_input_bytes", "verification_bytes", "adapter_invocations", "worker_us", "byte_budget_wait_us", "peak_workers", "selected_sessions", "skipped_sessions", "capacity_drain_us", "capacity_drain_passes"}
+var metricNames = [metricCount]string{"header_bytes", "hash_bytes", "filter_input_bytes", "verification_bytes", "adapter_invocations", "worker_us", "byte_budget_wait_us", "peak_workers", "selected_sessions", "skipped_sessions", "capacity_drain_us", "capacity_drain_passes", "inspection_cache_lookups", "inspection_cache_hits", "inspection_cache_queued", "inspection_cache_dropped", "inspection_cache_stored", "inspection_cache_failed"}
 
 // Add records a local aggregate once its operation completes. With tracing off
 // it performs only the recorder check and retains no measurements.

@@ -15,6 +15,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/trace"
 )
 
 const (
@@ -82,6 +83,7 @@ func validSummary(summary agentapi.ImportSummary, k Key) bool {
 func (c *Cache) Lookup(ctx context.Context, key Key) (agentapi.ImportSummary, bool) {
 	var zero agentapi.ImportSummary
 	cacheLookups.Add(1)
+	trace.Add(trace.InspectionCacheLookups, 1)
 	if c == nil || ctx.Err() != nil || !key.valid() {
 		return zero, false
 	}
@@ -114,6 +116,7 @@ func (c *Cache) Lookup(ctx context.Context, key Key) (agentapi.ImportSummary, bo
 		return zero, false
 	}
 	cacheHits.Add(1)
+	trace.Add(trace.InspectionCacheHits, 1)
 	return entry.Summary, true
 }
 
