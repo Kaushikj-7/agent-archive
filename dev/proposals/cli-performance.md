@@ -25,20 +25,28 @@ do not establish current-main performance acceptance.
 | Original work | Integrated replacement | Remaining work |
 | --- | --- | --- |
 | #390 compiler/verifier regressions | #449 and supplementary native scan #467 | Historical eight-check protection identities are not the current six-check configuration. |
-| #376 command/scale baselines | #451 output validation/model and #458 plan status | Fresh matched repaired-harness measurements. |
+| #376 command/scale baselines | #451 output validation/model and #458 plan status | Scoped-interactive matched 10k/100k evidence recorded below; other command paths remain unqualified. |
 | #379 selected reads, #381 discovery, #377 cache maintenance, #385 search/browser | #460 | Native/provider/operator, full-size and matched-performance qualification. |
 | #382 concurrent show/lookup | #460, original latency benchmark #465, release note #468 | Matched output/performance qualification. |
 | #384 transactional catalog and #391 migration/bounded reads | #460, preserved measured/year-window controls #464/#466 | Provider atomicity/clock, durable global writer barriers and cutover qualification; full-load/peak-memory acceptance. |
 | #383 stats selection | Source-superseded by #460; original year-window benchmark preserved in #466 | Full-window and matched-performance qualification remain open. |
 | #375 prepared stats, #380 ranking | #375, #470 ranking and #474 scratch reuse merged; original #380 source-superseded | Source review, CI and combined integration completed for the merged stack. Fresh matched performance acceptance remains open. |
 
-[#473](https://github.com/wangjohn/agent-archive/pull/473) supplies Older actions,
-but handoff still loads complete archive metadata before showing the picker.
-Repository scope still uses complete-summary fallback. The next source slice is
-the [bounded repository picker plan](bounded-repository-picker.md), which defines
+[#473](https://github.com/wangjohn/agent-archive/pull/473) originally supplied Older
+actions over eagerly loaded archive rows. The scoped picker implementation
+connects supported interactive handoff/list/show to bounded repository pages and
+remote Older. Named-project, advanced-predicate and legacy-format paths retain
+complete compatibility costs; noninteractive/JSON list remains unchanged. The scoped source slice follows
+the [bounded repository picker plan](bounded-repository-picker.md), which delivers
 versioned scoped indexes, complete construction/upgrade, bounded reader pages,
 local/archive merging and remote Older actions. Its seven PRs extend the delivered
-foundation; production provider and performance gates below remain separate.
+foundation. The [matched synthetic result ledger](../maintainers/picker-qualification/results-20261013.md)
+records all 16 processes / 104 cases at candidate `cc26f45aba6c76307aecf3c9d32b2650aef79eed`
+against baseline `a187e1b883924fd36c9d6700606a5c2756fc2b6f`, with exact fixture/harness
+hashes, all cold/warm/changed/native phases, allocation deltas and separately
+labeled fixture-inclusive heap/process memory. Independent PR7 review and hosted
+checks remain required. Production provider and broader command performance
+gates below remain separate.
 
 The [default listing contract](../maintainers/list-performance.md) now
 distinguishes legacy header enumeration and private summary reuse from
@@ -341,3 +349,14 @@ provider semantics and migration tests. Update this plan as each PR lands.
 This plan implements and extends the remaining work in
 [Archive listing at scale](listing-at-scale.md). Native session naming remains
 a separate proposal; refresh catalog rows when published metadata changes.
+
+## Scoped picker acceptance evidence
+
+Use the [real CLI first-frame/Older protocol](../maintainers/picker-qualification/README.md)
+for the next matched measurement. The baseline pin is merged contract-only
+`a187e1b883924fd36c9d6700606a5c2756fc2b6f`; compare its protocol 10 UI with the same
+complete logical archive on the final protocol 11 source. Shared harness and
+fixture hashes, exact production source, returned-byte/request counts,
+phase latency/allocations, sampled heap/native R costs and limitations must be
+retained. Historical phase3/model/JSON samples cannot satisfy this comparison.
+Synthetic source acceptance does not remove provider/credential/runtime HOLD.
