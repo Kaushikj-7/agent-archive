@@ -170,7 +170,7 @@ func matchedFixture(tb testing.TB, count int, statsCase, parentCase bool) (*stor
 				m.LinkedSessions = append(m.LinkedSessions, archive.LinkedSessionReference{SessionID: matchedID(child), Relationship: "subagent", Status: archive.LinkedSessionPublished, ObservedAt: storagetest.BenchmarkTime})
 			}
 		}
-		if statsCase || parentCase {
+		if statsCase || parentCase && i <= 50 {
 			raw = matchedJSON(tb, m)
 			if err := mem.Put(context.Background(), key, raw); err != nil {
 				tb.Fatal(err)
