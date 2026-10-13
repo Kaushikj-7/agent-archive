@@ -79,7 +79,7 @@ func CaptureSettledCursor(request *nativefacts.CaptureRequest) (_ *Proof, err er
 	if err != nil {
 		return nil, err
 	}
-	if selected != reviewed || selected.CreatedAt.IsZero() || !selected.CreatedAt.Equal(reg.SessionStartedAt) || selected.Folder == "" || filepath.Clean(selected.Folder) != filepath.Clean(reg.ProjectRoot) {
+	if settledCaptureRoutingChanged(selected, reviewed, reg) {
 		return nil, agentapi.Wrap(agentapi.Unsafe, errors.New("settled Cursor review or routing changed"))
 	}
 	// Keep raw/filter/bundle simultaneous views charged under the captured owner.
@@ -139,6 +139,10 @@ func CaptureSettledCursor(request *nativefacts.CaptureRequest) (_ *Proof, err er
 	keep = true
 	keepLease = true
 	return &Proof{capture: &settledCapture{reg: reg, bundle: bundle, facts: nativefacts.SettledImportFacts{Chat: selected, GlobalSHA256: hex.EncodeToString(global.Sum(nil))}, digest: digest, owner: owner, charged: b.charged, request: request, lease: lease, originalBudget: budget}}, nil
+}
+
+func settledCaptureRoutingChanged(selected, reviewed agentapi.DatabaseChat, reg archive.SessionRegistration) bool {
+	return selected != reviewed || selected.CreatedAt.IsZero() || !selected.CreatedAt.Equal(reg.SessionStartedAt) || selected.Folder == "" || filepath.Clean(selected.Folder) != filepath.Clean(reg.ProjectRoot)
 }
 
 func unsupportedSettledCaptureOwner(reg archive.SessionRegistration, budget *agentapi.NativeReadBudget) bool {
