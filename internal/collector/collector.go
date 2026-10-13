@@ -401,10 +401,10 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 // resumeStagedReleasesIfActive skips fresh work after ordinary recovery ends.
 // The direct helper still treats cancellation during staged work as fatal.
 func (p *pass) resumeStagedReleasesIfActive(ctx context.Context, local *state.Store, store storage.ObjectStore, opts Options) error {
-	if ctx.Err() != nil {
-		return nil
+	if ctx.Err() == nil {
+		return p.resumeStagedReleases(ctx, local, store, opts)
 	}
-	return p.resumeStagedReleases(ctx, local, store, opts)
+	return nil
 }
 
 // resumeStagedReleases transfers diagnostic ownership before ending its read scope.
