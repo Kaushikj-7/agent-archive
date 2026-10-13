@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"time"
 
 	"github.com/wangjohn/agent-archive/internal/destination"
 	"github.com/wangjohn/agent-archive/internal/storage"
@@ -93,21 +94,8 @@ func OpenPickerUpgrade(ctx context.Context, store storage.ObjectStore, cfg desti
 	if err != nil {
 		return nil, err
 	}
-	if state.Upgrade != nil {
-		saved := state.Upgrade
-		if owner == "" || owner != saved.Owner || saved.Proof != proof.ID || !reflect.DeepEqual(saved.Destination, cfg) {
-			return nil, ErrAdmissionClosed
-		}
-		return &PickerUpgrade{writer: w, authority: authority, State: *saved}, nil
-	}
-	if saved := state.PickerUpgradeReceipt; saved != nil {
-		if owner == "" || saved.Owner != owner || saved.Proof != proof.ID || !reflect.DeepEqual(saved.Destination, cfg) {
-			return nil, ErrAdmissionClosed
-		}
-		return &PickerUpgrade{writer: w, authority: authority, State: *saved}, nil
-	}
-	if owner != "" {
-		return nil, ErrAdmissionClosed
+	if state.Upgrade != nil || state.PickerUpgradeReceipt != nil || owner != "" {
+		return resumePickerUpgrade(w, state, cfg, authority, proof, owner)
 	}
 	h, etag, err := w.Head(ctx)
 	if err != nil {
@@ -115,6 +103,11 @@ func OpenPickerUpgrade(ctx context.Context, store storage.ObjectStore, cfg desti
 	}
 	if h.Protocol != 10 || h.GCLease != "" {
 		return nil, errors.New("scoped upgrade requires an unleased protocol 10 source")
+	}
+	if etag == "" {
+		if err = validateFreshPickerNamespace(ctx, store); err != nil {
+			return nil, err
+		}
 	}
 	if _, err = w.preflightClock(ctx); err != nil {
 		return nil, err
@@ -276,41 +269,8 @@ func (u *PickerUpgrade) Step(ctx context.Context, pageSize int) (bool, error) {
 		return false, err
 	}
 	admitted := u.context(ctx)
-	for _, leaf := range rows {
-		var r record
-		if err = json.Unmarshal(leaf.Value, &r); err != nil {
-			return false, err
-		}
-		if r.Revision == "" {
-			return false, errors.New("source identity has no revision")
-		}
-		if r.Entry != nil {
-			e := r.Entry
-			if e.Revision != r.Revision || e.Picker != nil {
-				return false, errors.New("source identity revision or format mismatch")
-			}
-			if err = u.writer.verifyEntry(ctx, leaf.Key, e); err != nil {
-				return false, err
-			}
-			e.Picker, err = BuildPickerRow(leaf.Key, *e)
-			if err != nil {
-				return false, err
-			}
-			keys, eerr := PickerMembershipKeys(leaf.Key, *e.Picker)
-			if eerr != nil {
-				return false, eerr
-			}
-			u.State.Memberships += uint64(len(keys))
-			if err = u.writer.updateOrders(admitted, &u.State.Candidate, leaf.Key, nil, e); err != nil {
-				return false, err
-			}
-			u.State.Copied++
-		}
-		u.State.Candidate.Identity, err = u.writer.update(admitted, u.State.Candidate.Identity, leaf.Key, r)
-		if err != nil {
-			return false, err
-		}
-		u.State.Cursor = leaf.Key
+	if err = u.copyPage(admitted, rows); err != nil {
+		return false, err
 	}
 	if len(rows) < pageSize {
 		if err = u.verify(ctx); err != nil {
@@ -340,56 +300,8 @@ func (u *PickerUpgrade) verify(ctx context.Context) error {
 			return err
 		}
 		for _, leaf := range rows {
-			var source record
-			if err = json.Unmarshal(leaf.Value, &source); err != nil {
+			if err = u.verifyIdentity(ctx, leaf, &live, &members, &counts); err != nil {
 				return err
-			}
-			actual, err := u.writer.find(ctx, u.State.Candidate.Identity, leaf.Key)
-			if err != nil {
-				return err
-			}
-			if actual.Revision != source.Revision || (source.Entry == nil) != (actual.Entry == nil) {
-				return errors.New("upgrade identity correspondence failed")
-			}
-			if source.Entry != nil {
-				raw, e := u.writer.readRef(ctx, source.Entry.Metadata, 32<<20)
-				if e != nil {
-					return e
-				}
-				full, e := decodeEntryBody(*source.Entry, raw)
-				if e != nil {
-					return e
-				}
-				expected := *source.Entry
-				expected.Summary = full
-				expected.SummaryOverflow = ""
-				expected.Picker, e = BuildPickerRow(leaf.Key, expected)
-				if e != nil {
-					return e
-				}
-				if actual.Entry.Picker == nil || !samePickerRow(*expected.Picker, *actual.Entry.Picker) || actual.Entry.MatchMetadata(full) != nil {
-					return errors.New("upgrade picker correspondence failed")
-				}
-				live++
-				keys, e := PickerMembershipKeys(leaf.Key, *expected.Picker)
-				if e != nil {
-					return e
-				}
-				members += uint64(len(keys))
-				for i, keys := range allOrderKeys(leaf.Key, &expected) {
-					roots := []ObjectRef{u.State.Candidate.Capture, u.State.Candidate.Activity, u.State.Candidate.Project}
-					counts[i] += uint64(len(keys))
-					for _, key := range keys {
-						raw, e = u.writer.lookup(ctx, roots[i], key)
-						if e != nil {
-							return e
-						}
-						var entry CatalogEntry
-						if len(raw) == 0 || json.Unmarshal(raw, &entry) != nil || entry.MatchMetadata(full) != nil || entry.Picker == nil || !samePickerRow(*entry.Picker, *expected.Picker) {
-							return errors.New("upgrade membership correspondence failed")
-						}
-					}
-				}
 			}
 			cursor = leaf.Key
 		}
@@ -453,6 +365,7 @@ func (u *PickerUpgrade) Activate(ctx context.Context) error {
 		candidate.Epoch = id
 		candidate.PublicationEpoch = id
 		candidate.PublicationWitness = HeadWitness{}
+		candidate.CommittedAt = time.Time{}
 		u.State.Candidate = candidate
 		u.State.Phase = "activating"
 		if err = u.save(ctx, &prior, func(s *admissions) error { s.Protocol = 11; s.Picker = pickerFormat(); return nil }); err != nil {
@@ -595,4 +508,150 @@ func (u *PickerUpgrade) checkProof(ctx context.Context) error {
 		return ErrAdmissionClosed
 	}
 	return nil
+}
+
+func resumePickerUpgrade(w *Writer, state admissions, cfg destination.Config, authority CutoverAuthority, proof CutoverProof, owner string) (*PickerUpgrade, error) {
+	if state.Upgrade != nil {
+		saved := state.Upgrade
+		if owner == "" || owner != saved.Owner || saved.Proof != proof.ID || !reflect.DeepEqual(saved.Destination, cfg) {
+			return nil, ErrAdmissionClosed
+		}
+		return &PickerUpgrade{writer: w, authority: authority, State: *saved}, nil
+	}
+	if saved := state.PickerUpgradeReceipt; saved != nil {
+		if owner == "" || saved.Owner != owner || saved.Proof != proof.ID || !reflect.DeepEqual(saved.Destination, cfg) {
+			return nil, ErrAdmissionClosed
+		}
+		return &PickerUpgrade{writer: w, authority: authority, State: *saved}, nil
+	}
+	if owner != "" {
+		return nil, ErrAdmissionClosed
+	}
+
+	return nil, ErrAdmissionClosed
+}
+
+func (u *PickerUpgrade) copyPage(admitted context.Context, rows []item) error {
+	var err error
+	for _, leaf := range rows {
+		var r record
+		if err = json.Unmarshal(leaf.Value, &r); err != nil {
+			return err
+		}
+		if r.Revision == "" {
+			return errors.New("source identity has no revision")
+		}
+		if r.Entry != nil {
+			e := r.Entry
+			if e.Revision != r.Revision || e.Picker != nil {
+				return errors.New("source identity revision or format mismatch")
+			}
+			if err = u.writer.verifyEntry(admitted, leaf.Key, e); err != nil {
+				return err
+			}
+			e.Picker, err = BuildPickerRow(leaf.Key, *e)
+			if err != nil {
+				return err
+			}
+			keys, eerr := PickerMembershipKeys(leaf.Key, *e.Picker)
+			if eerr != nil {
+				return eerr
+			}
+			u.State.Memberships += uint64(len(keys))
+			if err = u.writer.updateOrders(admitted, &u.State.Candidate, leaf.Key, nil, e); err != nil {
+				return err
+			}
+			u.State.Copied++
+		}
+		u.State.Candidate.Identity, err = u.writer.update(admitted, u.State.Candidate.Identity, leaf.Key, r)
+		if err != nil {
+			return err
+		}
+		u.State.Cursor = leaf.Key
+	}
+
+	return nil
+}
+
+func (u *PickerUpgrade) verifyIdentity(ctx context.Context, leaf item, live, members *uint64, counts *[3]uint64) error {
+	var err error
+
+	var source record
+	if err = json.Unmarshal(leaf.Value, &source); err != nil {
+		return err
+	}
+	actual, err := u.writer.find(ctx, u.State.Candidate.Identity, leaf.Key)
+	if err != nil {
+		return err
+	}
+	if actual.Revision != source.Revision || (source.Entry == nil) != (actual.Entry == nil) {
+		return errors.New("upgrade identity correspondence failed")
+	}
+	if source.Entry != nil {
+		raw, e := u.writer.readRef(ctx, source.Entry.Metadata, 32<<20)
+		if e != nil {
+			return e
+		}
+		full, e := decodeEntryBody(*source.Entry, raw)
+		if e != nil {
+			return e
+		}
+		expected := *source.Entry
+		expected.Summary = full
+		expected.SummaryOverflow = ""
+		expected.Picker, e = BuildPickerRow(leaf.Key, expected)
+		if e != nil {
+			return e
+		}
+		if actual.Entry.Picker == nil || !samePickerRow(*expected.Picker, *actual.Entry.Picker) || actual.Entry.MatchMetadata(full) != nil {
+			return errors.New("upgrade picker correspondence failed")
+		}
+		*live++
+		keys, e := PickerMembershipKeys(leaf.Key, *expected.Picker)
+		if e != nil {
+			return e
+		}
+		*members += uint64(len(keys))
+		for i, keys := range allOrderKeys(leaf.Key, &expected) {
+			roots := []ObjectRef{u.State.Candidate.Capture, u.State.Candidate.Activity, u.State.Candidate.Project}
+			counts[i] += uint64(len(keys))
+			for _, key := range keys {
+				raw, e = u.writer.lookup(ctx, roots[i], key)
+				if e != nil {
+					return e
+				}
+				var entry CatalogEntry
+				if len(raw) == 0 || json.Unmarshal(raw, &entry) != nil || entry.MatchMetadata(full) != nil || entry.Picker == nil || !samePickerRow(*entry.Picker, *expected.Picker) {
+					return errors.New("upgrade membership correspondence failed")
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func validateFreshPickerNamespace(ctx context.Context, store storage.ObjectStore) error {
+	lister, ok := store.(storage.PageLister)
+	if !ok {
+		return errors.New("fresh scoped catalog requires bounded namespace verification")
+	}
+	cursor := ""
+	for {
+		page, err := lister.ListPage(ctx, "sessions/", cursor, 64)
+		if err != nil {
+			return err
+		}
+		for _, obj := range page.Objects {
+			if metadataKey(obj.Key) {
+				return errors.New("fresh scoped destination contains legacy metadata; use isolated legacy migration")
+			}
+		}
+		if page.Next == "" {
+			return nil
+		}
+		if page.Next == cursor {
+			return errors.New("namespace verification did not advance")
+		}
+		cursor = page.Next
+	}
 }

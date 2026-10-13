@@ -7,6 +7,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
@@ -21,6 +22,11 @@ func (s *sessionScan) readImportStage() (read sourceRead, ok bool, err error) {
 	}
 	adapter, err := sourceAdapter(s.opts.Sources, s.reg.Harness.Name)
 	if err != nil {
+		return read, false, err
+	}
+	if stage.TypedSelection {
+		outcome, err := s.publishExactTypedStage(stage, adapter)
+		read.outcome = outcome
 		return read, false, err
 	}
 	// Reapply current privacy rules; staged evidence is never raw native input.
@@ -92,7 +98,7 @@ func (s *sessionScan) resumeStagedPolicy(p state.PendingPublication) (state.Pend
 	}
 	// Frozen catalog ownership cannot be reused for changed policy bytes. Keep
 	// the journal and every source until exact owner recovery settles it.
-	if p.Catalog != nil || p.Selection != nil {
+	if p.Catalog != nil || p.Selection != nil || p.StagedSelection != nil {
 		return p, state.ErrCatalogJournalFrozen
 	}
 	current, err := s.historyGet(p.MetadataKey, historyMetadataLimit)
@@ -202,4 +208,40 @@ func importFilterGaps(gaps []archive.CaptureGap) []archive.CaptureGap {
 		}
 	}
 	return out
+}
+
+// The first typed producer uses the actual immutable stage, before ordinary
+// rebuilding, refilter, enrichment, capture-time or supplemental callbacks.
+func (s *sessionScan) publishExactTypedStage(stage state.ImportStage, adapter agentapi.TranscriptFilter) (sessionOutcome, error) {
+	if s.opts.CollectorGuard == nil {
+		return outcomeSkipped, state.ErrReadySelectionFrozen
+	}
+	cfg, present, err := config.Load(s.local.Home())
+	if err != nil || !present || !cfg.SupportsStagedSelection() {
+		return outcomeSkipped, errors.Join(state.ErrReadySelectionFrozen, err)
+	}
+	if authority, ok := s.remote.(interface{ CatalogMetadataAuthority() bool }); ok && authority.CatalogMetadataAuthority() {
+		return outcomeSkipped, state.ErrReadySelectionFrozen
+	}
+	if stage.Bundle.Capture.FilterVersion != archive.FilterVersion || stage.Bundle.Capture.AdapterVersion != adapter.Version() || stage.SkillEvidence != cfg.EffectiveSkillEvidence() || string(stage.SkillEvidence) != string(s.opts.skillEvidence()) || len(s.req.HookEvidence) != 0 {
+		return outcomeSkipped, state.ErrReadySelectionFrozen
+	}
+	if _, _, published := s.published.LastPublished(); published {
+		return outcomeSkipped, state.ErrReadySelectionFrozen
+	}
+	rendered, err := renderPublication(s.ctx, s.resolveParser(), s.parserVersion(), stage.Bundle, s.reg, s.now, s.opts, s.priorRepoKey)
+	if err != nil {
+		return outcomeSkipped, err
+	}
+	if rendered.declined {
+		return outcomeSkipped, state.ErrReadySelectionFrozen
+	}
+	pending := state.PendingPublication{Bundle: stage.Bundle, SourceKey: rendered.source.Key, SourceSHA256: rendered.source.SHA256, SourceBytes: rendered.sourceBytes, MetadataKey: rendered.metadataKey, MetadataBytes: rendered.metadata, SkillEvidence: string(stage.SkillEvidence), RequestToken: s.req.Token, ReadyAt: s.now, Attempted: true}
+	if err := s.freezeOrdinaryReadySelection(s.ctx, &pending); err != nil {
+		return outcomeSkipped, err
+	}
+	if err := s.local.SavePending(s.id(), pending); err != nil {
+		return outcomeSkipped, err
+	}
+	return s.publishPending(s.ctx, pending)
 }

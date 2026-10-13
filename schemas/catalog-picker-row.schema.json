@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/wangjohn/agent-archive/main/schemas/catalog-picker-row.schema.json",
   "title": "Scoped picker row facts version 1",
-  "description": "Picker member in CatalogEntry envelopes. Operational head/coordinator activation remains reserved. Runtime enforces UTF-8 byte bounds (8192 encoded row bytes; 256 bytes per label), exact reference/identity/order agreement and metadata-derived facts separately from mutable index child counts. JSON Schema character bounds are necessary but not sufficient.",
+  "description": "Picker member in CatalogEntry envelopes. Operational head/coordinator activation remains reserved. Runtime enforces UTF-8 byte bounds (8192 encoded row bytes; 256 bytes per label), exact reference/identity/order agreement and metadata-derived facts separately from mutable index child counts. JSON Schema character bounds are necessary but not sufficient. The same row facts appear in ordinary membership and canonical-association lookup envelopes; raw SessionKey remains exact source identity even when CanonicalHarness groups aliases.",
   "type": "object",
   "additionalProperties": false,
   "required": [

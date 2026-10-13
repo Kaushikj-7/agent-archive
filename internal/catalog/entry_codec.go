@@ -7,7 +7,6 @@ import (
 	"errors"
 	"io"
 	"math"
-	"strings"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -53,6 +52,9 @@ func validateEntryReference(e CatalogEntry) error {
 			return err
 		}
 		if _, err := PickerMembershipKeys(e.Picker.SessionKey, *e.Picker); err != nil {
+			return err
+		}
+		if _, err := PickerIdentityKey(*e.Picker); err != nil {
 			return err
 		}
 		if e.OrdinaryChildren > math.MaxInt64 || e.ReplayChildren > math.MaxInt64 {
@@ -137,14 +139,14 @@ func entryTreeValue(value any) bool {
 }
 
 func encodeTreeValue(key string, value any) (json.RawMessage, error) {
-	if strings.HasPrefix(key, "!picker/v1/") {
+	if pickerTreeKey(key) {
 		value = compactTreeValue(value)
 	}
 	raw, err := json.Marshal(value)
 	if err != nil {
 		return nil, err
 	}
-	if strings.HasPrefix(key, "!picker/") {
+	if pickerTreeKey(key) {
 		if _, err = DecodePickerRow(key, raw); err != nil {
 			return nil, err
 		}

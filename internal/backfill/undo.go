@@ -1131,11 +1131,15 @@ func importUndoRegistrations(store *state.Store, regs []archive.SessionRegistrat
 		seen[reg.ArchiveSessionID] = true
 	}
 	for after := ""; ; {
-		stages, next, err := store.ImportStages(context.Background(), after, 50)
+		stages, next, closePage, err := store.ImportStagesOwned(context.Background(), after, 50)
 		if err != nil {
 			return nil, err
 		}
 		for _, stage := range stages {
+			if stage.TypedSelection && stage.Registration.InBatch(batchID) {
+				closePage()
+				return nil, state.ErrReadySelectionFrozen
+			}
 			reg := stage.Registration
 			if reg.InBatch(batchID) && !seen[reg.ArchiveSessionID] {
 				reg.StagedImportSHA256 = stage.SHA256
@@ -1143,6 +1147,7 @@ func importUndoRegistrations(store *state.Store, regs []archive.SessionRegistrat
 				seen[reg.ArchiveSessionID] = true
 			}
 		}
+		closePage()
 		if next == "" {
 			break
 		}

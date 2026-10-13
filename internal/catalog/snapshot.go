@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"strings"
 	"sync"
 	"time"
 
@@ -542,7 +541,7 @@ func (s *Snapshot) visitRange(ctx context.Context, q Query, token snapshotCursor
 }
 
 func decodeRow(leaf item, index Index) (*Row, error) {
-	if index == ProjectIndex && strings.HasPrefix(leaf.Key, "!picker/") {
+	if index == ProjectIndex && pickerTreeKey(leaf.Key) {
 		if _, err := DecodePickerRow(leaf.Key, leaf.Value); err != nil {
 			return nil, err
 		}
@@ -564,7 +563,7 @@ func decodeRow(leaf item, index Index) (*Row, error) {
 		return nil, nil
 	}
 	key := leafSessionKey(entry)
-	if index == ProjectIndex && strings.HasPrefix(leaf.Key, "!picker/") && (entry.Picker == nil || entry.Picker.SessionKey != key || entry.Picker.Metadata != entry.Metadata || entry.Picker.Revision != entry.Revision) {
+	if index == ProjectIndex && pickerTreeKey(leaf.Key) && (entry.Picker == nil || entry.Picker.SessionKey != key || entry.Picker.Metadata != entry.Metadata || entry.Picker.Revision != entry.Revision) {
 		return nil, errors.New("picker envelope reference mismatch")
 	}
 	if key == "" || entry.Revision == "" || entry.Metadata.Key == "" {

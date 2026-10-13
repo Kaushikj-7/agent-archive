@@ -382,6 +382,8 @@ func allOrderKeys(key string, e *CatalogEntry) [][]string {
 	if e.Picker != nil {
 		picker, _ := PickerMembershipKeys(key, *e.Picker)
 		result[2] = append(result[2], picker...)
+		identity, _ := PickerIdentityKey(*e.Picker)
+		result[2] = append(result[2], identity)
 	}
 	return result
 }

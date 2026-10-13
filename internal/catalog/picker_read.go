@@ -24,6 +24,10 @@ var ErrPickerUnsupported = errors.New("picker query is unsupported; use the comp
 // ErrPickerBudget means no complete page or emptiness proof could be established.
 var ErrPickerBudget = errors.New("picker work budget exhausted; retry with an explicit larger budget")
 
+// ErrPickerIdentityAmbiguous means distinct physical aliases share one logical identity.
+// Callers cannot infer absence or select an arbitrary archived copy.
+var ErrPickerIdentityAmbiguous = errors.New("picker canonical identity has multiple physical publications; choose an exact archived row")
+
 // PickerScope describes the exact repository matcher, without caller predicates.
 // All selects every root. Otherwise known RepoKeys match only that RepoKey;
 // ProjectIDs also match missing RepoKeys. Without a RepoKey, ProjectIDs match all repositories.
@@ -82,8 +86,8 @@ type PickerPage struct {
 	Cost  PickerCost
 }
 
-// PickerIdentity retains the exact raw harness binding in the archive identity key.
-// CanonicalHarness on returned facts is the comparison identity used by callers.
+// PickerIdentity uses a canonical harness/session association. Returned facts
+// and references retain the physical raw harness binding; alias conflicts are errors.
 type PickerIdentity struct {
 	Harness   string
 	SessionID string
@@ -391,13 +395,15 @@ func (s *Snapshot) PickerLookup(ctx context.Context, ids []PickerIdentity) (Pick
 	if len(ids) > 100 {
 		return PickerIdentityBatch{}, ErrPickerUnsupported
 	}
-	keys := make([]string, len(ids))
+	ranges := make([]Query, len(ids))
+	normalized := slices.Clone(ids)
 	for i, id := range ids {
-		k, e := archive.MetadataObjectKey(id.Harness, id.SessionID)
+		lo, hi, e := PickerIdentityRange(id.Harness, id.SessionID)
 		if e != nil {
 			return PickerIdentityBatch{}, e
 		}
-		keys[i] = k
+		normalized[i].Harness = archive.CanonicalHarness(id.Harness)
+		ranges[i] = Query{Index: ProjectIndex, Lower: lo, Upper: hi}
 	}
 	ctx, work, err := pickerWorkContext(ctx, PickerBudget{})
 	if err != nil {
@@ -407,26 +413,32 @@ func (s *Snapshot) PickerLookup(ctx context.Context, ids []PickerIdentity) (Pick
 		return PickerIdentityBatch{}, err
 	}
 	result := PickerIdentityBatch{Results: make([]PickerIdentityResult, len(ids))}
-	for i, key := range keys {
-		e, err := s.findPinned(ctx, key)
-		if err != nil {
-			return PickerIdentityBatch{}, err
+	for i, q := range ranges {
+		result.Results[i].Identity = normalized[i]
+		count, e := s.Count(ctx, q)
+		if e != nil {
+			return PickerIdentityBatch{}, e
 		}
-		result.Results[i].Identity = ids[i]
-		if e == nil {
+		if count == 0 {
 			continue
 		}
-		if e.Picker == nil {
-			return PickerIdentityBatch{}, errors.New("complete picker identity lacks facts")
+		if count > 1 {
+			return PickerIdentityBatch{}, ErrPickerIdentityAmbiguous
 		}
-		if err = e.Picker.validate(); err != nil {
+		page := Page{}
+		last := ""
+		if err = s.visitRange(ctx, q, snapshotCursor{}, s.head.Project, 0, 1, &page, &last); err != nil {
 			return PickerIdentityBatch{}, err
 		}
-		if e.Picker.SessionKey != key || e.Picker.Metadata != e.Metadata || e.Picker.Revision != e.Revision {
-			return PickerIdentityBatch{}, errors.New("picker identity reference mismatch")
+		if len(page.Rows) != 1 || page.Rows[0].Entry.Picker == nil {
+			return PickerIdentityBatch{}, errors.New("picker canonical identity count differs from its leaf")
+		}
+		r := page.Rows[0].Entry.Picker
+		if r.CanonicalHarness != normalized[i].Harness || r.SessionID != normalized[i].SessionID {
+			return PickerIdentityBatch{}, errors.New("picker canonical lookup identity mismatch")
 		}
 		result.Results[i].Found = true
-		result.Results[i].Item = s.pickerItem(*e.Picker)
+		result.Results[i].Item = s.pickerItem(*r)
 	}
 	result.Cost = work.cost
 	return result, s.check(ctx)
