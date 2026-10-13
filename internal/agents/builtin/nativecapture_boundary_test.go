@@ -55,6 +55,15 @@ func TestNativeCaptureWholeSourceBoundary(t *testing.T) {
 			continue
 		}
 		pkgs = append(pkgs, p)
+		if len(p.XTestGoFiles) > 0 {
+			external := p
+			external.ImportPath += "_test"
+			external.GoFiles = append([]string(nil), p.XTestGoFiles...)
+			external.TestGoFiles = nil
+			external.XTestGoFiles = nil
+			external.IgnoredGoFiles = nil
+			pkgs = append(pkgs, external)
+		}
 	}
 	fset := token.NewFileSet()
 	imp := importer.ForCompiler(fset, "gc", func(path string) (io.ReadCloser, error) {
@@ -77,14 +86,27 @@ func TestNativeCaptureWholeSourceBoundary(t *testing.T) {
 			}
 			parsed = append(parsed, f)
 		}
-		// No other-profile/test file is silently excluded if it mentions this authority domain.
-		for _, name := range append(append([]string{}, p.IgnoredGoFiles...), p.XTestGoFiles...) {
+		// Uncompiled profiles remain fail closed for either capture boundary.
+		for _, name := range p.IgnoredGoFiles {
 			f, err := parser.ParseFile(fset, filepath.Join(p.Dir, name), nil, 0)
 			if err != nil {
 				t.Fatal(err)
 			}
 			for _, i := range f.Imports {
 				if captureBoundaryImport(strings.Trim(i.Path.Value, "\"")) {
+					t.Fatalf("unqualified build-profile domain import %s", filepath.Join(p.Dir, name))
+				}
+			}
+		}
+		// External tests use the same typed wrapper checks below. Keep the
+		// original direct authority-domain import refusal for those tests.
+		for _, name := range p.XTestGoFiles {
+			f, err := parser.ParseFile(fset, filepath.Join(p.Dir, name), nil, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, i := range f.Imports {
+				if strings.Trim(i.Path.Value, "\"") == captureDomainPath {
 					t.Fatalf("unqualified build-profile domain import %s", filepath.Join(p.Dir, name))
 				}
 			}
