@@ -84,17 +84,15 @@ func boundedHandoffChoices(ctx context.Context, env handoffSelectDependencies, s
 	}
 	state.buffer, state.next, state.remoteDone = first.Rows, first.Next, !first.More
 	state.view.RemotePages = 1
-	var operationErr error
+	searchState := &pickerSearchState{}
 	choices := &scopeChoices{scope: scope.only(), format: format}
 	if scope.Label == "" || scope.All {
 		choices.current = viewAll
 	}
-	var archived []archive.Metadata
-	var searchLoaded bool
 	choices.rowsFor = func(s sessionScope) scopeView {
 		v, e := model.First(ctx, s)
 		if e != nil {
-			operationErr = e
+			searchState.err = e
 			return scopeView{incomplete: true, total: -1, truncated: true, note: fmt.Sprintf("Could not load sessions: %v", e)}
 		}
 		rows := make([]handoffPickerRow, len(v.Rows))
@@ -112,61 +110,11 @@ func boundedHandoffChoices(ctx context.Context, env handoffSelectDependencies, s
 		if v.Incomplete {
 			note = "Local eligibility is incomplete; Older sessions continues the scan."
 		}
-		return scopeView{rows: out, total: v.Total, truncated: v.More, note: note, incomplete: v.Incomplete, search: func() []listRow {
-			if !searchLoaded {
-				archived, e = reader.ListMetadataWithOptions(ctx, store, archiveSessionsPrefix, reader.Filter{Harness: opts.harness, Replays: reader.ReplaysHidden}, reader.ListOptions{Cache: listCache(env, false), Skipped: warnSkippedSidecar(stderr, "handoff")})
-				if e != nil {
-					operationErr = e
-					terminal.Printf(stderr, "agent-archive: handoff: search failed: %v\n", e)
-					return nil
-				}
-				sortByActivity(archived)
-				searchLoaded = true
-			}
-			p.scope = s
-			p.localLabels = model.labels
-			p.readLimit = handoffTitleScanLimit
-			r, _, _ := p.rows(regs, archived, math.MaxInt)
-			result := formatHandoffRows(r, format)
-			// Search-only archive selections acquire exact refs in the captured view.
-			for i := range result {
-				batch, e := snapshot.PickerLookup(ctx, []catalog.PickerIdentity{{Harness: result[i].HarnessKey, SessionID: result[i].SessionID}})
-				if e != nil {
-					operationErr = e
-					terminal.Printf(stderr, "agent-archive: handoff: search failed: %v\n", e)
-					return nil
-				}
-				sel := &handoffPickerSelection{model: model, snapshot: snapshot, store: store, reg: r[i].reg}
-				if len(batch.Results) == 1 && batch.Results[0].Found {
-					item := batch.Results[0].Item
-					sel.item = &item
-				}
-				result[i].pickerSelection = sel
-			}
-			if opts.source != "local" {
-				children := formatSessionRows(s.filter(subagentSessions(archived)), format)
-				for i := range children {
-					children[i].Index = 0
-					batch, lookupErr := snapshot.PickerLookup(ctx, []catalog.PickerIdentity{{Harness: children[i].HarnessKey, SessionID: children[i].SessionID}})
-					if lookupErr != nil {
-						operationErr = lookupErr
-						return nil
-					}
-					if len(batch.Results) != 1 || !batch.Results[0].Found {
-						operationErr = errors.New("search selection no longer exists; refresh")
-						return nil
-					}
-					item := batch.Results[0].Item
-					children[i].pickerSelection = &handoffPickerSelection{model: model, item: &item, snapshot: snapshot, store: store}
-				}
-				result = append(result, children...)
-			}
-			return result
-		}}
+		return scopeView{rows: out, total: v.Total, truncated: v.More, note: note, incomplete: v.Incomplete, search: boundedHandoffSearch(ctx, env, store, snapshot, model, opts, s, regs, format, p, searchState, stderr)}
 	}
 	initial := choices.shown()
-	if operationErr != nil {
-		return nil, nil, nil, true, operationErr
+	if searchState.err != nil {
+		return nil, nil, nil, true, searchState.err
 	}
 	// Only a proven complete empty union permits widening to all projects.
 	if choices.current == viewScope && len(initial.rows) == 0 && !initial.incomplete {
@@ -188,8 +136,8 @@ func boundedHandoffChoices(ctx context.Context, env handoffSelectDependencies, s
 	}}
 	// PR6 consumes this model directly and replaces synchronous search with an
 	// error-bearing operation. Until then cancellation/failure forbids selection.
-	model.searchError = func() error { return operationErr }
-	return choices, model, snapshot, true, operationErr
+	model.searchError = func() error { return searchState.err }
+	return choices, model, snapshot, true, searchState.err
 }
 
 func (r handoffResolver) selectedPicker(sel *handoffPickerSelection) (handoffTarget, error) {
@@ -323,4 +271,72 @@ func boundedLocalHandoffChoices(ctx context.Context, env handoffSelectDependenci
 	}}
 	m.searchError = func() error { return loadErr }
 	return c, m, loadErr
+}
+
+type pickerSearchState struct {
+	archived []archive.Metadata
+	loaded   bool
+	err      error
+}
+
+func boundedHandoffSearch(ctx context.Context, env handoffSelectDependencies, store storage.ObjectStore, snapshot *catalog.Snapshot, model *pickerModel, opts handoffOptions, scope sessionScope, regs []archive.SessionRegistration, format listFormatOptions, p handoffPicker, state *pickerSearchState, stderr io.Writer) func() []listRow {
+	return func() []listRow {
+		if !state.loaded {
+			archived, err := reader.ListMetadataWithOptions(ctx, store, archiveSessionsPrefix, reader.Filter{Harness: opts.harness, Replays: reader.ReplaysHidden}, reader.ListOptions{Cache: listCache(env, false), Skipped: warnSkippedSidecar(stderr, "handoff")})
+			if err != nil {
+				state.err = err
+				terminal.Printf(stderr, "agent-archive: handoff: search failed: %v\n", err)
+				return nil
+			}
+			sortByActivity(archived)
+			state.archived = archived
+			state.loaded = true
+		}
+		p.scope = scope
+		p.localLabels = model.labels
+		p.readLimit = handoffTitleScanLimit
+		roots, _, _ := p.rows(regs, state.archived, math.MaxInt)
+		result := formatHandoffRows(roots, format)
+		if opts.source != "local" {
+			children := formatSessionRows(scope.filter(subagentSessions(state.archived)), format)
+			for i := range children {
+				children[i].Index = 0
+			}
+			result = append(result, children...)
+		}
+		if err := pinHandoffSearchRows(ctx, snapshot, model, store, result, roots); err != nil {
+			state.err = err
+			terminal.Printf(stderr, "agent-archive: handoff: search failed: %v\n", err)
+			return nil
+		}
+		return result
+	}
+}
+func pinHandoffSearchRows(ctx context.Context, snapshot *catalog.Snapshot, model *pickerModel, store storage.ObjectStore, rows []listRow, roots []handoffPickerRow) error {
+	for start := 0; start < len(rows); start += 100 {
+		end := min(start+100, len(rows))
+		ids := make([]catalog.PickerIdentity, end-start)
+		for i := start; i < end; i++ {
+			ids[i-start] = catalog.PickerIdentity{Harness: rows[i].HarnessKey, SessionID: rows[i].SessionID}
+		}
+		batch, err := snapshot.PickerLookup(ctx, ids)
+		if err != nil {
+			return err
+		}
+		for offset, result := range batch.Results {
+			i := start + offset
+			selection := &handoffPickerSelection{model: model, snapshot: snapshot, store: store}
+			if i < len(roots) {
+				selection.reg = roots[i].reg
+			}
+			if result.Found {
+				item := result.Item
+				selection.item = &item
+			} else if selection.reg == nil {
+				return errors.New("search selection no longer exists; refresh")
+			}
+			rows[i].pickerSelection = selection
+		}
+	}
+	return nil
 }
