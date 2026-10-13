@@ -297,6 +297,12 @@ func (u *PickerUpgrade) Step(ctx context.Context, pageSize int) (bool, error) {
 // auxiliary cardinalities. Each expected key is checked, so equal cardinality
 // also proves there are no extra keys. Verification retains only one page.
 func (u *PickerUpgrade) verify(ctx context.Context) error {
+	// The construction cursor relies on branch bounds. Independently validate
+	// those bounds against every referenced child before treating a paged walk
+	// or the advertised root cardinality as exhaustive source evidence.
+	if _, _, err := u.writer.validateIdentityBranches(ctx, u.State.Source.Identity, 0); err != nil {
+		return err
+	}
 	cursor := ""
 	var live, members uint64
 	counts := [3]uint64{}
@@ -339,6 +345,38 @@ func (u *PickerUpgrade) verify(ctx context.Context) error {
 		return errors.New("upgrade changed mutation receipts")
 	}
 	return u.unchanged(ctx)
+}
+
+func (w *Writer) validateIdentityBranches(ctx context.Context, ref ObjectRef, depth int) (string, string, error) {
+	if depth >= maxDepth {
+		return "", "", errors.New("catalog tree depth exceeded")
+	}
+	n, err := w.readNode(ctx, ref)
+	if err != nil {
+		return "", "", err
+	}
+	if len(n.Leaves) > 0 {
+		return n.Leaves[0].Key, n.Leaves[len(n.Leaves)-1].Key, nil
+	}
+	var first, last string
+	for i, child := range n.Children {
+		childNode, err := w.readNode(ctx, child.Ref)
+		if err != nil {
+			return "", "", err
+		}
+		low, high, err := w.validateIdentityBranches(ctx, child.Ref, depth+1)
+		if err != nil {
+			return "", "", err
+		}
+		if childNode.Count != child.Count || high != child.Max || low == "" || i > 0 && low <= last {
+			return "", "", errors.New("catalog identity branch differs from referenced child")
+		}
+		if i == 0 {
+			first = low
+		}
+		last = high
+	}
+	return first, last, nil
 }
 
 // Activate persists the stronger coordinator fence first, then commits one
@@ -465,16 +503,12 @@ func (u *PickerUpgrade) Rollback(ctx context.Context) error {
 	if u.State.Phase != "active" && u.State.Phase != "rollback" {
 		return errors.New("only activated scoped upgrade can roll back")
 	}
-	h, etag, err := u.writer.Head(ctx)
-	if err != nil {
+	if err := u.unchangedActivation(ctx); err != nil {
 		return err
-	}
-	if etag != u.State.ActivatedETag || h.Protocol != 11 || h.Identity != u.State.Candidate.Identity || h.Project != u.State.Candidate.Project {
-		return errors.New("catalog changed since scoped activation; rollback would forget publications")
 	}
 	prior := u.State
 	u.State.Phase = "rollback"
-	err = u.writer.Coordinator().change(ctx, func(s *admissions) error {
+	err := u.writer.Coordinator().change(ctx, func(s *admissions) error {
 		if len(s.Owners) != 0 || s.Hold != "" || s.GCLink != nil || s.Intent != nil {
 			return ErrAdmissionClosed
 		}
@@ -485,6 +519,12 @@ func (u *PickerUpgrade) Rollback(ctx context.Context) error {
 		} else if !reflect.DeepEqual(s.PickerUpgradeReceipt, &prior) || s.Seal != "" {
 			return ErrConflict
 		}
+		// Bind the exact-head check to this coordinator generation. A publisher
+		// that admits or completes afterward changes the generation and forces
+		// the seal CAS to retry both checks.
+		if err := u.unchangedActivation(ctx); err != nil {
+			return err
+		}
 		s.Seal = u.State.Owner
 		s.Upgrade = &u.State
 		return nil
@@ -493,6 +533,17 @@ func (u *PickerUpgrade) Rollback(ctx context.Context) error {
 		u.State = prior
 	}
 	return err
+}
+
+func (u *PickerUpgrade) unchangedActivation(ctx context.Context) error {
+	h, etag, err := u.writer.Head(ctx)
+	if err != nil {
+		return err
+	}
+	if etag != u.State.ActivatedETag || h.Protocol != 11 || h.Identity != u.State.Candidate.Identity || h.Project != u.State.Candidate.Project {
+		return errors.New("catalog changed since scoped activation; rollback would forget publications")
+	}
+	return nil
 }
 
 // PickerUpgradeCheckpoint exposes only the validated coordinator checkpoint for
