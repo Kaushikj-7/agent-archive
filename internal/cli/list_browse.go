@@ -471,6 +471,12 @@ type sessionPicker struct {
 func (l *sessionPicker) pickScoped(p *prompter, stdout io.Writer, choices *scopeChoices, action string) (listRow, bool, error) {
 	for {
 		c := choices.shown()
+		if loader := choices.loadOlder; loader != nil && loader.Available != nil {
+			l.older = nil
+			if loader.Available() {
+				l.older = loader
+			}
+		}
 		l.heading, l.toggles, l.toggled = c.heading, choices.canToggle(), false
 		l.headingFor = func(words string, matches int) string {
 			return choices.headingWith(choices.current, c.scopeView, c.constants, headingOptions{Verb: l.verb, Words: words, Matches: matches, Filtering: l.filtering && l.keys != nil})
