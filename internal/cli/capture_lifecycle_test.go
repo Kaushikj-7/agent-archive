@@ -203,6 +203,13 @@ func TestCodexCaptureReadAndRetentionLifecycle(t *testing.T) {
 	run("sync")
 	now = at.Add(48 * time.Hour)
 	run("sync")
+	for _, reg := range regs {
+		removal, found, err := local.Removal("codex", reg.NativeSessionID)
+		must(t, err)
+		if !found || removal.Reason != state.RemovalReasonRetention {
+			t.Fatal("expired native owner lacks its durable retention tombstone")
+		}
+	}
 	remaining := list(1)
 	if remaining[0].NativeSessionID != newID {
 		t.Fatal("retention deleted the newer session")
