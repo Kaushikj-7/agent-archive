@@ -12,9 +12,9 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
+	"github.com/wangjohn/agent-archive/internal/agents/cursorcapturecodec"
 	"github.com/wangjohn/agent-archive/internal/agents/importconfig"
 	"github.com/wangjohn/agent-archive/internal/agents/nativecapture/internal/sealed"
-	"github.com/wangjohn/agent-archive/internal/agents/nativecodec"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/cursorstore"
 	"github.com/wangjohn/agent-archive/internal/nativefacts"
@@ -97,21 +97,20 @@ func CaptureSettledCursor(request *nativefacts.CaptureRequest) (_ *sealed.Proof,
 		return nil, agentapi.Wrap(agentapi.Limit, agentapi.ErrReadBudget)
 	}
 	b.charged += scratch
-	filter := nativecodec.CursorAdapter{}
 	if err = ctx.Err(); err != nil {
 		return nil, errors.Join(cursorstore.NotChecked(cursorstore.UnknownFormat), err)
 	}
 	next := 0
-	filtered, closeFiltered, err := nativecodec.FilterComposerRecordsBounded(ctx, composer.Composer, func(ctx context.Context) (nativecodec.CursorBubble, bool, error) {
+	filtered, closeFiltered, err := cursorcapturecodec.FilterComposerRecordsBounded(ctx, composer.Composer, func(ctx context.Context) (cursorcapturecodec.Bubble, bool, error) {
 		if err := ctx.Err(); err != nil {
-			return nativecodec.CursorBubble{}, false, err
+			return cursorcapturecodec.Bubble{}, false, err
 		}
 		if next >= len(composer.Bubbles) {
-			return nativecodec.CursorBubble{}, false, nil
+			return cursorcapturecodec.Bubble{}, false, nil
 		}
 		row := composer.Bubbles[next]
 		next++
-		return nativecodec.CursorBubble{ID: row.ID, Value: row.Value}, true, nil
+		return cursorcapturecodec.Bubble{ID: row.ID, Value: row.Value}, true, nil
 	}, 32<<20, owner)
 	defer closeFiltered()
 	if err != nil {
@@ -127,7 +126,7 @@ func CaptureSettledCursor(request *nativefacts.CaptureRequest) (_ *sealed.Proof,
 	if inspection.IdentityMismatch || !inspection.Conversation {
 		return nil, agentapi.Wrap(agentapi.Unsafe, errors.New("settled Cursor conversation changed"))
 	}
-	bundle, err := archive.NewSourceBundle(reg, filter, filtered, at, nil)
+	bundle, err := cursorcapturecodec.NewSourceBundle(reg, filtered, at)
 	if err != nil {
 		return nil, err
 	}
@@ -158,15 +157,15 @@ func inspectSettledCaptureRow(ctx context.Context, row agentapi.DatabaseRecord, 
 		return agentapi.Wrap(agentapi.Limit, agentapi.ErrReadBudget)
 	}
 	defer owner.Release(scratch)
-	if err := nativecodec.ValidateSettledCursorMetadata(ctx, row.Key, row.Value); err != nil {
+	if err := cursorcapturecodec.ValidateSettledMetadata(ctx, row.Key, row.Value); err != nil {
 		return err
 	}
-	decoded, ok := nativecodec.DecodeCursorComposerData(row.Key, row.Value)
+	decoded, ok := cursorcapturecodec.DecodeComposerData(row.Key, row.Value)
 	if !ok || decoded.Chat.Malformed || decoded.Chat.KeyID == "" || len(decoded.Chat.KeyID) > 255 {
 		return cursorstore.NotChecked(cursorstore.UnknownFormat)
 	}
 	facts := decoded.Chat.CursorFacts
-	if facts.VersionPresent && (facts.Version < 1 || facts.Version > nativecodec.MaxCursorComposerVersion) || facts.Relationships == agentapi.CursorRelationshipsMalformed {
+	if facts.VersionPresent && (facts.Version < 1 || facts.Version > cursorcapturecodec.MaxComposerVersion) || facts.Relationships == agentapi.CursorRelationshipsMalformed {
 		return cursorstore.NotChecked(cursorstore.UnknownFormat)
 	}
 	if slices.Contains(decoded.Subagents, reg.SourceKey) {

@@ -177,6 +177,12 @@ func TestNativeCaptureWholeSourceBoundary(t *testing.T) {
 				if id.Pos() < f.Pos() || id.Pos() > f.End() {
 					continue
 				}
+				if obj.Pkg() != nil && obj.Pkg().Path() == captureCodecPath && obj.Exported() {
+					if !captureCodecObjectAllowed(p.ImportPath, rel, obj, calls, id) {
+						t.Errorf("forbidden codec bridge object %s at %s", obj.Name(), fset.Position(id.Pos()))
+					}
+					continue
+				}
 				if obj.Pkg() != nil && obj.Pkg().Path() == captureProducerPath && obj.Exported() {
 					if p.ImportPath != captureCursorAdapterPath || rel != "settled_import.go" || obj.Name() != "CaptureSettledCursor" || !captureDirectCallObject(f, id, "CaptureSettledRequest", false) {
 						t.Errorf("forbidden fixed producer reference at %s", fset.Position(id.Pos()))
@@ -214,6 +220,7 @@ const (
 	capturePackageBackfill capturePackagePath = "github.com/wangjohn/agent-archive/internal/backfill"
 	capturePackageSealed   capturePackagePath = captureSealedPath
 	capturePackageProducer capturePackagePath = captureProducerPath
+	capturePackageCodec    capturePackagePath = captureCodecPath
 	capturePackageBuiltin  capturePackagePath = "github.com/wangjohn/agent-archive/internal/agents/builtin"
 )
 
@@ -232,6 +239,7 @@ const (
 	captureAuthorityProof   captureAuthorityFile = "proof.go"
 	captureAuthorityCursor  captureAuthorityFile = "cursor.go"
 	captureAuthorityAdapter captureAuthorityFile = "settled_import.go"
+	captureAuthorityCodec   captureAuthorityFile = "codec.go"
 )
 
 type captureSymbolName string
@@ -259,7 +267,7 @@ func captureFixtureAllowed(pkg, file string) bool {
 		return captureFixtureFile(file) == captureFixtureImport
 	case capturePackageBuiltin:
 		return captureFixtureFile(file) == captureFixtureBinding
-	case capturePackageDomain, capturePackageCursor, capturePackageSealed, capturePackageProducer:
+	case capturePackageDomain, capturePackageCursor, capturePackageSealed, capturePackageProducer, capturePackageCodec:
 		return false
 	default:
 		return false
@@ -405,7 +413,7 @@ func (i captureProbeImporter) Import(path string) (*types.Package, error) {
 const captureCursorAdapterPath = "github.com/wangjohn/agent-archive/internal/agents/cursor"
 
 func captureBoundaryImport(path string) bool {
-	return capturePackagePath(path) == capturePackageDomain || capturePackagePath(path) == capturePackageCursor || capturePackagePath(path) == capturePackageSealed || capturePackagePath(path) == capturePackageProducer
+	return capturePackagePath(path) == capturePackageDomain || capturePackagePath(path) == capturePackageCursor || capturePackagePath(path) == capturePackageSealed || capturePackagePath(path) == capturePackageProducer || capturePackagePath(path) == capturePackageCodec
 }
 
 func captureAdapterConstructor(obj types.Object) bool {
@@ -482,6 +490,8 @@ const captureSealedPath = captureDomainPath + "/internal/sealed"
 
 const captureProducerPath = captureDomainPath + "/producer"
 
+const captureCodecPath = "github.com/wangjohn/agent-archive/internal/agents/cursorcapturecodec"
+
 func captureSourcePath(dir, name string) string {
 	if filepath.IsAbs(name) {
 		return name
@@ -495,6 +505,8 @@ func captureAuthorityImportAllowed(pkg, file, imported string) bool {
 		return pkg == captureDomainPath && captureAuthorityFile(file) == captureAuthorityProof || pkg == captureProducerPath && captureAuthorityFile(file) == captureAuthorityCursor
 	case capturePackageProducer:
 		return pkg == captureCursorAdapterPath && captureAuthorityFile(file) == captureAuthorityAdapter
+	case capturePackageCodec:
+		return pkg == captureProducerPath && captureAuthorityFile(file) == captureAuthorityCursor
 	case capturePackageDomain, capturePackageCursor, capturePackageState, capturePackageBackfill, capturePackageBuiltin:
 		return true
 	default:
@@ -542,7 +554,7 @@ func captureOriginalAuthorityError(root string, selectedDirs, selectedSources ma
 			return err
 		}
 		pkg := "github.com/wangjohn/agent-archive/" + filepath.ToSlash(rel)
-		if (pkg == captureDomainPath || strings.HasPrefix(pkg, captureDomainPath+"/")) && !selectedSources[path] {
+		if (pkg == captureDomainPath || strings.HasPrefix(pkg, captureDomainPath+"/") || pkg == captureCodecPath || strings.HasPrefix(pkg, captureCodecPath+"/")) && !selectedSources[path] {
 			return fmt.Errorf("unqualified closed-domain profile source %s", path)
 		}
 		f, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
@@ -550,7 +562,7 @@ func captureOriginalAuthorityError(root string, selectedDirs, selectedSources ma
 			return err
 		}
 		if pkg == captureDomainPath {
-			if entry.Name() != "proof.go" || len(f.Decls) != 2 || len(f.Imports) != 1 {
+			if captureAuthorityFile(entry.Name()) != captureAuthorityProof || len(f.Decls) != 2 || len(f.Imports) != 1 {
 				return fmt.Errorf("neutral facade shape changed in %s", path)
 			}
 			decl, ok := f.Decls[1].(*ast.GenDecl)
@@ -562,8 +574,16 @@ func captureOriginalAuthorityError(root string, selectedDirs, selectedSources ma
 				return fmt.Errorf("neutral facade must only alias Proof in %s", path)
 			}
 		}
+		if pkg == captureCodecPath || strings.HasPrefix(pkg, captureCodecPath+"/") {
+			if pkg != captureCodecPath || captureAuthorityFile(entry.Name()) != captureAuthorityCodec {
+				return fmt.Errorf("unlisted codec bridge source %s", path)
+			}
+		}
 		for _, spec := range f.Imports {
 			imported := strings.Trim(spec.Path.Value, "\"")
+			if pkg == captureCodecPath && !captureCodecDependencyAllowed(imported) {
+				return fmt.Errorf("forbidden codec bridge dependency %s in %s", imported, path)
+			}
 			if captureBoundaryImport(imported) && !selectedDirs[filepath.Dir(path)] {
 				return fmt.Errorf("unqualified ignored-only directory domain import in %s", path)
 			}
@@ -651,6 +671,8 @@ func captureCheckExports(t *testing.T, pkg *types.Package) {
 		allowed = map[string]bool{"Proof": true, "Reservation": true, "New": true, "NewReservation": true, "Digest": true}
 	case capturePackageProducer:
 		allowed = map[string]bool{"CaptureSettledCursor": true}
+	case capturePackageCodec:
+		allowed = captureCodecExports()
 	case capturePackageCursor, capturePackageState, capturePackageBackfill, capturePackageBuiltin:
 		return
 	default:
@@ -660,6 +682,45 @@ func captureCheckExports(t *testing.T, pkg *types.Package) {
 		object := pkg.Scope().Lookup(name)
 		if object.Exported() && !allowed[name] {
 			t.Errorf("unexpected authority export %s.%s", pkg.Path(), name)
+		}
+	}
+	if pkg.Path() == captureCodecPath {
+		for _, name := range pkg.Scope().Names() {
+			if _, ok := pkg.Scope().Lookup(name).(*types.Var); ok {
+				t.Errorf("mutable codec bridge global %s", name)
+			}
+		}
+		for _, name := range []string{"Bubble", "ComposerMetadata", "Reservation"} {
+			object, ok := pkg.Scope().Lookup(name).(*types.TypeName)
+			if !ok || object.IsAlias() {
+				t.Errorf("codec bridge %s must be a neutral defined type", name)
+			}
+		}
+		expectedFields := map[string]map[string]string{"Bubble": {"ID": "string", "Value": "encoding/json.RawMessage"}, "ComposerMetadata": {"Chat": "github.com/wangjohn/agent-archive/internal/agentapi.DatabaseChat", "Counted": "bool", "Subagents": "[]string"}}
+		for name, fields := range expectedFields {
+			object, ok := pkg.Scope().Lookup(name).(*types.TypeName)
+			if !ok {
+				continue
+			}
+			structure, ok := object.Type().Underlying().(*types.Struct)
+			if !ok || structure.NumFields() != len(fields) {
+				t.Errorf("codec bridge %s must retain its neutral field shape", name)
+				continue
+			}
+			for i := range structure.NumFields() {
+				field := structure.Field(i)
+				if types.TypeString(field.Type(), func(p *types.Package) string { return p.Path() }) != fields[field.Name()] {
+					t.Errorf("codec bridge field %s.%s is not neutral", name, field.Name())
+				}
+			}
+		}
+		for _, name := range []string{"ValidateSettledMetadata", "DecodeComposerData", "FilterComposerRecordsBounded", "NewSourceBundle"} {
+			if _, ok := pkg.Scope().Lookup(name).(*types.Func); !ok {
+				t.Errorf("codec bridge %s must be a fixed function", name)
+			}
+		}
+		if _, ok := pkg.Scope().Lookup("MaxComposerVersion").(*types.Const); !ok {
+			t.Error("codec bridge version must be immutable")
 		}
 	}
 	if pkg.Path() == captureProducerPath {
@@ -934,6 +995,168 @@ func TestNativeCaptureTypedHelperDirectCalleeControls(t *testing.T) {
 			}
 			if !found {
 				t.Fatal("probe has no resolved helper object")
+			}
+		})
+	}
+}
+
+func captureCodecExports() map[string]bool {
+	return map[string]bool{"Bubble": true, "ComposerMetadata": true, "Reservation": true, "MaxComposerVersion": true, "ValidateSettledMetadata": true, "DecodeComposerData": true, "FilterComposerRecordsBounded": true, "NewSourceBundle": true}
+}
+
+func captureCodecDependencyAllowed(path string) bool {
+	dependencies := map[string]bool{"context": true, "encoding/json": true, "time": true, "github.com/wangjohn/agent-archive/internal/agentapi": true, "github.com/wangjohn/agent-archive/internal/agents/nativecodec": true, "github.com/wangjohn/agent-archive/internal/archive": true}
+	return dependencies[path]
+}
+
+func captureCodecObjectAllowed(pkg, file string, object types.Object, calls map[ast.Expr]bool, id *ast.Ident) bool {
+	if pkg == captureCodecPath && captureAuthorityFile(file) == captureAuthorityCodec {
+		return true
+	}
+	if pkg != captureProducerPath || captureAuthorityFile(file) != captureAuthorityCursor {
+		return false
+	}
+	if field, ok := object.(*types.Var); ok && field.IsField() {
+		return map[string]bool{"ID": true, "Value": true, "Chat": true, "Counted": true, "Subagents": true}[field.Name()]
+	}
+	if !captureCodecExports()[object.Name()] {
+		return false
+	}
+	switch object.(type) {
+	case *types.TypeName, *types.Const:
+		return true
+	case *types.Func:
+		for expression := range calls {
+			if captureExactCalleeIdent(expression, id) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func TestNativeCaptureCodecBridgeTypedImporterControls(t *testing.T) {
+	const codecPath = "github.com/wangjohn/agent-archive/internal/agents/cursorcapturecodec"
+	bridge := types.NewPackage(codecPath, "cursorcapturecodec")
+	bridge.Scope().Insert(types.NewFunc(token.NoPos, bridge, "ValidateSettledMetadata", types.NewSignatureType(nil, nil, nil, types.NewTuple(), types.NewTuple(), false)))
+	bridge.MarkComplete()
+	for _, test := range []struct {
+		name    string
+		pkg     string
+		file    string
+		body    string
+		allowed bool
+	}{
+		{"actual-producer-direct", captureProducerPath, "cursor.go", `bridge.ValidateSettledMetadata()`, true},
+		{"unlisted-file", captureProducerPath, "extra.go", `bridge.ValidateSettledMetadata()`, false},
+		{"neutral-parent", captureDomainPath, "proof.go", `bridge.ValidateSettledMetadata()`, false},
+		{"ordinary-consumer", capturePackageStateString(), "import_stage.go", `bridge.ValidateSettledMetadata()`, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fset := token.NewFileSet()
+			file, err := parser.ParseFile(fset, test.file, `package probe;import bridge "`+codecPath+`";func use(){`+test.body+`}`, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			info := &types.Info{Uses: map[*ast.Ident]types.Object{}}
+			cfg := types.Config{Importer: captureProbeImporter{domain: bridge}}
+			if _, err := cfg.Check(test.pkg, fset, []*ast.File{file}, info); err != nil {
+				t.Fatal(err)
+			}
+			found := false
+			for _, object := range info.Uses {
+				if object.Pkg() != nil && object.Pkg().Path() == codecPath && object.Exported() {
+					found = true
+					if captureAuthorityImportAllowed(test.pkg, test.file, object.Pkg().Path()) != test.allowed {
+						t.Fatal("typed codec importer policy changed")
+					}
+				}
+			}
+			if !found {
+				t.Fatal("missing resolved codec object")
+			}
+		})
+	}
+}
+
+func TestNativeCaptureCodecBridgeTypedValueControls(t *testing.T) {
+	bridge := types.NewPackage(captureCodecPath, "cursorcapturecodec")
+	bridge.Scope().Insert(types.NewFunc(token.NoPos, bridge, "ValidateSettledMetadata", types.NewSignatureType(nil, nil, nil, types.NewTuple(), types.NewTuple(), false)))
+	bridge.MarkComplete()
+	for _, test := range []struct {
+		name    string
+		body    string
+		allowed bool
+	}{
+		{"direct-fixed-transform", `bridge.ValidateSettledMetadata()`, true},
+		{"transform-function-value", `_ = bridge.ValidateSettledMetadata`, false},
+		{"transform-nested-factory", `_ = func()func(){return bridge.ValidateSettledMetadata}()`, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fset := token.NewFileSet()
+			file, err := parser.ParseFile(fset, "cursor.go", `package producer;import bridge "`+captureCodecPath+`";func use(){`+test.body+`}`, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			info := &types.Info{Uses: map[*ast.Ident]types.Object{}}
+			cfg := types.Config{Importer: captureProbeImporter{domain: bridge}}
+			if _, err := cfg.Check(captureProducerPath, fset, []*ast.File{file}, info); err != nil {
+				t.Fatal(err)
+			}
+			calls := map[ast.Expr]bool{}
+			ast.Inspect(file, func(node ast.Node) bool {
+				if call, ok := node.(*ast.CallExpr); ok {
+					calls[call.Fun] = true
+				}
+				return true
+			})
+			found := false
+			for id, object := range info.Uses {
+				if object.Pkg() != nil && object.Pkg().Path() == captureCodecPath && object.Exported() {
+					found = true
+					if captureCodecObjectAllowed(captureProducerPath, "cursor.go", object, calls, id) != test.allowed {
+						t.Fatal("codec transform callee policy changed")
+					}
+				}
+			}
+			if !found {
+				t.Fatal("missing resolved codec function")
+			}
+		})
+	}
+}
+
+func TestNativeCaptureCodecBridgeOriginalProfileControls(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		dir      string
+		file     string
+		source   string
+		selected bool
+		allowed  bool
+	}{
+		{"fixed-producer-import", "internal/agents/nativecapture/producer", "cursor.go", "package producer\nimport bridge \"" + captureCodecPath + "\"\nfunc use(){bridge.ValidateSettledMetadata()}\n", true, true},
+		{"ordinary-bridge-import", "internal/state", "import_stage.go", "package state\nimport bridge \"" + captureCodecPath + "\"\nfunc use(){bridge.ValidateSettledMetadata()}\n", true, false},
+		{"ignored-bridge-export", "internal/agents/cursorcapturecodec", "hidden.go", "//go:build unavailable_profile\n\npackage cursorcapturecodec\nvar Reader any\n", false, false},
+		{"effectful-bridge-dependency", "internal/agents/cursorcapturecodec", "codec.go", "package cursorcapturecodec\nimport \"os\"\nfunc use(){os.Getwd()}\n", true, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			dir := filepath.Join(root, filepath.FromSlash(test.dir))
+			if err := os.MkdirAll(dir, 0700); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(dir, test.file)
+			if err := os.WriteFile(path, []byte(test.source), 0600); err != nil {
+				t.Fatal(err)
+			}
+			selected := map[string]bool{}
+			if test.selected {
+				selected[path] = true
+			}
+			err := captureOriginalAuthorityError(root, map[string]bool{dir: true}, selected)
+			if (err == nil) != test.allowed {
+				t.Fatal("codec original profile boundary changed", err)
 			}
 		})
 	}
