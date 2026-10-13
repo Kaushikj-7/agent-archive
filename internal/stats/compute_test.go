@@ -335,7 +335,7 @@ func TestSessionsBeforeParser014ArePricedAtTheMainModelAndFlagged(t *testing.T) 
 	// A tie on turns takes the model id that sorts first; no model at all is unpriced.
 	tied := meta("o2", "claude", day(time.September, 28, 10), parserVersion("0.13.0"),
 		usedModel("claude-sonnet-5-5", 3), usedModel("claude-opus-5-5", 3), tokens(1000, 0, 0, 0))
-	if id := mainModel(&tied); id != "claude-opus-5-5" {
+	if id := mainModel(&tied, NormalizeModel); id != "claude-opus-5-5" {
 		t.Fatalf("tie went to %q", id)
 	}
 	bare := meta("o3", "claude", day(time.September, 28, 10), parserVersion("0.13.0"), tokens(1000, 0, 0, 0))

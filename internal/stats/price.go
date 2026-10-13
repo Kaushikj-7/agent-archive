@@ -336,21 +336,6 @@ func (t PriceTable) Family(model string) (string, bool) {
 	return index.label(id), true
 }
 
-// price returns USD-like cost for tokens of one model, and whether the model
-// is priced.
-func (p priceIndex) price(model string, tokens tokenSet) (float64, bool) {
-	entry, ok := p[model]
-	if !ok {
-		return 0, false
-	}
-	const perMillion = 1e6
-	cost := float64(tokens.fresh)*entry.InputPerMTok +
-		float64(tokens.read)*entry.CacheReadPerMTok +
-		float64(tokens.write)*entry.CacheWritePerMTok +
-		float64(tokens.out)*entry.OutputPerMTok
-	return cost / perMillion, true
-}
-
 // label is the short name a model is grouped under in cost by model: its
 // price entry's family, or the normalized id when it is unpriced.
 func (p priceIndex) label(model string) string {
@@ -361,4 +346,13 @@ func (p priceIndex) label(model string) string {
 		return entry.ID
 	}
 	return model
+}
+
+func (entry ModelPrice) cost(tokens tokenSet) float64 {
+	const perMillion = 1e6
+	cost := float64(tokens.fresh)*entry.InputPerMTok +
+		float64(tokens.read)*entry.CacheReadPerMTok +
+		float64(tokens.write)*entry.CacheWritePerMTok +
+		float64(tokens.out)*entry.OutputPerMTok
+	return cost / perMillion
 }

@@ -77,7 +77,7 @@ func normalizedTokens(harness string, input, output, read, write, reasoning *int
 // "unknown". Without it, the session-wide counts are all attributed to the
 // session's main model and approximate is set. has is false when the session
 // reported no token count.
-func memberUsage(m *archive.Metadata) (byModel map[string]tokenSet, has, approximate bool) {
+func memberUsage(m *archive.Metadata, normalize func(string) string) (byModel map[string]tokenSet, has, approximate bool) {
 	harness := archive.CanonicalHarness(m.Harness.Name)
 	byModel = map[string]tokenSet{}
 	if len(m.ModelTokens) > 0 {
@@ -86,7 +86,7 @@ func memberUsage(m *archive.Metadata) (byModel map[string]tokenSet, has, approxi
 			if !ok {
 				continue
 			}
-			id := NormalizeModel(entry.Model)
+			id := normalize(entry.Model)
 			if id == "" {
 				id = archive.UnknownModel
 			}
@@ -102,21 +102,21 @@ func memberUsage(m *archive.Metadata) (byModel map[string]tokenSet, has, approxi
 	if !ok {
 		return byModel, false, false
 	}
-	byModel[mainModel(m)] = set
+	byModel[mainModel(m, normalize)] = set
 	return byModel, true, true
 }
 
 // mainModel is the model a session with no per-model split is priced at:
 // the one with the most turns (the lexically first on a tie), or "unknown"
 // when the session names no model.
-func mainModel(m *archive.Metadata) string {
+func mainModel(m *archive.Metadata, normalize func(string) string) string {
 	best, bestTurns := "", -1
 	for _, model := range m.Models {
 		id := model.Attributes["gen_ai.response.model"]
 		if strings.TrimSpace(id) == "" {
 			id = model.Attributes["gen_ai.request.model"]
 		}
-		id = NormalizeModel(id)
+		id = normalize(id)
 		if id == "" || id == "<synthetic>" {
 			continue
 		}

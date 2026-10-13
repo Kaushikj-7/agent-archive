@@ -11,7 +11,6 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/stats"
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
@@ -44,10 +43,10 @@ func statsWindowCycle(start int) (windows []int, index int) {
 // when the window changes: the sessions read once, and how to count them.
 type statsInputs struct {
 	mcpServerNames map[string]string
-	sessions       []archive.Metadata
+	prepared       *stats.Prepared
+	hasSessions    bool
 	now            time.Time
 	location       *time.Location
-	prices         stats.PriceTable
 	filters        statsFilters
 }
 
@@ -55,8 +54,8 @@ type statsInputs struct {
 // every project and skill (allRows); the web page keeps the engine's default
 // lists, as --html does.
 func (in statsInputs) compute(days int, allRows bool) stats.Stats {
-	return stats.Compute(in.sessions, stats.Options{
-		Now: in.now, Days: days, Location: in.location, PriceTable: in.prices, AllRows: allRows, MCPServerNames: in.mcpServerNames,
+	return in.prepared.Compute(stats.Options{
+		Now: in.now, Days: days, AllRows: allRows, MCPServerNames: in.mcpServerNames,
 	})
 }
 
@@ -421,7 +420,7 @@ func (b *statsBrowser) pageLines(width int) []string {
 	view := b.view
 	view.width = width
 	if s.Coverage.Sessions == 0 {
-		message := statsEmptyMessageWith(s, b.inputs.filters, len(b.inputs.sessions) > 0, " Press w for another window.")
+		message := statsEmptyMessageWith(s, b.inputs.filters, b.inputs.hasSessions, " Press w for another window.")
 		return strings.Split(view.wrap(message), "\n")
 	}
 	return renderPage(b.page, s, view)

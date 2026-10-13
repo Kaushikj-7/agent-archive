@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/stats"
 	"reflect"
 	"regexp"
 	"strconv"
@@ -209,7 +210,7 @@ func TestStatsUsageHintsListEveryRow(t *testing.T) {
 		page := mustRunStats(t, env, 100, "--no-cache", "--detail", "--days", "7", "--harness", "claude")
 		check(t, "the detail screen for 7 days", usageHints(page), n-statsMaxUseRows, "--json --all", "--days", "7", "--harness", "claude")
 	})
-	inputs := statsInputs{sessions: sessions, now: statsNow, location: statsNow.Location()}
+	inputs := statsInputs{hasSessions: len(sessions) > 0, prepared: stats.Prepare(sessions, stats.PrepareOptions{Location: statsNow.Location()}), now: statsNow, location: statsNow.Location()}
 	for _, days := range []int{7, 30, 90} {
 		t.Run(fmt.Sprintf("interactive %dd", days), func(t *testing.T) {
 			t.Parallel()
