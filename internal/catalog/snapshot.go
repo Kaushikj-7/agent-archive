@@ -205,12 +205,27 @@ func (s *Snapshot) readNode(ctx context.Context, ref ObjectRef) (node, error) {
 	if ref.Key == "" {
 		return node{}, nil
 	}
+	if work, ok := ctx.Value(pickerWorkKey{}).(*pickerWork); ok {
+		if err := work.node(); err != nil {
+			return node{}, err
+		}
+	}
 	s.cache.mu.Lock()
 	raw := append([]byte(nil), s.cache.bytes[ref]...)
 	s.cache.mu.Unlock()
 	if len(raw) == 0 {
 		var err error
-		raw, err = s.writer.readRef(ctx, ref, maxNodeBytes)
+		limit := int64(maxNodeBytes)
+		if work, ok := ctx.Value(pickerWorkKey{}).(*pickerWork); ok {
+			limit = min(limit, work.budget.Bytes-work.cost.Bytes)
+			if limit <= 0 {
+				return node{}, ErrPickerBudget
+			}
+		}
+		raw, err = s.writer.readRef(ctx, ref, limit)
+		if errors.Is(err, storage.ErrObjectTooLarge) && limit < maxNodeBytes {
+			return node{}, ErrPickerBudget
+		}
 		if err != nil {
 			return node{}, err
 		}
@@ -219,6 +234,11 @@ func (s *Snapshot) readNode(ctx context.Context, ref ObjectRef) (node, error) {
 	}
 	if err := s.check(ctx); err != nil {
 		return node{}, err
+	}
+	if work, ok := ctx.Value(pickerWorkKey{}).(*pickerWork); ok {
+		if err := work.bytes(len(raw)); err != nil {
+			return node{}, err
+		}
 	}
 	n, err := decodeNode(raw)
 	if err != nil {
@@ -544,6 +564,9 @@ func decodeRow(leaf item, index Index) (*Row, error) {
 		return nil, nil
 	}
 	key := leafSessionKey(entry)
+	if index == ProjectIndex && strings.HasPrefix(leaf.Key, "!picker/") && (entry.Picker == nil || entry.Picker.SessionKey != key || entry.Picker.Metadata != entry.Metadata || entry.Picker.Revision != entry.Revision) {
+		return nil, errors.New("picker envelope reference mismatch")
+	}
 	if key == "" || entry.Revision == "" || entry.Metadata.Key == "" {
 		return nil, errors.New("invalid catalog entry")
 	}
