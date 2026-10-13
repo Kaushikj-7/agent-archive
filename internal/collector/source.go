@@ -12,6 +12,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/cursorstore"
+	"github.com/wangjohn/agent-archive/internal/inspectioncache"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 	"github.com/wangjohn/agent-archive/internal/sourceio"
@@ -113,6 +114,8 @@ func newSourceReader(reg archive.SessionRegistration, opts Options) (sourceReade
 // providerReader keeps only read dependencies; boxing whole registrations and
 // collector options would allocate their unrelated policy fields per source.
 type providerReader struct {
+	inspectionCache         *inspectioncache.Cache
+	inspectionObservation   **inspectioncache.Observation
 	historicalSourceAllowed func(string) bool
 	pendingRollouts         func() agentapi.CodexRolloutLookup
 	resourceOwner           *sessionScan
@@ -321,9 +324,6 @@ func (r providerReader) filter(ctx context.Context, adapter archive.Adapter, max
 	if err = r.validateObservation(provider, observed.observation); err != nil {
 		return out, sourceState{}, err
 	}
-	if r.ref.Kind == archive.SourceKindFile {
-		transcriptFilters.Add(1)
-	}
 	in := snap.Input()
 	observed.binding, err = r.snapshotBinding(ctx, snap)
 	if err != nil {
@@ -342,13 +342,41 @@ func (r providerReader) filter(ctx context.Context, adapter archive.Adapter, max
 			c.Limits.ReadBudget = r.resourceOwner.readBudget()
 		}
 		var inspected agentapi.ImportSummary
-		inspected, err = streaming.InspectFilteredImport(ctx, in, c)
+		var cacheKey inspectioncache.Key
+		var content agentapi.VerifiedContentSnapshot
+		if r.inspectionCache != nil && r.harness == "codex" {
+			content, _ = snap.(agentapi.VerifiedContentSnapshot)
+			if content != nil {
+				if proof, proofErr := content.ContentProof(ctx); proofErr == nil {
+					cacheKey = inspectioncache.Key{Agent: r.harness, SourceIdentity: string(r.ref.Kind) + "\x00" + r.ref.Path + "\x00" + r.ref.Key, AdapterVersion: f.Version(), FilterVersion: archive.FilterVersion, InspectionVersion: 1, Proof: proof, RawBytes: limits.RawBytes, RecordBytes: limits.RecordBytes, FilteredBytes: maxBytes, Records: limits.Records}
+				}
+			}
+		}
+		cached := false
+		if cacheKey.Proof.Version != 0 {
+			inspected, cached = r.inspectionCache.Lookup(ctx, cacheKey)
+		}
+		if !cached {
+			if r.ref.Kind == archive.SourceKindFile {
+				transcriptFilters.Add(1)
+			}
+			inspected, err = streaming.InspectFilteredImport(ctx, in, c)
+		}
+		if err == nil && content != nil && cacheKey.Proof.Version != 0 {
+			err = content.VerifyContent(ctx)
+			if err == nil && !cached && inspected.Conversation && r.inspectionObservation != nil {
+				*r.inspectionObservation = &inspectioncache.Observation{Key: cacheKey, Summary: inspected}
+			}
+		}
 		if err == nil {
 			*summary = &inspected
 			out.NativeStartAt = inspected.NativeStartAt
 			out.Boundary = archive.CaptureBoundary{RetainedRecords: inspected.RetainedRecords, RetainedBytes: int(inspected.RetainedBytes)}
 		}
 	} else {
+		if r.ref.Kind == archive.SourceKindFile {
+			transcriptFilters.Add(1)
+		}
 		out, err = r.filterOwned(ctx, f, in, c)
 	}
 	if err != nil {

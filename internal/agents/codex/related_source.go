@@ -1727,12 +1727,16 @@ func originalProducerMatches(original *rolloutFile, admission agentapi.SourceAdm
 
 // ContentProof reuses the digest of the same ordinary boundary passed to filtering.
 func (s *ordinarySnapshot) ContentProof(ctx context.Context) (agentapi.SourceContentProof, error) {
- if err := s.VerifyContent(ctx); err != nil { return agentapi.SourceContentProof{}, err }
- return agentapi.SourceContentProof{Version: 1, Provider: "codex-ordinary", SHA256: s.digest, Boundary: s.length}, nil
+	if err := s.VerifyContent(ctx); err != nil {
+		return agentapi.SourceContentProof{}, err
+	}
+	return agentapi.SourceContentProof{Version: 1, Provider: "codex-ordinary", SHA256: s.digest, Boundary: s.length}, nil
 }
 
 // VerifyContent retains current descriptor, locator, selection and header checks.
 func (s *ordinarySnapshot) VerifyContent(ctx context.Context) error {
- if s.closed || s.owner.closed { return agentapi.ErrClosed }
- return s.check(ctx)
+	if s.closed || s.owner.closed {
+		return agentapi.ErrClosed
+	}
+	return s.check(ctx)
 }

@@ -18,6 +18,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/inspectioncache"
 	"github.com/wangjohn/agent-archive/internal/transcriptio"
 )
 
@@ -100,9 +101,10 @@ const maxBytesInFlight = 128 << 20
 
 // work is one transcript and the facts the plan decides its reason from.
 type work struct {
-	t   *transcript
-	c   Candidate
-	res resolution
+	inspectionObservation *inspectioncache.Observation
+	t                     *transcript
+	c                     Candidate
+	res                   resolution
 	// state is the archive's reason, from ArchiveState.
 	state SkipReason
 	// chat is a chat found only in Cursor's database, and messageFolders
@@ -717,6 +719,10 @@ func runAdapter(ctx context.Context, env Environment, w *work) {
 	}
 	defer func() {
 		w.checkSource(env)
+		if w.inspectionObservation != nil && env.ObserveInspection != nil && ctx.Err() == nil && w.validated && !w.empty && !w.unsafe && !w.sourceChanged && !w.vanished && !w.tooLarge && w.sourceErr == nil {
+			env.ObserveInspection(*w.inspectionObservation)
+		}
+		w.inspectionObservation = nil
 	}()
 	if env.Imports == nil {
 		w.unsafe = true

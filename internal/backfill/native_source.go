@@ -10,6 +10,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/collector"
+	"github.com/wangjohn/agent-archive/internal/inspectioncache"
 	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 	"github.com/wangjohn/agent-archive/internal/transcriptio"
 )
@@ -24,7 +25,7 @@ func filterImportSource(ctx context.Context, env Environment, w *work, started t
 	}
 	if string(w.t.harness) != "codex" || !w.c.NativeChild && !w.c.RelatedHistory || env.CodexRollouts == nil {
 		if inspect {
-			out, summary, err = collector.InspectSource(ctx, string(w.t.harness), ref, started, env.Sources)
+			out, summary, w.inspectionObservation, err = collector.InspectSourceCached(ctx, string(w.t.harness), ref, started, env.Sources, ordinaryInspectionCache(env, w))
 		} else {
 			out, _, err = collector.FilterSource(ctx, string(w.t.harness), ref, started, env.Sources)
 		}
@@ -123,4 +124,11 @@ func ownTaskRefusalCause(task agentapi.OwnTaskFacts, createdAt time.Time) agenta
 		}
 	}
 	return cause
+}
+
+func ordinaryInspectionCache(env Environment, w *work) *inspectioncache.Cache {
+	if w.c.NativeChild || w.c.RelatedHistory {
+		return nil
+	}
+	return env.InspectionCache
 }
