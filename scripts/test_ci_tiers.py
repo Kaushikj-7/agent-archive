@@ -237,7 +237,7 @@ class ExecutionPlanTest(unittest.TestCase):
         self.assertEqual(sum(enabled=='1' for _,enabled in calls),2)
 
     def test_full_verdict_rejects_missing_artifact_source_and_incomplete_empty_extra(self):
-        with tempfile.TemporaryDirectory() as d,mock.patch.dict(os.environ,{'GITHUB_SHA':'a'*40}):
+        with tempfile.TemporaryDirectory() as d,mock.patch.dict(os.environ,{'GITHUB_SHA':'a'*40,'GITHUB_EVENT_NAME':'local','GITHUB_REF':'','CI_SCHEDULE':''}):
             directory=Path(d);plan={'source':'a'*40,'packages':[],'native':False,'systemd':False,'fuzz':False,'purge':False}
             with self.assertRaises(FileNotFoundError):tier.verify_full(directory,plan)
             proof={'schema':1,'source':'a'*40,'tier':'full','suite':'extra','success':True,'extras':plan,'invocations':[], 'event':'local','ref':'','schedule':''}
@@ -338,8 +338,19 @@ class FullRaceTest(unittest.TestCase):
 
     def verify(self, directory, report, restorations=None):
         (directory/'tier.json').write_text(json.dumps(report))
-        with mock.patch.dict(os.environ,{'GITHUB_SHA':'a'*40}),mock.patch.object(tier.full_race,'source_proof',return_value={'source':'a'*40,'tree':'b'*40}),mock.patch.object(tier,'catalog',return_value={'restorations':restorations or []}),contextlib.redirect_stdout(io.StringIO()):
+        with mock.patch.dict(os.environ,{'GITHUB_SHA':'a'*40,'GITHUB_EVENT_NAME':'local','GITHUB_REF':'','CI_SCHEDULE':''}),mock.patch.object(tier.full_race,'source_proof',return_value={'source':'a'*40,'tree':'b'*40}),mock.patch.object(tier,'catalog',return_value={'restorations':restorations or []}),contextlib.redirect_stdout(io.StringIO()):
             tier.verify_full(directory,report['extras'])
+
+    def test_verdict_fixture_isolates_hosted_workflow_identity(self):
+        hosted={'GITHUB_SHA':'c'*40,'GITHUB_EVENT_NAME':'pull_request','GITHUB_REF':'refs/pull/493/merge','CI_SCHEDULE':'17 8 * * 0'}
+        with tempfile.TemporaryDirectory() as d,mock.patch.dict(os.environ,hosted):
+            directory=Path(d);report=self.fixture(directory)
+            self.verify(directory,report)
+            for key,value in hosted.items():self.assertEqual(os.environ[key],value)
+            # Fixture isolation must not allow a forged report identity.
+            for key,value in [('event','push'),('ref','refs/heads/foreign'),('schedule','foreign')]:
+                bad=copy.deepcopy(report);bad[key]=value
+                with self.subTest(key=key),self.assertRaises(tier.Failure):self.verify(directory,bad)
 
     def test_partition_preserves_colliding_package_names_and_new_fuzz_examples(self):
         with tempfile.TemporaryDirectory() as d:

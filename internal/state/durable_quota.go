@@ -14,6 +14,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/stateerrors"
 )
 
 const durableStorageQuota int64 = 1 << 30
@@ -26,7 +27,7 @@ const durableEntryLimit = 65536
 var ErrDurableStorageCapacity = errors.New("durable publication capacity exhausted; finish pending publication or recover retained evidence before retrying")
 
 // ErrDurableStorageRecovery preserves unknown or damaged obligations without native substitution.
-var ErrDurableStorageRecovery = errors.New("durable publication evidence requires recovery; native substitution and automatic cleanup are forbidden")
+var ErrDurableStorageRecovery = stateerrors.ErrDurableStorageRecovery
 
 type durableRootPath string
 

@@ -21,18 +21,18 @@ const (
 	historicalProjectDisable historicalProjectAction = "disable"
 )
 
-func runHistoricalProjects(args []string, stdout, stderr io.Writer, env Env) int {
-	fs := env.newCommandFlags("historical-project", stderr)
+func runBackfillProjects(args []string, stdout, stderr io.Writer, env Env) int {
+	fs := env.newCommandFlags("backfill projects", stderr)
 	if !fs.parse(args) {
 		return 2
 	}
 	args = fs.Args()
 	fail := func(message string) int {
-		terminal.Printf(stderr, "agent-archive: historical-project: %s\n", message)
+		terminal.Printf(stderr, "agent-archive: backfill projects: %s\n", message)
 		return 1
 	}
 	if !validHistoricalArguments(args) {
-		terminal.Println(stderr, "agent-archive: historical-project: use list, rename ID LABEL, enable ID, or disable ID with an exact project ID and bounded plain-text label")
+		terminal.Println(stderr, "agent-archive: backfill projects: use list, rename ID LABEL, enable ID, or disable ID with an exact project ID and bounded plain-text label")
 		return 2
 	}
 	action := historicalProjectAction(args[0])
@@ -69,7 +69,7 @@ func runHistoricalProjects(args []string, stdout, stderr io.Writer, env Env) int
 		return fail("setup or another settings operation is running; retry")
 	}
 	defer releaseSetup()
-	releaseCollector, err := lockCollector(home, "historical-project", env.now())
+	releaseCollector, err := lockCollector(home, "backfill projects", env.now())
 	if err != nil {
 		return fail("collector is running; retry")
 	}

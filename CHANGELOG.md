@@ -43,10 +43,12 @@ follow [Semantic Versioning](https://semver.org/).
 - Show planning progress during backfill and setup's recent-session import:
   a running count of sessions found, then completed/total counts and a percentage
   while checking sessions. Each step is named on live terminals.
+- Move historical project controls to `backfill projects list|rename|enable|disable`
+  and remove the top-level `historical-project` command.
 - Import complete sessions from vanished repositories into stable historical-only
   projects with bounded `backfill --mapping-file` assignments. Historical imports
   freeze filtered evidence without adding live capture roots. Rename or disable
-  their destination-bound permission with `historical-project`; pairing preserves
+  their destination-bound permission with `backfill projects`; pairing preserves
   local policy. Native deletion, privacy/parser maintenance, retention and exact
   undo keep ownership and capture age. A permanent v10 fence refuses older writers.
 - Validate original Codex thread cwd and producer facts independently of selected
