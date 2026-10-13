@@ -28,7 +28,7 @@ Unreadable native activity retains archive-only eligibility except under
 native labels only in auto/local mode.
 
 The union order is effective activity descending, then archived provenance:
-original archive activity, capture and physical session key; archive-associated
+original archive activity, capture, raw harness and session ID; archive-associated
 rows precede local-only rows at equal activity. Local-only ties use registration
 ordinal. Local presentation capture times never replace archive tie provenance.
 Remote pages keep their unconsumed buffer and cursor. Per-operation refill is

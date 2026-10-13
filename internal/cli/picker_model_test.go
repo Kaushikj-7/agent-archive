@@ -440,3 +440,17 @@ func TestPickerModelScopeContinuationsAndRefreshActivity(t *testing.T) {
 		t.Fatalf("refresh failed to observe activity/read new safe labels: %+v %v reads=%d", v, err, reads)
 	}
 }
+
+func TestPickerModelRawSessionPrefixTieOrder(t *testing.T) {
+	active := time.Unix(100, 0)
+	candidates := []pickerCandidate{}
+	for _, id := range []string{"a-b", "a"} {
+		key, _ := archive.MetadataObjectKey("codex", id)
+		item := catalog.PickerItem{Row: catalog.PickerRow{SessionKey: key, SessionID: id, Harness: "codex", Activity: active, CapturedAt: active}}
+		candidates = append(candidates, pickerCandidate{item: &item, row: handoffPickerRow{active: active}})
+	}
+	sort.Slice(candidates, func(i, j int) bool { return pickerCandidateBefore(candidates[i], candidates[j]) })
+	if candidates[0].item.Row.SessionID != "a" {
+		t.Fatal("physical path slash replaced raw session tie order")
+	}
+}

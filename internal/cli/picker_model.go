@@ -157,7 +157,10 @@ func pickerCandidateBefore(a, b pickerCandidate) bool {
 		if !ar.CapturedAt.Equal(br.CapturedAt) {
 			return ar.CapturedAt.After(br.CapturedAt)
 		}
-		return ar.SessionKey < br.SessionKey
+		if ar.Harness != br.Harness {
+			return ar.Harness < br.Harness
+		}
+		return ar.SessionID < br.SessionID
 	}
 	return a.ordinal < b.ordinal
 }
