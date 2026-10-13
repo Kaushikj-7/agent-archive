@@ -52,8 +52,26 @@ The stable `linux-full` job now succeeds on PRs with actual full extra bodies or
 an explicit empty selection, whose evidence says no full bodies ran. The stable
 `linux-race` verdict requires this evidence and the native check as well as both
 representative shards and Python gates. An empty extra plan does not install Go.
-Candidates run an unsharded full Linux race suite, plain full-size performance
-assertions and vet.
+Candidates run exhaustive full Linux race coverage, plain full-size performance
+assertions and vet. Full Linux and native macOS coverage discovers every selected
+package and compiled Test/Fuzz/Example parent on the tested source. The CLI's
+parents are balanced into two sequential exhaustive partitions using advisory
+timing hints; new names receive the ordinary positive default. The first Go
+invocation retains ordinary package concurrency and excludes only names exclusive
+to the CLI that belong to the second partition. Names shared by another package
+always run in the first invocation. The second invocation runs the CLI complement,
+including every descendant and fuzz seed. This bounds cumulative CLI process
+work without changing any individual test's ordinary deadline.
+
+Full artifacts retain raw package discovery, compiled listings, canonical commands,
+disjoint assignments and actual parent/child terminals. Execution and the required
+verdict check their complete union, restored full-size children, tracked source
+bytes/types/modes and exact source/event/plan. Missing bodies, unexpected packages,
+weakened flags, duplicate assignments and incomplete streams fail. Each invocation
+keeps race, count=1 and the 20-minute package timeout; discovery, both partitions
+and the existing performance/systemd/fuzz obligations share the original supervisor
+and job budgets. These full partitions are separate from the representative PR
+short shards. A split is scheduling evidence, not permission to omit coverage.
 The runner's shared 25-minute deadline includes discovery and tests; cancellation
 and failure stop and reap both test process groups. CLI listing invokes TestMain
 before execution, and both shards have independent TestMain initialization and
