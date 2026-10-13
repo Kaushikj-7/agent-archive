@@ -56,7 +56,7 @@ func TestStatsConfiguredMCPNamesAcrossOutputsAndWindows(t *testing.T) {
 	if !found {
 		t.Fatal("JSON lost the server identity or count")
 	}
-	in := statsInputs{sessions: []archive.Metadata{syntheticSession{id: "window", harness: "claude", captured: statsNow, mcp: map[string]int{id: 60}}.build()}, now: statsNow, mcpServerNames: cfg.MCPServerNames}
+	in := statsInputs{hasSessions: true, prepared: stats.Prepare([]archive.Metadata{syntheticSession{id: "window", harness: "claude", captured: statsNow, mcp: map[string]int{id: 60}}.build()}, stats.PrepareOptions{}), now: statsNow, mcpServerNames: cfg.MCPServerNames}
 	for _, days := range []int{7, 30, 90} {
 		if s := in.compute(days, true); s.MCP.Servers[0].Label() != "GitHub" {
 			t.Fatalf("alias lost switching to %d days", days)

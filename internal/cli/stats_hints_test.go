@@ -173,7 +173,7 @@ func TestStatsAllInHintsOnTheInteractiveScreen(t *testing.T) {
 		s.publish(t, mem)
 		sessions = append(sessions, s.build())
 	}
-	inputs := statsInputs{sessions: sessions, now: statsNow, location: statsNow.Location()}
+	inputs := statsInputs{hasSessions: len(sessions) > 0, prepared: stats.Prepare(sessions, stats.PrepareOptions{Location: statsNow.Location()}), now: statsNow, location: statsNow.Location()}
 	for _, tc := range []struct {
 		view    string
 		command string

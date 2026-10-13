@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/stats"
 	"regexp"
 	"slices"
 	"strings"
@@ -187,13 +188,14 @@ func TestStatsInteractiveWindowsEqualStaticRunsForEveryShape(t *testing.T) {
 				for _, start := range []int{7, 14, 200} {
 					windows, _ := statsWindowCycle(start)
 					shared := fetched(metas, now, loc, windows)
+					prepared := stats.Prepare(shared, stats.PrepareOptions{Location: loc})
 					for _, days := range windows {
 						alone := fetched(metas, now, loc, []int{days})
-						got, err := json.Marshal(statsInputs{sessions: shared, now: now, location: loc}.compute(days, true))
+						got, err := json.Marshal(statsInputs{hasSessions: len(shared) > 0, prepared: prepared, now: now, location: loc}.compute(days, true))
 						if err != nil {
 							t.Fatal(err)
 						}
-						want, err := json.Marshal(statsInputs{sessions: alone, now: now, location: loc}.compute(days, true))
+						want, err := json.Marshal(statsInputs{hasSessions: len(alone) > 0, prepared: stats.Prepare(alone, stats.PrepareOptions{Location: loc}), now: now, location: loc}.compute(days, true))
 						if err != nil {
 							t.Fatal(err)
 						}
@@ -201,7 +203,7 @@ func TestStatsInteractiveWindowsEqualStaticRunsForEveryShape(t *testing.T) {
 							t.Fatalf("%s %s at %v: window %d read for the cycle from %d differs from a static --days %d:\n%s\n---- static:\n%s", zone, shape.name, now, days, start, days, got, want)
 						}
 						if shape.name == "old descendants of recent roots" {
-							complete, err := json.Marshal(statsInputs{sessions: metas, now: now, location: loc}.compute(days, true))
+							complete, err := json.Marshal(statsInputs{hasSessions: len(metas) > 0, prepared: stats.Prepare(metas, stats.PrepareOptions{Location: loc}), now: now, location: loc}.compute(days, true))
 							if err != nil || string(got) != string(complete) {
 								t.Fatalf("%s window %d: old descendants differ from complete engine accounting: %v", zone, days, err)
 							}
@@ -275,7 +277,7 @@ func hostileInputs() statsInputs {
 			}.build())
 		}
 	}
-	return statsInputs{sessions: sessions, now: statsNow, location: statsNow.Location()}
+	return statsInputs{hasSessions: len(sessions) > 0, prepared: stats.Prepare(sessions, stats.PrepareOptions{Location: statsNow.Location()}), now: statsNow, location: statsNow.Location()}
 }
 
 // Whatever the terminal's size and however hostile the names, every frame is

@@ -74,13 +74,13 @@ func costliestSession(current []*unit) *CostliestSession {
 		return nil
 	}
 	var perMessage *int64
-	if best.rootHasData && best.root.Counts.Messages != nil && *best.root.Counts.Messages > 0 {
-		avg := best.rootTokens.inputSide() / int64(*best.root.Counts.Messages)
+	if best.rootHasData && best.messages > 0 {
+		avg := best.rootTokens.inputSide() / int64(best.messages)
 		perMessage = &avg
 	}
 	hitRate := cacheHitRate(&best.tokens)
 	drivers := []string{}
-	compacted := best.root.Counts.Compactions != nil && *best.root.Counts.Compactions > 0
+	compacted := best.compacted
 	if compacted || (perMessage != nil && *perMessage >= LongContextTokensPerMessage) {
 		drivers = append(drivers, DriverLongContext)
 	}
@@ -91,8 +91,8 @@ func costliestSession(current []*unit) *CostliestSession {
 		drivers = append(drivers, DriverLowCacheHit)
 	}
 	return &CostliestSession{
-		SessionID: best.root.SessionID, Harness: best.harness, Project: best.project,
-		Cost: best.cost.cost(), Tokens: best.tokens.total(), Subagents: len(best.children),
+		SessionID: best.sessionID, Harness: best.harness, Project: best.project,
+		Cost: best.cost.cost(), Tokens: best.tokens.total(), Subagents: best.subagentCount,
 		Drivers: drivers, CacheHitRate: hitRate, AvgInputPerMessage: perMessage,
 	}
 }

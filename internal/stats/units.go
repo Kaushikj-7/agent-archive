@@ -14,10 +14,15 @@ import (
 // its subagent sessions rolled in. Everything the engine aggregates is
 // computed here once.
 type unit struct {
-	root     *archive.Metadata
-	children []*archive.Metadata
-	harness  string
-	project  string
+	root          *archive.Metadata
+	capturedAt    time.Time
+	sessionID     string
+	messages      int
+	compacted     bool
+	subagentCount int
+	children      []*archive.Metadata
+	harness       string
+	project       string
 
 	// day is the root's captured_at day as a day number in the window's
 	// zone (see dayNumber); month is year*12 + month - 1.
@@ -51,9 +56,11 @@ type unit struct {
 }
 
 type modelUse struct {
-	id   string
-	set  tokenSet
-	cost costAcc
+	id     string
+	set    tokenSet
+	cost   costAcc
+	label  string
+	priced bool
 }
 
 // buildUnits groups metadata into units, ordered by the root's captured_at
@@ -86,8 +93,9 @@ func buildUnits(sessions []archive.Metadata, loc *time.Location, prices priceInd
 			u.children = append(u.children, m)
 		}
 	}
+	lookup := &modelLookup{prices: prices, normalized: map[string]string{}, entries: map[string]modelPriceLookup{}}
 	for _, u := range ordered {
-		u.finish(loc, prices)
+		u.finish(loc, lookup)
 	}
 	sort.SliceStable(ordered, func(i, j int) bool { return metadataBefore(ordered[i].root, ordered[j].root) })
 	return ordered
@@ -205,8 +213,15 @@ func (u *unit) members() []*archive.Metadata {
 }
 
 // finish computes everything derived from the unit's members.
-func (u *unit) finish(loc *time.Location, prices priceIndex) {
+func (u *unit) finish(loc *time.Location, lookup *modelLookup) {
 	root := u.root
+	u.capturedAt = root.CapturedAt
+	u.sessionID = root.SessionID
+	if root.Counts.Messages != nil {
+		u.messages = *root.Counts.Messages
+	}
+	u.compacted = root.Counts.Compactions != nil && *root.Counts.Compactions > 0
+	u.subagentCount = len(u.children)
 	u.harness = archive.CanonicalHarness(root.Harness.Name)
 	u.project = strings.TrimSpace(root.ProjectName)
 	captured := root.CapturedAt.In(loc)
@@ -222,7 +237,7 @@ func (u *unit) finish(loc *time.Location, prices priceIndex) {
 	u.mcp = map[string]int64{}
 	merged := map[string]tokenSet{}
 	for i, m := range u.members() {
-		byModel, has, approximate := memberUsage(m)
+		byModel, has, approximate := memberUsage(m, lookup.normalize)
 		var memberTotal tokenSet
 		for id, set := range byModel {
 			all := merged[id]
@@ -254,8 +269,10 @@ func (u *unit) finish(loc *time.Location, prices priceIndex) {
 		}
 	}
 	for _, id := range sortedModels(merged) {
-		use := modelUse{id: id, set: merged[id]}
-		if usd, ok := prices.price(id, use.set); ok {
+		entry := lookup.price(id)
+		use := modelUse{id: id, set: merged[id], label: entry.label, priced: entry.priced}
+		if entry.priced {
+			usd := entry.entry.cost(use.set)
 			use.cost = costAcc{usd: usd, priced: true, approximate: u.approximate}
 		} else {
 			use.cost = costAcc{unpriced: use.set.total(), approximate: u.approximate}

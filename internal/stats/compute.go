@@ -16,6 +16,7 @@ package stats
 
 import (
 	"math"
+	"slices"
 	"sort"
 	"time"
 
@@ -25,10 +26,13 @@ import (
 // Compute derives Stats from session metadata. See Stats for what counts as a
 // session and how the window is bounded, and Options for the knobs.
 func Compute(sessions []archive.Metadata, opts Options) Stats {
-	loc := opts.Location
-	if loc == nil {
-		loc = time.Local
-	}
+	return Prepare(sessions, PrepareOptions{Location: opts.Location, PriceTable: opts.PriceTable}).Compute(opts)
+}
+
+// Compute derives a window from the prepared snapshot. Location and PriceTable
+// in opts are ignored; prepare again to change either. Concurrent calls are safe.
+func (p *Prepared) Compute(opts Options) Stats {
+	loc, table, units := p.location, p.table, p.units
 	days := opts.Days
 	if days <= 0 {
 		days = DefaultDays
@@ -41,21 +45,11 @@ func Compute(sessions []archive.Metadata, opts Options) Stats {
 	if opts.AllRows {
 		topN = math.MaxInt
 	}
-	table := opts.PriceTable
-	if table.Version == "" && len(table.Models) == 0 {
-		table = DefaultPriceTable()
-	}
-	if table.Currency == "" {
-		table.Currency = "USD" // as ParsePriceTable defaults it
-	}
-	prices := table.index()
-
-	units := buildUnits(sessions, loc, prices)
 	now := opts.Now
 	if now.IsZero() && len(units) > 0 {
 		for _, u := range units {
-			if u.root.CapturedAt.After(now) {
-				now = u.root.CapturedAt
+			if u.capturedAt.After(now) {
+				now = u.capturedAt
 			}
 		}
 	}
@@ -92,7 +86,7 @@ func Compute(sessions []archive.Metadata, opts Options) Stats {
 
 	dailySeries, peak, peakSpend := daily(perDay, first)
 	topProjects, projectCount := projects(current, topN)
-	modelRows := models(current, prices)
+	modelRows := models(current)
 	var grouped *Groups
 	if opts.By != GroupNone {
 		grouped = groups(current, opts.By)
@@ -114,7 +108,7 @@ func Compute(sessions []archive.Metadata, opts Options) Stats {
 			PreviousFrom: startOfDay(first-days, loc), PreviousTo: startOfDay(first, loc),
 		},
 		Prices: PriceInfo{
-			Version: table.Version, AsOf: table.AsOf, Currency: table.Currency, Sources: table.Sources,
+			Version: table.Version, AsOf: table.AsOf, Currency: table.Currency, Sources: slices.Clone(table.Sources),
 			Notes: table.Notes, Overridden: table.Overridden,
 		},
 		Coverage:      cov,
@@ -160,7 +154,7 @@ func coverage(current []*unit) Coverage {
 		if u.toolMembersKnown == 0 {
 			cov.SessionsWithoutToolErrors++
 		}
-		cov.SubagentSessions += len(u.children)
+		cov.SubagentSessions += u.subagentCount
 		if u.orphan {
 			cov.OrphanSubagents++
 		}
@@ -316,12 +310,12 @@ type modelAcc struct {
 	priced   bool
 }
 
-func models(current []*unit, prices priceIndex) []ModelRow {
+func models(current []*unit) []ModelRow {
 	byLabel := map[string]*modelAcc{}
 	for _, u := range current {
 		seen := map[string]bool{}
 		for _, use := range u.perModel {
-			label := prices.label(use.id)
+			label := use.label
 			acc := byLabel[label]
 			if acc == nil {
 				acc = &modelAcc{models: map[string]struct{}{}}
@@ -330,8 +324,7 @@ func models(current []*unit, prices priceIndex) []ModelRow {
 			acc.models[use.id] = struct{}{}
 			acc.tokens = satAdd(acc.tokens, use.set.total())
 			acc.cost.add(use.cost)
-			_, priced := prices[use.id]
-			acc.priced = acc.priced || priced
+			acc.priced = acc.priced || use.priced
 			if !seen[label] {
 				seen[label] = true
 				acc.sessions++
