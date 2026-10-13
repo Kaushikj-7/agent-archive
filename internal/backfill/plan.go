@@ -743,7 +743,8 @@ func runAdapter(ctx context.Context, env Environment, w *work) {
 		freshStart = created.UTC()
 		w.c.StartedAt, w.c.StartedAtSource = freshStart, archive.StartedAtSourceFileCreated
 	}
-	filtered, release, err := filterImportSource(ctx, env, w, freshStart)
+	summaryInspector, supportsSummary := inspector.(agentapi.SummaryImportInspector)
+	filtered, summary, release, err := filterImportSource(ctx, env, w, freshStart, supportsSummary && summaryInspector.SupportsImportSummary())
 	defer release()
 	if err != nil {
 		if fatalSourceFailure(err) {
@@ -772,11 +773,28 @@ func runAdapter(ctx context.Context, env Environment, w *work) {
 		}
 		return
 	}
-	applyImportInspection(ctx, inspector, w, filtered)
+	if summary != nil {
+		observed, err := summaryInspector.InspectImportSummary(ctx, importInspectionRequest(w), *summary)
+		applyImportFacts(w, observed, err)
+	} else {
+		applyImportInspection(ctx, inspector, w, filtered)
+	}
 }
 
 func applyImportInspection(ctx context.Context, inspector agentapi.ImportInspector, w *work, filtered archive.FilteredTranscript) {
-	observed, err := inspector.InspectImport(ctx, agentapi.ImportInspectionRequest{Session: agentapi.NativeSession{Agent: agentmeta.ID(w.t.harness), NativeID: w.t.nativeID}, Source: agentapi.SourceRef{Kind: w.c.SourceKind, Path: w.t.path, Key: w.c.SourceKey}, Header: agentapi.NativeHeader{NativeID: w.t.nativeID, Directory: w.t.cwd, StartedAt: w.t.metaStart}, Filtered: filtered})
+	observed, err := inspector.InspectImport(ctx, importInspectionRequest(w, filtered))
+	applyImportFacts(w, observed, err)
+}
+
+func importInspectionRequest(w *work, filtered ...archive.FilteredTranscript) agentapi.ImportInspectionRequest {
+	var retained archive.FilteredTranscript
+	if len(filtered) > 0 {
+		retained = filtered[0]
+	}
+	return agentapi.ImportInspectionRequest{Session: agentapi.NativeSession{Agent: agentmeta.ID(w.t.harness), NativeID: w.t.nativeID}, Source: agentapi.SourceRef{Kind: w.c.SourceKind, Path: w.t.path, Key: w.c.SourceKey}, Header: agentapi.NativeHeader{NativeID: w.t.nativeID, Directory: w.t.cwd, StartedAt: w.t.metaStart}, Filtered: retained}
+}
+
+func applyImportFacts(w *work, observed agentapi.ImportInspection, err error) {
 	if err != nil {
 		w.unsafe = true
 		return
