@@ -49,10 +49,10 @@ type ImportsLookup interface {
 // ImportSummary contains bounded intrinsic observations from complete filtering.
 // It neither grants native admission nor supplies current header preference.
 type ImportSummary struct {
-	Conversation    bool
-	NativeStartAt   time.Time
-	RetainedBytes   int64
-	RetainedRecords int
+	Conversation    bool      `json:"Conversation"`
+	NativeStartAt   time.Time `json:"NativeStartAt"`
+	RetainedBytes   int64     `json:"RetainedBytes"`
+	RetainedRecords int       `json:"RetainedRecords"`
 }
 
 // StreamingImportFilter optionally inspects safe rows without retaining them.

@@ -210,10 +210,10 @@ var ErrHistorySourceExcluded = errors.New("required history source is excluded")
 // SourceContentProof identifies exactly the captured bytes owned by a live snapshot.
 // It supplies equality facts and never grants capture or import admission.
 type SourceContentProof struct {
-	Version  uint8
-	Provider string
-	SHA256   [32]byte
-	Boundary int64
+	Version  uint8    `json:"Version"`
+	Provider string   `json:"Provider"`
+	SHA256   [32]byte `json:"SHA256"`
+	Boundary int64    `json:"Boundary"`
 }
 
 // VerifiedContentSnapshot exposes provider-owned content equality while its

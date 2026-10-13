@@ -119,6 +119,14 @@ func TestVerifiedInspectionCacheRejectsSameSizeRestoredTimeRewrite(t *testing.T)
 	}
 }
 
+type cacheInspectionOverride string
+
+const (
+	cacheFilterOverride              cacheInspectionOverride = "filter"
+	cacheInspectorOverride           cacheInspectionOverride = "inspector"
+	cacheConfiguredInspectorOverride cacheInspectionOverride = "configured-inspector"
+)
+
 func TestWarmInspectionCachePreservesActualFilterAndInspectorOverrides(t *testing.T) {
 	tr := newTree(t)
 	repo := tr.repo("home/repo")
@@ -136,16 +144,16 @@ func TestWarmInspectionCachePreservesActualFilterAndInspectorOverrides(t *testin
 	if err := cache.StoreBatch(t.Context(), observations); err != nil {
 		t.Fatal(err)
 	}
-	for _, override := range []string{"filter", "inspector", "configured-inspector"} {
-		t.Run(override, func(t *testing.T) {
+	for _, override := range []cacheInspectionOverride{cacheFilterOverride, cacheInspectorOverride, cacheConfiguredInspectorOverride} {
+		t.Run(string(override), func(t *testing.T) {
 			env := tr.env()
 			var calls atomic.Int64
 			switch override {
-			case "filter":
+			case cacheFilterOverride:
 				env.Sources = retainedInspectionSources{env.Sources, &calls}
-			case "inspector":
+			case cacheInspectorOverride:
 				env.Imports = decoratedImports{env.Imports, &calls}
-			case "configured-inspector":
+			case cacheConfiguredInspectorOverride:
 				env.Imports = configuredImports{env.Imports}
 			}
 			want := plan(t, env, nil, config.Config{}, Filters{})
@@ -158,7 +166,7 @@ func TestWarmInspectionCachePreservesActualFilterAndInspectorOverrides(t *testin
 			if !reflect.DeepEqual(got, want) || after.Hits != before.Hits || len(observed) != 0 {
 				t.Fatalf("override bypassed: got=%+v want=%+v hits=%d observations=%d", got, want, after.Hits-before.Hits, len(observed))
 			}
-			if override != "configured-inspector" && calls.Load() != 2 {
+			if override != cacheConfiguredInspectorOverride && calls.Load() != 2 {
 				t.Fatalf("actual override calls = %d", calls.Load())
 			}
 		})

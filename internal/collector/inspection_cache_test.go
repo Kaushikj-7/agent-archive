@@ -71,11 +71,12 @@ func TestContentVerifiedWarmInspectionSkipsAllScansAndChangedFileScansOnce(t *te
 }
 
 type cacheFaultSources struct {
-	base                     agentapi.SourcesLookup
-	verify                   func() error
-	snapshotClose, passClose error
-	readFailure              error
-	proofFailure             error
+	base          agentapi.SourcesLookup
+	verify        func() error
+	snapshotClose error
+	passClose     error
+	readFailure   error
+	proofFailure  error
 }
 
 func (s cacheFaultSources) LookupSources(name string) (agentapi.SourceProvider, agentapi.TranscriptFilter, bool) {
@@ -115,6 +116,7 @@ func (p cacheFaultPass) Read(ctx context.Context, ref agentapi.SourceRef, limits
 	}
 	return cacheFaultSnapshot{snapshot, proof, p.faults}, nil
 }
+
 func (p cacheFaultPass) Close() error { return errors.Join(p.SourcePass.Close(), p.faults.passClose) }
 
 type cacheFaultSnapshot struct {
@@ -129,6 +131,7 @@ func (s cacheFaultSnapshot) ContentProof(ctx context.Context) (agentapi.SourceCo
 	}
 	return s.proof.ContentProof(ctx)
 }
+
 func (s cacheFaultSnapshot) VerifyContent(ctx context.Context) error {
 	if s.faults.verify != nil {
 		if err := s.faults.verify(); err != nil {
@@ -137,13 +140,28 @@ func (s cacheFaultSnapshot) VerifyContent(ctx context.Context) error {
 	}
 	return s.proof.VerifyContent(ctx)
 }
+
 func (s cacheFaultSnapshot) Close() error {
 	return errors.Join(s.SourceSnapshot.Close(), s.faults.snapshotClose)
 }
 
+type cacheFaultKind string
+
+const (
+	cacheSnapshotClose       cacheFaultKind = "snapshot-close"
+	cachePassClose           cacheFaultKind = "pass-close"
+	cacheChangedAfterHit     cacheFaultKind = "change-after-hit"
+	cacheCancelledAfterHit   cacheFaultKind = "cancel-after-hit"
+	cachePermissionBeforeHit cacheFaultKind = "permission-before-hit"
+	cacheMissingBeforeHit    cacheFaultKind = "missing-before-hit"
+	cacheReplacedAfterHit    cacheFaultKind = "replace-after-hit"
+	cachePermissionAfterHit  cacheFaultKind = "permission-after-hit"
+	cacheProofFailure        cacheFaultKind = "proof-failure"
+)
+
 func TestCacheNeverEmitsAfterProviderCleanupFailureAndRechecksHitContent(t *testing.T) {
-	for _, fault := range []string{"snapshot-close", "pass-close", "change-after-hit", "cancel-after-hit", "permission-before-hit", "missing-before-hit", "replace-after-hit", "permission-after-hit", "proof-failure"} {
-		t.Run(fault, func(t *testing.T) {
+	for _, fault := range []cacheFaultKind{cacheSnapshotClose, cachePassClose, cacheChangedAfterHit, cacheCancelledAfterHit, cachePermissionBeforeHit, cacheMissingBeforeHit, cacheReplacedAfterHit, cachePermissionAfterHit, cacheProofFailure} {
+		t.Run(string(fault), func(t *testing.T) {
 			dir := t.TempDir()
 			id := "00000000-0000-4000-8000-000000000001"
 			ref := agentapi.SourceRef{Kind: archive.SourceKindFile, Path: filepath.Join(dir, "rollout-"+id+".jsonl"), Key: id}
@@ -156,13 +174,13 @@ func TestCacheNeverEmitsAfterProviderCleanupFailureAndRechecksHitContent(t *test
 			defer cancel()
 			faults := cacheFaultSources{base: testSources}
 			switch fault {
-			case "proof-failure":
+			case cacheProofFailure:
 				faults.proofFailure = agentapi.Wrap(agentapi.Unavailable, errors.New("synthetic transient proof failure"))
-			case "snapshot-close":
+			case cacheSnapshotClose:
 				faults.snapshotClose = agentapi.Wrap(agentapi.Cleanup, errors.New("synthetic snapshot close"))
-			case "pass-close":
+			case cachePassClose:
 				faults.passClose = agentapi.Wrap(agentapi.Cleanup, errors.New("synthetic pass close"))
-			case "change-after-hit", "cancel-after-hit", "permission-before-hit", "missing-before-hit", "replace-after-hit", "permission-after-hit":
+			case cacheChangedAfterHit, cacheCancelledAfterHit, cachePermissionBeforeHit, cacheMissingBeforeHit, cacheReplacedAfterHit, cachePermissionAfterHit:
 				_, _, observed, err := InspectSourceCached(ctx, "codex", ref, time.Time{}, testSources, cache)
 				if err != nil || observed == nil {
 					t.Fatalf("prime: %+v %v", observed, err)
@@ -170,9 +188,10 @@ func TestCacheNeverEmitsAfterProviderCleanupFailureAndRechecksHitContent(t *test
 				if err := cache.StoreBatch(ctx, []inspectioncache.Observation{*observed}); err != nil {
 					t.Fatal(err)
 				}
-				if fault == "permission-after-hit" {
+				switch fault {
+				case cachePermissionAfterHit:
 					faults.verify = func() error { return os.Chmod(ref.Path, 0000) }
-				} else if fault == "replace-after-hit" {
+				case cacheReplacedAfterHit:
 					faults.verify = func() error {
 						temp := ref.Path + ".replacement"
 						if err := os.WriteFile(temp, []byte(raw), 0600); err != nil {
@@ -180,15 +199,17 @@ func TestCacheNeverEmitsAfterProviderCleanupFailureAndRechecksHitContent(t *test
 						}
 						return os.Rename(temp, ref.Path)
 					}
-				} else if fault == "permission-before-hit" {
+				case cachePermissionBeforeHit:
 					faults.readFailure = os.ErrPermission
-				} else if fault == "missing-before-hit" {
+				case cacheMissingBeforeHit:
 					if err := os.Remove(ref.Path); err != nil {
 						t.Fatal(err)
 					}
-				} else if fault == "cancel-after-hit" {
+				case cacheCancelledAfterHit:
 					faults.verify = func() error { cancel(); return ctx.Err() }
-				} else {
+				case cacheSnapshotClose, cachePassClose, cacheProofFailure:
+					t.Fatal("cleanup and proof failures must not prime the cache")
+				case cacheChangedAfterHit:
 					faults.verify = func() error {
 						info, err := os.Stat(ref.Path)
 						if err != nil {
@@ -206,7 +227,7 @@ func TestCacheNeverEmitsAfterProviderCleanupFailureAndRechecksHitContent(t *test
 			if err == nil || summary != nil || observed != nil {
 				t.Fatalf("failed provider exposed reusable summary: %+v %+v %v", summary, observed, err)
 			}
-			if (fault == "change-after-hit" || fault == "replace-after-hit") && !agentapi.HasFailure(err, agentapi.Changed) {
+			if (fault == cacheChangedAfterHit || fault == cacheReplacedAfterHit) && !agentapi.HasFailure(err, agentapi.Changed) {
 				t.Fatalf("content change classification: %v", err)
 			}
 		})

@@ -17,12 +17,20 @@ func TestOrdinaryContentProofMatchesInputAndRejectsRestoredStampRewrite(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer pass.Close()
+	defer func() {
+		if err := pass.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	snapshot, err := pass.Read(t.Context(), ref, agentapi.ReadLimits{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer snapshot.Close()
+	defer func() {
+		if err := snapshot.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	content, ok := snapshot.(agentapi.VerifiedContentSnapshot)
 	if !ok {
 		t.Fatalf("ordinary proof missing: %T", snapshot)
@@ -67,12 +75,20 @@ func TestLegacySnapshotHidesContentProof(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer pass.Close()
+	defer func() {
+		if err := pass.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	snapshot, err := pass.Read(t.Context(), ref, agentapi.ReadLimits{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer snapshot.Close()
+	defer func() {
+		if err := snapshot.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	if _, ok := snapshot.(agentapi.VerifiedContentSnapshot); ok {
 		t.Fatal("legacy wrapper exposes content proof")
 	}
@@ -89,12 +105,20 @@ func TestOrdinaryContentProofUsesCapturedCompleteBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer pass.Close()
+	defer func() {
+		if err := pass.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	snapshot, err := pass.Read(t.Context(), ref, agentapi.ReadLimits{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer snapshot.Close()
+	defer func() {
+		if err := snapshot.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	proof, err := snapshot.(agentapi.VerifiedContentSnapshot).ContentProof(t.Context())
 	if err != nil {
 		t.Fatal(err)

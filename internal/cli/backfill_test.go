@@ -377,12 +377,16 @@ func TestBackfillUnreadableFolder(t *testing.T) {
 }
 
 func snapshotTree(t *testing.T, dir string) string {
+	t.Helper()
 	return snapshotTreeFiltered(t, dir, false)
 }
 
 // snapshotArchiveTree permits only the command-owned disposable cache. Every
 // other child retains its original bytes, modes, size and modification time.
-func snapshotArchiveTree(t *testing.T, dir string) string { return snapshotTreeFiltered(t, dir, true) }
+func snapshotArchiveTree(t *testing.T, dir string) string {
+	t.Helper()
+	return snapshotTreeFiltered(t, dir, true)
+}
 
 func snapshotTreeFiltered(t *testing.T, dir string, ignoreCache bool) string {
 	t.Helper()

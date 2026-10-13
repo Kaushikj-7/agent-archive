@@ -11,18 +11,26 @@ import (
 const QueueCapacity = 256
 
 // WriterStats reports best-effort persistence coverage without changing decisions.
-type WriterStats struct{ Queued, Dropped, Stored, Failed uint64 }
+type WriterStats struct {
+	Queued  uint64
+	Dropped uint64
+	Stored  uint64
+	Failed  uint64
+}
 
 // Writer owns one bounded queue and one goroutine outside the planner.
 // Close joins the worker; no worker survives the command that owns it.
 type Writer struct {
-	cache                           *Cache
-	ctx                             context.Context
-	queue                           chan Observation
-	done                            chan struct{}
-	mu                              sync.Mutex
-	closed                          bool
-	queued, dropped, stored, failed atomic.Uint64
+	cache   *Cache
+	ctx     context.Context
+	queue   chan Observation
+	done    chan struct{}
+	mu      sync.Mutex
+	closed  bool
+	queued  atomic.Uint64
+	dropped atomic.Uint64
+	stored  atomic.Uint64
+	failed  atomic.Uint64
 }
 
 // NewWriter starts the command-owned cache worker. The context bounds its work.
@@ -87,6 +95,7 @@ func (w *Writer) run() {
 		}
 	}
 }
+
 func (w *Writer) persist(batch []Observation) {
 	if w.cache.StoreBatch(w.ctx, batch) != nil {
 		w.failed.Add(uint64(len(batch)))

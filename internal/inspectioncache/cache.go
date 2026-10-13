@@ -30,11 +30,16 @@ const (
 
 // Key qualifies intrinsic facts by source content and the effective inspection policy.
 type Key struct {
-	Agent, SourceIdentity, AdapterVersion, FilterVersion string
-	InspectionVersion                                    uint8
-	Proof                                                agentapi.SourceContentProof
-	RawBytes, RecordBytes, FilteredBytes                 int64
-	Records                                              int
+	Agent             string                      `json:"Agent"`
+	SourceIdentity    string                      `json:"SourceIdentity"`
+	AdapterVersion    string                      `json:"AdapterVersion"`
+	FilterVersion     string                      `json:"FilterVersion"`
+	InspectionVersion uint8                       `json:"InspectionVersion"`
+	Proof             agentapi.SourceContentProof `json:"Proof"`
+	RawBytes          int64                       `json:"RawBytes"`
+	RecordBytes       int64                       `json:"RecordBytes"`
+	FilteredBytes     int64                       `json:"FilteredBytes"`
+	Records           int                         `json:"Records"`
 }
 
 // Observation is a fully verified successful inspection ready for caller persistence.
@@ -57,11 +62,13 @@ func New(dir string) *Cache { return &Cache{dir: dir, maxEntries: MaxEntries, ma
 func (k Key) valid() bool {
 	return k.Agent == "codex" && len(k.SourceIdentity) > 0 && len(k.SourceIdentity) <= 16384 && len(k.AdapterVersion) > 0 && len(k.AdapterVersion) <= 128 && len(k.FilterVersion) > 0 && len(k.FilterVersion) <= 128 && k.InspectionVersion == 1 && k.Proof.Version == 1 && k.Proof.Provider == "codex-ordinary" && k.Proof.SHA256 != [32]byte{} && k.Proof.Boundary >= 0 && k.RawBytes > 0 && k.RecordBytes > 0 && k.FilteredBytes > 0 && k.Records >= 0
 }
+
 func (k Key) token() string {
 	data, _ := json.Marshal(k)
 	digest := sha256.Sum256(data)
 	return hex.EncodeToString(digest[:])
 }
+
 func (c *Cache) path(key Key) string { return filepath.Join(c.dir, key.token()+".json") }
 
 type record struct {
@@ -76,6 +83,7 @@ func summaryDigest(token string, summary agentapi.ImportSummary) string {
 	digest := sha256.Sum256(append([]byte(token), data...))
 	return hex.EncodeToString(digest[:])
 }
+
 func validSummary(summary agentapi.ImportSummary, k Key) bool {
 	return summary.Conversation && summary.RetainedBytes > 0 && summary.RetainedBytes <= k.FilteredBytes && summary.RetainedRecords > 0 && int64(summary.RetainedRecords) <= summary.RetainedBytes/2 && (k.Records == 0 || summary.RetainedRecords <= k.Records) && (summary.NativeStartAt.IsZero() || summary.NativeStartAt.Year() >= 1 && summary.NativeStartAt.Year() <= 9999)
 }
@@ -103,7 +111,7 @@ func (c *Cache) Lookup(ctx context.Context, key Key) (agentapi.ImportSummary, bo
 	if err != nil {
 		return zero, false
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	opened, err := file.Stat()
 	if err != nil || !os.SameFile(info, opened) || !opened.Mode().IsRegular() || opened.Mode().Perm() != 0600 || opened.Size() > maxEntryBytes {
 		return zero, false
@@ -115,7 +123,7 @@ func (c *Cache) Lookup(ctx context.Context, key Key) (agentapi.ImportSummary, bo
 	var entry record
 	decoder := json.NewDecoder(strings.NewReader(string(data)))
 	decoder.DisallowUnknownFields()
-	if decoder.Decode(&entry) != nil || decoder.Decode(&struct{}{}) != io.EOF || entry.Version != formatVersion || entry.Key != key.token() || entry.Integrity != summaryDigest(entry.Key, entry.Summary) || !validSummary(entry.Summary, key) {
+	if decoder.Decode(&entry) != nil || decoder.Decode(new(json.RawMessage)) != io.EOF || entry.Version != formatVersion || entry.Key != key.token() || entry.Integrity != summaryDigest(entry.Key, entry.Summary) || !validSummary(entry.Summary, key) {
 		return zero, false
 	}
 	cacheHits.Add(1)
@@ -134,7 +142,7 @@ func (c *Cache) inventory(ctx context.Context) ([]diskEntry, int64, error) {
 	if err != nil {
 		return nil, 0, err
 	}
-	defer directory.Close()
+	defer func() { _ = directory.Close() }()
 	var entries []diskEntry
 	var bytes int64
 	var seen int
@@ -143,7 +151,7 @@ func (c *Cache) inventory(ctx context.Context) ([]diskEntry, int64, error) {
 			return nil, 0, err
 		}
 		page, err := directory.ReadDir(256)
-		if err != nil && err != io.EOF {
+		if err != nil && !errors.Is(err, io.EOF) {
 			return nil, 0, err
 		}
 		for _, entry := range page {
@@ -171,7 +179,7 @@ func (c *Cache) inventory(ctx context.Context) ([]diskEntry, int64, error) {
 			entries = append(entries, diskEntry{entry.Name(), info.Size(), info.ModTime().UnixNano()})
 			bytes += info.Size()
 		}
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 	}
