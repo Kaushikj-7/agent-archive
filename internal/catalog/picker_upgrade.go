@@ -104,6 +104,11 @@ func OpenPickerUpgrade(ctx context.Context, store storage.ObjectStore, cfg desti
 	if h.Protocol != 10 || h.GCLease != "" {
 		return nil, errors.New("scoped upgrade requires an unleased protocol 10 source")
 	}
+	if etag == "" {
+		if err = validateFreshPickerNamespace(ctx, store); err != nil {
+			return nil, err
+		}
+	}
 	if _, err = w.preflightClock(ctx); err != nil {
 		return nil, err
 	}
@@ -623,4 +628,30 @@ func (u *PickerUpgrade) verifyIdentity(ctx context.Context, leaf item, live, mem
 		}
 	}
 	return nil
+}
+
+func validateFreshPickerNamespace(ctx context.Context, store storage.ObjectStore) error {
+	lister, ok := store.(storage.PageLister)
+	if !ok {
+		return errors.New("fresh scoped catalog requires bounded namespace verification")
+	}
+	cursor := ""
+	for {
+		page, err := lister.ListPage(ctx, "sessions/", cursor, 64)
+		if err != nil {
+			return err
+		}
+		for _, obj := range page.Objects {
+			if metadataKey(obj.Key) {
+				return errors.New("fresh scoped destination contains legacy metadata; use isolated legacy migration")
+			}
+		}
+		if page.Next == "" {
+			return nil
+		}
+		if page.Next == cursor {
+			return errors.New("namespace verification did not advance")
+		}
+		cursor = page.Next
+	}
 }

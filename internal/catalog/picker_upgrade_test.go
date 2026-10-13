@@ -364,10 +364,11 @@ func TestPickerUpgradeDrainsFrozenOldJournalAndPreservesCleanupReceipt(t *testin
 	t.Parallel()
 	store, provider, localStore, pending, guard, cfg := journalFixture(t)
 	j := *pending.Catalog.Recovery
-	ctx, settled, err := store.BeginJournalPublication(t.Context(), j.MutationID, pending.MetadataBytes, j, guard)
+	_, settled, err := store.BeginJournalPublication(t.Context(), j.MutationID, pending.MetadataBytes, j, guard)
 	if err != nil || settled {
 		t.Fatal(settled, err)
 	}
+	var ctx context.Context
 	store.EndPublicationAttempt(j.MutationID)
 	u, err := OpenPickerUpgrade(t.Context(), provider, cfg, pickerCutover{}, "")
 	if err != nil {
@@ -431,7 +432,7 @@ func TestPickerUpgradeDrainsFrozenOldJournalAndPreservesCleanupReceipt(t *testin
 
 func TestScopedJournalUsesDistinctFrozenProtocol(t *testing.T) {
 	t.Parallel()
-	store, provider, localStore, pending, guard, cfg := journalFixture(t)
+	store, provider, _, pending, _, cfg := journalFixture(t)
 	u, err := OpenPickerUpgrade(t.Context(), provider, cfg, pickerCutover{}, "")
 	if err != nil {
 		t.Fatal(err)
@@ -455,14 +456,14 @@ func TestScopedJournalUsesDistinctFrozenProtocol(t *testing.T) {
 	if err = os.Chmod(home, 0700); err != nil {
 		t.Fatal(err)
 	}
-	localStore, err = state.Open(home)
+	localStore, err := state.Open(home)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err = config.Save(home, config.Config{MachineID: "synthetic"}); err != nil {
 		t.Fatal(err)
 	}
-	guard, err = local.LockCollectorGuard(home)
+	guard, err := local.LockCollectorGuard(home)
 	if err != nil {
 		t.Fatal(err)
 	}

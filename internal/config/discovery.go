@@ -624,7 +624,7 @@ func peelHistoricalProjectProtection(c Config) (Config, error) {
 }
 
 func unsupportedPreparedWriter(c Config) bool {
-	return (c.SchemaVersion > 5 && c.SchemaVersion != 7 && c.SchemaVersion != 8 && c.SchemaVersion != 9 && c.SchemaVersion != 10 && c.SchemaVersion != 11 && c.SchemaVersion != 12 && c.SchemaVersion != 13 && c.SchemaVersion != 14) || (c.SchemaVersion == 14 && (!c.ScopedPickerProtection || c.Storage.EffectiveArchiveFormat() != destination.FormatCatalogV4)) || (c.SchemaVersion == 12 && (!c.PublicationCompositionProtection || !c.DurableStorageProtection)) || (c.SchemaVersion == 11 && c.Storage.EffectiveArchiveFormat() != destination.FormatCatalogV4) || (c.SchemaVersion == 10 && !c.HistoricalProjectProtection) || (c.SchemaVersion == 9 && !c.ImportStagingProtection) || (c.SchemaVersion == 8 && !c.RetentionProtection) || (c.SchemaVersion == 7 && !c.DurableStorageProtection) || (c.SchemaVersion == 5 && !c.CodexHistoryProtection) || (c.SchemaVersion == 4 && !c.GenerationProtection) || (c.SchemaVersion == 3 && c.CodexCapture == nil)
+	return (c.SchemaVersion > 5 && c.SchemaVersion != 7 && c.SchemaVersion != 8 && c.SchemaVersion != 9 && c.SchemaVersion != 10 && c.SchemaVersion != 11 && c.SchemaVersion != 12 && c.SchemaVersion != 13 && c.SchemaVersion != 14) || unsupportedScopedPreparedWriter(c) || (c.SchemaVersion == 12 && (!c.PublicationCompositionProtection || !c.DurableStorageProtection)) || (c.SchemaVersion == 11 && c.Storage.EffectiveArchiveFormat() != destination.FormatCatalogV4) || (c.SchemaVersion == 10 && !c.HistoricalProjectProtection) || (c.SchemaVersion == 9 && !c.ImportStagingProtection) || (c.SchemaVersion == 8 && !c.RetentionProtection) || (c.SchemaVersion == 7 && !c.DurableStorageProtection) || (c.SchemaVersion == 5 && !c.CodexHistoryProtection) || (c.SchemaVersion == 4 && !c.GenerationProtection) || (c.SchemaVersion == 3 && c.CodexCapture == nil)
 }
 
 // peelCatalogProtection keeps catalog configuration distinct from the permanent
@@ -779,4 +779,8 @@ func peelScopedPickerProtection(c Config) (Config, error) {
 		c.SchemaVersion = 12
 	}
 	return c, nil
+}
+
+func unsupportedScopedPreparedWriter(c Config) bool {
+	return c.SchemaVersion == 14 && (!c.ScopedPickerProtection || c.Storage.EffectiveArchiveFormat() != destination.FormatCatalogV4)
 }

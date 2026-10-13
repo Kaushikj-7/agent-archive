@@ -9,6 +9,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/destination"
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
+	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
@@ -63,13 +64,9 @@ func runMigrateCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	if !ok {
 		return fail(fmt.Errorf("reviewed credential cutover authority is unavailable; old write grants must be revoked and source kept read-only"))
 	}
-	sourceConfig := cfg
-	if cfg.Storage.EffectiveArchiveFormat() == destination.FormatCatalogV4 {
-		checkpoint, e := catalog.MigrationCheckpoint(ctx, target)
-		if e != nil {
-			return fail(e)
-		}
-		sourceConfig.Storage = checkpoint.Source
+	sourceConfig, err := migrationSourceConfig(ctx, target, cfg)
+	if err != nil {
+		return fail(err)
 	}
 	source, err := env.openStore(sourceConfig)
 	if err != nil {
@@ -80,10 +77,7 @@ func runMigrateCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		return fail(err)
 	}
 	defer unlock()
-	openMigration := catalog.OpenMigration
-	if *scoped {
-		openMigration = catalog.OpenScopedMigration
-	}
+	openMigration := migrationOpener(*scoped)
 	migration, err := openMigration(ctx, source, target, sourceConfig.Storage, targetConfig.Storage, authority)
 	if err != nil {
 		return fail(err)
@@ -107,9 +101,7 @@ func runMigrateCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		return fail(err)
 	}
 	cfg.Storage = targetConfig.Storage
-	if *scoped {
-		cfg.ScopedPickerProtection = true
-	}
+	cfg.ScopedPickerProtection = cfg.ScopedPickerProtection || *scoped
 	if err = config.Save(home, cfg); err != nil {
 		return fail(err)
 	}
@@ -139,4 +131,24 @@ func saveMigrationRollback(home string, cfg config.Config, migration *catalog.Mi
 	}
 
 	return 0
+}
+
+func migrationOpener(scoped bool) func(context.Context, storage.ObjectStore, storage.ObjectStore, destination.Config, destination.Config, catalog.CutoverAuthority) (*catalog.Migration, error) {
+	if scoped {
+		return catalog.OpenScopedMigration
+	}
+	return catalog.OpenMigration
+}
+
+func migrationSourceConfig(ctx context.Context, target storage.ObjectStore, cfg config.Config) (config.Config, error) {
+	sourceConfig := cfg
+	if cfg.Storage.EffectiveArchiveFormat() == destination.FormatCatalogV4 {
+		checkpoint, e := catalog.MigrationCheckpoint(ctx, target)
+		if e != nil {
+			return cfg, e
+		}
+		sourceConfig.Storage = checkpoint.Source
+	}
+
+	return sourceConfig, nil
 }

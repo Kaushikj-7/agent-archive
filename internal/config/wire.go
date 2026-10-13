@@ -225,8 +225,8 @@ func codexMarkerMatches(mode SkillEvidence, writer configWriter) bool {
 }
 
 func validateWriterVersion(c Config, version writerVersion) error {
-	if c.ScopedPickerProtection && (version.Version != 14 || version.Writer != scopedPickerWriter) {
-		return errors.New("scoped picker requires its exact permanent fence")
+	if err := validateScopedWriterMarker(c, version); err != nil {
+		return err
 	}
 	if err := validateSupportedWriterVersion(version); err != nil {
 		return err
@@ -236,9 +236,10 @@ func validateWriterVersion(c Config, version writerVersion) error {
 			return errors.New("scoped picker requires catalog format and permanent protection")
 		}
 	} else if version.Version == 13 {
-		if !c.StagedSelectionProtection || !c.PublicationCompositionProtection || !c.DurableStorageProtection || !c.ImportStagingProtection || c.Storage.EffectiveArchiveFormat() != destination.FormatLegacy {
-			return errors.New("staged selection requires protected legacy import configuration")
+		if err := validateStagedWriterConfig(c); err != nil {
+			return err
 		}
+
 	} else if version.Version == 12 {
 		if !c.PublicationCompositionProtection || !c.DurableStorageProtection {
 			return errors.New("publication composition requires durable storage protection")
@@ -336,4 +337,19 @@ func writerHasPermissionFloors(writer configWriter) bool {
 	default:
 		return false
 	}
+}
+
+func validateStagedWriterConfig(c Config) error {
+	if !c.StagedSelectionProtection || !c.PublicationCompositionProtection || !c.DurableStorageProtection || !c.ImportStagingProtection || c.Storage.EffectiveArchiveFormat() != destination.FormatLegacy {
+		return errors.New("staged selection requires protected legacy import configuration")
+	}
+	return nil
+}
+
+func validateScopedWriterMarker(c Config, version writerVersion) error {
+	if c.ScopedPickerProtection && (version.Version != 14 || version.Writer != scopedPickerWriter) {
+		return errors.New("scoped picker requires its exact permanent fence")
+	}
+
+	return nil
 }

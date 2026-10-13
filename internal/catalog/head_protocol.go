@@ -79,8 +79,12 @@ func (w *Writer) writeFormat(ctx context.Context, state admissions) error {
 	if err != nil {
 		return err
 	}
-	if state.Upgrade != nil || h.Protocol != state.Protocol || (h.Picker != nil) != (state.Picker != nil) {
+	if state.Upgrade != nil || !headCoordinatorMatch(h, state) {
 		return ErrAdmissionClosed
 	}
 	return nil
+}
+
+func headCoordinatorMatch(h CatalogHead, s admissions) bool {
+	return h.Protocol == s.Protocol && (h.Picker != nil) == (s.Picker != nil)
 }

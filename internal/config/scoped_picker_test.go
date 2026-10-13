@@ -86,3 +86,43 @@ func TestScopedPickerConfigurationComposesAndPreservesProtections(t *testing.T) 
 		t.Fatal(err)
 	}
 }
+
+func TestScopedPickerLayeredConfigurationRejectsMissingLowerCapabilities(t *testing.T) {
+	t.Parallel()
+	c := Config{RetentionDays: 90, ScopedPickerProtection: true, StagedSelectionProtection: true, PublicationCompositionProtection: true, DurableStorageProtection: true, ImportStagingProtection: true}
+	c.Storage.ArchiveFormat = "catalog-v4"
+	raw, err := json.Marshal(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"durable_storage_protection", "import_staging_protection", "publication_composition_protection", "scoped_picker_protection"} {
+		t.Run(field, func(t *testing.T) {
+			t.Parallel()
+			probe := strings.Replace(string(raw), `"`+field+`":true`, `"`+field+`":false`, 1)
+			var next Config
+			if err := json.Unmarshal([]byte(probe), &next); err == nil {
+				t.Fatal("accepted missing lower fence")
+			}
+		})
+	}
+	for _, probe := range []string{
+		strings.Replace(string(raw), `"version":14`, `"version":13`, 1),
+		strings.Replace(string(raw), `"writer":"scoped-picker-v1"`, `"writer":"staged-selection-v13"`, 1),
+		strings.Replace(string(raw), `"writer":"scoped-picker-v1"`, `"writer":"scoped-picker-v1","future":true`, 1),
+		strings.Replace(string(raw), `"scoped_picker_protection":true`, `"scoped_picker_protection":true,"scoped_picker_protection":true`, 1),
+	} {
+		var next Config
+		if err = json.Unmarshal([]byte(probe), &next); err == nil {
+			t.Fatal("accepted mixed or ambiguous scoped configuration", probe)
+		}
+	}
+	next := Config{RetentionDays: 90}
+	next.Storage = c.Storage
+	PreserveWriterFence(&next, c)
+	if !next.StagedSelectionProtection || !next.ScopedPickerProtection {
+		t.Fatal("removed sticky protections")
+	}
+	if next.SupportsStagedSelection() {
+		t.Fatal("enabled catalog staging")
+	}
+}

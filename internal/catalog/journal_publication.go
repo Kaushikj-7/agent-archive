@@ -81,7 +81,7 @@ func (s *Store) BeginJournalPublication(ctx context.Context, id string, raw []by
 				priorOwner = active
 			}
 		}
-		if journal.WriterProtocol() != head.Protocol || head.Protocol != state.Protocol || (head.Picker != nil) != (state.Picker != nil) {
+		if journal.WriterProtocol() != head.Protocol || !headCoordinatorMatch(head, *state) {
 			return ErrAdmissionClosed
 		}
 		if priorOwner == "" && (state.Seal != "" || len(state.Owners) >= 256) {
