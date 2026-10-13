@@ -1,8 +1,10 @@
 package cursorstore
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
@@ -100,15 +102,17 @@ func readRecoveryComposerTx(ctx context.Context, tx *sql.Tx, id string, rawLimit
 		if err := budget.Charge(0, 2*int64(len(value))+(32<<10)); err != nil {
 			return c, err
 		}
+		count, err := settledHeaderCount(ctx, value, budget.RemainingRows())
+		if err != nil {
+			return c, err
+		}
+		if err := budget.Charge(count, 24*int64(count)); err != nil {
+			return c, err
+		}
 	}
 	_, ids, err := decodeHeaders(value)
 	if err != nil {
 		return c, err
-	}
-	if reserveDecoded {
-		if err := budget.Charge(len(ids), 24*int64(len(ids))); err != nil {
-			return c, err
-		}
 	}
 	lengths, err := recoveryBubbleLengths(ctx, tx, id, budget)
 	if err != nil {
@@ -227,4 +231,37 @@ func recoveryBubbleLengths(ctx context.Context, tx *sql.Tx, id string, budget ag
 		out[key[len(prefix):]] = size.Int64
 	}
 	return out, rows.Err()
+}
+
+// settledHeaderCount bounds the ID/slice allocation before ordinary decoding.
+// Its borrowed JSON projection is covered by the caller's prospective views.
+func settledHeaderCount(ctx context.Context, value []byte, limit int) (int, error) {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(value, &fields) != nil || fields == nil {
+		return 0, NotChecked(UnknownFormat)
+	}
+	raw, present := fields["fullConversationHeadersOnly"]
+	if !present || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return 0, nil
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	token, err := decoder.Token()
+	if err != nil || token != json.Delim('[') {
+		return 0, NotChecked(UnknownFormat)
+	}
+	count := 0
+	for decoder.More() {
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
+		if count >= limit {
+			return 0, agentapi.Wrap(agentapi.Limit, agentapi.ErrReadBudget)
+		}
+		var row json.RawMessage
+		if decoder.Decode(&row) != nil {
+			return 0, NotChecked(UnknownFormat)
+		}
+		count++
+	}
+	return count, nil
 }
