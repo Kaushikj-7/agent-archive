@@ -1,185 +1,214 @@
-name: Extended
+name: Representative cache measurement
 on:
-  push:
-    branches: ['release-candidate/**']
-  schedule:
-    # Off the hour, when GitHub's scheduled workflow queue is less crowded.
-    - cron: '17 8 * * 1-6'
-    - cron: '17 8 * * 0'
   workflow_dispatch:
     inputs:
-      suite:
-        description: Checks to run on the selected ref
+      expected_sha:
+        description: Root-journaled frozen measurement M SHA
         required: true
-        default: all
+        type: string
+      batch:
+        description: Root-approved unused measurement namespace
+        required: true
+        type: string
+      mode:
+        description: Approved bounded observation
+        required: true
         type: choice
-        options: [all, macos, linux, fuzz, systemd]
-env:
-  CI_SCHEDULE: ${{ github.event.schedule }}
-  CI_SUITE: ${{ inputs.suite || 'all' }}
+        options: [off, seed, warm]
 permissions:
   contents: read
 concurrency:
-  # Keep only the newest run for each candidate branch. A
-  # scheduled or manually requested run always gets its own group.
-  group: ${{ github.workflow }}-${{ github.event_name == 'push' && github.ref || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'push' }}
-# Every action is pinned to a full commit SHA; keep these in step with test.yml.
+  group: representative-cache-measurement
+  cancel-in-progress: false
+# Proposal: off x2, seed x1, warm x2. No dispatch authority.
+# Root must record M SHA externally after freeze; embedding M in its own tracked
+# adapter/workflow would be self-referential. All dispatches supply that exact SHA.
+env:
+  EXPECTED_SHA: ${{ inputs.expected_sha }}
+  BATCH: ${{ inputs.batch }}
+  MODE: ${{ inputs.mode }}
+  PYTHONDONTWRITEBYTECODE: '1'
 jobs:
-  linux-race:
-    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'linux'))
+  worker0:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 12
+    env:
+      SHARD: '0'
+      GOTOOLCHAIN: local
+      GOWORK: 'off'
+      GOFLAGS: '-mod=readonly'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
+      - name: Set same controlled production paths
+        run: |
+          printf 'GOCACHE=%s/pr-go-build\nGOMODCACHE=%s/pr-go-modules\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Validate and clear owned paths before any Go setup or tool
+        run: python3 -B scripts/measure_go_cache.py paths
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.27.2'
           cache: false
-      - name: Require Go 1.27.2 (go.mod's toolchain line)
+      - name: Require production toolchain
         run: |
           go version
-          go version | grep -q ' go1\.27\.2 ' || { echo "expected go1.27.2, matching go.mod's toolchain line" >&2; exit 1; }
-      - name: Actual source and tier race bodies
-        run: python3 scripts/run_ci_tier.py --suite linux --output tier-results
-      - run: go vet ./...
-      - run: python3 scripts/test_release_signing.py
-      - run: python3 scripts/test_release_assets.py
-      - run: python3 scripts/test_release_candidate.py
-      - run: python3 scripts/test_install.py
-      - run: python3 scripts/test_install_from_source.py
-      - name: Install purge prerequisites
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes jq zsh
-      - name: Tiered purge matrix
-        env:
-          PYTHONDONTWRITEBYTECODE: '1'
-        run: |
-          tier="$(python3 -B -c 'import os,sys; sys.path.insert(0,"scripts"); import run_ci_tier as t; print(t.resolve(os.environ["GITHUB_EVENT_NAME"],os.environ["GITHUB_REF"],os.environ.get("CI_SCHEDULE",""),os.environ.get("CI_SUITE","all")))')"
-          python3 scripts/test_purge_recipe.py --tier "$tier" --evidence "$RUNNER_TEMP/purge-tier.json"
-      - run: python3 scripts/test_ci_workflow.py
-      - run: python3 scripts/test_linux_acceptance.py
-      - run: python3 -B scripts/test_go_shards.py
-      - run: python3 -B scripts/test_ci_tiers.py
-      - run: python3 -B scripts/test_stage_native_verify.py
-      - run: python3 -B scripts/test_scope_native_verify.py
-      - run: python3 -B scripts/test_stage_release_vulnerability_scan.py
-      - run: python3 -B scripts/test_measure_hook.py
-
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        if: always()
+          go version | grep -q ' go1\.27\.2 ' || { echo 'expected go1.27.2' >&2; exit 1; }
+      - id: key
+        run: python3 -B scripts/measure_go_cache.py prepare
+      - id: restore
+        if: inputs.mode != 'off'
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          name: extended-linux-race-tier
+          key: ${{ steps.key.outputs.primary }}
+          restore-keys: ${{ steps.key.outputs.restore_prefix }}
           path: |
-            tier-results
-            ${{ runner.temp }}/purge-tier.json
-          if-no-files-found: error
-
-  macos-full:
-    if: (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release-candidate/')) || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'macos'))
-    runs-on: macos-14
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: '1.27.2'
-          cache: false
-      - name: Require Go 1.27.2 (go.mod's toolchain line)
-        run: |
-          go version
-          go version | grep -q ' go1\.27\.2 ' || { echo "expected go1.27.2, matching go.mod's toolchain line" >&2; exit 1; }
-      - name: Native daily platform backstop or full macOS tier
-        run: python3 scripts/run_ci_tier.py --suite macos --output tier-results
-      - run: go vet ./...
-      - run: python3 scripts/test_release_signing.py
-      - run: python3 scripts/test_release_assets.py
-      - run: python3 scripts/test_release_candidate.py
-      - run: python3 scripts/test_install.py
-      - run: python3 scripts/test_install_from_source.py
-      - name: Install purge prerequisites
-        run: |
-          for tool in jq zsh; do
-            if ! command -v "$tool" >/dev/null; then brew install "$tool"; fi
-          done
-      - name: Tiered purge matrix
+            ${{ runner.temp }}/pr-go-build
+            ${{ runner.temp }}/pr-go-modules
+          enableCrossOsArchive: false
+          fail-on-cache-miss: false
+      - id: verify
         env:
-          PYTHONDONTWRITEBYTECODE: '1'
-        run: |
-          tier="$(python3 -B -c 'import os,sys; sys.path.insert(0,"scripts"); import run_ci_tier as t; print(t.resolve(os.environ["GITHUB_EVENT_NAME"],os.environ["GITHUB_REF"],os.environ.get("CI_SCHEDULE",""),os.environ.get("CI_SUITE","all")))')"
-          python3 scripts/test_purge_recipe.py --tier "$tier" --evidence "$RUNNER_TEMP/purge-tier.json"
-      - run: python3 scripts/test_ci_workflow.py
-      - run: python3 scripts/test_linux_acceptance.py
-
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        if: always()
+          RESTORE_OUTCOME: ${{ steps.restore.outcome }}
+          MATCHED_KEY: ${{ steps.restore.outputs.cache-matched-key }}
+          EXACT_HIT: ${{ steps.restore.outputs.cache-hit }}
+        run: python3 -B scripts/measure_go_cache.py verify
+      - run: python3 -B scripts/measure_go_cache.py start-worker
+      - id: worker
+        run: python3 -B scripts/run_go_shard.py --shard "$SHARD" --output shard-results
+      - id: complete
+        run: python3 -B scripts/measure_go_cache.py complete
+      - id: save
+        if: success() && inputs.mode != 'off' && steps.complete.outputs.save_ready == 'true' && steps.verify.outputs.restore_state != 'exact'
+        continue-on-error: true
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          name: extended-macos-full-tier
+          key: ${{ steps.key.outputs.primary }}
           path: |
-            tier-results
-            ${{ runner.temp }}/purge-tier.json
+            ${{ runner.temp }}/pr-go-build
+            ${{ runner.temp }}/pr-go-modules
+          enableCrossOsArchive: false
+      - name: Warn on service failure
+        if: always() && (steps.restore.outcome == 'failure' || steps.save.outcome == 'failure')
+        run: echo '::warning::Cache service failed; retain actual failed observation allocation'
+      - name: Retain uncached measurement evidence, including failures
+        if: always()
+        env:
+          RESTORE_OUTCOME: ${{ steps.restore.outcome }}
+          MATCHED_KEY: ${{ steps.restore.outputs.cache-matched-key }}
+          EXACT_HIT: ${{ steps.restore.outputs.cache-hit }}
+          SAVE_OUTCOME: ${{ steps.save.outcome }}
+          WORKER_OUTCOME: ${{ steps.worker.outcome }}
+        run: python3 -B scripts/measure_go_cache.py report
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: measure-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.mode }}-w0
+          path: |
+            shard-results
+            ${{ runner.temp }}/measurement-evidence.json
           if-no-files-found: error
-
-  fuzz:
-    # Plain go test in the PR workflow still runs every committed seed. The
-    # mutation campaign runs nightly or on demand against a selected ref.
-    if: (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release-candidate/')) || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'fuzz'))
+          retention-days: 7
+  worker1:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 12
+    env:
+      SHARD: '1'
+      GOTOOLCHAIN: local
+      GOWORK: 'off'
+      GOFLAGS: '-mod=readonly'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
+      - name: Set same controlled production paths
+        run: |
+          printf 'GOCACHE=%s/pr-go-build\nGOMODCACHE=%s/pr-go-modules\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Validate and clear owned paths before any Go setup or tool
+        run: python3 -B scripts/measure_go_cache.py paths
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.27.2'
           cache: false
-      - name: Every discovered fuzz target at the selected tier
-        run: python3 scripts/run_ci_tier.py --suite fuzz --output tier-results
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        if: always()
-        with:
-          name: extended-fuzz-tier
-          path: tier-results
-          if-no-files-found: error
-
-  real-systemd:
-    # The real user manager is exercised only on a disposable CI runner.
-    if: (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release-candidate/')) || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'systemd'))
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: '1.27.2'
-          cache: false
-      - name: Require Go 1.27.2 (go.mod's toolchain line)
+      - name: Require production toolchain
         run: |
           go version
-          go version | grep -q ' go1\.27\.2 ' || { echo "expected go1.27.2, matching go.mod's toolchain line" >&2; exit 1; }
-      - name: Start the runner user's systemd user manager
-        run: bash scripts/start_ci_systemd.sh
-      - name: Actual real-manager scheduler, setup, timer and uninstall bodies
-        env:
-          AGENT_ARCHIVE_REAL_SYSTEMD: '1'
-        run: python3 scripts/run_ci_tier.py --suite systemd --output tier-results
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        if: always()
+          go version | grep -q ' go1\.27\.2 ' || { echo 'expected go1.27.2' >&2; exit 1; }
+      - id: key
+        run: python3 -B scripts/measure_go_cache.py prepare
+      - id: restore
+        if: inputs.mode != 'off'
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          name: extended-systemd-tier
-          path: tier-results
+          key: ${{ steps.key.outputs.primary }}
+          restore-keys: ${{ steps.key.outputs.restore_prefix }}
+          path: |
+            ${{ runner.temp }}/pr-go-build
+            ${{ runner.temp }}/pr-go-modules
+          enableCrossOsArchive: false
+          fail-on-cache-miss: false
+      - id: verify
+        env:
+          RESTORE_OUTCOME: ${{ steps.restore.outcome }}
+          MATCHED_KEY: ${{ steps.restore.outputs.cache-matched-key }}
+          EXACT_HIT: ${{ steps.restore.outputs.cache-hit }}
+        run: python3 -B scripts/measure_go_cache.py verify
+      - run: python3 -B scripts/measure_go_cache.py start-worker
+      - id: worker
+        run: python3 -B scripts/run_go_shard.py --shard "$SHARD" --output shard-results
+      - id: complete
+        run: python3 -B scripts/measure_go_cache.py complete
+      - id: save
+        if: success() && inputs.mode != 'off' && steps.complete.outputs.save_ready == 'true' && steps.verify.outputs.restore_state != 'exact'
+        continue-on-error: true
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          key: ${{ steps.key.outputs.primary }}
+          path: |
+            ${{ runner.temp }}/pr-go-build
+            ${{ runner.temp }}/pr-go-modules
+          enableCrossOsArchive: false
+      - name: Warn on service failure
+        if: always() && (steps.restore.outcome == 'failure' || steps.save.outcome == 'failure')
+        run: echo '::warning::Cache service failed; retain actual failed observation allocation'
+      - name: Retain uncached measurement evidence, including failures
+        if: always()
+        env:
+          RESTORE_OUTCOME: ${{ steps.restore.outcome }}
+          MATCHED_KEY: ${{ steps.restore.outputs.cache-matched-key }}
+          EXACT_HIT: ${{ steps.restore.outputs.cache-hit }}
+          SAVE_OUTCOME: ${{ steps.save.outcome }}
+          WORKER_OUTCOME: ${{ steps.worker.outcome }}
+        run: python3 -B scripts/measure_go_cache.py report
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: measure-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.mode }}-w1
+          path: |
+            shard-results
+            ${{ runner.temp }}/measurement-evidence.json
           if-no-files-found: error
-      - name: What the manager says, if a step failed
-        if: failure()
-        run: |
-          systemctl --user list-units --all --no-pager 'agent-archive*' || true
-          systemctl --user status --no-pager 'agent-archive*' || true
-          journalctl --user --no-pager -n 100 || true
+          retention-days: 7
+  benchmark-verdict:
+    if: always()
+    needs: [worker0, worker1]
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: measure-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.mode }}-w*
+          path: ${{ runner.temp }}/shard-evidence
+      - name: Actual worker statuses and authoritative current body reconciliation
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+          EVIDENCE_DIRECTORY: ${{ runner.temp }}/shard-evidence
+        run: python3 -B scripts/measure_go_cache.py verdict
