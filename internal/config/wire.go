@@ -315,11 +315,12 @@ func writerHasPermissionFloors(writer configWriter) bool {
 }
 
 func validateStagedWriterConfiguration(c Config, version writerVersion) error {
-	if version.Version == 14 {
+	switch version.Version {
+	case 14:
 		if !c.SettledCursorSelectionProtection || !c.StagedSelectionProtection || !c.PublicationCompositionProtection || !c.DurableStorageProtection || !c.ImportStagingProtection || c.Storage.EffectiveArchiveFormat() != destination.FormatLegacy {
 			return errors.New("unsupported settled Cursor writer")
 		}
-	} else if version.Version == 13 {
+	case 13:
 		if !c.StagedSelectionProtection || !c.PublicationCompositionProtection || !c.DurableStorageProtection || !c.ImportStagingProtection || c.Storage.EffectiveArchiveFormat() != destination.FormatLegacy {
 			return errors.New("staged selection requires protected legacy import configuration")
 		}
