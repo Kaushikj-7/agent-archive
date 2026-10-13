@@ -74,14 +74,8 @@ func (p *PendingPublication) UnmarshalJSON(data []byte) error {
 		if err := closed.Decode(&wire); err != nil {
 			return ErrDurableStorageRecovery
 		}
-		if json.Unmarshal(wire.Version, &p.JournalVersion) != nil || p.JournalVersion != 4 {
-			return ErrDurableStorageRecovery
-		}
-		if err := json.Unmarshal(wire.Cursor, &p.CursorSelection); err != nil {
+		if err := decodePendingCursorProof(p, wire.Version, wire.Cursor); err != nil {
 			return err
-		}
-		if p.CursorSelection == nil || p.CursorSelection.Version != 4 {
-			return ErrDurableStorageRecovery
 		}
 		return p.validateStagedShape()
 	}
@@ -287,5 +281,18 @@ func (p *publishedSnapshot) UnmarshalJSON(data []byte) error {
 		}
 	}
 	*p = publishedSnapshot(next)
+	return nil
+}
+
+func decodePendingCursorProof(p *PendingPublication, version, raw json.RawMessage) error {
+	if json.Unmarshal(version, &p.JournalVersion) != nil || p.JournalVersion != 4 {
+		return ErrDurableStorageRecovery
+	}
+	if err := json.Unmarshal(raw, &p.CursorSelection); err != nil {
+		return err
+	}
+	if p.CursorSelection == nil || p.CursorSelection.Version != 4 {
+		return ErrDurableStorageRecovery
+	}
 	return nil
 }

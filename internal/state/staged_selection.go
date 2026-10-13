@@ -165,7 +165,7 @@ func (s *Store) stagedContext(ctx context.Context, id string) (config.Config, ar
 // FreezeStagedSelection accepts only freshly prepared typed noncatalog stages.
 // It never promotes a legacy stage or obtains evidence from native sources.
 func (s *Store) FreezeStagedSelection(ctx context.Context, id string, p PendingPublication, predecessor ReadyPredecessor, previous []byte) (PendingPublication, error) {
-	if p.StagedProof() != nil || p.Selection != nil || p.JournalVersion != 0 || p.Catalog != nil {
+	if pendingHasSelectionAuthority(p) {
 		return p, ErrReadySelectionFrozen
 	}
 	if err := s.validateReadablePendingContext(ctx, p); err != nil {
@@ -322,21 +322,7 @@ func (s *Store) validateStagedSelectionWithSource(ctx context.Context, p Pending
 	if err != nil || binding != q.Core.BindingSHA256 || readySHA(p.MetadataBytes) != q.Core.MetadataSHA256 {
 		return errors.Join(ErrDurableStorageRecovery, err)
 	}
-	var metadata archive.Metadata
-	scratch, closeScratch := s.WithReadBudget(ctx, s.resourceBudget)
-	defer closeScratch()
-	if err = scratch.unmarshalOwned(p.MetadataBytes, &metadata); err != nil {
-		return err
-	}
-	refs, err := metadata.SourceReferences()
-	if err != nil || len(refs) != 1 || refs[0] != p.SourceReference() || !stagedMetadataMatches(metadata, p.Bundle) {
-		return ErrDurableStorageRecovery
-	}
-	got, err := s.readyDigest(ctx, refs)
-	if err != nil || got != q.Core.SourceSetSHA256 {
-		return errors.Join(ErrDurableStorageRecovery, err)
-	}
-	return nil
+	return s.validateStagedPendingMetadata(ctx, p, q)
 }
 
 func (p *Published) saveStagedPublication(pending PendingPublication, at time.Time) error {
@@ -379,7 +365,7 @@ func (p *Published) preserveStagedPublished(ctx context.Context, next *published
 
 func (p *Published) validateStagedPublished(ctx context.Context, next *publishedState) error {
 	q := next.LastPublished.StagedProof()
-	if q == nil || next.LastPublished.CursorSelection != nil && next.LastPublished.StagedSelection != nil || q.Version == 4 && next.LastPublished.CursorSelection == nil || q.Version == 3 && next.LastPublished.StagedSelection == nil {
+	if invalidPublishedStagedProof(next, q) {
 		return ErrDurableStorageRecovery
 	}
 	if err := ctx.Err(); err != nil {
@@ -422,34 +408,8 @@ func (p *Published) validateStagedPublished(ctx context.Context, next *published
 		return errors.Join(ErrDurableStorageRecovery, err)
 	}
 	if q.Version == 4 {
-		if e := p.store.validateSettledIndex(reg); e != nil {
-			return e
-		}
-		factStage := ImportStage{Version: 3, TypedSelection: true, CursorFacts: q.CursorFacts}
-		if factStage.validateCursorFacts(reg) != nil {
-			return ErrDurableStorageRecovery
-		}
-		stage, present, e := p.store.LoadImportStage(ctx, reg)
-		if e != nil {
-			return e
-		}
-		if present {
-			if stage.Version != 3 || stage.SHA256 != q.StageSHA256 || stage.CursorFacts == nil || *stage.CursorFacts != *q.CursorFacts {
-				return ErrDurableStorageRecovery
-			}
-			stageBundle, e := p.store.readyDigest(ctx, stage.Bundle)
-			if e != nil || stageBundle != q.Core.BundleSHA256 {
-				return errors.Join(ErrDurableStorageRecovery, e)
-			}
-		} else {
-			var receipt stagedReleaseReceipt
-			if e := p.store.readStagedControl(p.id, stagedReleaseReceiptName, &receipt); e != nil || receipt.Version != 4 || !sameStagedSelection(receipt.Selection, *q) {
-				return errors.Join(ErrDurableStorageRecovery, e)
-			}
-		}
-		facts, err := p.store.readyDigest(ctx, q.CursorFacts)
-		if err != nil || facts != q.CursorFactsSHA256 {
-			return errors.Join(ErrDurableStorageRecovery, err)
+		if err := p.validatePublishedSettledStage(ctx, q, reg); err != nil {
+			return err
 		}
 	}
 	admission, err := p.store.readyDigest(ctx, reg)
@@ -594,3 +554,62 @@ const (
 	stagedImportPurpose        stagedSelectionPurpose = "staged-import"
 	settledCursorImportPurpose stagedSelectionPurpose = "settled-cursor-import"
 )
+
+func pendingHasSelectionAuthority(p PendingPublication) bool {
+	return p.StagedProof() != nil || p.Selection != nil || p.JournalVersion != 0 || p.Catalog != nil
+}
+
+func (s *Store) validateStagedPendingMetadata(ctx context.Context, p PendingPublication, q *StagedSelection) error {
+	var metadata archive.Metadata
+	scratch, closeScratch := s.WithReadBudget(ctx, s.resourceBudget)
+	defer closeScratch()
+	if err := scratch.unmarshalOwned(p.MetadataBytes, &metadata); err != nil {
+		return err
+	}
+	refs, err := metadata.SourceReferences()
+	if err != nil || len(refs) != 1 || refs[0] != p.SourceReference() || !stagedMetadataMatches(metadata, p.Bundle) {
+		return ErrDurableStorageRecovery
+	}
+	got, err := s.readyDigest(ctx, refs)
+	if err != nil || got != q.Core.SourceSetSHA256 {
+		return errors.Join(ErrDurableStorageRecovery, err)
+	}
+	return nil
+}
+
+func (p *Published) validatePublishedSettledStage(ctx context.Context, q *StagedSelection, reg archive.SessionRegistration) error {
+	if e := p.store.validateSettledIndex(reg); e != nil {
+		return e
+	}
+	factStage := ImportStage{Version: 3, TypedSelection: true, CursorFacts: q.CursorFacts}
+	if factStage.validateCursorFacts(reg) != nil {
+		return ErrDurableStorageRecovery
+	}
+	stage, present, e := p.store.LoadImportStage(ctx, reg)
+	if e != nil {
+		return e
+	}
+	if present {
+		if stage.Version != 3 || stage.SHA256 != q.StageSHA256 || stage.CursorFacts == nil || *stage.CursorFacts != *q.CursorFacts {
+			return ErrDurableStorageRecovery
+		}
+		stageBundle, e := p.store.readyDigest(ctx, stage.Bundle)
+		if e != nil || stageBundle != q.Core.BundleSHA256 {
+			return errors.Join(ErrDurableStorageRecovery, e)
+		}
+	} else {
+		var receipt stagedReleaseReceipt
+		if e := p.store.readStagedControl(p.id, stagedReleaseReceiptName, &receipt); e != nil || receipt.Version != 4 || !sameStagedSelection(receipt.Selection, *q) {
+			return errors.Join(ErrDurableStorageRecovery, e)
+		}
+	}
+	facts, err := p.store.readyDigest(ctx, q.CursorFacts)
+	if err != nil || facts != q.CursorFactsSHA256 {
+		return errors.Join(ErrDurableStorageRecovery, err)
+	}
+	return nil
+}
+
+func invalidPublishedStagedProof(next *publishedState, q *StagedSelection) bool {
+	return q == nil || next.LastPublished.CursorSelection != nil && next.LastPublished.StagedSelection != nil || q.Version == 4 && next.LastPublished.CursorSelection == nil || q.Version == 3 && next.LastPublished.StagedSelection == nil
+}

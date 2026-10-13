@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"hash"
 	"io"
 	"path/filepath"
 	"slices"
@@ -65,7 +66,7 @@ func (b *settledReadBudget) Charge(rows int, bytes int64) error {
 // CaptureSettledImport performs the actual settled read and Cursor filter.
 // It accepts reviewed observations as comparisons, never as capture authority.
 func CaptureSettledImport(ctx context.Context, database string, reg archive.SessionRegistration, reviewed agentapi.DatabaseChat, at time.Time, budget *agentapi.NativeReadBudget) (_ *SettledImportEvidence, err error) {
-	if budget == nil || reg.Harness.Name != archive.HarnessCursor || reg.SourceKind != archive.SourceKindCursorSQLite || reg.SourceKey != reg.NativeSessionID || reg.HistoricalProject != nil || reg.ParentSessionID != "" || reg.NativeChild || reg.ParentNativeSessionID != "" || reg.NativeRootSessionID != "" || reg.NativeSourceHome != "" || reg.PreviousGenerationID != "" || reg.CaptureFrozen || reg.CodexBinding != nil || reg.CodexAdmission != nil {
+	if unsupportedSettledCaptureOwner(reg, budget) {
 		return nil, agentapi.Wrap(agentapi.Unsafe, errors.New("unsupported settled Cursor owner"))
 	}
 	owner := &settledReservation{original: budget.Reservation(), limit: 128 << 20}
@@ -79,38 +80,7 @@ func CaptureSettledImport(ctx context.Context, database string, reg archive.Sess
 	var selected agentapi.DatabaseChat
 	global := sha256.New()
 	composer, err := cursorstore.ReadSettledAdmission(ctx, database, reg.SourceKey, 128<<20, archive.MaxRecordBytes, b, func(row agentapi.DatabaseRecord) error {
-		// The same owner reserves bounded JSON maps and sorting scratch before decode.
-		scratch := 2*int64(len(row.Value)) + 32<<10
-		if !owner.Reserve(scratch) {
-			return agentapi.Wrap(agentapi.Limit, agentapi.ErrReadBudget)
-		}
-		defer owner.Release(scratch)
-		if err := validateSettledMetadata(ctx, row.Key, row.Value); err != nil {
-			return err
-		}
-		decoded, ok := decodeComposerData(row.Key, row.Value)
-		if !ok || decoded.chat.Malformed || decoded.chat.KeyID == "" || len(decoded.chat.KeyID) > 255 {
-			return cursorstore.NotChecked(cursorstore.UnknownFormat)
-		}
-		facts := decoded.chat.CursorFacts
-		if facts.VersionPresent && (facts.Version < 1 || facts.Version > maxComposerVersion) || facts.Relationships == agentapi.CursorRelationshipsMalformed {
-			return cursorstore.NotChecked(cursorstore.UnknownFormat)
-		}
-		if slices.Contains(decoded.subagents, reg.SourceKey) {
-			return cursorstore.NotChecked(cursorstore.UnknownFormat)
-		}
-		// Ordered record hashes preserve the complete observed global routing set.
-		sum := sha256.Sum256(row.Value)
-		keySum := sha256.Sum256([]byte(row.Key))
-		global.Write(keySum[:])
-		global.Write(sum[:])
-		if decoded.chat.KeyID == reg.SourceKey {
-			if !decoded.counted || decoded.chat.Malformed || decoded.chat.ID != reg.NativeSessionID {
-				return cursorstore.NotChecked(cursorstore.UnknownFormat)
-			}
-			selected = decoded.chat
-		}
-		return nil
+		return inspectSettledCaptureRow(ctx, row, reg, owner, global, &selected)
 	})
 	if err != nil {
 		return nil, err
@@ -555,6 +525,45 @@ func validateSettledRoster(ctx context.Context, raw []byte) error {
 	var extra json.RawMessage
 	if decoder.Decode(&extra) != io.EOF {
 		return cursorstore.NotChecked(cursorstore.UnknownFormat)
+	}
+	return nil
+}
+
+func unsupportedSettledCaptureOwner(reg archive.SessionRegistration, budget *agentapi.NativeReadBudget) bool {
+	return budget == nil || reg.Harness.Name != archive.HarnessCursor || reg.SourceKind != archive.SourceKindCursorSQLite || reg.SourceKey != reg.NativeSessionID || reg.HistoricalProject != nil || reg.ParentSessionID != "" || reg.NativeChild || reg.ParentNativeSessionID != "" || reg.NativeRootSessionID != "" || reg.NativeSourceHome != "" || reg.PreviousGenerationID != "" || reg.CaptureFrozen || reg.CodexBinding != nil || reg.CodexAdmission != nil
+}
+
+func inspectSettledCaptureRow(ctx context.Context, row agentapi.DatabaseRecord, reg archive.SessionRegistration, owner *settledReservation, global hash.Hash, selected *agentapi.DatabaseChat) error {
+	// The same owner reserves bounded JSON maps and sorting scratch before decode.
+	scratch := 2*int64(len(row.Value)) + 32<<10
+	if !owner.Reserve(scratch) {
+		return agentapi.Wrap(agentapi.Limit, agentapi.ErrReadBudget)
+	}
+	defer owner.Release(scratch)
+	if err := validateSettledMetadata(ctx, row.Key, row.Value); err != nil {
+		return err
+	}
+	decoded, ok := decodeComposerData(row.Key, row.Value)
+	if !ok || decoded.chat.Malformed || decoded.chat.KeyID == "" || len(decoded.chat.KeyID) > 255 {
+		return cursorstore.NotChecked(cursorstore.UnknownFormat)
+	}
+	facts := decoded.chat.CursorFacts
+	if facts.VersionPresent && (facts.Version < 1 || facts.Version > maxComposerVersion) || facts.Relationships == agentapi.CursorRelationshipsMalformed {
+		return cursorstore.NotChecked(cursorstore.UnknownFormat)
+	}
+	if slices.Contains(decoded.subagents, reg.SourceKey) {
+		return cursorstore.NotChecked(cursorstore.UnknownFormat)
+	}
+	// Ordered record hashes preserve the complete observed global routing set.
+	sum := sha256.Sum256(row.Value)
+	keySum := sha256.Sum256([]byte(row.Key))
+	global.Write(keySum[:])
+	global.Write(sum[:])
+	if decoded.chat.KeyID == reg.SourceKey {
+		if !decoded.counted || decoded.chat.Malformed || decoded.chat.ID != reg.NativeSessionID {
+			return cursorstore.NotChecked(cursorstore.UnknownFormat)
+		}
+		*selected = decoded.chat
 	}
 	return nil
 }

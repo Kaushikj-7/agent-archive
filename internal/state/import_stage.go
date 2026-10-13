@@ -1101,7 +1101,7 @@ func (p ImportStage) validateCursorFacts(reg archive.SessionRegistration) error 
 		}
 		return nil
 	}
-	if p.CursorFacts == nil || !settledCursorFactShape(*p.CursorFacts) || (p.Bundle.ArchiveSessionID != "" && (!readySelectionOwnerMatches(reg, p.Bundle) || p.Bundle.Capture.Harness != reg.Harness || p.Bundle.PreviousGenerationID != "" || len(p.Bundle.LinkedSessions) != 0 || len(p.Bundle.SupplementalEvidence) != 0 || p.Bundle.Capture.SourceFormat != "cursor-composer")) || reg.Harness.Name != archive.HarnessCursor || reg.SourceKind != archive.SourceKindCursorSQLite || reg.SourceKey != reg.NativeSessionID || reg.ParentSessionID != "" || reg.NativeChild || reg.ParentNativeSessionID != "" || reg.NativeRootSessionID != "" || reg.NativeSourceHome != "" || reg.PreviousGenerationID != "" || reg.CaptureFrozen || reg.CodexBinding != nil || reg.CodexAdmission != nil || len(p.Children) != 0 || reg.HistoricalProject != nil {
+	if unsupportedSettledStageOwner(p, reg) {
 		return ErrReadySelectionFrozen
 	}
 	facts := p.CursorFacts
@@ -1198,4 +1198,8 @@ func (s *Store) commitFreshSettledStage(ctx context.Context, g config.DurableSto
 		return e
 	}
 	return rename()
+}
+
+func unsupportedSettledStageOwner(p ImportStage, reg archive.SessionRegistration) bool {
+	return p.CursorFacts == nil || !settledCursorFactShape(*p.CursorFacts) || (p.Bundle.ArchiveSessionID != "" && (!readySelectionOwnerMatches(reg, p.Bundle) || p.Bundle.Capture.Harness != reg.Harness || p.Bundle.PreviousGenerationID != "" || len(p.Bundle.LinkedSessions) != 0 || len(p.Bundle.SupplementalEvidence) != 0 || p.Bundle.Capture.SourceFormat != "cursor-composer")) || reg.Harness.Name != archive.HarnessCursor || reg.SourceKind != archive.SourceKindCursorSQLite || reg.SourceKey != reg.NativeSessionID || reg.ParentSessionID != "" || reg.NativeChild || reg.ParentNativeSessionID != "" || reg.NativeRootSessionID != "" || reg.NativeSourceHome != "" || reg.PreviousGenerationID != "" || reg.CaptureFrozen || reg.CodexBinding != nil || reg.CodexAdmission != nil || len(p.Children) != 0 || reg.HistoricalProject != nil
 }

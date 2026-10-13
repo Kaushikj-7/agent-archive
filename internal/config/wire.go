@@ -217,13 +217,9 @@ func validateWriterVersion(c Config, version writerVersion) error {
 	if !supportedWriterVersion(version) {
 		return errors.New("configuration requires a supported writer fence")
 	}
-	if version.Version == 14 {
-		if !c.SettledCursorSelectionProtection || !c.StagedSelectionProtection || !c.PublicationCompositionProtection || !c.DurableStorageProtection || !c.ImportStagingProtection || c.Storage.EffectiveArchiveFormat() != destination.FormatLegacy {
-			return errors.New("unsupported settled Cursor writer")
-		}
-	} else if version.Version == 13 {
-		if !c.StagedSelectionProtection || !c.PublicationCompositionProtection || !c.DurableStorageProtection || !c.ImportStagingProtection || c.Storage.EffectiveArchiveFormat() != destination.FormatLegacy {
-			return errors.New("staged selection requires protected legacy import configuration")
+	if version.Version == 14 || version.Version == 13 {
+		if err := validateStagedWriterConfiguration(c, version); err != nil {
+			return err
 		}
 	} else if version.Version == 12 {
 		if !c.PublicationCompositionProtection || !c.DurableStorageProtection {
@@ -316,4 +312,17 @@ func writerHasPermissionFloors(writer configWriter) bool {
 	default:
 		return false
 	}
+}
+
+func validateStagedWriterConfiguration(c Config, version writerVersion) error {
+	if version.Version == 14 {
+		if !c.SettledCursorSelectionProtection || !c.StagedSelectionProtection || !c.PublicationCompositionProtection || !c.DurableStorageProtection || !c.ImportStagingProtection || c.Storage.EffectiveArchiveFormat() != destination.FormatLegacy {
+			return errors.New("unsupported settled Cursor writer")
+		}
+	} else if version.Version == 13 {
+		if !c.StagedSelectionProtection || !c.PublicationCompositionProtection || !c.DurableStorageProtection || !c.ImportStagingProtection || c.Storage.EffectiveArchiveFormat() != destination.FormatLegacy {
+			return errors.New("staged selection requires protected legacy import configuration")
+		}
+	}
+	return nil
 }

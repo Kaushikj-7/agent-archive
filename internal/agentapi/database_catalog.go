@@ -63,6 +63,8 @@ type CursorComposerFacts struct {
 // CursorRelationshipShape distinguishes absent relationships from malformed input.
 type CursorRelationshipShape string
 
+// CursorRelationshipsAbsent, CursorRelationshipsValid, and CursorRelationshipsMalformed
+// distinguish absent, qualified, and malformed native child roster observations.
 const (
 	CursorRelationshipsAbsent    CursorRelationshipShape = "absent"
 	CursorRelationshipsValid     CursorRelationshipShape = "valid"
