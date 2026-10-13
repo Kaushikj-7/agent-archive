@@ -18,7 +18,16 @@ func (s *sessionScan) freezeOrdinaryReadySelection(ctx context.Context, p *state
 	if !found || !cfg.PublicationCompositionProtection {
 		return nil
 	}
-	if p.History != nil || p.Bundle.History != nil || p.MetadataOnly || s.reg.HistoricalProject != nil || s.reg.StagedImportSHA256 != "" {
+	staged := s.reg.StagedImportSHA256 != "" && cfg.StagedSelectionProtection
+	if staged {
+		if !cfg.SupportsStagedSelection() {
+			return state.ErrReadySelectionFrozen
+		}
+		if authority, ok := s.remote.(interface{ CatalogMetadataAuthority() bool }); ok && authority.CatalogMetadataAuthority() {
+			return state.ErrReadySelectionFrozen
+		}
+	}
+	if p.History != nil || p.Bundle.History != nil || p.MetadataOnly || s.reg.HistoricalProject != nil || s.reg.StagedImportSHA256 != "" && !staged {
 		return state.ErrReadySelectionFrozen
 	}
 	_, found, err = s.published.LastPublishedMetadata()
@@ -38,7 +47,12 @@ func (s *sessionScan) freezeOrdinaryReadySelection(ctx context.Context, p *state
 			return e
 		}
 	}
-	next, err := s.local.FreezeReadySelection(ctx, s.id(), *p, predecessor, raw)
+	var next state.PendingPublication
+	if staged {
+		next, err = s.local.FreezeStagedSelection(ctx, s.id(), *p, predecessor, raw)
+	} else {
+		next, err = s.local.FreezeReadySelection(ctx, s.id(), *p, predecessor, raw)
+	}
 	if err != nil {
 		return err
 	}
@@ -48,9 +62,16 @@ func (s *sessionScan) freezeOrdinaryReadySelection(ctx context.Context, p *state
 
 // checkReadySelectionRemote never converts an unknown predecessor to absence.
 func (s *sessionScan) checkReadySelectionRemote(p state.PendingPublication) (bool, error) {
+	proof := p.Selection
+	if p.StagedSelection != nil {
+		proof = &p.StagedSelection.Core
+	}
+	if proof == nil {
+		return false, state.ErrReadySelectionFrozen
+	}
 	raw, err := s.historyGet(p.MetadataKey, historyMetadataLimit)
 	if errors.Is(err, storage.ErrNotFound) {
-		if p.Selection.Predecessor == state.ReadyPredecessorAbsent {
+		if proof.Predecessor == state.ReadyPredecessorAbsent {
 			return false, nil
 		}
 		return false, errHistoryMetadataConflict
@@ -59,10 +80,10 @@ func (s *sessionScan) checkReadySelectionRemote(p state.PendingPublication) (boo
 		return false, err
 	}
 	digest := metadataSHA(raw)
-	if digest == p.Selection.MetadataSHA256 {
+	if digest == proof.MetadataSHA256 {
 		return true, nil
 	}
-	if p.Selection.Predecessor == state.ReadyPredecessorPresent && digest == p.Selection.PredecessorSHA256 {
+	if proof.Predecessor == state.ReadyPredecessorPresent && digest == proof.PredecessorSHA256 {
 		return false, nil
 	}
 	return false, errHistoryMetadataConflict
@@ -87,4 +108,12 @@ func (s *sessionScan) uploadReadySelection(p state.PendingPublication) error {
 		return s.verifyImportPublication(p)
 	}
 	return s.publicationRemote(p).Put(s.ctx, p.MetadataKey, p.MetadataBytes)
+}
+
+func (s *sessionScan) releaseTypedStage() error {
+	remote, ok := s.remote.(state.StagedReadback)
+	if !ok {
+		return state.ErrReadySelectionFrozen
+	}
+	return s.local.VerifyAndBeginStagedRelease(s.ctx, s.id(), remote, s.opts.CollectorGuard)
 }

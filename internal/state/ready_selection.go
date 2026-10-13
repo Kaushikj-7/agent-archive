@@ -90,6 +90,9 @@ func readyDigestValid(h string) bool {
 }
 
 func (p PendingPublication) validateReadySelectionShape() error {
+	if p.StagedSelection != nil {
+		return p.validateStagedShape()
+	}
 	if p.JournalVersion == 0 && p.Selection == nil {
 		return nil
 	}
@@ -131,7 +134,7 @@ func (s *Store) FreezeReadySelection(ctx context.Context, id string, p PendingPu
 		return p, err
 	}
 	cfg, err := s.inspectDurableReadRoots()
-	if err != nil || !cfg.PublicationCompositionProtection || !cfg.DurableStorageProtection || cfg.SchemaVersion != 12 {
+	if err != nil || !cfg.SupportsOrdinarySelection() {
 		return p, errors.Join(ErrDurableStorageRecovery, err)
 	}
 	reg, found, err := s.LoadRegistration(id)
@@ -208,6 +211,7 @@ func (s *Store) freezeReadyPredecessor(ctx context.Context, id string, p *Pendin
 
 func (s *Store) readyBinding(ctx context.Context, p PendingPublication) (string, error) {
 	p.Selection = nil
+	p.StagedSelection = nil
 	p.Catalog = nil
 	p.JournalVersion = 0
 	p.Attempted = false
@@ -217,6 +221,9 @@ func (s *Store) readyBinding(ctx context.Context, p PendingPublication) (string,
 }
 
 func (s *Store) validateReadySelection(ctx context.Context, p PendingPublication) error {
+	if p.StagedSelection != nil {
+		return s.validateStagedSelection(ctx, p)
+	}
 	if p.Selection == nil {
 		return p.validateReadySelectionShape()
 	}
@@ -252,7 +259,7 @@ func validateReadySourceKeys(p PendingPublication) error {
 
 func (s *Store) validateReadyOwner(ctx context.Context, p PendingPublication) error {
 	cfg, err := s.inspectDurableReadRoots()
-	if err != nil || cfg.SchemaVersion != 12 || !cfg.PublicationCompositionProtection || !cfg.DurableStorageProtection || cfg.DestinationID() != p.Selection.DestinationID {
+	if err != nil || !cfg.SupportsOrdinarySelection() || cfg.DestinationID() != p.Selection.DestinationID {
 		return errors.Join(ErrDurableStorageRecovery, err)
 	}
 	reg, found, err := s.LoadRegistration(p.Bundle.ArchiveSessionID)
@@ -355,6 +362,9 @@ func (q *ReadySelection) validateProofDigest() error {
 // SaveReadyPublication records selecting proof together with the cache before
 // request acknowledgment and pending removal. No source body is duplicated.
 func (p *Published) SaveReadyPublication(pending PendingPublication, at time.Time) error {
+	if pending.StagedSelection != nil {
+		return p.saveStagedPublication(pending, at)
+	}
 	if err := pending.ValidateReadySlot(p.id); err != nil {
 		return err
 	}
@@ -392,7 +402,7 @@ func (p *Published) preserveReadyPublished(ctx context.Context, next *publishedS
 	if next.LastPublished != nil && next.LastPublished.Selection != nil {
 		next.PublicationVersion = 2
 		cfg, err := p.store.inspectDurableReadRoots()
-		if err != nil || !cfg.PublicationCompositionProtection || !cfg.DurableStorageProtection || cfg.SchemaVersion != 12 {
+		if err != nil || !cfg.SupportsOrdinarySelection() {
 			return errors.Join(ErrDurableStorageRecovery, err)
 		}
 		if next.LastPublished.Selection.MetadataSHA256 != readySHA(next.MetadataBytes) {
@@ -418,9 +428,12 @@ func (s *Store) checkSelectingPendingWrite(ctx context.Context, id string, p Pen
 		return err
 	}
 	if !found {
-		if p.Selection != nil {
+		if p.Selection != nil || p.StagedSelection != nil {
 			return nil
 		}
+		return ErrReadySelectionFrozen
+	}
+	if old.StagedSelection != nil && (p.StagedSelection == nil || *old.StagedSelection != *p.StagedSelection) {
 		return ErrReadySelectionFrozen
 	}
 	if old.Selection != nil && (p.Selection == nil || *old.Selection != *p.Selection) {
@@ -448,6 +461,9 @@ func (s *Store) checkSelectingPendingRemoval(id string) error {
 	}
 	if !found {
 		return nil
+	}
+	if pending.StagedSelection != nil {
+		return ErrReadySelectionFrozen
 	}
 	if pending.Selection == nil {
 		return nil
@@ -515,7 +531,7 @@ func readySelectionOwnerMatches(reg archive.SessionRegistration, bundle archive.
 // slot independently of the owner recorded inside its recomputable wire data.
 // Existing legacy publication wire keeps its current identity rules.
 func (p PendingPublication) ValidateReadySlot(id string) error {
-	if (p.Selection != nil || p.JournalVersion != 0) && id != p.Bundle.ArchiveSessionID {
+	if (p.Selection != nil || p.StagedSelection != nil || p.JournalVersion != 0) && id != p.Bundle.ArchiveSessionID {
 		return ErrDurableStorageRecovery
 	}
 	return nil
