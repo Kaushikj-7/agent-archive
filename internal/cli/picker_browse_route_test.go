@@ -63,7 +63,7 @@ func (w *browseRouteOutput) Write(p []byte) (int, error) {
 func TestBareListUsesOneBoundedPageAndOlderReadsRemote(t *testing.T) {
 	a := newScopedArchive(t)
 	for i := range 130 {
-		a.add(t, fmt.Sprintf("route-%03d", i), fmt.Sprintf("RouteTitle%03d", i), a.label, func(m *archive.Metadata) {
+		a.addMetadata(t, fmt.Sprintf("route-%03d", i), fmt.Sprintf("RouteTitle%03d", i), a.label, func(m *archive.Metadata) {
 			m.Name = ""
 			m.EndedAt = nil
 			m.CapturedAt = a.base.CapturedAt.Add(-time.Duration(i+1) * time.Minute)
