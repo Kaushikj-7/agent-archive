@@ -12,13 +12,68 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 )
 
+var pickerReaderSeed struct {
+	once     sync.Once
+	objects  map[string][]byte
+	metadata []byte
+}
+
 func pickerReaderFixture(t *testing.T) (*Snapshot, *Writer, *qualifiedStore, []archive.Metadata) {
+	t.Helper()
+	// Exercise the real publication and complete upgrade once. Retain only
+	// immutable bytes; every caller gets independently owned mutable authority,
+	// bodies, metadata, node cache, and a newly started snapshot lifetime.
+	pickerReaderSeed.once.Do(func() {
+		_, _, store, metadata := buildPickerReaderFixture(t)
+		objects, err := store.List(t.Context(), "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		seed := make(map[string][]byte, len(objects))
+		for _, object := range objects {
+			raw, err := store.Get(t.Context(), object.Key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			seed[object.Key] = raw
+		}
+		raw, err := json.Marshal(metadata)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Publish only a fully constructed seed. sync.Once also completes when
+		// Fatal exits its initializer, so later callers must refuse that failure.
+		pickerReaderSeed.objects = seed
+		pickerReaderSeed.metadata = raw
+	})
+	if pickerReaderSeed.objects == nil || len(pickerReaderSeed.metadata) == 0 {
+		t.Fatal("picker reader fixture initialization did not complete")
+	}
+	w, store := fixture(t)
+	for key, raw := range pickerReaderSeed.objects {
+		if err := store.Put(t.Context(), key, raw); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var metadata []archive.Metadata
+	if err := json.Unmarshal(pickerReaderSeed.metadata, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	s, err := OpenSnapshot(t.Context(), store, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s, w, store, metadata
+}
+
+func buildPickerReaderFixture(t *testing.T) (*Snapshot, *Writer, *qualifiedStore, []archive.Metadata) {
 	t.Helper()
 	w, store := fixture(t)
 	var metadata []archive.Metadata
@@ -72,6 +127,53 @@ func pickerReaderFixture(t *testing.T) (*Snapshot, *Writer, *qualifiedStore, []a
 
 func testPickerRepo(c byte) string {
 	return archive.RepoKey("https://example.com/" + string(c) + ".git")
+}
+
+func TestPickerReaderFixturesOwnAuthorityBodiesAndMetadata(t *testing.T) {
+	first, _, changed, metadata := pickerReaderFixture(t)
+	second, _, independent, otherMetadata := pickerReaderFixture(t)
+	if first == second || first.cache == second.cache || first.nonce == second.nonce || first.secret == second.secret {
+		t.Fatal("reader fixtures share snapshot authority or cache")
+	}
+	q := PickerQuery{Scope: PickerScope{All: true}, Membership: PickerBrowse, Limit: 1}
+	page, err := second.PickerPage(t.Context(), q, "")
+	if err != nil || len(page.Rows) != 1 {
+		t.Fatalf("independent page %+v: %v", page, err)
+	}
+	keys := []string{HeadKey, CoordinatorKey, page.Rows[0].Row.Metadata.Key}
+	for i, key := range keys {
+		if i == 1 {
+			if err := changed.Delete(t.Context(), key); err != nil {
+				t.Fatal(err)
+			}
+		} else if err := changed.Put(t.Context(), key, []byte("modified fixture object")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	metadata[0].Title = "modified caller metadata"
+	*metadata[0].Counts.Turns = 99
+	first.started = time.Now().Add(-SnapshotLifetime)
+	first.cache.bytes = map[ObjectRef][]byte{first.head.Project: []byte("modified cache")}
+	third, _, fresh, freshMetadata := pickerReaderFixture(t)
+	for _, store := range []*qualifiedStore{independent, fresh} {
+		for _, key := range keys {
+			raw, err := store.Get(t.Context(), key)
+			if err != nil || !bytes.Equal(raw, pickerReaderSeed.objects[key]) {
+				t.Fatalf("fixture mutation crossed store boundary for %s: %v", key, err)
+			}
+		}
+	}
+	for _, ms := range [][]archive.Metadata{otherMetadata, freshMetadata} {
+		if ms[0].Title == metadata[0].Title || *ms[0].Counts.Turns != 0 {
+			t.Fatal("fixture mutation crossed metadata boundary")
+		}
+	}
+	if err := third.ValidateRead(t.Context()); err != nil {
+		t.Fatal("fixture mutation crossed lifetime boundary", err)
+	}
+	if _, err := second.HydratePicker(t.Context(), page.Rows[0].Reference); err != nil {
+		t.Fatal("fixture mutation crossed selected-body authority boundary", err)
+	}
 }
 
 func pickerOracle(ms []archive.Metadata, q PickerQuery) []string {
