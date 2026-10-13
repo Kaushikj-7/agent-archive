@@ -238,9 +238,9 @@ func TestSettledCursorFirstSaveRefusesOccupiedSlots(t *testing.T) {
 	for _, directory := range []string{"registrations", "requests", "pending", "published"} {
 		t.Run(directory, func(t *testing.T) {
 			r, c, _, _ := settledCursorFixture(t)
-			id, found, err := r.Store.ArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.Cursor, NativeID: c.NativeSessionID})
-			if err != nil || !found {
-				t.Fatal(found, err)
+			id, _, err := r.Store.EnsureArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.Cursor, NativeID: c.NativeSessionID})
+			if err != nil {
+				t.Fatal(err)
 			}
 			reg := r.registration(c, id, "")
 			budget := agentapi.NewNativeReadBudget(128 << 20)
@@ -291,9 +291,9 @@ func TestSettledCursorFirstSaveRefusesOccupiedSlots(t *testing.T) {
 
 func TestSettledCursorExactStageRetryAfterAdmission(t *testing.T) {
 	r, c, _, _ := settledCursorFixture(t)
-	id, found, err := r.Store.ArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.Cursor, NativeID: c.NativeSessionID})
-	if err != nil || !found {
-		t.Fatal(found, err)
+	id, _, err := r.Store.EnsureArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.Cursor, NativeID: c.NativeSessionID})
+	if err != nil {
+		t.Fatal(err)
 	}
 	reg := r.registration(c, id, "")
 	budget := agentapi.NewNativeReadBudget(128 << 20)
@@ -412,9 +412,9 @@ func TestSettledCursorSelectedNullRoutingKeepsAuthority(t *testing.T) {
 
 func TestSettledCursorFirstSaveRefusesStaleCommittedIndex(t *testing.T) {
 	r, c, _, _ := settledCursorFixture(t)
-	id, found, err := r.Store.ArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.Cursor, NativeID: c.NativeSessionID})
-	if err != nil || !found {
-		t.Fatal(found, err)
+	id, _, err := r.Store.EnsureArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.Cursor, NativeID: c.NativeSessionID})
+	if err != nil {
+		t.Fatal(err)
 	}
 	reg := r.registration(c, id, "")
 	budget := agentapi.NewNativeReadBudget(128 << 20)
