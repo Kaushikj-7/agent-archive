@@ -14,7 +14,6 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/catalog"
 	"github.com/wangjohn/agent-archive/internal/config"
-	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
@@ -80,9 +79,7 @@ func TestRealCLICatalogDefaultList50Bounded(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if _, err := reader.RebuildIndex(t.Context(), a.mem, archiveSessionsPrefix); err != nil {
-				t.Fatal(err)
-			}
+			// Catalog normalization rebuilds the complete legacy listing index.
 			remote := privateCatalogFromLegacy(t, a.mem)
 			counts := &catalogListReads{MeasuredStore: storagetest.NewMeasuredStore(remote.ObjectStore, 0), paths: map[string]int{}}
 			measured, err := catalog.Wrap(counts)
@@ -160,9 +157,7 @@ func TestRealCLICatalogListNonMultiplePageLimit(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if _, err := reader.RebuildIndex(t.Context(), a.mem, archiveSessionsPrefix); err != nil {
-				t.Fatal(err)
-			}
+			// Catalog normalization rebuilds the complete legacy listing index.
 			remote := privateCatalogFromLegacy(t, a.mem)
 			counts := &catalogListReads{MeasuredStore: storagetest.NewMeasuredStore(remote.ObjectStore, 0), paths: map[string]int{}}
 			measured, err := catalog.Wrap(counts)
