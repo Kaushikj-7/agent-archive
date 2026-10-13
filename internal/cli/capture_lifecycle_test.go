@@ -139,11 +139,6 @@ func TestCodexCaptureReadAndRetentionLifecycle(t *testing.T) {
 			t.Fatalf("discovery admitted an unexpected physical owner: %+v", reg)
 		}
 		byNative[reg.NativeSessionID] = reg
-		verified, err := readVerification(home, reg.ArchiveSessionID)
-		must(t, err)
-		if verified.VerifiedAt.IsZero() {
-			t.Fatal("publication lacks read-back verification")
-		}
 	}
 	root, linked, orphan := byNative[rootID], byNative[linkedID], byNative[orphanID]
 	if root.NativeChild || !linked.NativeChild || linked.ParentSessionID != root.ArchiveSessionID || !orphan.NativeChild || orphan.ParentSessionID != "" {
@@ -170,9 +165,22 @@ func TestCodexCaptureReadAndRetentionLifecycle(t *testing.T) {
 			}
 		}
 	}
+	checkVerification := func(reg archive.SessionRegistration, metadata archive.Metadata) {
+		t.Helper()
+		verified, err := readVerification(home, reg.ArchiveSessionID)
+		must(t, err)
+		published, err := local.LoadPublishedState(reg.ArchiveSessionID)
+		must(t, err)
+		_, publishedAt, found := published.LastPublished()
+		source, recorded := published.LastPublishedSource()
+		if verified.Outcome != verificationOutcomeVerified || verified.VerifiedAt.IsZero() || verified.ConfigurationID != sessionVerificationConfigurationID(cfg, reg) || !found || !recorded || !verified.PublishedAt.Equal(publishedAt) || verified.SourceSHA256 != metadata.SourceBundle.SHA256 || source != metadata.SourceBundle {
+			t.Fatalf("native owner %s lacks read-back verification of its current publication: %+v", reg.NativeSessionID, verified)
+		}
+	}
 	for _, reg := range regs {
 		var metadata archive.Metadata
 		must(t, json.Unmarshal([]byte(run("show", reg.ArchiveSessionID, "--json")), &metadata))
+		checkVerification(reg, metadata)
 		bundle, err := reader.LoadSource(t.Context(), remote, metadata, reader.Limits{})
 		must(t, err)
 		if bundle.NativeSessionID != reg.NativeSessionID || bundle.ArchiveSessionID != reg.ArchiveSessionID {
@@ -211,6 +219,7 @@ func TestCodexCaptureReadAndRetentionLifecycle(t *testing.T) {
 	for _, m := range list(3) {
 		if m.SessionID == root.ArchiveSessionID {
 			fresh = m.CapturedAt.Equal(now)
+			checkVerification(root, m)
 		}
 	}
 	if !fresh || !strings.Contains(run("show", root.ArchiveSessionID, "--transcript", "--no-pager"), "SYNTHETIC_REFRESH") {
