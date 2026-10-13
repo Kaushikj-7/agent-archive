@@ -43,7 +43,8 @@ type scopeView struct {
 
 // holdsNothing reports whether the view has nothing to show: no row, or none
 // that the words the browser opens with match.
-func (v scopeView) holdsNothing() bool { return (!v.incomplete && len(v.rows) == 0) || v.nothing }
+func (v scopeView) provenEmpty() bool  { return !v.incomplete && len(v.rows) == 0 }
+func (v scopeView) holdsNothing() bool { return v.provenEmpty() || v.nothing }
 
 // scopeRowsFunc builds the rows a scope shows. A scope with All set is every
 // session.
@@ -130,7 +131,7 @@ func (c *scopeChoices) toggle() {
 	if !c.canToggle() {
 		return
 	}
-	if c.current == viewAll && c.choice(viewScope).holdsNothing() {
+	if c.current == viewAll && c.choice(viewScope).provenEmpty() {
 		c.fellBack = true
 		all := c.choice(viewAll)
 		all.heading = c.heading(viewAll, all.scopeView, all.constants)

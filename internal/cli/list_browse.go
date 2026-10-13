@@ -657,7 +657,7 @@ func (l *sessionPicker) pickRows(p *prompter, stdout io.Writer, rows []listRow, 
 		if paged {
 			terminal.Println(stdout, pageLine(page, len(pages), len(v.rows)))
 		}
-		if len(rows) == 0 && v.words == "" && l.older == nil {
+		if l.emptyWithoutAction(rows) {
 			return listRow{}, false, nil
 		}
 		for {
@@ -703,23 +703,14 @@ func (l *sessionPicker) pickRows(p *prompter, stdout io.Writer, rows []listRow, 
 				if paged {
 					onPage = v.order[pages[page].start:pages[page].end]
 				}
-				if l.operation != nil {
-					if err := l.waitSearch(rows); err != nil {
-						return listRow{}, false, err
-					}
-					v = l.view(rows, totalMatched, truncated, format)
-					onPage = v.order
+				row, matched, text, e := l.lineAnswer(answer, onPage, rows, totalMatched, truncated, format)
+				if e != nil {
+					return listRow{}, false, e
 				}
-				if l.searchFailure != nil {
-					notice = "Search failed; Enter clears the filter so you can retry."
-					again = true
-					break
-				}
-				if row, matched := l.matchRow(answer, v.rows, onPage, rows); matched {
+				if matched {
 					return row, true, nil
 				}
-				// Words to narrow the table by, added to those already there.
-				l.setFilter(l.words() + " " + answer)
+				message = text
 				again = true
 			}
 			if !again {
@@ -1108,4 +1099,23 @@ func pagedArchiveChoices(scope sessionScope, format listFormatOptions, sessions 
 		}}
 	}
 	return choices
+}
+
+func (l *sessionPicker) lineAnswer(answer string, onPage, rows []listRow, total int, truncated bool, format listFormatOptions) (listRow, bool, string, error) {
+	if _, err := strconv.Atoi(answer); err != nil && l.operation != nil {
+		l.setFilter(l.words() + " " + answer)
+		return listRow{}, false, "", nil
+	}
+	if err := l.waitSearch(rows); err != nil {
+		return listRow{}, false, "", err
+	}
+	if l.searchFailure != nil {
+		return listRow{}, false, "Search failed; Enter clears the filter so you can retry.", nil
+	}
+	full := l.view(rows, total, truncated, format)
+	row, matched := l.matchRow(answer, full.rows, onPage, rows)
+	if !matched {
+		l.setFilter(l.words() + " " + answer)
+	}
+	return row, matched, "", nil
 }

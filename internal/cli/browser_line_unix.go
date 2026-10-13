@@ -3,7 +3,9 @@
 package cli
 
 import (
+	"errors"
 	"io"
+	"math"
 	"os"
 
 	"golang.org/x/sys/unix"
@@ -16,7 +18,11 @@ func browserLineReady(source io.Reader) (bool, error) {
 	if !ok {
 		return true, nil
 	}
-	fds := []unix.PollFd{{Fd: int32(file.Fd()), Events: unix.POLLIN}}
+	fd := file.Fd()
+	if fd > math.MaxInt32 {
+		return false, errors.New("browser input descriptor exceeds supported poll range")
+	}
+	fds := []unix.PollFd{{Fd: int32(fd), Events: unix.POLLIN}}
 	_, err := unix.Poll(fds, 50)
 	return fds[0].Revents != 0, err
 }

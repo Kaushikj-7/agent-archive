@@ -145,15 +145,7 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	ctx, stopReads := readCommandContext(env)
 	defer stopReads()
 	if browsing && q.empty() {
-		format := listFormatOptions{Now: env.now(), Projects: projectLabels(cfg), Style: styleFor(stdout), GroupByProject: true, Numbered: true, Verbose: opts.verbose}
-		choices, used, e := boundedArchiveChoices(catalog.WithReadView(ctx), env, store, opts, scope, format, stderr, "list")
-		if used {
-			stopList()
-			if e != nil {
-				terminal.Printf(stderr, "agent-archive: list: %v\n", e)
-				return 1
-			}
-			_, _, code := runBrowser(ctx, env, newPrompter(stdin, stdout), stdout, stderr, browserSpec{Mode: browseSessions, Choices: choices, Command: "list", Store: store, NoPager: opts.noPager})
+		if used, code := runBoundedListBrowser(catalog.WithReadView(ctx), env, store, cfg, opts, scope, stdin, stdout, stderr, stopList); used {
 			return code
 		}
 	}
@@ -193,13 +185,7 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		_, _, code := runBrowser(ctx, env, newPrompter(stdin, stdout), stdout, stderr, browserSpec{Mode: browseSessions, Choices: choices, Query: words, Command: "list", Store: store, NoPager: opts.noPager})
 		return code
 	}
-	if err := withPager(ctx, stdout, stderr, env, opts.noPager, func(w io.Writer) error {
-		return printListTable(w, choices.shown())
-	}); err != nil {
-		terminal.Printf(stderr, "agent-archive: list: %v\n", err)
-		return 1
-	}
-	return 0
+	return printListWithPager(ctx, env, stdout, stderr, opts.noPager, choices)
 }
 
 // listChoices is what list shows of the archive: for a browser, every
@@ -1041,4 +1027,14 @@ func selectedShowMetadata(ctx context.Context, store storage.ObjectStore, harnes
 		return selected, nil
 	}
 	return locateShowMetadata(ctx, store, harness, sessionID)
+}
+
+func printListWithPager(ctx context.Context, env listCommandDependencies, stdout, stderr io.Writer, noPager bool, choices *scopeChoices) int {
+	if err := withPager(ctx, stdout, stderr, env, noPager, func(w io.Writer) error {
+		return printListTable(w, choices.shown())
+	}); err != nil {
+		terminal.Printf(stderr, "agent-archive: list: %v\n", err)
+		return 1
+	}
+	return 0
 }

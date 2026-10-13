@@ -130,51 +130,18 @@ func (l *sessionPicker) loadOlder(p *prompter, stdout io.Writer) (bool, error) {
 				return false, ctx.Err()
 			}
 		}
-		if l.keys == nil {
-			answer, complete, err := l.pollBrowserLine(p)
-			if err != nil {
-				cancel()
-				join()
-				return false, err
-			}
-			if !complete {
-				continue
-			}
-			switch strings.ToLower(strings.TrimSpace(answer)) {
-			case "q", "quit":
-				l.operationQuit = true
-			case "a":
-				l.toggled = true
-			case "", "cancel":
-			default:
-				continue
-			}
-			l.operationCanceled = true
-			cancel()
-			result := join()
-			if result.err != nil && !errors.Is(result.err, context.Canceled) {
-				return false, result.err
-			}
-			return true, nil
-		}
-		k, err := l.keys.nextWait(50 * time.Millisecond)
+		cancelled, err := l.loadInput(p)
 		if err != nil {
 			cancel()
 			join()
 			return false, err
 		}
-		if k.kind == keyEscape || k.kind == keyEndOfInput || (k.kind == keyRune && (k.r == 'q' || k.r == 'a')) {
+		if cancelled {
 			l.operationCanceled = true
 			cancel()
 			result := join()
 			if result.err != nil && !errors.Is(result.err, context.Canceled) {
 				return false, result.err
-			}
-			if k.kind == keyEndOfInput || k.kind == keyRune && k.r == 'q' {
-				l.operationQuit = true
-			}
-			if k.kind == keyRune && k.r == 'a' {
-				l.toggled = true
 			}
 			return true, nil
 		}
@@ -296,6 +263,9 @@ func (l *sessionPicker) pollBrowserLine(p *prompter) (string, bool, error) {
 			answer := l.lineInput
 			l.lineInput = ""
 			p.noteLineEcho(answer)
+			if p.guidedSpacing {
+				terminal.Println(p.out)
+			}
 			return strings.TrimSpace(answer), true, nil
 		}
 		return "", false, fmt.Errorf("no more input: %w", err)
@@ -307,5 +277,48 @@ func (l *sessionPicker) pollBrowserLine(p *prompter) (string, bool, error) {
 	answer := l.lineInput
 	l.lineInput = ""
 	p.noteLineEcho(answer)
+	if p.guidedSpacing {
+		terminal.Println(p.out)
+	}
 	return strings.TrimSpace(answer), true, nil
+}
+
+func (l *sessionPicker) loadInput(p *prompter) (bool, error) {
+	if l.keys == nil {
+		answer, complete, err := l.pollBrowserLine(p)
+		if err != nil || !complete {
+			return false, err
+		}
+		switch strings.ToLower(strings.TrimSpace(answer)) {
+		case "q", "quit":
+			l.operationQuit = true
+		case "a":
+			l.toggled = true
+		case "", "cancel":
+		default:
+			return false, nil
+		}
+		return true, nil
+	}
+	k, err := l.keys.nextWait(50 * time.Millisecond)
+	if err != nil {
+		return false, err
+	}
+	switch k.kind {
+	case keyEscape:
+		return true, nil
+	case keyEndOfInput:
+		l.operationQuit = true
+		return true, nil
+	case keyRune:
+		switch k.r {
+		case 'q':
+			l.operationQuit = true
+			return true, nil
+		case 'a':
+			l.toggled = true
+			return true, nil
+		}
+	}
+	return false, nil
 }

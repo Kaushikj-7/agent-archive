@@ -60,13 +60,15 @@ func boundedHandoffChoices(ctx context.Context, env handoffSelectDependencies, s
 	}
 	// Probe supported format before local inventory reads. Unsupported is a
 	// compatibility decision, whereas an I/O/budget failure remains an error.
-	q, _ := pickerScopeQuery(scope, opts.harness, defaultListLimit)
+	// The model retains one extra remote lookahead. Cursor limits are sealed,
+	// so the supported-format probe must use the same query as model.state.
+	q, _ := pickerScopeQuery(scope, opts.harness, min(100, defaultListLimit+1))
 	first, err := snapshot.PickerPage(ctx, q, "")
 	if errors.Is(err, catalog.ErrPickerUnsupported) {
 		return nil, nil, nil, false, nil
 	}
 	if err != nil {
-		return nil, nil, nil, true, err
+		return nil, nil, nil, true, fmt.Errorf("read first handoff page: %w", err)
 	}
 	p := handoffPicker{ctx: ctx, env: env, home: home, harness: opts.harness, source: opts.source, archiveRead: true}
 	model := &pickerModel{archive: snapshot, regs: slices.Clone(regs), observeActivity: func(ctx context.Context, regs []archive.SessionRegistration) (map[pickerIdentity]time.Time, error) {
@@ -76,7 +78,7 @@ func boundedHandoffChoices(ctx context.Context, env handoffSelectDependencies, s
 		return p.buildLocalMetadata(r, t)
 	}}
 	if err = model.prepare(ctx); err != nil {
-		return nil, nil, nil, true, err
+		return nil, nil, nil, true, fmt.Errorf("classify handoff registrations: %w", err)
 	}
 	state, err := model.state(scope)
 	if err != nil {
@@ -93,7 +95,7 @@ func boundedHandoffChoices(ctx context.Context, env handoffSelectDependencies, s
 	choices.rowsForContext = func(readCtx context.Context, s sessionScope) scopeView {
 		v, e := pickerVisibleView(readCtx, model, s)
 		if e != nil {
-			operationErr = e
+			operationErr = fmt.Errorf("build handoff picker rows: %w", e)
 			return scopeView{incomplete: true, total: -1, truncated: true, note: fmt.Sprintf("Could not load sessions: %v", e)}
 		}
 		rows := make([]handoffPickerRow, len(v.Rows))

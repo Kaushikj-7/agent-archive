@@ -150,3 +150,31 @@ func TestBrowserSearchCompletionDoesNotWaitForPartialPipeLine(t *testing.T) {
 		t.Fatal("redraw lost pending input", answer, redraw, err)
 	}
 }
+
+func TestBrowserLineFilterEditCancelsPendingSearch(t *testing.T) {
+	stopped := make(chan struct{})
+	l := &sessionPicker{filter: "needle", searchContext: func(ctx context.Context) ([]listRow, error) { <-ctx.Done(); close(stopped); return nil, ctx.Err() }}
+	l.prepareSearch(nil)
+	_, picked, _, err := l.lineAnswer("next words", nil, nil, -1, true, listFormatOptions{})
+	if err != nil || picked || l.words() != "needle next words" {
+		t.Fatal("line filter edit was blocked by search", picked, l.words(), err)
+	}
+	select {
+	case <-stopped:
+	default:
+		t.Fatal("edited line left prior search running")
+	}
+	l.stopOperations()
+}
+
+func TestBrowserPendingSearchDoesNotSelectAnUnseenAdditionalNumber(t *testing.T) {
+	table := formatSessionRows([]archive.Metadata{{SessionID: "displayed", Harness: archive.Harness{Name: "codex"}}}, listFormatOptions{Numbered: true})
+	full := formatSessionRows([]archive.Metadata{{SessionID: "older", Title: "needle", Harness: archive.Harness{Name: "codex"}}}, listFormatOptions{Numbered: true})
+	l := &sessionPicker{filter: "needle", searchContext: func(context.Context) ([]listRow, error) { return full, nil }}
+	l.prepareSearch(table)
+	_, picked, _, err := l.lineAnswer("2", nil, table, -1, true, listFormatOptions{Numbered: true})
+	if err != nil || picked || l.words() != "needle 2" {
+		t.Fatal("pending search allowed an undisplayed number", picked, l.words(), err)
+	}
+	l.stopOperations()
+}

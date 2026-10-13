@@ -8,14 +8,16 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/catalog"
+	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
 // boundedArchiveChoices keeps a separate remote frontier for each displayed
 // scope. It never initializes the complete summary cache before search.
 func boundedArchiveChoices(ctx context.Context, env metadataCacheDependencies, store storage.ObjectStore, opts listOptions, scope sessionScope, format listFormatOptions, stderr io.Writer, command string) (*scopeChoices, bool, error) {
-	if !reader.CatalogAuthority(store) || opts.imported || opts.hookCaptured || opts.verbose || opts.filter.Model != "" || opts.filter.Skill != "" || opts.filter.SkillSHA256 != "" || opts.filter.SkillUsage != "" || !opts.filter.From.IsZero() || !opts.filter.To.IsZero() || opts.filter.RequireCompleteCoverage || opts.filter.Replays != reader.ReplaysHidden {
+	if !reader.CatalogAuthority(store) || !boundedArchiveOptions(opts) {
 		return nil, false, nil
 	}
 	pageSize := defaultListLimit
@@ -159,7 +161,7 @@ func readPickerSessionView(ctx context.Context, store storage.ObjectStore, row l
 		}
 		return metadataWithLinks(ctx, store, metadata), nil
 	}
-	return readSessionView(ctx, store, row.HarnessKey, row.SessionID)
+	return readSessionView(catalog.NewReadView(ctx), store, row.HarnessKey, row.SessionID)
 }
 
 func bindArchiveSearchRows(ctx context.Context, snapshot *catalog.Snapshot, store storage.ObjectStore, rows []listRow) error {
@@ -188,4 +190,24 @@ func bindArchiveSearchRows(ctx context.Context, snapshot *catalog.Snapshot, stor
 		}
 	}
 	return ctx.Err()
+}
+
+func boundedArchiveOptions(opts listOptions) bool {
+	f := opts.filter
+	return !opts.imported && !opts.hookCaptured && !opts.verbose && f.Model == "" && f.Skill == "" && f.SkillSHA256 == "" && f.SkillUsage == "" && f.From.IsZero() && f.To.IsZero() && !f.RequireCompleteCoverage && f.Replays == reader.ReplaysHidden
+}
+
+func runBoundedListBrowser(ctx context.Context, env listCommandDependencies, store storage.ObjectStore, cfg config.Config, opts listOptions, scope sessionScope, stdin io.Reader, stdout, stderr io.Writer, stopList func()) (bool, int) {
+	format := listFormatOptions{Now: env.now(), Projects: projectLabels(cfg), Style: styleFor(stdout), GroupByProject: true, Numbered: true, Verbose: opts.verbose}
+	choices, used, err := boundedArchiveChoices(ctx, env, store, opts, scope, format, stderr, "list")
+	if !used {
+		return false, 0
+	}
+	stopList()
+	if err != nil {
+		terminal.Printf(stderr, "agent-archive: list: %v\n", err)
+		return true, 1
+	}
+	_, _, code := runBrowser(ctx, env, newPrompter(stdin, stdout), stdout, stderr, browserSpec{Mode: browseSessions, Choices: choices, Command: "list", Store: store, NoPager: opts.noPager})
+	return true, code
 }
