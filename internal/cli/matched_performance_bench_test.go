@@ -161,8 +161,10 @@ func matchedArgs(kind matchedKind, limit int) []string {
 		return []string{"show", "00000001", "--json"}
 	case matchedInteractive:
 		return []string{"stats", "--days", "7"}
-	default:
+	case matchedStats1, matchedStats7, matchedStats30, matchedStats90:
 		return []string{"stats", "--days", strings.TrimPrefix(string(kind), "stats"), "--json", "--all"}
+	default:
+		panic(fmt.Sprintf("unknown matched command kind %q", kind))
 	}
 }
 
@@ -390,12 +392,11 @@ func TestMatchedPerformanceRejectsPartialOutput(t *testing.T) {
 				if err := json.Unmarshal(output.Bytes(), &doc); err != nil {
 					t.Fatal(err)
 				}
-				switch kind {
-				case matchedShowParent:
+				if kind == matchedShowParent {
 					delete(doc, "linked_session_availability")
-				case matchedStats7:
+				} else if kind == matchedStats7 {
 					delete(doc, "coverage")
-				case matchedList:
+				} else {
 					doc["sessions"] = json.RawMessage("[]")
 				}
 				partial := matchedJSON(t, doc)
