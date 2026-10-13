@@ -23,8 +23,11 @@ Prioritize:
    header start is outside the selected range.
 
 Delivery order differs from impact ranking: establish a small measurement
-baseline and ship conservative date exclusion first, then streaming inspection,
-then verified reuse. Repeated-read consolidation is conditional on profiling.
+baseline and bounded aggregate tracing first, then streaming inspection,
+then verified reuse and date exclusion from successful inspection evidence.
+A header-only date exclusion is deferred: an old malformed body or later native
+metadata can leave the current candidate without a start and with a refusal
+reason. A header timestamp alone cannot preserve those candidate fields. Repeated-read consolidation is conditional on profiling.
 
 The previous investigation observed 1,511 files / 3.49 GiB in the default Codex
 stores, with 1,352 header starts inside that run's seven-day window. Only
@@ -36,7 +39,9 @@ measurements; early dates alone will not address most of that workload.
 - [Planning](../../internal/backfill/plan.go) discovers sources, resolves
   projects and recovery, classifies archive state, filters selected transcripts,
   then applies final dates. `selectAdapterWork` does not reject known old starts.
-- `defaultWorkers` uses half the logical CPUs, clamped to 2–8. The 128 MiB
+- The CLI sets planning workers to **one** because its native lookup and source
+  ownership are serial. The library `defaultWorkers` uses half the logical CPUs,
+  clamped to 2–8 when the caller does not override it. The 128 MiB
   `byteBudget` reserves raw file size; a larger file runs alone. This is a
   scheduling bound, not a process RSS bound.
 - `runAdapter` builds a complete filtered transcript and retains only compact
@@ -51,10 +56,11 @@ measurements; early dates alone will not address most of that workload.
 - Reuse [existing tracing](../../internal/cli/trace.go), native read budgets,
   and native provider ports. Keep agent-specific rules inside integrations.
 
-## PR 1: Baseline and conservative early date exclusion
+## PR 1: Baseline, bounded tracing, and date evidence contract
 
 Dependency: current main. Record the unoptimized baseline before implementing
-date exclusion or any other optimization, even if both ship in this PR.
+date exclusion or any other optimization. PR 1 records the existing old-body
+error and late-metadata contract; it does not enable a header-only shortcut.
 
 ### Measurement
 
@@ -115,7 +121,15 @@ Measure end-to-end wall time, CPU time, allocated bytes, read bytes/passes,
 GC activity, and subprocess peak RSS. Allocations and the resource ledger alone
 do not establish peak memory. Run resource comparisons without the race detector.
 
-### Date exclusion
+### Deferred date exclusion
+
+Observed header facts alone do not attest complete body validity or the absence
+of later relationship metadata. First preserve and test the existing candidate
+fields and skip reasons, then use a verified successful inspection summary in
+PR 3 to establish safe eligibility. Until then, ordinary old files retain the
+full adapter path. The optional capability below is added only when exercised
+by such a proof; PR 1 adds no unused API scaffolding.
+
 
 Add an optional integration-owned capability for an authoritative planning start
 from observed header facts. Codex can initially supply this only for ordinary,
@@ -289,7 +303,8 @@ tests and the repository checks in [Testing](../contributing/testing.md).
 Run full lifecycle/recovery regression tests where native provider behavior
 changes. Fixtures stay synthetic and read/write only disposable test stores.
 
-Preserve current worker defaults and scheduling budgets across the first three
+Preserve the CLI planning override of one worker, library worker defaults, and
+scheduling budgets across the first three
 PRs so gains can be attributed to less work. Trace overhead target: below 2%
 when enabled on the representative fixture, negligible when disabled. No
 material increase in CPU time or peak RSS for any accepted optimization.
