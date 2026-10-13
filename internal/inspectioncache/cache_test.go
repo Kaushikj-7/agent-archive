@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -228,5 +229,46 @@ func TestCacheHashesLocatorAndRejectsSymlinkDirectory(t *testing.T) {
 	}
 	if err := linked.StoreBatch(t.Context(), []Observation{observed}); err == nil {
 		t.Fatal("symlink directory written")
+	}
+}
+
+func TestCacheProductionDiskCapsAndDirectoryTraversalBound(t *testing.T) {
+	if MaxEntries != 10000 || MaxBytes != 16<<20 {
+		t.Fatalf("production caps changed: %d/%d", MaxEntries, MaxBytes)
+	}
+	cache := New(filepath.Join(t.TempDir(), "inspection"))
+	if err := os.Mkdir(cache.dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for i := range 6 {
+		path := filepath.Join(cache.dir, fmt.Sprintf("oversized-%d.json", i))
+		file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY, 0600)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := file.Truncate(3 << 20); err != nil {
+			t.Fatal(err)
+		}
+		if err := file.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := cache.StoreBatch(t.Context(), []Observation{cacheTestObservation()}); err != nil {
+		t.Fatal(err)
+	}
+	entries, bytes, err := cache.inventory(t.Context())
+	if err != nil || len(entries) > MaxEntries || bytes > MaxBytes {
+		t.Fatalf("production disk cap: entries=%d bytes=%d error=%v", len(entries), bytes, err)
+	}
+	// Empty corrupt files cost no content allocations, yet metadata traversal is
+	// still bounded and refuses persistence instead of growing an arbitrary tree.
+	for i := range 2*MaxEntries + 2 {
+		path := filepath.Join(cache.dir, fmt.Sprintf("invalid-%05d.json", i))
+		if err := os.WriteFile(path, nil, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := cache.StoreBatch(t.Context(), []Observation{cacheTestObservation()}); err == nil {
+		t.Fatal("unbounded cache directory accepted")
 	}
 }

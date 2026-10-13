@@ -74,6 +74,7 @@ type cacheFaultSources struct {
 	base                     agentapi.SourcesLookup
 	verify                   func() error
 	snapshotClose, passClose error
+	readFailure              error
 }
 
 func (s cacheFaultSources) LookupSources(name string) (agentapi.SourceProvider, agentapi.TranscriptFilter, bool) {
@@ -100,6 +101,9 @@ type cacheFaultPass struct {
 }
 
 func (p cacheFaultPass) Read(ctx context.Context, ref agentapi.SourceRef, limits agentapi.ReadLimits) (agentapi.SourceSnapshot, error) {
+	if p.faults.readFailure != nil {
+		return nil, p.faults.readFailure
+	}
 	snapshot, err := p.SourcePass.Read(ctx, ref, limits)
 	if err != nil {
 		return nil, err
@@ -134,7 +138,7 @@ func (s cacheFaultSnapshot) Close() error {
 }
 
 func TestCacheNeverEmitsAfterProviderCleanupFailureAndRechecksHitContent(t *testing.T) {
-	for _, fault := range []string{"snapshot-close", "pass-close", "change-after-hit", "cancel-after-hit"} {
+	for _, fault := range []string{"snapshot-close", "pass-close", "change-after-hit", "cancel-after-hit", "permission-before-hit", "missing-before-hit", "replace-after-hit"} {
 		t.Run(fault, func(t *testing.T) {
 			dir := t.TempDir()
 			id := "00000000-0000-4000-8000-000000000001"
@@ -152,7 +156,7 @@ func TestCacheNeverEmitsAfterProviderCleanupFailureAndRechecksHitContent(t *test
 				faults.snapshotClose = agentapi.Wrap(agentapi.Cleanup, errors.New("synthetic snapshot close"))
 			case "pass-close":
 				faults.passClose = agentapi.Wrap(agentapi.Cleanup, errors.New("synthetic pass close"))
-			case "change-after-hit", "cancel-after-hit":
+			case "change-after-hit", "cancel-after-hit", "permission-before-hit", "missing-before-hit", "replace-after-hit":
 				_, _, observed, err := InspectSourceCached(ctx, "codex", ref, time.Time{}, testSources, cache)
 				if err != nil || observed == nil {
 					t.Fatalf("prime: %+v %v", observed, err)
@@ -160,7 +164,21 @@ func TestCacheNeverEmitsAfterProviderCleanupFailureAndRechecksHitContent(t *test
 				if err := cache.StoreBatch(ctx, []inspectioncache.Observation{*observed}); err != nil {
 					t.Fatal(err)
 				}
-				if fault == "cancel-after-hit" {
+				if fault == "replace-after-hit" {
+					faults.verify = func() error {
+						temp := ref.Path + ".replacement"
+						if err := os.WriteFile(temp, []byte(raw), 0600); err != nil {
+							return err
+						}
+						return os.Rename(temp, ref.Path)
+					}
+				} else if fault == "permission-before-hit" {
+					faults.readFailure = os.ErrPermission
+				} else if fault == "missing-before-hit" {
+					if err := os.Remove(ref.Path); err != nil {
+						t.Fatal(err)
+					}
+				} else if fault == "cancel-after-hit" {
 					faults.verify = func() error { cancel(); return ctx.Err() }
 				} else {
 					faults.verify = func() error {
@@ -180,7 +198,7 @@ func TestCacheNeverEmitsAfterProviderCleanupFailureAndRechecksHitContent(t *test
 			if err == nil || summary != nil || observed != nil {
 				t.Fatalf("failed provider exposed reusable summary: %+v %+v %v", summary, observed, err)
 			}
-			if fault == "change-after-hit" && !agentapi.HasFailure(err, agentapi.Changed) {
+			if (fault == "change-after-hit" || fault == "replace-after-hit") && !agentapi.HasFailure(err, agentapi.Changed) {
 				t.Fatalf("content change classification: %v", err)
 			}
 		})
