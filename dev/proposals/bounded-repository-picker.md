@@ -1,7 +1,8 @@
 # Bounded repository windows and picker startup
 
-Status: implementation-ready proposal; no implementation or production activation
-is claimed. Prepared 2026-10-13 against main
+Status: PR 1 reserves the format and integrates refusal controls. Bounded indexed
+picker construction, reads and production activation remain unimplemented.
+Prepared 2026-10-13 against main
 `4b9b612ff9fbac454c93a292435bb151f7cde75f`.
 
 This is the next source implementation slice of
