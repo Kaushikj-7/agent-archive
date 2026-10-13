@@ -477,22 +477,6 @@ func (m *Migration) Verify(ctx context.Context) error {
 	return m.save(ctx)
 }
 
-func migrationRows(ctx context.Context, snapshot *Snapshot) ([]Row, error) {
-	var rows []Row
-	cursor := ""
-	for {
-		page, err := snapshot.Query(ctx, Query{Index: IdentityIndex}, cursor, 1000)
-		if err != nil {
-			return nil, err
-		}
-		rows = append(rows, page.Rows...)
-		if page.Next == "" {
-			return rows, nil
-		}
-		cursor = page.Next
-	}
-}
-
 // Activate revalidates the exhaustive oracle and credential authority before
 // making readers visible. Admission stays sealed until local configuration is
 // durably switched and FinishActivation acknowledges that step.

@@ -92,23 +92,7 @@ func runMigrateCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		if err = migration.Rollback(ctx); err != nil {
 			return fail(err)
 		}
-		if migration.State.Protocol == 11 {
-			cfg.Storage = migration.State.Destination
-			cfg.ScopedPickerProtection = true
-		} else {
-			cfg.Storage = migration.State.Source
-		}
-		cfg.Paused = true
-		cfg.SchemaVersion = config.SchemaVersion
-		if err = config.Save(home, cfg); err != nil {
-			return fail(err)
-		}
-		if migration.State.Protocol == 11 {
-			terminal.Println(stdout, "Retained the original fully indexed catalog under its permanent scoped writer fence. Publication remains sealed and collection is paused.")
-		} else {
-			terminal.Println(stdout, "Rolled back to the retained read-only source. Collection remains paused.")
-		}
-		return 0
+		return saveMigrationRollback(home, cfg, migration, stdout, fail)
 	}
 	for {
 		done, e := migration.Step(ctx)
@@ -133,5 +117,26 @@ func runMigrateCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		return fail(err)
 	}
 	terminal.Printf(stdout, "Activated catalog-v4 after exhaustive source and history verification (%d sessions). The original destination remains read-only.\n", migration.State.Copied)
+	return 0
+}
+
+func saveMigrationRollback(home string, cfg config.Config, migration *catalog.Migration, stdout io.Writer, fail func(error) int) int {
+	if migration.State.Protocol == 11 {
+		cfg.Storage = migration.State.Destination
+		cfg.ScopedPickerProtection = true
+	} else {
+		cfg.Storage = migration.State.Source
+	}
+	cfg.Paused = true
+	cfg.SchemaVersion = config.SchemaVersion
+	if err := config.Save(home, cfg); err != nil {
+		return fail(err)
+	}
+	if migration.State.Protocol == 11 {
+		terminal.Println(stdout, "Retained the original fully indexed catalog under its permanent scoped writer fence. Publication remains sealed and collection is paused.")
+	} else {
+		terminal.Println(stdout, "Rolled back to the retained read-only source. Collection remains paused.")
+	}
+
 	return 0
 }

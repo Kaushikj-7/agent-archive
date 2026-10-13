@@ -21,7 +21,7 @@ func exactHex(value string, bytes int) bool {
 var errCoordinatorDescriptor = errors.New("invalid catalog coordinator descriptor")
 
 func (state admissions) validate() error {
-	if !((state.Protocol == 10 && state.Picker == nil) || (state.Protocol == 11 && state.Picker.valid())) || state.Generation == 0 || state.Owners == nil || len(state.Owners) > 256 {
+	if !state.validFormat() || state.Generation == 0 || state.Owners == nil || len(state.Owners) > 256 {
 		return errCoordinatorDescriptor
 	}
 	if err := state.validatePickerUpgrade(); err != nil {
@@ -133,4 +133,8 @@ func (state admissions) validatePickerUpgrade() error {
 	}
 
 	return nil
+}
+
+func (state admissions) validFormat() bool {
+	return (state.Protocol == 10 && state.Picker == nil) || (state.Protocol == 11 && state.Picker.valid())
 }

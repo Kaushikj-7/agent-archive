@@ -12,6 +12,7 @@ import (
 // CatalogJournal binds one frozen publication to its originating collector
 // lock and configured destination. It contains hashes, never source payloads.
 type CatalogJournal struct {
+	Protocol         uint64 `json:"protocol,omitempty"`
 	Owner            string `json:"owner"`
 	Origin           string `json:"origin"`
 	Destination      string `json:"destination"`
@@ -23,7 +24,7 @@ type CatalogJournal struct {
 
 // Validate refuses incomplete recovery descriptors before remote mutation.
 func (j CatalogJournal) Validate() error {
-	if !journalHex(j.Owner, 16) || !journalHex(j.Origin, 32) || !journalHex(j.SHA256, 32) || j.Destination == "" || len(j.Destination) > 128 || j.SessionID == "" || len(j.SessionID) > 512 || strings.ContainsAny(j.SessionID, "/\\") || j.SessionID == "." || j.SessionID == ".." || j.MutationID == "" || len(j.MutationID) > 128 || len(j.ExpectedRevision) > 128 {
+	if (j.Protocol != 0 && j.Protocol != 11) || !journalHex(j.Owner, 16) || !journalHex(j.Origin, 32) || !journalHex(j.SHA256, 32) || j.Destination == "" || len(j.Destination) > 128 || j.SessionID == "" || len(j.SessionID) > 512 || strings.ContainsAny(j.SessionID, "/\\") || j.SessionID == "." || j.SessionID == ".." || j.MutationID == "" || len(j.MutationID) > 128 || len(j.ExpectedRevision) > 128 {
 		return errors.New("invalid catalog journal recovery descriptor")
 	}
 	return nil
@@ -190,4 +191,12 @@ func (g *CollectorGuard) HoldJournalRemoval(j CatalogJournal) (func(), error) {
 		return nil, errors.New("catalog pre-removal record differs")
 	}
 	return done, nil
+}
+
+// WriterProtocol preserves the frozen protocol-10 wire without adding fields.
+func (j CatalogJournal) WriterProtocol() uint64 {
+	if j.Protocol == 0 {
+		return 10
+	}
+	return j.Protocol
 }

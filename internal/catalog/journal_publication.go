@@ -15,7 +15,8 @@ import (
 // The journal descriptor must already be durable before this admission CAS.
 // The completed result authorizes replay of local acknowledgement, never writes.
 func (s *Store) BeginJournalPublication(ctx context.Context, id string, raw []byte, journal local.CatalogJournal, guard *local.CollectorGuard) (context.Context, bool, error) {
-	if _, _, err := s.Writer.Head(ctx); err != nil {
+	head, _, err := s.Writer.Head(ctx)
+	if err != nil {
 		return nil, false, err
 	}
 	if journal.Validate() != nil || journal.MutationID != id {
@@ -79,6 +80,9 @@ func (s *Store) BeginJournalPublication(ctx context.Context, id string, raw []by
 				}
 				priorOwner = active
 			}
+		}
+		if journal.WriterProtocol() != head.Protocol || head.Protocol != state.Protocol || (head.Picker != nil) != (state.Picker != nil) {
+			return ErrAdmissionClosed
 		}
 		if priorOwner == "" && (state.Seal != "" || len(state.Owners) >= 256) {
 			return ErrAdmissionClosed
