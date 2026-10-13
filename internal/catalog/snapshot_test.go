@@ -61,8 +61,22 @@ func TestSnapshotBoundedRangeCountsCursorsAndBodyAuthority(t *testing.T) {
 		}
 	}
 	next, err := s.Query(t.Context(), q, p.Next, 50)
-	if err != nil || next.Rows[0].Entry.Summary.SessionID != "session-0050" {
+	if err != nil || len(next.Rows) != 50 || next.Next == "" {
 		t.Fatalf("continuation %+v %v", next, err)
+	}
+	for i, row := range next.Rows {
+		if row.Entry.Summary.SessionID != fmt.Sprintf("session-%04d", 50+i) {
+			t.Fatalf("second-page continuation order %s", row.Entry.Summary.SessionID)
+		}
+	}
+	tail, err := s.Query(t.Context(), q, next.Next, 50)
+	if err != nil || len(tail.Rows) != 40 || tail.Next != "" {
+		t.Fatalf("nonmultiple final page: rows=%d cursor=%q err=%v", len(tail.Rows), tail.Next, err)
+	}
+	for i, row := range tail.Rows {
+		if row.Entry.Summary.SessionID != fmt.Sprintf("session-%04d", 100+i) {
+			t.Fatalf("tail continuation order %s", row.Entry.Summary.SessionID)
+		}
 	}
 	changed := q
 	changed.Reverse = !changed.Reverse

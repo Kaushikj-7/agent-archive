@@ -65,18 +65,24 @@ func metadataFixture(t *testing.T, count int) (*CodexRolloutLookup, []string, st
 }
 
 func TestMetadataInventorySharesFiveSweepsAtPhysicalScale(t *testing.T) {
+	if testing.Short() {
+		t.Skip("full physical sweep scale; weekly and exact candidates")
+	}
 	testMetadataInventoryScale(t, false, 1100, 256)
 }
 
 func TestMetadataInventorySharesFiveSweepsWithIndexedWAL(t *testing.T) {
+	if testing.Short() {
+		t.Skip("full indexed physical sweep scale; weekly and exact candidates")
+	}
 	testMetadataInventoryScale(t, true, 1100, 256)
 }
 
 func testMetadataInventoryScale(t *testing.T, indexed bool, logical, pairs int) {
 	t.Helper()
 	lookup, ids, root := metadataFixture(t, logical)
-	// A second copy for every logical ID exceeds the observation cache while
-	// retaining all physical candidates in the explicitly requested epoch.
+	// A second copy for every logical ID retains all physical candidates in
+	// the requested epoch; the full fixture also exceeds the observation cache.
 	if err := os.MkdirAll(filepath.Join(root, "archived_sessions", "nested"), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -433,6 +439,18 @@ func TestMetadataFullEpochKeepsOrdinaryDeadlineIndependent(t *testing.T) {
 }
 
 func TestMetadataInventoryMaximumCopiesAndJointCapacity(t *testing.T) {
+	if testing.Short() {
+		t.Skip("full 16384 physical metadata copies; weekly and exact candidates")
+	}
+	testMetadataInventoryCopiesAndJointCapacity(t, 16384)
+}
+
+func TestMetadataInventorySmallCopiesAndJointCapacity(t *testing.T) {
+	testMetadataInventoryCopiesAndJointCapacity(t, 64)
+}
+
+func testMetadataInventoryCopiesAndJointCapacity(t *testing.T, copies int) {
+	t.Helper()
 	store, _, _, root := fixture(t)
 	id := "00000000-0000-0000-0000-000000000001"
 	dir := filepath.Join(root, "sessions", "nested")
@@ -440,7 +458,7 @@ func TestMetadataInventoryMaximumCopiesAndJointCapacity(t *testing.T) {
 		t.Fatal(err)
 	}
 	line := `{"type":"session_meta","timestamp":"2026-10-01T12:00:00Z","payload":{"id":"` + id + `","cwd":"/synthetic","source":"cli","cli_version":"0.160.0","originator":"codex-tui"}}` + "\n"
-	for i := range 16384 {
+	for i := range copies {
 		name := fmt.Sprintf("rollout-%05d-%s.jsonl", i, id)
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(line+"SECRET_BODY\n"), 0600); err != nil {
 			t.Fatal(err)
@@ -459,11 +477,11 @@ func TestMetadataInventoryMaximumCopiesAndJointCapacity(t *testing.T) {
 	}
 	defer func() { _ = slice.Close() }()
 	if err := slice.Valid(t.Context()); err != nil {
-		if !raceEnabled || agentapi.Failure(err) != agentapi.Limit || view.remaining > 0 || t.Context().Err() != nil {
+		if copies != 16384 || !raceEnabled || agentapi.Failure(err) != agentapi.Limit || view.remaining > 0 || t.Context().Err() != nil {
 			t.Fatalf("maximum fixture gap: %v physical=%d retained=%d header=%d remaining=%s", err, len(view.facts), view.charge, view.headerBytes, view.remaining)
 		}
 		set, refusal := slice.Thread(t.Context(), id)
-		if agentapi.Failure(refusal) != agentapi.Limit || set.Complete || len(set.Candidates) != 0 || view.complete || view.cursor != nil || view.counts.physical > 16384 || view.counts.requested > int64(len(line)*view.counts.physical) {
+		if agentapi.Failure(refusal) != agentapi.Limit || set.Complete || len(set.Candidates) != 0 || view.complete || view.cursor != nil || view.counts.physical > copies || view.counts.requested > int64(len(line)*view.counts.physical) {
 			t.Fatalf("race refusal retained partial authority: set=%+v refusal=%v complete=%t cursor=%t counts=%+v headerLen=%d remaining=%s", set, refusal, view.complete, view.cursor != nil, view.counts, len(line), view.remaining)
 		}
 		t.Logf("instrumented maximum owned refusal elapsed=%s remaining=%s retained=%d headerwork=%d counts=%+v", time.Since(started), view.remaining, view.charge, view.headerBytes, view.counts)
@@ -478,20 +496,21 @@ func TestMetadataInventoryMaximumCopiesAndJointCapacity(t *testing.T) {
 		}
 		return
 	}
-	if len(view.facts) != 16384 || view.counts.physical != 16384 || view.counts.entries != 16385 || !view.complete {
+	if len(view.facts) != copies || view.counts.physical != copies || view.counts.entries != copies+1 || !view.complete {
 		t.Fatal("maximum physical metadata truncated")
 	}
 	used, peak := lookup.readBudget.Charged()
-	t.Logf("maxcopies=16384 headerLen=%d retained=%d headerwork=%d charged=%d peak=%d elapsed=%s remaining=%s counts=%+v", len(line), view.charge, view.headerBytes, used, peak, time.Since(started), view.remaining, view.counts)
+	t.Logf("copies=%d headerLen=%d retained=%d headerwork=%d charged=%d peak=%d elapsed=%s remaining=%s counts=%+v", copies, len(line), view.charge, view.headerBytes, used, peak, time.Since(started), view.remaining, view.counts)
 	// Joint capacity refusal precedes allocating a candidate result whose source
 	// metadata already consumes the aggregate cap; it does not discard facts.
 	if !view.reserve(metadataBytes - view.charge - view.headerBytes) {
 		t.Fatal("boundary charge failed")
 	}
-	if _, err := slice.Thread(t.Context(), id); agentapi.Failure(err) != agentapi.Limit {
-		t.Fatal("joint cap did not refuse result allocation", err)
+	set, err := slice.Thread(t.Context(), id)
+	if agentapi.Failure(err) != agentapi.Limit || set.Complete || len(set.Candidates) != 0 {
+		t.Fatalf("joint cap retained partial result authority: set=%+v err=%v", set, err)
 	}
-	if len(view.facts) != 16384 || view.counts.requested != int64(len(line)*16384) {
+	if len(view.facts) != copies || view.counts.requested != int64(len(line)*copies) {
 		t.Fatal("capacity refusal lost physical facts or metadata read body")
 	}
 	if err := slice.Close(); err != nil {
@@ -786,6 +805,10 @@ func TestMetadataPhysicalCeilingRefusesBeforeExtraOpen(t *testing.T) {
 	if view.counts.fileOpens != before || view.cursor != nil || view.counts.physical != 16384 {
 		t.Fatal("extra physical file opened beyond cap")
 	}
+}
+
+func TestMetadataInventorySmallerPhysicalScale(t *testing.T) {
+	testMetadataInventoryScale(t, false, 64, 16)
 }
 
 func TestMetadataInventorySmallerIndexedScale(t *testing.T) {

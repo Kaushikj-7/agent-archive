@@ -72,6 +72,14 @@ func rootRemoteFixture(t *testing.T, count int) (*catalog.Store, *storagetest.Me
 			t.Fatal(err)
 		}
 	}
+	key, err := archive.MetadataObjectKey("claude", "session-0000")
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, _, err := writer.Find(t.Context(), key)
+	if err != nil || entry == nil || entry.SummaryOverflow == "" {
+		t.Fatalf("root fixture must exceed the real inline envelope: entry=%+v err=%v", entry, err)
+	}
 	return remote, legacy, cutoff
 }
 
@@ -110,7 +118,11 @@ func TestRemoteRootChildrenUsesFullAuthorityAndLazyEmptyWindow(t *testing.T) {
 }
 
 func TestRemoteRootChildrenReusesOnlyCompleteSameRootSQL(t *testing.T) {
-	for _, count := range []int{128, 512} {
+	counts := []int{128}
+	if !testing.Short() {
+		counts = append(counts, 512)
+	}
+	for _, count := range counts {
 		t.Run(strconv.Itoa(count), func(t *testing.T) {
 			remote, legacy, cutoff := rootRemoteFixture(t, count)
 			measured := storagetest.NewMeasuredStore(remote, 0)
