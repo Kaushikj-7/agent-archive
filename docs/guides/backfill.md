@@ -296,10 +296,10 @@ not create permissions.
 ```sh
 agent-archive backfill --mapping-file mappings.json --dry-run --json
 agent-archive backfill --mapping-file mappings.json
-agent-archive historical-project list
-agent-archive historical-project rename 11111111111111111111111111111111 "Retired API"
-agent-archive historical-project disable 11111111111111111111111111111111
-agent-archive historical-project enable 11111111111111111111111111111111
+agent-archive backfill projects list
+agent-archive backfill projects rename 11111111111111111111111111111111 "Retired API"
+agent-archive backfill projects disable 11111111111111111111111111111111
+agent-archive backfill projects enable 11111111111111111111111111111111
 ```
 
 Review the assignments, historical IDs, labels and counts before confirming.
@@ -347,7 +347,7 @@ whole-session expiry; disabled permissions still expire under finite retention.
 Exact batch undo and purge remove the owned sessions and staged/remote evidence.
 **Undo retains historical project identities and destination permissions as
 explicit configuration**, including identities shared by another import. Use
-`historical-project disable ID` to stop their retained maintenance. Undo does not
+`backfill projects disable ID` to stop their retained maintenance. Undo does not
 claim sessions owned by another batch or change live capture configuration.
 
 The first committed historical permission installs the permanent
