@@ -3,6 +3,7 @@ package cursor
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agents/nativecodec"
 	"strings"
 	"testing"
 )
@@ -16,10 +17,10 @@ func TestSettledRosterPreflightPreservesCanonicalFacts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = validateSettledRoster(t.Context(), raw); err != nil {
+	if err = nativecodec.ValidateSettledCursorRoster(t.Context(), raw); err != nil {
 		t.Fatal(err)
 	}
-	facts := composerReviewFacts(map[string]json.RawMessage{"subagentComposerIds": raw})
+	facts := nativecodec.CursorReviewFacts(map[string]json.RawMessage{"subagentComposerIds": raw})
 	if facts.ChildIDsSHA256 == "" {
 		t.Fatal("canonical roster digest missing")
 	}
@@ -28,11 +29,11 @@ func TestSettledRosterPreflightPreservesCanonicalFacts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = validateSettledRoster(t.Context(), raw); err == nil {
+	if err = nativecodec.ValidateSettledCursorRoster(t.Context(), raw); err == nil {
 		t.Fatal("oversize roster reached lenient decoder")
 	}
 	for _, raw := range []string{`null`, `{}`, `[null]`, `[1]`, `[""]`, `["same","same"]`} {
-		if err = validateSettledRoster(t.Context(), []byte(raw)); err == nil {
+		if err = nativecodec.ValidateSettledCursorRoster(t.Context(), []byte(raw)); err == nil {
 			t.Fatalf("malformed roster accepted: %s", raw)
 		}
 	}
@@ -40,7 +41,7 @@ func TestSettledRosterPreflightPreservesCanonicalFacts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = validateSettledRoster(t.Context(), oversized); err == nil {
+	if err = nativecodec.ValidateSettledCursorRoster(t.Context(), oversized); err == nil {
 		t.Fatal("oversize ID reached lenient roster decode")
 	}
 
@@ -55,7 +56,7 @@ func TestSettledMetadataRejectsUnqualifiedRouting(t *testing.T) {
 		`{"composerId":"foreign","workspaceIdentifier":{"uri":{"authority":1,"path":"/project"}}}`,
 		`{"composerId":"foreign","workspaceIdentifier":{"uri":{"fsPath":false}}}`,
 	} {
-		if err := validateSettledMetadata(t.Context(), "composerData:foreign", []byte(raw)); err == nil {
+		if err := nativecodec.ValidateSettledCursorMetadata(t.Context(), "composerData:foreign", []byte(raw)); err == nil {
 			t.Fatalf("unqualified global routing accepted: %s", raw)
 		}
 	}
@@ -63,7 +64,7 @@ func TestSettledMetadataRejectsUnqualifiedRouting(t *testing.T) {
 		`{"composerId":"foreign"}`,
 		`{"composerId":"foreign","workspaceIdentifier":{"uri":{"scheme":"file","path":"/project","unrelated":1}}}`,
 	} {
-		if err := validateSettledMetadata(t.Context(), "composerData:foreign", []byte(raw)); err != nil {
+		if err := nativecodec.ValidateSettledCursorMetadata(t.Context(), "composerData:foreign", []byte(raw)); err != nil {
 			t.Fatalf("qualified global routing: %v", err)
 		}
 	}

@@ -87,7 +87,3 @@ func decodeComposerData(key string, raw []byte) (composer, bool) {
 func composerWorkspaceFolder(raw json.RawMessage) string {
 	return nativecodec.CursorWorkspaceFolder(raw)
 }
-
-func composerReviewFacts(fields map[string]json.RawMessage) agentapi.CursorComposerFacts {
-	return nativecodec.CursorReviewFacts(fields)
-}

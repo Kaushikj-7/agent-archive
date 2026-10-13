@@ -209,16 +209,21 @@ func TestSettledCaptureProofCopiesShareTerminalClose(t *testing.T) {
 	}
 }
 
-func TestSettledLegacyCaptureOnlyCannotInventStageExpectation(t *testing.T) {
+func TestSettledCaptureOnlyCannotInventStageExpectation(t *testing.T) {
 	s, reg, expected, _, budget := settledStateCaptureFixture(t)
 	lease, err := expected.Borrow()
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer lease.Close()
-	proof, err := cursor.CaptureSettledImport(t.Context(), lease.Locator(), reg, lease.Reviewed(), lease.At(), budget)
+	request, err := nativefacts.FreezeCaptureRequest(t.Context(), reg, lease.Reviewed(), lease.Locator(), lease.At(), nativefacts.CapturePolicy{FilterVersion: archive.FilterVersion, SkillEvidence: nativefacts.CaptureSkillNone}, budget)
 	if err != nil {
-		t.Fatal("actual legacy capture-only setup", err)
+		t.Fatal(err)
+	}
+	defer request.Close()
+	proof, err := cursor.CaptureSettledRequest(request)
+	if err != nil {
+		t.Fatal("actual capture-only setup", err)
 	}
 	defer func() {
 		if err := proof.Close(); err != nil {

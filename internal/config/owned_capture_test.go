@@ -15,6 +15,9 @@ import (
 func ownedCaptureConfigFixture(t *testing.T) (string, []byte) {
 	t.Helper()
 	home := t.TempDir()
+	if err := os.Chmod(home, 0700); err != nil {
+		t.Fatal(err)
+	}
 	cfg := Config{MachineID: "synthetic", DurableStorageProtection: true, PublicationCompositionProtection: true, ImportStagingProtection: true, StagedSelectionProtection: true, SettledCursorSelectionProtection: true}
 	if err := Save(home, cfg); err != nil {
 		t.Fatal(err)
@@ -116,6 +119,9 @@ func TestOwnedImportGuardRefusesUnsupportedPromotion(t *testing.T) {
 	// Save intentionally preserves existing sticky fences. A fresh ordinary
 	// protected configuration supplies an actually unsupported settled floor.
 	home := t.TempDir()
+	if err := os.Chmod(home, 0700); err != nil {
+		t.Fatal(err)
+	}
 	cfg := Config{MachineID: "synthetic", DurableStorageProtection: true, PublicationCompositionProtection: true, ImportStagingProtection: true}
 	if err = Save(home, cfg); err != nil {
 		t.Fatal(err)

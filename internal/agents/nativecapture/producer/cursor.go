@@ -1,4 +1,5 @@
-package nativecapture
+// Package producer performs the fixed SQL capture before sealing evidence.
+package producer
 
 import (
 	"context"
@@ -12,6 +13,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/agents/importconfig"
+	"github.com/wangjohn/agent-archive/internal/agents/nativecapture/internal/sealed"
 	"github.com/wangjohn/agent-archive/internal/agents/nativecodec"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/cursorstore"
@@ -19,7 +21,7 @@ import (
 )
 
 type settledReadBudget struct {
-	owner   *settledReservation
+	owner   *sealed.Reservation
 	rows    int
 	charged int64
 }
@@ -39,7 +41,7 @@ func (b *settledReadBudget) Charge(rows int, bytes int64) error {
 
 // CaptureSettledCursor performs complete fixed settled I/O and deterministic derivation.
 // Only this backend may mint a Proof; public request values alone never authorize.
-func CaptureSettledCursor(request *nativefacts.CaptureRequest) (_ *Proof, err error) {
+func CaptureSettledCursor(request *nativefacts.CaptureRequest) (_ *sealed.Proof, err error) {
 	lease, err := request.Borrow()
 	if err != nil {
 		return nil, err
@@ -63,7 +65,7 @@ func CaptureSettledCursor(request *nativefacts.CaptureRequest) (_ *Proof, err er
 	if unsupportedSettledCaptureOwner(reg, budget) {
 		return nil, agentapi.Wrap(agentapi.Unsafe, errors.New("unsupported settled Cursor owner"))
 	}
-	owner := &settledReservation{original: lease.Reservation(), limit: 128 << 20}
+	owner := sealed.NewReservation(lease.Reservation(), 128<<20)
 	b := &settledReadBudget{owner: owner, rows: 65536}
 	keep := false
 	defer func() {
@@ -129,7 +131,7 @@ func CaptureSettledCursor(request *nativefacts.CaptureRequest) (_ *Proof, err er
 	if err != nil {
 		return nil, err
 	}
-	digest, err := settledCaptureDigest(ctx, owner, bundle, 32<<20)
+	digest, err := sealed.Digest(ctx, owner, bundle, 32<<20)
 	if err != nil {
 		return nil, err
 	}
@@ -138,7 +140,7 @@ func CaptureSettledCursor(request *nativefacts.CaptureRequest) (_ *Proof, err er
 	}
 	keep = true
 	keepLease = true
-	return &Proof{capture: &settledCapture{reg: reg, bundle: bundle, facts: nativefacts.SettledImportFacts{Chat: selected, GlobalSHA256: hex.EncodeToString(global.Sum(nil))}, digest: digest, owner: owner, charged: b.charged, request: request, lease: lease, originalBudget: budget}}, nil
+	return sealed.New(reg, bundle, nativefacts.SettledImportFacts{Chat: selected, GlobalSHA256: hex.EncodeToString(global.Sum(nil))}, digest, owner, b.charged, request, lease, budget), nil
 }
 
 func settledCaptureRoutingChanged(selected, reviewed agentapi.DatabaseChat, reg archive.SessionRegistration) bool {
@@ -149,7 +151,7 @@ func unsupportedSettledCaptureOwner(reg archive.SessionRegistration, budget *age
 	return budget == nil || reg.Harness.Name != archive.HarnessCursor || reg.SourceKind != archive.SourceKindCursorSQLite || reg.SourceKey != reg.NativeSessionID || reg.HistoricalProject != nil || reg.ParentSessionID != "" || reg.NativeChild || reg.ParentNativeSessionID != "" || reg.NativeRootSessionID != "" || reg.NativeSourceHome != "" || reg.PreviousGenerationID != "" || reg.CaptureFrozen || reg.CodexBinding != nil || reg.CodexAdmission != nil
 }
 
-func inspectSettledCaptureRow(ctx context.Context, row agentapi.DatabaseRecord, reg archive.SessionRegistration, owner *settledReservation, global hash.Hash, selected *agentapi.DatabaseChat) error {
+func inspectSettledCaptureRow(ctx context.Context, row agentapi.DatabaseRecord, reg archive.SessionRegistration, owner *sealed.Reservation, global hash.Hash, selected *agentapi.DatabaseChat) error {
 	// The same owner reserves bounded JSON maps and sorting scratch before decode.
 	scratch := 2*int64(len(row.Value)) + 32<<10
 	if !owner.Reserve(scratch) {
