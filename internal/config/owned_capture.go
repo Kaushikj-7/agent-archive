@@ -236,7 +236,7 @@ func withDurableStorageOwned(reads *captureConfigReads, held *local.RootedHome, 
 	if err = rootedConfigUnchanged(held, before); err != nil {
 		return err
 	}
-	// Qualified floor14 already requires both sticky fences. Promotion is refused.
+	// Qualified floor15 already requires both sticky fences. Promotion is refused.
 	if err = reads.ctx.Err(); err != nil {
 		return err
 	}

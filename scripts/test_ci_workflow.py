@@ -233,7 +233,7 @@ class CadenceTest(unittest.TestCase):
         self.assertIn('--tier full --suite linux', found['linux-full'])
         self.assertIn('shard: [0, 1]', found['linux-short'])
         self.assertIn('fail-fast: false', found['linux-short'])
-        self.assertIn('python3 scripts/run_go_shard.py --shard',found['linux-short'])
+        self.assertIn('python3 -B scripts/run_go_shard.py --shard',found['linux-short'])
         self.assertEqual(job_key(found['linux-race'],'if'),'always()')
         self.assertEqual(job_key(found['linux-race'],'needs'),'[linux-short, linux-full, script-tests, macos-smoke, tier-plan]')
         self.assertIn('--verdict', found['linux-race'])

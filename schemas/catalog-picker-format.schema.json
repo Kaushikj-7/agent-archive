@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/wangjohn/agent-archive/main/schemas/catalog-picker-format.schema.json",
+  "title": "Reserved scoped picker head descriptor",
+  "description": "Picker member of head protocol 11/schema 5. This reservation is not activation authority; current operational readers and writers refuse it until complete construction is supported.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["Version", "RowSchema", "Capabilities"],
+  "properties": {
+    "Version": {"const": 1},
+    "RowSchema": {"const": 1},
+    "Capabilities": {"type": "array", "minItems": 1, "maxItems": 1, "items": {"const": "scoped-picker-v1"}}
+  }
+}

@@ -131,7 +131,7 @@ func prepareDiscoveryConfig(c *Config) error {
 		c.SchemaVersion = 13
 	}
 	if c.SettledCursorSelectionProtection {
-		c.SchemaVersion = 14
+		c.SchemaVersion = 15
 	}
 	return validateDiscoveryConfig(*c)
 }
@@ -624,7 +624,7 @@ func peelHistoricalProjectProtection(c Config) (Config, error) {
 }
 
 func unsupportedPreparedWriter(c Config) bool {
-	return (c.SchemaVersion > 5 && c.SchemaVersion != 7 && c.SchemaVersion != 8 && c.SchemaVersion != 9 && c.SchemaVersion != 10 && c.SchemaVersion != 11 && c.SchemaVersion != 12 && c.SchemaVersion != 13 && c.SchemaVersion != 14) || (c.SchemaVersion == 12 && (!c.PublicationCompositionProtection || !c.DurableStorageProtection)) || (c.SchemaVersion == 11 && c.Storage.EffectiveArchiveFormat() != destination.FormatCatalogV4) || (c.SchemaVersion == 10 && !c.HistoricalProjectProtection) || (c.SchemaVersion == 9 && !c.ImportStagingProtection) || (c.SchemaVersion == 8 && !c.RetentionProtection) || (c.SchemaVersion == 7 && !c.DurableStorageProtection) || (c.SchemaVersion == 5 && !c.CodexHistoryProtection) || (c.SchemaVersion == 4 && !c.GenerationProtection) || (c.SchemaVersion == 3 && c.CodexCapture == nil)
+	return (c.SchemaVersion > 5 && c.SchemaVersion != 7 && c.SchemaVersion != 8 && c.SchemaVersion != 9 && c.SchemaVersion != 10 && c.SchemaVersion != 11 && c.SchemaVersion != 12 && c.SchemaVersion != 13 && c.SchemaVersion != 15) || (c.SchemaVersion == 12 && (!c.PublicationCompositionProtection || !c.DurableStorageProtection)) || (c.SchemaVersion == 11 && c.Storage.EffectiveArchiveFormat() != destination.FormatCatalogV4) || (c.SchemaVersion == 10 && !c.HistoricalProjectProtection) || (c.SchemaVersion == 9 && !c.ImportStagingProtection) || (c.SchemaVersion == 8 && !c.RetentionProtection) || (c.SchemaVersion == 7 && !c.DurableStorageProtection) || (c.SchemaVersion == 5 && !c.CodexHistoryProtection) || (c.SchemaVersion == 4 && !c.GenerationProtection) || (c.SchemaVersion == 3 && c.CodexCapture == nil)
 }
 
 // peelCatalogProtection keeps catalog configuration distinct from the permanent
@@ -739,12 +739,12 @@ func peelPublicationProtection(c Config) (Config, error) {
 
 // SupportsOrdinarySelection preserves the ordinary codec under both supported floors.
 func (c Config) SupportsOrdinarySelection() bool {
-	return c.PublicationCompositionProtection && c.DurableStorageProtection && (c.SchemaVersion == 12 || (c.SchemaVersion == 13 || c.SchemaVersion == 14 && c.SettledCursorSelectionProtection) && c.StagedSelectionProtection)
+	return c.PublicationCompositionProtection && c.DurableStorageProtection && (c.SchemaVersion == 12 || (c.SchemaVersion == 13 || c.SchemaVersion == 15 && c.SettledCursorSelectionProtection) && c.StagedSelectionProtection)
 }
 
 // SupportsStagedSelection never enables catalog staging.
 func (c Config) SupportsStagedSelection() bool {
-	return (c.SchemaVersion == 13 || c.SchemaVersion == 14 && c.SettledCursorSelectionProtection) && c.StagedSelectionProtection && c.SupportsOrdinarySelection() && c.ImportStagingProtection && c.Storage.EffectiveArchiveFormat() == destination.FormatLegacy
+	return (c.SchemaVersion == 13 || c.SchemaVersion == 15 && c.SettledCursorSelectionProtection) && c.StagedSelectionProtection && c.SupportsOrdinarySelection() && c.ImportStagingProtection && c.Storage.EffectiveArchiveFormat() == destination.FormatLegacy
 }
 
 func peelStagedSelectionProtection(c Config) (Config, error) {
@@ -764,12 +764,12 @@ func peelStagedSelectionProtection(c Config) (Config, error) {
 
 // SupportsSettledCursorSelection accepts only the distinct closed Cursor floor.
 func (c Config) SupportsSettledCursorSelection() bool {
-	return c.SchemaVersion == 14 && c.SettledCursorSelectionProtection && c.SupportsStagedSelection()
+	return c.SchemaVersion == 15 && c.SettledCursorSelectionProtection && c.SupportsStagedSelection()
 }
 
 func peelSettledCursorSelectionProtection(c Config) (Config, error) {
 	if !c.SettledCursorSelectionProtection {
-		if c.SchemaVersion == 14 {
+		if c.SchemaVersion == 15 {
 			return c, errors.New("settled Cursor floor lacks protection")
 		}
 		return c, nil
