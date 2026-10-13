@@ -4,11 +4,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"reflect"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -140,6 +144,7 @@ var cursorSettledComposerStatuses = map[string]bool{
 
 // cursorComposerFilter accumulates one FilterComposer call.
 type cursorComposerFilter struct {
+	bounded        *cursorOutputBudget
 	result         archive.FilteredTranscript
 	gapSet         map[string]bool
 	omitted        keyNameSet
@@ -173,6 +178,10 @@ func (f *cursorComposerFilter) omit(level, key string) { f.omitted.add(level + "
 
 // FilterComposerRecords consumes one composer and its ordered borrowed message rows.
 func FilterComposerRecords(ctx context.Context, raw []byte, next func(context.Context) (CursorBubble, bool, error)) (archive.FilteredTranscript, error) {
+	return filterComposerRecords(ctx, raw, next, nil)
+}
+
+func filterComposerRecords(ctx context.Context, raw []byte, next func(context.Context) (CursorBubble, bool, error), bounded *cursorOutputBudget) (archive.FilteredTranscript, error) {
 	if len(raw) > maxRecordBytes {
 		return archive.FilteredTranscript{}, archive.ErrRecordTooLarge
 	}
@@ -190,6 +199,7 @@ func FilterComposerRecords(ctx context.Context, raw []byte, next func(context.Co
 	// createdAt is the zero time when the chat records no creation time.
 	createdAt, hasCreatedAt := cursorTime(composer["createdAt"])
 	f := &cursorComposerFilter{
+		bounded: bounded,
 		result: archive.FilteredTranscript{
 			Format:              cursorComposerFormat,
 			SessionIDs:          []string{composerID},
@@ -679,13 +689,28 @@ func (f *cursorComposerFilter) toolResultBlocks(raw any) []any {
 // retain sanitizes one built record exactly as filterJSONL sanitizes a native
 // one and appends it.
 func (f *cursorComposerFilter) retain(record map[string]any) error {
+	if f.bounded != nil {
+		defer func() { f.bounded.owner.Release(f.bounded.transient); f.bounded.transient = 0 }()
+	}
+	if f.bounded != nil && f.bounded.err != nil {
+		return f.bounded.err
+	}
 	state := archive.PrivacyState{AddGap: f.addGap, OmittedKey: func(key string) { f.omit("record", key) }, DeniedKey: f.denied.add}
 	safe, keep := sanitizeObject(record, &state)
 	if !keep {
 		return nil
 	}
-	encoded, err := json.Marshal(safe)
+	var encoded []byte
+	var err error
+	if f.bounded != nil {
+		encoded, err = f.bounded.encodeRecord(safe)
+	} else {
+		encoded, err = json.Marshal(safe)
+	}
 	if err != nil {
+		if f.bounded != nil {
+			return err
+		}
 		return &archive.FilterError{Reason: "safe record cannot be encoded"}
 	}
 	f.result.Records = append(f.result.Records, encoded)
@@ -822,6 +847,9 @@ func cursorArgumentObject(raw any) (map[string]any, bool) {
 // level.key, among the omitted keys; the sanitizer's own "record without
 // allowed fields" gap would misdescribe it, since it is no record.
 func (f *cursorComposerFilter) toolOutput(raw any, level, key string) (string, bool) {
+	if f.bounded != nil && f.bounded.err != nil {
+		return "", false
+	}
 	original := ""
 	if text, isString := raw.(string); isString && isNestedJSON(text) {
 		// Filter 11: a result stored as a JSON string (the common case) is
@@ -867,8 +895,17 @@ func (f *cursorComposerFilter) toolOutput(raw any, level, key string) (string, b
 	if original != "" && reflect.DeepEqual(safe, raw) && !archive.JSONHasDuplicateKeys(original) {
 		return original, true
 	}
-	encoded, err := json.Marshal(safe)
+	var encoded []byte
+	var err error
+	if f.bounded != nil {
+		encoded, err = f.bounded.encodeTransient(safe)
+	} else {
+		encoded, err = json.Marshal(safe)
+	}
 	if err != nil {
+		if f.bounded != nil {
+			f.bounded.err = err
+		}
 		return "", false
 	}
 	return string(encoded), true
@@ -919,4 +956,92 @@ func decodeCursorBubble(value []byte) (map[string]any, error) {
 		return nil, errCursorFormatUnknown
 	}
 	return bubble, nil
+}
+
+// CursorFilterReservation borrows one captured resource owner; it grants no source authority.
+type CursorFilterReservation interface {
+	Reserve(int64) bool
+	Release(int64)
+	Available() int64
+	Refuse(int64)
+}
+
+type cursorOutputBudget struct {
+	ctx       context.Context
+	owner     CursorFilterReservation
+	limit     int64
+	held      int64
+	transient int64
+	count     int
+	err       error
+}
+
+// FilterComposerRecordsBounded uses the identical native filter with prospective
+// output checks. The returned close ends borrowed encoded-record ownership.
+func FilterComposerRecordsBounded(ctx context.Context, raw []byte, next func(context.Context) (CursorBubble, bool, error), limit int64, owner CursorFilterReservation) (archive.FilteredTranscript, func(), error) {
+	if owner == nil || limit <= 0 || limit > 32<<20 {
+		return archive.FilteredTranscript{}, func() {}, agentapi.Wrap(agentapi.Limit, agentapi.ErrReadBudget)
+	}
+	budget := &cursorOutputBudget{ctx: ctx, owner: owner, limit: limit}
+	var once sync.Once
+	closeOutput := func() {
+		once.Do(func() { owner.Release(budget.held + budget.transient); budget.held = 0; budget.transient = 0 })
+	}
+	out, err := filterComposerRecords(ctx, raw, next, budget)
+	if err != nil {
+		closeOutput()
+	}
+	return out, closeOutput, err
+}
+
+func (b *cursorOutputBudget) encodedBound(value any) (int64, error) {
+	const scratch int64 = 32 << 10
+	if !b.owner.Reserve(scratch) {
+		return 0, agentapi.Wrap(agentapi.Limit, agentapi.ErrReadBudget)
+	}
+	n, err := agentmeta.JSONWireBound(b.ctx, value, min(b.limit-b.held, b.owner.Available()/2))
+	b.owner.Release(scratch)
+	if err != nil {
+		return 0, errors.Join(agentapi.Wrap(agentapi.Limit, agentapi.ErrReadBudget), err)
+	}
+	return n, nil
+}
+
+func (b *cursorOutputBudget) encodeRecord(value any) ([]byte, error) {
+	if b.count >= 65536 {
+		return nil, agentapi.Wrap(agentapi.Limit, agentapi.ErrReadBudget)
+	}
+	n, err := b.encodedBound(value)
+	if err != nil {
+		return nil, err
+	}
+	if !b.owner.Reserve(2 * n) {
+		return nil, agentapi.Wrap(agentapi.Limit, agentapi.ErrReadBudget)
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		b.owner.Release(2 * n)
+		return nil, err
+	}
+	b.owner.Release(2*n - int64(len(encoded)))
+	b.held += int64(len(encoded))
+	b.count++
+	return encoded, nil
+}
+
+func (b *cursorOutputBudget) encodeTransient(value any) ([]byte, error) {
+	n, err := b.encodedBound(value)
+	if err != nil {
+		return nil, err
+	}
+	if !b.owner.Reserve(2 * n) {
+		return nil, agentapi.Wrap(agentapi.Limit, agentapi.ErrReadBudget)
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		b.owner.Release(2 * n)
+		return nil, err
+	}
+	b.transient += 2 * n
+	return encoded, nil
 }

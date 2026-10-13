@@ -7,5 +7,5 @@ import (
 
 // Imports declares this integration's historical native observation rules.
 func Imports() agentapi.ImportInspector {
-	return importconfig.Provider{FileCreatedStart: true, ConversationTypes: []string{"user", "assistant", "message", "response_item", "tool_use", "tool_result", "tool_call"}}
+	return importconfig.Cursor()
 }
