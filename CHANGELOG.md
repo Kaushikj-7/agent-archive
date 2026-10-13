@@ -6,6 +6,10 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Reuse verified ordinary Codex inspection facts during repeated backfill planning.
+  Planning can update a bounded private disposable cache, including with `--dry-run`;
+  archive and configuration changes still require import confirmation.
+
 - Refuse reserved scoped-picker catalog and configuration formats before admitting
   writes; existing catalog formats and picker behavior remain supported.
 

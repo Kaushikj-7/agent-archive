@@ -1724,3 +1724,15 @@ func (f *rolloutFile) currentHeader(ctx context.Context) bool {
 func originalProducerMatches(original *rolloutFile, admission agentapi.SourceAdmission) bool {
 	return (admission.InitialProducerVersion == "" || admission.InitialProducerVersion == original.meta.Version) && (admission.InitialProducerOriginator == "" || admission.InitialProducerOriginator == original.meta.Originator)
 }
+
+// ContentProof reuses the digest of the same ordinary boundary passed to filtering.
+func (s *ordinarySnapshot) ContentProof(ctx context.Context) (agentapi.SourceContentProof, error) {
+ if err := s.VerifyContent(ctx); err != nil { return agentapi.SourceContentProof{}, err }
+ return agentapi.SourceContentProof{Version: 1, Provider: "codex-ordinary", SHA256: s.digest, Boundary: s.length}, nil
+}
+
+// VerifyContent retains current descriptor, locator, selection and header checks.
+func (s *ordinarySnapshot) VerifyContent(ctx context.Context) error {
+ if s.closed || s.owner.closed { return agentapi.ErrClosed }
+ return s.check(ctx)
+}
