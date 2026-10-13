@@ -43,7 +43,12 @@ func (s *lifecycleStore) Delete(ctx context.Context, key string) error {
 // synthetic files and an injected store; it does not establish live acceptance.
 func TestCodexCaptureReadAndRetentionLifecycle(t *testing.T) {
 	t.Parallel()
-	physical := func() string { p, err := filepath.EvalSymlinks(t.TempDir()); must(t, err); return p }
+	physical := func() string {
+		p, err := filepath.EvalSymlinks(t.TempDir())
+		must(t, err)
+		must(t, os.Chmod(p, 0700))
+		return p
+	}
 	home, userHome, project, native := physical(), physical(), physical(), physical()
 	at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
 	cfg := config.Config{MachineID: "synthetic-machine", Storage: credentialsTestConfig(), RetentionDays: 1, Harnesses: []string{"codex"}, Archive: archive.Config{Enabled: true, Projects: []archive.ProjectActivation{{Root: project, ProjectID: archive.ProjectID(project), Included: true, ActivatedAt: at}}}, Discovery: &config.DiscoveryConfig{Enabled: true, CodexHomes: []string{native}}}
