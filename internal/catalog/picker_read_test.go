@@ -24,7 +24,13 @@ func pickerReaderFixture(t *testing.T) (*Snapshot, *Writer, *qualifiedStore, []a
 	for i := range 96 {
 		id := fmt.Sprintf("picker-%03d", i)
 		m := mutation(t, w, id)
+		harness := []string{"claude", "Claude-Code", "codex", "synthetic-unknown"}[i%4]
+		m.Next.Summary.SourceBundle.Key = strings.Replace(m.Next.Summary.SourceBundle.Key, "sessions/claude/", "sessions/"+harness+"/", 1)
+		if err := w.store.Put(t.Context(), m.Next.Summary.SourceBundle.Key, []byte("synthetic source "+id)); err != nil {
+			t.Fatal(err)
+		}
 		m = pickerMetadata(t, w, m, func(md *archive.Metadata) {
+			md.Harness.Name = []string{"claude", "Claude-Code", "codex", "synthetic-unknown"}[i%4]
 			md.ProjectID = fmt.Sprintf("project-%d", i%5)
 			if i%3 == 0 {
 				md.RepoKey = testPickerRepo('a')
@@ -49,6 +55,7 @@ func pickerReaderFixture(t *testing.T) (*Snapshot, *Writer, *qualifiedStore, []a
 				md.Title = strings.Repeat("overflow", 2000)
 			}
 		})
+		m.SessionKey, _ = archive.MetadataObjectKey(m.Next.Summary.Harness.Name, m.Next.Summary.SessionID)
 		metadata = append(metadata, m.Next.Summary)
 		if _, err := w.Commit(t.Context(), m); err != nil {
 			t.Fatal(err)
@@ -116,37 +123,40 @@ func TestPickerPagesMatchCompleteRepositoryOracle(t *testing.T) {
 	scopes := []PickerScope{{All: true}, {RepoKey: testPickerRepo('a'), ProjectIDs: []string{"project-1", "project-3", "project-1"}}, {ProjectIDs: []string{"project-0", "project-4"}}, {RepoKey: testPickerRepo('c')}, {}}
 	for _, scope := range scopes {
 		for _, member := range []string{"browse", "handoff"} {
-			for _, limit := range []int{1, 7, 100} {
-				q := PickerQuery{Scope: scope, Membership: member, Limit: limit}
-				expected := pickerOracle(ms, q)
-				var actual []string
-				next := ""
-				for {
-					page, err := s.PickerPage(t.Context(), q, next)
-					if err != nil {
-						t.Fatal(err)
+			for _, harness := range []string{"", "CLAUDE-CODE", "codex", "synthetic-unknown", "absent"} {
+				for _, limit := range []int{1, 7, 100} {
+					q := PickerQuery{Scope: scope, Membership: member, Harness: harness, Limit: limit}
+					expected := pickerOracle(ms, q)
+					var actual []string
+					next := ""
+					for {
+						page, err := s.PickerPage(t.Context(), q, next)
+						if err != nil {
+							t.Fatal(err)
+						}
+						if page.Total != uint64(len(expected)) || page.Empty != (len(expected) == 0) {
+							t.Fatalf("counts %+v expected %d", page, len(expected))
+						}
+						for _, item := range page.Rows {
+							actual = append(actual, item.Row.SessionID)
+						}
+						if page.More != (page.Next != "") {
+							t.Fatal("more lacks continuation")
+						}
+						if !page.More {
+							break
+						}
+						next = page.Next
 					}
-					if page.Total != uint64(len(expected)) || page.Empty != (len(expected) == 0) {
-						t.Fatalf("counts %+v expected %d", page, len(expected))
+					if !slices.Equal(actual, expected) {
+						t.Fatalf("scope %+v member %s limit %d: got %v want %v", scope, member, limit, actual, expected)
 					}
-					for _, item := range page.Rows {
-						actual = append(actual, item.Row.SessionID)
-					}
-					if page.More != (page.Next != "") {
-						t.Fatal("more lacks continuation")
-					}
-					if !page.More {
-						break
-					}
-					next = page.Next
-				}
-				if !slices.Equal(actual, expected) {
-					t.Fatalf("scope %+v member %s limit %d: got %v want %v", scope, member, limit, actual, expected)
 				}
 			}
 		}
 	}
 }
+
 func TestPickerLookupIsUnfilteredAndHydrationHasVerifiedProvenance(t *testing.T) {
 	s, _, _, ms := pickerReaderFixture(t)
 	ids := []PickerIdentity{}
