@@ -378,20 +378,70 @@ func (p *relatedSourcePass) selectLineage(ctx context.Context, selected sourceSe
 			bases[id.HistoryBase.RolloutID] = true
 		}
 	}
-	var tip *rolloutFile
+	var tips []*rolloutFile
 	for id, f := range candidates {
 		if !bases[id] {
-			if tip != nil {
-				return selected, sourceRefusal(agentapi.Unavailable, agentapi.CauseRolloutTipAmbiguous, "ambiguous rollout tips")
-			}
-			tip = f
+			tips = append(tips, f)
 		}
+	}
+	if len(tips) > 1 {
+		// An observed rollout can look like a tip only because a segment
+		// between it and a later one was never observed. Walk each apparent
+		// tip's chain back by rollout ID, so an ancestor is not a tip.
+		for _, f := range tips {
+			if err := p.markAncestors(ctx, f, bases); err != nil {
+				return selected, err
+			}
+		}
+		tips = slices.DeleteFunc(tips, func(f *rolloutFile) bool { return bases[f.identity.RolloutID] })
+	}
+	if len(tips) > 1 {
+		return selected, sourceRefusal(agentapi.Unavailable, agentapi.CauseRolloutTipAmbiguous, "ambiguous rollout tips")
+	}
+	var tip *rolloutFile
+	if len(tips) == 1 {
+		tip = tips[0]
 	}
 	if tip == nil {
 		return selected, sourceRefusal(agentapi.Unavailable, agentapi.CauseRolloutTipAmbiguous, "no rollout tip")
 	}
 	selected.leaf = tip
 	return selected, nil
+}
+
+// markAncestors records in bases every rollout the chain behind f reaches,
+// found by rollout ID as graph finds them. It stops where a base cannot be
+// resolved: that only leaves a tip ambiguous, and the chosen tip's own walk
+// names an unresolved base.
+func (p *relatedSourcePass) markAncestors(ctx context.Context, f *rolloutFile, bases map[string]bool) error {
+	seen := map[string]bool{f.identity.RolloutID: true}
+	for current := f; current.identity.HistoryBase != nil && len(seen) <= archive.MaxHistorySpans; {
+		id := current.identity.HistoryBase.RolloutID
+		if seen[id] {
+			return nil
+		}
+		seen[id] = true
+		bases[id] = true
+		refs, err := p.env.CodexRollouts.Rollout(ctx, id)
+		if err != nil {
+			return err
+		}
+		if len(refs) != 1 {
+			return nil
+		}
+		base, err := p.open(ctx, refs[0])
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if base.identity.RolloutID != id {
+			return nil
+		}
+		current = base
+	}
+	return nil
 }
 
 type physicalSpan struct {
@@ -1308,7 +1358,12 @@ func (s *historySnapshot) RevisionCandidates(ctx context.Context) ([]agentapi.So
 			}
 		}
 	}
+	// Past the limit, further off-chain rollouts are left out rather than
+	// refusing the chain's own capture.
 	for _, ref := range presentCandidates(s.selection.set.Candidates) {
+		if !seen[ref.Path] && len(out) >= archive.MaxHistorySpans {
+			break
+		}
 		if err := add(ref); err != nil {
 			return nil, err
 		}
@@ -1328,7 +1383,9 @@ func (s *ordinarySnapshot) RevisionCandidates(ctx context.Context) ([]agentapi.S
 			continue
 		}
 		if len(out) >= archive.MaxHistorySpans {
-			return nil, sourceRefusal(agentapi.Limit, agentapi.CauseHistoricalCandidateLimit, "historical candidate limit")
+			// Further off-chain rollouts are left out rather than refusing
+			// the rollout's own capture.
+			break
 		}
 		out = append(out, ref)
 	}

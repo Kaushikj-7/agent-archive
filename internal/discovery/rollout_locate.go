@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/codexmeta"
 )
 
@@ -58,16 +59,24 @@ func rolloutDirectories(id string) []string {
 
 // locate finds rollout id by its file name, rollout-<local time>-<id>.jsonl,
 // in each approved native home. Only a few directories are listed, and each
-// at most once per pass.
+// at most once per pass while the pass's listing allowance lasts; past it, a
+// directory is searched for id alone without keeping its listing.
 func (l *CodexRolloutLookup) locate(ctx context.Context, id string) ([]string, error) {
 	var out []string
 	for _, root := range l.roots {
 		for _, dir := range rolloutDirectories(id) {
 			listing, err := l.listing(ctx, root, dir)
+			var paths []string
+			switch {
+			case errors.Is(err, errListingAllowance):
+				paths, err = searchRollouts(ctx, root, dir, id)
+			case err == nil:
+				paths = listing[id]
+			}
 			if err != nil {
 				return nil, err
 			}
-			for _, path := range listing[id] {
+			for _, path := range paths {
 				if rolloutPresent(path) {
 					out = append(out, path)
 				}
@@ -78,9 +87,13 @@ func (l *CodexRolloutLookup) locate(ctx context.Context, id string) ([]string, e
 	return slices.Compact(out), nil
 }
 
+// errListingAllowance reports a directory listing the pass cannot keep.
+var errListingAllowance = errors.New("native rollout listing allowance exhausted")
+
 // listing indexes one directory's rollout files by rollout ID. A missing
 // directory lists nothing. Listings are charged to the shared ledger for
-// the pass and kept until Close.
+// the pass and kept until Close; one that does not fit is not kept
+// (errListingAllowance).
 func (l *CodexRolloutLookup) listing(ctx context.Context, root, dir string) (map[string][]string, error) {
 	key := filepath.Join(root, dir)
 	if listing, found := l.listings[key]; found {
@@ -88,24 +101,61 @@ func (l *CodexRolloutLookup) listing(ctx context.Context, root, dir string) (map
 	}
 	listing := map[string][]string{}
 	charge := int64(0)
-	release := func() { l.readBudget.ReleaseUnscoped(charge) }
+	err := walkRollouts(ctx, root, dir, func(id, path string) error {
+		n := 2*int64(len(path)+len(id)) + 64
+		if l.listingBytes+charge+n > maxListingBytes || !l.readBudget.ReserveUnscoped(n) {
+			return errListingAllowance
+		}
+		charge += n
+		listing[id] = append(listing[id], path)
+		return nil
+	})
+	if err != nil {
+		l.readBudget.ReleaseUnscoped(charge)
+		return nil, err
+	}
+	if l.listings == nil {
+		l.listings = map[string]map[string][]string{}
+	}
+	l.listings[key] = listing
+	l.listingBytes += charge
+	return listing, nil
+}
+
+// searchRollouts lists one directory for rollout id alone, keeping nothing
+// else, for a directory whose whole listing the pass cannot keep.
+func searchRollouts(ctx context.Context, root, dir, want string) ([]string, error) {
+	var out []string
+	err := walkRollouts(ctx, root, dir, func(id, path string) error {
+		if id == want {
+			if len(out) >= archive.MaxHistorySpans {
+				return agentapi.Wrap(agentapi.Limit, errors.New("physical locator limit"))
+			}
+			out = append(out, path)
+		}
+		return nil
+	})
+	return out, err
+}
+
+// walkRollouts calls visit with each rollout file in one directory, at most
+// maxListingEntries entries. A missing directory has none.
+func walkRollouts(ctx context.Context, root, dir string, visit func(id, path string) error) error {
+	key := filepath.Join(root, dir)
 	entries := 0
 	d := directory{Root: root, Path: dir}
 	for {
 		if err := ctx.Err(); err != nil {
-			release()
-			return nil, err
+			return err
 		}
 		names, next, complete, err := readBatch(d)
 		if err != nil {
-			release()
-			return nil, agentapi.Wrap(agentapi.Unavailable, errors.New("native rollout directory unavailable; retry next scan"))
+			return agentapi.Wrap(agentapi.Unavailable, errors.New("native rollout directory unavailable; retry next scan"))
 		}
 		for _, name := range names {
 			entries++
 			if entries > maxListingEntries {
-				release()
-				return nil, agentapi.Wrap(agentapi.Unavailable, errors.New("native rollout directory too large to search"))
+				return agentapi.Wrap(agentapi.Unavailable, errors.New("native rollout directory too large to search"))
 			}
 			if !strings.HasPrefix(name, "rollout-") {
 				continue
@@ -114,26 +164,15 @@ func (l *CodexRolloutLookup) listing(ctx context.Context, root, dir string) (map
 			if id == "" {
 				continue
 			}
-			path := filepath.Join(key, name)
-			n := 2*int64(len(path)+len(id)) + 64
-			if l.listingBytes+charge+n > maxListingBytes || !l.readBudget.ReserveUnscoped(n) {
-				release()
-				return nil, agentapi.Wrap(agentapi.Unavailable, errors.New("native rollout listing budget exhausted; retry next scan"))
+			if err := visit(id, filepath.Join(key, name)); err != nil {
+				return err
 			}
-			charge += n
-			listing[id] = append(listing[id], path)
 		}
 		if complete {
-			break
+			return nil
 		}
 		d.Offset = next
 	}
-	if l.listings == nil {
-		l.listings = map[string]map[string][]string{}
-	}
-	l.listings[key] = listing
-	l.listingBytes += charge
-	return listing, nil
 }
 
 // rolloutPresent reports a regular file at path. An observation or listing

@@ -172,7 +172,9 @@ The lookup keeps at most 8 MiB of observed rollout facts (hints) and 4 MiB of
 rollout directory listings per pass, with conservative bounds before
 accumulation, charged to the shared native read ledger. A base rollout is found
 by its ID in at most the three day directories its UUIDv7 time names and
-archived_sessions/, each listed once per pass and at most 65,536 entries.
+archived_sessions/, each listed once per pass and at most 65,536 entries; a
+directory whose listing no longer fits the 4 MiB is searched for that one ID
+without keeping its listing.
 Observation leaves one second of the same pass allowance for its durable
 checkpoint. The checkpoint inherits the original caller's cancellation, so
 expiry of the observation slice preserves the queue without extending the pass

@@ -217,6 +217,39 @@ func TestThreadChainFindsBaseInArchivedSessions(t *testing.T) {
 	}
 }
 
+// A base observed in its day directory and since moved into
+// archived_sessions/ is found where it is now: the stale observation neither
+// hides it nor counts as a second locator.
+func TestThreadChainFindsObservedBaseMovedToArchivedSessions(t *testing.T) {
+	t.Parallel()
+	root := chainRoot(t)
+	thread, oldPath, _, tipPath := twoSegmentThread(t, root, 4, "")
+	db := hintDatabase(t, root, false)
+	addHint(t, db, thread, tipPath, chainEpoch)
+	lookup := chainLookup(t, root)
+	info, err := os.Stat(oldPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lookup.Observe(SourceDescriptor{Kind: archive.SourceKindFile, Root: root, Locator: oldPath, StableKey: thread}, Fingerprint{Size: info.Size(), Mtime: info.ModTime().UnixNano()}, &codexmeta.CodexIdentity{ThreadID: thread, RolloutID: thread})
+	basePath := filepath.Join(root, "archived_sessions", filepath.Base(oldPath))
+	if err := os.MkdirAll(filepath.Dir(basePath), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(oldPath, basePath); err != nil {
+		t.Fatal(err)
+	}
+	refs, err := lookup.Rollout(t.Context(), thread)
+	if err != nil || len(refs) != 1 || refs[0].Path != basePath {
+		t.Fatal("moved base: ", refs, err)
+	}
+	s, err := chainPass(t, root, lookup).Read(t.Context(), agentapi.SourceRef{Kind: archive.SourceKindFile, Path: tipPath, Key: thread}, agentapi.ReadLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = s.Close()
+}
+
 // A segment the chain continues from that is nowhere to be found is a named
 // failure a later pass retries.
 func TestThreadChainMissingBaseIsANamedFailure(t *testing.T) {
@@ -473,5 +506,26 @@ func TestHistoricalPolicySkipsOnlyUnsolicitedDisabledDiscovery(t *testing.T) {
 				t.Fatalf("native inventory eligibility changed: %+v", health)
 			}
 		})
+	}
+}
+
+// A directory whose listing the pass can no longer keep (a large
+// archived_sessions/, say) is still searched for the one rollout asked for,
+// rather than failing every base search through it on every pass.
+func TestRolloutSearchPastListingAllowanceStillFindsTheRollout(t *testing.T) {
+	t.Parallel()
+	root := chainRoot(t)
+	id := v7ID(chainEpoch, 5)
+	path, _ := chainRollout(t, root, "archived_sessions", id, id, 0, nil, "archived")
+	lookup := chainLookup(t, root)
+	// Nothing was charged for this allowance; Close must not release it.
+	lookup.listingBytes = maxListingBytes
+	t.Cleanup(func() { lookup.listingBytes = 0 })
+	refs, err := lookup.Rollout(t.Context(), id)
+	if err != nil || len(refs) != 1 || refs[0].Path != path {
+		t.Fatal(refs, err)
+	}
+	if _, kept := lookup.listings[filepath.Join(root, "archived_sessions")]; kept {
+		t.Fatal("kept a listing past the allowance")
 	}
 }

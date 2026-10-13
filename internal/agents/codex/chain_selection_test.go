@@ -2,12 +2,14 @@ package codex
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
 	"testing"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/codexmeta"
 )
 
@@ -141,5 +143,56 @@ func TestMissingRegisteredRolloutFallsBackToObservedCandidates(t *testing.T) {
 	l := &historyLookup{thread: agentapi.CodexRolloutSet{Candidates: []agentapi.SourceRef{registered, leaf}}, rollouts: map[string][]agentapi.SourceRef{threadA: {base}}}
 	if b := historyRead(t, historyPass(t, dir, l), registered); b.History.ActiveRolloutID != rolloutC {
 		t.Fatalf("renamed rollout: %+v", b.History)
+	}
+}
+
+// Without a current locator, an observed root and an observed tip whose
+// middle segment was never observed are one chain, not two tips: the tip's
+// walk back by rollout ID reaches the root.
+func TestNoCurrentLocatorUnobservedMiddleSegmentIsNotAmbiguous(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	base, middle, position := chainFixture(t, dir)
+	middleRaw, err := os.ReadFile(middle.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	next := codexmeta.CodexHistoryPosition{RolloutID: rolloutC, EndOrdinal: position.EndOrdinal + 2, EndByteOffset: uint64(len(middleRaw))}
+	tip, _ := historyFile(t, dir, rolloutD, threadA, next.EndOrdinal, map[string]any{"history_base": next}, "latest")
+	l := &historyLookup{
+		thread:   agentapi.CodexRolloutSet{Candidates: []agentapi.SourceRef{base, tip}},
+		rollouts: map[string][]agentapi.SourceRef{threadA: {base}, rolloutC: {middle}},
+	}
+	if b := historyRead(t, historyPass(t, dir, l), base); b.History.ActiveRolloutID != rolloutD {
+		t.Fatalf("tip behind an unobserved segment: %+v", b.History)
+	}
+}
+
+// Observed off-chain rollouts past the candidate limit are left out of the
+// historical revisions; they never refuse the chain's own capture.
+func TestOffChainCandidatesPastTheLimitDoNotRefuseCapture(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	base, leaf, _ := chainFixture(t, dir)
+	var offChain []agentapi.SourceRef
+	for n := range archive.MaxHistorySpans {
+		ref := agentapi.SourceRef{Path: filepath.Join(dir, fmt.Sprintf("rollout-2026-10-01T12-00-00-%08x-0000-4000-8000-000000000000.jsonl", 0xa0000000+n)), Key: threadA}
+		if err := os.WriteFile(ref.Path, nil, 0600); err != nil {
+			t.Fatal(err)
+		}
+		offChain = append(offChain, ref)
+	}
+	l := &historyLookup{thread: agentapi.CodexRolloutSet{Current: &leaf, Candidates: offChain[:archive.MaxHistorySpans-1], Revision: "one"}, rollouts: map[string][]agentapi.SourceRef{threadA: {base}}}
+	s, err := historyPass(t, dir, l).Read(t.Context(), leaf, agentapi.ReadLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Close() }()
+	refs, err := s.(agentapi.SourceRevisionCandidates).RevisionCandidates(t.Context())
+	if err != nil {
+		t.Fatal("off-chain rollouts refused the chain's capture: ", err)
+	}
+	if len(refs) != archive.MaxHistorySpans || refs[0].Path != base.Path || refs[1].Path != leaf.Path {
+		t.Fatalf("revision candidates: %d, first %v", len(refs), refs[:min(len(refs), 2)])
 	}
 }

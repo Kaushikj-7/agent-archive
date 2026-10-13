@@ -23,7 +23,10 @@ thread, the file must remain inside its admitted source root, and the lookup
 revision must remain current. Without a current locator (no row in Codex's
 thread index, or an older Codex), the tip is the one rollout among the seed and
 the thread's observed rollouts that no other continues from; several such
-rollouts are a named, retryable failure (`rollout_tip_ambiguous`). Rollouts off
+rollouts are a named, retryable failure (`rollout_tip_ambiguous`). An observed
+rollout counts as continued from when the chain walked back by rollout ID from
+another apparent tip reaches it, so an unobserved middle segment does not make
+the thread's root look like a second tip. Rollouts off
 the chain walked back from the tip take no part in selection. Modification time, file size and
 lexical order never choose a current revision.
 
@@ -70,7 +73,9 @@ this pass that still exists, else by file name
 `sessions/YYYY/MM/DD` within one day of the creation time its UUIDv7 carries,
 and in `archived_sessions/`. Each directory is listed at most once per pass
 (at most 65536 entries, 4MiB of listings per pass, charged to the shared
-ledger). The provider reopens each locator and checks its header identity. A
+ledger); a directory whose listing no longer fits is searched for the one
+rollout ID without keeping its listing. The provider reopens each locator and
+checks its header identity. A
 base found nowhere, or at two locators, is a named, retryable failure
 (`history_base_unavailable`), never a wait.
 
@@ -93,7 +98,9 @@ observed segment changes the source's signature. Without a current locator the
 source chooses the tip from them. Beside a current locator, candidates off the
 chain (an abandoned branch after a rollback, say) never block capture or choose
 the tip; ones whose files still exist are offered after the chain as
-best-effort historical revisions. Only rollouts the lookup has observed (a
+best-effort historical revisions, up to the 64-candidate limit with the
+chain's own segments first; off-chain ones past it are left out rather than
+refusing the capture. Only rollouts the lookup has observed (a
 discovery listing or the restored cache) are offered: no proof says every
 abandoned branch was found, and a branch captured while it was current stays
 preserved through the published revision history either way. A discovery
