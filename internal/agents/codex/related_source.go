@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"hash"
 	"io"
 	"math"
 	"os"
@@ -820,7 +819,6 @@ type ordinarySnapshot struct {
 	ctx                context.Context
 	length             int64
 	digest             [32]byte
-	longestRecord      int64
 	hashScratch        []byte
 	closed             bool
 	observed           agentapi.SourceObservation
@@ -851,7 +849,7 @@ func (p *relatedSourcePass) ordinary(ctx context.Context, limits agentapi.ReadLi
 			p.release(reservation, ordinaryScratch)
 		}
 	}()
-	h := &ordinaryDigest{Hash: sha256.New()}
+	h := sha256.New()
 	// One snapshot owns this scratch until Close. All ordinary hash operations
 	// use it serially, within the existing ordinaryScratch reservation.
 	buffer := make([]byte, max(1, min(ordinaryScratch, f.boundary)))
@@ -863,7 +861,6 @@ func (p *relatedSourcePass) ordinary(ctx context.Context, limits agentapi.ReadLi
 	stamp := f.file.Stamp()
 	out := &ordinarySnapshot{scratchCharge: ordinaryScratch, scratchReservation: reservation, owner: p, source: f, selection: selection, headers: selection.headerFiles(nil), ctx: ctx, length: f.boundary, observed: agentapi.SourceObservation{Signature: sourceio.FileSignature(stamp.Size, stamp.ModifiedAt.UnixNano()), Present: true, Empty: f.boundary == 0, Activity: stamp.ModifiedAt, Size: stamp.Size}}
 	copy(out.digest[:], h.Sum(nil))
-	out.longestRecord = max(h.longest, h.line)
 	out.hashScratch = buffer
 	if p.env.CodexRollouts != nil {
 		var err error
@@ -907,37 +904,6 @@ func (s *ordinarySnapshot) Close() error {
 type ordinaryFile struct {
 	agentapi.FileInput
 	s *ordinarySnapshot
-}
-
-// ordinaryDigest records framing during the existing initial hash read. It
-// retains only counters, never source bytes, and does not change read errors.
-type ordinaryDigest struct {
-	hash.Hash
-	line, longest int64
-}
-
-func (h *ordinaryDigest) Write(p []byte) (int, error) {
-	n, err := h.Hash.Write(p)
-	for data := p[:n]; len(data) > 0; {
-		i := bytes.IndexByte(data, '\n')
-		if i < 0 {
-			h.line += int64(len(data))
-			break
-		}
-		h.longest = max(h.longest, h.line+int64(i))
-		h.line = 0
-		data = data[i+1:]
-	}
-	return n, err
-}
-
-// LongestVerifiedRecord owns one fresh prefix verification per receipt. The
-// codec still verifies independently after its full read, including errors.
-func (f ordinaryFile) LongestVerifiedRecord(ctx context.Context) (int64, error) {
-	if err := f.s.VerifyContent(ctx); err != nil {
-		return 0, err
-	}
-	return f.s.longestRecord, nil
 }
 
 func (f ordinaryFile) Length() int64 { return f.s.length }
@@ -1789,7 +1755,54 @@ func (s *ordinarySnapshot) ContentProof(ctx context.Context) (agentapi.SourceCon
 	if err := s.VerifyContent(ctx); err != nil {
 		return agentapi.SourceContentProof{}, err
 	}
-	return agentapi.SourceContentProof{Version: 1, Provider: "codex-ordinary", SHA256: s.digest, Boundary: s.length}, nil
+	return s.capturedProof(), nil
+}
+
+func (s *ordinarySnapshot) capturedProof() agentapi.SourceContentProof {
+	return agentapi.SourceContentProof{Version: 1, Provider: "codex-ordinary", SHA256: s.digest, Boundary: s.length}
+}
+
+// VerifiedInspectionFor rejects snapshot and filter decorators, including ones
+// that promote this method while overriding Input, Check or inspection behavior.
+func (s *ordinarySnapshot) VerifiedInspectionFor(snapshot agentapi.SourceSnapshot, filter agentapi.TranscriptFilter) bool {
+	actual, ok := snapshot.(*ordinarySnapshot)
+	_, native := filter.(Filter)
+	return ok && actual == s && native
+}
+
+// CapturedContentHint identifies captured bytes without asserting current source
+// equality. It authorizes only a lookup; a hit still requires VerifyContent.
+func (s *ordinarySnapshot) CapturedContentHint(ctx context.Context) (agentapi.SourceContentProof, error) {
+	if s.closed || s.owner.closed {
+		return agentapi.SourceContentProof{}, agentapi.ErrClosed
+	}
+	if err := ctx.Err(); err != nil {
+		return agentapi.SourceContentProof{}, err
+	}
+	return s.capturedProof(), nil
+}
+
+// InspectVerifiedImport owns the actual codec call and its complete input.
+// The concrete codec always ends its read with ordinaryFile.Check, independently
+// hashing the captured prefix and checking current selection, locator and header.
+// After that check this operation only copies intrinsic summary/proof values;
+// no arbitrary inspector return, external callback or read can intervene.
+func (s *ordinarySnapshot) InspectVerifiedImport(ctx context.Context, filter agentapi.TranscriptFilter, c agentapi.FilterContext) (agentapi.ImportSummary, agentapi.SourceContentProof, error) {
+	f, native := filter.(Filter)
+	if !native {
+		return agentapi.ImportSummary{}, agentapi.SourceContentProof{}, sourceFailure(agentapi.Unavailable, "verified inspection requires native Codex filter")
+	}
+	if _, err := s.CapturedContentHint(ctx); err != nil {
+		return agentapi.ImportSummary{}, agentapi.SourceContentProof{}, err
+	}
+	summary, err := f.InspectFilteredImport(ctx, s.Input(), c)
+	if err != nil {
+		return agentapi.ImportSummary{}, agentapi.SourceContentProof{}, err
+	}
+	if err := ctx.Err(); err != nil {
+		return agentapi.ImportSummary{}, agentapi.SourceContentProof{}, err
+	}
+	return summary, s.capturedProof(), nil
 }
 
 // VerifyContent retains current descriptor, locator, selection and header checks.

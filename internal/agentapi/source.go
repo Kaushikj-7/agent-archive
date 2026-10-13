@@ -223,11 +223,16 @@ type VerifiedContentSnapshot interface {
 	VerifyContent(context.Context) error
 }
 
-// VerifiedRecordFraming supplies bounded framing measured over a snapshot's
-// complete captured bytes. Each call independently verifies those bytes against
-// the live source before returning the longest record (excluding newlines,
-// including an incomplete tail). Failure requires the ordinary framing path;
-// this receipt never substitutes for the filter's end-of-use verification.
-type VerifiedRecordFraming interface {
-	LongestVerifiedRecord(context.Context) (int64, error)
+// VerifiedImportSnapshot owns a complete, concrete import inspection and its
+// final independent source verification. VerifiedInspectionFor must attest both
+// actual snapshot and filter, declining decorators and unsupported input.
+// CapturedContentHint only shortlists cache entries: it is not a current proof.
+// A hit requires live VerifyContent after lookup. On a miss InspectVerifiedImport
+// returns intrinsic facts and their proof from the same owned input and boundary,
+// with no external callback or source read between final verification and return.
+// Callers publish observations only after normal source checks and cleanup.
+type VerifiedImportSnapshot interface {
+	VerifiedInspectionFor(SourceSnapshot, TranscriptFilter) bool
+	CapturedContentHint(context.Context) (SourceContentProof, error)
+	InspectVerifiedImport(context.Context, TranscriptFilter, FilterContext) (ImportSummary, SourceContentProof, error)
 }

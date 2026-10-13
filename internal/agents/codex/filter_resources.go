@@ -33,16 +33,6 @@ func nativeScannerCharge(ctx context.Context, file agentapi.FileInput, limits ag
 	if maxRecord <= 0 {
 		maxRecord = archive.MaxRecordBytes
 	}
-	if framed, ok := file.(agentapi.VerifiedRecordFraming); ok {
-		if longest, err := framed.LongestVerifiedRecord(ctx); err == nil {
-			if longest > maxRecord {
-				return 0, agentapi.Wrap(agentapi.Limit, archive.ErrRecordTooLarge)
-			}
-			return scannerCapacity(longest, maxRecord), nil
-		}
-		// A changed source must retain the ordinary read/error precedence.
-		// In particular, its current bytes can contain an oversized record.
-	}
 	var buffer [countScratch]byte
 	var line, longest int64
 	var bytesRead int64
@@ -80,15 +70,11 @@ func nativeScannerCharge(ctx context.Context, file agentapi.FileInput, limits ag
 	}
 	// The codec ignores an incomplete final record but its scanner can buffer it.
 	longest = max(longest, line)
-	return scannerCapacity(longest, maxRecord), nil
-}
-
-func scannerCapacity(longest, maxRecord int64) int64 {
 	capacity := int64(min(64<<10, maxRecord+1))
 	for capacity < longest+1 && capacity < maxRecord+1 {
 		capacity = min(capacity*2, maxRecord+1)
 	}
-	return capacity
+	return capacity, nil
 }
 
 var errFilterBudget = agentapi.ReadBudgetLimit(errors.New("native filtered work exceeds shared data budget"))
