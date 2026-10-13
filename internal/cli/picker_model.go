@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"maps"
 	"slices"
 	"sort"
@@ -67,7 +68,7 @@ type pickerModel struct {
 	facts           map[pickerIdentity]*catalog.PickerItem
 	activity        map[pickerIdentity]time.Time
 	labels          map[localLabelKey]localLabelResult
-	label           func(context.Context, archive.SessionRegistration, time.Time) (archive.Metadata, bool)
+	label           func(context.Context, archive.SessionRegistration, time.Time) (archive.Metadata, bool, error)
 	source          string
 	harness         string
 	pageSize        int
@@ -232,7 +233,7 @@ func (m *pickerModel) state(s sessionScope) (*pickerScopeState, error) {
 		st.locals = append(st.locals, c)
 	}
 	sort.SliceStable(st.locals, func(i, j int) bool { return pickerCandidateBefore(st.locals[i], st.locals[j]) })
-	if m.source == "local" {
+	if m.source == "local" || m.archive == nil {
 		st.remoteDone = true
 	}
 	m.states[key] = st
@@ -337,6 +338,13 @@ func (m *pickerModel) Older(ctx context.Context, s sessionScope) (modelPickerVie
 	if !st.view.More {
 		st.view.Total = len(st.view.Rows)
 	}
+	if m.absenceUnknown && m.source != "local" {
+		// Offline auto can prove the native subset complete, but not the
+		// combined scope empty. Archive retry requires a refreshed view.
+		st.view.Incomplete = true
+		st.view.Empty = false
+		st.view.Total = -1
+	}
 	if err = m.validateOperation(ctx, pages); err != nil {
 		return modelPickerView{}, err
 	}
@@ -371,6 +379,9 @@ func (m *pickerModel) validateOperation(ctx context.Context, pages int) error {
 func (m *pickerModel) Refresh(ctx context.Context, s sessionScope, fresh pickerArchive) (modelPickerView, error) {
 	candidate := *m
 	candidate.archive = fresh
+	if fresh != nil {
+		candidate.absenceUnknown = false
+	}
 	if err := candidate.prepare(ctx); err != nil {
 		return modelPickerView{}, err
 	}
@@ -436,9 +447,19 @@ func (m *pickerModel) materializeLocal(ctx context.Context, st *pickerScopeState
 		}
 		*attempts++
 		st.view.LabelAttempts++
-		result.metadata, result.hasPrompt = m.label(ctx, reg, c.row.active)
+		var labelErr error
+		result.metadata, result.hasPrompt, labelErr = m.label(ctx, reg, c.row.active)
 		if err := ctx.Err(); err != nil {
 			return pickerCandidate{}, false, err
+		}
+		if labelErr != nil {
+			if errors.Is(labelErr, context.Canceled) || errors.Is(labelErr, context.DeadlineExceeded) {
+				return pickerCandidate{}, false, labelErr
+			}
+			// A read/parse failure does not establish no prompt. Keep this
+			// candidate pending so Older may retry without a negative cache.
+			st.view.Incomplete = true
+			return c, false, nil
 		}
 		m.labels[key] = result
 	}

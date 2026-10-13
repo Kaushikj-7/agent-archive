@@ -120,10 +120,10 @@ func TestPickerModelAllPagesEqualExhaustiveUnion(t *testing.T) {
 				for _, r := range want {
 					wantIDs = append(wantIDs, r.metadata.Harness.Name+"/"+r.metadata.SessionID)
 				}
-				m := &pickerModel{archive: a, regs: regs, activity: activity, source: source, pageSize: 7, labelBudget: 50, label: func(ctx context.Context, r archive.SessionRegistration, at time.Time) (archive.Metadata, bool) {
+				m := &pickerModel{archive: a, regs: regs, activity: activity, source: source, pageSize: 7, labelBudget: 50, label: func(ctx context.Context, r archive.SessionRegistration, at time.Time) (archive.Metadata, bool, error) {
 					labelPicker := p
 					labelPicker.ctx = ctx
-					return labelPicker.buildLocalMetadata(r, at)
+					return labelPicker.buildLocalMetadataResult(r, at)
 				}}
 				if err = m.prepare(t.Context()); err != nil {
 					t.Fatal(err)
@@ -148,8 +148,8 @@ func TestPickerModelAllPagesEqualExhaustiveUnion(t *testing.T) {
 
 func TestPickerModelAttemptBudgetCannotProveEmpty(t *testing.T) {
 	a := &modelArchive{facts: map[pickerIdentity]catalog.PickerItem{}}
-	m := &pickerModel{archive: a, pageSize: 50, labelBudget: 50, activity: map[pickerIdentity]time.Time{}, label: func(_ context.Context, r archive.SessionRegistration, _ time.Time) (archive.Metadata, bool) {
-		return archive.Metadata{SessionID: r.ArchiveSessionID, Harness: r.Harness}, r.ArchiveSessionID == "local-100"
+	m := &pickerModel{archive: a, pageSize: 50, labelBudget: 50, activity: map[pickerIdentity]time.Time{}, label: func(_ context.Context, r archive.SessionRegistration, _ time.Time) (archive.Metadata, bool, error) {
+		return archive.Metadata{SessionID: r.ArchiveSessionID, Harness: r.Harness}, r.ArchiveSessionID == "local-100", nil
 	}}
 	for i := range 101 {
 		r := archive.SessionRegistration{ArchiveSessionID: fmt.Sprintf("local-%03d", i), Harness: archive.Harness{Name: "codex"}}
@@ -284,8 +284,8 @@ func TestPickerModelEqualActivityKeepsArchiveProvenance(t *testing.T) {
 			a.facts[pickerID("codex", id)] = item
 		}
 	}
-	m := &pickerModel{archive: a, regs: regs, activity: activity, source: "auto", pageSize: 2, labelBudget: 50, label: func(_ context.Context, r archive.SessionRegistration, at time.Time) (archive.Metadata, bool) {
-		return archive.Metadata{SessionID: r.ArchiveSessionID, Harness: r.Harness, CapturedAt: at}, true
+	m := &pickerModel{archive: a, regs: regs, activity: activity, source: "auto", pageSize: 2, labelBudget: 50, label: func(_ context.Context, r archive.SessionRegistration, at time.Time) (archive.Metadata, bool, error) {
+		return archive.Metadata{SessionID: r.ArchiveSessionID, Harness: r.Harness, CapturedAt: at}, true, nil
 	}}
 	if err := m.prepare(t.Context()); err != nil {
 		t.Fatal(err)
@@ -354,8 +354,8 @@ func TestPickerModelZeroPromptRevivalSourcePolicy(t *testing.T) {
 			reg := archive.SessionRegistration{ArchiveSessionID: "revive", Harness: archive.Harness{Name: "codex"}}
 			item := catalog.PickerItem{Row: catalog.PickerRow{SessionKey: "physical", SessionID: "revive", Harness: "codex", Root: true, PromptState: catalog.PickerPromptsZero, Activity: time.Unix(10, 0), CapturedAt: time.Unix(20, 0)}}
 			a := &modelArchive{facts: map[pickerIdentity]catalog.PickerItem{pickerID("codex", "revive"): item}}
-			m := &pickerModel{archive: a, regs: []archive.SessionRegistration{reg}, activity: map[pickerIdentity]time.Time{pickerID("codex", "revive"): time.Unix(30, 0)}, source: source, pageSize: 50, labelBudget: 50, label: func(_ context.Context, r archive.SessionRegistration, at time.Time) (archive.Metadata, bool) {
-				return archive.Metadata{SessionID: r.ArchiveSessionID, Harness: r.Harness, CapturedAt: at}, true
+			m := &pickerModel{archive: a, regs: []archive.SessionRegistration{reg}, activity: map[pickerIdentity]time.Time{pickerID("codex", "revive"): time.Unix(30, 0)}, source: source, pageSize: 50, labelBudget: 50, label: func(_ context.Context, r archive.SessionRegistration, at time.Time) (archive.Metadata, bool, error) {
+				return archive.Metadata{SessionID: r.ArchiveSessionID, Harness: r.Harness, CapturedAt: at}, true, nil
 			}}
 			if err := m.prepare(t.Context()); err != nil {
 				t.Fatal(err)
@@ -415,9 +415,9 @@ func TestPickerModelScopeContinuationsAndRefreshActivity(t *testing.T) {
 			out[pickerID("codex", r.ArchiveSessionID)] = active.Add(-time.Duration(i) * time.Second)
 		}
 		return out, nil
-	}, label: func(_ context.Context, r archive.SessionRegistration, at time.Time) (archive.Metadata, bool) {
+	}, label: func(_ context.Context, r archive.SessionRegistration, at time.Time) (archive.Metadata, bool, error) {
 		reads++
-		return archive.Metadata{SessionID: r.ArchiveSessionID, Harness: r.Harness, CapturedAt: at}, true
+		return archive.Metadata{SessionID: r.ArchiveSessionID, Harness: r.Harness, CapturedAt: at}, true, nil
 	}}
 	if err := m.prepare(t.Context()); err != nil {
 		t.Fatal(err)
@@ -510,8 +510,8 @@ func TestPickerModelCachedOlderRejectsChangedAuthorityAtomically(t *testing.T) {
 				regs = append(regs, reg)
 				activity[pickerID("codex", id)] = time.Unix(int64(10-i), 0)
 			}
-			m := &pickerModel{archive: a, regs: regs, activity: activity, source: source, pageSize: 2, labelBudget: 50, label: func(_ context.Context, reg archive.SessionRegistration, at time.Time) (archive.Metadata, bool) {
-				return archive.Metadata{SessionID: reg.ArchiveSessionID, Harness: reg.Harness, CapturedAt: at}, true
+			m := &pickerModel{archive: a, regs: regs, activity: activity, source: source, pageSize: 2, labelBudget: 50, label: func(_ context.Context, reg archive.SessionRegistration, at time.Time) (archive.Metadata, bool, error) {
+				return archive.Metadata{SessionID: reg.ArchiveSessionID, Harness: reg.Harness, CapturedAt: at}, true, nil
 			}}
 			if err := m.prepare(t.Context()); err != nil {
 				t.Fatal(err)
@@ -540,5 +540,55 @@ func TestPickerModelCachedOlderRejectsChangedAuthorityAtomically(t *testing.T) {
 				t.Fatalf("retry failed: %+v %v", last, err)
 			}
 		})
+	}
+}
+
+func TestPickerModelOfflineAutoCannotProveCombinedScopeEmpty(t *testing.T) {
+	for _, source := range []string{"auto", "local"} {
+		t.Run(source, func(t *testing.T) {
+			m := &pickerModel{absenceUnknown: true, source: source, pageSize: 50, labelBudget: 50}
+			if err := m.prepare(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			v, err := m.First(t.Context(), sessionScope{All: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if source == "local" {
+				if !v.Empty || v.Incomplete || v.Total != 0 {
+					t.Fatal(v)
+				}
+			} else {
+				if v.Empty || !v.Incomplete || v.Total != -1 || v.More {
+					t.Fatal(v)
+				}
+				fresh := &modelArchive{facts: map[pickerIdentity]catalog.PickerItem{}}
+				v, err = m.Refresh(t.Context(), sessionScope{All: true}, fresh)
+				if err != nil || !v.Empty || v.Incomplete || v.Total != 0 || m.absenceUnknown {
+					t.Fatalf("fresh complete view retained offline uncertainty: %+v %v", v, err)
+				}
+			}
+		})
+	}
+}
+
+func TestPickerModelLabelCancellationDoesNotConsumeCandidate(t *testing.T) {
+	reg := archive.SessionRegistration{ArchiveSessionID: "retry", Harness: archive.Harness{Name: "codex"}}
+	m := &pickerModel{source: "local", regs: []archive.SessionRegistration{reg}, activity: map[pickerIdentity]time.Time{pickerID("codex", "retry"): time.Unix(100, 0)}, pageSize: 50, labelBudget: 50, label: func(context.Context, archive.SessionRegistration, time.Time) (archive.Metadata, bool, error) {
+		return archive.Metadata{}, false, context.Canceled
+	}}
+	if err := m.prepare(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	scope := sessionScope{All: true}
+	if _, err := m.First(t.Context(), scope); !errors.Is(err, context.Canceled) || len(m.labels) != 0 {
+		t.Fatalf("cancellation consumed or cached candidate: %v labels=%v", err, m.labels)
+	}
+	m.label = func(context.Context, archive.SessionRegistration, time.Time) (archive.Metadata, bool, error) {
+		return archive.Metadata{SessionID: reg.ArchiveSessionID, Harness: reg.Harness}, true, nil
+	}
+	v, err := m.First(t.Context(), scope)
+	if err != nil || len(v.Rows) != 1 || v.Empty || v.LabelAttempts != 1 {
+		t.Fatalf("canceled first page was not retryable: %+v %v", v, err)
 	}
 }
