@@ -25,6 +25,9 @@ const codexWriter configWriter = "codex-scope-floor-v3"
 
 const publicationCompositionWriter configWriter = "publication-composition-v12"
 
+// scopedPickerWriter reserves the permanent capability; construction is not yet supported.
+const scopedPickerWriter configWriter = "scoped-picker-v1"
+
 const catalogWriter configWriter = "catalog-v4-v11"
 
 const historicalProjectWriter configWriter = "historical-projects-v10"
@@ -112,12 +115,16 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 func decodeConfig(data []byte, c *Config) (bool, error) {
 	plain := configJSON(*c)
 	wire := struct {
-		SchemaVersion json.RawMessage `json:"schema_version"`
-		RetentionDays json.RawMessage `json:"retention_days"`
+		SchemaVersion          json.RawMessage `json:"schema_version"`
+		RetentionDays          json.RawMessage `json:"retention_days"`
+		ScopedPickerProtection json.RawMessage `json:"scoped_picker_protection"`
 		*configJSON
 	}{configJSON: &plain}
 	if err := json.Unmarshal(data, &wire); err != nil {
 		return false, err
+	}
+	if len(wire.ScopedPickerProtection) != 0 {
+		return false, errors.New("scoped picker protection requires a writer with complete scoped catalog support; upgrade before opening this configuration")
 	}
 	if len(wire.RetentionDays) == 0 {
 		plain.RetentionDays = DefaultRetentionDays
@@ -179,6 +186,9 @@ func decodeConfigVersion(plain *configJSON, rawVersion json.RawMessage) (bool, e
 		if err := json.Unmarshal(raw, &plain.SchemaVersion); err != nil {
 			return false, err
 		}
+		if plain.SchemaVersion == 14 {
+			return false, errors.New("scoped picker configuration requires its permanent protected writer fence and complete scoped catalog support")
+		}
 	}
 	return fenced, nil
 }
@@ -188,6 +198,9 @@ func codexMarkerMatches(mode SkillEvidence, writer configWriter) bool {
 }
 
 func validateWriterVersion(c Config, version writerVersion) error {
+	if version.Version == 14 || version.Writer == scopedPickerWriter {
+		return errors.New("scoped picker configuration requires complete scoped catalog support; upgrade before opening this configuration")
+	}
 	if !supportedWriterVersion(version) {
 		return errors.New("configuration requires a supported writer fence")
 	}

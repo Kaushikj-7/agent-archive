@@ -116,6 +116,14 @@ func (c *Coordinator) change(ctx context.Context, fn func(*admissions) error) er
 // owners are refused to prevent concurrent acknowledgement of another caller.
 // A new owner cannot cross a seal, including after process restart.
 func (c *Coordinator) Admit(ctx context.Context, owner, digest string, refs []ObjectRef) error {
+	if c.writer.readOnly {
+		return ErrReadOnly
+	}
+	// Check before admission can authorize source or index writes. Upgrade must
+	// seal and drain existing owners before replacing this protocol.
+	if _, _, err := c.writer.Head(ctx); err != nil {
+		return err
+	}
 	if owner == "" || len(owner) > 512 || digest == "" || len(refs) > 256 {
 		return errors.New("invalid catalog admission")
 	}

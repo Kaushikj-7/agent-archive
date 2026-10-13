@@ -18,7 +18,7 @@ and source status are linked here.
 
 ## Current reconciliation
 
-Reconciled against main `4a2ca72a` (2026-10-12). Closed original PRs were
+Reconciled against main `4b9b612f` (2026-10-13). Closed original PRs were
 source-superseded rather than merged unchanged. Their historical measurements
 do not establish current-main performance acceptance.
 
@@ -30,7 +30,15 @@ do not establish current-main performance acceptance.
 | #382 concurrent show/lookup | #460, original latency benchmark #465, release note #468 | Matched output/performance qualification. |
 | #384 transactional catalog and #391 migration/bounded reads | #460, preserved measured/year-window controls #464/#466 | Provider atomicity/clock, durable global writer barriers and cutover qualification; full-load/peak-memory acceptance. |
 | #383 stats selection | Source-superseded by #460; original year-window benchmark preserved in #466 | Full-window and matched-performance qualification remain open. |
-| #375 prepared stats, #380 ranking | #375 reconciled onto current main; original #380 closed in favor of #470 ranking and #474 scratch reuse (stacked on #375) | Exact current-head independent review evidence, CI and combined integration remain gates. Merge #375 before #474 and refresh affected candidates after main changes. Draft source does not establish readiness or matched performance. |
+| #375 prepared stats, #380 ranking | #375, #470 ranking and #474 scratch reuse merged; original #380 source-superseded | Source review, CI and combined integration completed for the merged stack. Fresh matched performance acceptance remains open. |
+
+[#473](https://github.com/wangjohn/agent-archive/pull/473) supplies Older actions,
+but handoff still loads complete archive metadata before showing the picker.
+Repository scope still uses complete-summary fallback. The next source slice is
+the [bounded repository picker plan](bounded-repository-picker.md), which defines
+versioned scoped indexes, complete construction/upgrade, bounded reader pages,
+local/archive merging and remote Older actions. Its seven PRs extend the delivered
+foundation; production provider and performance gates below remain separate.
 
 The [default listing contract](../maintainers/list-performance.md) now
 distinguishes legacy header enumeration and private summary reuse from

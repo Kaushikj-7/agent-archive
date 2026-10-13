@@ -22,6 +22,13 @@ Production S3/R2 construction and migration still refuse unqualified providers;
 provider atomicity/clock, global writer/cutover authority, full-load and matched
 performance acceptance remain gates. See [catalog migration and query](../catalog/migration-and-query.md)
 and the [provider release gate](../catalog/provider-qualification.md).
+The next source slice is the
+[bounded repository picker implementation plan](bounded-repository-picker.md).
+It builds on the shared catalog rather than restoring the historical readiness
+marker design: repository/activity ranges, remote pages and selected-body loading
+replace eager picker archive traversal. Merged Older actions currently expand
+already loaded choices; bounded remote startup is not implemented yet.
+
 The phase designs below preserve the original plan.
 Each phase lands before the next one starts. Each phase's PR updates its
 status line below.

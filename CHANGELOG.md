@@ -6,6 +6,9 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Refuse reserved scoped-picker catalog and configuration formats before admitting
+  writes; existing catalog formats and picker behavior remain supported.
+
 - Rank the default stats project list while retaining only the requested rows,
   reducing ranking work for archives with many projects.
 
