@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/catalog"
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
@@ -88,6 +89,8 @@ func runHandoffCommand(args []string, stdin io.Reader, stdout, stderr io.Writer,
 	// Only an argument the person typed is a query; an ID the picker or the
 	// calling agent chose below is already a session's.
 
+	var selectedPicker *handoffPickerSelection
+	opts.selection = &selectedPicker
 	var target handoffTarget
 	if opts.file == "" {
 		cfg, found, loadErr := env.loadHandoffConfig(home)
@@ -129,6 +132,9 @@ func runHandoffCommand(args []string, stdin io.Reader, stdout, stderr io.Writer,
 			}
 		}
 		if opts.sessionID == "" && !opts.latest && opts.file == "" {
+			readCtx, stopPickerReads := readCommandContext(env)
+			defer stopPickerReads()
+			opts.readCtx = catalog.WithReadView(readCtx)
 			if code, done := chooseHandoffSession(&opts, home, interactive, input, stdout, stderr, env); done {
 				return code
 			}
@@ -234,10 +240,17 @@ func resolveHandoffTarget(opts handoffOptions, home string, stderr io.Writer, en
 		// The calling agent is the source of a direct handoff.
 		skip = nil
 	}
-	ctx, stopReads := readCommandContext(env)
-	defer stopReads()
+	ctx := opts.readCtx
+	if ctx == nil {
+		var stopReads func()
+		ctx, stopReads = readCommandContext(env)
+		defer stopReads()
+	}
 	resolver := handoffResolver{ctx: ctx, env: env, home: home, cfg: cfg,
 		revision: opts.revision, harness: opts.harness, source: opts.source, skip: skip, gate: gate, stderr: stderr}
+	if opts.selection != nil && *opts.selection != nil {
+		return resolver.selectedPicker(*opts.selection)
+	}
 	if !opts.latest {
 		return resolver.byID(opts.sessionID)
 	}

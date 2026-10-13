@@ -7,7 +7,8 @@ import (
 	"strings"
 )
 
-// Only the new authority is tightened; old configuration decoding is unchanged.
+// Protected staged and scoped authorities use exact selecting fields; older
+// configuration decoding remains unchanged.
 func checkStagedConfigAuthority(data []byte) error {
 	d := json.NewDecoder(bytes.NewReader(data))
 	token, err := d.Token()
@@ -31,14 +32,14 @@ func checkStagedConfigAuthority(data []byte) error {
 		if err = d.Decode(&value); err != nil {
 			return err
 		}
-		for _, name := range []stagedConfigField{stagedConfigSchemaField, stagedConfigSelectionField, stagedConfigCursorField} {
+		for _, name := range []stagedConfigField{stagedConfigSchemaField, stagedConfigSelectionField, stagedConfigCursorField, stagedConfigPickerField} {
 			if strings.EqualFold(key, string(name)) {
 				seen[string(name)]++
 				if name == stagedConfigSchemaField {
 					schema = value
 					schemaExact = schemaExact && key == string(name)
 				}
-				if name == stagedConfigSelectionField || name == stagedConfigCursorField {
+				if name == stagedConfigSelectionField || name == stagedConfigCursorField || name == stagedConfigPickerField {
 					staged = true
 					if key != string(name) || seen[string(name)] != 1 || bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
 						return errors.New("invalid staged configuration authority")
@@ -97,4 +98,5 @@ const (
 	stagedConfigSchemaField    stagedConfigField = "schema_version"
 	stagedConfigSelectionField stagedConfigField = "staged_selection_protection"
 	stagedConfigCursorField    stagedConfigField = "settled_cursor_selection_protection"
+	stagedConfigPickerField    stagedConfigField = "scoped_picker_protection"
 )

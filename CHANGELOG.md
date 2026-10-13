@@ -10,6 +10,16 @@ follow [Semantic Versioning](https://semver.org/).
   Planning can update a bounded private disposable cache, including with `--dry-run`;
   archive and configuration changes still require import confirmation.
 
+- Load the handoff picker from bounded repository pages on supported scoped
+  catalogs, merge current local activity, and continue native eligibility checks
+  with Older sessions. Changed or expired archive selections require refresh.
+  Local read failures leave eligibility unknown instead of proving an empty
+  repository; archive-only handoff reports read errors rather than no matches.
+
+- Add complete scoped catalog construction and resumable `migrate --scoped-picker`
+  upgrades, with verified activation and a permanent stronger writer fence.
+  Production S3/R2 qualification and credential authority remain required.
+
 - Refuse reserved scoped-picker catalog and configuration formats before admitting
   writes; existing catalog formats and picker behavior remain supported.
 

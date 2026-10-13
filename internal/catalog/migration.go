@@ -119,7 +119,7 @@ func (m *Migration) proof(ctx context.Context) (CutoverProof, error) {
 	if err != nil {
 		return proof, err
 	}
-	if proof.ID == "" || proof.Protocol != 10 || proof.Source != destinationIdentity(m.State.Source) || proof.Destination != destinationIdentity(m.State.Destination) {
+	if proof.ID == "" || proof.Protocol != m.State.Protocol || proof.Source != destinationIdentity(m.State.Source) || proof.Destination != destinationIdentity(m.State.Destination) {
 		return proof, errors.New("credential cutover proof differs from migration destination or writer protocol")
 	}
 	return proof, nil
@@ -128,6 +128,17 @@ func (m *Migration) proof(ctx context.Context) (CutoverProof, error) {
 // OpenMigration validates qualification and isolation before any write. A
 // checkpoint is resumed only for its original destination and credential proof.
 func OpenMigration(ctx context.Context, source, target storage.ObjectStore, sourceConfig, targetConfig destination.Config, authority CutoverAuthority) (*Migration, error) {
+	return openMigration(ctx, source, target, sourceConfig, targetConfig, authority, 10)
+}
+
+// OpenScopedMigration constructs every indexed session in the stronger format
+// before activating an isolated legacy-source destination. Protocol 10 migration
+// remains a distinct compatible route with unchanged frozen journal digests.
+func OpenScopedMigration(ctx context.Context, source, target storage.ObjectStore, sourceConfig, targetConfig destination.Config, authority CutoverAuthority) (*Migration, error) {
+	return openMigration(ctx, source, target, sourceConfig, targetConfig, authority, 11)
+}
+
+func openMigration(ctx context.Context, source, target storage.ObjectStore, sourceConfig, targetConfig destination.Config, authority CutoverAuthority, protocol uint64) (*Migration, error) {
 	if !isolated(sourceConfig, targetConfig) || targetConfig.EffectiveArchiveFormat() != destination.FormatCatalogV4 || sourceConfig.EffectiveArchiveFormat() != destination.FormatLegacy {
 		return nil, errors.New("migration requires isolated legacy source and catalog destination")
 	}
@@ -144,7 +155,7 @@ func OpenMigration(ctx context.Context, source, target storage.ObjectStore, sour
 	if _, ok := source.(storage.LimitedGetter); !ok {
 		return nil, errors.New("migration requires bounded source reads")
 	}
-	m := &Migration{Source: source, Destination: target, Authority: authority, State: CatalogMigration{Protocol: 10, Source: sourceConfig, Destination: targetConfig}, writer: w}
+	m := &Migration{Source: source, Destination: target, Authority: authority, State: CatalogMigration{Protocol: protocol, Source: sourceConfig, Destination: targetConfig}, writer: w}
 	proof, err := m.proof(ctx)
 	if err != nil {
 		return nil, err
@@ -152,7 +163,7 @@ func OpenMigration(ctx context.Context, source, target storage.ObjectStore, sour
 	raw, checkpointVersion, err := w.versioned.GetCatalogVersion(ctx, MigrationKey, 64<<10)
 	if err == nil {
 		state, decodeErr := decodeMigration(raw)
-		if decodeErr != nil || destinationIdentity(state.Source) != destinationIdentity(sourceConfig) || destinationIdentity(state.Destination) != destinationIdentity(targetConfig) || state.Proof != proof.ID {
+		if decodeErr != nil || state.Protocol != protocol || destinationIdentity(state.Source) != destinationIdentity(sourceConfig) || destinationIdentity(state.Destination) != destinationIdentity(targetConfig) || state.Proof != proof.ID {
 			return nil, errors.New("migration checkpoint differs from cutover authority")
 		}
 		m.State = state
@@ -180,7 +191,7 @@ func OpenMigration(ctx context.Context, source, target storage.ObjectStore, sour
 		return m, nil
 	}
 	// Never claim mixed namespace completeness, even before sealing or copying.
-	objects, err := target.List(ctx, "")
+	objects, err := m.destinationInventory(ctx, "", true)
 	if err != nil {
 		return nil, err
 	}
@@ -382,14 +393,7 @@ func (m *Migration) Verify(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	rows, err := migrationRows(ctx, snapshot)
-	if err != nil {
-		return err
-	}
-	remaining := map[string]CatalogEntry{}
-	for _, row := range rows {
-		remaining[row.Key] = row.Entry
-	}
+	var verified uint64
 	cursor := ""
 	for {
 		page, err := m.Source.(storage.PageLister).ListPage(ctx, "sessions/", cursor, 64)
@@ -400,10 +404,14 @@ func (m *Migration) Verify(ctx context.Context) error {
 			if !metadataKey(obj.Key) {
 				continue
 			}
-			entry, ok := remaining[obj.Key]
-			if !ok {
+			entryPtr, _, lookupErr := m.writer.Find(ctx, obj.Key)
+			if lookupErr != nil {
+				return lookupErr
+			}
+			if entryPtr == nil {
 				return fmt.Errorf("source session missing from catalog: %s", obj.Key)
 			}
+			entry := *entryPtr
 			raw, etag, err := m.Source.(storage.LimitedVersionedGetter).GetLimitedVersioned(ctx, obj.Key, 32<<20)
 			if err != nil {
 				return err
@@ -427,17 +435,24 @@ func (m *Migration) Verify(ctx context.Context) error {
 					return storage.ErrChecksumMismatch
 				}
 			}
-			delete(remaining, obj.Key)
+			verified++
 		}
 		if page.Next == "" {
 			break
 		}
 		cursor = page.Next
 	}
-	if len(remaining) != 0 {
+	identity, err := m.writer.readNode(ctx, snapshot.head.Identity)
+	if err != nil {
+		return err
+	}
+	if identity.Count != verified {
 		return errors.New("catalog has entries outside exhaustive source inventory")
 	}
-	objects, err := m.Destination.List(ctx, "sessions/")
+	if err = m.verifyScopedRoots(ctx, snapshot, verified); err != nil {
+		return err
+	}
+	objects, err := m.destinationInventory(ctx, "sessions/", false)
 	if err != nil {
 		return err
 	}
@@ -460,22 +475,6 @@ func (m *Migration) Verify(ctx context.Context) error {
 	m.State.VerifiedRoot = snapshot.Root()
 	m.State.Phase = MigrationVerified
 	return m.save(ctx)
-}
-
-func migrationRows(ctx context.Context, snapshot *Snapshot) ([]Row, error) {
-	var rows []Row
-	cursor := ""
-	for {
-		page, err := snapshot.Query(ctx, Query{Index: IdentityIndex}, cursor, 1000)
-		if err != nil {
-			return nil, err
-		}
-		rows = append(rows, page.Rows...)
-		if page.Next == "" {
-			return rows, nil
-		}
-		cursor = page.Next
-	}
 }
 
 // Activate revalidates the exhaustive oracle and credential authority before
@@ -528,6 +527,9 @@ func (m *Migration) FinishActivation(ctx context.Context) error {
 // read-only, so rollback cannot discard newer publications or reenable legacy
 // writes. Configuration rollback is allowed only under this exact-root gate.
 func (m *Migration) Rollback(ctx context.Context) error {
+	if m.State.Protocol == 11 {
+		return m.rollbackScoped(ctx)
+	}
 	proof, err := m.proof(ctx)
 	if err != nil || proof.ID != m.State.Proof {
 		return errors.Join(ErrAdmissionClosed, err)
@@ -608,7 +610,7 @@ func decodeMigration(raw []byte) (CatalogMigration, error) {
 
 func (state CatalogMigration) validate() error {
 	invalid := errors.New("invalid migration checkpoint descriptor")
-	if state.Protocol != 10 || !exactHex(state.ID, 24) || !exactHex(state.Owner, 24) || state.Proof == "" || len(state.Proof) > 4096 || len(state.Cursor) > 4096 || len(state.ExpectedHead) > 4096 || !isolated(state.Source, state.Destination) || state.Source.EffectiveArchiveFormat() != destination.FormatLegacy || state.Destination.EffectiveArchiveFormat() != destination.FormatCatalogV4 {
+	if (state.Protocol != 10 && state.Protocol != 11) || !exactHex(state.ID, 24) || !exactHex(state.Owner, 24) || state.Proof == "" || len(state.Proof) > 4096 || len(state.Cursor) > 4096 || len(state.ExpectedHead) > 4096 || !isolated(state.Source, state.Destination) || state.Source.EffectiveArchiveFormat() != destination.FormatLegacy || state.Destination.EffectiveArchiveFormat() != destination.FormatCatalogV4 {
 		return invalid
 	}
 	switch state.Phase {
@@ -627,4 +629,111 @@ func (state CatalogMigration) validate() error {
 		return invalid
 	}
 	return nil
+}
+
+func (m *Migration) rollbackScoped(ctx context.Context) error {
+	if m.State.Phase != MigrationActive && m.State.Phase != MigrationRollback {
+		return errors.New("only active scoped migration can roll back")
+	}
+	if err := m.unchangedHead(ctx); err != nil {
+		return err
+	}
+	if _, err := m.proof(ctx); err != nil {
+		return err
+	}
+	if m.State.Phase == MigrationRollback {
+		return m.held(ctx)
+	}
+	owner := m.State.Owner
+	err := m.writer.Coordinator().change(ctx, func(s *admissions) error {
+		if s.Protocol != 11 || len(s.Owners) != 0 || s.Hold != "" || s.GCLink != nil || s.Intent != nil || s.Upgrade != nil || (s.Seal != "" && s.Seal != owner) {
+			return ErrAdmissionClosed
+		}
+		if err := m.unchangedHead(ctx); err != nil {
+			return err
+		}
+		s.Seal = owner
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	m.State.Phase = MigrationRollback
+	return m.save(ctx)
+}
+
+func (m *Migration) verifyScopedRoots(ctx context.Context, snapshot *Snapshot, verified uint64) error {
+	if m.State.Protocol == 11 {
+		h := snapshot.head
+		verifier := &PickerUpgrade{writer: m.writer, State: PickerUpgradeState{Source: h, Candidate: h, SourceETag: snapshot.etag, Copied: verified}}
+		// Derive membership cardinality in bounded pages; verify below checks each
+		// expected leaf and total index cardinality against verified full bodies.
+		cursor := ""
+		for {
+			rows, e := m.writer.identityPage(ctx, h.Identity, cursor, 64)
+			if e != nil {
+				return e
+			}
+			for _, leaf := range rows {
+				var r record
+				if e = json.Unmarshal(leaf.Value, &r); e != nil {
+					return e
+				}
+				if r.Entry != nil {
+					if r.Entry.Picker == nil {
+						return errors.New("scoped migration identity lacks picker facts")
+					}
+					keys, e := PickerMembershipKeys(leaf.Key, *r.Entry.Picker)
+					if e != nil {
+						return e
+					}
+					verifier.State.Memberships += uint64(len(keys))
+				}
+				cursor = leaf.Key
+			}
+			if len(rows) < 64 {
+				break
+			}
+		}
+		if err := verifier.verify(ctx); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (m *Migration) destinationInventory(ctx context.Context, prefix string, initializing bool) ([]storage.Object, error) {
+	if m.State.Protocol != 11 {
+		return m.Destination.List(ctx, prefix)
+	}
+	lister, ok := m.Destination.(storage.PageLister)
+	if !ok {
+		return nil, errors.New("scoped construction requires bounded destination inventory")
+	}
+	cursor := ""
+	for {
+		page, err := lister.ListPage(ctx, prefix, cursor, 64)
+		if err != nil {
+			return nil, err
+		}
+		if initializing {
+			if page.Next != "" {
+				return nil, errors.New("scoped initialization contains unrelated inventory")
+			}
+			return page.Objects, nil
+		}
+		for _, object := range page.Objects {
+			if metadataKey(object.Key) {
+				return nil, errors.New("mixed legacy/catalog namespace cannot be activated")
+			}
+		}
+		if page.Next == "" {
+			return nil, nil
+		}
+		if page.Next == cursor {
+			return nil, errors.New("destination inventory did not advance")
+		}
+		cursor = page.Next
+	}
 }

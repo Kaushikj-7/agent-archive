@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/wangjohn/agent-archive/internal/destination"
 )
 
 func TestScopedPickerFenceCannotBeFlattenedIntoOlderConfiguration(t *testing.T) {
@@ -56,6 +58,121 @@ func TestScopedPickerReservationRefusesLayeredStagedConfiguration(t *testing.T) 
 		after, err := json.Marshal(next)
 		if err != nil || string(after) != string(raw) {
 			t.Fatal("refusal changed layered configuration", err)
+		}
+	}
+}
+
+func TestScopedPickerConfigurationComposesAndPreservesProtections(t *testing.T) {
+	t.Parallel()
+	c := Config{RetentionDays: 90, ScopedPickerProtection: true, StagedSelectionProtection: true, PublicationCompositionProtection: true, DurableStorageProtection: true, RetentionProtection: true, ImportStagingProtection: true, HistoricalProjectProtection: true, GenerationProtection: true, CodexHistoryProtection: true, Storage: destination.Config{ArchiveFormat: destination.FormatCatalogV4}}
+	raw, err := json.Marshal(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded Config
+	if err = json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.SchemaVersion != 14 || !decoded.ScopedPickerProtection || !decoded.PublicationCompositionProtection || !decoded.DurableStorageProtection || !decoded.HistoricalProjectProtection || !decoded.StagedSelectionProtection || decoded.SupportsStagedSelection() {
+		t.Fatal(decoded)
+	}
+	next := Config{RetentionDays: 90, Storage: c.Storage}
+	PreserveWriterFence(&next, decoded)
+	raw, err = json.Marshal(next)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = json.Unmarshal(raw, &decoded); err != nil || !decoded.ScopedPickerProtection {
+		t.Fatal(err)
+	}
+}
+
+func TestScopedPickerLayeredConfigurationRejectsMissingLowerCapabilities(t *testing.T) {
+	t.Parallel()
+	c := Config{RetentionDays: 90, ScopedPickerProtection: true, StagedSelectionProtection: true, PublicationCompositionProtection: true, DurableStorageProtection: true, ImportStagingProtection: true, Storage: destination.Config{ArchiveFormat: destination.FormatCatalogV4}}
+	raw, err := json.Marshal(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"durable_storage_protection", "import_staging_protection", "publication_composition_protection", "scoped_picker_protection"} {
+		t.Run(field, func(t *testing.T) {
+			t.Parallel()
+			probe := strings.Replace(string(raw), `"`+field+`":true`, `"`+field+`":false`, 1)
+			var next Config
+			if err := json.Unmarshal([]byte(probe), &next); err == nil {
+				t.Fatal("accepted missing lower fence")
+			}
+		})
+	}
+	for _, probe := range []string{
+		strings.Replace(string(raw), `"version":14`, `"version":13`, 1),
+		strings.Replace(string(raw), `"writer":"scoped-picker-v1"`, `"writer":"staged-selection-v13"`, 1),
+		strings.Replace(string(raw), `"writer":"scoped-picker-v1"`, `"writer":"scoped-picker-v1","future":true`, 1),
+		strings.Replace(string(raw), `"scoped_picker_protection":true`, `"scoped_picker_protection":true,"scoped_picker_protection":true`, 1),
+	} {
+		var next Config
+		if err = json.Unmarshal([]byte(probe), &next); err == nil {
+			t.Fatal("accepted mixed or ambiguous scoped configuration", probe)
+		}
+	}
+	next := Config{RetentionDays: 90, Storage: c.Storage}
+	PreserveWriterFence(&next, c)
+	if !next.StagedSelectionProtection || !next.ScopedPickerProtection {
+		t.Fatal("removed sticky protections")
+	}
+	if next.SupportsStagedSelection() {
+		t.Fatal("enabled catalog staging")
+	}
+}
+
+func TestScopedPickerCatalogRetainsSettledCursorFenceWithoutEnablingLegacySelection(t *testing.T) {
+	t.Parallel()
+	legacy := Config{RetentionDays: 90, SettledCursorSelectionProtection: true, StagedSelectionProtection: true, PublicationCompositionProtection: true, DurableStorageProtection: true, ImportStagingProtection: true, HistoricalProjectProtection: true}
+	raw, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = json.Unmarshal(raw, &legacy); err != nil || legacy.SchemaVersion != 15 || !legacy.SupportsSettledCursorSelection() {
+		t.Fatal(legacy, err)
+	}
+	catalog := legacy
+	catalog.Storage.ArchiveFormat = destination.FormatCatalogV4
+	catalog.ScopedPickerProtection = true
+	raw, err = json.Marshal(catalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved Config
+	if err = json.Unmarshal(raw, &saved); err != nil {
+		t.Fatal(err)
+	}
+	if saved.SchemaVersion != 14 || !saved.ScopedPickerProtection || !saved.SettledCursorSelectionProtection || !saved.StagedSelectionProtection || !saved.SupportsOrdinarySelection() || saved.SupportsStagedSelection() || saved.SupportsSettledCursorSelection() {
+		t.Fatal("scoped catalog lost remembered floors or enabled legacy selection", saved)
+	}
+	rollback := Config{RetentionDays: 90, Storage: saved.Storage}
+	PreserveWriterFence(&rollback, saved)
+	round, err := json.Marshal(rollback)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = json.Unmarshal(round, &rollback); err != nil || !rollback.SettledCursorSelectionProtection || !rollback.ScopedPickerProtection || rollback.SchemaVersion != 14 {
+		t.Fatal("rollback lost permanent capability composition", rollback, err)
+	}
+	for _, field := range []string{"staged_selection_protection", "publication_composition_protection", "durable_storage_protection", "import_staging_protection", "scoped_picker_protection"} {
+		probe := strings.Replace(string(raw), `"`+field+`":true`, `"`+field+`":false`, 1)
+		var refused Config
+		if err = json.Unmarshal([]byte(probe), &refused); err == nil {
+			t.Fatal("accepted settled scoped configuration missing a floor", field)
+		}
+	}
+	for _, probe := range []string{
+		strings.Replace(string(raw), `"version":14,"writer":"scoped-picker-v1"`, `"version":15,"writer":"settled-cursor-selection-v15"`, 1),
+		strings.Replace(string(raw), `"settled_cursor_selection_protection":true`, `"settled_cursor_selection_protection":true,"SETTLED_CURSOR_SELECTION_PROTECTION":true`, 1),
+		strings.Replace(string(raw), `"scoped_picker_protection":true`, `"scoped_picker_protection":true,"SCOPED_PICKER_PROTECTION":true`, 1),
+	} {
+		var refused Config
+		if err = json.Unmarshal([]byte(probe), &refused); err == nil {
+			t.Fatal("accepted mixed settled scoped selecting authority", probe)
 		}
 	}
 }
