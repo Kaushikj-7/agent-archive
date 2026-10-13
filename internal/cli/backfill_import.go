@@ -20,6 +20,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/backfill"
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/discovery"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/terminal"
@@ -117,6 +118,7 @@ type registeredImport struct {
 // release ends the watch and drops the locks registration held. It is
 // called once, whatever registerImportLocked returned.
 func (r *registeredImport) release() {
+	defer r.batch.CloseStagedResults()
 	for i := len(r.releases) - 1; i >= 0; i-- {
 		r.releases[i]()
 	}
@@ -188,6 +190,7 @@ func registerImportLocked(env Env, stdout, stderr io.Writer, home string, plan b
 		return reg, err
 	}
 	batch, admittedAt, plan := commit.batch, commit.admittedAt, commit.plan
+	defer func() { reg.batch = batch }()
 	reg.added, reg.plan, reg.changed = commit.added, commit.plan, commit.changed
 	stopConfirmation()
 	if err := env.checkpoint("committed"); err != nil {
@@ -225,21 +228,8 @@ func registerImportLocked(env Env, stdout, stderr io.Writer, home string, plan b
 	defer func() { resultErr = errors.Join(resultErr, lookup.Close()) }()
 	// The confirmation's lookup is closed with its plan. Rebuild the trusted
 	// census before reading qualified selected history in this fresh pass.
-	for _, candidate := range candidates {
-		if candidate.Harness == archive.HarnessCodex {
-			if _, err := lookup.Thread(registrationCtx, candidate.NativeSessionID); err != nil && registrationCtx.Err() != nil {
-				return reg, err
-			}
-		}
-	}
-	for {
-		health, err := lookup.ObserveReadOnly(registrationCtx)
-		if err != nil {
-			return reg, err
-		}
-		if !health.Pending {
-			break
-		}
+	if err := prepareImportLookup(registrationCtx, lookup, candidates); err != nil {
+		return reg, err
 	}
 	var onCapacity func(context.Context) error
 	if capacityUploads {
@@ -345,6 +335,7 @@ func finishInterruptedBatch(env Env, stdout io.Writer, home string, plan backfil
 		return nil
 	}
 	last = latest
+	defer last.CloseStagedResults()
 	store, err := state.Open(home)
 	if err != nil {
 		return err
@@ -612,7 +603,8 @@ func uploadImport(env Env, stdout, stderr io.Writer, home, batchID string, plan 
 	lastProgress := time.Now()
 	for len(u.pending) > 0 && !stop() {
 		before := len(u.pending)
-		_, err := runPass(env, false, passOptions{progress: u.observe, stop: stop})
+		result, err := runPass(env, false, passOptions{progress: u.observe, stop: stop})
+		result.CloseStagedResults()
 		u.stopFinishing()
 		if refreshErr := u.refresh(); refreshErr != nil && err == nil {
 			err = refreshErr
@@ -989,6 +981,7 @@ func importCapacityDrain(env Env, stdout io.Writer, home string, store *state.St
 			return err
 		}
 		result, err := collector.Run(ctx, store, remote, collector.Options{Sources: env.agentRegistry(), Parsers: parsersFor(env), Decoders: env.agentRegistry(), MachineID: current.MachineID, Now: env.Now, AcceptSession: current.AcceptSession, HistoricalProjectLabel: current.HistoricalProjectLabel, SkillEvidence: current.EffectiveSkillEvidence(), RequireSkillUse: current.RequireSkillUse, CursorDatabase: env.cursorDatabase(), CodexRollouts: lookup, ConfiguredCodexHomes: readHomes, RepoKey: env.repoKey, Stop: stop})
+		defer result.CloseStagedResults()
 		if err != nil {
 			return err
 		}
@@ -998,4 +991,24 @@ func importCapacityDrain(env Env, stdout io.Writer, home string, store *state.St
 		terminal.Printf(stdout, "Freed staging capacity after remotely verifying %s; continuing admission.\n", countNoun(len(result.Published), "session"))
 		return nil
 	}
+}
+
+func prepareImportLookup(registrationCtx context.Context, lookup *discovery.CodexRolloutLookup, candidates []backfill.Candidate) error {
+	for _, candidate := range candidates {
+		if candidate.Harness == archive.HarnessCodex {
+			if _, err := lookup.Thread(registrationCtx, candidate.NativeSessionID); err != nil && registrationCtx.Err() != nil {
+				return err
+			}
+		}
+	}
+	for {
+		health, err := lookup.ObserveReadOnly(registrationCtx)
+		if err != nil {
+			return err
+		}
+		if !health.Pending {
+			break
+		}
+	}
+	return nil
 }

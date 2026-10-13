@@ -74,6 +74,7 @@ const (
 // and S3 credentials are resolved through the named AWS profile.
 type Config struct {
 	ScopedPickerProtection           bool                `json:"scoped_picker_protection,omitempty"`
+	StagedSelectionProtection        bool                `json:"staged_selection_protection,omitempty"`
 	PublicationCompositionProtection bool                `json:"publication_composition_protection,omitempty"`
 	HistoricalProjects               []HistoricalProject `json:"historical_projects,omitempty"`
 	HistoricalProjectProtection      bool                `json:"historical_project_protection,omitempty"`
