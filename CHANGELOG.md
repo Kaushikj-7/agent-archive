@@ -6,6 +6,16 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Capture Codex sessions again while Codex is running. A thread's history is
+  now read by following Codex's own record of its current rollout back through
+  the rollout each one continues from, instead of waiting for a full inventory
+  of every Codex file that new files kept invalidating; sessions no longer sit
+  "waiting for Codex history coverage". A missing earlier rollout is reported
+  as a failure the next pass retries ("a Codex rollout this thread continues
+  from was not found"). Other rollouts of the same thread, such as a branch
+  abandoned by a rollback, no longer hold a thread back; they are kept as
+  earlier revisions when the scan has seen them.
+
 - Load the handoff picker from bounded repository pages on supported scoped
   catalogs, merge current local activity, and continue native eligibility checks
   with Older sessions. Changed or expired archive selections require refresh.

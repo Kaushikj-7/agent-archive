@@ -138,13 +138,15 @@ synthetic success establishes extension coverage only; it creates no production
 agent or installed-version verification. The contributor recipe identifies the
 ports and capability-specific checks required for a new implementation.
 
-Changed Codex scans reconcile same-thread physical revisions only after the
-lookup certifies complete candidate coverage. Historical reads use the existing
+Changed Codex scans reconcile the thread's own physical segments on its current
+chain (the rollout Codex's index names, then each rollout its history base
+names), then any observed same-thread rollouts off that chain, best effort.
+Off-chain rollouts never block selection. Historical reads use the existing
 native admission and source-home checks, close each snapshot before the next
 read, and retain independent aggregate bounds for raw bytes, filtered records,
-filtered bytes and compressed stages. Current selection may remain available
-while historical coverage is pending, but that scan cannot acknowledge a request
-or settle its signature. Meaningful preservation compares owned logical ordinals
+filtered bytes and compressed stages. A chain the lookup cannot resolve (a
+missing base) fails that scan, which cannot acknowledge a request or settle its
+signature. Meaningful preservation compares owned logical ordinals
 through the native record comparator; file sizes and copied headers supply no
 coverage evidence. One physical revision receives one latest verified retained
 entry, including an outgoing append first seen during reconciliation. Newly

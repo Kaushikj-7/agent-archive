@@ -20,10 +20,12 @@ available, because a later physical revision may be current.
 
 A current locator is an untrusted hint. The opened header must match the stable
 thread, the file must remain inside its admitted source root, and the lookup
-revision must remain current. Without a current locator, selection requires a
-complete candidate set with one connected, unique lineage tip. Missing or
-ambiguous evidence remains pending. Modification time, file size and lexical
-order never choose a current revision.
+revision must remain current. Without a current locator (no row in Codex's
+thread index, or an older Codex), the tip is the one rollout among the seed and
+the thread's observed rollouts that no other continues from; several such
+rollouts are a named, retryable failure (`rollout_tip_ambiguous`). Rollouts off
+the chain walked back from the tip take no part in selection. Modification time, file size and
+lexical order never choose a current revision.
 
 Physical `history_base` edges form an ordered graph. Each included prefix ends
 on a newline and agrees with the raw exclusive ordinal boundary. Cycles,
@@ -44,53 +46,59 @@ a child reset its counters. Independent own per-call usage remains useful.
 
 ## Shared native catalog
 
-`discovery.CodexRolloutLookup` owns the pass's requested coverage, native current
-projection and optional full metadata epoch. Ordinary collection and generation
-preview retain their requested lane. `MetadataInventory` explicitly requests a
-lazy view with separate bounds: 16 homes, 16384 physical entries, 2048 directories
-and 16MiB aggregate metadata facts/header work, charged to the shared native read
-budget. A late request starts a complete following round; neither observation
-cache membership nor requested coverage proves complete inventory.
+`discovery.CodexRolloutLookup` owns the pass's native current projection,
+observed rollout facts, rollout directory listings and optional full metadata
+epoch. Ordinary collection and generation preview use the lookup directly.
+`MetadataInventory` explicitly requests a lazy view with separate bounds: 16
+homes, 16384 physical entries, 2048 directories and 16MiB aggregate metadata
+facts/header work, charged to the shared native read budget. That view serves
+only a content-free diagnostic for a related-history refusal (see below); no
+capture or backfill waits for it. Neither observation cache membership nor any
+listing proves complete inventory.
 Physical candidates count before header validity; filesystem fingerprints include
 subdirectories and unrelated entries and retain a separate18432-entry traversal
 ceiling. Aliases of one canonical home share acquisition while every approved
 home spelling remains fenced.
 
-Requested coverage runs in epochs: observe every directory, then validate every
-directory's membership digest and each rollout's header identity, then
-complete. Only a completed, unfailed epoch proves a requested thread's
-candidate set (`Complete`). A completed epoch restarts when the next pass loads
-it, so proofs are double-buffered: on restart each request the epoch covered
-keeps that epoch's member candidates as its retained proof, which serves the
-thread while later epochs run. A newer unfailed epoch replaces it; one that did
-not cover the request (it overflowed) drops it; a failed epoch leaves it. A
-proof is a past observation: consumers reopen every candidate and recheck its
-identity, and a candidate moved or rewritten since fails that read and is
-retried. What a proof can miss is a rollout created later, so live evidence
-retires it: when a listing or current-row header read finds a locator claiming
-the thread that the proof in use (this epoch's or retained) does not hold, or
-another identity at one it does, that request has no proof until a newer epoch
-completes. Restored observation-cache facts, which can name vanished locators,
-never retire a proof. Live evidence arrives only as listings reach a
-directory, so a retained proof can still lack a segment created after it. The
-set marks such a proof `Retained`: a source signature may use it to recognize
-an unchanged lineage, but a read without a current locator does not choose a
-lineage tip from it, and waits for a proof completed in its own pass; the
-collector reports that wait as deferred (waiting for history coverage), not
-as a failure. A proof completed in the current pass can also lack a segment
-created after its directory was listed earlier in the epoch; such a read
-chooses the older tip, history already captured, and the next listing of that
-directory changes the lineage and causes a recapture. A discovery checkpoint that misses its pass deadline
-hands its catalog to the lookup, whose close writes it without that deadline,
-so an epoch that completed just before is not lost. Checkpoints accept a retained proof only from an earlier
-attempt that covered the request, with every candidate marked a member.
+A thread's lineage is a chain, and the chain is its own proof. The tip is the
+rollout Codex's thread index names (`threads.rollout_path` in
+`state_5.sqlite`). Each rollout's header names the rollout it continues from
+(`history_base`); the source walks tip, base, base's base, until a rollout with
+no base. The lookup finds a base by its rollout ID: first at a locator observed
+this pass that still exists, else by file name
+(`rollout-<local time>-<rollout ID>.jsonl`) in the day directories
+`sessions/YYYY/MM/DD` within one day of the creation time its UUIDv7 carries,
+and in `archived_sessions/`. Each directory is listed at most once per pass
+(at most 65536 entries, 4MiB of listings per pass, charged to the shared
+ledger). The provider reopens each locator and checks its header identity. A
+base found nowhere, or at two locators, is a named, retryable failure
+(`history_base_unavailable`), never a wait.
 
-Source signatures hash the set's lineage token: the revision the same current
-locator, candidates and candidate observations would carry if complete. The
-pass-local revision that `Check` compares still includes completeness, but a
-coverage change alone never makes an unchanged session look changed to the
-scan-skip check. A new segment, a changed candidate set or changed candidate
-stamps still change the token.
+No proof that the native home holds no other rollout of the thread is needed,
+and none is attempted. Earlier versions required one: a global coverage epoch
+that observed every directory under `sessions/` and `archived_sessions/` and
+then validated that none had changed. While Codex ran it kept creating rollout
+files, so epochs never validated, and once 256 threads had requested coverage
+no new thread could enter; every Codex capture deferred indefinitely. A catalog
+those versions wrote still carries a `native_coverage` field; a read ignores it
+and the next checkpoint drops it.
+
+What the chain cannot see is a segment created after Codex's index was read.
+The next pass reads the index again, finds the new tip, its lookup revision
+differs, the source looks changed and is captured again.
+
+The lookup also reports the thread's observed same-thread rollouts as
+candidates, and its revision covers them and their identity evidence, so a newly
+observed segment changes the source's signature. Without a current locator the
+source chooses the tip from them. Beside a current locator, candidates off the
+chain (an abandoned branch after a rollback, say) never block capture or choose
+the tip; ones whose files still exist are offered after the chain as
+best-effort historical revisions. Only rollouts the lookup has observed (a
+discovery listing or the restored cache) are offered: no proof says every
+abandoned branch was found, and a branch captured while it was current stays
+preserved through the published revision history either way. A discovery
+checkpoint that misses its pass deadline hands its catalog to the lookup, whose
+close writes it without that deadline.
 
 The full view binds lazy acquisition to the owner's constructor-approved
 canonical root set and fences every supplied alias spelling. A changed or

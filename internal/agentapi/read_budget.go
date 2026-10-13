@@ -39,10 +39,10 @@ const PassReadBudget int64 = 256 << 20
 
 // PassCacheReserve is the room the pass keeps for what outlives one
 // session's scan, all charged with ReserveUnscoped and capped: the Codex
-// lookup's restored catalog with its coverage facts (32 MiB), coverage
-// observations (8 MiB) and metadata inventory (16 MiB); the source's cached
-// ancestor prefixes (16 MiB) and rollout headers (64 x 128 KiB): 80 MiB in
-// all (discovery.PassCacheBytes plus codex.PassCacheBytes).
+// lookup's restored catalog (32 MiB), rollout observations (8 MiB), rollout
+// directory listings (4 MiB) and metadata inventory (16 MiB); the source's
+// cached ancestor prefixes (16 MiB) and rollout headers (64 x 128 KiB):
+// 84 MiB in all (discovery.PassCacheBytes plus codex.PassCacheBytes).
 const PassCacheReserve int64 = 96 << 20
 
 // NewNativeReadBudget creates a pass-owned shared charge ledger.
