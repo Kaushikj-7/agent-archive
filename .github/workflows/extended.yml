@@ -14,7 +14,7 @@ on:
         description: Approved bounded observation
         required: true
         type: choice
-        options: [off, seed, warm]
+        options: ['off', 'seed', 'warm']
 permissions:
   contents: read
 concurrency:
