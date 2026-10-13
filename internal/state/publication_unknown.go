@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"github.com/wangjohn/agent-archive/internal/local"
-	"strings"
+	"github.com/wangjohn/agent-archive/internal/wirepolicy"
 )
 
 // Future publication fields cannot become a legacy ready transaction simply
@@ -182,68 +182,7 @@ func rejectDuplicateSelectionKeys(data []byte) error {
 }
 
 func rejectDuplicateAuthorityKeys(data []byte, names []string) error {
-	if !json.Valid(data) {
-		return ErrDurableStorageRecovery
-	}
-	seen := map[string]bool{}
-	maxKey := 0
-	for _, name := range names {
-		maxKey = max(maxKey, len(name))
-	}
-	depth, expectKey := 0, false
-	for i := 0; i < len(data); i++ {
-		switch data[i] {
-		case '{', '[':
-			depth++
-			if depth == 1 {
-				expectKey = true
-			}
-		case '}', ']':
-			depth--
-		case ',':
-			if depth == 1 {
-				expectKey = true
-			}
-		case ':':
-			if depth == 1 {
-				expectKey = false
-			}
-		case '"':
-			start := i
-			for i++; i < len(data); i++ {
-				if data[i] == '\\' {
-					i++
-					continue
-				}
-				if data[i] == '"' {
-					break
-				}
-			}
-			if depth != 1 || !expectKey || i-start > 6*maxKey+2 {
-				continue
-			}
-			var key string
-			if json.Unmarshal(data[start:i+1], &key) != nil {
-				return ErrDurableStorageRecovery
-			}
-			canonical := ""
-			for _, name := range names {
-				if strings.EqualFold(key, name) {
-					canonical = name
-					break
-				}
-			}
-			if canonical == "" {
-				continue
-			}
-			key = canonical
-			if seen[key] {
-				return ErrDurableStorageRecovery
-			}
-			seen[key] = true
-		}
-	}
-	return nil
+	return wirepolicy.RejectDuplicateAuthorityKeys(data, names)
 }
 
 func (p *publishedSnapshot) UnmarshalJSON(data []byte) error {

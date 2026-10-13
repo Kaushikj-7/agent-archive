@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/listingindex"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
@@ -44,6 +46,35 @@ func validateEntryReference(e CatalogEntry) error {
 	}
 	if e.SummaryOverflow != "" && e.SummaryOverflow != overflowMetadata {
 		return errors.New("unknown catalog entry overflow marker")
+	}
+	if e.Picker != nil {
+		if err := e.Picker.validate(); err != nil {
+			return err
+		}
+		if _, err := PickerMembershipKeys(e.Picker.SessionKey, *e.Picker); err != nil {
+			return err
+		}
+		if _, err := PickerIdentityKey(*e.Picker); err != nil {
+			return err
+		}
+		if e.OrdinaryChildren > math.MaxInt64 || e.ReplayChildren > math.MaxInt64 {
+			return errors.New("picker child count overflow")
+		}
+		r := e.Picker
+		if r.Metadata != e.Metadata || r.Revision != e.Revision || r.SessionKey != leafSessionKey(&e) || r.ProjectID != e.Summary.ProjectID || !r.Activity.Equal(listingindex.ActivityTime(e.Summary)) || !r.CapturedAt.Equal(e.Summary.CapturedAt) || r.Root != !e.Summary.IsChild() || r.Replay != (e.Summary.Replay != nil) || r.OrdinaryChildren != int64(e.OrdinaryChildren) || r.ReplayChildren != int64(e.ReplayChildren) {
+			return errors.New("picker envelope mismatch")
+		}
+		if e.SummaryOverflow == "" {
+			full := e
+			full.Picker = nil
+			expected, err := BuildPickerRow(r.SessionKey, full)
+			if err != nil {
+				return err
+			}
+			if !samePickerRow(*expected, *r) {
+				return errors.New("picker facts differ from inline summary")
+			}
+		}
 	}
 	return nil
 }
@@ -108,9 +139,17 @@ func entryTreeValue(value any) bool {
 }
 
 func encodeTreeValue(key string, value any) (json.RawMessage, error) {
+	if pickerTreeKey(key) {
+		value = compactTreeValue(value)
+	}
 	raw, err := json.Marshal(value)
 	if err != nil {
 		return nil, err
+	}
+	if pickerTreeKey(key) {
+		if _, err = DecodePickerRow(key, raw); err != nil {
+			return nil, err
+		}
 	}
 	leaf, err := json.Marshal(item{Key: key, Value: raw})
 	if err != nil {
@@ -147,6 +186,19 @@ func (e CatalogEntry) MatchMetadata(m archive.Metadata) error {
 	}
 	if !sameMetadata(expected, actual) {
 		return errors.New("catalog selected body differs from summary")
+	}
+	if e.Picker != nil {
+		full := e
+		full.Summary = m
+		full.SummaryOverflow = ""
+		full.Picker = nil
+		expected, err := BuildPickerRow(e.Picker.SessionKey, full)
+		if err != nil {
+			return err
+		}
+		if !samePickerRow(*expected, *e.Picker) {
+			return errors.New("picker facts differ from verified metadata")
+		}
 	}
 	return nil
 }
