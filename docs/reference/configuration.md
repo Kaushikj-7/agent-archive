@@ -259,7 +259,7 @@ Choosing Keep forever installs a sticky compatibility fence: older binaries refu
 opaque stable `id`, mutable `label`, and `permissions` containing exact
 `destination_id` and `enabled` decisions. No entry contains a live root or
 future-capture permission. The collection is bounded to 16,384 identities, with
-at most 128 destination decisions each. Use `historical-project list`, `rename`,
+at most 128 destination decisions each. Use `backfill projects list`, `rename`,
 `enable` and `disable` to manage current-destination policy; new identities are
 introduced by a confirmed mapping-file import. See the
 [historical-only guide](../guides/backfill.md#historical-only-projects) and
