@@ -45,6 +45,10 @@ func (l *sessionPicker) words() string { return strings.Join(strings.Fields(l.fi
 // setFilter narrows the table to the words in text. The table starts again at
 // its top, with the first row that matches highlighted.
 func (l *sessionPicker) setFilter(text string) {
+	if strings.Join(strings.Fields(text), " ") != l.words() {
+		l.stopOperations()
+		l.searchFailure = nil
+	}
 	l.filter = text
 	l.cursor, l.moved, l.start, l.bottom, l.cache, l.memo = 0, false, 0, nil, nil, nil
 }
@@ -71,8 +75,18 @@ func (l *sessionPicker) view(rows []listRow, totalMatched int, truncated bool, f
 		printListFooter(&footer, len(rows), totalMatched, truncated, format)
 	} else {
 		shown, matched = filterRows(l.universe(rows), q)
+		if l.searchFailure != nil {
+			fmt.Fprintf(&footer, "Search failed: %v; clear the filter and retry.\n", l.searchFailure)
+		} else if !l.searchRead && (l.search != nil || l.searchContext != nil) {
+			footer.WriteString("Loading complete search; Esc clears.\n")
+		}
 		laid = filteredFormat(format, shown)
-		footer.WriteString(l.filterFooter(matched, words))
+		if l.searchRead || (l.search == nil && l.searchContext == nil) {
+			footer.WriteString(l.filterFooter(matched, words))
+		}
+		if l.searchNotice != "" {
+			footer.WriteString(l.searchNotice + "\n")
+		}
 	}
 	if l.boundedNotice != "" {
 		footer.WriteString(l.boundedNotice + "\n")
@@ -95,6 +109,17 @@ func (l *sessionPicker) view(rows []listRow, totalMatched int, truncated bool, f
 	heading := l.heading
 	if l.headingFor != nil {
 		heading = l.headingFor(words, matched)
+		if words != "" && !l.searchRead && (l.search != nil || l.searchContext != nil) {
+			heading = l.headingFor("", len(rows))
+			if l.searchFailure != nil {
+				heading += " · Search unavailable"
+			} else {
+				heading += " · Searching…"
+			}
+		}
+	}
+	if words != "" && l.searchRead && l.searchPartial {
+		heading += " · local eligibility may be unknown"
 	}
 	v := &pickerView{words: words, filtering: l.filtering, rows: shown, order: order, first: first, matched: matched, groups: groups, format: laid, heading: heading, footer: footer.String()}
 	l.memo = v
@@ -105,11 +130,11 @@ func (l *sessionPicker) view(rows []listRow, totalMatched int, truncated bool, f
 // when it knows them (subagents too), else the table's own rows. The table's
 // rows keep the numbers the table gave them (withTableNumbers).
 func (l *sessionPicker) universe(rows []listRow) []listRow {
-	if l.search == nil {
+	if l.search == nil && l.searchContext == nil {
 		return rows
 	}
 	if !l.searchRead {
-		l.searched, l.searchRead = withTableNumbers(rows, l.search()), true
+		return nil
 	}
 	return l.searched
 }
@@ -126,6 +151,15 @@ func withTableNumbers(table, searched []listRow) []listRow {
 		inTable[childKey(r.HarnessKey, r.SessionID)] = true
 	}
 	out := slices.Clone(table)
+	full := make(map[string]listRow, len(searched))
+	for _, r := range searched {
+		full[childKey(r.HarnessKey, r.SessionID)] = r
+	}
+	for i, r := range out {
+		if searchedRow, ok := full[childKey(r.HarnessKey, r.SessionID)]; ok {
+			out[i].fields = searchedRow.fields
+		}
+	}
 	next := len(table)
 	for _, r := range searched {
 		if inTable[childKey(r.HarnessKey, r.SessionID)] {
@@ -145,6 +179,10 @@ func withTableNumbers(table, searched []listRow) []listRow {
 func (l *sessionPicker) filterFooter(matched int, words string) string {
 	quoted := `"` + archive.DisplayLine(words) + `"`
 	var line string
+	if l.searchPartial {
+		line = fmt.Sprintf("%d observed sessions match %s; local eligibility may be unknown.\n", matched, quoted)
+		return line
+	}
 	switch {
 	case l.keys != nil && matched == 0:
 		line = "No sessions match " + quoted + ".\n"

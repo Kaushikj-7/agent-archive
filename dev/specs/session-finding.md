@@ -352,6 +352,7 @@ Enter does, and the heading's verb.
 | Caller | Rows | Enter | Heading |
 |---|---|---|---|
 | `list` | archive | show the details, then back to the list (browse) | none |
+| `list` (supported scoped catalog) | bounded archive pages | the same browser as `list` (browse) | none |
 | `show` (no ID) | archive | the same as `list` (browse) | none |
 | `show --json` (no ID) | archive | return the session; print its JSON (pick one) | `Show ·` |
 | `show "<words>"`, several matches | the matches | show the details (browse) | `"words" matches N ·` |

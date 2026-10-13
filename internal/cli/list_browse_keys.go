@@ -77,9 +77,13 @@ type listScreen struct {
 // and End to the top and bottom. A group scrolled into keeps its heading,
 // marked continued, and its column header. Typed characters collect at the
 // prompt until Enter chooses the row they name.
-func (l *sessionPicker) pickKeys(p *prompter, stdout io.Writer, rows []listRow, totalMatched int, truncated bool, format listFormatOptions, action string) (listRow, bool, error) {
+func (l *sessionPicker) pickKeysContext(ctx context.Context, p *prompter, stdout io.Writer, rows []listRow, totalMatched int, truncated bool, format listFormatOptions, action string) (listRow, bool, error) {
 	question := p.promptText("Enter number (or unique short SESSION_ID) to "+action+", or q to quit", true, nil, -1, ": ")
 	if l.emptyWithoutAction(rows) {
+		l.prepareSearchContext(ctx, rows)
+		if l.invalidView != nil {
+			return listRow{}, false, l.invalidView
+		}
 		v := l.view(rows, totalMatched, truncated, format)
 		if err := printSessionGroups(stdout, v.groups, v.format); err != nil {
 			return listRow{}, false, err
@@ -97,6 +101,10 @@ func (l *sessionPicker) pickKeys(p *prompter, stdout io.Writer, rows []listRow, 
 	for first := true; ; first = false {
 		if !first && l.clear != nil {
 			l.clear()
+		}
+		l.prepareSearchContext(ctx, rows)
+		if l.invalidView != nil {
+			return listRow{}, false, l.invalidView
 		}
 		v := l.view(rows, totalMatched, truncated, format)
 		screen := l.filterScreen(stdout, v, prompt())
@@ -122,7 +130,11 @@ func (l *sessionPicker) pickKeys(p *prompter, stdout io.Writer, rows []listRow, 
 		terminal.Print(stdout, frame.String())
 		notice = ""
 		for {
-			k, err := l.keys.next()
+			k, err := l.nextBrowserKey()
+			l.prepareSearchContext(ctx, rows)
+			if err == nil {
+				err = l.invalidView
+			}
 			if err != nil {
 				if errors.Is(err, io.EOF) {
 					return listRow{}, false, nil
@@ -139,7 +151,10 @@ func (l *sessionPicker) pickKeys(p *prompter, stdout io.Writer, rows []listRow, 
 			} else {
 				typed, result = l.listKey(k, screen, typed)
 			}
-			if again := l.view(rows, totalMatched, truncated, format); again != v || l.start != screen.start || l.filtering && l.cursor != screen.cursor {
+			if l.invalidView != nil {
+				return listRow{}, false, l.invalidView
+			}
+			if again := l.view(rows, totalMatched, truncated, format); l.viewChanged(again, v, screen) {
 				// Measured again, so the next key of a burst (PgDn after
 				// PgDn, or after ↓) moves on from here.
 				v = again
@@ -619,4 +634,8 @@ func (l *sessionPicker) emptyWithoutAction(rows []listRow) bool {
 
 func (l *sessionPicker) activatesOlder(k key, typed string) bool {
 	return l.older != nil && !l.filtering && typed == "" && k.kind == keyRune && unicode.ToLower(k.r) == 'o'
+}
+
+func (l *sessionPicker) viewChanged(next, prior *pickerView, screen listScreen) bool {
+	return next != prior || l.start != screen.start || l.filtering && l.cursor != screen.cursor
 }

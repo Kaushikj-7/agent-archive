@@ -11,11 +11,13 @@ import subprocess
 import sys
 import time
 
+import full_race
+
 ROOT = Path(__file__).resolve().parent.parent
 MODULE = 'github.com/wangjohn/agent-archive/'
-FULL_PERFORMANCE_COMMAND = ['go', 'test', '-v', '-json', '-p', '1', '-count=1', '-run',
-                            'StayFast|FiveMegabyte|TestCursorOverlappingHooksRegisterOnce',
-                            './internal/collector', './internal/archive', './internal/agents/nativecodec', './internal/capture']
+PERFORMANCE = ['go', 'test', '-v', '-json', '-p', '1', '-count=1', '-run',
+               'StayFast|FiveMegabyte|TestCursorOverlappingHooksRegisterOnce',
+               './internal/collector', './internal/archive', './internal/agents/nativecodec', './internal/capture']
 
 
 class Failure(RuntimeError):
@@ -286,16 +288,19 @@ def run_suite(tier, suite, out, extras=None, seconds=2400):
     deadline = time.monotonic()+seconds
     def execute(command, name, short=False, selected=None, children=None, env=None, real_manager=False):
         if env is None:
-            env = dict(os.environ, AGENT_ARCHIVE_REAL_SYSTEMD='0')
+            env = dict(os.environ, AGENT_ARCHIVE_REAL_SYSTEMD='0', AGENT_ARCHIVE_PERF='0')
+        invocation = {'command': command, 'log': name+'.jsonl', 'evidence': None,
+                      'performance_enabled': env.get('AGENT_ARCHIVE_PERF') == '1',
+                      'real_systemd_enabled': env.get('AGENT_ARCHIVE_REAL_SYSTEMD') == '1'}
+        report['invocations'].append(invocation)
+        path.write_text(json.dumps(report, indent=2)+'\n')
         text = checked(command, out/(name+'.jsonl'), deadline, env)
         if command[0] == 'bash':
             text = '\n'.join(line for line in text.splitlines() if line.startswith('{'))
         proof = body_evidence(text, short)
         if selected:
             verify_selected(proof['actual'], selected, children, real_manager=real_manager)
-        report['invocations'].append({'command': command, 'log': name+'.jsonl', 'evidence': proof,
-                                      'performance_enabled': env.get('AGENT_ARCHIVE_PERF') == '1',
-                                      'real_systemd_enabled': env.get('AGENT_ARCHIVE_REAL_SYSTEMD') == '1'})
+        invocation['evidence'] = proof
         path.write_text(json.dumps(report, indent=2)+'\n')
     common = ['go', 'test', '-race', '-count=1', '-json', '-timeout', '20m']
     if suite == 'macos' and tier == 'daily':
@@ -305,22 +310,19 @@ def run_suite(tier, suite, out, extras=None, seconds=2400):
     if suite in ('linux', 'extra') or suite == 'macos' and tier == 'full':
         packages = extras['packages'] if suite == 'extra' else ['./...']
         if packages:
-            if suite == 'macos' and tier == 'full':
+            if tier == 'full' and suite == 'macos':
                 import run_native_full
                 run_native_full.run(out, deadline, report, path)
+            elif tier == 'full':
+                try:
+                    full_race.run(packages, out, deadline, report,
+                                  lambda: path.write_text(json.dumps(report, indent=2)+'\n'),
+                                  checked, execute, ROOT, body_evidence, verify_selected,
+                                  catalog()['restorations'])
+                except full_race.shards.Failure as error:
+                    raise Failure(str(error)) from error
             else:
-                execute(common + (['-short'] if tier == 'daily' else []) + packages, 'race', tier == 'daily')
-            if tier == 'full' and suite != 'macos':
-                required = {}
-                children = {}
-                for entry in catalog()['restorations']:
-                    relative = './'+entry['package']
-                    included = any(p == './...' or p == relative or p.endswith('/...') and (relative == p[:-4] or relative.startswith(p[:-3])) for p in packages)
-                    if included:
-                        pkg = MODULE+entry['package']
-                        required.setdefault(pkg, []).append(entry['test'])
-                        children[(pkg,entry['test'])] = entry.get('full_children', [])
-                verify_selected(report['invocations'][-1]['evidence']['actual'], required, children)
+                execute(common + ['-short'] + packages, 'race', True)
         if tier == 'daily' and suite == 'linux':
             chosen = [e for e in catalog()['restorations'] if e['restore'] == 'daily']
             by_pkg = {}
@@ -336,7 +338,7 @@ def run_suite(tier, suite, out, extras=None, seconds=2400):
                 pattern = '^('+'|'.join(re.escape(n) for n in names)+')$'
                 execute(common+['-run', pattern, './'+pkg[len(MODULE):]], 'medium-'+pkg.rsplit('/',1)[1], selected={pkg:names}, children=children)
         if tier == 'full' and packages:
-            execute(FULL_PERFORMANCE_COMMAND, 'performance', env=dict(os.environ, AGENT_ARCHIVE_PERF='1', AGENT_ARCHIVE_REAL_SYSTEMD='0'))
+            execute(PERFORMANCE, 'performance', env=dict(os.environ, AGENT_ARCHIVE_PERF='1', AGENT_ARCHIVE_REAL_SYSTEMD='0'))
     if suite == 'macos':
         execute(['bash','scripts/test_published_writer.sh'],'published-writer', selected={MODULE+'internal/config':['TestPublishedWriterRefusesProtectedConfiguration']})
     if suite == 'fuzz' or suite == 'extra' and extras['fuzz']:
@@ -370,6 +372,11 @@ def run_suite(tier, suite, out, extras=None, seconds=2400):
     if suite == 'macos' and tier == 'full':
         import run_native_full
         run_native_full.verify(out, report)
+    if tier == 'full' and report.get('full_schedule'):
+        try:
+            full_race.verify(out, report, packages, ROOT, body_evidence, verify_selected, catalog()['restorations'])
+        except full_race.shards.Failure as error:
+            raise Failure(str(error)) from error
     report['success'] = True
     path.write_text(json.dumps(report,indent=2)+'\n')
 
@@ -383,17 +390,23 @@ def verify_full(directory, plan):
     if (report.get('schema') != 1 or report.get('success') is not True
             or report.get('source') != os.environ['GITHUB_SHA'] or report.get('tier') != 'full'):
         raise Failure('full tier source/status mismatch')
+    if (report.get('event') != os.environ.get('GITHUB_EVENT_NAME', 'local')
+            or report.get('ref') != os.environ.get('GITHUB_REF', '')
+            or report.get('schedule') != os.environ.get('CI_SCHEDULE', '')):
+        raise Failure('full tier event/ref/schedule mismatch')
     extra = report.get('suite') == 'extra'
     if extra and report.get('extras') != plan:
         raise Failure('extra coverage differs from exact-source plan')
     if not extra and report.get('suite') != 'linux':
         raise Failure('unexpected full verdict suite')
     expected_packages = plan['packages'] if extra else ['./...']
-    race = [i for i in report['invocations'] if i['log'] == 'race.jsonl']
-    if bool(race) != bool(expected_packages) or len(race) > 1:
-        raise Failure('missing or unexpected full race invocation')
-    if race and race[0]['command'] != ['go','test','-race','-count=1','-json','-timeout','20m',*expected_packages]:
-        raise Failure('full race command weakened')
+    if expected_packages:
+        try:
+            full_race.verify(directory, report, expected_packages, ROOT, body_evidence, verify_selected, catalog()['restorations'])
+        except full_race.shards.Failure as error:
+            raise Failure(str(error)) from error
+    elif report['invocations'] or report.get('full_schedule') or report.get('full_discovery') or any(directory.glob('full-*')) or any(directory.glob('race*')):
+        raise Failure('empty extra contains unexpected execution/discovery')
     for invocation in report['invocations']:
         name = invocation['log']
         if not re.fullmatch(r'[\w-]+\.jsonl', name):
@@ -403,6 +416,16 @@ def verify_full(directory, plan):
             text = '\n'.join(line for line in text.splitlines() if line.startswith('{'))
         if invocation['evidence'] != body_evidence(text, short=False):
             raise Failure('raw body evidence mismatch')
+    allowed = {f'race-{n}.jsonl': cmd for n, cmd in enumerate(report.get('full_schedule', {}).get('commands', []))}
+    if expected_packages:
+        allowed['performance.jsonl'] = PERFORMANCE
+    if extra and plan['systemd']:
+        for name, pattern, relative in [('systemd', '^TestReal', './internal/scheduler/systemd'), ('cli', '^TestRealSystemd', './internal/cli')]:
+            allowed['systemd-'+name+'.jsonl'] = ['go', 'test', '-count=1', '-json', '-timeout', '8m', '-run', pattern, relative]
+    if (len(report['invocations']) != len(allowed)
+            or {i['log'] for i in report['invocations']} != set(allowed)
+            or any(i['command'] != allowed[i['log']] for i in report['invocations'])):
+        raise Failure('unexpected, missing or weakened full invocation')
     if expected_packages and not any(i['log']=='performance.jsonl' and i.get('performance_enabled') is True for i in report['invocations']):
         raise Failure('full plain performance evidence missing')
     if extra and plan['systemd'] and not all(any(i['log']=='systemd-'+name+'.jsonl' for i in report['invocations']) for name in ('systemd','cli')):

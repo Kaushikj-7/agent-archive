@@ -101,7 +101,7 @@ def _verify(out, report, require_obligations):
         raise tier.Failure('native catalog/source/settings mismatch')
     packages = shard.metadata((out/'native-packages.json').read_text())
     discovered = listing((out/'native-list.jsonl').read_text(), packages)
-    performance_packages = [tier.MODULE+p[2:] for p in tier.FULL_PERFORMANCE_COMMAND if p.startswith('./')]
+    performance_packages = [tier.MODULE+p[2:] for p in tier.PERFORMANCE if p.startswith('./')]
     performance_names = listing((out/'native-performance-list.jsonl').read_text(),
                                 {p: packages[p] for p in performance_packages}, require_cli=False)
     if catalog['performance_names'] != performance_names:
@@ -140,7 +140,7 @@ def _verify(out, report, require_obligations):
         raise tier.Failure('native aggregate raw body evidence mismatch')
     native['evidence'] = proof
     other = [item for item in invocations if not item['log'].startswith('native-')]
-    obligations = [('performance.jsonl', tier.FULL_PERFORMANCE_COMMAND, True),
+    obligations = [('performance.jsonl', tier.PERFORMANCE, True),
                    ('published-writer.jsonl', ['bash', 'scripts/test_published_writer.sh'], False)] if require_obligations else []
     if len(other) != len(obligations):
         raise tier.Failure('missing or unexpected native full obligation')
@@ -180,7 +180,7 @@ def _run(out, deadline, report, report_path):
     names = listing(text, packages)
     # Plain builds may expose different tests than race builds. Discover the
     # unchanged performance command in its own build/environment.
-    performance_command = list(tier.FULL_PERFORMANCE_COMMAND)
+    performance_command = list(tier.PERFORMANCE)
     performance_command[performance_command.index('-run')] = '-list'
     performance_packages = [tier.MODULE+p[2:] for p in performance_command if p.startswith('./')]
     performance_text = tier.checked(performance_command, out/'native-performance-list.jsonl', deadline,

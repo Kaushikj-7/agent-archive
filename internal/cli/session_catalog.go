@@ -82,6 +82,11 @@ func catalogCandidateSessions(ctx context.Context, env metadataCacheDependencies
 			sortByActivity(sessions)
 			return filterListOrigin(sessions, opts.imported, opts.hookCaptured), true, true, fallbackErr
 		}
+		if sessions == nil && len(page.Rows) > 0 {
+			// The catalog reports the complete candidate count before paging.
+			// Keep every candidate without repeatedly copying large metadata.
+			sessions = make([]archive.Metadata, 0, page.Total)
+		}
 		for _, row := range page.Rows {
 			sessions = append(sessions, row.Summary.Metadata())
 		}
