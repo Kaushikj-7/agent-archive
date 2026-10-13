@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -186,6 +187,7 @@ func matchedFixture(tb testing.TB, count int, statsCase, parentCase bool) (*stor
 			}
 		}
 	}
+	matchedPinRevisionNonces(tb, mem)
 	return mem, fixture
 }
 
@@ -430,4 +432,42 @@ func matchedObjectHash(tb testing.TB, mem *storagetest.MemoryStore) []byte {
 		_, _ = hash.Write(body)
 	}
 	return hash.Sum(nil)
+}
+
+// SeedArchive publishes random revision nonces. Freeze those fixture-only
+// identities without changing the validated v3 summary or timestamp fields.
+// The key protocol is checked by ParseRevision/PutRevision on each source;
+// changed encodings must fail setup rather than silently mix comparison data.
+func matchedPinRevisionNonces(tb testing.TB, mem *storagetest.MemoryStore) {
+	tb.Helper()
+	objects, err := mem.List(context.Background(), listingindex.V3Prefix)
+	if err != nil {
+		tb.Fatal(err)
+	}
+	for _, object := range objects {
+		revision, err := listingindex.ParseRevision(object.Key)
+		if err != nil {
+			tb.Fatal(err)
+		}
+		digest := sha256.Sum256([]byte(revision.MetadataKey + ":" + revision.ETag))
+		revision.Nonce = fmt.Sprintf("%x", digest)[:26]
+		summary := base64.RawURLEncoding.EncodeToString(matchedJSON(tb, revision))
+		var chunks []string
+		for len(summary) > 255 {
+			chunks = append(chunks, summary[:255])
+			summary = summary[255:]
+		}
+		chunks = append(chunks, summary)
+		parts := strings.Split(object.Key, "/")
+		if len(parts) < 6 {
+			tb.Fatal("invalid synthetic v3 revision key")
+		}
+		revision.Key = strings.Join(parts[:5], "/") + "/" + strings.Join(chunks, "/")
+		if err := listingindex.PutRevision(context.Background(), mem, revision); err != nil {
+			tb.Fatal(err)
+		}
+		if err := mem.Delete(context.Background(), object.Key); err != nil {
+			tb.Fatal(err)
+		}
+	}
 }

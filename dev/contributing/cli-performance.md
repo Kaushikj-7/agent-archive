@@ -148,3 +148,11 @@ versioned getter exactly once. It checks the limit after copying tiny synthetic
 bodies, unlike a provider's admission check; no oversized body case is measured.
 The older wrapper lacked this counted method. No catalog is seeded or enabled,
 and no optimized production reader or stats code is copied into the baseline.
+
+The seed's randomized revision nonces are replaced by deterministic 26-character
+hash-derived fixture identities. The common harness retains every summary and
+its capture-time prefix, re-encodes the public v3 JSON in 255-byte path
+components, and validates the result through each source's `PutRevision`.
+Any protocol incompatibility fails fixture setup. This fixture-only replacement
+makes the full stored key/body fingerprint reproducible, without normalizing
+away output differences.
