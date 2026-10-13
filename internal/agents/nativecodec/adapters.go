@@ -399,6 +399,10 @@ func filterJSONL(r io.Reader, format string, knownTypes map[string]bool, lead ma
 }
 
 func filterJSONLEncoded(r io.Reader, format string, knownTypes map[string]bool, lead map[string]any, validateMeta func([]byte) error, encoder func(map[string]any) ([]byte, error), beforeRecord func(int) (func(), error), bounds ...archive.CaptureBoundary) (archive.FilteredTranscript, error) {
+	return filterJSONLWithOutput(r, format, knownTypes, lead, validateMeta, encoder, beforeRecord, nil, bounds...)
+}
+
+func filterJSONLWithOutput(r io.Reader, format string, knownTypes map[string]bool, lead map[string]any, validateMeta func([]byte) error, encoder func(map[string]any) ([]byte, error), beforeRecord func(int) (func(), error), inspect func(map[string]any), bounds ...archive.CaptureBoundary) (archive.FilteredTranscript, error) {
 	scanner := bufio.NewScanner(r)
 	// Individual native JSONL records can contain tool output. A hard limit keeps
 	// filtering bounded; exceeding it is refused rather than silently
@@ -407,15 +411,19 @@ func filterJSONLEncoded(r io.Reader, format string, knownTypes map[string]bool, 
 	// its maximum and the initial buffer's capacity, so the initial buffer
 	// must not exceed the limit either.
 	scanner.Buffer(make([]byte, min(64*1024, maxRecordBytes+1)), maxRecordBytes+1)
-	return filterRecordsObserved(format, knownTypes, lead, func() ([]byte, bool) {
+	return filterRecordsWithOutput(format, knownTypes, lead, func() ([]byte, bool) {
 		if scanner.Scan() {
 			return scanner.Bytes(), true
 		}
 		return nil, false
-	}, scanner.Err, validateMeta, nil, nil, encoder, beforeRecord, bounds...)
+	}, scanner.Err, validateMeta, nil, nil, encoder, beforeRecord, inspect, bounds...)
 }
 
 func filterRecordsObserved(format string, knownTypes map[string]bool, lead map[string]any, next func() ([]byte, bool), readError func() error, validateMeta func([]byte) error, retained func(int), own func(string) bool, encoder func(map[string]any) ([]byte, error), beforeRecord func(int) (func(), error), bounds ...archive.CaptureBoundary) (archive.FilteredTranscript, error) {
+	return filterRecordsWithOutput(format, knownTypes, lead, next, readError, validateMeta, retained, own, encoder, beforeRecord, nil, bounds...)
+}
+
+func filterRecordsWithOutput(format string, knownTypes map[string]bool, lead map[string]any, next func() ([]byte, bool), readError func() error, validateMeta func([]byte) error, retained func(int), own func(string) bool, encoder func(map[string]any) ([]byte, error), beforeRecord func(int) (func(), error), inspect func(map[string]any), bounds ...archive.CaptureBoundary) (archive.FilteredTranscript, error) {
 	next, readError = boundRecordSource(next, readError, bounds)
 	result := archive.FilteredTranscript{Format: format, NativeStartComplete: true}
 	records := recordReservations{before: beforeRecord}
@@ -429,6 +437,9 @@ func filterRecordsObserved(format string, knownTypes map[string]bool, lead map[s
 	// their own code.
 	var omittedKeys, deniedKeys keyNameSet
 	addGap := func(code string, record int, detail string) {
+		if inspect != nil {
+			return
+		}
 		key := fmt.Sprintf("%s:%s", code, detail)
 		if !gapSet[key] {
 			gapSet[key] = true
@@ -471,7 +482,13 @@ func filterRecordsObserved(format string, knownTypes map[string]bool, lead map[s
 			continue
 		}
 		kind, _ := raw["type"].(string)
-		noteOwnedNativeIdentity(&result, raw, kind, own)
+		if inspect != nil {
+			if !isClaudeTitleRecord(raw) {
+				noteRecordTime(&result, raw)
+			}
+		} else {
+			noteOwnedNativeIdentity(&result, raw, kind, own)
+		}
 		if err := validateMetadataReserved(kind, line, validateMeta, beforeRecord); err != nil {
 			return archive.FilteredTranscript{}, err
 		}
@@ -513,9 +530,11 @@ func filterRecordsObserved(format string, knownTypes map[string]bool, lead map[s
 		if !keep {
 			continue
 		}
-		observeHarness(&result, safe)
-		noteSafeIdentity(&result, safe)
-		if err := retainEncodedRecord(&result, safe, encoder, bounds); err != nil {
+		if inspect == nil {
+			observeHarness(&result, safe)
+			noteSafeIdentity(&result, safe)
+		}
+		if err := outputEncodedRecord(&result, safe, encoder, bounds, inspect); err != nil {
 			return archive.FilteredTranscript{}, err
 		}
 	}
@@ -871,7 +890,7 @@ func encodeSafeRecord(value map[string]any, encoder func(map[string]any) ([]byte
 	return json.Marshal(value)
 }
 
-func retainEncodedRecord(result *archive.FilteredTranscript, safe map[string]any, encoder func(map[string]any) ([]byte, error), bounds []archive.CaptureBoundary) error {
+func outputEncodedRecord(result *archive.FilteredTranscript, safe map[string]any, encoder func(map[string]any) ([]byte, error), bounds []archive.CaptureBoundary, inspect func(map[string]any)) error {
 	encoded, err := encodeSafeRecord(safe, encoder)
 	if errors.Is(err, agentapi.ErrReadBudget) {
 		// The caller's memory ledger refused the record, not its content:
@@ -884,6 +903,12 @@ func retainEncodedRecord(result *archive.FilteredTranscript, safe map[string]any
 	if bytesBoundReached(bounds, result.Boundary.RetainedBytes, len(encoded)) {
 		return archive.ErrRecordTooLarge
 	}
-	retain(result, encoded)
+	if inspect != nil {
+		inspect(safe)
+		result.Boundary.RetainedRecords++
+		result.Boundary.RetainedBytes += len(encoded)
+	} else {
+		retain(result, encoded)
+	}
 	return nil
 }
