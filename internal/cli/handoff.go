@@ -89,9 +89,6 @@ func runHandoffCommand(args []string, stdin io.Reader, stdout, stderr io.Writer,
 	// Only an argument the person typed is a query; an ID the picker or the
 	// calling agent chose below is already a session's.
 
-	readCtx, stopPickerReads := readCommandContext(env)
-	defer stopPickerReads()
-	opts.readCtx = catalog.WithReadView(readCtx)
 	var selectedPicker *handoffPickerSelection
 	opts.selection = &selectedPicker
 	var target handoffTarget
@@ -135,6 +132,9 @@ func runHandoffCommand(args []string, stdin io.Reader, stdout, stderr io.Writer,
 			}
 		}
 		if opts.sessionID == "" && !opts.latest && opts.file == "" {
+			readCtx, stopPickerReads := readCommandContext(env)
+			defer stopPickerReads()
+			opts.readCtx = catalog.WithReadView(readCtx)
 			if code, done := chooseHandoffSession(&opts, home, interactive, input, stdout, stderr, env); done {
 				return code
 			}
