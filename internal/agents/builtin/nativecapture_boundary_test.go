@@ -224,6 +224,8 @@ func captureFixtureAllowed(pkg, file string) bool {
 		return captureFixtureFile(file) == captureFixtureImport
 	case capturePackageBuiltin:
 		return captureFixtureFile(file) == captureFixtureBinding
+	case capturePackageDomain, capturePackageCursor:
+		return false
 	default:
 		return false
 	}

@@ -67,10 +67,9 @@ func (e *Proof) WithVerifiedCapture(ctx context.Context, reg archive.SessionRegi
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	loanCtx, cancel := context.WithCancelCause(ctx)
-	stop := context.AfterFunc(originalCtx, func() { cancel(context.Cause(originalCtx)) })
-	defer func() { stop(); cancel(nil) }()
-	ctx = joinLoanContext(loanCtx, originalCtx)
+	loanCtx, closeLoan := joinLoanContext(ctx, originalCtx)
+	defer closeLoan()
+	ctx = loanCtx
 	original, err := settledCaptureDigest(ctx, c.owner, c.reg, 64<<10)
 	if err != nil {
 		return err
@@ -200,9 +199,11 @@ func (r *settledReservation) Available() int64 { return min(r.original.Available
 
 func (r *settledReservation) Refuse(n int64) { r.original.Refuse(n) }
 
-// joinLoanContext inherits the borrower child and retains the original lease checks.
-func joinLoanContext(parent, original context.Context) context.Context {
-	return joinedLoanContext{Context: parent, original: original}
+// joinLoanContext inherits both loan lifetimes and retains synchronous lease checks.
+func joinLoanContext(parent, original context.Context) (context.Context, func()) {
+	child, cancel := context.WithCancelCause(parent)
+	stop := context.AfterFunc(original, func() { cancel(context.Cause(original)) })
+	return joinedLoanContext{Context: child, original: original}, func() { stop(); cancel(nil) }
 }
 
 type joinedLoanContext struct {
