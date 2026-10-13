@@ -29,10 +29,11 @@ type stagedReleaseReceipt struct {
 	Selection StagedSelection `json:"selection"`
 	SHA256    string          `json:"sha256"`
 }
+
 type stagedReleaseProgress struct {
-	Version       int    `json:"version"`
-	ReceiptSHA256 string `json:"receipt_sha256"`
-	Phase         string `json:"phase"`
+	Version       int                `json:"version"`
+	ReceiptSHA256 string             `json:"receipt_sha256"`
+	Phase         stagedReleasePhase `json:"phase"`
 }
 
 func (r *stagedReleaseReceipt) UnmarshalJSON(raw []byte) error {
@@ -53,14 +54,15 @@ func (r *stagedReleaseReceipt) UnmarshalJSON(raw []byte) error {
 	if r.Version != 3 || r.Selection.validateDigest() != nil {
 		return ErrDurableStorageRecovery
 	}
-	copy := *r
-	copy.SHA256 = ""
-	b, err := json.Marshal(copy)
+	receiptCopy := *r
+	receiptCopy.SHA256 = ""
+	b, err := json.Marshal(receiptCopy)
 	if err != nil || readySHA(b) != r.SHA256 {
 		return ErrDurableStorageRecovery
 	}
 	return nil
 }
+
 func (p *stagedReleaseProgress) UnmarshalJSON(raw []byte) error {
 	if len(raw) > 16<<10 {
 		return ErrDurableStorageRecovery
@@ -76,25 +78,26 @@ func (p *stagedReleaseProgress) UnmarshalJSON(raw []byte) error {
 		return ErrDurableStorageRecovery
 	}
 	*p = stagedReleaseProgress(next)
-	if p.Version != 3 || !readyDigestValid(p.ReceiptSHA256) || (p.Phase != "verified" && p.Phase != "local-complete" && p.Phase != "released") {
+	if p.Version != 3 || !readyDigestValid(p.ReceiptSHA256) || (p.Phase != stagedReleaseVerified && p.Phase != stagedReleaseLocalComplete && p.Phase != stagedReleaseReleased) {
 		return ErrDurableStorageRecovery
 	}
 	return nil
 }
-func stagedControl(id, name string) string {
-	return filepath.Join("sessions", id, "import-stage", name)
+
+func stagedControl(id string, name stagedControlName) string {
+	return filepath.Join("sessions", id, "import-stage", string(name))
 }
 
 func (s *Store) requireStagedReleaseProgress(id string, q *StagedSelection) error {
 	var receipt stagedReleaseReceipt
-	if err := s.readStagedControl(id, "release.json", &receipt); err != nil {
+	if err := s.readStagedControl(id, stagedReleaseReceiptName, &receipt); err != nil {
 		return errors.Join(ErrDurableStorageRecovery, err)
 	}
 	var progress stagedReleaseProgress
-	if err := s.readStagedControl(id, "release-progress.json", &progress); err != nil {
+	if err := s.readStagedControl(id, stagedReleaseProgressName, &progress); err != nil {
 		return errors.Join(ErrDurableStorageRecovery, err)
 	}
-	if receipt.Selection != *q || progress.ReceiptSHA256 != receipt.SHA256 || (progress.Phase != "local-complete" && progress.Phase != "released") {
+	if receipt.Selection != *q || progress.ReceiptSHA256 != receipt.SHA256 || (progress.Phase != stagedReleaseLocalComplete && progress.Phase != stagedReleaseReleased) {
 		return ErrReadySelectionFrozen
 	}
 	return nil
@@ -199,13 +202,13 @@ func (s *Store) verifyAndBeginStagedRelease(ctx context.Context, id string, remo
 		if err != nil {
 			return err
 		}
-		if err = s.writeStagedControl(ctx, id, "release.json", state.receipt); err != nil {
+		if err = s.writeStagedControl(ctx, id, stagedReleaseReceiptName, state.receipt); err != nil {
 			return err
 		}
 	}
 	if !state.progressFound {
-		state.progress = stagedReleaseProgress{Version: 3, ReceiptSHA256: state.receipt.SHA256, Phase: "verified"}
-		if err = s.writeStagedControl(ctx, id, "release-progress.json", state.progress); err != nil {
+		state.progress = stagedReleaseProgress{Version: 3, ReceiptSHA256: state.receipt.SHA256, Phase: stagedReleaseVerified}
+		if err = s.writeStagedControl(ctx, id, stagedReleaseProgressName, state.progress); err != nil {
 			return err
 		}
 	}
@@ -247,7 +250,7 @@ func (s *Store) finishStagedRelease(ctx context.Context, id string, q *StagedSel
 		if err := s.checkStagedChildHandoffs(ctx, stage, q); err != nil {
 			return err
 		}
-	} else if progress.Phase != "local-complete" {
+	} else if progress.Phase != stagedReleaseLocalComplete {
 		return ErrDurableStorageRecovery
 	}
 	if requested {
@@ -255,8 +258,8 @@ func (s *Store) finishStagedRelease(ctx context.Context, id string, q *StagedSel
 			return err
 		}
 	}
-	progress.Phase = "local-complete"
-	if err = s.writeDurableGuard(ctx, g, stagedControl(id, "release-progress.json"), progress); err != nil {
+	progress.Phase = stagedReleaseLocalComplete
+	if err = s.writeDurableGuard(ctx, g, stagedControl(id, stagedReleaseProgressName), progress); err != nil {
 		return err
 	}
 	if found {
@@ -271,11 +274,11 @@ func (s *Store) finishStagedRelease(ctx context.Context, id string, q *StagedSel
 			return err
 		}
 	}
-	progress.Phase = "released"
-	return s.writeDurableGuard(ctx, g, stagedControl(id, "release-progress.json"), progress)
+	progress.Phase = stagedReleaseReleased
+	return s.writeDurableGuard(ctx, g, stagedControl(id, stagedReleaseProgressName), progress)
 }
 
-func (s *Store) writeStagedControl(ctx context.Context, id, name string, value any) error {
+func (s *Store) writeStagedControl(ctx context.Context, id string, name stagedControlName, value any) error {
 	if _, err := agentmeta.JSONWireBound(ctx, value, 16<<10); err != nil {
 		return errors.Join(ErrDurableStorageCapacity, err)
 	}
@@ -283,17 +286,18 @@ func (s *Store) writeStagedControl(ctx context.Context, id, name string, value a
 		return s.writeDurableGuard(ctx, g, stagedControl(id, name), value)
 	})
 }
-func (s *Store) removeCoveredStagedRequest(id string) error {
+
+func (s *Store) removeCoveredStagedRequest(id string) (err error) {
 	home, err := local.OpenRootedHome(s.home)
 	if err != nil {
 		return err
 	}
-	defer home.Close()
+	defer func() { err = errors.Join(err, home.Close()) }()
 	dir, err := privateDirectory(home.Root, "requests", false)
 	if err != nil {
 		return err
 	}
-	defer dir.Close()
+	defer func() { err = errors.Join(err, dir.Close()) }()
 	if err = dir.Remove(id + ".json"); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
@@ -394,11 +398,14 @@ func (s *Store) resumeStagedReleases(ctx context.Context, remote StagedReadback,
 }
 
 type stagedReleaseState struct {
-	selection                                           *StagedSelection
-	receipt                                             stagedReleaseReceipt
-	progress                                            stagedReleaseProgress
-	pending                                             PendingPublication
-	receiptFound, progressFound, pendingFound, released bool
+	selection     *StagedSelection
+	receipt       stagedReleaseReceipt
+	progress      stagedReleaseProgress
+	pending       PendingPublication
+	receiptFound  bool
+	progressFound bool
+	pendingFound  bool
+	released      bool
 }
 
 func (s *Store) loadStagedReleaseState(ctx context.Context, id string) (out stagedReleaseState, err error) {
@@ -407,7 +414,7 @@ func (s *Store) loadStagedReleaseState(ctx context.Context, id string) (out stag
 		return out, errors.Join(ErrDurableStorageRecovery, err)
 	}
 	out.selection = published.state.LastPublished.StagedSelection
-	err = s.readStagedControl(id, "release.json", &out.receipt)
+	err = s.readStagedControl(id, stagedReleaseReceiptName, &out.receipt)
 	if err == nil {
 		out.receiptFound = true
 		if out.receipt.Selection != *out.selection {
@@ -416,7 +423,7 @@ func (s *Store) loadStagedReleaseState(ctx context.Context, id string) (out stag
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return out, err
 	}
-	err = s.readStagedControl(id, "release-progress.json", &out.progress)
+	err = s.readStagedControl(id, stagedReleaseProgressName, &out.progress)
 	if err == nil {
 		out.progressFound = true
 		if !out.receiptFound || out.progress.ReceiptSHA256 != out.receipt.SHA256 {
@@ -425,7 +432,7 @@ func (s *Store) loadStagedReleaseState(ctx context.Context, id string) (out stag
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return out, err
 	}
-	if out.progressFound && out.progress.Phase == "released" {
+	if out.progressFound && out.progress.Phase == stagedReleaseReleased {
 		if err := s.checkReleasedStageAbsent(ctx, id); err != nil {
 			return out, err
 		}
@@ -440,11 +447,12 @@ func (s *Store) loadStagedReleaseState(ctx context.Context, id string) (out stag
 		if out.pending.StagedSelection == nil || *out.pending.StagedSelection != *out.selection || out.pending.Catalog != nil {
 			return out, ErrDurableStorageRecovery
 		}
-	} else if !out.receiptFound || !out.progressFound || out.progress.Phase != "local-complete" {
+	} else if !out.receiptFound || !out.progressFound || out.progress.Phase != stagedReleaseLocalComplete {
 		return out, ErrDurableStorageRecovery
 	}
 	return out, nil
 }
+
 func (s *Store) checkReleasedStageAbsent(ctx context.Context, id string) error {
 	_, present, err := s.loadPreparedImportStage(ctx, id)
 	if err != nil {
@@ -470,7 +478,7 @@ func (s *Store) checkStagedChildHandoffs(ctx context.Context, stage ImportStage,
 		if e != nil {
 			return e
 		}
-		if !admitted || reg.StagedImportSHA256 != child.StagedImportSHA256 || reg.ParentSessionID != id || reg.NativeSessionID != child.NativeSessionID || reg.ParentNativeSessionID != child.ParentNativeSessionID || reg.Harness.Name != child.Harness.Name || reg.ProjectID != child.ProjectID || reg.DestinationID != q.Core.DestinationID || !reg.InBatch(stage.Registration.ImportBatch.Recorded()) {
+		if !admitted || reg.StagedImportSHA256 != child.StagedImportSHA256 || reg.ParentSessionID != id || reg.NativeSessionID != child.NativeSessionID || reg.ParentNativeSessionID != child.ParentNativeSessionID || reg.Harness.Name != child.Harness.Name || reg.ProjectID != child.ProjectID || reg.DestinationID != q.Core.DestinationID || !inPreparedImportBatch(reg, stage.Registration) {
 			return ErrReadySelectionFrozen
 		}
 		request, present, e := s.LoadRequest(child.ArchiveSessionID)
@@ -494,8 +502,8 @@ func (s *Store) checkStagedChildHandoffs(ctx context.Context, stage ImportStage,
 	return nil
 }
 
-func (s *Store) readStagedControl(id, name string, value any) (err error) {
-	if !safeFileComponent(id) || (name != "release.json" && name != "release-progress.json") {
+func (s *Store) readStagedControl(id string, name stagedControlName, value any) (err error) {
+	if !safeFileComponent(id) || (name != stagedReleaseReceiptName && name != stagedReleaseProgressName) {
 		return ErrDurableStorageRecovery
 	}
 	home, err := local.OpenRootedHome(s.home)
@@ -508,7 +516,7 @@ func (s *Store) readStagedControl(id, name string, value any) (err error) {
 		return err
 	}
 	defer func() { err = errors.Join(err, root.Close()) }()
-	info, err := root.Lstat(name)
+	info, err := root.Lstat(string(name))
 	if err != nil {
 		return err
 	}
@@ -529,7 +537,7 @@ func (s *Store) readStagedControl(id, name string, value any) (err error) {
 			reservation.Release(3 * n)
 		}
 	}()
-	file, err := root.Open(name)
+	file, err := root.Open(string(name))
 	if err != nil {
 		return err
 	}
@@ -546,7 +554,7 @@ func (s *Store) readStagedControl(id, name string, value any) (err error) {
 	if decoder.Decode(&extra) != io.EOF {
 		return ErrDurableStorageRecovery
 	}
-	named, err := root.Lstat(name)
+	named, err := root.Lstat(string(name))
 	if err != nil || !sameDurableStamp(info, named) {
 		return errors.Join(ErrDurableStorageRecovery, err)
 	}
@@ -602,6 +610,7 @@ func (s *Store) validateFinalStagedAuthority(ctx context.Context, id string, q *
 	}
 	return nil
 }
+
 func (s *Store) validateFinalStagedRoster(ctx context.Context, stage ImportStage, q *StagedSelection, cfg config.Config) error {
 	if !stage.TypedSelection || stage.SHA256 != q.StageSHA256 || stage.SkillEvidence != cfg.EffectiveSkillEvidence() {
 		return ErrReadySelectionFrozen
@@ -616,6 +625,7 @@ func (s *Store) validateFinalStagedRoster(ctx context.Context, stage ImportStage
 	}
 	return nil
 }
+
 func (s *Store) refuseTypedStagedRetirement(id string) error {
 	cfg, present, err := config.Load(s.home)
 	if err != nil {
@@ -632,7 +642,7 @@ func (s *Store) refuseTypedStagedRetirement(id string) error {
 		return ErrReadySelectionFrozen
 	}
 	var receipt stagedReleaseReceipt
-	if err := s.readStagedControl(id, "release.json", &receipt); err == nil {
+	if err := s.readStagedControl(id, stagedReleaseReceiptName, &receipt); err == nil {
 		return ErrReadySelectionFrozen
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
@@ -657,3 +667,18 @@ func (s *Store) resumeStagedOwner(ctx context.Context, id string, remote StagedR
 	}
 	return s.VerifyAndBeginStagedRelease(ctx, id, remote, guard)
 }
+
+type stagedReleasePhase string
+
+const (
+	stagedReleaseVerified      stagedReleasePhase = "verified"
+	stagedReleaseLocalComplete stagedReleasePhase = "local-complete"
+	stagedReleaseReleased      stagedReleasePhase = "released"
+)
+
+type stagedControlName string
+
+const (
+	stagedReleaseReceiptName  stagedControlName = "release.json"
+	stagedReleaseProgressName stagedControlName = "release-progress.json"
+)

@@ -55,14 +55,15 @@ func (q *StagedSelection) validateDigest() error {
 	if err := q.validateProofShape(); err != nil {
 		return err
 	}
-	copy := *q
-	copy.SHA256 = ""
-	digest, err := boundedStagedProofDigest(copy)
+	proofCopy := *q
+	proofCopy.SHA256 = ""
+	digest, err := boundedStagedProofDigest(proofCopy)
 	if err != nil || digest != q.SHA256 {
 		return ErrDurableStorageRecovery
 	}
 	return nil
 }
+
 func (q *StagedSelection) validateProofShape() error {
 	if q == nil || q.Version != 3 || q.Core.Version != 3 || q.Core.Purpose != "staged-import" || q.Core.SHA256 != "" || q.HadRequest != (q.CoveredToken != "") || len(q.CoveredToken) > 128 || len(q.Core.DestinationID) == 0 || len(q.Core.DestinationID) > 128 {
 		return ErrDurableStorageRecovery
@@ -213,10 +214,16 @@ func (s *Store) FreezeStagedSelection(ctx context.Context, id string, p PendingP
 }
 
 func (s *Store) validateStagedSelection(ctx context.Context, p PendingPublication) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if p.StagedSelection == nil {
 		return nil
 	}
 	if err := p.validateStagedShape(); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if err := validateReadySourceKeys(p); err != nil {
@@ -307,8 +314,14 @@ func (p *Published) preserveStagedPublished(ctx context.Context, next *published
 
 func (p *Published) validateStagedPublished(ctx context.Context, next *publishedState) error {
 	q := next.LastPublished.StagedSelection
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if next.LastPublished.Selection != nil || q.validateDigest() != nil || readySHA(next.MetadataBytes) != q.Core.MetadataSHA256 {
 		return ErrDurableStorageRecovery
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	cfg, err := p.store.inspectDurableReadRoots()
 	if err != nil || !cfg.SupportsStagedSelection() || cfg.DestinationID() != q.Core.DestinationID {

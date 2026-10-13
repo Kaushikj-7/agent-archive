@@ -373,7 +373,8 @@ func (s *Store) SaveImportSourceSet(ctx context.Context, reg archive.SessionRegi
 	if !safeFileComponent(reg.ArchiveSessionID) {
 		return "", ErrDurableStorageRecovery
 	}
-	stage := ImportStage{Version: 1, Registration: reg, Bundle: bundle, SkillEvidence: mode, Children: children, Preserved: preserved}
+	version := 1
+	typedSelection := false
 	cfg, present, err := config.Load(s.home)
 	if err != nil {
 		return "", err
@@ -382,8 +383,8 @@ func (s *Store) SaveImportSourceSet(ctx context.Context, reg archive.SessionRegi
 		if !cfg.SupportsStagedSelection() || len(preserved) != 0 || reg.HistoricalProject != nil || reg.Harness.Name == "cursor" {
 			return "", ErrReadySelectionFrozen
 		}
-		stage.Version = 2
-		stage.TypedSelection = true
+		version = 2
+		typedSelection = true
 		if len(children) > 64 {
 			return "", ErrDurableStorageCapacity
 		}
@@ -392,6 +393,7 @@ func (s *Store) SaveImportSourceSet(ctx context.Context, reg archive.SessionRegi
 		}
 	}
 
+	stage := ImportStage{Version: version, TypedSelection: typedSelection, Registration: reg, Bundle: bundle, SkillEvidence: mode, Children: children, Preserved: preserved}
 	digest, err := stage.digest(ctx)
 	if err != nil {
 		return "", err
@@ -539,7 +541,11 @@ func (s *Store) loadPreparedImportStage(ctx context.Context, id string) (stage I
 
 // RemoveImportStage releases verified or explicitly cancelled selected evidence.
 func (s *Store) RemoveImportStage(id string) error {
-	stage, found, err := s.loadPreparedImportStage(s.durableContext(), id)
+	return s.removeImportStage(s.durableContext(), id)
+}
+
+func (s *Store) removeImportStage(ctx context.Context, id string) error {
+	stage, found, err := s.loadPreparedImportStage(ctx, id)
 	if err != nil {
 		return err
 	}
@@ -654,12 +660,12 @@ func (s *Store) DropUnadmittedImportStage(ctx context.Context, stage ImportStage
 			if prepared.SHA256 != child.StagedImportSHA256 || prepared.Registration.ParentSessionID != stage.Registration.ArchiveSessionID || !prepared.Registration.InBatch(stage.Registration.ImportBatch.Recorded()) {
 				return ErrDurableStorageRecovery
 			}
-			if err := s.RemoveImportStage(child.ArchiveSessionID); err != nil {
+			if err := s.removeImportStage(ctx, child.ArchiveSessionID); err != nil {
 				return err
 			}
 		}
 	}
-	return s.RemoveImportStage(stage.Registration.ArchiveSessionID)
+	return s.removeImportStage(ctx, stage.Registration.ArchiveSessionID)
 }
 
 // Control journals are read through the same home capability, with a fixed cap.
@@ -955,7 +961,7 @@ func (s *Store) classifyReleasedImportOwner(ctx context.Context, id string, rece
 // importStageAbsentDescriptor checks immutable release attribution before cancellation.
 func (s *Store) importStageAbsentDescriptor(ctx context.Context, id string) (ImportStage, bool, error) {
 	var receipt stagedReleaseReceipt
-	if e := s.readStagedControl(id, "release.json", &receipt); e == nil {
+	if e := s.readStagedControl(id, stagedReleaseReceiptName, &receipt); e == nil {
 		if s.resourceBudget == nil {
 			return ImportStage{}, false, ErrReadySelectionFrozen
 		}
@@ -1023,4 +1029,9 @@ func (s *Store) applyImportStageCancellation(id string, stage ImportStage) (Impo
 		return stage, e
 	}
 	return stage, nil
+}
+
+// inPreparedImportBatch compares attribution without exporting an operational batch token.
+func inPreparedImportBatch(reg, owner archive.SessionRegistration) bool {
+	return reg.InBatch(owner.ImportBatch.Recorded())
 }

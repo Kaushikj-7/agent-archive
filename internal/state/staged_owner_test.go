@@ -85,7 +85,7 @@ func TestStagedAdmissionChildCannotEscapeCapturedPageBudget(t *testing.T) {
 	if err = local.Write(filepath.Join(s.Home(), "import-stage-cursor.json"), cursor); err != nil {
 		t.Fatal(err)
 	}
-	if !(childID < cursor.After && cursor.After < parentID) {
+	if childID >= cursor.After || cursor.After >= parentID {
 		t.Fatal("actual child/cursor/parent lexical boundary")
 	}
 	page, _, closePage, pageErr := s.ImportStagesOwned(t.Context(), cursor.After, 50)
@@ -150,8 +150,8 @@ func TestStagedTypedDigestPreservesCanonicalWire(t *testing.T) {
 }
 
 func TestStagedReceiptOnlyPageBindsExactImportOwner(t *testing.T) {
-	for _, mode := range []string{"matching", "foreign", "changed", "missing"} {
-		t.Run(mode, func(t *testing.T) {
+	for _, mode := range []stagedReceiptOwnerCase{stagedReceiptMatching, stagedReceiptForeign, stagedReceiptChanged, stagedReceiptMissing} {
+		t.Run(string(mode), func(t *testing.T) {
 			s, p, guard := stagedSelectionFixture(t, true)
 			id := p.Bundle.ArchiveSessionID
 			reg, _, err := s.LoadRegistration(id)
@@ -161,21 +161,21 @@ func TestStagedReceiptOnlyPageBindsExactImportOwner(t *testing.T) {
 			if err = s.VerifyAndBeginStagedRelease(t.Context(), id, stagedRemote(p), guard); err != nil {
 				t.Fatal(err)
 			}
-			if mode == "changed" {
+			if mode == stagedReceiptChanged {
 				altered := reg
 				altered.ImportBatch = archive.NewImportBatch("changed-import")
 				if err = local.Write(s.registrationPath(id), altered); err != nil {
 					t.Fatal(err)
 				}
 			}
-			if mode == "missing" {
+			if mode == stagedReceiptMissing {
 				if err = os.Remove(s.registrationPath(id)); err != nil {
 					t.Fatal(err)
 				}
 			}
 			stages, _, closePage, err := s.ImportStagesOwned(t.Context(), "", 50)
 			defer closePage()
-			if mode == "changed" || mode == "missing" {
+			if mode == stagedReceiptChanged || mode == stagedReceiptMissing {
 				if !errors.Is(err, ErrReadySelectionFrozen) {
 					t.Fatalf("unproven owner classified: %v", err)
 				}
@@ -185,10 +185,10 @@ func TestStagedReceiptOnlyPageBindsExactImportOwner(t *testing.T) {
 				t.Fatalf("receipt-only page: %v %v", stages, err)
 			}
 			target := reg.ImportBatch.Recorded()
-			if mode == "foreign" {
+			if mode == stagedReceiptForeign {
 				target = "unrelated-import"
 			}
-			if stages[0].Registration.InBatch(target) != (mode == "matching") {
+			if stages[0].Registration.InBatch(target) != (mode == stagedReceiptMatching) {
 				t.Fatal("receipt-only import attribution mismatch")
 			}
 			if stages[0].Registration.ArchiveSessionID != id || stages[0].Registration.StagedImportSHA256 != reg.StagedImportSHA256 {
@@ -227,3 +227,12 @@ func TestStagedReadablePendingFitsOneVerificationOwner(t *testing.T) {
 		t.Fatal("verification changed selected authority")
 	}
 }
+
+type stagedReceiptOwnerCase string
+
+const (
+	stagedReceiptMatching stagedReceiptOwnerCase = "matching"
+	stagedReceiptForeign  stagedReceiptOwnerCase = "foreign"
+	stagedReceiptChanged  stagedReceiptOwnerCase = "changed"
+	stagedReceiptMissing  stagedReceiptOwnerCase = "missing"
+)

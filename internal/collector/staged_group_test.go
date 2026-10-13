@@ -45,9 +45,11 @@ func (s *stagedChildFailureStore) GetLimited(ctx context.Context, key string, li
 func TestStagedParentFirstRestartContinuesChildAfterNativeDeletion(t *testing.T) {
 	stagedParentFirstRestartControl(t, false)
 }
+
 func TestStagedGroupUsesOnePrecommitReadbackTriplet(t *testing.T) {
 	stagedParentFirstRestartControl(t, true)
 }
+
 func stagedParentFirstRestartControl(t *testing.T, assertReadbacks bool) {
 	t.Helper()
 	store := newTestStore(t)

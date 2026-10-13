@@ -2,6 +2,7 @@ package state
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -9,14 +10,15 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 )
 
 func TestStagedFactoryRejectsRedigestedMetadataIdentity(t *testing.T) {
-	for _, field := range []string{"native", "project", "harness", "harness-version", "harness-mode", "parent", "capture", "filter", "adapter-name", "adapter-version"} {
-		t.Run(field, func(t *testing.T) {
+	for _, field := range []stagedMetadataField{stagedMetadataNative, stagedMetadataProject, stagedMetadataHarness, stagedMetadataHarnessVersion, stagedMetadataHarnessMode, stagedMetadataParent, stagedMetadataCapture, stagedMetadataFilter, stagedMetadataAdapterName, stagedMetadataAdapterVersion} {
+		t.Run(string(field), func(t *testing.T) {
 			s, p, _ := stagedPreparedFixture(t, true)
 			p.StagedSelection = nil
 			p.JournalVersion = 0
@@ -25,25 +27,25 @@ func TestStagedFactoryRejectsRedigestedMetadataIdentity(t *testing.T) {
 				t.Fatal(err)
 			}
 			switch field {
-			case "native":
+			case stagedMetadataNative:
 				m.NativeSessionID += "-other"
-			case "project":
+			case stagedMetadataProject:
 				m.ProjectID += "-other"
-			case "harness":
+			case stagedMetadataHarness:
 				m.Harness.Name = "claude"
-			case "harness-version":
+			case stagedMetadataHarnessVersion:
 				m.Harness.Version = "other"
-			case "harness-mode":
+			case stagedMetadataHarnessMode:
 				m.Harness.Mode = "other"
-			case "parent":
+			case stagedMetadataParent:
 				m.ParentSessionID = "other"
-			case "capture":
+			case stagedMetadataCapture:
 				m.CapturedAt = m.CapturedAt.AddDate(0, 0, 1)
-			case "filter":
+			case stagedMetadataFilter:
 				m.FilterVersion = "other"
-			case "adapter-name":
+			case stagedMetadataAdapterName:
 				m.Adapter.Name = "other"
-			case "adapter-version":
+			case stagedMetadataAdapterVersion:
 				m.Adapter.Version = "other"
 			}
 			var err error
@@ -158,28 +160,28 @@ func TestStagedReleaseRechecksPolicyAfterReadback(t *testing.T) {
 }
 
 func TestStagedCancelAndForgetRefuseBeforeEffects(t *testing.T) {
-	for _, operation := range []string{"cancel", "forget", "idle", "orphan"} {
-		t.Run(operation, func(t *testing.T) {
+	for _, operation := range []stagedRetirementCase{stagedRetirementCancel, stagedRetirementForget, stagedRetirementIdle, stagedRetirementOrphan} {
+		t.Run(string(operation), func(t *testing.T) {
 			s, p, _ := stagedDetachedFixture(t)
 			id := p.Bundle.ArchiveSessionID
 			reg, _, err := s.LoadRegistration(id)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if operation == "cancel" {
+			if operation == stagedRetirementCancel {
 				if err := os.Remove(s.registrationPath(id)); err != nil {
 					t.Fatal(err)
 				}
 			}
 			before := stagedAuthorityBytes(t, s, id)
 			switch operation {
-			case "cancel":
+			case stagedRetirementCancel:
 				err = s.CancelImportStage(t.Context(), reg)
-			case "forget":
+			case stagedRetirementForget:
 				err = s.ForgetSession(id, agentmeta.SessionKey{})
-			case "idle":
+			case stagedRetirementIdle:
 				_, err = s.ForgetIdleSession(id, agentmeta.SessionKey{}, false, nil)
-			case "orphan":
+			case stagedRetirementOrphan:
 				_, err = s.ForgetOrphan(id)
 			}
 			if !errors.Is(err, ErrReadySelectionFrozen) {
@@ -202,11 +204,11 @@ func TestStagedGenericPendingRemovalRefusesCompletedProgress(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = s.writeStagedControl(t.Context(), id, "release.json", receipt); err != nil {
+	if err = s.writeStagedControl(t.Context(), id, stagedReleaseReceiptName, receipt); err != nil {
 		t.Fatal(err)
 	}
-	progress := stagedReleaseProgress{Version: 3, ReceiptSHA256: receipt.SHA256, Phase: "local-complete"}
-	if err = s.writeStagedControl(t.Context(), id, "release-progress.json", progress); err != nil {
+	progress := stagedReleaseProgress{Version: 3, ReceiptSHA256: receipt.SHA256, Phase: stagedReleaseLocalComplete}
+	if err = s.writeStagedControl(t.Context(), id, stagedReleaseProgressName, progress); err != nil {
 		t.Fatal(err)
 	}
 	before := stagedAuthorityBytes(t, s, id)
@@ -238,11 +240,11 @@ func TestStagedChildPublishedAloneCannotReleaseRoster(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = s.writeStagedControl(t.Context(), id, "release.json", receipt); err != nil {
+	if err = s.writeStagedControl(t.Context(), id, stagedReleaseReceiptName, receipt); err != nil {
 		t.Fatal(err)
 	}
-	progress := stagedReleaseProgress{Version: 3, ReceiptSHA256: receipt.SHA256, Phase: "local-complete"}
-	if err = s.writeStagedControl(t.Context(), id, "release-progress.json", progress); err != nil {
+	progress := stagedReleaseProgress{Version: 3, ReceiptSHA256: receipt.SHA256, Phase: stagedReleaseLocalComplete}
+	if err = s.writeStagedControl(t.Context(), id, stagedReleaseProgressName, progress); err != nil {
 		t.Fatal(err)
 	}
 	if err = s.checkStagedChildHandoffs(t.Context(), parent, proof); err != nil {
@@ -266,6 +268,7 @@ func stagedAuthorityBytes(t *testing.T, s *Store, id string) map[string][]byte {
 	}
 	return out
 }
+
 func assertStagedAuthorityBytes(t *testing.T, s *Store, id string, before map[string][]byte) {
 	t.Helper()
 	after := stagedAuthorityBytes(t, s, id)
@@ -277,4 +280,68 @@ func assertStagedAuthorityBytes(t *testing.T, s *Store, id string, before map[st
 			t.Fatalf("authority changed: %s", path)
 		}
 	}
+}
+
+type stagedMetadataField string
+
+const (
+	stagedMetadataNative         stagedMetadataField = "native"
+	stagedMetadataProject        stagedMetadataField = "project"
+	stagedMetadataHarness        stagedMetadataField = "harness"
+	stagedMetadataHarnessVersion stagedMetadataField = "harness-version"
+	stagedMetadataHarnessMode    stagedMetadataField = "harness-mode"
+	stagedMetadataParent         stagedMetadataField = "parent"
+	stagedMetadataCapture        stagedMetadataField = "capture"
+	stagedMetadataFilter         stagedMetadataField = "filter"
+	stagedMetadataAdapterName    stagedMetadataField = "adapter-name"
+	stagedMetadataAdapterVersion stagedMetadataField = "adapter-version"
+)
+
+type stagedRetirementCase string
+
+const (
+	stagedRetirementCancel stagedRetirementCase = "cancel"
+	stagedRetirementForget stagedRetirementCase = "forget"
+	stagedRetirementIdle   stagedRetirementCase = "idle"
+	stagedRetirementOrphan stagedRetirementCase = "orphan"
+)
+
+func TestStagedClosedProofCodecKeepsDigestAndCallerCancellation(t *testing.T) {
+	s, p, _ := stagedPreparedFixture(t, true)
+	q := *p.StagedSelection
+	proof := q
+	proof.SHA256 = ""
+	canonical, err := json.Marshal(proof)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if readySHA(canonical) != q.SHA256 {
+		t.Fatal("closed codec changed canonical self digest")
+	}
+	raw, err := json.Marshal(q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded StagedSelection
+	if err = json.Unmarshal(raw, &decoded); err != nil || decoded != q {
+		t.Fatalf("closed codec roundtrip: %v", err)
+	}
+	tampered := q
+	tampered.SHA256 = strings.Repeat("0", 64)
+	raw, err = json.Marshal(tampered)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = json.Unmarshal(raw, &decoded); !errors.Is(err, ErrDurableStorageRecovery) {
+		t.Fatalf("codec dropped mandatory digest: %v", err)
+	}
+	before := stagedAuthorityBytes(t, s, p.Bundle.ArchiveSessionID)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	read, closeRead := s.WithReadBudget(ctx, agentapi.NewNativeReadBudget(2<<20))
+	defer closeRead()
+	if err = read.ValidateReadySelection(ctx, p); !errors.Is(err, context.Canceled) {
+		t.Fatalf("actual caller cancellation lost: %v", err)
+	}
+	assertStagedAuthorityBytes(t, s, p.Bundle.ArchiveSessionID, before)
 }

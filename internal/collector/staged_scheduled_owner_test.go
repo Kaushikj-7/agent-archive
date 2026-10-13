@@ -179,6 +179,7 @@ func (r *stagedDiagnosticFailureStore) GetLimited(ctx context.Context, key strin
 	}
 	return r.MemoryStore.GetLimited(ctx, key, limit)
 }
+
 func TestStagedRunDiagnosticOwnerSurvivesAliasesFailuresAndRepeatedPasses(t *testing.T) {
 	store, p, opts, remote := stagedCommittedOwnerFixture(t)
 	cause := errors.New("controlled bounded readback failure")

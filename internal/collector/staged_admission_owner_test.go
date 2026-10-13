@@ -249,6 +249,7 @@ func stagedGroupAuthorityFiles(t *testing.T, store *state.Store, parent, child a
 	}
 	return out
 }
+
 func assertStagedGroupAuthorityFiles(t *testing.T, store *state.Store, parent, child archive.SessionRegistration, before map[string][]byte) {
 	t.Helper()
 	after := stagedGroupAuthorityFiles(t, store, parent, child)

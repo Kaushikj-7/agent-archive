@@ -59,8 +59,9 @@ func (s *Store) validateExactStagedSource(ctx context.Context, stage ImportStage
 }
 
 type stagedCountWriter struct {
-	writer             io.Writer
-	remaining, written int64
+	writer    io.Writer
+	remaining int64
+	written   int64
 }
 
 func (w *stagedCountWriter) Write(p []byte) (int, error) {
@@ -73,12 +74,22 @@ func (w *stagedCountWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
-// A bounded proof encoder hashes the same canonical JSON as readyDigest,
-// without constructing a second self-marshaled proof byte slice. The outer
-// decoder's captured three-owner reservation includes this <=16KiB encoding.
-func boundedStagedProofDigest(value any) (string, error) {
-	return boundedStagedWireDigest(context.Background(), value, 16<<10)
+// Closed proof shape is checked before this contextless canonical codec.
+// All strings are fixed digests or bounded owner/token fields; the output
+// writer caps 16KiB including the excluded Encoder newline. No general value
+// counter or synthetic context crosses JSON method dispatch.
+func boundedStagedProofDigest(value StagedSelection) (string, error) {
+	writer := &stagedJSONDigestWriter{sum: sha256.New()}
+	bounded := &stagedCountWriter{writer: writer, remaining: 16 << 10}
+	if err := json.NewEncoder(bounded).Encode(value); err != nil {
+		return "", err
+	}
+	if !writer.haveLast || writer.last != '\n' {
+		return "", ErrDurableStorageRecovery
+	}
+	return hex.EncodeToString(writer.sum.Sum(nil)), nil
 }
+
 func boundedStagedWireDigest(ctx context.Context, value any, limit int64) (string, error) {
 	if _, err := agentmeta.JSONWireBound(ctx, value, limit); err != nil {
 		return "", err

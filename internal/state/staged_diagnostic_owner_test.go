@@ -14,6 +14,7 @@ import (
 type stagedOwnedResumeControl interface {
 	ResumeStagedReleases(context.Context, StagedReadback, *local.CollectorGuard) (map[string]error, func(), error)
 }
+
 type stagedBeforeResumeControl interface {
 	ResumeStagedReleases(context.Context, StagedReadback, *local.CollectorGuard) (map[string]error, error)
 }
@@ -22,11 +23,11 @@ type stagedBeforeResumeControl interface {
 // grants no authority and changes no before production implementation.
 func callStagedResumeControl(ctx context.Context, s *Store, remote StagedReadback, guard *local.CollectorGuard) (map[string]error, func(), error) {
 	if owned, ok := any(s).(stagedOwnedResumeControl); ok {
-		holds, close, err := owned.ResumeStagedReleases(ctx, remote, guard)
-		if close == nil {
-			close = func() {}
+		holds, closeDiagnostics, err := owned.ResumeStagedReleases(ctx, remote, guard)
+		if closeDiagnostics == nil {
+			closeDiagnostics = func() {}
 		}
-		return holds, close, err
+		return holds, closeDiagnostics, err
 	}
 	holds, err := any(s).(stagedBeforeResumeControl).ResumeStagedReleases(ctx, remote, guard)
 	return holds, func() {}, err
@@ -65,7 +66,7 @@ func TestStagedScheduledDiagnosticOwnerKeepsRawHoldThroughAliases(t *testing.T) 
 	closeDiagnostics()
 	closeDiagnostics()
 	if budget.Available() != before {
-		t.Fatal("diagnostic close was not exact/idempotent")
+		t.Fatal("diagnostic closeDiagnostics was not exact/idempotent")
 	}
 }
 

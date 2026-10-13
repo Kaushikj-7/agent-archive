@@ -55,6 +55,7 @@ func checkStagedConfigAuthority(data []byte) error {
 	}
 	return checkStagedWriterObject(schema)
 }
+
 func checkStagedWriterObject(raw []byte) error {
 	d := json.NewDecoder(bytes.NewReader(raw))
 	token, err := d.Token()
@@ -68,7 +69,7 @@ func checkStagedWriterObject(raw []byte) error {
 			return err
 		}
 		key, ok := token.(string)
-		if !ok || (key != "version" && key != "writer") || seen[key] {
+		if !ok || (stagedWriterField(key) != stagedWriterVersionField && stagedWriterField(key) != stagedWriterNameField) || seen[key] {
 			return errors.New("ambiguous staged writer field")
 		}
 		seen[key] = true
@@ -82,3 +83,10 @@ func checkStagedWriterObject(raw []byte) error {
 	}
 	return nil
 }
+
+type stagedWriterField string
+
+const (
+	stagedWriterVersionField stagedWriterField = "version"
+	stagedWriterNameField    stagedWriterField = "writer"
+)

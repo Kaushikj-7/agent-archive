@@ -19,7 +19,6 @@ import (
 func stagedPreparedFixture(t *testing.T, request bool) (*Store, PendingPublication, *local.CollectorGuard) {
 	t.Helper()
 	s := newTestStore(t)
-	var p PendingPublication
 	cfg, _, err := config.Load(s.Home())
 	if err != nil {
 		t.Fatal(err)
@@ -51,7 +50,7 @@ func stagedPreparedFixture(t *testing.T, request bool) (*Store, PendingPublicati
 	reg.ImportBatch = archive.NewImportBatch("synthetic-batch")
 	at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	reg.AdmittedAt = at
-	p = PendingPublication{Bundle: archive.SourceBundle{SchemaVersion: archive.SourceSchemaVersion, ArchiveSessionID: id, NativeSessionID: reg.NativeSessionID, ProjectID: reg.ProjectID, Capture: archive.SourceCapture{Harness: reg.Harness, AdapterName: "synthetic", FilterVersion: archive.FilterVersion, CapturedAt: at}, NativeRecords: []map[string]any{{"content": strings.Repeat("x", 96<<10)}}}, ReadyAt: at, Attempted: true, SkillEvidence: string(cfg.EffectiveSkillEvidence())}
+	p := PendingPublication{Bundle: archive.SourceBundle{SchemaVersion: archive.SourceSchemaVersion, ArchiveSessionID: id, NativeSessionID: reg.NativeSessionID, ProjectID: reg.ProjectID, Capture: archive.SourceCapture{Harness: reg.Harness, AdapterName: "synthetic", FilterVersion: archive.FilterVersion, CapturedAt: at}, NativeRecords: []map[string]any{{"content": strings.Repeat("x", 96<<10)}}}, ReadyAt: at, Attempted: true, SkillEvidence: string(cfg.EffectiveSkillEvidence())}
 	p.MetadataKey, err = archive.MetadataObjectKey(reg.Harness.Name, id)
 	if err != nil {
 		t.Fatal(err)
@@ -176,6 +175,7 @@ func (r *stagedReadbackFixture) GetLimited(ctx context.Context, key string, limi
 	}
 	return append([]byte(nil), b...), nil
 }
+
 func stagedRemote(p PendingPublication) *stagedReadbackFixture {
 	return &stagedReadbackFixture{values: map[string][]byte{p.MetadataKey: p.MetadataBytes, p.SourceKey: p.SourceBytes}}
 }
