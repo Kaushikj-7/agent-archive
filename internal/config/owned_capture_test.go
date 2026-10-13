@@ -106,22 +106,29 @@ func TestOwnedCaptureConfigGrowthPreservesCompleteBody(t *testing.T) {
 }
 
 func TestOwnedImportGuardRefusesUnsupportedPromotion(t *testing.T) {
-	home, raw := ownedCaptureConfigFixture(t)
-	cfg, _, err := Load(home)
-	if err != nil {
-		t.Fatal(err)
+	protected, _ := ownedCaptureConfigFixture(t)
+	budget := agentapi.NewNativeReadBudget(128 << 20)
+	called := false
+	err := WithImportStagingOwned(t.Context(), protected, func() ConfigReadReservation { return budget.Reservation() }, func(DurableStorageGuard) error { called = true; return nil })
+	if err != nil || !called || budget.Available() != 128<<20 {
+		t.Fatal("qualified config rejected or leaked", err)
 	}
-	cfg.SettledCursorSelectionProtection = false
-	cfg.StagedSelectionProtection = false
+	// Save intentionally preserves existing sticky fences. A fresh ordinary
+	// protected configuration supplies an actually unsupported settled floor.
+	home := t.TempDir()
+	cfg := Config{MachineID: "synthetic", DurableStorageProtection: true, PublicationCompositionProtection: true, ImportStagingProtection: true}
 	if err = Save(home, cfg); err != nil {
 		t.Fatal(err)
 	}
-	raw, err = os.ReadFile(filepath.Join(home, "config.json"))
+	cfg, _, err = Load(home)
+	if err != nil || cfg.SupportsSettledCursorSelection() {
+		t.Fatal("unsupported fixture has settled authority", err)
+	}
+	raw, err := os.ReadFile(filepath.Join(home, "config.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	budget := agentapi.NewNativeReadBudget(128 << 20)
-	called := false
+	called = false
 	err = WithImportStagingOwned(t.Context(), home, func() ConfigReadReservation { return budget.Reservation() }, func(DurableStorageGuard) error { called = true; return nil })
 	if err == nil || called {
 		t.Fatal("unsupported config promoted", err)
