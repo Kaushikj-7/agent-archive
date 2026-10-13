@@ -15,8 +15,8 @@ import (
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
-// ConfigReadReservation owns encoded-equivalent configuration views, not a heap bound.
-type ConfigReadReservation interface {
+// ReadReservation owns encoded-equivalent configuration views, not a heap bound.
+type ReadReservation interface {
 	Reserve(int64) bool
 	Release(int64)
 	Available() int64
@@ -24,7 +24,7 @@ type ConfigReadReservation interface {
 
 // LoadRootedOwned reads and validates complete config under a captured owner.
 // The returned close must follow all use of the decoded configuration.
-func LoadRootedOwned(ctx context.Context, home *local.RootedHome, owner ConfigReadReservation) (cfg Config, found bool, closeConfig func(), err error) {
+func LoadRootedOwned(ctx context.Context, home *local.RootedHome, owner ReadReservation) (cfg Config, found bool, closeConfig func(), err error) {
 	closeConfig = func() {}
 	if ctx == nil || home == nil || home.Root == nil {
 		err = errors.New("owned configuration requires context and rooted home")
@@ -84,7 +84,7 @@ func LoadRootedOwned(ctx context.Context, home *local.RootedHome, owner ConfigRe
 	return
 }
 
-func readOwnedConfigBody(ctx context.Context, file io.Reader, initial int64, owner ConfigReadReservation) (raw []byte, allocated int64, err error) {
+func readOwnedConfigBody(ctx context.Context, file io.Reader, initial int64, owner ReadReservation) (raw []byte, allocated int64, err error) {
 	allocated = initial
 	raw = make([]byte, int(initial))
 	used := 0
@@ -132,7 +132,7 @@ func readOwnedConfigBody(ctx context.Context, file io.Reader, initial int64, own
 
 type captureConfigReads struct {
 	ctx     context.Context
-	reserve func() ConfigReadReservation
+	reserve func() ReadReservation
 	closes  []func()
 }
 
@@ -180,7 +180,7 @@ func loadOwnedSettledPreflight(r *captureConfigReads, home *local.RootedHome, de
 
 // WithImportStagingOwned guards only already qualified settled Cursor config.
 // It never promotes an unsupported floor; default staging remains unchanged.
-func WithImportStagingOwned(ctx context.Context, home string, reserve func() ConfigReadReservation, write func(DurableStorageGuard) error) (err error) {
+func WithImportStagingOwned(ctx context.Context, home string, reserve func() ReadReservation, write func(DurableStorageGuard) error) (err error) {
 	if ctx == nil || reserve == nil || write == nil {
 		return errors.New("owned import guard requires context, reservation and writer")
 	}

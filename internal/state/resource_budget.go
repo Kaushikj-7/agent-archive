@@ -304,7 +304,7 @@ func (s *Store) withImportStaging(ctx context.Context, write func(config.Durable
 	if s.resourceReservation == nil {
 		return config.WithImportStaging(s.home, write)
 	}
-	return config.WithImportStagingOwned(ctx, s.home, func() config.ConfigReadReservation { return s.readReservation() }, write)
+	return config.WithImportStagingOwned(ctx, s.home, func() config.ReadReservation { return s.readReservation() }, write)
 }
 
 // ownStageValidationWire holds the sequential canonical encoder view through

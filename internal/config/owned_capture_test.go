@@ -109,7 +109,7 @@ func TestOwnedImportGuardRefusesUnsupportedPromotion(t *testing.T) {
 	protected, _ := ownedCaptureConfigFixture(t)
 	budget := agentapi.NewNativeReadBudget(128 << 20)
 	called := false
-	err := WithImportStagingOwned(t.Context(), protected, func() ConfigReadReservation { return budget.Reservation() }, func(DurableStorageGuard) error { called = true; return nil })
+	err := WithImportStagingOwned(t.Context(), protected, func() ReadReservation { return budget.Reservation() }, func(DurableStorageGuard) error { called = true; return nil })
 	if err != nil || !called || budget.Available() != 128<<20 {
 		t.Fatal("qualified config rejected or leaked", err)
 	}
@@ -129,7 +129,7 @@ func TestOwnedImportGuardRefusesUnsupportedPromotion(t *testing.T) {
 		t.Fatal(err)
 	}
 	called = false
-	err = WithImportStagingOwned(t.Context(), home, func() ConfigReadReservation { return budget.Reservation() }, func(DurableStorageGuard) error { called = true; return nil })
+	err = WithImportStagingOwned(t.Context(), home, func() ReadReservation { return budget.Reservation() }, func(DurableStorageGuard) error { called = true; return nil })
 	if err == nil || called {
 		t.Fatal("unsupported config promoted", err)
 	}

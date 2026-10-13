@@ -17,7 +17,7 @@ import (
 // MaxCursorComposerVersion is the newest qualified composer metadata version.
 const MaxCursorComposerVersion = 18
 
-// composer is what one composerData value contributes.
+// CursorComposerMetadata is what one composerData value contributes.
 type CursorComposerMetadata struct {
 	Chat agentapi.DatabaseChat
 	// counted is whether it is a chat: messages, and not a draft.
@@ -28,7 +28,7 @@ type CursorComposerMetadata struct {
 	Newer bool
 }
 
-// decodeComposerData decodes one composerData value; ok is false when it is
+// DecodeCursorComposerData decodes one composerData value; ok is false when it is
 // not a shape this release knows. Only the fields that decide the count are
 // strict: isDraft and the message lists, and _v must be a positive integer.
 // A _v newer than MaxCursorComposerVersion is still read, and marked newer, when
@@ -192,6 +192,7 @@ func CursorWorkspaceFolder(raw json.RawMessage) string {
 	return ""
 }
 
+// CursorReviewFacts extracts the conservative metadata used for Cursor review.
 func CursorReviewFacts(fields map[string]json.RawMessage) agentapi.CursorComposerFacts {
 	versionRaw, versionPresent := fields["_v"]
 	var version int

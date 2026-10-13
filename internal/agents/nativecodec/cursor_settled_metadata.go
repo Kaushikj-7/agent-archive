@@ -71,6 +71,7 @@ func rejectCursorMetadataDuplicates(ctx context.Context, raw []byte) error {
 	return nil
 }
 
+// ValidateSettledCursorMetadata rejects ambiguous or unsupported settled metadata.
 func ValidateSettledCursorMetadata(ctx context.Context, key string, raw []byte) error {
 	if err := rejectCursorMetadataDuplicates(ctx, raw); err != nil {
 		return err
