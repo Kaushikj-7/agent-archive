@@ -132,7 +132,7 @@ func (s *sessionScan) publishPending(ctx context.Context, pending state.PendingP
 	if err := s.upload(pending); err != nil {
 		return outcomeSkipped, err
 	}
-	if (s.reg.StagedImportSHA256 != "" && pending.History == nil) || pending.Selection != nil || pending.StagedSelection != nil {
+	if (s.reg.StagedImportSHA256 != "" && pending.History == nil) || pending.Selection != nil || pending.StagedProof() != nil {
 		if err := s.verifyImportPublication(pending); err != nil {
 			return outcomeSkipped, err
 		}
@@ -147,7 +147,7 @@ func (s *sessionScan) publishPending(ctx context.Context, pending state.PendingP
 
 // checkStagedDestination runs before any slot check, catalog admission or remote effect.
 func (s *sessionScan) checkStagedDestination(pending state.PendingPublication) error {
-	if pending.StagedSelection != nil {
+	if pending.StagedProof() != nil {
 		if s.opts.CollectorGuard == nil {
 			return state.ErrReadySelectionFrozen
 		}
@@ -218,7 +218,7 @@ func (s *sessionScan) acknowledgePublication(pending state.PendingPublication, k
 	if err := s.local.RemoveRefreshSkip(s.id()); err != nil {
 		return outcomeSkipped, err
 	}
-	if pending.StagedSelection != nil {
+	if pending.StagedProof() != nil {
 		if keepPending {
 			return outcomeSkipped, state.ErrReadySelectionFrozen
 		}
@@ -257,7 +257,7 @@ func (s *sessionScan) upload(pending state.PendingPublication) error {
 	if err := s.local.SaveListingRepair(s.id(), state.ListingRepair{MetadataKey: pending.MetadataKey, DestinationID: s.reg.DestinationID}); err != nil {
 		return fmt.Errorf("journal listing repair: %w", err)
 	}
-	if pending.Selection != nil || pending.StagedSelection != nil {
+	if pending.Selection != nil || pending.StagedProof() != nil {
 		return s.uploadReadySelection(pending)
 	}
 	if pending.History != nil {

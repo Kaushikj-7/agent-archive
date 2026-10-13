@@ -18,7 +18,7 @@ import (
 // equality authenticates every field without allocating another decoded bundle.
 // Noncanonical older wire remains recovery work; generic RemovePending is unchanged.
 func (s *Store) RemoveExactLegacyPending(id string, expected PendingPublication) error {
-	if !safeFileComponent(id) || expected.StagedSelection != nil || expected.Catalog != nil || expected.History != nil || expected.Bundle.History != nil || expected.Bundle.SchemaVersion != archive.SourceSchemaVersion || expected.Bundle.ArchiveSessionID != id {
+	if !safeFileComponent(id) || expected.StagedProof() != nil || expected.Catalog != nil || expected.History != nil || expected.Bundle.History != nil || expected.Bundle.SchemaVersion != archive.SourceSchemaVersion || expected.Bundle.ArchiveSessionID != id {
 		return ErrCatalogJournalFrozen
 	}
 	ctx := s.durableContext()
@@ -64,7 +64,7 @@ func (s *Store) validateExactLegacyPending(ctx context.Context, id string, expec
 func (s *Store) exactLegacyPendingWire(ctx context.Context, expected PendingPublication) ([sha256.Size]byte, int64, error) {
 	var digest [sha256.Size]byte
 	const scratch = int64(32 << 10)
-	reservation := s.resourceBudget.Reservation()
+	reservation := s.readReservation()
 	if err := ctx.Err(); err != nil {
 		return digest, 0, err
 	}
@@ -187,7 +187,7 @@ func (s *Store) readExactLegacyPendingWire(ctx context.Context, dir *os.Root, na
 		return nil, errors.Join(ErrDurableStorageRecovery, err)
 	}
 	const scratch = int64(32 << 10)
-	reservation := s.resourceBudget.Reservation()
+	reservation := s.readReservation()
 	if s.resourceBudget != nil {
 		if !reservation.Reserve(scratch) {
 			return nil, errStateBudget

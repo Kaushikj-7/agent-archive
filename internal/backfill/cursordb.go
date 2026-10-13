@@ -465,6 +465,8 @@ func appendCursorDatabaseChats(env Environment, r *resolver, projectFilter []str
 		}
 		w.c.Skip = w.reason(plan.GeneratedAt)
 		w.c.Diagnostic = candidateDiagnostic(w.c.Skip, w.res.outcome, w.res.cause)
+		chat := w.chat
+		w.c.reviewedCursor = &chat
 		plan.Candidates = append(plan.Candidates, w.c)
 	}
 }

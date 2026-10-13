@@ -211,3 +211,13 @@ captured source, candidate roots, exact source validator and bounded progress in
 the coordinator CAS record. The upgrade seal excludes GC until configuration
 acknowledges activation; mixed activation states refuse protected writes. Scoped
 rollback retains the complete protocol-11 roots and permanent writer fence.
+
+The settled Cursor source candidate uses the distinct configuration capability `{version: 15, writer: settled-cursor-selection-v15}` with its existing permanent protections; legacy configurations peel directly to staged13. Cursor stage3 and pending/published4 remain independent wire domains. This source candidate does not activate picker14 or catalog head protocol11/schema5. Its current-main qualification is pending; a possible future352 configuration16 is conditional and unreserved.
+
+Scoped catalog configuration 14 can remember settled Cursor protection 15 and
+staged protection 13 without enabling either legacy selection route. It retains
+all publication, durable-storage, import and authorization floors. Exact
+`scoped-picker-v1` capability and catalog format dominate these remembered flags;
+this is capability composition, not numeric version ordering. Prior settled
+writers refuse the scoped header, and remote coordinator protocol 11 permanently
+fences older catalog writers. Legacy settled configuration 15 remains unchanged.

@@ -140,6 +140,8 @@ const (
 // It holds paths and native IDs for the import step; nothing here is ever
 // printed.
 type Candidate struct {
+	// reviewedCursor is compact planning evidence, never capture authority.
+	reviewedCursor  *agentapi.DatabaseChat
 	Harness         string
 	NativeSessionID string
 	// NativeChild and native relationship IDs describe Codex ownership, not admission.

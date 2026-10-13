@@ -126,3 +126,55 @@ func TestScopedPickerLayeredConfigurationRejectsMissingLowerCapabilities(t *test
 		t.Fatal("enabled catalog staging")
 	}
 }
+
+func TestScopedPickerCatalogRetainsSettledCursorFenceWithoutEnablingLegacySelection(t *testing.T) {
+	t.Parallel()
+	legacy := Config{RetentionDays: 90, SettledCursorSelectionProtection: true, StagedSelectionProtection: true, PublicationCompositionProtection: true, DurableStorageProtection: true, ImportStagingProtection: true, HistoricalProjectProtection: true}
+	raw, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = json.Unmarshal(raw, &legacy); err != nil || legacy.SchemaVersion != 15 || !legacy.SupportsSettledCursorSelection() {
+		t.Fatal(legacy, err)
+	}
+	catalog := legacy
+	catalog.Storage.ArchiveFormat = "catalog-v4"
+	catalog.ScopedPickerProtection = true
+	raw, err = json.Marshal(catalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved Config
+	if err = json.Unmarshal(raw, &saved); err != nil {
+		t.Fatal(err)
+	}
+	if saved.SchemaVersion != 14 || !saved.ScopedPickerProtection || !saved.SettledCursorSelectionProtection || !saved.StagedSelectionProtection || !saved.SupportsOrdinarySelection() || saved.SupportsStagedSelection() || saved.SupportsSettledCursorSelection() {
+		t.Fatal("scoped catalog lost remembered floors or enabled legacy selection", saved)
+	}
+	rollback := Config{RetentionDays: 90, Storage: saved.Storage}
+	PreserveWriterFence(&rollback, saved)
+	round, err := json.Marshal(rollback)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = json.Unmarshal(round, &rollback); err != nil || !rollback.SettledCursorSelectionProtection || !rollback.ScopedPickerProtection || rollback.SchemaVersion != 14 {
+		t.Fatal("rollback lost permanent capability composition", rollback, err)
+	}
+	for _, field := range []string{"staged_selection_protection", "publication_composition_protection", "durable_storage_protection", "import_staging_protection", "scoped_picker_protection"} {
+		probe := strings.Replace(string(raw), `"`+field+`":true`, `"`+field+`":false`, 1)
+		var refused Config
+		if err = json.Unmarshal([]byte(probe), &refused); err == nil {
+			t.Fatal("accepted settled scoped configuration missing a floor", field)
+		}
+	}
+	for _, probe := range []string{
+		strings.Replace(string(raw), `"version":14,"writer":"scoped-picker-v1"`, `"version":15,"writer":"settled-cursor-selection-v15"`, 1),
+		strings.Replace(string(raw), `"settled_cursor_selection_protection":true`, `"settled_cursor_selection_protection":true,"SETTLED_CURSOR_SELECTION_PROTECTION":true`, 1),
+		strings.Replace(string(raw), `"scoped_picker_protection":true`, `"scoped_picker_protection":true,"SCOPED_PICKER_PROTECTION":true`, 1),
+	} {
+		var refused Config
+		if err = json.Unmarshal([]byte(probe), &refused); err == nil {
+			t.Fatal("accepted mixed settled scoped selecting authority", probe)
+		}
+	}
+}

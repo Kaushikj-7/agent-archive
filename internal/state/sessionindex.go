@@ -76,7 +76,7 @@ func (e qualifiedSessionIndexEntry) validate(key agentmeta.SessionKey) error {
 
 func (s *Store) readQualifiedIndex(key agentmeta.SessionKey) (qualifiedSessionIndexEntry, bool, error) {
 	var entry qualifiedSessionIndexEntry
-	err := local.Read(qualifiedSessionIndexPath(s.home, key), &entry)
+	err := s.readIndexControlJSON(qualifiedSessionIndexPath(s.home, key), &entry)
 	if errors.Is(err, os.ErrNotExist) {
 		return s.packedSessionIndexEntry(key)
 	}
@@ -121,7 +121,7 @@ func (s *Store) matchingRegistration(key agentmeta.SessionKey, id string) (bool,
 			return false, err
 		}
 		if _, found, err := s.loadGenerationHead(key); err != nil || !found {
-			return false, ErrSessionIndexRecoveryRequired
+			return false, s.indexRecoveryError(err)
 		}
 	}
 	actual, err := registrationKey(reg)

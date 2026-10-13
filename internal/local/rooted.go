@@ -78,7 +78,13 @@ func RootedWrite(root *os.Root, name string, value any) error {
 
 // RootedAtomicWrite writes, syncs and renames inside the held directory. Failed
 // temporary removal is returned; interrupted files remain visible to accounting.
-func RootedAtomicWrite(root *os.Root, name string, write func(io.Writer) error) (err error) {
+func RootedAtomicWrite(root *os.Root, name string, write func(io.Writer) error) error {
+	return RootedAtomicWriteChecked(root, name, write, nil)
+}
+
+// RootedAtomicWriteChecked prepares and syncs outside the optional commit check.
+// The check must invoke its rename exactly once on success; directory sync follows it.
+func RootedAtomicWriteChecked(root *os.Root, name string, write func(io.Writer) error, commit func(func() error) error) (err error) {
 	token, err := ID()
 	if err != nil {
 		return err
@@ -102,12 +108,35 @@ func RootedAtomicWrite(root *os.Root, name string, write func(io.Writer) error) 
 	if err != nil {
 		return err
 	}
-	if err = root.Rename(temp, name); err != nil {
-		return err
+	if commit == nil {
+		if err = root.Rename(temp, name); err != nil {
+			return err
+		}
+	} else {
+		invoked := false
+		renamed := false
+		var renameErr error
+		err = commit(func() error {
+			if invoked {
+				renameErr = errors.New("rooted rename invoked more than once")
+				return renameErr
+			}
+			invoked = true
+			renameErr = root.Rename(temp, name)
+			renamed = renameErr == nil
+			return renameErr
+		})
+		err = errors.Join(err, renameErr)
+		if !invoked {
+			return errors.Join(err, errors.New("rooted commit check omitted rename"))
+		}
+		if !renamed {
+			return err
+		}
 	}
-	d, err := root.Open(filepath.Dir(name))
-	if err != nil {
-		return err
+	d, openErr := root.Open(filepath.Dir(name))
+	if openErr != nil {
+		return errors.Join(err, openErr)
 	}
-	return errors.Join(d.Sync(), d.Close())
+	return errors.Join(err, d.Sync(), d.Close())
 }

@@ -64,3 +64,9 @@ permits an older writer. For an existing-catalog upgrade, use:
 ```sh
 agent-archive migrate --scoped-picker --rollback
 ```
+
+Migrating a legacy configuration with settled Cursor protection retains that
+permanent flag and every staged/publication/storage protection in scoped
+configuration 14. The scoped capability fences older writers; catalog destinations
+continue to refuse staged and settled Cursor selection. Rollback preserves all
+remembered protections.

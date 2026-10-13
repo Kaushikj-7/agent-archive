@@ -2,6 +2,7 @@
 package builtin
 
 import (
+	"errors"
 	"fmt"
 	"reflect"
 	"slices"
@@ -12,6 +13,8 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agents/claude"
 	"github.com/wangjohn/agent-archive/internal/agents/codex"
 	"github.com/wangjohn/agent-archive/internal/agents/cursor"
+	"github.com/wangjohn/agent-archive/internal/agents/nativecapture"
+	"github.com/wangjohn/agent-archive/internal/nativefacts"
 )
 
 // Integration binds implemented operations to an identity declaration.
@@ -41,6 +44,7 @@ type Integration struct {
 
 // Registry holds validated immutable lookups and operation projections.
 type Registry struct {
+	fixedCapture   *fixedCursorCapture
 	catalog        agentmeta.Catalog
 	sourceBindings map[string]Integration
 	bindings       map[agentmeta.ID]Integration
@@ -136,6 +140,7 @@ func NewBuiltins() *Registry {
 	if err != nil {
 		panic(err)
 	}
+	r.fixedCapture = &fixedCursorCapture{}
 	return r
 }
 
@@ -453,4 +458,19 @@ func (n nativeLabels) LookupLabels(name string) (agentapi.LabelProvider, bool) {
 		return codex.NativeLabelProvider{Host: n.host}, true
 	}
 	return n.registry.LookupLabels(name)
+}
+
+type fixedCursorCapture struct{}
+
+func (*fixedCursorCapture) capture(request *nativefacts.CaptureRequest) (*nativecapture.Proof, error) {
+	return cursor.CaptureSettledRequest(request)
+}
+
+// CaptureSettledCursor projects only the private real provider installed by NewBuiltins.
+// Arbitrary Registry.New Integration bindings cannot acquire capture authority.
+func (r *Registry) CaptureSettledCursor(request *nativefacts.CaptureRequest) (*nativecapture.Proof, error) {
+	if r == nil || r.fixedCapture == nil {
+		return nil, errors.New("settled capture requires builtin provider")
+	}
+	return r.fixedCapture.capture(request)
 }
