@@ -1,10 +1,18 @@
 # Headless local/archive picker
 
 `internal/cli/picker_model.go` owns the offered union independently of terminal
-rendering. `First`, `Older`, `Refresh` and `Select` retain an immutable captured
+rendering. `First`, `Older` and `Select` retain an immutable captured
 archive view. Each scope has its own local position, remote buffer, cursor,
-suppression set, emitted physical keys and visible prefix. Refresh requires a
-new archive view; cached scopes do not renew the ten-minute snapshot lifetime.
+suppression set, emitted physical keys and visible prefix. Every operation checks
+the captured lifetime before publishing a prefix; an operation served entirely
+from buffered or local candidates obtains its own fresh head observation.
+The caller prefetches the initial page, so initial CLI setup makes two head
+observations around page/model construction, plus one per exact local identity
+lookup batch. This fixed CLI overhead is separate from the reader page API's
+one-observation cost and the registration-dependent native inventory work.
+Refresh reconstructs the model with a new captured archive view and observed
+native activity; cached scopes do not renew the ten-minute snapshot lifetime.
+The browser layer owns that reconstruction rather than an unused model method.
 
 Supported bare handoff setup consumes this model through `picker_handoff.go`.
 The format probe and typed scope guard run before local activity/label reads.
@@ -38,7 +46,10 @@ limited to `2 + ceil(R/P)` pages, where R is the relevant suppression inventory;
 this local-dependent additive work is separate from bounded archive page cost.
 
 Each operation allows 50 uncached native label attempts, counting failed and
-no-prompt reads. Labels are cached by canonical harness/session, activity,
+no-prompt reads. Native read/parse failures are unknown eligibility rather than
+known no-prompt; they are not cached and leave the ordered local candidate
+pending for Older to retry. Cancellation returns an error without consuming
+the visible prefix. Known no-prompt results remain safely cached. Labels are cached by canonical harness/session, activity,
 registration facts and source policy. When an unresolved local candidate could
 be next, the model stops with an honest prefix and `Incomplete=true`;
 `More=true`, `Total=-1`, and `Empty=false`. Older continues from that position.
@@ -46,10 +57,15 @@ Leading empty locals therefore cannot produce a false empty scope or silently
 trigger all-project fallback. Activity inventory work and native label attempts
 are separate costs; local inventory is not an archive-size-independent cost.
 
-Ordinary archive failures preserve auto/local offline selection using the same
-native attempt budget. Archive association remains unknown and never receives
-“not yet uploaded.” Archive-source failures, cancellation, stale views, lookup
-ambiguity and catalog work-budget errors remain explicit failures. Hidden-child
+Ordinary archive failures, including a store that cannot open, preserve supported
+auto/local offline selection using the same native attempt budget. Archive
+association remains unknown and never receives “not yet uploaded.” Offline auto
+cannot prove the combined scope empty or widen it, even when the native subset
+is complete; refreshing the archive resolves that uncertainty. Source-local can
+prove its native-only scope empty. Native activity batch errors are explicit
+failures, since missing ordering observations cannot establish the top page.
+Archive-source failures, cancellation, stale views, lookup ambiguity and catalog
+work-budget errors remain explicit failures. Hidden-child
 totals are unknown at startup; each archived parent uses its card's child count.
 
 Opaque references travel with browser rows into handoff options and the selected
@@ -60,7 +76,11 @@ become selected metadata authority. Auto/local reread current native registratio
 and filtered sources; archive fallback uses the verified immutable source pointer
 without a same-ID metadata refresh. A rewrite/deletion requires refresh.
 
-Complete compatibility search stays lazy. Until the next UI layer supplies an
+Complete compatibility search stays lazy. Its bounded opt-in uses one strict
+activity inventory; a batch failure fails search explicitly. Ordinary local label
+failures preserve known archive matches with a partial local-eligibility notice
+and never poison the shared known-negative label cache. Legacy callers retain
+their two-result/native best-effort API defaults. Until the next UI layer supplies an
 error-bearing search operation, a search load error prevents selection rather
 than substituting the loaded browse prefix. Search-only selections also retain
 exact captured references, including child rows.

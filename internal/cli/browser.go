@@ -111,7 +111,7 @@ func runBrowser(ctx context.Context, env sessionBrowserDependencies, p *prompter
 			renderSessionSummary(stdout, *b.last, b.summaryOptions(true))
 		}
 	} else {
-		row, picked, err = list.pickScoped(p, stdout, spec.Choices, strings.ToLower(spec.Verb))
+		row, picked, err = list.pickScopedContext(ctx, p, stdout, spec.Choices, strings.ToLower(spec.Verb))
 		if keys != nil && picked && p.handBack != nil {
 			keys.handBack(p.handBack)
 		}

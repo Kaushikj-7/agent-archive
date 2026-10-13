@@ -15,6 +15,10 @@ disjoint validated subtree ranges, and `Empty` proves their total is zero. All
 errors discard the page, including `ErrPickerBudget`; an error does not prove
 emptiness or a complete prefix.
 
+Equal activity and capture timestamps retain the exhaustive raw harness, then
+session ID ascending tie order, including identities that prefix another
+identity. Physical object keys remain exact selection identities.
+
 Each logical page uses one head and coordinator observation (the opening
 snapshot supplies the initial observations), then pinned internal counts and
 walks. Every range retrieves at most P+1 candidates. A continuation stores each
@@ -50,7 +54,8 @@ loading a newer same-ID rewrite is not equivalent.
 Reader tests compare every page against an independent complete repository
 oracle and exercise overflow labels, zero/unknown prompts, children, replays,
 counts, expired/foreign/malformed cursors, changed heads, cancellation, missing
-and corrupt nodes, and unary-tree budgets. Bulk immutable-tree fixtures avoid
+and corrupt nodes, final-return cancellation/expiry, prefix identity ties, and
+unary-tree budgets. Bulk immutable-tree fixtures avoid
 retaining dead COW nodes, and construction is outside measured operations. The
 10k/100k page measurement covers this reader, not whole CLI startup or provider
 qualification; those remain separate integration evidence.

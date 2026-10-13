@@ -3,6 +3,8 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"maps"
 	"slices"
 	"sort"
 	"time"
@@ -17,7 +19,11 @@ type pickerArchive interface {
 	PickerLookup(context.Context, []catalog.PickerIdentity) (catalog.PickerIdentityBatch, error)
 	HydratePicker(context.Context, catalog.PickerReference) (catalog.PickerHydration, error)
 }
-type pickerIdentity struct{ harness, session string }
+
+type pickerIdentity struct {
+	harness string
+	session string
+}
 
 func pickerID(h, s string) pickerIdentity { return pickerIdentity{archive.CanonicalHarness(h), s} }
 
@@ -30,35 +36,44 @@ type pickerCandidate struct {
 // modelPickerView distinguishes an exact prefix from work awaiting continuation.
 // Incomplete never proves emptiness, even when Rows is empty.
 type modelPickerView struct {
-	Rows                                   []pickerCandidate
-	More, Incomplete, Empty                bool
-	Total                                  int
-	LabelAttempts, RemotePages, Suppressed int
+	Rows          []pickerCandidate
+	More          bool
+	Incomplete    bool
+	Empty         bool
+	Total         int
+	LabelAttempts int
+	RemotePages   int
+	Suppressed    int
 }
+
 type pickerScopeState struct {
-	query               catalog.PickerQuery
-	locals              []pickerCandidate
-	localPos            int
-	buffer              []catalog.PickerItem
-	next                string
-	started, remoteDone bool
-	suppress            map[pickerIdentity]bool
-	emitted             map[string]bool
-	view                modelPickerView
+	query      catalog.PickerQuery
+	locals     []pickerCandidate
+	localPos   int
+	buffer     []catalog.PickerItem
+	next       string
+	started    bool
+	remoteDone bool
+	suppress   map[pickerIdentity]bool
+	emitted    map[string]bool
+	view       modelPickerView
 }
+
 type pickerModel struct {
-	observeActivity       func(context.Context, []archive.SessionRegistration) (map[pickerIdentity]time.Time, error)
-	absenceUnknown        bool
-	searchError           func() error
-	archive               pickerArchive
-	regs                  []archive.SessionRegistration
-	facts                 map[pickerIdentity]*catalog.PickerItem
-	activity              map[pickerIdentity]time.Time
-	labels                map[localLabelKey]localLabelResult
-	label                 func(context.Context, archive.SessionRegistration, time.Time) (archive.Metadata, bool)
-	source, harness       string
-	pageSize, labelBudget int
-	states                map[string]*pickerScopeState
+	observeActivity func(context.Context, []archive.SessionRegistration) (map[pickerIdentity]time.Time, error)
+	absenceUnknown  bool
+	searchError     func() error
+	archive         pickerArchive
+	regs            []archive.SessionRegistration
+	facts           map[pickerIdentity]*catalog.PickerItem
+	activity        map[pickerIdentity]time.Time
+	labels          map[localLabelKey]localLabelResult
+	label           func(context.Context, archive.SessionRegistration, time.Time) (archive.Metadata, bool, error)
+	source          string
+	harness         string
+	pageSize        int
+	labelBudget     int
+	states          map[string]*pickerScopeState
 }
 
 func pickerScopeQuery(s sessionScope, harness string, limit int) (catalog.PickerQuery, error) {
@@ -69,7 +84,11 @@ func pickerScopeQuery(s sessionScope, harness string, limit int) (catalog.Picker
 	if !scope.All {
 		scope.RepoKey, scope.ProjectIDs = s.RepoKey, slices.Clone(s.ProjectIDs)
 	}
-	return catalog.PickerQuery{Scope: scope, Membership: "handoff", Harness: harness, Limit: limit}, nil
+	return catalog.PickerQuery{Scope: scope, Membership: catalog.PickerHandoff, Harness: harness, Limit: limit}, nil
+}
+
+func (m *pickerModel) relevantRegistration(reg archive.SessionRegistration) bool {
+	return topLevelRegistration(reg) && reg.Replay == nil && (m.harness == "" || archive.CanonicalHarness(reg.Harness.Name) == archive.CanonicalHarness(m.harness))
 }
 
 // prepare classifies every relevant registration exactly, including uploaded
@@ -87,9 +106,14 @@ func (m *pickerModel) prepare(ctx context.Context) error {
 	m.facts = map[pickerIdentity]*catalog.PickerItem{}
 	ids := []catalog.PickerIdentity{}
 	seen := map[pickerIdentity]bool{}
+	relevant := []archive.SessionRegistration{}
 	for _, reg := range m.regs {
 		id := pickerID(reg.Harness.Name, reg.ArchiveSessionID)
-		if !topLevelRegistration(reg) || reg.Replay != nil || (m.harness != "" && id.harness != archive.CanonicalHarness(m.harness)) || seen[id] {
+		if !m.relevantRegistration(reg) {
+			continue
+		}
+		relevant = append(relevant, reg)
+		if seen[id] {
 			continue
 		}
 		seen[id] = true
@@ -120,7 +144,7 @@ func (m *pickerModel) prepare(ctx context.Context) error {
 	}
 	if m.observeActivity != nil {
 		var err error
-		m.activity, err = m.observeActivity(ctx, m.regs)
+		m.activity, err = m.observeActivity(ctx, relevant)
 		if err != nil {
 			return err
 		}
@@ -131,14 +155,16 @@ func (m *pickerModel) prepare(ctx context.Context) error {
 	m.states = map[string]*pickerScopeState{}
 	return ctx.Err()
 }
+
 func pickerPresentation(r catalog.PickerRow) archive.Metadata {
-	m := archive.Metadata{SessionID: r.SessionID, Harness: archive.Harness{Name: r.Harness}, ProjectID: r.ProjectID, RepoKey: r.RepoKey, ProjectName: r.ProjectName, CapturedAt: r.CapturedAt, Name: r.Name, Title: r.Title}
+	var turns *int
 	if r.PromptCount != nil {
 		n := int(*r.PromptCount)
-		m.Counts.Turns = &n
+		turns = &n
 	}
-	return m
+	return archive.Metadata{SessionID: r.SessionID, Harness: archive.Harness{Name: r.Harness}, ProjectID: r.ProjectID, RepoKey: r.RepoKey, ProjectName: r.ProjectName, CapturedAt: r.CapturedAt, Name: r.Name, Title: r.Title, Counts: archive.Counts{Turns: turns}}
 }
+
 func pickerCandidateBefore(a, b pickerCandidate) bool {
 	if !a.row.active.Equal(b.row.active) {
 		return a.row.active.After(b.row.active)
@@ -164,6 +190,7 @@ func pickerCandidateBefore(a, b pickerCandidate) bool {
 	}
 	return a.ordinal < b.ordinal
 }
+
 func (m *pickerModel) state(s sessionScope) (*pickerScopeState, error) {
 	q, err := pickerScopeQuery(s, m.harness, min(100, m.pageSize+1))
 	if err != nil {
@@ -179,13 +206,15 @@ func (m *pickerModel) state(s sessionScope) (*pickerScopeState, error) {
 	// canonical identities keep another harness with the same ID independent.
 	latest := map[pickerIdentity]int{}
 	for i, r := range m.regs {
-		latest[pickerID(r.Harness.Name, r.ArchiveSessionID)] = i
+		if m.relevantRegistration(r) {
+			latest[pickerID(r.Harness.Name, r.ArchiveSessionID)] = i
+		}
 	}
 	for i := range m.regs {
 		reg := &m.regs[i]
 		id := pickerID(reg.Harness.Name, reg.ArchiveSessionID)
 		item, classified := m.facts[id]
-		if !classified || latest[id] != i {
+		if !classified || !m.relevantRegistration(*reg) || latest[id] != i {
 			continue
 		}
 		md := registrationMetadata(*reg)
@@ -204,23 +233,24 @@ func (m *pickerModel) state(s sessionScope) (*pickerScopeState, error) {
 		if item != nil && (!item.Row.Root || item.Row.Replay) {
 			continue
 		}
-		c := pickerCandidate{row: handoffPickerRow{metadata: md, active: active, registered: true, reg: reg}, item: item, ordinal: i}
-		if item == nil || item.Row.PromptState == "zero" {
+		var unbuilt *archive.SessionRegistration
+		if item == nil || item.Row.PromptState == catalog.PickerPromptsZero {
 			if m.source == "archive" {
 				continue
 			}
-			c.row.unbuilt = reg
-			c.row.notUploaded = item == nil && !m.absenceUnknown
+			unbuilt = reg
 		}
+		c := pickerCandidate{row: handoffPickerRow{metadata: md, active: active, registered: true, reg: reg, unbuilt: unbuilt, notUploaded: item == nil && !m.absenceUnknown}, item: item, ordinal: i}
 		st.locals = append(st.locals, c)
 	}
 	sort.SliceStable(st.locals, func(i, j int) bool { return pickerCandidateBefore(st.locals[i], st.locals[j]) })
-	if m.source == "local" {
+	if m.source == "local" || m.archive == nil {
 		st.remoteDone = true
 	}
 	m.states[key] = st
 	return st, nil
 }
+
 func (m *pickerModel) First(ctx context.Context, s sessionScope) (modelPickerView, error) {
 	st, err := m.state(s)
 	if err != nil {
@@ -239,7 +269,9 @@ func (m *pickerModel) First(ctx context.Context, s sessionScope) (modelPickerVie
 	}
 	return m.Older(ctx, s)
 }
+
 func clonePickerView(v modelPickerView) modelPickerView { v.Rows = slices.Clone(v.Rows); return v }
+
 func (m *pickerModel) Older(ctx context.Context, s sessionScope) (modelPickerView, error) {
 	st, err := m.state(s)
 	if err != nil {
@@ -252,9 +284,7 @@ func (m *pickerModel) Older(ctx context.Context, s sessionScope) (modelPickerVie
 	st.buffer = slices.Clone(st.buffer)
 	st.view = clonePickerView(st.view)
 	st.emitted = map[string]bool{}
-	for k, v := range priorEmitted {
-		st.emitted[k] = v
-	}
+	maps.Copy(st.emitted, priorEmitted)
 	st.started = true
 	st.view.Incomplete = false
 	target := len(st.view.Rows) + m.pageSize
@@ -319,26 +349,42 @@ func (m *pickerModel) Older(ctx context.Context, s sessionScope) (modelPickerVie
 	if !st.view.More {
 		st.view.Total = len(st.view.Rows)
 	}
+	if m.absenceUnknown && m.source != "local" {
+		// Offline auto can prove the native subset complete, but not the
+		// combined scope empty. Archive retry requires a refreshed view.
+		st.view.Incomplete = true
+		st.view.Empty = false
+		st.view.Total = -1
+	}
+	if err = m.validateOperation(ctx, pages); err != nil {
+		return modelPickerView{}, err
+	}
 	raw, _ := json.Marshal(s)
 	m.states[string(raw)] = st
 	return clonePickerView(st.view), nil
 }
 
-// Refresh requires a new captured archive view supplied by the caller. Reusing
-// an expired snapshot cannot extend its lifetime or manufacture fresh references.
-func (m *pickerModel) Refresh(ctx context.Context, s sessionScope, fresh pickerArchive) (modelPickerView, error) {
-	candidate := *m
-	candidate.archive = fresh
-	if err := candidate.prepare(ctx); err != nil {
-		return modelPickerView{}, err
+// validateOperation verifies cached operations as well as freshly read pages.
+func (m *pickerModel) validateOperation(ctx context.Context, pages int) error {
+	// A logical operation can finish entirely from buffered archive rows or
+	// local candidates. Such an operation still needs a fresh head observation.
+	if pages == 0 {
+		if validator, ok := m.archive.(interface{ ValidateContinuation(context.Context) error }); ok {
+			if err := validator.ValidateContinuation(ctx); err != nil {
+				return err
+			}
+		}
 	}
-	view, err := candidate.First(ctx, s)
-	if err != nil {
-		return modelPickerView{}, err
+	// Page reads establish freshness; their captured lifetime and cancellation
+	// still apply after any native materialization and before publishing state.
+	if validator, ok := m.archive.(interface{ ValidateRead(context.Context) error }); ok {
+		if err := validator.ValidateRead(ctx); err != nil {
+			return err
+		}
 	}
-	*m = candidate
-	return view, nil
+	return ctx.Err()
 }
+
 func pickerLocalLabelKey(reg archive.SessionRegistration, active time.Time, source string) localLabelKey {
 	raw, _ := json.Marshal(reg)
 	return localLabelKey{sessionID: reg.ArchiveSessionID, harness: archive.CanonicalHarness(reg.Harness.Name), active: active, registration: string(raw), policy: source}
@@ -355,6 +401,7 @@ func (st *pickerScopeState) suppressRemote() {
 		st.view.Suppressed++
 	}
 }
+
 func (m *pickerModel) fillRemote(ctx context.Context, st *pickerScopeState, pages *int, budget int) error {
 	st.suppressRemote()
 	for len(st.buffer) == 0 && !st.remoteDone {
@@ -375,6 +422,7 @@ func (m *pickerModel) fillRemote(ctx context.Context, st *pickerScopeState, page
 	}
 	return nil
 }
+
 func (m *pickerModel) materializeLocal(ctx context.Context, st *pickerScopeState, attempts *int) (pickerCandidate, bool, error) {
 	c := st.locals[st.localPos]
 	if c.row.unbuilt == nil {
@@ -391,9 +439,19 @@ func (m *pickerModel) materializeLocal(ctx context.Context, st *pickerScopeState
 		}
 		*attempts++
 		st.view.LabelAttempts++
-		result.metadata, result.hasPrompt = m.label(ctx, reg, c.row.active)
+		var labelErr error
+		result.metadata, result.hasPrompt, labelErr = m.label(ctx, reg, c.row.active)
 		if err := ctx.Err(); err != nil {
 			return pickerCandidate{}, false, err
+		}
+		if labelErr != nil {
+			if errors.Is(labelErr, context.Canceled) || errors.Is(labelErr, context.DeadlineExceeded) {
+				return pickerCandidate{}, false, labelErr
+			}
+			// A read/parse failure does not establish no prompt. Keep this
+			// candidate pending so Older may retry without a negative cache.
+			st.view.Incomplete = true
+			return c, false, nil
 		}
 		m.labels[key] = result
 	}

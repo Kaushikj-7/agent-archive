@@ -33,9 +33,10 @@ type scopeView struct {
 	// searchNote is the footer's line about the matches elsewhere of the
 	// words the browser opens with, which the filter shows only while it
 	// holds those words; searchWords says them.
-	searchNote   string
-	searchWords  string
-	searchNotice string
+	searchNote    string
+	searchWords   string
+	searchNotice  string
+	searchPartial bool
 	// nothing is set when the view holds nothing though it has rows: the
 	// words the browser opens with match none of them, so the browser opens
 	// on all projects as it does for a scope with no session.
@@ -44,7 +45,8 @@ type scopeView struct {
 
 // holdsNothing reports whether the view has nothing to show: no row, or none
 // that the words the browser opens with match.
-func (v scopeView) provenEmpty() bool  { return !v.incomplete && len(v.rows) == 0 }
+func (v scopeView) provenEmpty() bool { return !v.incomplete && len(v.rows) == 0 }
+
 func (v scopeView) holdsNothing() bool { return v.provenEmpty() || v.nothing }
 
 // scopeRowsFunc builds the rows a scope shows. A scope with All set is every
@@ -132,6 +134,7 @@ func (c *scopeChoices) toggle() {
 	if !c.canToggle() {
 		return
 	}
+	// Initial search misses do not remove the scope rows after clearing.
 	if c.current == viewAll && c.choice(viewScope).provenEmpty() {
 		c.fellBack = true
 		all := c.choice(viewAll)
@@ -143,11 +146,7 @@ func (c *scopeChoices) toggle() {
 
 // choice builds choice i once.
 func (c *scopeChoices) choice(i int) *scopeChoice {
-	ctx := c.ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	return c.choiceContext(ctx, i)
+	return c.choiceContext(c.ctx, i)
 }
 
 func (c *scopeChoices) choiceContext(ctx context.Context, i int) *scopeChoice {

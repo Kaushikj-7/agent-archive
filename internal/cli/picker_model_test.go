@@ -40,6 +40,7 @@ func (a *modelArchive) PickerPage(ctx context.Context, q catalog.PickerQuery, ne
 	}
 	return p, nil
 }
+
 func (a *modelArchive) PickerLookup(ctx context.Context, ids []catalog.PickerIdentity) (catalog.PickerIdentityBatch, error) {
 	if ctx.Err() != nil {
 		return catalog.PickerIdentityBatch{}, ctx.Err()
@@ -52,9 +53,11 @@ func (a *modelArchive) PickerLookup(ctx context.Context, ids []catalog.PickerIde
 	}
 	return b, nil
 }
+
 func (a *modelArchive) HydratePicker(context.Context, catalog.PickerReference) (catalog.PickerHydration, error) {
 	return catalog.PickerHydration{}, errors.New("fake hydration")
 }
+
 func modelIDs(v modelPickerView) []string {
 	out := []string{}
 	for _, r := range v.Rows {
@@ -82,18 +85,19 @@ func TestPickerModelAllPagesEqualExhaustiveUnion(t *testing.T) {
 						continue
 					}
 					key, _ := archive.MetadataObjectKey(md.Harness.Name, md.SessionID)
-					r := catalog.PickerRow{SessionKey: key, SessionID: md.SessionID, Harness: md.Harness.Name, Activity: lastActivity(md), CapturedAt: md.CapturedAt, Root: true, Title: md.Title, ProjectID: md.ProjectID}
+					promptState := catalog.PickerPromptsUnknown
 					if archivedWithoutPrompt(md) {
-						r.PromptState = "zero"
+						promptState = catalog.PickerPromptsZero
 					}
+					r := catalog.PickerRow{SessionKey: key, SessionID: md.SessionID, Harness: md.Harness.Name, Activity: lastActivity(md), CapturedAt: md.CapturedAt, Root: true, Title: md.Title, ProjectID: md.ProjectID, PromptState: promptState}
 					item := catalog.PickerItem{Row: r}
 					a.facts[pickerID(md.Harness.Name, md.SessionID)] = item
-					if r.PromptState != "zero" {
+					if r.PromptState != catalog.PickerPromptsZero {
 						a.items = append(a.items, item)
 					}
 				}
 				// Position 51/101 association must come from exact lookup rather than page.
-				for i := 0; i < 110; i++ {
+				for i := range 110 {
 					md := archived[0]
 					md.SessionID = fmt.Sprintf("remote-%03d", i)
 					md.CapturedAt = md.CapturedAt.Add(-time.Duration(i+1) * time.Minute)
@@ -116,9 +120,10 @@ func TestPickerModelAllPagesEqualExhaustiveUnion(t *testing.T) {
 				for _, r := range want {
 					wantIDs = append(wantIDs, r.metadata.Harness.Name+"/"+r.metadata.SessionID)
 				}
-				m := &pickerModel{archive: a, regs: regs, activity: activity, source: source, pageSize: 7, labelBudget: 50, label: func(ctx context.Context, r archive.SessionRegistration, at time.Time) (archive.Metadata, bool) {
-					p.ctx = ctx
-					return p.buildLocalMetadata(r, at)
+				m := &pickerModel{archive: a, regs: regs, activity: activity, source: source, pageSize: 7, labelBudget: 50, label: func(ctx context.Context, r archive.SessionRegistration, at time.Time) (archive.Metadata, bool, error) {
+					labelPicker := p
+					labelPicker.ctx = ctx
+					return labelPicker.buildLocalMetadataResult(r, at)
 				}}
 				if err = m.prepare(t.Context()); err != nil {
 					t.Fatal(err)
@@ -143,10 +148,10 @@ func TestPickerModelAllPagesEqualExhaustiveUnion(t *testing.T) {
 
 func TestPickerModelAttemptBudgetCannotProveEmpty(t *testing.T) {
 	a := &modelArchive{facts: map[pickerIdentity]catalog.PickerItem{}}
-	m := &pickerModel{archive: a, pageSize: 50, labelBudget: 50, activity: map[pickerIdentity]time.Time{}, label: func(_ context.Context, r archive.SessionRegistration, _ time.Time) (archive.Metadata, bool) {
-		return archive.Metadata{SessionID: r.ArchiveSessionID, Harness: r.Harness}, r.ArchiveSessionID == "local-100"
+	m := &pickerModel{archive: a, pageSize: 50, labelBudget: 50, activity: map[pickerIdentity]time.Time{}, label: func(_ context.Context, r archive.SessionRegistration, _ time.Time) (archive.Metadata, bool, error) {
+		return archive.Metadata{SessionID: r.ArchiveSessionID, Harness: r.Harness}, r.ArchiveSessionID == "local-100", nil
 	}}
-	for i := 0; i < 101; i++ {
+	for i := range 101 {
 		r := archive.SessionRegistration{ArchiveSessionID: fmt.Sprintf("local-%03d", i), Harness: archive.Harness{Name: "codex"}}
 		m.regs = append(m.regs, r)
 		m.activity[pickerID("codex", r.ArchiveSessionID)] = time.Unix(int64(1000-i), 0)
@@ -179,7 +184,7 @@ func TestPickerModelAttemptBudgetCannotProveEmpty(t *testing.T) {
 
 func TestPickerModelErrorAtomicScopeAndIdentity(t *testing.T) {
 	a := &modelArchive{facts: map[pickerIdentity]catalog.PickerItem{}}
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		a.items = append(a.items, catalog.PickerItem{Row: catalog.PickerRow{SessionKey: strconv.Itoa(i), SessionID: strconv.Itoa(i), Harness: "codex", Activity: time.Unix(int64(10-i), 0)}})
 	}
 	m := &pickerModel{archive: a, pageSize: 2, labelBudget: 50, source: "archive"}
@@ -235,7 +240,7 @@ func TestPickerModelHarnessIdentityAndCachePolicy(t *testing.T) {
 
 func TestPickerModelBackwardOverrideSuppressesPastPage101(t *testing.T) {
 	a := &modelArchive{facts: map[pickerIdentity]catalog.PickerItem{}}
-	for i := 0; i < 130; i++ {
+	for i := range 130 {
 		r := catalog.PickerRow{SessionKey: fmt.Sprintf("sessions/codex/%03d/metadata.json", i), SessionID: fmt.Sprintf("id-%03d", i), Harness: "codex", Root: true, Activity: time.Unix(int64(10000-i), 0), CapturedAt: time.Unix(int64(20000-i), 0)}
 		item := catalog.PickerItem{Row: r}
 		a.items = append(a.items, item)
@@ -279,8 +284,8 @@ func TestPickerModelEqualActivityKeepsArchiveProvenance(t *testing.T) {
 			a.facts[pickerID("codex", id)] = item
 		}
 	}
-	m := &pickerModel{archive: a, regs: regs, activity: activity, source: "auto", pageSize: 2, labelBudget: 50, label: func(_ context.Context, r archive.SessionRegistration, at time.Time) (archive.Metadata, bool) {
-		return archive.Metadata{SessionID: r.ArchiveSessionID, Harness: r.Harness, CapturedAt: at}, true
+	m := &pickerModel{archive: a, regs: regs, activity: activity, source: "auto", pageSize: 2, labelBudget: 50, label: func(_ context.Context, r archive.SessionRegistration, at time.Time) (archive.Metadata, bool, error) {
+		return archive.Metadata{SessionID: r.ArchiveSessionID, Harness: r.Harness, CapturedAt: at}, true, nil
 	}}
 	if err := m.prepare(t.Context()); err != nil {
 		t.Fatal(err)
@@ -347,10 +352,10 @@ func TestPickerModelZeroPromptRevivalSourcePolicy(t *testing.T) {
 	for _, source := range []string{"auto", "local", "archive"} {
 		t.Run(source, func(t *testing.T) {
 			reg := archive.SessionRegistration{ArchiveSessionID: "revive", Harness: archive.Harness{Name: "codex"}}
-			item := catalog.PickerItem{Row: catalog.PickerRow{SessionKey: "physical", SessionID: "revive", Harness: "codex", Root: true, PromptState: "zero", Activity: time.Unix(10, 0), CapturedAt: time.Unix(20, 0)}}
+			item := catalog.PickerItem{Row: catalog.PickerRow{SessionKey: "physical", SessionID: "revive", Harness: "codex", Root: true, PromptState: catalog.PickerPromptsZero, Activity: time.Unix(10, 0), CapturedAt: time.Unix(20, 0)}}
 			a := &modelArchive{facts: map[pickerIdentity]catalog.PickerItem{pickerID("codex", "revive"): item}}
-			m := &pickerModel{archive: a, regs: []archive.SessionRegistration{reg}, activity: map[pickerIdentity]time.Time{pickerID("codex", "revive"): time.Unix(30, 0)}, source: source, pageSize: 50, labelBudget: 50, label: func(_ context.Context, r archive.SessionRegistration, at time.Time) (archive.Metadata, bool) {
-				return archive.Metadata{SessionID: r.ArchiveSessionID, Harness: r.Harness, CapturedAt: at}, true
+			m := &pickerModel{archive: a, regs: []archive.SessionRegistration{reg}, activity: map[pickerIdentity]time.Time{pickerID("codex", "revive"): time.Unix(30, 0)}, source: source, pageSize: 50, labelBudget: 50, label: func(_ context.Context, r archive.SessionRegistration, at time.Time) (archive.Metadata, bool, error) {
+				return archive.Metadata{SessionID: r.ArchiveSessionID, Harness: r.Harness, CapturedAt: at}, true, nil
 			}}
 			if err := m.prepare(t.Context()); err != nil {
 				t.Fatal(err)
@@ -396,11 +401,11 @@ func TestPickerActivitiesSharedIDStaysHarnessQualified(t *testing.T) {
 	}
 }
 
-func TestPickerModelScopeContinuationsAndRefreshActivity(t *testing.T) {
+func TestPickerModelScopeContinuationsAndFreshActivity(t *testing.T) {
 	a := &modelArchive{facts: map[pickerIdentity]catalog.PickerItem{}}
 	regs := []archive.SessionRegistration{}
 	active := time.Unix(100, 0)
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		regs = append(regs, archive.SessionRegistration{ArchiveSessionID: fmt.Sprintf("refresh-%d", i), Harness: archive.Harness{Name: "codex"}, ProjectRoot: "/repo"})
 	}
 	reads := 0
@@ -410,9 +415,9 @@ func TestPickerModelScopeContinuationsAndRefreshActivity(t *testing.T) {
 			out[pickerID("codex", r.ArchiveSessionID)] = active.Add(-time.Duration(i) * time.Second)
 		}
 		return out, nil
-	}, label: func(_ context.Context, r archive.SessionRegistration, at time.Time) (archive.Metadata, bool) {
+	}, label: func(_ context.Context, r archive.SessionRegistration, at time.Time) (archive.Metadata, bool, error) {
 		reads++
-		return archive.Metadata{SessionID: r.ArchiveSessionID, Harness: r.Harness, CapturedAt: at}, true
+		return archive.Metadata{SessionID: r.ArchiveSessionID, Harness: r.Harness, CapturedAt: at}, true, nil
 	}}
 	if err := m.prepare(t.Context()); err != nil {
 		t.Fatal(err)
@@ -435,7 +440,11 @@ func TestPickerModelScopeContinuationsAndRefreshActivity(t *testing.T) {
 		t.Fatalf("toggle reread or lost prefix reads=%d view=%+v err=%v", reads, v, err)
 	}
 	active = active.Add(time.Hour)
-	v, err = m.Refresh(t.Context(), scoped, a)
+	m = &pickerModel{archive: a, regs: regs, source: m.source, pageSize: m.pageSize, labelBudget: m.labelBudget, observeActivity: m.observeActivity, label: m.label, labels: m.labels}
+	if err = m.prepare(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	v, err = m.First(t.Context(), scoped)
 	if err != nil || len(v.Rows) != 2 || reads != 8 || !v.Rows[0].row.active.Equal(active) {
 		t.Fatalf("refresh failed to observe activity/read new safe labels: %+v %v reads=%d", v, err, reads)
 	}
@@ -458,7 +467,7 @@ func TestPickerModelRawSessionPrefixTieOrder(t *testing.T) {
 func TestPickerModelMoreRequiresEligibleUnsuppressedLookahead(t *testing.T) {
 	key, other := archive.RepoKey("https://example.test/repo"), archive.RepoKey("https://example.test/other")
 	a := &modelArchive{facts: map[pickerIdentity]catalog.PickerItem{}}
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		id := strconv.Itoa(i)
 		item := catalog.PickerItem{Row: catalog.PickerRow{SessionKey: id, SessionID: id, Harness: "codex", Root: true, RepoKey: key, Activity: time.Unix(int64(10-i), 0)}}
 		a.items = append(a.items, item)
@@ -475,5 +484,141 @@ func TestPickerModelMoreRequiresEligibleUnsuppressedLookahead(t *testing.T) {
 	}
 	if v.More || v.Incomplete || len(v.Rows) != 2 || v.Total != 2 || v.Suppressed != 1 {
 		t.Fatalf("suppressed lookahead was reported as eligible More: %+v", v)
+	}
+}
+
+// validatingModelArchive exercises operations that finish from cached candidates.
+type validatingModelArchive struct {
+	*modelArchive
+	validationErr error
+	readErr       error
+}
+
+func (a *validatingModelArchive) ValidateRead(context.Context) error {
+	return a.readErr
+}
+
+func (a *validatingModelArchive) ValidateContinuation(context.Context) error {
+	return a.validationErr
+}
+
+func TestPickerModelCachedOlderRejectsChangedAuthorityAtomically(t *testing.T) {
+	for _, source := range []string{"local", "auto"} {
+		t.Run(source, func(t *testing.T) {
+			a := &validatingModelArchive{modelArchive: &modelArchive{facts: map[pickerIdentity]catalog.PickerItem{}, items: []catalog.PickerItem{{Row: catalog.PickerRow{SessionKey: "remote", SessionID: "remote", Harness: "codex", Activity: time.Unix(1, 0)}}}}}
+			regs := []archive.SessionRegistration{}
+			activity := map[pickerIdentity]time.Time{}
+			for i := range 4 {
+				id := strconv.Itoa(i)
+				reg := archive.SessionRegistration{ArchiveSessionID: id, Harness: archive.Harness{Name: "codex"}}
+				regs = append(regs, reg)
+				activity[pickerID("codex", id)] = time.Unix(int64(10-i), 0)
+			}
+			m := &pickerModel{archive: a, regs: regs, activity: activity, source: source, pageSize: 2, labelBudget: 50, label: func(_ context.Context, reg archive.SessionRegistration, at time.Time) (archive.Metadata, bool, error) {
+				return archive.Metadata{SessionID: reg.ArchiveSessionID, Harness: reg.Harness, CapturedAt: at}, true, nil
+			}}
+			if err := m.prepare(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			scope := sessionScope{All: true}
+			first, err := m.First(t.Context(), scope)
+			if err != nil {
+				t.Fatal(err)
+			}
+			a.validationErr = catalog.ErrStaleCursor
+			if _, err = m.Older(t.Context(), scope); !errors.Is(err, catalog.ErrStaleCursor) {
+				t.Fatalf("cached continuation accepted changed head: %v", err)
+			}
+			a.validationErr = nil
+			a.readErr = catalog.ErrStaleCursor
+			if _, err = m.Older(t.Context(), scope); !errors.Is(err, catalog.ErrStaleCursor) {
+				t.Fatalf("cached continuation accepted expired lifetime: %v", err)
+			}
+			a.readErr = nil
+			unchanged, err := m.First(t.Context(), scope)
+			if err != nil || !reflect.DeepEqual(modelIDs(first), modelIDs(unchanged)) {
+				t.Fatalf("failed Older consumed prefix: %v %v", modelIDs(unchanged), err)
+			}
+			last, err := m.Older(t.Context(), scope)
+			if err != nil || len(last.Rows) != 4 {
+				t.Fatalf("retry failed: %+v %v", last, err)
+			}
+		})
+	}
+}
+
+func TestPickerModelOfflineAutoCannotProveCombinedScopeEmpty(t *testing.T) {
+	for _, source := range []string{"auto", "local"} {
+		t.Run(source, func(t *testing.T) {
+			m := &pickerModel{absenceUnknown: true, source: source, pageSize: 50, labelBudget: 50}
+			if err := m.prepare(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			v, err := m.First(t.Context(), sessionScope{All: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if source == "local" {
+				if !v.Empty || v.Incomplete || v.Total != 0 {
+					t.Fatal(v)
+				}
+			} else {
+				if v.Empty || !v.Incomplete || v.Total != -1 || v.More {
+					t.Fatal(v)
+				}
+				fresh := &modelArchive{facts: map[pickerIdentity]catalog.PickerItem{}}
+				m = &pickerModel{archive: fresh, source: source, pageSize: 50, labelBudget: 50}
+				if err = m.prepare(t.Context()); err != nil {
+					t.Fatal(err)
+				}
+				v, err = m.First(t.Context(), sessionScope{All: true})
+				if err != nil || !v.Empty || v.Incomplete || v.Total != 0 || m.absenceUnknown {
+					t.Fatalf("fresh complete view retained offline uncertainty: %+v %v", v, err)
+				}
+			}
+		})
+	}
+}
+
+func TestPickerModelLabelCancellationDoesNotConsumeCandidate(t *testing.T) {
+	reg := archive.SessionRegistration{ArchiveSessionID: "retry", Harness: archive.Harness{Name: "codex"}}
+	m := &pickerModel{source: "local", regs: []archive.SessionRegistration{reg}, activity: map[pickerIdentity]time.Time{pickerID("codex", "retry"): time.Unix(100, 0)}, pageSize: 50, labelBudget: 50, label: func(context.Context, archive.SessionRegistration, time.Time) (archive.Metadata, bool, error) {
+		return archive.Metadata{}, false, context.Canceled
+	}}
+	if err := m.prepare(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	scope := sessionScope{All: true}
+	if _, err := m.First(t.Context(), scope); !errors.Is(err, context.Canceled) || len(m.labels) != 0 {
+		t.Fatalf("cancellation consumed or cached candidate: %v labels=%v", err, m.labels)
+	}
+	m.label = func(context.Context, archive.SessionRegistration, time.Time) (archive.Metadata, bool, error) {
+		return archive.Metadata{SessionID: reg.ArchiveSessionID, Harness: reg.Harness}, true, nil
+	}
+	v, err := m.First(t.Context(), scope)
+	if err != nil || len(v.Rows) != 1 || v.Empty || v.LabelAttempts != 1 {
+		t.Fatalf("canceled first page was not retryable: %+v %v", v, err)
+	}
+}
+
+func TestPickerModelObservesOnlyEligibleFilteredRegistrations(t *testing.T) {
+	root := archive.SessionRegistration{ArchiveSessionID: "root", Harness: archive.Harness{Name: "codex"}}
+	child := root
+	child.SubagentID = "child"
+	other := archive.SessionRegistration{ArchiveSessionID: "other", Harness: archive.Harness{Name: "claude"}}
+	m := &pickerModel{archive: &modelArchive{facts: map[pickerIdentity]catalog.PickerItem{}}, source: "local", harness: "codex", regs: []archive.SessionRegistration{root, other, child}, pageSize: 50, labelBudget: 50, observeActivity: func(_ context.Context, regs []archive.SessionRegistration) (map[pickerIdentity]time.Time, error) {
+		if len(regs) != 1 || regs[0].Harness.Name != "codex" || regs[0].SubagentID != "" {
+			return nil, errors.New("irrelevant registration reached strict activity provider")
+		}
+		return map[pickerIdentity]time.Time{pickerID("codex", "root"): time.Unix(100, 0)}, nil
+	}, label: func(_ context.Context, reg archive.SessionRegistration, at time.Time) (archive.Metadata, bool, error) {
+		return archive.Metadata{SessionID: reg.ArchiveSessionID, Harness: reg.Harness, CapturedAt: at}, true, nil
+	}}
+	if err := m.prepare(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	v, err := m.First(t.Context(), sessionScope{All: true})
+	if err != nil || len(v.Rows) != 1 || v.Rows[0].row.reg.SubagentID != "" {
+		t.Fatalf("ineligible last registration replaced offered root: %+v %v", v, err)
 	}
 }

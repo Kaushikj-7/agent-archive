@@ -194,6 +194,11 @@ only the rows already displayed. Esc clears a search or cancels a page read;
 line mode accepts Enter or `cancel` during a page read. Named projects and
 advanced filters retain the complete compatibility reader.
 
+Handoff's complete archive search retains all archived matcher fields. Native
+local search makes at most 50 new label-read attempts per search, including
+failed reads and sessions with no prompt. Its match count describes observed
+sessions; local eligibility beyond that work remains explicitly unknown.
+
 ## Browsing on a terminal
 
 The list and bare-show browsers offer **Older sessions** when the initial table

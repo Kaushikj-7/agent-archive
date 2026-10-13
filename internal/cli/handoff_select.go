@@ -135,47 +135,54 @@ func selectHandoffSession(env handoffSelectDependencies, home string, opts hando
 	}
 	boundedFormat := listFormatOptions{Now: env.now(), Projects: projectLabels(cfg), Style: styleFor(stdout), GroupByProject: true, Numbered: true, DimID: true,
 		NarrowHint: "Narrow with --harness, or name a session: agent-archive handoff SESSION_ID."}
-	if err == nil {
-		stop := startActivity(stdout, "Finding sessions…")
-		choices, model, _, used, boundedErr := boundedHandoffChoices(ctx, env, store, home, opts, scope, regs, boundedFormat, stderr)
-		stop()
-		if used {
-			if boundedErr != nil {
-				if opts.source == "archive" || errors.Is(boundedErr, catalog.ErrPickerBudget) || errors.Is(boundedErr, catalog.ErrStaleCursor) || errors.Is(boundedErr, catalog.ErrPickerIdentityAmbiguous) || ctx.Err() != nil {
-					terminal.Printf(stderr, "agent-archive: handoff: %v\n", boundedErr)
-					return "", "", false, 1
-				}
-				terminal.Printf(stderr, "agent-archive: handoff: note: the archive could not be read, so only this machine's sessions are listed: %v\n", boundedErr)
-				choices, model, boundedErr = boundedLocalHandoffChoices(ctx, env, home, opts, scope, regs, boundedFormat)
-				if boundedErr != nil {
-					terminal.Printf(stderr, "agent-archive: handoff: %v\n", boundedErr)
-					return "", "", false, 1
-				}
-			}
-			if choices.shown().holdsNothing() {
-				terminal.Println(stdout, "No sessions match.")
-				return "", "", false, 0
-			}
-			row, selected, code := runBrowser(ctx, env, in.prompter(stdout), stdout, stderr, browserSpec{Mode: pickSession, Verb: "Hand off", Choices: choices, Command: "handoff"})
-			if e := model.searchError(); e != nil {
+	stopBounded := startActivity(stdout, "Finding sessions…")
+	choices, model, used, boundedErr := handoffChoicesForStore(ctx, env, store, home, opts, scope, regs, boundedFormat, stderr, err)
+	stopBounded()
+	if used {
+		if boundedErr != nil {
+			if opts.source == "archive" || errors.Is(boundedErr, catalog.ErrPickerBudget) || errors.Is(boundedErr, catalog.ErrStaleCursor) || errors.Is(boundedErr, catalog.ErrPickerIdentityAmbiguous) || errors.Is(boundedErr, errPickerActivityUnavailable) || errors.Is(boundedErr, context.Canceled) || errors.Is(boundedErr, context.DeadlineExceeded) || ctx.Err() != nil {
+				terminal.Printf(stderr, "agent-archive: handoff: %v\n", boundedErr)
 				return "", "", false, 1
 			}
-			if selected && opts.selection != nil {
-				*opts.selection = row.pickerSelection
+			terminal.Printf(stderr, "agent-archive: handoff: note: the archive could not be read, so only this machine's sessions are listed: %v\n", boundedErr)
+			choices, model, boundedErr = boundedLocalHandoffChoices(ctx, env, home, opts, scope, regs, boundedFormat, stderr)
+			if boundedErr != nil {
+				terminal.Printf(stderr, "agent-archive: handoff: %v\n", boundedErr)
+				return "", "", false, 1
 			}
-			return row.SessionID, row.HarnessKey, selected, code
 		}
+		if choices.shown().holdsNothing() {
+			terminal.Println(stdout, "No sessions match.")
+			return "", "", false, 0
+		}
+		row, selected, code := runBrowser(ctx, env, in.prompter(stdout), stdout, stderr, browserSpec{Mode: pickSession, Verb: "Hand off", Choices: choices, Command: "handoff"})
+		if e := model.searchError(); e != nil {
+			return "", "", false, 1
+		}
+		if selected && opts.selection != nil {
+			*opts.selection = row.pickerSelection
+		}
+		return row.SessionID, row.HarnessKey, selected, code
 	}
 	stop := startActivity(stdout, "Finding sessions…")
 	var archived []archive.Metadata
 	if err == nil {
 		archived, err = loadSessionsForBrowse(env, store, listOptions{filter: reader.Filter{Harness: opts.harness, Replays: reader.ReplaysHidden}}, stderr, "handoff")
 	}
+	if err != nil && (opts.source == "archive" || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
+		stop()
+		terminal.Printf(stderr, "agent-archive: handoff: %v\n", err)
+		return "", "", false, 1
+	}
 	picker := handoffPicker{localLabels: make(map[localLabelKey]localLabelResult), ctx: ctx, env: env, home: home, harness: opts.harness, source: opts.source, archiveRead: err == nil}
 	format := listFormatOptions{Now: env.now(), Projects: projectLabels(cfg), Style: styleFor(stdout), GroupByProject: true, Numbered: true, DimID: true, Children: childCounts(archived),
 		NarrowHint: "Narrow with --harness, or name a session: agent-archive handoff SESSION_ID."}
-	choices := pagedHandoffChoices(scope, format, picker, regs, archived)
+	choices = pagedHandoffChoices(scope, format, picker, regs, archived)
 	stop()
+	if err := ctx.Err(); err != nil {
+		terminal.Printf(stderr, "agent-archive: handoff: %v\n", err)
+		return "", "", false, 1
+	}
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: handoff: note: the archive could not be read, so only this machine's sessions are listed: %v\n", err)
 	}
@@ -289,13 +296,19 @@ type localLabelResult struct {
 }
 
 type handoffPicker struct {
+	// searchLabelBudget bounds attempted uncached native reads in bounded search.
+	// Zero preserves the legacy accepted-row title limit.
+	searchLabelBudget int
 	// Shared by picker scope/search views; only small safe row facts are cached.
 	localLabels map[localLabelKey]localLabelResult
-	ctx         context.Context
-	env         handoffSelectDependencies
-	home        string
-	harness     string
-	source      string
+	// readError opts bounded search into strict activity/cancellation errors.
+	// Ordinary native label failures keep eligibility and totals unknown.
+	readError *error
+	ctx       context.Context
+	env       handoffSelectDependencies
+	home      string
+	harness   string
+	source    string
 	// archiveRead is false when the archive could not be listed, so a
 	// session missing from it is not known to be missing.
 	archiveRead bool
@@ -306,6 +319,12 @@ type handoffPicker struct {
 	// be read into (its transcript read to title it): past it, such a
 	// session is left out, as a limit would leave it out. 0 for no bound.
 	readLimit int
+}
+
+// withContext preserves picker policy while using the current operation's context.
+func (p handoffPicker) withContext(ctx context.Context) handoffPicker {
+	p.ctx = ctx
+	return p
 }
 
 // rows merges registrations with archived sessions, joined on the archive
@@ -352,7 +371,10 @@ func (p handoffPicker) rows(regs []archive.SessionRegistration, archived []archi
 		}
 		return !p.scope.contains(registrationMetadata(reg), &reg)
 	})
-	activity := pickerActivities(p.ctx, p.env, regs)
+	activity, err := p.activities(regs)
+	if err != nil {
+		return nil, -1, true
+	}
 	for _, reg := range regs {
 		active, ok := activity[pickerID(reg.Harness.Name, reg.ArchiveSessionID)]
 		if !ok {
@@ -376,58 +398,133 @@ func (p handoffPicker) rows(regs []archive.SessionRegistration, archived []archi
 	})
 	sort.SliceStable(all, func(i, j int) bool { return all[i].active.After(all[j].active) })
 	rows = make([]handoffPickerRow, 0, min(limit, len(all)))
+	attempts, unknown := 0, false
 	for i, row := range all {
 		if len(rows) == limit {
 			// Every archived session left over can be offered; one not
 			// yet uploaded may have no prompt, and was not read to see.
 			rest := all[i:]
-			if slices.ContainsFunc(rest, func(row handoffPickerRow) bool { return row.unbuilt != nil }) {
+			if unknown || slices.ContainsFunc(rest, func(row handoffPickerRow) bool { return row.unbuilt != nil }) {
 				return rows, -1, true
 			}
 			return rows, len(rows) + len(rest), true
 		}
 		if row.unbuilt != nil {
-			if p.readLimit > 0 && len(rows) >= p.readLimit {
+			admitted, partial := p.admitLocalLabel(*row.unbuilt, row.active, len(rows), &attempts)
+			if !admitted {
+				unknown = unknown || partial
 				continue
 			}
-			metadata, ok := p.localMetadata(*row.unbuilt, row.active)
-			if !ok {
+			result, labelUnknown, err := p.localMetadataForRows(*row.unbuilt, row.active)
+			if err != nil {
+				return nil, -1, true
+			}
+			unknown = unknown || labelUnknown
+			if !result.hasPrompt {
 				continue
 			}
-			row.metadata, row.unbuilt = metadata, nil
+			row.metadata, row.unbuilt = result.metadata, nil
 		}
 		rows = append(rows, row)
 	}
+	if unknown {
+		return rows, -1, true
+	}
 	return rows, len(rows), false
+}
+
+func (p handoffPicker) activities(regs []archive.SessionRegistration) (map[pickerIdentity]time.Time, error) {
+	if p.readError == nil {
+		return pickerActivities(p.ctx, p.env, regs), nil
+	}
+	activity, err := pickerActivitiesResult(p.ctx, p.env, regs)
+	if err != nil {
+		*p.readError = err
+	}
+	return activity, err
+}
+
+// admitLocalLabel applies the legacy accepted-row limit and the bounded
+// search-only attempted-read limit before reading a native label.
+func (p handoffPicker) admitLocalLabel(reg archive.SessionRegistration, active time.Time, rows int, attempts *int) (bool, bool) {
+	if p.labelLimitReached(rows) {
+		return false, p.readError != nil || p.searchLabelBudget > 0
+	}
+	key := pickerLocalLabelKey(reg, active, p.source)
+	if _, cached := p.localLabels[key]; cached || p.searchLabelBudget <= 0 {
+		return true, false
+	}
+	if *attempts >= p.searchLabelBudget {
+		return false, true
+	}
+	*attempts++
+	return true, false
+}
+
+func (p handoffPicker) labelLimitReached(rows int) bool {
+	return p.readLimit > 0 && rows >= p.readLimit
+}
+
+func (p handoffPicker) localMetadataForRows(reg archive.SessionRegistration, active time.Time) (localLabelResult, bool, error) {
+	if p.readError == nil {
+		metadata, hasPrompt := p.localMetadata(reg, active)
+		return localLabelResult{metadata: metadata, hasPrompt: hasPrompt}, false, nil
+	}
+	metadata, hasPrompt, err := p.localMetadataResult(reg, active)
+	result := localLabelResult{metadata: metadata, hasPrompt: hasPrompt}
+	if err == nil {
+		return result, false, nil
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		*p.readError = err
+		return result, false, err
+	}
+	return result, true, nil
 }
 
 // localMetadata is the part of a session's metadata the picker shows, built
 // from its transcript as it is now. ok is false when the transcript cannot be
 // read or holds no prompt yet.
 func (p handoffPicker) localMetadata(reg archive.SessionRegistration, active time.Time) (archive.Metadata, bool) {
-	key := pickerLocalLabelKey(reg, active, p.source)
-	if result, ok := p.localLabels[key]; ok {
-		return result.metadata, result.hasPrompt
+	if p.localLabels == nil {
+		return p.buildLocalMetadata(reg, active)
 	}
-	metadata, ok := p.buildLocalMetadata(reg, active)
-	if p.localLabels != nil {
-		p.localLabels[key] = localLabelResult{metadata: metadata, hasPrompt: ok}
-	}
+	metadata, ok, _ := p.localMetadataResult(reg, active)
 	return metadata, ok
 }
 
+func (p handoffPicker) localMetadataResult(reg archive.SessionRegistration, active time.Time) (archive.Metadata, bool, error) {
+	key := pickerLocalLabelKey(reg, active, p.source)
+	if result, ok := p.localLabels[key]; ok {
+		return result.metadata, result.hasPrompt, nil
+	}
+	metadata, ok, err := p.buildLocalMetadataResult(reg, active)
+	if err != nil {
+		return metadata, false, err
+	}
+	if p.localLabels != nil {
+		p.localLabels[key] = localLabelResult{metadata: metadata, hasPrompt: ok}
+	}
+	return metadata, ok, nil
+}
+
 func (p handoffPicker) buildLocalMetadata(reg archive.SessionRegistration, active time.Time) (archive.Metadata, bool) {
+	metadata, ok, _ := p.buildLocalMetadataResult(reg, active)
+	return metadata, ok
+}
+
+func (p handoffPicker) buildLocalMetadataResult(reg archive.SessionRegistration, active time.Time) (archive.Metadata, bool, error) {
 	bundle, err := collector.ReadLocalBundle(p.ctx, p.home, reg, p.env.now().UTC(), p.env.cursorDatabase(), registryFor(p.env))
 	if err != nil {
-		return archive.Metadata{}, false
+		return archive.Metadata{}, false, err
 	}
 	analysis, err := analyzeSource(p.ctx, parsersFor(p.env), bundle)
 	if err != nil {
-		return archive.Metadata{}, false
+		return archive.Metadata{}, false, err
 	}
 	labels, ok := archive.LabelsFromAnalysis(analysis)
 	if !ok {
-		return archive.Metadata{}, false
+		return archive.Metadata{}, false, nil
 	}
 	project := ""
 	if reg.ProjectRoot != "" {
@@ -435,7 +532,7 @@ func (p handoffPicker) buildLocalMetadata(reg archive.SessionRegistration, activ
 	}
 	return archive.Metadata{SessionID: reg.ArchiveSessionID, NativeSessionID: reg.NativeSessionID, ProjectID: reg.ProjectID,
 		ProjectName: project, Harness: reg.Harness, CapturedAt: active, Name: labels.Name, Title: labels.Title,
-		Branch: labels.Branch, PullRequests: labels.PullRequests, Origin: reg.Origin, RepoKey: reg.RepoKey}, true
+		Branch: labels.Branch, PullRequests: labels.PullRequests, Origin: reg.Origin, RepoKey: reg.RepoKey}, true, nil
 }
 
 // registrationMetadata is the part of a registered session's metadata that

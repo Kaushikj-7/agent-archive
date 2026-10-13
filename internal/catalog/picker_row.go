@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"math"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -24,29 +25,41 @@ const PickerEnvelopeBytes = 16384
 // PickerLabelBytes bounds each UTF-8 presentation label.
 const PickerLabelBytes = 256
 
+// PickerPromptState distinguishes known prompt counts from unavailable counts.
+type PickerPromptState string
+
+const (
+	// PickerPromptsUnknown preserves sessions whose prompt count is unavailable.
+	PickerPromptsUnknown PickerPromptState = "unknown"
+	// PickerPromptsZero identifies a known zero prompt count.
+	PickerPromptsZero PickerPromptState = "zero"
+	// PickerPromptsPositive identifies a known positive prompt count.
+	PickerPromptsPositive PickerPromptState = "positive"
+)
+
 // PickerRow is a bounded projection, never an authoritative metadata body.
 // Child aggregates describe the live index and may change without a revision.
 type PickerRow struct {
-	Schema           uint64    `json:"Schema"`
-	SessionKey       string    `json:"SessionKey"`
-	SessionID        string    `json:"SessionID"`
-	Harness          string    `json:"Harness"`
-	CanonicalHarness string    `json:"CanonicalHarness"`
-	Metadata         ObjectRef `json:"Metadata"`
-	Revision         string    `json:"Revision"`
-	ProjectID        string    `json:"ProjectID"`
-	RepoKey          string    `json:"RepoKey"`
-	Activity         time.Time `json:"Activity"`
-	CapturedAt       time.Time `json:"CapturedAt"`
-	Name             string    `json:"Name"`
-	Title            string    `json:"Title"`
-	ProjectName      string    `json:"ProjectName"`
-	Root             bool      `json:"Root"`
-	Replay           bool      `json:"Replay"`
-	OrdinaryChildren int64     `json:"OrdinaryChildren"`
-	ReplayChildren   int64     `json:"ReplayChildren"`
-	PromptState      string    `json:"PromptState"`
-	PromptCount      *int64    `json:"PromptCount,omitempty"`
+	Schema           uint64            `json:"Schema"`
+	SessionKey       string            `json:"SessionKey"`
+	SessionID        string            `json:"SessionID"`
+	Harness          string            `json:"Harness"`
+	CanonicalHarness string            `json:"CanonicalHarness"`
+	Metadata         ObjectRef         `json:"Metadata"`
+	Revision         string            `json:"Revision"`
+	ProjectID        string            `json:"ProjectID"`
+	RepoKey          string            `json:"RepoKey"`
+	Activity         time.Time         `json:"Activity"`
+	CapturedAt       time.Time         `json:"CapturedAt"`
+	Name             string            `json:"Name"`
+	Title            string            `json:"Title"`
+	ProjectName      string            `json:"ProjectName"`
+	Root             bool              `json:"Root"`
+	Replay           bool              `json:"Replay"`
+	OrdinaryChildren int64             `json:"OrdinaryChildren"`
+	ReplayChildren   int64             `json:"ReplayChildren"`
+	PromptState      PickerPromptState `json:"PromptState"`
+	PromptCount      *int64            `json:"PromptCount,omitempty"`
 }
 
 func pickerLabel(s string) (string, error) {
@@ -76,7 +89,7 @@ func BuildPickerRow(key string, e CatalogEntry) (*PickerRow, error) {
 	if e.OrdinaryChildren > math.MaxInt64 || e.ReplayChildren > math.MaxInt64 {
 		return nil, errors.New("picker child count overflow")
 	}
-	r := &PickerRow{Schema: 1, SessionKey: key, SessionID: m.SessionID, Harness: m.Harness.Name, CanonicalHarness: archive.CanonicalHarness(m.Harness.Name), Metadata: e.Metadata, Revision: e.Revision, ProjectID: m.ProjectID, RepoKey: m.RepoKey, Activity: listingindex.ActivityTime(m).UTC(), CapturedAt: m.CapturedAt.UTC(), Root: !m.IsChild(), Replay: m.Replay != nil, OrdinaryChildren: int64(e.OrdinaryChildren), ReplayChildren: int64(e.ReplayChildren), PromptState: "unknown"}
+	r := &PickerRow{Schema: 1, SessionKey: key, SessionID: m.SessionID, Harness: m.Harness.Name, CanonicalHarness: archive.CanonicalHarness(m.Harness.Name), Metadata: e.Metadata, Revision: e.Revision, ProjectID: m.ProjectID, RepoKey: m.RepoKey, Activity: listingindex.ActivityTime(m).UTC(), CapturedAt: m.CapturedAt.UTC(), Root: !m.IsChild(), Replay: m.Replay != nil, OrdinaryChildren: int64(e.OrdinaryChildren), ReplayChildren: int64(e.ReplayChildren), PromptState: PickerPromptsUnknown}
 	for _, p := range []struct {
 		dst *string
 		src string
@@ -89,9 +102,9 @@ func BuildPickerRow(key string, e CatalogEntry) (*PickerRow, error) {
 	if m.Counts.Turns != nil {
 		n := int64(*m.Counts.Turns)
 		r.PromptCount = &n
-		r.PromptState = "positive"
+		r.PromptState = PickerPromptsPositive
 		if n == 0 {
-			r.PromptState = "zero"
+			r.PromptState = PickerPromptsZero
 		}
 	}
 	if err = r.validate(); err != nil {
@@ -172,7 +185,7 @@ func (r *PickerRow) UnmarshalJSON(raw []byte) error {
 			return errors.New("picker row requires explicit non-null facts")
 		}
 	}
-	if value, ok := fields["PromptCount"]; ok && (v.PromptState == "unknown" || bytes.Equal(bytes.TrimSpace(value), []byte("null"))) {
+	if value, ok := fields["PromptCount"]; ok && (v.PromptState == PickerPromptsUnknown || bytes.Equal(bytes.TrimSpace(value), []byte("null"))) {
 		return errors.New("invalid picker prompt count field")
 	}
 	next := PickerRow(v)
@@ -205,10 +218,15 @@ func PickerMembershipKeys(key string, r PickerRow) ([]string, error) {
 		scopes = append(scopes, "project-missing/"+hex.EncodeToString([]byte(r.ProjectID)))
 	}
 	memberships := []string{"browse"}
-	if r.PromptState != "zero" {
+	if r.PromptState != PickerPromptsZero {
 		memberships = append(memberships, "handoff")
 	}
-	order := r.Activity.UTC().Format("2006-01-02T15:04:05.000000000Z") + "/" + r.CapturedAt.UTC().Format("2006-01-02T15:04:05.000000000Z") + "/" + descendingIdentity(key)
+	// MetadataObjectKey permits no NUL in either raw component. Terminators
+	// preserve shorter-component ordering before inversion, unlike path slashes
+	// which can sort after a continuation byte such as '-'. The exact raw tuple
+	// uniquely determines the physical metadata identity.
+	identity := descendingIdentity(r.Harness + "\x00" + r.SessionID + "\x00")
+	order := r.Activity.UTC().Format("2006-01-02T15:04:05.000000000Z") + "/" + r.CapturedAt.UTC().Format("2006-01-02T15:04:05.000000000Z") + "/" + identity
 	var keys []string
 	for _, m := range memberships {
 		for _, scope := range scopes {
@@ -251,25 +269,23 @@ func DecodePickerRow(key string, raw []byte) (*PickerRow, error) {
 	if err != nil {
 		return nil, err
 	}
-	for _, k := range keys {
-		if k == key {
-			return e.Picker, nil
-		}
+	if slices.Contains(keys, key) {
+		return e.Picker, nil
 	}
 	return nil, errors.New("picker membership key mismatch")
 }
 
 func (r PickerRow) validatePrompts() error {
 	switch r.PromptState {
-	case "unknown":
+	case PickerPromptsUnknown:
 		if r.PromptCount != nil {
 			return errors.New("unknown picker prompts carry count")
 		}
-	case "zero":
+	case PickerPromptsZero:
 		if r.PromptCount == nil || *r.PromptCount != 0 {
 			return errors.New("invalid zero picker prompts")
 		}
-	case "positive":
+	case PickerPromptsPositive:
 		if r.PromptCount == nil || *r.PromptCount <= 0 {
 			return errors.New("invalid positive picker prompts")
 		}

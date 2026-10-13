@@ -131,8 +131,9 @@ func TestBoundedArchiveSearchLoadsOlderChildrenAndUncappedFieldsOnDemand(t *test
 		t.Fatal(used, err)
 	}
 	initial := choices.shown().rows
+	olderIDs := map[string]bool{"older-parent": true, "older-child": true}
 	for _, r := range initial {
-		if r.SessionID == "older-parent" || r.SessionID == "older-child" {
+		if olderIDs[r.SessionID] {
 			t.Fatal("older fixtures unexpectedly loaded initially")
 		}
 	}

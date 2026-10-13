@@ -68,7 +68,7 @@ func (f *scopedPickerFormat) valid() bool {
 	return f != nil && f.Version == 1 && f.RowSchema == 1 && len(f.Capabilities) == 1 && f.Capabilities[0] == scopedPickerCapability
 }
 
-func (h CatalogHead) validFormat() bool {
+func (h *CatalogHead) validFormat() bool {
 	return (h.Protocol == 10 && h.Schema == 4 && h.Picker == nil) || (h.Protocol == 11 && h.Schema == 5 && h.Picker.valid())
 }
 
@@ -87,4 +87,11 @@ func (w *Writer) writeFormat(ctx context.Context, state admissions) error {
 
 func headCoordinatorMatch(h CatalogHead, s admissions) bool {
 	return h.Protocol == s.Protocol && (h.Picker != nil) == (s.Picker != nil)
+}
+
+func (h *CatalogHead) validateLiveEntry(entry *CatalogEntry) error {
+	if h.Protocol == 11 && entry != nil && entry.Picker == nil {
+		return errors.New("scoped live identity is missing exact picker facts")
+	}
+	return nil
 }

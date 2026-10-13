@@ -77,8 +77,7 @@ func runMigrateCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		return fail(err)
 	}
 	defer unlock()
-	openMigration := migrationOpener(*scoped)
-	migration, err := openMigration(ctx, source, target, sourceConfig.Storage, targetConfig.Storage, authority)
+	migration, err := openMigrationForCLI(ctx, home, *scoped, source, target, sourceConfig.Storage, targetConfig.Storage, authority)
 	if err != nil {
 		return fail(err)
 	}
@@ -151,4 +150,18 @@ func migrationSourceConfig(ctx context.Context, target storage.ObjectStore, cfg 
 	}
 
 	return sourceConfig, nil
+}
+
+func checkScopedMigrationPending(home string, scoped bool) error {
+	if scoped {
+		return ensurePickerPendingDrained(home)
+	}
+	return nil
+}
+
+func openMigrationForCLI(ctx context.Context, home string, scoped bool, source, target storage.ObjectStore, sourceConfig, targetConfig destination.Config, authority catalog.CutoverAuthority) (*catalog.Migration, error) {
+	if err := checkScopedMigrationPending(home, scoped); err != nil {
+		return nil, err
+	}
+	return migrationOpener(scoped)(ctx, source, target, sourceConfig, targetConfig, authority)
 }

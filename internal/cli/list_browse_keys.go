@@ -77,10 +77,10 @@ type listScreen struct {
 // and End to the top and bottom. A group scrolled into keeps its heading,
 // marked continued, and its column header. Typed characters collect at the
 // prompt until Enter chooses the row they name.
-func (l *sessionPicker) pickKeys(p *prompter, stdout io.Writer, rows []listRow, totalMatched int, truncated bool, format listFormatOptions, action string) (listRow, bool, error) {
+func (l *sessionPicker) pickKeysContext(ctx context.Context, p *prompter, stdout io.Writer, rows []listRow, totalMatched int, truncated bool, format listFormatOptions, action string) (listRow, bool, error) {
 	question := p.promptText("Enter number (or unique short SESSION_ID) to "+action+", or q to quit", true, nil, -1, ": ")
 	if l.emptyWithoutAction(rows) {
-		l.prepareSearch(rows)
+		l.prepareSearchContext(ctx, rows)
 		if l.invalidView != nil {
 			return listRow{}, false, l.invalidView
 		}
@@ -102,7 +102,7 @@ func (l *sessionPicker) pickKeys(p *prompter, stdout io.Writer, rows []listRow, 
 		if !first && l.clear != nil {
 			l.clear()
 		}
-		l.prepareSearch(rows)
+		l.prepareSearchContext(ctx, rows)
 		if l.invalidView != nil {
 			return listRow{}, false, l.invalidView
 		}
@@ -131,7 +131,7 @@ func (l *sessionPicker) pickKeys(p *prompter, stdout io.Writer, rows []listRow, 
 		notice = ""
 		for {
 			k, err := l.nextBrowserKey()
-			l.prepareSearch(rows)
+			l.prepareSearchContext(ctx, rows)
 			if err == nil {
 				err = l.invalidView
 			}

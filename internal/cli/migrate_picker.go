@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/local"
 	"io"
+	"os"
 
 	"github.com/wangjohn/agent-archive/internal/catalog"
 	"github.com/wangjohn/agent-archive/internal/config"
@@ -52,6 +54,9 @@ func runPickerUpgrade(stdout, stderr io.Writer, env Env, rollback bool) int {
 		return fail(err)
 	}
 	defer unlock()
+	if err = ensurePickerPendingDrained(home); err != nil {
+		return fail(err)
+	}
 	upgrade, err := catalog.OpenPickerUpgrade(ctx, store, cfg.Storage, authority, owner)
 	if err != nil {
 		return fail(err)
@@ -89,4 +94,33 @@ func runPickerUpgrade(stdout, stderr io.Writer, env Env, rollback bool) int {
 	}
 	terminal.Printf(stdout, "Activated complete scoped picker indexes (%d sessions).\n", upgrade.State.Copied)
 	return 0
+}
+
+func ensurePickerPendingDrained(home string) (err error) {
+	root, err := local.OpenRootedHome(home)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, root.Close()) }()
+	for _, name := range []string{"pending", "publication-evidence"} {
+		directory, e := root.Root.Open(name)
+		if errors.Is(e, os.ErrNotExist) {
+			continue
+		}
+		if e != nil {
+			return e
+		}
+		names, readErr := directory.Readdirnames(1)
+		closeErr := directory.Close()
+		if len(names) > 0 {
+			return fmt.Errorf("unresolved local %s remains; settle its exact original publication or recovery route before scoped upgrade", name)
+		}
+		if readErr != nil && !errors.Is(readErr, io.EOF) {
+			return readErr
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+	}
+	return root.Check()
 }

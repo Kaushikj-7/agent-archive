@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,16 +20,10 @@ type browserOperationResult struct {
 	generation uint64
 	panicValue any
 }
+
 type browserOperation struct {
 	cancel context.CancelFunc
 	done   chan browserOperationResult
-}
-
-func (l *sessionPicker) operationContext() context.Context {
-	if l.ctx != nil {
-		return l.ctx
-	}
-	return context.Background()
 }
 
 // stopOperations cancels and joins every owned read before the command closes
@@ -44,7 +39,7 @@ func (l *sessionPicker) stopOperations() {
 	}
 }
 
-func (l *sessionPicker) prepareSearch(rows []listRow) {
+func (l *sessionPicker) prepareSearchContext(ctx context.Context, rows []listRow) {
 	if l.words() == "" || l.searchRead || l.searchFailure != nil || (l.search == nil && l.searchContext == nil) {
 		return
 	}
@@ -54,7 +49,7 @@ func (l *sessionPicker) prepareSearch(rows []listRow) {
 		return
 	}
 	if l.operation == nil {
-		ctx, cancel := context.WithCancel(l.operationContext())
+		ctx, cancel := context.WithCancel(ctx)
 		generation := l.generation
 		op := &browserOperation{cancel: cancel, done: make(chan browserOperationResult, 1)}
 		l.operation = op
@@ -85,10 +80,10 @@ func (l *sessionPicker) prepareSearch(rows []listRow) {
 
 // loadOlder runs provider work outside rendering and continues servicing keys.
 // Esc cancels this read; quitting or changing scope cancels before returning.
-func (l *sessionPicker) loadOlder(p *prompter, stdout io.Writer) (bool, error) {
+func (l *sessionPicker) loadOlderContext(ctx context.Context, p *prompter, stdout io.Writer) (bool, error) {
 	l.stopOperations()
 	l.operationCanceled = false
-	ctx, cancel := context.WithCancel(l.operationContext())
+	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	done := make(chan browserOperationResult, 1)
 	loader := l.older
@@ -158,12 +153,12 @@ func (l *sessionPicker) nextBrowserKey() (key, error) {
 	return l.keys.next()
 }
 
-func (l *sessionPicker) waitSearch(rows []listRow) error {
+func (l *sessionPicker) waitSearchContext(ctx context.Context, rows []listRow) error {
 	for l.operation != nil {
 		select {
-		case <-l.operationContext().Done():
+		case <-ctx.Done():
 			l.stopOperations()
-			return l.operationContext().Err()
+			return ctx.Err()
 		case result := <-l.operation.done:
 			l.operation.cancel()
 			l.operation = nil
@@ -185,14 +180,14 @@ func (l *sessionPicker) waitSearch(rows []listRow) error {
 
 // readBrowserLine services completed search reads while waiting for cooked
 // input. A completed search asks the caller to redraw without consuming input.
-func (l *sessionPicker) readBrowserLine(p *prompter, question string, rows []listRow) (string, bool, error) {
+func (l *sessionPicker) readBrowserLineContext(ctx context.Context, p *prompter, question string, rows []listRow) (string, bool, error) {
 	terminal.Print(p.out, question)
 	for {
-		if err := l.operationContext().Err(); err != nil {
+		if err := ctx.Err(); err != nil {
 			return "", false, err
 		}
 		pending := l.operation != nil
-		l.prepareSearch(rows)
+		l.prepareSearchContext(ctx, rows)
 		if l.invalidView != nil {
 			return "", false, l.invalidView
 		}
@@ -206,7 +201,37 @@ func (l *sessionPicker) readBrowserLine(p *prompter, question string, rows []lis
 	}
 }
 
-func (l *sessionPicker) toggleScope(p *prompter, stdout io.Writer, choices *scopeChoices) error {
+// pendingNumberAnswer preserves prebuffered post-selection input while keeping
+// a live numeric submission responsive during a search.
+func (l *sessionPicker) pendingNumberAnswerContext(ctx context.Context, p *prompter, rows []listRow, answer string) (string, error) {
+	if numericBrowserAnswer(answer) && l.operation != nil && p.in.Buffered() == 0 {
+		answer, _, err := l.waitNumberSearchContext(ctx, p, rows, answer)
+		return answer, err
+	}
+	return answer, nil
+}
+
+// waitNumberSearch keeps a numeric answer pending while the universe loads,
+// without taking away the person's ability to clear, edit, or quit the search.
+func (l *sessionPicker) waitNumberSearchContext(ctx context.Context, p *prompter, rows []listRow, answer string) (string, bool, error) {
+	for l.operation != nil {
+		next, redraw, err := l.readBrowserLineContext(ctx, p, "Searching; Enter clears, words edit, q quits: ", rows)
+		if err != nil {
+			return "", false, err
+		}
+		if redraw {
+			return answer, true, nil
+		}
+		if _, e := strconv.Atoi(next); e == nil {
+			answer = next
+			continue
+		}
+		return next, false, nil
+	}
+	return answer, true, nil
+}
+
+func (l *sessionPicker) toggleScopeContext(ctx context.Context, p *prompter, stdout io.Writer, choices *scopeChoices) error {
 	l.stopOperations()
 	l.operationCanceled = false
 	if choices.rowsForContext != nil {
@@ -228,7 +253,7 @@ func (l *sessionPicker) toggleScope(p *prompter, stdout io.Writer, choices *scop
 			}
 			return true, nil
 		}}
-		_, err := l.loadOlder(p, stdout)
+		_, err := l.loadOlderContext(ctx, p, stdout)
 		l.older = previous
 		if err != nil {
 			return err
@@ -247,6 +272,7 @@ func runBrowserRead(done chan<- browserOperationResult, load func() browserOpera
 	defer func() { result.panicValue = recover(); done <- result }()
 	result = load()
 }
+
 func (r browserOperationResult) checked() {
 	if r.panicValue != nil {
 		panic(r.panicValue)
@@ -320,6 +346,8 @@ func (l *sessionPicker) loadInput(p *prompter) (bool, error) {
 	case keyEndOfInput:
 		l.operationQuit = true
 		return true, nil
+	case keyEnter, keyBackspace, keyUp, keyDown, keyLeft, keyRight, keyPageUp, keyPageDown, keyHome, keyEnd, keyResize:
+		// These keys do not cancel an operation.
 	case keyRune:
 		switch k.r {
 		case 'q':

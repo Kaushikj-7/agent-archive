@@ -377,10 +377,6 @@ func (k *keyInput) decode(data []byte) []key {
 // maxBurst bounds the bytes read as one burst.
 const maxBurst = 4096
 
-// readBurst waits for input, then takes whatever else is already there,
-// and waits briefly for the rest of an escape sequence cut off at its end.
-func (k *keyInput) readBurst() ([]byte, error) { return k.readBurstWait(-1) }
-
 func (k *keyInput) readBurstWait(wait time.Duration) ([]byte, error) {
 	buf := make([]byte, 256)
 	n, err := k.term.read(buf, wait)

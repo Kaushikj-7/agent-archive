@@ -8,7 +8,9 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/state"
+	"github.com/wangjohn/agent-archive/internal/storage"
 	"os"
+	"strconv"
 	"testing"
 
 	"github.com/wangjohn/agent-archive/internal/destination"
@@ -19,11 +21,12 @@ type pickerCutover struct{}
 func (pickerCutover) VerifyCatalogCutover(_ context.Context, source, target destination.Config) (CutoverProof, error) {
 	return CutoverProof{ID: "synthetic-scoped-credential-proof", Source: destinationIdentity(source), Destination: destinationIdentity(target), Protocol: 11}, nil
 }
+
 func pickerDestination() destination.Config {
 	return destination.Config{Provider: "s3", Bucket: "synthetic", ArchiveFormat: destination.FormatCatalogV4}
 }
 
-func completePickerUpgrade(t *testing.T, w *Writer, s *qualifiedStore) *PickerUpgrade {
+func completePickerUpgrade(t *testing.T, s *qualifiedStore) *PickerUpgrade {
 	t.Helper()
 	u, err := OpenPickerUpgrade(t.Context(), s, pickerDestination(), pickerCutover{}, "")
 	if err != nil {
@@ -136,12 +139,15 @@ func TestPickerUpgradeResumesPreservesIdentityAndReceiptAndEnablesCommit(t *test
 	if err = w.Coordinator().Active(t.Context()); err != nil {
 		t.Fatal(err)
 	}
+	if err = u.FinishActivation(t.Context()); err != nil {
+		t.Fatal("completed activation replay after new publication", err)
+	}
 }
 
 func TestPickerUpgradeFreshCatalogCompleteBeforeAvailability(t *testing.T) {
 	t.Parallel()
 	w, s := fixture(t)
-	completePickerUpgrade(t, w, s)
+	completePickerUpgrade(t, s)
 	h, _, err := w.Head(t.Context())
 	if err != nil || h.Protocol != 11 {
 		t.Fatal(h, err)
@@ -229,10 +235,10 @@ func TestScopedLegacyMigrationConstructsCompleteIndexesBeforeActivation(t *testi
 func TestPickerUpgradeRollbackKeepsStrongerFenceAndRefusesNewPublications(t *testing.T) {
 	t.Parallel()
 	for _, publish := range []bool{false, true} {
-		t.Run(fmt.Sprint(publish), func(t *testing.T) {
+		t.Run(strconv.FormatBool(publish), func(t *testing.T) {
 			t.Parallel()
 			w, s := fixture(t)
-			u := completePickerUpgrade(t, w, s)
+			u := completePickerUpgrade(t, s)
 			if publish {
 				if _, err := w.Commit(t.Context(), mutation(t, w, "newer")); err != nil {
 					t.Fatal(err)
@@ -265,10 +271,10 @@ func TestPickerUpgradeRollbackKeepsStrongerFenceAndRefusesNewPublications(t *tes
 func TestScopedCommitLostResponseRetainsExactReceipts(t *testing.T) {
 	t.Parallel()
 	for _, unknown := range []bool{false, true} {
-		t.Run(fmt.Sprint(unknown), func(t *testing.T) {
+		t.Run(strconv.FormatBool(unknown), func(t *testing.T) {
 			t.Parallel()
-			w, base := fixture(t)
-			completePickerUpgrade(t, w, base)
+			_, base := fixture(t)
+			completePickerUpgrade(t, base)
 			s := &lostStore{qualifiedStore: base, failRead: unknown}
 			w, err := New(s)
 			if err != nil {
@@ -301,7 +307,7 @@ func TestScopedCommitLostResponseRetainsExactReceipts(t *testing.T) {
 func TestScopedStorePublicationCASRaceAndConflictKeepCompleteUniverse(t *testing.T) {
 	t.Parallel()
 	w, base := fixture(t)
-	completePickerUpgrade(t, w, base)
+	completePickerUpgrade(t, base)
 	delayed := &pausedCASStore{qualifiedStore: base, reached: make(chan struct{}), resume: make(chan struct{})}
 	store, err := Wrap(delayed)
 	if err != nil {
@@ -496,6 +502,34 @@ func TestScopedJournalUsesDistinctFrozenProtocol(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err = store.CompletePublication(ctx, j.MutationID, pending.MetadataBytes); err != nil {
+		t.Fatal(err)
+	}
+}
+
+type boundedPickerDestination struct{ *qualifiedStore }
+
+func (*boundedPickerDestination) List(context.Context, string) ([]storage.Object, error) {
+	return nil, errors.New("unbounded construction inventory forbidden")
+}
+
+func TestScopedMigrationUsesBoundedDestinationInventory(t *testing.T) {
+	t.Parallel()
+	source, target, src, dst, _ := migrationFixture(t, 3)
+	destination := &boundedPickerDestination{target}
+	migration, err := OpenScopedMigration(t.Context(), source, destination, src, dst, pickerCutover{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		done, e := migration.Step(t.Context())
+		if e != nil {
+			t.Fatal(e)
+		}
+		if done {
+			break
+		}
+	}
+	if err = migration.Activate(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 }

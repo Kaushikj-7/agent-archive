@@ -27,11 +27,11 @@ func boundedArchiveChoices(ctx context.Context, env metadataCacheDependencies, s
 		}
 		pageSize = opts.limit
 	}
-	q, err := pickerScopeQuery(scope, opts.filter.Harness, pageSize)
-	if err != nil {
+	if !pickerScopeSupported(scope, opts.filter.Harness, pageSize) {
 		return nil, false, nil
 	}
-	q.Membership = "browse"
+	q, _ := pickerScopeQuery(scope, opts.filter.Harness, pageSize)
+	q.Membership = catalog.PickerBrowse
 	snapshot, err := catalog.OpenSnapshot(ctx, store, nil)
 	if err != nil {
 		return nil, true, err
@@ -61,7 +61,6 @@ func boundedArchiveChoices(ctx context.Context, env metadataCacheDependencies, s
 		return int(p.Total)
 	}
 	states[index] = &state{rows: page.Rows, next: page.Next, more: page.More, total: count(page)}
-	choices := &scopeChoices{ctx: ctx, scope: scope.only(), format: format, current: index, validate: snapshot.ValidateContinuation}
 	var loadErr error
 	load := func(readCtx context.Context, s sessionScope, i int, older bool) error {
 		st := states[i]
@@ -72,7 +71,7 @@ func boundedArchiveChoices(ctx context.Context, env metadataCacheDependencies, s
 		if e != nil {
 			return e
 		}
-		query.Membership = "browse"
+		query.Membership = catalog.PickerBrowse
 		next := ""
 		if st != nil {
 			next = st.next
@@ -89,7 +88,7 @@ func boundedArchiveChoices(ctx context.Context, env metadataCacheDependencies, s
 		states[i] = st
 		return nil
 	}
-	choices.rowsForContext = func(readCtx context.Context, s sessionScope) scopeView {
+	rowsForContext := func(readCtx context.Context, s sessionScope) scopeView {
 		i := viewScope
 		if s.All {
 			i = viewAll
@@ -124,6 +123,7 @@ func boundedArchiveChoices(ctx context.Context, env metadataCacheDependencies, s
 			return result, nil
 		}}
 	}
+	choices := &scopeChoices{ctx: ctx, scope: scope.only(), format: format, current: index, validate: snapshot.ValidateContinuation, rowsForContext: rowsForContext}
 	_ = choices.shown()
 	if loadErr != nil {
 		return nil, true, loadErr
@@ -196,7 +196,7 @@ func bindArchiveSearchRows(ctx context.Context, snapshot *catalog.Snapshot, stor
 
 func boundedArchiveOptions(opts listOptions) bool {
 	f := opts.filter
-	return !opts.imported && !opts.hookCaptured && !opts.verbose && f.Model == "" && f.Skill == "" && f.SkillSHA256 == "" && f.SkillUsage == "" && f.From.IsZero() && f.To.IsZero() && !f.RequireCompleteCoverage && f.Replays == reader.ReplaysHidden
+	return !opts.imported && !opts.hookCaptured && !opts.verbose && f.Model == "" && f.Skill == "" && f.SkillSHA256 == "" && f.From.IsZero() && f.To.IsZero() && !f.RequireCompleteCoverage && f.Replays == reader.ReplaysHidden
 }
 
 func runBoundedListBrowser(ctx context.Context, env listCommandDependencies, store storage.ObjectStore, cfg config.Config, opts listOptions, scope sessionScope, stdin io.Reader, stdout, stderr io.Writer, stopList func()) (bool, int) {

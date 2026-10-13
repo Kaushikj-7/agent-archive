@@ -313,6 +313,9 @@ func (w *Writer) Find(ctx context.Context, key string) (*CatalogEntry, string, e
 		return nil, "", err
 	}
 	r, err := w.find(ctx, h.Identity, key)
+	if err == nil {
+		err = h.validateLiveEntry(r.Entry)
+	}
 	return r.Entry, r.Revision, err
 }
 

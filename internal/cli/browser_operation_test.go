@@ -86,11 +86,12 @@ func TestBrowserOlderAcceptsQuitAndJoinsSlowRead(t *testing.T) {
 	for _, mode := range []string{"keys", "lines"} {
 		t.Run(mode, func(t *testing.T) {
 			stopped := make(chan struct{})
-			l := &sessionPicker{older: &browserLoadAction{Label: "Older sessions", LoadContext: func(ctx context.Context) (bool, error) { <-ctx.Done(); close(stopped); return false, ctx.Err() }}}
+			var keys *keyInput
 			if mode == "keys" {
-				l.keys = startKeys(newFakeKeys(later(0, "q")))
-				defer l.keys.close()
+				keys = startKeys(newFakeKeys(later(0, "q")))
+				defer keys.close()
 			}
+			l := &sessionPicker{keys: keys, older: &browserLoadAction{Label: "Older sessions", LoadContext: func(ctx context.Context) (bool, error) { <-ctx.Done(); close(stopped); return false, ctx.Err() }}}
 			_, err := l.loadOlder(newPrompter(strings.NewReader("q\n"), io.Discard), io.Discard)
 			if err != nil || !l.operationQuit {
 				t.Fatal("slow read prevented quit", err)
@@ -124,8 +125,8 @@ func TestBrowserSearchCompletionDoesNotWaitForPartialPipeLine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer input.Close()
-	defer output.Close()
+	defer func() { _ = input.Close() }()
+	defer func() { _ = output.Close() }()
 	gate := make(chan struct{})
 	l := &sessionPicker{filter: "needle", searchContext: func(context.Context) ([]listRow, error) { <-gate; return nil, nil }}
 	defer l.stopOperations()

@@ -21,6 +21,9 @@ python3 scripts/test_purge_recipe.py                     # runs the bucket purge
 python3 scripts/test_ci_workflow.py                      # Extended keeps the validated systemd image
 python3 scripts/test_ci_tiers.py                         # cadence, source proof and body evidence
 python3 scripts/test_go_shards.py                         # discovery, coverage, verdict, and process cleanup
+python3 -B scripts/test_generate_go_shard_hints.py         # matched artifact medians and pause envelopes
+python3 -B scripts/test_go_cache_context.py               # cache identity and tracked source proof
+python3 -B scripts/test_go_cache_steps.py                 # cache failure paths and PR-only wiring
 python3 scripts/test_measure_hook.py                     # synthetic hook benchmark effect/cleanup checks
 ./scripts/test_macos_smoke.sh                             # native macOS with cgo; the PR gate
 VERSION=dev ./scripts/build-release.sh                   # the release build (CI runs it on a release tag)
@@ -54,7 +57,7 @@ assertions and vet.
 The runner's shared 25-minute deadline includes discovery and tests; cancellation
 and failure stop and reap both test process groups. CLI listing invokes TestMain
 before execution, and both shards have independent TestMain initialization and
-temporary state. Cold workers keep independent build/module caches; sharding
+temporary state. PR workers keep separate PR/worker-scoped build/module caches; sharding
 improves latency only if measured scheduling benefits outweigh that extra work.
 For local coverage validation on Linux, run one worker at a time:
 
@@ -63,8 +66,46 @@ python3 scripts/run_go_shard.py --shard 0 --output /tmp/go-shard-0
 python3 scripts/run_go_shard.py --shard 1 --output /tmp/go-shard-1
 ```
 
-The checked-in timing hints are historical elapsed rankings, including parallel
-child trees, rather than wall-time or CPU forecasts. Hosted comparisons must
+The checked-in timing hints are advisory integer milliseconds from successful
+paired artifact observations. `scripts/go_shard_hint_sources.json` pins the
+measured source, exact worker settings, sample IDs, hosted attribution and source
+limitations; `scripts/generate_go_shard_hints.py` validates the actual current
+runner's discovery, exhaustive coverage and body evidence before taking medians.
+Download and safely extract each named sample into its relative directory under
+an artifact root, then regenerate without executing Go:
+
+```sh
+python3 -B scripts/generate_go_shard_hints.py \
+  --request scripts/go_shard_hint_sources.json \
+  --artifacts-root /path/to/cache-integration-profiles \
+  --output scripts/go_shard_hints.json
+```
+
+The generator rejects source/settings/catalog mixtures, failed or incomplete
+streams, reused samples and mismatched manifest body evidence. Reconciliation
+checks the request's pinned artifact source independently of the regenerating
+workflow's `GITHUB_SHA`. The request may provide fresh `packages`/`cli` discovery
+lists to drop stale names or give newly
+discovered names the positive 1000 ms fallback; omission uses actual sample
+discovery. Discovery in the live runner always remains authoritative. Artifact
+IDs and runtime-source equivalence require independent API/source verification;
+raw JSON alone cannot attest those caller-supplied provenance fields.
+
+Ordinary weights are median package-terminal elapsed seconds, rounded half-up
+to positive milliseconds (minimum 1). CLI weights take the larger of parent
+elapsed and the active envelope from the last top-level continuation (or run)
+through the latest parent/descendant terminal. This excludes the initial parent
+pause and never sums sibling elapsed values. Descendant cohort waits and
+overlapping parent envelopes remain, so these rankings are not wall-time or CPU
+forecasts. Git invocation and worker0 vet costs stay separate from weights;
+the assigned Git package stays isolated on whichever worker receives it.
+
+The current hints use two cached ancestor-runtime observations (prefix and
+exact restore). The recorded D base subsequently added catalog/config protocol
+changes in PR485, so these are not exact D-base timings. Current CI must discover
+and execute the new bodies and expose materially changed affected-package costs
+before merge; do not combine durations from different sources as matched samples
+or claim savings without a current-source control. Hosted comparisons must
 record whole-job latency and rounded runner allocation, including scripts,
 verdict and native verification, against both the original spend and the new
 single-worker fixture baseline. A local warm serial run proves coverage rather
@@ -120,7 +161,8 @@ Linux suite on these branches because Test runs full non-short Linux race
 coverage and plain full-size performance assertions. Extended supplies full
 non-short macOS race coverage and plain full-size performance assertions.
 Test, Levenshtein and Extended disable setup-go's shared module/build cache
-for every trigger, so candidate validation cannot restore executable build
+for every trigger; only the two PR representative workers have explicit
+restore/save actions. Candidate validation cannot restore executable build
 state from another run. Go still verifies downloaded modules against go.sum;
 fresh runners may take longer while downloading and compiling dependencies.
 Concurrency groups keep each candidate branch separate from other runs.
@@ -149,7 +191,54 @@ choices run that suite full. Separate scheduled/manual concurrency groups cannot
 be cancelled by a newer main push. Missing/failed/cancelled bodies or artifacts
 leave validation incomplete. The workflows retain source SHA, tier, commands,
 actual terminals and selected/not-run identities in artifacts. No dependency,
-compiled-test, result or advisory caches change with these tiers.
+compiled-test, result or advisory caches change with these tiers. The separate
+PR cache policy below does not apply to these full/scheduled jobs.
+
+### PR dependency and compilation caches
+
+Only the two `linux-short` PR workers restore Go modules and compiled artifacts
+with explicit pinned `actions/cache/restore` and `/save` actions. Setup-go's
+integrated cache stays disabled. Both workers need the full CLI race testmain;
+their ordinary packages differ and worker 0 also runs vet. Each worker therefore
+owns a separate cache and save key; neither races the other worker's save.
+The only cached paths are controlled runner-temp `pr-go-build` and
+`pr-go-modules` directories. Catalogs, manifests, tier/body evidence, test results
+and security advisories are never stored as verification evidence in a cache.
+Actual discovery and execution use `-count=1` regardless of cache outcome, and
+the required verdict always reconciles freshly generated artifacts.
+
+Keys include actual Go 1.27.2 driver/build/vet tool bytes, native
+OS/architecture/CGO/flags, C/C++ compiler binary/version identities, runner image/version and OS metadata, both module
+files' bytes, PR number, worker and source tree. A single narrow restore prefix
+may reuse older source from the same PR/worker/dependency/build context; Go's
+input-derived compilation keys rebuild changed code. Context or dependency
+changes have no broad fallback. Missing/unsafe context fails explicitly. Actual
+event base/head/tested merge ancestry and tracked bytes/types/modes are checked
+before restore, after module verification
+and after successful execution, including index-hidden edits. Module download
+and `go mod verify` run on hits and misses. Source/checksum/discovery/test
+failures remain failures and cannot save. A missing or transport-failed restore
+clears only the owned cache directories, then runs normal compilation/tests;
+save service failures warn after actual worker success.
+
+PR merge scope is never promoted to main/base/release caches. Saves additionally
+require a successful same-repository PR; forks still verify and execute but
+do not create caches under this conservative policy. A cache contains no secrets
+or private artifacts. Compiler input hashes and module verification are useful
+rebuild/corruption checks, not proof of adversarial restored-state integrity.
+Candidate, manual/full, scheduled, native and security verification paths stay
+fresh; a cached green PR cannot replace fresh exact-candidate evidence.
+
+Adoption requires frozen-source uncached/cold/warm hosted measurement, including
+hash/source/compiler metadata, module verification, restore/save/upload/post
+steps, real verdict latency and each job's rounded allocation. No warm-speedup
+or 4–6-minute guarantee follows from enabling this attachment. Initial PR/fork
+misses, duplicated module/full-CLI cache volume, immutable keys, image changes,
+quota/eviction and restore/verify/save overhead limit useful reuse. Native caches
+need their own measured case. Dedicated measurement adapters may share the pure
+key/context primitives with an isolated namespace and truthful dispatch source;
+the production entrypoint remains PR-only. Never spoof event/SHA or broaden
+full/candidate paths to measure this policy.
 
 Purge `--tier pr` retains every test method, bash/zsh where available and every
 privacy, wrong-prefix, ownership, preflight, corruption, pause, partial-deletion,
