@@ -169,7 +169,10 @@ def _verify(out, report, require_obligations):
 def _run(out, deadline, report, report_path):
     """Run ordinary packages and two CLI units sequentially under one deadline."""
     source_guard(report['source'], out)
-    env = dict(os.environ, AGENT_ARCHIVE_REAL_SYSTEMD='0', AGENT_ARCHIVE_PERF='0')
+    env = dict(os.environ, AGENT_ARCHIVE_REAL_SYSTEMD='0')
+    # Collector's performance opt-in checks for any nonempty value: "0"
+    # would skip its ordinary race bodies. Only the plain obligation opts in.
+    env.pop('AGENT_ARCHIVE_PERF', None)
     packages_text = tier.checked(['go', 'list', '-json', './...'], out/'native-packages.json', deadline, env)
     packages = shard.metadata(packages_text)
     text = tier.checked(['go', 'test', '-race', '-count=1', '-json', '-p', '1', '-timeout', '20m',

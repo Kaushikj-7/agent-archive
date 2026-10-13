@@ -345,7 +345,7 @@ class NativeFullTest(unittest.TestCase):
                 text=self.body(performance_names(command,'-run'))
             output.write_text(text);return text
         restorations={'restorations':[{'package':'internal/cli','test':'TestA','restore':'weekly','full_children':['full']}]}
-        with tempfile.TemporaryDirectory() as d,mock.patch.object(native,'source_guard') as guard,mock.patch.object(tier,'git',return_value='a'*40),mock.patch.object(tier,'checked',side_effect=checked),mock.patch.object(tier,'catalog',return_value=restorations),mock.patch.dict(os.environ,{'GITHUB_SHA':'a'*40}),contextlib.redirect_stdout(io.StringIO()):
+        with tempfile.TemporaryDirectory() as d,mock.patch.object(native,'source_guard') as guard,mock.patch.object(tier,'git',return_value='a'*40),mock.patch.object(tier,'checked',side_effect=checked),mock.patch.object(tier,'catalog',return_value=restorations),mock.patch.dict(os.environ,{'GITHUB_SHA':'a'*40,'AGENT_ARCHIVE_PERF':'0'}),contextlib.redirect_stdout(io.StringIO()):
             out=Path(d);tier.run_suite('full','macos',out)
             report=json.loads((out/'tier.json').read_text());self.assertTrue(report['success']);self.assertGreaterEqual(guard.call_count,3)
             self.assertEqual(len(set(deadline for _,deadline,_ in calls)),1)
@@ -353,6 +353,9 @@ class NativeFullTest(unittest.TestCase):
             self.assertEqual(len(units),3)
             self.assertTrue(all('-short' not in c and c[c.index('-timeout')+1]=='20m' and c[c.index('-p')+1]=='1' for c in units))
             self.assertTrue(all(env['GOMAXPROCS']==str(report['native_full']['cpus']) for c,_,env in calls if c in units))
+            # Collector's performance gate tests nonempty getenv, so even
+            # "0" skips its ordinary race bodies. Clear inherited opt-in too.
+            self.assertTrue(all('AGENT_ARCHIVE_PERF' not in env for c,_,env in calls if '-race' in c))
             self.assertTrue(any(env.get('AGENT_ARCHIVE_PERF')=='1' for _,_,env in calls))
             self.assertTrue(any(c[0]=='bash' for c,_,_ in calls))
             helper=next(r for r in report['native_full']['evidence']['actual'] if r['test']=='TestChildHelper')
