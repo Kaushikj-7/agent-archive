@@ -346,6 +346,24 @@ func TestMatchedPerformanceRejectsPartialOutput(t *testing.T) {
 			if err := matchedValidate(0, output.Bytes(), []byte("warning"), fixture, kind, 50, expected, env); err == nil {
 				t.Fatal("accepted command warning")
 			}
+			if kind == "show-parent" || kind == "stats7" || kind == "list" {
+				var doc map[string]json.RawMessage
+				if err := json.Unmarshal(output.Bytes(), &doc); err != nil {
+					t.Fatal(err)
+				}
+				switch kind {
+				case "show-parent":
+					delete(doc, "linked_session_availability")
+				case "stats7":
+					delete(doc, "coverage")
+				case "list":
+					doc["sessions"] = json.RawMessage("[]")
+				}
+				partial := matchedJSON(t, doc)
+				if err := matchedValidate(0, partial, nil, fixture, kind, 50, expected, env); err == nil {
+					t.Fatal("accepted valid JSON with omitted results")
+				}
+			}
 		})
 	}
 }
