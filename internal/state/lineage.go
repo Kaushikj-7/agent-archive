@@ -152,6 +152,9 @@ func (s *Store) RemoveSuperseded(archiveSessionID, key string) error {
 // nothing reads it: backfill consults removal records only for sessions
 // that are not registered.
 func (s *Store) ForgetIdleSession(archiveSessionID string, key agentmeta.SessionKey, deferForWork bool, removal *RemovalRecord) (forgotten bool, err error) {
+	if err := s.refuseTypedStagedRetirement(archiveSessionID); err != nil {
+		return false, err
+	}
 	if !safeFileComponent(archiveSessionID) {
 		return false, errors.New("archive session ID is not a safe file name component")
 	}
@@ -323,6 +326,9 @@ func (s *Store) OrphanChangedAt(archiveSessionID string) time.Time {
 // does not wait for a subagent candidate's lock under the request lock: a
 // held one fails the attempt with ErrBusy, for the next sweep to retry.
 func (s *Store) ForgetOrphan(archiveSessionID string) (forgotten bool, err error) {
+	if err := s.refuseTypedStagedRetirement(archiveSessionID); err != nil {
+		return false, err
+	}
 	if !safeFileComponent(archiveSessionID) {
 		return false, errors.New("archive session ID is not a safe file name component")
 	}
@@ -385,6 +391,9 @@ func (s *Store) SessionDir(archiveSessionID string) string {
 // to write for the session, UpdateRegistration reports it forgotten, and
 // RegisterNewSession assigns a fresh archive ID instead of reusing this one.
 func (s *Store) ForgetSession(archiveSessionID string, key agentmeta.SessionKey) error {
+	if err := s.refuseTypedStagedRetirement(archiveSessionID); err != nil {
+		return err
+	}
 	if err := s.CheckDurableSessionRead(archiveSessionID); err != nil {
 		return err
 	}
@@ -416,6 +425,9 @@ func (s *Store) ForgetSession(archiveSessionID string, key agentmeta.SessionKey)
 // forgetSession is ForgetSession; withCandidates false is for a caller that
 // already removed the session's subagent candidates under their locks.
 func (s *Store) forgetSession(archiveSessionID string, key agentmeta.SessionKey, withCandidates bool, revision, retirement *local.Staged) error {
+	if err := s.refuseTypedStagedRetirement(archiveSessionID); err != nil {
+		return err
+	}
 	if !safeFileComponent(archiveSessionID) {
 		return errors.New("archive session ID is not a safe file name component")
 	}

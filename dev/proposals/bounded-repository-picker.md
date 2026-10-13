@@ -1,7 +1,8 @@
 # Bounded repository windows and picker startup
 
-Status: implementation-ready proposal; no implementation or production activation
-is claimed. Prepared 2026-10-13 against main
+Status: PR 1 reserves the format and integrates refusal controls. Bounded indexed
+picker construction, reads and production activation remain unimplemented.
+Prepared 2026-10-13 against main
 `4b9b612ff9fbac454c93a292435bb151f7cde75f`.
 
 This is the next source implementation slice of
@@ -148,8 +149,10 @@ freshness checks must be adapted through an explicit caller-connected batch
 contract, not disabled to avoid network calls. Preserve validation at page return,
 continuation and selected-body use, and never restart the original expiry clock.
 
-For page size P, tree height H and scope range count S, first-page tree work is
-bounded by O(S * H + S * P), rather than total archive cardinality. Publish concrete
+For page size P, tree height H and scope range count S, the conservative first-page
+tree-work bound is O(S * H * (P + 1)), with bounded lookahead. O(S * H + S * P)
+is an amortized target requiring a traversal/occupancy proof for the current
+underfull/unary tree. Publish concrete
 request and byte ceilings derived from node/page limits, with bounded lookahead.
 Set a finite supported scope-range ceiling in PR 1 (start with 32 unique ranges);
 larger configurations use an explicit compatibility path. Do not infer constant

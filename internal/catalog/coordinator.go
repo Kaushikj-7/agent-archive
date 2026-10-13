@@ -235,6 +235,9 @@ func (c *Coordinator) Release(ctx context.Context, owner string) error {
 // BeginPublication holds global pending/history admission through durable local
 // acknowledgement. Frozen metadata describes all active and preserved sources.
 func (s *Store) BeginPublication(ctx context.Context, id string, metadata []byte) (context.Context, error) {
+	if _, _, err := s.Writer.Head(ctx); err != nil {
+		return ctx, err
+	}
 	if id == "" || len(id) > 455 {
 		return ctx, errors.New("invalid publication identifier")
 	}

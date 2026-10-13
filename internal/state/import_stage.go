@@ -1,6 +1,7 @@
 package state
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"syscall"
 	"time"
 
@@ -24,6 +26,8 @@ import (
 // The registration atomically selects its digest; an interrupted preparation
 // cannot manufacture an admitted session.
 type ImportStage struct {
+	TypedSelection   bool                        `json:"typed_stage,omitempty"`
+	ReleaseOnly      bool                        `json:"-"`
 	Canceled         bool                        `json:"-"`
 	CancellationOnly bool                        `json:"-"`
 	Preserved        []archive.SourceBundle      `json:"preserved,omitempty"`
@@ -46,6 +50,13 @@ func importStageRelative(id string) string {
 func (p ImportStage) digest(ctx context.Context) (string, error) {
 	p.SHA256 = ""
 	p.Registration.StagedImportSHA256 = ""
+	if p.TypedSelection {
+		digest, err := boundedStagedWireDigest(ctx, p, MaxImportStageBytes)
+		if errors.Is(err, agentmeta.ErrJSONWireLimit) || errors.Is(err, agentapi.ErrReadBudget) {
+			return "", errors.Join(ErrDurableStorageCapacity, err)
+		}
+		return digest, err
+	}
 	if _, err := agentmeta.JSONWireBound(ctx, p, maxPendingHistoryBytes); err != nil {
 		return "", errors.Join(ErrDurableStorageCapacity, err)
 	}
@@ -109,36 +120,43 @@ func (s *Store) ImportStages(ctx context.Context, after string, limit int) (stag
 		path := importStageRelative(entry.Name())
 		info, err := home.Root.Lstat(path)
 		if errors.Is(err, os.ErrNotExist) {
-			var cancel importCancellation
-			if e := s.readImportControl(importCancelRelative(entry.Name()), &cancel); e == nil {
-				if _, e := hex.DecodeString(cancel.SHA256); e != nil || len(cancel.SHA256) != 64 {
-					return nil, "", ErrDurableStorageRecovery
-				}
-				stages = append(stages, ImportStage{Canceled: true, CancellationOnly: true, SHA256: cancel.SHA256, Registration: archive.SessionRegistration{ArchiveSessionID: entry.Name()}})
-			} else if !errors.Is(e, os.ErrNotExist) {
+			stage, found, e := s.importStageAbsentDescriptor(ctx, entry.Name())
+			if e != nil {
 				return nil, "", e
+			}
+			if found {
+				stages = append(stages, stage)
 			}
 			continue
 		}
 		if err != nil || !info.Mode().IsRegular() || info.Size() > maxPendingHistoryBytes {
 			return nil, "", errors.Join(ErrDurableStorageRecovery, err)
 		}
-		scratch, closeScratch := s.WithReadBudget(ctx, agentapi.NewNativeReadBudget(128<<20))
+		pageBudget := s.resourceBudget
+		if pageBudget == nil {
+			pageBudget = agentapi.NewNativeReadBudget(128 << 20)
+		}
+		scratch, closeScratch := s.WithReadBudget(ctx, pageBudget)
 		stage, found, err := scratch.loadPreparedImportStage(ctx, entry.Name())
 		if err != nil || !found {
 			closeScratch()
 			return nil, "", errors.Join(ErrDurableStorageRecovery, err)
 		}
+		if stage.TypedSelection && s.resourceBudget == nil {
+			closeScratch()
+			return nil, "", ErrReadySelectionFrozen
+		}
+		stage.Bundle = archive.SourceBundle{}
+		stage.Preserved = nil
+		if err := s.retainImportDescriptor(ctx, stage); err != nil {
+			closeScratch()
+			return nil, "", err
+		}
 		closeScratch()
 
-		var cancellation importCancellation
-		if e := s.readImportControl(importCancelRelative(entry.Name()), &cancellation); e == nil {
-			if cancellation.SHA256 != stage.SHA256 {
-				return nil, "", ErrDurableStorageRecovery
-			}
-			stage.Canceled = true
-		} else if !errors.Is(e, os.ErrNotExist) {
-			return nil, "", e
+		stage, err = s.applyImportStageCancellation(entry.Name(), stage)
+		if err != nil {
+			return nil, "", err
 		}
 		stage.Bundle = archive.SourceBundle{}
 		stage.Preserved = nil
@@ -151,6 +169,18 @@ func (s *Store) ImportStages(ctx context.Context, after string, limit int) (stag
 // crashes. The confirmed batch, current destination and authorization must still
 // agree. Native deletion cannot invalidate already staged selected evidence.
 func (s *Store) ResumeImportAdmissions(ctx context.Context) error {
+	if s.resourceBudget == nil {
+		cfg, present, err := config.Load(s.home)
+		if err != nil {
+			return err
+		}
+		if present && cfg.StagedSelectionProtection {
+			read, closeRead := s.WithImportResultScope(ctx)
+			defer closeRead()
+			return read.ResumeImportAdmissions(ctx)
+		}
+	}
+
 	cfg, found, err := config.Load(s.home)
 	if err != nil {
 		return err
@@ -164,13 +194,17 @@ func (s *Store) ResumeImportAdmissions(ctx context.Context) error {
 	if err := s.readImportControl("import-stage-cursor.json", &cursor); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return errors.Join(ErrDurableStorageRecovery, err)
 	}
-	stages, next, err := s.ImportStages(ctx, cursor.After, 50)
+	stages, next, closePage, err := s.ImportStagesOwned(ctx, cursor.After, 50)
+	defer closePage()
 	if err != nil {
 		return err
 	}
 	for _, stage := range stages {
 		if err := ctx.Err(); err != nil {
 			return err
+		}
+		if stage.ReleaseOnly {
+			continue
 		}
 		if stage.CancellationOnly {
 			if err := s.removeImportCancellation(stage.Registration.ArchiveSessionID); err != nil {
@@ -193,6 +227,12 @@ func (s *Store) ResumeImportAdmissions(ctx context.Context) error {
 }
 
 func (s *Store) resumePreparedImport(ctx context.Context, stage ImportStage) error {
+	if stage.TypedSelection {
+		cfg, present, err := config.Load(s.home)
+		if err != nil || !present || !cfg.SupportsStagedSelection() {
+			return errors.Join(ErrReadySelectionFrozen, err)
+		}
+	}
 	reg := stage.Registration
 	reg.StagedImportSHA256 = stage.SHA256
 	// Children are materialized only after their parent's durable selection.
@@ -271,12 +311,28 @@ func (s *Store) admitPreparedImport(ctx context.Context, stage ImportStage, reg 
 
 // Validate checks the bounded journal digest, identity and selected source set.
 func (p ImportStage) Validate(ctx context.Context, reg archive.SessionRegistration) error {
+	if p.TypedSelection {
+		if len(p.Children) > 64 {
+			return ErrDurableStorageCapacity
+		}
+		if _, err := agentmeta.JSONWireBound(ctx, p.Children, 64<<10); err != nil {
+			return errors.Join(ErrDurableStorageCapacity, err)
+		}
+	}
 	expected, err := p.digest(ctx)
 	if err != nil {
 		return err
 	}
-	if p.Version != 1 || p.SHA256 != expected {
+	if (p.Version != 1 && p.Version != 2) || p.TypedSelection != (p.Version == 2) || p.SHA256 != expected {
 		return ErrDurableStorageRecovery
+	}
+	if p.TypedSelection && (reg.Origin != archive.SessionOriginImport || reg.ImportBatch.Recorded() == "" || len(p.Preserved) != 0 || p.Bundle.History != nil || reg.HistoricalProject != nil || reg.Harness.Name == "cursor" || len(p.Children) > 64) {
+		return ErrReadySelectionFrozen
+	}
+	if p.TypedSelection {
+		if _, err := agentmeta.JSONWireBound(ctx, p.Children, 64<<10); err != nil {
+			return errors.Join(ErrDurableStorageCapacity, err)
+		}
 	}
 	return p.validateOwner(reg)
 }
@@ -317,7 +373,27 @@ func (s *Store) SaveImportSourceSet(ctx context.Context, reg archive.SessionRegi
 	if !safeFileComponent(reg.ArchiveSessionID) {
 		return "", ErrDurableStorageRecovery
 	}
-	stage := ImportStage{Version: 1, Registration: reg, Bundle: bundle, SkillEvidence: mode, Children: children, Preserved: preserved}
+	version := 1
+	typedSelection := false
+	cfg, present, err := config.Load(s.home)
+	if err != nil {
+		return "", err
+	}
+	if present && cfg.StagedSelectionProtection {
+		if !cfg.SupportsStagedSelection() || len(preserved) != 0 || reg.HistoricalProject != nil || reg.Harness.Name == "cursor" {
+			return "", ErrReadySelectionFrozen
+		}
+		version = 2
+		typedSelection = true
+		if len(children) > 64 {
+			return "", ErrDurableStorageCapacity
+		}
+		if _, err := agentmeta.JSONWireBound(ctx, children, 64<<10); err != nil {
+			return "", errors.Join(ErrDurableStorageCapacity, err)
+		}
+	}
+
+	stage := ImportStage{Version: version, TypedSelection: typedSelection, Registration: reg, Bundle: bundle, SkillEvidence: mode, Children: children, Preserved: preserved}
 	digest, err := stage.digest(ctx)
 	if err != nil {
 		return "", err
@@ -335,7 +411,7 @@ func (s *Store) SaveImportSourceSet(ctx context.Context, reg archive.SessionRegi
 			return err
 		}
 		if found {
-			if existing.SHA256 != digest {
+			if existing.SHA256 != digest || existing.Version != stage.Version {
 				return ErrSessionIdentityConflict
 			}
 			return nil
@@ -459,22 +535,23 @@ func (s *Store) loadPreparedImportStage(ctx context.Context, id string) (stage I
 			}
 		}()
 	}
-	decoder := json.NewDecoder(io.LimitReader(file, maxPendingHistoryBytes+1))
-	if err = decoder.Decode(&stage); err != nil {
-		return stage, true, errors.Join(ErrDurableStorageRecovery, err)
-	}
-	var extra any
-	if decoder.Decode(&extra) != io.EOF {
-		return stage, true, ErrDurableStorageRecovery
-	}
-	if stage.Registration.ArchiveSessionID != id {
-		return stage, true, ErrDurableStorageRecovery
-	}
-	return stage, true, stage.Validate(ctx, stage.Registration)
+	stage, err = s.decodePreparedImportStage(ctx, id, file, info.Size(), reservation)
+	return stage, true, err
 }
 
 // RemoveImportStage releases verified or explicitly cancelled selected evidence.
 func (s *Store) RemoveImportStage(id string) error {
+	return s.removeImportStage(s.durableContext(), id)
+}
+
+func (s *Store) removeImportStage(ctx context.Context, id string) error {
+	stage, found, err := s.loadPreparedImportStage(ctx, id)
+	if err != nil {
+		return err
+	}
+	if found && stage.TypedSelection {
+		return ErrReadySelectionFrozen
+	}
 	return s.removeImportFile(id, "stage.json")
 }
 
@@ -549,6 +626,9 @@ func (s *Store) ResumeAllImportAdmissions(ctx context.Context) error {
 // owner. It removes only its private filtered evidence, never registrations or
 // remote objects that another admission owns.
 func (s *Store) DropUnadmittedImportStage(ctx context.Context, stage ImportStage) error {
+	if stage.TypedSelection {
+		return ErrReadySelectionFrozen
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -580,12 +660,12 @@ func (s *Store) DropUnadmittedImportStage(ctx context.Context, stage ImportStage
 			if prepared.SHA256 != child.StagedImportSHA256 || prepared.Registration.ParentSessionID != stage.Registration.ArchiveSessionID || !prepared.Registration.InBatch(stage.Registration.ImportBatch.Recorded()) {
 				return ErrDurableStorageRecovery
 			}
-			if err := s.RemoveImportStage(child.ArchiveSessionID); err != nil {
+			if err := s.removeImportStage(ctx, child.ArchiveSessionID); err != nil {
 				return err
 			}
 		}
 	}
-	return s.RemoveImportStage(stage.Registration.ArchiveSessionID)
+	return s.removeImportStage(ctx, stage.Registration.ArchiveSessionID)
 }
 
 // Control journals are read through the same home capability, with a fixed cap.
@@ -642,6 +722,20 @@ func (s *Store) removeImportCancellation(id string) error {
 // CancelImportStage journals unadmitted cleanup while protecting admitted owners.
 func (s *Store) CancelImportStage(ctx context.Context, reg archive.SessionRegistration) error {
 	return config.WithImportStaging(s.home, func(g config.DurableStorageGuard) error {
+		cfg, present, err := config.Load(s.home)
+		if err != nil {
+			return err
+		}
+		if present && cfg.StagedSelectionProtection {
+			stage, found, err := s.LoadImportStage(ctx, reg)
+			if err != nil {
+				return err
+			}
+			if found && stage.TypedSelection {
+				return ErrReadySelectionFrozen
+			}
+		}
+
 		admitted, found, err := s.LoadRegistration(reg.ArchiveSessionID)
 		if err != nil {
 			return err
@@ -652,6 +746,9 @@ func (s *Store) CancelImportStage(ctx context.Context, reg archive.SessionRegist
 		stage, found, err := s.LoadImportStage(ctx, reg)
 		if err != nil || !found {
 			return err
+		}
+		if stage.TypedSelection {
+			return ErrReadySelectionFrozen
 		}
 		if err := s.writeDurableGuard(ctx, g, importCancelRelative(reg.ArchiveSessionID), importCancellation{SHA256: stage.SHA256}); err != nil {
 			return err
@@ -705,15 +802,21 @@ func (s *Store) preparedImportChildren(ctx context.Context, stage ImportStage) (
 			}
 			continue // Its registration independently owns publication and recovery.
 		}
-		scratch, closeScratch := s.WithReadBudget(ctx, agentapi.NewNativeReadBudget(128<<20))
+		budget := agentapi.NewNativeReadBudget(128 << 20)
+		if stage.TypedSelection && s.resourceBudget != nil {
+			budget = s.resourceBudget
+		}
+		scratch, closeScratch := s.WithReadBudget(ctx, budget)
 		prepared, found, err := scratch.loadPreparedImportStage(ctx, child.ArchiveSessionID)
-		closeScratch()
 		if err != nil {
+			closeScratch()
 			return nil, err
 		}
 		if !found || prepared.SHA256 != child.StagedImportSHA256 || prepared.Registration.ParentSessionID != stage.Registration.ArchiveSessionID || !prepared.Registration.InBatch(stage.Registration.ImportBatch.Recorded()) {
+			closeScratch()
 			return nil, ErrDurableStorageRecovery
 		}
+		closeScratch()
 		children = append(children, child)
 	}
 	return children, nil
@@ -736,4 +839,199 @@ func sameHistoricalProjectProof(a, b archive.SessionRegistration) bool {
 		return a.HistoricalProject == nil && b.HistoricalProject == nil
 	}
 	return a.HistoricalProject.Equal(b.HistoricalProject)
+}
+
+// UnmarshalJSON bounds typed stage wire and decodes it with strict fields.
+// Legacy stage decoding retains its existing format.
+func (p *ImportStage) UnmarshalJSON(raw []byte) error {
+	type plain ImportStage
+	var header struct {
+		Version        int  `json:"version"`
+		TypedSelection bool `json:"typed_stage"`
+	}
+	if err := json.Unmarshal(raw, &header); err != nil {
+		return err
+	}
+	var next plain
+	if header.TypedSelection || header.Version == 2 {
+		if int64(len(raw)) > MaxImportStageBytes {
+			return ErrDurableStorageCapacity
+		}
+		if err := rejectStagedNullAliases(raw, []string{"version", "typed_stage", "sha256", "registration", "bundle", "children", "preserved", "skill_evidence"}); err != nil {
+			return err
+		}
+		decoder := json.NewDecoder(bytes.NewReader(raw))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&next); err != nil {
+			return ErrDurableStorageRecovery
+		}
+		if !next.TypedSelection || next.Version != 2 {
+			return ErrDurableStorageRecovery
+		}
+	} else if err := json.Unmarshal(raw, &next); err != nil {
+		return err
+	}
+	*p = ImportStage(next)
+	return nil
+}
+
+// retainImportDescriptor transfers the bounded descriptor/roster into the
+// caller's captured page owner before releasing the full-stage read scratch.
+func (s *Store) retainImportDescriptor(ctx context.Context, stage ImportStage) error {
+	n, err := agentmeta.JSONWireBound(ctx, stage, 128<<20)
+	if err != nil {
+		return errors.Join(ErrDurableStorageCapacity, err)
+	}
+	if s.resourceBudget == nil {
+		return nil
+	}
+	reservation := s.resourceBudget.Reservation()
+	if !reservation.Reserve(n) {
+		return errStateBudget
+	}
+	*s.resourceReleases = append(*s.resourceReleases, func() { reservation.Release(n) })
+	return nil
+}
+
+// ImportStagesOwned returns one captured page. The close must follow all
+// descriptor/roster use; ordinary ImportStages retains its legacy API.
+func (s *Store) ImportStagesOwned(ctx context.Context, after string, limit int) ([]ImportStage, string, func(), error) {
+	budget := s.resourceBudget
+	if budget == nil {
+		budget = agentapi.NewNativeReadBudget(128 << 20)
+	}
+	read, closePage := s.WithReadBudget(ctx, budget)
+	stages, next, err := read.ImportStages(ctx, after, limit)
+	if err != nil {
+		closePage()
+		return nil, "", func() {}, err
+	}
+	return stages, next, closePage, nil
+}
+
+// WithImportResultScope keeps bounded copied results and nested page/child
+// reads on one captured owner. Returned values must not outlive close.
+func (s *Store) WithImportResultScope(ctx context.Context) (*Store, func()) {
+	budget := s.resourceBudget
+	if budget == nil {
+		budget = agentapi.NewNativeReadBudget(128 << 20)
+	}
+	return s.WithReadBudget(ctx, budget)
+}
+
+// RetainImportID creates an independent result string while both page and
+// receiving reservations coexist. The receiving scope owns it until close.
+func (s *Store) RetainImportID(ctx context.Context, id string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if !safeFileComponent(id) || s.resourceBudget == nil {
+		return "", ErrDurableStorageRecovery
+	}
+	reservation := s.resourceBudget.Reservation()
+	n := int64(len(id))
+	if !reservation.Reserve(n) {
+		return "", errStateBudget
+	}
+	copied := strings.Clone(id)
+	*s.resourceReleases = append(*s.resourceReleases, func() { reservation.Release(n) })
+	return copied, nil
+}
+
+// Classification grants no deletion authority. The rooted immutable receipt
+// selects the exact current registration digest; unknown or successor facts
+// cannot be silently attributed to a different import.
+func (s *Store) classifyReleasedImportOwner(ctx context.Context, id string, receipt stagedReleaseReceipt) (archive.SessionRegistration, error) {
+	var reg archive.SessionRegistration
+	found, err := s.readOwned(s.registrationPath(id), &reg)
+	if err != nil || !found {
+		return reg, errors.Join(ErrReadySelectionFrozen, err)
+	}
+	q := receipt.Selection
+	if reg.Validate() != nil || reg.ArchiveSessionID != id || reg.Origin != archive.SessionOriginImport || reg.ImportBatch.Recorded() == "" || reg.StagedImportSHA256 != q.StageSHA256 || reg.DestinationID != q.Core.DestinationID {
+		return reg, ErrReadySelectionFrozen
+	}
+	digest, err := s.readyDigest(ctx, reg)
+	if err != nil || digest != q.Core.AdmissionContext {
+		return reg, errors.Join(ErrReadySelectionFrozen, err)
+	}
+	return reg, nil
+}
+
+// importStageAbsentDescriptor checks immutable release attribution before cancellation.
+func (s *Store) importStageAbsentDescriptor(ctx context.Context, id string) (ImportStage, bool, error) {
+	var receipt stagedReleaseReceipt
+	if e := s.readStagedControl(id, stagedReleaseReceiptName, &receipt); e == nil {
+		if s.resourceBudget == nil {
+			return ImportStage{}, false, ErrReadySelectionFrozen
+		}
+		reg, err := s.classifyReleasedImportOwner(ctx, id, receipt)
+		if err != nil {
+			return ImportStage{}, false, err
+		}
+		descriptor := ImportStage{Version: 2, TypedSelection: true, ReleaseOnly: true, SHA256: receipt.Selection.StageSHA256, Registration: reg}
+		if err := s.retainImportDescriptor(ctx, descriptor); err != nil {
+			return ImportStage{}, false, err
+		}
+		return descriptor, true, nil
+	} else if !errors.Is(e, os.ErrNotExist) {
+		return ImportStage{}, false, e
+	}
+	var cancel importCancellation
+	if e := s.readImportControl(importCancelRelative(id), &cancel); e == nil {
+		if _, e := hex.DecodeString(cancel.SHA256); e != nil || len(cancel.SHA256) != 64 {
+			return ImportStage{}, false, ErrDurableStorageRecovery
+		}
+		return ImportStage{Canceled: true, CancellationOnly: true, SHA256: cancel.SHA256, Registration: archive.SessionRegistration{ArchiveSessionID: id}}, true, nil
+	} else if !errors.Is(e, os.ErrNotExist) {
+		return ImportStage{}, false, e
+	}
+	return ImportStage{}, false, nil
+}
+
+// decodePreparedImportStage shares the enclosing captured ledger; it owns only digest scratch.
+func (s *Store) decodePreparedImportStage(ctx context.Context, id string, file io.Reader, size int64, reservation *agentapi.NativeReadReservation) (ImportStage, error) {
+	var stage ImportStage
+	decoder := json.NewDecoder(io.LimitReader(file, maxPendingHistoryBytes+1))
+	if err := decoder.Decode(&stage); err != nil {
+		return stage, errors.Join(ErrDurableStorageRecovery, err)
+	}
+	var extra any
+	if decoder.Decode(&extra) != io.EOF {
+		return stage, ErrDurableStorageRecovery
+	}
+	if stage.Registration.ArchiveSessionID != id {
+		return stage, ErrDurableStorageRecovery
+	}
+	if stage.TypedSelection {
+		const counterScratch = int64(32 << 10)
+		if !reservation.Reserve(counterScratch) {
+			return stage, errStateBudget
+		}
+		defer reservation.Release(counterScratch)
+		cfg, present, e := config.Load(s.home)
+		if e != nil || !present || !cfg.SupportsStagedSelection() || size > MaxImportStageBytes {
+			return stage, errors.Join(ErrReadySelectionFrozen, e)
+		}
+	}
+	return stage, stage.Validate(ctx, stage.Registration)
+}
+
+// applyImportStageCancellation verifies the exact captured selection before marking it.
+func (s *Store) applyImportStageCancellation(id string, stage ImportStage) (ImportStage, error) {
+	var cancellation importCancellation
+	if e := s.readImportControl(importCancelRelative(id), &cancellation); e == nil {
+		if cancellation.SHA256 != stage.SHA256 {
+			return stage, ErrDurableStorageRecovery
+		}
+		stage.Canceled = true
+	} else if !errors.Is(e, os.ErrNotExist) {
+		return stage, e
+	}
+	return stage, nil
+}
+
+// inPreparedImportBatch compares attribution without exporting an operational batch token.
+func inPreparedImportBatch(reg, owner archive.SessionRegistration) bool {
+	return reg.InBatch(owner.ImportBatch.Recorded())
 }
