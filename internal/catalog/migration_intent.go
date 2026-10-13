@@ -203,7 +203,7 @@ func (m *Migration) resumeInitialization(ctx context.Context) error {
 	if m.intent == nil || m.intent.Kind != migrationInitialize {
 		return ErrAdmissionClosed
 	}
-	objects, err := m.Destination.List(ctx, "")
+	objects, err := m.destinationInventory(ctx, "", true)
 	if err != nil {
 		return err
 	}

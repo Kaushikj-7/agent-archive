@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"reflect"
 	"time"
 
@@ -33,8 +34,8 @@ func (u *PickerUpgradeState) validate(s admissions) error {
 	if u == nil {
 		return nil
 	}
-	if !exactHex(u.Owner, 24) || s.Seal != u.Owner || s.Hold != "" || s.GCLink != nil || s.Intent != nil || u.Proof == "" || u.Destination.EffectiveArchiveFormat() != destination.FormatCatalogV4 || len(u.Cursor) > 4096 || u.Source.Protocol != 10 || !u.Source.validFormat() || !u.Candidate.validFormat() || u.Candidate.Protocol != 11 || u.Source.validateReferences() != nil || u.Candidate.validateReferences() != nil {
-		return errCoordinatorDescriptor
+	if err := u.validateBinding(s); err != nil {
+		return err
 	}
 	switch u.Phase {
 	case "draining":
@@ -45,7 +46,12 @@ func (u *PickerUpgradeState) validate(s admissions) error {
 		if len(s.Owners) != 0 || s.Protocol != 10 {
 			return errCoordinatorDescriptor
 		}
-	case "activating", "active", "rollback":
+	case "active", "rollback":
+		if u.ActivatedETag == "" {
+			return errCoordinatorDescriptor
+		}
+		fallthrough
+	case "activating":
 		if len(s.Owners) != 0 || s.Protocol != 11 {
 			return errCoordinatorDescriptor
 		}
@@ -341,6 +347,9 @@ func (u *PickerUpgrade) Activate(ctx context.Context) error {
 	if err := u.checkProof(ctx); err != nil {
 		return err
 	}
+	if _, err := u.writer.preflightClock(ctx); err != nil {
+		return err
+	}
 	if u.State.Phase == "active" {
 		return nil
 	}
@@ -383,7 +392,11 @@ func (u *PickerUpgrade) Activate(ctx context.Context) error {
 	candidate := u.State.Candidate
 	// Version observation fills publication witnesses; compare the publication
 	// identity and immutable roots when adjudicating an already successful CAS.
-	same := h.Protocol == 11 && h.PublicationEpoch == candidate.PublicationEpoch && h.Identity == candidate.Identity && h.Project == candidate.Project && h.Capture == candidate.Capture && h.Activity == candidate.Activity && h.Receipts == candidate.Receipts && h.Previous == candidate.Previous
+	observed := candidate
+	observed.PublicationWitness = h.PublicationWitness
+	observed.CommittedAt = h.CommittedAt
+	same := headHash(observed) == headHash(h)
+
 	if !same {
 		if etag != u.State.SourceETag || !sameObservedHead(h, u.State.Source) {
 			return ErrConflict
@@ -413,6 +426,13 @@ func (u *PickerUpgrade) Activate(ctx context.Context) error {
 func (u *PickerUpgrade) FinishActivation(ctx context.Context) error {
 	if u.State.Phase != "active" {
 		return ErrAdmissionClosed
+	}
+	state, _, err := u.writer.Coordinator().read(ctx)
+	if err != nil {
+		return err
+	}
+	if state.Upgrade == nil && state.Seal == "" && state.Mode == admissionActive && state.Protocol == 11 && state.Proof == u.State.Proof && reflect.DeepEqual(state.PickerUpgradeReceipt, &u.State) {
+		return nil
 	}
 	h, etag, err := u.writer.Head(ctx)
 	if err != nil {
@@ -654,4 +674,37 @@ func validateFreshPickerNamespace(ctx context.Context, store storage.ObjectStore
 		}
 		cursor = page.Next
 	}
+}
+
+// UnmarshalJSON refuses unknown, missing and null checkpoint fields without
+// modifying the receiver. Head, coordinator and checkpoint contracts remain
+// distinct even though this checkpoint contains exact copies of both heads.
+func (u *PickerUpgradeState) UnmarshalJSON(raw []byte) error {
+	type plain PickerUpgradeState
+	var next plain
+	d := json.NewDecoder(bytes.NewReader(raw))
+	d.DisallowUnknownFields()
+	if d.Decode(&next) != nil || d.Decode(new(any)) != io.EOF {
+		return errCoordinatorDescriptor
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(raw, &fields) != nil {
+		return errCoordinatorDescriptor
+	}
+	for _, field := range []string{"owner", "destination", "proof", "source", "source_etag", "candidate", "cursor", "phase", "copied", "memberships"} {
+		value, present := fields[field]
+		if !present || bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+			return errCoordinatorDescriptor
+		}
+	}
+	*u = PickerUpgradeState(next)
+	return nil
+}
+
+func (u *PickerUpgradeState) validateBinding(s admissions) error {
+	if !exactHex(u.Owner, 24) || s.Seal != u.Owner || s.Hold != "" || s.GCLink != nil || s.Intent != nil || u.Proof == "" || len(u.Proof) > 4096 || len(u.SourceETag) > 4096 || len(u.ActivatedETag) > 4096 || u.Candidate.Receipts != u.Source.Receipts || u.Destination.EffectiveArchiveFormat() != destination.FormatCatalogV4 || len(u.Cursor) > 4096 || u.Source.Protocol != 10 || !u.Source.validFormat() || !u.Candidate.validFormat() || u.Candidate.Protocol != 11 || u.Source.validateReferences() != nil || u.Candidate.validateReferences() != nil {
+		return errCoordinatorDescriptor
+	}
+
+	return nil
 }

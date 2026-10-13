@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -371,5 +372,200 @@ func TestPickerCanonicalLookupPreservesAliasReferenceAndRejectsAmbiguity(t *test
 	batch, err = s.PickerLookup(t.Context(), []PickerIdentity{{Harness: "claude", SessionID: "alias-choice"}})
 	if err != nil || !batch.Results[0].Found || batch.Results[0].Item.Row.SessionKey != alias.SessionKey {
 		t.Fatalf("delete alias %v %+v", err, batch)
+	}
+}
+
+func TestPickerRowsCarryIndexedParentCountsWithoutChildEnumeration(t *testing.T) {
+	_, w, store, _ := pickerReaderFixture(t)
+	publishPickerHarness(t, w, "actual-parent", "claude", nil)
+	publishPickerHarness(t, w, "ordinary-child", "claude", func(a *archive.Metadata) { a.ParentSessionID = "actual-parent" })
+	publishPickerHarness(t, w, "replay-child", "claude", func(a *archive.Metadata) { a.ParentSessionID = "actual-parent"; a.Replay = &archive.Replay{} })
+	meter := &pickerMeter{qualifiedStore: store}
+	s, err := OpenSnapshot(t.Context(), meter, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, err := s.PickerPage(t.Context(), PickerQuery{Scope: PickerScope{All: true}, Membership: "browse", Harness: "claude", Limit: 100}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, item := range page.Rows {
+		if item.Row.SessionID == "actual-parent" {
+			found = true
+			if item.Row.OrdinaryChildren != 1 || item.Row.ReplayChildren != 1 {
+				t.Fatalf("wrong indexed parent counts %+v", item.Row)
+			}
+		}
+		if item.Row.SessionID == "ordinary-child" || item.Row.SessionID == "replay-child" {
+			t.Fatal("child appeared in root page")
+		}
+	}
+	if !found || meter.metadata != 0 || meter.lists != 0 {
+		t.Fatalf("parent found=%v meter=%+v", found, meter)
+	}
+}
+
+func TestPickerScopeRangeCeilingCountsUniqueMemberships(t *testing.T) {
+	s, _, _, _ := pickerReaderFixture(t)
+	ids := make([]string, 32)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("project-%d", i)
+	}
+	q := PickerQuery{Scope: PickerScope{ProjectIDs: append(slices.Clone(ids), ids...)}, Membership: "browse", Limit: 1}
+	p, err := s.PickerPage(t.Context(), q, "")
+	if err != nil || len(p.Rows) != 1 || !p.More {
+		t.Fatalf("32 actual ranges %+v %v", p, err)
+	}
+	reordered := q
+	slices.Reverse(reordered.Scope.ProjectIDs)
+	if _, err = s.PickerPage(t.Context(), reordered, p.Next); err != nil {
+		t.Fatal("normalized request changed cursor binding", err)
+	}
+	q.Scope.ProjectIDs = append(q.Scope.ProjectIDs, "one-more-distinct")
+	if _, err = s.PickerPage(t.Context(), q, ""); !errors.Is(err, ErrPickerUnsupported) {
+		t.Fatal("33 actual ranges accepted", err)
+	}
+	q.Scope = PickerScope{RepoKey: testPickerRepo('a'), ProjectIDs: ids}
+	if _, err = s.PickerPage(t.Context(), q, ""); !errors.Is(err, ErrPickerUnsupported) {
+		t.Fatal("repository adds an actual range", err)
+	}
+}
+
+// finalPickerContext changes cancellation or lifetime on the last validation
+// observed in an otherwise identical warm operation. It models authority
+// expiring after all I/O has finished but before the result is returned.
+type finalPickerContext struct {
+	context.Context
+	calls  int
+	stop   int
+	onStop func()
+}
+
+func (c *finalPickerContext) Err() error {
+	c.calls++
+	if c.calls == c.stop && c.onStop != nil {
+		c.onStop()
+	}
+	return c.Context.Err()
+}
+
+func TestPickerFinalValidationDiscardsAllResults(t *testing.T) {
+	s, _, _, _ := pickerReaderFixture(t)
+	q := PickerQuery{Scope: PickerScope{All: true}, Membership: "browse", Limit: 2}
+	p, err := s.PickerPage(t.Context(), q, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	operations := []struct {
+		name string
+		run  func(context.Context) (any, error)
+	}{
+		{"page", func(ctx context.Context) (any, error) { return s.PickerPage(ctx, q, "") }},
+		{"empty-page", func(ctx context.Context) (any, error) {
+			empty := q
+			empty.Scope = PickerScope{}
+			return s.PickerPage(ctx, empty, "")
+		}},
+		{"lookup", func(ctx context.Context) (any, error) {
+			return s.PickerLookup(ctx, []PickerIdentity{{Harness: p.Rows[0].Row.Harness, SessionID: p.Rows[0].Row.SessionID}})
+		}},
+		{"hydration", func(ctx context.Context) (any, error) { return s.HydratePicker(ctx, p.Rows[0].Reference) }},
+	}
+	for _, op := range operations {
+		for _, expired := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/expired=%v", op.name, expired), func(t *testing.T) {
+				s.started = time.Now()
+				// Warm all immutable paths before measuring the validation count.
+				if _, err := op.run(t.Context()); err != nil {
+					t.Fatal(err)
+				}
+				probe := &finalPickerContext{Context: t.Context()}
+				if _, err := op.run(probe); err != nil {
+					t.Fatal(err)
+				}
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				want := error(context.Canceled)
+				hook := cancel
+				if expired {
+					want = ErrStaleCursor
+					hook = func() { s.started = time.Now().Add(-SnapshotLifetime) }
+				}
+				final := &finalPickerContext{Context: ctx, stop: probe.calls, onStop: hook}
+				result, err := op.run(final)
+				if !errors.Is(err, want) || !reflect.ValueOf(result).IsZero() || final.calls != probe.calls {
+					t.Fatalf("final validation returned result=%+v error=%v calls=%d want=%d", result, err, final.calls, probe.calls)
+				}
+				s.started = time.Now()
+			})
+		}
+	}
+}
+
+func TestPickerPrefixIdentityTiesMatchCompleteOrderAcrossRanges(t *testing.T) {
+	w, store := fixture(t)
+	at := time.Date(2026, 10, 1, 1, 2, 3, 4, time.UTC)
+	var metadata []archive.Metadata
+	for i, harness := range []string{"claude", "claude-code", "a", "a-", "a0", "z"} {
+		for j, id := range []string{"a", "a-", "a0", "z"} {
+			m := publishPickerHarness(t, w, id, harness, func(md *archive.Metadata) {
+				md.CapturedAt = at
+				md.EndedAt = &at
+				md.ProjectID = fmt.Sprintf("tie-project-%d", (i+j)%3)
+			})
+			metadata = append(metadata, m.Next.Summary)
+		}
+	}
+	completePickerUpgrade(t, w, store)
+	s, err := OpenSnapshot(t.Context(), store, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Directly compare every pair, independently of the encoded membership key.
+	for _, a := range metadata {
+		for _, b := range metadata {
+			ak, _ := archive.MetadataObjectKey(a.Harness.Name, a.SessionID)
+			bk, _ := archive.MetadataObjectKey(b.Harness.Name, b.SessionID)
+			left := PickerRow{Activity: at, CapturedAt: at, Harness: a.Harness.Name, SessionID: a.SessionID, SessionKey: ak}
+			right := PickerRow{Activity: at, CapturedAt: at, Harness: b.Harness.Name, SessionID: b.SessionID, SessionKey: bk}
+			want := a.Harness.Name < b.Harness.Name || a.Harness.Name == b.Harness.Name && a.SessionID < b.SessionID
+			if pickerBefore(left, right) != want {
+				t.Fatalf("tie comparison %s/%s vs %s/%s", a.Harness.Name, a.SessionID, b.Harness.Name, b.SessionID)
+			}
+		}
+	}
+	for _, scope := range []PickerScope{{All: true}, {ProjectIDs: []string{"tie-project-0", "tie-project-1", "tie-project-2"}}} {
+		for _, limit := range []int{1, 5, 100} {
+			q := PickerQuery{Scope: scope, Membership: "browse", Limit: limit}
+			var actual []string
+			for next := ""; ; {
+				p, err := s.PickerPage(t.Context(), q, next)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, item := range p.Rows {
+					actual = append(actual, item.Row.Harness+"/"+item.Row.SessionID)
+				}
+				if !p.More {
+					break
+				}
+				next = p.Next
+			}
+			ordered := slices.Clone(metadata)
+			slices.SortFunc(ordered, func(a, b archive.Metadata) int {
+				if n := strings.Compare(a.Harness.Name, b.Harness.Name); n != 0 {
+					return n
+				}
+				return strings.Compare(a.SessionID, b.SessionID)
+			})
+			var want []string
+			for _, md := range ordered {
+				want = append(want, md.Harness.Name+"/"+md.SessionID)
+			}
+			if !slices.Equal(actual, want) {
+				t.Fatalf("scope=%+v limit=%d got=%v want=%v", scope, limit, actual, want)
+			}
+		}
 	}
 }

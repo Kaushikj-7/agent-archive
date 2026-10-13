@@ -340,6 +340,9 @@ func (s *Snapshot) findPinned(ctx context.Context, key string) (*CatalogEntry, e
 				if err != nil {
 					return nil, err
 				}
+				if err = s.head.validateLiveEntry(r.Entry); err != nil {
+					return nil, err
+				}
 				return r.Entry, nil
 			}
 			return nil, nil
@@ -530,6 +533,9 @@ func (s *Snapshot) visitRange(ctx context.Context, q Query, token snapshotCursor
 		}
 		if row == nil {
 			continue
+		}
+		if err = s.head.validateLiveEntry(&row.Entry); err != nil {
+			return err
 		}
 		page.Rows = append(page.Rows, *row)
 		if len(page.Rows) > limit {

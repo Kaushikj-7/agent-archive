@@ -190,7 +190,7 @@ func TestPickerFirstPageWorkDoesNotScaleWithUnrelatedArchive(t *testing.T) {
 			if meter.metadata != 0 || meter.lists != 0 || meter.head != 1 || meter.coordinator != 1 || meter.nodes > 30 || p.Cost.Nodes > 30 || meter.bytes > 2<<20 {
 				t.Fatalf("unbounded startup size %d: meter %+v cost %+v", size, meter, p.Cost)
 			}
-			t.Logf("archive=%d head=%d coordinator=%d nodeGET=%d nodeVisits=%d bytes=%d bodyGET=%d LIST=%d", size, meter.head, meter.coordinator, meter.nodes, p.Cost.Nodes, meter.bytes, meter.metadata, meter.lists)
+			t.Logf("archive=%d projectRoot=%s head=%d coordinator=%d nodeGET=%d nodeVisits=%d bytes=%d bodyGET=%d LIST=%d", size, s.head.Project.SHA256, meter.head, meter.coordinator, meter.nodes, p.Cost.Nodes, meter.bytes, meter.metadata, meter.lists)
 			beforeHead, beforeCoord := meter.head, meter.coordinator
 			if _, e = s.PickerPage(t.Context(), q, p.Next); e != nil {
 				t.Fatal(e)
