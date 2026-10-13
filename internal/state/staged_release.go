@@ -110,7 +110,7 @@ func (s *Store) stagedReadback(ctx context.Context, remote StagedReadback, key s
 	if len(want) == 0 || len(want) > maxPendingHistoryBytes {
 		return ErrDurableStorageCapacity
 	}
-	owner := s.resourceBudget.Reservation()
+	owner := s.readReservation()
 	n := int64(len(want))
 	if !owner.Reserve(2*n + 1) {
 		return errStateBudget
@@ -523,7 +523,7 @@ func (s *Store) readStagedControl(id string, name stagedControlName, value any) 
 	if !info.Mode().IsRegular() || info.Size() > 16<<10 || info.Size() < 1 {
 		return ErrDurableStorageRecovery
 	}
-	reservation := s.resourceBudget.Reservation()
+	reservation := s.readReservation()
 	n := info.Size()
 	if !reservation.Reserve(3 * n) {
 		return errStateBudget

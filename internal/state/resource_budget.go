@@ -14,6 +14,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
@@ -22,6 +23,9 @@ import (
 // no Published or Pending value read through the handle may outlive it.
 func (s *Store) WithReadBudget(ctx context.Context, budget *agentapi.NativeReadBudget) (*Store, func()) {
 	scoped := *s
+	if budget != s.resourceBudget {
+		scoped.resourceReservation = nil
+	}
 	scoped.resourceBudget = budget
 	scoped.resourceContext = ctx
 	scoped.resourceReleases = &[]func(){}
@@ -44,7 +48,7 @@ var errStateBudget = agentapi.ReadBudgetLimit(errors.New("local state exceeds sh
 var errStateFileUnstable = errors.New("local state file is not a stable regular file")
 
 func (s *Store) readBudgeted(path string, value any, retain bool) error {
-	reservation := s.resourceBudget.Reservation()
+	reservation := s.readReservation()
 	if s.resourceBudget == nil {
 		if _, published := value.(*publishedState); !published {
 			return local.Read(path, value)
@@ -118,7 +122,7 @@ func (s *Store) readBudgeted(path string, value any, retain bool) error {
 }
 
 func (s *Store) writeCompact(path string, value any) error {
-	reservation := s.resourceBudget.Reservation()
+	reservation := s.readReservation()
 	if s.resourceBudget == nil {
 		return local.WriteCompact(path, value)
 	}
@@ -145,7 +149,7 @@ func (s *Store) writeCompact(path string, value any) error {
 // unmarshalOwned charges an additional decoded view of bytes already owned by
 // this scope. Returned metadata has an independent lifetime from its wire input.
 func (s *Store) unmarshalOwned(data []byte, value any) error {
-	reservation := s.resourceBudget.Reservation()
+	reservation := s.readReservation()
 	if s.resourceBudget == nil {
 		return json.Unmarshal(data, value)
 	}
@@ -167,7 +171,7 @@ func (s *Store) unmarshalOwned(data []byte, value any) error {
 // summaryBudgeted holds one decoded sidecar and the digest's two encoded byte
 // owners only while deriving the compact summary, before persistence starts.
 func (s *Store) summaryBudgeted(p publishedState) (PublishedSummary, error) {
-	reservation := s.resourceBudget.Reservation()
+	reservation := s.readReservation()
 	if s.resourceBudget != nil {
 		if err := s.resourceContext.Err(); err != nil {
 			return PublishedSummary{}, err
@@ -229,7 +233,7 @@ func (s *Store) summaryBudgeted(p publishedState) (PublishedSummary, error) {
 // nextBudgeted borrows the sole temporary metadata decode used to preserve an
 // existing clock clamp. The result keeps only the compact clamp, never that view.
 func (p *Published) nextBudgeted(bundle archive.SourceBundle, at time.Time, status CacheStatus, reason BlockedReason, metadata []byte, held []archive.SupplementalEvidence, source *archive.SourceReference) (publishedState, error) {
-	reservation := p.store.resourceBudget.Reservation()
+	reservation := p.store.readReservation()
 	if p.store.resourceBudget != nil {
 		if err := p.store.resourceContext.Err(); err != nil {
 			return publishedState{}, err
@@ -264,4 +268,65 @@ func decodeStateJSON(data []byte, value any) error {
 		return json.Unmarshal(data, value)
 	}
 	return err
+}
+
+type stateReservation interface {
+	Reserve(int64) bool
+	Release(int64)
+	Available() int64
+	Refuse(int64)
+}
+
+func (s *Store) readReservation() stateReservation {
+	if s.resourceReservation != nil {
+		return s.resourceReservation()
+	}
+	return s.resourceBudget.Reservation()
+}
+
+func (s *Store) loadConfig() (cfg config.Config, found bool, err error) {
+	if s.resourceReservation == nil {
+		return config.Load(s.home)
+	}
+	held, err := local.OpenRootedHome(s.home)
+	if err != nil {
+		return cfg, false, err
+	}
+	defer func() { err = errors.Join(err, held.Close()) }()
+	cfg, found, closeCfg, err := config.LoadRootedOwned(s.resourceContext, held, s.readReservation())
+	if err == nil {
+		*s.resourceReleases = append(*s.resourceReleases, closeCfg)
+	}
+	return cfg, found, err
+}
+
+func (s *Store) withImportStaging(ctx context.Context, write func(config.DurableStorageGuard) error) error {
+	if s.resourceReservation == nil {
+		return config.WithImportStaging(s.home, write)
+	}
+	return config.WithImportStagingOwned(ctx, s.home, func() config.ConfigReadReservation { return s.readReservation() }, write)
+}
+
+// ownStageValidationWire holds the sequential canonical encoder view through
+// checked capture validation and its write; default staging is unchanged.
+func (s *Store) ownStageValidationWire(ctx context.Context, stage ImportStage) (func(), error) {
+	if s.resourceReservation == nil {
+		return func() {}, nil
+	}
+	owner := s.readReservation()
+	const scratch int64 = 32 << 10
+	if !owner.Reserve(scratch) {
+		return nil, errors.Join(ErrDurableStorageCapacity, errStateBudget)
+	}
+	n, err := agentmeta.JSONWireBound(ctx, stage, MaxImportStageBytes)
+	if err != nil {
+		owner.Release(scratch)
+		return nil, errors.Join(ErrDurableStorageCapacity, err)
+	}
+	if !owner.Reserve(n) {
+		owner.Release(scratch)
+		return nil, errors.Join(ErrDurableStorageCapacity, errStateBudget)
+	}
+	var once sync.Once
+	return func() { once.Do(func() { owner.Release(n + scratch) }) }, nil
 }

@@ -4,18 +4,19 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"os"
 	"path/filepath"
 	"slices"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
-	"github.com/wangjohn/agent-archive/internal/agents/cursor"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
+	"github.com/wangjohn/agent-archive/internal/agents/nativecapture"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/nativefacts"
 	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 	"github.com/wangjohn/agent-archive/internal/state"
 )
@@ -745,12 +746,25 @@ func (r Registration) stageSettledCursor(ctx context.Context, w *parentWork, reg
 		w.stagedSHA256 = existing.SHA256
 		return nil
 	}
-	evidence, e := cursor.CaptureSettledImport(ctx, r.CursorDatabase, reg, *w.c.reviewedCursor, r.AdmittedAt, budget)
+	port, ok := r.Sources.(settledCapturePort)
+	if !ok {
+		return state.ErrReadySelectionFrozen
+	}
+	cfg, present, e := config.Load(r.Home)
+	if e != nil || !present {
+		return errors.Join(state.ErrReadySelectionFrozen, e)
+	}
+	request, e := nativefacts.FreezeCaptureRequest(ctx, reg, *w.c.reviewedCursor, r.CursorDatabase, r.AdmittedAt, nativefacts.CapturePolicy{FilterVersion: archive.FilterVersion, SkillEvidence: nativefacts.CaptureSkillMode(cfg.EffectiveSkillEvidence())}, budget)
+	if e != nil {
+		return e
+	}
+	defer request.Close()
+	evidence, e := port.CaptureSettledCursor(request)
 	if e != nil {
 		return e
 	}
 	defer func() { err = errors.Join(err, evidence.Close()) }()
-	digest, e := store.SaveSettledCursorImportStage(ctx, reg, evidence)
+	digest, e := store.SaveSettledCursorImportStage(ctx, reg, request, evidence)
 	if e != nil {
 		return e
 	}
@@ -759,4 +773,8 @@ func (r Registration) stageSettledCursor(ctx context.Context, w *parentWork, reg
 		return r.AfterStage(w.id)
 	}
 	return nil
+}
+
+type settledCapturePort interface {
+	CaptureSettledCursor(*nativefacts.CaptureRequest) (*nativecapture.Proof, error)
 }

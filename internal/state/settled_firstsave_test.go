@@ -15,6 +15,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agents/cursor"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/nativefacts"
 )
 
 type settledStateCatalogHost struct{ db *sql.DB }
@@ -37,7 +38,7 @@ func (h settledStateCatalogHost) Query(ctx context.Context, query string, visit 
 	return rows.Err()
 }
 
-func settledStateCaptureFixture(t *testing.T) (*Store, archive.SessionRegistration, *cursor.SettledImportEvidence, *agentapi.NativeReadBudget) {
+func settledStateCaptureFixture(t *testing.T) (*Store, archive.SessionRegistration, *nativefacts.CaptureRequest, *cursor.SettledImportEvidence, *agentapi.NativeReadBudget) {
 	t.Helper()
 	s := newTestStore(t)
 	cfg, _, err := config.Load(s.Home())
@@ -104,7 +105,12 @@ func settledStateCaptureFixture(t *testing.T) (*Store, archive.SessionRegistrati
 		t.Fatal(err)
 	}
 	budget := agentapi.NewNativeReadBudget(128 << 20)
-	evidence, err := cursor.CaptureSettledImport(t.Context(), database, reg, catalog.Chats[0], reg.AdmittedAt, budget)
+	request, err := nativefacts.FreezeCaptureRequest(t.Context(), reg, catalog.Chats[0], database, reg.AdmittedAt, nativefacts.CapturePolicy{FilterVersion: archive.FilterVersion, SkillEvidence: nativefacts.CaptureSkillMode(cfg.EffectiveSkillEvidence())}, budget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(request.Close)
+	evidence, err := cursor.CaptureSettledRequest(request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,11 +119,11 @@ func settledStateCaptureFixture(t *testing.T) (*Store, archive.SessionRegistrati
 			t.Error(err)
 		}
 	})
-	return s, reg, evidence, budget
+	return s, reg, request, evidence, budget
 }
 
 func TestSettledFirstSaveRechecksAfterSyncedPreparation(t *testing.T) {
-	s, reg, evidence, budget := settledStateCaptureFixture(t)
+	s, reg, request, evidence, budget := settledStateCaptureFixture(t)
 	read, closeRead := s.WithReadBudget(t.Context(), budget)
 	defer closeRead()
 	hookRan := false
@@ -144,7 +150,7 @@ func TestSettledFirstSaveRechecksAfterSyncedPreparation(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := read.SaveSettledCursorImportStage(t.Context(), reg, evidence); !errors.Is(err, ErrReadySelectionFrozen) {
+	if _, err := read.SaveSettledCursorImportStage(t.Context(), reg, request, evidence); !errors.Is(err, ErrReadySelectionFrozen) {
 		t.Fatalf("overtaken first-save accepted: %v", err)
 	}
 	if !hookRan {
@@ -164,7 +170,7 @@ func TestSettledFirstSaveRechecksAfterSyncedPreparation(t *testing.T) {
 }
 
 func TestSettledCheckedRenameKeepsRequestLock(t *testing.T) {
-	s, reg, _, _ := settledStateCaptureFixture(t)
+	s, reg, _, _, _ := settledStateCaptureFixture(t)
 	cfg, _, err := config.Load(s.Home())
 	if err != nil {
 		t.Fatal(err)

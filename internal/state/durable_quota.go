@@ -379,7 +379,7 @@ func (s *Store) writeDurableGuard(ctx context.Context, g config.DurableStorageGu
 }
 
 func (s *Store) writeDurableGuardChecked(ctx context.Context, g config.DurableStorageGuard, path string, p any, commit func(func() error) error) (err error) {
-	reservation := s.resourceBudget.Reservation()
+	reservation := s.readReservation()
 	if err = g.CheckHome(s.home); err != nil {
 		return err
 	}

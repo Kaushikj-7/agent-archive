@@ -52,10 +52,11 @@ import (
 // never stores credentials or a second copy of conversation content beyond
 // what the published source bundle itself already contains.
 type Store struct {
-	durableInspection *durableInspectionCache
-	resourceBudget    *agentapi.NativeReadBudget
-	resourceContext   context.Context
-	resourceReleases  *[]func()
+	durableInspection   *durableInspectionCache
+	resourceBudget      *agentapi.NativeReadBudget
+	resourceReservation func() stateReservation
+	resourceContext     context.Context
+	resourceReleases    *[]func()
 	// indexSnapshots uses logical packed authority for qualified-index writes.
 	indexSnapshots bool
 	// onPackedEnumeration observes collector-only physical-index directory probes.

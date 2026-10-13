@@ -20,6 +20,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/cursorstore"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/nativefacts"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
@@ -245,7 +246,12 @@ func TestSettledCursorFirstSaveRefusesOccupiedSlots(t *testing.T) {
 			}
 			reg := r.registration(c, id, "")
 			budget := agentapi.NewNativeReadBudget(128 << 20)
-			evidence, err := cursor.CaptureSettledImport(t.Context(), r.CursorDatabase, reg, *c.reviewedCursor, r.AdmittedAt, budget)
+			request, err := settledTestRequest(t, r, reg, *c.reviewedCursor, budget)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer request.Close()
+			evidence, err := cursor.CaptureSettledRequest(request)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -271,7 +277,7 @@ func TestSettledCursorFirstSaveRefusesOccupiedSlots(t *testing.T) {
 			before := settledStoreInventory(t, r.Home)
 			store, closeStore := r.Store.WithReadBudget(t.Context(), budget)
 			defer closeStore()
-			if _, err = store.SaveSettledCursorImportStage(t.Context(), reg, evidence); !errors.Is(err, state.ErrReadySelectionFrozen) {
+			if _, err = store.SaveSettledCursorImportStage(t.Context(), reg, request, evidence); !errors.Is(err, state.ErrReadySelectionFrozen) {
 				t.Fatalf("occupied first-save accepted: %v", err)
 			}
 			after := settledStoreInventory(t, r.Home)
@@ -298,7 +304,12 @@ func TestSettledCursorExactStageRetryAfterAdmission(t *testing.T) {
 	}
 	reg := r.registration(c, id, "")
 	budget := agentapi.NewNativeReadBudget(128 << 20)
-	evidence, err := cursor.CaptureSettledImport(t.Context(), r.CursorDatabase, reg, *c.reviewedCursor, r.AdmittedAt, budget)
+	request, err := settledTestRequest(t, r, reg, *c.reviewedCursor, budget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer request.Close()
+	evidence, err := cursor.CaptureSettledRequest(request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -309,7 +320,7 @@ func TestSettledCursorExactStageRetryAfterAdmission(t *testing.T) {
 	}()
 	store, closeStore := r.Store.WithReadBudget(t.Context(), budget)
 	defer closeStore()
-	digest, err := store.SaveSettledCursorImportStage(t.Context(), reg, evidence)
+	digest, err := store.SaveSettledCursorImportStage(t.Context(), reg, request, evidence)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -322,7 +333,7 @@ func TestSettledCursorExactStageRetryAfterAdmission(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := settledStoreInventory(t, r.Home)
-	retry, err := store.SaveSettledCursorImportStage(t.Context(), reg, evidence)
+	retry, err := store.SaveSettledCursorImportStage(t.Context(), reg, request, evidence)
 	if err != nil || retry != digest {
 		t.Fatalf("exact owned retry: %s %v", retry, err)
 	}
@@ -419,7 +430,12 @@ func TestSettledCursorFirstSaveRefusesStaleCommittedIndex(t *testing.T) {
 	}
 	reg := r.registration(c, id, "")
 	budget := agentapi.NewNativeReadBudget(128 << 20)
-	evidence, err := cursor.CaptureSettledImport(t.Context(), r.CursorDatabase, reg, *c.reviewedCursor, r.AdmittedAt, budget)
+	request, err := settledTestRequest(t, r, reg, *c.reviewedCursor, budget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer request.Close()
+	evidence, err := cursor.CaptureSettledRequest(request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -442,7 +458,7 @@ func TestSettledCursorFirstSaveRefusesStaleCommittedIndex(t *testing.T) {
 	before := settledStoreInventory(t, r.Home)
 	store, closeStore := r.Store.WithReadBudget(t.Context(), budget)
 	defer closeStore()
-	if _, err = store.SaveSettledCursorImportStage(t.Context(), reg, evidence); !errors.Is(err, state.ErrReadySelectionFrozen) {
+	if _, err = store.SaveSettledCursorImportStage(t.Context(), reg, request, evidence); !errors.Is(err, state.ErrReadySelectionFrozen) {
 		t.Fatalf("stale committed index revived: %v", err)
 	}
 	after := settledStoreInventory(t, r.Home)
@@ -454,4 +470,13 @@ func TestSettledCursorFirstSaveRefusesStaleCommittedIndex(t *testing.T) {
 			t.Fatalf("stale refusal changed %s", path)
 		}
 	}
+}
+
+func settledTestRequest(t *testing.T, r Registration, reg archive.SessionRegistration, reviewed agentapi.DatabaseChat, budget *agentapi.NativeReadBudget) (*nativefacts.CaptureRequest, error) {
+	t.Helper()
+	cfg, _, err := config.Load(r.Home)
+	if err != nil {
+		return nil, err
+	}
+	return nativefacts.FreezeCaptureRequest(t.Context(), reg, reviewed, r.CursorDatabase, r.AdmittedAt, nativefacts.CapturePolicy{FilterVersion: archive.FilterVersion, SkillEvidence: nativefacts.CaptureSkillMode(cfg.EffectiveSkillEvidence())}, budget)
 }

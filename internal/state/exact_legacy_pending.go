@@ -64,7 +64,7 @@ func (s *Store) validateExactLegacyPending(ctx context.Context, id string, expec
 func (s *Store) exactLegacyPendingWire(ctx context.Context, expected PendingPublication) ([sha256.Size]byte, int64, error) {
 	var digest [sha256.Size]byte
 	const scratch = int64(32 << 10)
-	reservation := s.resourceBudget.Reservation()
+	reservation := s.readReservation()
 	if err := ctx.Err(); err != nil {
 		return digest, 0, err
 	}
@@ -187,7 +187,7 @@ func (s *Store) readExactLegacyPendingWire(ctx context.Context, dir *os.Root, na
 		return nil, errors.Join(ErrDurableStorageRecovery, err)
 	}
 	const scratch = int64(32 << 10)
-	reservation := s.resourceBudget.Reservation()
+	reservation := s.readReservation()
 	if s.resourceBudget != nil {
 		if !reservation.Reserve(scratch) {
 			return nil, errStateBudget

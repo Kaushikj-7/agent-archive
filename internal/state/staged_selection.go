@@ -10,23 +10,23 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
-	"github.com/wangjohn/agent-archive/internal/agents/cursor"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/nativefacts"
 )
 
 // StagedSelection is a separately mandatory codec; ordinary selection2 never
 // acquires staged meaning. Stage and request authority are derived by Store.
 type StagedSelection struct {
-	CursorFacts       *cursor.SettledImportFacts `json:"cursor_facts,omitempty"`
-	CursorFactsSHA256 string                     `json:"cursor_facts_sha256,omitempty"`
-	Version           int                        `json:"version"`
-	StageSHA256       string                     `json:"stage_sha256"`
-	RosterSHA256      string                     `json:"roster_sha256"`
-	CoveredToken      string                     `json:"covered_token"`
-	HadRequest        bool                       `json:"had_request"`
-	Core              ReadySelection             `json:"proof"`
-	SHA256            string                     `json:"sha256"`
+	CursorFacts       *nativefacts.SettledImportFacts `json:"cursor_facts,omitempty"`
+	CursorFactsSHA256 string                          `json:"cursor_facts_sha256,omitempty"`
+	Version           int                             `json:"version"`
+	StageSHA256       string                          `json:"stage_sha256"`
+	RosterSHA256      string                          `json:"roster_sha256"`
+	CoveredToken      string                          `json:"covered_token"`
+	HadRequest        bool                            `json:"had_request"`
+	Core              ReadySelection                  `json:"proof"`
+	SHA256            string                          `json:"sha256"`
 }
 
 // UnmarshalJSON enforces the bounded, closed staged-selection proof codec.
@@ -187,7 +187,7 @@ func (s *Store) FreezeStagedSelection(ctx context.Context, id string, p PendingP
 	}
 	version := 3
 	purpose := stagedImportPurpose
-	var facts *cursor.SettledImportFacts
+	var facts *nativefacts.SettledImportFacts
 	var factsSHA256 string
 	if stage.Version == 3 {
 		version = 4
@@ -482,7 +482,7 @@ func (q *StagedSelection) validStagedProtocol() bool {
 	return q.Version == 4 && q.Core.Version == 4 && q.Core.Purpose == "settled-cursor-import" && readyDigestValid(q.CursorFactsSHA256) && q.CursorFacts != nil && settledCursorFactShape(*q.CursorFacts)
 }
 
-func settledCursorFactShape(f cursor.SettledImportFacts) bool {
+func settledCursorFactShape(f nativefacts.SettledImportFacts) bool {
 	c := f.Chat
 	return readyDigestValid(f.GlobalSHA256) && len(c.ID) > 0 && len(c.ID) <= 255 && len(c.KeyID) > 0 && len(c.KeyID) <= 255 && len(c.Folder) > 0 && len(c.Folder) <= 1024 && len(c.WorkspaceID) <= 255 && !c.Malformed && !c.CreatedAt.IsZero() && c.CursorFacts.VersionPresent && c.CursorFacts.Version == 18 && (c.CursorFacts.Relationships == agentapi.CursorRelationshipsAbsent && c.CursorFacts.ChildIDsSHA256 == "" || c.CursorFacts.Relationships == agentapi.CursorRelationshipsValid && readyDigestValid(c.CursorFacts.ChildIDsSHA256))
 }

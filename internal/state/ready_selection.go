@@ -58,7 +58,7 @@ var ErrReadySelectionFrozen = errors.Join(ErrDurableStorageRecovery, errors.New(
 func readySHA(data []byte) string { sum := sha256.Sum256(data); return hex.EncodeToString(sum[:]) }
 
 func (s *Store) readyDigest(ctx context.Context, value any) (string, error) {
-	reservation := s.resourceBudget.Reservation()
+	reservation := s.readReservation()
 	const scratch = 32 << 10
 	if !reservation.Reserve(scratch) {
 		return "", errStateBudget
