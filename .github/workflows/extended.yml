@@ -7,20 +7,21 @@ on:
         required: true
         type: string
       batch:
-        description: Root-approved unused measurement namespace
+        description: Existing root-approved followup-20261013-0349 namespace
         required: true
         type: string
       mode:
         description: Approved bounded observation
         required: true
         type: choice
-        options: ['off', 'seed', 'warm']
+        options: ['prefix', 'warm']
 permissions:
   contents: read
 concurrency:
   group: representative-cache-measurement
   cancel-in-progress: false
-# Proposal: off x2, seed x1, warm x2. No dispatch authority.
+# Proposal: at most prefix then exact warm on new integrated source; no performance comparison.
+# Root must check all spent allocation + next 27 <= 145 before each of at most 2 dispatches.
 # Root must record M SHA externally after freeze; embedding M in its own tracked
 # adapter/workflow would be self-referential. All dispatches supply that exact SHA.
 env:
@@ -58,7 +59,6 @@ jobs:
       - id: key
         run: python3 -B scripts/measure_go_cache.py prepare
       - id: restore
-        if: inputs.mode != 'off'
         continue-on-error: true
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -81,7 +81,7 @@ jobs:
       - id: complete
         run: python3 -B scripts/measure_go_cache.py complete
       - id: save
-        if: success() && inputs.mode != 'off' && steps.complete.outputs.save_ready == 'true' && steps.verify.outputs.restore_state != 'exact'
+        if: success() && inputs.mode == 'prefix' && steps.complete.outputs.save_ready == 'true' && steps.verify.outputs.restore_state != 'exact'
         continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -140,7 +140,6 @@ jobs:
       - id: key
         run: python3 -B scripts/measure_go_cache.py prepare
       - id: restore
-        if: inputs.mode != 'off'
         continue-on-error: true
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -163,7 +162,7 @@ jobs:
       - id: complete
         run: python3 -B scripts/measure_go_cache.py complete
       - id: save
-        if: success() && inputs.mode != 'off' && steps.complete.outputs.save_ready == 'true' && steps.verify.outputs.restore_state != 'exact'
+        if: success() && inputs.mode == 'prefix' && steps.complete.outputs.save_ready == 'true' && steps.verify.outputs.restore_state != 'exact'
         continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -212,3 +211,11 @@ jobs:
           NEEDS: ${{ toJSON(needs) }}
           EVIDENCE_DIRECTORY: ${{ runner.temp }}/shard-evidence
         run: python3 -B scripts/measure_go_cache.py verdict
+      - name: Preserve fresh integrated test proof
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: measure-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.mode }}-verdict
+          path: ${{ runner.temp }}/measurement-verdict-evidence.json
+          if-no-files-found: warn
+          retention-days: 7
