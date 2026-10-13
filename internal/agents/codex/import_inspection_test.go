@@ -20,8 +20,10 @@ type inspectionFile struct {
 }
 
 func (f inspectionFile) ReadAt(p []byte, off int64) (int, error) { return f.Reader.ReadAt(p, off) }
-func (f inspectionFile) Length() int64                           { return f.Size() }
-func (f inspectionFile) Check() error                            { return f.check }
+
+func (f inspectionFile) Length() int64 { return f.Size() }
+
+func (f inspectionFile) Check() error { return f.check }
 
 func TestImportInspectionMatchesRetainedRowsAndNativeStart(t *testing.T) {
 	for _, row := range []string{
@@ -72,12 +74,20 @@ func TestImportInspectionReleasesBudgetAndPreservesFinalChecks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer pass.Close()
+	t.Cleanup(func() {
+		if err := pass.Close(); err != nil {
+			t.Error(err)
+		}
+	})
 	snap, err := pass.Read(t.Context(), ref, agentapi.ReadLimits{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer snap.Close()
+	t.Cleanup(func() {
+		if err := snap.Close(); err != nil {
+			t.Error(err)
+		}
+	})
 	before, _ := budget.Charged()
 	c := agentapi.FilterContext{Filename: filepath.Base(ref.Path), Limits: agentapi.ReadLimits{ReadBudget: budget}}
 	_, err = (Filter{}).InspectFilteredImport(t.Context(), snap.Input(), c)

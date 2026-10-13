@@ -337,12 +337,13 @@ func (r providerReader) filter(ctx context.Context, adapter archive.Adapter, max
 		}
 	}
 
-	c := agentapi.FilterContext{Filename: filepath.Base(r.ref.Path), StartedAt: r.startedAt, Limits: limits}
 	streaming, supports := f.(agentapi.StreamingImportFilter)
-	if summary != nil && supports && streaming.InspectionFor(f) && streaming.SupportsImportInspection(in) {
-		if r.resourceOwner != nil {
-			c.Limits.ReadBudget = r.resourceOwner.readBudget()
-		}
+	canInspect := summary != nil && supports && streaming.InspectionFor(f) && streaming.SupportsImportInspection(in)
+	if canInspect && r.resourceOwner != nil {
+		limits.ReadBudget = r.resourceOwner.readBudget()
+	}
+	c := agentapi.FilterContext{Filename: filepath.Base(r.ref.Path), StartedAt: r.startedAt, Limits: limits}
+	if canInspect {
 		var inspected agentapi.ImportSummary
 		inspected, err = r.inspectSummary(ctx, snap, f, streaming, in, c, maxBytes)
 		if err == nil {
