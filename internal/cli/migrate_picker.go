@@ -96,12 +96,12 @@ func runPickerUpgrade(stdout, stderr io.Writer, env Env, rollback bool) int {
 	return 0
 }
 
-func ensurePickerPendingDrained(home string) error {
+func ensurePickerPendingDrained(home string) (err error) {
 	root, err := local.OpenRootedHome(home)
 	if err != nil {
 		return err
 	}
-	defer root.Close()
+	defer func() { err = errors.Join(err, root.Close()) }()
 	for _, name := range []string{"pending", "publication-evidence"} {
 		directory, e := root.Root.Open(name)
 		if errors.Is(e, os.ErrNotExist) {
