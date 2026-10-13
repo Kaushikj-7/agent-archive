@@ -85,7 +85,7 @@ class CatalogTest(unittest.TestCase):
 
 class GateTest(unittest.TestCase):
     def test_event_verdict_fail_closed(self):
-        pr = {j: {'result': s} for j, s in [('linux-short', 'success'), ('linux-full', 'skipped'), ('script-tests', 'success')]}
+        pr = {j: {'result': s} for j, s in [('linux-short', 'success'), ('linux-full', 'success'), ('script-tests', 'success'), ('macos-smoke','success'), ('tier-plan','success')]}
         runner.verdict('pull_request', 'refs/pull/1/merge', pr)
         candidate = copy.deepcopy(pr)
         candidate['linux-short']['result'], candidate['linux-full']['result'] = 'skipped', 'success'
@@ -109,12 +109,18 @@ class GateTest(unittest.TestCase):
             paths = []
             for i in range(2):
                 path = Path(directory)/str(i)/'manifest.json';path.parent.mkdir();paths.append(path)
+                cli_text = records(*[event('pass', Test=name) for name in catalog['assignments'][i]['cli']], event('pass'))
+                (path.parent/'cli.json').write_text(cli_text)
+                ordinary_text = records(event('pass','b',Test='TestOrdinary'),event('pass','b')) if i == 1 else records(event('output','a',Output='? a [no test files]\n'),event('skip','a'))
+                (path.parent/'ordinary.json').write_text(ordinary_text)
+                import run_ci_tier
+                proof = run_ci_tier.body_evidence(ordinary_text+'\n'+cli_text,True)
                 path.write_text(json.dumps({'shard': i, 'catalog': catalog, 'catalog_sha256': runner.digest(catalog),
-                                            'success': True, 'coverage': catalog['assignments'][i]}))
+                                            'success': True, 'tier': 'pr', 'body_evidence': proof, 'coverage': catalog['assignments'][i]}))
             runner.reconcile(directory)
             good = paths[1].read_text()
             for key, value in [('success', False), ('shard', 0), ('coverage', {'packages': [], 'cli': []}),
-                               ('catalog_sha256', 'different')]:
+                               ('catalog_sha256', 'different'), ('body_evidence', {})]:
                 item = json.loads(good);item[key] = value;paths[1].write_text(json.dumps(item))
                 with self.assertRaises(runner.Failure):
                     runner.reconcile(directory)
@@ -164,6 +170,9 @@ else:
                 for index in (0, 1):runner.run(index, root/str(index), 30)
                 runner.reconcile(root)
             calls = [json.loads(line) for line in command_log.read_text().splitlines()]
+            listings = [call for call in calls if '-list' in call['args']]
+            self.assertEqual(len(listings),2)
+            self.assertTrue(all('-count=1' in call['args'] and '-race' in call['args'] and '-short' in call['args'] for call in listings))
             executed = [call for call in calls if call['args'][0]=='test' and '-list' not in call['args']]
             for package in (runner.GIT_IDENTITY, 'ordinary/a', 'ordinary/b'):
                 self.assertEqual(sum(package in call['args'] for call in executed), 1)

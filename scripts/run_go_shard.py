@@ -295,12 +295,21 @@ def reconcile(directory):
     for manifest in manifests:
         if (manifest.get('success') is not True or manifest.get('catalog') != first
                 or manifest.get('catalog_sha256') != digest(first)
-                or first.get('source') != os.environ.get('GITHUB_SHA', first.get('source'))):
+                or first.get('source') != os.environ.get('GITHUB_SHA', first.get('source'))
+                or manifest.get('tier') != 'pr' or not isinstance(manifest.get('body_evidence'), dict)):
             raise Failure('shard catalog/source/result mismatch')
         index = manifest['shard']
         expected = first['assignments'][index]
         if manifest.get('coverage') != expected:
             raise Failure('shard evidence does not cover its complete assignment')
+        import run_ci_tier
+        directory = paths[manifests.index(manifest)].parent
+        logs = [directory / name for name in ('git-identity.json', 'ordinary.json', 'cli.json') if (directory / name).exists()]
+        if not (directory / 'cli.json').exists():
+            raise Failure('actual shard CLI evidence missing')
+        raw = '\n'.join(log.read_text() for log in logs)
+        if manifest['body_evidence'] != run_ci_tier.body_evidence(raw, short=True):
+            raise Failure('actual shard body evidence differs from manifest')
     assignments = first['assignments']
     for kind in ('packages', 'cli'):
         a, b = [set(s[kind]) for s in assignments]
@@ -311,7 +320,8 @@ def reconcile(directory):
 
 
 def verdict(event, ref, needs):
-    expected = {'linux-short': 'success', 'linux-full': 'skipped', 'script-tests': 'success'}
+    expected = {'linux-short': 'success', 'linux-full': 'success', 'script-tests': 'success',
+                'macos-smoke': 'success', 'tier-plan': 'success'}
     if event == 'push' and ref.startswith('refs/heads/release-candidate/') and ref != 'refs/heads/release-candidate/':
         expected['linux-short'], expected['linux-full'] = 'skipped', 'success'
     elif event != 'pull_request':
@@ -341,7 +351,7 @@ def run(index, out, seconds):
     phases = {}
     phases['package_discovery_seconds'] = supervise([(['go', 'list', '-json', './...'], out / 'packages.json', env)], deadline)[0]
     packages = metadata((out / 'packages.json').read_text())
-    phases['cli_listing_race_build_testmain_seconds'] = supervise([(['go', 'test', '-race', '-short', '-json', '-list', '^(Test|Fuzz|Example)', CLI], out / 'listing.json', env)], deadline)[0]
+    phases['cli_listing_race_build_testmain_seconds'] = supervise([(['go', 'test', '-race', '-short', '-count=1', '-json', '-list', '^(Test|Fuzz|Example)', CLI], out / 'listing.json', env)], deadline)[0]
     names = listed_names((out / 'listing.json').read_text())
     hints = json.loads((ROOT / 'scripts/go_shard_hints.json').read_text())
     ordinary = sorted(set(packages) - {CLI})
@@ -397,6 +407,9 @@ def run(index, out, seconds):
     c = coverage((out / 'cli.json').read_text(), {CLI: True}, cli_bins[index])
     if index == 0:
         phases['vet_seconds'] = supervise([(['go', 'vet', './...'], out / 'vet.txt', env)], deadline)[0]
+    import run_ci_tier
+    manifest['tier'] = 'pr'
+    manifest['body_evidence'] = run_ci_tier.body_evidence(ordinary_text + '\n' + (out / 'cli.json').read_text(), short=True)
     manifest.update(success=True, phases=phases, coverage={'packages': p['packages'], 'cli': c['cli']})
     path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + '\n')
 

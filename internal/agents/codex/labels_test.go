@@ -171,7 +171,8 @@ func TestLabelsSettledReadDoesNotMutateNativeHome(t *testing.T) {
 }
 
 func TestLabelsSettledCanonicalStoragePrecedence(t *testing.T) {
-	t.Parallel()
+	// Run precedence checks before the parallel full-history fixtures: native
+	// database observations intentionally become unavailable after 100 ms.
 	for _, tc := range []struct {
 		mode  codexmeta.HistoryMode
 		name  string
@@ -179,7 +180,6 @@ func TestLabelsSettledCanonicalStoragePrecedence(t *testing.T) {
 		want  string
 	}{{codexmeta.CodexHistoryLegacy, "Unused name", "Database title", "Database title"}, {codexmeta.CodexHistoryLegacy, "Unused name", "Invented prompt", "Index name"}, {codexmeta.CodexHistoryPaginated, "Canonical name", "Stale title", "Canonical name"}, {codexmeta.CodexHistoryPaginated, "Invented prompt", "Stale title", "Invented prompt"}, {codexmeta.CodexHistoryPaginated, "", "Stale title", ""}} {
 		t.Run(string(tc.mode)+tc.want, func(t *testing.T) {
-			t.Parallel()
 			root, request := labelFixture(t)
 			labelIndex(t, root, "Index name")
 			db := labelDB(t, root, request, tc.mode, tc.name, tc.title)
@@ -189,6 +189,40 @@ func TestLabelsSettledCanonicalStoragePrecedence(t *testing.T) {
 			got, ok := lookupLabel(root, request)
 			if !ok || got.Name != tc.want {
 				t.Fatalf("%+v %v want %q", got, ok, tc.want)
+			}
+		})
+	}
+}
+
+func TestLabelsSettledDatabaseUnavailableAfterDeadline(t *testing.T) {
+	root, request := labelFixture(t)
+	labelIndex(t, root, "Index name")
+	db := labelDB(t, root, request, codexmeta.CodexHistoryLegacy, "Unused name", "Invented prompt")
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name string
+		ctx  func() (context.Context, context.CancelFunc)
+	}{
+		{"expired", func() (context.Context, context.CancelFunc) {
+			return context.WithDeadline(context.Background(), time.Unix(0, 0))
+		}},
+		{"canceled", func() (context.Context, context.CancelFunc) {
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			return ctx, cancel
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := tc.ctx()
+			defer cancel()
+			rows, settled, absent := readLabelDatabase(ctx, root, []agentapi.LabelRequest{request})
+			if len(rows) != 0 || settled || absent {
+				t.Fatalf("interrupted database supplied authority: rows=%v settled=%v absent=%v", rows, settled, absent)
+			}
+			if labels := lookupLabelHome(ctx, root, []agentapi.LabelRequest{request}, true); len(labels) != 0 {
+				t.Fatalf("interrupted database allowed index fallback: %+v", labels)
 			}
 		})
 	}
