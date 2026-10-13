@@ -198,6 +198,8 @@ func TestBackfillCommandMeasurement(t *testing.T) {
 		Calls int     `json:"calls"`
 	}
 	checkpoints := map[string]checkpoint{}
+	cpuBefore, _, err := backfillProcessResources()
+	must(t, err)
 	start := time.Now()
 	env.backfillCheckpoint = func(step string) error {
 		value := checkpoints[step]
@@ -212,6 +214,8 @@ func TestBackfillCommandMeasurement(t *testing.T) {
 	}
 	code := Run(args, nil, &stdout, &stderr, env)
 	elapsed := time.Since(start)
+	cpuAfter, commandRSS, err := backfillProcessResources()
+	must(t, err)
 	runtime.ReadMemStats(&after)
 	if code != 0 {
 		t.Fatalf("command failed %d: %s\n%s", code, stderr.String(), stdout.String())
@@ -239,18 +243,20 @@ func TestBackfillCommandMeasurement(t *testing.T) {
 			must(t, e)
 			raw, e := json.Marshal(map[string]any{"records": bundle.NativeRecords, "history": bundle.History, "text": bundle.NativeText, "started_at": reg.SessionStartedAt, "started_at_source": reg.StartedAtSource, "origin": reg.Origin, "format": bundle.Capture.SourceFormat})
 			must(t, e)
-			normalized = append(normalized, reg.NativeSessionID+":"+strings.ReplaceAll(string(raw), project, "$PROJECT"))
+			safe := strings.ReplaceAll(string(raw), project, "$PROJECT")
+			sessionDigest := sha256.Sum256([]byte(safe))
+			normalized = append(normalized, reg.NativeSessionID+":"+hex.EncodeToString(sessionDigest[:]))
 		}
 		batches, e := backfill.LoadBatches(home)
 		must(t, e)
-		if len(batches) != 1 || batches[0].CompletedAt == nil || len(batches[0].Sessions) != len(expected) {
+		if len(batches) != 1 || batches[0].CompletedAt == nil || len(batches[0].Sessions)+len(batches[0].Subagents) != len(expected) {
 			t.Fatalf("incomplete batch: %+v", batches)
 		}
 		imported = len(regs)
 	}
 	sort.Strings(normalized)
 	digest := sha256.Sum256([]byte(strings.Join(normalized, "\n")))
-	result := map[string]any{"fixture_version": 3, "state": stateName, "trace": os.Getenv("AA_BACKFILL_TRACE") == "1", "scenario": scenario, "mode": mode, "sessions": count, "selected": len(expected), "imported": imported, "skipped": count - len(expected), "input_bytes": inputBytes, "elapsed_seconds": elapsed.Seconds(), "checkpoint_offsets": checkpoints, "allocated_bytes": after.TotalAlloc - before.TotalAlloc, "gc_cycles": after.NumGC - before.NumGC, "artifact_sha256": hex.EncodeToString(digest[:]), "toolchain": runtime.Version(), "logical_cpus": runtime.NumCPU(), "planning_workers": 1, "default_adapter_workers": min(8, max(2, runtime.NumCPU()/2)), "byte_budget": 128 << 20}
+	result := map[string]any{"fixture_version": 3, "state": stateName, "trace": os.Getenv("AA_BACKFILL_TRACE") == "1", "scenario": scenario, "mode": mode, "sessions": count, "selected": len(expected), "imported": imported, "skipped": count - len(expected), "input_bytes": inputBytes, "elapsed_seconds": elapsed.Seconds(), "checkpoint_offsets": checkpoints, "command_cpu_seconds": cpuAfter - cpuBefore, "command_peak_rss_at_return_bytes": commandRSS, "allocated_bytes": after.TotalAlloc - before.TotalAlloc, "gc_cycles": after.NumGC - before.NumGC, "artifact_sha256": hex.EncodeToString(digest[:]), "toolchain": runtime.Version(), "logical_cpus": runtime.NumCPU(), "planning_workers": 1, "default_adapter_workers": min(8, max(2, runtime.NumCPU()/2)), "byte_budget": 128 << 20}
 	raw, e := json.Marshal(result)
 	must(t, e)
 	if os.Getenv("AA_BACKFILL_TRACE") == "1" {
