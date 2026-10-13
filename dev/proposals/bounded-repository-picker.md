@@ -447,9 +447,14 @@ successor; no prefix without that boundary is a scope match.
 
 Canonical harness filtering must preserve the original harness/session tie
 discriminator used by the exhaustive caller oracle; aliases cannot silently
-change identity ordering. Order keys reuse `orderKeys` activity/capture timestamp formatting and
-`descendingIdentity(rawMetadataObjectKey)` exactly; range traversal uses
-the existing descending activity/capture and identity tie comparator. `MetadataObjectKey` preserves the exact raw harness
+change identity ordering. Order keys reuse `orderKeys` activity/capture timestamp
+formatting, followed by `descendingIdentity(rawHarness + NUL + sessionID + NUL)`.
+Validated identity components forbid NUL; the terminated tuple uniquely determines
+the physical metadata key and preserves component prefix ordering. Reverse range
+traversal matches the exhaustive comparator: activity/capture descending, then
+raw harness/session ascending. The tuple suffix is smaller than the previous
+full-path suffix and retains the existing 4096-byte key bound.
+`MetadataObjectKey` preserves the exact raw harness
 spelling; canonical harness normalization is only filter/group authority, never
 permission to substitute an exact source identity. RepoKey
 membership includes only validated nonempty RepoKeys. Project-any includes every
@@ -588,3 +593,28 @@ this exact prefix: zero proves absence, one yields a unique pinned entry, and mo
 than one returns explicit ambiguity while fetching at most two rows as evidence.
 PR 4 owns that API and its captured-view/request budgets; PR 3 must construct and
 validate every additional lookup copy before activation.
+
+### PR 3 construction and activation boundary
+
+Qualified stores can now construct and activate complete protocol-11 catalogs.
+`OpenScopedMigration` uses the isolated legacy-source route while ordinary
+`OpenMigration` remains protocol 10. `OpenPickerUpgrade` is a distinct operation
+bound to its exact catalog source head, destination, reviewed protocol-11 proof
+and seal owner. Its coordinator CAS record retains the candidate roots and finite
+identity-page progress. The old active view remains readable while building;
+unknown owners and unresolved local publication evidence refuse progress.
+
+Construction verifies immutable bodies, retains revisions/tombstones/receipts and
+rebuilds every ordinary ordering copy, scoped membership and canonical identity
+copy. Verification checks each expected value and auxiliary cardinality to prove
+there are no extra or missing copies. Activation persists the stronger
+coordinator fence before one complete head CAS and keeps publication sealed until
+configuration version 14 is saved. Mixed states refuse protected writes.
+
+New protocol-11 pending descriptors carry an explicit journal protocol. Original
+protocol-10 journal fields and digest bytes are unchanged; their frozen owners
+drain before activation, and completed old journals permit only local cleanup.
+Scoped rollback preserves the original fully indexed data under the stronger
+head/coordinator/configuration fences and refuses any later head change.
+Production provider qualification is unchanged. Paged consumers and end-to-end
+bounded picker behavior remain the subsequent implementation slices.

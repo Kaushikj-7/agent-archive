@@ -3,6 +3,11 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/wangjohn/agent-archive/internal/catalog"
@@ -22,7 +27,7 @@ func TestRunScopedUpgradeResumesProtectedConfigurationAndKeepsRollbackFenced(t *
 	t.Parallel()
 	store := &scopedMigrationCLIStore{&qualifiedCLIStore{storagetest.NewMemoryStore()}}
 	cfg := config.Config{SchemaVersion: 11, RetentionDays: 90, Storage: destination.Config{Provider: "s3", Bucket: "private-picker", Prefix: "synthetic", Region: "us-east-1", ArchiveFormat: destination.FormatCatalogV4}}
-	env := operatorTestEnv(t, cfg)
+	env := pickerOperatorEnv(t, cfg)
 	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return store, nil }
 	run := func(extra ...string) int {
 		var out, stderr bytes.Buffer
@@ -54,5 +59,135 @@ func TestRunScopedUpgradeResumesProtectedConfigurationAndKeepsRollbackFenced(t *
 	saved, _, err = config.Load(home)
 	if err != nil || !saved.Paused || saved.SchemaVersion != 14 {
 		t.Fatal(saved, err)
+	}
+}
+
+func TestRunScopedUpgradePreservesUnknownPendingEvidence(t *testing.T) {
+	t.Parallel()
+	store := &scopedMigrationCLIStore{&qualifiedCLIStore{storagetest.NewMemoryStore()}}
+	cfg := config.Config{SchemaVersion: 11, RetentionDays: 90, Storage: destination.Config{Provider: "s3", Bucket: "private-picker", Prefix: "synthetic", Region: "us-east-1", ArchiveFormat: destination.FormatCatalogV4}}
+	env := pickerOperatorEnv(t, cfg)
+	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return store, nil }
+	home, err := env.readHome()
+	if err != nil {
+		t.Fatal(err)
+	}
+	directory := filepath.Join(home, "pending")
+	if err = os.MkdirAll(directory, 0700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(directory, "foreign.json")
+	original := []byte(`{"unknown_future_pending":true}`)
+	if err = os.WriteFile(path, original, 0600); err != nil {
+		t.Fatal(err)
+	}
+	var out, stderr bytes.Buffer
+	if code := Run([]string{"migrate", "--scoped-picker"}, nil, &out, &stderr, env); code != 1 {
+		t.Fatal(code)
+	}
+	if !strings.Contains(stderr.String(), "exact original publication") {
+		t.Fatal(stderr.String())
+	}
+	actual, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(actual, original) {
+		t.Fatal("changed unknown evidence", err)
+	}
+	if _, err = catalog.PickerUpgradeCheckpoint(t.Context(), store); !errors.Is(err, storage.ErrNotFound) {
+		t.Fatal("claimed upgrade with unknown local work", err)
+	}
+}
+
+func pickerOperatorEnv(t *testing.T, cfg config.Config) Env {
+	t.Helper()
+	env := operatorTestEnv(t, cfg)
+	home, err := env.readHome()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.Chmod(home, 0700); err != nil {
+		t.Fatal(err)
+	}
+	return env
+}
+
+type scopedConfigurationFaultStore struct {
+	*scopedMigrationCLIStore
+	beforeConfiguration func() error
+}
+
+func (s *scopedConfigurationFaultStore) PutConditional(ctx context.Context, key string, raw []byte, condition storage.PutCondition) (string, error) {
+	etag, err := s.scopedMigrationCLIStore.PutConditional(ctx, key, raw, condition)
+	if err != nil {
+		return etag, err
+	}
+	if key == catalog.CoordinatorKey && s.beforeConfiguration != nil {
+		var state struct {
+			Upgrade *catalog.PickerUpgradeState `json:"picker_upgrade"`
+		}
+		if err = json.Unmarshal(raw, &state); err != nil {
+			return etag, err
+		}
+		if state.Upgrade != nil && state.Upgrade.Phase == "active" {
+			fn := s.beforeConfiguration
+			s.beforeConfiguration = nil
+			if err = fn(); err != nil {
+				return etag, err
+			}
+		}
+	}
+	return etag, nil
+}
+
+func TestRunScopedUpgradeRecoversConfigurationSaveAfterHeadActivation(t *testing.T) {
+	t.Parallel()
+	store := &scopedConfigurationFaultStore{scopedMigrationCLIStore: &scopedMigrationCLIStore{&qualifiedCLIStore{storagetest.NewMemoryStore()}}}
+	cfg := config.Config{SchemaVersion: 11, RetentionDays: 90, Storage: destination.Config{Provider: "s3", Bucket: "private-picker", Prefix: "synthetic", Region: "us-east-1", ArchiveFormat: destination.FormatCatalogV4}}
+	env := pickerOperatorEnv(t, cfg)
+	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return store, nil }
+	home, err := env.readHome()
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(home, "config.json")
+	saved := filepath.Join(home, "synthetic-config-save-fault.json")
+	store.beforeConfiguration = func() error {
+		if err := os.Rename(path, saved); err != nil {
+			return err
+		}
+		return os.Mkdir(path, 0700)
+	}
+	run := func() int {
+		var out, stderr bytes.Buffer
+		return Run([]string{"migrate", "--scoped-picker"}, nil, &out, &stderr, env)
+	}
+	if code := run(); code != 1 {
+		t.Fatal("configuration fault missing", code)
+	}
+	checkpoint, err := catalog.PickerUpgradeCheckpoint(t.Context(), store)
+	if err != nil || checkpoint.Phase != "active" {
+		t.Fatal(checkpoint, err)
+	}
+	w, err := catalog.New(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = w.PutImmutable(t.Context(), catalog.KindMetadata, []byte(`{}`)); !errors.Is(err, catalog.ErrAdmissionClosed) {
+		t.Fatal("released seal before local save", err)
+	}
+	if err = os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.Rename(saved, path); err != nil {
+		t.Fatal(err)
+	}
+	if code := run(); code != 0 {
+		t.Fatal("configuration resumption failed", code)
+	}
+	final, _, err := config.Load(home)
+	if err != nil || !final.ScopedPickerProtection || final.SchemaVersion != 14 {
+		t.Fatal(final, err)
+	}
+	if _, err = w.PutImmutable(t.Context(), catalog.KindMetadata, []byte(`{}`)); err != nil {
+		t.Fatal("exact activation acknowledgement did not release", err)
 	}
 }

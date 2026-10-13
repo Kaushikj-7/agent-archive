@@ -8,6 +8,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/state"
+	"github.com/wangjohn/agent-archive/internal/storage"
 	"os"
 	"testing"
 
@@ -135,6 +136,9 @@ func TestPickerUpgradeResumesPreservesIdentityAndReceiptAndEnablesCommit(t *test
 	}
 	if err = w.Coordinator().Active(t.Context()); err != nil {
 		t.Fatal(err)
+	}
+	if err = u.FinishActivation(t.Context()); err != nil {
+		t.Fatal("completed activation replay after new publication", err)
 	}
 }
 
@@ -496,6 +500,34 @@ func TestScopedJournalUsesDistinctFrozenProtocol(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err = store.CompletePublication(ctx, j.MutationID, pending.MetadataBytes); err != nil {
+		t.Fatal(err)
+	}
+}
+
+type boundedPickerDestination struct{ *qualifiedStore }
+
+func (*boundedPickerDestination) List(context.Context, string) ([]storage.Object, error) {
+	return nil, errors.New("unbounded construction inventory forbidden")
+}
+
+func TestScopedMigrationUsesBoundedDestinationInventory(t *testing.T) {
+	t.Parallel()
+	source, target, src, dst, _ := migrationFixture(t, 3)
+	destination := &boundedPickerDestination{target}
+	migration, err := OpenScopedMigration(t.Context(), source, destination, src, dst, pickerCutover{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		done, e := migration.Step(t.Context())
+		if e != nil {
+			t.Fatal(e)
+		}
+		if done {
+			break
+		}
+	}
+	if err = migration.Activate(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 }

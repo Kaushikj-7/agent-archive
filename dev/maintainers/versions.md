@@ -199,13 +199,10 @@ must fence old direct admission APIs through that coordinator, not the head alon
 The permanent configuration capability is `{version: 14, writer: scoped-picker-v1}`
 with `scoped_picker_protection`; 13 is reserved separately by staged legacy
 publication (#479). Existing catalog configuration 11 and publication composition
-12 retain every lower protection and authorization floor. This reservation cannot
-be activated yet: current decoders explicitly refuse the new head/configuration,
-including mixed capabilities, before admission authorizes source/index writes.
-Only protocol 10/schema 4 is writable. Complete construction, transactional rows,
-upgrade, paged reads and all existing writer protection composition must land
-before activating 14; frozen protocol-10 owners must drain under the destination
-seal first. See the [frozen contracts and consumer inventory](../proposals/bounded-repository-picker.md#pr-1-frozen-reservations-and-consumer-inventory).
+12 retain every lower protection and authorization floor. Qualified source stores now support complete scoped construction and guarded
+activation; production S3/R2 atomic, clock and credential-cutover gates remain
+closed. Frozen protocol-10 owners must settle under the exact destination seal
+before the stronger writer contract activates. See the [frozen contracts and consumer inventory](../proposals/bounded-repository-picker.md#pr-1-frozen-reservations-and-consumer-inventory).
 
 Scoped construction support consumes the exact protocol-11/schema-5 head and
 protocol-11 coordinator descriptors. Configuration version 14 composes existing
