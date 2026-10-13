@@ -141,6 +141,11 @@ func BenchmarkBuildPlan(b *testing.B) {
 					target = 4 << 20
 				}
 				row := `{"type":"response_item","payload":{"type":"function_call_output","output":"` + strings.Repeat("synthetic stdout ", 1024) + `"}}` + "\n"
+				if scenario == planScenarioLarge && i == 0 {
+					// Preserve ordinary production output limits while inspecting
+					// the complete large raw source.
+					row = `{"type":"response_item","payload":{"type":"function_call_output","output":"` + strings.Repeat("x", 1<<20) + `"}}` + "\n"
+				}
 				if scenario == planScenarioRetained || i%3 == 0 && scenario != planScenarioLarge {
 					row = `{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"` + strings.Repeat("Synthetic explanation. ", 700) + `"}]}}` + "\n"
 				}

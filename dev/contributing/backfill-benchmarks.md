@@ -22,13 +22,17 @@ python3 scripts/compare_backfill.py /tmp/backfill-original/samples.jsonl /tmp/ba
 ```
 
 The clock is September 23, 2026 in California. Metadata headers occupy exactly
-1,024 bytes before the newline, including trailing JSON whitespace. Fixture version 5 has:
+1,024 bytes before the newline, including trailing JSON whitespace. Fixture version 6 has:
 
 - Recent and old corpora: 1,500 files, sizes cycling through 256 KiB, 256 KiB,
   512 KiB, 1 MiB, 1 MiB, 1 MiB, 1 MiB, 2 MiB, 4 MiB, 8 MiB, plus small records.
   One-third carry retained assistant explanations; the rest carry tool stdout.
   Recent selects 1,350; old selects 150. Both run planning and complete imports.
 - Large: one file with at least 210 MiB tool stdout and 31 small files.
+  Its 1-MiB output strings exceed the normal per-string privacy cap; retained
+  output fits the unchanged production transcript limit. All 32 sessions must
+  be admitted, imported and verified. Version 5 used 8-KiB output strings whose
+  retained total exceeded that limit and correctly refused the large source.
 - Related: one old parent and four recent self-contained forks sharing context.
 - Ancestry: one old parent and four recent children whose native history refers
   to the parent's captured prefix. Uploaded history manifests are verified.
