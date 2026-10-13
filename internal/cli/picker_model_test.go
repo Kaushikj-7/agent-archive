@@ -401,7 +401,7 @@ func TestPickerActivitiesSharedIDStaysHarnessQualified(t *testing.T) {
 	}
 }
 
-func TestPickerModelScopeContinuationsAndRefreshActivity(t *testing.T) {
+func TestPickerModelScopeContinuationsAndFreshActivity(t *testing.T) {
 	a := &modelArchive{facts: map[pickerIdentity]catalog.PickerItem{}}
 	regs := []archive.SessionRegistration{}
 	active := time.Unix(100, 0)
@@ -440,7 +440,11 @@ func TestPickerModelScopeContinuationsAndRefreshActivity(t *testing.T) {
 		t.Fatalf("toggle reread or lost prefix reads=%d view=%+v err=%v", reads, v, err)
 	}
 	active = active.Add(time.Hour)
-	v, err = m.Refresh(t.Context(), scoped, a)
+	m = &pickerModel{archive: a, regs: regs, source: m.source, pageSize: m.pageSize, labelBudget: m.labelBudget, observeActivity: m.observeActivity, label: m.label, labels: m.labels}
+	if err = m.prepare(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	v, err = m.First(t.Context(), scoped)
 	if err != nil || len(v.Rows) != 2 || reads != 8 || !v.Rows[0].row.active.Equal(active) {
 		t.Fatalf("refresh failed to observe activity/read new safe labels: %+v %v reads=%d", v, err, reads)
 	}
@@ -563,7 +567,11 @@ func TestPickerModelOfflineAutoCannotProveCombinedScopeEmpty(t *testing.T) {
 					t.Fatal(v)
 				}
 				fresh := &modelArchive{facts: map[pickerIdentity]catalog.PickerItem{}}
-				v, err = m.Refresh(t.Context(), sessionScope{All: true}, fresh)
+				m = &pickerModel{archive: fresh, source: source, pageSize: 50, labelBudget: 50}
+				if err = m.prepare(t.Context()); err != nil {
+					t.Fatal(err)
+				}
+				v, err = m.First(t.Context(), sessionScope{All: true})
 				if err != nil || !v.Empty || v.Incomplete || v.Total != 0 || m.absenceUnknown {
 					t.Fatalf("fresh complete view retained offline uncertainty: %+v %v", v, err)
 				}

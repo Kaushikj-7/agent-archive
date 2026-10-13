@@ -1,7 +1,7 @@
 # Headless local/archive picker
 
 `internal/cli/picker_model.go` owns the offered union independently of terminal
-rendering. `First`, `Older`, `Refresh` and `Select` retain an immutable captured
+rendering. `First`, `Older` and `Select` retain an immutable captured
 archive view. Each scope has its own local position, remote buffer, cursor,
 suppression set, emitted physical keys and visible prefix. Every operation checks
 the captured lifetime before publishing a prefix; an operation served entirely
@@ -10,8 +10,9 @@ The caller prefetches the initial page, so initial CLI setup makes two head
 observations around page/model construction, plus one per exact local identity
 lookup batch. This fixed CLI overhead is separate from the reader page API's
 one-observation cost and the registration-dependent native inventory work.
-Refresh requires a
-new archive view; cached scopes do not renew the ten-minute snapshot lifetime.
+Refresh reconstructs the model with a new captured archive view and observed
+native activity; cached scopes do not renew the ten-minute snapshot lifetime.
+The browser layer owns that reconstruction rather than an unused model method.
 
 Supported bare handoff setup consumes this model through `picker_handoff.go`.
 The format probe and typed scope guard run before local activity/label reads.

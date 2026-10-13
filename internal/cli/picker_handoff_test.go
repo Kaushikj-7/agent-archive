@@ -122,6 +122,32 @@ func TestRealCLIBoundedHandoffSelectionRejectsHeadRewriteBeforeSources(t *testin
 	}
 }
 
+func TestBoundedHandoffFreshArchiveReplacesOfflineUnknownView(t *testing.T) {
+	f := newPickerFixture(t)
+	regs, err := state.OpenReadOnly(f.home).LoadRegistrations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope := sessionScope{All: true}
+	opts := handoffOptions{source: "auto"}
+	format := listFormatOptions{Now: f.env.now()}
+	offline, prior, err := boundedLocalHandoffChoices(t.Context(), f.env, f.home, opts, scope, regs, format, io.Discard)
+	if err != nil || !prior.absenceUnknown || !offline.shown().incomplete {
+		t.Fatalf("offline view lost uncertainty: err=%v", err)
+	}
+	remote := scopedPickerCatalog(t, f.mem)
+	fresh, model, _, used, err := boundedHandoffChoices(catalog.WithReadView(t.Context()), f.env, remote, f.home, opts, scope, regs, format, io.Discard)
+	if err != nil || !used {
+		t.Fatal(used, err)
+	}
+	if model == prior || model.absenceUnknown || fresh.shown().incomplete || len(fresh.shown().rows) != 3 {
+		t.Fatalf("fresh captured model retained offline state: view=%+v", fresh.shown())
+	}
+	if !prior.absenceUnknown || !offline.shown().incomplete {
+		t.Fatal("fresh model changed the prior captured view")
+	}
+}
+
 func TestRealCLIBoundedHandoffNativeFailureKeepsEligibilityUnknown(t *testing.T) {
 	f := newHandoffFixture(t, false)
 	remote := scopedPickerCatalog(t, f.mem)

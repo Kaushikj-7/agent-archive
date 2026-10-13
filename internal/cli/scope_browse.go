@@ -124,7 +124,9 @@ func (c *scopeChoices) toggle() {
 	if !c.canToggle() {
 		return
 	}
-	if c.current == viewAll && c.choice(viewScope).holdsNothing() {
+	scope := c.choice(viewScope)
+	// Initial search misses do not remove the scope's rows after clearing.
+	if c.current == viewAll && !scope.incomplete && len(scope.rows) == 0 {
 		c.fellBack = true
 		all := c.choice(viewAll)
 		all.heading = c.heading(viewAll, all.scopeView, all.constants)

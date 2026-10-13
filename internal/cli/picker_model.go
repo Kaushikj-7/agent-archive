@@ -385,25 +385,6 @@ func (m *pickerModel) validateOperation(ctx context.Context, pages int) error {
 	return ctx.Err()
 }
 
-// Refresh requires a new captured archive view supplied by the caller. Reusing
-// an expired snapshot cannot extend its lifetime or manufacture fresh references.
-func (m *pickerModel) Refresh(ctx context.Context, s sessionScope, fresh pickerArchive) (modelPickerView, error) {
-	candidate := *m
-	candidate.archive = fresh
-	if fresh != nil {
-		candidate.absenceUnknown = false
-	}
-	if err := candidate.prepare(ctx); err != nil {
-		return modelPickerView{}, err
-	}
-	view, err := candidate.First(ctx, s)
-	if err != nil {
-		return modelPickerView{}, err
-	}
-	*m = candidate
-	return view, nil
-}
-
 func pickerLocalLabelKey(reg archive.SessionRegistration, active time.Time, source string) localLabelKey {
 	raw, _ := json.Marshal(reg)
 	return localLabelKey{sessionID: reg.ArchiveSessionID, harness: archive.CanonicalHarness(reg.Harness.Name), active: active, registration: string(raw), policy: source}
