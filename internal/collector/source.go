@@ -17,6 +17,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 	"github.com/wangjohn/agent-archive/internal/sourceio"
 	"github.com/wangjohn/agent-archive/internal/state"
+	"github.com/wangjohn/agent-archive/internal/trace"
 	"github.com/wangjohn/agent-archive/internal/transcriptio"
 )
 
@@ -114,6 +115,7 @@ func newSourceReader(reg archive.SessionRegistration, opts Options) (sourceReade
 // providerReader keeps only read dependencies; boxing whole registrations and
 // collector options would allocate their unrelated policy fields per source.
 type providerReader struct {
+	countInspection         bool
 	inspectionCache         *inspectioncache.Cache
 	inspectionObservation   **inspectioncache.Observation
 	historicalSourceAllowed func(string) bool
@@ -357,6 +359,9 @@ func (r providerReader) filter(ctx context.Context, adapter archive.Adapter, max
 			inspected, cached = r.inspectionCache.Lookup(ctx, cacheKey)
 		}
 		if !cached {
+			if r.countInspection {
+				trace.Add(trace.AdapterInvocations, 1)
+			}
 			if r.ref.Kind == archive.SourceKindFile {
 				transcriptFilters.Add(1)
 			}
@@ -374,6 +379,9 @@ func (r providerReader) filter(ctx context.Context, adapter archive.Adapter, max
 			out.Boundary = archive.CaptureBoundary{RetainedRecords: inspected.RetainedRecords, RetainedBytes: int(inspected.RetainedBytes)}
 		}
 	} else {
+		if r.countInspection {
+			trace.Add(trace.AdapterInvocations, 1)
+		}
 		if r.ref.Kind == archive.SourceKindFile {
 			transcriptFilters.Add(1)
 		}

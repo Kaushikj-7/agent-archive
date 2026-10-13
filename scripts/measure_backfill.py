@@ -9,7 +9,7 @@ import argparse
 import json
 import os
 import platform
-import resource
+import re
 import subprocess
 from pathlib import Path
 
@@ -19,17 +19,21 @@ def main():
     parser.add_argument("binary", type=Path)
     parser.add_argument("output", type=Path)
     parser.add_argument("--samples", type=int, default=5)
-    parser.add_argument("--scenario", action="append", choices=["recent", "old", "large", "related"])
+    parser.add_argument("--scenario", action="append", choices=["recent", "old", "large", "related", "ancestry", "tool-heavy", "retained-heavy"])
     parser.add_argument("--small", action="store_true")
+    parser.add_argument("--trace", action="store_true")
+    parser.add_argument("--state", choices=["cold", "warm", "changed"], default="cold")
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
-    scenarios = args.scenario or ["recent", "old", "large", "related"]
+    scenarios = args.scenario or ["recent", "old", "large", "related", "ancestry", "tool-heavy", "retained-heavy"]
     for scenario in scenarios:
-        modes = ["import"] if scenario in ["large", "related"] else ["plan", "import"]
+        modes = ["import"] if scenario in ["large", "related", "ancestry", "tool-heavy", "retained-heavy"] else ["plan", "import"]
         for mode in modes:
             for index in range(args.samples):
                 env = os.environ.copy()
-                env.update(AA_BACKFILL_SCENARIO=scenario, AA_BACKFILL_MODE=mode)
+                env.update(AA_BACKFILL_SCENARIO=scenario, AA_BACKFILL_MODE=mode, AA_BACKFILL_STATE=args.state)
+                if args.trace:
+                    env["AA_BACKFILL_TRACE"] = "1"
                 if args.small:
                     env["AA_BACKFILL_SMALL"] = "1"
                 # wait4 returns this process's resource usage, not a cumulative
@@ -43,6 +47,10 @@ def main():
                     raise SystemExit(content)
                 line = next(line for line in content.splitlines() if line.startswith("AA_BACKFILL_RESULT "))
                 result = json.loads(line.split(" ", 1)[1])
+                stages = {}
+                for name, value, unit in re.findall(r"(backfill [a-z ]+?)\s+(\d+(?:\.\d+)?)(ms|s)", content):
+                    stages[name] = float(value) / (1000 if unit == "ms" else 1)
+                result["trace_stage_seconds"] = stages
                 result.update(sample=index, process_cpu_seconds=usage.ru_utime + usage.ru_stime,
                               process_peak_rss_bytes=usage.ru_maxrss * (1 if platform.system() == "Darwin" else 1024),
                               host=platform.platform(), resource_scope="whole subprocess; fixture and verification included")

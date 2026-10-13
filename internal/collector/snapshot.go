@@ -199,6 +199,7 @@ func InspectSourceCached(ctx context.Context, harness string, ref agentapi.Sourc
 	reg := archive.SessionRegistration{Harness: archive.Harness{Name: adapter.Name()}, TranscriptPath: ref.Path, SourceKind: ref.Kind, SourceKey: ref.Key, SessionStartedAt: startedAt}
 	source, _ := newSourceReader(reg, Options{Sources: sources})
 	reader := source.(providerReader)
+	reader.countInspection = true
 	var summary *agentapi.ImportSummary
 	var observation *inspectioncache.Observation
 	reader.inspectionCache, reader.inspectionObservation = cache, &observation
