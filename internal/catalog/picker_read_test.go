@@ -62,20 +62,22 @@ func pickerReaderFixture(t *testing.T) (*Snapshot, *Writer, *qualifiedStore, []a
 			t.Fatal(err)
 		}
 	}
-	completePickerUpgrade(t, w, store)
+	completePickerUpgrade(t, store)
 	s, err := OpenSnapshot(t.Context(), store, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return s, w, store, metadata
 }
+
 func testPickerRepo(c byte) string {
 	return archive.RepoKey("https://example.com/" + string(c) + ".git")
 }
+
 func pickerOracle(ms []archive.Metadata, q PickerQuery) []string {
 	var filtered []archive.Metadata
 	for _, m := range ms {
-		if m.IsChild() || m.Replay != nil || q.Membership == "handoff" && m.Counts.Turns != nil && *m.Counts.Turns == 0 {
+		if m.IsChild() || m.Replay != nil || q.Membership == PickerHandoff && m.Counts.Turns != nil && *m.Counts.Turns == 0 {
 			continue
 		}
 		if q.Harness != "" && archive.CanonicalHarness(m.Harness.Name) != archive.CanonicalHarness(q.Harness) {
@@ -119,11 +121,12 @@ func pickerOracle(ms []archive.Metadata, q PickerQuery) []string {
 	}
 	return ids
 }
+
 func TestPickerPagesMatchCompleteRepositoryOracle(t *testing.T) {
 	s, _, _, ms := pickerReaderFixture(t)
 	scopes := []PickerScope{{All: true}, {RepoKey: testPickerRepo('a'), ProjectIDs: []string{"project-1", "project-3", "project-1"}}, {ProjectIDs: []string{"project-0", "project-4"}}, {RepoKey: testPickerRepo('c')}, {}}
 	for _, scope := range scopes {
-		for _, member := range []string{"browse", "handoff"} {
+		for _, member := range []PickerMembership{PickerBrowse, PickerHandoff} {
 			for _, harness := range []string{"", "CLAUDE-CODE", "codex", "synthetic-unknown", "absent"} {
 				for _, limit := range []int{1, 7, 100} {
 					q := PickerQuery{Scope: scope, Membership: member, Harness: harness, Limit: limit}
@@ -197,15 +200,16 @@ func TestPickerLookupIsUnfilteredAndHydrationHasVerifiedProvenance(t *testing.T)
 		t.Fatal("forged reference accepted")
 	}
 }
+
 func TestPickerCursorRejectsMutationScopeForeignLifetimeAndHead(t *testing.T) {
 	s, w, store, _ := pickerReaderFixture(t)
-	q := PickerQuery{Scope: PickerScope{All: true}, Membership: "browse", Limit: 2}
+	q := PickerQuery{Scope: PickerScope{All: true}, Membership: PickerBrowse, Limit: 2}
 	p, err := s.PickerPage(t.Context(), q, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	wrong := q
-	wrong.Membership = "handoff"
+	wrong.Membership = PickerHandoff
 	if _, err = s.PickerPage(t.Context(), wrong, p.Next); !errors.Is(err, ErrStaleCursor) {
 		t.Fatal(err)
 	}
@@ -223,7 +227,9 @@ func TestPickerCursorRejectsMutationScopeForeignLifetimeAndHead(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	reader.Close()
+	if err := reader.Close(); err != nil {
+		t.Fatal(err)
+	}
 	var token pickerCursor
 	if err = json.Unmarshal(raw, &token); err != nil {
 		t.Fatal(err)
@@ -274,15 +280,17 @@ func TestPickerCursorRejectsMutationScopeForeignLifetimeAndHead(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
 func TestPickerUnsupportedAndBudgetAreNotEmptyProofs(t *testing.T) {
+	const invalidMembership PickerMembership = "arbitrary"
 	s, _, _, _ := pickerReaderFixture(t)
-	for _, q := range []PickerQuery{{Scope: PickerScope{All: true}, Membership: "browse", Limit: 101}, {Scope: PickerScope{All: true, RepoKey: testPickerRepo('a')}, Membership: "browse", Limit: 5}, {Membership: "arbitrary", Limit: 5}} {
+	for _, q := range []PickerQuery{{Scope: PickerScope{All: true}, Membership: PickerBrowse, Limit: 101}, {Scope: PickerScope{All: true, RepoKey: testPickerRepo('a')}, Membership: PickerBrowse, Limit: 5}, {Membership: invalidMembership, Limit: 5}} {
 		p, err := s.PickerPage(t.Context(), q, "")
 		if !errors.Is(err, ErrPickerUnsupported) || p.Empty {
 			t.Fatalf("%+v %v", p, err)
 		}
 	}
-	q := PickerQuery{Scope: PickerScope{All: true}, Membership: "browse", Limit: 5, Budget: PickerBudget{Nodes: 1}}
+	q := PickerQuery{Scope: PickerScope{All: true}, Membership: PickerBrowse, Limit: 5, Budget: PickerBudget{Nodes: 1}}
 	p, err := s.PickerPage(t.Context(), q, "")
 	if !errors.Is(err, ErrPickerBudget) || p.Empty || len(p.Rows) > 0 {
 		t.Fatalf("%+v %v", p, err)
@@ -290,6 +298,34 @@ func TestPickerUnsupportedAndBudgetAreNotEmptyProofs(t *testing.T) {
 	q.Budget = PickerBudget{Bytes: 1}
 	if _, err = s.PickerPage(t.Context(), q, ""); !errors.Is(err, ErrPickerBudget) {
 		t.Fatal(err)
+	}
+}
+
+func TestPickerQueryAndCursorPreserveOriginalJSONFieldNames(t *testing.T) {
+	q := PickerQuery{Scope: PickerScope{All: true}, Membership: PickerBrowse, Limit: 2}
+	raw, err := json.Marshal(q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const original = `{"Scope":{"All":true,"RepoKey":"","ProjectIDs":null},"Membership":"browse","Harness":"","Limit":2,"Budget":{"Nodes":0,"Bytes":0}}`
+	if string(raw) != original {
+		t.Fatalf("query changed original cursor encoding: %s", raw)
+	}
+	raw, err = json.Marshal(pickerCursor{Query: q})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err = json.Unmarshal(raw, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if len(fields) != 5 || string(fields["Query"]) != original {
+		t.Fatalf("cursor changed original envelope: %s", raw)
+	}
+	for _, name := range []string{"Nonce", "Head", "Query", "After", "Seal"} {
+		if _, ok := fields[name]; !ok {
+			t.Fatalf("cursor lost original field %s: %s", name, raw)
+		}
 	}
 }
 
@@ -314,6 +350,7 @@ func publishPickerHarness(t *testing.T, w *Writer, id, harness string, edit func
 	}
 	return m
 }
+
 func TestPickerCanonicalLookupPreservesAliasReferenceAndRejectsAmbiguity(t *testing.T) {
 	_, w, store, _ := pickerReaderFixture(t)
 	alias := publishPickerHarness(t, w, "alias-choice", "Claude-Code", func(a *archive.Metadata) {
@@ -331,7 +368,7 @@ func TestPickerCanonicalLookupPreservesAliasReferenceAndRejectsAmbiguity(t *test
 		t.Fatal(err)
 	}
 	r := batch.Results[0]
-	if !r.Found || r.Identity.Harness != "claude" || r.Item.Row.SessionKey != alias.SessionKey || r.Item.Row.Root || !r.Item.Row.Replay || r.Item.Row.PromptState != "zero" {
+	if !r.Found || r.Identity.Harness != "claude" || r.Item.Row.SessionKey != alias.SessionKey || r.Item.Row.Root || !r.Item.Row.Replay || r.Item.Row.PromptState != PickerPromptsZero {
 		t.Fatalf("wrong alias classification %+v", r)
 	}
 	h, err := s.HydratePicker(t.Context(), r.Item.Reference)
@@ -385,7 +422,7 @@ func TestPickerRowsCarryIndexedParentCountsWithoutChildEnumeration(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	page, err := s.PickerPage(t.Context(), PickerQuery{Scope: PickerScope{All: true}, Membership: "browse", Harness: "claude", Limit: 100}, "")
+	page, err := s.PickerPage(t.Context(), PickerQuery{Scope: PickerScope{All: true}, Membership: PickerBrowse, Harness: "claude", Limit: 100}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -397,7 +434,7 @@ func TestPickerRowsCarryIndexedParentCountsWithoutChildEnumeration(t *testing.T)
 				t.Fatalf("wrong indexed parent counts %+v", item.Row)
 			}
 		}
-		if item.Row.SessionID == "ordinary-child" || item.Row.SessionID == "replay-child" {
+		if slices.Contains([]string{"ordinary-child", "replay-child"}, item.Row.SessionID) {
 			t.Fatal("child appeared in root page")
 		}
 	}
@@ -412,7 +449,7 @@ func TestPickerScopeRangeCeilingCountsUniqueMemberships(t *testing.T) {
 	for i := range ids {
 		ids[i] = fmt.Sprintf("project-%d", i)
 	}
-	q := PickerQuery{Scope: PickerScope{ProjectIDs: append(slices.Clone(ids), ids...)}, Membership: "browse", Limit: 1}
+	q := PickerQuery{Scope: PickerScope{ProjectIDs: append(slices.Clone(ids), ids...)}, Membership: PickerBrowse, Limit: 1}
 	p, err := s.PickerPage(t.Context(), q, "")
 	if err != nil || len(p.Rows) != 1 || !p.More {
 		t.Fatalf("32 actual ranges %+v %v", p, err)
@@ -452,7 +489,7 @@ func (c *finalPickerContext) Err() error {
 
 func TestPickerFinalValidationDiscardsAllResults(t *testing.T) {
 	s, _, _, _ := pickerReaderFixture(t)
-	q := PickerQuery{Scope: PickerScope{All: true}, Membership: "browse", Limit: 2}
+	q := PickerQuery{Scope: PickerScope{All: true}, Membership: PickerBrowse, Limit: 2}
 	p, err := s.PickerPage(t.Context(), q, "")
 	if err != nil {
 		t.Fatal(err)
@@ -517,7 +554,7 @@ func TestPickerPrefixIdentityTiesMatchCompleteOrderAcrossRanges(t *testing.T) {
 			metadata = append(metadata, m.Next.Summary)
 		}
 	}
-	completePickerUpgrade(t, w, store)
+	completePickerUpgrade(t, store)
 	s, err := OpenSnapshot(t.Context(), store, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -537,7 +574,7 @@ func TestPickerPrefixIdentityTiesMatchCompleteOrderAcrossRanges(t *testing.T) {
 	}
 	for _, scope := range []PickerScope{{All: true}, {ProjectIDs: []string{"tie-project-0", "tie-project-1", "tie-project-2"}}} {
 		for _, limit := range []int{1, 5, 100} {
-			q := PickerQuery{Scope: scope, Membership: "browse", Limit: limit}
+			q := PickerQuery{Scope: scope, Membership: PickerBrowse, Limit: limit}
 			var actual []string
 			for next := ""; ; {
 				p, err := s.PickerPage(t.Context(), q, next)

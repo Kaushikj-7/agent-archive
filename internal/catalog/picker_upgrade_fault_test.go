@@ -37,7 +37,7 @@ func (s *rollbackPublicationStore) GetCatalogVersion(ctx context.Context, key st
 func TestPickerUpgradeRollbackRefusesPublicationAfterInitialHeadObservation(t *testing.T) {
 	t.Parallel()
 	w, base := fixture(t)
-	u := completePickerUpgrade(t, w, base)
+	u := completePickerUpgrade(t, base)
 	input := mutation(t, w, "published-during-rollback")
 	store := &rollbackPublicationStore{qualifiedStore: base}
 	var err error

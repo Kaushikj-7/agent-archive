@@ -10,6 +10,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"os"
+	"strconv"
 	"testing"
 
 	"github.com/wangjohn/agent-archive/internal/destination"
@@ -25,7 +26,7 @@ func pickerDestination() destination.Config {
 	return destination.Config{Provider: "s3", Bucket: "synthetic", ArchiveFormat: destination.FormatCatalogV4}
 }
 
-func completePickerUpgrade(t *testing.T, w *Writer, s *qualifiedStore) *PickerUpgrade {
+func completePickerUpgrade(t *testing.T, s *qualifiedStore) *PickerUpgrade {
 	t.Helper()
 	u, err := OpenPickerUpgrade(t.Context(), s, pickerDestination(), pickerCutover{}, "")
 	if err != nil {
@@ -146,7 +147,7 @@ func TestPickerUpgradeResumesPreservesIdentityAndReceiptAndEnablesCommit(t *test
 func TestPickerUpgradeFreshCatalogCompleteBeforeAvailability(t *testing.T) {
 	t.Parallel()
 	w, s := fixture(t)
-	completePickerUpgrade(t, w, s)
+	completePickerUpgrade(t, s)
 	h, _, err := w.Head(t.Context())
 	if err != nil || h.Protocol != 11 {
 		t.Fatal(h, err)
@@ -234,10 +235,10 @@ func TestScopedLegacyMigrationConstructsCompleteIndexesBeforeActivation(t *testi
 func TestPickerUpgradeRollbackKeepsStrongerFenceAndRefusesNewPublications(t *testing.T) {
 	t.Parallel()
 	for _, publish := range []bool{false, true} {
-		t.Run(fmt.Sprint(publish), func(t *testing.T) {
+		t.Run(strconv.FormatBool(publish), func(t *testing.T) {
 			t.Parallel()
 			w, s := fixture(t)
-			u := completePickerUpgrade(t, w, s)
+			u := completePickerUpgrade(t, s)
 			if publish {
 				if _, err := w.Commit(t.Context(), mutation(t, w, "newer")); err != nil {
 					t.Fatal(err)
@@ -270,10 +271,10 @@ func TestPickerUpgradeRollbackKeepsStrongerFenceAndRefusesNewPublications(t *tes
 func TestScopedCommitLostResponseRetainsExactReceipts(t *testing.T) {
 	t.Parallel()
 	for _, unknown := range []bool{false, true} {
-		t.Run(fmt.Sprint(unknown), func(t *testing.T) {
+		t.Run(strconv.FormatBool(unknown), func(t *testing.T) {
 			t.Parallel()
-			w, base := fixture(t)
-			completePickerUpgrade(t, w, base)
+			_, base := fixture(t)
+			completePickerUpgrade(t, base)
 			s := &lostStore{qualifiedStore: base, failRead: unknown}
 			w, err := New(s)
 			if err != nil {
@@ -306,7 +307,7 @@ func TestScopedCommitLostResponseRetainsExactReceipts(t *testing.T) {
 func TestScopedStorePublicationCASRaceAndConflictKeepCompleteUniverse(t *testing.T) {
 	t.Parallel()
 	w, base := fixture(t)
-	completePickerUpgrade(t, w, base)
+	completePickerUpgrade(t, base)
 	delayed := &pausedCASStore{qualifiedStore: base, reached: make(chan struct{}), resume: make(chan struct{})}
 	store, err := Wrap(delayed)
 	if err != nil {
