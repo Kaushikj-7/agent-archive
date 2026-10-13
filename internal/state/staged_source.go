@@ -50,7 +50,7 @@ func (s *Store) validateStagedSourceForFactory(ctx context.Context, stage Import
 	if original != selected || stage.Bundle.Capture.FilterVersion != archive.FilterVersion || string(stage.SkillEvidence) != p.SkillEvidence {
 		return nil, ErrReadySelectionFrozen
 	}
-	owner := s.resourceBudget.Reservation()
+	owner := s.readReservation()
 	const compressorScratch int64 = 1 << 20
 	const counterScratch int64 = 32 << 10
 	if !owner.Reserve(counterScratch) {

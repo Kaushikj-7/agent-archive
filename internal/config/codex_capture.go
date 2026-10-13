@@ -202,6 +202,7 @@ func (c Config) CodexDiscoveryGeneration(root, cwd string, started, now time.Tim
 // A legacy snapshot restored over v3 remains included-project-only and fenced.
 func PreserveWriterFence(next *Config, previous Config) {
 	next.ScopedPickerProtection = next.ScopedPickerProtection || previous.ScopedPickerProtection
+	next.SettledCursorSelectionProtection = next.SettledCursorSelectionProtection || previous.SettledCursorSelectionProtection
 	next.StagedSelectionProtection = next.StagedSelectionProtection || previous.StagedSelectionProtection
 	next.PublicationCompositionProtection = next.PublicationCompositionProtection || previous.PublicationCompositionProtection
 	next.HistoricalProjectProtection = next.HistoricalProjectProtection || previous.HistoricalProjectProtection

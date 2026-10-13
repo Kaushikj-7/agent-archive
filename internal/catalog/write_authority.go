@@ -30,7 +30,7 @@ func (w *Writer) checkWriteAuthority(ctx context.Context) error {
 	}
 	if state.Upgrade != nil {
 		u, ok := ctx.Value(pickerUpgradeKey{}).(pickerUpgradeAuthority)
-		if state.Upgrade.Phase == "draining" && authority.owner != "" {
+		if state.Upgrade.Phase == PickerUpgradeDraining && authority.owner != "" {
 			owner, exists := state.Owners[authority.owner]
 			if exists && owner.Digest == authority.digest && state.Protocol == 10 && state.Hold == "" {
 				return nil

@@ -4,17 +4,19 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"os"
 	"path/filepath"
 	"slices"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
+	"github.com/wangjohn/agent-archive/internal/agents/nativecapture"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/nativefacts"
 	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 	"github.com/wangjohn/agent-archive/internal/state"
 )
@@ -40,6 +42,8 @@ const (
 // keeps `pause` out (it takes that lock), so collection cannot be paused
 // while registration runs; each hold still rereads the configuration.
 type Registration struct {
+	// ReadBudget optionally shares the caller-owned import capture ledger.
+	ReadBudget *agentapi.NativeReadBudget
 	// HistoricalSourcePolicy binds reviewed source-location restrictions to current config.
 	HistoricalSourcePolicy func(config.Config) func(string) bool
 	// Context bounds outside-lock repository validation; nil gets 30 seconds per slice.
@@ -544,6 +548,15 @@ func regularFile(path string) bool {
 // the reservation unadmitted and safe to retry.
 func (r Registration) stage(ctx context.Context, w *parentWork) error {
 	reg := r.registration(w.c, w.id, w.repoKey)
+	if reg.Harness.Name == archive.HarnessCursor && reg.SourceKind == archive.SourceKindCursorSQLite {
+		cfg, present, err := config.Load(r.Home)
+		if err != nil {
+			return err
+		}
+		if present && cfg.SettledCursorSelectionProtection {
+			return r.stageSettledCursor(ctx, w, reg)
+		}
+	}
 	if existing, found, err := r.Store.LoadImportStage(ctx, reg); err != nil {
 		return err
 	} else if found {
@@ -712,4 +725,56 @@ func (r Registration) cleanObsoleteStages(ctx context.Context, works []*parentWo
 		}
 	}
 	return err
+}
+
+func (r Registration) stageSettledCursor(ctx context.Context, w *parentWork, reg archive.SessionRegistration) (err error) {
+	if w.c.reviewedCursor == nil || len(w.c.Subagents) != 0 {
+		return state.ErrReadySelectionFrozen
+	}
+	budget := r.ReadBudget
+	if budget == nil {
+		budget = agentapi.NewNativeReadBudget(128 << 20)
+	}
+	store, closeStore := r.Store.WithReadBudget(ctx, budget)
+	defer closeStore()
+	if existing, found, e := store.LoadImportStage(ctx, reg); e != nil {
+		return e
+	} else if found {
+		if existing.Version != 3 || existing.CursorFacts == nil || existing.CursorFacts.Chat != *w.c.reviewedCursor {
+			return state.ErrReadySelectionFrozen
+		}
+		w.stagedSHA256 = existing.SHA256
+		return nil
+	}
+	port, ok := r.Sources.(settledCapturePort)
+	if !ok {
+		return state.ErrReadySelectionFrozen
+	}
+	cfg, present, e := config.Load(r.Home)
+	if e != nil || !present {
+		return errors.Join(state.ErrReadySelectionFrozen, e)
+	}
+	request, e := nativefacts.FreezeCaptureRequest(ctx, reg, *w.c.reviewedCursor, r.CursorDatabase, r.AdmittedAt, nativefacts.CapturePolicy{FilterVersion: archive.FilterVersion, SkillEvidence: nativefacts.CaptureSkillMode(cfg.EffectiveSkillEvidence())}, budget)
+	if e != nil {
+		return e
+	}
+	defer request.Close()
+	evidence, e := port.CaptureSettledCursor(request)
+	if e != nil {
+		return e
+	}
+	defer func() { err = errors.Join(err, evidence.Close()) }()
+	digest, e := store.SaveSettledCursorImportStage(ctx, reg, request, evidence)
+	if e != nil {
+		return e
+	}
+	w.stagedSHA256 = digest
+	if r.AfterStage != nil {
+		return r.AfterStage(w.id)
+	}
+	return nil
+}
+
+type settledCapturePort interface {
+	CaptureSettledCursor(*nativefacts.CaptureRequest) (*nativecapture.Proof, error)
 }

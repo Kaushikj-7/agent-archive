@@ -20,6 +20,7 @@ type pickerCutover struct{}
 func (pickerCutover) VerifyCatalogCutover(_ context.Context, source, target destination.Config) (CutoverProof, error) {
 	return CutoverProof{ID: "synthetic-scoped-credential-proof", Source: destinationIdentity(source), Destination: destinationIdentity(target), Protocol: 11}, nil
 }
+
 func pickerDestination() destination.Config {
 	return destination.Config{Provider: "s3", Bucket: "synthetic", ArchiveFormat: destination.FormatCatalogV4}
 }

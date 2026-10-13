@@ -39,6 +39,13 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      GOTOOLCHAIN: local
+      GOWORK: 'off'
+      GOFLAGS: '-mod=readonly'
+      PYTHONDONTWRITEBYTECODE: '1'
+      SHARD: ${{ matrix.shard }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
     strategy:
       fail-fast: false
       matrix:
@@ -47,6 +54,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
+      - name: Set controlled worker Go cache paths
+        run: |
+          printf 'GOCACHE=%s/pr-go-build\nGOMODCACHE=%s/pr-go-modules\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Validate and clear owned cache paths before tool setup
+        run: python3 -B scripts/go_cache_steps.py paths
       # The Go version is pinned here rather than read from go.mod, so CI
       # never depends on how setup-go picks a toolchain. It must match
       # go.mod's toolchain line; the next step checks that.
@@ -58,10 +71,50 @@ jobs:
         run: |
           go version
           go version | grep -q ' go1\.27\.2 ' || { echo "expected go1.27.2, matching go.mod's toolchain line" >&2; exit 1; }
+      - name: Prepare exact-source PR worker cache identity
+        id: go-cache-key
+        run: python3 -B scripts/go_cache_steps.py prepare
+      - name: Restore PR worker Go dependencies and compilation
+        id: go-cache-restore
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          key: ${{ steps.go-cache-key.outputs.primary }}
+          restore-keys: ${{ steps.go-cache-key.outputs.restore_prefix }}
+          path: |
+            ${{ runner.temp }}/pr-go-build
+            ${{ runner.temp }}/pr-go-modules
+          enableCrossOsArchive: false
+          fail-on-cache-miss: false
+      - name: Verify restored modules or compile with empty caches
+        id: go-cache-verify
+        env:
+          RESTORE_OUTCOME: ${{ steps.go-cache-restore.outcome }}
+          MATCHED_KEY: ${{ steps.go-cache-restore.outputs.cache-matched-key }}
+          EXACT_HIT: ${{ steps.go-cache-restore.outputs.cache-hit }}
+        run: python3 -B scripts/go_cache_steps.py verify
       - name: Discovered race-short shard
         env:
           SHARD: ${{ matrix.shard }}
-        run: python3 scripts/run_go_shard.py --shard "$SHARD" --output shard-results
+        run: python3 -B scripts/run_go_shard.py --shard "$SHARD" --output shard-results
+      - name: Require unchanged source and current PR worker success before cache save
+        id: go-cache-complete
+        run: python3 -B scripts/go_cache_steps.py complete
+      # Fork runs retain verification/compilation/execution, but never save.
+      - name: Save successful same-repository PR worker compilation
+        id: go-cache-save
+        if: success() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && steps.go-cache-complete.outputs.save_ready == 'true' && steps.go-cache-verify.outputs.restore_state != 'exact'
+        continue-on-error: true
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          key: ${{ steps.go-cache-key.outputs.primary }}
+          path: |
+            ${{ runner.temp }}/pr-go-build
+            ${{ runner.temp }}/pr-go-modules
+          enableCrossOsArchive: false
+      - name: Report accelerator service failures
+        if: always() && (steps.go-cache-restore.outcome == 'failure' || steps.go-cache-save.outcome == 'failure')
+        run: echo '::warning::Go cache service failed; current module/source/test verdicts remain authoritative'
       - name: Preserve catalog and execution evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -157,7 +210,10 @@ jobs:
       - run: python3 scripts/test_linux_acceptance.py
 
       - run: python3 scripts/test_go_shards.py
+      - run: python3 -B scripts/test_generate_go_shard_hints.py
       - run: python3 scripts/test_ci_tiers.py
+      - run: python3 -B scripts/test_go_cache_context.py
+      - run: python3 -B scripts/test_go_cache_steps.py
 
   # Keep this required check stable and fail closed when a worker fails/skips.
   linux-race:

@@ -28,6 +28,12 @@ func TestReconfigurationNativeOwnerSwitchKeepsExistingMode(t *testing.T) {
 			if err := os.WriteFile(path, nil, 0640); err != nil {
 				t.Fatal(err)
 			}
+			must(t, os.Chmod(path, 0640))
+			initialInfo, err := os.Stat(path)
+			must(t, err)
+			if initialInfo.Mode().Perm() != 0640 {
+				t.Fatalf("initial target mode = %04o, want 0640", initialInfo.Mode().Perm())
+			}
 			nextPath := path
 			if alias {
 				nextPath = path + "-alias"
@@ -127,6 +133,12 @@ func TestReconfigurationNativeAliasOnlyRetirementKeepsTarget(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings")
 	alias := path + "-alias"
 	must(t, os.WriteFile(path, nil, 0640))
+	must(t, os.Chmod(path, 0640))
+	initialInfo, err := os.Stat(path)
+	must(t, err)
+	if initialInfo.Mode().Perm() != 0640 {
+		t.Fatalf("initial target mode = %04o, want 0640", initialInfo.Mode().Perm())
+	}
 	must(t, os.Symlink(path, alias))
 	hook := Hook{Ports: testPorts, Executable: "/agent-archive", DataHome: t.TempDir()}
 	files := Files{"claude": alias}

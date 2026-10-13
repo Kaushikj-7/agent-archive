@@ -33,6 +33,7 @@ func pickerCandidate(t *testing.T, w *Writer, h CatalogHead, m CatalogMutation, 
 	}
 	return next
 }
+
 func pickerMetadata(t *testing.T, w *Writer, m CatalogMutation, edit func(*archive.Metadata)) CatalogMutation {
 	t.Helper()
 	edit(&m.Next.Summary)
@@ -46,6 +47,7 @@ func pickerMetadata(t *testing.T, w *Writer, m CatalogMutation, edit func(*archi
 	}
 	return m
 }
+
 func pickerLeaves(t *testing.T, w *Writer, h CatalogHead) map[string]PickerRow {
 	t.Helper()
 	result := map[string]PickerRow{}
@@ -76,11 +78,22 @@ func pickerLeaves(t *testing.T, w *Writer, h CatalogHead) map[string]PickerRow {
 	return result
 }
 
+type pickerFixtureKind string
+
+const (
+	pickerFixtureRoot        pickerFixtureKind = "root"
+	pickerFixtureChild       pickerFixtureKind = "child"
+	pickerFixtureNativeChild pickerFixtureKind = "native-child"
+	pickerFixtureReplay      pickerFixtureKind = "replay"
+	pickerFixtureZero        pickerFixtureKind = "zero"
+	pickerFixtureOverflow    pickerFixtureKind = "overflow"
+)
+
 func TestPickerMembershipsMatchExhaustiveClassification(t *testing.T) {
 	t.Parallel()
 	for _, repo := range []string{"", archive.RepoKey("https://example.com/synthetic.git")} {
 		for _, prompt := range []int{-1, 0, 2} {
-			for _, kind := range []string{"root", "child", "native-child", "replay"} {
+			for _, kind := range []pickerFixtureKind{pickerFixtureRoot, pickerFixtureChild, pickerFixtureNativeChild, pickerFixtureReplay} {
 				t.Run(fmt.Sprintf("%s/%d/%s", repo, prompt, kind), func(t *testing.T) {
 					t.Parallel()
 					w, _ := fixture(t)
@@ -91,11 +104,13 @@ func TestPickerMembershipsMatchExhaustiveClassification(t *testing.T) {
 							a.Counts.Turns = &prompt
 						}
 						switch kind {
-						case "child":
+						case pickerFixtureRoot, pickerFixtureZero, pickerFixtureOverflow:
+							// These fixtures retain ordinary root classification.
+						case pickerFixtureChild:
 							a.ParentSessionID = "parent"
-						case "native-child":
+						case pickerFixtureNativeChild:
 							a.NativeChild = true
-						case "replay":
+						case pickerFixtureReplay:
 							a.Replay = &archive.Replay{}
 						}
 					})
@@ -105,7 +120,7 @@ func TestPickerMembershipsMatchExhaustiveClassification(t *testing.T) {
 					if prompt == 0 {
 						expected = 6
 					}
-					if kind != "root" {
+					if kind != pickerFixtureRoot {
 						expected = 0
 					}
 					if len(leaves) != expected {
@@ -210,7 +225,8 @@ func TestPickerBoundedCodecAndForgedFacts(t *testing.T) {
 	if err = json.Unmarshal(raw, &decoded); err != nil {
 		t.Fatal(err)
 	}
-	bad := append(raw[:len(raw)-1], []byte(",\"Unknown\":1}")...)
+	bad := append([]byte(nil), raw[:len(raw)-1]...)
+	bad = append(bad, []byte(",\"Unknown\":1}")...)
 	if json.Unmarshal(bad, &decoded) == nil {
 		t.Fatal("unknown field accepted")
 	}

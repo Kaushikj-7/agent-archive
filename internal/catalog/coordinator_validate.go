@@ -124,7 +124,7 @@ func (link gcLink) validateReleasedHead() error {
 func (state admissions) validatePickerUpgrade() error {
 	if state.PickerUpgradeReceipt != nil {
 		receipt := state.PickerUpgradeReceipt
-		if state.Protocol != 11 || receipt.Phase != "active" || !exactHex(receipt.Owner, 24) || receipt.ActivatedETag == "" || !receipt.Candidate.validFormat() || receipt.Candidate.Protocol != 11 || receipt.Candidate.validateReferences() != nil {
+		if state.Protocol != 11 || receipt.Phase != PickerUpgradeActive || !exactHex(receipt.Owner, 24) || receipt.ActivatedETag == "" || !receipt.Candidate.validFormat() || receipt.Candidate.Protocol != 11 || receipt.Candidate.validateReferences() != nil {
 			return errCoordinatorDescriptor
 		}
 	}

@@ -52,10 +52,11 @@ import (
 // never stores credentials or a second copy of conversation content beyond
 // what the published source bundle itself already contains.
 type Store struct {
-	durableInspection *durableInspectionCache
-	resourceBudget    *agentapi.NativeReadBudget
-	resourceContext   context.Context
-	resourceReleases  *[]func()
+	durableInspection   *durableInspectionCache
+	resourceBudget      *agentapi.NativeReadBudget
+	resourceReservation func() stateReservation
+	resourceContext     context.Context
+	resourceReleases    *[]func()
 	// indexSnapshots uses logical packed authority for qualified-index writes.
 	indexSnapshots bool
 	// onPackedEnumeration observes collector-only physical-index directory probes.
@@ -66,7 +67,8 @@ type Store struct {
 	hook bool
 	// onWriteSync, when set by a test, runs where writeUnderLock syncs to
 	// disk outside the lock: once its temporary file is synced, and once it
-	// is renamed into place, before the directory is synced.
+	// is renamed into place, before the directory is synced. Settled first-save
+	// preparation also invokes it after its synced temp and before commit checks.
 	onWriteSync func()
 	// onLockWait, when set by a test, runs before any wait for a lock that
 	// can last (see namedLockWait), with the lock's name.
@@ -473,7 +475,7 @@ func (s *Store) LoadRegistrations() ([]archive.SessionRegistration, error) {
 // LoadRegistration returns one session's registration, if it has been saved.
 func (s *Store) LoadRegistration(archiveSessionID string) (archive.SessionRegistration, bool, error) {
 	var reg archive.SessionRegistration
-	err := local.Read(s.registrationPath(archiveSessionID), &reg)
+	err := s.readIndexControlJSON(s.registrationPath(archiveSessionID), &reg)
 	if errors.Is(err, os.ErrNotExist) {
 		return archive.SessionRegistration{}, false, nil
 	}
@@ -765,6 +767,7 @@ type CatalogPublication struct {
 }
 
 type PendingPublication struct {
+	CursorSelection *StagedSelection    `json:"cursor_commit4,omitempty"`
 	JournalVersion  int                 `json:"journal_version,omitempty"`
 	StagedSelection *StagedSelection    `json:"staged_commit3,omitempty"`
 	Selection       *ReadySelection     `json:"selection_commit,omitempty"`

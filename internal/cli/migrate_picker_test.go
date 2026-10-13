@@ -127,7 +127,7 @@ func (s *scopedConfigurationFaultStore) PutConditional(ctx context.Context, key 
 		if err = json.Unmarshal(raw, &state); err != nil {
 			return etag, err
 		}
-		if state.Upgrade != nil && state.Upgrade.Phase == "active" {
+		if state.Upgrade != nil && state.Upgrade.Phase == catalog.PickerUpgradeActive {
 			fn := s.beforeConfiguration
 			s.beforeConfiguration = nil
 			if err = fn(); err != nil {
@@ -164,7 +164,7 @@ func TestRunScopedUpgradeRecoversConfigurationSaveAfterHeadActivation(t *testing
 		t.Fatal("configuration fault missing", code)
 	}
 	checkpoint, err := catalog.PickerUpgradeCheckpoint(t.Context(), store)
-	if err != nil || checkpoint.Phase != "active" {
+	if err != nil || checkpoint.Phase != catalog.PickerUpgradeActive {
 		t.Fatal(checkpoint, err)
 	}
 	w, err := catalog.New(store)
@@ -189,5 +189,37 @@ func TestRunScopedUpgradeRecoversConfigurationSaveAfterHeadActivation(t *testing
 	}
 	if _, err = w.PutImmutable(t.Context(), catalog.KindMetadata, []byte(`{}`)); err != nil {
 		t.Fatal("exact activation acknowledgement did not release", err)
+	}
+}
+
+func TestRunScopedMigrationAndRollbackRetainSettledCursorProtection(t *testing.T) {
+	t.Parallel()
+	source := storagetest.NewMemoryStore()
+	target := &scopedMigrationCLIStore{&qualifiedCLIStore{storagetest.NewMemoryStore()}}
+	cfg := config.Config{RetentionDays: 90, SettledCursorSelectionProtection: true, StagedSelectionProtection: true, ImportStagingProtection: true, PublicationCompositionProtection: true, DurableStorageProtection: true, Storage: destination.Config{Provider: "s3", Bucket: "private-legacy", Prefix: "old", Region: "us-east-1"}}
+	env := pickerOperatorEnv(t, cfg)
+	env.OpenStore = func(c config.Config) (storage.ObjectStore, error) {
+		if c.Storage.Bucket == "private-scoped" {
+			return target, nil
+		}
+		return source, nil
+	}
+	for _, rollback := range []bool{false, true} {
+		args := []string{"migrate", "--format", "catalog-v4", "--bucket", "private-scoped", "--prefix", "new", "--scoped-picker"}
+		if rollback {
+			args = append(args, "--rollback")
+		}
+		var out, stderr bytes.Buffer
+		if code := Run(args, nil, &out, &stderr, env); code != 0 {
+			t.Fatal(code, stderr.String())
+		}
+		home, err := env.readHome()
+		if err != nil {
+			t.Fatal(err)
+		}
+		saved, _, err := config.Load(home)
+		if err != nil || saved.SchemaVersion != 14 || !saved.ScopedPickerProtection || !saved.SettledCursorSelectionProtection || !saved.StagedSelectionProtection || !saved.ImportStagingProtection || !saved.PublicationCompositionProtection || !saved.DurableStorageProtection || saved.SupportsStagedSelection() || saved.SupportsSettledCursorSelection() || saved.Paused != rollback {
+			t.Fatal("migration or rollback lost settled protections", saved, err)
+		}
 	}
 }
