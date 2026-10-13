@@ -31,7 +31,7 @@ type capturePackage struct {
 }
 
 func TestNativeCaptureWholeSourceBoundary(t *testing.T) {
-	cmd := exec.CommandContext(t.Context(), "go", "list", "-p=1", "-deps", "-export", "-json", "github.com/wangjohn/agent-archive/...")
+	cmd := exec.CommandContext(t.Context(), "go", "list", "-p=1", "-deps", "-test", "-export", "-json", "github.com/wangjohn/agent-archive/...")
 	raw, err := cmd.Output()
 	if err != nil {
 		t.Fatal(err)
@@ -49,6 +49,11 @@ func TestNativeCaptureWholeSourceBoundary(t *testing.T) {
 			t.Fatal(err)
 		}
 		exports[p.ImportPath] = p.Export
+		// Test variants supply test-only dependency exports. Canonical packages
+		// below already include their complete TestGoFiles and profile checks.
+		if strings.Contains(p.ImportPath, " [") || strings.HasSuffix(p.ImportPath, ".test") {
+			continue
+		}
 		pkgs = append(pkgs, p)
 	}
 	fset := token.NewFileSet()
