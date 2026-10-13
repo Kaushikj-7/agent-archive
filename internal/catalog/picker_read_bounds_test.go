@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -17,8 +18,12 @@ import (
 // and tracking metadata bodies separately from node/head/coordinator requests.
 type pickerMeter struct {
 	*qualifiedStore
-	metadata, lists, nodes, head, coordinator int
-	bytes                                     int64
+	metadata    int
+	lists       int
+	nodes       int
+	head        int
+	coordinator int
+	bytes       int64
 }
 
 func (m *pickerMeter) observe(key string, n int) {
@@ -34,21 +39,25 @@ func (m *pickerMeter) observe(key string, n int) {
 		m.coordinator++
 	}
 }
+
 func (m *pickerMeter) GetLimited(ctx context.Context, key string, limit int64) ([]byte, error) {
 	b, e := m.qualifiedStore.GetLimited(ctx, key, limit)
 	m.observe(key, len(b))
 	return b, e
 }
+
 func (m *pickerMeter) GetCatalogVersion(ctx context.Context, key string, limit int64) ([]byte, storage.CatalogObjectVersion, error) {
 	b, v, e := m.qualifiedStore.GetCatalogVersion(ctx, key, limit)
 	m.observe(key, len(b))
 	return b, v, e
 }
+
 func (m *pickerMeter) Get(ctx context.Context, key string) ([]byte, error) {
 	b, e := m.qualifiedStore.Get(ctx, key)
 	m.observe(key, len(b))
 	return b, e
 }
+
 func (m *pickerMeter) List(ctx context.Context, prefix string) ([]storage.Object, error) {
 	m.lists++
 	return nil, errors.New("unexpected LIST in picker request")
@@ -98,6 +107,7 @@ func bulkPickerTree(t *testing.T, ctx context.Context, w *Writer, leaves []item,
 	}
 	return root.Ref
 }
+
 func bulkPickerFixture(t *testing.T, size, unary int) (*Snapshot, *pickerMeter) {
 	t.Helper()
 	w, store := fixture(t)
@@ -171,15 +181,16 @@ func bulkPickerFixture(t *testing.T, size, unary int) (*Snapshot, *pickerMeter) 
 	}
 	return s, meter
 }
+
 func TestPickerFirstPageWorkDoesNotScaleWithUnrelatedArchive(t *testing.T) {
 	sizes := []int{10000, 100000}
 	if testing.Short() {
 		sizes = []int{1000, 10000}
 	}
 	for _, size := range sizes {
-		t.Run(fmt.Sprint(size), func(t *testing.T) {
+		t.Run(strconv.Itoa(size), func(t *testing.T) {
 			s, meter := bulkPickerFixture(t, size, 0)
-			q := PickerQuery{Scope: PickerScope{RepoKey: testPickerRepo('a')}, Membership: "browse", Limit: 10}
+			q := PickerQuery{Scope: PickerScope{RepoKey: testPickerRepo('a')}, Membership: PickerBrowse, Limit: 10}
 			p, e := s.PickerPage(t.Context(), q, "")
 			if e != nil {
 				t.Fatal(e)
@@ -201,9 +212,10 @@ func TestPickerFirstPageWorkDoesNotScaleWithUnrelatedArchive(t *testing.T) {
 		})
 	}
 }
+
 func TestPickerUnaryTreeBudgetIsEnforcedBeforeFalseResults(t *testing.T) {
 	s, meter := bulkPickerFixture(t, 100, 30)
-	q := PickerQuery{Scope: PickerScope{RepoKey: testPickerRepo('a')}, Membership: "browse", Limit: 10, Budget: PickerBudget{Nodes: 10}}
+	q := PickerQuery{Scope: PickerScope{RepoKey: testPickerRepo('a')}, Membership: PickerBrowse, Limit: 10, Budget: PickerBudget{Nodes: 10}}
 	p, e := s.PickerPage(t.Context(), q, "")
 	if !errors.Is(e, ErrPickerBudget) || p.Empty || len(p.Rows) > 0 || meter.nodes > 10 {
 		t.Fatalf("%+v %+v %v", p, meter, e)
@@ -214,9 +226,10 @@ func TestPickerUnaryTreeBudgetIsEnforcedBeforeFalseResults(t *testing.T) {
 		t.Fatalf("%+v %v", p, e)
 	}
 }
+
 func TestPickerMissingAndCorruptedNodesRefuseEmptyProof(t *testing.T) {
 	for _, corrupt := range []bool{false, true} {
-		t.Run(fmt.Sprint(corrupt), func(t *testing.T) {
+		t.Run(strconv.FormatBool(corrupt), func(t *testing.T) {
 			s, meter := bulkPickerFixture(t, 100, 0)
 			if corrupt {
 				if e := meter.Put(t.Context(), s.head.Project.Key, []byte("corrupted")); e != nil {
@@ -227,7 +240,7 @@ func TestPickerMissingAndCorruptedNodesRefuseEmptyProof(t *testing.T) {
 					t.Fatal(e)
 				}
 			}
-			p, e := s.PickerPage(t.Context(), PickerQuery{Scope: PickerScope{All: true}, Membership: "browse", Limit: 10}, "")
+			p, e := s.PickerPage(t.Context(), PickerQuery{Scope: PickerScope{All: true}, Membership: PickerBrowse, Limit: 10}, "")
 			if e == nil || p.Empty {
 				t.Fatalf("%+v %v", p, e)
 			}
@@ -242,7 +255,7 @@ func TestPickerOverflowFirstScreenDoesNotReadFullMetadata(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	p, e := s.PickerPage(t.Context(), PickerQuery{Scope: PickerScope{All: true}, Membership: "browse", Limit: 100}, "")
+	p, e := s.PickerPage(t.Context(), PickerQuery{Scope: PickerScope{All: true}, Membership: PickerBrowse, Limit: 100}, "")
 	if e != nil {
 		t.Fatal(e)
 	}

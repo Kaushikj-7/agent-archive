@@ -32,25 +32,35 @@ var ErrPickerIdentityAmbiguous = errors.New("picker canonical identity has multi
 // All selects every root. Otherwise known RepoKeys match only that RepoKey;
 // ProjectIDs also match missing RepoKeys. Without a RepoKey, ProjectIDs match all repositories.
 type PickerScope struct {
-	All        bool
-	RepoKey    string
-	ProjectIDs []string
+	All        bool     `json:"All"`
+	RepoKey    string   `json:"RepoKey"`
+	ProjectIDs []string `json:"ProjectIDs"`
 }
 
 // PickerBudget limits node visits and decoded bytes, including cache hits.
 // Zero fields use practical defaults: 8192 nodes and 32 MiB per logical operation.
 type PickerBudget struct {
-	Nodes int
-	Bytes int64
+	Nodes int   `json:"Nodes"`
+	Bytes int64 `json:"Bytes"`
 }
+
+// PickerMembership selects an indexed root eligibility class.
+type PickerMembership string
+
+const (
+	// PickerBrowse selects ordinary browser roots.
+	PickerBrowse PickerMembership = "browse"
+	// PickerHandoff excludes roots with known zero prompts.
+	PickerHandoff PickerMembership = "handoff"
+)
 
 // PickerQuery selects browse or handoff roots, optionally one canonical harness.
 type PickerQuery struct {
-	Scope      PickerScope
-	Membership string
-	Harness    string
-	Limit      int
-	Budget     PickerBudget
+	Scope      PickerScope      `json:"Scope"`
+	Membership PickerMembership `json:"Membership"`
+	Harness    string           `json:"Harness"`
+	Limit      int              `json:"Limit"`
+	Budget     PickerBudget     `json:"Budget"`
 }
 
 // PickerCost counts actual bounded tree work separately from local inventory work.
@@ -115,6 +125,7 @@ type PickerHydration struct {
 }
 
 type pickerWorkKey struct{}
+
 type pickerWork struct {
 	budget PickerBudget
 	cost   PickerCost
@@ -127,6 +138,7 @@ func (w *pickerWork) node() error {
 	w.cost.Nodes++
 	return nil
 }
+
 func (w *pickerWork) bytes(n int) error {
 	if int64(n) > w.budget.Bytes-w.cost.Bytes {
 		return ErrPickerBudget
@@ -134,6 +146,7 @@ func (w *pickerWork) bytes(n int) error {
 	w.cost.Bytes += int64(n)
 	return nil
 }
+
 func pickerWorkContext(ctx context.Context, b PickerBudget) (context.Context, *pickerWork, error) {
 	if b.Nodes < 0 || b.Bytes < 0 {
 		return ctx, nil, ErrPickerUnsupported
@@ -147,6 +160,7 @@ func pickerWorkContext(ctx context.Context, b PickerBudget) (context.Context, *p
 	w := &pickerWork{budget: b}
 	return context.WithValue(ctx, pickerWorkKey{}, w), w, nil
 }
+
 func (s *Snapshot) pickerStart(ctx context.Context, w *pickerWork) error {
 	if s.head.Picker == nil || !s.head.Picker.valid() {
 		return ErrPickerUnsupported
@@ -166,8 +180,9 @@ func (s *Snapshot) pickerStart(ctx context.Context, w *pickerWork) error {
 	}
 	return s.ValidateContinuation(ctx)
 }
+
 func normalizePicker(q PickerQuery) (PickerQuery, []Query, error) {
-	if q.Limit < 1 || q.Limit > 100 || (q.Membership != "browse" && q.Membership != "handoff") {
+	if q.Limit < 1 || q.Limit > 100 || (q.Membership != PickerBrowse && q.Membership != PickerHandoff) {
 		return q, nil, ErrPickerUnsupported
 	}
 	if q.Harness != "" {
@@ -212,18 +227,18 @@ func normalizePicker(q PickerQuery) (PickerQuery, []Query, error) {
 	}
 	ranges := make([]Query, 0, len(scopes))
 	for _, scope := range scopes {
-		prefix := "!picker/v1/" + q.Membership + "/" + scope + "/" + harness + "/"
+		prefix := "!picker/v1/" + string(q.Membership) + "/" + scope + "/" + harness + "/"
 		ranges = append(ranges, Query{Index: ProjectIndex, Lower: prefix, Upper: prefix + "~", Reverse: true})
 	}
 	return q, ranges, nil
 }
 
 type pickerCursor struct {
-	Nonce string
-	Head  CatalogHead
-	Query PickerQuery
-	After []string
-	Seal  string
+	Nonce string      `json:"Nonce"`
+	Head  CatalogHead `json:"Head"`
+	Query PickerQuery `json:"Query"`
+	After []string    `json:"After"`
+	Seal  string      `json:"Seal"`
 }
 
 func (s *Snapshot) pickerSeal(t pickerCursor) string {
@@ -233,6 +248,7 @@ func (s *Snapshot) pickerSeal(t pickerCursor) string {
 	_, _ = mac.Write(raw)
 	return hex.EncodeToString(mac.Sum(nil))
 }
+
 func (s *Snapshot) decodePickerCursor(next string, q PickerQuery, n int) ([]string, error) {
 	if next == "" {
 		return make([]string, n), nil
@@ -248,9 +264,9 @@ func (s *Snapshot) decodePickerCursor(next string, q PickerQuery, n int) ([]stri
 	if err != nil {
 		return nil, ErrStaleCursor
 	}
-	defer reader.Close()
 	raw, err := io.ReadAll(io.LimitReader(reader, (256<<10)+1))
-	if err != nil || len(raw) > 256<<10 {
+	closeErr := reader.Close()
+	if err != nil || closeErr != nil || len(raw) > 256<<10 {
 		return nil, ErrStaleCursor
 	}
 	var token pickerCursor
@@ -274,6 +290,7 @@ func (s *Snapshot) decodePickerCursor(next string, q PickerQuery, n int) ([]stri
 	}
 	return token.After, nil
 }
+
 func clonePickerRow(r PickerRow) PickerRow {
 	if r.PromptCount != nil {
 		n := *r.PromptCount
@@ -281,9 +298,11 @@ func clonePickerRow(r PickerRow) PickerRow {
 	}
 	return r
 }
+
 func (s *Snapshot) pickerItem(r PickerRow) PickerItem {
 	return PickerItem{Row: clonePickerRow(r), Reference: PickerReference{snapshot: s, row: clonePickerRow(r)}}
 }
+
 func pickerBefore(a, b PickerRow) bool {
 	if !a.Activity.Equal(b.Activity) {
 		return a.Activity.After(b.Activity)
