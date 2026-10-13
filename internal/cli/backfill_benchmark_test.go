@@ -35,6 +35,9 @@ func TestBackfillCommandMeasurement(t *testing.T) {
 	if os.Getenv("AA_BACKFILL_SMALL") == "1" {
 		count = 12
 	}
+	if scenario == "tool-heavy" || scenario == "retained-heavy" {
+		count = 32
+	}
 	if scenario == "large" {
 		count = 32
 	}
@@ -97,6 +100,26 @@ func TestBackfillCommandMeasurement(t *testing.T) {
 			n, e = f.WriteString(row)
 			must(t, e)
 			inputBytes += int64(n)
+		}
+		if scenario == "recent" || scenario == "old" || scenario == "tool-heavy" || scenario == "retained-heavy" {
+			sizes := []int64{256 << 10, 256 << 10, 512 << 10, 1 << 20, 1 << 20, 1 << 20, 1 << 20, 2 << 20, 4 << 20, 8 << 20}
+			target := sizes[i%len(sizes)]
+			if scenario == "tool-heavy" || scenario == "retained-heavy" {
+				target = 4 << 20
+			}
+			if os.Getenv("AA_BACKFILL_SMALL") == "1" {
+				target /= 256
+			}
+			bulk := `{"type":"response_item","payload":{"type":"function_call_output","call_id":"synthetic","output":"` + strings.Repeat("synthetic tool stdout ", 800) + `"}}` + "\n"
+			if i%3 == 0 || scenario == "retained-heavy" {
+				bulk = `{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"` + strings.Repeat("Synthetic retained explanation. ", 500) + `"}]}}` + "\n"
+			}
+			for wrote := int64(0); wrote < target; {
+				n, e = f.WriteString(bulk)
+				must(t, e)
+				wrote += int64(n)
+				inputBytes += int64(n)
+			}
 		}
 		if scenario == "large" && i == 0 {
 			tool := `{"type":"response_item","payload":{"type":"function_call_output","call_id":"synthetic","output":"` + strings.Repeat("x", 8192) + `"}}` + "\n"
@@ -168,7 +191,7 @@ func TestBackfillCommandMeasurement(t *testing.T) {
 	}
 	sort.Strings(normalized)
 	digest := sha256.Sum256([]byte(strings.Join(normalized, "\n")))
-	result := map[string]any{"fixture_version": 1, "scenario": scenario, "mode": mode, "sessions": count, "selected": len(expected), "imported": imported, "skipped": count - len(expected), "input_bytes": inputBytes, "elapsed_seconds": elapsed.Seconds(), "allocated_bytes": after.TotalAlloc - before.TotalAlloc, "gc_cycles": after.NumGC - before.NumGC, "artifact_sha256": hex.EncodeToString(digest[:]), "toolchain": runtime.Version(), "logical_cpus": runtime.NumCPU(), "workers": min(8, max(2, runtime.NumCPU()/2))}
+	result := map[string]any{"fixture_version": 2, "scenario": scenario, "mode": mode, "sessions": count, "selected": len(expected), "imported": imported, "skipped": count - len(expected), "input_bytes": inputBytes, "elapsed_seconds": elapsed.Seconds(), "allocated_bytes": after.TotalAlloc - before.TotalAlloc, "gc_cycles": after.NumGC - before.NumGC, "artifact_sha256": hex.EncodeToString(digest[:]), "toolchain": runtime.Version(), "logical_cpus": runtime.NumCPU(), "planning_workers": 1, "default_adapter_workers": min(8, max(2, runtime.NumCPU()/2)), "byte_budget": 128 << 20}
 	raw, e := json.Marshal(result)
 	must(t, e)
 	fmt.Printf("AA_BACKFILL_RESULT %s\n", raw)
