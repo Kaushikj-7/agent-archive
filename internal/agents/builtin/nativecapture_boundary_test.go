@@ -212,6 +212,8 @@ const (
 	capturePackageCursor   capturePackagePath = captureCursorAdapterPath
 	capturePackageState    capturePackagePath = "github.com/wangjohn/agent-archive/internal/state"
 	capturePackageBackfill capturePackagePath = "github.com/wangjohn/agent-archive/internal/backfill"
+	capturePackageSealed   capturePackagePath = captureSealedPath
+	capturePackageProducer capturePackagePath = captureProducerPath
 	capturePackageBuiltin  capturePackagePath = "github.com/wangjohn/agent-archive/internal/agents/builtin"
 )
 
@@ -224,13 +226,29 @@ const (
 	captureFixtureBinding    captureFixtureFile = "nativecapture_binding_test.go"
 )
 
+type captureAuthorityFile string
+
+const (
+	captureAuthorityProof   captureAuthorityFile = "proof.go"
+	captureAuthorityCursor  captureAuthorityFile = "cursor.go"
+	captureAuthorityAdapter captureAuthorityFile = "settled_import.go"
+)
+
 type captureSymbolName string
 
 const (
-	captureSymbolCursor captureSymbolName = "CaptureSettledCursor"
-	captureSymbolProof  captureSymbolName = "Proof"
-	captureSymbolLoan   captureSymbolName = "WithVerifiedCapture"
-	captureSymbolClose  captureSymbolName = "Close"
+	captureSymbolCursor         captureSymbolName = "CaptureSettledCursor"
+	captureSymbolProof          captureSymbolName = "Proof"
+	captureSymbolLoan           captureSymbolName = "WithVerifiedCapture"
+	captureSymbolClose          captureSymbolName = "Close"
+	captureSymbolDigest         captureSymbolName = "Digest"
+	captureSymbolNewReservation captureSymbolName = "NewReservation"
+	captureSymbolNew            captureSymbolName = "New"
+	captureSymbolRefuse         captureSymbolName = "Refuse"
+	captureSymbolAvailable      captureSymbolName = "Available"
+	captureSymbolRelease        captureSymbolName = "Release"
+	captureSymbolReserve        captureSymbolName = "Reserve"
+	captureSymbolReservation    captureSymbolName = "Reservation"
 )
 
 func captureFixtureAllowed(pkg, file string) bool {
@@ -286,7 +304,7 @@ func captureObjectAllowed(pkg string, obj types.Object, fixture bool) bool {
 	if capturePackagePath(pkg) == capturePackageDomain || capturePackagePath(pkg) == capturePackageCursor || fixture {
 		return true
 	}
-	if obj.Name() == "Proof" {
+	if captureSymbolName(obj.Name()) == captureSymbolProof {
 		_, ok := obj.(*types.TypeName)
 		return ok
 	}
@@ -387,7 +405,7 @@ func (i captureProbeImporter) Import(path string) (*types.Package, error) {
 const captureCursorAdapterPath = "github.com/wangjohn/agent-archive/internal/agents/cursor"
 
 func captureBoundaryImport(path string) bool {
-	return capturePackagePath(path) == capturePackageDomain || capturePackagePath(path) == capturePackageCursor
+	return capturePackagePath(path) == capturePackageDomain || capturePackagePath(path) == capturePackageCursor || capturePackagePath(path) == capturePackageSealed || capturePackagePath(path) == capturePackageProducer
 }
 
 func captureAdapterConstructor(obj types.Object) bool {
@@ -403,7 +421,7 @@ func captureAdapterConstructor(obj types.Object) bool {
 }
 
 func captureAdapterReferenceAllowed(pkg, file string, fixture bool) bool {
-	return fixture || pkg == captureCursorAdapterPath && file == "settled_import.go" || pkg == "github.com/wangjohn/agent-archive/internal/agents/builtin" && file == "registry.go"
+	return fixture || pkg == captureCursorAdapterPath && captureAuthorityFile(file) == captureAuthorityAdapter || pkg == "github.com/wangjohn/agent-archive/internal/agents/builtin" && file == "registry.go"
 }
 
 func TestNativeCaptureAdapterWrapperTypedControls(t *testing.T) {
@@ -471,11 +489,11 @@ func captureSourcePath(dir, name string) string {
 }
 
 func captureAuthorityImportAllowed(pkg, file, imported string) bool {
-	switch imported {
-	case captureSealedPath:
-		return pkg == captureDomainPath && file == "proof.go" || pkg == captureProducerPath && file == "cursor.go"
-	case captureProducerPath:
-		return pkg == captureCursorAdapterPath && file == "settled_import.go"
+	switch capturePackagePath(imported) {
+	case capturePackageSealed:
+		return pkg == captureDomainPath && captureAuthorityFile(file) == captureAuthorityProof || pkg == captureProducerPath && captureAuthorityFile(file) == captureAuthorityCursor
+	case capturePackageProducer:
+		return pkg == captureCursorAdapterPath && captureAuthorityFile(file) == captureAuthorityAdapter
 	default:
 		return true
 	}
@@ -485,20 +503,24 @@ func captureAuthorityImportAllowed(pkg, file, imported string) bool {
 // profiles must not acquire authority merely because no package was selected.
 func captureScanOriginalAuthority(t *testing.T, packages []capturePackage) {
 	selectedDirs := map[string]bool{}
+	selectedSources := map[string]bool{}
 	for _, pkg := range packages {
 		selectedDirs[pkg.Dir] = true
+		for _, name := range append(append(append(append([]string{}, pkg.GoFiles...), pkg.CgoFiles...), pkg.TestGoFiles...), pkg.XTestGoFiles...) {
+			selectedSources[captureSourcePath(pkg.Dir, name)] = true
+		}
 	}
 	t.Helper()
 	root, err := filepath.Abs("../../..")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := captureOriginalAuthorityError(root, selectedDirs); err != nil {
+	if err := captureOriginalAuthorityError(root, selectedDirs, selectedSources); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func captureOriginalAuthorityError(root string, selectedDirs map[string]bool) error {
+func captureOriginalAuthorityError(root string, selectedDirs, selectedSources map[string]bool) error {
 	return filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -517,6 +539,9 @@ func captureOriginalAuthorityError(root string, selectedDirs map[string]bool) er
 			return err
 		}
 		pkg := "github.com/wangjohn/agent-archive/" + filepath.ToSlash(rel)
+		if (pkg == captureDomainPath || strings.HasPrefix(pkg, captureDomainPath+"/")) && !selectedSources[path] {
+			return fmt.Errorf("unqualified closed-domain profile source %s", path)
+		}
 		f, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
 		if err != nil {
 			return err
@@ -557,19 +582,19 @@ func captureAuthorityObjectAllowed(pkg, file string, obj types.Object, calls map
 	if obj.Pkg() == nil || obj.Pkg().Path() != captureSealedPath {
 		return false
 	}
-	if pkg == captureDomainPath && file == "proof.go" {
+	if pkg == captureDomainPath && captureAuthorityFile(file) == captureAuthorityProof {
 		name, ok := obj.(*types.TypeName)
 		return ok && name.Name() == "Proof"
 	}
 	if pkg == captureSealedPath {
 		return true
 	}
-	if pkg == captureProducerPath && file == "cursor.go" {
-		switch obj.Name() {
-		case "Proof", "Reservation":
+	if pkg == captureProducerPath && captureAuthorityFile(file) == captureAuthorityCursor {
+		switch captureSymbolName(obj.Name()) {
+		case captureSymbolProof, captureSymbolReservation:
 			_, ok := obj.(*types.TypeName)
 			return ok
-		case "Reserve", "Release", "Available", "Refuse":
+		case captureSymbolReserve, captureSymbolRelease, captureSymbolAvailable, captureSymbolRefuse:
 			fn, ok := obj.(*types.Func)
 			if !ok {
 				return false
@@ -592,7 +617,7 @@ func captureAuthorityObjectAllowed(pkg, file string, obj types.Object, calls map
 				}
 			}
 			return false
-		case "New", "NewReservation", "Digest":
+		case captureSymbolNew, captureSymbolNewReservation, captureSymbolDigest:
 			fn, ok := obj.(*types.Func)
 			if !ok {
 				return false
@@ -608,18 +633,18 @@ func captureAuthorityObjectAllowed(pkg, file string, obj types.Object, calls map
 			}
 		}
 	}
-	return captureObjectAllowed(pkg, obj, false) && (obj.Name() == "Proof" || obj.Name() == "Close" || obj.Name() == "WithVerifiedCapture")
+	return captureObjectAllowed(pkg, obj, false) && (captureSymbolName(obj.Name()) == captureSymbolProof || captureSymbolName(obj.Name()) == captureSymbolClose || captureSymbolName(obj.Name()) == captureSymbolLoan)
 }
 
 func captureCheckExports(t *testing.T, pkg *types.Package) {
 	t.Helper()
 	var allowed map[string]bool
-	switch pkg.Path() {
-	case captureDomainPath:
+	switch capturePackagePath(pkg.Path()) {
+	case capturePackageDomain:
 		allowed = map[string]bool{"Proof": true}
-	case captureSealedPath:
+	case capturePackageSealed:
 		allowed = map[string]bool{"Proof": true, "Reservation": true, "New": true, "NewReservation": true, "Digest": true}
-	case captureProducerPath:
+	case capturePackageProducer:
 		allowed = map[string]bool{"CaptureSettledCursor": true}
 	default:
 		return
@@ -659,7 +684,7 @@ func captureCheckExports(t *testing.T, pkg *types.Package) {
 			}
 			for i := 0; i < named.NumMethods(); i++ {
 				name := named.Method(i).Name()
-				permitted := typeName == "Proof" && (name == "Close" || name == "WithVerifiedCapture") || typeName == "Reservation" && (name == "Reserve" || name == "Release" || name == "Available" || name == "Refuse")
+				permitted := captureSymbolName(typeName) == captureSymbolProof && (captureSymbolName(name) == captureSymbolClose || captureSymbolName(name) == captureSymbolLoan) || captureSymbolName(typeName) == captureSymbolReservation && (captureSymbolName(name) == captureSymbolReserve || captureSymbolName(name) == captureSymbolRelease || captureSymbolName(name) == captureSymbolAvailable || captureSymbolName(name) == captureSymbolRefuse)
 				if named.Method(i).Exported() && !permitted {
 					t.Errorf("unexpected sealed method %s.%s", typeName, name)
 				}
@@ -755,6 +780,7 @@ func TestNativeCaptureFinalIssuerCallControls(t *testing.T) {
 		{"function-value", `func CaptureSettledCursor(){mint:=issuer.New;_ = mint}`, false},
 		{"extra-wrapper", `func AnotherCapture(){return issuer.New(),nil}`, false},
 		{"nested-mint", `func CaptureSettledCursor(){f:=func(){return issuer.New(),nil};_=f}`, false},
+		{"early-conditional-mint", `func CaptureSettledCursor(){if bad{return issuer.New(),nil};return nil,nil}`, false},
 		{"nonfinal-mint", `func CaptureSettledCursor(){p:=issuer.New();return p,nil}`, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -789,7 +815,28 @@ func TestNativeCaptureIgnoredOnlyDirectoryIssuerControl(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(hidden, "issuer.go"), []byte(source), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := captureOriginalAuthorityError(root, map[string]bool{}); err == nil || !strings.Contains(err.Error(), "forbidden issuer/producer import") {
+	if err := captureOriginalAuthorityError(root, map[string]bool{}, map[string]bool{}); err == nil || !strings.Contains(err.Error(), "unqualified closed-domain profile source") {
 		t.Fatal("ignored-only issuer directory escaped", err)
+	}
+}
+
+func TestNativeCaptureIgnoredClosedDomainDeclarationControls(t *testing.T) {
+	for _, test := range []struct{ name, dir, file, source string }{
+		{"ignored-exact-producer", "internal/agents/nativecapture/producer", "cursor.go", "//go:build unavailable_profile\n\npackage producer\nimport issuer \"" + captureSealedPath + "\"\nfunc CaptureSettledCursor(){return issuer.New(),nil}\n"},
+		{"ignored-hidden-sealed-export", "internal/agents/nativecapture/internal/sealed", "hidden.go", "//go:build unavailable_profile\n\npackage sealed\nvar ExportedIssuer any\n"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			dir := filepath.Join(root, filepath.FromSlash(test.dir))
+			if err := os.MkdirAll(dir, 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, test.file), []byte(test.source), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := captureOriginalAuthorityError(root, map[string]bool{dir: true}, map[string]bool{}); err == nil || !strings.Contains(err.Error(), "unqualified closed-domain profile source") {
+				t.Fatal("ignored issuer declaration escaped", err)
+			}
+		})
 	}
 }
