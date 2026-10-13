@@ -100,19 +100,16 @@ func EncodeSource(w io.Writer, bundle SourceBundle) error {
 		return err
 	}
 	header := sourceHeader(bundle)
+	lines := sourceLineWriter{w: w}
+	encoder := json.NewEncoder(&lines)
 	write := func(value any) error {
-		line, err := json.Marshal(value)
-		if err != nil {
+		if err := encoder.Encode(value); err != nil {
+			if lines.err != nil {
+				return lines.err
+			}
 			return fmt.Errorf("encode source line: %w", err)
 		}
-		if len(line) > MaxSourceLineBytes {
-			return fmt.Errorf("source line of %d bytes exceeds the %d byte line limit", len(line), MaxSourceLineBytes)
-		}
-		if _, err := w.Write(line); err != nil {
-			return err
-		}
-		_, err = w.Write([]byte{'\n'})
-		return err
+		return nil
 	}
 	if err := write(header); err != nil {
 		return err
@@ -137,6 +134,37 @@ func EncodeSource(w io.Writer, bundle SourceBundle) error {
 		}
 	}
 	return nil
+}
+
+// sourceLineWriter receives one complete JSON value plus the encoder's newline.
+// Checking before forwarding keeps oversized lines out of the destination, while
+// Encoder avoids Marshal's separately allocated copy of each completed value.
+// Keep JSON and newline writes separate to preserve destination error boundaries.
+type sourceLineWriter struct {
+	w   io.Writer
+	err error
+}
+
+func (w *sourceLineWriter) Write(line []byte) (int, error) {
+	jsonBytes := len(line) - 1
+	if jsonBytes > MaxSourceLineBytes {
+		w.err = fmt.Errorf("source line of %d bytes exceeds the %d byte line limit", jsonBytes, MaxSourceLineBytes)
+		return 0, w.err
+	}
+	n, err := w.w.Write(line[:jsonBytes])
+	if err == nil && n != jsonBytes {
+		err = io.ErrShortWrite
+	}
+	if err != nil {
+		w.err = err
+		return n, err
+	}
+	newlineBytes, err := w.w.Write(line[jsonBytes:])
+	if err == nil && newlineBytes != 1 {
+		err = io.ErrShortWrite
+	}
+	w.err = err
+	return n + newlineBytes, err
 }
 
 func sourceHeader(bundle SourceBundle) SourceHeader {
