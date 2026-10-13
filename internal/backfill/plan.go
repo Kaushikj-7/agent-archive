@@ -777,7 +777,7 @@ func runAdapter(ctx context.Context, env Environment, w *work) {
 	}
 	trace.Add(trace.AdapterInvocations, 1)
 	summaryInspector, supportsSummary := inspector.(agentapi.SummaryImportInspector)
-	filtered, summary, release, err := filterImportSource(ctx, env, w, freshStart, supportsSummary && summaryInspector.SupportsImportSummary())
+	filtered, summary, release, err := filterImportSource(ctx, env, w, freshStart, supportsSummary && summaryInspector.SummaryFor(inspector) && summaryInspector.SupportsImportSummary())
 	defer release()
 	if err != nil {
 		if fatalSourceFailure(err) {
