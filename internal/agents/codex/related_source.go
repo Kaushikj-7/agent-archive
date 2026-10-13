@@ -1328,66 +1328,60 @@ func (p *relatedSourcePass) ReadRevision(ctx context.Context, ref agentapi.Sourc
 	return snapshot, nil
 }
 
-func (s *historySnapshot) RevisionCandidates(ctx context.Context) ([]agentapi.SourceRef, error) {
+func (s *historySnapshot) RevisionCandidates(ctx context.Context) (agentapi.RevisionCandidateSet, error) {
 	if s.closed || s.owner.closed {
-		return nil, agentapi.ErrClosed
+		return agentapi.RevisionCandidateSet{}, agentapi.ErrClosed
 	}
 	if err := s.check(ctx); err != nil {
-		return nil, err
+		return agentapi.RevisionCandidateSet{}, err
 	}
-	out := make([]agentapi.SourceRef, 0, archive.MaxHistorySpans)
+	var out agentapi.RevisionCandidateSet
 	seen := map[string]bool{}
-	add := func(ref agentapi.SourceRef) error {
-		if seen[ref.Path] {
-			return nil
-		}
-		if len(out) >= archive.MaxHistorySpans {
-			return sourceRefusal(agentapi.Limit, agentapi.CauseHistoricalCandidateLimit, "historical candidate limit")
-		}
-		seen[ref.Path] = true
-		out = append(out, ref)
-		return nil
-	}
-	// The thread's own segments on its chain come first. Observed same-thread
-	// rollouts off it (an abandoned branch, say) follow as best-effort
-	// historical revisions; one whose file is gone since is passed over.
+	// The thread's own segments on its chain are required.
 	for _, span := range s.spans {
-		if span.file.identity.ThreadID == s.selection.thread {
-			if err := add(span.file.ref); err != nil {
-				return nil, err
-			}
+		if span.file.identity.ThreadID != s.selection.thread || seen[span.file.ref.Path] {
+			continue
 		}
+		if len(out.Chain) >= archive.MaxHistorySpans {
+			return agentapi.RevisionCandidateSet{}, sourceRefusal(agentapi.Limit, agentapi.CauseHistoricalCandidateLimit, "historical candidate limit")
+		}
+		seen[span.file.ref.Path] = true
+		out.Chain = append(out.Chain, span.file.ref)
 	}
-	// Past the limit, further off-chain rollouts are left out rather than
+	// Observed same-thread rollouts off it (an abandoned branch, say) follow
+	// as best-effort historical revisions; one whose file is gone since is
+	// passed over, and past the limit further ones are left out rather than
 	// refusing the chain's own capture.
 	for _, ref := range presentCandidates(s.selection.set.Candidates) {
-		if !seen[ref.Path] && len(out) >= archive.MaxHistorySpans {
+		if seen[ref.Path] {
+			continue
+		}
+		if len(out.Chain)+len(out.BestEffort) >= archive.MaxHistorySpans {
 			break
 		}
-		if err := add(ref); err != nil {
-			return nil, err
-		}
+		seen[ref.Path] = true
+		out.BestEffort = append(out.BestEffort, ref)
 	}
 	return out, nil
 }
 
-func (s *ordinarySnapshot) RevisionCandidates(ctx context.Context) ([]agentapi.SourceRef, error) {
+func (s *ordinarySnapshot) RevisionCandidates(ctx context.Context) (agentapi.RevisionCandidateSet, error) {
 	if _, err := s.AdmissionFacts(ctx); err != nil {
-		return nil, err
+		return agentapi.RevisionCandidateSet{}, err
 	}
 	// An ordinary rollout is the whole chain; observed same-thread rollouts
 	// off it follow as best-effort historical revisions.
-	out := []agentapi.SourceRef{s.source.ref}
+	out := agentapi.RevisionCandidateSet{Chain: []agentapi.SourceRef{s.source.ref}}
 	for _, ref := range presentCandidates(s.selection.set.Candidates) {
 		if ref.Path == s.source.ref.Path {
 			continue
 		}
-		if len(out) >= archive.MaxHistorySpans {
+		if 1+len(out.BestEffort) >= archive.MaxHistorySpans {
 			// Further off-chain rollouts are left out rather than refusing
 			// the rollout's own capture.
 			break
 		}
-		out = append(out, ref)
+		out.BestEffort = append(out.BestEffort, ref)
 	}
 	return out, nil
 }

@@ -41,51 +41,46 @@ func (r providerReader) revisions(ctx context.Context, adapter agentapi.Transcri
 	if admissionErr != nil {
 		return errors.Join(admissionErr, snap.Close())
 	}
-	refs, candidateErr := candidates.RevisionCandidates(ctx)
+	set, candidateErr := candidates.RevisionCandidates(ctx)
 	if err := errors.Join(candidateErr, snap.Close()); err != nil {
 		return err
 	}
-	if r.discoveryRoot() == "" && (related || len(refs) > 1) {
-		return agentapi.Wrap(agentapi.Unavailable, errors.New("historical reconciliation requires an admitted source home"))
+	if r.discoveryRoot() == "" {
+		if related || len(set.Chain) > 1 {
+			return agentapi.Wrap(agentapi.Unavailable, errors.New("historical reconciliation requires an admitted source home"))
+		}
+		// Off-chain rollouts are only ever best effort; without an admitted
+		// source home they are not read at all.
+		set.BestEffort = nil
 	}
-	if len(refs) > archive.MaxHistorySpans {
+	if len(set.Chain)+len(set.BestEffort) > archive.MaxHistorySpans {
 		return agentapi.Wrap(agentapi.Limit, errors.New("historical candidate count exceeded"))
 	}
 	// Raw, retained records, and filtered bytes have independent aggregate bounds.
-	rawLeft, filteredLeft := maxRawBytes(r.harness, maxBytes), int64(128<<20)
-	recordsLeft := archive.MaxHistoryRecords
-	for _, ref := range refs {
+	budget := revisionBudget{raw: maxRawBytes(r.harness, maxBytes), filtered: 128 << 20, records: archive.MaxHistoryRecords}
+	for _, ref := range set.Chain {
+		if err := r.readRevision(ctx, historical, adapter, ref, limits, maxBytes, &budget, consume); err != nil {
+			return err
+		}
+	}
+	// A best-effort candidate that cannot be read, or no longer fits the
+	// budget the chain left, is left out: an off-chain rollout never blocks
+	// the chain's own capture. Its consumer's failures still fail.
+	for _, ref := range set.BestEffort {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if ref.Kind != archive.SourceKindFile || len(ref.Path) > 4096 || len(ref.Key) > 4096 {
-			return agentapi.Wrap(agentapi.Unsafe, errors.New("invalid historical candidate locator"))
+		before := budget
+		var consumeErr error
+		err := r.readRevision(ctx, historical, adapter, ref, limits, maxBytes, &budget, func(filtered archive.FilteredTranscript, binding *archive.CodexSourceBinding) error {
+			consumeErr = consume(filtered, binding)
+			return consumeErr
+		})
+		if consumeErr != nil || ctx.Err() != nil {
+			return errors.Join(err, ctx.Err())
 		}
-		limits.RawBytes = min(maxRawBytes(r.harness, maxBytes), rawLeft)
-		limits.Records = recordsLeft
-		limits.FilteredBytes = min(maxBytes, filteredLeft)
-		if limits.RawBytes <= 0 || filteredLeft <= 0 || recordsLeft <= 0 {
-			return agentapi.Wrap(agentapi.Limit, errors.New("historical aggregate budget exceeded"))
-		}
-		snapshot, err := historical.ReadRevision(ctx, ref, r.admission, limits)
 		if err != nil {
-			return err
-		}
-		raw := snapshot.Observation().Size
-		if raw < 0 || raw > rawLeft {
-			return errors.Join(agentapi.Wrap(agentapi.Limit, errors.New("historical raw budget exceeded")), snapshot.Close())
-		}
-		filtered, binding, err := r.filterRevision(ctx, snapshot, adapter, ref, limits, min(maxBytes, filteredLeft), &recordsLeft)
-		if err != nil {
-			return err
-		}
-		rawLeft -= raw
-		if filtered.Boundary.RetainedBytes < 0 || int64(filtered.Boundary.RetainedBytes) > filteredLeft {
-			return agentapi.Wrap(agentapi.Limit, errors.New("historical filtered budget exceeded"))
-		}
-		filteredLeft -= int64(filtered.Boundary.RetainedBytes)
-		if err := consume(filtered, binding); err != nil {
-			return err
+			budget = before
 		}
 	}
 	final, err := pass.Signature(ctx, r.ref)
@@ -96,6 +91,49 @@ func (r providerReader) revisions(ctx context.Context, adapter agentapi.Transcri
 		return agentapi.Wrap(agentapi.Changed, errors.New("active revision changed after reconciliation"))
 	}
 	return nil
+}
+
+// revisionBudget is what one reconciliation's historical reads may still
+// use: raw source bytes, filtered bytes and retained records.
+type revisionBudget struct {
+	raw      int64
+	filtered int64
+	records  int
+}
+
+// readRevision reads, filters and consumes one historical candidate within
+// budget, charging it only for what that candidate used.
+func (r providerReader) readRevision(ctx context.Context, historical agentapi.SourceRevisions, adapter agentapi.TranscriptFilter, ref agentapi.SourceRef, limits agentapi.ReadLimits, maxBytes int64, budget *revisionBudget, consume func(archive.FilteredTranscript, *archive.CodexSourceBinding) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if ref.Kind != archive.SourceKindFile || len(ref.Path) > 4096 || len(ref.Key) > 4096 {
+		return agentapi.Wrap(agentapi.Unsafe, errors.New("invalid historical candidate locator"))
+	}
+	limits.RawBytes = min(maxRawBytes(r.harness, maxBytes), budget.raw)
+	limits.Records = budget.records
+	limits.FilteredBytes = min(maxBytes, budget.filtered)
+	if limits.RawBytes <= 0 || budget.filtered <= 0 || budget.records <= 0 {
+		return agentapi.Wrap(agentapi.Limit, errors.New("historical aggregate budget exceeded"))
+	}
+	snapshot, err := historical.ReadRevision(ctx, ref, r.admission, limits)
+	if err != nil {
+		return err
+	}
+	raw := snapshot.Observation().Size
+	if raw < 0 || raw > budget.raw {
+		return errors.Join(agentapi.Wrap(agentapi.Limit, errors.New("historical raw budget exceeded")), snapshot.Close())
+	}
+	filtered, binding, err := r.filterRevision(ctx, snapshot, adapter, ref, limits, min(maxBytes, budget.filtered), &budget.records)
+	if err != nil {
+		return err
+	}
+	if filtered.Boundary.RetainedBytes < 0 || int64(filtered.Boundary.RetainedBytes) > budget.filtered {
+		return agentapi.Wrap(agentapi.Limit, errors.New("historical filtered budget exceeded"))
+	}
+	budget.raw -= raw
+	budget.filtered -= int64(filtered.Boundary.RetainedBytes)
+	return consume(filtered, binding)
 }
 
 func (r providerReader) filterRevision(ctx context.Context, snapshot agentapi.SourceSnapshot, adapter agentapi.TranscriptFilter, ref agentapi.SourceRef, limits agentapi.ReadLimits, maxBytes int64, recordsLeft *int) (filtered archive.FilteredTranscript, binding *archive.CodexSourceBinding, err error) {

@@ -659,3 +659,28 @@ func TestNativeReconciliationDoesNotTreatMissingSourceBookkeepingAsRevision(t *t
 		}
 	}
 }
+
+// B, the observed rollout off the current chain A then C, cannot be read.
+// It is only a best-effort historical revision, so the chain's own
+// reconciliation still succeeds without it, preserving A.
+func TestNativeRevisionReconciliationSkipsUnreadableOffChainRollout(t *testing.T) {
+	scan, lookup := reconciliationFixture(t)
+	read, ok, err := scan.read()
+	if err != nil || !ok {
+		t.Fatal("native read", err)
+	}
+	active, _, err := scan.build(read)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(lookup.refs[revisionB][0].Path, []byte("not a rollout\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := scan.reconcileRevisions(read, active)
+	if err != nil {
+		t.Fatal("an unreadable off-chain rollout blocked the chain's reconciliation: ", err)
+	}
+	if plan.Current != revisionC || len(plan.Preserved) != 1 || plan.Preserved[0].RevisionID != revisionThread {
+		t.Fatalf("plan: %#v", plan)
+	}
+}

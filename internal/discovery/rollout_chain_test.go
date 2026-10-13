@@ -135,12 +135,12 @@ func revisionPaths(tb testing.TB, s agentapi.SourceSnapshot) []string {
 	if !ok {
 		tb.Fatal("snapshot lists no revision candidates")
 	}
-	refs, err := candidates.RevisionCandidates(tb.Context())
+	set, err := candidates.RevisionCandidates(tb.Context())
 	if err != nil {
 		tb.Fatal(err)
 	}
 	var paths []string
-	for _, ref := range refs {
+	for _, ref := range slices.Concat(set.Chain, set.BestEffort) {
 		paths = append(paths, ref.Path)
 	}
 	slices.Sort(paths)

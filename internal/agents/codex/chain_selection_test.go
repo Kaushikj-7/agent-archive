@@ -43,6 +43,7 @@ func TestMissingHistoryBaseIsANamedRetryableFailure(t *testing.T) {
 		"ambiguous": {threadA: {base, leaf}},
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			l := &historyLookup{thread: agentapi.CodexRolloutSet{Current: &leaf, Revision: "one"}, rollouts: rollouts}
 			s, err := historyPass(t, dir, l).Read(t.Context(), leaf, agentapi.ReadLimits{})
 			if err == nil {
@@ -77,19 +78,22 @@ func TestOffChainSameThreadRolloutIsNoBlockerBesideCurrentLocator(t *testing.T) 
 	if !ok {
 		t.Fatal("history snapshot lists no revision candidates")
 	}
-	refs, err := candidates.RevisionCandidates(t.Context())
+	set, err := candidates.RevisionCandidates(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
-	var paths []string
-	for _, ref := range refs {
-		paths = append(paths, ref.Path)
+	paths := func(refs []agentapi.SourceRef) []string {
+		var out []string
+		for _, ref := range refs {
+			out = append(out, ref.Path)
+		}
+		return out
 	}
-	chain := []string{leaf.Path, base.Path}
-	slices.Sort(paths[:min(len(paths), 2)])
-	slices.Sort(chain)
-	if want := append(chain, other.Path); !slices.Equal(paths, want) {
-		t.Fatalf("revision candidates = %v, want the chain then the off-chain branch %v", paths, want)
+	if got, want := paths(set.Chain), []string{base.Path, leaf.Path}; !slices.Equal(got, want) {
+		t.Fatalf("chain candidates = %v, want %v", got, want)
+	}
+	if got, want := paths(set.BestEffort), []string{other.Path}; !slices.Equal(got, want) {
+		t.Fatalf("best-effort candidates = %v, want the off-chain branch %v", got, want)
 	}
 }
 
@@ -188,11 +192,11 @@ func TestOffChainCandidatesPastTheLimitDoNotRefuseCapture(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = s.Close() }()
-	refs, err := s.(agentapi.SourceRevisionCandidates).RevisionCandidates(t.Context())
+	set, err := s.(agentapi.SourceRevisionCandidates).RevisionCandidates(t.Context())
 	if err != nil {
 		t.Fatal("off-chain rollouts refused the chain's capture: ", err)
 	}
-	if len(refs) != archive.MaxHistorySpans || refs[0].Path != base.Path || refs[1].Path != leaf.Path {
-		t.Fatalf("revision candidates: %d, first %v", len(refs), refs[:min(len(refs), 2)])
+	if len(set.Chain) != 2 || set.Chain[0].Path != base.Path || set.Chain[1].Path != leaf.Path || len(set.Chain)+len(set.BestEffort) != archive.MaxHistorySpans {
+		t.Fatalf("revision candidates: chain %v, %d best effort", set.Chain, len(set.BestEffort))
 	}
 }

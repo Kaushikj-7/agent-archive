@@ -91,10 +91,21 @@ type SourceRevisions interface {
 	ReadRevision(context.Context, SourceRef, SourceAdmission, ReadLimits) (SourceSnapshot, error)
 }
 
+// RevisionCandidateSet is a thread's bounded historical revision candidates.
+// Chain lists the thread's own segments on the selected lineage: a failure
+// reading one fails the reconciliation. BestEffort lists observed same-thread
+// rollouts off that chain (an abandoned branch, say), kept as historical
+// revisions when they can be read: a failure reading one only leaves it out,
+// so it never blocks the chain's own capture.
+type RevisionCandidateSet struct {
+	Chain      []SourceRef
+	BestEffort []SourceRef
+}
+
 // SourceRevisionCandidates exposes bounded same-thread candidates from validated
 // graph and lookup evidence; these observations never grant capture admission.
 type SourceRevisionCandidates interface {
-	RevisionCandidates(context.Context) ([]SourceRef, error)
+	RevisionCandidates(context.Context) (RevisionCandidateSet, error)
 }
 
 // OwnTaskFacts contains the first owned native task observation, never permission.

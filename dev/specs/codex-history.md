@@ -100,7 +100,13 @@ chain (an abandoned branch after a rollback, say) never block capture or choose
 the tip; ones whose files still exist are offered after the chain as
 best-effort historical revisions, up to the 64-candidate limit with the
 chain's own segments first; off-chain ones past it are left out rather than
-refusing the capture. Only rollouts the lookup has observed (a
+refusing the capture. The source marks them best effort: a failure reading one
+(its own base gone, an unreadable header, the reconciliation's byte budget
+spent) only leaves that branch out, while a failure reading a segment of the
+current chain still fails the reconciliation. Without an admitted source home
+they are not read at all. One known limit remains: a thread with more than 64
+observed same-thread rollouts is refused with a limit failure even beside a
+current locator. Only rollouts the lookup has observed (a
 discovery listing or the restored cache) are offered: no proof says every
 abandoned branch was found, and a branch captured while it was current stays
 preserved through the published revision history either way. A discovery
