@@ -33,6 +33,12 @@ on both sources. `AGENT_ARCHIVE_PICKER_SIZE=10000` or `100000` restricts the mai
 benchmark to one fixture size for isolated process-memory observation. No test
 reads real homes, native settings, providers or credentials.
 
+Fixture preparation explicitly makes each synthetic archive home mode0700
+before environment setup and measured phases. This matches the private-home
+condition required by production native reads regardless of the process umask;
+it does not change that production guard. A regression starts with mode0755 and
+requires the real native-label first/Older frames and nonzero native reads.
+
 The production baseline is
 `a187e1b883924fd36c9d6700606a5c2756fc2b6f`, merged protocol-contract source before
 transactional picker implementation. Create a separate clean checkout at this
@@ -156,8 +162,9 @@ fixture pairing while retaining every raw phase observation. It requires every
 source/size/kind/repeat process and each named command/cache/registration case;
 equal case counts alone cannot qualify a missing measurement. Run
 `python3 scripts/test_summarize_picker_qualification.py` for its acceptance controls.
-Independent PR7
-review and required hosted checks still gate completion.
+Required independent review and hosted check gates are tracked in
+[PR499](https://github.com/wangjohn/agent-archive/pull/499).
+Merging the source does not establish provider activation.
 ProductionS3/R2 CAS/clock evidence, endpoint-scoped capabilities, credential
 cutover authority and multi-machine lifecycle remain
 [release gates](../../catalog/provider-qualification.md).
