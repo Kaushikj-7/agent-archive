@@ -77,3 +77,34 @@ func TestLegacySnapshotHidesContentProof(t *testing.T) {
 		t.Fatal("legacy wrapper exposes content proof")
 	}
 }
+
+func TestOrdinaryContentProofUsesCapturedCompleteBoundary(t *testing.T) {
+	dir := t.TempDir()
+	ref, raw := historyFile(t, dir, threadA, threadA, 0, nil, "complete")
+	raw = append(raw, []byte(`{"type":`)...)
+	if err := os.WriteFile(ref.Path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	pass, err := (SourceProvider{}).OpenPass(t.Context(), agentapi.SourceEnvironment{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pass.Close()
+	snapshot, err := pass.Read(t.Context(), ref, agentapi.ReadLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer snapshot.Close()
+	proof, err := snapshot.(agentapi.VerifiedContentSnapshot).ContentProof(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := snapshot.Input().File
+	prefix, err := io.ReadAll(io.NewSectionReader(input, 0, input.Length()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if proof.Boundary != input.Length() || proof.Boundary >= int64(len(raw)) || proof.SHA256 != sha256.Sum256(prefix) {
+		t.Fatalf("proof used whole file instead of captured prefix: %+v len=%d input=%d", proof, len(raw), input.Length())
+	}
+}
