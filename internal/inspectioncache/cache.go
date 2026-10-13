@@ -193,24 +193,7 @@ func (c *Cache) StoreBatch(ctx context.Context, observations []Observation) erro
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(c.dir, 0700); err != nil {
-		return err
-	}
-	info, err := os.Lstat(c.dir)
-	if err != nil {
-		return err
-	}
-	if !info.IsDir() || info.Mode().Perm() != 0700 {
-		return errors.New("inspection cache directory is not private")
-	}
-	lockInfo, lockErr := os.Lstat(filepath.Join(c.dir, "writer.lock"))
-	if lockErr != nil && !os.IsNotExist(lockErr) {
-		return lockErr
-	}
-	if lockErr == nil && (!lockInfo.Mode().IsRegular() || lockInfo.Mode().Perm() != 0600 || lockInfo.Size() != 0) {
-		return errors.New("inspection cache lock is not private and empty")
-	}
-	unlock, err := local.NamedLock(c.dir, "writer.lock")
+	unlock, err := c.lock()
 	if err != nil {
 		return err
 	}
@@ -278,4 +261,25 @@ func writeAtomic(dir, name string, data []byte) (err error) {
 		return err
 	}
 	return os.Rename(temp, filepath.Join(dir, name))
+}
+
+func (c *Cache) lock() (func(), error) {
+	if err := os.MkdirAll(c.dir, 0700); err != nil {
+		return nil, err
+	}
+	info, err := os.Lstat(c.dir)
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() || info.Mode().Perm() != 0700 {
+		return nil, errors.New("inspection cache directory is not private")
+	}
+	lockInfo, lockErr := os.Lstat(filepath.Join(c.dir, "writer.lock"))
+	if lockErr != nil && !os.IsNotExist(lockErr) {
+		return nil, lockErr
+	}
+	if lockErr == nil && (!lockInfo.Mode().IsRegular() || lockInfo.Mode().Perm() != 0600 || lockInfo.Size() != 0) {
+		return nil, errors.New("inspection cache lock is not private and empty")
+	}
+	return local.NamedLock(c.dir, "writer.lock")
 }

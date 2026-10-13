@@ -344,35 +344,7 @@ func (r providerReader) filter(ctx context.Context, adapter archive.Adapter, max
 			c.Limits.ReadBudget = r.resourceOwner.readBudget()
 		}
 		var inspected agentapi.ImportSummary
-		var cacheKey inspectioncache.Key
-		var content agentapi.VerifiedContentSnapshot
-		if r.inspectionCache != nil && r.harness == "codex" {
-			content, _ = snap.(agentapi.VerifiedContentSnapshot)
-			if content != nil {
-				if proof, proofErr := content.ContentProof(ctx); proofErr == nil {
-					cacheKey = inspectioncache.Key{Agent: r.harness, SourceIdentity: string(r.ref.Kind) + "\x00" + r.ref.Path + "\x00" + r.ref.Key, AdapterVersion: f.Version(), FilterVersion: archive.FilterVersion, InspectionVersion: 1, Proof: proof, RawBytes: limits.RawBytes, RecordBytes: limits.RecordBytes, FilteredBytes: maxBytes, Records: limits.Records}
-				}
-			}
-		}
-		cached := false
-		if cacheKey.Proof.Version != 0 {
-			inspected, cached = r.inspectionCache.Lookup(ctx, cacheKey)
-		}
-		if !cached {
-			if r.countInspection {
-				trace.Add(trace.AdapterInvocations, 1)
-			}
-			if r.ref.Kind == archive.SourceKindFile {
-				transcriptFilters.Add(1)
-			}
-			inspected, err = streaming.InspectFilteredImport(ctx, in, c)
-		}
-		if err == nil && content != nil && cacheKey.Proof.Version != 0 {
-			err = content.VerifyContent(ctx)
-			if err == nil && !cached && inspected.Conversation && r.inspectionObservation != nil {
-				*r.inspectionObservation = &inspectioncache.Observation{Key: cacheKey, Summary: inspected}
-			}
-		}
+		inspected, err = r.inspectSummary(ctx, snap, f, streaming, in, c, maxBytes)
 		if err == nil {
 			*summary = &inspected
 			out.NativeStartAt = inspected.NativeStartAt
@@ -452,7 +424,7 @@ func translateSourceError(err error) error {
 	return err
 }
 
-// transcriptFilters counts full changed-file filtering, never previews.
+// transcriptFilters counts actual complete file codec scans, including inspection.
 var transcriptFilters atomic.Int64
 
 // CursorChatSize counts existing native value bytes, excluding framing.
@@ -833,4 +805,37 @@ func (r providerReader) filterOwned(ctx context.Context, filter agentapi.Transcr
 		return out, err
 	}
 	return filter.Filter(ctx, in, c)
+}
+
+func (r providerReader) inspectSummary(ctx context.Context, snapshot agentapi.SourceSnapshot, f agentapi.TranscriptFilter, streaming agentapi.StreamingImportFilter, in agentapi.NativeInput, c agentapi.FilterContext, maxBytes int64) (inspected agentapi.ImportSummary, err error) {
+	var cacheKey inspectioncache.Key
+	var content agentapi.VerifiedContentSnapshot
+	if r.inspectionCache != nil && r.harness == "codex" {
+		content, _ = snapshot.(agentapi.VerifiedContentSnapshot)
+		if content != nil {
+			if proof, proofErr := content.ContentProof(ctx); proofErr == nil {
+				cacheKey = inspectioncache.Key{Agent: r.harness, SourceIdentity: string(r.ref.Kind) + "\x00" + r.ref.Path + "\x00" + r.ref.Key, AdapterVersion: f.Version(), FilterVersion: archive.FilterVersion, InspectionVersion: 1, Proof: proof, RawBytes: c.Limits.RawBytes, RecordBytes: c.Limits.RecordBytes, FilteredBytes: maxBytes, Records: c.Limits.Records}
+			}
+		}
+	}
+	cached := false
+	if cacheKey.Proof.Version != 0 {
+		inspected, cached = r.inspectionCache.Lookup(ctx, cacheKey)
+	}
+	if !cached {
+		if r.countInspection {
+			trace.Add(trace.AdapterInvocations, 1)
+		}
+		if r.ref.Kind == archive.SourceKindFile {
+			transcriptFilters.Add(1)
+		}
+		inspected, err = streaming.InspectFilteredImport(ctx, in, c)
+	}
+	if err == nil && content != nil && cacheKey.Proof.Version != 0 {
+		err = content.VerifyContent(ctx)
+		if err == nil && !cached && inspected.Conversation && r.inspectionObservation != nil {
+			*r.inspectionObservation = &inspectioncache.Observation{Key: cacheKey, Summary: inspected}
+		}
+	}
+	return inspected, err
 }

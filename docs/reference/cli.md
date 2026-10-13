@@ -787,7 +787,8 @@ Usage: agent-archive backfill [options]
 Import the Claude Code, Codex, and Cursor sessions already on this machine that
 the archive has not captured. First shows each project with its session count
 per app, and why any session is not imported; archive and configuration changes
-require confirmation. Planning may update a disposable local inspection cache. Live repositories can be proposed for matching deleted worktrees.
+require confirmation. Planning may update a disposable local inspection cache.
+Live repositories can be proposed for matching deleted worktrees.
 Projects the import needs are added to capture. Prints project
 folders, counts, and recovery reasons, never conversation content.
 After confirmation, filtered evidence is staged before admission; uploads can

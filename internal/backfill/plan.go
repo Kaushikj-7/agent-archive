@@ -755,13 +755,7 @@ func runAdapter(ctx context.Context, env Environment, w *work) {
 	if w.sourceChanged || w.vanished || w.tooLarge {
 		return
 	}
-	defer func() {
-		w.checkSource(env)
-		if w.inspectionObservation != nil && env.ObserveInspection != nil && ctx.Err() == nil && w.validated && !w.empty && !w.unsafe && !w.sourceChanged && !w.vanished && !w.tooLarge && w.sourceErr == nil {
-			env.ObserveInspection(*w.inspectionObservation)
-		}
-		w.inspectionObservation = nil
-	}()
+	defer w.finishInspectionObservation(ctx, env)
 	if env.Imports == nil {
 		w.unsafe = true
 		return
@@ -1001,4 +995,12 @@ func importNativeCandidate(source agentapi.DiscoveryCandidate, t *transcript) Ca
 		}
 	}
 	return Candidate{Harness: string(source.Session.Agent), TranscriptPath: t.path, SourceKind: source.Source.Kind, SourceKey: key, Bytes: t.size, NativeSessionID: t.nativeID, NativeChild: child, RelatedHistory: related, ParentNativeID: parent, RootNativeID: root, NativeHome: home}
+}
+
+func (w *work) finishInspectionObservation(ctx context.Context, env Environment) {
+	w.checkSource(env)
+	if w.inspectionObservation != nil && env.ObserveInspection != nil && ctx.Err() == nil && w.validated && !w.empty && !w.unsafe && !w.sourceChanged && !w.vanished && !w.tooLarge && w.sourceErr == nil {
+		env.ObserveInspection(*w.inspectionObservation)
+	}
+	w.inspectionObservation = nil
 }
