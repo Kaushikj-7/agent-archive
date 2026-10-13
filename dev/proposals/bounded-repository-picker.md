@@ -524,3 +524,28 @@ count attempts including failures and expose partial/unknown state on its explic
 finite work budget. Complete archive search retains all matcher fields and child
 parent grouping through context/error-aware loading, with no loaded-page substitute
 on failure.
+
+### PR 2 consumed mutation and row codec
+
+The candidate protocol-11/schema-5 mutation path now derives `CatalogEntry.Picker`
+from checksum-verified full metadata, maintains its scoped Project memberships in
+that mutation's existing head CAS, and updates parent child aggregates in every
+copy without changing the metadata revision. `BuildPickerRow` and
+`PickerMembershipKeys` are shared construction helpers for the upgrade owner.
+A scoped candidate refuses a preexisting live identity missing its facts;
+construction must build the complete universe before activation. Protocol-10
+mutations refuse supplied Picker fields and continue emitting the old envelope.
+Head and coordinator operational decoding still refuse protocol 11; this slice
+cannot activate a new destination or bypass provider qualification.
+
+Picker Project values use the existing strict `CatalogEntry` envelope with its
+`metadata-v10` compact Summary and a bounded, strict Picker member. Identity and
+other order entries preserve the same facts during automatic overflow compaction.
+`DecodePickerRow` consumes this envelope in Project snapshot decoding and GC,
+validates exact scope/harness/membership/order correspondence, and reads no body.
+The Picker member is at most 8192 encoded bytes; each UTF-8 label prefix is at
+most 256 bytes; the complete compact picker envelope is at most 16384 bytes.
+The row schema is recorded in `schemas/catalog-picker-row.schema.json`; runtime
+also enforces byte limits and exact immutable checksum keys. Selected body
+verification recomputes metadata-derived facts while retaining separately
+validated live index child counts. A projection never authorizes source loading.

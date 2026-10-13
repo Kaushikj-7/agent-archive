@@ -107,6 +107,7 @@ type HeadWitness struct {
 //
 //revive:disable-next-line:exported -- Keep the accepted protocol API name.
 type CatalogEntry struct {
+	Picker *PickerRow `json:"Picker,omitempty"`
 	// SummaryOverflow marks a lazy index projection resolved through Metadata.
 	SummaryOverflow  string           `json:"SummaryOverflow,omitempty"`
 	OrdinaryChildren uint64           `json:"OrdinaryChildren"`
@@ -364,6 +365,10 @@ func allOrderKeys(key string, e *CatalogEntry) [][]string {
 			result[2] = append(result[2], prefix+keys[0])
 		}
 	}
+	if e.Picker != nil {
+		picker, _ := PickerMembershipKeys(key, *e.Picker)
+		result[2] = append(result[2], picker...)
+	}
 	return result
 }
 
@@ -514,6 +519,13 @@ func (w *Writer) receipt(ctx context.Context, h CatalogHead, id, digest string) 
 
 func (w *Writer) prepareCommit(ctx context.Context, h CatalogHead, m CatalogMutation, revision, digest string, existing bool) (CatalogHead, error) {
 	base := h
+	scoped := h.Protocol == scopedPickerProtocol && h.Schema == scopedPickerSchema
+	if !scoped && (h.Protocol != 10 || h.Schema != 4) {
+		return h, errors.New("unsupported mutation head format")
+	}
+	if !scoped && m.Next != nil && m.Next.Picker != nil {
+		return h, errors.New("protocol 10 mutation cannot carry picker facts")
+	}
 	if m.Next != nil {
 		if err := w.verifyEntry(ctx, m.SessionKey, m.Next); err != nil {
 			return h, err
@@ -529,6 +541,15 @@ func (w *Writer) prepareCommit(ctx context.Context, h CatalogHead, m CatalogMuta
 	next := m.Next
 	if next != nil {
 		next.Revision = revision
+		if scoped {
+			next.Picker, err = BuildPickerRow(m.SessionKey, *next)
+			if err != nil {
+				return h, err
+			}
+		}
+	}
+	if scoped && old.Entry != nil && old.Entry.Picker == nil {
+		return h, errors.New("scoped identity is missing picker facts")
 	}
 	if err = w.updateOrders(ctx, &h, m.SessionKey, old.Entry, next); err != nil {
 		return h, err

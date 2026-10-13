@@ -1,0 +1,190 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/wangjohn/agent-archive/main/schemas/catalog-picker-row.schema.json",
+  "title": "Scoped picker row facts version 1",
+  "description": "Picker member in CatalogEntry envelopes. Operational head/coordinator activation remains reserved. Runtime enforces UTF-8 byte bounds (8192 encoded row bytes; 256 bytes per label), exact reference/identity/order agreement and metadata-derived facts separately from mutable index child counts. JSON Schema character bounds are necessary but not sufficient.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "SessionKey",
+    "SessionID",
+    "Harness",
+    "CanonicalHarness",
+    "Revision",
+    "ProjectID",
+    "RepoKey",
+    "Name",
+    "Title",
+    "ProjectName",
+    "Schema",
+    "Metadata",
+    "Activity",
+    "CapturedAt",
+    "Root",
+    "Replay",
+    "OrdinaryChildren",
+    "ReplayChildren",
+    "PromptState"
+  ],
+  "properties": {
+    "SessionKey": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    },
+    "SessionID": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    },
+    "Harness": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    },
+    "CanonicalHarness": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    },
+    "Revision": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    },
+    "ProjectID": {
+      "type": "string",
+      "maxLength": 512
+    },
+    "RepoKey": {
+      "type": "string",
+      "maxLength": 512,
+      "pattern": "^(|repo-[0-9a-f]{16})$"
+    },
+    "Name": {
+      "type": "string",
+      "maxLength": 256
+    },
+    "Title": {
+      "type": "string",
+      "maxLength": 256
+    },
+    "ProjectName": {
+      "type": "string",
+      "maxLength": 256
+    },
+    "Schema": {
+      "const": 1
+    },
+    "Metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "Key",
+        "SHA256"
+      ],
+      "properties": {
+        "Key": {
+          "type": "string",
+          "pattern": "^catalog-v4/metadata/[0-9a-f]{64}\\.json$"
+        },
+        "SHA256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "Activity": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "CapturedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "Root": {
+      "type": "boolean"
+    },
+    "Replay": {
+      "type": "boolean"
+    },
+    "OrdinaryChildren": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9223372036854775807
+    },
+    "ReplayChildren": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9223372036854775807
+    },
+    "PromptCount": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9223372036854775807
+    },
+    "PromptState": {
+      "enum": [
+        "unknown",
+        "zero",
+        "positive"
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "PromptState": {
+            "const": "unknown"
+          }
+        }
+      },
+      "then": {
+        "not": {
+          "required": [
+            "PromptCount"
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "PromptState": {
+            "const": "zero"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "PromptCount"
+        ],
+        "properties": {
+          "PromptCount": {
+            "const": 0
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "PromptState": {
+            "const": "positive"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "PromptCount"
+        ],
+        "properties": {
+          "PromptCount": {
+            "minimum": 1
+          }
+        }
+      }
+    }
+  ]
+}
