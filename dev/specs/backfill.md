@@ -1488,7 +1488,7 @@ JSON previews expose all requested assignments, without transcript locators.
 Historical identity and destination-scoped permissions live separately from
 `Archive.Projects`. Only admitted identities receive new permissions; disabled
 local decisions and labels are never changed by importing assignments. The
-`historical-project list|rename|enable|disable` command manages explicit policy
+`backfill projects list|rename|enable|disable` command manages explicit policy
 under setup/collector/hooks locks. Setup preserves committed identities and
 policy. Pairing transfers bounded IDs, labels and current-destination decisions,
 never original cwds or native mappings, and preserves recipient decisions.
