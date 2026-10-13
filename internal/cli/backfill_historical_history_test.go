@@ -119,7 +119,7 @@ func TestHistoricalRevisedHistoryKeepsAllSourcesWithoutNativeCheckout(t *testing
 		t.Fatal("history lacks independent source ownership", regs[0])
 	}
 	var renameOut, renameErr bytes.Buffer
-	if code := Run([]string{"historical-project", "rename", regs[0].ProjectID, "Renamed historical revision"}, nil, &renameOut, &renameErr, env); code != 0 {
+	if code := Run([]string{"backfill", "projects", "rename", regs[0].ProjectID, "Renamed historical revision"}, nil, &renameOut, &renameErr, env); code != 0 {
 		t.Fatalf("rename %d %s", code, renameErr.String())
 	}
 	for range 5 {
