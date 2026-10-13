@@ -9,7 +9,8 @@ import (
 
 // scopeView is the rows one scope shows, before they are laid out.
 type scopeView struct {
-	rows []listRow
+	incomplete bool
+	rows       []listRow
 	// total counts what the scope holds, or is -1 when it was not read to
 	// the end; truncated is set when rows is only the first part.
 	total     int
@@ -39,7 +40,7 @@ type scopeView struct {
 
 // holdsNothing reports whether the view has nothing to show: no row, or none
 // that the words the browser opens with match.
-func (v scopeView) holdsNothing() bool { return len(v.rows) == 0 || v.nothing }
+func (v scopeView) holdsNothing() bool { return (!v.incomplete && len(v.rows) == 0) || v.nothing }
 
 // scopeRowsFunc builds the rows a scope shows. A scope with All set is every
 // session.
@@ -123,7 +124,7 @@ func (c *scopeChoices) toggle() {
 	if !c.canToggle() {
 		return
 	}
-	if c.current == viewAll && len(c.choice(viewScope).rows) == 0 {
+	if c.current == viewAll && c.choice(viewScope).holdsNothing() {
 		c.fellBack = true
 		all := c.choice(viewAll)
 		all.heading = c.heading(viewAll, all.scopeView, all.constants)

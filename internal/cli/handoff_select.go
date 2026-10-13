@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"io"
 	"math"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/catalog"
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/reader"
@@ -124,12 +126,52 @@ func selectHandoffSession(env handoffSelectDependencies, home string, opts hando
 		terminal.Printf(stderr, "agent-archive: handoff: %v\n", scopeErr)
 		return "", "", false, 1
 	}
+	ctx := opts.readCtx
+	if ctx == nil {
+		var stopReads func()
+		ctx, stopReads = readCommandContext(env)
+		defer stopReads()
+		ctx = catalog.WithReadView(ctx)
+	}
+	boundedFormat := listFormatOptions{Now: env.now(), Projects: projectLabels(cfg), Style: styleFor(stdout), GroupByProject: true, Numbered: true, DimID: true,
+		NarrowHint: "Narrow with --harness, or name a session: agent-archive handoff SESSION_ID."}
+	if err == nil {
+		stop := startActivity(stdout, "Finding sessions…")
+		choices, model, _, used, boundedErr := boundedHandoffChoices(ctx, env, store, home, opts, scope, regs, boundedFormat, stderr)
+		stop()
+		if used {
+			if boundedErr != nil {
+				if opts.source == "archive" || errors.Is(boundedErr, catalog.ErrPickerBudget) || errors.Is(boundedErr, catalog.ErrStaleCursor) || errors.Is(boundedErr, catalog.ErrPickerIdentityAmbiguous) || ctx.Err() != nil {
+					terminal.Printf(stderr, "agent-archive: handoff: %v\n", boundedErr)
+					return "", "", false, 1
+				}
+				terminal.Printf(stderr, "agent-archive: handoff: note: the archive could not be read, so only this machine's sessions are listed: %v\n", boundedErr)
+				choices, model, boundedErr = boundedLocalHandoffChoices(ctx, env, home, opts, scope, regs, boundedFormat)
+				if boundedErr != nil {
+					terminal.Printf(stderr, "agent-archive: handoff: %v\n", boundedErr)
+					return "", "", false, 1
+				}
+			}
+			if choices.shown().holdsNothing() {
+				terminal.Println(stdout, "No sessions match.")
+				return "", "", false, 0
+			}
+			row, selected, code := runBrowser(ctx, env, in.prompter(stdout), stdout, stderr, browserSpec{Mode: pickSession, Verb: "Hand off", Choices: choices, Command: "handoff"})
+			if e := model.searchError(); e != nil {
+				return "", "", false, 1
+			}
+			if selected && opts.selection != nil {
+				*opts.selection = row.pickerSelection
+			}
+			return row.SessionID, row.HarnessKey, selected, code
+		}
+	}
 	stop := startActivity(stdout, "Finding sessions…")
 	var archived []archive.Metadata
 	if err == nil {
 		archived, err = loadSessionsForBrowse(env, store, listOptions{filter: reader.Filter{Harness: opts.harness, Replays: reader.ReplaysHidden}}, stderr, "handoff")
 	}
-	picker := handoffPicker{localLabels: make(map[localLabelKey]localLabelResult), ctx: context.Background(), env: env, home: home, harness: opts.harness, source: opts.source, archiveRead: err == nil}
+	picker := handoffPicker{localLabels: make(map[localLabelKey]localLabelResult), ctx: ctx, env: env, home: home, harness: opts.harness, source: opts.source, archiveRead: err == nil}
 	format := listFormatOptions{Now: env.now(), Projects: projectLabels(cfg), Style: styleFor(stdout), GroupByProject: true, Numbered: true, DimID: true, Children: childCounts(archived),
 		NarrowHint: "Narrow with --harness, or name a session: agent-archive handoff SESSION_ID."}
 	choices := pagedHandoffChoices(scope, format, picker, regs, archived)
@@ -141,7 +183,7 @@ func selectHandoffSession(env handoffSelectDependencies, home string, opts hando
 		terminal.Println(stdout, "No sessions match.")
 		return "", "", false, 0
 	}
-	row, selected, code := runBrowser(context.Background(), env, in.prompter(stdout), stdout, stderr, browserSpec{Mode: pickSession, Verb: "Hand off", Choices: choices, Command: "handoff"})
+	row, selected, code := runBrowser(ctx, env, in.prompter(stdout), stdout, stderr, browserSpec{Mode: pickSession, Verb: "Hand off", Choices: choices, Command: "handoff"})
 	if code != 0 {
 		return "", "", false, code
 	}
@@ -234,11 +276,11 @@ func archivedWithoutPrompt(m archive.Metadata) bool {
 }
 
 type localLabelKey struct {
-	harness string
+	harness      string
 	registration string
-	policy string
-	sessionID string
-	active    time.Time
+	policy       string
+	sessionID    string
+	active       time.Time
 }
 
 type localLabelResult struct {
@@ -282,42 +324,42 @@ func (p handoffPicker) rows(regs []archive.SessionRegistration, archived []archi
 	regs = slices.DeleteFunc(slices.Clone(regs), func(reg archive.SessionRegistration) bool {
 		return !topLevelRegistration(reg) || reg.Replay != nil || (p.harness != "" && archive.CanonicalHarness(reg.Harness.Name) != p.harness)
 	})
-	registered := make(map[string]*archive.SessionRegistration, len(regs))
+	registered := make(map[pickerIdentity]*archive.SessionRegistration, len(regs))
 	for i := range regs {
-		registered[regs[i].ArchiveSessionID] = &regs[i]
+		registered[pickerID(regs[i].Harness.Name, regs[i].ArchiveSessionID)] = &regs[i]
 	}
 	all := make([]handoffPickerRow, 0, len(archived)+len(regs))
-	index := map[string]int{}
+	index := map[pickerIdentity]int{}
 	// uploaded holds every archived session, in scope or not: a registered
 	// session the archive has is not one it lacks.
-	uploaded := map[string]bool{}
+	uploaded := map[pickerIdentity]bool{}
 	for _, m := range topLevelSessions(archived) {
 		if m.IsReplay() {
 			continue
 		}
-		uploaded[m.SessionID] = true
-		if !p.scope.contains(m, registered[m.SessionID]) {
+		uploaded[pickerID(m.Harness.Name, m.SessionID)] = true
+		if !p.scope.contains(m, registered[pickerID(m.Harness.Name, m.SessionID)]) {
 			continue
 		}
-		index[m.SessionID] = len(all)
+		index[pickerID(m.Harness.Name, m.SessionID)] = len(all)
 		all = append(all, handoffPickerRow{metadata: m, active: lastActivity(m), noPrompt: archivedWithoutPrompt(m)})
 	}
 	// A copy, which leaves registered pointing at the registrations as they were.
 	regs = slices.DeleteFunc(slices.Clone(regs), func(reg archive.SessionRegistration) bool {
-		if uploaded[reg.ArchiveSessionID] {
-			_, inScope := index[reg.ArchiveSessionID]
+		if uploaded[pickerID(reg.Harness.Name, reg.ArchiveSessionID)] {
+			_, inScope := index[pickerID(reg.Harness.Name, reg.ArchiveSessionID)]
 			return !inScope
 		}
 		return !p.scope.contains(registrationMetadata(reg), &reg)
 	})
-	activity := collector.LastActivities(p.ctx, regs, p.env.cursorDatabase(), registryFor(p.env))
+	activity := pickerActivities(p.ctx, p.env, regs)
 	for _, reg := range regs {
-		active, ok := activity[reg.ArchiveSessionID]
+		active, ok := activity[pickerID(reg.Harness.Name, reg.ArchiveSessionID)]
 		if !ok {
 			// No transcript (yet, or any more): nothing to hand off.
 			continue
 		}
-		if i, found := index[reg.ArchiveSessionID]; found {
+		if i, found := index[pickerID(reg.Harness.Name, reg.ArchiveSessionID)]; found {
 			all[i].active, all[i].registered, all[i].reg = active, true, &reg
 			if all[i].noPrompt && p.source != "archive" {
 				// Archived before its first prompt: the transcript may hold one now.

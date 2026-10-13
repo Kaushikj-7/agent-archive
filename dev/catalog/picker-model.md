@@ -1,0 +1,64 @@
+# Headless local/archive picker
+
+`internal/cli/picker_model.go` owns the offered union independently of terminal
+rendering. `First`, `Older`, `Refresh` and `Select` retain an immutable captured
+archive view. Each scope has its own local position, remote buffer, cursor,
+suppression set, emitted physical keys and visible prefix. Refresh requires a
+new archive view; cached scopes do not renew the ten-minute snapshot lifetime.
+
+Supported bare handoff setup consumes this model through `picker_handoff.go`.
+The format probe and typed scope guard run before local activity/label reads.
+Unsupported formats and named project scopes retain the complete compatibility
+loader. List/show browser operation integration and cancellable asynchronous
+search are the next UI layer; this PR does not claim terminal operation states.
+
+Exact canonical lookup classifies all relevant top-level non-replay local
+registrations in batches of at most 100. It shares the page snapshot and finds
+uploaded copies outside the page, scope, or handoff membership. A canonical
+alias collision is an actionable lookup error. Native activity preserves
+provider batching while isolating canonical harnesses, so another harness with
+the same session ID cannot overwrite an observation.
+
+Local membership delegates to `sessionScope.contains`, preserving registration
+RepoKey precedence, configured roots, symlinks and path fallback. A readable
+local registration overrides activity unconditionally, including movement
+backward. The entire overridden identity is suppressed remotely before merging.
+Unreadable native activity retains archive-only eligibility except under
+`--source local`. Known zero-prompt archive copies can revive through readable
+native labels only in auto/local mode.
+
+The union order is effective activity descending, then archived provenance:
+original archive activity, capture and physical session key; archive-associated
+rows precede local-only rows at equal activity. Local-only ties use registration
+ordinal. Local presentation capture times never replace archive tie provenance.
+Remote pages keep their unconsumed buffer and cursor. Per-operation refill is
+limited to `2 + ceil(R/P)` pages, where R is the relevant suppression inventory;
+this local-dependent additive work is separate from bounded archive page cost.
+
+Each operation allows 50 uncached native label attempts, counting failed and
+no-prompt reads. Labels are cached by canonical harness/session, activity,
+registration facts and source policy. When an unresolved local candidate could
+be next, the model stops with an honest prefix and `Incomplete=true`;
+`More=true`, `Total=-1`, and `Empty=false`. Older continues from that position.
+Leading empty locals therefore cannot produce a false empty scope or silently
+trigger all-project fallback. Activity inventory work and native label attempts
+are separate costs; local inventory is not an archive-size-independent cost.
+
+Ordinary archive failures preserve auto/local offline selection using the same
+native attempt budget. Archive association remains unknown and never receives
+“not yet uploaded.” Archive-source failures, cancellation, stale views, lookup
+ambiguity and catalog work-budget errors remain explicit failures. Hidden-child
+totals are unknown at startup; each archived parent uses its card's child count.
+
+Opaque references travel with browser rows into handoff options and the selected
+resolver. Before native or archived source reads, archived associations pass
+`HydratePicker` and `ResolvedMetadata`: immutable hash, identity, projection,
+captured authority and current activation are checked. Safe native labels never
+become selected metadata authority. Auto/local reread current native registration
+and filtered sources; archive fallback uses the verified immutable source pointer
+without a same-ID metadata refresh. A rewrite/deletion requires refresh.
+
+Complete compatibility search stays lazy. Until the next UI layer supplies an
+error-bearing search operation, a search load error prevents selection rather
+than substituting the loaded browse prefix. Search-only selections also retain
+exact captured references, including child rows.
