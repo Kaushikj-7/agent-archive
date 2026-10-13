@@ -62,7 +62,7 @@ func pickerReaderFixture(t *testing.T) (*Snapshot, *Writer, *qualifiedStore, []a
 			t.Fatal(err)
 		}
 	}
-	completePickerUpgrade(t, w, store)
+	completePickerUpgrade(t, store)
 	s, err := OpenSnapshot(t.Context(), store, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -554,7 +554,7 @@ func TestPickerPrefixIdentityTiesMatchCompleteOrderAcrossRanges(t *testing.T) {
 			metadata = append(metadata, m.Next.Summary)
 		}
 	}
-	completePickerUpgrade(t, w, store)
+	completePickerUpgrade(t, store)
 	s, err := OpenSnapshot(t.Context(), store, nil)
 	if err != nil {
 		t.Fatal(err)

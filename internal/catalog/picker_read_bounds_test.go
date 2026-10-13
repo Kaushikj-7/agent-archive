@@ -115,7 +115,7 @@ func bulkPickerFixture(t *testing.T, size, unary int) (*Snapshot, *pickerMeter) 
 	if _, e := w.Commit(t.Context(), seed); e != nil {
 		t.Fatal(e)
 	}
-	completePickerUpgrade(t, w, store)
+	completePickerUpgrade(t, store)
 	h, _, e := w.Head(t.Context())
 	if e != nil {
 		t.Fatal(e)
