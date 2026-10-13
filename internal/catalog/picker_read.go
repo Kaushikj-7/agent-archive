@@ -291,7 +291,10 @@ func pickerBefore(a, b PickerRow) bool {
 	if !a.CapturedAt.Equal(b.CapturedAt) {
 		return a.CapturedAt.After(b.CapturedAt)
 	}
-	return a.SessionKey < b.SessionKey
+	if a.Harness != b.Harness {
+		return a.Harness < b.Harness
+	}
+	return a.SessionID < b.SessionID
 }
 
 // PickerPage merges at most 32 disjoint ordered membership ranges. Each range
@@ -386,7 +389,10 @@ func (s *Snapshot) PickerPage(ctx context.Context, q PickerQuery, next string) (
 	}
 	result.Empty = result.Total == 0
 	result.Cost = work.cost
-	return result, s.check(ctx)
+	if err = s.check(ctx); err != nil {
+		return PickerPage{}, err
+	}
+	return result, nil
 }
 
 // PickerLookup performs a finite exact unfiltered identity batch, with one fresh
@@ -441,7 +447,10 @@ func (s *Snapshot) PickerLookup(ctx context.Context, ids []PickerIdentity) (Pick
 		result.Results[i].Item = s.pickerItem(*r)
 	}
 	result.Cost = work.cost
-	return result, s.check(ctx)
+	if err = s.check(ctx); err != nil {
+		return PickerIdentityBatch{}, err
+	}
+	return result, nil
 }
 
 // HydratePicker verifies the selected immutable body against its captured facts
@@ -484,5 +493,8 @@ func (s *Snapshot) HydratePicker(ctx context.Context, ref PickerReference) (Pick
 		return PickerHydration{}, err
 	}
 	row.resolved = &resolvedRow{snapshot: s, key: row.Key, hash: hash}
-	return PickerHydration{Row: row, Raw: raw}, s.check(ctx)
+	if err = s.check(ctx); err != nil {
+		return PickerHydration{}, err
+	}
+	return PickerHydration{Row: row, Raw: raw}, nil
 }
