@@ -94,8 +94,9 @@ func buildUnits(sessions []archive.Metadata, loc *time.Location, prices priceInd
 		}
 	}
 	lookup := &modelLookup{prices: prices, normalized: map[string]string{}, entries: map[string]modelPriceLookup{}}
+	scratch := unitScratch{member: map[string]tokenSet{}, merged: map[string]tokenSet{}}
 	for _, u := range ordered {
-		u.finish(loc, lookup)
+		u.finish(loc, lookup, &scratch)
 	}
 	sort.SliceStable(ordered, func(i, j int) bool { return metadataBefore(ordered[i].root, ordered[j].root) })
 	return ordered
@@ -208,12 +209,16 @@ func (r *rootResolver) resolve(m *archive.Metadata) *archive.Metadata {
 	return r.done[m].root
 }
 
-func (u *unit) members() []*archive.Metadata {
-	return append([]*archive.Metadata{u.root}, u.children...)
+// unitScratch belongs to one buildUnits call. Units copy its values into their
+// own model slices before the scratch is reused for another unit.
+type unitScratch struct {
+	member map[string]tokenSet
+	merged map[string]tokenSet
+	ids    []string
 }
 
 // finish computes everything derived from the unit's members.
-func (u *unit) finish(loc *time.Location, lookup *modelLookup) {
+func (u *unit) finish(loc *time.Location, lookup *modelLookup, scratch *unitScratch) {
 	root := u.root
 	u.capturedAt = root.CapturedAt
 	u.sessionID = root.SessionID
@@ -233,11 +238,15 @@ func (u *unit) finish(loc *time.Location, lookup *modelLookup) {
 		turns := value(root.Counts.Turns)
 		u.prompts = &turns
 	}
-	u.skills = map[string]struct{}{}
-	u.mcp = map[string]int64{}
-	merged := map[string]tokenSet{}
-	for i, m := range u.members() {
-		byModel, has, approximate := memberUsage(m, lookup.normalize)
+	merged := scratch.merged
+	clear(merged)
+	for i := 0; i <= len(u.children); i++ {
+		m := root
+		if i > 0 {
+			m = u.children[i-1]
+		}
+		has, approximate := memberUsage(m, lookup.normalize, scratch.member)
+		byModel := scratch.member
 		var memberTotal tokenSet
 		for id, set := range byModel {
 			all := merged[id]
@@ -256,19 +265,15 @@ func (u *unit) finish(loc *time.Location, lookup *modelLookup) {
 				u.childTokens = satAdd(u.childTokens, memberTotal.total())
 			}
 		}
-		u.addToolErrors(m)
-		for _, skill := range m.SkillsUsed {
-			if name := strings.TrimSpace(skill.Name); name != "" {
-				u.skills[name] = struct{}{}
-			}
-		}
-		for _, call := range m.MCPCalls {
-			if name := strings.TrimSpace(call.Name); name != "" && call.Count > 0 {
-				u.mcp[name] = satAdd(u.mcp[name], int64(call.Count))
-			}
-		}
+		u.addActivity(m)
 	}
-	for _, id := range sortedModels(merged) {
+	scratch.ids = scratch.ids[:0]
+	for id := range merged {
+		scratch.ids = append(scratch.ids, id)
+	}
+	sort.Strings(scratch.ids)
+	u.perModel = make([]modelUse, 0, len(scratch.ids))
+	for _, id := range scratch.ids {
 		entry := lookup.price(id)
 		use := modelUse{id: id, set: merged[id], label: entry.label, priced: entry.priced}
 		if entry.priced {
@@ -280,6 +285,27 @@ func (u *unit) finish(loc *time.Location, lookup *modelLookup) {
 		u.perModel = append(u.perModel, use)
 		u.tokens.add(use.set)
 		u.cost.add(use.cost)
+	}
+}
+
+// addActivity copies tool, skill and MCP totals from one member.
+func (u *unit) addActivity(m *archive.Metadata) {
+	u.addToolErrors(m)
+	for _, skill := range m.SkillsUsed {
+		if name := strings.TrimSpace(skill.Name); name != "" {
+			if u.skills == nil {
+				u.skills = map[string]struct{}{}
+			}
+			u.skills[name] = struct{}{}
+		}
+	}
+	for _, call := range m.MCPCalls {
+		if name := strings.TrimSpace(call.Name); name != "" && call.Count > 0 {
+			if u.mcp == nil {
+				u.mcp = map[string]int64{}
+			}
+			u.mcp[name] = satAdd(u.mcp[name], int64(call.Count))
+		}
 	}
 }
 

@@ -2,7 +2,6 @@ package stats
 
 import (
 	"math"
-	"sort"
 	"strings"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -76,10 +75,10 @@ func normalizedTokens(harness string, input, output, read, write, reasoning *int
 // entry is one model, and tokens on a record that named none are under
 // "unknown". Without it, the session-wide counts are all attributed to the
 // session's main model and approximate is set. has is false when the session
-// reported no token count.
-func memberUsage(m *archive.Metadata, normalize func(string) string) (byModel map[string]tokenSet, has, approximate bool) {
+// reported no token count. The caller owns byModel, which is cleared before use.
+func memberUsage(m *archive.Metadata, normalize func(string) string, byModel map[string]tokenSet) (has, approximate bool) {
 	harness := archive.CanonicalHarness(m.Harness.Name)
-	byModel = map[string]tokenSet{}
+	clear(byModel)
 	if len(m.ModelTokens) > 0 {
 		for _, entry := range m.ModelTokens {
 			set, ok := normalizedTokens(harness, entry.InputTokens, entry.OutputTokens, entry.CacheReadTokens, entry.CacheWriteTokens, entry.ReasoningTokens)
@@ -95,15 +94,15 @@ func memberUsage(m *archive.Metadata, normalize func(string) string) (byModel ma
 			byModel[id] = merged
 			has = true
 		}
-		return byModel, has, false
+		return has, false
 	}
 	c := m.Counts
 	set, ok := normalizedTokens(harness, c.InputTokens, c.OutputTokens, c.CacheReadTokens, c.CacheWriteTokens, c.ReasoningTokens)
 	if !ok {
-		return byModel, false, false
+		return false, false
 	}
 	byModel[mainModel(m, normalize)] = set
-	return byModel, true, true
+	return true, true
 }
 
 // mainModel is the model a session with no per-model split is priced at:
@@ -157,17 +156,6 @@ func (c *costAcc) cost() Cost {
 		usd = &value
 	}
 	return Cost{USD: usd, Partial: c.unpriced > 0, UnpricedTokens: c.unpriced, Approximate: c.approximate}
-}
-
-// sortedModels lists a map's model ids in a fixed order, so float sums do not
-// depend on map iteration.
-func sortedModels(byModel map[string]tokenSet) []string {
-	ids := make([]string, 0, len(byModel))
-	for id := range byModel {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-	return ids
 }
 
 // bucket is a running total over sessions: the overview, one agent, one

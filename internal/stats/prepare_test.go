@@ -183,3 +183,21 @@ func TestPreparedPriceAndTimezoneRequireNewSnapshot(t *testing.T) {
 		t.Fatal("new preparation changed the old snapshot")
 	}
 }
+
+func TestPreparedScratchDoesNotLeakAcrossUnits(t *testing.T) {
+	sessions := []archive.Metadata{
+		meta("first", "claude", prepareNow, modelTokens("claude-opus-5-5", 100, 50, 0, 0), modelTokens("unknown-a", 8, 2, 0, 0), skill("first"), mcp("first", 2)),
+		meta("second", "codex", prepareNow, modelTokens("unknown-b", 9, 3, 1, 0)),
+		meta("third", "cursor", prepareNow),
+	}
+	p := Prepare(sessions, PrepareOptions{Location: newYork})
+	for i, u := range p.units {
+		if u.root != nil || u.children != nil {
+			t.Fatal("prepared unit retains caller metadata")
+		}
+		want := Prepare(sessions[i:i+1], PrepareOptions{Location: newYork}).units[0]
+		if !slices.EqualFunc(u.perModel, want.perModel, func(a, b modelUse) bool { return a == b }) || u.tokens != want.tokens || u.cost != want.cost {
+			t.Fatalf("unit %d retained another unit's model scratch", i)
+		}
+	}
+}
