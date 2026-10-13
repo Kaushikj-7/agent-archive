@@ -49,7 +49,7 @@ func scopedPickerCatalog(t *testing.T, mem *storagetest.MemoryStore) *catalog.St
 
 func TestRealCLIBoundedHandoffStartupAndOlderReadNoBodies(t *testing.T) {
 	a := newScopedArchive(t)
-	for i := 0; i < 105; i++ {
+	for i := range 105 {
 		a.add(t, fmt.Sprintf("picker-%03d", i), fmt.Sprintf("Title %03d", i), a.label, func(m *archive.Metadata) { m.Counts.Turns = nil })
 	}
 	remote := scopedPickerCatalog(t, a.mem)

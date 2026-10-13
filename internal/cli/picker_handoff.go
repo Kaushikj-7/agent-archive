@@ -51,7 +51,7 @@ func boundedHandoffChoices(ctx context.Context, env handoffSelectDependencies, s
 	if !reader.CatalogAuthority(store) {
 		return nil, nil, nil, false, nil
 	}
-	if _, err := pickerScopeQuery(scope, opts.harness, defaultListLimit+1); err != nil {
+	if !supportsBoundedHandoffScope(scope, opts.harness) {
 		return nil, nil, nil, false, nil
 	}
 	snapshot, err := catalog.OpenSnapshot(ctx, store, nil)
@@ -72,8 +72,9 @@ func boundedHandoffChoices(ctx context.Context, env handoffSelectDependencies, s
 	model := &pickerModel{archive: snapshot, regs: slices.Clone(regs), observeActivity: func(ctx context.Context, regs []archive.SessionRegistration) (map[pickerIdentity]time.Time, error) {
 		return pickerActivities(ctx, env, regs), ctx.Err()
 	}, source: opts.source, harness: opts.harness, pageSize: defaultListLimit, labelBudget: defaultListLimit, label: func(ctx context.Context, r archive.SessionRegistration, t time.Time) (archive.Metadata, bool) {
-		p.ctx = ctx
-		return p.buildLocalMetadata(r, t)
+		labelPicker := p
+		labelPicker.ctx = ctx
+		return labelPicker.buildLocalMetadata(r, t)
 	}}
 	if err = model.prepare(ctx); err != nil {
 		return nil, nil, nil, true, err
@@ -85,10 +86,7 @@ func boundedHandoffChoices(ctx context.Context, env handoffSelectDependencies, s
 	state.buffer, state.next, state.remoteDone = first.Rows, first.Next, !first.More
 	state.view.RemotePages = 1
 	searchState := &pickerSearchState{}
-	choices := &scopeChoices{scope: scope.only(), format: format}
-	if scope.Label == "" || scope.All {
-		choices.current = viewAll
-	}
+	choices := &scopeChoices{scope: scope.only(), format: format, current: initialHandoffScope(scope)}
 	choices.rowsFor = func(s sessionScope) scopeView {
 		v, e := model.First(ctx, s)
 		if e != nil {
@@ -207,17 +205,15 @@ func boundedLocalHandoffChoices(ctx context.Context, env handoffSelectDependenci
 	m := &pickerModel{absenceUnknown: true, regs: slices.Clone(regs), observeActivity: func(ctx context.Context, regs []archive.SessionRegistration) (map[pickerIdentity]time.Time, error) {
 		return pickerActivities(ctx, env, regs), ctx.Err()
 	}, source: "local", harness: opts.harness, pageSize: defaultListLimit, labelBudget: defaultListLimit, label: func(ctx context.Context, r archive.SessionRegistration, at time.Time) (archive.Metadata, bool) {
-		p.ctx = ctx
-		return p.buildLocalMetadata(r, at)
+		labelPicker := p
+		labelPicker.ctx = ctx
+		return labelPicker.buildLocalMetadata(r, at)
 	}}
 	if err := m.prepare(ctx); err != nil {
 		return nil, nil, err
 	}
 	var loadErr error
-	c := &scopeChoices{scope: scope.only(), format: format}
-	if scope.All || scope.Label == "" {
-		c.current = viewAll
-	}
+	c := &scopeChoices{scope: scope.only(), format: format, current: initialHandoffScope(scope)}
 	c.rowsFor = func(s sessionScope) scopeView {
 		v, err := m.First(ctx, s)
 		if err != nil {
@@ -312,6 +308,7 @@ func boundedHandoffSearch(ctx context.Context, env handoffSelectDependencies, st
 		return result
 	}
 }
+
 func pinHandoffSearchRows(ctx context.Context, snapshot *catalog.Snapshot, model *pickerModel, store storage.ObjectStore, rows []listRow, roots []handoffPickerRow) error {
 	for start := 0; start < len(rows); start += 100 {
 		end := min(start+100, len(rows))
@@ -325,18 +322,31 @@ func pinHandoffSearchRows(ctx context.Context, snapshot *catalog.Snapshot, model
 		}
 		for offset, result := range batch.Results {
 			i := start + offset
-			selection := &handoffPickerSelection{model: model, snapshot: snapshot, store: store}
+			var reg *archive.SessionRegistration
 			if i < len(roots) {
-				selection.reg = roots[i].reg
+				reg = roots[i].reg
 			}
+			var item *catalog.PickerItem
 			if result.Found {
-				item := result.Item
-				selection.item = &item
-			} else if selection.reg == nil {
+				found := result.Item
+				item = &found
+			} else if reg == nil {
 				return errors.New("search selection no longer exists; refresh")
 			}
-			rows[i].pickerSelection = selection
+			rows[i].pickerSelection = &handoffPickerSelection{model: model, snapshot: snapshot, store: store, reg: reg, item: item}
 		}
 	}
 	return nil
+}
+
+func supportsBoundedHandoffScope(scope sessionScope, harness string) bool {
+	_, err := pickerScopeQuery(scope, harness, defaultListLimit+1)
+	return err == nil
+}
+
+func initialHandoffScope(scope sessionScope) int {
+	if scope.All || scope.Label == "" {
+		return viewAll
+	}
+	return viewScope
 }

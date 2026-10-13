@@ -3,7 +3,10 @@
 `internal/cli/picker_model.go` owns the offered union independently of terminal
 rendering. `First`, `Older`, `Refresh` and `Select` retain an immutable captured
 archive view. Each scope has its own local position, remote buffer, cursor,
-suppression set, emitted physical keys and visible prefix. Refresh requires a
+suppression set, emitted physical keys and visible prefix. Every operation checks
+the captured lifetime before publishing a prefix; an operation served entirely
+from buffered or local candidates obtains its own fresh head observation.
+Refresh requires a
 new archive view; cached scopes do not renew the ten-minute snapshot lifetime.
 
 Supported bare handoff setup consumes this model through `picker_handoff.go`.
