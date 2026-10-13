@@ -152,7 +152,11 @@ Implementation controls and matched measurements are tracked in
 [Matched results](results-20261013.md) pin the measured candidate, baseline,
 harness/adapter/binary hashes and all 16 completed processes / 104 cases.
 `python3 scripts/summarize_picker_qualification.py OUTPUT` verifies completeness and
-fixture pairing while retaining every raw phase observation. Independent PR7
+fixture pairing while retaining every raw phase observation. It requires every
+source/size/kind/repeat process and each named command/cache/registration case;
+equal case counts alone cannot qualify a missing measurement. Run
+`python3 scripts/test_summarize_picker_qualification.py` for its acceptance controls.
+Independent PR7
 review and required hosted checks still gate completion.
 ProductionS3/R2 CAS/clock evidence, endpoint-scoped capabilities, credential
 cutover authority and multi-machine lifecycle remain

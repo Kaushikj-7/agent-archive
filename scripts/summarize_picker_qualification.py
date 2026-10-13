@@ -13,7 +13,11 @@ manifest = json.loads((args.output / "manifest.json").read_text())
 if manifest["failed"]:
     raise SystemExit("matrix incomplete: failed process; do not claim paired qualification")
 expected_processes = len(manifest["sizes"]) * 2 * manifest["repeats"] * 2
-if len(manifest["completed"]) != expected_processes:
+expected_names = {f"{size}-{kind}-{repeat}-{source}"
+                  for size in manifest["sizes"] for kind in ("main", "native")
+                  for repeat in range(1, manifest["repeats"] + 1)
+                  for source in ("baseline", "candidate")}
+if len(manifest["completed"]) != expected_processes or set(manifest["completed"]) != expected_names:
     raise SystemExit("matrix incomplete: missing paired process")
 rows, processes = [], []
 for name in manifest["completed"]:
@@ -31,8 +35,12 @@ for name in manifest["completed"]:
     if len(parsed) != (9 if kind == "main" else 4):
         raise SystemExit("missing/extra measured cases: " + name + " count=" + str(len(parsed)))
     identities = {(r["Command"], r["CacheState"], r["Registrations"]) for r in parsed}
-    if len(identities) != len(parsed):
-        raise SystemExit("duplicate measured case: " + name)
+    expected_cases = ({(command, cache, 0) for command in ("handoff", "list", "show")
+                       for cache in ("cold", "warm", "changed")} if kind == "main" else
+                      {("handoff", cache, registrations) for cache in ("cold", "native-labels")
+                       for registrations in (20, 120)})
+    if len(identities) != len(parsed) or identities != expected_cases:
+        raise SystemExit("missing/duplicate/unexpected measured case: " + name)
     if source == "candidate":
         for result in parsed:
             for phase in ("First", "Older"):
