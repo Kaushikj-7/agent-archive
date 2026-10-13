@@ -13,6 +13,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/local"
+	_ "github.com/wangjohn/agent-archive/internal/testutil/golden" // Registers -update for go test ./... -update.
 )
 
 func cacheTestObservation() Observation {

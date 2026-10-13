@@ -49,18 +49,15 @@ func (w *Writer) Observe(observed Observation) {
 	defer w.mu.Unlock()
 	if w.closed || w.ctx.Err() != nil {
 		w.dropped.Add(1)
-		cacheDropped.Add(1)
 		trace.Add(trace.InspectionCacheDropped, 1)
 		return
 	}
 	select {
 	case w.queue <- observed:
 		w.queued.Add(1)
-		cacheQueued.Add(1)
 		trace.Add(trace.InspectionCacheQueued, 1)
 	default:
 		w.dropped.Add(1)
-		cacheDropped.Add(1)
 		trace.Add(trace.InspectionCacheDropped, 1)
 	}
 }
@@ -99,12 +96,10 @@ func (w *Writer) run() {
 func (w *Writer) persist(batch []Observation) {
 	if w.cache.StoreBatch(w.ctx, batch) != nil {
 		w.failed.Add(uint64(len(batch)))
-		cacheFailed.Add(uint64(len(batch)))
 		trace.Add(trace.InspectionCacheFailed, int64(len(batch)))
 		return
 	}
 	w.stored.Add(uint64(len(batch)))
-	cacheStored.Add(uint64(len(batch)))
 	trace.Add(trace.InspectionCacheStored, int64(len(batch)))
 }
 

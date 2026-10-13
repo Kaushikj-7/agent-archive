@@ -91,7 +91,6 @@ func validSummary(summary agentapi.ImportSummary, k Key) bool {
 // Lookup reads one small entry. Any unavailable or invalid entry is a miss.
 func (c *Cache) Lookup(ctx context.Context, key Key) (agentapi.ImportSummary, bool) {
 	var zero agentapi.ImportSummary
-	cacheLookups.Add(1)
 	trace.Add(trace.InspectionCacheLookups, 1)
 	if c == nil || ctx.Err() != nil || !key.valid() {
 		return zero, false
@@ -126,7 +125,6 @@ func (c *Cache) Lookup(ctx context.Context, key Key) (agentapi.ImportSummary, bo
 	if decoder.Decode(&entry) != nil || decoder.Decode(new(json.RawMessage)) != io.EOF || entry.Version != formatVersion || entry.Key != key.token() || entry.Integrity != summaryDigest(entry.Key, entry.Summary) || !validSummary(entry.Summary, key) {
 		return zero, false
 	}
-	cacheHits.Add(1)
 	trace.Add(trace.InspectionCacheHits, 1)
 	return entry.Summary, true
 }

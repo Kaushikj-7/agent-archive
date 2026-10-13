@@ -180,14 +180,6 @@ func FilterSource(ctx context.Context, harness string, ref agentapi.SourceRef, s
 	return out, adapter, err
 }
 
-// InspectSource uses compact filtering when the actual injected filter supports
-// the observed input. Unsupported codecs and history retain FilterSource behavior.
-// Callers must also require an integration-owned summary interpreter.
-func InspectSource(ctx context.Context, harness string, ref agentapi.SourceRef, startedAt time.Time, sources agentapi.SourcesLookup) (archive.FilteredTranscript, *agentapi.ImportSummary, error) {
-	out, summary, _, err := InspectSourceCached(ctx, harness, ref, startedAt, sources, nil)
-	return out, summary, err
-}
-
 // InspectSourceCached optionally reuses provider-verified intrinsic facts. The
 // returned observation is safe for caller persistence only after caller source
 // checks succeed. Snapshot and pass cleanup have completed before this returns.

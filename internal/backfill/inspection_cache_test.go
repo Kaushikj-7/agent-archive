@@ -5,12 +5,14 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/inspectioncache"
+	"github.com/wangjohn/agent-archive/internal/trace"
 )
 
 func TestVerifiedInspectionCachePreservesWholePlanAcrossCacheStates(t *testing.T) {
@@ -40,15 +42,17 @@ func TestVerifiedInspectionCachePreservesWholePlanAcrossCacheStates(t *testing.T
 	if err := cache.StoreBatch(t.Context(), observations); err != nil {
 		t.Fatal(err)
 	}
-	before := inspectioncache.OperationCounts()
+	disableTrace := trace.Enable()
+	t.Cleanup(disableTrace)
 	observations = nil
 	warm := plan(t, env, nil, config.Config{}, Filters{})
-	after := inspectioncache.OperationCounts()
+	traceOutput := inspectionCacheTrace()
+	disableTrace()
 	if !reflect.DeepEqual(warm, baseline) {
 		t.Fatalf("warm plan differs: %+v / %+v", warm, baseline)
 	}
-	if after.Hits-before.Hits != 1 || len(observations) != 0 {
-		t.Fatalf("warm reuse: before=%+v after=%+v observations=%d", before, after, len(observations))
+	if !strings.Contains(traceOutput, "inspection_cache_hits 1") || len(observations) != 0 {
+		t.Fatalf("warm reuse: trace=%s observations=%d", traceOutput, len(observations))
 	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -109,13 +113,15 @@ func TestVerifiedInspectionCacheRejectsSameSizeRestoredTimeRewrite(t *testing.T)
 	if err := os.Chtimes(actual, info.ModTime(), info.ModTime()); err != nil {
 		t.Fatal(err)
 	}
-	before := inspectioncache.OperationCounts()
+	disableTrace := trace.Enable()
+	t.Cleanup(disableTrace)
 	got := plan(t, env, nil, config.Config{}, Filters{})
-	after := inspectioncache.OperationCounts()
+	traceOutput := inspectionCacheTrace()
+	disableTrace()
 	env.InspectionCache, env.ObserveInspection = nil, nil
 	want := plan(t, env, nil, config.Config{}, Filters{})
-	if !reflect.DeepEqual(got, want) || after.Hits != before.Hits {
-		t.Fatalf("same-size restored stamp reused facts: got=%+v want=%+v counters=%+v/%+v", got, want, before, after)
+	if !reflect.DeepEqual(got, want) || strings.Contains(traceOutput, "inspection_cache_hits") {
+		t.Fatalf("same-size restored stamp reused facts: got=%+v want=%+v trace=%s", got, want, traceOutput)
 	}
 }
 
@@ -160,15 +166,23 @@ func TestWarmInspectionCachePreservesActualFilterAndInspectorOverrides(t *testin
 			env.InspectionCache = cache
 			var observed []inspectioncache.Observation
 			env.ObserveInspection = func(o inspectioncache.Observation) { observed = append(observed, o) }
-			before := inspectioncache.OperationCounts()
+			disableTrace := trace.Enable()
+			t.Cleanup(disableTrace)
 			got := plan(t, env, nil, config.Config{}, Filters{})
-			after := inspectioncache.OperationCounts()
-			if !reflect.DeepEqual(got, want) || after.Hits != before.Hits || len(observed) != 0 {
-				t.Fatalf("override bypassed: got=%+v want=%+v hits=%d observations=%d", got, want, after.Hits-before.Hits, len(observed))
+			traceOutput := inspectionCacheTrace()
+			disableTrace()
+			if !reflect.DeepEqual(got, want) || strings.Contains(traceOutput, "inspection_cache_hits") || len(observed) != 0 {
+				t.Fatalf("override bypassed: got=%+v want=%+v trace=%s observations=%d", got, want, traceOutput, len(observed))
 			}
 			if override != cacheConfiguredInspectorOverride && calls.Load() != 2 {
 				t.Fatalf("actual override calls = %d", calls.Load())
 			}
 		})
 	}
+}
+
+func inspectionCacheTrace() string {
+	var output strings.Builder
+	trace.Write(&output)
+	return output.String()
 }
