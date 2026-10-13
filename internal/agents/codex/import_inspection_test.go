@@ -88,6 +88,20 @@ func TestImportInspectionReleasesBudgetAndPreservesFinalChecks(t *testing.T) {
 	if before != after {
 		t.Fatalf("inspection retained charge %d", after-before)
 	}
+	reservation := budget.Reservation()
+	pressure := budget.Available() - (70 << 10)
+	if !reservation.Reserve(pressure) {
+		t.Fatal("pressure reservation refused")
+	}
+	_, err = (Filter{}).InspectFilteredImport(t.Context(), snap.Input(), c)
+	if !agentapi.HasFailure(err, agentapi.Limit) {
+		t.Fatalf("encoding pressure was not a limit refusal: %v", err)
+	}
+	after, _ = budget.Charged()
+	if after != before+pressure {
+		t.Fatalf("pressure refusal retained charge %d", after-before-pressure)
+	}
+	reservation.Release(pressure)
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	_, err = (Filter{}).InspectFilteredImport(ctx, snap.Input(), c)
