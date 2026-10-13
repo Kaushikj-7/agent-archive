@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base32"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -450,7 +451,7 @@ func matchedPinRevisionNonces(tb testing.TB, mem *storagetest.MemoryStore) {
 			tb.Fatal(err)
 		}
 		digest := sha256.Sum256([]byte(revision.MetadataKey + ":" + revision.ETag))
-		revision.Nonce = fmt.Sprintf("%x", digest)[:26]
+		revision.Nonce = base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(digest[:16])
 		summary := base64.RawURLEncoding.EncodeToString(matchedJSON(tb, revision))
 		var chunks []string
 		for len(summary) > 255 {
