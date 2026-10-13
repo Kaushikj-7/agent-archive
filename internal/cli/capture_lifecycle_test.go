@@ -85,6 +85,7 @@ func TestCodexCaptureReadAndRetentionLifecycle(t *testing.T) {
 	rootID, rootPath := write(1, "", project, "SYNTHETIC_ROOT", at.Add(time.Minute))
 	linkedID, _ := write(2, rootID, project, "SYNTHETIC_CHILD", at.Add(time.Minute))
 	orphanID, _ := write(3, "00000000-0000-0000-0000-000000000999", project, "SYNTHETIC_ORPHAN", at.Add(time.Minute))
+	ownerMarkers := map[string]string{rootID: "SYNTHETIC_ROOT", linkedID: "SYNTHETIC_CHILD", orphanID: "SYNTHETIC_ORPHAN"}
 	write(4, "", physical(), "EXCLUDED_SCOPE_NEVER_UPLOAD", at.Add(time.Minute))
 	remote := &lifecycleStore{MemoryStore: storagetest.NewMemoryStore()}
 	now := at.Add(2 * time.Minute)
@@ -134,6 +135,9 @@ func TestCodexCaptureReadAndRetentionLifecycle(t *testing.T) {
 	}
 	byNative := map[string]archive.SessionRegistration{}
 	for _, reg := range regs {
+		if ownerMarkers[reg.NativeSessionID] == "" || reg.Origin != archive.SessionOriginDiscovery || reg.ProjectRoot != project || reg.ProjectID != archive.ProjectID(project) || reg.NativeSourceHome != native || reg.TranscriptPath != filepath.Join(native, "sessions", "rollout-"+reg.NativeSessionID+".jsonl") || reg.DestinationID != cfg.DestinationID() {
+			t.Fatalf("discovery admitted an unexpected physical owner: %+v", reg)
+		}
 		byNative[reg.NativeSessionID] = reg
 		verified, err := readVerification(home, reg.ArchiveSessionID)
 		must(t, err)
@@ -155,6 +159,17 @@ func TestCodexCaptureReadAndRetentionLifecycle(t *testing.T) {
 		return doc.Sessions
 	}
 	list(3) // Warm the actual disposable metadata cache before republishing.
+	checkOwnTranscript := func(nativeID, text string) {
+		t.Helper()
+		if !strings.Contains(text, ownerMarkers[nativeID]) {
+			t.Fatalf("native owner %s lacks its own transcript marker", nativeID)
+		}
+		for otherID, marker := range ownerMarkers {
+			if otherID != nativeID && strings.Contains(text, marker) {
+				t.Fatalf("native owner %s includes another owner's transcript marker %s", nativeID, marker)
+			}
+		}
+	}
 	for _, reg := range regs {
 		var metadata archive.Metadata
 		must(t, json.Unmarshal([]byte(run("show", reg.ArchiveSessionID, "--json")), &metadata))
@@ -163,9 +178,10 @@ func TestCodexCaptureReadAndRetentionLifecycle(t *testing.T) {
 		if bundle.NativeSessionID != reg.NativeSessionID || bundle.ArchiveSessionID != reg.ArchiveSessionID {
 			t.Fatal("verified source identity differs from selected session")
 		}
-		if text := run("show", reg.ArchiveSessionID, "--transcript", "--no-pager"); !strings.Contains(text, "SYNTHETIC_") {
-			t.Fatal("native transcript was not rendered")
-		}
+		nativeRecords, err := json.Marshal(bundle.NativeRecords)
+		must(t, err)
+		checkOwnTranscript(reg.NativeSessionID, string(nativeRecords))
+		checkOwnTranscript(reg.NativeSessionID, run("show", reg.ArchiveSessionID, "--transcript", "--no-pager"))
 	}
 	var statistics statsDocument
 	must(t, json.Unmarshal([]byte(run("stats", "--days", "1", "--all", "--json")), &statistics))
@@ -218,6 +234,9 @@ func TestCodexCaptureReadAndRetentionLifecycle(t *testing.T) {
 	now = at.Add(48 * time.Hour)
 	run("sync")
 	for _, reg := range regs {
+		if _, found, err := local.LoadRegistration(reg.ArchiveSessionID); err != nil || found {
+			t.Fatalf("expired owner remains durably registered: %s (found=%v, err=%v)", reg.ArchiveSessionID, found, err)
+		}
 		removal, found, err := local.Removal("codex", reg.NativeSessionID)
 		must(t, err)
 		if !found || removal.Reason != state.RemovalReasonRetention {
@@ -240,6 +259,9 @@ func TestCodexCaptureReadAndRetentionLifecycle(t *testing.T) {
 	last := list(1)
 	if last[0].NativeSessionID != latestID {
 		t.Fatal("eligible expired native owner resurrected or fresh discovery failed")
+	}
+	if _, found, err := local.LoadRegistration(firstSurvivor.SessionID); err != nil || found {
+		t.Fatalf("eligible expired owner remains durably registered (found=%v, err=%v)", found, err)
 	}
 	removal, found, err := local.Removal("codex", newID)
 	must(t, err)
