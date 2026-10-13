@@ -1,0 +1,298 @@
+{
+  "attribution": {
+    "D_base": "a187e1b883924fd36c9d6700606a5c2756fc2b6f",
+    "excluded_instrumentation_paths": [
+      ".github/workflows/extended.yml",
+      "scripts/measure_go_cache.py"
+    ],
+    "measurement_source": "c988618fd4dcfd384465a8c5324ce3f193cb2645",
+    "measurement_tree": "1c570374831cad51f6d2595aa370a544a29684dd",
+    "merged_C": "956628dfca1b22a7542aa4781278a9ab6555b08e",
+    "role": "ancestor cache-enabled timing evidence; advisory ranking, not exact current-base timings",
+    "runtime_digest": "d168293d5d7b6482e65dc8b895fa26bab0cd774d534546bb8465bb98c5a3c359",
+    "runtime_source": "5854e2d1e38aa1c6a5d095adf0107f16d051a2ed",
+    "runtime_tree": "a8d50e7084f09ee29284ac7c39eacbd3e06c1ecb",
+    "samples": [
+      {
+        "dispatch_to_verdict_seconds": 535.0,
+        "id": "01-prefix",
+        "mode": "prefix",
+        "rounded_linux_job_minutes": 17,
+        "run_id": 38351093120,
+        "workers": [
+          {
+            "artifact_api_digest": "sha256:c5dd7f9e9aa0f1047d782a7008f3f729f005119a6647144e94e016497af42bd6",
+            "artifact_id": 11791490535,
+            "artifact_name": "measure-38351093120-1-prefix-w0",
+            "context": "5dfeb260783627780c42d9b1deca5a1626dbec05ab869d4e280139fbc83f8ea8",
+            "cpu": {
+              "affinity": [
+                0,
+                1,
+                2,
+                3
+              ],
+              "model": "AMD EPYC 7763 64-Core Processor",
+              "quota": "unavailable"
+            },
+            "evidence_sha256": "57e335d7ba91e3b297bd734649970c94594701970ecb197cc13850d213001aff",
+            "job_id": 115143434894,
+            "metadata_file_hashes": {
+              "allocation.json": "c64a4edf0c18d1fa85f51df9a1db0e737caeb87f0cc993e57b5c1aff52784268",
+              "artifacts.json": "2f5f33db4db8146bdf2819b097928e2e8f0cee279f8ca663d4637be8bbbab6fa",
+              "audit.md": "7cf0d5ec79eead6b66f8b468778b219f16d0d3baa4520aa5702f040a109b72f9",
+              "jobs.json": "5530a939308aa5e094180540473d56e1f089b8e58a19fd8aa54a7a5998fc7544",
+              "run.json": "0c8a18f6bcef8d0be6b646999921a00d3aff87a4a3d94fe3af47f2d36974e0c4"
+            },
+            "restore_state": "prefix",
+            "runtime_binary_hashes": {
+              "cc": {
+                "binary": "1b99826121ae6682a634e5efe09bd3e3df58ce58e0b28f849114ab5b89139c26",
+                "version": "ae487f55927d605284a32711e4ecf6bc3be2bcd5a9de414ace0936264b741f85"
+              },
+              "cxx": {
+                "binary": "1353e9bdd29a7295c7226bf6c63abccce056d8cac31f112e5cdbecc3f28c2769",
+                "version": "39553616934606f58b27c04bed0cdbbe5b00c92c831a9aaadebd7ceda61d1334"
+              },
+              "toolchain": {
+                "asm": "0e7bf93f6ce3164328c5f60e51101c8f93d430f91f02cf9000f4f6d64d8850d4",
+                "cgo": "8a470e65b4d4799820f463be4d1373b775bf1087fa94512e5ea3b1d0f79e689b",
+                "compile": "8d4484dbaa31c4c6cec965aadd42efaa1e8d59e4a30ca3b466b502c377c29121",
+                "go": "548d3c32f83fa81152f543eb1526be7884cfe0526eb5e9ce29d3eca14786e7e0",
+                "link": "b7567a824e05fa24240edbf883e77e536914f22444c6946f1cd4a904b315f9c2",
+                "vet": "f73e3188eb0953bf2938bb6eea06ee07dc0b4001468c17d3f199124e487d119b"
+              }
+            },
+            "service": {
+              "EXACT_HIT": "false",
+              "MATCHED_KEY": "aa-ci-measure-v1-followup-20261013-0349-w0-5dfeb260783627780c42d9b1deca5a1626dbec05ab869d4e280139fbc83f8ea8-8d5d5416b378e560a654c806456c4e91f914b205655ced87cd80e94596d83183-9b1c2d3b6a3bca3bd97cc5e8a73d695deec81ee0",
+              "RESTORE_OUTCOME": "success",
+              "SAVE_OUTCOME": "success",
+              "WORKER_OUTCOME": "success"
+            },
+            "worker": 0
+          },
+          {
+            "artifact_api_digest": "sha256:fda9449e52b285f067a6307d9799049521c44b554713e3c9510e6044e647acd0",
+            "artifact_id": 11791270965,
+            "artifact_name": "measure-38351093120-1-prefix-w1",
+            "context": "5dfeb260783627780c42d9b1deca5a1626dbec05ab869d4e280139fbc83f8ea8",
+            "cpu": {
+              "affinity": [
+                0,
+                1,
+                2,
+                3
+              ],
+              "model": "AMD EPYC 9V74 80-Core Processor",
+              "quota": "unavailable"
+            },
+            "evidence_sha256": "6fd653bac7b5f5f4918f09d558bc0cb9577816f89aac73f200852a7ab91030c9",
+            "job_id": 115143435141,
+            "metadata_file_hashes": {
+              "allocation.json": "c64a4edf0c18d1fa85f51df9a1db0e737caeb87f0cc993e57b5c1aff52784268",
+              "artifacts.json": "2f5f33db4db8146bdf2819b097928e2e8f0cee279f8ca663d4637be8bbbab6fa",
+              "audit.md": "7cf0d5ec79eead6b66f8b468778b219f16d0d3baa4520aa5702f040a109b72f9",
+              "jobs.json": "5530a939308aa5e094180540473d56e1f089b8e58a19fd8aa54a7a5998fc7544",
+              "run.json": "0c8a18f6bcef8d0be6b646999921a00d3aff87a4a3d94fe3af47f2d36974e0c4"
+            },
+            "restore_state": "prefix",
+            "runtime_binary_hashes": {
+              "cc": {
+                "binary": "1b99826121ae6682a634e5efe09bd3e3df58ce58e0b28f849114ab5b89139c26",
+                "version": "ae487f55927d605284a32711e4ecf6bc3be2bcd5a9de414ace0936264b741f85"
+              },
+              "cxx": {
+                "binary": "1353e9bdd29a7295c7226bf6c63abccce056d8cac31f112e5cdbecc3f28c2769",
+                "version": "39553616934606f58b27c04bed0cdbbe5b00c92c831a9aaadebd7ceda61d1334"
+              },
+              "toolchain": {
+                "asm": "0e7bf93f6ce3164328c5f60e51101c8f93d430f91f02cf9000f4f6d64d8850d4",
+                "cgo": "8a470e65b4d4799820f463be4d1373b775bf1087fa94512e5ea3b1d0f79e689b",
+                "compile": "8d4484dbaa31c4c6cec965aadd42efaa1e8d59e4a30ca3b466b502c377c29121",
+                "go": "548d3c32f83fa81152f543eb1526be7884cfe0526eb5e9ce29d3eca14786e7e0",
+                "link": "b7567a824e05fa24240edbf883e77e536914f22444c6946f1cd4a904b315f9c2",
+                "vet": "f73e3188eb0953bf2938bb6eea06ee07dc0b4001468c17d3f199124e487d119b"
+              }
+            },
+            "service": {
+              "EXACT_HIT": "false",
+              "MATCHED_KEY": "aa-ci-measure-v1-followup-20261013-0349-w1-5dfeb260783627780c42d9b1deca5a1626dbec05ab869d4e280139fbc83f8ea8-8d5d5416b378e560a654c806456c4e91f914b205655ced87cd80e94596d83183-9b1c2d3b6a3bca3bd97cc5e8a73d695deec81ee0",
+              "RESTORE_OUTCOME": "success",
+              "SAVE_OUTCOME": "success",
+              "WORKER_OUTCOME": "success"
+            },
+            "worker": 1
+          }
+        ]
+      },
+      {
+        "dispatch_to_verdict_seconds": 430.0,
+        "id": "02-warm",
+        "mode": "warm",
+        "rounded_linux_job_minutes": 14,
+        "run_id": 38352282699,
+        "workers": [
+          {
+            "artifact_api_digest": "sha256:1727ba5e827cc9f03298c66981aa7429c440cf7d31c9b387e73543ed7971cebf",
+            "artifact_id": 11791472560,
+            "artifact_name": "measure-38352282699-1-warm-w0",
+            "context": "5dfeb260783627780c42d9b1deca5a1626dbec05ab869d4e280139fbc83f8ea8",
+            "cpu": {
+              "affinity": [
+                0,
+                1,
+                2,
+                3
+              ],
+              "model": "AMD EPYC 9V74 80-Core Processor",
+              "quota": "unavailable"
+            },
+            "evidence_sha256": "e2b83af6d1217a35789b2779bd0fd244018b34f10caa8556b34df96194b8954f",
+            "job_id": 115147152669,
+            "metadata_file_hashes": {
+              "allocation.json": "31e341f3a764fc3b3f10135275c7694a7f1307deec487e85b80373a7e00620f3",
+              "artifacts.json": "a748179e825837557813f42b41910930e0a9b4eb854e7ddd1f475f083ed91ee2",
+              "audit.md": "952bffa986598ef4d224b25ecb5611ca17e8147d75524fca580da69c88334904",
+              "jobs.json": "c7a5caa0a01b28785b0cf12685edd41ff65e4f712a57f7d9e02f9a8f0cf61f8f",
+              "run.json": "911009af1db26ec84623bf9e9950b7d761a5faa64ede5bc0b919ec711f73ab1d"
+            },
+            "restore_state": "exact",
+            "runtime_binary_hashes": {
+              "cc": {
+                "binary": "1b99826121ae6682a634e5efe09bd3e3df58ce58e0b28f849114ab5b89139c26",
+                "version": "ae487f55927d605284a32711e4ecf6bc3be2bcd5a9de414ace0936264b741f85"
+              },
+              "cxx": {
+                "binary": "1353e9bdd29a7295c7226bf6c63abccce056d8cac31f112e5cdbecc3f28c2769",
+                "version": "39553616934606f58b27c04bed0cdbbe5b00c92c831a9aaadebd7ceda61d1334"
+              },
+              "toolchain": {
+                "asm": "0e7bf93f6ce3164328c5f60e51101c8f93d430f91f02cf9000f4f6d64d8850d4",
+                "cgo": "8a470e65b4d4799820f463be4d1373b775bf1087fa94512e5ea3b1d0f79e689b",
+                "compile": "8d4484dbaa31c4c6cec965aadd42efaa1e8d59e4a30ca3b466b502c377c29121",
+                "go": "548d3c32f83fa81152f543eb1526be7884cfe0526eb5e9ce29d3eca14786e7e0",
+                "link": "b7567a824e05fa24240edbf883e77e536914f22444c6946f1cd4a904b315f9c2",
+                "vet": "f73e3188eb0953bf2938bb6eea06ee07dc0b4001468c17d3f199124e487d119b"
+              }
+            },
+            "service": {
+              "EXACT_HIT": "true",
+              "MATCHED_KEY": "aa-ci-measure-v1-followup-20261013-0349-w0-5dfeb260783627780c42d9b1deca5a1626dbec05ab869d4e280139fbc83f8ea8-8d5d5416b378e560a654c806456c4e91f914b205655ced87cd80e94596d83183-1c570374831cad51f6d2595aa370a544a29684dd",
+              "RESTORE_OUTCOME": "success",
+              "SAVE_OUTCOME": "skipped",
+              "WORKER_OUTCOME": "success"
+            },
+            "worker": 0
+          },
+          {
+            "artifact_api_digest": "sha256:bf2f3e7509adec890391b75bba7f0bb5414fd1a698a30e62e9f80557eb2868e0",
+            "artifact_id": 11791885336,
+            "artifact_name": "measure-38352282699-1-warm-w1",
+            "context": "5dfeb260783627780c42d9b1deca5a1626dbec05ab869d4e280139fbc83f8ea8",
+            "cpu": {
+              "affinity": [
+                0,
+                1,
+                2,
+                3
+              ],
+              "model": "INTEL(R) XEON(R) PLATINUM 8573C",
+              "quota": "unavailable"
+            },
+            "evidence_sha256": "e63d5485a3b3230b122e49c9b7be442007c68e00195d3603d7bfffa771f4adfc",
+            "job_id": 115147152473,
+            "metadata_file_hashes": {
+              "allocation.json": "31e341f3a764fc3b3f10135275c7694a7f1307deec487e85b80373a7e00620f3",
+              "artifacts.json": "a748179e825837557813f42b41910930e0a9b4eb854e7ddd1f475f083ed91ee2",
+              "audit.md": "952bffa986598ef4d224b25ecb5611ca17e8147d75524fca580da69c88334904",
+              "jobs.json": "c7a5caa0a01b28785b0cf12685edd41ff65e4f712a57f7d9e02f9a8f0cf61f8f",
+              "run.json": "911009af1db26ec84623bf9e9950b7d761a5faa64ede5bc0b919ec711f73ab1d"
+            },
+            "restore_state": "exact",
+            "runtime_binary_hashes": {
+              "cc": {
+                "binary": "1b99826121ae6682a634e5efe09bd3e3df58ce58e0b28f849114ab5b89139c26",
+                "version": "ae487f55927d605284a32711e4ecf6bc3be2bcd5a9de414ace0936264b741f85"
+              },
+              "cxx": {
+                "binary": "1353e9bdd29a7295c7226bf6c63abccce056d8cac31f112e5cdbecc3f28c2769",
+                "version": "39553616934606f58b27c04bed0cdbbe5b00c92c831a9aaadebd7ceda61d1334"
+              },
+              "toolchain": {
+                "asm": "0e7bf93f6ce3164328c5f60e51101c8f93d430f91f02cf9000f4f6d64d8850d4",
+                "cgo": "8a470e65b4d4799820f463be4d1373b775bf1087fa94512e5ea3b1d0f79e689b",
+                "compile": "8d4484dbaa31c4c6cec965aadd42efaa1e8d59e4a30ca3b466b502c377c29121",
+                "go": "548d3c32f83fa81152f543eb1526be7884cfe0526eb5e9ce29d3eca14786e7e0",
+                "link": "b7567a824e05fa24240edbf883e77e536914f22444c6946f1cd4a904b315f9c2",
+                "vet": "f73e3188eb0953bf2938bb6eea06ee07dc0b4001468c17d3f199124e487d119b"
+              }
+            },
+            "service": {
+              "EXACT_HIT": "true",
+              "MATCHED_KEY": "aa-ci-measure-v1-followup-20261013-0349-w1-5dfeb260783627780c42d9b1deca5a1626dbec05ab869d4e280139fbc83f8ea8-8d5d5416b378e560a654c806456c4e91f914b205655ced87cd80e94596d83183-1c570374831cad51f6d2595aa370a544a29684dd",
+              "RESTORE_OUTCOME": "success",
+              "SAVE_OUTCOME": "skipped",
+              "WORKER_OUTCOME": "success"
+            },
+            "worker": 1
+          }
+        ]
+      }
+    ],
+    "unprofiled_base_delta": {
+      "changed_paths": [
+        "CHANGELOG.md",
+        "dev/maintainers/versions.md",
+        "dev/proposals/bounded-repository-picker.md",
+        "dev/proposals/cli-performance.md",
+        "dev/proposals/listing-at-scale.md",
+        "internal/catalog/coordinator.go",
+        "internal/catalog/head_protocol.go",
+        "internal/catalog/head_protocol_test.go",
+        "internal/catalog/journal_publication.go",
+        "internal/catalog/picker_schema_test.go",
+        "internal/config/scoped_picker_test.go",
+        "internal/config/wire.go",
+        "schemas/catalog-picker-format.schema.json"
+      ],
+      "limitation": "PR485 changed catalog/config/protocol tests after profiling. Current D CI must rediscover and execute every unit; affected current weights require artifact review before merge."
+    },
+    "verification": "Root API/source/runtime freeze and independent raw audits accepted both paired current-runtime samples, including 38 strict new ordinary run/pass lifecycles each. Artifact attribution is externally verified, not self-attested by raw JSON."
+  },
+  "samples": [
+    {
+      "directory": "01-prefix/audit-evidence",
+      "id": "01-prefix"
+    },
+    {
+      "directory": "02-warm/audit-evidence",
+      "id": "02-warm"
+    }
+  ],
+  "settings": {
+    "0": {
+      "cli_cpus": 2,
+      "cli_parallel": 2,
+      "cpus": 4,
+      "deadline_seconds": 1500,
+      "isolated_packages": [
+        "github.com/wangjohn/agent-archive/internal/gitremote"
+      ],
+      "ordinary_cpus": 2,
+      "ordinary_parallel": 2,
+      "package_p": 1
+    },
+    "1": {
+      "cli_cpus": 2,
+      "cli_parallel": 2,
+      "cpus": 4,
+      "deadline_seconds": 1500,
+      "isolated_packages": [],
+      "ordinary_cpus": 2,
+      "ordinary_parallel": 2,
+      "package_p": 1
+    }
+  },
+  "source": "c988618fd4dcfd384465a8c5324ce3f193cb2645"
+}

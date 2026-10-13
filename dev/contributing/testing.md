@@ -21,6 +21,7 @@ python3 scripts/test_purge_recipe.py                     # runs the bucket purge
 python3 scripts/test_ci_workflow.py                      # Extended keeps the validated systemd image
 python3 scripts/test_ci_tiers.py                         # cadence, source proof and body evidence
 python3 scripts/test_go_shards.py                         # discovery, coverage, verdict, and process cleanup
+python3 -B scripts/test_generate_go_shard_hints.py         # matched artifact medians and pause envelopes
 python3 -B scripts/test_go_cache_context.py               # cache identity and tracked source proof
 python3 -B scripts/test_go_cache_steps.py                 # cache failure paths and PR-only wiring
 python3 scripts/test_measure_hook.py                     # synthetic hook benchmark effect/cleanup checks
@@ -65,8 +66,46 @@ python3 scripts/run_go_shard.py --shard 0 --output /tmp/go-shard-0
 python3 scripts/run_go_shard.py --shard 1 --output /tmp/go-shard-1
 ```
 
-The checked-in timing hints are historical elapsed rankings, including parallel
-child trees, rather than wall-time or CPU forecasts. Hosted comparisons must
+The checked-in timing hints are advisory integer milliseconds from successful
+paired artifact observations. `scripts/go_shard_hint_sources.json` pins the
+measured source, exact worker settings, sample IDs, hosted attribution and source
+limitations; `scripts/generate_go_shard_hints.py` validates the actual current
+runner's discovery, exhaustive coverage and body evidence before taking medians.
+Download and safely extract each named sample into its relative directory under
+an artifact root, then regenerate without executing Go:
+
+```sh
+python3 -B scripts/generate_go_shard_hints.py \
+  --request scripts/go_shard_hint_sources.json \
+  --artifacts-root /path/to/cache-integration-profiles \
+  --output scripts/go_shard_hints.json
+```
+
+The generator rejects source/settings/catalog mixtures, failed or incomplete
+streams, reused samples and mismatched manifest body evidence. Reconciliation
+checks the request's pinned artifact source independently of the regenerating
+workflow's `GITHUB_SHA`. The request may provide fresh `packages`/`cli` discovery
+lists to drop stale names or give newly
+discovered names the positive 1000 ms fallback; omission uses actual sample
+discovery. Discovery in the live runner always remains authoritative. Artifact
+IDs and runtime-source equivalence require independent API/source verification;
+raw JSON alone cannot attest those caller-supplied provenance fields.
+
+Ordinary weights are median package-terminal elapsed seconds, rounded half-up
+to positive milliseconds (minimum 1). CLI weights take the larger of parent
+elapsed and the active envelope from the last top-level continuation (or run)
+through the latest parent/descendant terminal. This excludes the initial parent
+pause and never sums sibling elapsed values. Descendant cohort waits and
+overlapping parent envelopes remain, so these rankings are not wall-time or CPU
+forecasts. Git invocation and worker0 vet costs stay separate from weights;
+the assigned Git package stays isolated on whichever worker receives it.
+
+The current hints use two cached ancestor-runtime observations (prefix and
+exact restore). The recorded D base subsequently added catalog/config protocol
+changes in PR485, so these are not exact D-base timings. Current CI must discover
+and execute the new bodies and expose materially changed affected-package costs
+before merge; do not combine durations from different sources as matched samples
+or claim savings without a current-source control. Hosted comparisons must
 record whole-job latency and rounded runner allocation, including scripts,
 verdict and native verification, against both the original spend and the new
 single-worker fixture baseline. A local warm serial run proves coverage rather
