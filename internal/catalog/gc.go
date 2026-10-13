@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"strings"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -301,7 +300,7 @@ func (w *Writer) markTree(ctx context.Context, ref ObjectRef, live, visited map[
 		}
 	}
 	for _, leaf := range n.Leaves {
-		if strings.HasPrefix(leaf.Key, "!picker/") {
+		if pickerTreeKey(leaf.Key) {
 			if _, err = DecodePickerRow(leaf.Key, leaf.Value); err != nil {
 				return err
 			}
