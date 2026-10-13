@@ -165,7 +165,7 @@ func pickerCandidateBefore(a, b pickerCandidate) bool {
 	return a.ordinal < b.ordinal
 }
 func (m *pickerModel) state(s sessionScope) (*pickerScopeState, error) {
-	q, err := pickerScopeQuery(s, m.harness, m.pageSize)
+	q, err := pickerScopeQuery(s, m.harness, min(100, m.pageSize+1))
 	if err != nil {
 		return nil, err
 	}
@@ -309,6 +309,11 @@ func (m *pickerModel) Older(ctx context.Context, s sessionScope) (modelPickerVie
 		st.emitted[key] = true
 		st.view.Rows = append(st.view.Rows, c)
 	}
+	if !st.view.Incomplete {
+		if err = m.proveMore(ctx, st, &pages, pageBudget, &attempts); err != nil {
+			return modelPickerView{}, err
+		}
+	}
 	st.view.More = st.view.Incomplete || st.localPos < len(st.locals) || len(st.buffer) > 0 || !st.remoteDone
 	st.view.Empty = len(st.view.Rows) == 0 && !st.view.More
 	if !st.view.More {
@@ -399,4 +404,34 @@ func (m *pickerModel) materializeLocal(ctx context.Context, st *pickerScopeState
 	c.row.metadata = result.metadata
 	c.row.unbuilt = nil
 	return c, true, nil
+}
+
+// proveMore retains one accepted lookahead. Unexamined native candidates or
+// refill budget exhaustion yield an incomplete continuation, never a claim
+// that an additional eligible row is known to exist.
+func (m *pickerModel) proveMore(ctx context.Context, st *pickerScopeState, pages *int, pageBudget int, attempts *int) error {
+	if err := m.fillRemote(ctx, st, pages, pageBudget); err != nil {
+		return err
+	}
+	if st.view.Incomplete || len(st.buffer) > 0 {
+		return nil
+	}
+	for st.localPos < len(st.locals) {
+		c, accepted, err := m.materializeLocal(ctx, st, attempts)
+		if err != nil {
+			return err
+		}
+		if st.view.Incomplete {
+			return nil
+		}
+		if accepted {
+			st.localPos--
+			// Materialized presentation is retained without losing original archive
+			// provenance or moving the local frontier past an unconsumed row.
+			st.locals = slices.Clone(st.locals)
+			st.locals[st.localPos] = c
+			return nil
+		}
+	}
+	return nil
 }

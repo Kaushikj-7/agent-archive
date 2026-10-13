@@ -51,7 +51,7 @@ func boundedHandoffChoices(ctx context.Context, env handoffSelectDependencies, s
 	if !reader.CatalogAuthority(store) {
 		return nil, nil, nil, false, nil
 	}
-	if _, err := pickerScopeQuery(scope, opts.harness, defaultListLimit); err != nil {
+	if _, err := pickerScopeQuery(scope, opts.harness, defaultListLimit+1); err != nil {
 		return nil, nil, nil, false, nil
 	}
 	snapshot, err := catalog.OpenSnapshot(ctx, store, nil)
@@ -60,7 +60,7 @@ func boundedHandoffChoices(ctx context.Context, env handoffSelectDependencies, s
 	}
 	// Probe supported format before local inventory reads. Unsupported is a
 	// compatibility decision, whereas an I/O/budget failure remains an error.
-	q, _ := pickerScopeQuery(scope, opts.harness, defaultListLimit)
+	q, _ := pickerScopeQuery(scope, opts.harness, defaultListLimit+1)
 	first, err := snapshot.PickerPage(ctx, q, "")
 	if errors.Is(err, catalog.ErrPickerUnsupported) {
 		return nil, nil, nil, false, nil

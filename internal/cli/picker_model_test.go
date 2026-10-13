@@ -315,7 +315,7 @@ func TestPickerModelRegistrationScopePrecedence(t *testing.T) {
 		reg.Harness.Name = "codex"
 		m.regs = append(m.regs, reg)
 		m.activity[pickerID("codex", reg.ArchiveSessionID)] = time.Unix(100, 0)
-		item := catalog.PickerItem{Row: catalog.PickerRow{SessionID: reg.ArchiveSessionID, Harness: "codex", Root: true, RepoKey: other, ProjectID: "project", Activity: time.Unix(50, 0)}}
+		item := catalog.PickerItem{Row: catalog.PickerRow{SessionKey: reg.ArchiveSessionID, SessionID: reg.ArchiveSessionID, Harness: "codex", Root: true, RepoKey: other, ProjectID: "project", Activity: time.Unix(50, 0)}}
 		a.facts[pickerID("codex", reg.ArchiveSessionID)] = item
 	}
 	if err := m.prepare(t.Context()); err != nil {
@@ -431,12 +431,12 @@ func TestPickerModelScopeContinuationsAndRefreshActivity(t *testing.T) {
 		t.Fatal("global borrowed scoped cursor", all, err)
 	}
 	v, err = m.First(t.Context(), scoped)
-	if err != nil || len(v.Rows) != 4 || reads != 4 {
+	if err != nil || len(v.Rows) != 4 || reads != 5 {
 		t.Fatalf("toggle reread or lost prefix reads=%d view=%+v err=%v", reads, v, err)
 	}
 	active = active.Add(time.Hour)
 	v, err = m.Refresh(t.Context(), scoped, a)
-	if err != nil || len(v.Rows) != 2 || reads != 6 || !v.Rows[0].row.active.Equal(active) {
+	if err != nil || len(v.Rows) != 2 || reads != 8 || !v.Rows[0].row.active.Equal(active) {
 		t.Fatalf("refresh failed to observe activity/read new safe labels: %+v %v reads=%d", v, err, reads)
 	}
 }
@@ -452,5 +452,28 @@ func TestPickerModelRawSessionPrefixTieOrder(t *testing.T) {
 	sort.Slice(candidates, func(i, j int) bool { return pickerCandidateBefore(candidates[i], candidates[j]) })
 	if candidates[0].item.Row.SessionID != "a" {
 		t.Fatal("physical path slash replaced raw session tie order")
+	}
+}
+
+func TestPickerModelMoreRequiresEligibleUnsuppressedLookahead(t *testing.T) {
+	key, other := archive.RepoKey("https://example.test/repo"), archive.RepoKey("https://example.test/other")
+	a := &modelArchive{facts: map[pickerIdentity]catalog.PickerItem{}}
+	for i := 0; i < 3; i++ {
+		id := strconv.Itoa(i)
+		item := catalog.PickerItem{Row: catalog.PickerRow{SessionKey: id, SessionID: id, Harness: "codex", Root: true, RepoKey: key, Activity: time.Unix(int64(10-i), 0)}}
+		a.items = append(a.items, item)
+		a.facts[pickerID("codex", id)] = item
+	}
+	reg := archive.SessionRegistration{ArchiveSessionID: "2", Harness: archive.Harness{Name: "codex"}, RepoKey: other}
+	m := &pickerModel{archive: a, regs: []archive.SessionRegistration{reg}, source: "archive", pageSize: 2, labelBudget: 50, activity: map[pickerIdentity]time.Time{pickerID("codex", "2"): time.Unix(50, 0)}}
+	if err := m.prepare(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	v, err := m.First(t.Context(), sessionScope{Label: "repo", Dir: "/repo", RepoKey: key})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.More || v.Incomplete || len(v.Rows) != 2 || v.Total != 2 || v.Suppressed != 1 {
+		t.Fatalf("suppressed lookahead was reported as eligible More: %+v", v)
 	}
 }

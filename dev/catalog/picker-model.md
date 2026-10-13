@@ -31,7 +31,9 @@ The union order is effective activity descending, then archived provenance:
 original archive activity, capture, raw harness and session ID; archive-associated
 rows precede local-only rows at equal activity. Local-only ties use registration
 ordinal. Local presentation capture times never replace archive tie provenance.
-Remote pages keep their unconsumed buffer and cursor. Per-operation refill is
+Remote pages retain P+1 bounded candidates where supported and keep their
+unconsumed lookahead buffer and cursor. More is proven by an accepted lookahead;
+unknown eligibility is explicit incomplete continuation. Per-operation refill is
 limited to `2 + ceil(R/P)` pages, where R is the relevant suppression inventory;
 this local-dependent additive work is separate from bounded archive page cost.
 
