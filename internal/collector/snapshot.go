@@ -108,12 +108,36 @@ func LastActivity(ctx context.Context, reg archive.SessionRegistration, database
 
 // LastActivities preserves per-provider batching without choosing native readers in shared code.
 func LastActivities(ctx context.Context, regs []archive.SessionRegistration, database string, sources agentapi.SourcesLookup) map[string]time.Time {
+	found, _ := lastActivities(ctx, regs, database, sources, false)
+	return found
+}
+
+// LastActivitiesWithError preserves provider batching and refuses partial activity
+// observations on failure. Missing observations without an error remain unreadable.
+func LastActivitiesWithError(ctx context.Context, regs []archive.SessionRegistration, database string, sources agentapi.SourcesLookup) (map[string]time.Time, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	found, err := lastActivities(ctx, regs, database, sources, true)
+	if err != nil {
+		return nil, err
+	}
+	if err = ctx.Err(); err != nil {
+		return nil, err
+	}
+	return found, nil
+}
+
+func lastActivities(ctx context.Context, regs []archive.SessionRegistration, database string, sources agentapi.SourcesLookup, strict bool) (map[string]time.Time, error) {
 	span := trace.Start("local activity")
 	span.Count("sessions", len(regs))
 	defer span.End()
 	out := map[string]time.Time{}
 	if sources == nil {
-		return out
+		if strict && len(regs) > 0 {
+			return nil, errors.New("source integrations are required to observe session activity")
+		}
+		return out, nil
 	}
 	groups := map[sourcePassKey][]archive.SessionRegistration{}
 	for _, reg := range regs {
@@ -131,6 +155,9 @@ func LastActivities(ctx context.Context, regs []archive.SessionRegistration, dat
 		e := sourceEnvironment(discoveryRegistration(group[0]), database)
 		provider, _, ok := sources.LookupSources(key.name)
 		if !ok {
+			if strict {
+				return nil, fmt.Errorf("session activity provider unavailable for %s", key.name)
+			}
 			continue
 		}
 		refs := make([]agentapi.SourceRef, 0, len(group))
@@ -139,11 +166,19 @@ func LastActivities(ctx context.Context, regs []archive.SessionRegistration, dat
 		}
 		batch, ok := provider.(agentapi.ActivityProvider)
 		if !ok {
+			if strict {
+				return nil, fmt.Errorf("session activity provider unavailable for %s", key.name)
+			}
 			continue
 		}
 		found, err := batch.Activities(ctx, e, refs)
-		if err != nil && ctx.Err() != nil {
-			return out
+		if err != nil {
+			if strict {
+				return nil, fmt.Errorf("read %s session activity: %w", key.name, err)
+			}
+			if ctx.Err() != nil {
+				return out, ctx.Err()
+			}
 		}
 		for _, reg := range group {
 			if at, ok := found[sourceRef(reg)]; ok && !at.IsZero() {
@@ -151,7 +186,7 @@ func LastActivities(ctx context.Context, regs []archive.SessionRegistration, dat
 			}
 		}
 	}
-	return out
+	return out, nil
 }
 
 // FilterTranscriptFile filters one native transcript file that has no

@@ -329,3 +329,21 @@ func (*Store) PutConditional(context.Context, string, []byte, storage.PutConditi
 // CatalogReadScope identifies this destination authority without exposing
 // credentials or object paths. Wrappers forward the same opaque instance key.
 func (s *Store) CatalogReadScope() string { return s.readScope }
+
+// CatalogWriteProtocol observes the exact operational head/coordinator contract
+// before the collector freezes new journal bytes. A later format change cannot
+// reinterpret those bytes; exact admission rechecks their protocol.
+func (s *Store) CatalogWriteProtocol(ctx context.Context) (uint64, error) {
+	h, _, err := s.Writer.Head(ctx)
+	if err != nil {
+		return 0, err
+	}
+	state, _, err := s.Writer.Coordinator().read(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if state.Upgrade != nil || state.Seal != "" || h.Protocol != state.Protocol || (h.Picker != nil) != (state.Picker != nil) {
+		return 0, ErrAdmissionClosed
+	}
+	return h.Protocol, nil
+}

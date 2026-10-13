@@ -211,7 +211,7 @@ func (w *Writer) markRetained(ctx context.Context, h CatalogHead, clock storage.
 		if err = old.observeVersion(v); err != nil {
 			return err
 		}
-		if old.Schema != 4 || old.PublicationWitness.LastModified.After(successorTime) {
+		if !old.validFormat() || old.PublicationWitness.LastModified.After(successorTime) {
 			return errors.New("invalid retained head or regressed provider clock")
 		}
 		if err = w.markHead(ctx, old, live, visited); err != nil {
@@ -274,14 +274,15 @@ func (w *Writer) markHead(ctx context.Context, h CatalogHead, live, visited map[
 		return err
 	}
 	for _, root := range []ObjectRef{h.Identity, h.Capture, h.Activity, h.Project, h.Receipts} {
-		if err := w.markTree(ctx, root, live, visited, 0); err != nil {
+		if err := w.markTree(ctx, root, live, visited, 0, h.Protocol == 11); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (w *Writer) markTree(ctx context.Context, ref ObjectRef, live, visited map[string]bool, depth int) error {
+func (w *Writer) markTree(ctx context.Context, ref ObjectRef, live, visited map[string]bool, depth int, formats ...bool) error {
+	scoped := len(formats) > 0 && formats[0]
 	if ref.Key == "" || visited[ref.Key] {
 		return nil
 	}
@@ -295,7 +296,7 @@ func (w *Writer) markTree(ctx context.Context, ref ObjectRef, live, visited map[
 		return err
 	}
 	for _, child := range n.Children {
-		if err = w.markTree(ctx, child.Ref, live, visited, depth+1); err != nil {
+		if err = w.markTree(ctx, child.Ref, live, visited, depth+1, scoped); err != nil {
 			return err
 		}
 	}
@@ -325,6 +326,9 @@ func (w *Writer) markTree(ctx context.Context, ref ObjectRef, live, visited map[
 			}
 		}
 		if entry != nil {
+			if scoped && entry.Picker == nil {
+				return errors.New("scoped GC entry lacks exact picker facts")
+			}
 			if err = w.verifyEntry(ctx, leafSessionKey(entry), entry); err != nil {
 				return err
 			}
@@ -378,7 +382,9 @@ func (w *Writer) gcHead(ctx context.Context, authorize func(context.Context, *Wr
 	if err != nil {
 		return h, "", err
 	}
-	h = CatalogHead{Schema: 4, Protocol: 10, Generation: 1, Epoch: id, PublicationEpoch: id}
+	h.Generation = 1
+	h.Epoch = id
+	h.PublicationEpoch = id
 	raw, err := json.Marshal(h)
 	if err != nil {
 		return h, "", err

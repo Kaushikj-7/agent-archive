@@ -34,17 +34,20 @@ const (
 )
 
 type admissions struct {
-	Intent     *migrationIntent     `json:"migration_intent,omitempty"`
-	Protocol   uint64               `json:"protocol"`
-	Mode       admissionMode        `json:"mode"`
-	Proof      string               `json:"proof"`
-	Generation uint64               `json:"generation"`
-	Seal       string               `json:"seal"`
-	Hold       string               `json:"hold"`
-	GCReceipt  *gcCompletion        `json:"gc_receipt,omitempty"`
-	GCLink     *gcLink              `json:"gc_link,omitempty"`
-	Owners     map[string]admission `json:"owners"`
-	Completed  map[string]admission `json:"completed,omitempty"`
+	PickerUpgradeReceipt *PickerUpgradeState  `json:"picker_upgrade_receipt,omitempty"`
+	Picker               *scopedPickerFormat  `json:"Picker,omitempty"`
+	Upgrade              *PickerUpgradeState  `json:"picker_upgrade,omitempty"`
+	Intent               *migrationIntent     `json:"migration_intent,omitempty"`
+	Protocol             uint64               `json:"protocol"`
+	Mode                 admissionMode        `json:"mode"`
+	Proof                string               `json:"proof"`
+	Generation           uint64               `json:"generation"`
+	Seal                 string               `json:"seal"`
+	Hold                 string               `json:"hold"`
+	GCReceipt            *gcCompletion        `json:"gc_receipt,omitempty"`
+	GCLink               *gcLink              `json:"gc_link,omitempty"`
+	Owners               map[string]admission `json:"owners"`
+	Completed            map[string]admission `json:"completed,omitempty"`
 }
 
 // Coordinator uses the qualified provider's single CAS admission authority.
@@ -121,7 +124,8 @@ func (c *Coordinator) Admit(ctx context.Context, owner, digest string, refs []Ob
 	}
 	// Check before admission can authorize source or index writes. Upgrade must
 	// seal and drain existing owners before replacing this protocol.
-	if _, _, err := c.writer.Head(ctx); err != nil {
+	head, _, err := c.writer.Head(ctx)
+	if err != nil {
 		return err
 	}
 	if owner == "" || len(owner) > 512 || digest == "" || len(refs) > 256 {
@@ -134,6 +138,9 @@ func (c *Coordinator) Admit(ctx context.Context, owner, digest string, refs []Ob
 	}
 	return c.change(ctx, func(state *admissions) error {
 		if _, ok := state.Owners[owner]; ok {
+			return ErrAdmissionClosed
+		}
+		if state.Upgrade != nil || head.Protocol != state.Protocol || (head.Picker != nil) != (state.Picker != nil) {
 			return ErrAdmissionClosed
 		}
 		if state.Seal != "" {
@@ -205,7 +212,7 @@ func (b heldCoordinator) Hold(ctx context.Context) ([]ObjectRef, func(), error) 
 	}
 	var protected []ObjectRef
 	err = b.coordinator.change(ctx, func(state *admissions) error {
-		if b.owner == "" || state.Seal != b.owner || len(state.Owners) != 0 || state.Hold != "" {
+		if state.Upgrade != nil || b.owner == "" || state.Seal != b.owner || len(state.Owners) != 0 || state.Hold != "" {
 			return ErrAdmissionClosed
 		}
 		state.Hold = hold
@@ -240,6 +247,13 @@ func (s *Store) BeginPublication(ctx context.Context, id string, metadata []byte
 	}
 	if id == "" || len(id) > 455 {
 		return ctx, errors.New("invalid publication identifier")
+	}
+	state, _, err := s.Writer.Coordinator().read(ctx)
+	if err != nil {
+		return ctx, err
+	}
+	if err = s.Writer.writeFormat(ctx, state); err != nil {
+		return ctx, err
 	}
 	refs, digest, err := publicationAdmission(metadata)
 	if err != nil {
@@ -385,7 +399,7 @@ func (c *Coordinator) Activate(ctx context.Context, owner, proof string) error {
 		return errors.New("cutover proof required")
 	}
 	return c.change(ctx, func(state *admissions) error {
-		if state.Seal != owner || len(state.Owners) != 0 || state.Hold != "" {
+		if state.Upgrade != nil || state.Seal != owner || len(state.Owners) != 0 || state.Hold != "" {
 			return ErrAdmissionClosed
 		}
 		state.Mode = admissionActive
