@@ -32,8 +32,13 @@ and lookahead. Byte-limited node GETs refuse before downloading an oversized
 node. The conservative structural bound is O(S × H × (P+1)), including valid
 underfull and unary trees, rather than assuming a minimum node occupancy. A
 budget too small for that tree returns `ErrPickerBudget`; callers do not silently
-scan the archive or fall back to expensive search. Exact identity batches are
-finite and measured separately from repository-page work and local inventory.
+scan the archive or fall back to expensive search. Canonical identity batches accept at most 100 identities and use the exact
+canonical-harness/session lookup ranges. Zero proves absence, one returns its
+physical raw-harness reference, and more than one returns
+`ErrPickerIdentityAmbiguous` for the batch, with no arbitrary result. Lookup
+includes children, replays, and known zero-prompt publications regardless of page
+scope. These finite batches are measured separately from repository-page work
+and local inventory.
 
 `HydratePicker` accepts the original opaque reference, checks current head and
 coordinator authority, reads only its immutable metadata body, verifies hash,

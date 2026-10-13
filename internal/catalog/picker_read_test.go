@@ -291,3 +291,85 @@ func TestPickerUnsupportedAndBudgetAreNotEmptyProofs(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func publishPickerHarness(t *testing.T, w *Writer, id, harness string, edit func(*archive.Metadata)) CatalogMutation {
+	t.Helper()
+	m := mutation(t, w, id)
+	m.ID = "publish-" + harness + "-" + id
+	source := []byte("synthetic source " + id)
+	m.Next.Summary.SourceBundle.Key = strings.Replace(m.Next.Summary.SourceBundle.Key, "sessions/claude/", "sessions/"+harness+"/", 1)
+	if err := w.store.Put(t.Context(), m.Next.Summary.SourceBundle.Key, source); err != nil {
+		t.Fatal(err)
+	}
+	m = pickerMetadata(t, w, m, func(a *archive.Metadata) {
+		a.Harness.Name = harness
+		if edit != nil {
+			edit(a)
+		}
+	})
+	m.SessionKey, _ = archive.MetadataObjectKey(harness, id)
+	if _, err := w.Commit(t.Context(), m); err != nil {
+		t.Fatal(err)
+	}
+	return m
+}
+func TestPickerCanonicalLookupPreservesAliasReferenceAndRejectsAmbiguity(t *testing.T) {
+	_, w, store, _ := pickerReaderFixture(t)
+	alias := publishPickerHarness(t, w, "alias-choice", "Claude-Code", func(a *archive.Metadata) {
+		a.ParentSessionID = "parent"
+		n := 0
+		a.Counts.Turns = &n
+		a.Replay = &archive.Replay{}
+	})
+	s, err := OpenSnapshot(t.Context(), store, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	batch, err := s.PickerLookup(t.Context(), []PickerIdentity{{Harness: "CLAUDE", SessionID: "alias-choice"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := batch.Results[0]
+	if !r.Found || r.Identity.Harness != "claude" || r.Item.Row.SessionKey != alias.SessionKey || r.Item.Row.Root || !r.Item.Row.Replay || r.Item.Row.PromptState != "zero" {
+		t.Fatalf("wrong alias classification %+v", r)
+	}
+	h, err := s.HydratePicker(t.Context(), r.Item.Reference)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, ok, err := s.ResolvedMetadata(t.Context(), h.Row)
+	if err != nil || !ok || body.Harness.Name != "Claude-Code" || body.SourceBundle.Key != alias.Next.Summary.SourceBundle.Key {
+		t.Fatalf("physical selection %v %v %+v", ok, err, body)
+	}
+	other, err := OpenSnapshot(t.Context(), store, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = other.HydratePicker(t.Context(), r.Item.Reference); err == nil {
+		t.Fatal("foreign reference accepted")
+	}
+	canonical := publishPickerHarness(t, w, "alias-choice", "claude", nil)
+	s, err = OpenSnapshot(t.Context(), store, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	batch, err = s.PickerLookup(t.Context(), []PickerIdentity{{Harness: "claude-code", SessionID: "alias-choice"}})
+	if !errors.Is(err, ErrPickerIdentityAmbiguous) || len(batch.Results) > 0 {
+		t.Fatalf("ambiguous aliases selected arbitrarily %+v %v", batch, err)
+	}
+	_, revision, err := w.Find(t.Context(), canonical.SessionKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = w.Commit(t.Context(), CatalogMutation{ID: "delete-canonical-alias", SessionKey: canonical.SessionKey, ExpectedRevision: revision}); err != nil {
+		t.Fatal(err)
+	}
+	s, err = OpenSnapshot(t.Context(), store, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	batch, err = s.PickerLookup(t.Context(), []PickerIdentity{{Harness: "claude", SessionID: "alias-choice"}})
+	if err != nil || !batch.Results[0].Found || batch.Results[0].Item.Row.SessionKey != alias.SessionKey {
+		t.Fatalf("delete alias %v %+v", err, batch)
+	}
+}
