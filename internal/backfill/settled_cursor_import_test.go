@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
+	"github.com/wangjohn/agent-archive/internal/agents/cursor"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
@@ -203,6 +205,10 @@ func TestSettledCursorMalformedGlobalAliasesRefuseAdmission(t *testing.T) {
 		`{"_v":18,"composerId":"foreign-parent","fullConversationHeadersOnly":[],"SubagentComposerIds":["settled-selected"]}`,
 		`{"_v":18,"composerId":5,"fullConversationHeadersOnly":[],"subagentComposerIds":[]}`,
 		`{"_v":18,"composerId":"foreign-parent","fullConversationHeadersOnly":[],"workspaceIdentifier":{"id":5}}`,
+		`{"_v":18,"composerId":"foreign-parent","fullConversationHeadersOnly":[],"workspaceIdentifier":null}`,
+		`{"_v":18,"composerId":"foreign-parent","fullConversationHeadersOnly":[],"workspaceIdentifier":{"uri":{"Path":"/project"}}}`,
+		`{"_v":18,"composerId":"foreign-parent","fullConversationHeadersOnly":[],"workspaceIdentifier":{"uri":{"scheme":null,"path":"/project"}}}`,
+		`{"_v":18,"composerId":"foreign-parent","fullConversationHeadersOnly":[],"workspaceIdentifier":{"uri":{"authority":5,"path":"/project"}}}`,
 	} {
 		t.Run(raw, func(t *testing.T) {
 			r, c, _, database := settledCursorFixture(t)
@@ -225,5 +231,226 @@ func TestSettledCursorMalformedGlobalAliasesRefuseAdmission(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestSettledCursorFirstSaveRefusesOccupiedSlots(t *testing.T) {
+	for _, directory := range []string{"registrations", "requests", "pending", "published"} {
+		t.Run(directory, func(t *testing.T) {
+			r, c, _, _ := settledCursorFixture(t)
+			id, found, err := r.Store.ArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.Cursor, NativeID: c.NativeSessionID})
+			if err != nil || !found {
+				t.Fatal(found, err)
+			}
+			reg := r.registration(c, id, "")
+			budget := agentapi.NewNativeReadBudget(128 << 20)
+			evidence, err := cursor.CaptureSettledImport(t.Context(), r.CursorDatabase, reg, *c.reviewedCursor, r.AdmittedAt, budget)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() {
+				if err := evidence.Close(); err != nil {
+					t.Error(err)
+				}
+			}()
+			if directory == "registrations" {
+				ordinary := reg
+				ordinary.Origin = archive.SessionOriginHook
+				ordinary.ImportBatch = archive.NewImportBatch("")
+				if _, err = r.Store.RegisterReservedSession(agentmeta.SessionKey{Agent: agentmeta.Cursor, NativeID: ordinary.NativeSessionID}, id, func(string) archive.SessionRegistration { return ordinary }); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				// Standalone journal evidence may be orphaned/malformed. Its presence
+				// is not absence and must not authorize a new first-stage selection.
+				if err = local.WriteBytes(filepath.Join(r.Home, directory, id+".json"), []byte(`{"unknown":"retained authority"}`)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			before := settledStoreInventory(t, r.Home)
+			store, closeStore := r.Store.WithReadBudget(t.Context(), budget)
+			defer closeStore()
+			if _, err = store.SaveSettledCursorImportStage(t.Context(), reg, evidence); !errors.Is(err, state.ErrReadySelectionFrozen) {
+				t.Fatalf("occupied first-save accepted: %v", err)
+			}
+			after := settledStoreInventory(t, r.Home)
+			if len(after) != len(before) {
+				t.Fatal("occupied refusal created authority files", after)
+			}
+			for path, raw := range before {
+				if !bytes.Equal(raw, after[path]) {
+					t.Fatalf("occupied refusal changed %s", path)
+				}
+			}
+			if _, err = os.Lstat(filepath.Join(r.Home, "sessions", id, "import-stage", "stage.json")); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("first-save left stage: %v", err)
+			}
+		})
+	}
+}
+
+func TestSettledCursorExactStageRetryAfterAdmission(t *testing.T) {
+	r, c, _, _ := settledCursorFixture(t)
+	id, found, err := r.Store.ArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.Cursor, NativeID: c.NativeSessionID})
+	if err != nil || !found {
+		t.Fatal(found, err)
+	}
+	reg := r.registration(c, id, "")
+	budget := agentapi.NewNativeReadBudget(128 << 20)
+	evidence, err := cursor.CaptureSettledImport(t.Context(), r.CursorDatabase, reg, *c.reviewedCursor, r.AdmittedAt, budget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := evidence.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
+	store, closeStore := r.Store.WithReadBudget(t.Context(), budget)
+	defer closeStore()
+	digest, err := store.SaveSettledCursorImportStage(t.Context(), reg, evidence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	admitted := reg
+	admitted.StagedImportSHA256 = digest
+	if _, err = r.Store.RegisterReservedSession(agentmeta.SessionKey{Agent: agentmeta.Cursor, NativeID: reg.NativeSessionID}, id, func(string) archive.SessionRegistration { return admitted }); err != nil {
+		t.Fatal(err)
+	}
+	if err = r.Store.SaveRequest(id, "backfill", r.AdmittedAt); err != nil {
+		t.Fatal(err)
+	}
+	before := settledStoreInventory(t, r.Home)
+	retry, err := store.SaveSettledCursorImportStage(t.Context(), reg, evidence)
+	if err != nil || retry != digest {
+		t.Fatalf("exact owned retry: %s %v", retry, err)
+	}
+	after := settledStoreInventory(t, r.Home)
+	if len(after) != len(before) {
+		t.Fatal("exact retry changed authority inventory")
+	}
+	for path, raw := range before {
+		if !bytes.Equal(raw, after[path]) {
+			t.Fatalf("exact retry changed %s", path)
+		}
+	}
+}
+
+func TestSettledCursorGlobalRosterBoundControls(t *testing.T) {
+	for _, count := range []int{64, 65} {
+		t.Run(fmt.Sprint(count), func(t *testing.T) {
+			r, c, _, database := settledCursorFixture(t)
+			ids := make([]string, count)
+			for i := range ids {
+				ids[i] = fmt.Sprintf("foreign-child-%02d", i)
+			}
+			raw, err := json.Marshal(map[string]any{"_v": 18, "composerId": "foreign-parent", "fullConversationHeadersOnly": []any{}, "subagentComposerIds": ids})
+			if err != nil {
+				t.Fatal(err)
+			}
+			writer := openCursorWriter(t, database, false)
+			insertCursorRows(t, writer, map[string]any{"composerData:foreign-parent": string(raw)})
+			if err = writer.Close(); err != nil {
+				t.Fatal(err)
+			}
+			before := settledStoreInventory(t, r.Home)
+			result, err := r.Run([]Candidate{c})
+			if count == 64 {
+				if err != nil || len(result.Sessions) != 1 {
+					t.Fatalf("exact64 global roster control: %+v %v", result, err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("oversize global roster admitted owner")
+			}
+			after := settledStoreInventory(t, r.Home)
+			if len(after) != len(before) {
+				t.Fatal("oversize roster created authority files")
+			}
+			for path, raw := range before {
+				if !bytes.Equal(raw, after[path]) {
+					t.Fatalf("oversize roster changed %s", path)
+				}
+			}
+		})
+	}
+}
+
+func TestSettledCursorSelectedNullRoutingKeepsAuthority(t *testing.T) {
+	r, c, _, database := settledCursorFixture(t)
+	writer := openCursorWriter(t, database, false)
+	rows := chatRows(c.NativeSessionID, map[string]any{"createdAt": millis(c.StartedAt)}, "question", "answer")
+	var composer map[string]any
+	if err := json.Unmarshal([]byte(rows["composerData:"+c.NativeSessionID].(string)), &composer); err != nil {
+		t.Fatal(err)
+	}
+	composer["workspaceIdentifier"] = nil
+	raw, err := json.Marshal(composer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows["composerData:"+c.NativeSessionID] = string(raw)
+	insertCursorRows(t, writer, rows)
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	before := settledStoreInventory(t, r.Home)
+	if _, err := r.Run([]Candidate{c}); err == nil {
+		t.Fatal("selected null routing admitted owner")
+	}
+	after := settledStoreInventory(t, r.Home)
+	if len(after) != len(before) {
+		t.Fatal("null routing created authority files")
+	}
+	for path, raw := range before {
+		if !bytes.Equal(raw, after[path]) {
+			t.Fatalf("null routing changed %s", path)
+		}
+	}
+}
+
+func TestSettledCursorFirstSaveRefusesStaleCommittedIndex(t *testing.T) {
+	r, c, _, _ := settledCursorFixture(t)
+	id, found, err := r.Store.ArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.Cursor, NativeID: c.NativeSessionID})
+	if err != nil || !found {
+		t.Fatal(found, err)
+	}
+	reg := r.registration(c, id, "")
+	budget := agentapi.NewNativeReadBudget(128 << 20)
+	evidence, err := cursor.CaptureSettledImport(t.Context(), r.CursorDatabase, reg, *c.reviewedCursor, r.AdmittedAt, budget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := evidence.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
+	ordinary := reg
+	ordinary.Origin = archive.SessionOriginHook
+	ordinary.ImportBatch = archive.NewImportBatch("")
+	if _, err = r.Store.RegisterReservedSession(agentmeta.SessionKey{Agent: agentmeta.Cursor, NativeID: reg.NativeSessionID}, id, func(string) archive.SessionRegistration { return ordinary }); err != nil {
+		t.Fatal(err)
+	}
+	// This negative crash/file-loss setup keeps the real committed index intact.
+	// It is not a fresh positive owner or a registration-promotion shortcut.
+	if err = os.Remove(filepath.Join(r.Home, "registrations", id+".json")); err != nil {
+		t.Fatal(err)
+	}
+	before := settledStoreInventory(t, r.Home)
+	store, closeStore := r.Store.WithReadBudget(t.Context(), budget)
+	defer closeStore()
+	if _, err = store.SaveSettledCursorImportStage(t.Context(), reg, evidence); !errors.Is(err, state.ErrReadySelectionFrozen) {
+		t.Fatalf("stale committed index revived: %v", err)
+	}
+	after := settledStoreInventory(t, r.Home)
+	if len(after) != len(before) {
+		t.Fatal("stale index refusal created authorities")
+	}
+	for path, raw := range before {
+		if !bytes.Equal(raw, after[path]) {
+			t.Fatalf("stale refusal changed %s", path)
+		}
 	}
 }

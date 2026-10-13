@@ -439,6 +439,14 @@ func (s *Store) savePreparedImportStage(ctx context.Context, reg archive.Session
 			}
 			return nil
 		}
+		if stage.Version == 3 {
+			if e := s.checkFreshSettledStage(ctx, g, reg, stage.SkillEvidence); e != nil {
+				return e
+			}
+			return s.writeDurableGuardChecked(ctx, g, importStageRelative(reg.ArchiveSessionID), stage, func(rename func() error) error {
+				return s.commitFreshSettledStage(ctx, g, reg, stage.SkillEvidence, rename)
+			})
+		}
 		return s.writeDurableGuard(ctx, g, importStageRelative(reg.ArchiveSessionID), stage)
 	})
 	return digest, err
@@ -1117,4 +1125,76 @@ func (s *Store) validateSettledIndex(reg archive.SessionRegistration) error {
 		return errors.Join(ErrSessionIdentityConflict, err)
 	}
 	return nil
+}
+
+// checkFreshSettledStage refuses occupied first-write slots; exact stage retries
+// are handled before this check. The final call is under the request lock.
+func (s *Store) checkFreshSettledStage(ctx context.Context, g config.DurableStorageGuard, reg archive.SessionRegistration, mode config.SkillEvidence) (err error) {
+	if err = ctx.Err(); err != nil {
+		return err
+	}
+	if err = g.CheckHome(s.home); err != nil {
+		return err
+	}
+	if err = s.validateSettledIndex(reg); err != nil {
+		return err
+	}
+	cfg, present, e := config.Load(s.home)
+	if e != nil || !present || !cfg.SupportsSettledCursorSelection() || cfg.Paused || !cfg.Archive.Enabled || !cfg.AcceptSession(reg) || reg.DestinationID != cfg.DestinationID() || mode != cfg.EffectiveSkillEvidence() {
+		return errors.Join(ErrReadySelectionFrozen, e)
+	}
+	held, e := local.OpenRootedHome(s.home)
+	if e != nil {
+		return e
+	}
+	defer func() { err = errors.Join(err, held.Close()) }()
+	for _, directory := range []string{"registrations", "requests", "pending", "published"} {
+		_, e = held.Root.Lstat(filepath.Join(directory, reg.ArchiveSessionID+".json"))
+		if e == nil {
+			return ErrReadySelectionFrozen
+		}
+		if !errors.Is(e, os.ErrNotExist) {
+			return errors.Join(ErrReadySelectionFrozen, e)
+		}
+	}
+	for _, path := range []string{importStageRelative(reg.ArchiveSessionID), stagedControl(reg.ArchiveSessionID, "release.json"), stagedControl(reg.ArchiveSessionID, "release-progress.json"), importCancelRelative(reg.ArchiveSessionID)} {
+		_, e = held.Root.Lstat(path)
+		if e == nil {
+			return ErrReadySelectionFrozen
+		}
+		if !errors.Is(e, os.ErrNotExist) {
+			return errors.Join(ErrReadySelectionFrozen, e)
+		}
+	}
+	key := agentmeta.SessionKey{Agent: agentmeta.ID(reg.Harness.Name), NativeID: reg.NativeSessionID}
+	entry, found, e := s.readQualifiedIndex(key)
+	if e != nil || !found || entry.Absent || entry.validate(key) != nil || entry.ArchiveSessionID != reg.ArchiveSessionID || entry.Reservation == "" {
+		return errors.Join(ErrReadySelectionFrozen, ErrSessionIdentityConflict, e)
+	}
+	return held.Check()
+}
+
+func (s *Store) commitFreshSettledStage(ctx context.Context, g config.DurableStorageGuard, reg archive.SessionRegistration, mode config.SkillEvidence, rename func() error) (err error) {
+	// Existing private test seam models a writer overtaking the synced temp.
+	s.writeSynced()
+	held, e := local.OpenRootedHome(s.home)
+	if e != nil {
+		return e
+	}
+	defer func() { err = errors.Join(err, held.Close()) }()
+	unlock, e := local.RootedLockWait(held, requestLockName(reg.ArchiveSessionID), time.Second)
+	if e != nil {
+		return e
+	}
+	defer unlock()
+	if e = s.checkFreshSettledStage(ctx, g, reg, mode); e != nil {
+		return e
+	}
+	if e = held.Check(); e != nil {
+		return e
+	}
+	if e = g.CheckHome(s.home); e != nil {
+		return e
+	}
+	return rename()
 }

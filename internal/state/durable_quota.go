@@ -280,7 +280,11 @@ func (q *durableQuota) scan(path string, depth int, remaining *int, u *durableUs
 	}
 }
 
-func (q *durableQuota) write(path string, n int64, write func(io.Writer) error) (err error) {
+func (q *durableQuota) write(path string, n int64, write func(io.Writer) error) error {
+	return q.writeChecked(path, n, write, nil)
+}
+
+func (q *durableQuota) writeChecked(path string, n int64, write func(io.Writer) error, commit func(func() error) error) (err error) {
 	if n < 0 || n > durableStorageQuota/2 {
 		return ErrDurableStorageCapacity
 	}
@@ -325,13 +329,13 @@ func (q *durableQuota) write(path string, n int64, write func(io.Writer) error) 
 		return err
 	}
 	defer func() { err = errors.Join(err, dir.Close()) }()
-	return local.RootedAtomicWrite(q.home.Root, path, func(w io.Writer) error {
+	return local.RootedAtomicWriteChecked(q.home.Root, path, func(w io.Writer) error {
 		limited := &boundedDurableWriter{writer: w, remaining: n}
 		if e := write(limited); e != nil {
 			return e
 		}
 		return q.guard.CheckHome(q.path)
-	})
+	}, commit)
 }
 
 type boundedDurableWriter struct {
@@ -370,7 +374,11 @@ func (s *Store) savePendingGuard(ctx context.Context, g config.DurableStorageGua
 	return s.writeDurableGuard(ctx, g, filepath.Join("pending", id+".json"), p)
 }
 
-func (s *Store) writeDurableGuard(ctx context.Context, g config.DurableStorageGuard, path string, p any) (err error) {
+func (s *Store) writeDurableGuard(ctx context.Context, g config.DurableStorageGuard, path string, p any) error {
+	return s.writeDurableGuardChecked(ctx, g, path, p, nil)
+}
+
+func (s *Store) writeDurableGuardChecked(ctx context.Context, g config.DurableStorageGuard, path string, p any, commit func(func() error) error) (err error) {
 	reservation := s.resourceBudget.Reservation()
 	if err = g.CheckHome(s.home); err != nil {
 		return err
@@ -407,7 +415,7 @@ func (s *Store) writeDurableGuard(ctx context.Context, g config.DurableStorageGu
 		return err
 	}
 	defer func() { err = errors.Join(err, q.Close()) }()
-	return q.write(path, n, func(w io.Writer) error { return json.NewEncoder(w).Encode(p) })
+	return q.writeChecked(path, n, func(w io.Writer) error { return json.NewEncoder(w).Encode(p) }, commit)
 }
 
 func (s *Store) stagePendingSourceGuard(g config.DurableStorageGuard, id string, ref archive.SourceReference, data []byte) (err error) {

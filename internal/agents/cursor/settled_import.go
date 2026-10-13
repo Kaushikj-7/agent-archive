@@ -455,7 +455,10 @@ func validateSettledMetadata(ctx context.Context, key string, raw []byte) error 
 			return cursorstore.NotChecked(cursorstore.UnknownFormat)
 		}
 	}
-	if value, present := fields["workspaceIdentifier"]; present && !bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+	if value, present := fields["workspaceIdentifier"]; present {
+		if bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+			return cursorstore.NotChecked(cursorstore.UnknownFormat)
+		}
 		var workspace map[string]json.RawMessage
 		if json.Unmarshal(value, &workspace) != nil || workspace == nil {
 			return cursorstore.NotChecked(cursorstore.UnknownFormat)
@@ -472,16 +475,79 @@ func validateSettledMetadata(ctx context.Context, key string, raw []byte) error 
 			}
 		}
 		if raw, present := workspace["uri"]; present {
-			var uri any
-			if json.Unmarshal(raw, &uri) != nil {
-				return cursorstore.NotChecked(cursorstore.UnknownFormat)
-			}
-			switch uri.(type) {
-			case string, map[string]any:
-			default:
-				return cursorstore.NotChecked(cursorstore.UnknownFormat)
+			if err := validateSettledURI(raw); err != nil {
+				return err
 			}
 		}
+	}
+	if raw, present := fields["subagentComposerIds"]; present {
+		if err := validateSettledRoster(ctx, raw); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateSettledURI(raw []byte) error {
+	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return cursorstore.NotChecked(cursorstore.UnknownFormat)
+	}
+	var text string
+	if json.Unmarshal(raw, &text) == nil {
+		return nil
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(raw, &fields) != nil || fields == nil {
+		return cursorstore.NotChecked(cursorstore.UnknownFormat)
+	}
+	names := []string{"scheme", "authority", "fsPath", "path", "external"}
+	for name, value := range fields {
+		for _, canonical := range names {
+			if strings.EqualFold(name, canonical) {
+				if name != canonical || bytes.Equal(bytes.TrimSpace(value), []byte("null")) || json.Unmarshal(value, &text) != nil {
+					return cursorstore.NotChecked(cursorstore.UnknownFormat)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// validateSettledRoster bounds every prospective ID before the lenient catalog
+// decoder allocates its roster; that decoder still owns canonical sorting/hash.
+func validateSettledRoster(ctx context.Context, raw []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	token, err := decoder.Token()
+	if err != nil || token != json.Delim('[') {
+		return cursorstore.NotChecked(cursorstore.UnknownFormat)
+	}
+	seen := map[string]bool{}
+	count := 0
+	for decoder.More() {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if count == 64 {
+			return cursorstore.NotChecked(cursorstore.UnknownFormat)
+		}
+		var encoded json.RawMessage
+		if decoder.Decode(&encoded) != nil || len(encoded) > 6*255+2 || bytes.Equal(bytes.TrimSpace(encoded), []byte("null")) {
+			return cursorstore.NotChecked(cursorstore.UnknownFormat)
+		}
+		var id string
+		if json.Unmarshal(encoded, &id) != nil || id == "" || len(id) > 255 || seen[id] {
+			return cursorstore.NotChecked(cursorstore.UnknownFormat)
+		}
+		seen[id] = true
+		count++
+	}
+	token, err = decoder.Token()
+	if err != nil || token != json.Delim(']') {
+		return cursorstore.NotChecked(cursorstore.UnknownFormat)
+	}
+	var extra json.RawMessage
+	if decoder.Decode(&extra) != io.EOF {
+		return cursorstore.NotChecked(cursorstore.UnknownFormat)
 	}
 	return nil
 }

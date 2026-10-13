@@ -241,8 +241,11 @@ func settledHeaderCount(ctx context.Context, value []byte, limit int) (int, erro
 		return 0, NotChecked(UnknownFormat)
 	}
 	raw, present := fields["fullConversationHeadersOnly"]
-	if !present || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
-		return 0, nil
+	if !present || string(raw) == "null" {
+		raw, present = fields["conversation"]
+		if !present || string(raw) == "null" {
+			return 0, nil
+		}
 	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	token, err := decoder.Token()

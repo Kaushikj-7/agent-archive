@@ -66,7 +66,8 @@ type Store struct {
 	hook bool
 	// onWriteSync, when set by a test, runs where writeUnderLock syncs to
 	// disk outside the lock: once its temporary file is synced, and once it
-	// is renamed into place, before the directory is synced.
+	// is renamed into place, before the directory is synced. Settled first-save
+	// preparation also invokes it after its synced temp and before commit checks.
 	onWriteSync func()
 	// onLockWait, when set by a test, runs before any wait for a lock that
 	// can last (see namedLockWait), with the lock's name.

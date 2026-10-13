@@ -53,3 +53,36 @@ func TestSettledAdmissionReservesHeaderCountBeforeParsing(t *testing.T) {
 		t.Fatalf("adequate header-count owner lost malformed control: visits=%d err=%v", visits, err)
 	}
 }
+
+func TestSettledAdmissionCountsInlineFallbackBeforeDecode(t *testing.T) {
+	for _, raw := range []string{
+		`{"_v":18,"composerId":"c","conversation":[{"bubbleId":"b1"},{"bubbleId":"b2"},{"bubbleId":"b3"}]}`,
+		`{"_v":18,"composerId":"c","fullConversationHeadersOnly":null,"conversation":[{"bubbleId":"b1"},{"bubbleId":"b2"},{"bubbleId":"b3"}]}`,
+	} {
+		t.Run(raw, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "state.vscdb")
+			writeDB(t, path, false, map[string]any{"composerData:c": raw})
+			visits := 0
+			_, err := ReadSettledAdmission(t.Context(), path, "c", 1<<20, 1<<20, &settledAdmissionBudget{rows: 5, bytes: 1 << 20}, func(agentapi.DatabaseRecord) error { visits++; return nil })
+			if !errors.Is(err, agentapi.ErrReadBudget) || visits != 0 {
+				t.Fatalf("inline decode preceded row refusal: visits=%d err=%v", visits, err)
+			}
+			_, err = ReadSettledAdmission(t.Context(), path, "c", 1<<20, 1<<20, &settledAdmissionBudget{rows: 1024, bytes: 1 << 20}, func(agentapi.DatabaseRecord) error { visits++; return nil })
+			if err != nil || visits == 0 {
+				t.Fatalf("adequate inline fallback: visits=%d err=%v", visits, err)
+			}
+		})
+	}
+}
+
+func TestSettledHeaderCountKeepsOrdinaryPrecedence(t *testing.T) {
+	raw := []byte(`{"fullConversationHeadersOnly":[],"conversation":[{"bubbleId":"fallback"}]}`)
+	count, err := settledHeaderCount(t.Context(), raw, 0)
+	if err != nil || count != 0 {
+		t.Fatalf("non-null full headers lost precedence: %d %v", count, err)
+	}
+	_, ids, err := decodeHeaders(raw)
+	if err != nil || len(ids) != 0 {
+		t.Fatalf("ordinary header precedence changed: %v %v", ids, err)
+	}
+}

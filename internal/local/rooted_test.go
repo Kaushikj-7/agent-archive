@@ -2,6 +2,7 @@ package local
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -142,5 +143,72 @@ func TestRootedHomeRejectsPermissionsChangedDuringScope(t *testing.T) {
 	}
 	if err := held.Check(); err == nil {
 		t.Fatal("unsafe changed home retained authority")
+	}
+}
+
+func TestRootedCheckedCommitRequiresActualRename(t *testing.T) {
+	for _, omit := range []bool{false, true} {
+		t.Run(fmt.Sprint(omit), func(t *testing.T) {
+			home := t.TempDir()
+			if err := os.Chmod(home, 0700); err != nil {
+				t.Fatal(err)
+			}
+			held, err := OpenRootedHome(home)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() {
+				if err := held.Close(); err != nil {
+					t.Error(err)
+				}
+			}()
+			err = RootedAtomicWriteChecked(held.Root, "selected.json", func(w io.Writer) error { _, err := w.Write([]byte("selected")); return err }, func(rename func() error) error {
+				if omit {
+					return nil
+				}
+				return rename()
+			})
+			if omit {
+				if err == nil {
+					t.Fatal("omitted rename reported durable success")
+				}
+				if _, err = held.Root.Lstat("selected.json"); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("omitted commit wrote selection: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw, err := os.ReadFile(filepath.Join(home, "selected.json"))
+			if err != nil || string(raw) != "selected" {
+				t.Fatal(string(raw), err)
+			}
+		})
+	}
+}
+
+func TestRootedCheckedCommitRetainsLateRawError(t *testing.T) {
+	home := t.TempDir()
+	if err := os.Chmod(home, 0700); err != nil {
+		t.Fatal(err)
+	}
+	held, err := OpenRootedHome(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := held.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
+	failure := errors.New("late checked commit failure")
+	err = RootedAtomicWriteChecked(held.Root, "selected.json", func(w io.Writer) error { _, err := w.Write([]byte("selected")); return err }, func(rename func() error) error { return errors.Join(rename(), failure) })
+	if !errors.Is(err, failure) {
+		t.Fatalf("late raw error lost: %v", err)
+	}
+	raw, readErr := os.ReadFile(filepath.Join(home, "selected.json"))
+	if readErr != nil || string(raw) != "selected" {
+		t.Fatal(string(raw), readErr)
 	}
 }
