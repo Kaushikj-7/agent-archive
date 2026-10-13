@@ -34,7 +34,8 @@ Planning, including `--dry-run`, can update the disposable private
 It holds successful intrinsic inspection facts for ordinary Codex rollouts,
 qualified by verified content digests and inspection versions. Current source
 opening, content checks, project permissions and archive decisions still run.
-The cache stores at most 10,000 entries and 16 MiB; a bounded command writer
+The cache stores at most 10,000 entries and 16 MiB of serialized records
+(filesystem overhead is additional); a bounded command writer
 can drop observations under load. A missing, invalid, busy or evicted cache
 simply causes full inspection. Delete this directory to discard it. Neither
 planning nor this cache registers sessions, changes configuration or uploads data.
