@@ -185,17 +185,20 @@ func (s *Store) FreezeStagedSelection(ctx context.Context, id string, p PendingP
 	if found && request.Token != p.RequestToken || !found && p.RequestToken != "" {
 		return p, ErrDurableStorageRecovery
 	}
-	q := &StagedSelection{Version: 3, StageSHA256: stage.SHA256, CoveredToken: p.RequestToken, HadRequest: found, Core: ReadySelection{Version: 3, Purpose: "staged-import", DestinationID: cfg.DestinationID(), Predecessor: predecessor, MetadataSHA256: readySHA(p.MetadataBytes)}}
+	version := 3
+	purpose := stagedImportPurpose
+	var facts *cursor.SettledImportFacts
+	var factsSHA256 string
 	if stage.Version == 3 {
-		q.Version = 4
-		q.Core.Version = 4
-		q.Core.Purpose = "settled-cursor-import"
-		q.CursorFacts = stage.CursorFacts
-		q.CursorFactsSHA256, err = s.readyDigest(ctx, stage.CursorFacts)
+		version = 4
+		purpose = settledCursorImportPurpose
+		facts = stage.CursorFacts
+		factsSHA256, err = s.readyDigest(ctx, stage.CursorFacts)
 		if err != nil {
 			return p, err
 		}
 	}
+	q := &StagedSelection{Version: version, StageSHA256: stage.SHA256, CoveredToken: p.RequestToken, HadRequest: found, CursorFacts: facts, CursorFactsSHA256: factsSHA256, Core: ReadySelection{Version: version, Purpose: string(purpose), DestinationID: cfg.DestinationID(), Predecessor: predecessor, MetadataSHA256: readySHA(p.MetadataBytes)}}
 	predecessorView := p
 	predecessorView.Selection = &q.Core
 	if err := s.freezeReadyPredecessor(ctx, id, &predecessorView, previous); err != nil {
@@ -236,7 +239,7 @@ func (s *Store) FreezeStagedSelection(ctx context.Context, id string, p PendingP
 		return p, err
 	}
 	p.JournalVersion = q.Version
-	p.setStagedProof(q)
+	setPendingStagedProof(&p, q)
 	q.Core.BindingSHA256, err = s.readyBinding(ctx, p)
 	if err != nil {
 		return p, err
@@ -548,7 +551,8 @@ func (p PendingPublication) StagedProof() *StagedSelection {
 	}
 	return p.StagedSelection
 }
-func (p *PendingPublication) setStagedProof(q *StagedSelection) {
+
+func setPendingStagedProof(p *PendingPublication, q *StagedSelection) {
 	p.StagedSelection = nil
 	p.CursorSelection = nil
 	if q == nil {
@@ -560,6 +564,7 @@ func (p *PendingPublication) setStagedProof(q *StagedSelection) {
 		p.StagedSelection = q
 	}
 }
+
 func (p *publishedSnapshot) StagedProof() *StagedSelection {
 	if p == nil {
 		return nil
@@ -569,6 +574,7 @@ func (p *publishedSnapshot) StagedProof() *StagedSelection {
 	}
 	return p.StagedSelection
 }
+
 func (p *publishedSnapshot) setStagedProof(q *StagedSelection) {
 	p.StagedSelection = nil
 	p.CursorSelection = nil
@@ -581,3 +587,10 @@ func (p *publishedSnapshot) setStagedProof(q *StagedSelection) {
 		p.StagedSelection = q
 	}
 }
+
+type stagedSelectionPurpose string
+
+const (
+	stagedImportPurpose        stagedSelectionPurpose = "staged-import"
+	settledCursorImportPurpose stagedSelectionPurpose = "settled-cursor-import"
+)

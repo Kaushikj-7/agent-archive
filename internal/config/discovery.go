@@ -766,6 +766,7 @@ func peelStagedSelectionProtection(c Config) (Config, error) {
 func (c Config) SupportsSettledCursorSelection() bool {
 	return c.SchemaVersion == 14 && c.SettledCursorSelectionProtection && c.SupportsStagedSelection()
 }
+
 func peelSettledCursorSelectionProtection(c Config) (Config, error) {
 	if !c.SettledCursorSelectionProtection {
 		if c.SchemaVersion == 14 {

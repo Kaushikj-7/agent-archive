@@ -2,10 +2,10 @@ package local
 
 import (
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -148,7 +148,7 @@ func TestRootedHomeRejectsPermissionsChangedDuringScope(t *testing.T) {
 
 func TestRootedCheckedCommitRequiresActualRename(t *testing.T) {
 	for _, omit := range []bool{false, true} {
-		t.Run(fmt.Sprint(omit), func(t *testing.T) {
+		t.Run(strconv.FormatBool(omit), func(t *testing.T) {
 			home := t.TempDir()
 			if err := os.Chmod(home, 0700); err != nil {
 				t.Fatal(err)

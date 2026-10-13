@@ -31,16 +31,16 @@ func checkStagedConfigAuthority(data []byte) error {
 		if err = d.Decode(&value); err != nil {
 			return err
 		}
-		for _, name := range []string{"schema_version", "staged_selection_protection", "settled_cursor_selection_protection"} {
-			if strings.EqualFold(key, name) {
-				seen[name]++
-				if name == "schema_version" {
+		for _, name := range []stagedConfigField{stagedConfigSchemaField, stagedConfigSelectionField, stagedConfigCursorField} {
+			if strings.EqualFold(key, string(name)) {
+				seen[string(name)]++
+				if name == stagedConfigSchemaField {
 					schema = value
-					schemaExact = schemaExact && key == name
+					schemaExact = schemaExact && key == string(name)
 				}
-				if name == "staged_selection_protection" || name == "settled_cursor_selection_protection" {
+				if name == stagedConfigSelectionField || name == stagedConfigCursorField {
 					staged = true
-					if key != name || seen[name] != 1 || bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+					if key != string(name) || seen[string(name)] != 1 || bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
 						return errors.New("invalid staged configuration authority")
 					}
 				}
@@ -89,4 +89,12 @@ type stagedWriterField string
 const (
 	stagedWriterVersionField stagedWriterField = "version"
 	stagedWriterNameField    stagedWriterField = "writer"
+)
+
+type stagedConfigField string
+
+const (
+	stagedConfigSchemaField    stagedConfigField = "schema_version"
+	stagedConfigSelectionField stagedConfigField = "staged_selection_protection"
+	stagedConfigCursorField    stagedConfigField = "settled_cursor_selection_protection"
 )

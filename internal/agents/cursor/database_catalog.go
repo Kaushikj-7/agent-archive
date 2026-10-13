@@ -259,13 +259,12 @@ func composerWorkspaceFolder(raw json.RawMessage) string {
 }
 
 func composerReviewFacts(fields map[string]json.RawMessage) agentapi.CursorComposerFacts {
-	facts := agentapi.CursorComposerFacts{Relationships: agentapi.CursorRelationshipsAbsent}
-	if raw, present := fields["_v"]; present {
-		facts.VersionPresent = true
-		if json.Unmarshal(raw, &facts.Version) != nil {
-			facts.Version = 0
-		}
+	versionRaw, versionPresent := fields["_v"]
+	var version int
+	if versionPresent && json.Unmarshal(versionRaw, &version) != nil {
+		version = 0
 	}
+	facts := agentapi.CursorComposerFacts{Relationships: agentapi.CursorRelationshipsAbsent, VersionPresent: versionPresent, Version: version}
 	raw, present := fields["subagentComposerIds"]
 	if !present {
 		return facts

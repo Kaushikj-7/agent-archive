@@ -13,8 +13,10 @@ type settledAdmissionBudget struct {
 	bytes int64
 }
 
-func (b *settledAdmissionBudget) RemainingRows() int    { return b.rows }
+func (b *settledAdmissionBudget) RemainingRows() int { return b.rows }
+
 func (b *settledAdmissionBudget) RemainingBytes() int64 { return b.bytes }
+
 func (b *settledAdmissionBudget) Charge(rows int, bytes int64) error {
 	if rows > b.rows || bytes > b.bytes {
 		return agentapi.Wrap(agentapi.Limit, agentapi.ErrReadBudget)

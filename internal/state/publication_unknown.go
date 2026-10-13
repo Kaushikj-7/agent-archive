@@ -261,11 +261,10 @@ func (p *publishedSnapshot) UnmarshalJSON(data []byte) error {
 	}
 	type plain publishedSnapshot
 	var next plain
-	var wire struct {
+	wire := struct {
 		*plain
 		Cursor *StagedSelection `json:"cursor_commit4"`
-	}
-	wire.plain = &next
+	}{plain: &next}
 	if err := json.Unmarshal(data, &wire); err != nil {
 		return err
 	}

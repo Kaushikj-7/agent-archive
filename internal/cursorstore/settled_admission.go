@@ -39,32 +39,8 @@ func visitSettledComposerMetadata(ctx context.Context, tx *sql.Tx, budget agenta
 	if budget.RemainingRows() <= 0 {
 		return agentapi.Wrap(agentapi.Limit, agentapi.ErrRawLimit)
 	}
-	lengths, err := tx.QueryContext(ctx, `SELECT length(CAST(key AS BLOB)),length(CAST(value AS BLOB)) FROM cursorDiskKV WHERE key >= ? AND key < ? ORDER BY key LIMIT ?`, lower, upper, budget.RemainingRows()+1)
+	count, err := countSettledComposerMetadata(ctx, tx, budget, lower, upper)
 	if err != nil {
-		return err
-	}
-	count := 0
-	for {
-		if err = budget.Charge(1, 16); err != nil {
-			return errors.Join(err, lengths.Close())
-		}
-		if !lengths.Next() {
-			break
-		}
-		var keyBytes, valueBytes sql.NullInt64
-		if err = lengths.Scan(&keyBytes, &valueBytes); err != nil {
-			return errors.Join(err, lengths.Close())
-		}
-		if !keyBytes.Valid || keyBytes.Int64 < 0 || !valueBytes.Valid || valueBytes.Int64 < 0 || keyBytes.Int64 > budget.RemainingBytes() || valueBytes.Int64 > budget.RemainingBytes()-keyBytes.Int64 {
-			return errors.Join(agentapi.Wrap(agentapi.Limit, agentapi.ErrRawLimit), lengths.Close())
-		}
-		// Reserve key, value and row metadata before the payload query allocates.
-		if err = budget.Charge(1, keyBytes.Int64+valueBytes.Int64); err != nil {
-			return errors.Join(err, lengths.Close())
-		}
-		count++
-	}
-	if err = errors.Join(lengths.Err(), lengths.Close()); err != nil {
 		return err
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT key,value FROM cursorDiskKV WHERE key >= ? AND key < ? ORDER BY key LIMIT ?`, lower, upper, count+1)
@@ -90,4 +66,33 @@ func visitSettledComposerMetadata(ctx context.Context, tx *sql.Tx, budget agenta
 		return NotChecked(ChangedDuringRead)
 	}
 	return errors.Join(rows.Err(), ctx.Err())
+}
+
+func countSettledComposerMetadata(ctx context.Context, tx *sql.Tx, budget agentapi.RecoveryReadBudget, lower, upper string) (count int, err error) {
+	lengths, err := tx.QueryContext(ctx, `SELECT length(CAST(key AS BLOB)),length(CAST(value AS BLOB)) FROM cursorDiskKV WHERE key >= ? AND key < ? ORDER BY key LIMIT ?`, lower, upper, budget.RemainingRows()+1)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { err = errors.Join(err, lengths.Close()) }()
+	for {
+		if err = budget.Charge(1, 16); err != nil {
+			return 0, err
+		}
+		if !lengths.Next() {
+			break
+		}
+		var keyBytes, valueBytes sql.NullInt64
+		if err = lengths.Scan(&keyBytes, &valueBytes); err != nil {
+			return 0, err
+		}
+		if !keyBytes.Valid || keyBytes.Int64 < 0 || !valueBytes.Valid || valueBytes.Int64 < 0 || keyBytes.Int64 > budget.RemainingBytes() || valueBytes.Int64 > budget.RemainingBytes()-keyBytes.Int64 {
+			return 0, agentapi.Wrap(agentapi.Limit, agentapi.ErrRawLimit)
+		}
+		// Reserve key, value and row metadata before the payload query allocates.
+		if err = budget.Charge(1, keyBytes.Int64+valueBytes.Int64); err != nil {
+			return 0, err
+		}
+		count++
+	}
+	return count, lengths.Err()
 }

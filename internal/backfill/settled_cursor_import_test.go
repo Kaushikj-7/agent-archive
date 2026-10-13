@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -55,7 +56,7 @@ func settledCursorFixture(t *testing.T) (Registration, Candidate, config.Config,
 	c.reviewedCursor = &catalog.Chats[0]
 	r.CursorDatabase = database
 	r.Context = t.Context()
-	if _, _, err = r.Store.EnsureArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.ID("cursor"), NativeID: c.NativeSessionID}); err != nil {
+	if _, _, err = r.Store.EnsureArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.Cursor, NativeID: c.NativeSessionID}); err != nil {
 		t.Fatal(err)
 	}
 	return r, c, cfg, database
@@ -338,7 +339,7 @@ func TestSettledCursorExactStageRetryAfterAdmission(t *testing.T) {
 
 func TestSettledCursorGlobalRosterBoundControls(t *testing.T) {
 	for _, count := range []int{64, 65} {
-		t.Run(fmt.Sprint(count), func(t *testing.T) {
+		t.Run(strconv.Itoa(count), func(t *testing.T) {
 			r, c, _, database := settledCursorFixture(t)
 			ids := make([]string, count)
 			for i := range ids {

@@ -8,17 +8,17 @@ import (
 // DatabaseChat is compact native catalog evidence for a possible historical session.
 // KeyID is the native record locator; identity disagreement is not silently repaired.
 type DatabaseChat struct {
-	CursorFacts CursorComposerFacts
-	ID          string
-	KeyID       string
-	CreatedAt   time.Time
-	Folder      string
-	WorkspaceID string
+	CursorFacts CursorComposerFacts `json:"CursorFacts"`
+	ID          string              `json:"ID"`
+	KeyID       string              `json:"KeyID"`
+	CreatedAt   time.Time           `json:"CreatedAt"`
+	Folder      string              `json:"Folder"`
+	WorkspaceID string              `json:"WorkspaceID"`
 	// WorkspaceIdentifier reports that the native record carried a workspace
 	// reference at all, even one that names no local folder or ID (a remote
 	// or unknown URI shape). Such a chat is not known to be folderless.
-	WorkspaceIdentifier bool
-	Malformed           bool
+	WorkspaceIdentifier bool `json:"WorkspaceIdentifier"`
+	Malformed           bool `json:"Malformed"`
 }
 
 // DatabaseCatalog retains only compact planning metadata, never raw message content.
@@ -54,10 +54,10 @@ type DatabaseCatalogLookup interface {
 
 // CursorComposerFacts is comparable review data, never admission authority.
 type CursorComposerFacts struct {
-	VersionPresent bool
-	Version        int
-	Relationships  CursorRelationshipShape
-	ChildIDsSHA256 string
+	VersionPresent bool                    `json:"VersionPresent"`
+	Version        int                     `json:"Version"`
+	Relationships  CursorRelationshipShape `json:"Relationships"`
+	ChildIDsSHA256 string                  `json:"ChildIDsSHA256"`
 }
 
 // CursorRelationshipShape distinguishes absent relationships from malformed input.

@@ -1093,6 +1093,7 @@ func (s *Store) SaveSettledCursorImportStage(ctx context.Context, reg archive.Se
 	})
 	return digest, err
 }
+
 func (p ImportStage) validateCursorFacts(reg archive.SessionRegistration) error {
 	if p.Version != 3 {
 		if p.CursorFacts != nil {
@@ -1157,7 +1158,7 @@ func (s *Store) checkFreshSettledStage(ctx context.Context, g config.DurableStor
 			return errors.Join(ErrReadySelectionFrozen, e)
 		}
 	}
-	for _, path := range []string{importStageRelative(reg.ArchiveSessionID), stagedControl(reg.ArchiveSessionID, "release.json"), stagedControl(reg.ArchiveSessionID, "release-progress.json"), importCancelRelative(reg.ArchiveSessionID)} {
+	for _, path := range []string{importStageRelative(reg.ArchiveSessionID), stagedControl(reg.ArchiveSessionID, stagedReleaseReceiptName), stagedControl(reg.ArchiveSessionID, stagedReleaseProgressName), importCancelRelative(reg.ArchiveSessionID)} {
 		_, e = held.Root.Lstat(path)
 		if e == nil {
 			return ErrReadySelectionFrozen

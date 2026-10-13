@@ -211,7 +211,7 @@ func (s *Store) freezeReadyPredecessor(ctx context.Context, id string, p *Pendin
 
 func (s *Store) readyBinding(ctx context.Context, p PendingPublication) (string, error) {
 	p.Selection = nil
-	p.setStagedProof(nil)
+	setPendingStagedProof(&p, nil)
 	p.Catalog = nil
 	p.JournalVersion = 0
 	p.Attempted = false

@@ -993,6 +993,7 @@ func FilterComposerRecordsBounded(ctx context.Context, raw []byte, next func(con
 	}
 	return out, closeOutput, err
 }
+
 func (b *cursorOutputBudget) encodedBound(value any) (int64, error) {
 	const scratch int64 = 32 << 10
 	if !b.owner.Reserve(scratch) {
@@ -1005,6 +1006,7 @@ func (b *cursorOutputBudget) encodedBound(value any) (int64, error) {
 	}
 	return n, nil
 }
+
 func (b *cursorOutputBudget) encodeRecord(value any) ([]byte, error) {
 	if b.count >= 65536 {
 		return nil, agentapi.Wrap(agentapi.Limit, agentapi.ErrReadBudget)
@@ -1026,6 +1028,7 @@ func (b *cursorOutputBudget) encodeRecord(value any) ([]byte, error) {
 	b.count++
 	return encoded, nil
 }
+
 func (b *cursorOutputBudget) encodeTransient(value any) ([]byte, error) {
 	n, err := b.encodedBound(value)
 	if err != nil {

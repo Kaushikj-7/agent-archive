@@ -9,6 +9,7 @@ import (
 	"errors"
 	"io"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -30,6 +31,7 @@ type SettledImportFacts struct {
 // SettledImportEvidence owns an actual immutable capture. Its zero value and
 // closed copies cannot supply a selected stage; copies share the same lifetime.
 type SettledImportEvidence struct{ capture *settledCapture }
+
 type settledCapture struct {
 	mu      sync.Mutex
 	closed  bool
@@ -47,8 +49,10 @@ type settledReadBudget struct {
 	charged int64
 }
 
-func (b *settledReadBudget) RemainingRows() int    { return b.rows }
+func (b *settledReadBudget) RemainingRows() int { return b.rows }
+
 func (b *settledReadBudget) RemainingBytes() int64 { return b.owner.Available() }
+
 func (b *settledReadBudget) Charge(rows int, bytes int64) error {
 	if rows < 0 || rows > b.rows || bytes < 0 || !b.owner.Reserve(bytes) {
 		return agentapi.Wrap(agentapi.Limit, agentapi.ErrReadBudget)
@@ -92,10 +96,8 @@ func CaptureSettledImport(ctx context.Context, database string, reg archive.Sess
 		if facts.VersionPresent && (facts.Version < 1 || facts.Version > maxComposerVersion) || facts.Relationships == agentapi.CursorRelationshipsMalformed {
 			return cursorstore.NotChecked(cursorstore.UnknownFormat)
 		}
-		for _, child := range decoded.subagents {
-			if child == reg.SourceKey {
-				return cursorstore.NotChecked(cursorstore.UnknownFormat)
-			}
+		if slices.Contains(decoded.subagents, reg.SourceKey) {
+			return cursorstore.NotChecked(cursorstore.UnknownFormat)
 		}
 		// Ordered record hashes preserve the complete observed global routing set.
 		sum := sha256.Sum256(row.Value)
@@ -132,7 +134,7 @@ func CaptureSettledImport(ctx context.Context, database string, reg archive.Sess
 	pass := &sourcePass{live: map[*chatSnapshot]bool{}}
 	snapshot := &chatSnapshot{owner: pass, composer: composer}
 	pass.live[snapshot] = true
-	defer snapshot.Close()
+	defer func() { err = errors.Join(err, snapshot.Close()) }()
 	filter := Filter{}
 	records := snapshot.Input().Records
 	first, ok, err := records.Next(ctx)
@@ -271,7 +273,8 @@ func rejectCursorMetadataDuplicates(ctx context.Context, raw []byte) error {
 		if !compound {
 			return nil
 		}
-		if delimiter == '{' {
+		switch delimiter {
+		case '{':
 			seen := map[string]bool{}
 			for d.More() {
 				key, err := d.Token()
@@ -291,13 +294,13 @@ func rejectCursorMetadataDuplicates(ctx context.Context, raw []byte) error {
 					return err
 				}
 			}
-		} else if delimiter == '[' {
+		case '[':
 			for d.More() {
 				if err := readValue(depth + 1); err != nil {
 					return err
 				}
 			}
-		} else {
+		default:
 			return cursorstore.NotChecked(cursorstore.UnknownFormat)
 		}
 		_, err = d.Token()
@@ -306,7 +309,7 @@ func rejectCursorMetadataDuplicates(ctx context.Context, raw []byte) error {
 	if err := readValue(0); err != nil {
 		return err
 	}
-	if _, err := d.Token(); err != io.EOF {
+	if _, err := d.Token(); !errors.Is(err, io.EOF) {
 		return cursorstore.NotChecked(cursorstore.UnknownFormat)
 	}
 	return nil
@@ -344,6 +347,7 @@ func (f *SettledImportFacts) UnmarshalJSON(raw []byte) error {
 	*f = SettledImportFacts(next)
 	return nil
 }
+
 func exactSettledFields(raw []byte, keys []string) error {
 	var fields map[string]json.RawMessage
 	if json.Unmarshal(raw, &fields) != nil || len(fields) != len(keys) {
@@ -423,6 +427,7 @@ func (r *settledReservation) Reserve(n int64) bool {
 	r.used += n
 	return true
 }
+
 func (r *settledReservation) Release(n int64) {
 	if n < 0 || n > r.used {
 		panic("unbalanced settled reservation")
@@ -430,8 +435,10 @@ func (r *settledReservation) Release(n int64) {
 	r.original.Release(n)
 	r.used -= n
 }
+
 func (r *settledReservation) Available() int64 { return min(r.original.Available(), r.limit-r.used) }
-func (r *settledReservation) Refuse(n int64)   { r.original.Refuse(n) }
+
+func (r *settledReservation) Refuse(n int64) { r.original.Refuse(n) }
 
 func validateSettledMetadata(ctx context.Context, key string, raw []byte) error {
 	if err := rejectCursorMetadataDuplicates(ctx, raw); err != nil {
