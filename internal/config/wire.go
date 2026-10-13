@@ -169,7 +169,7 @@ func validateCompositionConfig(plain configJSON, fenced bool) error {
 	if plain.StagedSelectionProtection && (!fenced || plain.SchemaVersion != 13 || plain.Storage.EffectiveArchiveFormat() != destination.FormatLegacy) {
 		return errors.New("staged selection requires its exact noncatalog writer fence")
 	}
-	if plain.PublicationCompositionProtection && (!fenced || !(plain.SchemaVersion == 12 || plain.SchemaVersion == 13 && plain.StagedSelectionProtection) || !plain.DurableStorageProtection) {
+	if plain.PublicationCompositionProtection && !(fenced && (plain.SchemaVersion == 12 || plain.SchemaVersion == 13 && plain.StagedSelectionProtection) && plain.DurableStorageProtection) {
 		return errors.New("publication composition requires its exact protected writer fence")
 	}
 	if plain.Storage.EffectiveArchiveFormat() == destination.FormatCatalogV4 && (!fenced || (plain.SchemaVersion != 11 && (plain.SchemaVersion != 12 || !plain.PublicationCompositionProtection || !plain.DurableStorageProtection))) {

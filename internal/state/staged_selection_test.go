@@ -50,17 +50,16 @@ func stagedPreparedFixture(t *testing.T, request bool) (*Store, PendingPublicati
 	reg.ImportBatch = archive.NewImportBatch("synthetic-batch")
 	at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	reg.AdmittedAt = at
-	p := PendingPublication{Bundle: archive.SourceBundle{SchemaVersion: archive.SourceSchemaVersion, ArchiveSessionID: id, NativeSessionID: reg.NativeSessionID, ProjectID: reg.ProjectID, Capture: archive.SourceCapture{Harness: reg.Harness, AdapterName: "synthetic", FilterVersion: archive.FilterVersion, CapturedAt: at}, NativeRecords: []map[string]any{{"content": strings.Repeat("x", 96<<10)}}}, ReadyAt: at, Attempted: true, SkillEvidence: string(cfg.EffectiveSkillEvidence())}
-	p.MetadataKey, err = archive.MetadataObjectKey(reg.Harness.Name, id)
+	metadataKey, err := archive.MetadataObjectKey(reg.Harness.Name, id)
 	if err != nil {
 		t.Fatal(err)
 	}
 	initialMetadata := archive.Metadata{SchemaVersion: archive.MetadataSchemaVersion, SessionID: id, NativeSessionID: reg.NativeSessionID, ProjectID: reg.ProjectID, Harness: reg.Harness, CapturedAt: at, FilterVersion: archive.FilterVersion, Adapter: archive.AdapterInfo{Name: "synthetic"}}
-	p.MetadataBytes, err = json.Marshal(initialMetadata)
+	metadataBytes, err := json.Marshal(initialMetadata)
 	if err != nil {
 		t.Fatal(err)
 	}
-	p.Bundle.Capture.FilterVersion = archive.FilterVersion
+	p := PendingPublication{MetadataKey: metadataKey, MetadataBytes: metadataBytes, Bundle: archive.SourceBundle{SchemaVersion: archive.SourceSchemaVersion, ArchiveSessionID: id, NativeSessionID: reg.NativeSessionID, ProjectID: reg.ProjectID, Capture: archive.SourceCapture{Harness: reg.Harness, AdapterName: "synthetic", FilterVersion: archive.FilterVersion, CapturedAt: at}, NativeRecords: []map[string]any{{"content": strings.Repeat("x", 96<<10)}}}, ReadyAt: at, Attempted: true, SkillEvidence: string(cfg.EffectiveSkillEvidence())}
 	source, err := archive.BuildCompressedSource(p.Bundle)
 	if err != nil {
 		t.Fatal(err)
