@@ -24,6 +24,8 @@ import (
 // and no path: projects are named by project ID and sessions by archive
 // session ID. Registrations point back to it through ImportBatch.
 type Batch struct {
+	stagedResult *stagedBatchResult
+
 	// ID is <local date>-<n>, n counting that day's imports from 1.
 	ID        string    `json:"id"`
 	StartedAt time.Time `json:"started_at"`
@@ -426,20 +428,54 @@ func (b *Batch) reconcileStagedSources(store *state.Store) error {
 	if !found || !cfg.ImportStagingProtection {
 		return nil
 	}
+	if cfg.StagedSelectionProtection && b.stagedResult == nil {
+		reader, closeResults := store.WithImportResultScope(context.Background())
+		b.stagedResult = &stagedBatchResult{reader: reader, close: closeResults}
+	}
+	pageStore := store
+	if b.stagedResult != nil {
+		pageStore = b.stagedResult.reader
+	}
 	for after := ""; ; {
-		stages, next, err := store.ImportStages(context.Background(), after, 50)
+		stages, next, closePage, err := pageStore.ImportStagesOwned(context.Background(), after, 50)
 		if err != nil {
 			return err
 		}
 		for _, stage := range stages {
-			if stage.Registration.InBatch(b.ID) {
-				b.StagedSessions = addUnique(b.StagedSessions, stage.Registration.ArchiveSessionID)
+			id := stage.Registration.ArchiveSessionID
+			if !stage.Registration.InBatch(b.ID) || slices.Contains(b.StagedSessions, id) {
+				continue
 			}
+			if stage.TypedSelection {
+				copied, err := b.stagedResult.reader.RetainImportID(context.Background(), id)
+				if err != nil {
+					closePage()
+					return err
+				}
+				id = copied
+			}
+			b.StagedSessions = append(b.StagedSessions, id)
 		}
+		closePage()
 		if next == "" {
 			break
 		}
 		after = next
 	}
 	return nil
+}
+
+// Copies of Batch share this result owner. Close only after every alias and
+// serialized/report/upload use has ended; it is idempotent, not a proof.
+type stagedBatchResult struct {
+	reader *state.Store
+	close  func()
+}
+
+// CloseStagedResults releases copied staged-result IDs after all batch aliases
+// finish using them; repeated calls and legacy batches are safe.
+func (b *Batch) CloseStagedResults() {
+	if b.stagedResult != nil {
+		b.stagedResult.close()
+	}
 }

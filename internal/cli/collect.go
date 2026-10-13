@@ -70,7 +70,8 @@ func runCollectCommand(_ []string, _ io.Writer, stderr io.Writer, env Env) int {
 	if home, err := env.home(); err == nil {
 		_ = local.TrimLog(filepath.Join(home, "collector-error.log"), errorLogMaxBytes, errorLogKeepBytes)
 	}
-	_, err := runOnePass(env, true)
+	result, err := runOnePass(env, true)
+	defer result.CloseStagedResults()
 	if err != nil {
 		if errors.Is(err, errNotSetUp) || errors.Is(err, errPaused) {
 			return 0

@@ -224,7 +224,11 @@ func (o Options) minUploadInterval() time.Duration {
 }
 
 // Result summarizes one Run call. It never includes transcript content.
+// CloseStagedResults ends copied staged diagnostic ownership after all result
+// aliases and diagnostic consumers finish; it is a no-op for legacy results.
 type Result struct {
+	stagedDiagnostics *stagedDiagnosticResult
+
 	Scanned   int
 	Published []string
 	// Skipped lists sessions with nothing new to publish.
@@ -281,8 +285,11 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	if durableErr != nil {
 		return Result{Errors: map[string]error{"durable-storage": durableErr}}, durableErr
 	}
-	if err := local.ResumeImportAdmissions(ctx); err != nil {
-		return Result{Errors: map[string]error{"staged-imports": err}}, err
+	admission, closeAdmission := local.WithReadBudget(ctx, (&sessionScan{opts: opts}).readBudget())
+	admissionErr := admission.ResumeImportAdmissions(ctx)
+	closeAdmission()
+	if admissionErr != nil {
+		return Result{Errors: map[string]error{"staged-imports": admissionErr}}, admissionErr
 	}
 	// Recovery can finish cancellation or establish selected admissions. Report
 	// their current obligations, rather than the pre-recovery orphan snapshot.
@@ -385,7 +392,41 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 		}
 		p.scan(ctx, reg)
 	}
+	if err := p.resumeStagedReleasesIfActive(ctx, local, store, opts); err != nil {
+		return p.result, err
+	}
 	return p.result, p.saveStatus()
+}
+
+// resumeStagedReleasesIfActive skips fresh work after ordinary recovery ends.
+// The direct helper still treats cancellation during staged work as fatal.
+func (p *pass) resumeStagedReleasesIfActive(ctx context.Context, local *state.Store, store storage.ObjectStore, opts Options) error {
+	if ctx.Err() == nil {
+		return p.resumeStagedReleases(ctx, local, store, opts)
+	}
+	return nil
+}
+
+// resumeStagedReleases transfers diagnostic ownership before ending its read scope.
+func (p *pass) resumeStagedReleases(ctx context.Context, local *state.Store, store storage.ObjectStore, opts Options) error {
+	if remote, ok := store.(state.StagedReadback); ok {
+		scoped, closeSchedule := local.WithReadBudget(ctx, (&sessionScan{opts: opts}).readBudget())
+		holds, closeDiagnostics, err := scoped.ResumeStagedReleases(ctx, remote, opts.CollectorGuard)
+		if closeDiagnostics != nil {
+			p.result.stagedDiagnostics = &stagedDiagnosticResult{close: closeDiagnostics}
+		}
+		closeSchedule()
+		for id, hold := range holds {
+			addError(p.result.Errors, id, hold)
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if err != nil {
+			addError(p.result.Errors, "staged-releases", err)
+		}
+	}
+	return nil
 }
 
 // Cancellation remains fatal even when a refusal also identifies owed work.
@@ -868,5 +909,17 @@ func (p *pass) repairListingIndex() {
 		if err != nil {
 			p.result.Errors["listing-maintenance"] = err
 		}
+	}
+}
+
+// A value copy of Result shares this owner. Close only after every diagnostic
+// consumer and alias is finished; legacy results have no staged owner.
+type stagedDiagnosticResult struct{ close func() }
+
+// CloseStagedResults is idempotent and ends only staged diagnostic ID ownership.
+// No result alias may use those diagnostics after the shared owner is closed.
+func (r Result) CloseStagedResults() {
+	if r.stagedDiagnostics != nil {
+		r.stagedDiagnostics.close()
 	}
 }

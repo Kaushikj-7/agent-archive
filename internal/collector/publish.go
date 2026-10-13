@@ -74,6 +74,9 @@ func (s *sessionScan) block(reason state.BlockedReason, candidate *archive.Sourc
 // finally the removal of the pending file. ctx must be the original scan
 // context; admission derives an invocation context for this serial lifecycle.
 func (s *sessionScan) publishPending(ctx context.Context, pending state.PendingPublication) (sessionOutcome, error) {
+	if err := s.checkStagedDestination(pending); err != nil {
+		return outcomeSkipped, err
+	}
 	if err := pending.ValidateReadySlot(s.id()); err != nil {
 		return outcomeSkipped, err
 	}
@@ -112,11 +115,8 @@ func (s *sessionScan) publishPending(ctx context.Context, pending state.PendingP
 		}
 	}
 
-	if err := s.checkHistoryPublication(pending); err != nil {
+	if err := s.checkPendingUploadInputs(pending); err != nil {
 		return outcomeSkipped, err
-	}
-	if !pending.CarriesNoSource() && !storage.VerifySHA256(pending.SourceBytes, pending.SourceSHA256) {
-		return outcomeSkipped, errors.New("pending source checksum does not match its persisted bytes")
 	}
 	// Marking it attempted rewrites the whole file, source bytes and bundle
 	// included, so it is done once: a retry of an attempted publication, or
@@ -141,12 +141,7 @@ func (s *sessionScan) publishPending(ctx context.Context, pending state.PendingP
 	if err := s.upload(pending); err != nil {
 		return outcomeSkipped, err
 	}
-	if s.reg.StagedImportSHA256 != "" && pending.History == nil {
-		if err := s.verifyImportPublication(pending); err != nil {
-			return outcomeSkipped, err
-		}
-	}
-	if pending.Selection != nil {
+	if (s.reg.StagedImportSHA256 != "" && pending.History == nil) || pending.Selection != nil || pending.StagedSelection != nil {
 		if err := s.verifyImportPublication(pending); err != nil {
 			return outcomeSkipped, err
 		}
@@ -157,6 +152,22 @@ func (s *sessionScan) publishPending(ctx context.Context, pending state.PendingP
 		}
 	}
 	return s.acknowledgePublication(pending, false)
+}
+
+// checkStagedDestination runs before any slot check, catalog admission or remote effect.
+func (s *sessionScan) checkStagedDestination(pending state.PendingPublication) error {
+	if pending.StagedSelection != nil {
+		if s.opts.CollectorGuard == nil {
+			return state.ErrReadySelectionFrozen
+		}
+		if authority, ok := s.remote.(interface{ CatalogMetadataAuthority() bool }); ok && authority.CatalogMetadataAuthority() {
+			return state.ErrReadySelectionFrozen
+		}
+		if pending.Catalog != nil {
+			return state.ErrReadySelectionFrozen
+		}
+	}
+	return nil
 }
 
 // acknowledgePublication follows verified exact readback. A committed privacy
@@ -216,6 +227,15 @@ func (s *sessionScan) acknowledgePublication(pending state.PendingPublication, k
 	if err := s.local.RemoveRefreshSkip(s.id()); err != nil {
 		return outcomeSkipped, err
 	}
+	if pending.StagedSelection != nil {
+		if keepPending {
+			return outcomeSkipped, state.ErrReadySelectionFrozen
+		}
+		if err := s.releaseTypedStage(); err != nil {
+			return outcomeSkipped, err
+		}
+		return outcomePublished, nil
+	}
 	if pending.RequestToken != "" {
 		if _, err := s.local.CompleteRequest(s.id(), pending.RequestToken); err != nil {
 			return outcomeSkipped, fmt.Errorf("complete published request: %w", err)
@@ -246,7 +266,7 @@ func (s *sessionScan) upload(pending state.PendingPublication) error {
 	if err := s.local.SaveListingRepair(s.id(), state.ListingRepair{MetadataKey: pending.MetadataKey, DestinationID: s.reg.DestinationID}); err != nil {
 		return fmt.Errorf("journal listing repair: %w", err)
 	}
-	if pending.Selection != nil {
+	if pending.Selection != nil || pending.StagedSelection != nil {
 		return s.uploadReadySelection(pending)
 	}
 	if pending.History != nil {
@@ -441,6 +461,17 @@ func (s *sessionScan) recordPublicationRetirement(pending state.PendingPublicati
 			}
 			s.warn(fmt.Errorf("record superseded source for cleanup: %w", err))
 		}
+	}
+	return nil
+}
+
+// checkPendingUploadInputs preserves history admission before byte checksum checks.
+func (s *sessionScan) checkPendingUploadInputs(pending state.PendingPublication) error {
+	if err := s.checkHistoryPublication(pending); err != nil {
+		return err
+	}
+	if !pending.CarriesNoSource() && !storage.VerifySHA256(pending.SourceBytes, pending.SourceSHA256) {
+		return errors.New("pending source checksum does not match its persisted bytes")
 	}
 	return nil
 }
