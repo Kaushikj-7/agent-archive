@@ -3,6 +3,7 @@ package state
 import (
 	"encoding/json"
 	"errors"
+	"reflect"
 	"testing"
 )
 
@@ -35,8 +36,14 @@ func TestPublicationWireGuardCompatibility(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			err := tc.guard([]byte(tc.raw), tc.keys)
 			if tc.refuse {
-				if err != ErrDurableStorageRecovery || !errors.Is(errors.Join(errors.New("outer"), err), ErrDurableStorageRecovery) {
+				// The guard must return the sentinel object itself, not a wrapper or
+				// a fresh error with the same message. The sentinel is pointer-backed.
+				actual, expected := reflect.ValueOf(err), reflect.ValueOf(ErrDurableStorageRecovery)
+				if !actual.IsValid() || actual.Type() != expected.Type() || actual.Kind() != reflect.Pointer || actual.Pointer() != expected.Pointer() {
 					t.Fatalf("recovery identity lost: %v", err)
+				}
+				if !errors.Is(errors.Join(errors.New("outer"), err), ErrDurableStorageRecovery) {
+					t.Fatalf("wrapped recovery identity lost: %v", err)
 				}
 			} else if err != nil {
 				t.Fatalf("ordinary input refused: %v", err)
