@@ -26,3 +26,30 @@ func TestScopedPickerFenceCannotBeFlattenedIntoOlderConfiguration(t *testing.T) 
 		})
 	}
 }
+
+func TestScopedPickerConfigurationComposesAndPreservesProtections(t *testing.T) {
+	t.Parallel()
+	c := Config{RetentionDays: 90, ScopedPickerProtection: true, PublicationCompositionProtection: true, DurableStorageProtection: true, RetentionProtection: true, ImportStagingProtection: true, HistoricalProjectProtection: true, GenerationProtection: true, CodexHistoryProtection: true}
+	c.Storage.ArchiveFormat = "catalog-v4"
+	raw, err := json.Marshal(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded Config
+	if err = json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.SchemaVersion != 14 || !decoded.ScopedPickerProtection || !decoded.PublicationCompositionProtection || !decoded.DurableStorageProtection || !decoded.HistoricalProjectProtection {
+		t.Fatal(decoded)
+	}
+	next := Config{RetentionDays: 90}
+	next.Storage = c.Storage
+	PreserveWriterFence(&next, decoded)
+	raw, err = json.Marshal(next)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = json.Unmarshal(raw, &decoded); err != nil || !decoded.ScopedPickerProtection {
+		t.Fatal(err)
+	}
+}

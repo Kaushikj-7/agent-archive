@@ -14,12 +14,16 @@ import (
 
 func runMigrateCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	fs := env.newCommandFlags("migrate", stderr)
+	scoped := fs.Bool("scoped-picker", false, "build complete scoped indexes in the current catalog-v4 destination")
 	format := fs.String("format", "", "destination format (catalog-v4)")
 	prefix := fs.String("prefix", "", "isolated destination prefix")
 	bucket := fs.String("bucket", "", "isolated destination bucket")
 	rollback := fs.Bool("rollback", false, "return to retained read-only legacy source, only if catalog has not changed")
 	if !fs.parseFlagsOnly(args) {
 		return 2
+	}
+	if *scoped && *format == "" && *prefix == "" && *bucket == "" {
+		return runPickerUpgrade(stdout, stderr, env, *rollback)
 	}
 	if *format != string(destination.FormatCatalogV4) || (*prefix == "" && *bucket == "") {
 		terminal.Println(stderr, "agent-archive: migrate: --format catalog-v4 and an isolated --prefix or --bucket are required")
@@ -76,7 +80,11 @@ func runMigrateCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		return fail(err)
 	}
 	defer unlock()
-	migration, err := catalog.OpenMigration(ctx, source, target, sourceConfig.Storage, targetConfig.Storage, authority)
+	openMigration := catalog.OpenMigration
+	if *scoped {
+		openMigration = catalog.OpenScopedMigration
+	}
+	migration, err := openMigration(ctx, source, target, sourceConfig.Storage, targetConfig.Storage, authority)
 	if err != nil {
 		return fail(err)
 	}
@@ -84,13 +92,22 @@ func runMigrateCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		if err = migration.Rollback(ctx); err != nil {
 			return fail(err)
 		}
-		cfg.Storage = migration.State.Source
+		if migration.State.Protocol == 11 {
+			cfg.Storage = migration.State.Destination
+			cfg.ScopedPickerProtection = true
+		} else {
+			cfg.Storage = migration.State.Source
+		}
 		cfg.Paused = true
 		cfg.SchemaVersion = config.SchemaVersion
 		if err = config.Save(home, cfg); err != nil {
 			return fail(err)
 		}
-		terminal.Println(stdout, "Rolled back to the retained read-only source. Collection remains paused.")
+		if migration.State.Protocol == 11 {
+			terminal.Println(stdout, "Retained the original fully indexed catalog under its permanent scoped writer fence. Publication remains sealed and collection is paused.")
+		} else {
+			terminal.Println(stdout, "Rolled back to the retained read-only source. Collection remains paused.")
+		}
 		return 0
 	}
 	for {
@@ -106,6 +123,9 @@ func runMigrateCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		return fail(err)
 	}
 	cfg.Storage = targetConfig.Storage
+	if *scoped {
+		cfg.ScopedPickerProtection = true
+	}
 	if err = config.Save(home, cfg); err != nil {
 		return fail(err)
 	}

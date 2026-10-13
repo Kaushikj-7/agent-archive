@@ -2,18 +2,18 @@ package catalog
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
 )
 
-// The reservation must not be activated until construction, mutation and reads
-// maintain the complete scoped index universe. Protocol 10 remains writable.
+// Scoped format activation requires exhaustive construction under durable ownership.
 const scopedPickerProtocol = 11
 const scopedPickerSchema = 5
 const scopedPickerCapability = "scoped-picker-v1"
 
-var errScopedPickerUnavailable = errors.New("scoped catalog requires complete scoped picker support; upgrade before reading or modifying this destination")
+var errScopedPickerUnavailable = errors.New("scoped catalog is incomplete or unavailable; complete the scoped catalog upgrade before modifying this destination")
 
 type scopedPickerFormat struct {
 	Version      uint64   `json:"Version"`
@@ -50,11 +50,36 @@ func (h *CatalogHead) UnmarshalJSON(raw []byte) error {
 		if next.Protocol != scopedPickerProtocol || next.Schema != scopedPickerSchema || len(wire.Picker) == 0 || format.Version != 1 || format.RowSchema != 1 || len(format.Capabilities) != 1 || format.Capabilities[0] != scopedPickerCapability {
 			return errors.New("invalid scoped catalog protocol, schema or capabilities")
 		}
-		return errScopedPickerUnavailable
+		next.Picker = &format
 	}
-	if next.Protocol != 10 || next.Schema != 4 {
+	if next.Picker == nil && (next.Protocol != 10 || next.Schema != 4) {
 		return errors.New("unsupported catalog head protocol or schema; upgrade before accessing this destination")
 	}
 	*h = CatalogHead(next)
+	return nil
+}
+
+func pickerFormat() *scopedPickerFormat {
+	return &scopedPickerFormat{Version: 1, RowSchema: 1, Capabilities: []string{scopedPickerCapability}}
+}
+
+func (f *scopedPickerFormat) valid() bool {
+	return f != nil && f.Version == 1 && f.RowSchema == 1 && len(f.Capabilities) == 1 && f.Capabilities[0] == scopedPickerCapability
+}
+
+func (h CatalogHead) validFormat() bool {
+	return (h.Protocol == 10 && h.Schema == 4 && h.Picker == nil) || (h.Protocol == 11 && h.Schema == 5 && h.Picker.valid())
+}
+
+// Protected writes require exact head/coordinator composition, including during
+// activation recovery. A seal alone is never permission to cross a format fence.
+func (w *Writer) writeFormat(ctx context.Context, state admissions) error {
+	h, _, err := w.Head(ctx)
+	if err != nil {
+		return err
+	}
+	if state.Upgrade != nil || h.Protocol != state.Protocol || (h.Picker != nil) != (state.Picker != nil) {
+		return ErrAdmissionClosed
+	}
 	return nil
 }

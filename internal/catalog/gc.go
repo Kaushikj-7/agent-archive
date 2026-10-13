@@ -212,7 +212,7 @@ func (w *Writer) markRetained(ctx context.Context, h CatalogHead, clock storage.
 		if err = old.observeVersion(v); err != nil {
 			return err
 		}
-		if old.Schema != 4 || old.PublicationWitness.LastModified.After(successorTime) {
+		if !old.validFormat() || old.PublicationWitness.LastModified.After(successorTime) {
 			return errors.New("invalid retained head or regressed provider clock")
 		}
 		if err = w.markHead(ctx, old, live, visited); err != nil {
@@ -379,7 +379,9 @@ func (w *Writer) gcHead(ctx context.Context, authorize func(context.Context, *Wr
 	if err != nil {
 		return h, "", err
 	}
-	h = CatalogHead{Schema: 4, Protocol: 10, Generation: 1, Epoch: id, PublicationEpoch: id}
+	h.Generation = 1
+	h.Epoch = id
+	h.PublicationEpoch = id
 	raw, err := json.Marshal(h)
 	if err != nil {
 		return h, "", err

@@ -137,6 +137,10 @@ func (m *Migration) sealIntent(ctx context.Context) error {
 			return ErrAdmissionClosed
 		}
 		state.Seal = m.State.Owner
+		if m.State.Protocol == 11 {
+			state.Protocol = 11
+			state.Picker = pickerFormat()
+		}
 		return nil
 	})
 }
