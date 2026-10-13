@@ -9,6 +9,8 @@ import (
 	"github.com/wangjohn/agent-archive/internal/stateerrors"
 )
 
+// RejectDuplicateAuthorityKeys refuses invalid JSON and repeated authority keys,
+// matching the supplied names without regard to case.
 func RejectDuplicateAuthorityKeys(data []byte, names []string) error {
 	if !json.Valid(data) {
 		return stateerrors.ErrDurableStorageRecovery
@@ -74,6 +76,8 @@ func RejectDuplicateAuthorityKeys(data []byte, names []string) error {
 	return nil
 }
 
+// StrictStagedKeys requires exactly the supplied keys with nonnull values and
+// rejects duplicate authority keys.
 func StrictStagedKeys(raw []byte, keys []string) error {
 	if err := RejectDuplicateAuthorityKeys(raw, keys); err != nil {
 		return err
@@ -94,6 +98,8 @@ func StrictStagedKeys(raw []byte, keys []string) error {
 	return nil
 }
 
+// RejectStagedNullAliases refuses case aliases and null values for the supplied
+// authority names, as well as duplicate authority keys.
 func RejectStagedNullAliases(raw []byte, names []string) error {
 	if err := RejectDuplicateAuthorityKeys(raw, names); err != nil {
 		return err
