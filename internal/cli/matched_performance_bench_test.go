@@ -392,12 +392,15 @@ func TestMatchedPerformanceRejectsPartialOutput(t *testing.T) {
 				if err := json.Unmarshal(output.Bytes(), &doc); err != nil {
 					t.Fatal(err)
 				}
-				if kind == matchedShowParent {
+				switch kind {
+				case matchedShowParent:
 					delete(doc, "linked_session_availability")
-				} else if kind == matchedStats7 {
+				case matchedStats7:
 					delete(doc, "coverage")
-				} else {
+				case matchedList:
 					doc["sessions"] = json.RawMessage("[]")
+				case matchedListText, matchedShowExact, matchedShowShort, matchedStats1, matchedStats30, matchedStats90, matchedInteractive:
+					t.Fatalf("unsupported JSON omission control for %q", kind)
 				}
 				partial := matchedJSON(t, doc)
 				if err := matchedValidate(0, partial, nil, fixture, kind, 50, expected, env); err == nil {
