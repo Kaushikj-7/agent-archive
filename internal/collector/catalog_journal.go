@@ -50,7 +50,11 @@ func (s *sessionScan) prepareCatalogJournal(pending state.PendingPublication) (s
 		if err != nil {
 			return pending, err
 		}
-		pending.Catalog.Recovery = &local.CatalogJournal{Owner: owner, Origin: origin, Destination: s.opts.CatalogDestination, SessionID: s.id(), MutationID: pending.Catalog.ID, ExpectedRevision: pending.Catalog.ExpectedRevision, SHA256: digest}
+		journalProtocol := uint64(0)
+		if pending.Catalog.Protocol == 11 {
+			journalProtocol = 11
+		}
+		pending.Catalog.Recovery = &local.CatalogJournal{Protocol: journalProtocol, Owner: owner, Origin: origin, Destination: s.opts.CatalogDestination, SessionID: s.id(), MutationID: pending.Catalog.ID, ExpectedRevision: pending.Catalog.ExpectedRevision, SHA256: digest}
 		if err = s.local.SavePending(s.id(), pending); err != nil {
 			return pending, err
 		}

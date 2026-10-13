@@ -43,6 +43,13 @@ func (s *Store) publicationClaim(ctx context.Context) (*publicationClaim, error)
 	if err != nil {
 		return nil, err
 	}
+	h, _, headErr := s.Writer.Head(ctx)
+	if headErr != nil {
+		return nil, headErr
+	}
+	if h.Protocol != state.Protocol || (h.Picker != nil) != (state.Picker != nil) || (state.Upgrade != nil && state.Upgrade.Phase != PickerUpgradeDraining) {
+		return nil, ErrAdmissionClosed
+	}
 	owner, ok := state.Owners[claim.owner]
 	if !ok || owner.Digest != claim.digest || state.Hold != "" || len(owner.Refs) != len(claim.refs) {
 		return nil, ErrAdmissionClosed
