@@ -188,27 +188,56 @@ func TestNativeCaptureWholeSourceBoundary(t *testing.T) {
 	}
 }
 
+type capturePackagePath string
+
+const (
+	capturePackageDomain   capturePackagePath = captureDomainPath
+	capturePackageCursor   capturePackagePath = captureCursorAdapterPath
+	capturePackageState    capturePackagePath = "github.com/wangjohn/agent-archive/internal/state"
+	capturePackageBackfill capturePackagePath = "github.com/wangjohn/agent-archive/internal/backfill"
+	capturePackageBuiltin  capturePackagePath = "github.com/wangjohn/agent-archive/internal/agents/builtin"
+)
+
+type captureFixtureFile string
+
+const (
+	captureFixtureFirstSave  captureFixtureFile = "settled_firstsave_test.go"
+	captureFixtureProvenance captureFixtureFile = "settled_capture_provenance_test.go"
+	captureFixtureImport     captureFixtureFile = "settled_cursor_import_test.go"
+	captureFixtureBinding    captureFixtureFile = "nativecapture_binding_test.go"
+)
+
+type captureSymbolName string
+
+const (
+	captureSymbolCursor captureSymbolName = "CaptureSettledCursor"
+	captureSymbolProof  captureSymbolName = "Proof"
+	captureSymbolLoan   captureSymbolName = "WithVerifiedCapture"
+	captureSymbolClose  captureSymbolName = "Close"
+)
+
 func captureFixtureAllowed(pkg, file string) bool {
-	switch pkg {
-	case "github.com/wangjohn/agent-archive/internal/state":
-		return file == "settled_firstsave_test.go" || file == "settled_capture_provenance_test.go"
-	case "github.com/wangjohn/agent-archive/internal/backfill":
-		return file == "settled_cursor_import_test.go"
-	case "github.com/wangjohn/agent-archive/internal/agents/builtin":
-		return file == "nativecapture_binding_test.go"
+	switch capturePackagePath(pkg) {
+	case capturePackageState:
+		return captureFixtureFile(file) == captureFixtureFirstSave || captureFixtureFile(file) == captureFixtureProvenance
+	case capturePackageBackfill:
+		return captureFixtureFile(file) == captureFixtureImport
+	case capturePackageBuiltin:
+		return captureFixtureFile(file) == captureFixtureBinding
 	default:
 		return false
 	}
 }
 
 func captureSymbolAllowed(pkg, name string, fixture bool) bool {
-	if pkg == captureDomainPath {
+	if capturePackagePath(pkg) == capturePackageDomain {
 		return true
 	}
-	if pkg == "github.com/wangjohn/agent-archive/internal/agents/cursor" || fixture {
-		return name == "CaptureSettledCursor" || name == "Proof" || name == "WithVerifiedCapture" || name == "Close"
+	symbol := captureSymbolName(name)
+	if capturePackagePath(pkg) == capturePackageCursor || fixture {
+		return symbol == captureSymbolCursor || symbol == captureSymbolProof || symbol == captureSymbolLoan || symbol == captureSymbolClose
 	}
-	return name == "Proof" || name == "WithVerifiedCapture" || name == "Close"
+	return symbol == captureSymbolProof || symbol == captureSymbolLoan || symbol == captureSymbolClose
 }
 
 func TestNativeCaptureSymbolBoundaryControls(t *testing.T) {
@@ -235,7 +264,7 @@ func captureObjectAllowed(pkg string, obj types.Object, fixture bool) bool {
 	if !captureSymbolAllowed(pkg, obj.Name(), fixture) {
 		return false
 	}
-	if pkg == captureDomainPath || pkg == "github.com/wangjohn/agent-archive/internal/agents/cursor" || fixture {
+	if capturePackagePath(pkg) == capturePackageDomain || capturePackagePath(pkg) == capturePackageCursor || fixture {
 		return true
 	}
 	if obj.Name() == "Proof" {
@@ -335,7 +364,7 @@ func (i captureProbeImporter) Import(path string) (*types.Package, error) {
 const captureCursorAdapterPath = "github.com/wangjohn/agent-archive/internal/agents/cursor"
 
 func captureBoundaryImport(path string) bool {
-	return path == captureDomainPath || path == captureCursorAdapterPath
+	return capturePackagePath(path) == capturePackageDomain || capturePackagePath(path) == capturePackageCursor
 }
 
 func captureAdapterConstructor(obj types.Object) bool {

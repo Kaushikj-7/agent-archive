@@ -48,12 +48,12 @@ func (s *Store) ownIndexExtent(n int64) (func(), error) {
 }
 
 func (s *Store) retainIndexExtent(n int64) error {
-	close, err := s.ownIndexExtent(n)
+	releaseExtent, err := s.ownIndexExtent(n)
 	if err != nil {
 		return err
 	}
 	if s.resourceReservation != nil {
-		*s.resourceReleases = append(*s.resourceReleases, close)
+		*s.resourceReleases = append(*s.resourceReleases, releaseExtent)
 	}
 	return nil
 }

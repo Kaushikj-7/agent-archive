@@ -190,17 +190,17 @@ func TestSettledCaptureRequestCloseBeforeRenameKeepsAuthority(t *testing.T) {
 
 func TestSettledCaptureProofCopiesShareTerminalClose(t *testing.T) {
 	s, reg, request, proof, budget := settledStateCaptureFixture(t)
-	copy := *proof
+	proofCopy := *proof
 	if err := proof.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := copy.Close(); err != nil {
+	if err := proofCopy.Close(); err != nil {
 		t.Fatal(err)
 	}
 	read, closeRead := s.WithReadBudget(t.Context(), budget)
 	defer closeRead()
 	before := stagedAuthorityBytes(t, s, reg.ArchiveSessionID)
-	if _, err := read.SaveSettledCursorImportStage(t.Context(), reg, request, &copy); err == nil {
+	if _, err := read.SaveSettledCursorImportStage(t.Context(), reg, request, &proofCopy); err == nil {
 		t.Fatal("closed copied proof accepted")
 	}
 	assertStagedAuthorityBytes(t, s, reg.ArchiveSessionID, before)

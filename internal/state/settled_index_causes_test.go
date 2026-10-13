@@ -27,10 +27,11 @@ func TestSettledIndexDescendantsPreserveCapturedPressureCause(t *testing.T) {
 					reg := migrationRegistration(key, "generation-owner")
 					reg.PreviousGenerationID = "previous-owner"
 					reg.CaptureFrozen = route != "second-head"
-					head := generationHead{Version: 1, Key: key, Active: reg.ArchiveSessionID}
+					active := reg.ArchiveSessionID
 					if reg.CaptureFrozen {
-						head.Active = "active-successor"
+						active = "active-successor"
 					}
+					head := generationHead{Version: 1, Key: key, Active: active}
 					node := generationNode{Version: 1, Key: key, ID: reg.ArchiveSessionID, Previous: reg.PreviousGenerationID}
 					receipt := generationRecovery{Version: 1, Key: key, Previous: reg.PreviousGenerationID, Next: reg.ArchiveSessionID, Complete: true}
 					for _, dir := range []string{generationHeadsDir, generationNodesDir, generationRecoveryDir} {

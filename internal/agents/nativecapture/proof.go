@@ -70,7 +70,7 @@ func (e *Proof) WithVerifiedCapture(ctx context.Context, reg archive.SessionRegi
 	loanCtx, cancel := context.WithCancelCause(ctx)
 	stop := context.AfterFunc(originalCtx, func() { cancel(context.Cause(originalCtx)) })
 	defer func() { stop(); cancel(nil) }()
-	ctx = joinedLoanContext{Context: loanCtx, original: originalCtx}
+	ctx = joinLoanContext(loanCtx, originalCtx)
 	original, err := settledCaptureDigest(ctx, c.owner, c.reg, 64<<10)
 	if err != nil {
 		return err
@@ -199,6 +199,11 @@ func (r *settledReservation) Release(n int64) {
 func (r *settledReservation) Available() int64 { return min(r.original.Available(), r.limit-r.used) }
 
 func (r *settledReservation) Refuse(n int64) { r.original.Refuse(n) }
+
+// joinLoanContext inherits the borrower child and retains the original lease checks.
+func joinLoanContext(parent, original context.Context) context.Context {
+	return joinedLoanContext{Context: parent, original: original}
+}
 
 type joinedLoanContext struct {
 	context.Context
