@@ -195,6 +195,15 @@ func TestCodexCaptureReadAndRetentionLifecycle(t *testing.T) {
 	if !fresh || !strings.Contains(run("show", root.ArchiveSessionID, "--transcript", "--no-pager"), "SYNTHETIC_REFRESH") {
 		t.Fatal("warm read path retained pre-publication metadata or source")
 	}
+	// Re-enable through the supported reconciliation. The disabled-only
+	// candidate predates renewed consent, while the later survivor does not.
+	cfg = mustLoadConfig(t, home)
+	previous = cfg
+	discoveryPolicy = *cfg.Discovery
+	discoveryPolicy.Enabled = true
+	cfg.Discovery = &discoveryPolicy
+	must(t, config.ReconcileDiscovery(&cfg, previous, now))
+	must(t, config.Save(home, cfg))
 	// A newer admitted session survives the same sweep that expires all three
 	// original owners. Native files remain present to challenge tombstones.
 	now = at.Add(36 * time.Hour)
@@ -214,19 +223,25 @@ func TestCodexCaptureReadAndRetentionLifecycle(t *testing.T) {
 	if remaining[0].NativeSessionID != newID {
 		t.Fatal("retention deleted the newer session")
 	}
-	// Re-enable scanning over the still-present expired native files. Expiry
-	// must remove discovery ownership as well as both publication objects.
-	cfg = mustLoadConfig(t, home)
-	previous = cfg
-	discoveryPolicy = *cfg.Discovery
-	discoveryPolicy.Enabled = true
-	cfg.Discovery = &discoveryPolicy
-	must(t, config.ReconcileDiscovery(&cfg, previous, now))
-	must(t, config.Save(home, cfg))
+	// The original files are below the renewed consent floor. Challenge the
+	// removal fence independently with the survivor, which began after that
+	// floor and is still present in the native catalog when it expires.
+	firstSurvivor := remaining[0]
+	now = at.Add(72*time.Hour + time.Minute)
+	latestID, _ := write(7, "", project, "SYNTHETIC_LATEST", now)
 	for range 2 {
 		run("sync")
 	}
-	list(1)
+	last := list(1)
+	if last[0].NativeSessionID != latestID {
+		t.Fatal("eligible expired native owner resurrected or fresh discovery failed")
+	}
+	removal, found, err := local.Removal("codex", newID)
+	must(t, err)
+	if !found || removal.Reason != state.RemovalReasonRetention {
+		t.Fatal("eligible expired owner lacks its durable tombstone")
+	}
+	regs = append(regs, archive.SessionRegistration{ArchiveSessionID: firstSurvivor.SessionID, NativeSessionID: newID})
 	objects, err := remote.List(t.Context(), "")
 	must(t, err)
 	for _, object := range objects {
