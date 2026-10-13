@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/archive"
 )
 
 type inspectionFile struct {
@@ -120,5 +121,36 @@ func TestImportInspectionRetainsLateMetadataAndLimitRefusals(t *testing.T) {
 				t.Fatalf("different refusal: got=%v want=%v tail=%s bounds=%+v", got, want, tail, bound)
 			}
 		}
+	}
+}
+
+func BenchmarkCodexImportInspection(b *testing.B) {
+	raw := strings.Repeat(`{"type":"response_item","timestamp":"2020-01-01T00:00:00Z","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"synthetic visible content"}]}}`+"\n", 2048)
+	in := agentapi.NativeInput{File: inspectionFile{Reader: strings.NewReader(raw)}}
+	c := agentapi.FilterContext{Filename: "ordinary.jsonl"}
+	for _, streaming := range []bool{false, true} {
+		name := "retained"
+		if streaming {
+			name = "summary"
+		}
+		b.Run(name, func(b *testing.B) {
+			b.ReportAllocs()
+			b.SetBytes(int64(len(raw)))
+			for b.Loop() {
+				var err error
+				if streaming {
+					_, err = (Filter{}).InspectFilteredImport(b.Context(), in, c)
+				} else {
+					var full archive.FilteredTranscript
+					full, err = (Filter{}).Filter(b.Context(), in, c)
+					if err == nil {
+						_, err = Imports().InspectImport(b.Context(), agentapi.ImportInspectionRequest{Filtered: full})
+					}
+				}
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
 	}
 }
