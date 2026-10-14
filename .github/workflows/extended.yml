@@ -297,6 +297,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 35
     env:
+      GOENV: 'off'
       GOTOOLCHAIN: local
       GOWORK: 'off'
       GOFLAGS: '-mod=readonly'

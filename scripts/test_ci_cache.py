@@ -331,6 +331,21 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("steps.complete.outputs.save_ready == 'true'", text)
         self.assertNotIn('retention-days:', text)  # Caches use default repo 10 GB LRU.
 
+    def test_integrated_cross_lanes_static_registration_and_reference_context(self):
+        workflow = jobs((ROOT/'.github/workflows/test.yml').read_text())
+        for name in ('cross-linux-arm64','cross-darwin-nocgo','cross-linux-release'):
+            lane = workflow[name]
+            self.assertIn('uses: ./.github/actions/verified-go-cache',lane)
+            for setting in ('GOTOOLCHAIN: local',"GOWORK: 'off'","GOFLAGS: '-mod=readonly'"):
+                self.assertIn(setting,lane)
+        static = workflow['script-static']
+        for script in ('test_go_cache_context.py','test_go_cache_steps.py','test_ci_cache.py',
+                       'test_go_parent_shards.py','test_pr_reference.py'):
+            self.assertIn('scripts/'+script,static)
+        reference = jobs((ROOT/'.github/workflows/extended.yml').read_text())['pr-reference']
+        for setting in ("GOENV: 'off'",'GOTOOLCHAIN: local',"GOWORK: 'off'","GOFLAGS: '-mod=readonly'"):
+            self.assertIn(setting,reference)
+
     def test_every_hit_still_executes_current_checks_and_forks_never_save(self):
         workflow = jobs((ROOT/'.github/workflows/test.yml').read_text())
         short = workflow['linux-short']
