@@ -208,6 +208,29 @@ campaign when manual dispatch is unavailable. Extended skips its duplicate
 Linux suite on these branches because Test runs full non-short Linux race
 coverage and plain full-size performance assertions. Extended supplies full
 non-short macOS race coverage and plain full-size performance assertions.
+Extended full Darwin coverage uses a compiled native CGO/race catalog at the
+exact source SHA, followed by three independent `macos-14` hosts. Whole ordinary
+packages and disjoint CLI parent trees share a deterministic weighted assignment;
+fuzz seeds and executable examples are discovered from the compiled test mains.
+Each host bounds Go package concurrency to one and test concurrency/CPU to two,
+with private temporary/build state. The `macos-full` check retains its stable name
+and reconciles all three workers, source/context/catalog identity, raw package and
+body terminals, and every named full restoration child. A separate native job
+compiles and runs plain performance bodies plus the pinned published writer once.
+Daily remains smoke plus expanded short native integration and published writer.
+
+`scripts/native_full_hints.json` contains advisory costs imported from the
+successful historical Darwin full artifact at `11ccad84`, with source/settings,
+archive and raw-file fingerprints. It reuses the logical-duration helper from
+`scripts/generate_go_shard_hints.py`; it does not use Linux short costs. One older
+serial run cannot predict current worker elapsed time. Unknown/changed restoration
+CLI trees receive a positive unmeasured one-second weight; unknown/changed ordinary
+packages receive one second per compiled parent (minimum one). Other costs remain
+historical advice even when dependencies or CPU bounds change. Qualification and
+rebalancing require the current candidate's three-worker timings. Ordinary PR
+checks do not run this Extended full matrix. Full scheduled jobs can take longer
+than the four-to-five-minute PR goal.
+
 Test, Levenshtein and Extended disable setup-go's shared module/build cache
 for every trigger; only the PR representative workers have explicit
 restore/save actions. Candidate validation cannot restore executable build
