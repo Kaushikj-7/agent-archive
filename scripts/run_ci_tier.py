@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Explicit CI cadence, conservative PR backstops and actual execution evidence."""
 import argparse
+import copy
 import hashlib
 import json
 import os
@@ -519,13 +520,22 @@ def native_host_context():
 
 
 def verify_native_smoke(directory, report, sensitive, *, local=False):
-    """Reconcile whole native package obligations and selected compiled parents."""
-    directory = Path(directory)
-    native = report.get('native_smoke', {})
+    """External verification always resolves current source/compiler identity."""
     if local and (os.environ.get('GITHUB_ACTIONS') == 'true' or os.environ.get('GITHUB_EVENT_NAME')):
         raise Failure('local native diagnostics cannot qualify a hosted event')
     proof = None if local else full_race.source_proof(ROOT)
     context = None if local else native_host_context()
+    return _verify_native_smoke(directory, report, sensitive, local=local,
+                                source_proof=proof, context=context)
+
+
+def _verify_native_smoke(directory, report, sensitive, *, local, source_proof, context):
+    """Private producer path consumes only its pinned live post checkpoints."""
+    directory = Path(directory)
+    native = report.get('native_smoke', {})
+    if local and (os.environ.get('GITHUB_ACTIONS') == 'true' or os.environ.get('GITHUB_EVENT_NAME')):
+        raise Failure('local native diagnostics cannot qualify a hosted event')
+    proof = source_proof
     if not local:
         try:
             cache_keys.validate_context(native.get('context'), native=True)
@@ -535,6 +545,8 @@ def verify_native_smoke(directory, report, sensitive, *, local=False):
     if (native.get('qualification') != ('local-diagnostic-only' if local else 'hosted')
             or native.get('schema') != 1 or native.get('source_proof') != proof
             or native.get('post_source_proof') != proof
+            or not local and (report.get('source') != proof['source']
+                              or report.get('source_proof') != native.get('source_proof'))
             or native.get('context') != context or native.get('post_context') != context
             or native.get('context_sha256') != (None if local else cache_keys.digest(context))
             or local and not valid_native_local_guard(native.get('local_guard'))
@@ -617,8 +629,10 @@ def run_native_smoke(out, deadline, report, save, execute, sensitive, *, local=F
         raise Failure('local native diagnostics cannot qualify a hosted event')
     if local:
         print('native smoke: local diagnostics only; no hosted compiler/source qualification', flush=True)
-    native = report['native_smoke'] = {'schema': 1, 'source_proof': None if local else full_race.source_proof(ROOT),
-        'context': None if local else context,
+    pre_source_proof = None if local else full_race.source_proof(ROOT)
+    report['source_proof'] = copy.deepcopy(pre_source_proof)
+    native = report['native_smoke'] = {'schema': 1, 'source_proof': copy.deepcopy(pre_source_proof),
+        'context': None if local else copy.deepcopy(context),
         'context_sha256': None if local else cache_keys.digest(context),
         'qualification': 'local-diagnostic-only' if local else 'hosted',
         **({'local_guard': context} if local else {}), 'sensitive': sensitive, 'build_command': ['go', 'build', './...'], 'phase_seconds': {}}
@@ -648,10 +662,15 @@ def run_native_smoke(out, deadline, report, save, execute, sensitive, *, local=F
     for name, command in native_commands(sensitive):
         chosen = native_selected_phases(sensitive).get(name)
         timed(name, lambda: execute(command, name, short=True, selected=chosen or None))
-    native['post_context'] = None if local else native_host_context()
-    native['post_source_proof'] = None if local else full_race.source_proof(ROOT)
+    post_context = None if local else native_host_context()
+    post_source_proof = None if local else full_race.source_proof(ROOT)
+    native['post_context'] = copy.deepcopy(post_context)
+    native['post_source_proof'] = copy.deepcopy(post_source_proof)
     save()
-    verify_native_smoke(out, report, sensitive, local=local)
+    # Both checkpoints were just collected live around all build/test commands.
+    # Reuse those pinned values privately, never proof claimed by an artifact.
+    _verify_native_smoke(out, report, sensitive, local=local,
+                         source_proof=post_source_proof, context=post_context)
 
 
 def run_suite(tier, suite, out, extras=None, seconds=2400, *, own_plain_vet=False, native_local=False):
@@ -672,7 +691,9 @@ def run_suite(tier, suite, out, extras=None, seconds=2400, *, own_plain_vet=Fals
     path.write_text(json.dumps(report, indent=2)+'\n')
     deadline = time.monotonic()+seconds
     if tier == 'pr':
-        report['source_proof'] = None if native_local else full_race.source_proof(ROOT)
+        # Native smoke owns its two actual checkpoints around all commands.
+        # Avoid adding redundant whole-repository scans outside that boundary.
+        report['source_proof'] = None if suite == 'macos' else full_race.source_proof(ROOT)
     def execute(command, name, short=False, selected=None, children=None, env=None, real_manager=False):
         if env is None:
             env = dict(os.environ, AGENT_ARCHIVE_REAL_SYSTEMD='0')
@@ -810,7 +831,7 @@ def run_suite(tier, suite, out, extras=None, seconds=2400, *, own_plain_vet=Fals
             raise Failure(str(error)) from error
     if own_plain_vet:
         report['plain_vet'] = execute_plain_vet(out, deadline)
-    if tier == 'pr' and not native_local and full_race.source_proof(ROOT) != report['source_proof']:
+    if tier == 'pr' and suite != 'macos' and full_race.source_proof(ROOT) != report['source_proof']:
         raise Failure('PR regression source changed during execution')
     report['success'] = True
     path.write_text(json.dumps(report,indent=2)+'\n')

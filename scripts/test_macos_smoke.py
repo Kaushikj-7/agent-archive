@@ -59,7 +59,7 @@ class NativeSmokeTest(unittest.TestCase):
                       context_sha256=tier.cache_keys.digest(CANONICAL), qualification='hosted', sensitive=sensitive, build_command=['go', 'build', './...'],
                       build_sha256=hashlib.sha256(b'').hexdigest(), discovery={p: inventory[p] for p in selected},
                       phase_seconds={'build': 1.0, 'discovery': 1.0})
-        report = dict(invocations=[], native_smoke=native)
+        report = dict(source=PROOF['source'], source_proof=copy.deepcopy(PROOF), invocations=[], native_smoke=native)
         for name, command in tier.native_commands(sensitive):
             wanted = ({p: inventory[p] for p in inventory if p not in selected} if name == 'native-packages'
                       else tier.native_selected_phases(sensitive)[name])
@@ -98,7 +98,8 @@ class NativeSmokeTest(unittest.TestCase):
                 self.assertFalse(any('writer' in str(i) for i in report['invocations']))
 
     def test_missing_selected_parent_missing_phase_source_and_weakened_commands(self):
-        changes = [lambda r: r['invocations'].pop(),
+        changes = [lambda r: r.update(source='c'*40),
+                   lambda r: r['invocations'].pop(),
                    lambda r: r['native_smoke'].update(post_source_proof={'source': 'c'*40, 'tree': 'b'*40}),
                    lambda r: r['native_smoke'].update(sensitive=False),
                    lambda r: r['native_smoke']['context']['go'].update(CGO_ENABLED='0'),
@@ -162,7 +163,7 @@ class NativeSmokeTest(unittest.TestCase):
             with self.subTest(sensitive=sensitive), tempfile.TemporaryDirectory() as d:
                 directory = Path(d)
                 template = self.fixture(directory, sensitive)
-                report = {'invocations': []}
+                report = {'source': PROOF['source'], 'invocations': []}
                 commands = []
                 def checked(command, output, deadline, env=None):
                     commands.append(command)
@@ -173,16 +174,18 @@ class NativeSmokeTest(unittest.TestCase):
                     item = next(i for i in template['invocations'] if i['log'] == name+'.jsonl')
                     self.assertEqual(command, item['command'])
                     report['invocations'].append(item)
-                with mock.patch.object(tier, 'native_host_context', return_value=copy.deepcopy(CANONICAL)), mock.patch.object(tier.full_race, 'source_proof', return_value=PROOF), mock.patch.object(tier, 'checked', side_effect=checked), mock.patch.object(tier, 'discover', return_value=template['native_smoke']['discovery']):
+                with mock.patch.object(tier, 'native_host_context', side_effect=[copy.deepcopy(CANONICAL), copy.deepcopy(CANONICAL)]) as identities, mock.patch.object(tier.full_race, 'source_proof', side_effect=[copy.deepcopy(PROOF), copy.deepcopy(PROOF)]) as sources, mock.patch.object(tier, 'checked', side_effect=checked), mock.patch.object(tier, 'discover', return_value=template['native_smoke']['discovery']):
                     tier.run_native_smoke(directory, 100, report, lambda: None, execute, sensitive)
                 self.assertEqual(commands, [['go', 'build', './...']])
+                self.assertEqual(identities.call_count, 2)
+                self.assertEqual(sources.call_count, 2)
                 self.assertNotIn('AGENT_ARCHIVE_KEYCHAIN_ROUND_TRIP', os.environ)
 
     def test_failed_phase_retains_timing_and_cannot_produce_success_proof(self):
         with tempfile.TemporaryDirectory() as d:
             directory = Path(d)
             template = self.fixture(directory)
-            report = {'invocations': []}
+            report = {'source': PROOF['source'], 'invocations': []}
             def checked(command, output, deadline, env=None):
                 output.write_text('')
                 return ''
@@ -248,7 +251,7 @@ class NativeSmokeTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             directory = Path(d)
             template = self.fixture(directory)
-            report = {'invocations': []}
+            report = {'source': PROOF['source'], 'invocations': []}
             changed = copy.deepcopy(CANONICAL)
             changed['sdk']['sdk_build'] = 'f'*64
             def checked(command, output, deadline, env=None):
@@ -256,7 +259,7 @@ class NativeSmokeTest(unittest.TestCase):
                 return ''
             def execute(command, name, **kwargs):
                 report['invocations'].append(next(i for i in template['invocations'] if i['log'] == name+'.jsonl'))
-            with mock.patch.object(tier, 'native_host_context', side_effect=[copy.deepcopy(CANONICAL), changed, copy.deepcopy(CANONICAL)]), mock.patch.object(tier.full_race, 'source_proof', return_value=PROOF), mock.patch.object(tier, 'checked', side_effect=checked), mock.patch.object(tier, 'discover', return_value=template['native_smoke']['discovery']):
+            with mock.patch.object(tier, 'native_host_context', side_effect=[copy.deepcopy(CANONICAL), changed]), mock.patch.object(tier.full_race, 'source_proof', return_value=PROOF), mock.patch.object(tier, 'checked', side_effect=checked), mock.patch.object(tier, 'discover', return_value=template['native_smoke']['discovery']):
                 with self.assertRaises(tier.Failure):
                     tier.run_native_smoke(directory, 100, report, lambda: None, execute, False)
 
@@ -270,6 +273,42 @@ class NativeSmokeTest(unittest.TestCase):
                                           context_sha256=tier.cache_keys.digest(changed))
             with self.assertRaises(tier.Failure):
                 self.verify(directory, report)
+
+    def test_changed_live_source_between_commands_cannot_produce_success(self):
+        with tempfile.TemporaryDirectory() as d:
+            directory = Path(d)
+            template = self.fixture(directory)
+            report = {'source': PROOF['source'], 'invocations': []}
+            def checked(command, output, deadline, env=None):
+                output.write_text('')
+                return ''
+            def execute(command, name, **kwargs):
+                report['invocations'].append(next(i for i in template['invocations'] if i['log'] == name+'.jsonl'))
+            with mock.patch.object(tier, 'native_host_context', return_value=copy.deepcopy(CANONICAL)), mock.patch.object(tier.full_race, 'source_proof', side_effect=[copy.deepcopy(PROOF), dict(PROOF, tree='c'*40)]), mock.patch.object(tier, 'checked', side_effect=checked), mock.patch.object(tier, 'discover', return_value=template['native_smoke']['discovery']):
+                with self.assertRaises(tier.Failure):
+                    tier.run_native_smoke(directory, 100, report, lambda: None, execute, False)
+
+    def test_complete_hosted_runner_owns_exactly_two_live_source_and_compiler_checkpoints(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {'GITHUB_SHA': PROOF['source'], 'GITHUB_ACTIONS': 'true', 'GITHUB_EVENT_NAME': 'pull_request'}):
+            directory = Path(d)
+            template = self.fixture(directory)
+            commands = {tuple(command): name+'.jsonl' for name, command in tier.native_commands(False)}
+            def checked(command, output, deadline, env=None):
+                text = '' if command == ['go', 'build', './...'] else (directory/commands[tuple(command)]).read_text()
+                output.write_text(text)
+                return text
+            with mock.patch.object(tier, 'git', return_value=PROOF['source']), mock.patch.object(tier, 'native_host_context', side_effect=[copy.deepcopy(CANONICAL), copy.deepcopy(CANONICAL)]) as contexts, mock.patch.object(tier.full_race, 'source_proof', side_effect=[copy.deepcopy(PROOF), copy.deepcopy(PROOF)]) as sources, mock.patch.object(tier, 'checked', side_effect=checked), mock.patch.object(tier, 'discover', return_value=template['native_smoke']['discovery']):
+                tier.run_suite('pr', 'macos', directory)
+            report = json.loads((directory/'tier.json').read_text())
+            self.assertTrue(report['success'])
+            self.assertEqual(sources.call_count, 2)
+            self.assertEqual(contexts.call_count, 2)
+            # External verification independently re-reads the live checkout;
+            # its artifact's self-consistent earlier source is insufficient.
+            with mock.patch.object(tier.full_race, 'source_proof', return_value=dict(PROOF, tree='c'*40)) as live, mock.patch.object(tier, 'native_host_context', return_value=copy.deepcopy(CANONICAL)):
+                with self.assertRaises(tier.Failure):
+                    tier.verify_native_smoke(directory, report, False)
+                live.assert_called_once_with(tier.ROOT)
 
 
 if __name__ == '__main__':
