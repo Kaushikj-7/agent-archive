@@ -3,14 +3,17 @@
 Prepared 2026-09-30 against `main` at `dc443c7`. Status: phases 1
 and 2 implemented; phase 3's historical synthetic matrix recorded in #451;
 phase 4 has default-v3 bounded bodies and a gated opt-in catalog implementation.
-Matched scoped-interactive measurements with the repaired command harness
-completed 2026-10-13:16 processes / 104 cases, baseline
+The merged author qualification record reports matched scoped-interactive
+measurements with the repaired command harness completed 2026-10-13:
+16 processes / 104 cases, baseline
 `a187e1b883924fd36c9d6700606a5c2756fc2b6f` and candidate
 `cc26f45aba6c76307aecf3c9d32b2650aef79eed`.
 [Results, hashes and limits](../maintainers/picker-qualification/results-20261013.md)
-cover10k/100k cold/warm/changed and native 20/120 cases. Final source review and
-required hosted checks are tracked in [PR499](https://github.com/wangjohn/agent-archive/pull/499);
-production release gates remain separate.
+cover10k/100k cold/warm/changed and native 20/120 cases.
+[PR499](https://github.com/wangjohn/agent-archive/pull/499) merged into main
+`c8dcf2a88e0479eb63cf682d8d76e1428ff7609a` on 2026-10-14. These are recorded
+author claims for the pinned source/fixture envelope, not independently renewed
+current-main runtime evidence; production release gates remain separate.
 This scoped query subset does not qualify every historical listing/full-load path.
 Reconciled 2026-10-11 at `db2ccd3e`. The current
 [listing contract](../maintainers/list-performance.md) specifies indexed bounded
@@ -38,9 +41,14 @@ Older actions for supported interactive paths. Its
 [CLI qualification controls](../maintainers/picker-qualification/README.md)
 separate complete synthetic construction, actual command work and nativeR costs.
 Final integrated-source synthetic paired measurements are recorded above;
-final source review and required hosted checks are tracked in
-[PR499](https://github.com/wangjohn/agent-archive/pull/499), with provider release
-acceptance remaining separate. Legacy destinations retain proportional header discovery.
+the records landed in [PR499](https://github.com/wangjohn/agent-archive/pull/499),
+with provider release acceptance remaining separate. Legacy destinations retain
+proportional header discovery. Integrated source through
+[#493](https://github.com/wangjohn/agent-archive/pull/493) includes remote Older
+and lazy complete search for supported catalog queries; unsupported queries
+retain complete fallbacks. See the
+[current CLI performance reconciliation](cli-performance.md#current-reconciliation)
+for source status and separate acceptance limits.
 
 The phase designs below preserve the original plan.
 Each phase lands before the next one starts. Each phase's PR updates its

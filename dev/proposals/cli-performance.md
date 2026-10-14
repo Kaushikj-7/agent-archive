@@ -18,13 +18,13 @@ and source status are linked here.
 
 ## Current reconciliation
 
-Reconciled against main `4b9b612f` (2026-10-13). Closed original PRs were
+Source status reconciled against main `c8dcf2a88e0479eb63cf682d8d76e1428ff7609a` (2026-10-14). Closed original PRs were
 source-superseded rather than merged unchanged. Their historical measurements
 do not establish current-main performance acceptance.
 
 | Original work | Integrated replacement | Remaining work |
 | --- | --- | --- |
-| #390 compiler/verifier regressions | #449 and supplementary native scan #467 | Historical eight-check protection identities are not the current six-check configuration. |
+| #390 compiler/verifier regressions | #449 and supplementary native scan #467 | Historical protection identities are not evidence of current required checks; verify the exact candidate against current branch protections. |
 | #376 command/scale baselines | #451 output validation/model and #458 plan status | Scoped-interactive matched 10k/100k evidence recorded below; other command paths remain unqualified. |
 | #379 selected reads, #381 discovery, #377 cache maintenance, #385 search/browser | #460 | Native/provider/operator, full-size and matched-performance qualification. |
 | #382 concurrent show/lookup | #460, original latency benchmark #465, release note #468 | Matched output/performance qualification. |
@@ -44,10 +44,37 @@ foundation. The [matched synthetic result ledger](../maintainers/picker-qualific
 records all 16 processes / 104 cases at candidate `cc26f45aba6c76307aecf3c9d32b2650aef79eed`
 against baseline `a187e1b883924fd36c9d6700606a5c2756fc2b6f`, with exact fixture/harness
 hashes, all cold/warm/changed/native phases, allocation deltas and separately
-labeled fixture-inclusive heap/process memory. Final source review and required
-hosted checks are tracked in [PR499](https://github.com/wangjohn/agent-archive/pull/499).
+labeled fixture-inclusive heap/process memory.
+[PR499](https://github.com/wangjohn/agent-archive/pull/499) merged into this main
+on 2026-10-14; its records remain pinned author qualification claims for that
+source/fixture envelope. This reconciliation does not independently audit the
+raw measurement pairs or renew runtime acceptance at the current main.
 Production provider and broader command performance
 gates below remain separate.
+
+The bounded repository picker source is now integrated. PRs
+[#485](https://github.com/wangjohn/agent-archive/pull/485),
+[#486](https://github.com/wangjohn/agent-archive/pull/486),
+[#488](https://github.com/wangjohn/agent-archive/pull/488),
+[#487](https://github.com/wangjohn/agent-archive/pull/487),
+[#492](https://github.com/wangjohn/agent-archive/pull/492), and
+[#493](https://github.com/wangjohn/agent-archive/pull/493) add the format boundary,
+scoped indexes, construction/upgrade, bounded readers, local/archive merging,
+and browser remote Older and lazy complete search. Supported catalog queries
+can use bounded first pages. Legacy and unsupported queries retain complete
+fallbacks. Production catalog activation remains refused by the provider gate.
+The [bounded repository picker plan](bounded-repository-picker.md) preserves
+its original design; its earlier status is not current integration evidence.
+
+Further allocation reductions landed in
+[#502](https://github.com/wangjohn/agent-archive/pull/502) (collector fixtures),
+[#506](https://github.com/wangjohn/agent-archive/pull/506) (source JSONL encoding),
+and [#508](https://github.com/wangjohn/agent-archive/pull/508) (complete search
+candidate buffers). These changes do not close end-to-end performance gates.
+Separate matched-command and lifecycle acceptance work is tracked in
+[#503](https://github.com/wangjohn/agent-archive/pull/503) and
+[#504](https://github.com/wangjohn/agent-archive/pull/504). Their references here
+do not assert independently qualified runtime or current PR readiness.
 
 The [default listing contract](../maintainers/list-performance.md) now
 distinguishes legacy header enumeration and private summary reuse from
@@ -361,4 +388,5 @@ matched comparisons of equivalent complete logical archives. Shared harness and
 fixture hashes, exact production source, returned-byte/request counts,
 phase latency/allocations, sampled heap/native R costs and limitations must be
 retained. Historical phase3/model/JSON samples cannot satisfy this comparison.
-Synthetic source acceptance does not remove provider/credential/runtime HOLD.
+These recorded author qualification claims do not independently establish
+current-main runtime acceptance or remove provider/credential/runtime HOLD.

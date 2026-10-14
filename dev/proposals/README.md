@@ -14,13 +14,21 @@ actively working on it. Code and user documentation remain the current contract.
 Historical-only ownership status reconciled 2026-10-12 after #433 merged as
 `18ca0c48`; fragment and combined acceptance work remain open.
 
+Performance and native-name source status reconciled 2026-10-14 against main
+`c8dcf2a88e0479eb63cf682d8d76e1428ff7609a`. The
+[performance record](cli-performance.md#current-reconciliation) preserves merged
+scoped-picker author qualification records and separates them from broader
+acceptance. Native names retain their existing
+[implemented design](implemented/native-session-names.md) and PARTIAL comparison
+record; this reconciliation adds no runtime or UI acceptance.
+
 ## Remaining implementation
 
 | Proposal | Implemented | Remaining |
 | --- | --- | --- |
 | [Historical backfill recovery](historical-backfill-recovery.md) | Diagnostics, portable recovery, rollout lookup, history lifecycle and native child capture; recovery hardening; historical-only ownership and bounded bulk mappings (#433). | [Fragment format foundation](../specs/codex-fragments.md) is proposed with schema checks; decoder/filter/consumer, lifecycle, opt-in import, repair journal and the combined acceptance matrix remain gated. |
-| [CLI performance](cli-performance.md) | Synthetic command and historical listing benchmark harnesses with output validation. | Matched repaired-harness measurements and proposed follow-ups. |
-| [Archive listing at scale](listing-at-scale.md) | Parallel listing, tracing, bounded metadata-body reads; 10k benchmark and 10k/20k operation-count coverage. | Full 1k/10k/100k measurement matrix and an index that bounds LIST header cost. |
+| [CLI performance](cli-performance.md) | Concurrent reads, cache/query/stats work, opt-in catalog and bounded picker source; historical benchmark controls and allocation reductions. | Pinned scoped-interactive matched measurements recorded in #499; broader command performance, production provider/cutover qualification and acceptance remain open. |
+| [Archive listing at scale](listing-at-scale.md) | Parallel listing, tracing, bounded metadata bodies and opt-in scoped catalog pages with remote Older; historical matrix and scoped matched 10k/100k records. | Default legacy LIST headers still scale with archive size; broader scale/full-load acceptance and provider activation remain open. |
 | [Cloud capture](cloud-capture.md) | No cloud collector/push or vendor pull implementation. | Proposed, unscheduled; requires producer probes and runtime/authentication design. |
 
 [Setup recent import](../specs/setup-recent-import.md) now includes both automatic
@@ -35,7 +43,7 @@ seven-day import and the status prompt for existing installations. See the
 | [Release remediation](release-remediation.md) | Implementation record; disposable provider/per-app acceptance and release sign-off remain open. |
 | [Native name comparisons](../maintainers/native-session-name-comparisons.md) | Partial sandbox evidence; native UI acceptance blocked. |
 | [Published-release acceptance](../maintainers/open-source-acceptance.md) | Maintainer runbook for candidate/provider/app checks; implementation does not imply a passing release gate. |
-| [Archive catalog performance](cli-performance.md) | Catalog implementation source composed in ROOT407; final source/runtime/combined stack and native/provider/operator acceptance remain pending. |
+| [Archive catalog performance](cli-performance.md) | Catalog and bounded picker source integrated; #499 contains pinned synthetic scoped-picker author qualification records. Broader runtime/combined stack and native/provider/operator acceptance remain pending. |
 
 ## Implemented designs
 
