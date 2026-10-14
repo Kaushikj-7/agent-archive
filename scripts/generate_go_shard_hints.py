@@ -32,16 +32,20 @@ def json_stream(text):
 
 
 @contextlib.contextmanager
-def contract_parser(source):
+def contract_parser(source, body_catalog=None):
     """Reconcile imported artifacts against their requested source, not CI's SHA."""
     original = runner.json_stream
+    original_catalog = run_ci_tier.catalog
     event_source = os.environ.get('GITHUB_SHA')
     runner.json_stream = json_stream
+    if body_catalog is not None:
+        run_ci_tier.catalog = lambda: body_catalog
     os.environ['GITHUB_SHA'] = source
     try:
         yield
     finally:
         runner.json_stream = original
+        run_ci_tier.catalog = original_catalog
         if event_source is None:
             os.environ.pop('GITHUB_SHA', None)
         else:
@@ -196,8 +200,8 @@ def _read_sample(directory, source, expected_settings):
     return catalog, package_values, cli_values, {'files': fingerprints, 'phases': phases}
 
 
-def read_sample(directory, source, expected_settings):
-    with contract_parser(source):
+def read_sample(directory, source, expected_settings, body_catalog=None):
+    with contract_parser(source, body_catalog):
         try:
             runner.reconcile(directory, len(expected_settings))
             return _read_sample(directory, source, expected_settings)
@@ -205,7 +209,7 @@ def read_sample(directory, source, expected_settings):
             raise runner.Failure(str(error)) from error
 
 
-def generate(samples, source, settings, discovered_packages, discovered_cli):
+def generate(samples, source, settings, discovered_packages, discovered_cli, body_catalog=None):
     if not samples:
         raise runner.Failure('no successful samples')
     if (len({sid for sid, _ in samples}) != len(samples)
@@ -214,7 +218,7 @@ def generate(samples, source, settings, discovered_packages, discovered_cli):
     package_samples, cli_samples, evidence = {}, {}, []
     universe = None
     for sample_id, directory in samples:
-        catalog, packages, cli, proof = read_sample(directory, source, settings)
+        catalog, packages, cli, proof = read_sample(directory, source, settings, body_catalog)
         current = (catalog['packages'], catalog['cli'])
         if universe is not None and current != universe:
             raise runner.Failure('mixed discovery catalogs')
@@ -233,6 +237,7 @@ def generate(samples, source, settings, discovered_packages, discovered_cli):
             'provenance': {'source': source, 'settings': settings, 'samples': evidence,
                            'runner_contract_sha256': hashlib.sha256(
                                Path(runner.__file__).read_bytes()).hexdigest(),
+                           'body_catalog_sha256': runner.digest(body_catalog) if body_catalog is not None else None,
                            'policy': 'median seconds then half-up integer ms, minimum 1; '
                                      'package terminal elapsed; CLI recursively exclusive elapsed plus descendant bodies; '
                                      'unknown discovered units 1000ms; auxiliary phases excluded',
@@ -254,9 +259,19 @@ def main():
     if len(manifests) != runner.worker_count(len(request['settings'])):
         raise runner.Failure('sample requires complete worker manifests')
     catalog = json.loads(manifests[0].read_text())['catalog']
+    body_catalog_json = request.get('body_catalog_json')
+    body_catalog = None
+    if body_catalog_json is not None:
+        if (not isinstance(body_catalog_json, str) or hashlib.sha256(body_catalog_json.encode()).hexdigest()
+                != request.get('body_catalog_sha256')):
+            raise runner.Failure('invalid pinned source body catalog bytes')
+        body_catalog = json.loads(body_catalog_json)
+        if (not isinstance(body_catalog, dict) or body_catalog.get('schema') != 1
+                or not isinstance(body_catalog.get('restorations'), list)):
+            raise runner.Failure('invalid pinned source body catalog')
     result = generate(samples, request['source'], request['settings'],
                       request.get('packages', sorted(set(catalog['packages']) - {runner.CLI})),
-                      request.get('cli', catalog['cli']))
+                      request.get('cli', catalog['cli']), body_catalog)
     result['provenance']['attribution'] = request.get('attribution', {})
     result['provenance']['generator_sha256'] = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
     Path(args.output).write_text(json.dumps(result, indent=2, sort_keys=True) + '\n')

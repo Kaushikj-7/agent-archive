@@ -196,6 +196,18 @@ class GeneratorTests(unittest.TestCase):
         with self.assertRaises(hints.runner.Failure): self.generate()
         self.assertIs(hints.runner.json_stream, original)
 
+    def test_pinned_source_catalog_validates_historical_projection_and_restores_current(self):
+        source_catalog = run_ci_tier.catalog()
+        changed = copy.deepcopy(source_catalog)
+        changed['restorations'].append({'package': 'internal/cli', 'test': 'TestAlpha',
+                                        'restore': 'weekly', 'pr': 'new projection'})
+        with mock.patch.object(run_ci_tier, 'catalog', return_value=changed) as current:
+            with self.assertRaises(hints.runner.Failure): self.generate()
+            result = hints.generate(self.samples, 'accepted-source', SETTINGS, PKGS, NAMES, source_catalog)
+            self.assertEqual(result['cli']['TestAlpha'], 2000)
+            self.assertIs(run_ci_tier.catalog, current)
+        self.assertEqual(result['provenance']['body_catalog_sha256'], hints.runner.digest(source_catalog))
+
     def test_imported_source_uses_request_and_restores_ci_event_source(self):
         for event_source in (None, 'current-ci-merge-source'):
             with mock.patch.dict(os.environ):

@@ -110,7 +110,9 @@ python3 -B scripts/generate_go_shard_hints.py \
   --output scripts/go_shard_hints.json
 ```
 
-The generator rejects source/settings/catalog mixtures, failed or incomplete
+Imported evidence pins the measured source body catalog and its hash, so later
+scale catalog additions cannot rewrite a historical manifest. Current CI uses
+the current catalog. The generator rejects source/settings/catalog mixtures, failed or incomplete
 streams, reused samples and mismatched manifest body evidence. Reconciliation
 checks the request's pinned artifact source independently of the regenerating
 workflow's `GITHUB_SHA`. The request may provide fresh `packages`/`cli` discovery
@@ -138,8 +140,8 @@ Git package stays isolated on whichever worker receives it.
 The current hints use one successful hosted Linux short observation pair from
 run38513512721 at cd39753074cade7174a25dc0beb8e1b83b0300c8. Artifact IDs,
 archive digests, exact worker settings and raw-file hashes are retained along
-with the previous measurement request. This small ancestor sample is advice,
-not current-source or native Darwin full timing. Live discovery assigns unknown
+with the previous measurement request. This small sample has equivalent representative runtime inputs at the base and is advice,
+not current-candidate or native Darwin full timing. Live discovery assigns unknown
 names the 1000ms fallback and ignores stale hints. Four workers are a hosted
 trial; retain that default only after current-candidate whole-job measurements
 justify the extra compilation, allocation and startup costs. The runner accepts

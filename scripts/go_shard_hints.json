@@ -2579,13 +2579,40 @@
         "source": "c988618fd4dcfd384465a8c5324ce3f193cb2645"
       },
       "previous_request_sha256": "2f54cb431cc2212670b338057e786411d8bc478d3c03cc2bec701a0ad5efd089",
-      "role": "one successful hosted Linux race-short matched pair; ancestor timing advice, not current candidate wall-time or Darwin full evidence",
+      "role": "one successful hosted Linux race-short matched pair; representative-runtime-equivalent source advice, not current candidate wall-time or Darwin full evidence",
       "run_id": 38513512721,
-      "sample_count": 1
+      "sample_count": 1,
+      "source_equivalence": {
+        "body_catalog_source_sha256": "3ebbd87c0f7505f9bb69bbb5724a0936f15f7af484e31358bb12c40ffcfa0371",
+        "commit_api_url": "https://github.com/wangjohn/agent-archive/commit/cd39753074cade7174a25dc0beb8e1b83b0300c8",
+        "comparison_base": "c8dcf2a88e0479eb63cf682d8d76e1428ff7609a",
+        "equal_imported_helper_ast_sha256": {
+          "body_evidence": "06dbe7acbadaea006007fe44e8a78d53f99421200cf7d7af3fc124c84c4d3782",
+          "catalog": "b552a184b83531a63e787da406d3280fd7f7900363f17b4adb787b2493034388",
+          "terminals": "bc2f643934df20f0656499ac746cf5f2d6c00e71b54c02e8e729bd98602faa00"
+        },
+        "equal_representative_blobs": {
+          "scripts/ci_tiers.json": "3ed8ba1d5a853dd390882bea6b8f05ddba3903e3",
+          "scripts/run_go_shard.py": "cb2f90f343608b2fdcc16c93d31b191198a7a7df"
+        },
+        "measurement_parents": [
+          "c8dcf2a88e0479eb63cf682d8d76e1428ff7609a",
+          "00b103668b4b4f4b23e7fcceb9577cbb5945271a"
+        ],
+        "measurement_source": "cd39753074cade7174a25dc0beb8e1b83b0300c8",
+        "measurement_tree": "9535d57cd53d372f2e73209d8c703dce17bd3fe3",
+        "only_changed_paths": [
+          "scripts/run_ci_tier.py",
+          "scripts/run_native_full.py",
+          "scripts/test_ci_tiers.py"
+        ],
+        "scope": "All tracked production/test Go inputs, fixtures and module files are identical. Only native full orchestration/process cleanup and its synthetic tests differ. Representative short runner and imported body/catalog/terminal helpers are identical. P1 and P2 scheduling changes remain unmeasured until current-candidate hosted runs."
+      }
     },
-    "generator_sha256": "1abff02ef1382dc4c0701eaafd98c3851b3282515ab25db6b76dde0c224a2eef",
+    "body_catalog_sha256": "d487d093cc230f683148e04ad5f4a1e4397913e3015aea50f0f2a0ab8913e8ec",
+    "generator_sha256": "f807915be53872258a35ec1a8bfe99845b404ad1f57aa626334f74dfd066a6c1",
     "policy": "median seconds then half-up integer ms, minimum 1; package terminal elapsed; CLI recursively exclusive elapsed plus descendant bodies; unknown discovered units 1000ms; auxiliary phases excluded",
-    "runner_contract_sha256": "485ec4648e86f1cabb4cccf567eac1447a09b247cb35e1c9501d86a3ac7eadea",
+    "runner_contract_sha256": "c2e0ef865216f0d75c1f501fa23b1da809b6afac4d51cdce8bc738d5a1fa9819",
     "samples": [
       {
         "files": [
