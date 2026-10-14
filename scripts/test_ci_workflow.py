@@ -335,13 +335,14 @@ class CadenceTest(unittest.TestCase):
         self.assertIn('--tier pr --suite macos', smoke)
         self.assertNotIn('--tier full', smoke)
 
-    def test_native_smoke_retains_build_and_runs_short_race_tests(self):
+    def test_native_smoke_uses_the_verified_tier_entry_point(self):
         smoke = (ROOT / 'scripts/test_macos_smoke.sh').read_text()
-        self.assertIn('go build ./...', smoke)
-        self.assertEqual(len(re.findall(r'go test -race -short ', smoke)), 3)
-        self.assertNotRegex(smoke, r'go test -race (?!-short)')
-        self.assertIn('macOS smoke test missing:', smoke)
-        self.assertIn('CGO_ENABLED', smoke)
+        standalone = (ROOT / 'scripts/run_macos_smoke.py').read_text()
+        self.assertIn('exec python3 -B scripts/run_macos_smoke.py "$@"', smoke)
+        self.assertIn("tier.run_suite('pr', 'macos',", standalone)
+        workflow = jobs((ROOT / '.github/workflows/test.yml').read_text())
+        self.assertIn('./scripts/test_macos_smoke.sh --output native-tier-results', workflow['macos-smoke'])
+        self.assertIn('scripts/test_macos_smoke.py', workflow['script-tests'])
 
     def test_daily_vulnerability_audit_remains_fresh(self):
         workflow = (ROOT / '.github/workflows/levenshtein.yml').read_text()
