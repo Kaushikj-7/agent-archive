@@ -145,6 +145,23 @@ func TestContentSearchDestinationIsolation(t *testing.T) {
 		t.Fatal(err)
 	}
 	a, dirA := contentSearchLocation(home, cfg)
+	// Namespace assembly must retain the exact persisted encoding and isolate
+	// installation and activation changes as well as storage destination changes.
+	want := cfg.DestinationID() + "/" + cfg.MachineID + "/" + cfg.DestinationSince.UTC().Format(time.RFC3339Nano) + "/filter-" + archive.FilterVersion
+	if a != want {
+		t.Fatalf("namespace encoding changed: %q, want %q", a, want)
+	}
+	for _, change := range []func(*config.Config){
+		func(c *config.Config) { c.MachineID += "-other" },
+		func(c *config.Config) { c.DestinationSince = c.DestinationSince.Add(time.Second) },
+	} {
+		changed := cfg
+		change(&changed)
+		namespace, dir := contentSearchLocation(home, changed)
+		if namespace == a || dir == dirA {
+			t.Fatal("installation or activation contexts collide")
+		}
+	}
 	cfg.Storage.Prefix += "-other"
 	b, dirB := contentSearchLocation(home, cfg)
 	if a == b || dirA == dirB {

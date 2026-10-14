@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -149,7 +150,7 @@ func executeContentSearch(opts contentSearchOptions, stdout, stderr io.Writer, e
 }
 
 func contentSearchLocation(home string, cfg config.Config) (string, string) {
-	namespace := cfg.DestinationID() + "/" + cfg.MachineID + "/" + cfg.DestinationSince.UTC().Format(time.RFC3339Nano) + "/filter-" + archive.FilterVersion
+	namespace := strings.Join([]string{cfg.DestinationID(), cfg.MachineID, cfg.DestinationSince.UTC().Format(time.RFC3339Nano), "filter-" + archive.FilterVersion}, "/")
 	sum := sha256.Sum256([]byte(namespace))
 	return namespace, filepath.Join(home, "search", hex.EncodeToString(sum[:]))
 }
