@@ -39,7 +39,7 @@ func TestRolloutLookupCurrentWALIdentityRefreshAndPrivateCleanup(t *testing.T) {
 	}
 	defer func() { _ = lookup.Close() }()
 	set, err := lookup.Thread(t.Context(), id)
-	if err != nil || set.Current == nil || set.Current.Path != path || set.Complete {
+	if err != nil || set.Current == nil || set.Current.Path != path || len(set.Candidates) != 1 {
 		t.Fatal(set, err)
 	}
 	if err := lookup.Check(t.Context(), id, set.Revision); err != nil {
@@ -143,7 +143,7 @@ func TestRolloutLookupObservedFactsAreHintsAndRevisionChanges(t *testing.T) {
 	source := SourceDescriptor{Kind: archive.SourceKindFile, Root: root, Locator: path, StableKey: id}
 	lookup.Observe(source, Fingerprint{Size: 1}, &identity)
 	initial, err := lookup.Thread(t.Context(), id)
-	if err != nil || initial.Complete || initial.Current != nil {
+	if err != nil || initial.Current != nil || len(initial.Candidates) != 1 {
 		t.Fatal(initial, err)
 	}
 	identity.RootID = "caller-mutation"
@@ -168,13 +168,13 @@ func TestRolloutLookupBoundsCurrentIDsAndCancellation(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = lookup.Close() }()
-	for i := range maxCoverageRequests + 2 {
+	for i := range maxCachedThreads + 2 {
 		id := fmt.Sprintf("00000000-0000-0000-0000-%012x", i)
 		if _, err := lookup.Thread(t.Context(), id); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if len(lookup.threads) > maxCoverageRequests {
+	if len(lookup.threads) > maxCachedThreads {
 		t.Fatal("unbounded pass current cache")
 	}
 	ctx, cancel := context.WithCancel(t.Context())

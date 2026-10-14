@@ -529,7 +529,7 @@ func (m *metadataInventory) step(ctx context.Context) error {
 		if err != nil && agentapi.Failure(err) == agentapi.Limit {
 			return err
 		}
-		if err != nil || batch.coverage == nil || batch.coverage.Unavailable {
+		if err != nil || batch.digest == nil || batch.digest.Unavailable {
 			return metadataUnavailable()
 		}
 		key := d.Root + "\x00" + d.Path
@@ -540,14 +540,14 @@ func (m *metadataInventory) step(ctx context.Context) error {
 			}
 			i = len(m.directories)
 			m.directoryIndex[key] = i
-			m.directories = append(m.directories, metadataDirectory{dir: directory{Root: d.Root, Path: d.Path}, stamp: batch.coverage.Stamp})
+			m.directories = append(m.directories, metadataDirectory{dir: directory{Root: d.Root, Path: d.Path}, stamp: batch.digest.Stamp})
 			m.counts.directories++
 		}
 		proof := &m.directories[i]
-		if proof.stamp != batch.coverage.Stamp {
+		if proof.stamp != batch.digest.Stamp {
 			return metadataChanged()
 		}
-		proof.digest = appendCoverageDigest(proof.digest, batch.coverage.Entries)
+		proof.digest = appendDirectoryDigest(proof.digest, batch.digest.Entries)
 		m.batch = batch.Entries
 		m.next = d
 		if !batch.Complete {
@@ -747,7 +747,7 @@ func (m *metadataInventory) validate(ctx context.Context) error {
 		// removals and moves; individual file observations fence append/rewrite.
 		// Irrelevant file payload changes cannot alter native metadata membership.
 		m.counts.stats++
-		if directoryCoverageStamp(proof.dir.Root, proof.dir.Path) != proof.stamp {
+		if directoryStamp(proof.dir.Root, proof.dir.Path) != proof.stamp {
 			return metadataChanged()
 		}
 	}
@@ -892,7 +892,7 @@ func (m *metadataInventory) thread(ctx context.Context, id string) (agentapi.Cod
 	if current != nil {
 		_, _ = io.WriteString(hash, current.Path)
 	}
-	return agentapi.CodexRolloutSet{Current: current, Complete: m.complete, Revision: hex.EncodeToString(hash.Sum(nil))}, nil
+	return agentapi.CodexRolloutSet{Current: current, Revision: hex.EncodeToString(hash.Sum(nil))}, nil
 }
 
 type metadataSlice struct {

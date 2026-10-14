@@ -207,7 +207,11 @@ def checked_many(commands, deadline):
         raise Failure('tier command cancelled')
     old = {sig: signal.signal(sig, cancel) for sig in (signal.SIGTERM, signal.SIGINT)}
     try:
-        full_race.shards.supervise(commands, deadline)
+        started = time.monotonic()
+        durations = full_race.shards.supervise(commands, deadline)
+        print('tier invocation timing: ' + json.dumps({'batch_wall_seconds': time.monotonic()-started,
+            'invocations': [{'log': str(command[1]), 'seconds': duration} for command, duration in zip(commands, durations)],
+            'overlap': len(commands) > 1}), flush=True)
     except full_race.shards.Failure as error:
         raise Failure(str(error)) from error
     finally:

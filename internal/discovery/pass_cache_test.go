@@ -104,7 +104,8 @@ func TestOversizedCatalogIsRebuilt(t *testing.T) {
 			if lookup.restoredCharge != 0 {
 				t.Fatalf("discarded catalog still charged: %d", lookup.restoredCharge)
 			}
-			h, err := run(t.Context(), store, cfg, Options{Sources: builtin.NewBuiltins(), Rollouts: lookup, Now: func() time.Time { return at.Add(2 * time.Minute) }}, syntheticSupport)
+			// One pass: a census rerun would read the catalog this pass rebuilt.
+			h, err := runWithAdapters(t.Context(), store, cfg, Options{Sources: builtin.NewBuiltins(), Rollouts: lookup, Now: func() time.Time { return at.Add(2 * time.Minute) }}, []SourceAdapter{codexAdapter{supported: syntheticSupport}})
 			if err != nil || h.Probes == 0 {
 				t.Fatalf("discovery made no progress: probes=%d errors=%v err=%v", h.Probes, h.Errors, err)
 			}
@@ -137,7 +138,7 @@ func TestCatalogIsWrittenWithinTheCap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	near := catalog{Version: catalogVersion, Roots: lookup.roots, Coverage: newCoverage(lookup.roots), Health: Health{Errors: []string{strings.Repeat("x", maxCatalogBytes-(1<<20))}}}
+	near := catalog{Version: catalogVersion, Roots: lookup.roots, Health: Health{Errors: []string{strings.Repeat("x", maxCatalogBytes-(1<<20))}}}
 	if err := lookup.writeCatalog(t.Context(), path, near); err != nil {
 		t.Fatal("near-cap catalog not written:", err)
 	}

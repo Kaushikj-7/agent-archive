@@ -26,13 +26,17 @@ const (
 // and lets a caller tell a deferral from a failure.
 type SourceCause string
 
-// Source causes.
+// Source causes that name a Codex history lineage the source could not
+// resolve. Each is a retryable failure: a later pass, once the rollout is
+// back or the ambiguity gone, reads the thread.
 const (
-	// CauseHistoryCoverage: Codex has not yet established which rollout files
-	// make up the thread's history, so the source cannot select its lineage
-	// or list its historical candidates. A later pass, once coverage
-	// completes, can.
-	CauseHistoryCoverage SourceCause = "history_coverage"
+	// CauseHistoryBaseUnavailable: a rollout the thread's lineage continues
+	// from was not found by its ID, or was found at more than one locator.
+	CauseHistoryBaseUnavailable SourceCause = "history_base_unavailable"
+	// CauseRolloutTipAmbiguous: Codex's thread index names no current
+	// rollout, and the thread's observed rollouts do not end in exactly one
+	// rollout that no other continues from.
+	CauseRolloutTipAmbiguous SourceCause = "rollout_tip_ambiguous"
 )
 
 // Native source refusal causes are fixed codes with no paths or content.
@@ -93,7 +97,8 @@ const (
 
 // causeText words each cause after the kind's own words.
 var causeText = map[SourceCause]string{
-	CauseHistoryCoverage: "Codex history coverage incomplete",
+	CauseHistoryBaseUnavailable: "a Codex rollout this thread continues from was not found",
+	CauseRolloutTipAmbiguous:    "Codex thread has no single current rollout",
 }
 
 // SourceError retains a local cause and a bounded public classification.
