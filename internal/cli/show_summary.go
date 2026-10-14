@@ -202,19 +202,20 @@ func summaryContext(m archive.Metadata, opts summaryOptions) []string {
 	return parts
 }
 
-// compactAge is relativeAge in the header's short form ("2h ago").
+// compactAge is shortWhen in the header's words: "just now", then "2m ago"
+// and "13h ago" earlier today, then shortWhen's weekday or date alone
+// ("Mon", "Oct 9"), which read as when rather than how long ago.
 func compactAge(now, t time.Time) string {
-	d := now.Sub(t)
-	switch {
-	case d < time.Minute:
+	when := shortWhen(now, t)
+	if when == "now" {
 		return "just now"
-	case d < time.Hour:
-		return fmt.Sprintf("%dm ago", int(d/time.Minute))
-	case d < 48*time.Hour:
-		return fmt.Sprintf("%dh ago", int(d/time.Hour))
-	default:
-		return fmt.Sprintf("%dd ago", int(d/(24*time.Hour)))
 	}
+	// Only the minute and hour forms end in a unit; the weekday and date
+	// forms end in a letter other than m or h, or a digit.
+	if strings.HasSuffix(when, "m") || strings.HasSuffix(when, "h") {
+		return when + " ago"
+	}
+	return when
 }
 
 // summaryStatus is the header's right-hand status: how the last turn ended,
