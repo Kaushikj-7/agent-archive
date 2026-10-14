@@ -12,6 +12,7 @@ import (
 )
 
 func TestMemoryStoreClonesKeepBodiesVersionsAndMutationsPrivate(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	source := NewMemoryStore()
 	input := []byte("immutable seed")

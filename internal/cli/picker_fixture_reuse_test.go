@@ -12,7 +12,15 @@ import (
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
+type qualificationObjectKey string
+
+const (
+	qualificationHeadKey        qualificationObjectKey = catalog.HeadKey
+	qualificationCoordinatorKey qualificationObjectKey = catalog.CoordinatorKey
+)
+
 func TestQualificationFixtureCopiesKeepMutationsPrivate(t *testing.T) {
+	t.Parallel()
 	metadata := qualificationMetadata(1400, 0)
 	started := time.Now()
 	constructed := buildQualificationFixture(t, metadata)
@@ -53,7 +61,8 @@ func TestQualificationFixtureCopiesKeepMutationsPrivate(t *testing.T) {
 	must(t, first.raw.Put(t.Context(), catalog.HeadKey, []byte("corrupt head")))
 	must(t, first.raw.Put(t.Context(), catalog.CoordinatorKey, []byte("corrupt coordinator")))
 	for _, object := range firstObjects {
-		if object.Key == catalog.HeadKey || object.Key == catalog.CoordinatorKey {
+		key := qualificationObjectKey(object.Key)
+		if key == qualificationHeadKey || key == qualificationCoordinatorKey {
 			continue
 		}
 		original, err := first.raw.Get(t.Context(), object.Key)

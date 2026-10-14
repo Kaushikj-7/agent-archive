@@ -282,10 +282,11 @@ var qualificationSeeds = struct {
 }{fixtures: make(map[string]qualificationFrozenFixture)}
 
 type qualificationFrozenFixture struct {
-	objects        storagetest.MemorySnapshot
-	head, metadata []byte
-	manifest       string
-	height         int
+	objects  storagetest.MemorySnapshot
+	head     []byte
+	metadata []byte
+	manifest string
+	height   int
 }
 
 func freezeQualificationFixture(tb testing.TB, fixture qualificationFixture) qualificationFrozenFixture {
@@ -349,16 +350,16 @@ func cloneQualificationFixture(tb testing.TB, fixture qualificationFixture) qual
 	if err != nil {
 		tb.Fatal(err)
 	}
-	copy := qualificationFixture{raw: &qualifiedCLIStore{memory}, manifest: fixture.manifest, height: fixture.height}
-	if err := json.Unmarshal(qualificationJSON(tb, fixture.head), &copy.head); err != nil {
+	cloned := qualificationFixture{raw: &qualifiedCLIStore{memory}, manifest: fixture.manifest, height: fixture.height}
+	if err := json.Unmarshal(qualificationJSON(tb, fixture.head), &cloned.head); err != nil {
 		tb.Fatal(err)
 	}
-	if err := json.Unmarshal(qualificationJSON(tb, fixture.metadata), &copy.metadata); err != nil {
+	if err := json.Unmarshal(qualificationJSON(tb, fixture.metadata), &cloned.metadata); err != nil {
 		tb.Fatal(err)
 	}
-	copy.store, err = catalog.Wrap(copy.raw)
+	cloned.store, err = catalog.Wrap(cloned.raw)
 	if err != nil {
 		tb.Fatal(err)
 	}
-	return copy
+	return cloned
 }
