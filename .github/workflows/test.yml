@@ -199,19 +199,77 @@ jobs:
           if-no-files-found: error
 
 
-  script-tests:
-    needs: [tier-plan]
+  script-static:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      HOME: ${{ runner.temp }}/script-static-home
+      XDG_CONFIG_HOME: ${{ runner.temp }}/script-static-xdg
+      PYTHONDONTWRITEBYTECODE: '1'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Create isolated script environment
+        run: mkdir -p "$HOME" "$XDG_CONFIG_HOME"
       - run: python3 scripts/test_release_signing.py
       - run: python3 scripts/test_release_assets.py
       - run: python3 scripts/test_release_candidate.py
+      # Extended's real-systemd backstop keeps its name and validated image.
+      - run: python3 scripts/test_ci_workflow.py
+      - run: python3 scripts/test_stage_native_verify.py
+      - run: python3 -B scripts/test_scope_native_verify.py
+      - run: python3 -B scripts/test_stage_release_vulnerability_scan.py
+      - run: python3 scripts/test_measure_hook.py
+      # Static and fake-Docker checks of the Linux live acceptance scripts;
+      # the live run itself needs privileged Docker and is not run in CI.
+      - run: python3 scripts/test_linux_acceptance.py
+
+      - run: python3 scripts/test_go_shards.py
+      - run: python3 -B scripts/test_generate_go_shard_hints.py
+      - run: python3 scripts/test_ci_tiers.py
+      - run: python3 -B scripts/test_native_full.py
+      - run: python3 -B scripts/test_go_cache_context.py
+      - run: python3 -B scripts/test_go_cache_steps.py
+
+      - run: python3 -B scripts/test_ci_lane_verdict.py
+      - name: Remove isolated script environment
+        if: always()
+        run: rm -rf -- "$HOME" "$XDG_CONFIG_HOME"
+
+  script-install:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      HOME: ${{ runner.temp }}/script-install-home
+      XDG_CONFIG_HOME: ${{ runner.temp }}/script-install-xdg
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Create isolated script environment
+        run: mkdir -p "$HOME" "$XDG_CONFIG_HOME"
       - run: python3 scripts/test_install.py
       - run: python3 scripts/test_install_from_source.py
+      - name: Remove isolated script environment
+        if: always()
+        run: rm -rf -- "$HOME" "$XDG_CONFIG_HOME"
+
+  script-purge:
+    needs: [tier-plan]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      HOME: ${{ runner.temp }}/script-purge-home
+      XDG_CONFIG_HOME: ${{ runner.temp }}/script-purge-xdg
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Create isolated script environment
+        run: mkdir -p "$HOME" "$XDG_CONFIG_HOME"
       - name: Install purge prerequisites
         run: |
           sudo apt-get update
@@ -230,22 +288,23 @@ jobs:
           name: purge-tier
           path: ${{ runner.temp }}/purge-tier.json
           if-no-files-found: error
-      # Extended's real-systemd backstop keeps its name and validated image.
-      - run: python3 scripts/test_ci_workflow.py
-      - run: python3 scripts/test_stage_native_verify.py
-      - run: python3 -B scripts/test_scope_native_verify.py
-      - run: python3 -B scripts/test_stage_release_vulnerability_scan.py
-      - run: python3 scripts/test_measure_hook.py
-      # Static and fake-Docker checks of the Linux live acceptance scripts;
-      # the live run itself needs privileged Docker and is not run in CI.
-      - run: python3 scripts/test_linux_acceptance.py
+      - name: Remove isolated script environment
+        if: always()
+        run: rm -rf -- "$HOME" "$XDG_CONFIG_HOME"
 
-      - run: python3 scripts/test_go_shards.py
-      - run: python3 -B scripts/test_generate_go_shard_hints.py
-      - run: python3 scripts/test_ci_tiers.py
-      - run: python3 -B scripts/test_native_full.py
-      - run: python3 -B scripts/test_go_cache_context.py
-      - run: python3 -B scripts/test_go_cache_steps.py
+  script-tests:
+    if: always()
+    needs: [script-static, script-install, script-purge]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Require every independent lane to succeed
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: python3 -B scripts/ci_lane_verdict.py script-tests
 
   # Keep this required check stable and fail closed when a worker fails/skips.
   linux-race:
@@ -407,9 +466,7 @@ jobs:
           path: native-tier-results
           if-no-files-found: error
 
-  cross-build:
-    # The Linux test sees linux/amd64, and macos-smoke sees Darwin with cgo.
-    # Build and vet the other release targets before a change reaches main.
+  cross-linux-arm64:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -432,24 +489,65 @@ jobs:
         run: |
           go build ./...
           go vet ./...
-      # A macOS build without cgo uses the Keychain stand-in in
-      # internal/credentials/keychain_nocgo_darwin.go, which macos-smoke
-      # (cgo on) never compiles.
+
+  cross-darwin-nocgo:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.2'
+          cache: false
+      - name: Require Go 1.27.2 (go.mod's toolchain line)
+        run: |
+          go version
+          go version | grep -q ' go1\.27\.2 ' || { echo "expected go1.27.2, matching go.mod's toolchain line" >&2; exit 1; }
       - name: Vet darwin without cgo
         env:
           GOOS: darwin
           GOARCH: arm64
           CGO_ENABLED: '0'
         run: go vet ./...
-      # The release workflow's Linux build and checks, on a placeholder
-      # version, so everything except tagging and publishing is exercised
-      # before a release.
+
+  cross-linux-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.2'
+          cache: false
+      - name: Require Go 1.27.2 (go.mod's toolchain line)
+        run: |
+          go version
+          go version | grep -q ' go1\.27\.2 ' || { echo "expected go1.27.2, matching go.mod's toolchain line" >&2; exit 1; }
       - name: Build and check the release's Linux binaries
         env:
           VERSION: v0.0.0-ci
         run: |
           ./scripts/build-release.sh linux
           ./scripts/verify-linux-release.sh
+
+
+  cross-build:
+    if: always()
+    needs: [cross-linux-arm64, cross-darwin-nocgo, cross-linux-release]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Require every independent lane to succeed
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: python3 -B scripts/ci_lane_verdict.py cross-build
 
   lint:
     # macOS, the platform the tool ships for, so the cgo Keychain code is

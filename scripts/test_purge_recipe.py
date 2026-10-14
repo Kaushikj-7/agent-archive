@@ -10,11 +10,13 @@ import stat
 import sys
 import subprocess
 import tempfile
+import time
 import unittest
 
 DOCS = Path(__file__).resolve().parent.parent / 'docs'
 TIER = 'full'
 CASE_EVIDENCE = []
+METHOD_TIMINGS = []
 
 RECIPE_PAGES = [DOCS / 'security' / 'archive-cleanup.md', DOCS / 'getting-started' / 'uninstall.md']
 
@@ -134,6 +136,14 @@ def resume_cases(tier):
 
 
 class EvidenceResult(unittest.TextTestResult):
+    def startTest(self, test):
+        super().startTest(test)
+        self.method_started = time.monotonic()
+
+    def stopTest(self, test):
+        METHOD_TIMINGS.append({'test': test.id(), 'seconds': time.monotonic() - self.method_started})
+        super().stopTest(test)
+
     def addSubTest(self, test, subtest, err):
         super().addSubTest(test, subtest, err)
         CASE_EVIDENCE.append({'test': test.id(), 'case': dict(subtest.params),
@@ -944,5 +954,6 @@ if __name__ == '__main__':
         source = subprocess.check_output(['git','-C',str(DOCS.parent),'rev-parse','HEAD'],text=True).strip()
         args.evidence.parent.mkdir(parents=True,exist_ok=True)
         args.evidence.write_text(json.dumps({'schema':1, 'source':source, 'tier':TIER,
-                                            'success':program.result.wasSuccessful(), 'cases':CASE_EVIDENCE},indent=2)+'\n')
+                                            'success':program.result.wasSuccessful(), 'cases':CASE_EVIDENCE,
+                                            'method_timings': METHOD_TIMINGS},indent=2)+'\n')
     sys.exit(not program.result.wasSuccessful())
