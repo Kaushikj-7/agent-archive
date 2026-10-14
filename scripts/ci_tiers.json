@@ -210,6 +210,27 @@
       "test": "TestLargeRecordMemoryCeiling",
       "restore": "weekly",
       "pr": "representative; full matrix/scale NOT RUN"
+    },
+    {
+      "package": "internal/catalog",
+      "test": "TestPickerFirstPageWorkDoesNotScaleWithUnrelatedArchive",
+      "restore": "weekly",
+      "pr": "128/512-record representative; 10000/100000 records NOT RUN",
+      "full_children": [
+        "10000",
+        "100000"
+      ]
+    },
+    {
+      "package": "internal/cli",
+      "test": "TestPickerQualificationRealCLIPhases",
+      "restore": "weekly",
+      "pr": "1400-record handoff/list/show first/Older page oracle (>100 eligible rows); scale NOT RUN",
+      "full_children": [
+        "1400",
+        "10000",
+        "100000"
+      ]
     }
   ]
 }
