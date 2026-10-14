@@ -6,6 +6,7 @@ Input schema and collection recipe: docs/reference/ci-timing.md.
 import argparse
 from collections import Counter
 from datetime import datetime
+from decimal import Decimal
 import json
 import math
 from pathlib import Path
@@ -166,6 +167,88 @@ def report(document):
     return {'schema': 1, 'diagnostic_only': True, 'samples': samples, 'summaries': summaries}
 
 
+def go_event_stamp(value):
+    """Parse Go RFC3339Nano without losing fractional precision on Python 3.9."""
+    if not isinstance(value, str):
+        raise ValueError('missing Go event timestamp')
+    match = re.fullmatch(r'(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,9}))?(Z|[+-]\d{2}:\d{2})', value)
+    if not match:
+        raise ValueError('invalid Go event timestamp')
+    whole, fraction, zone = match.groups()
+    return Decimal(str(stamp(whole + zone))) + Decimal('0.' + (fraction or '0'))
+
+
+def parent_tree_timings(events):
+    """Diagnostic wall intervals for top-level Go lifecycles, per invocation.
+
+    Go's terminal Elapsed omits waits for parallel descendants. A paused parent
+    starts its measured wall interval at cont; an unpaused parent starts at run.
+    Incomplete or inconsistent lifecycle evidence never supplies a wall estimate.
+    """
+    active, rows = {}, []
+
+    def finish(key, state, terminal=None):
+        issues = list(state['issues'])
+        seconds = None
+        if terminal is None:
+            issues.append('missing parent terminal')
+        elif state['phase'] == 'paused':
+            issues.append('paused parent missing cont')
+        if terminal is not None and not issues:
+            try:
+                seconds = float(go_event_stamp(terminal.get('Time')) - go_event_stamp(state['start']))
+                if seconds < 0:
+                    raise ValueError('parent lifecycle timestamps run backwards')
+            except (AttributeError, TypeError, ValueError):
+                seconds = None
+                issues.append('missing/invalid parent lifecycle timestamp')
+        rows.append({'package': key[0], 'parent': key[1], 'seconds': seconds,
+                     'own_elapsed_seconds': terminal.get('Elapsed') if terminal else None,
+                     'status': terminal.get('Action') if terminal else None,
+                     'timing_issues': issues})
+
+    for event in events:
+        package, name, action = event.get('Package'), event.get('Test'), event.get('Action')
+        # A fresh package invocation cannot complete a previous invocation's tree.
+        if not name and action == 'start':
+            for key in list(active):
+                if key[0] == package:
+                    finish(key, active.pop(key))
+        if not name or '/' in name or action not in ('run', 'pause', 'cont', 'pass', 'fail', 'skip'):
+            continue
+        key = (package, name)
+        if action == 'run':
+            if key in active:
+                old = active.pop(key)
+                old['issues'].append('duplicate run before parent terminal')
+                finish(key, old)
+            active[key] = {'phase': 'run', 'start': event.get('Time'), 'last': None, 'issues': []}
+        if key not in active:
+            active[key] = {'phase': 'missing-run', 'start': None, 'last': None,
+                           'issues': ['missing parent run']}
+        state = active[key]
+        try:
+            current = go_event_stamp(event.get('Time'))
+            if state['last'] is not None and current < state['last']:
+                state['issues'].append('parent lifecycle timestamps run backwards')
+            state['last'] = current
+        except (AttributeError, TypeError, ValueError):
+            state['issues'].append('missing/invalid parent lifecycle timestamp')
+        if action == 'pause':
+            if state['phase'] != 'run':
+                state['issues'].append('unexpected parent pause')
+            state['phase'] = 'paused'
+        elif action == 'cont':
+            if state['phase'] != 'paused':
+                state['issues'].append('unexpected parent cont')
+            state['phase'], state['start'] = 'continued', event.get('Time')
+        elif action in ('pass', 'fail', 'skip'):
+            finish(key, active.pop(key), event)
+    for key, state in active.items():
+        finish(key, state)
+    return rows
+
+
 def worker_evidence(directory):
     """Read existing coverage artifacts; this is not a second coverage registry."""
     import run_go_shard
@@ -175,16 +258,12 @@ def worker_evidence(directory):
         path = directory / filename
         if not path.exists():
             continue
-        for event in run_go_shard.json_stream(path.read_text()):
-            if event.get('Action') not in ('pass', 'fail', 'skip'):
-                continue
-            name = event.get('Test')
-            row = {'package': event.get('Package'), 'seconds': event.get('Elapsed'),
-                   'status': event['Action'], 'log': filename}
-            if name and '/' not in name:
-                parents.append(dict(row, parent=name))
-            elif not name:
-                packages.append(row)
+        events = list(run_go_shard.json_stream(path.read_text()))
+        parents.extend(dict(row, log=filename) for row in parent_tree_timings(events))
+        for event in events:
+            if event.get('Action') in ('pass', 'fail', 'skip') and not event.get('Test'):
+                packages.append({'package': event.get('Package'), 'seconds': event.get('Elapsed'),
+                                 'status': event['Action'], 'log': filename})
     order = lambda row: row.get('seconds') or 0
     return {'directory': str(directory), 'source': manifest.get('catalog', {}).get('source'),
             'shard': manifest.get('shard'), 'success': manifest.get('success'),
@@ -192,7 +271,7 @@ def worker_evidence(directory):
             'timing_observation': manifest.get('timing_observation'),
             'packages': sorted(packages, key=order, reverse=True),
             'complete_parent_trees': sorted(parents, key=order, reverse=True),
-            'note': 'Elapsed includes parent descendants/parallel waits; never sum parents. Coverage reconciliation remains authoritative.'}
+            'note': 'Parent seconds measure cont-to-terminal (run-to-terminal when unpaused), including descendant waits; unknown lifecycle timing is null. own_elapsed_seconds is Go terminal Elapsed and can omit parallel descendant waits. Never sum parents. Coverage reconciliation remains authoritative.'}
 
 
 def main():

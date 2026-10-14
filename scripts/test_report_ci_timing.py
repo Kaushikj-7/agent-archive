@@ -116,13 +116,62 @@ class ReportTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
             (directory/'manifest.json').write_text(json.dumps({'catalog': {'source': 'merge'}, 'shard': 0, 'success': True}))
-            (directory/'ordinary.json').write_text('\n'.join(json.dumps(row) for row in [
+            events = [
+                {'Action': 'run', 'Package': 'p', 'Test': 'TestA', 'Time': '2026-10-14T00:00:00Z'},
                 {'Action': 'pass', 'Package': 'p', 'Test': 'TestA/child', 'Elapsed': 3},
-                {'Action': 'pass', 'Package': 'p', 'Test': 'TestA', 'Elapsed': 4},
-                {'Action': 'pass', 'Package': 'p', 'Elapsed': 5}]))
+                {'Action': 'pass', 'Package': 'p', 'Test': 'TestA', 'Elapsed': .03, 'Time': '2026-10-14T00:00:04Z'},
+                {'Action': 'pass', 'Package': 'p', 'Elapsed': 5}]
+            (directory/'ordinary.json').write_text('\n'.join(json.dumps(row) for row in events))
             value = timing.worker_evidence(directory)
-            self.assertEqual(value['complete_parent_trees'], [{'package': 'p', 'seconds': 4, 'status': 'pass', 'log': 'ordinary.json', 'parent': 'TestA'}])
+            self.assertEqual(value['complete_parent_trees'], [{'package': 'p', 'seconds': 4,
+                'own_elapsed_seconds': .03, 'status': 'pass', 'log': 'ordinary.json',
+                'parent': 'TestA', 'timing_issues': []}])
             self.assertEqual(value['packages'][0]['seconds'], 5)
+
+    def parallel_events(self):
+        # Real-shaped Go t.Parallel stream: parent own elapsed is tiny while
+        # descendants keep its complete tree alive for nearly 150 seconds.
+        return [dict(Package='statshtml', Test=name, Action=action, Time=when, **extra)
+                for name, action, when, extra in [
+                    ('TestBuild', 'run', '2026-10-14T00:00:00.000000001Z', {}),
+                    ('TestBuild', 'pause', '2026-10-14T00:00:00.030000001Z', {}),
+                    ('TestBuild', 'cont', '2026-10-14T00:00:10.000000001Z', {}),
+                    ('TestBuild/large', 'run', '2026-10-14T00:00:10.010000001Z', {}),
+                    ('TestBuild/large', 'pass', '2026-10-14T00:02:38.070000001Z', {'Elapsed': 148.06}),
+                    ('TestBuild', 'pass', '2026-10-14T00:02:38.080000001Z', {'Elapsed': .03})]]
+
+    def test_parallel_parent_uses_complete_tree_wall_not_own_elapsed(self):
+        row, = timing.parent_tree_timings(self.parallel_events())
+        self.assertAlmostEqual(row['seconds'], 148.080, places=5)
+        self.assertEqual(row['own_elapsed_seconds'], .03)
+        self.assertEqual(row['timing_issues'], [])
+
+    def test_parent_missing_or_malformed_lifecycle_is_unknown(self):
+        events = self.parallel_events()
+        for broken in (events[1:], events[:-1], [e for e in events if e['Action'] != 'cont'],
+                       [dict(e, Time=None) if e['Action'] == 'run' else e for e in events],
+                       [dict(e, Time='bad') if e['Action'] == 'cont' else e for e in events],
+                       [dict(e, Time='2026-10-13T00:00:00Z') if e['Action'] == 'pass' else e for e in events],
+                       [e for e in events if e['Action'] != 'pause']):
+            with self.subTest(events=broken):
+                row, = timing.parent_tree_timings(broken)
+                self.assertIsNone(row['seconds'])
+                self.assertTrue(row['timing_issues'])
+
+    def test_parent_repeated_invocations_and_truncated_invocation_stay_separate(self):
+        events = self.parallel_events()
+        rows = timing.parent_tree_timings(events + events)
+        self.assertEqual(len(rows), 2)
+        self.assertTrue(all(not r['timing_issues'] for r in rows))
+        # New package start flushes an incomplete earlier invocation, even
+        # when the same parent name appears again.
+        rows = timing.parent_tree_timings(events[:-1] + [{'Package': 'statshtml', 'Action': 'start'}] + events)
+        self.assertEqual(len(rows), 2)
+        self.assertIsNone(rows[0]['seconds'])
+        self.assertAlmostEqual(rows[1]['seconds'], 148.08, places=5)
+        rows = timing.parent_tree_timings(events[:1] + events)
+        self.assertTrue(rows[0]['timing_issues'])
+        self.assertIsNone(rows[0]['seconds'])
 
     def test_tier_batch_reports_overlap_without_summing(self):
         import run_ci_tier

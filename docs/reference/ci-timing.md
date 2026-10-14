@@ -100,7 +100,13 @@ commands are explicitly marked and their durations must not be added.
 Append `--evidence path/to/go-shard-0` (repeat for each worker) to summarize the
 existing manifests, flags/compiler context, runner image/cache observation,
 phases, slow package terminals, and complete top-level parent trees. Parent
-elapsed times include descendants and parallel waits. The report does not
+`seconds` uses lifecycle timestamps from `cont` to the terminal, or `run` to
+the terminal for an unpaused parent, including descendant waits after that start.
+Time paused before `cont` is excluded. Missing timestamps, missing terminals,
+paused parents without `cont`, and malformed lifecycles yield null wall timing
+with diagnostic issues. Each invocation remains separate. `own_elapsed_seconds`
+retains Go's terminal `Elapsed`, which can omit waits for parallel descendants;
+it is not a complete-parent wall estimate. The report does not
 reinterpret these artifacts as a coverage verdict. Cache bytes and tool
 installation are measured from inventory/API step data, not inferred from hits.
 
