@@ -509,9 +509,9 @@ func qualificationDefaultFixture(tb testing.TB) qualificationFixture {
 }
 
 func TestPickerQualificationRealCLIPhases(t *testing.T) {
-	sizes := []int{1400}
-	if os.Getenv("AGENT_ARCHIVE_PERF") == "1" {
-		sizes = []int{10000, 100000}
+	sizes := []int{1400, 10000, 100000}
+	if testing.Short() {
+		sizes = []int{1400}
 	}
 	for _, size := range sizes {
 		t.Run(strconv.Itoa(size), func(t *testing.T) {

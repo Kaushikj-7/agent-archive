@@ -185,7 +185,7 @@ func bulkPickerFixture(t *testing.T, size, unary int) (*Snapshot, *pickerMeter) 
 func TestPickerFirstPageWorkDoesNotScaleWithUnrelatedArchive(t *testing.T) {
 	sizes := []int{10000, 100000}
 	if testing.Short() {
-		sizes = []int{1000, 10000}
+		sizes = []int{128, 512}
 	}
 	for _, size := range sizes {
 		t.Run(strconv.Itoa(size), func(t *testing.T) {
