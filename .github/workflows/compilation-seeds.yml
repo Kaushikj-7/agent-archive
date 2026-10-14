@@ -1,0 +1,89 @@
+name: Compilation seeds
+# Public standard runners only. No schedule and no PR/PR-target execution.
+on:
+  push:
+    branches: [main]
+# Ignore persistent per-user Go configuration; all compiler flags are explicit.
+env:
+  GOENV: 'off'
+permissions:
+  contents: read
+concurrency:
+  group: compilation-seeds-main
+  cancel-in-progress: true
+jobs:
+  seed:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            profile: product
+          - os: macos-14
+            profile: product
+          - os: ubuntu-24.04
+            profile: shared
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      GOTOOLCHAIN: local
+      GOWORK: 'off'
+      GOFLAGS: '-mod=readonly'
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.2'
+          cache: false
+      - name: Prepare exact immutable shared source
+        if: matrix.profile == 'shared'
+        run: python3 -B scripts/warm_shared_tools.py --checkout-only
+      - id: restored
+        uses: ./.github/actions/verified-go-cache
+        with:
+          profile: ${{ matrix.profile }}
+          shared-source: ${{ matrix.profile == 'shared' && format('{0}/shared-seed-source', runner.temp) || '' }}
+      - name: Fresh production compilation and race test compilation
+        if: matrix.profile == 'product' && steps.restored.outputs.restore-state != 'trusted'
+        shell: bash
+        run: |
+          go build ./...
+          # Compile complete packages without executing assertions or TestMain.
+          # These are accelerators, never evidence of any test body passing.
+          go list ./... > "$RUNNER_TEMP/seed-packages.txt"
+          while IFS= read -r package; do
+            go test -race -vet=off -c -o "$RUNNER_TEMP/seed.test" "$package"
+          done < "$RUNNER_TEMP/seed-packages.txt"
+      - name: Compile pinned checker binaries
+        if: runner.os == 'macOS' && steps.restored.outputs.restore-state != 'trusted'
+        run: |
+          python3 -B scripts/verified_tools.py golangci-lint
+          python3 -B scripts/verified_tools.py deadcode
+      - name: Compile immutable historical Git tools on Linux
+        if: runner.os == 'Linux' && matrix.profile == 'product' && steps.restored.outputs.restore-state != 'trusted'
+        run: |
+          python3 -B scripts/pinned_git.py upstream-2.30.2
+          python3 -B scripts/pinned_git.py upstream-2.39.2
+      - name: Compile immutable shared checker helpers on Linux
+        if: matrix.profile == 'shared' && steps.restored.outputs.restore-state != 'trusted'
+        run: python3 -B scripts/warm_shared_tools.py
+      - name: Validate exact trusted-main source and checksums for publication
+        id: complete
+        if: steps.restored.outputs.restore-state != 'trusted'
+        env:
+          CACHE_PROFILE: ${{ matrix.profile }}
+          CACHE_SHARED_SOURCE: ${{ matrix.profile == 'shared' && format('{0}/shared-seed-source', runner.temp) || '' }}
+        run: python3 -B scripts/ci_cache.py complete --profile "$CACHE_PROFILE" --shared-source "$CACHE_SHARED_SOURCE"
+      - name: Save one immutable seed per complete context
+        if: success() && steps.complete.outputs.save_ready == 'true'
+        continue-on-error: true
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          key: ${{ steps.complete.outputs.seed }}
+          path: |
+            ${{ runner.temp }}/pr-go-build
+            ${{ runner.temp }}/pr-go-modules/cache
+          enableCrossOsArchive: false

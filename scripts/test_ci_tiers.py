@@ -324,6 +324,7 @@ class PlainVetTest(unittest.TestCase):
 
     import go_cache_context as context_keys
     context.update(schema=context_keys.SCHEMA,os_release='d'*64,
+                   native_environment='d'*64,pinned_tools=context_keys.TOOL_PINS,compilation_modes=context_keys.COMPILATION_MODES,
                    cc={'binary':'d'*64,'version':'d'*64},cxx={'binary':'d'*64,'version':'d'*64},
                    toolchain={name:'d'*64 for name in ('go','compile','asm','link','cgo','vet')},
                    image={'ImageOS':'ubuntu24','ImageVersion':'20261001.1.0'})

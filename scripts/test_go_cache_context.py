@@ -59,7 +59,7 @@ class ContextTests(unittest.TestCase):
             with self.subTest(label=label):
                 self.assertNotEqual(first.prefix, self.plan(dict(context, **changed)).prefix)
         self.assertNotEqual(first.prefix, self.plan(pr=13).prefix)
-        self.assertNotEqual(first.prefix, self.plan(worker=1).prefix)
+        self.assertEqual(first.prefix, self.plan(worker=1).prefix)
         changed = dict(first.source, dependency='d'*64)
         self.assertNotEqual(first.prefix, self.plan(source=changed).prefix)
 
@@ -67,16 +67,19 @@ class ContextTests(unittest.TestCase):
         source = self.plan().source
         two = keys.cache_plan(12, 0, self.context(), source, self.root, 2)
         four = keys.cache_plan(12, 0, self.context(), source, self.root, 4)
+        eight = keys.cache_plan(12, 7, self.context(), source, self.root, 8)
+        self.assertNotEqual(four.prefix,eight.prefix)
+        self.assertIn('-n8-w0-',eight.prefix)
         self.assertNotEqual(two.prefix, four.prefix)
-        self.assertNotEqual(four.prefix, keys.cache_plan(12, 3, self.context(), source, self.root, 4).prefix)
-        for workers, worker in ((3, 0), (4, 4), (2, 2), (True, 0), ('4', 0)):
+        self.assertEqual(four.prefix, keys.cache_plan(12, 3, self.context(), source, self.root, 4).prefix)
+        for workers, worker in ((3, 0), (4, 4), (8, 8), (2, 2), (True, 0), ('4', 0)):
             with self.assertRaises(keys.InvalidContext):
                 keys.cache_plan(12, worker, self.context(), source, self.root, workers)
 
     def test_actual_go_metadata_fails_closed(self):
         for key, value in [('GOVERSION', 'go1.27.3'), ('CGO_ENABLED', '0'),
                            ('GOHOSTARCH', 'arm64'), ('GOFLAGS', '-mod=mod'),
-                           ('GOTOOLCHAIN', 'auto'), ('GOWORK', '/tmp/other')]:
+                           ('GOTOOLCHAIN', 'auto'), ('GOWORK', '/tmp/other'), ('GOCACHEPROG', '/tmp/external-cache')]:
             with self.subTest(key=key):
                 original = self.go[key]
                 self.go[key] = value
