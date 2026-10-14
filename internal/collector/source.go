@@ -814,6 +814,9 @@ func (r providerReader) inspectSummary(ctx context.Context, snapshot agentapi.So
 	var owned agentapi.VerifiedImportSnapshot
 	if r.inspectionCache != nil && r.harness == "codex" {
 		content, _ = snapshot.(agentapi.VerifiedContentSnapshot)
+		if content != nil && !content.ContentProofFor(snapshot, in) {
+			content = nil
+		}
 		if content != nil {
 			operation, supports := snapshot.(agentapi.VerifiedImportSnapshot)
 			if supports && operation.VerifiedInspectionFor(snapshot, f) {
@@ -829,7 +832,8 @@ func (r providerReader) inspectSummary(ctx context.Context, snapshot agentapi.So
 			if proofErr != nil {
 				return inspected, proofErr
 			}
-			cacheKey = inspectioncache.Key{Agent: r.harness, SourceIdentity: string(r.ref.Kind) + "\x00" + r.ref.Path + "\x00" + r.ref.Key, AdapterVersion: f.Version(), FilterVersion: archive.FilterVersion, InspectionVersion: 1, Proof: proof, RawBytes: c.Limits.RawBytes, RecordBytes: c.Limits.RecordBytes, FilteredBytes: maxBytes, Records: c.Limits.Records}
+			// Version 2 discards facts persisted before actual-input qualification.
+			cacheKey = inspectioncache.Key{Agent: r.harness, SourceIdentity: string(r.ref.Kind) + "\x00" + r.ref.Path + "\x00" + r.ref.Key, AdapterVersion: f.Version(), FilterVersion: archive.FilterVersion, InspectionVersion: 2, Proof: proof, RawBytes: c.Limits.RawBytes, RecordBytes: c.Limits.RecordBytes, FilteredBytes: maxBytes, Records: c.Limits.Records}
 		}
 	}
 	cached := false

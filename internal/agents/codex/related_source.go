@@ -1750,6 +1750,13 @@ func originalProducerMatches(original *rolloutFile, admission agentapi.SourceAdm
 	return (admission.InitialProducerVersion == "" || admission.InitialProducerVersion == original.meta.Version) && (admission.InitialProducerOriginator == "" || admission.InitialProducerOriginator == original.meta.Originator)
 }
 
+// ContentProofFor excludes promoted methods on snapshot or input decorators.
+func (s *ordinarySnapshot) ContentProofFor(snapshot agentapi.SourceSnapshot, in agentapi.NativeInput) bool {
+	actual, ok := snapshot.(*ordinarySnapshot)
+	file, ordinary := in.File.(ordinaryFile)
+	return ok && actual == s && ordinary && file.s == s && file.FileInput == s.source.file && in.Records == nil && in.SubagentMeta == nil && !s.closed && !s.owner.closed
+}
+
 // ContentProof reuses the digest of the same ordinary boundary passed to filtering.
 func (s *ordinarySnapshot) ContentProof(ctx context.Context) (agentapi.SourceContentProof, error) {
 	if err := s.VerifyContent(ctx); err != nil {

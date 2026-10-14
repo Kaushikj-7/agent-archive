@@ -132,3 +132,71 @@ func TestOrdinaryContentProofUsesCapturedCompleteBoundary(t *testing.T) {
 		t.Fatalf("proof used whole file instead of captured prefix: %+v len=%d input=%d", proof, len(raw), input.Length())
 	}
 }
+
+// Embedded proof methods must not attest a wrapper's actual snapshot or input.
+type decoratedContentSnapshot struct {
+	agentapi.SourceSnapshot
+	agentapi.VerifiedContentSnapshot
+}
+
+func TestOrdinaryContentProofQualifiesExactSnapshotAndWholeInput(t *testing.T) {
+	ref, _ := historyFile(t, t.TempDir(), threadA, threadA, 0, nil, "synthetic")
+	pass, err := (SourceProvider{}).OpenPass(t.Context(), agentapi.SourceEnvironment{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := pass.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
+	snapshot, err := pass.Read(t.Context(), ref, agentapi.ReadLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := snapshot.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
+	content := snapshot.(agentapi.VerifiedContentSnapshot)
+	in := snapshot.Input()
+	if !content.ContentProofFor(snapshot, in) {
+		t.Fatal("actual ordinary input declined")
+	}
+	decorated := decoratedContentSnapshot{snapshot, content}
+	if decorated.ContentProofFor(decorated, in) {
+		t.Fatal("promoted capability attested decorated snapshot")
+	}
+	records := in
+	records.Records = struct{ agentapi.RecordInput }{}
+	if content.ContentProofFor(snapshot, records) {
+		t.Fatal("alternate record input attested")
+	}
+	metadata := in
+	metadata.SubagentMeta = []byte("synthetic")
+	if content.ContentProofFor(snapshot, metadata) {
+		t.Fatal("extra input metadata attested")
+	}
+	metadata.SubagentMeta = []byte{}
+	if content.ContentProofFor(snapshot, metadata) {
+		t.Fatal("decorated empty metadata attested")
+	}
+	other := in
+	file := in.File.(ordinaryFile)
+	file.s = &ordinarySnapshot{}
+	other.File = file
+	if content.ContentProofFor(snapshot, other) {
+		t.Fatal("different ordinary input owner attested")
+	}
+	other.File = file.FileInput
+	if content.ContentProofFor(snapshot, other) {
+		t.Fatal("different input framing attested")
+	}
+	if err := snapshot.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if content.ContentProofFor(snapshot, in) {
+		t.Fatal("closed snapshot attested")
+	}
+}
