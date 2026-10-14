@@ -58,7 +58,7 @@ func scopedPickerCatalog(t *testing.T, mem *storagetest.MemoryStore) *catalog.St
 func TestRealCLIBoundedHandoffStartupAndOlderReadNoBodies(t *testing.T) {
 	a := newScopedArchive(t)
 	for i := range 105 {
-		a.add(t, fmt.Sprintf("picker-%03d", i), fmt.Sprintf("Title %03d", i), a.label, func(m *archive.Metadata) { m.Counts.Turns = nil })
+		a.addMetadata(t, fmt.Sprintf("picker-%03d", i), fmt.Sprintf("Title %03d", i), a.label, func(m *archive.Metadata) { m.Counts.Turns = nil })
 	}
 	remote := scopedPickerCatalog(t, a.mem)
 	counts := &catalogListReads{MeasuredStore: storagetest.NewMeasuredStore(remote.ObjectStore, 0), paths: map[string]int{}}

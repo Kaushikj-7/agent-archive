@@ -75,9 +75,14 @@ func pickerReaderFixture(t *testing.T) (*Snapshot, *Writer, *qualifiedStore, []a
 
 func buildPickerReaderFixture(t *testing.T) (*Snapshot, *Writer, *qualifiedStore, []archive.Metadata) {
 	t.Helper()
+	return buildPickerReaderFixtureSize(t, 96)
+}
+
+func buildPickerReaderFixtureSize(t *testing.T, size int) (*Snapshot, *Writer, *qualifiedStore, []archive.Metadata) {
+	t.Helper()
 	w, store := fixture(t)
 	var metadata []archive.Metadata
-	for i := range 96 {
+	for i := range size {
 		id := fmt.Sprintf("picker-%03d", i)
 		m := mutation(t, w, id)
 		harness := []string{"claude", "Claude-Code", "codex", "synthetic-unknown"}[i%4]
@@ -385,7 +390,17 @@ func TestPickerCursorRejectsMutationScopeForeignLifetimeAndHead(t *testing.T) {
 
 func TestPickerUnsupportedAndBudgetAreNotEmptyProofs(t *testing.T) {
 	const invalidMembership PickerMembership = "arbitrary"
-	s, _, _, _ := pickerReaderFixture(t)
+	var s *Snapshot
+	var metadata []archive.Metadata
+	if testing.Short() {
+		// The first row is a child/replay; the second is an ordinary root.
+		// This minimal prefix still uses real publication and guarded upgrade.
+		// Keep the full 96-row fixture for non-short qualification and every
+		// pagination/cursor test that calls pickerReaderFixture.
+		s, _, _, metadata = buildPickerReaderFixtureSize(t, 2)
+	} else {
+		s, _, _, metadata = pickerReaderFixture(t)
+	}
 	for _, q := range []PickerQuery{{Scope: PickerScope{All: true}, Membership: PickerBrowse, Limit: 101}, {Scope: PickerScope{All: true, RepoKey: testPickerRepo('a')}, Membership: PickerBrowse, Limit: 5}, {Membership: invalidMembership, Limit: 5}} {
 		p, err := s.PickerPage(t.Context(), q, "")
 		if !errors.Is(err, ErrPickerUnsupported) || p.Empty {
@@ -401,6 +416,15 @@ func TestPickerUnsupportedAndBudgetAreNotEmptyProofs(t *testing.T) {
 	if _, err = s.PickerPage(t.Context(), q, ""); !errors.Is(err, ErrPickerBudget) {
 		t.Fatal(err)
 	}
+	// Count and candidate traversal each charge nodes, including cache hits.
+	// Prove the smaller fixture has a real nonempty answer that exceeds both
+	// deliberately exhausted budgets, rather than relying on an empty tree.
+	q.Budget = PickerBudget{}
+	p, err = s.PickerPage(t.Context(), q, "")
+	if err != nil || p.Empty || len(p.Rows) == 0 || p.Cost.Nodes <= 1 || p.Cost.Bytes <= 1 {
+		t.Fatalf("fixture no longer exercises budget exhaustion: %+v %v", p, err)
+	}
+	t.Logf("real fixture rows=%d; successful query nodes=%d bytes=%d", len(metadata), p.Cost.Nodes, p.Cost.Bytes)
 }
 
 func TestPickerQueryAndCursorPreserveOriginalJSONFieldNames(t *testing.T) {
