@@ -42,9 +42,14 @@ func TestGeometryScannerMatchesPreviousExpressions(t *testing.T) {
 		}
 		check(fmt.Sprint("rendered names=", names), string(page))
 	}
+	for _, name := range []string{"x", "y", "x1", "x2", "y1", "y2", "cx", "cy", "r", "rx", "width", "height", "stroke-width", "stroke-dashoffset"} {
+		for _, prefix := range []string{" ", "\t", "\n", "\r", "\f", "\v", "\u00a0", "", " data-"} {
+			check("attribute boundary", prefix+name+`="-1"`)
+		}
+	}
 	atoms := []string{" ", "\t", "\n", "\r", "\f", "\v", "\u00a0", "x", "y", "x1", "x2", "y1", "y2", "cx", "cy", "r", "rx", "width", "height", "stroke-width", "stroke-dashoffset", "stroke-dasharray", "data-x", "=\"", "'", "\"", "0", "-1", "NaN", "Inf", "101%", "", "<svg", ">", "1 2 -3"}
 	rng := rand.New(rand.NewPCG(0x150, 2))
-	for seed := 0; seed < 1000; seed++ {
+	for seed := range 1000 {
 		var page strings.Builder
 		for range 30 {
 			page.WriteString(atoms[rng.IntN(len(atoms))])

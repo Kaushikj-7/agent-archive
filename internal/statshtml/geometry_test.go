@@ -78,6 +78,25 @@ func deepCopy(s stats.Stats) stats.Stats {
 // sizes are the attributes that are lengths, which are never negative.
 var sizes = map[string]bool{"width": true, "height": true, "r": true, "rx": true, "stroke-width": true}
 
+type geometryAttribute string
+
+const (
+	geometryX                geometryAttribute = "x"
+	geometryY                geometryAttribute = "y"
+	geometryX1               geometryAttribute = "x1"
+	geometryX2               geometryAttribute = "x2"
+	geometryY1               geometryAttribute = "y1"
+	geometryY2               geometryAttribute = "y2"
+	geometryCX               geometryAttribute = "cx"
+	geometryCY               geometryAttribute = "cy"
+	geometryR                geometryAttribute = "r"
+	geometryRX               geometryAttribute = "rx"
+	geometryWidth            geometryAttribute = "width"
+	geometryHeight           geometryAttribute = "height"
+	geometryStrokeWidth      geometryAttribute = "stroke-width"
+	geometryStrokeDashOffset geometryAttribute = "stroke-dashoffset"
+)
+
 // geometryNumbers visits the same quoted attributes as the original regular
 // expressions. Indexing the quote delimiters avoids running the regexp VM over
 // every byte of the full self-contained page for every poisoned numeric leaf.
@@ -99,8 +118,8 @@ func geometryNumbers(page string, visit func(name, value string)) {
 			continue
 		}
 		name := page[start:eq]
-		switch name {
-		case "x", "y", "x1", "x2", "y1", "y2", "cx", "cy", "r", "rx", "width", "height", "stroke-width", "stroke-dashoffset":
+		switch geometryAttribute(name) {
+		case geometryX, geometryY, geometryX1, geometryX2, geometryY1, geometryY2, geometryCX, geometryCY, geometryR, geometryRX, geometryWidth, geometryHeight, geometryStrokeWidth, geometryStrokeDashOffset:
 		default:
 			continue
 		}
