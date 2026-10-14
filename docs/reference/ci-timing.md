@@ -159,3 +159,61 @@ both four and eight are supported by the catalog and cache guards. Keep the
 stable `linux-race` aggregate required check. Do not mix schema-less historical
 manifests into live reconciliation; only the explicit historical hint-import
 interface accepts those old records.
+
+## Shared checker scheduling experiment
+
+Production shared verification stays at `--jobs 4`. Use the existing
+**Levenshtein → Run workflow** control and opt into `benchmark-checker-jobs`
+only when a concrete source revision is ready for a scheduling experiment.
+The input defaults to false; PRs, main pushes and daily scans never start the
+extra benchmark worker. It uses one standard `ubuntu-24.04` worker for at most
+30 minutes, with seven-day diagnostic artifacts. Ordinary verification and the
+separate release-compiler vulnerability scan still run normally.
+
+The helper `scripts/benchmark_shared_verify.py` uses the same immutable shared
+policy, exact compiler context and tracked-input native staging as PR checks.
+It requires the complete six-check pre-merge inventory, performs one successful
+warmup, then runs `4, 2, 2, 4` checks concurrently in that order. Each invocation
+runs the whole policy; these numbers are concurrency limits, not selected checks.
+Each measured invocation starts from a separate byte-verified copy of the same
+warm **compilation** snapshot. Snapshot copying and verification are recorded
+outside the checker interval. The task-local snapshot is capped at 3 GiB and
+removed at completion; it is never uploaded or published as a repository cache.
+
+Result caches, scanner/tool output and XDG directories start empty for every
+invocation. Explicit `rerun_checks` also requests fresh analysis under the pinned
+interface. Vulnerability scans use their current database. Go may reuse its
+source/action-keyed compilation objects; previous-source checker results cannot
+satisfy this experiment. Full plans, raw reports, stderr, exact source/compiler
+identity, baseline bytes, per-check timings and the paired median ratio are saved
+in `checker-concurrency-benchmark`. An incomplete, failed, missing, duplicate or
+cached result invalidates the observation. Keep failed diagnostics when assessing
+whether a concurrency setting is useful.
+
+This is a small diagnostic with two observations per variant, **not** a latency
+qualification or a reason to change production automatically. Compare body time,
+RSS/CPU contention if separately observed, and repeat on another representative
+source only when the result warrants it. Warm compilation does not imply warm
+Staticcheck facts: analysis/results deliberately start fresh. Native Darwin
+lint/deadcode, Linux lint/vet, new exported comments, exact-source audit/vet and
+release-compiler scanning remain ordinary required checks; the experiment does
+not replace any of them. Do not extrapolate its Linux result to macOS bodies.
+
+After final topology integration, freeze a new independently checked job
+inventory and comparison group before collecting normal-traffic observations.
+Include all eight Linux workers, every split build/script/purge lane and their
+stable aggregates; manually dispatched diagnostics do not enter that cohort.
+Record fork/cache/platform/dependency cohorts separately and retain failed runs
+and unknown cache states. The refreshed equivalent-coverage baseline is Test
+run `38610109893` plus Levenshtein run `38610109924`: approximately **54.18
+actual runner-minutes** and a **463-second workflow-created lower bound**.
+The earlier 47.1-minute example predates the per-worker vet requirements. A
+20% runner-minute increase is an investigation trigger, even when standard
+public-repository compute is free. Preserve the 10 GB repository cache setting;
+LRU eviction and cold fallbacks are preferable to enabling paid storage.
+
+Qualification remains pending until 20 unique successful comparable observations
+with actual initiating event timestamps support the declared warm-cohort p95.
+Queueing, cache restore/upload and aggregate completion belong in that latency;
+a checker-only median or a synthetic manual run cannot establish the 150-second
+end-to-end goal.

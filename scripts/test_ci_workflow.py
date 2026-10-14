@@ -152,7 +152,7 @@ class CandidateCampaignTest(unittest.TestCase):
     def test_candidate_validation_never_restores_shared_go_build_state(self):
         # Candidate evidence must come from fresh source/module verification,
         # not executable build state restored from another workflow's cache.
-        expected = {'test': 8, 'levenshtein': 2, 'extended': 7}
+        expected = {'test': 8, 'levenshtein': 3, 'extended': 7}
         for name, count in expected.items():
             workflow = (ROOT / '.github/workflows' / f'{name}.yml').read_text()
             setup = [step for job in jobs(workflow).values() for step in steps(job)
