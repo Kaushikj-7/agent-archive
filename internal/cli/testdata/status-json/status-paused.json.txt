@@ -50,7 +50,7 @@ $ agent-archive status --json
         "project_metadata_operations": 0,
         "git_metadata_bytes": 0,
         "header_probes": 0,
-        "directory_entries": 2,
+        "directory_entries": 0,
         "bytes_read": 0,
         "registered": 0
       },

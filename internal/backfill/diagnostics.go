@@ -67,8 +67,12 @@ const (
 	DetailForkOwnershipBoundaryUnavailable DiagnosticDetail = DiagnosticDetail(agentapi.CauseForkOwnershipBoundaryUnavailable)
 	// DetailHistoricalCandidateLimit describes the historical candidate limit refusal.
 	DetailHistoricalCandidateLimit DiagnosticDetail = DiagnosticDetail(agentapi.CauseHistoricalCandidateLimit)
-	// DetailHistoryCoverage describes the history coverage refusal.
-	DetailHistoryCoverage DiagnosticDetail = DiagnosticDetail(agentapi.CauseHistoryCoverage)
+	// DetailHistoryBaseUnavailable describes a missing or duplicated rollout
+	// a Codex thread's lineage continues from.
+	DetailHistoryBaseUnavailable DiagnosticDetail = DiagnosticDetail(agentapi.CauseHistoryBaseUnavailable)
+	// DetailRolloutTipAmbiguous describes a Codex thread with no single
+	// current rollout.
+	DetailRolloutTipAmbiguous DiagnosticDetail = DiagnosticDetail(agentapi.CauseRolloutTipAmbiguous)
 	// DetailHistoryDependencyUnavailable describes the history dependency unavailable refusal.
 	DetailHistoryDependencyUnavailable DiagnosticDetail = DiagnosticDetail(agentapi.CauseHistoryDependencyUnavailable)
 	// DetailHistoryOrdinalOverflow describes the history ordinal overflow refusal.
@@ -147,7 +151,8 @@ var diagnosticDescriptions = map[DiagnosticDetail]diagnosticDescription{
 	DetailOwnTaskStartedAtMissing:                          {ActionAwaitSupport, "The first own task has no started_at timestamp."},
 	DetailOwnTaskStartedAtInvalid:                          {ActionAwaitSupport, "The first own task has an invalid started_at timestamp."},
 	DetailOwnTaskExecutionUnsupported:                      {ActionAwaitSupport, "The own task's source is not a supported local execution format."},
-	DetailHistoryCoverage:                                  {ActionRetry, "Codex history coverage is incomplete; retry after the native inventory settles."},
+	DetailHistoryBaseUnavailable:                           {ActionRetry, "A Codex rollout this thread continues from was not found, or was found twice; retry once Codex has finished moving its files."},
+	DetailRolloutTipAmbiguous:                              {ActionRetry, "Codex's thread index names no current rollout and several rollouts could be the latest; retry after Codex records the thread again."},
 	DetailNativeAdmissionEvidenceUnavailable:               {ActionAwaitSupport, "The source reader cannot supply native admission evidence."},
 	DetailOwnTaskMissing:                                   {ActionReviewSource, "No first own task was found beyond the inherited history boundary."},
 	DetailOwnTaskInvalid:                                   {ActionAwaitSupport, "The first own task lacks valid native identity, execution or timestamp evidence."},

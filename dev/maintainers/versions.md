@@ -221,3 +221,14 @@ all publication, durable-storage, import and authorization floors. Exact
 this is capability composition, not numeric version ordering. Prior settled
 writers refuse the scoped header, and remote coordinator protocol 11 permanently
 fences older catalog writers. Legacy settled configuration 15 remains unchanged.
+
+Codex lineage selection by chain walk (the rollout Codex's index names, then
+each rollout's `history_base`) replaces the global `native_coverage` epoch in
+the private discovery catalog. The catalog stays at version 6: a read ignores
+the retired field and the next checkpoint drops it, and an earlier writer
+reading a catalog without it starts a fresh epoch. Filtering, adapter output,
+derived metadata and published source/metadata schemas are unchanged, so no
+version bumps. The lookup revision a Codex source signature hashes no longer
+carries coverage completeness or a coverage-proven candidate set, so each Codex
+session's signature changes once and its next pass reads it again; unchanged
+content publishes nothing new.

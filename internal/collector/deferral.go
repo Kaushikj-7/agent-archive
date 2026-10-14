@@ -10,9 +10,6 @@ import (
 // Reasons a scan was deferred (Result.Deferred, state.Status.DeferredSessions).
 // They carry no path or content, and once written keep their spelling.
 const (
-	// DeferredHistoryCoverage: Codex has not yet established which rollout
-	// files make up the thread's history.
-	DeferredHistoryCoverage = "codex_history_coverage"
 	// DeferredSourceChanged: the source (a transcript, or the native index
 	// naming it) changed while it was being read.
 	DeferredSourceChanged = "source_changed"
@@ -40,8 +37,8 @@ func (*readBudgetDeferralError) deferralReason() string { return DeferredReadBud
 // MaxDeferral bounds how long a session's scans may be deferred: once every
 // pass for this long has deferred them, the next deferral is a failure,
 // reported as one (DeferralExpiredProblem), and so is every deferral after
-// it, so a refusal no later pass clears (coverage that never completes for
-// the thread, a source changed on every read) cannot hide as "rechecking"
+// it, so a refusal no later pass clears (a source changed on every read)
+// cannot hide as "rechecking"
 // for good. A pass that scans the session without deferring it (it fails
 // otherwise, or succeeds) starts the clock again; a pass that ends before
 // scanning it leaves the clock running.
@@ -92,18 +89,12 @@ func (p *pass) carryDeferredSince(id string) {
 
 // deferralReason reports whether a scan's error only defers the session, and
 // why: every failure it joins is a source refusal the next pass is expected
-// to clear, a history coverage refusal (agentapi.CauseHistoryCoverage, which
-// the Codex source names where it refuses) or a source that changed while
-// being read (agentapi.Changed). One failure of any other kind makes the
+// to clear, a source that changed while being read (agentapi.Changed). One failure of any other kind makes the
 // whole error a failure. The outermost SourceError of each failure decides,
 // as agentapi.Failure does.
 func deferralReason(err error) (string, bool) {
 	if classified, ok := err.(agentapi.Classified); ok {
-		kind, cause := classified.Classification()
-		switch {
-		case cause == agentapi.CauseHistoryCoverage:
-			return DeferredHistoryCoverage, true
-		case kind == agentapi.Changed:
+		if kind, _ := classified.Classification(); kind == agentapi.Changed {
 			return DeferredSourceChanged, true
 		}
 		return "", false
@@ -121,8 +112,7 @@ func deferralReason(err error) (string, bool) {
 			if !ok {
 				return "", false
 			}
-			// Coverage is the more specific reason, so it names the deferral.
-			if reason == "" || partReason == DeferredHistoryCoverage {
+			if reason == "" {
 				reason = partReason
 			}
 		}

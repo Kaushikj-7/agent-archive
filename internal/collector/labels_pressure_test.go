@@ -44,7 +44,7 @@ func TestExternalRenameIntegrityCompressionRespectsSharedPressure(t *testing.T) 
 			provider.label = archive.SessionLabel{State: archive.SessionLabelPresent, Name: "Deferred rename", Source: archive.SessionLabelDatabase, Contract: codex.LabelContract}
 			budget := agentapi.NewNativeReadBudget(64 << 10)
 			// Complete coverage proves the transcript deleted, not renamed.
-			opts.CodexRollouts = recoveryBudgetLookup{CodexRolloutLookup: &reconciliationLookup{set: agentapi.CodexRolloutSet{Complete: true}}, budget: budget}
+			opts.CodexRollouts = recoveryBudgetLookup{CodexRolloutLookup: &reconciliationLookup{set: agentapi.CodexRolloutSet{}}, budget: budget}
 			now = now.Add(time.Hour)
 			remote.keys = nil
 			result, err := Run(t.Context(), local, remote, opts)
