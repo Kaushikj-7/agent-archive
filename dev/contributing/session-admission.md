@@ -113,6 +113,21 @@ retained application offsets cannot turn an owned key into certified absence
 or strand a request for a damaged index. The candidate snapshot is loaded once
 per slice reaching the final phase, rather than reread for each requested key.
 
+Discovery's request for a census-certified absence is not damage. Under a
+complete version-1 marker, `RequestSessionIndexAbsence` writes a fresh opaque
+token to `session-index-absence.json` and then the key's retained request
+entry, under hooks.lock, without changing the marker: other keys' misses stay
+allowed. The next slice reads the token, enumerates the complete registration
+and candidate inventory, and applies requested misses with the ordinary
+owner/candidate repair. Each absence write is fenced under hooks.lock on the
+same complete marker generation and an unchanged token, so every applied
+request preceded the census and its key's earlier owners are in it; the
+retained entry refuses later registrations of that key. The slice then records
+the token certified. A changed token or marker leaves work for the next slice.
+A repeated request for a retained key keeps it scheduled. Damaged, owned or
+uncertified evidence, packed markers, and unusable tokens take the full
+recovery request.
+
 Registration membership changes stage a small durable revision outside locks.
 The request lock precedes the short membership lock, which commits the revision
 before the registration rename. Completion takes hooks then membership and

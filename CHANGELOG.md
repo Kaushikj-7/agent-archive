@@ -17,6 +17,16 @@ follow [Semantic Versioning](https://semver.org/).
   earlier revisions when the scan has seen them and they can be read; one that
   cannot be read, or does not fit beside the thread's own history, is left out
   rather than failing the thread's capture.
+- Stop losing Claude Code subagents (and holding back new sessions) while
+  Codex discovery works through a backlog. Each newly discovered Codex session
+  used to withdraw the whole local identity census until the next collector
+  pass, so every hook that needed a new identity in the meantime was refused:
+  `status` showed "local session identity bookkeeping needs collector
+  recovery" and `identity_recovery` pending with phase `unknown`, and a Claude
+  Code subagent finishing in that window was never captured. Discovery now
+  asks for proof about its own session only; the census stays in force for
+  everything else, and the next pass certifies the discovered session without
+  a full rebuild.
 
 ## [0.2.1]
 

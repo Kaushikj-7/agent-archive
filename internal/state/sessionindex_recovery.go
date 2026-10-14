@@ -140,8 +140,17 @@ func (s *Store) RequestSessionIndexRecovery(key agentmeta.SessionKey) error {
 	var prior qualifiedSessionIndexEntry
 	readErr := readRecoveryJSON(qualifiedSessionIndexPath(s.home, key), &prior)
 	var marker sessionIndexMarker
-	if readErr == nil && prior.Version == 1 && prior.Agent == key.Agent && prior.NativeID == key.NativeID && (prior.Recovery != prior.Absent) && prior.ArchiveSessionID == "" && prior.Reservation == "" && !prior.Conflict && readRecoveryJSON(filepath.Join(s.home, sessionIndexMarkerFile), &marker) == nil && recoveryMarkerVersion(marker.Version) && !marker.Complete && marker.Generation != "" {
-		return nil
+	if readErr == nil && prior.Version == 1 && prior.Agent == key.Agent && prior.NativeID == key.NativeID && (prior.Recovery != prior.Absent) && prior.ArchiveSessionID == "" && prior.Reservation == "" && !prior.Conflict && readRecoveryJSON(filepath.Join(s.home, sessionIndexMarkerFile), &marker) == nil && recoveryMarkerVersion(marker.Version) {
+		if !marker.Complete && marker.Generation != "" {
+			return nil
+		}
+		// A retained absence request under a complete census is already
+		// scheduled for certification; it is not damage to the census.
+		if marker.Complete && marker.Version == 1 && prior.Recovery {
+			if _, pending, err := s.readAbsenceRequest(); err == nil && pending {
+				return nil
+			}
+		}
 	}
 	if err := s.MarkSessionIndexRecoveryNeeded(); err != nil {
 		return err
@@ -403,7 +412,9 @@ func (s *Store) recoverCandidateIndex(ctx context.Context, candidate SubagentCan
 	return nil
 }
 
-func (s *Store) recoverRequestedMiss(ctx context.Context, file os.DirEntry, inventory map[agentmeta.SessionKey][]string, candidates map[agentmeta.SessionKey][]SubagentCandidate) error {
+// fence, when set, runs under hooks.lock right before an absence is written;
+// an error from it leaves the request in place and is returned as is.
+func (s *Store) recoverRequestedMiss(ctx context.Context, file os.DirEntry, inventory map[agentmeta.SessionKey][]string, candidates map[agentmeta.SessionKey][]SubagentCandidate, fence func() error) error {
 
 	if err := ctx.Err(); err != nil {
 		return err
@@ -452,8 +463,9 @@ func (s *Store) recoverRequestedMiss(ctx context.Context, file os.DirEntry, inve
 	// Capture/import registration is serialized by hooks.lock. This narrow
 	// application lock never covers the inventory enumeration or disk sync.
 	err := s.writeUnderLock(lockedWrite{
-		lock: func() (func(), error) { return local.NamedLockWait(s.home, "hooks.lock", time.Second) },
-		path: path,
+		lock:  func() (func(), error) { return local.NamedLockWait(s.home, "hooks.lock", time.Second) },
+		path:  path,
+		check: fence,
 		change: func(current fileSnapshot) (any, bool, error) {
 			var latest qualifiedSessionIndexEntry
 			if err := json.Unmarshal(current.data, &latest); err != nil {
