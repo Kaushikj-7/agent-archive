@@ -406,8 +406,6 @@ func (r *handoffQueryResolver) exactArchiveSession(ctx context.Context) (string,
 		if errors.Is(err, storage.ErrNotFound) {
 			err = nil
 		}
-	} else if reader.CatalogAuthority(store) {
-		keys, err = reader.NewMetadataFinder(catalogFor(r.env)).FindMetadataKeys(ctx, store, "sessions", r.query)
 	} else {
 		keys, err = r.exactRegisteredKeys(ctx, store)
 	}
@@ -427,7 +425,7 @@ func (r *handoffQueryResolver) exactArchiveSession(ctx context.Context) (string,
 	return parts[len(parts)-3], exactUnique, nil
 }
 
-// exactRegisteredKeys probes only registered harnesses in a legacy store.
+// exactRegisteredKeys probes only registered harnesses through the store view.
 // A full-ID miss must not enumerate the archive before a local title match.
 func (r *handoffQueryResolver) exactRegisteredKeys(ctx context.Context, store storage.ObjectStore) ([]string, error) {
 	var keys []string
