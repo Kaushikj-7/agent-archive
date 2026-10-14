@@ -217,3 +217,51 @@ existing ImageVersion-only compatibility projection; raw full contexts remain
 verified. The final reference must use the same source SHA/tree as the worker
 artifacts, not merely a related branch head. This qualification is correctness
 evidence, not a runner-time or150-second benchmark.
+
+
+## Bounded manual native smoke references
+
+`Extended` has an explicit `native-smoke-reference` choice, excluded from `all`,
+normal PR/push runs and schedules. It uses one standard `macos-14` host per
+manual dispatch and the same native producer/verifier. Inputs `expected_source`,
+`native_smoke_mode` (`normal`/`sensitive`) and `native_smoke_cache`
+(`cold`/`trusted-seed`) must identify the exact workflow/checkout SHA and cohort.
+A moved ref fails; do not override `GITHUB_SHA` or forge a PR tier plan.
+
+Run the four cases sequentially after the trusted main seed exists, using the
+same immutable source. Cold proves both owned caches empty before the normal
+module download/verification prelude and performs no Actions restore. A trusted
+seed request requires the composite's **final verified** state `trusted`;
+`miss` and `corrupt-rebuilt` fail warm qualification before bodies. Each job
+starts independently; it does not inherit a previously executed cohort's build
+objects. The installed toolchain/SDK are standard hosted provisioning, so cold
+here describes product compilation/module caches, not physically cold hardware.
+
+Ordinary PR native artifacts now retain `cache-observation.json` from the same
+final restore-state output, bound to source, module identity and canonical
+compiler/SDK context. A service download/cache hit alone does not prove trusted
+reuse, nor does a verified seed imply every current-source compile action hits.
+
+The manual artifact name includes mode, cache request and attempt, with seven-day
+retention. Its `reference.json` is explicitly outside required PR gates and p95
+traffic. `producer_seconds` includes native source/compiler guards and evidence
+verification; phase durations include their compilation. Setup/module/cache and
+upload costs remain visible in workflow job/step timestamps. Manual workflow
+wall time lacks the PR tier-plan/dependency path and must not stand in for full
+PR-to-green latency.
+
+After collecting four actual artifacts, use:
+
+```sh
+python3 -B scripts/native_smoke_reference.py compare \
+  --reference cold-normal/reference.json --reference cold-sensitive/reference.json \
+  --reference trusted-normal/reference.json --reference trusted-sensitive/reference.json \
+  --output native-comparison.json
+```
+
+This metadata comparison requires all four successful distinct cohorts and exact
+source/tree/full canonical context equality, including runner image. Different
+images or sources remain separate unqualified comparisons. It cannot replace
+raw native body verification, required CI or ordinary-traffic tail measurements.
+Keep manual head and PR synthetic merge identities distinct; any tree-equivalence
+claim requires independent Git evidence and does not relabel their source SHAs.

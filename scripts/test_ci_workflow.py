@@ -152,7 +152,7 @@ class CandidateCampaignTest(unittest.TestCase):
     def test_candidate_validation_never_restores_shared_go_build_state(self):
         # Candidate evidence must come from fresh source/module verification,
         # not executable build state restored from another workflow's cache.
-        expected = {'test': 10, 'levenshtein': 2, 'extended': 8}
+        expected = {'test': 10, 'levenshtein': 2, 'extended': 9}
         for name, count in expected.items():
             workflow = (ROOT / '.github/workflows' / f'{name}.yml').read_text()
             setup = [step for job in jobs(workflow).values() for step in steps(job)
@@ -189,6 +189,7 @@ class CandidateCampaignTest(unittest.TestCase):
         conditions = {name: job_key(text, 'if') for name, text in jobs(workflow).items()}
         expected = {
             'pr-reference': "github.event_name == 'workflow_dispatch' && inputs.suite == 'pr-reference'",
+            'native-smoke-reference': "github.event_name == 'workflow_dispatch' && inputs.suite == 'native-smoke-reference'",
             'linux-race': "github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'linux'))",
             'macos-full': "(github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release-candidate/')) || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'macos'))",
         }
@@ -297,9 +298,9 @@ class CadenceTest(unittest.TestCase):
         workflow = EXTENDED_YML.read_text()
         self.assertIn("    branches: ['release-candidate/**']", workflow)
         self.assertIn('  schedule:', workflow)
-        self.assertIn('options: [all, macos, linux, fuzz, systemd, pr-reference]', workflow)
+        self.assertIn('options: [all, macos, linux, fuzz, systemd, pr-reference, native-smoke-reference]', workflow)
         found = jobs(workflow)
-        all_jobs = set(found) - {'pr-reference'}
+        all_jobs = set(found) - {'pr-reference', 'native-smoke-reference'}
         for event, ref, suite, expected in (
                 ('pull_request', 'refs/pull/1/merge', '', set()),
                 ('push', 'refs/heads/main', '', set()),
@@ -312,6 +313,7 @@ class CadenceTest(unittest.TestCase):
                 ('workflow_dispatch', 'refs/heads/main', 'fuzz', {'fuzz'}),
                 ('workflow_dispatch', 'refs/heads/main', 'systemd', {'real-systemd'}),
                 ('workflow_dispatch', 'refs/heads/main', 'pr-reference', {'pr-reference'}),
+                ('workflow_dispatch', 'refs/heads/main', 'native-smoke-reference', {'native-smoke-reference'}),
                 ('workflow_dispatch', 'refs/heads/main', 'unknown', set())):
             with self.subTest(event=event, ref=ref, suite=suite):
                 actual = {name for name, text in found.items()
