@@ -139,6 +139,26 @@ class GeneratorTests(unittest.TestCase):
             with self.subTest(offset=offset), self.assertRaises(hints.runner.Failure):
                 hints.stamp({'Time': '2026-01-01T00:00:00' + offset})
 
+    def test_package_cost_exclusion_is_observed_sequential_body_residual(self):
+        exclusions = {PKGS[0]: 'TestAudit'}
+        for _, sample in self.samples:
+            path = sample/'0'/'ordinary.json'
+            rows = hints.json_stream(path.read_text())
+            rows[:0] = [{'Action':'run','Package':PKGS[0],'Test':'TestAudit'},
+                        {'Action':'pass','Package':PKGS[0],'Test':'TestAudit','Elapsed':.5}]
+            stream(path, rows)
+            manifest_path=sample/'0'/'manifest.json'; manifest=json.loads(manifest_path.read_text())
+            manifest['body_evidence']=run_ci_tier.body_evidence(path.read_text()+'\n'+(sample/'0'/'cli.json').read_text(),True)
+            manifest_path.write_text(json.dumps(manifest))
+        result=hints.generate(self.samples,'accepted-source',SETTINGS,PKGS,NAMES,package_cost_exclusions=exclusions)
+        self.assertEqual(result['packages'][PKGS[0]],1500)
+        self.assertEqual(result['provenance']['samples'][0]['package_cost_exclusions'][0]['derived_remaining_seconds'],'0.5')
+        with self.assertRaises(hints.runner.Failure):
+            hints.generate(self.samples,'accepted-source',SETTINGS,PKGS,NAMES,package_cost_exclusions={PKGS[0]:'TestMissing'})
+        path=self.samples[0][1]/'0'/'ordinary.json'; rows=hints.json_stream(path.read_text()); rows[1]['Action']='skip'; stream(path,rows)
+        with self.assertRaises(hints.runner.Failure):
+            hints.generate(self.samples,'accepted-source',SETTINGS,PKGS,NAMES,package_cost_exclusions=exclusions)
+
     def test_failed_manifest_rejected(self):
         self.mutate(lambda m: m.update(success=False))
         with self.assertRaises(hints.runner.Failure): self.generate()

@@ -142,7 +142,7 @@ def cli_durations(records, names):
     return {name: cost(name) for name in names}
 
 
-def _read_sample(directory, source, expected_settings):
+def _read_sample(directory, source, expected_settings, package_cost_exclusions=None):
     directory = Path(directory)
     workers = runner.worker_count(len(expected_settings))
     if set(expected_settings) != {str(i) for i in range(workers)}:
@@ -166,7 +166,7 @@ def _read_sample(directory, source, expected_settings):
         if (len(flattened) != len(set(flattened)) or not all(bins)
                 or set(flattened) != universe):
             raise runner.Failure('incomplete/overlapping partition')
-    package_values, cli_values, fingerprints, phases = {}, {}, [], {}
+    package_values, cli_values, fingerprints, phases, exclusions = {}, {}, [], {}, []
     for path, m in zip(paths, manifests):
         index = m['shard']
         if (m.get('success') is not True or m['catalog'] != catalog
@@ -195,25 +195,47 @@ def _read_sample(directory, source, expected_settings):
             if not r.get('Test') and r['Action'] in ('pass', 'skip'):
                 positive_ms(r.get('Elapsed'))
                 package_values[r['Package']] = r['Elapsed']
+        for package, test in (package_cost_exclusions or {}).items():
+            if package not in assignments[index]['packages']:
+                continue
+            body = [r for r in runner.json_stream(raw) if r.get('Package') == package
+                    and r.get('Test') == test and r.get('Action') != 'output']
+            if ([r.get('Action') for r in body] != ['run', 'pass']
+                    or any(r.get('Package') == package and r.get('Test', '').startswith(test + '/')
+                           for r in runner.json_stream(raw))):
+                raise runner.Failure('excluded package cost needs one sequential passing body')
+            if 'Time' in body[0] and stamp(body[-1]) < stamp(body[0]):
+                raise runner.Failure('excluded package body clock reversed')
+            elapsed = body[-1].get('Elapsed')
+            positive_ms(elapsed)
+            remaining = Decimal(str(package_values[package])) - Decimal(str(elapsed))
+            if remaining < 0:
+                raise runner.Failure('excluded body cost exceeds package elapsed')
+            exclusions.append({'package': package, 'test': test, 'observed_body_seconds': elapsed,
+                               'observed_package_seconds': package_values[package],
+                               'derived_remaining_seconds': str(remaining)})
+            package_values[package] = remaining
         cli_values.update(cli_durations(runner.json_stream(cli_raw), assignments[index]['cli']))
         # Auxiliary phases are provenance only, not arbitrary package weights.
         phases[str(index)] = m['phases']
         for f in sorted(p.glob('*.json')):
             fingerprints.append({'shard': index, 'file': f.name,
                                  'sha256': hashlib.sha256(f.read_bytes()).hexdigest()})
-    return catalog, package_values, cli_values, {'files': fingerprints, 'phases': phases}
+    if set(package_cost_exclusions or {}) != {e['package'] for e in exclusions}:
+        raise runner.Failure('excluded package body absent from successful sample')
+    return catalog, package_values, cli_values, {'files': fingerprints, 'phases': phases, 'package_cost_exclusions': exclusions}
 
 
-def read_sample(directory, source, expected_settings, body_catalog=None):
+def read_sample(directory, source, expected_settings, body_catalog=None, package_cost_exclusions=None):
     with contract_parser(source, body_catalog):
         try:
             runner.reconcile(directory, len(expected_settings))
-            return _read_sample(directory, source, expected_settings)
+            return _read_sample(directory, source, expected_settings, package_cost_exclusions)
         except run_ci_tier.Failure as error:
             raise runner.Failure(str(error)) from error
 
 
-def generate(samples, source, settings, discovered_packages, discovered_cli, body_catalog=None):
+def generate(samples, source, settings, discovered_packages, discovered_cli, body_catalog=None, package_cost_exclusions=None):
     if not samples:
         raise runner.Failure('no successful samples')
     if (len({sid for sid, _ in samples}) != len(samples)
@@ -222,7 +244,7 @@ def generate(samples, source, settings, discovered_packages, discovered_cli, bod
     package_samples, cli_samples, evidence = {}, {}, []
     universe = None
     for sample_id, directory in samples:
-        catalog, packages, cli, proof = read_sample(directory, source, settings, body_catalog)
+        catalog, packages, cli, proof = read_sample(directory, source, settings, body_catalog, package_cost_exclusions)
         current = (catalog['packages'], catalog['cli'])
         if universe is not None and current != universe:
             raise runner.Failure('mixed discovery catalogs')
@@ -236,7 +258,12 @@ def generate(samples, source, settings, discovered_packages, discovered_cli, bod
             raise runner.Failure('duplicate discovered names')
         return {n: positive_ms(median(values[n])) if n in values else DEFAULT_MS
                 for n in sorted(discovered)}
-    return {'packages': weights(discovered_packages, package_samples),
+    excluded_samples = {}
+    for sample in evidence:
+        for excluded in sample['package_cost_exclusions']:
+            excluded_samples.setdefault(excluded['package'], []).append(Decimal(str(excluded['observed_body_seconds'])))
+    return {'owned_plain_audit_exclusions_ms': {p: positive_ms(median(values)) for p, values in sorted(excluded_samples.items())},
+            'packages': weights(discovered_packages, package_samples),
             'cli': weights(discovered_cli, cli_samples),
             'provenance': {'source': source, 'settings': settings, 'samples': evidence,
                            'runner_contract_sha256': hashlib.sha256(
@@ -275,7 +302,17 @@ def main():
             raise runner.Failure('invalid pinned source body catalog')
     result = generate(samples, request['source'], request['settings'],
                       request.get('packages', sorted(set(catalog['packages']) - {runner.CLI})),
-                      request.get('cli', catalog['cli']), body_catalog)
+                      request.get('cli', catalog['cli']), body_catalog, request.get('package_cost_exclusions'))
+    if request.get('auxiliary_costs_ms') is not None:
+        auxiliary = request['auxiliary_costs_ms']
+        if set(auxiliary) != {'vet', 'git_invocation'} or any(type(v) is not int or v < 0 for v in auxiliary.values()):
+            raise runner.Failure('invalid auxiliary cost hints')
+        phases = [p for sample in result['provenance']['samples'] for p in sample['phases'].values()]
+        expected_auxiliary = {name: positive_ms(median([p[field] for p in phases if field in p]))
+                              for name, field in [('vet', 'vet_seconds'), ('git_invocation', 'git_identity_invocation_seconds')]}
+        if auxiliary != expected_auxiliary:
+            raise runner.Failure('auxiliary hints differ from observed invocation medians')
+        result['auxiliary_costs_ms'] = auxiliary
     result['provenance']['attribution'] = request.get('attribution', {})
     result['provenance']['generator_sha256'] = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
     Path(args.output).write_text(json.dumps(result, indent=2, sort_keys=True) + '\n')
