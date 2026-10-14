@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run two deterministic PR race shards and reconcile their coverage evidence.
+"""Run deterministic PR race shards and reconcile their coverage evidence.
 
 Timing hints rank discovered units; they never limit discovery or test coverage.
 """
@@ -91,6 +91,8 @@ def stop_processes(processes, previous_children):
                 process.wait(timeout=max(.01, end-time.monotonic()))
             except subprocess.TimeoutExpired as error:
                 raise Failure('killed child did not exit within cleanup deadline') from error
+        if previous_children is None:
+            return  # Native runners retain process-group cleanup and direct-child reaping.
         # PTY harnesses create sessions/groups outside the Go command's
         # group. Once their parent dies they are adopted by this subreaper;
         # terminate and reap all newly adopted children, regardless of PGID.
@@ -118,17 +120,23 @@ def stop_processes(processes, previous_children):
             signal.signal(sig, handler)
 
 
-def supervise(commands, deadline):
+def supervise(commands, deadline, *, stderr_path=None, terminal=None):
     """Record each complete invocation; file streams cannot block on pipe output."""
-    # PR_SET_CHILD_SUBREAPER is Linux-specific, as is this race worker. Adopt
-    # test grandchildren if Go exits first, avoiding orphan zombies on failure.
     if time.monotonic() >= deadline:
         raise Failure('shared discovery/test deadline already exceeded')
-    libc = ctypes.CDLL(None, use_errno=True)
-    libc.prctl.argtypes = [ctypes.c_int] + [ctypes.c_ulong] * 4
-    if libc.prctl(36, 1, 0, 0, 0) != 0:
-        raise Failure('cannot enable Linux child-subreaper cleanup')
-    previous_children = child_pids()
+    # Linux also adopts escaped test grandchildren. Native macOS full batches
+    # retain the existing process-group ownership and reap each direct child.
+    previous_children = None
+    if sys.platform == 'linux':
+        libc = ctypes.CDLL(None, use_errno=True)
+        libc.prctl.argtypes = [ctypes.c_int] + [ctypes.c_ulong] * 4
+        if libc.prctl(36, 1, 0, 0, 0) != 0:
+            raise Failure('cannot enable Linux child-subreaper cleanup')
+        previous_children = child_pids()
+    elif sys.platform != 'darwin':
+        raise Failure('unsupported process supervisor platform')
+    if stderr_path is not None and len(commands) != 1:
+        raise Failure('separate stderr requires one invocation')
     processes, files, started, durations, monitors, pending = [], [], [], [], [], []
     try:
         for command, output, env in commands:
@@ -136,7 +144,10 @@ def supervise(commands, deadline):
             files.append(handle)
             print('command:', json.dumps(command), flush=True)
             started.append(time.monotonic())
-            processes.append(subprocess.Popen(command, stdout=handle, env=env,
+            stderr_handle = open(stderr_path, 'wb') if stderr_path is not None else None
+            if stderr_handle is not None:
+                files.append(stderr_handle)
+            processes.append(subprocess.Popen(command, stdout=handle, stderr=stderr_handle, env=env,
                                               start_new_session=True))
             durations.append(None)
             monitors.append(open(output, 'rb') if 'test' in command and '-json' in command else None)
@@ -179,6 +190,8 @@ def supervise(commands, deadline):
         try:
             stop_processes(processes, previous_children)
         finally:
+            if terminal is not None:
+                terminal[:] = [process.returncode for process in processes]
             for handle in files + [m for m in monitors if m is not None]:
                 handle.close()
 
@@ -222,7 +235,17 @@ def listed_names(text):
     return sorted(names)
 
 
-def partition(units, hints):
+def worker_count(workers):
+    if type(workers) is not int or workers not in (2, 4):
+        raise Failure("worker count must be 2 or 4")
+    return workers
+
+
+def partition(units, hints, workers=2, initial_loads=None):
+    # Generic bounded LPT scheduling is shared with native full coverage.
+    # Representative PR topology is independently restricted by worker_count.
+    if type(workers) is not int or not 1 <= workers <= 16:
+        raise Failure('partition count must be an integer from 1 through 16')
     if len(set(units)) != len(units):
         raise Failure('duplicate partition units')
     weights = {}
@@ -235,14 +258,18 @@ def partition(units, hints):
             print(f'unknown unit assigned: {name}, default={value}ms', flush=True)
     for name in sorted(set(hints) - set(units)):
         print(f'stale hint ignored: {name}', flush=True)
-    bins, loads = [[], []], [0, 0]
+    loads = [0] * workers if initial_loads is None else list(initial_loads)
+    if len(loads) != workers or any(type(v) is not int or v < 0 for v in loads):
+        raise Failure('invalid initial scheduling loads')
+    bins = [[] for _ in range(workers)]
     for name in sorted(units, key=lambda n: (-weights[n], n)):
-        index = min(range(2), key=lambda i: (loads[i], i))
+        index = min(range(workers), key=lambda i: (loads[i], i))
         bins[index].append(name)
         loads[index] += weights[name]
-    if (not all(bins) or set(bins[0]) & set(bins[1])
-            or set(bins[0]) | set(bins[1]) != set(units)):
+    if (not all(bins) or sum(len(b) for b in bins) != len(set(n for b in bins for n in b))
+            or set(n for b in bins for n in b) != set(units)):
         raise Failure('partition is not nonempty, disjoint and exhaustive')
+    print("predicted logical loads (ms; not worker elapsed):", loads, flush=True)
     return [sorted(b) for b in bins]
 
 
@@ -296,18 +323,153 @@ def digest(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 
 
-def reconcile(directory):
+def execute_worker_vet(out, deadline, settings):
+    """Always retain raw streams and terminal/failure receipt before rejection."""
+    import run_ci_tier
+    env = dict(os.environ, AGENT_ARCHIVE_REAL_SYSTEMD='0')
+    env.pop('AGENT_ARCHIVE_PERF', None)
+    receipt = {'schema': 1, 'command': ['go', 'vet', './...'], 'log': 'plain-vet.txt',
+               'stderr_log': 'plain-vet.stderr', 'performance_enabled': False,
+               'real_systemd_enabled': False, 'identity_schema': 'full-v1', 'exit_code': None, 'success': False}
+    terminal, started = [], time.monotonic()
+    try:
+        for name in ('plain-vet.txt', 'plain-vet.stderr', 'plain-vet-receipt.json'):
+            (out/name).unlink(missing_ok=True)
+        receipt['pre_source_proof'] = run_ci_tier.full_race.source_proof(ROOT)
+        receipt['context'] = run_ci_tier.plain_vet_context()
+        if (receipt['pre_source_proof'] != settings['plain_vet_source_proof']
+                or receipt['context'] != settings['plain_vet_context']):
+            raise Failure('worker vet pre-execution source/context mismatch')
+        supervise([(receipt['command'], out/'plain-vet.txt', env)], deadline,
+                  stderr_path=out/'plain-vet.stderr', terminal=terminal)
+        receipt['post_source_proof'] = run_ci_tier.full_race.source_proof(ROOT)
+        receipt['post_context'] = run_ci_tier.plain_vet_context()
+        if (receipt['post_source_proof'] != receipt['pre_source_proof']
+                or receipt['post_context'] != receipt['context']):
+            raise Failure('worker vet source/context changed')
+        for name, field in [('plain-vet.txt', 'log_sha256'), ('plain-vet.stderr', 'stderr_sha256')]:
+            receipt[field] = hashlib.sha256((out/name).read_bytes()).hexdigest()
+        receipt['exit_code'] = terminal[0] if len(terminal) == 1 else None
+        # Live worker validation keeps the existing actual compiler/context guard.
+        run_ci_tier.verify_plain_vet(out, {'plain_vet': receipt},
+            settings['plain_vet_source_proof'], settings['plain_vet_context_sha256'], strict_full_context=True)
+        receipt['success'] = True
+        return receipt
+    except BaseException as error:
+        receipt['error'] = {'type': type(error).__name__, 'message': str(error)}
+        raise
+    finally:
+        receipt['exit_code'] = terminal[0] if len(terminal) == 1 else None
+        receipt['invocation_seconds'] = time.monotonic()-started
+        for name, field in [('plain-vet.txt', 'log_sha256'), ('plain-vet.stderr', 'stderr_sha256')]:
+            path = out/name
+            receipt[field] = hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else None
+        (out/'plain-vet-receipt.json').write_text(json.dumps(receipt, indent=2, sort_keys=True)+'\n')
+
+
+def verify_worker_vet(directory, manifest, expected):
+    import run_ci_tier
+    settings = manifest.get('settings', {})
+    if type(settings.get('plain_vet_receipt_schema')) is not int or settings['plain_vet_receipt_schema'] != 1:
+        raise Failure('worker vet receipt schema missing or invalid')
+    try:
+        receipt = json.loads((directory/'plain-vet-receipt.json').read_text())
+    except (OSError, ValueError) as error:
+        raise Failure('worker vet receipt missing or malformed') from error
+    if not isinstance(receipt, dict):
+        raise Failure('worker vet receipt malformed')
+    context = settings.get('plain_vet_context')
+    if (not isinstance(context, dict) or set(context) != {'go', 'version', 'runner_os',
+            'runner_arch', 'image', 'os_release', 'cc', 'cxx', 'toolchain', 'race', 'tags', 'schema'}
+            or not isinstance(context.get('image'), dict)
+            or set(context['image']) != {'ImageOS', 'ImageVersion'}
+            or any(type(v) is not str or not re.fullmatch(r'[A-Za-z0-9_.-]+', v)
+                   for v in context['image'].values())):
+        raise Failure('worker vet full image/context identity malformed')
+    if (receipt.get('identity_schema') != 'full-v1'
+            or type(receipt.get('schema')) is not int or receipt['schema'] != 1
+            or not isinstance(context, dict) or digest(context) != settings.get('plain_vet_context_sha256')
+            or manifest.get('plain_vet') != receipt or receipt.get('success') is not True
+            or receipt.get('post_context') != context or receipt.get('context') != context
+            or receipt.get('stderr_log') != 'plain-vet.stderr'
+            or receipt.get('error') is not None
+            or type(receipt.get('invocation_seconds')) not in (int, float)
+            or not 0 <= receipt['invocation_seconds'] < float('inf')):
+        raise Failure('worker vet receipt/context mismatch')
+    # Cross-worker aggregation validates the explicit schema and full worker
+    # context above, never the aggregate runner's unrelated native context.
+    # The live worker also invokes this canonical verifier with historical=False.
+    run_ci_tier.verify_plain_vet(directory, {'plain_vet': receipt}, expected,
+                                digest(context), historical=True, strict_full_context=True)
+    if receipt.get('stderr_sha256') != hashlib.sha256((directory/'plain-vet.stderr').read_bytes()).hexdigest():
+        raise Failure('worker vet raw stderr mismatch')
+
+
+def reconcile(directory, workers=2, audit_evidence=None, *, expected_source_proof=None, require_plain_vet=False):
+    worker_count(workers)
     paths = sorted(Path(directory).glob('**/manifest.json'))
-    if len(paths) != 2:
-        raise Failure('expected exactly two shard manifests')
+    if len(paths) != workers:
+        raise Failure('expected complete worker manifest count')
     manifests = [json.loads(p.read_text()) for p in paths]
-    if {m.get('shard') for m in manifests} != {0, 1}:
+    if any(type(m.get('shard')) is not int for m in manifests) or {m.get('shard') for m in manifests} != set(range(workers)):
         raise Failure('missing/duplicate shard evidence')
     first = manifests[0]['catalog']
+    if first.get('workers', 2) != workers or len(first.get('assignments', [])) != workers:
+        raise Failure('catalog worker count mismatch')
+    if any(m.get('settings', {}).get('plain_audit_owned') for m in manifests):
+        if not all(m.get('settings', {}).get('plain_audit_owned') is True for m in manifests) or audit_evidence is None:
+            raise Failure('owned plain audit requires complete independent evidence')
+        import run_ci_tier
+        try:
+            if expected_source_proof is None:
+                run_ci_tier.verify_source_audit(audit_evidence, first['source'])
+            else:
+                run_ci_tier.verify_source_audit(audit_evidence, first['source'], expected_source_proof=expected_source_proof)
+        except run_ci_tier.Failure as error:
+            raise Failure(str(error)) from error
+    vet_owned = [m.get('settings', {}).get('plain_vet_owned', False) for m in manifests]
+    if any(vet_owned) or require_plain_vet:
+        import run_ci_tier
+        if not all(v is True for v in vet_owned) or audit_evidence is None:
+            raise Failure('owned plain vet requires complete independent evidence')
+        # Legacy shared receipts are only a Git-bound historical import policy.
+        # Presence (not truthiness) of ANY new-format signal prevents fallback,
+        # including a missing/invalid schema marker on an otherwise new worker.
+        legacy = expected_source_proof is not None and all(
+            'plain_vet_identity_schema' not in m.get('settings', {})
+            and 'plain_vet_receipt_schema' not in m.get('settings', {})
+            and 'plain_vet_context' not in m.get('settings', {})
+            and 'plain_vet' not in m
+            and not (p.parent/'plain-vet-receipt.json').exists()
+            and not (p.parent/'plain-vet.stderr').exists()
+            for p, m in zip(paths, manifests))
+        try:
+            if legacy:
+                values = [m.get('settings', {}).get('plain_vet_context_sha256') for m in manifests]
+                if any(type(v) is not str or not re.fullmatch('[0-9a-f]{64}', v) for v in values):
+                    raise Failure('legacy plain vet context digest malformed')
+                contexts = set(values)
+                if len(contexts) != 1:
+                    raise Failure('owned plain vet requires complete independent evidence')
+                audit = run_ci_tier.verify_source_audit(audit_evidence, first['source'],
+                    expected_source_proof=expected_source_proof, require_plain_vet=True,
+                    expected_vet_context_sha256=next(iter(contexts)), strict_full_context=True)
+            else:
+                audit = run_ci_tier.verify_source_audit(audit_evidence, first['source'],
+                    expected_source_proof=expected_source_proof)
+            for path, manifest in zip(paths, manifests):
+                settings = manifest.get('settings', {})
+                if settings.get('plain_vet_source_proof') != audit.get('source_proof'):
+                    raise Failure('owned plain vet worker tracked source proof mismatch')
+                if not legacy:
+                    verify_worker_vet(path.parent, manifest, audit['source_proof'])
+        except run_ci_tier.Failure as error:
+            raise Failure(str(error)) from error
     for manifest in manifests:
         if (manifest.get('success') is not True or manifest.get('catalog') != first
                 or manifest.get('catalog_sha256') != digest(first)
                 or first.get('source') != os.environ.get('GITHUB_SHA', first.get('source'))
+                or manifest.get('settings', {}).get('workers', 2) != workers
                 or manifest.get('tier') != 'pr' or not isinstance(manifest.get('body_evidence'), dict)):
             raise Failure('shard catalog/source/result mismatch')
         index = manifest['shard']
@@ -320,22 +482,33 @@ def reconcile(directory):
         if not (directory / 'cli.json').exists():
             raise Failure('actual shard CLI evidence missing')
         raw = '\n'.join(log.read_text() for log in logs)
+        ordinary_raw = '\n'.join(log.read_text() for log in logs if log.name != 'cli.json')
+        actual_packages = coverage(ordinary_raw, {n: first['packages'][n] for n in expected['packages']})
+        actual_cli = coverage((directory / 'cli.json').read_text(), {CLI: True}, expected['cli'])
+        if {'packages': actual_packages['packages'], 'cli': actual_cli['cli']} != expected:
+            raise Failure('actual terminal coverage differs from assignment')
+        if manifest.get('settings', {}).get('plain_audit_owned') and run_ci_tier.SOURCE_AUDIT_PACKAGE in expected['packages']:
+            try:
+                run_ci_tier.verify_owned_audit_skip(raw)
+            except run_ci_tier.Failure as error:
+                raise Failure(str(error)) from error
         if manifest['body_evidence'] != run_ci_tier.body_evidence(raw, short=True):
             raise Failure('actual shard body evidence differs from manifest')
     assignments = first['assignments']
     for kind in ('packages', 'cli'):
-        a, b = [set(s[kind]) for s in assignments]
+        bins = [s[kind] for s in assignments]
+        flattened = [n for b in bins for n in b]
         universe = set(first[kind]) - ({CLI} if kind == 'packages' else set())
-        if a & b or a | b != universe or not a or not b:
+        if len(flattened) != len(set(flattened)) or set(flattened) != universe or not all(bins):
             raise Failure('manifest partition is not exhaustive/disjoint')
     print('reconciled source/catalog:', first['source'], digest(first))
 
 
 def verdict(event, ref, needs):
     expected = {'linux-short': 'success', 'linux-full': 'success', 'script-tests': 'success',
-                'macos-smoke': 'success', 'tier-plan': 'success'}
+                'macos-smoke': 'success', 'tier-plan': 'success', 'source-audit': 'success'}
     if event == 'push' and ref.startswith('refs/heads/release-candidate/') and ref != 'refs/heads/release-candidate/':
-        expected['linux-short'], expected['linux-full'] = 'skipped', 'success'
+        expected['linux-short'], expected['linux-full'], expected['source-audit'] = 'skipped', 'success', 'skipped'
     elif event != 'pull_request':
         raise Failure('unsupported gate event/ref')
     if not isinstance(needs, dict) or set(needs) != set(expected):
@@ -344,11 +517,19 @@ def verdict(event, ref, needs):
         raise Failure('required job result did not succeed or intentionally skip')
 
 
-def run(index, out, seconds):
+def run(index, out, seconds, workers=2, plain_audit_owned=False, plain_vet_owned=False):
+    worker_count(workers)
+    if type(index) is not int or index not in range(workers):
+        raise Failure("invalid worker index")
+    started = time.monotonic()
     out.mkdir(parents=True, exist_ok=True)
     (out / 'manifest.json').unlink(missing_ok=True)
     deadline = time.monotonic() + seconds
     env = os.environ.copy()
+    if plain_audit_owned:
+        env['AGENT_ARCHIVE_PLAIN_SOURCE_AUDIT_OWNED'] = '1'
+    else:
+        env.pop('AGENT_ARCHIVE_PLAIN_SOURCE_AUDIT_OWNED', None)
     cpus = max(1, len(os.sched_getaffinity(0)))
     quota_file = Path('/sys/fs/cgroup/cpu.max')
     if quota_file.exists():
@@ -367,13 +548,40 @@ def run(index, out, seconds):
     names = listed_names((out / 'listing.json').read_text())
     hints = json.loads((ROOT / 'scripts/go_shard_hints.json').read_text())
     ordinary = sorted(set(packages) - {CLI})
-    package_bins, cli_bins = partition(ordinary, hints['packages']), partition(names, hints['cli'])
-    catalog = {'source': source, 'packages': packages, 'cli': names,
-               'assignments': [{'packages': package_bins[i], 'cli': cli_bins[i]} for i in range(2)]}
+    auxiliary = hints.get('auxiliary_costs_ms', {'vet': 0, 'git_invocation': 0})
+    if set(auxiliary) != {'vet', 'git_invocation'} or any(type(v) is not int or v < 0 for v in auxiliary.values()):
+        raise Failure('invalid auxiliary scheduling hints')
+    fixed = [0 if plain_vet_owned else auxiliary['vet']] + [0] * (workers - 1)
+    package_hints = dict(hints['packages'])
+    exclusions = hints.get('owned_plain_audit_exclusions_ms', {})
+    if any(type(v) is not int or v < 0 for v in exclusions.values()):
+        raise Failure('invalid owned audit cost hints')
+    if not plain_audit_owned:
+        for package, elapsed in exclusions.items():
+            if package in ordinary:
+                package_hints[package] = package_hints.get(package, 1000) + elapsed
+    if GIT_IDENTITY in ordinary:
+        package_hints[GIT_IDENTITY] = max(package_hints.get(GIT_IDENTITY, 1000), auxiliary['git_invocation'])
+    package_bins = partition(ordinary, package_hints, workers, fixed)
+    cli_fixed = [fixed[i] + (auxiliary['git_invocation'] if GIT_IDENTITY in package_bins[i] else 0)
+                 for i in range(workers)]
+    cli_bins = partition(names, hints['cli'], workers, cli_fixed)
+    catalog = {'source': source, 'workers': workers, 'packages': packages, 'cli': names,
+               'assignments': [{'packages': package_bins[i], 'cli': cli_bins[i]} for i in range(workers)]}
     manifest = {'shard': index, 'catalog': catalog, 'catalog_sha256': digest(catalog), 'success': False,
                 'phases': phases,
-                'settings': {'cpus': cpus, 'cli_cpus': cli_cpus, 'ordinary_cpus': ordinary_cpus, 'package_p': 1,
+                'scheduling': {'fixed_vet_ms': fixed, 'cli_fixed_auxiliary_ms': cli_fixed,
+                               'usage': 'logical ranking plus observed fixed invocation advice; not elapsed forecast'},
+                'settings': {'plain_audit_owned': plain_audit_owned, 'workers': workers, 'cpus': cpus, 'cli_cpus': cli_cpus, 'ordinary_cpus': ordinary_cpus, 'package_p': 1,
                              'ordinary_parallel': ordinary_cpus, 'cli_parallel': cli_cpus, 'deadline_seconds': seconds}}
+    if plain_vet_owned:
+        import run_ci_tier
+        worker_source = run_ci_tier.full_race.source_proof(ROOT)
+        if worker_source['source'] != source:
+            raise Failure('owned vet worker tracked source mismatch')
+        manifest['settings'].update(plain_vet_owned=True, plain_vet_receipt_schema=1, plain_vet_source_proof=worker_source,
+            plain_vet_context=run_ci_tier.plain_vet_context())
+        manifest['settings']['plain_vet_context_sha256'] = digest(manifest['settings']['plain_vet_context'])
     path = out / 'manifest.json'
     path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + '\n')
     print('effective catalog:', json.dumps(catalog, sort_keys=True), flush=True)
@@ -417,11 +625,17 @@ def run(index, out, seconds):
                               (['git-identity.json'] if isolated else []) + (['ordinary.json'] if overlapping else []))
     p = coverage(ordinary_text, {n: packages[n] for n in package_bins[index]})
     c = coverage((out / 'cli.json').read_text(), {CLI: True}, cli_bins[index])
-    if index == 0:
+    if plain_vet_owned and run_ci_tier.full_race.source_proof(ROOT) != manifest['settings']['plain_vet_source_proof']:
+        raise Failure('owned vet worker source changed during execution')
+    if plain_vet_owned:
+        manifest['plain_vet'] = execute_worker_vet(out, deadline, manifest['settings'])
+    if index == 0 and not plain_vet_owned:
         phases['vet_seconds'] = supervise([(['go', 'vet', './...'], out / 'vet.txt', env)], deadline)[0]
     import run_ci_tier
     manifest['tier'] = 'pr'
     manifest['body_evidence'] = run_ci_tier.body_evidence(ordinary_text + '\n' + (out / 'cli.json').read_text(), short=True)
+    phases['worker_total_seconds'] = time.monotonic() - started
+    print('actual worker phases (seconds):', json.dumps(phases, sort_keys=True), flush=True)
     manifest.update(success=True, phases=phases, coverage={'packages': p['packages'], 'cli': c['cli']})
     path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + '\n')
 
@@ -429,7 +643,11 @@ def run(index, out, seconds):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument('--shard', type=int, choices=(0, 1))
+    group.add_argument('--shard', type=int)
+    parser.add_argument('--workers', type=int, choices=(2, 4), default=2)
+    parser.add_argument('--plain-audit-owned', action='store_true')
+    parser.add_argument('--plain-vet-owned', action='store_true')
+    parser.add_argument('--audit-evidence', type=Path)
     group.add_argument('--reconcile', type=Path)
     group.add_argument('--verdict', action='store_true')
     parser.add_argument('--output', type=Path, default=Path('shard-results'))
@@ -445,10 +663,10 @@ def main():
         if args.verdict:
             verdict(os.environ['GITHUB_EVENT_NAME'], os.environ['GITHUB_REF'], json.loads(os.environ['NEEDS']))
         elif args.reconcile is not None:
-            reconcile(args.reconcile)
+            reconcile(args.reconcile, args.workers, args.audit_evidence, require_plain_vet=args.plain_vet_owned)
         else:
             os.chdir(ROOT)
-            run(args.shard, args.output, args.seconds)
+            run(args.shard, args.output, args.seconds, args.workers, args.plain_audit_owned, args.plain_vet_owned)
     except (Failure, ValueError, KeyError, OSError) as error:
         print(f'shard gate failed: {error}', file=sys.stderr)
         return 1

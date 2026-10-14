@@ -46,9 +46,9 @@ def job_key(text, key):
     return value
 
 
-def condition_matches(expression, event, ref='', suite=''):
+def condition_matches(expression, event, ref='', suite='', schedule='17 8 * * 0'):
     """Evaluate only the small boolean condition grammar used by these jobs."""
-    values = {'github.event_name': event, 'github.ref': ref, 'inputs.suite': suite}
+    values = {'github.event_name': event, 'github.ref': ref, 'inputs.suite': suite, 'github.event.schedule': schedule}
     for key, value in values.items():
         expression = expression.replace(key, repr(value))
     tree = ast.parse(expression.replace('&&', ' and ').replace('||', ' or '), mode='eval')
@@ -64,6 +64,8 @@ def condition_matches(expression, event, ref='', suite=''):
                 return any(items)
         if isinstance(node, ast.Compare) and len(node.ops) == 1 and isinstance(node.ops[0], ast.Eq):
             return value(node.left) == value(node.comparators[0])
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == 'always' and not node.args:
+            return True
         if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
                 and node.func.id == 'startsWith' and len(node.args) == 2 and not node.keywords):
             return value(node.args[0]).startswith(value(node.args[1]))
@@ -139,6 +141,8 @@ class PublishedWriterJobTest(unittest.TestCase):
         self.assertIn('--suite macos', found['macos-full'])
         self.assertIn("execute(['bash','scripts/test_published_writer.sh']", (ROOT / 'scripts/run_ci_tier.py').read_text())
         self.assertRegex(job_key(found['macos-full'], 'runs-on'), r'^macos-')
+        self.assertIn('run_native_full.py obligations', found['macos-obligations'])
+        self.assertRegex(job_key(found['macos-obligations'], 'runs-on'), r'^macos-')
         for name, text in found.items():
             if name != 'macos-full':
                 self.assertNotIn('test_published_writer.sh', text)
@@ -148,7 +152,7 @@ class CandidateCampaignTest(unittest.TestCase):
     def test_candidate_validation_never_restores_shared_go_build_state(self):
         # Candidate evidence must come from fresh source/module verification,
         # not executable build state restored from another workflow's cache.
-        expected = {'test': 6, 'levenshtein': 2, 'extended': 4}
+        expected = {'test': 8, 'levenshtein': 2, 'extended': 7}
         for name, count in expected.items():
             workflow = (ROOT / '.github/workflows' / f'{name}.yml').read_text()
             setup = [step for job in jobs(workflow).values() for step in steps(job)
@@ -173,9 +177,9 @@ class CandidateCampaignTest(unittest.TestCase):
     def test_candidate_test_keeps_all_pr_gates(self):
         workflow = (ROOT / '.github/workflows/test.yml').read_text()
         self.assertIn('  pull_request:', workflow)
-        self.assertEqual(set(jobs(workflow)), {'linux-race', 'linux-short', 'linux-full', 'script-tests', 'git-identity-compatibility', 'macos-smoke', 'cross-build', 'lint', 'tier-plan'})
+        self.assertEqual(set(jobs(workflow)), {'linux-race', 'linux-short', 'linux-full', 'script-tests', 'git-identity-compatibility', 'macos-smoke', 'cross-build', 'lint', 'tier-plan', 'source-audit'})
         for name, text in jobs(workflow).items():
-            if name not in ('linux-race', 'linux-short', 'linux-full'):
+            if name not in ('linux-race', 'linux-short', 'linux-full', 'source-audit'):
                 self.assertIsNone(job_key(text, 'if'), name)
         self.assertIn('--tier full --suite linux', workflow)
         self.assertIn('github.event.pull_request.number || github.ref', workflow)
@@ -189,6 +193,10 @@ class CandidateCampaignTest(unittest.TestCase):
         }
         for name, suite in (('fuzz', 'fuzz'), ('real-systemd', 'systemd')):
             expected[name] = "(github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release-candidate/')) || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == '" + suite + "'))"
+        expected['macos-full'] = 'always() && ('+expected['macos-full']+')'
+        native_condition = "(github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release-candidate/')) || (github.event_name == 'schedule' && github.event.schedule == '17 8 * * 0') || (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'macos'))"
+        for name in ('macos-plan', 'macos-workers', 'macos-obligations'):
+            expected[name] = native_condition
         self.assertEqual(conditions, expected)
         self.assertIn("github.event_name == 'push' && github.ref || github.run_id", workflow)
         self.assertIn('--suite macos', jobs(workflow)['macos-full'])
@@ -231,11 +239,11 @@ class CadenceTest(unittest.TestCase):
         self.assertIsNone(job_key(found['linux-full'],'if'))
         self.assertIn('--suite extra --extra-plan', found['linux-full'])
         self.assertIn('--tier full --suite linux', found['linux-full'])
-        self.assertIn('shard: [0, 1]', found['linux-short'])
+        self.assertIn('shard: [0, 1, 2, 3]', found['linux-short'])
         self.assertIn('fail-fast: false', found['linux-short'])
-        self.assertIn('python3 -B scripts/run_go_shard.py --shard',found['linux-short'])
+        self.assertIn('python3 -B scripts/run_go_shard.py --workers 4 --plain-audit-owned --plain-vet-owned --shard',found['linux-short'])
         self.assertEqual(job_key(found['linux-race'],'if'),'always()')
-        self.assertEqual(job_key(found['linux-race'],'needs'),'[linux-short, linux-full, script-tests, macos-smoke, tier-plan]')
+        self.assertEqual(job_key(found['linux-race'],'needs'),'[linux-short, linux-full, script-tests, macos-smoke, tier-plan, source-audit]')
         self.assertIn('--verdict', found['linux-race'])
         self.assertIn('--reconcile', found['linux-race'])
         self.assertIn('--tier "$tier" --evidence', found['script-tests'])
@@ -243,6 +251,33 @@ class CadenceTest(unittest.TestCase):
         for script in ('test_release_candidate.py','test_ci_workflow.py','test_stage_native_verify.py','test_scope_native_verify.py','test_go_shards.py','test_ci_tiers.py'):
             step=next(step for step in steps(found['script-tests']) if script in step)
             self.assertIsNone(step_key(step,'if'))
+
+    def test_plain_audit_is_required_source_bound_and_owned_short_only(self):
+        workflow=(ROOT/'.github/workflows/test.yml').read_text(); found=jobs(workflow)
+        audit=found['source-audit']
+        self.assertEqual(job_key(audit,'if'), "github.event_name == 'pull_request'")
+        self.assertIn('--tier pr --suite audit --own-plain-vet --seconds 780', audit)
+        self.assertIn('name: go-source-audit', audit)
+        self.assertIn('--plain-audit-owned',found['linux-short'])
+        self.assertIn('--plain-vet-owned',found['linux-short'])
+        self.assertIn('--plain-vet-owned --reconcile',found['linux-race'])
+        # Live receipt validation independently hashes the installed Go/compiler
+        # context; its verifier must use the same exact runtime policy as audit.
+        verifier=found['linux-race']
+        for setting in ("GOTOOLCHAIN: local", "GOWORK: 'off'", "GOFLAGS: '-mod=readonly'"):
+            self.assertIn(setting,verifier)
+        verifier_steps=list(steps(verifier))
+        setup=[step for step in verifier_steps if 'uses: actions/setup-go@' in step]
+        self.assertEqual(len(setup),1)
+        self.assertEqual(step_key(setup[0],'if'),"github.event_name == 'pull_request'")
+        self.assertIn("go-version: '1.27.2'",setup[0])
+        self.assertIn('cache: false',setup[0])
+        self.assertLess(verifier.index('uses: actions/setup-go@'),verifier.index('--plain-vet-owned --reconcile'))
+        self.assertIn('--audit-evidence "$RUNNER_TEMP/source-audit-evidence"',found['linux-race'])
+        self.assertIn('source-audit',job_key(found['linux-race'],'needs'))
+        boundary=(ROOT/'internal/agents/builtin/nativecapture_boundary_test.go').read_text()
+        self.assertIn('testing.Short() && os.Getenv("AGENT_ARCHIVE_PLAIN_SOURCE_AUDIT_OWNED") == "1"', boundary)
+        self.assertIn('"-p=1", "-deps", "-compiled", "-test", "-export"',boundary)
 
     def test_extended_event_matrix_and_full_size_backstops(self):
         workflow = EXTENDED_YML.read_text()
@@ -259,7 +294,7 @@ class CadenceTest(unittest.TestCase):
                 ('schedule', 'refs/heads/main', '', all_jobs),
                 ('workflow_dispatch', 'refs/heads/main', 'all', all_jobs),
                 ('workflow_dispatch', 'refs/heads/main', 'linux', {'linux-race'}),
-                ('workflow_dispatch', 'refs/heads/main', 'macos', {'macos-full'}),
+                ('workflow_dispatch', 'refs/heads/main', 'macos', {'macos-full', 'macos-plan', 'macos-workers', 'macos-obligations'}),
                 ('workflow_dispatch', 'refs/heads/main', 'fuzz', {'fuzz'}),
                 ('workflow_dispatch', 'refs/heads/main', 'systemd', {'real-systemd'}),
                 ('workflow_dispatch', 'refs/heads/main', 'unknown', set())):
@@ -273,12 +308,32 @@ class CadenceTest(unittest.TestCase):
         runner=(ROOT/'scripts/run_ci_tier.py').read_text()
         self.assertIn("if tier == 'full':", runner)
         self.assertIn('full_race.run(packages, out, deadline', runner)
-        self.assertIn("execute(common + ['-short'] + packages, 'race', True)", runner)
+        self.assertIn("execute(common + ['-short'] + packages, 'race', True, env=short_env)", runner)
         full = (ROOT / 'scripts/full_race.py').read_text()
         self.assertIn("COMMON = ['go', 'test', '-race', '-count=1', '-json', '-timeout', '20m']", full)
         self.assertNotIn("'-short'", full)
         self.assertIn("AGENT_ARCHIVE_PERF='1'",runner)
         self.assertIn("'-count=1'",runner)
+
+    def test_native_full_matrix_and_daily_are_disjoint(self):
+        found = jobs(EXTENDED_YML.read_text())
+        for name in ('macos-plan', 'macos-workers', 'macos-obligations'):
+            self.assertFalse(condition_matches(job_key(found[name], 'if'), 'schedule', schedule='17 8 * * 1-6'))
+            self.assertTrue(condition_matches(job_key(found[name], 'if'), 'schedule', schedule='17 8 * * 0'))
+        self.assertTrue(condition_matches(job_key(found['macos-full'], 'if'), 'schedule', schedule='17 8 * * 1-6'))
+        workers = found['macos-workers']
+        self.assertIn('worker: [0, 1, 2]', workers)
+        self.assertIn('fail-fast: false', workers)
+        self.assertEqual(job_key(found['macos-full'], 'needs'), '[macos-plan, macos-workers, macos-obligations]')
+        self.assertIn('toJSON(needs)', found['macos-full'])
+        self.assertIn('run_native_full.py reconcile', found['macos-full'])
+        for name in ('macos-plan', 'macos-workers', 'macos-obligations'):
+            upload = next(step for step in steps(found[name]) if 'uses: actions/upload-artifact@' in step)
+            self.assertEqual(step_key(upload, 'if'), 'always()')
+            self.assertIn('if-no-files-found: error', upload)
+        smoke = jobs((ROOT / '.github/workflows/test.yml').read_text())['macos-smoke']
+        self.assertIn('--tier pr --suite macos', smoke)
+        self.assertNotIn('--tier full', smoke)
 
     def test_native_smoke_retains_build_and_runs_short_race_tests(self):
         smoke = (ROOT / 'scripts/test_macos_smoke.sh').read_text()

@@ -20,7 +20,7 @@ class ContextTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         self.release = self.root/'os-release'
         self.release.write_text('ID=ubuntu\nVERSION_ID="24.04"\n')
         self.go = metadata()
@@ -62,6 +62,16 @@ class ContextTests(unittest.TestCase):
         self.assertNotEqual(first.prefix, self.plan(worker=1).prefix)
         changed = dict(first.source, dependency='d'*64)
         self.assertNotEqual(first.prefix, self.plan(source=changed).prefix)
+
+    def test_worker_count_separates_cache_ownership(self):
+        source = self.plan().source
+        two = keys.cache_plan(12, 0, self.context(), source, self.root, 2)
+        four = keys.cache_plan(12, 0, self.context(), source, self.root, 4)
+        self.assertNotEqual(two.prefix, four.prefix)
+        self.assertNotEqual(four.prefix, keys.cache_plan(12, 3, self.context(), source, self.root, 4).prefix)
+        for workers, worker in ((3, 0), (4, 4), (2, 2), (True, 0), ('4', 0)):
+            with self.assertRaises(keys.InvalidContext):
+                keys.cache_plan(12, worker, self.context(), source, self.root, workers)
 
     def test_actual_go_metadata_fails_closed(self):
         for key, value in [('GOVERSION', 'go1.27.3'), ('CGO_ENABLED', '0'),

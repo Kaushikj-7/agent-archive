@@ -127,6 +127,9 @@ func runHandoffCommand(args []string, stdin io.Reader, stdout, stderr io.Writer,
 	}
 	if !opts.native {
 		if opts.sessionID != "" {
+			readCtx, stopQueryReads := readCommandContext(env)
+			defer stopQueryReads()
+			opts.readCtx = catalog.WithReadView(readCtx)
 			if code, done := resolveHandoffQuery(&opts, home, interactive, input, stdout, stderr, env); done {
 				return code
 			}
@@ -152,6 +155,17 @@ func runHandoffCommand(args []string, stdin io.Reader, stdout, stderr io.Writer,
 			}
 			return 1
 		}
+	}
+	// Reading is complete. Release signal ownership before destination
+	// prompts and launched agents take over terminal interaction.
+	if opts.readCtx != nil {
+		if owner := readPhase(opts.readCtx); owner != nil {
+			owner.Pause()
+		}
+	}
+	if opts.readCtx != nil && opts.readCtx.Err() != nil {
+		terminal.Printf(stderr, "agent-archive: handoff: %v\n", opts.readCtx.Err())
+		return 1
 	}
 	if target.describe != "" {
 		terminal.Printf(stderr, "handoff: using %s\n", target.describe)
@@ -207,6 +221,10 @@ func runHandoffCommand(args []string, stdin io.Reader, stdout, stderr io.Writer,
 		dest = choice.dest
 		p.close()
 	}
+	if opts.readCtx != nil && opts.readCtx.Err() != nil {
+		terminal.Printf(stderr, "agent-archive: handoff: %v\n", opts.readCtx.Err())
+		return 1
+	}
 	if dest != "" {
 		// Run from inside an agent (interaction is off there), without a
 		// terminal, or asked to, the new agent gets a terminal of its own.
@@ -247,7 +265,7 @@ func resolveHandoffTarget(opts handoffOptions, home string, stderr io.Writer, en
 		defer stopReads()
 	}
 	resolver := handoffResolver{ctx: ctx, env: env, home: home, cfg: cfg,
-		revision: opts.revision, harness: opts.harness, source: opts.source, skip: skip, gate: gate, stderr: stderr}
+		revision: opts.revision, harness: opts.harness, source: opts.source, skip: skip, gate: gate, stderr: stderr, store: opts.archiveStore}
 	if opts.selection != nil && *opts.selection != nil {
 		return resolver.selectedPicker(*opts.selection)
 	}
@@ -431,6 +449,8 @@ func hasPrompt(analysis archive.Analysis) bool {
 }
 
 type handoffResolver struct {
+	// store preserves the query read view's destination authority.
+	store    storage.ObjectStore
 	revision string
 	ctx      context.Context
 	env      handoffResolverDependencies
@@ -454,6 +474,9 @@ type handoffResolver struct {
 // byID resolves an explicit archive session ID: the local registration first
 // (fresh, and available while paused or offline), then the archive.
 func (r handoffResolver) byID(id string) (handoffTarget, error) {
+	if err := r.ctx.Err(); err != nil {
+		return handoffTarget{}, err
+	}
 	// localErr is why the local transcript could not be used; with --source
 	// auto the archive's published copy is tried next, and both reasons are
 	// reported if it fails too.
@@ -484,9 +507,13 @@ func (r handoffResolver) byID(id string) (handoffTarget, error) {
 }
 
 func (r handoffResolver) archiveByID(id string) (handoffTarget, error) {
-	store, err := r.env.openStore(r.cfg)
-	if err != nil {
-		return handoffTarget{}, fmt.Errorf("open storage: %w", err)
+	store := r.store
+	if store == nil {
+		var err error
+		store, err = r.env.openStore(r.cfg)
+		if err != nil {
+			return handoffTarget{}, fmt.Errorf("open storage: %w", err)
+		}
 	}
 	key, err := locateMetadataKey(r.ctx, store, r.harness, id)
 	if err != nil {

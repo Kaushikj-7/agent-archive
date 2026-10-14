@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -171,6 +172,17 @@ func editRegistration(t *testing.T, f handoffFixture, id string, edit func(map[s
 type sourceCountingStore struct {
 	storage.ObjectStore
 	bodies atomic.Int32
+}
+
+func (s *sourceCountingStore) GetLimited(ctx context.Context, key string, limit int64) ([]byte, error) {
+	if !strings.HasSuffix(key, "/metadata.json") {
+		s.bodies.Add(1)
+	}
+	bounded, ok := s.ObjectStore.(storage.LimitedGetter)
+	if !ok {
+		return nil, errors.New("underlying store has no bounded read capability")
+	}
+	return bounded.GetLimited(ctx, key, limit)
 }
 
 func (s *sourceCountingStore) Get(ctx context.Context, key string) ([]byte, error) {

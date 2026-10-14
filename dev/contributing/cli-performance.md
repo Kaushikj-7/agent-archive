@@ -103,3 +103,20 @@ are measured. Freeze this repaired harness on both baseline and candidate; older
 discard-writer samples are not equivalent. Preserve exact production/harness
 commits, fixture hashes, toolchain/build settings and raw samples. Controlled
 matched measurements of this repaired harness remain pending.
+
+## Scoped interactive picker measurements
+
+The [picker qualification harness](../maintainers/picker-qualification/README.md)
+adds real first-screen and Older `CLI.Run` controls for supported handoff/list/show
+browsers at 10k/100k. It uses a complete synthetic bulk catalog plus a separate
+actual-construction equivalence check; construction/warmup remain outside measured
+work. GET/LIST/Stat and returned bytes, phase latency/allocations, sampled heap and
+native R costs are distinct. Run the identical repaired terminal harness on the
+pinned protocol 10 production baseline and integrated protocol 11 candidate. The
+historical JSON/discard-writer matrix is not a matched picker comparison.
+The [2026-10-13 paired result ledger](../maintainers/picker-qualification/results-20261013.md)
+records16 successful processes / 104 cases, including both sizes and every native
+case; source/binary/harness/adapter and logical fixture hashes are retained.
+Sampled heap includes live fixtures and whole-process RSS includes setup; neither
+is command-exclusive peak memory. Independent review/hosted checks and provider
+qualification remain separate gates.
