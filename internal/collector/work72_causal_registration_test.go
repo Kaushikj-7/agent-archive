@@ -40,6 +40,9 @@ func TestWork72RealRegistrationUnobservedBaseRestoration(t *testing.T) {
 		return p
 	}
 	fixtureHome, project, native := canonical(t.TempDir()), canonical(t.TempDir()), canonical(t.TempDir())
+	if err := os.Chmod(fixtureHome, 0700); err != nil {
+		t.Fatal(err)
+	}
 	at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
 	store, e := state.Open(fixtureHome)
 	if e != nil {
