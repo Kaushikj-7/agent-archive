@@ -142,6 +142,26 @@ class NativeSmokeTest(unittest.TestCase):
                 self.assertEqual(commands, [['go', 'build', './...']])
                 self.assertNotIn('AGENT_ARCHIVE_KEYCHAIN_ROUND_TRIP', os.environ)
 
+    def test_failed_phase_retains_timing_and_cannot_produce_success_proof(self):
+        with tempfile.TemporaryDirectory() as d:
+            directory = Path(d)
+            template = self.fixture(directory)
+            report = {'invocations': []}
+            def checked(command, output, deadline, env=None):
+                output.write_text('')
+                return ''
+            def execute(command, name, **kwargs):
+                if name == 'native-cli':
+                    raise tier.Failure('native command failed')
+                report['invocations'].append(next(i for i in template['invocations'] if i['log'] == name+'.jsonl'))
+            with mock.patch.object(tier.subprocess, 'check_output', return_value=json.dumps(CONTEXT).encode()), mock.patch.object(tier.full_race, 'source_proof', return_value=PROOF), mock.patch.object(tier, 'checked', side_effect=checked), mock.patch.object(tier, 'discover', return_value=template['native_smoke']['discovery']):
+                with self.assertRaisesRegex(tier.Failure, 'native command failed'):
+                    tier.run_native_smoke(directory, 100, report, lambda: None, execute, False)
+                self.assertIn('native-cli', report['native_smoke']['phase_seconds'])
+                self.assertNotIn('post_source_proof', report['native_smoke'])
+                with self.assertRaises(tier.Failure):
+                    self.verify(directory, report)
+
 
 if __name__ == '__main__':
     unittest.main()
