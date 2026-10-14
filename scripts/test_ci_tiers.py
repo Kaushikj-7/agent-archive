@@ -159,7 +159,7 @@ class SourceProofTest(unittest.TestCase):
             git('init','-q');git('config','user.name','CI fixture');git('config','user.email','ci@example.invalid')
             target=root/'internal/scheduler/old.go';target.parent.mkdir(parents=True);target.write_text('package scheduler\n')
             git('add','.');git('commit','-qm','base');base=git('rev-parse','HEAD');main=git('branch','--show-current')
-            # Lowercase head aliases HEAD on case-insensitive macOS filesystems.
+            # "head" aliases HEAD on case-insensitive macOS filesystems.
             git('checkout','-qb','fixture-head');git('mv','internal/scheduler/old.go','internal/scheduler/new.go');git('commit','-qm','rename');head=git('rev-parse','HEAD')
             git('checkout',main);git('merge','--no-ff','-m','tested merge','fixture-head');tested=git('rev-parse','HEAD')
             event={'pull_request':{'base':{'sha':base},'head':{'sha':head}}}
