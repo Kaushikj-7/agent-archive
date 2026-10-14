@@ -51,7 +51,9 @@ unrestricted short shards already checked by the verdict, plus focused critical
 refusal/limit integration backstops. They do not duplicate the short suite. Every PR also builds all Darwin production packages with
 cgo and runs native smoke. Sensitive product changes additionally run explicitly named
 native short consent, source-authority and catalog refusal regressions. Scheduler protocol and CLI setup/uninstall/scheduler changes require the
-actual systemd integration on a disposable runner during a PR. The daily run
+actual systemd integration on a disposable runner during a PR. Shared CLI
+dispatch, installation identity, status observation, setup journal and setup
+resource changes also retain this integration. The daily run
 retains the full real-manager suite.
 
 The stable `linux-full` check records source-bound focused PR bodies (or an explicit
