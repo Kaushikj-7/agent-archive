@@ -207,6 +207,9 @@ def runtime_context(run=execute, env=None, os_release=Path('/etc/os-release'),
             'toolchain': toolchain(go),
             'race': True, 'tags': [], 'schema': SCHEMA,
             'pinned_tools': TOOL_PINS, 'compilation_modes': COMPILATION_MODES,
+            'native_environment': digest({name: env.get(name) for name in
+                ('CFLAGS', 'CPPFLAGS', 'CXXFLAGS', 'LDFLAGS', 'MAKEFLAGS', 'CPATH',
+                 'C_INCLUDE_PATH', 'CPLUS_INCLUDE_PATH', 'LIBRARY_PATH', 'PKG_CONFIG_PATH')}),
             **({'sdk': sdk} if sdk else {})}
 
 
@@ -214,7 +217,7 @@ def validate_context(context, *, native=False):
     """One exact schema validator for cache, audit and per-worker vet proofs."""
     fields = {'go', 'version', 'runner_os', 'runner_arch', 'image', 'os_release',
               'cc', 'cxx', 'toolchain', 'race', 'tags', 'schema',
-              'pinned_tools', 'compilation_modes'}
+              'pinned_tools', 'compilation_modes', 'native_environment'}
     if not isinstance(context, dict):
         raise InvalidContext('runtime context is not an object')
     go = context.get('go')
@@ -243,7 +246,7 @@ def validate_context(context, *, native=False):
             or any(type(v) is not str or not re.fullmatch(r'[A-Za-z0-9_.-]+', v)
                    for v in image.values())):
         raise InvalidContext('runtime image provenance malformed')
-    hashes = [context['os_release']]
+    hashes = [context['os_release'], context['native_environment']]
     for name in ('cc', 'cxx', 'toolchain'):
         values = context[name]
         expected = {'go', 'compile', 'asm', 'link', 'cgo', 'vet'} if name == 'toolchain' else {'binary', 'version'}

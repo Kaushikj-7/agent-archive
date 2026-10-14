@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Adapters for verified compilation caches; no check results or XDG state.
+"""Adapters for verified Go caches; no external verdicts, receipts or XDG state.
 
 One shared immutable trusted-main seed per complete host/compiler/module context.
 PR workers share a single PR-scoped compilation snapshot, published by worker 0.
@@ -108,22 +108,36 @@ def snapshot_paths(plan, kind):
     raise InvalidContext('unknown compilation snapshot kind')
 
 
+def manifest_path(plan):
+    path = Path(plan.paths[0])/MANIFEST
+    if path.is_symlink() or (path.exists() and not path.is_file()):
+        raise InvalidContext('cache manifest is not a regular file')
+    return path
+
+
 def publish_manifest(plan, context, kind='seed'):
+    target = manifest_path(plan)
     paths = snapshot_paths(plan, kind)
     for path in paths:
         Path(path).mkdir(parents=True, exist_ok=True)
     candidates = cache_files(paths)
     bound_compilation(plan, candidates)
     files, size = file_inventory(paths, candidates)
-    (Path(plan.paths[0])/MANIFEST).write_text(json.dumps({
+    payload = json.dumps({
         'schema': SCHEMA, 'kind': kind, 'context': digest(context),
         'dependency': plan.source['dependency'], 'source': plan.source,
-        'files': files, 'bytes': size}, sort_keys=True))
+        'files': files, 'bytes': size}, sort_keys=True)
+    if len(payload.encode()) > 32 * 1024 * 1024:
+        raise InvalidContext('cache manifest exceeds metadata budget')
+    target.write_text(payload)
     return size
 
 
 def validate_manifest(plan, context, kind='seed'):
-    manifest = json.loads((Path(plan.paths[0])/MANIFEST).read_text())
+    path = manifest_path(plan)
+    if path.stat().st_size > 32 * 1024 * 1024:
+        raise InvalidContext('cache manifest exceeds metadata budget')
+    manifest = json.loads(path.read_text())
     if not isinstance(manifest, dict) or manifest.get('kind') != kind:
         raise InvalidContext('compilation manifest kind differs')
     paths = snapshot_paths(plan, manifest.get('kind'))

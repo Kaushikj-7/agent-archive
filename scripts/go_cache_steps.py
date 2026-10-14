@@ -86,6 +86,22 @@ def worker_success(plan, manifest, guard, worker, workers=2):
     return True
 
 
+def pr_publisher(env, event, worker):
+    repository = env.get('GITHUB_REPOSITORY')
+    head_repo = event
+    for key in ('pull_request', 'head', 'repo'):
+        if not isinstance(head_repo, dict):
+            return False
+        head_repo = head_repo.get(key)
+    if not isinstance(head_repo, dict):
+        return False
+    return (type(worker) is int and worker == 0
+            and env.get('GITHUB_EVENT_NAME') == 'pull_request'
+            and isinstance(repository, str)
+            and re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repository) is not None
+            and head_repo.get('full_name') == repository)
+
+
 def emit(values, output):
     for key, value in values.items():
         if not re.fullmatch(r'[a-z_]+', key) or not isinstance(value, str) or '\n' in value or '\r' in value:
@@ -145,9 +161,7 @@ def main():
                 worker_success(plan, manifest, guard, int(env['SHARD']), workers)
                 # Every worker retains its source/evidence guard; only the
                 # one authorized publisher pays the checksum/upload cost.
-                if (int(env['SHARD']) != 0
-                        or event['pull_request'].get('head', {}).get('repo', {}).get('full_name')
-                        != env.get('GITHUB_REPOSITORY')):
+                if not pr_publisher(env, event, int(env['SHARD'])):
                     emit({'save_ready': 'false'}, env['GITHUB_OUTPUT'])
                     return 0
                 from ci_cache import publish_manifest
@@ -156,6 +170,7 @@ def main():
                 except InvalidContext:
                     emit({'save_ready': 'false'}, env['GITHUB_OUTPUT'])
                     return 0
+                guard(plan.source)
                 emit({'save_ready': 'true', 'cache_bytes': str(size)}, env['GITHUB_OUTPUT'])
         return 0
     except InvalidContext as error:

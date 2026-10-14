@@ -55,7 +55,7 @@ jobs:
           # These are accelerators, never evidence of any test body passing.
           go list ./... > "$RUNNER_TEMP/seed-packages.txt"
           while IFS= read -r package; do
-            go test -race -c -o "$RUNNER_TEMP/seed.test" "$package"
+            go test -race -vet=off -c -o "$RUNNER_TEMP/seed.test" "$package"
           done < "$RUNNER_TEMP/seed-packages.txt"
       - name: Compile pinned checker binaries
         if: runner.os == 'macOS' && steps.restored.outputs.restore-state != 'trusted'

@@ -1,10 +1,16 @@
 # Verified CI compilation caches
 
-Caches accelerate compilation and immutable tools. A cache hit never supplies a
-passing test, audit, vet, lint, scanner or coverage receipt. Current bodies still
-execute with their existing `-count=1`, and existing source/worker/verdict checks
-remain authoritative. Levenshtein's verification directories and XDG directories
-are deliberately fresh, including the vulnerability database.
+Caches accelerate compilation and immutable tools. A cache never supplies a
+previous test/check receipt or coverage proof. Current test bodies still execute
+with their existing `-count=1`, and source/worker/verdict checks remain authoritative.
+Every owned `go vet ./...` invocation still executes against current source and
+emits a new full source/compiler receipt. Go's intrinsic analysis cache may
+reuse vet facts/successful output when its package compilation action ID, tool
+identity, analyzer flags, mode and dependency fact hashes all match. This is
+normal source-keyed Go memoization, not restoration of an external verification
+receipt. Seeds use `-vet=off` for test compilation; PR Go snapshots can contain
+that normal internal Go state. Levenshtein verification directories and XDG
+state are deliberately fresh, including the vulnerability database.
 
 ## Trust and identities
 

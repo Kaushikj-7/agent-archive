@@ -54,6 +54,16 @@ class CompilationTests(unittest.TestCase):
         self.assertEqual(self.call(matched=''), 'miss')
         self.assertEqual(self.call(outcome='failure'), 'miss')
 
+    def test_manifest_symlink_is_rejected_without_reading_or_writing_target(self):
+        target = self.root/'unrelated'
+        target.write_text('keep source bytes')
+        (Path(self.plan.paths[0])/cache.MANIFEST).symlink_to(target)
+        with self.assertRaises(keys.InvalidContext):
+            cache.publish_manifest(self.plan,self.context)
+        with self.assertRaises(keys.InvalidContext):
+            cache.validate_manifest(self.plan,self.context)
+        self.assertEqual(target.read_text(),'keep source bytes')
+
     def test_context_and_module_invalidation_and_source_reuse(self):
         cache.publish_manifest(self.plan, self.context)
         new_source = dict(self.source, tested='d'*40, tree='e'*40)

@@ -41,7 +41,7 @@ def synthetic_vet_context(image='unit1'):
             'cxx': {'binary': 'd'*64, 'version': 'e'*64},
             'toolchain': dict.fromkeys(('go','compile','asm','link','cgo','vet'), 'f'*64),
             'race': False, 'tags': [], 'schema': go_cache_context.SCHEMA,
-            'pinned_tools': go_cache_context.TOOL_PINS,
+            'native_environment': 'd'*64, 'pinned_tools': go_cache_context.TOOL_PINS,
             'compilation_modes': go_cache_context.COMPILATION_MODES}
 
 
