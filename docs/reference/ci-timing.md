@@ -106,6 +106,9 @@ including any compilation inside that phase. Failed phases retain their elapsed
 time without a successful source/coverage receipt. Base and conditional CLI
 commands keep separate package lifetimes and their original 10/20-minute
 budgets; sharing discovery does not pool deadlines or skip a native test body.
+Hosted smoke receipts use the same full compiler, toolchain, SDK and runner image
+identity as the verified compilation cache. Pre/post identities must match the
+current canonical host; restored compilation never replaces fresh body evidence.
 The unrestricted native command must yield all seven package PASS streams and
 actual body lifecycles. Selected CLI/catalog parents are independently reconciled
 against their compiled listing and actual parent/child terminals. Established ordinary capability/Keychain opt-in skips

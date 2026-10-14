@@ -9,9 +9,31 @@ import unittest
 from unittest import mock
 
 import run_ci_tier as tier
+from test_go_cache_context import metadata
 
 PROOF = {'source': 'a'*40, 'tree': 'b'*40}
 CONTEXT = {'GOOS': 'darwin', 'CGO_ENABLED': '1', 'GOVERSION': 'go1.27.2'}
+
+
+
+def canonical_context():
+    """Synthetic unit fixture built through the actual shared schema validator."""
+    go = metadata()
+    go.update(GOOS='darwin', GOHOSTOS='darwin', GOARCH='arm64', GOHOSTARCH='arm64', GOENV='off')
+    def run(argv):
+        if argv == ['go', 'version']:
+            return b'go version go1.27.2 darwin/arm64\n'
+        if argv == ['go', 'env', '-json', *tier.cache_keys.GO_FIELDS]:
+            return json.dumps(go).encode()
+        return ('synthetic unit metadata: '+' '.join(argv)).encode()
+    context = tier.cache_keys.runtime_context(run=run, env={
+        'RUNNER_OS': 'macOS', 'RUNNER_ARCH': 'ARM64', 'ImageOS': 'unit-macos', 'ImageVersion': 'unit-1'},
+        compiler=lambda name: {'binary': 'c'*64, 'version': 'd'*64},
+        toolchain=lambda go: dict.fromkeys(('go', 'compile', 'asm', 'link', 'cgo', 'vet'), 'e'*64), native=True)
+    return tier.cache_keys.validate_context(context, native=True)
+
+
+CANONICAL = canonical_context()
 
 
 def lines(events):
@@ -33,7 +55,8 @@ class NativeSmokeTest(unittest.TestCase):
         (directory/'native-list.jsonl').write_text(lines(listing))
         (directory/'native-build.log').write_text('')
         native = dict(schema=1, source_proof=copy.deepcopy(PROOF), post_source_proof=copy.deepcopy(PROOF),
-                      context=copy.deepcopy(CONTEXT), qualification='hosted', sensitive=sensitive, build_command=['go', 'build', './...'],
+                      context=copy.deepcopy(CANONICAL), post_context=copy.deepcopy(CANONICAL),
+                      context_sha256=tier.cache_keys.digest(CANONICAL), qualification='hosted', sensitive=sensitive, build_command=['go', 'build', './...'],
                       build_sha256=hashlib.sha256(b'').hexdigest(), discovery={p: inventory[p] for p in selected},
                       phase_seconds={'build': 1.0, 'discovery': 1.0})
         report = dict(invocations=[], native_smoke=native)
@@ -57,7 +80,7 @@ class NativeSmokeTest(unittest.TestCase):
         return report
 
     def verify(self, directory, report, sensitive=False):
-        with mock.patch.object(tier.full_race, 'source_proof', return_value=PROOF):
+        with mock.patch.object(tier.full_race, 'source_proof', return_value=PROOF), mock.patch.object(tier, 'native_host_context', return_value=copy.deepcopy(CANONICAL)):
             tier.verify_native_smoke(directory, report, sensitive)
 
     def test_base_and_conditional_complete_with_original_separate_deadlines(self):
@@ -78,7 +101,11 @@ class NativeSmokeTest(unittest.TestCase):
         changes = [lambda r: r['invocations'].pop(),
                    lambda r: r['native_smoke'].update(post_source_proof={'source': 'c'*40, 'tree': 'b'*40}),
                    lambda r: r['native_smoke'].update(sensitive=False),
-                   lambda r: r['native_smoke']['context'].update(CGO_ENABLED='0'),
+                   lambda r: r['native_smoke']['context']['go'].update(CGO_ENABLED='0'),
+                   lambda r: r['native_smoke']['context']['sdk'].pop('sdk_build'),
+                   lambda r: r['native_smoke']['post_context']['sdk'].update(sdk_version='f'*64),
+                   lambda r: r['native_smoke']['post_context']['toolchain'].update(compile='f'*64),
+                   lambda r: r['native_smoke']['post_context']['image'].update(ImageVersion='unit-new'),
                    lambda r: r['invocations'][0]['command'].remove('-count=1'),
                    lambda r: r['native_smoke']['phase_seconds'].pop('build'),
                    lambda r: r['native_smoke'].update(build_command=['go','build','./internal/cli'])]
@@ -146,7 +173,7 @@ class NativeSmokeTest(unittest.TestCase):
                     item = next(i for i in template['invocations'] if i['log'] == name+'.jsonl')
                     self.assertEqual(command, item['command'])
                     report['invocations'].append(item)
-                with mock.patch.object(tier.subprocess, 'check_output', return_value=json.dumps(CONTEXT).encode()), mock.patch.object(tier.full_race, 'source_proof', return_value=PROOF), mock.patch.object(tier, 'checked', side_effect=checked), mock.patch.object(tier, 'discover', return_value=template['native_smoke']['discovery']):
+                with mock.patch.object(tier, 'native_host_context', return_value=copy.deepcopy(CANONICAL)), mock.patch.object(tier.full_race, 'source_proof', return_value=PROOF), mock.patch.object(tier, 'checked', side_effect=checked), mock.patch.object(tier, 'discover', return_value=template['native_smoke']['discovery']):
                     tier.run_native_smoke(directory, 100, report, lambda: None, execute, sensitive)
                 self.assertEqual(commands, [['go', 'build', './...']])
                 self.assertNotIn('AGENT_ARCHIVE_KEYCHAIN_ROUND_TRIP', os.environ)
@@ -163,7 +190,7 @@ class NativeSmokeTest(unittest.TestCase):
                 if name == 'native-cli':
                     raise tier.Failure('native command failed')
                 report['invocations'].append(next(i for i in template['invocations'] if i['log'] == name+'.jsonl'))
-            with mock.patch.object(tier.subprocess, 'check_output', return_value=json.dumps(CONTEXT).encode()), mock.patch.object(tier.full_race, 'source_proof', return_value=PROOF), mock.patch.object(tier, 'checked', side_effect=checked), mock.patch.object(tier, 'discover', return_value=template['native_smoke']['discovery']):
+            with mock.patch.object(tier, 'native_host_context', return_value=copy.deepcopy(CANONICAL)), mock.patch.object(tier.full_race, 'source_proof', return_value=PROOF), mock.patch.object(tier, 'checked', side_effect=checked), mock.patch.object(tier, 'discover', return_value=template['native_smoke']['discovery']):
                 with self.assertRaisesRegex(tier.Failure, 'native command failed'):
                     tier.run_native_smoke(directory, 100, report, lambda: None, execute, False)
                 self.assertIn('native-cli', report['native_smoke']['phase_seconds'])
@@ -188,7 +215,7 @@ class NativeSmokeTest(unittest.TestCase):
             self.assertIsNone(report['native_smoke']['context'])
             self.assertIsNone(report['source_proof'])
             self.assertIsNone(report['native_smoke']['post_source_proof'])
-            with mock.patch.object(tier.full_race, 'source_proof', return_value=PROOF):
+            with mock.patch.object(tier.full_race, 'source_proof', return_value=PROOF), mock.patch.object(tier, 'native_host_context', return_value=copy.deepcopy(CANONICAL)):
                 with self.assertRaises(tier.Failure):
                     tier.verify_native_smoke(directory, report, False)
             with mock.patch.dict(os.environ, {'GITHUB_ACTIONS': 'true'}):
@@ -196,6 +223,53 @@ class NativeSmokeTest(unittest.TestCase):
                     tier.run_suite('pr', 'macos', directory, native_local=True)
                 with self.assertRaises(tier.Failure):
                     tier.verify_native_smoke(directory, report, False, local=True)
+
+    def test_hosted_context_delegates_to_shared_native_policy_and_rejects_sdk_or_platform(self):
+        with mock.patch.object(tier.cache_keys, 'runtime_context', return_value=copy.deepcopy(CANONICAL)) as collect:
+            self.assertEqual(tier.native_host_context(), CANONICAL)
+            collect.assert_called_once_with(native=True)
+        bad = copy.deepcopy(CANONICAL)
+        bad['sdk'].pop('sdk_build')
+        with mock.patch.object(tier.cache_keys, 'runtime_context', return_value=bad):
+            with self.assertRaises(tier.Failure):
+                tier.native_host_context()
+        linux = copy.deepcopy(CANONICAL)
+        linux.pop('sdk')
+        linux['go'].update(GOOS='linux', GOHOSTOS='linux')
+        linux.update(version='go version go1.27.2 linux/arm64', runner_os='Linux')
+        with mock.patch.object(tier.cache_keys, 'runtime_context', return_value=linux):
+            with self.assertRaisesRegex(tier.Failure, 'requires Darwin'):
+                tier.native_host_context()
+        with mock.patch.object(tier.cache_keys, 'runtime_context', side_effect=tier.cache_keys.InvalidContext('image unavailable')):
+            with self.assertRaisesRegex(tier.Failure, 'image unavailable'):
+                tier.native_host_context()
+
+    def test_canonical_post_execution_sdk_drift_cannot_qualify_even_with_passing_bodies(self):
+        with tempfile.TemporaryDirectory() as d:
+            directory = Path(d)
+            template = self.fixture(directory)
+            report = {'invocations': []}
+            changed = copy.deepcopy(CANONICAL)
+            changed['sdk']['sdk_build'] = 'f'*64
+            def checked(command, output, deadline, env=None):
+                output.write_text('')
+                return ''
+            def execute(command, name, **kwargs):
+                report['invocations'].append(next(i for i in template['invocations'] if i['log'] == name+'.jsonl'))
+            with mock.patch.object(tier, 'native_host_context', side_effect=[copy.deepcopy(CANONICAL), changed, copy.deepcopy(CANONICAL)]), mock.patch.object(tier.full_race, 'source_proof', return_value=PROOF), mock.patch.object(tier, 'checked', side_effect=checked), mock.patch.object(tier, 'discover', return_value=template['native_smoke']['discovery']):
+                with self.assertRaises(tier.Failure):
+                    tier.run_native_smoke(directory, 100, report, lambda: None, execute, False)
+
+    def test_consistent_stale_sdk_receipt_still_must_match_current_canonical_host(self):
+        with tempfile.TemporaryDirectory() as d:
+            directory = Path(d)
+            report = self.fixture(directory)
+            changed = copy.deepcopy(CANONICAL)
+            changed['sdk']['sdk_build'] = 'f'*64
+            report['native_smoke'].update(context=changed, post_context=copy.deepcopy(changed),
+                                          context_sha256=tier.cache_keys.digest(changed))
+            with self.assertRaises(tier.Failure):
+                self.verify(directory, report)
 
 
 if __name__ == '__main__':

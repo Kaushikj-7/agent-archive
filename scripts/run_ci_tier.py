@@ -14,6 +14,7 @@ import tempfile
 import time
 
 import full_race
+import go_cache_context as cache_keys
 
 ROOT = Path(__file__).resolve().parent.parent
 MODULE = 'github.com/wangjohn/agent-archive/'
@@ -506,6 +507,17 @@ def native_commands(sensitive):
     return commands
 
 
+def native_host_context():
+    """Use the one compiler/SDK/image identity shared with compilation caches."""
+    try:
+        context = cache_keys.validate_context(cache_keys.runtime_context(native=True), native=True)
+        if context['go']['GOOS'] != 'darwin':
+            raise cache_keys.InvalidContext('native smoke requires Darwin')
+        return context
+    except cache_keys.InvalidContext as error:
+        raise Failure(str(error)) from error
+
+
 def verify_native_smoke(directory, report, sensitive, *, local=False):
     """Reconcile whole native package obligations and selected compiled parents."""
     directory = Path(directory)
@@ -513,10 +525,18 @@ def verify_native_smoke(directory, report, sensitive, *, local=False):
     if local and (os.environ.get('GITHUB_ACTIONS') == 'true' or os.environ.get('GITHUB_EVENT_NAME')):
         raise Failure('local native diagnostics cannot qualify a hosted event')
     proof = None if local else full_race.source_proof(ROOT)
+    context = None if local else native_host_context()
+    if not local:
+        try:
+            cache_keys.validate_context(native.get('context'), native=True)
+            cache_keys.validate_context(native.get('post_context'), native=True)
+        except cache_keys.InvalidContext as error:
+            raise Failure(str(error)) from error
     if (native.get('qualification') != ('local-diagnostic-only' if local else 'hosted')
             or native.get('schema') != 1 or native.get('source_proof') != proof
             or native.get('post_source_proof') != proof
-            or native.get('context') != (None if local else {'GOOS': 'darwin', 'CGO_ENABLED': '1', 'GOVERSION': 'go1.27.2'})
+            or native.get('context') != context or native.get('post_context') != context
+            or native.get('context_sha256') != (None if local else cache_keys.digest(context))
             or local and not valid_native_local_guard(native.get('local_guard'))
             or native.get('sensitive') is not sensitive
             or native.get('build_command') != ['go', 'build', './...']
@@ -587,16 +607,19 @@ def valid_native_local_guard(context):
 
 
 def run_native_smoke(out, deadline, report, save, execute, sensitive, *, local=False):
-    context = json.loads(subprocess.check_output(['go', 'env', '-json', 'GOOS', 'CGO_ENABLED', 'GOVERSION'], timeout=30))
-    if (not valid_native_local_guard(context) or not local
-            and context['GOVERSION'] != 'go1.27.2'):
-        raise Failure('macOS smoke requires native Darwin/cgo Go 1.27.2')
+    if local:
+        context = json.loads(subprocess.check_output(['go', 'env', '-json', 'GOOS', 'CGO_ENABLED', 'GOVERSION'], timeout=30))
+        if not valid_native_local_guard(context):
+            raise Failure('macOS smoke requires native Darwin with cgo')
+    else:
+        context = native_host_context()
     if local and (os.environ.get('GITHUB_ACTIONS') == 'true' or os.environ.get('GITHUB_EVENT_NAME')):
         raise Failure('local native diagnostics cannot qualify a hosted event')
     if local:
         print('native smoke: local diagnostics only; no hosted compiler/source qualification', flush=True)
     native = report['native_smoke'] = {'schema': 1, 'source_proof': None if local else full_race.source_proof(ROOT),
         'context': None if local else context,
+        'context_sha256': None if local else cache_keys.digest(context),
         'qualification': 'local-diagnostic-only' if local else 'hosted',
         **({'local_guard': context} if local else {}), 'sensitive': sensitive, 'build_command': ['go', 'build', './...'], 'phase_seconds': {}}
     save()
@@ -625,6 +648,7 @@ def run_native_smoke(out, deadline, report, save, execute, sensitive, *, local=F
     for name, command in native_commands(sensitive):
         chosen = native_selected_phases(sensitive).get(name)
         timed(name, lambda: execute(command, name, short=True, selected=chosen or None))
+    native['post_context'] = None if local else native_host_context()
     native['post_source_proof'] = None if local else full_race.source_proof(ROOT)
     save()
     verify_native_smoke(out, report, sensitive, local=local)

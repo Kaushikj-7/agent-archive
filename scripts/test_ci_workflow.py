@@ -344,7 +344,13 @@ class CadenceTest(unittest.TestCase):
         self.assertIn("tier.run_suite('pr', 'macos',", standalone)
         workflow = jobs((ROOT / '.github/workflows/test.yml').read_text())
         self.assertIn('./scripts/test_macos_smoke.sh --output native-tier-results', workflow['macos-smoke'])
-        self.assertIn('scripts/test_macos_smoke.py', workflow['script-tests'])
+        self.assertIn('scripts/test_macos_smoke.py', workflow['script-static'])
+        self.assertIn('uses: ./.github/actions/verified-go-cache', workflow['macos-smoke'])
+        extended = jobs((ROOT / '.github/workflows/extended.yml').read_text())
+        daily = next(step for step in steps(extended['macos-full']) if 'name: Native daily platform backstop' in step)
+        for control in ("GOTOOLCHAIN: local", "GOWORK: 'off'", "GOFLAGS: '-mod=readonly'", "GOENV: 'off'"):
+            self.assertIn(control, daily)
+        self.assertEqual(step_key(daily, 'if'), "github.event_name == 'schedule' && github.event.schedule == '17 8 * * 1-6'")
 
     def test_daily_vulnerability_audit_remains_fresh(self):
         workflow = (ROOT / '.github/workflows/levenshtein.yml').read_text()
