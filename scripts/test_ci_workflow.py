@@ -148,7 +148,7 @@ class CandidateCampaignTest(unittest.TestCase):
     def test_candidate_validation_never_restores_shared_go_build_state(self):
         # Candidate evidence must come from fresh source/module verification,
         # not executable build state restored from another workflow's cache.
-        expected = {'test': 7, 'levenshtein': 2, 'extended': 4}
+        expected = {'test': 8, 'levenshtein': 2, 'extended': 4}
         for name, count in expected.items():
             workflow = (ROOT / '.github/workflows' / f'{name}.yml').read_text()
             setup = [step for job in jobs(workflow).values() for step in steps(job)
@@ -233,7 +233,7 @@ class CadenceTest(unittest.TestCase):
         self.assertIn('--tier full --suite linux', found['linux-full'])
         self.assertIn('shard: [0, 1, 2, 3]', found['linux-short'])
         self.assertIn('fail-fast: false', found['linux-short'])
-        self.assertIn('python3 -B scripts/run_go_shard.py --workers 4 --plain-audit-owned --shard',found['linux-short'])
+        self.assertIn('python3 -B scripts/run_go_shard.py --workers 4 --plain-audit-owned --plain-vet-owned --shard',found['linux-short'])
         self.assertEqual(job_key(found['linux-race'],'if'),'always()')
         self.assertEqual(job_key(found['linux-race'],'needs'),'[linux-short, linux-full, script-tests, macos-smoke, tier-plan, source-audit]')
         self.assertIn('--verdict', found['linux-race'])
@@ -248,9 +248,23 @@ class CadenceTest(unittest.TestCase):
         workflow=(ROOT/'.github/workflows/test.yml').read_text(); found=jobs(workflow)
         audit=found['source-audit']
         self.assertEqual(job_key(audit,'if'), "github.event_name == 'pull_request'")
-        self.assertIn('--tier pr --suite audit --seconds 780', audit)
+        self.assertIn('--tier pr --suite audit --own-plain-vet --seconds 780', audit)
         self.assertIn('name: go-source-audit', audit)
         self.assertIn('--plain-audit-owned',found['linux-short'])
+        self.assertIn('--plain-vet-owned',found['linux-short'])
+        self.assertIn('--plain-vet-owned --reconcile',found['linux-race'])
+        # Live receipt validation independently hashes the installed Go/compiler
+        # context; its verifier must use the same exact runtime policy as audit.
+        verifier=found['linux-race']
+        for setting in ("GOTOOLCHAIN: local", "GOWORK: 'off'", "GOFLAGS: '-mod=readonly'"):
+            self.assertIn(setting,verifier)
+        verifier_steps=list(steps(verifier))
+        setup=[step for step in verifier_steps if 'uses: actions/setup-go@' in step]
+        self.assertEqual(len(setup),1)
+        self.assertEqual(step_key(setup[0],'if'),"github.event_name == 'pull_request'")
+        self.assertIn("go-version: '1.27.2'",setup[0])
+        self.assertIn('cache: false',setup[0])
+        self.assertLess(verifier.index('uses: actions/setup-go@'),verifier.index('--plain-vet-owned --reconcile'))
         self.assertIn('--audit-evidence "$RUNNER_TEMP/source-audit-evidence"',found['linux-race'])
         self.assertIn('source-audit',job_key(found['linux-race'],'needs'))
         boundary=(ROOT/'internal/agents/builtin/nativecapture_boundary_test.go').read_text()
