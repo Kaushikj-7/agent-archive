@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import re
+import subprocess
 from statistics import median
 
 import contextlib
@@ -226,25 +227,69 @@ def _read_sample(directory, source, expected_settings, package_cost_exclusions=N
     return catalog, package_values, cli_values, {'files': fingerprints, 'phases': phases, 'package_cost_exclusions': exclusions}
 
 
-def read_sample(directory, source, expected_settings, body_catalog=None, package_cost_exclusions=None):
+def measured_source(source, body_catalog_json=None):
+    """Resolve historical proof and regular catalog bytes from immutable Git objects."""
+    if not isinstance(source, str) or not re.fullmatch('[0-9a-f]{40}', source):
+        raise runner.Failure('measured source must be a full commit SHA')
+    def git(*args):
+        return subprocess.check_output(['git', '-C', str(runner.ROOT), *args],
+                                       stderr=subprocess.PIPE, timeout=20)
+    try:
+        commit = git('rev-parse', '--verify', source + '^{commit}').decode().strip()
+        if commit != source:
+            raise runner.Failure('measured source must name the commit itself')
+        tree = git('rev-parse', source + '^{tree}').decode().strip()
+        entry = git('ls-tree', source, '--', 'scripts/ci_tiers.json').decode().strip()
+        mode, kind, blob_path = entry.split(None, 2)
+        blob, path = blob_path.split('\t')
+        if mode != '100644' or kind != 'blob' or path != 'scripts/ci_tiers.json':
+            raise runner.Failure('measured source body catalog must be a regular tracked file')
+        raw = git('cat-file', 'blob', blob).decode()
+        if body_catalog_json is not None and raw != body_catalog_json:
+            raise runner.Failure('pinned body catalog differs from measured Git bytes')
+        return {'source': commit, 'tree': tree}, raw
+    except (subprocess.SubprocessError, OSError, ValueError) as error:
+        raise runner.Failure('fetch the exact measured source commit and its regular body catalog before importing') from error
+
+
+def read_sample(directory, source, expected_settings, body_catalog=None, package_cost_exclusions=None, *, audit_directory=None):
+    expected = None
+    if audit_directory is not None:
+        expected, catalog_raw = measured_source(source)
+        if body_catalog != json.loads(catalog_raw):
+            raise runner.Failure('historical audit requires the measured Git body catalog')
     with contract_parser(source, body_catalog):
         try:
-            runner.reconcile(directory, len(expected_settings))
-            return _read_sample(directory, source, expected_settings, package_cost_exclusions)
+            runner.reconcile(directory, len(expected_settings), audit_directory, expected_source_proof=expected)
+            catalog, packages, cli, proof = _read_sample(directory, source, expected_settings, package_cost_exclusions)
+            if audit_directory is not None:
+                if not all(v.get('plain_audit_owned') is True for v in expected_settings.values()):
+                    raise runner.Failure('imported plain audit requires owned short sample settings')
+                audit_directory = Path(audit_directory)
+                rows = json_stream((audit_directory / 'source-audit.jsonl').read_text())
+                terminal = [r for r in rows if r.get('Test') == run_ci_tier.SOURCE_AUDIT_TEST and r.get('Action') == 'pass'][0]
+                positive_ms(terminal.get('Elapsed'))
+                proof['plain_audit'] = {'expected_source_proof': expected,
+                    'observed_plain_body_seconds': terminal['Elapsed'],
+                    'files': [{'file': name, 'sha256': hashlib.sha256((audit_directory / name).read_bytes()).hexdigest()}
+                              for name in ('tier.json', 'source-audit.jsonl')]}
+            return catalog, packages, cli, proof
         except run_ci_tier.Failure as error:
             raise runner.Failure(str(error)) from error
 
 
-def generate(samples, source, settings, discovered_packages, discovered_cli, body_catalog=None, package_cost_exclusions=None):
+def generate(samples, source, settings, discovered_packages, discovered_cli, body_catalog=None, package_cost_exclusions=None, *, audit_directories=None):
     if not samples:
         raise runner.Failure('no successful samples')
     if (len({sid for sid, _ in samples}) != len(samples)
             or len({str(Path(p).resolve()) for _, p in samples}) != len(samples)):
         raise runner.Failure('duplicate samples cannot count twice')
+    if set(audit_directories or {}) - {sid for sid, _ in samples}:
+        raise runner.Failure('audit directory names an unknown sample')
     package_samples, cli_samples, evidence = {}, {}, []
     universe = None
     for sample_id, directory in samples:
-        catalog, packages, cli, proof = read_sample(directory, source, settings, body_catalog, package_cost_exclusions)
+        catalog, packages, cli, proof = read_sample(directory, source, settings, body_catalog, package_cost_exclusions, audit_directory=(audit_directories or {}).get(sample_id))
         current = (catalog['packages'], catalog['cli'])
         if universe is not None and current != universe:
             raise runner.Failure('mixed discovery catalogs')
@@ -262,6 +307,12 @@ def generate(samples, source, settings, discovered_packages, discovered_cli, bod
     for sample in evidence:
         for excluded in sample['package_cost_exclusions']:
             excluded_samples.setdefault(excluded['package'], []).append(Decimal(str(excluded['observed_body_seconds'])))
+    for sample in evidence:
+        if 'plain_audit' in sample:
+            if package_cost_exclusions:
+                raise runner.Failure('owned audit samples must not subtract the skipped race audit again')
+            excluded_samples.setdefault(run_ci_tier.SOURCE_AUDIT_PACKAGE, []).append(
+                Decimal(str(sample['plain_audit']['observed_plain_body_seconds'])))
     return {'owned_plain_audit_exclusions_ms': {p: positive_ms(median(values)) for p, values in sorted(excluded_samples.items())},
             'packages': weights(discovered_packages, package_samples),
             'cli': weights(discovered_cli, cli_samples),
@@ -271,7 +322,8 @@ def generate(samples, source, settings, discovered_packages, discovered_cli, bod
                            'body_catalog_sha256': runner.digest(body_catalog) if body_catalog is not None else None,
                            'policy': 'median seconds then half-up integer ms, minimum 1; '
                                      'package terminal elapsed; CLI recursively exclusive elapsed plus descendant bodies; '
-                                     'unknown discovered units 1000ms; auxiliary phases excluded',
+                                     'unknown discovered units 1000ms; auxiliary phases excluded; '
+                                     'owned audit plain body cost only restores advisory unowned local ranking',
                            'usage': 'advisory ranking only; dynamic discovery and current CI are authoritative'}}
 
 
@@ -296,13 +348,16 @@ def main():
         if (not isinstance(body_catalog_json, str) or hashlib.sha256(body_catalog_json.encode()).hexdigest()
                 != request.get('body_catalog_sha256')):
             raise runner.Failure('invalid pinned source body catalog bytes')
+        measured_source(request['source'], body_catalog_json)
         body_catalog = json.loads(body_catalog_json)
         if (not isinstance(body_catalog, dict) or body_catalog.get('schema') != 1
                 or not isinstance(body_catalog.get('restorations'), list)):
             raise runner.Failure('invalid pinned source body catalog')
     result = generate(samples, request['source'], request['settings'],
                       request.get('packages', sorted(set(catalog['packages']) - {runner.CLI})),
-                      request.get('cli', catalog['cli']), body_catalog, request.get('package_cost_exclusions'))
+                      request.get('cli', catalog['cli']), body_catalog, request.get('package_cost_exclusions'),
+                      audit_directories={s['id']: args.artifacts_root / s['audit_directory']
+                                         for s in request['samples'] if 'audit_directory' in s})
     if request.get('auxiliary_costs_ms') is not None:
         auxiliary = request['auxiliary_costs_ms']
         if set(auxiliary) != {'vet', 'git_invocation'} or any(type(v) is not int or v < 0 for v in auxiliary.values()):

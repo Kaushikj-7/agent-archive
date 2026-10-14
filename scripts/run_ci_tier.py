@@ -333,7 +333,7 @@ def source_audit_body(raw):
     return actual
 
 
-def verify_source_audit(directory, source):
+def verify_source_audit(directory, source, *, expected_source_proof=None):
     """Require exact-source plain named body and package PASS, never compilation."""
     directory = Path(directory)
     report = json.loads((directory / 'tier.json').read_text())
@@ -344,7 +344,13 @@ def verify_source_audit(directory, source):
             or report.get('tier') != 'pr' or report.get('suite') != 'audit'
             or len(report.get('invocations', [])) != 1):
         raise Failure('plain source audit source/status mismatch')
-    if proof != full_race.source_proof(ROOT):
+    # Historical importers resolve this proof from Git, never from the report.
+    # Live callers retain the current tracked-byte and event-source guard.
+    expected = full_race.source_proof(ROOT) if expected_source_proof is None else expected_source_proof
+    if (not isinstance(expected, dict) or set(expected) != {'source', 'tree'}
+            or expected.get('source') != source
+            or not re.fullmatch('[0-9a-f]{40}', expected.get('tree', ''))
+            or proof != expected):
         raise Failure('plain source audit tracked source proof mismatch')
     invocation = report['invocations'][0]
     if (invocation.get('command') != SOURCE_AUDIT_COMMAND or invocation.get('log') != 'source-audit.jsonl'
