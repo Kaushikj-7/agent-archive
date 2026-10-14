@@ -68,13 +68,13 @@ type sessionBrowser struct {
 func (b *sessionBrowser) run(ctx context.Context, choices *scopeChoices) error {
 	for {
 		b.screen.clear()
-		row, ok, err := b.list.pickScoped(b.prompt, b.stdout, choices, "show")
+		row, ok, err := b.list.pickScopedContext(ctx, b.prompt, b.stdout, choices, "show")
 		if err != nil || !ok {
 			return err
 		}
 		stop := startActivity(b.stdout, "Loading session…")
-		viewCtx := catalog.NewReadView(ctx)
-		view, err := readSessionView(viewCtx, b.store, row.HarnessKey, row.SessionID)
+		viewCtx := pickerSelectionContext(ctx, row)
+		view, err := readPickerSessionView(viewCtx, b.store, row)
 		stop()
 		if err != nil {
 			return err
@@ -363,11 +363,22 @@ func (b *sessionBrowser) transcriptPrompt() (browseAction, error) {
 }
 
 func (b *sessionBrowser) renderTranscript(ctx context.Context, row listRow) ([]byte, error) {
-	key, err := locateMetadataKey(ctx, b.store, row.HarnessKey, row.SessionID)
-	if err != nil {
-		return nil, err
+	var view sessionView
+	var bundle archive.SourceBundle
+	var err error
+	if sel := row.pickerSelection; sel != nil && sel.item != nil {
+		view, err = readPickerSessionView(ctx, b.store, row)
+		if err != nil {
+			return nil, err
+		}
+		bundle, err = reader.LoadSource(ctx, b.store, view.Metadata, reader.Limits{})
+	} else {
+		key, e := locateMetadataKey(ctx, b.store, row.HarnessKey, row.SessionID)
+		if e != nil {
+			return nil, e
+		}
+		view, bundle, err = loadVerifiedSession(ctx, b.store, key)
 	}
-	view, bundle, err := loadVerifiedSession(ctx, b.store, key)
 	if err != nil {
 		return nil, err
 	}
@@ -403,10 +414,22 @@ const minPickerPageRows = 3
 // Row numbers stay those of the whole table, so any listed number or short
 // ID can be typed from any page.
 type sessionPicker struct {
-	older         *browserLoadAction
-	loadedOlder   bool
-	boundedNotice string
-	env           terminalSizeDependencies
+	ctx           context.Context
+	searchContext func(context.Context) ([]listRow, error)
+	operation     *browserOperation
+	searchFailure error
+	invalidView   error
+	searchNotice  string
+	searchPartial bool
+	generation    uint64
+
+	lineInput         string
+	operationCanceled bool
+	operationQuit     bool
+	older             *browserLoadAction
+	loadedOlder       bool
+	boundedNotice     string
+	env               terminalSizeDependencies
 	// keys, when set, reads the list a key at a time: it scrolls instead
 	// of turning pages (see pickKeys).
 	keys *keyInput
@@ -468,7 +491,7 @@ type sessionPicker struct {
 // pickScoped is pickRows over the scope's choices: it shows the one now
 // chosen, under its heading, and shows the other when `a` is typed alone.
 // It returns when a row is picked or the user quits.
-func (l *sessionPicker) pickScoped(p *prompter, stdout io.Writer, choices *scopeChoices, action string) (listRow, bool, error) {
+func (l *sessionPicker) pickScopedContext(ctx context.Context, p *prompter, stdout io.Writer, choices *scopeChoices, action string) (listRow, bool, error) {
 	for {
 		c := choices.shown()
 		if loader := choices.loadOlder; loader != nil && loader.Available != nil {
@@ -481,14 +504,29 @@ func (l *sessionPicker) pickScoped(p *prompter, stdout io.Writer, choices *scope
 		l.headingFor = func(words string, matches int) string {
 			return choices.headingWith(choices.current, c.scopeView, c.constants, headingOptions{Verb: l.verb, Words: words, Matches: matches, Filtering: l.filtering && l.keys != nil})
 		}
-		l.search, l.searched, l.searchRead = c.search, nil, false
-		l.noteText, l.noteWords = c.searchNote, c.searchWords
-		row, ok, err := l.pickRows(p, stdout, c.rows, c.total, c.truncated, c.format, action)
+		l.stopOperations()
+		l.search, l.searchContext, l.searched, l.searchRead = c.search, c.searchContext, nil, false
+		l.searchFailure = nil
+		l.noteText, l.noteWords, l.searchNotice = c.searchNote, c.searchWords, c.searchNotice
+		l.searchPartial = c.searchPartial
+		row, ok, err := l.pickRowsContext(ctx, p, stdout, c.rows, c.total, c.truncated, c.format, action)
 		if l.loadedOlder && err == nil {
 			l.loadedOlder = false
-			more, e := l.older.Load()
+			more, e := l.loadOlderContext(ctx, p, stdout)
+			if l.operationQuit {
+				return listRow{}, false, nil
+			}
 			if e != nil {
 				return listRow{}, false, e
+			}
+			if l.toggled {
+				if e := l.toggleScopeContext(ctx, p, stdout, choices); e != nil {
+					return listRow{}, false, e
+				}
+				if l.operationQuit {
+					return listRow{}, false, nil
+				}
+				l.toggled = false
 			}
 			if !more {
 				l.older = nil
@@ -503,7 +541,12 @@ func (l *sessionPicker) pickScoped(p *prompter, stdout io.Writer, choices *scope
 		if !l.toggled || err != nil {
 			return row, ok, err
 		}
-		choices.toggle()
+		if e := l.toggleScopeContext(ctx, p, stdout, choices); e != nil {
+			return listRow{}, false, e
+		}
+		if l.operationQuit {
+			return listRow{}, false, nil
+		}
 		// The other table starts at its top, on a cleared screen.
 		l.start, l.cache, l.bottom = 0, nil, nil
 		if l.clear != nil {
@@ -580,14 +623,18 @@ type pickerPages struct {
 // when keys are read. format.Numbered must be set. An answer that is not a
 // row's number (matchRow), an ID, or a command word is words to filter the
 // table by; they add to the filter already there.
-func (l *sessionPicker) pickRows(p *prompter, stdout io.Writer, rows []listRow, totalMatched int, truncated bool, format listFormatOptions, action string) (listRow, bool, error) {
+func (l *sessionPicker) pickRowsContext(ctx context.Context, p *prompter, stdout io.Writer, rows []listRow, totalMatched int, truncated bool, format listFormatOptions, action string) (listRow, bool, error) {
 	l.memo = nil
 	if l.keys != nil {
-		return l.pickKeys(p, stdout, rows, totalMatched, truncated, format, action)
+		return l.pickKeysContext(ctx, p, stdout, rows, totalMatched, truncated, format, action)
 	}
 	question := p.promptText("Enter number (or unique short SESSION_ID) to "+action+", words to filter, or q to quit", true, nil, -1, ": ")
 	notice := ""
 	for {
+		l.prepareSearchContext(ctx, rows)
+		if l.invalidView != nil {
+			return listRow{}, false, l.invalidView
+		}
 		v := l.view(rows, totalMatched, truncated, format)
 		l.shown = v.heading
 		pages, width, sized := l.pages(stdout, v.groups, v.format, len(v.rows), v.footer, question)
@@ -616,7 +663,7 @@ func (l *sessionPicker) pickRows(p *prompter, stdout io.Writer, rows []listRow, 
 		if paged {
 			terminal.Println(stdout, pageLine(page, len(pages), len(v.rows)))
 		}
-		if len(rows) == 0 && v.words == "" && l.older == nil {
+		if l.emptyWithoutAction(rows) {
 			return listRow{}, false, nil
 		}
 		for {
@@ -627,17 +674,25 @@ func (l *sessionPicker) pickRows(p *prompter, stdout io.Writer, rows []listRow, 
 			} else {
 				terminal.Println(stdout)
 			}
-			answer, err := p.line(question)
+			answer, refresh, err := l.readBrowserLineContext(ctx, p, question, rows)
+			if refresh {
+				break
+			}
 			if err != nil {
 				if errors.Is(err, io.EOF) {
 					return listRow{}, false, nil
 				}
 				return listRow{}, false, err
 			}
+			l.prepareSearchContext(ctx, rows)
 			answer = strings.TrimSpace(answer)
-			if l.older != nil && (strings.EqualFold(answer, "o") || strings.EqualFold(answer, "older")) {
+			if l.olderLine(answer) {
 				l.loadedOlder = true
 				return listRow{}, false, nil
+			}
+			answer, err = l.pendingNumberAnswerContext(ctx, p, rows, answer)
+			if err != nil {
+				return listRow{}, false, err
 			}
 			command := l.lineCommand(answer)
 			if command == lineQuit || command == lineScope {
@@ -658,11 +713,14 @@ func (l *sessionPicker) pickRows(p *prompter, stdout io.Writer, rows []listRow, 
 				if paged {
 					onPage = v.order[pages[page].start:pages[page].end]
 				}
-				if row, matched := l.matchRow(answer, v.rows, onPage, rows); matched {
+				row, matched, text, e := l.lineAnswerContext(ctx, answer, onPage, rows, totalMatched, truncated, format)
+				if e != nil {
+					return listRow{}, false, e
+				}
+				if matched {
 					return row, true, nil
 				}
-				// Words to narrow the table by, added to those already there.
-				l.setFilter(l.words() + " " + answer)
+				message = text
 				again = true
 			}
 			if !again {
@@ -970,6 +1028,19 @@ func findBrowseSessions(ctx context.Context, env sessionSelectionDependencies, s
 		terminal.Printf(stderr, "agent-archive: %s: %v\n", command, err)
 		return nil, false, 1
 	}
+	format := listFormatOptions{Now: env.now(), Projects: projectLabels(cfg), Style: styleFor(stdout), GroupByProject: true, Numbered: true}
+	bounded, used, boundedErr := boundedArchiveChoices(ctx, env, store, listOptions{filter: reader.Filter{Harness: harness, Replays: reader.ReplaysHidden}}, scope, format, stderr, command)
+	if used {
+		if boundedErr != nil {
+			terminal.Printf(stderr, "agent-archive: %s: %v\n", command, boundedErr)
+			return nil, false, 1
+		}
+		if bounded.shown().holdsNothing() {
+			terminal.Println(stdout, "No archived sessions match.")
+			return nil, false, 0
+		}
+		return bounded, true, 0
+	}
 	stopBrowse := startActivity(stdout, "Finding sessions…")
 	sessions, err := loadSessionsForBrowseContext(ctx, env, store, listOptions{filter: reader.Filter{Harness: harness, Replays: reader.ReplaysHidden}}, stderr, command)
 	stopBrowse()
@@ -977,7 +1048,6 @@ func findBrowseSessions(ctx context.Context, env sessionSelectionDependencies, s
 		terminal.Printf(stderr, "agent-archive: %s: %v\n", command, err)
 		return nil, false, 1
 	}
-	format := listFormatOptions{Now: env.now(), Projects: projectLabels(cfg), Style: styleFor(stdout), GroupByProject: true, Numbered: true}
 	choices = pagedArchiveChoices(scope, format, sessions, defaultListLimit, nil, "")
 	if len(choices.shown().rows) == 0 {
 		terminal.Println(stdout, "No archived sessions match.")
@@ -1040,3 +1110,33 @@ func pagedArchiveChoices(scope sessionScope, format listFormatOptions, sessions 
 	}
 	return choices
 }
+
+func (l *sessionPicker) lineAnswerContext(ctx context.Context, answer string, onPage, rows []listRow, total int, truncated bool, format listFormatOptions) (listRow, bool, string, error) {
+	if !numericBrowserAnswer(answer) && l.operation != nil {
+		l.setFilter(l.words() + " " + answer)
+		return listRow{}, false, "", nil
+	}
+	if err := l.waitSearchContext(ctx, rows); err != nil {
+		return listRow{}, false, "", err
+	}
+	if l.searchUnavailable() {
+		return listRow{}, false, "Search failed; Enter clears the filter so you can retry.", nil
+	}
+	full := l.view(rows, total, truncated, format)
+	row, matched := l.matchRow(answer, full.rows, onPage, rows)
+	if !matched {
+		l.setFilter(l.words() + " " + answer)
+	}
+	return row, matched, "", nil
+}
+
+func (l *sessionPicker) olderLine(answer string) bool {
+	return l.older != nil && (strings.EqualFold(answer, "o") || strings.EqualFold(answer, "older"))
+}
+
+func numericBrowserAnswer(answer string) bool {
+	_, err := strconv.Atoi(answer)
+	return err == nil
+}
+
+func (l *sessionPicker) searchUnavailable() bool { return l.searchFailure != nil }

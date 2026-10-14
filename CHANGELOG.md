@@ -18,6 +18,19 @@ follow [Semantic Versioning](https://semver.org/).
   cannot be read, or does not fit beside the thread's own history, is left out
   rather than failing the thread's capture.
 
+- Keep exhaustive full CLI CI coverage within ordinary process deadlines by
+  partitioning compiled tests, fuzz seeds and examples, with source-bound raw
+  coverage checks and unchanged race, test and overall job limits.
+
+- Open supported catalog list/show browsers using bounded repository pages.
+  Older sessions advances each scope independently; complete archive search
+  starts when filtering and reports loading or read failures. Cancelling a
+  search or page read joins its provider work before selection or exit.
+  Synthetic first-screen/Older controls distinguish archive request/body costs
+  from native registration work; production S3/R2 activation remains gated.
+  Handoff search caps attempted native label reads, including failures, and
+  distinguishes observed matches from unknown local eligibility.
+
 - Load the handoff picker from bounded repository pages on supported scoped
   catalogs, merge current local activity, and continue native eligibility checks
   with Older sessions. Changed or expired archive selections require refresh.

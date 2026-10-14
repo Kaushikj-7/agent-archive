@@ -352,6 +352,7 @@ Enter does, and the heading's verb.
 | Caller | Rows | Enter | Heading |
 |---|---|---|---|
 | `list` | archive | show the details, then back to the list (browse) | none |
+| `list` (supported scoped catalog) | bounded archive pages | the same browser as `list` (browse) | none |
 | `show` (no ID) | archive | the same as `list` (browse) | none |
 | `show --json` (no ID) | archive | return the session; print its JSON (pick one) | `Show ·` |
 | `show "<words>"`, several matches | the matches | show the details (browse) | `"words" matches N ·` |
@@ -940,6 +941,18 @@ the answer goes into the guide.
   `--all-projects` prove not enough.
 
 ## Deviations
+
+- Scoped catalog windows: supported ordinary interactive handoff/list/bare-show
+  setup reads typed root projections and remote Older pages. Named-project and
+  advanced predicates retain complete compatibility paths; noninteractive/JSON
+  list behavior is unchanged. Complete archived search loads only on demand and
+  reports loading/failure/cancellation; clearing search restores the valid page
+  view. Native-local labels retain their documented finite preview bound.
+  Row projections remain presentation only; selection verifies the immutable
+  metadata/body and current authority before reading sources. Local inventoryR
+  and unsupported query costs are separate from bounded archive startup. See
+  [picker qualification](../maintainers/picker-qualification/README.md) for the
+  actual CLI10k/100k first-screen/Older evidence protocol and release limits.
 
 - PR 2: `custom-title` and `pr-link` are rebuilt from typed values
   (`internal/archive/filter_session_labels.go`, as `compact_boundary` is) and
