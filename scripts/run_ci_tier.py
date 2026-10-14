@@ -371,7 +371,7 @@ def execute_plain_vet(out, deadline):
             'performance_enabled': False, 'real_systemd_enabled': False}
 
 
-def verify_plain_vet(directory, report, expected, expected_context_sha256, historical=False):
+def verify_plain_vet(directory, report, expected, expected_context_sha256, historical=False, *, strict_full_context=False):
     """Require canonical successful execution receipt separately from audit bodies."""
     import run_go_shard
     receipt = report.get('plain_vet')
@@ -381,7 +381,12 @@ def verify_plain_vet(directory, report, expected, expected_context_sha256, histo
     if not isinstance(context, dict) or not isinstance(context.get('go'), dict):
         raise Failure('plain vet recorded context malformed')
     identity_schema = receipt.get('identity_schema')
-    if identity_schema == PLAIN_VET_IDENTITY_SCHEMA:
+    if strict_full_context:
+        if identity_schema != 'full-v1' and not (historical and identity_schema is None):
+            raise Failure('strict plain vet full-context schema missing or unsupported')
+        plain_vet_identity(context)  # Validate raw provenance; never compare projection.
+        compatibility = context
+    elif identity_schema == PLAIN_VET_IDENTITY_SCHEMA:
         compatibility = plain_vet_identity(context)
     elif historical and identity_schema is None:
         plain_vet_identity(context)  # Validate full raw image provenance too.
@@ -414,7 +419,8 @@ def verify_plain_vet(directory, report, expected, expected_context_sha256, histo
             or not re.fullmatch('[0-9a-f]{64}',expected_context_sha256)
             or run_go_shard.digest(compatibility) != expected_context_sha256):
         raise Failure('plain vet recorded context mismatch')
-    if not historical and compatibility != plain_vet_identity(plain_vet_context()):
+    current = plain_vet_context() if not historical else None
+    if not historical and compatibility != (current if strict_full_context else plain_vet_identity(current)):
         raise Failure('plain vet current context mismatch')
     if (receipt.get('command') != PLAIN_VET_COMMAND or receipt.get('log') != 'plain-vet.txt'
             or type(receipt.get('exit_code')) is not int or receipt['exit_code'] != 0
@@ -430,7 +436,7 @@ def verify_plain_vet(directory, report, expected, expected_context_sha256, histo
         raise Failure('plain vet raw log mismatch')
 
 
-def verify_source_audit(directory, source, *, expected_source_proof=None, require_plain_vet=False, expected_vet_context_sha256=None):
+def verify_source_audit(directory, source, *, expected_source_proof=None, require_plain_vet=False, expected_vet_context_sha256=None, strict_full_context=False):
     """Require exact-source plain named body and package PASS, never compilation."""
     directory = Path(directory)
     report = json.loads((directory / 'tier.json').read_text())
@@ -460,7 +466,7 @@ def verify_source_audit(directory, source, *, expected_source_proof=None, requir
         raise Failure('plain source audit raw body evidence mismatch')
     if require_plain_vet:
         verify_plain_vet(directory, report, expected, expected_vet_context_sha256,
-                         historical=expected_source_proof is not None)
+                         historical=expected_source_proof is not None, strict_full_context=strict_full_context)
     return report
 
 
