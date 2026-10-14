@@ -19,10 +19,15 @@ import (
 type uniquenessScenario string
 
 const uniquenessUnobservedCopy uniquenessScenario = "unobserved-copy"
+
 const uniquenessBothObserved uniquenessScenario = "both-observed"
+
 const uniquenessArchiveNotDirectory uniquenessScenario = "archive-not-directory"
+
 const uniquenessOtherHomeNotDirectory uniquenessScenario = "other-home-not-directory"
+
 const uniquenessOtherHomeCopy uniquenessScenario = "other-home-copy"
+
 const uniquenessHardlinkCopy uniquenessScenario = "hardlink-copy"
 
 // Only real parsed native header facts enter the actual lookup.
