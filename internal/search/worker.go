@@ -149,7 +149,9 @@ func (s *Store) Observe(ctx context.Context, metadata archive.Metadata, parsers 
 			}
 		}
 		if membershipChanged || privacyChanged {
-			if _, err = tx.ExecContext(ctx, "UPDATE search_work SET indexed_sources='' WHERE id=?", id); err != nil {
+			// Removed rows cannot count as indexed if a later observation restores
+			// the previous desired snapshot before replacement work runs.
+			if _, err = tx.ExecContext(ctx, "UPDATE search_work SET indexed='',indexed_sources='' WHERE id=?", id); err != nil {
 				return err
 			}
 			if err = s.removeSessionTx(ctx, tx, id); err != nil {

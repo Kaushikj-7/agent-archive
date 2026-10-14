@@ -186,6 +186,48 @@ func TestWorkerPrivacyInvalidatesBeforeUnavailableReplacement(t *testing.T) {
 	}
 }
 
+// Restoring a previous snapshot must not acknowledge rows an observation removed.
+func TestWorkerRestoredSnapshotRemainsPendingAfterInvalidation(t *testing.T) {
+	t.Parallel()
+	for _, invalidation := range []string{"membership", "privacy"} {
+		t.Run(invalidation, func(t *testing.T) {
+			t.Parallel()
+			metadata, _, objects := workerHistory(t)
+			s := openTest(t)
+			parsers := builtin.NewBuiltins()
+			at := metadata.CapturedAt
+			if err := s.Observe(t.Context(), metadata, parsers, at, 0); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.Run(t.Context(), objects, parsers, at, Budget{}); err != nil {
+				t.Fatal(err)
+			}
+			removed := metadata
+			if invalidation == "membership" {
+				history := *metadata.History
+				removed.History = &history
+				removed.History.Preserved = nil
+			} else {
+				removed.FilterVersion = ""
+			}
+			if err := s.Observe(t.Context(), removed, parsers, at, 0); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.Observe(t.Context(), metadata, parsers, at, 0); err != nil {
+				t.Fatal(err)
+			}
+			progress, err := s.Run(t.Context(), objects, parsers, at, Budget{})
+			if err != nil || progress.Committed != 1 || progress.Pending != 0 {
+				t.Fatalf("restored snapshot was mistaken for installed state: %+v %v", progress, err)
+			}
+			page, err := s.Search(t.Context(), Query{Text: "old"})
+			if err != nil || len(page.Hits) != 1 {
+				t.Fatalf("restored session remained absent: %+v %v", page, err)
+			}
+		})
+	}
+}
+
 func TestWorkerOversizeHasFiniteBlockedState(t *testing.T) {
 	t.Parallel()
 	metadata, _, objects := verifiedFixture(t, "claude", workerTranscript)
