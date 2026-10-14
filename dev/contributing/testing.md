@@ -30,14 +30,14 @@ VERSION=dev ./scripts/build-release.sh                   # the release build (CI
 ```
 
 CI's [Test workflow](../../.github/workflows/test.yml) runs the short race
-suite across two Ubuntu workers for each pull request. Each worker discovers all
+suite across four Ubuntu trial workers for each pull request. Each worker discovers all
 packages and CLI top-level tests, fuzz seeds and executable examples, assigns
 ordinary packages once and CLI names to disjoint bins, and retains complete
 subtest trees. Timing hints only rank discovered units; new units are assigned
 and logged. The assigned native Git identity package runs first on a quiet worker because
 its observers have fixed 500 ms deadlines. The workers then overlap bounded
 ordinary-package and CLI processes; vet runs once. Each worker records its source, catalog, assignment and
-terminal coverage; the stable required `linux-race` verdict reconciles both
+terminal coverage; the stable required `linux-race` verdict reconciles all four
 artifacts and fails on any missing, failed or cancelled worker. All Linux
 Python gates, including purge, staging, scope and shard-runner regressions, run
 in a parallel script job required by that verdict. A separate exact-source plan
@@ -92,8 +92,9 @@ improves latency only if measured scheduling benefits outweigh that extra work.
 For local coverage validation on Linux, run one worker at a time:
 
 ```sh
-python3 scripts/run_go_shard.py --shard 0 --output /tmp/go-shard-0
-python3 scripts/run_go_shard.py --shard 1 --output /tmp/go-shard-1
+for worker in 0 1 2 3; do
+  python3 scripts/run_go_shard.py --workers 4 --shard "$worker" --output "/tmp/go-shard-$worker"
+done
 ```
 
 The checked-in timing hints are advisory integer milliseconds from successful
@@ -111,7 +112,9 @@ python3 -B scripts/generate_go_shard_hints.py \
   --output scripts/go_shard_hints.json
 ```
 
-The generator rejects source/settings/catalog mixtures, failed or incomplete
+Imported evidence pins the measured source body catalog and its hash, so later
+scale catalog additions cannot rewrite a historical manifest. Current CI uses
+the current catalog. The generator rejects source/settings/catalog mixtures, failed or incomplete
 streams, reused samples and mismatched manifest body evidence. Reconciliation
 checks the request's pinned artifact source independently of the regenerating
 workflow's `GITHUB_SHA`. The request may provide fresh `packages`/`cli` discovery
@@ -122,20 +125,52 @@ IDs and runtime-source equivalence require independent API/source verification;
 raw JSON alone cannot attest those caller-supplied provenance fields.
 
 Ordinary weights are median package-terminal elapsed seconds, rounded half-up
-to positive milliseconds (minimum 1). CLI weights take the larger of parent
-elapsed and the active envelope from the last top-level continuation (or run)
-through the latest parent/descendant terminal. This excludes the initial parent
-pause and never sums sibling elapsed values. Descendant cohort waits and
-overlapping parent envelopes remain, so these rankings are not wall-time or CPU
-forecasts. Git invocation and worker0 vet costs stay separate from weights;
-the assigned Git package stays isolated on whichever worker receives it.
+to positive milliseconds (minimum 1). CLI weights recursively account logical
+body cost: subtract each direct child's synchronous run-to-pause (parallel) or
+run-to-terminal (sequential) interval from the parent's elapsed value, then add
+each child's accounted cost. This avoids charging parallel cohort queueing and
+counting sequential children twice, while including parallel descendant bodies.
+Slash-containing child names use observed active enclosing lifecycles rather
+than inventing a parent for each selector component. Nanosecond RFC3339 clocks
+and complete run/pause/cont/terminal lifecycles are validated. Skipped bodies
+retain their actual elapsed cost and remain skips in coverage evidence.
+These costs rank logical work; they are not elapsed-time or CPU forecasts.
+Predicted bin loads are logged separately from measured worker phase durations.
+Git invocation and worker0 vet costs stay separate from weights; the assigned
+Git package stays isolated on whichever worker receives it.
 
-The current hints use two cached ancestor-runtime observations (prefix and
-exact restore). The recorded D base subsequently added catalog/config protocol
-changes in PR485, so these are not exact D-base timings. Current CI must discover
-and execute the new bodies and expose materially changed affected-package costs
-before merge; do not combine durations from different sources as matched samples
-or claim savings without a current-source control. Hosted comparisons must
+The current hints use the four successful representative shard artifacts from
+run38525632395 at tested source2a120d1fd2074122fb245e9d3ea2b384069368dc.
+The overall workflow failed a CI test fixture; it is not a successful workflow
+observation. Artifact IDs, archive digests, exact settings, raw-file hashes and
+immutable historical catalog bytes are pinned, and prior requests are retained.
+The source-audit move uses an explicit observed residual: builtin package
+246.889s minus its sequential whole-source audit244.930s leaves1.959s of
+observed remaining package cost. This is derived advice, not a measured run of
+the changed scheduling. Local shards without independent audit ownership restore
+the excluded244.930s ranking cost. Observed vet42.087s and isolated Git3.265s
+seed fixed scheduling offsets; listing/startup/queue delays stay separate.
+Four workers remain a hosted trial. Current whole-job latency and allocation
+must justify retaining them; no five-minute target or wall-time saving is
+claimed from these logical rankings. The generic partition helper accepts1..16
+bins for shared native scheduling; representative PR topology/cache ownership
+accepts only two/four and the full-race default stays two.
+
+Every PR runs the exact whole-source architecture/type audit in a separate
+required plain job, with count=1, package concurrency1 and its existing inner
+go list-export concurrency1. Assertions are unchanged. The job retains actual
+named run/PASS, package PASS, command and tracked source proof. Representative
+shards skip only that short race body under explicit --plain-audit-owned; raw
+artifacts mark the race body NOT RUN and retain its skip reason. Required shard
+reconciliation fails without the independently passing plain audit evidence.
+Local short tests without this ownership still run the audit. Daily Linux
+coverage executes the same actual plain audit before owned short race coverage.
+Weekly/candidate non-short Linux and Darwin coverage execute the original body;
+only the redundant candidate PR audit job intentionally skips. This is a static
+architecture/type audit; relocation does not substitute compilation for a test
+body or change its source/permission assertions.
+
+Hosted comparisons must
 record whole-job latency and rounded runner allocation, including scripts,
 verdict and native verification, against both the original spend and the new
 single-worker fixture baseline. A local warm serial run proves coverage rather
@@ -195,7 +230,7 @@ Linux suite on these branches because Test runs full non-short Linux race
 coverage and plain full-size performance assertions. Extended supplies full
 non-short macOS race coverage and plain full-size performance assertions.
 Test, Levenshtein and Extended disable setup-go's shared module/build cache
-for every trigger; only the two PR representative workers have explicit
+for every trigger; only the PR representative workers have explicit
 restore/save actions. Candidate validation cannot restore executable build
 state from another run. Go still verifies downloaded modules against go.sum;
 fresh runners may take longer while downloading and compiling dependencies.
