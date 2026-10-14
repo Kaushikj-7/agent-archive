@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -166,13 +167,30 @@ func TestDurableConcurrentInitialFloorLargeConfiguration(t *testing.T) {
 	}
 	start := make(chan struct{})
 	errs := make(chan error, 2)
+	var guarded atomic.Int32
 	var wg sync.WaitGroup
 	for range 2 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			<-start
-			errs <- WithDurableStorage(home, func(g DurableStorageGuard) error { return g.CheckHome(home) })
+			var err error
+			for range 10 {
+				err = WithDurableStorage(home, func(g DurableStorageGuard) error {
+					if err := g.CheckHome(home); err != nil {
+						return err
+					}
+					guarded.Add(1)
+					return nil
+				})
+				if !errors.Is(err, local.ErrBusy) {
+					break
+				}
+				// Each production call has a bounded preflight/lock deadline.
+				// Busy callers retry; every other error remains a failure.
+				time.Sleep(10 * time.Millisecond)
+			}
+			errs <- err
 		}()
 	}
 	close(start)
@@ -182,6 +200,9 @@ func TestDurableConcurrentInitialFloorLargeConfiguration(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+	}
+	if guarded.Load() != 2 {
+		t.Fatalf("successful concurrent guards: %d, want 2", guarded.Load())
 	}
 	cfg, present, err := Load(home)
 	if err != nil || !present || !cfg.DurableStorageProtection || cfg.SchemaVersion != 7 {
