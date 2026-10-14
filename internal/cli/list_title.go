@@ -60,6 +60,12 @@ func listTitle(display string) string {
 		return display
 	}
 	if cleaned := cleanTitle(text); cleaned != "" {
+		if strings.HasPrefix(cleaned, replayTitlePrefix) {
+			// Cleaning uncovered a mark ("# [replay] fix"): clean what follows
+			// it as the replay branch would, so the result is a fixed point.
+			// cleaned is shorter than text, so this recursion ends.
+			return listTitle(cleaned)
+		}
 		return cleaned
 	}
 	return display
@@ -67,8 +73,10 @@ func listTitle(display string) string {
 
 // cleanTitle applies listTitle's rules until the text stops changing, however
 // deeply markup nests ("> > > > fix it"), so listTitle is a fixed point. A
-// pass that changes the text strips at least one byte, or only capitalizes a
-// first letter (which can add a byte) that the next change must strip, so
+// pass that changes the text strips at least one byte of the text before it
+// (then may capitalize the new first letter, adding at most one byte), or
+// only capitalizes a first letter. unicode.ToTitle never leaves a letter
+// lower-case, so two capitalize-only passes cannot follow each other, and
 // 2*len(text)+2 passes always reach the fixed point. Titles are at most 128
 // runes (archive's sessionTitleLimit), so this stays small. It may return "".
 func cleanTitle(text string) string {

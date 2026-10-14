@@ -57,6 +57,8 @@ func TestListTitle(t *testing.T) {
 		{name: "replay mark kept", in: "[replay] foo", want: "[replay] Foo"},
 		{name: "replay mark with markup", in: "[replay] # \"fix the build\"", want: "[replay] Fix the build"},
 		{name: "replay mark alone", in: "[replay] ", want: "[replay]"},
+		{name: "replay mark under markup", in: "# [replay] fix the bug", want: "[replay] Fix the bug"},
+		{name: "replay mark inside quotes", in: "\"[replay] fix the bug\"", want: "[replay] Fix the bug"},
 		{name: "non-ASCII first letter", in: "élan vital for the picker", want: "Élan vital for the picker"},
 		{name: "cyrillic first letter", in: "привет мир", want: "Привет мир"},
 		{name: "uncased script", in: "修复 列表", want: "修复 列表"},
@@ -119,6 +121,7 @@ func FuzzListTitle(f *testing.F) {
 		"/code-review d3e525605855086e5f0f2acf1115dd6df0d6fbf6...351890220f3581bb8478807c22c7a54f855afa7b",
 		"\"`'“‘", "élan", "a\u200bb", "\x1b]52;c;x\x07", "\xff\xfe", "ǆungla", "e.g. x. y z",
 		"> > > > > > > > > > > x", "fix the bug.”.”.”.”",
+		"> [replay] # fix",
 	} {
 		f.Add(seed)
 	}
