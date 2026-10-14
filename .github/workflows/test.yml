@@ -200,37 +200,22 @@ jobs:
           if-no-files-found: error
 
 
-  script-tests:
-    needs: [tier-plan]
+  script-static:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Create isolated script environment
+        run: |
+          mkdir -p "$RUNNER_TEMP/script-static-home" "$RUNNER_TEMP/script-static-xdg" "$RUNNER_TEMP/script-static-tmp"
+          printf 'HOME=%s/script-static-home\nXDG_CONFIG_HOME=%s/script-static-xdg\nTMPDIR=%s/script-static-tmp\n' "$RUNNER_TEMP" "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - run: python3 scripts/test_release_signing.py
       - run: python3 scripts/test_release_assets.py
       - run: python3 scripts/test_release_candidate.py
-      - run: python3 scripts/test_install.py
-      - run: python3 scripts/test_install_from_source.py
-      - name: Install purge prerequisites
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes jq zsh
-      - name: Representative purge or required full purge extras
-        env:
-          EVENT: ${{ github.event_name }}
-          FULL_PURGE: ${{ needs.tier-plan.outputs.purge }}
-        run: |
-          tier=pr
-          if [ "$EVENT" != pull_request ] || [ "$FULL_PURGE" = true ]; then tier=full; fi
-          python3 scripts/test_purge_recipe.py --tier "$tier" --evidence "$RUNNER_TEMP/purge-tier.json"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        if: always()
-        with:
-          name: purge-tier
-          path: ${{ runner.temp }}/purge-tier.json
-          if-no-files-found: error
       # Extended's real-systemd backstop keeps its name and validated image.
       - run: python3 scripts/test_ci_workflow.py
       - run: python3 scripts/test_stage_native_verify.py
@@ -251,6 +236,100 @@ jobs:
       - run: python3 -B scripts/test_go_cache_context.py
       - run: python3 -B scripts/test_go_cache_steps.py
 
+      - run: python3 -B scripts/test_ci_lane_verdict.py
+      - run: python3 -B scripts/test_purge_ci.py
+      - name: Remove isolated script environment
+        if: always()
+        run: rm -rf -- "$RUNNER_TEMP/script-static-home" "$RUNNER_TEMP/script-static-xdg" "$RUNNER_TEMP/script-static-tmp"
+
+  script-install:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Create isolated script environment
+        run: |
+          mkdir -p "$RUNNER_TEMP/script-install-home" "$RUNNER_TEMP/script-install-xdg" "$RUNNER_TEMP/script-install-tmp"
+          printf 'HOME=%s/script-install-home\nXDG_CONFIG_HOME=%s/script-install-xdg\nTMPDIR=%s/script-install-tmp\n' "$RUNNER_TEMP" "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - run: python3 scripts/test_install.py
+      - run: python3 scripts/test_install_from_source.py
+      - name: Remove isolated script environment
+        if: always()
+        run: rm -rf -- "$RUNNER_TEMP/script-install-home" "$RUNNER_TEMP/script-install-xdg" "$RUNNER_TEMP/script-install-tmp"
+
+  script-purge:
+    needs: [tier-plan]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1]
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Create isolated script environment
+        run: |
+          mkdir -p "$RUNNER_TEMP/script-purge-home" "$RUNNER_TEMP/script-purge-xdg" "$RUNNER_TEMP/script-purge-tmp"
+          printf 'HOME=%s/script-purge-home\nXDG_CONFIG_HOME=%s/script-purge-xdg\nTMPDIR=%s/script-purge-tmp\n' "$RUNNER_TEMP" "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Install purge prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes jq zsh
+      - name: Representative purge or required full purge extras
+        env:
+          EVENT: ${{ github.event_name }}
+          FULL_PURGE: ${{ needs.tier-plan.outputs.purge }}
+          SHARD: ${{ matrix.shard }}
+        run: |
+          tier=pr
+          if [ "$EVENT" != pull_request ] || [ "$FULL_PURGE" = true ]; then tier=full; fi
+          python3 scripts/test_purge_recipe.py --workers 2 --shard "$SHARD" --tier "$tier" --evidence "$RUNNER_TEMP/purge-tier.json"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: purge-tier-${{ matrix.shard }}
+          path: ${{ runner.temp }}/purge-tier.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Remove isolated script environment
+        if: always()
+        run: rm -rf -- "$RUNNER_TEMP/script-purge-home" "$RUNNER_TEMP/script-purge-xdg" "$RUNNER_TEMP/script-purge-tmp"
+
+  script-tests:
+    if: always()
+    needs: [script-static, script-install, script-purge, tier-plan]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Require every independent lane to succeed
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: python3 -B scripts/ci_lane_verdict.py script-tests
+      - name: Download complete purge worker evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: purge-tier-*
+          path: ${{ runner.temp }}/purge-evidence
+      - name: Reconcile current-source complete purge method and case union
+        env:
+          EVENT: ${{ github.event_name }}
+          FULL_PURGE: ${{ needs.tier-plan.outputs.purge }}
+        run: |
+          tier=pr
+          if [ "$EVENT" != pull_request ] || [ "$FULL_PURGE" = true ]; then tier=full; fi
+          python3 -B scripts/purge_ci.py --tier "$tier" --evidence "$RUNNER_TEMP/purge-evidence"
+
   # Keep this required check stable and fail closed when a worker fails/skips.
   linux-race:
     if: always()
@@ -270,7 +349,7 @@ jobs:
         env:
           NEEDS: ${{ toJSON(needs) }}
         run: python3 scripts/run_go_shard.py --verdict
-      - name: Download all four successful shard catalogs
+      - name: Download all eight successful shard catalogs
         if: github.event_name == 'pull_request'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -411,9 +490,7 @@ jobs:
           path: native-tier-results
           if-no-files-found: error
 
-  cross-build:
-    # The Linux test sees linux/amd64, and macos-smoke sees Darwin with cgo.
-    # Build and vet the other release targets before a change reaches main.
+  cross-linux-arm64:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -436,24 +513,65 @@ jobs:
         run: |
           go build ./...
           go vet ./...
-      # A macOS build without cgo uses the Keychain stand-in in
-      # internal/credentials/keychain_nocgo_darwin.go, which macos-smoke
-      # (cgo on) never compiles.
+
+  cross-darwin-nocgo:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.2'
+          cache: false
+      - name: Require Go 1.27.2 (go.mod's toolchain line)
+        run: |
+          go version
+          go version | grep -q ' go1\.27\.2 ' || { echo "expected go1.27.2, matching go.mod's toolchain line" >&2; exit 1; }
       - name: Vet darwin without cgo
         env:
           GOOS: darwin
           GOARCH: arm64
           CGO_ENABLED: '0'
         run: go vet ./...
-      # The release workflow's Linux build and checks, on a placeholder
-      # version, so everything except tagging and publishing is exercised
-      # before a release.
+
+  cross-linux-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.2'
+          cache: false
+      - name: Require Go 1.27.2 (go.mod's toolchain line)
+        run: |
+          go version
+          go version | grep -q ' go1\.27\.2 ' || { echo "expected go1.27.2, matching go.mod's toolchain line" >&2; exit 1; }
       - name: Build and check the release's Linux binaries
         env:
           VERSION: v0.0.0-ci
         run: |
           ./scripts/build-release.sh linux
           ./scripts/verify-linux-release.sh
+
+
+  cross-build:
+    if: always()
+    needs: [cross-linux-arm64, cross-darwin-nocgo, cross-linux-release]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Require every independent lane to succeed
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: python3 -B scripts/ci_lane_verdict.py cross-build
 
   lint:
     # macOS, the platform the tool ships for, so the cgo Keychain code is
