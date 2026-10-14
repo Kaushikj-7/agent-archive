@@ -33,18 +33,29 @@ find none say so without creating the data directory.
   by reason, instead of listing them as failed:
 
   ```text
-  Scanned 40 session(s): 1 published, 30 unchanged, 0 failed; 1 rechecking after the source changed while being read; 8 waiting for Codex history coverage.
+  Scanned 40 session(s): 1 published, 30 unchanged, 0 failed; 1 rechecking after the source changed while being read; 2 waiting for read memory other sessions held.
   ```
 
-  Codex history coverage is the work of finding every rollout file that
-  belongs to a Codex thread; until a pass completes it, a session whose
-  history spans several files can't be read in full. A source that changed
-  while being read is read again. Neither is a failure: the next pass
-  retries, the session stays pending, and `status` lists it as
-  **waiting for Codex history coverage** or **rechecking after the source
-  changed while being read** rather than as failed. A session still put
+  A source that changed while being read is read again, and a session that
+  needed read memory other sessions held is read once it is free. Neither
+  is a failure: the next pass retries, the session stays pending, and
+  `status` lists it as **rechecking after the source changed while being
+  read** or **waiting for read memory other sessions held** rather than as
+  failed. A session still put
   off after 24 hours of passes is reported as failed, with "still not read
   after 24 hours of retries", on every pass until one reads it.
+
+  A Codex thread whose history spans several rollout files is read by
+  following Codex's own record of its current file back through the file
+  each one continues from. If one of those files is missing (Codex was
+  moving it, say), the pass reports "a Codex rollout this thread continues
+  from was not found" as a failure and the next pass tries again; if Codex
+  has no record of the current file and several could be the latest, it
+  reports "Codex thread has no single current rollout". Other Codex files,
+  including ones being written while the pass runs, never hold a thread
+  back. Versions before this one could instead list Codex sessions as
+  **waiting for Codex history coverage** for a long time; that wait no
+  longer exists.
 
   None of these is a failure, and none changes the exit code. Claude Code
   reports some background agents with a transcript it never writes; such a
@@ -135,7 +146,8 @@ transcript. Imported sessions and sessions waiting to upload have separate count
 Under each app are at most five uploading sessions (`status APP` lists all),
 with the project, start time, and any failure. A session without its first
 upload says **waiting for its first upload**; one whose last scan was put off
-until the next pass says why (**waiting for Codex history coverage**, say)
+until the next pass says why (**rechecking after the source changed while
+being read**, say)
 and is not a failure. Capture gaps and Cursor chats
 without transcripts are reported separately. Under Codex, **N Codex sessions
 from the 7 days before setup were not captured** counts sessions that started

@@ -33,7 +33,7 @@ the finished plan shows how many will actually be imported.
 In `backfill history`, an import's UPLOAD column counts as **waiting** only
 the sessions not in the archive yet. Sessions already uploaded are counted
 after it: **rechecking** when only a re-scan is still owed (a Codex session
-waiting for its history coverage, say), **updating** when newer work is still
+whose rollout changed while it was read, say), **updating** when newer work is still
 to upload, as in `uploaded · 2 rechecking` or `3 waiting · 1 updating`.
 
 Ctrl-C while the plan is being made stops it and changes nothing. Ctrl-C
@@ -250,8 +250,8 @@ and selected physical revisions use the validated shared history reader and
 durable staging; missing or ambiguous dependencies remain unresolved.
 Summaries contain no transcript paths, native IDs, remote URLs, or content.
 For Codex history refusals, `diagnostics` preserves fixed source reason codes
-when available: incomplete history coverage, missing dependencies or ownership
-boundaries, missing or invalid first-own-task evidence, and specific resource
+when available: a missing or duplicated rollout a thread continues from, no
+single current rollout, missing dependencies or ownership boundaries, missing or invalid first-own-task evidence, and specific resource
 limits. Text plans show the same counted breakdown. Unknown source reasons
 use a generic unavailable or resource-limit diagnostic; raw errors are never
 printed. These details explain the existing skip and do not change eligibility.

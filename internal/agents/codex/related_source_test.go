@@ -45,7 +45,6 @@ const (
 	historyScenarioChildAbsent     ownershipScenario = "child_absent"
 	historyScenarioChildZero       ownershipScenario = "child_zero"
 	historyScenarioChildCopied     ownershipScenario = "child_copied"
-	historyScenarioIncomplete      failureScenario   = "incomplete"
 	historyScenarioCompeting       failureScenario   = "competing"
 	historyScenarioMissingBase     failureScenario   = "missing_base"
 	historyScenarioSplitPrefix     failureScenario   = "split_prefix"
@@ -202,7 +201,7 @@ func TestRelatedHistoryOwnershipAndRoundTrip(t *testing.T) {
 
 func TestRelatedSelectionAndDependencyFailures(t *testing.T) {
 	t.Parallel()
-	for _, kind := range []failureScenario{historyScenarioIncomplete, historyScenarioCompeting, historyScenarioMissingBase, historyScenarioSplitPrefix, historyScenarioOrdinalMismatch, historyScenarioCycle, historyScenarioOutside, historyScenarioStaleCurrent} {
+	for _, kind := range []failureScenario{historyScenarioCompeting, historyScenarioMissingBase, historyScenarioSplitPrefix, historyScenarioOrdinalMismatch, historyScenarioCycle, historyScenarioOutside, historyScenarioStaleCurrent} {
 		t.Run(string(kind), func(t *testing.T) {
 			t.Parallel()
 			dir := t.TempDir()
@@ -223,11 +222,9 @@ func TestRelatedSelectionAndDependencyFailures(t *testing.T) {
 			l := &historyLookup{thread: agentapi.CodexRolloutSet{Current: &leaf, Revision: "one"}, rollouts: map[string][]agentapi.SourceRef{threadA: {base}}}
 			p := historyPass(t, dir, l)
 			switch kind {
-			case historyScenarioIncomplete:
-				l.thread.Current = nil
 			case historyScenarioCompeting:
 				other, _ := historyFile(t, dir, rolloutD, threadA, 0, nil, "other")
-				l.thread = agentapi.CodexRolloutSet{Candidates: []agentapi.SourceRef{leaf, other}, Complete: true}
+				l.thread = agentapi.CodexRolloutSet{Candidates: []agentapi.SourceRef{leaf, other}}
 			case historyScenarioMissingBase:
 				l.rollouts = nil
 			case historyScenarioOutside:

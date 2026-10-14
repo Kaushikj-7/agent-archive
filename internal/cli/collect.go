@@ -210,13 +210,10 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (result collector.Resu
 		}
 	}
 	result, err = collector.Run(ctx, localStore, objectStore, collector.Options{
-		CollectorGuard:     guard,
-		CatalogDestination: config.DestinationID(cfg.Storage),
-		Labels:             env.labelProviders(cfg),
-		LabelEnvironment:   env.labelEnvironment(cfg, labelHomes),
-		PrepareCodexCoverage: func(ctx context.Context, regs []archive.SessionRegistration) error {
-			return rollouts.PrepareRegistered(ctx, cfg, regs, discovery.Options{Now: env.Now, Stop: stop})
-		},
+		CollectorGuard:           guard,
+		CatalogDestination:       config.DestinationID(cfg.Storage),
+		Labels:                   env.labelProviders(cfg),
+		LabelEnvironment:         env.labelEnvironment(cfg, labelHomes),
 		SkipSessionIndexRecovery: true,
 		CodexRollouts:            rollouts,
 		PendingCodexRollouts:     pendingCodexRollouts(rollouts),
