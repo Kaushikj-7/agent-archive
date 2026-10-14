@@ -171,7 +171,12 @@ receipt pins canonical command, successful exit, raw-log hash, source before
 and after, and the existing exact Go1.27.2/compiler/runtime context. Worker0
 omits its trailing vet only under explicit `--plain-vet-owned`; all workers
 record matching ownership/context and the required reconciliation demands the
-same-source actual-vet receipt. Default local/standalone shards still run vet,
+same-source actual-vet receipt. Cross-job vet equivalence omits only the hosted
+image's provisioning ImageVersion label: overlapping releases with identical
+OS bytes, Go metadata/flags and compiler/toolchain binary hashes share the vet
+receipt. Full labels remain in receipts, cache admission still binds the full
+context, and vet execution's before/after context must be identical. ImageOS
+and every actual runtime input remain required. Default local/standalone shards still run vet,
 with no change to daily, full or native vet behavior. Owned scheduling excludes
 the historical fixed-vet offset rather than charging the moved work twice.
 Historical unowned observations remain valid and require no new receipt.

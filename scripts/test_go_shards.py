@@ -190,7 +190,7 @@ class WorkerCountTest(unittest.TestCase):
                         path.write_text(records(*[event('pass',Test=n) for n in ['TestA','TestB'] if re.fullmatch(pattern,n)],event('pass')))
                     else:path.write_text(records(*[event('pass',p) for p in ['p0','p1'] if p in command]))
                 return [0.01]*len(commands)
-            with mock.patch.object(runner,'ROOT',root),mock.patch.object(runner,'supervise',side_effect=supervise),mock.patch.object(runner.os,'sched_getaffinity',return_value={0,1,2,3},create=True),mock.patch.object(runner.subprocess,'check_output',return_value='head\n'),mock.patch.object(run_ci_tier,'plain_vet_context',return_value={'test':'context'}),mock.patch.object(run_ci_tier.full_race,'source_proof',return_value={'source':'head','tree':'b'*40}),mock.patch.dict(os.environ,{'GITHUB_SHA':'head'}),contextlib.redirect_stdout(io.StringIO()):
+            with mock.patch.object(runner,'ROOT',root),mock.patch.object(runner,'supervise',side_effect=supervise),mock.patch.object(runner.os,'sched_getaffinity',return_value={0,1,2,3},create=True),mock.patch.object(runner.subprocess,'check_output',return_value='head\n'),mock.patch.object(run_ci_tier,'plain_vet_context',return_value={'test':'context','image':{'ImageOS':'ubuntu24','ImageVersion':'20261001.1.0'}}),mock.patch.object(run_ci_tier.full_race,'source_proof',return_value={'source':'head','tree':'b'*40}),mock.patch.dict(os.environ,{'GITHUB_SHA':'head'}),contextlib.redirect_stdout(io.StringIO()):
                 runner.run(0,root/'default',30)
                 self.assertEqual(sum(c==['go','vet','./...'] for c in calls),1)
                 calls.clear();runner.run(0,root/'owned',30,plain_vet_owned=True)

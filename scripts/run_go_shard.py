@@ -456,7 +456,7 @@ def run(index, out, seconds, workers=2, plain_audit_owned=False, plain_vet_owned
         if worker_source['source'] != source:
             raise Failure('owned vet worker tracked source mismatch')
         manifest['settings'].update(plain_vet_owned=True, plain_vet_source_proof=worker_source,
-            plain_vet_context_sha256=digest(run_ci_tier.plain_vet_context()))
+            plain_vet_context_sha256=run_ci_tier.plain_vet_context_sha256(run_ci_tier.plain_vet_context()))
     path = out / 'manifest.json'
     path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + '\n')
     print('effective catalog:', json.dumps(catalog, sort_keys=True), flush=True)
