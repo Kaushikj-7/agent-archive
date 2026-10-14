@@ -1,5 +1,6 @@
 """Behavior tests for cadence, exact selection, source fallback and truthful evidence."""
 import contextlib
+import copy
 import io
 import json
 import os
@@ -132,6 +133,24 @@ class EvidenceTest(unittest.TestCase):
 
 
 class SourceProofTest(unittest.TestCase):
+    def test_full_source_proof_rejects_hidden_modes_symlinks_and_ignored_go_inputs(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d)
+            def git(*args):return subprocess.check_output(['git','-C',str(root),*args],stderr=subprocess.PIPE,text=True).strip()
+            git('init','-q');git('config','user.name','CI fixture');git('config','user.email','ci@example.invalid')
+            path=root/'input.go';path.write_text('package fixture\n');(root/'.gitignore').write_text('ignored.go\n')
+            git('add','.');git('commit','-qm','source')
+            proof=tier.full_race.source_proof(root);self.assertEqual(proof['source'],git('rev-parse','HEAD'))
+            git('update-index','--assume-unchanged','input.go');path.write_text('package changed\n')
+            self.assertEqual(git('status','--porcelain'),'')
+            with self.assertRaises(tier.full_race.shards.Failure):tier.full_race.source_proof(root)
+            path.write_text('package fixture\n');path.chmod(0o755)
+            with self.assertRaises(tier.full_race.shards.Failure):tier.full_race.source_proof(root)
+            path.chmod(0o644);(root/'ignored.go').write_text('package injected\n')
+            with self.assertRaises(tier.full_race.shards.Failure):tier.full_race.source_proof(root)
+            (root/'ignored.go').unlink();path.unlink();path.symlink_to('.gitignore')
+            with self.assertRaises(tier.full_race.shards.Failure):tier.full_race.source_proof(root)
+
     def test_verified_merge_includes_renamed_paths_and_hidden_working_edits_force_full(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory)
@@ -189,9 +208,13 @@ class ExecutionPlanTest(unittest.TestCase):
             calls.append((command,env['AGENT_ARCHIVE_REAL_SYSTEMD']))
             package=tier.MODULE+'internal/scheduler/systemd'
             name='TestRealUserManagerConformance'
+            if command[:2] == ['go', 'list']:
+                text=json.dumps({'ImportPath':package,'TestGoFiles':['test.go']})
+                output.write_text(text);return text
             if './internal/cli' in command:
                 package=tier.MODULE+'internal/cli';name='TestRealSystemdSetup'
             if '-list' in command:
+                if './internal/scheduler/...' in command:name='TestOrdinary'
                 text=events({'Action':'output','Package':package,'Output':name+'\n'},{'Action':'pass','Package':package})
             else:
                 if '-race' in command or command[-1]=='./internal/capture':name='TestOrdinary'
@@ -203,7 +226,7 @@ class ExecutionPlanTest(unittest.TestCase):
                 text=events(*records)
             output.write_text(text);return text
         extra={'packages':['./internal/scheduler/...'],'native':False,'systemd':True,'fuzz':False,'purge':False}
-        with tempfile.TemporaryDirectory() as d,mock.patch.object(tier,'git',return_value='a'*40),mock.patch.object(tier,'checked',side_effect=checked),mock.patch.dict(os.environ,{'GITHUB_SHA':'a'*40,'AGENT_ARCHIVE_REAL_SYSTEMD':'1'}):
+        with tempfile.TemporaryDirectory() as d,mock.patch.object(tier,'git',return_value='a'*40),mock.patch.object(tier.full_race,'source_proof',return_value={'source':'a'*40,'tree':'b'*40}),mock.patch.object(tier,'checked',side_effect=checked),mock.patch.dict(os.environ,{'GITHUB_SHA':'a'*40,'AGENT_ARCHIVE_REAL_SYSTEMD':'1'}):
             tier.run_suite('full','extra',Path(d),extra)
             proof=json.loads((Path(d)/'tier.json').read_text());self.assertTrue(proof['success'])
             actual=next(i for i in proof['invocations'] if i['log']=='systemd-systemd.jsonl')['evidence']['actual']
@@ -214,10 +237,10 @@ class ExecutionPlanTest(unittest.TestCase):
         self.assertEqual(sum(enabled=='1' for _,enabled in calls),2)
 
     def test_full_verdict_rejects_missing_artifact_source_and_incomplete_empty_extra(self):
-        with tempfile.TemporaryDirectory() as d,mock.patch.dict(os.environ,{'GITHUB_SHA':'a'*40}):
+        with tempfile.TemporaryDirectory() as d,mock.patch.dict(os.environ,{'GITHUB_SHA':'a'*40,'GITHUB_EVENT_NAME':'local','GITHUB_REF':'','CI_SCHEDULE':''}):
             directory=Path(d);plan={'source':'a'*40,'packages':[],'native':False,'systemd':False,'fuzz':False,'purge':False}
             with self.assertRaises(FileNotFoundError):tier.verify_full(directory,plan)
-            proof={'schema':1,'source':'a'*40,'tier':'full','suite':'extra','success':True,'extras':plan,'invocations':[]}
+            proof={'schema':1,'source':'a'*40,'tier':'full','suite':'extra','success':True,'extras':plan,'invocations':[], 'event':'local','ref':'','schedule':''}
             (directory/'tier.json').write_text(json.dumps(proof));tier.verify_full(directory,plan)
             for key,value in [('source','b'*40),('success',False),('tier','daily')]:
                 bad=dict(proof,**{key:value});(directory/'tier.json').write_text(json.dumps(bad))
@@ -271,6 +294,157 @@ class PurgeSelectionTest(unittest.TestCase):
         source=Path(purge.__file__).read_text()
         self.assertIn("if boundary == 2 and phase == 'after':",source)
         self.assertIn('self.assertEqual(self.attempts(), [])',source)
+
+
+class FullRaceTest(unittest.TestCase):
+    def fixture(self, directory):
+        full=tier.full_race;cli=full.CLI;ordinary=tier.MODULE+'internal/other';empty=tier.MODULE+'internal/empty'
+        packages={cli:True,ordinary:True,empty:False}
+        names={cli:['ExampleWorks','FuzzSeed','TestCollision','TestNew','TestRestore'],ordinary:['TestCollision'],empty:[]}
+        (directory/'full-packages.json').write_text(events(*[
+            dict(ImportPath=p,TestGoFiles=['fixture_test.go'] if tested else []) for p,tested in packages.items()]))
+        records=[]
+        for pkg, tests in names.items():
+            records += [dict(Action='output',Package=pkg,Output=n+'\n') for n in tests]
+            if not packages[pkg]:records.append(dict(Action='output',Package=pkg,Output='[no test files]\n'))
+            records.append(dict(Action='pass' if packages[pkg] else 'skip',Package=pkg))
+        (directory/'full-list.jsonl').write_text(events(*records))
+        hints=json.loads((tier.ROOT/'scripts/go_shard_hints.json').read_text())['cli']
+        with contextlib.redirect_stdout(io.StringIO()):schedule=full.schedule(packages,names,['./...'],hints)
+        schedule['source_proof']={'source':'a'*40,'tree':'b'*40}
+        schedule['discovery']=[dict(command=['go','list','-json','./...'],log='full-packages.json'),dict(command=full.LIST_FLAGS+['./...'],log='full-list.jsonl')]
+        invocations=[]
+        for index, (command,assignment) in enumerate(zip(schedule['commands'],schedule['assignments'])):
+            rows=[]
+            for pkg, tests in assignment.items():
+                for name in tests:
+                    rows.append(dict(Action='run',Package=pkg,Test=name))
+                    if name=='TestRestore':rows += [dict(Action='run',Package=pkg,Test=name+'/512'),dict(Action='pass',Package=pkg,Test=name+'/512')]
+                    rows.append(dict(Action='pass',Package=pkg,Test=name))
+                if not packages[pkg]:rows.append(dict(Action='output',Package=pkg,Output='[no test files]\n'))
+                rows.append(dict(Action='pass' if packages[pkg] else 'skip',Package=pkg))
+            text=events(*rows);log=f'race-{index}.jsonl';(directory/log).write_text(text)
+            invocations.append(dict(command=command,log=log,evidence=tier.body_evidence(text,False),performance_enabled=False,real_systemd_enabled=False))
+        perf=events(dict(Action='pass',Package=tier.MODULE+'internal/collector',Test='TestStayFast'))
+        (directory/'performance.jsonl').write_text(perf)
+        invocations.append(dict(command=tier.PERFORMANCE,log='performance.jsonl',evidence=tier.body_evidence(perf,False),performance_enabled=True,real_systemd_enabled=False))
+        report=dict(schema=1,source='a'*40,tier='full',suite='extra',success=True,
+                    event='local',ref='',schedule='',
+                    extras=dict(source='a'*40,packages=['./...'],native=False,systemd=False,fuzz=False,purge=False),
+                    invocations=invocations,full_schedule=schedule,
+                    full_schedule_sha256=full.shards.digest(schedule),
+                    full_discovery=[dict(d,completed=True) for d in schedule['discovery']])
+        return report
+
+    def verify(self, directory, report, restorations=None):
+        (directory/'tier.json').write_text(json.dumps(report))
+        with mock.patch.dict(os.environ,{'GITHUB_SHA':'a'*40,'GITHUB_EVENT_NAME':'local','GITHUB_REF':'','CI_SCHEDULE':''}),mock.patch.object(tier.full_race,'source_proof',return_value={'source':'a'*40,'tree':'b'*40}),mock.patch.object(tier,'catalog',return_value={'restorations':restorations or []}),contextlib.redirect_stdout(io.StringIO()):
+            tier.verify_full(directory,report['extras'])
+
+    def test_verdict_fixture_isolates_hosted_workflow_identity(self):
+        hosted={'GITHUB_SHA':'c'*40,'GITHUB_EVENT_NAME':'pull_request','GITHUB_REF':'refs/pull/493/merge','CI_SCHEDULE':'17 8 * * 0'}
+        with tempfile.TemporaryDirectory() as d,mock.patch.dict(os.environ,hosted):
+            directory=Path(d);report=self.fixture(directory)
+            self.verify(directory,report)
+            for key,value in hosted.items():self.assertEqual(os.environ[key],value)
+            # Fixture isolation must not allow a forged report identity.
+            for key,value in [('event','push'),('ref','refs/heads/foreign'),('schedule','foreign')]:
+                bad=copy.deepcopy(report);bad[key]=value
+                with self.subTest(key=key),self.assertRaises(tier.Failure):self.verify(directory,bad)
+
+    def test_partition_preserves_colliding_package_names_and_new_fuzz_examples(self):
+        with tempfile.TemporaryDirectory() as d:
+            directory=Path(d);report=self.fixture(directory);self.verify(directory,report)
+            assignments=report['full_schedule']['assignments'];cli=tier.full_race.CLI
+            self.assertEqual(len(assignments),2)
+            self.assertIn('TestCollision',assignments[0][cli]);self.assertNotIn('TestCollision',assignments[1][cli])
+            self.assertEqual(set(assignments[0][cli])|set(assignments[1][cli]),set(report['full_schedule']['names'][cli]))
+            self.assertFalse(set(assignments[0][cli])&set(assignments[1][cli]))
+            self.assertIn('FuzzSeed',report['full_schedule']['names'][cli]);self.assertIn('ExampleWorks',report['full_schedule']['names'][cli])
+
+    def test_verdict_rejects_omitted_overlapping_names_source_commands_and_unknown_invocations(self):
+        with tempfile.TemporaryDirectory() as d:
+            directory=Path(d);original=self.fixture(directory)
+            changes=[lambda r:r['full_schedule']['names'][tier.full_race.CLI].remove('FuzzSeed'),
+                     lambda r:r.update(event='push'),
+                     lambda r:r.update(ref='refs/heads/unrelated'),
+                     lambda r:r['full_schedule']['assignments'][1][tier.full_race.CLI].append('TestCollision'),
+                     lambda r:r['full_schedule']['source_proof'].update(source='c'*40),
+                     lambda r:r['full_schedule']['discovery'][1]['command'].insert(2,'-short'),
+                     lambda r:r['full_discovery'][1].update(completed=False),
+                     lambda r:r['invocations'][0]['command'].insert(2,'-short'),
+                     lambda r:r['invocations'][0]['command'].__setitem__(6,'21m'),
+                     lambda r:r['invocations'][1]['command'].__setitem__(8,'.*'),
+                     lambda r:r['invocations'].pop(1),
+                     lambda r:r['invocations'].append(copy.deepcopy(r['invocations'][0])),
+                     lambda r:r['invocations'].append(dict(r['invocations'][-1],log='extra.jsonl'))]
+            (directory/'extra.jsonl').write_text((directory/'performance.jsonl').read_text())
+            for index, change in enumerate(changes):
+                bad=copy.deepcopy(original);change(bad)
+                with self.subTest(index=index),self.assertRaises((tier.Failure,tier.full_race.shards.Failure)):
+                    self.verify(directory,bad)
+
+    def test_raw_logs_refuse_missing_parents_children_package_terminals_and_forged_evidence(self):
+        with tempfile.TemporaryDirectory() as d:
+            directory=Path(d);original=self.fixture(directory)
+            invocation=original['invocations'][0];path=directory/invocation['log'];raw=path.read_text();rows=[json.loads(l) for l in raw.splitlines()]
+            top=next(r['Test'] for r in rows if r.get('Test') and '/' not in r['Test'])
+            variants=[lambda rs:[r for r in rs if r.get('Test')!=top],
+                      lambda rs:[r for r in rs if r.get('Test')!=top or r['Action']!='pass'],
+                      lambda rs:[r for r in rs if r.get('Test') or r['Action'] not in ('pass','skip')],
+                      lambda rs:rs+[dict(Action='pass',Package='unexpected/package',Test='TestExtra')],
+                      lambda rs:rs+[dict(Action='pass',Package=tier.full_race.CLI,Test='TestNotCompiled')],
+                      lambda rs:rs+[dict(Action='run',Package=tier.full_race.CLI,Test=top+'/unended')],
+                      lambda rs:rs+[next(r for r in rs if r.get('Test') and r['Action']=='pass')]]
+            for index, mutate in enumerate(variants):
+                changed=events(*mutate(rows));path.write_text(changed);bad=copy.deepcopy(original)
+                try:bad['invocations'][0]['evidence']=tier.body_evidence(changed,False)
+                except tier.Failure:pass
+                with self.subTest(index=index),self.assertRaises((tier.Failure,tier.full_race.shards.Failure)):
+                    self.verify(directory,bad)
+            path.write_text(raw);bad=copy.deepcopy(original);bad['invocations'][0]['evidence']['actual']=[]
+            with self.assertRaises(tier.Failure):self.verify(directory,bad)
+
+    def test_required_restored_child_missing_or_skipped_fails_even_with_parent_pass(self):
+        with tempfile.TemporaryDirectory() as d:
+            directory=Path(d);report=self.fixture(directory)
+            entry=dict(package='internal/cli',test='TestRestore',restore='weekly',full_children=['512'])
+            with mock.patch.object(tier,'catalog',return_value={'restorations':[entry]}):
+                # Recompute the scale evidence for this synthetic required parent.
+                for inv in report['invocations']:inv['evidence']=tier.body_evidence((directory/inv['log']).read_text(),False)
+                self.verify(directory,report,[entry])
+                inv=next(i for i in report['invocations'] if any(r['test']=='TestRestore' for r in i['evidence']['actual']))
+                path=directory/inv['log'];raw=path.read_text();rows=[json.loads(l) for l in raw.splitlines()]
+                for skipped in (False,True):
+                    altered=[dict(r,Action='skip') if r.get('Test')=='TestRestore/512' and r['Action']=='pass' else r for r in rows] if skipped else [r for r in rows if r.get('Test')!='TestRestore/512']
+                    text=events(*altered);path.write_text(text);inv['evidence']=tier.body_evidence(text,False)
+                    with self.assertRaises(tier.Failure):self.verify(directory,report,[entry])
+
+    def test_discovery_rejects_duplicate_failed_or_body_executing_lists(self):
+        full=tier.full_race;pkg=full.CLI
+        for raw in (events(dict(Action='fail',Package=pkg)),events(dict(Action='run',Package=pkg,Test='TestA')),
+                    events(dict(Action='output',Package=pkg,Output='TestA\n'),dict(Action='output',Package=pkg,Output='TestA\n'),dict(Action='pass',Package=pkg)),
+                    events(dict(Action='pass',Package='unknown'))):
+            with self.subTest(raw=raw),self.assertRaises(full.shards.Failure):full.listing(raw,{pkg:True})
+
+    def test_native_full_and_linux_enforce_the_same_compiled_schedule(self):
+        for suite in ('linux','macos'):
+            with tempfile.TemporaryDirectory() as d:
+                directory=Path(d);report=self.fixture(directory);raw={p.name:p.read_text() for p in directory.iterdir()}
+                calls=[]
+                def checked(command,output,deadline,env=None):
+                    calls.append((command,deadline,env['AGENT_ARCHIVE_REAL_SYSTEMD']))
+                    if command[:2]==['go','list']:text=raw['full-packages.json']
+                    elif '-list' in command:text=raw['full-list.jsonl']
+                    elif command[0]=='bash':text=events(dict(Action='pass',Package=tier.MODULE+'internal/config',Test='TestPublishedWriterRefusesProtectedConfiguration'))
+                    else:text=raw[output.name]
+                    output.write_text(text);return text
+                with mock.patch.object(tier,'git',return_value='a'*40),mock.patch.object(tier.full_race,'source_proof',return_value={'source':'a'*40,'tree':'b'*40}),mock.patch.object(tier,'checked',side_effect=checked),mock.patch.object(tier,'catalog',return_value={'restorations':[]}),mock.patch.dict(os.environ,{'GITHUB_SHA':'a'*40}),contextlib.redirect_stdout(io.StringIO()):
+                    tier.run_suite('full',suite,directory,seconds=37)
+                result=json.loads((directory/'tier.json').read_text());self.assertTrue(result['success'])
+                self.assertEqual(len([i for i in result['invocations'] if i['log'].startswith('race')]),2)
+                self.assertEqual(len({deadline for _,deadline,_ in calls}),1)
+                self.assertTrue(all(enabled=='0' for _,_,enabled in calls))
 
 
 if __name__=='__main__':

@@ -70,8 +70,8 @@ func (a scopedArchive) add(t *testing.T, id, title, project string, change ...fu
 	}
 }
 
-// addMetadata writes the same sidecar as add. Bulk fixtures rebuild their
-// listing index once after all sidecars are present.
+// addMetadata lets catalog fixtures insert their complete universe before the
+// constructor normalizes source references and rebuilds the legacy index once.
 func (a scopedArchive) addMetadata(t *testing.T, id, title, project string, change ...func(*archive.Metadata)) {
 	t.Helper()
 	m := a.base
