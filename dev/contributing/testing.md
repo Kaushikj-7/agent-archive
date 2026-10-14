@@ -168,6 +168,16 @@ same-source actual-vet receipt. Default local/standalone shards still run vet,
 with no change to daily, full or native vet behavior. Owned scheduling excludes
 the historical fixed-vet offset rather than charging the moved work twice.
 Historical unowned observations remain valid and require no new receipt.
+The live owned-vet protocol is `plain-vet-compatible-v1`: cross-job identity
+excludes only the incidental runner `image.ImageVersion` release label, while
+retaining ImageOS, OS-release, exact Go/compiler/tool hashes and every flag.
+The full raw context and image label remain in the receipt, and per-job pre/post
+checks and compilation-cache keys retain the complete image identity. This
+allows compatible Ubuntu image rollouts across matrix jobs. Missing live
+identity schemas cannot downgrade the gate. Schema-less owned receipts use
+full digests only through the independently source-bound historical importer;
+older unowned samples retain their original contract.
+
 
 Raw object-stream parsing uses the same offset decoder for live execution and
 historical imports, retaining concatenated objects, whitespace and malformed

@@ -143,20 +143,20 @@ class WorkerCountTest(unittest.TestCase):
                 runner.reconcile(directory,4,Path('/audit'),require_plain_vet=True)
             for i in range(4):
                 path=Path(directory)/str(i)/'manifest.json';value=json.loads(path.read_text())
-                value['settings'].update(plain_vet_owned=True,plain_vet_context_sha256='d'*64,plain_vet_source_proof={'source':catalog['source'],'tree':'b'*40})
+                value['settings'].update(plain_vet_owned=True,plain_vet_identity_schema=run_ci_tier.PLAIN_VET_IDENTITY_SCHEMA,plain_vet_context_sha256='d'*64,plain_vet_source_proof={'source':catalog['source'],'tree':'b'*40})
                 path.write_text(json.dumps(value))
             with mock.patch.object(run_ci_tier,'verify_source_audit',return_value={'source_proof':{'source':catalog['source'],'tree':'b'*40}}) as audit:
                 runner.reconcile(directory,4,Path('/audit'),require_plain_vet=True)
                 self.assertTrue(audit.call_args.kwargs['require_plain_vet'])
                 self.assertEqual(audit.call_args.kwargs['expected_vet_context_sha256'],'d'*64)
             path=Path(directory)/'0'/'manifest.json';value=json.loads(path.read_text())
-            for update in (dict(plain_vet_owned=False),dict(plain_vet_context_sha256='e'*64)):
+            for update in (dict(plain_vet_owned=False),dict(plain_vet_context_sha256='e'*64),dict(plain_vet_identity_schema=None)):
                 bad=copy.deepcopy(value);bad['settings'].update(update);path.write_text(json.dumps(bad))
                 with mock.patch.object(run_ci_tier,'verify_source_audit',return_value={}),self.assertRaises(runner.Failure):runner.reconcile(directory,4,Path('/audit'))
             path.write_text(json.dumps(value))
             for i in range(4):
                 path=Path(directory)/str(i)/'manifest.json';value=json.loads(path.read_text())
-                value['settings'].pop('plain_vet_owned');value['settings'].pop('plain_vet_context_sha256');value['settings'].pop('plain_vet_source_proof')
+                value['settings'].pop('plain_vet_identity_schema');value['settings'].pop('plain_vet_owned');value['settings'].pop('plain_vet_context_sha256');value['settings'].pop('plain_vet_source_proof')
                 path.write_text(json.dumps(value))
             for i in range(4):
                 path=Path(directory)/str(i)/'manifest.json'; value=json.loads(path.read_text())
@@ -190,7 +190,7 @@ class WorkerCountTest(unittest.TestCase):
                         path.write_text(records(*[event('pass',Test=n) for n in ['TestA','TestB'] if re.fullmatch(pattern,n)],event('pass')))
                     else:path.write_text(records(*[event('pass',p) for p in ['p0','p1'] if p in command]))
                 return [0.01]*len(commands)
-            with mock.patch.object(runner,'ROOT',root),mock.patch.object(runner,'supervise',side_effect=supervise),mock.patch.object(runner.os,'sched_getaffinity',return_value={0,1,2,3},create=True),mock.patch.object(runner.subprocess,'check_output',return_value='head\n'),mock.patch.object(run_ci_tier,'plain_vet_context',return_value={'test':'context'}),mock.patch.object(run_ci_tier.full_race,'source_proof',return_value={'source':'head','tree':'b'*40}),mock.patch.dict(os.environ,{'GITHUB_SHA':'head'}),contextlib.redirect_stdout(io.StringIO()):
+            with mock.patch.object(runner,'ROOT',root),mock.patch.object(runner,'supervise',side_effect=supervise),mock.patch.object(runner.os,'sched_getaffinity',return_value={0,1,2,3},create=True),mock.patch.object(runner.subprocess,'check_output',return_value='head\n'),mock.patch.object(run_ci_tier,'plain_vet_context',return_value={'image':{'ImageOS':'ubuntu24','ImageVersion':'1'}}),mock.patch.object(run_ci_tier.full_race,'source_proof',return_value={'source':'head','tree':'b'*40}),mock.patch.dict(os.environ,{'GITHUB_SHA':'head'}),contextlib.redirect_stdout(io.StringIO()):
                 runner.run(0,root/'default',30)
                 self.assertEqual(sum(c==['go','vet','./...'] for c in calls),1)
                 calls.clear();runner.run(0,root/'owned',30,plain_vet_owned=True)
