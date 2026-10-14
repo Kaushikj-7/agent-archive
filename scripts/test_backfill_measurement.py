@@ -20,14 +20,14 @@ def module(name):
 
 
 class MeasurementEvidence(unittest.TestCase):
-    def compare(self, edit=None):
+    def compare(self, edit=None, samples=5):
         fields = ['host', 'logical_cpus', 'gomaxprocs', 'fixture_version', 'toolchain',
                   'planning_workers', 'default_adapter_workers', 'byte_budget',
                   'sessions', 'selected', 'imported', 'skipped', 'input_bytes',
                   'artifact_sha256', 'elapsed_seconds', 'command_cpu_seconds',
                   'command_peak_rss_at_return_bytes']
         rows = [dict.fromkeys(fields, 1) | {'scenario': 'recent', 'mode': 'import',
-                'sample': i, 'state': 'cold', 'trace': False} for i in range(5)]
+                'sample': i, 'state': 'cold', 'trace': False} for i in range(samples)]
         candidate = [row.copy() for row in rows]
         if edit:
             edit(candidate)
@@ -40,6 +40,14 @@ class MeasurementEvidence(unittest.TestCase):
 
     def test_equivalent_unique_samples(self):
         self.compare()
+
+    def test_empty_inputs_rejected(self):
+        with self.assertRaisesRegex(SystemExit, 'At least five matched samples'):
+            self.compare(samples=0)
+
+    def test_too_few_matched_samples_rejected(self):
+        with self.assertRaisesRegex(SystemExit, 'At least five samples'):
+            self.compare(samples=4)
 
     def test_duplicate_samples_rejected(self):
         with self.assertRaisesRegex(SystemExit, 'Duplicate sample'):
