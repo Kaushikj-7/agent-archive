@@ -171,14 +171,14 @@ class CachePlan:
 
 
 def cache_plan(pr, worker, context, source, runner_temp, workers=2):
-    if type(pr) is not int or pr <= 0 or type(worker) is not int or type(workers) is not int or workers not in (2, 4) or worker not in range(workers):
+    if type(pr) is not int or pr <= 0 or type(worker) is not int or type(workers) is not int or workers not in (2, 4, 8) or worker not in range(workers):
         raise InvalidContext('invalid PR or worker ownership')
     return owned_plan(f'{SCHEMA}-pr{pr}-n{workers}', worker, context, source, runner_temp, workers)
 
 
 def owned_plan(namespace, worker, context, source, runner_temp, workers=2):
     """Shared key primitive; callers own event/namespace policy, never spoof events."""
-    if not re.fullmatch(r'[A-Za-z0-9-]+', namespace) or type(worker) is not int or type(workers) is not int or workers not in (2, 4) or worker not in range(workers):
+    if not re.fullmatch(r'[A-Za-z0-9-]+', namespace) or type(worker) is not int or type(workers) is not int or workers not in (2, 4, 8) or worker not in range(workers):
         raise InvalidContext('unsafe cache namespace or worker')
     if (set(source) != {'tested', 'tree', 'dependency'}
             or not SHA.fullmatch(source['tested']) or not SHA.fullmatch(source['tree'])
