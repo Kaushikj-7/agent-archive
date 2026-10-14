@@ -59,7 +59,7 @@ class ContextTests(unittest.TestCase):
             with self.subTest(label=label):
                 self.assertNotEqual(first.prefix, self.plan(dict(context, **changed)).prefix)
         self.assertNotEqual(first.prefix, self.plan(pr=13).prefix)
-        self.assertNotEqual(first.prefix, self.plan(worker=1).prefix)
+        self.assertEqual(first.prefix, self.plan(worker=1).prefix)
         changed = dict(first.source, dependency='d'*64)
         self.assertNotEqual(first.prefix, self.plan(source=changed).prefix)
 
@@ -69,9 +69,9 @@ class ContextTests(unittest.TestCase):
         four = keys.cache_plan(12, 0, self.context(), source, self.root, 4)
         eight = keys.cache_plan(12, 7, self.context(), source, self.root, 8)
         self.assertNotEqual(four.prefix,eight.prefix)
-        self.assertIn('-n8-w7-',eight.prefix)
+        self.assertIn('-n8-w0-',eight.prefix)
         self.assertNotEqual(two.prefix, four.prefix)
-        self.assertNotEqual(four.prefix, keys.cache_plan(12, 3, self.context(), source, self.root, 4).prefix)
+        self.assertEqual(four.prefix, keys.cache_plan(12, 3, self.context(), source, self.root, 4).prefix)
         for workers, worker in ((3, 0), (4, 4), (8, 8), (2, 2), (True, 0), ('4', 0)):
             with self.assertRaises(keys.InvalidContext):
                 keys.cache_plan(12, worker, self.context(), source, self.root, workers)

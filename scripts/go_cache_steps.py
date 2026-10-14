@@ -14,7 +14,7 @@ import sys
 
 from go_cache_context import (InvalidContext, cache_plan, digest, outputs, owned_paths,
                               prepare_paths, prepare_owned_paths, pr_ancestry,
-                              runtime_context, source_identity)
+                              runtime_context, source_identity, validate_context)
 
 
 @dataclass(frozen=True)
@@ -39,6 +39,8 @@ def restore_result(plan, outcome, matched, exact):
         if exact == 'true':
             raise InvalidContext('exact hit without matched key')
         return Restore('miss')
+    if plan.seed and matched == plan.seed and exact != 'true':
+        return Restore('trusted', matched)
     if matched == plan.primary and exact == 'true':
         return Restore('exact', matched)
     if (exact != 'true' and matched != plan.primary
@@ -47,14 +49,30 @@ def restore_result(plan, outcome, matched, exact):
     raise InvalidContext('cache match violates exact or worker ownership contract')
 
 
-def verify_restored(plan, outcome, matched, exact, guard, command=execute_modules):
+def verify_restored(plan, outcome, matched, exact, guard, command=execute_modules, context=None):
     result = restore_result(plan, outcome, matched, exact)
     prepare_paths(plan, clear=result.state in ('miss', 'error'))
+    state = result.state
+    if context is not None and state not in ('miss', 'error'):
+        from ci_cache import validate_manifest
+        try:
+            validate_manifest(plan, context)
+        except (InvalidContext, OSError, ValueError, TypeError):
+            prepare_paths(plan, clear=True)
+            state = 'corrupt-rebuilt'
     guard(plan.source)
-    command(['go', 'mod', 'download'])
-    command(['go', 'mod', 'verify'])
+    try:
+        command(['go', 'mod', 'download'])
+        command(['go', 'mod', 'verify'])
+    except subprocess.SubprocessError:
+        if context is None or state in ('miss', 'error', 'corrupt-rebuilt'):
+            raise
+        prepare_paths(plan, clear=True)
+        state = 'corrupt-rebuilt'
+        command(['go', 'mod', 'download'])
+        command(['go', 'mod', 'verify'])
     guard(plan.source)
-    return result.state
+    return state
 
 
 def worker_success(plan, manifest, guard, worker, workers=2):
@@ -100,7 +118,7 @@ def main():
         event = json.loads(Path(env['GITHUB_EVENT_PATH']).read_text())
         pr_ancestry(source, env['GITHUB_SHA'], event, int(env['PR_NUMBER']))
         current = source_identity(source, env['GITHUB_SHA'])
-        context = runtime_context()
+        context = validate_context(runtime_context())
         plan = cache_plan(int(env['PR_NUMBER']), int(env['SHARD']), context, current, runner_temp, workers)
         if env.get('GOCACHE') != plan.paths[0] or env.get('GOMODCACHE') != plan.paths[1]:
             raise InvalidContext('worker caches differ from saved paths')
@@ -120,12 +138,25 @@ def main():
                 raise InvalidContext('source/environment differs from prepared key')
             if args.phase == 'verify':
                 state = verify_restored(plan, env['RESTORE_OUTCOME'], env.get('MATCHED_KEY', ''),
-                                        env.get('EXACT_HIT', ''), guard)
+                                        env.get('EXACT_HIT', ''), guard, context=context)
                 emit({'restore_state': state}, env['GITHUB_OUTPUT'])
             else:
                 manifest = json.loads((source/'shard-results/manifest.json').read_text())
                 worker_success(plan, manifest, guard, int(env['SHARD']), workers)
-                emit({'save_ready': 'true'}, env['GITHUB_OUTPUT'])
+                # Every worker retains its source/evidence guard; only the
+                # one authorized publisher pays the checksum/upload cost.
+                if (int(env['SHARD']) != 0
+                        or event['pull_request'].get('head', {}).get('repo', {}).get('full_name')
+                        != env.get('GITHUB_REPOSITORY')):
+                    emit({'save_ready': 'false'}, env['GITHUB_OUTPUT'])
+                    return 0
+                from ci_cache import publish_manifest
+                try:
+                    size = publish_manifest(plan, context)
+                except InvalidContext:
+                    emit({'save_ready': 'false'}, env['GITHUB_OUTPUT'])
+                    return 0
+                emit({'save_ready': 'true', 'cache_bytes': str(size)}, env['GITHUB_OUTPUT'])
         return 0
     except InvalidContext as error:
         print('PR Go cache contract failed: ' + str(error), file=sys.stderr)

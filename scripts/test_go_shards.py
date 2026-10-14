@@ -40,7 +40,9 @@ def synthetic_vet_context(image='unit1'):
             'os_release': 'a'*64, 'cc': {'binary': 'b'*64, 'version': 'c'*64},
             'cxx': {'binary': 'd'*64, 'version': 'e'*64},
             'toolchain': dict.fromkeys(('go','compile','asm','link','cgo','vet'), 'f'*64),
-            'race': False, 'tags': [], 'schema': go_cache_context.SCHEMA}
+            'race': False, 'tags': [], 'schema': go_cache_context.SCHEMA,
+            'pinned_tools': go_cache_context.TOOL_PINS,
+            'compilation_modes': go_cache_context.COMPILATION_MODES}
 
 
 def synthetic_worker_receipt(directory, manifest, image='unit1'):

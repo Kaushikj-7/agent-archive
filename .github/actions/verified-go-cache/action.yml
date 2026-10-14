@@ -1,0 +1,43 @@
+name: Verified compilation seed
+description: Restore only checksummed trusted-main Go compilation/modules; never test/check results
+inputs:
+  source:
+    description: Product checkout path relative to workspace
+    default: .
+outputs:
+  restore-state:
+    description: trusted, miss or corrupt-rebuilt
+    value: ${{ steps.verify.outputs.restore_state }}
+runs:
+  using: composite
+  steps:
+    - name: Prepare source and exact compiler/SDK context
+      id: key
+      shell: bash
+      env:
+        CACHE_SOURCE: ${{ inputs.source }}
+      run: python3 -B "$CACHE_SOURCE/scripts/ci_cache.py" prepare --source "$CACHE_SOURCE"
+    - name: Set controlled compilation/module paths
+      shell: bash
+      run: |
+        printf 'GOCACHE=%s/pr-go-build\nGOMODCACHE=%s/pr-go-modules\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
+    - name: Restore read-only trusted-main seed
+      id: restore
+      continue-on-error: true
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        key: ${{ steps.key.outputs.seed }}
+        path: |
+          ${{ runner.temp }}/pr-go-build
+          ${{ runner.temp }}/pr-go-modules
+        enableCrossOsArchive: false
+        fail-on-cache-miss: false
+    - name: Verify checksums/modules or rebuild cold
+      id: verify
+      shell: bash
+      env:
+        CACHE_SOURCE: ${{ inputs.source }}
+        RESTORE_OUTCOME: ${{ steps.restore.outcome }}
+        MATCHED_KEY: ${{ steps.restore.outputs.cache-matched-key }}
+      working-directory: ${{ inputs.source }}
+      run: python3 -B scripts/ci_cache.py verify --source .
