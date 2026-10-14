@@ -16,7 +16,10 @@ func newYork(t *testing.T) *time.Location {
 }
 
 func TestAgentLabel(t *testing.T) {
-	for _, tc := range []struct{ harness, name string }{
+	for _, tc := range []struct {
+		harness string
+		name    string
+	}{
 		{"claude", "Claude"},
 		{"claude-code", "Claude"},
 		{"Claude", "Claude"},
@@ -79,6 +82,7 @@ func TestShortWhen(t *testing.T) {
 		{"another zone, same local day", time.Date(2026, 10, 14, 2, 0, 0, 0, time.UTC), "Tue"},
 		{"six days back", time.Date(2026, 10, 8, 0, 0, 0, 0, ny), "Thu"},
 		{"seven days back", time.Date(2026, 10, 7, 23, 0, 0, 0, ny), "Oct 7"},
+		{"two-digit day", time.Date(2026, 9, 10, 12, 0, 0, 0, ny), "Sep 10"},
 		{"start of year", time.Date(2026, 1, 1, 0, 0, 0, 0, ny), "Jan 1"},
 		{"last year", time.Date(2025, 12, 31, 23, 59, 0, 0, ny), "2025-12-31"},
 		{"long ago", time.Date(2025, 3, 1, 9, 0, 0, 0, ny), "2025-03-01"},
@@ -166,7 +170,7 @@ func TestCompactAge(t *testing.T) {
 
 func TestDayBucket(t *testing.T) {
 	ny := newYork(t)
-	at := func(m time.Month, d, h, min int) time.Time { return time.Date(2026, m, d, h, min, 0, 0, ny) }
+	at := func(m time.Month, d, h, minute int) time.Time { return time.Date(2026, m, d, h, minute, 0, 0, ny) }
 	// Wednesday Oct 14 2026: this week began Monday Oct 12, last week ran
 	// Oct 5–11.
 	wed := at(10, 14, 15, 30)
@@ -176,9 +180,10 @@ func TestDayBucket(t *testing.T) {
 	// Tuesday Sep 1 2026: yesterday is in August.
 	tue := at(9, 1, 9, 0)
 	for _, tc := range []struct {
-		name   string
-		now, t time.Time
-		want   dayBucketKind
+		name string
+		now  time.Time
+		t    time.Time
+		want dayBucketKind
 	}{
 		{"now", wed, wed, bucketToday},
 		{"midnight today", wed, at(10, 14, 0, 0), bucketToday},
@@ -216,5 +221,8 @@ func TestDayBucketLabels(t *testing.T) {
 		if got := dayBucketKind(i).label(); got != label {
 			t.Errorf("bucket %d label = %q, want %q", i, got, label)
 		}
+	}
+	if got := dayBucketKind(len(want)).label(); got != "OLDER" {
+		t.Errorf("out-of-range bucket label = %q, want OLDER", got)
 	}
 }

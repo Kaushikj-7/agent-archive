@@ -24,6 +24,8 @@ const agentDot = "●"
 // agent-archive captures, aliases included. Any other harness keeps its
 // own name, made safe for one line with its first letter upper-cased, and
 // an empty one is "Unknown". Color it with textStyle.agent.
+//
+//lint:ignore unparam every agent shares one dot today; the session list rows take it from here so a later mark changes in one place.
 func agentLabel(harness string) (dot, name string) {
 	switch knownAgent(harness) {
 	case agentmeta.Claude:
@@ -65,8 +67,9 @@ func (s textStyle) agent(harness, text string) string {
 	return s.dim(text)
 }
 
-// shortWhen is when t was, relative to now, in at most five characters, for
-// a list's WHEN column. Days are local days in now's location.
+// shortWhen is when t was, relative to now, for a list's WHEN column: at
+// most six characters ("Oct 10") within now's year, and ten for an older
+// date ("2025-03-01"). Days are local days in now's location.
 //
 //   - The zero time is "-".
 //   - Under a minute ago, or in the future (clock skew), is "now".
@@ -180,9 +183,10 @@ func (b dayBucketKind) label() string {
 		return "LAST WEEK"
 	case bucketEarlierThisMonth:
 		return "EARLIER THIS MONTH"
-	default:
-		return "OLDER"
+	case bucketOlder:
 	}
+	// Older, and any kind past the last, is the oldest group.
+	return "OLDER"
 }
 
 // localDaysBetween is how many calendar days from's date is before to's,

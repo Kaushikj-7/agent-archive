@@ -182,8 +182,8 @@ func summaryRows(view sessionView, opts summaryOptions, width int) []summaryRow 
 	return rows
 }
 
-// summaryContext is the line under the title: harness, project, and how
-// long ago the session was last active, as list's WHEN says.
+// summaryContext is the line under the title: harness, project, and when
+// the session was last active, in compactAge's short form.
 func summaryContext(m archive.Metadata, opts summaryOptions) []string {
 	var parts []string
 	if name := archive.DisplayLine(m.Harness.Name); name != "" {
