@@ -105,7 +105,11 @@ refusing the capture. The source marks them best effort: a failure reading one
 spent) or staging one (the revision planner's stage count or bytes, or an
 import's stage budget, none of which a refusal changes) only leaves that
 branch out, while a failure reading a segment of the current chain still fails
-the reconciliation. Without an admitted source home
+the reconciliation. A best-effort failure that can clear on its own (the
+pass's shared read budget, a rollout changed while reading, cancellation)
+still fails it too, so the session defers and a later pass reads the branch:
+leaving it out would record a signature that an abandoned branch never
+changes again. Without an admitted source home
 they are not read at all. One known limit remains: a thread with more than 64
 observed same-thread rollouts is refused with a limit failure even beside a
 current locator. Only rollouts the lookup has observed (a

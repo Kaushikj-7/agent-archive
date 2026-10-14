@@ -38,9 +38,13 @@ func TestMissingHistoryBaseIsANamedRetryableFailure(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	base, leaf, _ := chainFixture(t, dir)
+	// A base the lookup found that is gone by the time it is opened.
+	vanished := base
+	vanished.Path = filepath.Join(filepath.Dir(base.Path), "gone-"+filepath.Base(base.Path))
 	for name, rollouts := range map[string]map[string][]agentapi.SourceRef{
 		"missing":   nil,
 		"ambiguous": {threadA: {base, leaf}},
+		"vanished":  {threadA: {vanished}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()

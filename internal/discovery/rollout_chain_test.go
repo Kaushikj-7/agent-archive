@@ -529,3 +529,24 @@ func TestRolloutSearchPastListingAllowanceStillFindsTheRollout(t *testing.T) {
 		t.Fatal("kept a listing past the allowance")
 	}
 }
+
+// A directory a rollout search cannot read (archived_sessions/ too large to
+// list, say) does not hide the rollout from the directories it can.
+func TestRolloutSearchPastAnUnreadableDirectoryStillFindsTheRollout(t *testing.T) {
+	t.Parallel()
+	root := chainRoot(t)
+	id := v7ID(chainEpoch, 6)
+	path, _ := chainRollout(t, root, rolloutDirectories(id)[1], id, id, 0, nil, "day")
+	if err := os.WriteFile(filepath.Join(root, "archived_sessions"), []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	lookup := chainLookup(t, root)
+	refs, err := lookup.Rollout(t.Context(), id)
+	if err != nil || len(refs) != 1 || refs[0].Path != path {
+		t.Fatal(refs, err)
+	}
+	// With nothing found, the unreadable directory is still the failure.
+	if refs, err := lookup.Rollout(t.Context(), v7ID(chainEpoch, 7)); err == nil {
+		t.Fatal("an unreadable directory hid nothing: ", refs)
+	}
+}

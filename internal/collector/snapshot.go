@@ -299,7 +299,7 @@ func readImportSourceSet(ctx context.Context, reg archive.SessionRegistration, a
 		// leave out a best-effort revision that does not fit.
 		n := int64(prior.Capture.Boundary.RetainedBytes)
 		if n > remaining {
-			return agentapi.ErrReadBudget
+			return errors.Join(agentapi.ErrReadBudget, errRevisionDoesNotFit)
 		}
 		seen[id] = true
 		remaining -= n

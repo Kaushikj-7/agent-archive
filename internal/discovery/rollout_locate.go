@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"os"
@@ -60,9 +61,12 @@ func rolloutDirectories(id string) []string {
 // locate finds rollout id by its file name, rollout-<local time>-<id>.jsonl,
 // in each approved native home. Only a few directories are listed, and each
 // at most once per pass while the pass's listing allowance lasts; past it, a
-// directory is searched for id alone without keeping its listing.
+// directory is searched for id alone without keeping its listing. A directory
+// that cannot be searched does not stop the others: its failure is returned
+// only when no directory holds the rollout.
 func (l *CodexRolloutLookup) locate(ctx context.Context, id string) ([]string, error) {
 	var out []string
+	var failed error
 	for _, root := range l.roots {
 		for _, dir := range rolloutDirectories(id) {
 			listing, err := l.listing(ctx, root, dir)
@@ -73,8 +77,15 @@ func (l *CodexRolloutLookup) locate(ctx context.Context, id string) ([]string, e
 			case err == nil:
 				paths = listing[id]
 			}
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, ctxErr
+			}
 			if err != nil {
-				return nil, err
+				if agentapi.HasFailure(err, agentapi.Limit) {
+					return nil, err
+				}
+				failed = cmp.Or(failed, err)
+				continue
 			}
 			for _, path := range paths {
 				if rolloutPresent(path) {
@@ -82,6 +93,9 @@ func (l *CodexRolloutLookup) locate(ctx context.Context, id string) ([]string, e
 				}
 			}
 		}
+	}
+	if len(out) == 0 && failed != nil {
+		return nil, failed
 	}
 	slices.Sort(out)
 	return slices.Compact(out), nil

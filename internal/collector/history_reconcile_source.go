@@ -67,8 +67,12 @@ func (r providerReader) revisions(ctx context.Context, adapter agentapi.Transcri
 	}
 	// A best-effort candidate that cannot be read, or no longer fits the
 	// budget the chain left or the consumer's own limits, is left out: an
-	// off-chain rollout never blocks the chain's own capture. Its consumer's
-	// other failures still fail.
+	// off-chain rollout never blocks the chain's own capture. A failure that
+	// clears on its own (the pass's shared read budget, a source changed while
+	// reading, cancellation) still fails, so the session defers and a later
+	// pass reads the candidate: leaving it out would record a signature that
+	// an abandoned branch never changes again. The consumer's other failures
+	// still fail.
 	for _, ref := range set.BestEffort {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -79,12 +83,13 @@ func (r providerReader) revisions(ctx context.Context, adapter agentapi.Transcri
 			consumeErr = consume(filtered, binding)
 			return consumeErr
 		})
-		if consumeErr != nil && !consumerLimit(consumeErr) || ctx.Err() != nil {
+		if err == nil {
+			continue
+		}
+		if ctx.Err() != nil || !leaveOutBestEffort(err, consumeErr != nil) {
 			return errors.Join(err, ctx.Err())
 		}
-		if err != nil {
-			budget = before
-		}
+		budget = before
 	}
 	final, err := pass.Signature(ctx, r.ref)
 	if err != nil {
@@ -96,10 +101,26 @@ func (r providerReader) revisions(ctx context.Context, adapter agentapi.Transcri
 	return nil
 }
 
-// consumerLimit reports a revisions consumer refusing one revision for its
-// own aggregate limits (stage count or bytes, retained or import budget).
-func consumerLimit(err error) bool {
-	return agentapi.HasFailure(err, agentapi.Limit) || errors.Is(err, agentapi.ErrReadBudget)
+// errRevisionDoesNotFit marks a revisions consumer's refusal of one revision
+// for a fixed limit of its own that a later pass would meet again (an
+// import's stage budget), even when the refusal also reads as a read-budget
+// failure.
+var errRevisionDoesNotFit = errors.New("historical revision does not fit")
+
+// leaveOutBestEffort reports whether a best-effort revision's failure only
+// leaves it out: a failure that will not clear on its own (a missing,
+// unreadable or unsafe rollout, or a limit). One that can clear (the pass's
+// shared read budget, a source changed while reading, cancellation) fails the
+// reconciliation so it is retried. A consumer's failures are left out only
+// for its limits, which leave its state unchanged.
+func leaveOutBestEffort(err error, consumer bool) bool {
+	if errors.Is(err, errRevisionDoesNotFit) {
+		return true
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, agentapi.ErrReadBudget) || agentapi.HasFailure(err, agentapi.Changed) {
+		return false
+	}
+	return !consumer || agentapi.HasFailure(err, agentapi.Limit)
 }
 
 // revisionBudget is what one reconciliation's historical reads may still

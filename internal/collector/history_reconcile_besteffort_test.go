@@ -2,8 +2,10 @@ package collector
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"slices"
 	"testing"
 
@@ -14,7 +16,9 @@ import (
 // B, the observed rollout off the current chain A then C, reads cleanly but
 // its consumer refuses it for an aggregate limit (the planner's stage count or
 // bytes, or an import's stage budget). B is left out and the chain's
-// reconciliation still succeeds; a consumer's other failures still fail.
+// reconciliation still succeeds. A refusal that can clear on its own (the
+// pass's shared read budget, a changed source) and a consumer's other
+// failures still fail, so the session is retried rather than B lost.
 func TestNativeRevisionsLeaveOutOffChainRolloutTheConsumerCannotHold(t *testing.T) {
 	for _, refusal := range []struct {
 		name string
@@ -22,7 +26,9 @@ func TestNativeRevisionsLeaveOutOffChainRolloutTheConsumerCannotHold(t *testing.
 		ok   bool
 	}{
 		{"limit", agentapi.Wrap(agentapi.Limit, errors.New("revision stage byte limit exceeded")), true},
-		{"read budget", agentapi.ErrReadBudget, true},
+		{"import stage budget", errors.Join(agentapi.ErrReadBudget, errRevisionDoesNotFit), true},
+		{"shared read budget", agentapi.ReadBudgetLimit(errors.New("retained work exceeds shared data budget")), false},
+		{"changed", agentapi.Wrap(agentapi.Changed, errors.New("preserved physical revision changed")), false},
 		{"other", errors.New("store unavailable"), false},
 	} {
 		t.Run(refusal.name, func(t *testing.T) {
@@ -134,5 +140,37 @@ func TestRevisionPlannerRefusalLeavesThePlanUnchanged(t *testing.T) {
 	}
 	if got := stageKeys(); planner.bytesLeft != 0 || !bytes.Equal(before, after) || !slices.Equal(stages, got) || !plan.MeaningfulAt.Equal(first.MeaningfulAt) {
 		t.Fatalf("refusal changed the plan: stages %v -> %v, bytes left %d", stages, got, planner.bytesLeft)
+	}
+}
+
+// A best-effort revision that cannot be read is left out only for a failure
+// that will not clear on its own; one that can (the shared read budget, a
+// source changed while reading, cancellation) fails so a later pass retries
+// it instead of recording a signature an abandoned branch never changes.
+func TestLeaveOutBestEffortOnlyForLastingFailures(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name     string
+		err      error
+		consumer bool
+		out      bool
+	}{
+		{"missing", os.ErrNotExist, false, true},
+		{"unsafe", agentapi.Wrap(agentapi.Unsafe, errors.New("unsafe source format")), false, true},
+		{"format", agentapi.Wrap(agentapi.FormatMismatch, errors.New("format")), false, true},
+		{"base unavailable", agentapi.WithCause(agentapi.Wrap(agentapi.Unavailable, errors.New("base")), agentapi.CauseHistoryBaseUnavailable), false, true},
+		{"budget left by the chain", agentapi.Wrap(agentapi.Limit, errors.New("historical raw budget exceeded")), false, true},
+		{"shared read budget", agentapi.ReadBudgetLimit(errors.New("pass")), false, false},
+		{"changed", agentapi.Wrap(agentapi.Changed, errors.New("rollout dependency changed")), false, false},
+		{"canceled", context.Canceled, false, false},
+		{"deadline", agentapi.Wrap(agentapi.Unavailable, context.DeadlineExceeded), false, false},
+		{"consumer limit", agentapi.Wrap(agentapi.Limit, errors.New("revision stage limit exceeded")), true, true},
+		{"consumer import budget", errors.Join(agentapi.ErrReadBudget, errRevisionDoesNotFit), true, true},
+		{"consumer shared budget", agentapi.ReadBudgetLimit(errors.New("retained")), true, false},
+		{"consumer other", errors.New("store unavailable"), true, false},
+	} {
+		if got := leaveOutBestEffort(c.err, c.consumer); got != c.out {
+			t.Errorf("%s: left out %v, want %v", c.name, got, c.out)
+		}
 	}
 }

@@ -491,6 +491,11 @@ func (p *relatedSourcePass) graph(ctx context.Context, leaf *rolloutFile) ([]phy
 			return nil, sourceRefusal(agentapi.Unavailable, agentapi.CauseHistoryBaseUnavailable, "history dependency missing or ambiguous")
 		}
 		base, err := p.open(ctx, refs[0])
+		if errors.Is(err, os.ErrNotExist) {
+			// Gone since the lookup found it (Codex renamed it, say): the
+			// base is unavailable, not the thread's own source missing.
+			return nil, sourceRefusal(agentapi.Unavailable, agentapi.CauseHistoryBaseUnavailable, "history dependency missing")
+		}
 		if err != nil {
 			return nil, err
 		}
