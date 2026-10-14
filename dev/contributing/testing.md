@@ -65,7 +65,7 @@ PR purge retains its representative refusal/recovery cases; expanded products ru
 daily and exhaustive matrices weekly/candidates. The stable `linux-race` verdict
 requires extras, native smoke, unrestricted short shards and Python gates.
 Candidates run exhaustive full Linux race coverage, plain full-size performance
-assertions and vet. Full Linux and native macOS coverage discovers every selected
+assertions and vet. Full Linux and standalone native macOS tier coverage discovers every selected
 package and compiled Test/Fuzz/Example parent on the tested source. The CLI's
 parents are balanced into two partitions using advisory timing hints;
 new names receive the ordinary positive default. The full
@@ -175,6 +175,16 @@ same-source actual-vet receipt. Default local/standalone shards still run vet,
 with no change to daily, full or native vet behavior. Owned scheduling excludes
 the historical fixed-vet offset rather than charging the moved work twice.
 Historical unowned observations remain valid and require no new receipt.
+The live owned-vet protocol is `plain-vet-compatible-v1`: cross-job identity
+excludes only the incidental runner `image.ImageVersion` release label, while
+retaining ImageOS, OS-release, exact Go/compiler/tool hashes and every flag.
+The full raw context and image label remain in the receipt, and per-job pre/post
+checks and compilation-cache keys retain the complete image identity. This
+allows compatible Ubuntu image rollouts across matrix jobs. Missing live
+identity schemas cannot downgrade the gate. Schema-less owned receipts use
+full digests only through the independently source-bound historical importer;
+older unowned samples retain their original contract.
+
 
 Raw object-stream parsing uses the same offset decoder for live execution and
 historical imports, retaining concatenated objects, whitespace and malformed
@@ -259,6 +269,44 @@ campaign when manual dispatch is unavailable. Extended skips its duplicate
 Linux suite on these branches because Test runs full non-short Linux race
 coverage and plain full-size performance assertions. Extended supplies full
 non-short macOS race coverage and plain full-size performance assertions.
+Extended full Darwin coverage uses a compiled native CGO/race catalog at the
+exact source SHA, followed by three independent `macos-14` hosts. Whole ordinary
+packages and disjoint CLI parent trees share a deterministic weighted assignment;
+fuzz seeds and executable examples are discovered from the compiled test mains.
+Each host bounds Go package concurrency to one and test concurrency/CPU to two,
+with private temporary/build state. The `macos-full` check retains its stable name
+and reconciles all three workers, source/context/catalog identity, raw package and
+body terminals, and every named full restoration child. A separate native job
+compiles and runs plain performance bodies plus the pinned published writer once.
+The four-package plain command retains archive as an explicit compilation/test-main
+scope with required package PASS; its catalog has no performance-regex bodies. The
+collector, nativecodec and capture scopes require all five intended compiled parents
+and actual body PASS. Missing parents, missing packages or an unexpected performance
+match in the compilation-only scope fail validation; archive is never counted as a
+plain performance body.
+Daily remains smoke plus expanded short native integration and published writer. Full qualification
+fixture construction reuses canonical entry bytes across ordering memberships and
+counts their leaf framing without serializing nested payloads again just for the
+byte budget. Final node encoding and the 128 KiB limits remain unchanged; a bounded
+reference encoder pins node bytes, hashes and topology. Full 10k/100k qualification
+sizes and CLI phase assertions still run in the full native catalog.
+
+`scripts/native_full_hints.json` contains advisory costs imported from the
+successful historical Darwin full artifact at `11ccad84`, with source/settings,
+archive and raw-file fingerprints. Regeneration resolves its regular Git source
+blobs and derives the canonical historical schedule from only the pure scheduling
+definitions, with an explicit reviewed partition-helper compatibility pair and
+exact selector semantics. Current scheduling changes cannot rewrite old evidence;
+unreviewed helper contracts fail closed. It reuses the logical-duration helper from
+`scripts/generate_go_shard_hints.py`; it does not use Linux short costs. One older
+serial run cannot predict current worker elapsed time. Unknown/changed restoration
+CLI trees receive a positive unmeasured one-second weight; unknown/changed ordinary
+packages receive one second per compiled parent (minimum one). Other costs remain
+historical advice even when dependencies or CPU bounds change. Qualification and
+rebalancing require the current candidate's three-worker timings. Ordinary PR
+checks do not run this Extended full matrix. Full scheduled jobs can take longer
+than the four-to-five-minute PR goal.
+
 Test, Levenshtein and Extended disable setup-go's shared module/build cache
 for every trigger; only the PR representative workers have explicit
 restore/save actions. Candidate validation cannot restore executable build
