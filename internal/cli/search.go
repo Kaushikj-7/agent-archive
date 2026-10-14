@@ -51,7 +51,7 @@ func runSearchCommand(args []string, stdout, stderr io.Writer, env searchCommand
 	children := fs.String("children", "hide", "hide, include or only child sessions")
 	limit := fs.Int("limit", 20, "maximum returned sessions (1–100)")
 	cursor := fs.String("cursor", "", "continue an unchanged index/query page")
-	refresh := fs.Bool("refresh", false, "index exactly --session from verified archive sources")
+	refresh := fs.Bool("refresh", false, "run one bounded namespace-wide archive refresh, or index --session")
 	session := fs.String("session", "", "exact archive session ID; requires --refresh and --harness")
 	read := fs.String("read", "", "read a source-bound reference from a search result")
 	offset := fs.Int("offset", -1, "with --read, absolute byte offset (default passage start)")
@@ -68,14 +68,14 @@ func runSearchCommand(args []string, stdout, stderr io.Writer, env searchCommand
 	if *all && *project != "" {
 		return fs.usageError("--project and --all-projects cannot be combined")
 	}
-	if *refresh != (*session != "") || (*refresh && canonical == "") {
-		return fs.usageError("indexing requires --refresh --session ID --harness NAME")
+	if (*session != "" && !*refresh) || (*session != "" && canonical == "") {
+		return fs.usageError("named indexing requires --refresh --session ID --harness NAME")
 	}
 	if *read != "" && (given || *refresh || *session != "") {
 		return fs.usageError("--read cannot be combined with a query or refresh")
 	}
 	if !given && !*refresh && *read == "" {
-		return fs.usageError("provide a query, --refresh --session ID --harness NAME, or --read REF")
+		return fs.usageError("provide a query, --refresh, or --read REF")
 	}
 	if given {
 		if _, err := search.MatchExpression(text); err != nil {
@@ -123,7 +123,7 @@ func executeContentSearch(opts contentSearchOptions, stdout, stderr io.Writer, e
 	opts.query.Scope = search.Scope{Restricted: scope.narrowed(), Named: scope.Dir == "", RepoKey: scope.RepoKey, ProjectName: scope.Label, ProjectIDs: scope.ProjectIDs}
 	if !opts.refresh {
 		if _, err = os.Lstat(filepath.Join(dir, "content.sqlite")); os.IsNotExist(err) {
-			terminal.Println(stdout, "Search coverage is incomplete: no local content index. Index a session with search --refresh --session ID --harness NAME.")
+			terminal.Println(stdout, "Search coverage is incomplete: no local content index. Run search --refresh, or index --session ID --harness NAME.")
 			return 0
 		} else if err != nil {
 			return searchCommandError(stderr, err)
@@ -167,6 +167,24 @@ func refreshSearchSession(ctx context.Context, env searchCommandDependencies, cf
 	if err != nil {
 		return err
 	}
+	if opts.session == "" {
+		discovery, e := index.Reconcile(ctx, objects, parsersFor(env), env.now(), search.ReconcileBudget{})
+		if e != nil {
+			terminal.Printf(stderr, "Search discovery is incomplete: %v\n", e)
+		}
+		progress, runErr := index.Run(ctx, objects, parsersFor(env), env.now(), search.Budget{VerifyCurrent: true})
+		terminal.Printf(stdout, "Observed archive slice: %d objects, %d metadata reads, %d catalog nodes; %d indexed, %d pending, %d failed. Last observed coverage is local to this machine.\n", discovery.Objects, discovery.Metadata, discovery.Nodes, progress.Committed, progress.Pending, progress.Failed)
+		if runErr != nil {
+			return runErr
+		}
+		if e != nil {
+			return e
+		}
+		if progress.Failed > 0 {
+			return errors.New("search refresh has failed work; retry after backoff or inspect coverage")
+		}
+		return nil
+	}
 	key, err := archive.MetadataObjectKey(opts.query.Harness, opts.session)
 	if err != nil {
 		return err
@@ -181,7 +199,7 @@ func refreshSearchSession(ctx context.Context, env searchCommandDependencies, cf
 	if err = index.Observe(ctx, metadata, parsersFor(env), env.now(), 0); err != nil {
 		return err
 	}
-	progress, err := index.Run(ctx, objects, parsersFor(env), env.now(), search.Budget{Sources: 64, Sessions: 64, Limits: reader.Limits{}})
+	progress, err := index.Run(ctx, objects, parsersFor(env), env.now(), search.Budget{Sources: 64, Sessions: 64, Limits: reader.Limits{}, VerifyCurrent: true})
 	if err != nil {
 		return err
 	}

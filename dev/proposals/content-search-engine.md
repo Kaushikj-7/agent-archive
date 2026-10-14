@@ -200,3 +200,76 @@ identity fact and require the verified reader to reject mismatches rather than
 accepting a cached projection. Initial work timestamps preserve FIFO fairness
 against a continuing arrival of completed sessions; completion priority breaks
 ties without indefinitely starving older active work.
+
+## Bounded archive reconciliation
+
+`search --refresh` runs one explicit namespace-wide discovery/indexing pass;
+ordinary queries keep their current-project scope and perform no discovery or
+remote reads. Named session refresh still works. Production composition holds
+`Store.LockWork` across metadata reads, `Observe` and `Run`, and enables
+`Budget.VerifyCurrent`. That option opens fresh authority after source loading,
+including when the caller supplied an older catalog read view, before a
+projection can install. Source parsing and projection preparation stay outside
+SQLite write transactions.
+
+Discovery has a 20-second child deadline within the command's 30-second pass.
+Discovery errors are reported while already-known source work receives the
+remaining time. Defaults process 32 physical identities/objects, up to four
+recent catalog entries, eight exact known-identity checks, 512 nodes and 16 MiB
+of discovery record bytes. Catalog bytes include head/coordinator reads and
+cached node visits. Source indexing separately allows four sources, sixteen
+session attempts and 32 MiB of referenced compressed bytes, with 512 catalog
+nodes/16 MiB for fresh pre-install authority. Only one source is in flight.
+Pass exhaustion remains retryable; it is distinct from an individually
+oversized source. Source decompression limits are unchanged.
+
+Catalog catch-up persists physical identity keys, including tombstones, with
+root/mode/interpretation identity. It never persists snapshot-authenticated
+cursors. A walk across changing roots is discovery without a complete-snapshot
+claim. Exact fresh identity checks establish removals independently. Stable-root
+walk coverage, old local identity validation, pending/failed indexing and
+retained-source gaps are separate facts. Older schema1/schema2 identities seed
+through bounded local keyset pages, including after restart; opening an upgraded
+index never eagerly scans remote storage. Source provenance may be recovered
+from verified preserved bytes when old sidecars omit it, never from active
+revision metadata.
+
+Legacy discovery counts all physical listed objects, including source-only
+pages. It requires `PageLister`, restarts failed opaque continuations safely,
+and never represents mutable listing pages as an immutable snapshot. Corruption,
+timeout, stale snapshots and partial listing do not establish absence. Network
+changes after the last local observation remain unknown until another refresh.
+
+Reproduce discovery costs separately from source work:
+
+```sh
+go test -v ./internal/search -run TestReconcileDefaultPassCatchupOperations
+go test ./internal/search -run '^$' -bench BenchmarkReconcileColdAndWarm -benchmem -benchtime=3x
+```
+
+Default source count is deliberately conservative rather than a scheduling SLA.
+Even small archives can need many bounded passes; a future one-minute worker tick
+would translate each additional pass into scheduling lag. S4/S5 composition must
+choose manual catch-up and scheduled budgets using measured costs. This change
+adds neither concurrency nor a scheduler.
+
+Measured on Go1.27.2, a shared Intel i7-8559U Mac and a synthetic in-memory
+40-session archive with zero simulated remote latency:
+
+- Defaults discovered the archive in two passes and indexed it in ten. Discovery
+  used four pages, forty identity entries/metadata GETs, sixty-four exact known
+  checks,111head reads,10coordinator reads,137node visits and2,436,259accounted
+  record bytes. Source work used40GETs/parses and12,772compressed bytes;
+  fresh pre-install checks separately used40checks,80nodes and1,514,248bytes.
+  Advisory elapsed catch-up was614ms, excluding archive construction.
+- Three-iteration cold discovery with an explicit50-entry budget used40metadata
+  GETs,5nodes and212,634bytes per operation, roughly107ms and2.50MB allocated.
+  Warm default discovery used0metadata GETs,16node visits and252,120accounted
+  bytes, roughly15.9ms and1.12MB allocated. Repeated cached node decoding counts
+  toward work bytes, so these figures are not HTTP payload measurements.
+
+These tiny fixtures establish operation counts and resumability, not archive-size
+or latency guarantees. Forty sessions at four sources per pass already need ten
+passes; a one-minute schedule would add roughly ten minutes before remote
+latency, large sources, backoff or coalescing. Larger manual catch-up budgets
+remain a composition decision, with the one-source-at-a-time constraint intact.

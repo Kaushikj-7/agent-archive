@@ -1,0 +1,553 @@
+package search
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"strings"
+	"time"
+
+	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/catalog"
+	"github.com/wangjohn/agent-archive/internal/reader"
+	"github.com/wangjohn/agent-archive/internal/storage"
+)
+
+// ReconcileBudget bounds namespace-wide discovery, separately from source work.
+// Defaults read 32 physical identities/objects, 8 exact known-session checks,
+// 512 catalog nodes and 16 MiB of tree/metadata bytes within 20 seconds.
+type ReconcileBudget struct {
+	Entries int
+	Checks  int
+	Nodes   int
+	Bytes   int64
+}
+
+// Discovery describes attempted discovery work, including failures. No source
+// bundle is downloaded by Reconcile. CompletedWalk is never an absence proof.
+type Discovery struct {
+	Pages            int
+	Objects          int
+	Metadata         int
+	Checks           int
+	Removed          int
+	HeadReads        int
+	CoordinatorReads int
+	Nodes            int
+	Bytes            int64
+	CompletedWalk    bool
+	Unchanged        bool
+}
+
+type discoveryMode string
+
+const (
+	discoveryCatalog discoveryMode = "catalog"
+	discoveryLegacy  discoveryMode = "legacy"
+)
+
+type discoveryState struct {
+	mode         discoveryMode
+	after        string
+	token        string
+	root         string
+	complete     string
+	validated    string
+	contract     string
+	stable       bool
+	observed     int64
+	seedWork     string
+	seedSessions string
+	checkRoot    string
+	checkedRoot  string
+	seeded       int
+}
+
+// Reconcile observes a bounded namespace-wide slice. Composition holds LockWork
+// through this call and Run. Query scope does not alter discovery authority.
+// Fresh snapshots resume logical keys, never opaque snapshot cursors. Known
+// identities are checked independently, so moving sweeps cannot authorize removal.
+func (s *Store) Reconcile(ctx context.Context, objects storage.ObjectStore, parsers agentapi.ParsersLookup, at time.Time, budget ReconcileBudget) (result Discovery, err error) {
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	if budget.Entries <= 0 {
+		budget.Entries = 32
+	}
+	budget.Entries = min(budget.Entries, 1000)
+	if budget.Checks <= 0 {
+		budget.Checks = 8
+	}
+	budget.Checks = min(budget.Checks, 1000)
+	if budget.Nodes <= 0 {
+		budget.Nodes = 512
+	}
+	if budget.Bytes <= 0 {
+		budget.Bytes = 16 << 20
+	}
+	var state discoveryState
+	err = s.db.QueryRowContext(ctx, "SELECT mode,after_key,token,root,stable,complete_root,observed,validated,contract,seed_work,seed_sessions,seeded,check_root,checked_root FROM search_discovery WHERE id=1").Scan(&state.mode, &state.after, &state.token, &state.root, &state.stable, &state.complete, &state.observed, &state.validated, &state.contract, &state.seedWork, &state.seedSessions, &state.seeded, &state.checkRoot, &state.checkedRoot)
+	if err != nil {
+		return result, err
+	}
+	mode := discoveryLegacy
+	if reader.CatalogAuthority(objects) {
+		mode = discoveryCatalog
+	}
+	contract := extractionContract(parsers)
+	if state.mode != mode || state.contract != contract {
+		state = discoveryState{mode: mode, stable: true, contract: contract}
+		if err = s.saveDiscovery(ctx, state); err != nil {
+			return result, err
+		}
+	}
+	if err = s.seedKnown(ctx, &state, budget.Checks); err != nil {
+		return result, err
+	}
+	if mode == discoveryCatalog {
+		return s.reconcileCatalog(ctx, objects, parsers, at, budget, state)
+	}
+	return s.reconcileLegacy(ctx, objects, parsers, at, budget, state)
+}
+
+func (s *Store) reconcileCatalog(ctx context.Context, objects storage.ObjectStore, parsers agentapi.ParsersLookup, at time.Time, budget ReconcileBudget, state discoveryState) (result Discovery, err error) {
+	ctx = catalog.NewReadView(ctx)
+	var cost func() catalog.PickerCost
+	ctx, cost, err = catalog.DiscoveryBudget(ctx, budget.Nodes, budget.Bytes)
+	if err != nil {
+		return result, err
+	}
+	defer func() {
+		c := cost()
+		result.Nodes = c.Nodes
+		result.Bytes += c.Bytes
+		result.HeadReads = c.HeadObservations
+		result.CoordinatorReads = c.CoordinatorReads
+	}()
+	snapshot, e := catalog.OpenSnapshot(ctx, objects, nil)
+	if e != nil {
+		return result, e
+	}
+	root := digest(snapshot.Root())
+	if state.complete != root {
+		state.complete = ""
+		if err = s.saveDiscovery(ctx, state); err != nil {
+			return result, err
+		}
+	}
+	// Reserve bounded independent checks before discovery, so removals and local
+	// parser changes progress even under continuously changing catalog roots.
+	if state.validated == "" {
+		state.checkRoot = root
+	} else if state.checkRoot != root {
+		state.checkRoot = ""
+	}
+	if err = s.checkKnown(ctx, objects, snapshot, parsers, at, budget.Checks, &state, &result, budget.Bytes); err != nil {
+		return result, err
+	}
+	if state.validated == "" && state.checkRoot == root && state.seeded == 3 {
+		state.checkedRoot = root
+	}
+	if state.complete == root {
+		result.Unchanged = true
+		return result, s.saveDiscovery(ctx, state)
+	}
+	if state.after == "" {
+		state.root = root
+		state.stable = true
+	} else if state.root != root {
+		state.stable = false
+	}
+	// A small newest-first slice keeps recent publications responsive, while the
+	// identity slice below advances every pass and cannot be starved by arrivals.
+	recent, e := snapshot.Query(ctx, catalog.Query{Index: catalog.CaptureIndex, Reverse: true}, "", min(4, budget.Entries))
+	result.Pages++
+	if e != nil {
+		return result, e
+	}
+	for _, row := range recent.Rows {
+		if err = s.observeCatalog(ctx, snapshot, row, parsers, at, &result); err != nil {
+			return result, err
+		}
+	}
+	rows, done, e := snapshot.ScanIdentities(ctx, state.after, budget.Entries)
+	result.Pages++
+	if e != nil {
+		return result, e
+	}
+	for _, row := range rows {
+		result.Objects++
+		if row.Entry != nil {
+			if err = s.observeCatalog(ctx, snapshot, catalog.Row{Key: row.Key, Entry: *row.Entry}, parsers, at, &result); err != nil {
+				return result, err
+			}
+		}
+		state.after = row.Key
+		if err = s.saveDiscovery(ctx, state); err != nil {
+			return result, err
+		}
+	}
+	if err = snapshot.ValidateContinuation(ctx); err != nil {
+		return result, err
+	}
+	if done {
+		result.CompletedWalk = true
+		state.after = ""
+		state.observed = at.UnixNano()
+		if state.stable {
+			state.complete = root
+		}
+		state.root = ""
+	}
+	return result, s.saveDiscovery(ctx, state)
+}
+
+func (s *Store) reconcileLegacy(ctx context.Context, objects storage.ObjectStore, parsers agentapi.ParsersLookup, at time.Time, budget ReconcileBudget, state discoveryState) (result Discovery, err error) {
+	pager, ok := objects.(storage.PageLister)
+	if !ok {
+		return result, errors.New("bounded search discovery requires paged object listing")
+	}
+	if err = s.checkKnown(ctx, objects, nil, parsers, at, budget.Checks, &state, &result, budget.Bytes); err != nil {
+		return result, err
+	}
+	pageLimit := budget.Entries
+	if pageLimit < 1 || pageLimit > 1000 {
+		return result, errors.New("search page limit must be 1..1000")
+	}
+	page, e := pager.ListPage(ctx, "sessions/", state.token, int32(pageLimit))
+	result.Pages++
+	if e != nil {
+		state.token = ""
+		state.after = ""
+		if saveErr := s.saveDiscovery(ctx, state); saveErr != nil {
+			return result, saveErr
+		}
+		return result, e
+	}
+	if len(page.Objects) > budget.Entries {
+		return result, errors.New("object store exceeded search discovery page limit")
+	}
+	for _, object := range page.Objects {
+		result.Objects++
+		if strings.HasSuffix(object.Key, "/metadata.json") {
+			var prior string
+			lookup := s.db.QueryRowContext(ctx, "SELECT revision FROM search_observed WHERE key=?", object.Key).Scan(&prior)
+			if lookup != nil && !errors.Is(lookup, sql.ErrNoRows) {
+				return result, lookup
+			}
+			if prior != "" && prior == object.ETag {
+				if err = s.observeCached(ctx, object.Key, parsers, at); err != nil {
+					return result, err
+				}
+				continue
+			}
+			m, e := readBoundedMetadata(ctx, objects, object.Key, budget.Bytes-result.Bytes)
+			result.Metadata++
+			result.Bytes += int64(len(m.raw))
+			if e != nil && !errors.Is(e, storage.ErrNotFound) {
+				return result, e
+			}
+			if e == nil {
+				if err = s.recordObservation(ctx, object.Key, m.revision, m.metadata, parsers, at); err != nil {
+					return result, err
+				}
+			}
+		}
+	}
+	state.token = page.Next
+	if page.Next == "" {
+		result.CompletedWalk = true
+		state.observed = at.UnixNano()
+	}
+	return result, s.saveDiscovery(ctx, state)
+}
+
+func extractionContract(parsers agentapi.ParsersLookup) string {
+	versions := []string{archive.FilterVersion, ExtractorVersion}
+	for _, name := range []string{"claude", "codex", "cursor"} {
+		if parsers != nil {
+			if p, ok := parsers.LookupParser(name); ok {
+				versions = append(versions, name, p.Version())
+			}
+		}
+	}
+	return digest(versions)
+}
+
+func (s *Store) saveDiscovery(ctx context.Context, state discoveryState) error {
+	_, err := s.db.ExecContext(ctx, "UPDATE search_discovery SET mode=?,after_key=?,token=?,root=?,stable=?,complete_root=?,observed=?,validated=?,contract=?,seed_work=?,seed_sessions=?,seeded=?,check_root=?,checked_root=? WHERE id=1", state.mode, state.after, state.token, state.root, state.stable, state.complete, state.observed, state.validated, state.contract, state.seedWork, state.seedSessions, state.seeded, state.checkRoot, state.checkedRoot)
+	return err
+}
+
+func (s *Store) observeCatalog(ctx context.Context, snapshot *catalog.Snapshot, row catalog.Row, parsers agentapi.ParsersLookup, at time.Time, result *Discovery) error {
+	var prior string
+	err := s.db.QueryRowContext(ctx, "SELECT revision FROM search_observed WHERE key=?", row.Key).Scan(&prior)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if prior == row.Entry.Revision {
+		return s.observeCached(ctx, row.Key, parsers, at)
+	}
+	m, err := reader.ReadCatalogSelection(ctx, snapshot, row)
+	result.Metadata++
+	if err != nil {
+		return err
+	}
+	if err = snapshot.ValidateContinuation(ctx); err != nil {
+		return err
+	}
+	return s.recordObservation(ctx, row.Key, row.Entry.Revision, m, parsers, at)
+}
+
+func (s *Store) recordObservation(ctx context.Context, key, revision string, m archive.Metadata, parsers agentapi.ParsersLookup, at time.Time) error {
+	canonical, err := archive.MetadataObjectKey(m.Harness.Name, m.SessionID)
+	if err != nil || canonical != key {
+		return errors.New("search metadata disagrees with canonical session identity")
+	}
+	if err = s.Observe(ctx, m, parsers, at, 0); err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, "INSERT INTO search_observed(key,session,revision,observed) VALUES(?,?,?,?) ON CONFLICT(key) DO UPDATE SET session=excluded.session,revision=excluded.revision,observed=excluded.observed", key, m.Harness.Name+"/"+m.SessionID, revision, at.UnixNano())
+	return err
+}
+
+var errMetadataBudget = errors.New("search metadata read budget exhausted; retry a fresh pass")
+
+type boundedMetadata struct {
+	metadata archive.Metadata
+	raw      []byte
+	revision string
+}
+
+func readBoundedMetadata(ctx context.Context, objects storage.ObjectStore, key string, limit int64) (boundedMetadata, error) {
+	getter, ok := objects.(storage.LimitedGetter)
+	if !ok {
+		return boundedMetadata{}, errors.New("search metadata requires bounded reads")
+	}
+	if limit <= 0 {
+		return boundedMetadata{}, errMetadataBudget
+	}
+	var raw []byte
+	var revision string
+	var err error
+	if versioned, ok := objects.(storage.LimitedVersionedGetter); ok {
+		raw, revision, err = versioned.GetLimitedVersioned(ctx, key, min(limit, 32<<20))
+	} else {
+		raw, err = getter.GetLimited(ctx, key, min(limit, 32<<20))
+	}
+	if errors.Is(err, storage.ErrObjectTooLarge) && limit < 32<<20 {
+		return boundedMetadata{}, errMetadataBudget
+	}
+	if err != nil {
+		return boundedMetadata{}, err
+	}
+	m, err := reader.ReadMetadata(ctx, metadataBody{ObjectStore: objects, key: key, raw: raw}, key)
+	return boundedMetadata{metadata: m, raw: raw, revision: revision}, err
+}
+
+type metadataBody struct {
+	storage.ObjectStore
+	key string
+	raw []byte
+}
+
+func (b metadataBody) Get(ctx context.Context, key string) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if key != b.key {
+		return nil, errors.New("unexpected search metadata key")
+	}
+	return b.raw, nil
+}
+
+func (s *Store) checkKnown(ctx context.Context, objects storage.ObjectStore, snapshot *catalog.Snapshot, parsers agentapi.ParsersLookup, at time.Time, limit int, state *discoveryState, result *Discovery, bytes int64) error {
+	rows, err := s.db.QueryContext(ctx, "SELECT key,session FROM search_observed WHERE key>? ORDER BY key LIMIT ?", state.validated, limit)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+	type known struct {
+		key string
+		id  string
+	}
+	keys := make([]known, 0, limit)
+	for rows.Next() {
+		var k known
+		if err = rows.Scan(&k.key, &k.id); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		keys = append(keys, k)
+	}
+	err = rows.Err()
+	_ = rows.Close()
+	if err != nil {
+		return err
+	}
+	for _, k := range keys {
+		result.Checks++
+		var m archive.Metadata
+		var revision string
+		var absent bool
+		if snapshot != nil {
+			entry, e := snapshot.Find(ctx, k.key)
+			if e != nil {
+				return e
+			}
+			absent = entry == nil
+			if !absent {
+				revision = entry.Revision
+				var prior string
+				if e = s.db.QueryRowContext(ctx, "SELECT revision FROM search_observed WHERE key=?", k.key).Scan(&prior); e != nil {
+					return e
+				}
+				if prior == revision {
+					if e = s.observeCached(ctx, k.key, parsers, at); e != nil {
+						return e
+					}
+					state.validated = k.key
+					if e = s.saveDiscovery(ctx, *state); e != nil {
+						return e
+					}
+					continue
+				}
+				m, e = reader.ReadCatalogSelection(ctx, snapshot, catalog.Row{Key: k.key, Entry: *entry})
+				result.Metadata++
+				if e != nil {
+					return e
+				}
+			}
+		} else {
+			body, e := readBoundedMetadata(ctx, objects, k.key, bytes-result.Bytes)
+			result.Metadata++
+			absent = errors.Is(e, storage.ErrNotFound)
+			if e != nil && !absent {
+				return e
+			}
+			m = body.metadata
+			revision = body.revision
+			result.Bytes += int64(len(body.raw))
+		}
+		if snapshot != nil {
+			if err = snapshot.ValidateContinuation(ctx); err != nil {
+				return err
+			}
+		}
+		if absent {
+			if err = s.forget(ctx, k.key, k.id); err != nil {
+				return err
+			}
+			result.Removed++
+		} else if err = s.recordObservation(ctx, k.key, revision, m, parsers, at); err != nil {
+			return err
+		}
+		state.validated = k.key
+		if err = s.saveDiscovery(ctx, *state); err != nil {
+			return err
+		}
+	}
+	if len(keys) < limit {
+		state.validated = ""
+	}
+	return nil
+}
+
+func (s *Store) forget(ctx context.Context, key, id string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err = s.removeSessionTx(ctx, tx, id); err != nil {
+		return err
+	}
+	for _, statement := range []string{"DELETE FROM search_sources WHERE session=?", "DELETE FROM search_work WHERE id=?"} {
+		if _, err = tx.ExecContext(ctx, statement, id); err != nil {
+			return err
+		}
+	}
+	if _, err = tx.ExecContext(ctx, "DELETE FROM search_observed WHERE key=?", key); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Store) observeCached(ctx context.Context, key string, parsers agentapi.ParsersLookup, at time.Time) error {
+	var raw []byte
+	if err := s.db.QueryRowContext(ctx, "SELECT w.metadata FROM search_work w JOIN search_observed o ON o.session=w.id WHERE o.key=?", key).Scan(&raw); err != nil {
+		return err
+	}
+	var metadata archive.Metadata
+	if err := json.Unmarshal(raw, &metadata); err != nil {
+		return err
+	}
+	if err := s.Observe(ctx, metadata, parsers, at, 0); err != nil {
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, "UPDATE search_observed SET observed=? WHERE key=?", at.UnixNano(), key)
+	return err
+}
+
+func (s *Store) seedKnown(ctx context.Context, state *discoveryState, limit int) error {
+	if state.seeded&1 == 0 {
+		after, done, err := s.seedRows(ctx, "SELECT id,json_extract(metadata,'$.harness.name'),json_extract(metadata,'$.session_id') FROM search_work WHERE id>? ORDER BY id LIMIT ?", state.seedWork, limit)
+		if err != nil {
+			return err
+		}
+		state.seedWork = after
+		if done {
+			state.seeded |= 1
+		}
+	}
+	if state.seeded&2 == 0 {
+		after, done, err := s.seedRows(ctx, "SELECT id,harness,session_id FROM search_sessions WHERE id>? ORDER BY id LIMIT ?", state.seedSessions, limit)
+		if err != nil {
+			return err
+		}
+		state.seedSessions = after
+		if done {
+			state.seeded |= 2
+		}
+	}
+	return s.saveDiscovery(ctx, *state)
+}
+
+func (s *Store) seedRows(ctx context.Context, query, after string, limit int) (string, bool, error) {
+	rows, err := s.db.QueryContext(ctx, query, after, limit)
+	if err != nil {
+		return after, false, err
+	}
+	defer func() { _ = rows.Close() }()
+	type identity struct {
+		id      string
+		harness string
+		session string
+	}
+	identities := make([]identity, 0, limit)
+	for rows.Next() {
+		var row identity
+		if err = rows.Scan(&row.id, &row.harness, &row.session); err != nil {
+			_ = rows.Close()
+			return after, false, err
+		}
+		identities = append(identities, row)
+	}
+	err = rows.Err()
+	_ = rows.Close()
+	if err != nil {
+		return after, false, err
+	}
+	for _, row := range identities {
+		key, e := archive.MetadataObjectKey(row.harness, row.session)
+		if e != nil {
+			return after, false, e
+		}
+		if _, err = s.db.ExecContext(ctx, "INSERT OR IGNORE INTO search_observed(key,session,revision,observed) VALUES(?,?,'',0)", key, row.id); err != nil {
+			return after, false, err
+		}
+		after = row.id
+	}
+	return after, len(identities) < limit, nil
+}

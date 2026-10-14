@@ -85,7 +85,7 @@ func (s *Store) initialize(ctx context.Context) error {
 	if err := s.db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version != 0 && version != 1 && version != 2 {
+	if version != 0 && version != 1 && version != 2 && version != 3 {
 		return errors.New("unsupported search schema; rebuild index")
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -104,7 +104,12 @@ func (s *Store) initialize(ctx context.Context) error {
  CREATE INDEX IF NOT EXISTS search_work_clock ON search_work(touched);
  CREATE INDEX IF NOT EXISTS search_work_pending ON search_work(touched,priority,id) WHERE desired!=indexed;
  CREATE TABLE IF NOT EXISTS search_sources (session TEXT NOT NULL, identity TEXT NOT NULL, projection BLOB NOT NULL, PRIMARY KEY(session,identity));
- PRAGMA user_version=2;`)
+ CREATE TABLE IF NOT EXISTS search_discovery (id INTEGER PRIMARY KEY CHECK(id=1), mode TEXT NOT NULL DEFAULT '', after_key TEXT NOT NULL DEFAULT '', token TEXT NOT NULL DEFAULT '', root TEXT NOT NULL DEFAULT '', stable INTEGER NOT NULL DEFAULT 1, complete_root TEXT NOT NULL DEFAULT '', observed INTEGER NOT NULL DEFAULT 0, validated TEXT NOT NULL DEFAULT '', contract TEXT NOT NULL DEFAULT '', seed_work TEXT NOT NULL DEFAULT '',seed_sessions TEXT NOT NULL DEFAULT '',seeded INTEGER NOT NULL DEFAULT 0,check_root TEXT NOT NULL DEFAULT '',checked_root TEXT NOT NULL DEFAULT '');
+ INSERT OR IGNORE INTO search_discovery(id) VALUES(1);
+ CREATE TABLE IF NOT EXISTS search_observed (key TEXT PRIMARY KEY, session TEXT NOT NULL, revision TEXT NOT NULL, observed INTEGER NOT NULL);
+ CREATE INDEX IF NOT EXISTS search_observed_time ON search_observed(observed);
+ CREATE INDEX IF NOT EXISTS search_coverage_gaps ON search_sessions(id) WHERE coalesce(json_array_length(gaps),0)>0;
+ PRAGMA user_version=3;`)
 	if err != nil {
 		return err
 	}
@@ -321,11 +326,14 @@ func (s *Store) project(metadata archive.Metadata, projections []Projection) ([]
 // Observation is query coverage at a known local observation, not a promise of
 // immediately current remote archive contents. S3 supplies reconciliation facts.
 type Observation struct {
-	LastReconciled time.Time `json:"LastReconciled"`
-	Pending        int       `json:"Pending"`
-	Failed         int       `json:"Failed"`
-	Complete       bool      `json:"Complete"`
-	Limitations    []string  `json:"Limitations"`
+	LastReconciled         time.Time `json:"LastReconciled"`
+	LastObserved           time.Time `json:"LastObserved"`
+	DiscoveryComplete      bool      `json:"DiscoveryComplete"`
+	IdentityChecksComplete bool      `json:"IdentityChecksComplete"`
+	Pending                int       `json:"Pending"`
+	Failed                 int       `json:"Failed"`
+	Complete               bool      `json:"Complete"`
+	Limitations            []string  `json:"Limitations"`
 }
 
 // replaceBodyTx preserves FTS rows when text is unchanged even if a source's

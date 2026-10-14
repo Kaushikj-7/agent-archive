@@ -371,9 +371,24 @@ func (s *Snapshot) ReadMetadata(ctx context.Context, entry CatalogEntry) ([]byte
 	if err := validateEntryReference(entry); err != nil {
 		return nil, err
 	}
-	raw, err := s.writer.readRef(ctx, entry.Metadata, 32<<20)
+	limit := int64(32 << 20)
+	if work, ok := ctx.Value(pickerWorkKey{}).(*pickerWork); ok {
+		limit = min(limit, work.budget.Bytes-work.cost.Bytes)
+		if limit <= 0 {
+			return nil, ErrPickerBudget
+		}
+	}
+	raw, err := s.writer.readRef(ctx, entry.Metadata, limit)
+	if errors.Is(err, storage.ErrObjectTooLarge) && limit < 32<<20 {
+		return nil, ErrPickerBudget
+	}
 	if err != nil {
 		return nil, err
+	}
+	if work, ok := ctx.Value(pickerWorkKey{}).(*pickerWork); ok {
+		if e := work.bytes(len(raw)); e != nil {
+			return nil, e
+		}
 	}
 	if err = s.check(ctx); err != nil {
 		return nil, err

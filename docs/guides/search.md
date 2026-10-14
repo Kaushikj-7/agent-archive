@@ -5,10 +5,12 @@ It keeps a private local copy of that text. This initial version indexes session
 only when explicitly requested; it does not install background indexing or
 change capture, uploads, `list`, `show`, or `handoff`.
 
-Find a session ID using `agent-archive list`, then index its verified archive
-sources, including supported preserved native revisions:
+Run a bounded archive refresh to discover sessions from every project, or find
+a session ID using `agent-archive list` and refresh that exact session. Refresh
+includes supported preserved native revisions:
 
 ```sh
+agent-archive search --refresh
 agent-archive search --refresh --session SESSION_ID --harness codex
 agent-archive search "upload checksum"
 agent-archive search '"checksum mismatch"' --all-projects
@@ -81,7 +83,27 @@ Oversized work discards staged projections and stays blocked until its desired
 snapshot changes. A pass reads at most 64 sources and 32 MiB compressed data. Its
 30-second deadline covers authoritative metadata reads and indexing, so sessions
 with many retained revisions may require another refresh. Each pass can also
-advance previously observed pending sessions. There is no automatic archive
-discovery or scheduled worker in this release. Cached search results report known
-pending/failed state, which does not establish coverage of sessions never observed
-on this machine.
+advance previously observed pending sessions. `search --refresh` discovers an archive slice across all projects; it does not
+broaden the current-project scope of subsequent queries. A pass reserves up to
+20 seconds for discovery and the remainder of its 30-second deadline for pending
+indexing, including when discovery fails. Its defaults process up to 32 physical
+identities/objects, 4 recent catalog entries, 8 exact known-session checks,
+512 catalog nodes, and 16 MiB of discovery bytes, then up to 4 source downloads.
+Catalog metadata and pre-install verification have separate finite budgets.
+Run another explicit refresh to resume catch-up; no scheduler is installed.
+
+Catch-up checkpoints survive interruption and process restart. New catalog roots
+resume by physical identity key, including tombstones; new records behind that
+checkpoint are found in a later sweep. Partial or moving-root discovery never
+proves deletion or complete coverage. Exact fresh authority checks remove known
+sessions confirmed absent. Legacy paged archives report partial coverage even
+when a listing walk finishes, since those pages do not form an immutable snapshot.
+Stores without bounded listing report an explicit discovery error.
+
+Coverage distinguishes discovery of a stable observed catalog snapshot from
+pending, failed, and unsupported retained-source work. Last observation is local
+to this machine: unobserved remote deletions/privacy changes remain unknown until
+refresh. Observing stricter privacy, changed interpretation, or removed retained
+membership invalidates prior text before replacement. Indexing rechecks fresh
+authority after source loading and before install. These checks do not establish
+perpetual freshness after their observation. Normal queries remain network-free.

@@ -153,7 +153,7 @@ func TestContentSearchScopeBeforeLimit(t *testing.T) {
 func TestContentSearchRejectsInvalidFlagsWithoutIO(t *testing.T) {
 	env := testEnv(t, t.TempDir(), time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC))
 	env.Home = func() (string, error) { t.Error("invalid flags read home"); return "", errors.New("no") }
-	for _, args := range [][]string{{}, {"--refresh"}, {"--session", "id"}, {"--refresh", "--session", "id"}, {"query", "--read", "ref"}, {"query", "--project", "x", "--all-projects"}, {"query", "--limit", "0"}, {"query", "--replays", "invalid"}, {"query", "--children", "invalid"}, {"query", "--offset", "1"}, {"query", "--max-bytes", "1"}, {"query", "--since", "invalid"}, {"query", "--until", "invalid"}, {"query", "--since", "2026-02-01", "--until", "2026-01-01"}, {"\"unterminated"}} {
+	for _, args := range [][]string{{}, {"--session", "id"}, {"--refresh", "--session", "id"}, {"query", "--read", "ref"}, {"query", "--project", "x", "--all-projects"}, {"query", "--limit", "0"}, {"query", "--replays", "invalid"}, {"query", "--children", "invalid"}, {"query", "--offset", "1"}, {"query", "--max-bytes", "1"}, {"query", "--since", "invalid"}, {"query", "--until", "invalid"}, {"query", "--since", "2026-02-01", "--until", "2026-01-01"}, {"\"unterminated"}} {
 		var out, errOut bytes.Buffer
 		if code := Run(append([]string{"search"}, args...), nil, &out, &errOut, env); code != 2 {
 			t.Fatalf("%v: %d %s", args, code, &errOut)
@@ -296,5 +296,23 @@ func TestContentSearchRefreshBoundsWholePass(t *testing.T) {
 	}
 	if wrapped.reads < 2 {
 		t.Fatalf("did not exercise metadata and source reads: %d", wrapped.reads)
+	}
+}
+
+func TestContentSearchBoundedArchiveRefreshAndOfflineQuery(t *testing.T) {
+	env, objects, id := publishedFixture(t)
+	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return objects, nil }
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"search", "--refresh"}, nil, &out, &errOut, env); code != 0 || !strings.Contains(out.String(), "Observed archive slice") {
+		t.Fatalf("%d %s %s", code, &out, &errOut)
+	}
+	env.OpenStore = func(config.Config) (storage.ObjectStore, error) {
+		t.Error("ordinary query opened remote archive")
+		return nil, errors.New("offline")
+	}
+	out.Reset()
+	errOut.Reset()
+	if code := Run([]string{"search", "visible", "--all-projects"}, nil, &out, &errOut, env); code != 0 || !strings.Contains(out.String(), id) {
+		t.Fatalf("%d %s %s", code, &out, &errOut)
 	}
 }

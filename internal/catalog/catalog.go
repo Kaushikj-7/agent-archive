@@ -264,7 +264,7 @@ func (w *Writer) Head(ctx context.Context) (CatalogHead, string, error) {
 }
 
 func (w *Writer) readHead(ctx context.Context) (CatalogHead, storage.CatalogObjectVersion, error) {
-	raw, version, err := w.versioned.GetCatalogVersion(ctx, HeadKey, 16<<10)
+	raw, version, err := readDiscoveryVersion(ctx, w.versioned, HeadKey, 16<<10)
 	etag := version.ETag
 	if errors.Is(err, storage.ErrNotFound) {
 		state, _, e := w.Coordinator().read(ctx)

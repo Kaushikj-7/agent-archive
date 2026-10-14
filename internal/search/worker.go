@@ -1,6 +1,7 @@
 package search
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/catalog"
 	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
@@ -24,6 +26,7 @@ type Budget struct {
 	Sessions        int
 	CompressedBytes int
 	Limits          reader.Limits
+	VerifyCurrent   bool // Production callers must recheck fresh authority before install.
 }
 
 // Progress describes actual work and the known pending/failed state after a pass.
@@ -36,6 +39,9 @@ type Progress struct {
 	Pending         int
 	Failed          int
 	Gaps            []Gap
+	MetadataChecks  int
+	CatalogNodes    int
+	MetadataBytes   int64
 }
 
 type sourceRequest struct {
@@ -113,10 +119,13 @@ func (s *Store) Observe(ctx context.Context, metadata archive.Metadata, parsers 
 	}
 	defer func() { _ = tx.Rollback() }()
 	var previous []byte
-	var oldDesired string
+	var oldDesired, oldSourceID string
 	var touched int64
-	err = tx.QueryRowContext(ctx, "SELECT metadata,desired,touched FROM search_work WHERE id=?", id).Scan(&previous, &oldDesired, &touched)
+	err = tx.QueryRowContext(ctx, "SELECT metadata,desired,touched,source_identity FROM search_work WHERE id=?", id).Scan(&previous, &oldDesired, &touched, &oldSourceID)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if err = s.observeIdentityTx(ctx, tx, metadata, id, at, oldDesired != desired && !bytes.Equal(previous, data)); err != nil {
 		return err
 	}
 	if oldDesired == desired {
@@ -128,40 +137,8 @@ func (s *Store) Observe(ctx context.Context, metadata archive.Metadata, parsers 
 		}
 	}
 	if len(previous) > 0 {
-		var old archive.Metadata
-		if err = json.Unmarshal(previous, &old); err != nil {
+		if err = s.invalidateObservation(ctx, tx, id, metadata, reqs, parsers, previous, oldSourceID); err != nil {
 			return err
-		}
-		oldReqs, e := requests(old, parsers)
-		if e != nil {
-			return e
-		}
-		privacyChanged := metadata.FilterVersion != old.FilterVersion
-		membershipChanged := len(reqs) != len(oldReqs)
-		for _, oldReq := range oldReqs[min(1, len(oldReqs)):] {
-			if !slices.Contains(reqs, oldReq) {
-				membershipChanged = true
-			}
-		}
-		for i, req := range reqs {
-			if historicalVisibilityUnavailable(req.Filter) || (i < len(oldReqs) && req.Revision == oldReqs[i].Revision && req.Filter != oldReqs[i].Filter) {
-				privacyChanged = true
-			}
-		}
-		if membershipChanged || privacyChanged {
-			// Removed rows cannot count as indexed if a later observation restores
-			// the previous desired snapshot before replacement work runs.
-			if _, err = tx.ExecContext(ctx, "UPDATE search_work SET indexed='',indexed_sources='' WHERE id=?", id); err != nil {
-				return err
-			}
-			if err = s.removeSessionTx(ctx, tx, id); err != nil {
-				return err
-			}
-		}
-		if privacyChanged {
-			if _, err = tx.ExecContext(ctx, "DELETE FROM search_sources WHERE session=?", id); err != nil {
-				return err
-			}
 		}
 	}
 	if err = s.pruneSourcesTx(ctx, tx, id, reqs); err != nil {
@@ -176,6 +153,15 @@ func (s *Store) Observe(ctx context.Context, metadata archive.Metadata, parsers 
 		return err
 	}
 	return tx.Commit()
+}
+
+func (s *Store) observeIdentityTx(ctx context.Context, tx *sql.Tx, metadata archive.Metadata, id string, at time.Time, changed bool) error {
+	key, err := archive.MetadataObjectKey(metadata.Harness.Name, metadata.SessionID)
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, "INSERT INTO search_observed(key,session,revision,observed) VALUES(?,?,'',?) ON CONFLICT(key) DO UPDATE SET observed=excluded.observed,revision=CASE WHEN ? THEN '' ELSE revision END", key, id, at.UnixNano(), changed)
+	return err
 }
 
 func (s *Store) removeSessionTx(ctx context.Context, tx *sql.Tx, id string) error {
@@ -212,8 +198,25 @@ func (s *Store) nextWork(ctx context.Context, at time.Time) (workItem, error) {
 // parsing happen without a database transaction. Composition holds LockWork.
 // Source staging and final
 // membership replacement both reject superseded generations atomically.
-func (s *Store) Run(ctx context.Context, objects storage.ObjectStore, parsers agentapi.ParsersLookup, at time.Time, budget Budget) (Progress, error) {
-	progress := Progress{}
+func (s *Store) Run(ctx context.Context, objects storage.ObjectStore, parsers agentapi.ParsersLookup, at time.Time, budget Budget) (progress Progress, runErr error) {
+	if budget.VerifyCurrent {
+		bounded, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		ctx = bounded
+	}
+	progress = Progress{}
+	if budget.VerifyCurrent && reader.CatalogAuthority(objects) {
+		bounded, cost, err := catalog.DiscoveryBudget(ctx, 512, 16<<20)
+		if err != nil {
+			return progress, err
+		}
+		ctx = bounded
+		defer func() {
+			consumed := cost()
+			progress.CatalogNodes = consumed.Nodes
+			progress.MetadataBytes += consumed.Bytes
+		}()
+	}
 	if budget.Sources <= 0 {
 		budget.Sources = 4
 	}
@@ -268,6 +271,11 @@ func (s *Store) runItem(ctx context.Context, objects storage.ObjectStore, parser
 		return false, err
 	}
 	if item.sourceID == item.indexedSources {
+		if budget.VerifyCurrent {
+			if err = s.verifyCurrent(ctx, objects, parsers, at, item, progress); err != nil {
+				return false, err
+			}
+		}
 		return s.commitWork(ctx, at, item, reqs, nil, true, progress)
 	}
 	compressed := 0
@@ -297,6 +305,11 @@ func (s *Store) runItem(ctx context.Context, objects storage.ObjectStore, parser
 			progress.Loaded++
 			progress.CompressedBytes += req.Reference.CompressedBytes
 			if e != nil {
+				if budget.VerifyCurrent {
+					if check := s.verifyCurrent(ctx, objects, parsers, at, item, progress); check != nil {
+						return false, check
+					}
+				}
 				return false, e
 			}
 			p = loaded
@@ -332,6 +345,11 @@ func (s *Store) runItem(ctx context.Context, objects storage.ObjectStore, parser
 			}
 		}
 		projections = append(projections, p)
+	}
+	if budget.VerifyCurrent {
+		if err = s.verifyCurrent(ctx, objects, parsers, at, item, progress); err != nil {
+			return false, err
+		}
 	}
 	return s.commitWork(ctx, at, item, reqs, projections, false, progress)
 }
@@ -446,4 +464,107 @@ func (s *Store) pruneSourcesTx(ctx context.Context, tx *sql.Tx, id string, reqs 
 	}
 	_, err = tx.ExecContext(ctx, "DELETE FROM search_sources WHERE session=? AND identity NOT IN (SELECT value FROM json_each(?))", id, membership)
 	return err
+}
+
+func (s *Store) verifyCurrent(ctx context.Context, objects storage.ObjectStore, parsers agentapi.ParsersLookup, at time.Time, item workItem, progress *Progress) error {
+	key, err := archive.MetadataObjectKey(item.metadata.Harness.Name, item.metadata.SessionID)
+	if err != nil {
+		return err
+	}
+	progress.MetadataChecks++
+	var m archive.Metadata
+	if reader.CatalogAuthority(objects) {
+		ctx = catalog.NewReadView(ctx)
+		snapshot, e := catalog.OpenSnapshot(ctx, objects, nil)
+		if e != nil {
+			return e
+		}
+		entry, e := snapshot.Find(ctx, key)
+		if e != nil {
+			return e
+		}
+		if entry == nil {
+			if e = s.forget(ctx, key, item.id); e != nil {
+				return e
+			}
+			return ErrChanged
+		}
+		m, e = reader.ReadCatalogSelection(ctx, snapshot, catalog.Row{Key: key, Entry: *entry})
+		if e != nil {
+			return e
+		}
+		if e = snapshot.ValidateContinuation(ctx); e != nil {
+			return e
+		}
+	} else {
+		body, e := readBoundedMetadata(ctx, objects, key, (16<<20)-progress.MetadataBytes)
+		progress.MetadataBytes += int64(len(body.raw))
+		if errors.Is(e, storage.ErrNotFound) {
+			if e = s.forget(ctx, key, item.id); e != nil {
+				return e
+			}
+			return ErrChanged
+		}
+		if e != nil {
+			return e
+		}
+		m = body.metadata
+	}
+	canonical, e := archive.MetadataObjectKey(m.Harness.Name, m.SessionID)
+	if e != nil || canonical != key {
+		return errors.New("search metadata disagrees with canonical session identity")
+	}
+	if err = s.Observe(ctx, m, parsers, at, 0); err != nil {
+		return err
+	}
+	var generation int64
+	if err = s.db.QueryRowContext(ctx, "SELECT generation FROM search_work WHERE id=?", item.id).Scan(&generation); err != nil {
+		return err
+	}
+	if generation != item.generation {
+		return ErrChanged
+	}
+	return nil
+}
+
+func (s *Store) invalidateObservation(ctx context.Context, tx *sql.Tx, id string, metadata archive.Metadata, reqs []sourceRequest, parsers agentapi.ParsersLookup, previous []byte, oldSourceID string) error {
+	var old archive.Metadata
+	var err error
+	if err = json.Unmarshal(previous, &old); err != nil {
+		return err
+	}
+	oldReqs, e := requests(old, parsers)
+	if e != nil {
+		return e
+	}
+	// Recompute old metadata using the running interpretation. A mismatch with
+	// its stored source identity proves a local parser/extractor contract change.
+	privacyChanged := metadata.FilterVersion != old.FilterVersion || digest(oldReqs) != oldSourceID
+	membershipChanged := len(reqs) != len(oldReqs)
+	for _, oldReq := range oldReqs[min(1, len(oldReqs)):] {
+		if !slices.Contains(reqs, oldReq) {
+			membershipChanged = true
+		}
+	}
+	for i, req := range reqs {
+		if historicalVisibilityUnavailable(req.Filter) || (i < len(oldReqs) && req.Revision == oldReqs[i].Revision && (req.Filter != oldReqs[i].Filter || req.Schema != oldReqs[i].Schema)) {
+			privacyChanged = true
+		}
+	}
+	if membershipChanged || privacyChanged {
+		// Removed rows cannot count as indexed if a later observation restores
+		// the previous desired snapshot before replacement work runs.
+		if _, err = tx.ExecContext(ctx, "UPDATE search_work SET indexed='',indexed_sources='' WHERE id=?", id); err != nil {
+			return err
+		}
+		if err = s.removeSessionTx(ctx, tx, id); err != nil {
+			return err
+		}
+	}
+	if privacyChanged {
+		if _, err = tx.ExecContext(ctx, "DELETE FROM search_sources WHERE session=?", id); err != nil {
+			return err
+		}
+	}
+	return nil
 }
