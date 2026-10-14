@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -24,6 +25,17 @@ func (s *recordingStore) List(ctx context.Context, prefix string) ([]storage.Obj
 	s.lists = append(s.lists, prefix)
 	s.mu.Unlock()
 	return s.ObjectStore.List(ctx, prefix)
+}
+
+func (s *recordingStore) GetLimited(ctx context.Context, key string, limit int64) ([]byte, error) {
+	s.mu.Lock()
+	s.gets = append(s.gets, key)
+	s.mu.Unlock()
+	bounded, ok := s.ObjectStore.(storage.LimitedGetter)
+	if !ok {
+		return nil, errors.New("underlying store has no bounded read capability")
+	}
+	return bounded.GetLimited(ctx, key, limit)
 }
 
 func (s *recordingStore) Get(ctx context.Context, key string) ([]byte, error) {
