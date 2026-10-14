@@ -159,7 +159,8 @@ def run(patterns, out, deadline, report, persist, checked, execute, root, body_e
                  {'command': LIST_FLAGS + patterns, 'log': 'full-list.jsonl'}]
     report['full_discovery'] = [dict(d, completed=False) for d in discovery]
     persist()
-    env = dict(os.environ, AGENT_ARCHIVE_REAL_SYSTEMD='0', AGENT_ARCHIVE_PERF='0')
+    env = dict(os.environ, AGENT_ARCHIVE_REAL_SYSTEMD='0')
+    env.pop('AGENT_ARCHIVE_PERF', None)
     checked(['go', 'list', '-json', *patterns], out / 'full-packages.json', deadline, env)
     package_map = packages((out / 'full-packages.json').read_text())
     report['full_discovery'][0]['completed'] = True
