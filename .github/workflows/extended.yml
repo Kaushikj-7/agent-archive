@@ -13,7 +13,11 @@ on:
         required: true
         default: all
         type: choice
-        options: [all, macos, linux, fuzz, systemd]
+        options: [all, macos, linux, fuzz, systemd, pr-reference]
+      reference_source:
+        description: Full immutable tested merge SHA (only for pr-reference)
+        required: false
+        type: string
 env:
   CI_SCHEDULE: ${{ github.event.schedule }}
   CI_SUITE: ${{ inputs.suite || 'all' }}
@@ -27,6 +31,7 @@ concurrency:
 # Every action is pinned to a full commit SHA; keep these in step with test.yml.
 jobs:
   linux-race:
+    name: Extended Linux race
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'linux'))
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -286,3 +291,36 @@ jobs:
           systemctl --user list-units --all --no-pager 'agent-archive*' || true
           systemctl --user status --no-pager 'agent-archive*' || true
           journalctl --user --no-pager -n 100 || true
+
+  pr-reference:
+    # Bounded qualification only: never included in all, PR, push or schedules.
+    if: github.event_name == 'workflow_dispatch' && inputs.suite == 'pr-reference'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      GOTOOLCHAIN: local
+      GOWORK: 'off'
+      GOFLAGS: '-mod=readonly'
+      PYTHONDONTWRITEBYTECODE: '1'
+      REFERENCE_SOURCE: ${{ inputs.reference_source }}
+    steps:
+      - name: Require an immutable qualification source before checkout
+        run: python3 -c 'import os,re,sys; sys.exit(0 if re.fullmatch("[0-9a-f]{40}",os.environ.get("REFERENCE_SOURCE","")) else "reference_source must be a full commit SHA")'
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.reference_source }}
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.2'
+          cache: false
+      - name: Unrestricted same-source race-short bodies and source/compiler receipts
+        run: python3 -B scripts/run_pr_reference.py run --source "$REFERENCE_SOURCE" --output reference-results
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: pr-unrestricted-reference
+          path: reference-results
+          if-no-files-found: error
+          retention-days: 7
