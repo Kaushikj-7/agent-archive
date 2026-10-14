@@ -209,6 +209,19 @@ class CandidateCampaignTest(unittest.TestCase):
 
 
 class CadenceTest(unittest.TestCase):
+    def test_required_test_display_names_are_unique_across_workflows(self):
+        workflows = ROOT / '.github/workflows'
+        required = {job_key(text, 'name') or job
+                    for job, text in jobs((workflows/'test.yml').read_text()).items()}
+        self.assertIn('linux-race', required)
+        for path in sorted(workflows.glob('*.yml')):
+            if path.name == 'test.yml':
+                continue
+            for job, text in jobs(path.read_text()).items():
+                display = job_key(text, 'name') or job
+                self.assertNotIn(display, required,
+                                 f'{path.name}/{job} shadows a required Test check')
+
     def test_pr_scope_keeps_required_verify_and_full_non_pr_path(self):
         workflow = (ROOT / '.github/workflows/levenshtein.yml').read_text()
         verify = jobs(workflow)['verify']
