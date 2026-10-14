@@ -56,6 +56,9 @@ campaign. Never infer the expected inventory from the very run being assessed:
 a missing job would otherwise disappear from expectations. Intentional skipped
 jobs outside the declared PR inventory may remain in the snapshot; every declared
 job must finish successfully. Successful workflow conclusion alone is insufficient.
+Qualification always requires both Test and Levenshtein inventories and snapshots;
+a historical single-workflow snapshot can be reported but cannot qualify. The
+initiating event timestamp must precede or equal both workflow creation times.
 
 `source` is the API head revision, not necessarily `GITHUB_SHA` (the tested merge
 commit). Existing worker manifests and source proofs retain the tested checkout
@@ -103,8 +106,11 @@ installation are measured from inventory/API step data, not inferred from hits.
 
 Ten unique qualifying runs in a comparable cohort permit directional comparison.
 Twenty permit a **provisional**, nearest-rank p95. Attempts of the same workflow
-run do not increase sample size; all attempts remain visible. A small successful
-sample never proves the 150-second goal. Failure frequency, exclusions and reruns
+run do not increase sample size, even when paired with a different counterpart
+workflow run; all attempts remain visible. Within each comparison group the first
+qualifying sample is retained only if neither workflow run was already selected.
+`selected_sample_ids` identifies the observations used for the percentile. A small
+successful sample never proves the 150-second goal. Failure frequency, exclusions and reruns
 must accompany the latency report. Cold, fork and platform cohorts need their own
 qualification; a passing warm source-only cohort says nothing about their p95.
 

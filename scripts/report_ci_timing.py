@@ -48,6 +48,8 @@ def sample_report(sample):
     required = sample['required_jobs']
     if not required or any(not names or len(set(names)) != len(names) for names in required.values()):
         raise ValueError('nonempty unique required job inventories are mandatory')
+    if not {'Test', 'Levenshtein'} <= set(required):
+        issues.append('qualification requires Test and Levenshtein inventories')
     seen = set()
     for snapshot in sample['workflows']:
         run = snapshot['run']
@@ -101,6 +103,8 @@ def sample_report(sample):
     event = sample.get('event_at')
     if not event:
         issues.append('event timestamp unavailable: run-created latency is a lower bound')
+    elif any(stamp(event) > stamp(w['created_at']) for w in workflows):
+        issues.append('event timestamp follows workflow creation')
     cohort, cache = sample['cohort'], sample['cache_state']
     if cohort not in COHORTS or cache not in ('warm', 'cold', 'mixed', 'unknown'):
         raise ValueError('unsupported cohort/cache state')
@@ -143,15 +147,20 @@ def report(document):
         valid = [s for s in items if s['qualifying']]
         # Repeated attempts of the same workflow run are one observation. Keep
         # all attempts visible, but do not manufacture percentile sample size.
-        unique = {}
+        # Reusing either workflow with a new counterpart is still repetition.
+        unique, used_runs = [], set()
         for s in valid:
-            identity = tuple(sorted((w['name'], w['id']) for w in s['workflows']))
-            unique.setdefault(identity, s)
-        values = sorted(s['event_to_required_completion_seconds'] for s in unique.values())
+            identities = {(w['name'], w['id']) for w in s['workflows']}
+            if identities & used_runs:
+                continue
+            used_runs.update(identities)
+            unique.append(s)
+        values = sorted(s['event_to_required_completion_seconds'] for s in unique)
         n = len(values)
         p95 = values[math.ceil(.95*n)-1] if n >= 20 else None
         summaries.append({'cohort': cohort, 'cache_state': cache, 'comparable_group': group,
                           'observations': len(items), 'qualifying_unique_runs': n,
+                          'selected_sample_ids': [s['id'] for s in unique],
                           'excluded_or_repeated': len(items)-n, 'directional_sample_ready': n >= 10,
                           'provisional_p95_seconds': p95, 'target_150s_met': p95 <= 150 if p95 is not None else None})
     return {'schema': 1, 'diagnostic_only': True, 'samples': samples, 'summaries': summaries}

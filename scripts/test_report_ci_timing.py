@@ -12,7 +12,7 @@ import report_ci_timing as timing
 
 
 def sample():
-    return {'id': 'one', 'source': 'abc', 'cohort': 'source-only', 'cache_state': 'warm',
+    value = {'id': 'one', 'source': 'abc', 'cohort': 'source-only', 'cache_state': 'warm',
             'comparable_group': 'linux4-v1', 'event_at': '2026-10-14T00:00:00Z',
             'required_jobs': {'Test': ['linux-race']}, 'workflows': [
                 {'run': {'name': 'Test', 'id': 1, 'head_sha': 'abc', 'status': 'completed',
@@ -20,6 +20,12 @@ def sample():
                  'jobs': {'total_count': 1, 'jobs': [{'id': 2, 'name': 'linux-race', 'status': 'completed',
                            'conclusion': 'success', 'started_at': '2026-10-14T00:00:10Z',
                            'completed_at': '2026-10-14T00:02:00Z', 'steps': []}]}}]}
+    other = copy.deepcopy(value['workflows'][0])
+    other['run'].update(name='Levenshtein', id=3)
+    other['jobs']['jobs'][0].update(name='verify', id=4)
+    value['required_jobs']['Levenshtein'] = ['verify']
+    value['workflows'].append(other)
+    return value
 
 
 class ReportTests(unittest.TestCase):
@@ -27,7 +33,7 @@ class ReportTests(unittest.TestCase):
         result = timing.sample_report(sample())
         self.assertTrue(result['qualifying'])
         self.assertEqual(result['event_to_required_completion_seconds'], 120)
-        self.assertAlmostEqual(result['actual_runner_minutes'], 110/60)
+        self.assertAlmostEqual(result['actual_runner_minutes'], 220/60)
         self.assertEqual(result['jobs'][0]['run_created_to_job_start_seconds'], 9)
 
     def test_missing_cancelled_failed_skipped_and_cold(self):
@@ -45,7 +51,7 @@ class ReportTests(unittest.TestCase):
 
     def test_unknown_cache_event_source_and_workflow(self):
         for mutate in (lambda s: s.pop('event_at'), lambda s: s.update(cache_state='unknown'),
-                       lambda s: s.update(source='other'), lambda s: s['required_jobs'].update(Levenshtein=['verify'])):
+                       lambda s: s.update(source='other'), lambda s: s['workflows'].pop()):
             value = sample()
             mutate(value)
             self.assertFalse(timing.sample_report(value)['qualifying'])
@@ -55,12 +61,40 @@ class ReportTests(unittest.TestCase):
         for i in range(20):
             value = sample()
             value['id'] = str(i)
-            value['workflows'][0]['run']['id'] = i
+            value['workflows'][0]['run']['id'] = 2*i
+            value['workflows'][1]['run']['id'] = 2*i+1
             values.append(value)
         self.assertIsNone(timing.report({'schema': 1, 'samples': values[:19]})['summaries'][0]['provisional_p95_seconds'])
         self.assertEqual(timing.report({'schema': 1, 'samples': values})['summaries'][0]['provisional_p95_seconds'], 120)
         for value in values:
             value['workflows'][0]['run']['id'] = 1
+        summary = timing.report({'schema': 1, 'samples': values})['summaries'][0]
+        self.assertEqual(summary['qualifying_unique_runs'], 1)
+        self.assertIsNone(summary['provisional_p95_seconds'])
+
+    def test_partial_campaign_cannot_qualify(self):
+        value = sample()
+        value['workflows'].pop()
+        value['required_jobs'].pop('Levenshtein')
+        result = timing.sample_report(value)
+        self.assertFalse(result['qualifying'])
+        self.assertIn('qualification requires Test and Levenshtein inventories', result['issues'])
+        self.assertEqual(result['event_to_required_completion_seconds'], 120)
+
+    def test_event_cannot_follow_either_workflow_creation(self):
+        value = sample()
+        value['event_at'] = '2026-10-14T00:00:02Z'
+        result = timing.sample_report(value)
+        self.assertFalse(result['qualifying'])
+        self.assertIn('event timestamp follows workflow creation', result['issues'])
+
+    def test_reusing_one_workflow_with_new_counterparts_is_not_independent(self):
+        values = []
+        for i in range(20):
+            value = sample()
+            value['id'] = str(i)
+            value['workflows'][1]['run']['id'] = 100+i
+            values.append(value)
         summary = timing.report({'schema': 1, 'samples': values})['summaries'][0]
         self.assertEqual(summary['qualifying_unique_runs'], 1)
         self.assertIsNone(summary['provisional_p95_seconds'])
