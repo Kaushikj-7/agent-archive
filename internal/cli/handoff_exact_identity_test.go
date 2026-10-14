@@ -282,9 +282,10 @@ func TestHandoffArchiveQueryRetainsCapturedCatalogClient(t *testing.T) {
 				return catalog.Wrap(remote.ObjectStore)
 			}
 			args := []string{f.archiveOnly, "--source", "archive"}
-			if query == "qualified ID" {
+			switch query {
+			case "qualified ID":
 				args = append(args, "--harness", "codex")
-			} else if query == "title" {
+			case "title":
 				args[0] = "Archived elsewhere"
 			}
 			out, stderr, code := runHandoff(t, f.env, args...)
