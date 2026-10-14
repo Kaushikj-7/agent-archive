@@ -22,6 +22,7 @@ Historical-only ownership status reconciled 2026-10-12 after #433 merged as
 | [CLI performance](cli-performance.md) | Synthetic command and historical listing benchmark harnesses with output validation. | Matched repaired-harness measurements and proposed follow-ups. |
 | [Archive listing at scale](listing-at-scale.md) | Parallel listing, tracing, bounded metadata-body reads; 10k benchmark and 10k/20k operation-count coverage. | Full 1k/10k/100k measurement matrix and an index that bounds LIST header cost. |
 | [Cloud capture](cloud-capture.md) | No cloud collector/push or vendor pull implementation. | Proposed, unscheduled; requires producer probes and runtime/authentication design. |
+| [Claude Code cloud pull](claude-code-cloud-pull.md) | All seven pre-build checks done on a live account (`setup-token` rejected; CLI self-refresh works); nothing implemented. | Six PRs (full `/events` log with a new codec, incremental fetch). |
 
 [Setup recent import](../specs/setup-recent-import.md) now includes both automatic
 seven-day import and the status prompt for existing installations. See the

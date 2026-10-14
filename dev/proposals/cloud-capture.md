@@ -31,11 +31,13 @@ Three strategies exist. They differ in fidelity and in where credentials live.
 
 Push is the primary strategy. Pull is a fallback only where push is impossible or unreliable.
 
+**Exception: Claude Code on the web (2026-10-13).** Claude Code's session API lists every cloud session and returns the transcript records the VM wrote, so pull keeps native-record fidelity there and needs no hooks or VM credentials. Claude Code cloud capture now starts with pull; see [Claude Code cloud sessions: pull capture](claude-code-cloud-pull.md). Push remains the plan for CI runners and the other vendors.
+
 ## Support matrix
 
 | Agent | Hooks run in cloud | Native transcript in VM | Upload path | Credential channel | Pull fallback | Plan |
 | --- | --- | --- | --- | --- | --- | --- |
-| Claude Code on the web | *Verified*: repo `.claude/settings.json`, single-repository sessions only | *Verified*: `/root/.claude/projects/<cwd-slug>/<session_id>.jsonl` | *Verified* reachable: S3 and R2 through the proxy's TLS tunnel (default Trusted level) | Environment variables, readable by anyone using the environment | `claude --teleport` to a Mac (interactive, undocumented format); no public transcript API | Phase 1 |
+| Claude Code on the web | *Verified*: repo `.claude/settings.json`, single-repository sessions only | *Verified*: `/root/.claude/projects/<cwd-slug>/<session_id>.jsonl` | *Verified* reachable: S3 and R2 through the proxy's TLS tunnel (default Trusted level) | Environment variables, readable by anyone using the environment *Verified* list: `GET /v1/code/sessions`; transcript records through the API `--teleport` uses (undocumented). See [pull capture](claude-code-cloud-pull.md) | Pull first |
 | Claude Code in CI (`claude-code-action`, `claude -p`) | *Documented*: repo settings and a `settings` input | *Documented*: `transcript_path` | Runner egress | CI secrets | Not needed | Phase 1 |
 | Cursor Cloud Agents | *Documented*: repo `.cursor/hooks.json`; `sessionStart` and `sessionEnd` do not run; hooks skip early read-only turns | *Unknown*; `transcript_path` may be null ("if transcripts disabled") | *Documented*: all egress allowed by default | Runtime Secrets (redacted from transcripts) | *Documented*: v0 `GET /v0/agents/{id}/conversation` (messages only, no tool calls); v1 run stream (retention-limited) | Phase 0 probe, Phase 2 |
 | Codex cloud | *Unknown*: hooks documented for the CLI only; project hooks require trust review | *Unknown* | *Documented*: agent-phase internet off by default; an optional GET/HEAD/OPTIONS-only mode would block uploads | Secrets are removed before the agent phase; only plain environment variables remain | *None*: `codex cloud` returns status and diffs, not transcripts | Phase 0 probe, Phase 3 if the probe passes |
@@ -256,7 +258,7 @@ design and is not a prerequisite for this direct S3/R2 proposal.
 
 ### 9. After-the-fact pull (Phase 3)
 
-`agent-archive import cursor-cloud` fetches finished Cloud Agent conversations with a Cursor API key stored in the platform credential store. Its output is a new adapter (`cursor-cloud-api`) with `source_kind: vendor_api`, so readers never mistake it for a native transcript. It maps the Cursor agent ID to `native_session_id` and deduplicates against pushed sessions only once the mapping between agent ID and conversation ID is verified. The v0 endpoint has no tool calls, and the v1 stream expires, so the import must run periodically from the Mac's collector. `claude --teleport` could feed the same pattern for Claude Code if push capture proves insufficient.
+`agent-archive import cursor-cloud` fetches finished Cloud Agent conversations with a Cursor API key stored in the platform credential store. Its output is a new adapter (`cursor-cloud-api`) with `source_kind: vendor_api`, so readers never mistake it for a native transcript. It maps the Cursor agent ID to `native_session_id` and deduplicates against pushed sessions only once the mapping between agent ID and conversation ID is verified. The v0 endpoint has no tool calls, and the v1 stream expires, so the import must run periodically from the Mac's collector. Claude Code uses the same pattern with its own design: [pull capture](claude-code-cloud-pull.md).
 
 ## Phases
 
