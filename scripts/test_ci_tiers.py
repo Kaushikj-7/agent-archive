@@ -653,6 +653,7 @@ class FullRaceTest(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()):
             schedule=full.schedule({cli:True,other:True},names,['./...'],{})
         self.assertEqual(len(schedule['commands']),3)
+        self.assertEqual(schedule['batches'],[[0],[1,2]])
         self.assertEqual(schedule['assignments'][2],{cli:[isolated]})
         self.assertEqual(schedule['commands'][2],full.COMMON+['-run','^('+isolated+')$',cli])
         assigned=[n for a in schedule['assignments'] for n in a.get(cli,[])]
@@ -673,7 +674,11 @@ class FullRaceTest(unittest.TestCase):
             required=[e for e in tier.catalog()['restorations'] if e['test']=='TestPickerQualificationRealCLIPhases']
             self.verify(directory,original,required)
             self.assertEqual(len(original['full_schedule']['assignments']),3)
-            for change in (lambda r:r['invocations'].pop(2),
+            for change in (lambda r:r['full_schedule'].pop('batches'),
+                           lambda r:r['full_schedule'].__setitem__('batches',[[0,1],[2]]),
+                           lambda r:r['full_schedule'].__setitem__('batches',[[0],[1],[2]]),
+                           lambda r:r['full_schedule'].__setitem__('batches',[[0],[1,1,2]]),
+                           lambda r:r['invocations'].pop(2),
                            lambda r:r['full_schedule']['assignments'][2][tier.full_race.CLI].clear(),
                            lambda r:r['invocations'][2]['command'].__setitem__(8,'.*')):
                 bad=copy.deepcopy(original);change(bad)
@@ -768,11 +773,40 @@ class FullRaceTest(unittest.TestCase):
                     events(dict(Action='pass',Package='unknown'))):
             with self.subTest(raw=raw),self.assertRaises(full.shards.Failure):full.listing(raw,{pkg:True})
 
+    def test_full_batch_failure_retains_both_pending_entries_and_never_claims_success(self):
+        for suite in ('linux','macos'):
+            with self.subTest(suite=suite), tempfile.TemporaryDirectory() as d:
+                directory=Path(d);original=self.fixture(directory,isolated=True)
+                raw={p.name:p.read_text() for p in directory.iterdir()}
+                commands=[]
+                def checked(command,output,deadline,env=None):
+                    commands.append(command)
+                    if command[:2]==['go','list']:text=raw['full-packages.json']
+                    elif '-list' in command:text=raw['full-list.jsonl']
+                    else:text=raw[output.name]
+                    output.write_text(text);return text
+                def interrupted(batch,deadline):
+                    pending=json.loads((directory/'tier.json').read_text())['invocations'][-2:]
+                    self.assertEqual([i['log'] for i in pending],['race-1.jsonl','race-2.jsonl'])
+                    batch[0][1].write_text(raw['race-1.jsonl'])
+                    batch[1][1].write_text('')
+                    raise tier.Failure('partial batch cancelled')
+                with mock.patch.object(tier,'git',return_value='a'*40),mock.patch.object(tier.full_race,'source_proof',return_value={'source':'a'*40,'tree':'b'*40}),mock.patch.object(tier,'checked',side_effect=checked),mock.patch.object(tier,'checked_many',side_effect=interrupted),mock.patch.object(tier,'catalog',return_value={'restorations':[]}),mock.patch.dict(os.environ,{'GITHUB_SHA':'a'*40}),contextlib.redirect_stdout(io.StringIO()),self.assertRaisesRegex(tier.Failure,'partial batch'):
+                    tier.run_suite('full',suite,directory,seconds=37)
+                result=json.loads((directory/'tier.json').read_text())
+                self.assertFalse(result['success'])
+                self.assertEqual(len(result['invocations']),3)
+                self.assertTrue(result['invocations'][0]['evidence']['actual'])
+                self.assertTrue(all(i['evidence'] is None for i in result['invocations'][1:]))
+                self.assertNotIn('performance_compile',result)
+                self.assertEqual((directory/'race-1.jsonl').read_text(),raw['race-1.jsonl'])
+                self.assertFalse(any('-c' in command for command in commands))
+
     def test_native_full_and_linux_enforce_the_same_compiled_schedule(self):
         for suite in ('linux','macos'):
             with tempfile.TemporaryDirectory() as d:
-                directory=Path(d);report=self.fixture(directory);raw={p.name:p.read_text() for p in directory.iterdir()}
-                calls=[]
+                directory=Path(d);report=self.fixture(directory,isolated=True);raw={p.name:p.read_text() for p in directory.iterdir()}
+                calls=[]; batches=[]
                 def checked(command,output,deadline,env=None):
                     calls.append((command,deadline,env['AGENT_ARCHIVE_REAL_SYSTEMD']))
                     if command[:2]==['go','list']:text=raw['full-packages.json']
@@ -788,10 +822,20 @@ class FullRaceTest(unittest.TestCase):
                     elif command[0]=='bash':text=events(dict(Action='pass',Package=tier.MODULE+'internal/config',Test='TestPublishedWriterRefusesProtectedConfiguration'))
                     else:text=raw[output.name]
                     output.write_text(text);return text
-                with mock.patch.object(tier,'git',return_value='a'*40),mock.patch.object(tier.full_race,'source_proof',return_value={'source':'a'*40,'tree':'b'*40}),mock.patch.object(tier,'checked',side_effect=checked),mock.patch.object(tier,'catalog',return_value={'restorations':[]}),mock.patch.dict(os.environ,{'GITHUB_SHA':'a'*40}),contextlib.redirect_stdout(io.StringIO()):
+                def checked_many(commands, deadline):
+                    pending=json.loads((directory/'tier.json').read_text())['invocations'][-2:]
+                    self.assertEqual([i['log'] for i in pending],['race-1.jsonl','race-2.jsonl'])
+                    self.assertTrue(all(i['evidence'] is None for i in pending))
+                    self.assertEqual([i['command'] for i in pending],[c for c,_,_ in commands])
+                    batches.append([output.name for _,output,_ in commands])
+                    for command,output,env in commands:
+                        checked(command,output,deadline,env)
+                with mock.patch.object(tier,'git',return_value='a'*40),mock.patch.object(tier.full_race,'source_proof',return_value={'source':'a'*40,'tree':'b'*40}),mock.patch.object(tier,'checked',side_effect=checked),mock.patch.object(tier,'checked_many',side_effect=checked_many),mock.patch.object(tier,'catalog',return_value={'restorations':[]}),mock.patch.dict(os.environ,{'GITHUB_SHA':'a'*40}),contextlib.redirect_stdout(io.StringIO()):
                     tier.run_suite('full',suite,directory,seconds=37)
                 result=json.loads((directory/'tier.json').read_text());self.assertTrue(result['success'])
-                self.assertEqual(len([i for i in result['invocations'] if i['log'].startswith('race')]),2)
+                self.assertEqual(len([i for i in result['invocations'] if i['log'].startswith('race')]),3)
+                self.assertEqual(batches,[['race-1.jsonl','race-2.jsonl']])
+                self.assertEqual(result['full_schedule']['batches'],[[0],[1,2]])
                 self.assertEqual(len({deadline for _,deadline,_ in calls}),1)
                 self.assertTrue(all(enabled=='0' for _,_,enabled in calls))
 

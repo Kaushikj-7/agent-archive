@@ -80,6 +80,8 @@ def stop_processes(processes, previous_children):
                 process.wait(timeout=max(.01, end-time.monotonic()))
             except subprocess.TimeoutExpired as error:
                 raise Failure('killed child did not exit within cleanup deadline') from error
+        if previous_children is None:
+            return  # Native runners retain process-group cleanup and direct-child reaping.
         # PTY harnesses create sessions/groups outside the Go command's
         # group. Once their parent dies they are adopted by this subreaper;
         # terminate and reap all newly adopted children, regardless of PGID.
@@ -109,15 +111,19 @@ def stop_processes(processes, previous_children):
 
 def supervise(commands, deadline):
     """Record each complete invocation; file streams cannot block on pipe output."""
-    # PR_SET_CHILD_SUBREAPER is Linux-specific, as is this race worker. Adopt
-    # test grandchildren if Go exits first, avoiding orphan zombies on failure.
     if time.monotonic() >= deadline:
         raise Failure('shared discovery/test deadline already exceeded')
-    libc = ctypes.CDLL(None, use_errno=True)
-    libc.prctl.argtypes = [ctypes.c_int] + [ctypes.c_ulong] * 4
-    if libc.prctl(36, 1, 0, 0, 0) != 0:
-        raise Failure('cannot enable Linux child-subreaper cleanup')
-    previous_children = child_pids()
+    # Linux also adopts escaped test grandchildren. Native macOS full batches
+    # retain the existing process-group ownership and reap each direct child.
+    previous_children = None
+    if sys.platform == 'linux':
+        libc = ctypes.CDLL(None, use_errno=True)
+        libc.prctl.argtypes = [ctypes.c_int] + [ctypes.c_ulong] * 4
+        if libc.prctl(36, 1, 0, 0, 0) != 0:
+            raise Failure('cannot enable Linux child-subreaper cleanup')
+        previous_children = child_pids()
+    elif sys.platform != 'darwin':
+        raise Failure('unsupported process supervisor platform')
     processes, files, started, durations, monitors, pending = [], [], [], [], [], []
     try:
         for command, output, env in commands:
