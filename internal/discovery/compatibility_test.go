@@ -103,6 +103,7 @@ func TestCompatibleFormatsPublishAndReadBackAmongRejectedRecords(t *testing.T) {
 	var h Health
 	var checkpoint catalog
 	formats := map[string]bool{}
+	observedOutcomes := map[string]bool{}
 	supported := false
 	for pass := range 12 {
 		var err error
@@ -113,6 +114,11 @@ func TestCompatibleFormatsPublishAndReadBackAmongRejectedRecords(t *testing.T) {
 		if h.Outcomes["admission_retry"] != 0 {
 			if err := recoverytest.Exhaust(t.Context(), store, state.SessionIndexRecoverySlice, false); err != nil {
 				t.Fatal(err)
+			}
+		}
+		for outcome, count := range h.Outcomes {
+			if count > 0 {
+				observedOutcomes[outcome] = true
 			}
 		}
 		supported = supported || h.Supported
@@ -140,6 +146,11 @@ func TestCompatibleFormatsPublishAndReadBackAmongRejectedRecords(t *testing.T) {
 	for _, version := range versions {
 		if !formats[version] {
 			t.Fatalf("missing version diagnostic %q", version)
+		}
+	}
+	for _, expected := range rejectionCodes {
+		if !observedOutcomes[expected] {
+			t.Fatalf("missing rejection diagnostic %q: %+v", expected, observedOutcomes)
 		}
 	}
 	for path, expected := range rejected {
