@@ -15,7 +15,8 @@ follow [Semantic Versioning](https://semver.org/).
   from was not found"). Other rollouts of the same thread, such as a branch
   abandoned by a rollback, no longer hold a thread back; they are kept as
   earlier revisions when the scan has seen them and they can be read; one that
-  cannot be read is left out rather than failing the thread's capture.
+  cannot be read, or does not fit beside the thread's own history, is left out
+  rather than failing the thread's capture.
 
 - Load the handoff picker from bounded repository pages on supported scoped
   catalogs, merge current local activity, and continue native eligibility checks

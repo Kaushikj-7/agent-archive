@@ -3,6 +3,7 @@ package collector
 import (
 	"context"
 	"errors"
+	"slices"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
@@ -118,7 +119,18 @@ type revisionPlanner struct {
 	bytesLeft int
 }
 
+// add stages bundle as a historical revision. A failure leaves the plan as it
+// was, so a caller can leave out a best-effort revision that does not fit.
 func (p *revisionPlanner) add(ctx context.Context, bundle archive.SourceBundle) error {
+	sources, preserved, meaningfulAt, bytesLeft := slices.Clone(p.plan.Sources), slices.Clone(p.plan.Preserved), p.plan.MeaningfulAt, p.bytesLeft
+	err := p.stage(ctx, bundle)
+	if err != nil {
+		p.plan.Sources, p.plan.Preserved, p.plan.MeaningfulAt, p.bytesLeft = sources, preserved, meaningfulAt, bytesLeft
+	}
+	return err
+}
+
+func (p *revisionPlanner) stage(ctx context.Context, bundle archive.SourceBundle) error {
 	if err := bundle.ValidateHistory(); err != nil {
 		return err
 	}
@@ -255,7 +267,16 @@ func (p *revisionPlan) historyInputs() []state.HistoryInput {
 	return inputs
 }
 
-func (s *sessionScan) addNativeRevision(planner *revisionPlanner, filtered archive.FilteredTranscript, binding *archive.CodexSourceBinding, metadata archive.Metadata, cached, previous archive.SourceBundle) error {
+// addNativeRevision stages one native historical revision. On failure it
+// leaves the plan unchanged and releases what it retained, so revisions can
+// leave out a best-effort revision the plan cannot hold.
+func (s *sessionScan) addNativeRevision(planner *revisionPlanner, filtered archive.FilteredTranscript, binding *archive.CodexSourceBinding, metadata archive.Metadata, cached, previous archive.SourceBundle) (err error) {
+	mark := len(s.retainedReleases)
+	defer func() {
+		if err != nil {
+			s.releaseRetainedAfter(mark)
+		}
+	}()
 	bundle, err := s.newSourceBundle(s.reg, planner.adapter, filtered, s.now, nil)
 	if err != nil {
 		return err

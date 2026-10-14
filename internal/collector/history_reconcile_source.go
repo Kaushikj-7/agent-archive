@@ -11,6 +11,8 @@ import (
 
 // revisions owns a serial read lease. The consumer must release its native
 // values before returning; only bounded filtered/staged evidence may survive.
+// A consumer that returns an error must leave its own state as it was before
+// the call: a best-effort revision it refuses for a limit is left out.
 func (r providerReader) revisions(ctx context.Context, adapter agentapi.TranscriptFilter, expected sourceState, maxBytes int64, related bool, consume func(archive.FilteredTranscript, *archive.CodexSourceBinding) error) (err error) {
 	provider, _, err := r.binding()
 	if err != nil {
@@ -64,8 +66,9 @@ func (r providerReader) revisions(ctx context.Context, adapter agentapi.Transcri
 		}
 	}
 	// A best-effort candidate that cannot be read, or no longer fits the
-	// budget the chain left, is left out: an off-chain rollout never blocks
-	// the chain's own capture. Its consumer's failures still fail.
+	// budget the chain left or the consumer's own limits, is left out: an
+	// off-chain rollout never blocks the chain's own capture. Its consumer's
+	// other failures still fail.
 	for _, ref := range set.BestEffort {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -76,7 +79,7 @@ func (r providerReader) revisions(ctx context.Context, adapter agentapi.Transcri
 			consumeErr = consume(filtered, binding)
 			return consumeErr
 		})
-		if consumeErr != nil || ctx.Err() != nil {
+		if consumeErr != nil && !consumerLimit(consumeErr) || ctx.Err() != nil {
 			return errors.Join(err, ctx.Err())
 		}
 		if err != nil {
@@ -91,6 +94,12 @@ func (r providerReader) revisions(ctx context.Context, adapter agentapi.Transcri
 		return agentapi.Wrap(agentapi.Changed, errors.New("active revision changed after reconciliation"))
 	}
 	return nil
+}
+
+// consumerLimit reports a revisions consumer refusing one revision for its
+// own aggregate limits (stage count or bytes, retained or import budget).
+func consumerLimit(err error) bool {
+	return agentapi.HasFailure(err, agentapi.Limit) || errors.Is(err, agentapi.ErrReadBudget)
 }
 
 // revisionBudget is what one reconciliation's historical reads may still
