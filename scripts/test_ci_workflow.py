@@ -271,7 +271,12 @@ class CadenceTest(unittest.TestCase):
             self.assertIn('--suite '+suite+' --output tier-results',found[name])
             self.assertIn('if-no-files-found: error',found[name])
         runner=(ROOT/'scripts/run_ci_tier.py').read_text()
-        self.assertIn("['-short'] if tier == 'daily' else []",runner)
+        self.assertIn("if tier == 'full':", runner)
+        self.assertIn('full_race.run(packages, out, deadline', runner)
+        self.assertIn("execute(common + ['-short'] + packages, 'race', True)", runner)
+        full = (ROOT / 'scripts/full_race.py').read_text()
+        self.assertIn("COMMON = ['go', 'test', '-race', '-count=1', '-json', '-timeout', '20m']", full)
+        self.assertNotIn("'-short'", full)
         self.assertIn("AGENT_ARCHIVE_PERF='1'",runner)
         self.assertIn("'-count=1'",runner)
 

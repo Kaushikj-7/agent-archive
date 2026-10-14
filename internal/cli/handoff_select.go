@@ -296,6 +296,9 @@ type localLabelResult struct {
 }
 
 type handoffPicker struct {
+	// searchLabelBudget bounds attempted uncached native reads in bounded search.
+	// Zero preserves the legacy accepted-row title limit.
+	searchLabelBudget int
 	// Shared by picker scope/search views; only small safe row facts are cached.
 	localLabels map[localLabelKey]localLabelResult
 	// readError opts bounded search into strict activity/cancellation errors.
@@ -316,6 +319,12 @@ type handoffPicker struct {
 	// be read into (its transcript read to title it): past it, such a
 	// session is left out, as a limit would leave it out. 0 for no bound.
 	readLimit int
+}
+
+// withContext preserves picker policy while using the current operation's context.
+func (p handoffPicker) withContext(ctx context.Context) handoffPicker {
+	p.ctx = ctx
+	return p
 }
 
 // rows merges registrations with archived sessions, joined on the archive
@@ -389,7 +398,7 @@ func (p handoffPicker) rows(regs []archive.SessionRegistration, archived []archi
 	})
 	sort.SliceStable(all, func(i, j int) bool { return all[i].active.After(all[j].active) })
 	rows = make([]handoffPickerRow, 0, min(limit, len(all)))
-	unknown := false
+	attempts, unknown := 0, false
 	for i, row := range all {
 		if len(rows) == limit {
 			// Every archived session left over can be offered; one not
@@ -401,8 +410,9 @@ func (p handoffPicker) rows(regs []archive.SessionRegistration, archived []archi
 			return rows, len(rows) + len(rest), true
 		}
 		if row.unbuilt != nil {
-			if p.labelLimitReached(len(rows)) {
-				unknown = unknown || p.readError != nil
+			admitted, partial := p.admitLocalLabel(*row.unbuilt, row.active, len(rows), &attempts)
+			if !admitted {
+				unknown = unknown || partial
 				continue
 			}
 			result, labelUnknown, err := p.localMetadataForRows(*row.unbuilt, row.active)
@@ -432,6 +442,23 @@ func (p handoffPicker) activities(regs []archive.SessionRegistration) (map[picke
 		*p.readError = err
 	}
 	return activity, err
+}
+
+// admitLocalLabel applies the legacy accepted-row limit and the bounded
+// search-only attempted-read limit before reading a native label.
+func (p handoffPicker) admitLocalLabel(reg archive.SessionRegistration, active time.Time, rows int, attempts *int) (bool, bool) {
+	if p.labelLimitReached(rows) {
+		return false, p.readError != nil || p.searchLabelBudget > 0
+	}
+	key := pickerLocalLabelKey(reg, active, p.source)
+	if _, cached := p.localLabels[key]; cached || p.searchLabelBudget <= 0 {
+		return true, false
+	}
+	if *attempts >= p.searchLabelBudget {
+		return false, true
+	}
+	*attempts++
+	return true, false
 }
 
 func (p handoffPicker) labelLimitReached(rows int) bool {
