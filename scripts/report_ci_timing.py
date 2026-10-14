@@ -175,6 +175,8 @@ def go_event_stamp(value):
     if not match:
         raise ValueError('invalid Go event timestamp')
     whole, fraction, zone = match.groups()
+    if zone != 'Z' and (int(zone[1:3]) > 23 or int(zone[4:6]) > 59):
+        raise ValueError('invalid Go event timezone offset')
     return Decimal(str(stamp(whole + zone))) + Decimal('0.' + (fraction or '0'))
 
 

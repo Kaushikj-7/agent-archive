@@ -151,6 +151,7 @@ class ReportTests(unittest.TestCase):
         for broken in (events[1:], events[:-1], [e for e in events if e['Action'] != 'cont'],
                        [dict(e, Time=None) if e['Action'] == 'run' else e for e in events],
                        [dict(e, Time='bad') if e['Action'] == 'cont' else e for e in events],
+                       [dict(e, Time='2026-10-14T00:00:10+01:99') if e['Action'] == 'cont' else e for e in events],
                        [dict(e, Time='2026-10-13T00:00:00Z') if e['Action'] == 'pass' else e for e in events],
                        [e for e in events if e['Action'] != 'pause']):
             with self.subTest(events=broken):
