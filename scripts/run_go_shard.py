@@ -25,16 +25,17 @@ class Failure(RuntimeError):
 
 
 def json_stream(text):
-    decoder = json.JSONDecoder()
-    items = []
-    while text.strip():
-        text = text.lstrip()
-        item, end = decoder.raw_decode(text)
+    """Decode concatenated objects without repeatedly copying the remaining log."""
+    decoder, items, offset = json.JSONDecoder(), [], 0
+    whitespace = re.compile(r'\s*')
+    while True:
+        offset = whitespace.match(text, offset).end()
+        if offset == len(text):
+            return items
+        item, offset = decoder.raw_decode(text, offset)
         if not isinstance(item, dict):
             raise Failure('JSON record is not an object')
         items.append(item)
-        text = text[end:]
-    return items
 
 
 def child_pids():
@@ -298,7 +299,7 @@ def digest(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 
 
-def reconcile(directory, workers=2, audit_evidence=None, *, expected_source_proof=None):
+def reconcile(directory, workers=2, audit_evidence=None, *, expected_source_proof=None, require_plain_vet=False):
     worker_count(workers)
     paths = sorted(Path(directory).glob('**/manifest.json'))
     if len(paths) != workers:
@@ -318,6 +319,20 @@ def reconcile(directory, workers=2, audit_evidence=None, *, expected_source_proo
                 run_ci_tier.verify_source_audit(audit_evidence, first['source'])
             else:
                 run_ci_tier.verify_source_audit(audit_evidence, first['source'], expected_source_proof=expected_source_proof)
+        except run_ci_tier.Failure as error:
+            raise Failure(str(error)) from error
+    vet_owned = [m.get('settings', {}).get('plain_vet_owned', False) for m in manifests]
+    if any(vet_owned) or require_plain_vet:
+        import run_ci_tier
+        contexts = {m.get('settings', {}).get('plain_vet_context_sha256') for m in manifests}
+        if not all(v is True for v in vet_owned) or len(contexts) != 1 or audit_evidence is None:
+            raise Failure('owned plain vet requires complete independent evidence')
+        try:
+            audit = run_ci_tier.verify_source_audit(audit_evidence, first['source'],
+                expected_source_proof=expected_source_proof, require_plain_vet=True,
+                expected_vet_context_sha256=next(iter(contexts)))
+            if any(m['settings'].get('plain_vet_source_proof') != audit.get('source_proof') for m in manifests):
+                raise Failure('owned plain vet worker tracked source proof mismatch')
         except run_ci_tier.Failure as error:
             raise Failure(str(error)) from error
     for manifest in manifests:
@@ -372,7 +387,7 @@ def verdict(event, ref, needs):
         raise Failure('required job result did not succeed or intentionally skip')
 
 
-def run(index, out, seconds, workers=2, plain_audit_owned=False):
+def run(index, out, seconds, workers=2, plain_audit_owned=False, plain_vet_owned=False):
     worker_count(workers)
     if type(index) is not int or index not in range(workers):
         raise Failure("invalid worker index")
@@ -406,7 +421,7 @@ def run(index, out, seconds, workers=2, plain_audit_owned=False):
     auxiliary = hints.get('auxiliary_costs_ms', {'vet': 0, 'git_invocation': 0})
     if set(auxiliary) != {'vet', 'git_invocation'} or any(type(v) is not int or v < 0 for v in auxiliary.values()):
         raise Failure('invalid auxiliary scheduling hints')
-    fixed = [auxiliary['vet']] + [0] * (workers - 1)
+    fixed = [0 if plain_vet_owned else auxiliary['vet']] + [0] * (workers - 1)
     package_hints = dict(hints['packages'])
     exclusions = hints.get('owned_plain_audit_exclusions_ms', {})
     if any(type(v) is not int or v < 0 for v in exclusions.values()):
@@ -429,6 +444,13 @@ def run(index, out, seconds, workers=2, plain_audit_owned=False):
                                'usage': 'logical ranking plus observed fixed invocation advice; not elapsed forecast'},
                 'settings': {'plain_audit_owned': plain_audit_owned, 'workers': workers, 'cpus': cpus, 'cli_cpus': cli_cpus, 'ordinary_cpus': ordinary_cpus, 'package_p': 1,
                              'ordinary_parallel': ordinary_cpus, 'cli_parallel': cli_cpus, 'deadline_seconds': seconds}}
+    if plain_vet_owned:
+        import run_ci_tier
+        worker_source = run_ci_tier.full_race.source_proof(ROOT)
+        if worker_source['source'] != source:
+            raise Failure('owned vet worker tracked source mismatch')
+        manifest['settings'].update(plain_vet_owned=True, plain_vet_source_proof=worker_source,
+            plain_vet_context_sha256=digest(run_ci_tier.plain_vet_context()))
     path = out / 'manifest.json'
     path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + '\n')
     print('effective catalog:', json.dumps(catalog, sort_keys=True), flush=True)
@@ -472,7 +494,9 @@ def run(index, out, seconds, workers=2, plain_audit_owned=False):
                               (['git-identity.json'] if isolated else []) + (['ordinary.json'] if overlapping else []))
     p = coverage(ordinary_text, {n: packages[n] for n in package_bins[index]})
     c = coverage((out / 'cli.json').read_text(), {CLI: True}, cli_bins[index])
-    if index == 0:
+    if plain_vet_owned and run_ci_tier.full_race.source_proof(ROOT) != manifest['settings']['plain_vet_source_proof']:
+        raise Failure('owned vet worker source changed during execution')
+    if index == 0 and not plain_vet_owned:
         phases['vet_seconds'] = supervise([(['go', 'vet', './...'], out / 'vet.txt', env)], deadline)[0]
     import run_ci_tier
     manifest['tier'] = 'pr'
@@ -489,6 +513,7 @@ def main():
     group.add_argument('--shard', type=int)
     parser.add_argument('--workers', type=int, choices=(2, 4), default=2)
     parser.add_argument('--plain-audit-owned', action='store_true')
+    parser.add_argument('--plain-vet-owned', action='store_true')
     parser.add_argument('--audit-evidence', type=Path)
     group.add_argument('--reconcile', type=Path)
     group.add_argument('--verdict', action='store_true')
@@ -505,10 +530,10 @@ def main():
         if args.verdict:
             verdict(os.environ['GITHUB_EVENT_NAME'], os.environ['GITHUB_REF'], json.loads(os.environ['NEEDS']))
         elif args.reconcile is not None:
-            reconcile(args.reconcile, args.workers, args.audit_evidence)
+            reconcile(args.reconcile, args.workers, args.audit_evidence, require_plain_vet=args.plain_vet_owned)
         else:
             os.chdir(ROOT)
-            run(args.shard, args.output, args.seconds, args.workers, args.plain_audit_owned)
+            run(args.shard, args.output, args.seconds, args.workers, args.plain_audit_owned, args.plain_vet_owned)
     except (Failure, ValueError, KeyError, OSError) as error:
         print(f'shard gate failed: {error}', file=sys.stderr)
         return 1

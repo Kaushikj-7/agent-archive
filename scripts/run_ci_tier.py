@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Explicit CI cadence, conservative PR backstops and actual execution evidence."""
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -333,7 +334,90 @@ def source_audit_body(raw):
     return actual
 
 
-def verify_source_audit(directory, source, *, expected_source_proof=None):
+PLAIN_VET_COMMAND = ['go', 'vet', './...']
+
+
+def plain_vet_context():
+    """Use the existing strict Go/compiler identity for native Linux plain vet."""
+    import go_cache_context
+    try:
+        context = go_cache_context.runtime_context()
+    except go_cache_context.InvalidContext as error:
+        raise Failure('plain vet runtime context invalid') from error
+    if context['go']['GOARCH'] != 'amd64':
+        raise Failure('plain vet requires native Linux amd64')
+    return dict(context, race=False)
+
+
+def execute_plain_vet(out, deadline):
+    env = dict(os.environ, AGENT_ARCHIVE_REAL_SYSTEMD='0')
+    env.pop('AGENT_ARCHIVE_PERF', None)
+    before = full_race.source_proof(ROOT)
+    context = plain_vet_context()
+    started = time.monotonic()
+    raw = checked(PLAIN_VET_COMMAND, out/'plain-vet.txt', deadline, env)
+    after = full_race.source_proof(ROOT)
+    if before != after or context != plain_vet_context():
+        raise Failure('plain vet source or context changed during execution')
+    return {'command': PLAIN_VET_COMMAND, 'log': 'plain-vet.txt', 'exit_code': 0,
+            'pre_source_proof': before, 'post_source_proof': after, 'context': context,
+            'log_sha256': hashlib.sha256(raw.encode()).hexdigest(),
+            'invocation_seconds': time.monotonic()-started,
+            'performance_enabled': False, 'real_systemd_enabled': False}
+
+
+def verify_plain_vet(directory, report, expected, expected_context_sha256, historical=False):
+    """Require canonical successful execution receipt separately from audit bodies."""
+    import run_go_shard
+    receipt = report.get('plain_vet')
+    if not isinstance(receipt, dict):
+        raise Failure('owned plain vet receipt missing')
+    context = receipt.get('context', {})
+    if not isinstance(context, dict) or not isinstance(context.get('go'), dict):
+        raise Failure('plain vet recorded context malformed')
+    go = context['go']
+    import go_cache_context
+    hashes = [context.get('os_release')]
+    for compiler in ('cc', 'cxx'):
+        identity = context.get(compiler, {})
+        if not isinstance(identity, dict) or set(identity) != {'binary', 'version'}:
+            raise Failure('plain vet compiler identity missing')
+        hashes.extend(identity.values())
+    tools = context.get('toolchain', {})
+    if not isinstance(tools, dict) or set(tools) != {'go','compile','asm','link','cgo','vet'}:
+        raise Failure('plain vet toolchain identity missing')
+    hashes.extend(tools.values())
+    if (context.get('schema') != go_cache_context.SCHEMA or set(go) != set(go_cache_context.GO_FIELDS)
+            or any(not isinstance(v,str) for v in go.values())
+            or any(not isinstance(v,str) or not re.fullmatch('[0-9a-f]{64}',v) for v in hashes)):
+        raise Failure('plain vet compiler/environment identity malformed')
+    if (context.get('race') is not False or context.get('tags') != []
+            or context.get('version') != 'go version go1.27.2 linux/amd64'
+            or context.get('runner_os') != 'Linux' or context.get('runner_arch') != 'X64'
+            or any(go.get(k) != v for k,v in {'GOVERSION':'go1.27.2', 'GOOS':'linux',
+                'GOHOSTOS':'linux','GOARCH':'amd64','GOHOSTARCH':'amd64','CGO_ENABLED':'1',
+                'GOTOOLCHAIN':'local','GOWORK':'off','GOFLAGS':'-mod=readonly'}.items())
+            or not isinstance(expected_context_sha256,str)
+            or not re.fullmatch('[0-9a-f]{64}',expected_context_sha256)
+            or run_go_shard.digest(context) != expected_context_sha256):
+        raise Failure('plain vet recorded context mismatch')
+    if not historical and context != plain_vet_context():
+        raise Failure('plain vet current context mismatch')
+    if (receipt.get('command') != PLAIN_VET_COMMAND or receipt.get('log') != 'plain-vet.txt'
+            or type(receipt.get('exit_code')) is not int or receipt['exit_code'] != 0
+            or receipt.get('pre_source_proof') != expected or receipt.get('post_source_proof') != expected
+            or receipt.get('performance_enabled') is not False
+            or receipt.get('real_systemd_enabled') is not False):
+        raise Failure('plain vet execution/source receipt mismatch')
+    try:
+        raw = (Path(directory)/'plain-vet.txt').read_bytes()
+    except OSError as error:
+        raise Failure('plain vet raw log missing') from error
+    if receipt.get('log_sha256') != hashlib.sha256(raw).hexdigest():
+        raise Failure('plain vet raw log mismatch')
+
+
+def verify_source_audit(directory, source, *, expected_source_proof=None, require_plain_vet=False, expected_vet_context_sha256=None):
     """Require exact-source plain named body and package PASS, never compilation."""
     directory = Path(directory)
     report = json.loads((directory / 'tier.json').read_text())
@@ -361,10 +445,15 @@ def verify_source_audit(directory, source, *, expected_source_proof=None):
     actual = source_audit_body(raw)
     if invocation.get('evidence') != actual:
         raise Failure('plain source audit raw body evidence mismatch')
+    if require_plain_vet:
+        verify_plain_vet(directory, report, expected, expected_vet_context_sha256,
+                         historical=expected_source_proof is not None)
     return report
 
 
-def run_suite(tier, suite, out, extras=None, seconds=2400):
+def run_suite(tier, suite, out, extras=None, seconds=2400, *, own_plain_vet=False):
+    if own_plain_vet and (tier != 'pr' or suite != 'audit'):
+        raise Failure('plain vet ownership requires PR source-audit suite')
     out.mkdir(parents=True, exist_ok=True)
     source = git('rev-parse', 'HEAD')
     if source != os.environ.get('GITHUB_SHA', source):
@@ -503,12 +592,16 @@ def run_suite(tier, suite, out, extras=None, seconds=2400):
             full_race.verify(out, report, packages, ROOT, body_evidence, verify_selected, catalog()['restorations'])
         except full_race.shards.Failure as error:
             raise Failure(str(error)) from error
+    if own_plain_vet:
+        report['plain_vet'] = execute_plain_vet(out, deadline)
     if tier == 'pr' and full_race.source_proof(ROOT) != report['source_proof']:
         raise Failure('PR regression source changed during execution')
     report['success'] = True
     path.write_text(json.dumps(report,indent=2)+'\n')
     if suite == 'audit':
-        verify_source_audit(out, source)
+        import run_go_shard
+        context_hash = run_go_shard.digest(report['plain_vet']['context']) if own_plain_vet else None
+        verify_source_audit(out, source, require_plain_vet=own_plain_vet, expected_vet_context_sha256=context_hash)
 
 
 def verify_full(directory, plan):
@@ -657,6 +750,7 @@ def main():
     parser.add_argument('--plan', action='store_true')
     parser.add_argument('--verify', action='store_true')
     parser.add_argument('--verify-audit', action='store_true')
+    parser.add_argument('--own-plain-vet', action='store_true')
     parser.add_argument('--tier', choices=['pr','daily','full'])
     parser.add_argument('--suite', choices=['linux','macos','fuzz','systemd','extra','audit'], default='linux')
     parser.add_argument('--output', type=Path, required=True)
@@ -680,7 +774,10 @@ def main():
         if event == 'schedule' and args.tier and args.tier != resolved:
             raise Failure('explicit tier conflicts with scheduled cadence')
         if args.verify_audit:
-            verify_source_audit(args.output, os.environ['GITHUB_SHA'])
+            import run_go_shard
+            context_hash = run_go_shard.digest(plain_vet_context()) if args.own_plain_vet else None
+            verify_source_audit(args.output, os.environ['GITHUB_SHA'],
+                require_plain_vet=args.own_plain_vet, expected_vet_context_sha256=context_hash)
             return 0
         if args.verify:
             verify_full(args.output, json.loads(args.extra_plan.read_text()))
@@ -705,7 +802,7 @@ def main():
                 raise Failure('extra plan source mismatch')
             if tier == 'pr' and args.suite not in ('extra', 'macos', 'audit'):
                 raise Failure('PR ordinary coverage belongs to exhaustive shards')
-            run_suite(tier,args.suite,args.output,extra,args.seconds)
+            run_suite(tier,args.suite,args.output,extra,args.seconds,own_plain_vet=args.own_plain_vet)
     except (Failure,ValueError,KeyError,TypeError,OSError,subprocess.SubprocessError) as error:
         print('tier gate failed: '+str(error),file=sys.stderr)
         return 1
