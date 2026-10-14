@@ -14,6 +14,8 @@ follow [Semantic Versioning](https://semver.org/).
   Older sessions advances each scope independently; complete archive search
   starts when filtering and reports loading or read failures. Cancelling a
   search or page read joins its provider work before selection or exit.
+  Synthetic first-screen/Older controls distinguish archive request/body costs
+  from native registration work; production S3/R2 activation remains gated.
   Handoff search caps attempted native label reads, including failures, and
   distinguishes observed matches from unknown local eligibility.
 

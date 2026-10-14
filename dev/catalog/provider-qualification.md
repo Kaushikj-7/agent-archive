@@ -48,7 +48,12 @@ retain tombstones; a fifth bounded receipt tree retains mutation digests and
 unique committed revisions. Persist the frozen mutation ID and expected session
 revision in guarded `PendingPublication.commit` before any upload. Prior durable
 writers reject the reserved `commit` field, and catalog destination configs use
-the forward writer fence `catalog-v4-v11`. Legacy config/state remains readable.
+the original protocol-10 forward writer fence `catalog-v4-v11`. Scoped-picker
+protocol 11/schema 5 destinations require configuration 14 and the stronger exact
+`scoped-picker-v1` fence. See the [scoped upgrade and rollback
+contract](../../docs/guides/catalog-migration.md). Legacy config/state remains
+readable; these source contracts do not qualify production CAS, provider clocks
+or credential cutover, which remain on HOLD.
 
 `catalog.Store` resolves canonical metadata reads to the current identity entry,
 including bounded history reads and validators. It never writes canonical
@@ -94,3 +99,9 @@ supplied by the real destination coordinator. Missing or nil coordinator evidenc
 fails before any head or source write. The current provider refusal remains in
 place before credential access, including the R2 Keychain. Recovery releases
 only the exact observed durable owner under a newly held complete barrier.
+
+Scoped picker CLI10k/100k operation controls and matched synthetic measurements
+are documented in the [picker qualification protocol](../maintainers/picker-qualification/README.md).
+They qualify only their pinned source/fixture envelope. They supply no production
+endpoint CAS/clock or credential-cutover proof and do not enable S3/R2 capability
+methods. Keep actual multi-machine/provider/lifecycle acceptance separate.

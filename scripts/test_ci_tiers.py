@@ -132,6 +132,62 @@ class EvidenceTest(unittest.TestCase):
             proof=json.loads((Path(d)/'tier.json').read_text());self.assertTrue(proof['success']);self.assertEqual(proof['invocations'],[])
 
 
+class PerformanceCompileTest(unittest.TestCase):
+    proof = {'source': 'a'*40, 'tree': 'b'*40}
+
+    def test_compile_only_preparation_never_executes_binaries_and_cleans_before_return(self):
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d); marker = out/'executed'; directories = []
+            env = {'AGENT_ARCHIVE_PERF': '1', 'AGENT_ARCHIVE_REAL_SYSTEMD': '0'}
+            packages = ['./internal/collector', './internal/archive', './internal/agents/nativecodec', './internal/capture']
+            self.assertEqual(tier.PERFORMANCE, ['go', 'test', '-v', '-json', '-p', '1', '-count=1', '-run', 'StayFast|FiveMegabyte|TestCursorOverlappingHooksRegisterOnce', *packages])
+            def compile_only(command, output, deadline, actual_env):
+                self.assertEqual(command[:6], ['go', 'test', '-c', '-p', '2', '-o'])
+                self.assertEqual(command[7:], packages)
+                self.assertEqual(deadline, 137); self.assertIs(actual_env, env)
+                directory = Path(command[6]); directories.append(directory)
+                self.assertNotEqual(directory.parent, tier.ROOT)
+                for package in command[7:]:
+                    binary = directory/(package.rsplit('/', 1)[1]+'.test')
+                    binary.write_text('#!/bin/sh\ntouch '+str(marker)+'\n')
+                    binary.chmod(0o700)
+                output.write_text(''); return ''
+            with mock.patch.object(tier.full_race, 'source_proof', return_value=self.proof), mock.patch.object(tier, 'checked', side_effect=compile_only):
+                result = tier.prepare_performance(out, 137, env, self.proof)
+            self.assertFalse(marker.exists())
+            self.assertFalse(directories[0].exists())
+            self.assertEqual(result, dict(source_proof=self.proof, packages=tier.PERFORMANCE[-4:], parallel=2, completed=True))
+
+    def test_failure_missing_binary_and_changed_source_prevent_canonical_execution(self):
+        for failure in ('compile', 'cancel', 'missing', 'symlink', 'source-before', 'source-after'):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as d:
+                out = Path(d); calls = []; directories = []
+                changed = dict(self.proof, tree='c'*40)
+                proofs = [changed] if failure == 'source-before' else [self.proof, changed if failure == 'source-after' else self.proof]
+                def compile_only(command, output, deadline, env):
+                    calls.append(command)
+                    self.assertIn('-c', command)
+                    directory = Path(command[command.index('-o')+1]); directories.append(directory)
+                    for package in command[7:]:
+                        if failure != 'missing' or package != command[-1]:
+                            binary = directory/(package.rsplit('/', 1)[1]+'.test')
+                            if failure == 'symlink' and package == command[-1]:
+                                binary.symlink_to(directory/'collector.test')
+                            else:
+                                binary.write_text('not executable')
+                    if failure in ('compile', 'cancel'):
+                        raise tier.Failure('compile failed' if failure == 'compile' else 'tier command cancelled')
+                    output.write_text(''); return ''
+                def full_run(packages, directory, deadline, report, *args):
+                    report['full_schedule'] = {'source_proof': self.proof}
+                with mock.patch.object(tier, 'git', return_value='a'*40), mock.patch.object(tier.full_race, 'run', side_effect=full_run), mock.patch.object(tier.full_race, 'source_proof', side_effect=proofs), mock.patch.object(tier, 'checked', side_effect=compile_only), mock.patch.dict(os.environ, {'GITHUB_SHA': 'a'*40}), self.assertRaises(tier.Failure):
+                    tier.run_suite('full', 'linux', out, seconds=37)
+                self.assertTrue(all('-c' in command for command in calls))
+                self.assertTrue(all(not directory.exists() for directory in directories))
+                report = json.loads((out/'tier.json').read_text())
+                self.assertFalse(report['success']); self.assertEqual(report['invocations'], [])
+
+
 class SourceProofTest(unittest.TestCase):
     def test_full_source_proof_rejects_hidden_modes_symlinks_and_ignored_go_inputs(self):
         with tempfile.TemporaryDirectory() as d:
@@ -211,6 +267,11 @@ class ExecutionPlanTest(unittest.TestCase):
             if command[:2] == ['go', 'list']:
                 text=json.dumps({'ImportPath':package,'TestGoFiles':['test.go']})
                 output.write_text(text);return text
+            if '-c' in command:
+                temporary = Path(command[command.index('-o')+1])
+                for selected_package in command[7:]:
+                    (temporary/(selected_package.rsplit('/', 1)[1]+'.test')).write_text('compile only')
+                output.write_text(''); return ''
             if './internal/cli' in command:
                 package=tier.MODULE+'internal/cli';name='TestRealSystemdSetup'
             if '-list' in command:
@@ -334,6 +395,7 @@ class FullRaceTest(unittest.TestCase):
                     invocations=invocations,full_schedule=schedule,
                     full_schedule_sha256=full.shards.digest(schedule),
                     full_discovery=[dict(d,completed=True) for d in schedule['discovery']])
+        report['performance_compile'] = dict(source_proof=schedule['source_proof'], packages=tier.PERFORMANCE[-4:], parallel=2, completed=True)
         return report
 
     def verify(self, directory, report, restorations=None):
@@ -366,6 +428,11 @@ class FullRaceTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             directory=Path(d);original=self.fixture(directory)
             changes=[lambda r:r['full_schedule']['names'][tier.full_race.CLI].remove('FuzzSeed'),
+                     lambda r:r.pop('performance_compile'),
+                     lambda r:r['performance_compile'].update(parallel=4),
+                     lambda r:r['performance_compile'].update(completed=False),
+                     lambda r:r['performance_compile']['packages'].pop(),
+                     lambda r:r['performance_compile']['source_proof'].update(tree='c'*40),
                      lambda r:r.update(event='push'),
                      lambda r:r.update(ref='refs/heads/unrelated'),
                      lambda r:r['full_schedule']['assignments'][1][tier.full_race.CLI].append('TestCollision'),
@@ -435,6 +502,14 @@ class FullRaceTest(unittest.TestCase):
                 def checked(command,output,deadline,env=None):
                     calls.append((command,deadline,env['AGENT_ARCHIVE_REAL_SYSTEMD']))
                     if command[:2]==['go','list']:text=raw['full-packages.json']
+                    elif '-c' in command:
+                        temporary = Path(command[command.index('-o')+1])
+                        for package in command[7:]:
+                            (temporary/(package.rsplit('/', 1)[1]+'.test')).write_text('compile only')
+                        text = ''
+                    elif command == tier.PERFORMANCE:
+                        self.assertTrue(all(not Path(c[6]).exists() for c, _, _ in calls if '-c' in c))
+                        text = raw[output.name]
                     elif '-list' in command:text=raw['full-list.jsonl']
                     elif command[0]=='bash':text=events(dict(Action='pass',Package=tier.MODULE+'internal/config',Test='TestPublishedWriterRefusesProtectedConfiguration'))
                     else:text=raw[output.name]
