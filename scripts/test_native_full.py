@@ -99,6 +99,7 @@ class NativeFullTest(unittest.TestCase):
         report['performance_compile'] = dict(source_proof=PROOF, packages=native.tier.PERFORMANCE[-4:], parallel=2, completed=True)
         (out/'performance-compile.log').write_text('compiled\n')
         perf = {OTHER: ['TestSame']}
+        report['performance_scope'] = {'compiled_selection': perf, 'compile_only': sorted(native.PERFORMANCE_COMPILE_ONLY)}
         published = {native.tier.MODULE+'internal/config': ['TestPublishedWriterRefusesProtectedConfiguration']}
         for log, command, selected, enabled in (
                 ('performance.jsonl', native.tier.PERFORMANCE, perf, True),
@@ -276,6 +277,57 @@ class NativeFullTest(unittest.TestCase):
         self.assertIn(CLI+'::TestFull',unknown)
         self.assertIn(CLI+'::FuzzSeed',unknown)
         self.assertTrue(all(c>0 for c in costs.values()))
+
+    def test_real_compiled_native_catalog_has_five_performance_bodies_and_compile_only_archive(self):
+        # Regression P3-R1 uses the actual successful hosted compiled catalog,
+        # whose archive package has 157 parents and zero regex matches.
+        fixture = json.loads((Path(__file__).parent/'testdata/native_performance_catalog.json').read_text())
+        selected = native.performance_names(fixture)
+        archive = native.tier.MODULE+'internal/archive'
+        self.assertEqual(len(fixture['schedule']['names'][archive]), 157)
+        self.assertEqual(selected[archive], [])
+        self.assertEqual(set(selected), {native.tier.MODULE+p[2:] for p in native.tier.PERFORMANCE[-4:]})
+        self.assertEqual(sum(map(len, selected.values())), 5)
+        for pkg, required in native.PERFORMANCE_REQUIRED.items():
+            self.assertEqual(set(selected[pkg]), required)
+        for pkg, required in native.PERFORMANCE_REQUIRED.items():
+            for name in required:
+                bad = copy.deepcopy(fixture)
+                bad['schedule']['names'][pkg].remove(name)
+                with self.assertRaises(native.Failure):
+                    native.performance_names(bad)
+        for pkg in selected:
+            bad = copy.deepcopy(fixture)
+            del bad['schedule']['names'][pkg]
+            with self.assertRaises(native.Failure):
+                native.performance_names(bad)
+        bad = copy.deepcopy(fixture)
+        bad['schedule']['names'][archive].append('TestUnexpectedStayFast')
+        with self.assertRaises(native.Failure):
+            native.performance_names(bad)
+
+    def test_performance_raw_evidence_retains_compile_only_package_pass(self):
+        fixture = json.loads((Path(__file__).parent/'testdata/native_performance_catalog.json').read_text())
+        selected = native.performance_names(fixture)
+        packages = {p:True for p in selected}
+        text = bodies(selected, packages)
+        out = self.out/'plain'
+        out.mkdir()
+        report = self.receipt('obligations')
+        with patch.object(native.tier,'checked',return_value=text):
+            native.invocation(out, report, native.tier.PERFORMANCE, 'performance', 100,
+                              dict(ENV,AGENT_ARCHIVE_PERF='1'),selected)
+        (out/'performance.jsonl').write_text(text)
+        native.verify_invocation(out,report['invocations'][0],native.tier.PERFORMANCE,
+                                 selected,performance=True)
+        archive = native.tier.MODULE+'internal/archive'
+        events = [json.loads(line) for line in text.splitlines()]
+        missing_package = stream([e for e in events if e['Package']!=archive])
+        with self.assertRaises(native.Failure):
+            native.body_coverage(missing_package, packages, selected)
+        skipped_package = stream([dict(e,Action='skip') if e['Package']==archive and e['Action']=='pass' else e for e in events])
+        with self.assertRaises(native.Failure):
+            native.body_coverage(skipped_package,packages,selected)
 
     def test_plain_performance_missing_package_and_body_fails(self):
         with self.assertRaises(native.Failure):

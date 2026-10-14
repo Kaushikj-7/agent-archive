@@ -146,15 +146,39 @@ def restorations(actual, plan):
     tier.verify_selected(actual, selected, children)
 
 
+# The canonical command includes archive to compile and run its test main;
+# its historical/current catalog has no parent matching the performance regex.
+# Keep that package in preflight and runtime package evidence explicitly. Every
+# body-bearing package must still compile all intended named performance bodies.
+PERFORMANCE_COMPILE_ONLY = {tier.MODULE+'internal/archive'}
+PERFORMANCE_REQUIRED = {
+    tier.MODULE+'internal/collector': {
+        'TestFiveMegabyteToolResultRecordPublishes',
+        'TestLargeGrowingSessionPassesStayFast',
+        'TestUnchangedSessionsCostNoWritesAndStayFast'},
+    tier.MODULE+'internal/agents/nativecodec': {
+        'TestCursorTextRetainsAFiveMegabyteTranscriptInFull'},
+    tier.MODULE+'internal/capture': {'TestCursorOverlappingHooksRegisterOnce'},
+}
+
+
 def performance_names(plan):
     selected = {}
     pattern = re.compile(tier.PERFORMANCE[tier.PERFORMANCE.index('-run')+1])
     for relative in tier.PERFORMANCE[-4:]:
         p = tier.MODULE+relative[2:]
-        names = [n for n in plan['schedule']['names'].get(p, []) if pattern.search(n)]
-        if not names:
-            raise Failure('plain performance package has no compiled selected bodies')
+        catalog = plan['schedule']['names'].get(p)
+        if catalog is None:
+            raise Failure('plain performance package absent from compiled catalog: '+p)
+        names = [n for n in catalog if pattern.search(n)]
+        if p in PERFORMANCE_COMPILE_ONLY:
+            if names:
+                raise Failure('compile-only performance package unexpectedly selects bodies: '+p)
+        elif not names or not PERFORMANCE_REQUIRED.get(p, set()) <= set(names):
+            raise Failure('plain performance package missing required compiled bodies: '+p)
         selected[p] = names
+    if set(selected) != PERFORMANCE_COMPILE_ONLY | set(PERFORMANCE_REQUIRED):
+        raise Failure('plain performance package scope differs from its named contract')
     return selected
 
 
@@ -230,6 +254,8 @@ def execute(mode, out, directory=None, index=None, seconds=2400):
                                    unit['selected'], subset)
                 elif mode == 'obligations':
                     selected = performance_names(value)
+                    report['performance_scope'] = {'compiled_selection': selected,
+                                                   'compile_only': sorted(PERFORMANCE_COMPILE_ONLY)}
                     perf_env = dict(env, AGENT_ARCHIVE_PERF='1')
                     report['performance_compile'] = tier.prepare_performance(out, deadline, perf_env, source)
                     invocation(out, report, tier.PERFORMANCE, 'performance', deadline, perf_env, selected)
@@ -304,7 +330,11 @@ def reconcile(directory, needs):
     compile_proof = dict(source_proof=plan['source_proof'], packages=tier.PERFORMANCE[-4:], parallel=2, completed=True)
     if report.get('performance_compile') != compile_proof or not (out/'performance-compile.log').is_file():
         raise Failure('plain performance compilation preflight missing')
-    required = [('performance.jsonl', tier.PERFORMANCE, performance_names(plan), True),
+    selected_performance = performance_names(plan)
+    if report.get('performance_scope') != {'compiled_selection': selected_performance,
+                                           'compile_only': sorted(PERFORMANCE_COMPILE_ONLY)}:
+        raise Failure('plain performance body/compile-only scope missing or changed')
+    required = [('performance.jsonl', tier.PERFORMANCE, selected_performance, True),
                 ('published-writer.jsonl', ['bash','scripts/test_published_writer.sh'],
                  {tier.MODULE+'internal/config': ['TestPublishedWriterRefusesProtectedConfiguration']}, False)]
     if len(report['invocations']) != len(required):

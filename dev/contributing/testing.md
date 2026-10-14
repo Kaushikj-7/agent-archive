@@ -238,6 +238,12 @@ with private temporary/build state. The `macos-full` check retains its stable na
 and reconciles all three workers, source/context/catalog identity, raw package and
 body terminals, and every named full restoration child. A separate native job
 compiles and runs plain performance bodies plus the pinned published writer once.
+The four-package plain command retains archive as an explicit compilation/test-main
+scope with required package PASS; its catalog has no performance-regex bodies. The
+collector, nativecodec and capture scopes require all five intended compiled parents
+and actual body PASS. Missing parents, missing packages or an unexpected performance
+match in the compilation-only scope fail validation; archive is never counted as a
+plain performance body.
 Daily remains smoke plus expanded short native integration and published writer.
 
 `scripts/native_full_hints.json` contains advisory costs imported from the
