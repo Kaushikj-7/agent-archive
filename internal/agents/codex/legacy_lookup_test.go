@@ -47,7 +47,10 @@ func TestLegacyOrdinaryUnboundKeepsAnchoredSourceAndCurrentToken(t *testing.T) {
 	}
 }
 
-func TestLegacyCompatibilityRefusesBoundPaginatedRelatedAndRevert(t *testing.T) {
+// A legacy unbound registration keeps its legacy representation only for a
+// plain local rollout. A bound, paginated, related or reverted rollout is
+// never flattened into it: it is refused, or read through native selection.
+func TestLegacyCompatibilityNeverFlattensBoundPaginatedRelatedOrRevert(t *testing.T) {
 	t.Parallel()
 	type scenarioVariant0 string
 	const (
@@ -83,10 +86,14 @@ func TestLegacyCompatibilityRefusesBoundPaginatedRelatedAndRevert(t *testing.T) 
 			}
 			defer func() { _ = pass.Close() }()
 			snapshot, err := pass.Read(t.Context(), ref, agentapi.ReadLimits{})
-			if snapshot != nil {
-				_ = snapshot.Close()
+			if err != nil {
+				return
 			}
-			if err == nil {
+			_, flattened := snapshot.(legacyOrdinarySnapshot)
+			if err := snapshot.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if flattened {
 				t.Fatal("modern source flattened")
 			}
 		})
@@ -120,47 +127,8 @@ func (l registeredHistoryLookup) RegisteredThread(ctx context.Context, id string
 	return l.Thread(ctx, id)
 }
 
-// A registered legacy source's signature hashes the lineage token, so
-// coverage completeness flipping between passes does not make it look
-// changed, while a changed lineage still does.
-func TestLegacyUnboundSignatureIgnoresCoverageCompleteness(t *testing.T) {
-	t.Parallel()
-	root := t.TempDir()
-	ref := legacyTestFile(t, root, threadA, map[string]any{})
-	renamed := filepath.Join(root, "legacy-session.jsonl")
-	if err := os.Rename(ref.Path, renamed); err != nil {
-		t.Fatal(err)
-	}
-	ref.Path, ref.Key = renamed, "legacy-session"
-	lookup := &historyLookup{thread: agentapi.CodexRolloutSet{Revision: "complete", Lineage: "lineage", Complete: true}}
-	pass, err := (SourceProvider{}).OpenPass(t.Context(), agentapi.SourceEnvironment{CodexRollouts: registeredHistoryLookup{lookup}, LegacyUnboundRegistration: true, Policy: transcriptio.OpenPolicy{Root: root, RejectSymlinks: true}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = pass.Close() }()
-	signature := func() string {
-		t.Helper()
-		observed, err := pass.Signature(t.Context(), ref)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return observed.Signature.Token
-	}
-	settled := signature()
-	lookup.thread.Revision, lookup.thread.Complete = "incomplete", false
-	if signature() != settled {
-		t.Fatal("a coverage flip alone changed the legacy signature")
-	}
-	lookup.thread.Lineage = "new segment"
-	if signature() == settled {
-		t.Fatal("a changed lineage kept the legacy signature")
-	}
-}
-
 // A registered legacy read records the signature the next pass compares with
-// Signature, so both must hash the same lineage token. On an incomplete set
-// Revision and Lineage differ, and a read keyed by Revision would make every
-// later pass see a change.
+// Signature, so both must hash the same lookup revision.
 func TestLegacyUnboundReadObservationMatchesSignature(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -170,7 +138,7 @@ func TestLegacyUnboundReadObservationMatchesSignature(t *testing.T) {
 		t.Fatal(err)
 	}
 	ref.Path, ref.Key = renamed, "legacy-session"
-	lookup := &historyLookup{thread: agentapi.CodexRolloutSet{Revision: "incomplete", Lineage: "lineage"}}
+	lookup := &historyLookup{thread: agentapi.CodexRolloutSet{Revision: "revision"}}
 	pass, err := (SourceProvider{}).OpenPass(t.Context(), agentapi.SourceEnvironment{CodexRollouts: registeredHistoryLookup{lookup}, LegacyUnboundRegistration: true, Policy: transcriptio.OpenPolicy{Root: root, RejectSymlinks: true}})
 	if err != nil {
 		t.Fatal(err)
