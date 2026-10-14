@@ -158,6 +158,21 @@ Git3.012s are observed invocation advice. All four caches restored a previous
 source prefix (exact hit false); CLI listing/build/TestMain took24–26s. These
 samples are neither empty-cache cold nor exact-cache warm controls. The body
 weights rank logical work and do not predict worker elapsed or CPU time.
+The PR source-audit job also executes complete native Linux/amd64 plain
+`go vet ./...` sequentially after the actual named audit body. Its separate vet
+receipt pins canonical command, successful exit, raw-log hash, source before
+and after, and the existing exact Go1.27.2/compiler/runtime context. Worker0
+omits its trailing vet only under explicit `--plain-vet-owned`; all workers
+record matching ownership/context and the required reconciliation demands the
+same-source actual-vet receipt. Default local/standalone shards still run vet,
+with no change to daily, full or native vet behavior. Owned scheduling excludes
+the historical fixed-vet offset rather than charging the moved work twice.
+Historical unowned observations remain valid and require no new receipt.
+
+Raw object-stream parsing uses the same offset decoder for live execution and
+historical imports, retaining concatenated objects, whitespace and malformed
+stream rejection without repeatedly copying large remaining log tails.
+
 Four workers remain a hosted trial. Current whole-job latency and allocation
 must justify retaining them; no five-minute target or wall-time saving is
 claimed from these logical rankings. The generic partition helper accepts1..16

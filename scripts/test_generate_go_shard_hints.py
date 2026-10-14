@@ -296,6 +296,25 @@ class GeneratorTests(unittest.TestCase):
             result=generate()
             self.assertEqual(result['owned_plain_audit_exclusions_ms'][run_ci_tier.SOURCE_AUDIT_PACKAGE],5000)
             self.assertEqual(len(result['provenance']['samples'][0]['plain_audit']['files']),2)
+            # Future owned-vet samples bind their requested context/source and
+            # fingerprint the separate actual vet log without breaking old samples.
+            import test_ci_tiers
+            context=test_ci_tiers.PlainVetTest.context
+            for value in settings.values():
+                value.update(plain_vet_owned=True,plain_vet_context_sha256=hints.runner.digest(context),plain_vet_source_proof=proof)
+            for _,sample in self.samples:
+                for i in range(2):
+                    path=sample/str(i)/'manifest.json';manifest=json.loads(path.read_text());manifest['settings']=settings[str(i)];path.write_text(json.dumps(manifest))
+            (audit/'plain-vet.txt').write_text('')
+            report['plain_vet']={'command':run_ci_tier.PLAIN_VET_COMMAND,'log':'plain-vet.txt','exit_code':0,
+                'pre_source_proof':proof,'post_source_proof':proof,'context':context,
+                'log_sha256':hints.hashlib.sha256(b'').hexdigest(),'performance_enabled':False,'real_systemd_enabled':False}
+            (audit/'tier.json').write_text(json.dumps(report))
+            owned=generate()
+            self.assertIn('plain-vet.txt',[f['file'] for f in owned['provenance']['samples'][0]['plain_audit']['files']])
+            (audit/'plain-vet.txt').unlink()
+            with self.assertRaises(hints.runner.Failure):generate()
+            (audit/'plain-vet.txt').write_text('')
             with self.assertRaises(run_ci_tier.Failure):run_ci_tier.verify_source_audit(audit,proof['source'])
             with self.assertRaises(hints.runner.Failure):hints.generate(self.samples,proof['source'],settings,PKGS,NAMES,catalog)
             for update in (lambda r:r['source_proof'].update(tree='c'*40),lambda r:r.update(source='wrong'),

@@ -324,6 +324,80 @@ class SourceProofTest(unittest.TestCase):
                 self.assertTrue(tier.pr_extras(event,tested)['regressions'])
 
 
+class PlainVetTest(unittest.TestCase):
+    proof={'source':'a'*40,'tree':'b'*40}
+    context={'version':'go version go1.27.2 linux/amd64','runner_os':'Linux','runner_arch':'X64',
+             'race':False,'tags':[],'go':{'GOVERSION':'go1.27.2','GOOS':'linux','GOHOSTOS':'linux',
+             'GOARCH':'amd64','GOHOSTARCH':'amd64','CGO_ENABLED':'1','GOTOOLCHAIN':'local',
+             'GOWORK':'off','GOFLAGS':'-mod=readonly'}}
+
+    import go_cache_context as context_keys
+    context.update(schema=context_keys.SCHEMA,os_release='d'*64,
+                   cc={'binary':'d'*64,'version':'d'*64},cxx={'binary':'d'*64,'version':'d'*64},
+                   toolchain={name:'d'*64 for name in ('go','compile','asm','link','cgo','vet')},
+                   image={'ImageOS':'ubuntu24','ImageVersion':'20261001.1.0'})
+    context['go']={**dict.fromkeys(context_keys.GO_FIELDS,''),**context['go']}
+
+    def test_actual_checked_vet_receipt_and_failures_bind_source_and_context(self):
+        import run_go_shard
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(tier.full_race,'source_proof',return_value=self.proof), mock.patch.object(tier,'plain_vet_context',return_value=self.context):
+            out=Path(d)
+            def checked(command,path,deadline,env):
+                self.assertEqual(command,['go','vet','./...'])
+                self.assertNotIn('AGENT_ARCHIVE_PERF',env);self.assertEqual(env['AGENT_ARCHIVE_REAL_SYSTEMD'],'0')
+                path.write_text('');return ''
+            with mock.patch.object(tier,'checked',side_effect=checked):receipt=tier.execute_plain_vet(out,123)
+            report={'plain_vet':receipt};fingerprint=run_go_shard.digest(self.context)
+            tier.verify_plain_vet(out,report,self.proof,fingerprint)
+            # A nonzero/failed supervisor can never produce a successful receipt.
+            with mock.patch.object(tier,'checked',side_effect=tier.Failure('exit1')):
+                with self.assertRaises(tier.Failure):tier.execute_plain_vet(out,123)
+            for update in (lambda r:r.update(exit_code=1),lambda r:r.update(exit_code=True),
+                           lambda r:r.update(command=['go','test','./...']),
+                           lambda r:r['post_source_proof'].update(tree='c'*40),
+                           lambda r:r['pre_source_proof'].update(source='c'*40),
+                           lambda r:r['context']['go'].update(GOVERSION='go1.27.1'),
+                           lambda r:r['context']['go'].update(GOARCH='arm64'),
+                           lambda r:r['context']['go'].update(GOFLAGS='-tags=other'),
+                           lambda r:r.update(log_sha256='c'*64),lambda r:r['context'].pop('toolchain')):
+                bad=copy.deepcopy(receipt);update(bad)
+                with self.assertRaises(tier.Failure):tier.verify_plain_vet(out,{'plain_vet':bad},self.proof,fingerprint)
+            for key,value in (('GOVERSION','go1.27.1'),('GOARCH','arm64'),('GOOS','darwin'),('CGO_ENABLED','0')):
+                bad=copy.deepcopy(receipt);bad['context']['go'][key]=value
+                forged_digest=run_go_shard.digest(bad['context'])
+                with self.assertRaises(tier.Failure):
+                    tier.verify_plain_vet(out,{'plain_vet':bad},self.proof,forged_digest,historical=True)
+            with mock.patch.object(tier,'plain_vet_context',return_value=dict(self.context,image={'ImageVersion':'different'})):
+                with self.assertRaises(tier.Failure):tier.verify_plain_vet(out,report,self.proof,fingerprint)
+            tier.verify_plain_vet(out,report,self.proof,fingerprint,historical=True)
+            with self.assertRaises(tier.Failure):tier.verify_plain_vet(out,{},self.proof,fingerprint)
+            (out/'plain-vet.txt').unlink()
+            with self.assertRaises(tier.Failure):tier.verify_plain_vet(out,report,self.proof,fingerprint)
+            with mock.patch.object(tier.full_race,'source_proof',side_effect=[self.proof,{'source':'a'*40,'tree':'c'*40}]),mock.patch.object(tier,'checked',side_effect=checked):
+                with self.assertRaises(tier.Failure):tier.execute_plain_vet(out,123)
+            with mock.patch.object(tier,'plain_vet_context',side_effect=[self.context,dict(self.context,version='changed')]),mock.patch.object(tier,'checked',side_effect=checked):
+                with self.assertRaises(tier.Failure):tier.execute_plain_vet(out,123)
+
+    def test_audit_body_and_vet_are_independent_required_proofs(self):
+        import run_go_shard
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(tier,'git',return_value='a'*40), mock.patch.object(tier.full_race,'source_proof',return_value=self.proof), mock.patch.object(tier,'plain_vet_context',return_value=self.context), mock.patch.dict(os.environ,{'GITHUB_SHA':'a'*40}):
+            out=Path(d);calls=[]
+            def checked(command,path,deadline,env):
+                calls.append(command)
+                raw=SourceAuditTest().raw() if command==tier.SOURCE_AUDIT_COMMAND else ''
+                path.write_text(raw);return raw
+            with mock.patch.object(tier,'checked',side_effect=checked):tier.run_suite('pr','audit',out,own_plain_vet=True)
+            self.assertEqual(calls,[tier.SOURCE_AUDIT_COMMAND,tier.PLAIN_VET_COMMAND])
+            fingerprint=run_go_shard.digest(self.context)
+            report=tier.verify_source_audit(out,'a'*40,require_plain_vet=True,expected_vet_context_sha256=fingerprint)
+            saved=copy.deepcopy(report);report.pop('plain_vet');(out/'tier.json').write_text(json.dumps(report))
+            tier.verify_source_audit(out,'a'*40) # Historical unowned evidence remains valid.
+            with self.assertRaises(tier.Failure):tier.verify_source_audit(out,'a'*40,require_plain_vet=True,expected_vet_context_sha256=fingerprint)
+            (out/'tier.json').write_text(json.dumps(saved));(out/'source-audit.jsonl').write_text(events({'Package':tier.SOURCE_AUDIT_PACKAGE,'Action':'pass'}))
+            with self.assertRaises(tier.Failure):tier.verify_source_audit(out,'a'*40,require_plain_vet=True,expected_vet_context_sha256=fingerprint)
+            with self.assertRaises(tier.Failure):tier.run_suite('daily','linux',out,own_plain_vet=True)
+
+
 class SourceAuditTest(unittest.TestCase):
     proof = {'source': 'a'*40, 'tree': 'b'*40}
 
