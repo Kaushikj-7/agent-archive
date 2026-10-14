@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -9,7 +10,9 @@ import (
 
 // scopeView is the rows one scope shows, before they are laid out.
 type scopeView struct {
-	rows []listRow
+	incomplete bool
+	loadError  error
+	rows       []listRow
 	// total counts what the scope holds, or is -1 when it was not read to
 	// the end; truncated is set when rows is only the first part.
 	total     int
@@ -25,12 +28,15 @@ type scopeView struct {
 	// numbered as rows number it (more of them, past a limit), and a subagent
 	// has none; the browser keeps rows' own numbers for the rows it holds
 	// (withTableNumbers).
-	search func() []listRow
+	search        func() []listRow
+	searchContext func(context.Context) ([]listRow, error)
 	// searchNote is the footer's line about the matches elsewhere of the
 	// words the browser opens with, which the filter shows only while it
 	// holds those words; searchWords says them.
-	searchNote  string
-	searchWords string
+	searchNote    string
+	searchWords   string
+	searchNotice  string
+	searchPartial bool
 	// nothing is set when the view holds nothing though it has rows: the
 	// words the browser opens with match none of them, so the browser opens
 	// on all projects as it does for a scope with no session.
@@ -39,7 +45,9 @@ type scopeView struct {
 
 // holdsNothing reports whether the view has nothing to show: no row, or none
 // that the words the browser opens with match.
-func (v scopeView) holdsNothing() bool { return len(v.rows) == 0 || v.nothing }
+func (v scopeView) provenEmpty() bool { return !v.incomplete && len(v.rows) == 0 }
+
+func (v scopeView) holdsNothing() bool { return v.provenEmpty() || v.nothing }
 
 // scopeRowsFunc builds the rows a scope shows. A scope with All set is every
 // session.
@@ -60,9 +68,12 @@ type scopeChoice struct {
 // directory's scope, or all projects, and which one now. `a` switches between
 // the two. The other one is built only when it is asked for.
 type scopeChoices struct {
-	loadOlder *browserLoadAction
-	scope     sessionScope
-	rowsFor   scopeRowsFunc
+	ctx            context.Context
+	rowsForContext func(context.Context, sessionScope) scopeView
+	validate       func(context.Context) error
+	loadOlder      *browserLoadAction
+	scope          sessionScope
+	rowsFor        scopeRowsFunc
 	// format is the table's options before they are laid out for the rows.
 	format listFormatOptions
 	built  [2]*scopeChoice
@@ -123,7 +134,8 @@ func (c *scopeChoices) toggle() {
 	if !c.canToggle() {
 		return
 	}
-	if c.current == viewAll && len(c.choice(viewScope).rows) == 0 {
+	// Initial search misses do not remove the scope rows after clearing.
+	if c.current == viewAll && c.choice(viewScope).provenEmpty() {
 		c.fellBack = true
 		all := c.choice(viewAll)
 		all.heading = c.heading(viewAll, all.scopeView, all.constants)
@@ -134,6 +146,10 @@ func (c *scopeChoices) toggle() {
 
 // choice builds choice i once.
 func (c *scopeChoices) choice(i int) *scopeChoice {
+	return c.choiceContext(c.ctx, i)
+}
+
+func (c *scopeChoices) choiceContext(ctx context.Context, i int) *scopeChoice {
 	if built := c.built[i]; built != nil {
 		return built
 	}
@@ -141,7 +157,12 @@ func (c *scopeChoices) choice(i int) *scopeChoice {
 	if i == viewAll {
 		scope = scope.everything()
 	}
-	view := c.rowsFor(scope)
+	var view scopeView
+	if c.rowsForContext != nil {
+		view = c.rowsForContext(ctx, scope)
+	} else {
+		view = c.rowsFor(scope)
+	}
 	format, constants := c.format.withColumns(view.rows)
 	format.HiddenSubagents, format.Note = view.hidden, view.note
 	c.built[i] = &scopeChoice{scopeView: view, format: format, heading: c.heading(i, view, constants), constants: constants}

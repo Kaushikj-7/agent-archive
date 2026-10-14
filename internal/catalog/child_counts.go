@@ -2,6 +2,8 @@ package catalog
 
 import (
 	"context"
+	"errors"
+	"math"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -41,6 +43,18 @@ func (w *Writer) updateChildCounters(ctx context.Context, h *CatalogHead, key st
 		}
 		if entry.OrdinaryChildren == r.Entry.OrdinaryChildren && entry.ReplayChildren == r.Entry.ReplayChildren {
 			continue
+		}
+		if entry.Picker != nil {
+			if entry.OrdinaryChildren > math.MaxInt64 || entry.ReplayChildren > math.MaxInt64 {
+				return errors.New("picker child count overflow")
+			}
+			picker := *entry.Picker
+			picker.OrdinaryChildren = int64(entry.OrdinaryChildren)
+			picker.ReplayChildren = int64(entry.ReplayChildren)
+			entry.Picker = &picker
+			if err = picker.validate(); err != nil {
+				return err
+			}
 		}
 		if err = w.updateOrders(ctx, h, parent, r.Entry, &entry); err != nil {
 			return err

@@ -45,7 +45,6 @@ Inspect history
 
 Import history
   agent-archive backfill    Import sessions already on this machine
-  agent-archive historical-project  Manage historical project permissions
   agent-archive migrate     Migrate to an isolated catalog destination
 
 Switch agents
@@ -781,6 +780,7 @@ Guide: [Import existing sessions](../guides/backfill.md).
 ```text
 Usage: agent-archive backfill [options]
        agent-archive backfill history
+       agent-archive backfill projects list|rename|enable|disable
        agent-archive backfill undo [IMPORT_ID] [--project DIR] [--yes]
                                 [--restore-retention]
 
@@ -810,7 +810,8 @@ publication. History reports admitted and remotely verified uploads separately.
   --yes                 Skip the confirmation (required without a terminal)
   --background          Stage and register sessions, then exit; the background
                         collector verifies and uploads them
-See agent-archive help backfill history and agent-archive help backfill undo.
+See agent-archive help backfill history, agent-archive help backfill projects,
+and agent-archive help backfill undo.
 Example: agent-archive backfill --dry-run --since 30d
 ```
 
@@ -848,6 +849,24 @@ Example: agent-archive backfill history
 
 No flags.
 
+## agent-archive backfill projects
+
+Guide: [Import existing sessions](../guides/backfill.md#historical-only-projects).
+
+```text
+Usage: agent-archive backfill projects list
+       agent-archive backfill projects rename PROJECT_ID LABEL
+       agent-archive backfill projects enable PROJECT_ID
+       agent-archive backfill projects disable PROJECT_ID
+
+Manage stable historical project identities without authorizing native capture.
+Enable and disable affect permission in the current destination. Rename changes
+only the display label. Introduce an identity with a confirmed mapping-file
+import.
+```
+
+No flags.
+
 ## agent-archive backfill undo
 
 Guide: [Undo an import](../guides/backfill.md#undo).
@@ -857,7 +876,7 @@ Usage: agent-archive backfill undo [IMPORT_ID] [--project DIR] [--yes]
                                 [--restore-retention]
 
 Historical identities and destination permissions remain explicit settings;
-use historical-project disable PROJECT_ID to stop their retained maintenance.
+use backfill projects disable PROJECT_ID to stop their retained maintenance.
 
 Remove the latest import, or the import IMPORT_ID from backfill history: its
 sessions are deleted from the bucket and this machine, and the projects it added
@@ -880,24 +899,6 @@ Example: agent-archive backfill undo --project ~/src/old-experiment
 | `--restore-retention` | no value | — |
 | `--yes` | no value | — |
 
-## agent-archive historical-project
-
-Guide: [Import existing sessions](../guides/backfill.md#historical-only-projects).
-
-```text
-Usage: agent-archive historical-project list
-       agent-archive historical-project rename PROJECT_ID LABEL
-       agent-archive historical-project enable PROJECT_ID
-       agent-archive historical-project disable PROJECT_ID
-
-Manage stable historical project identities without authorizing native capture.
-Enable and disable affect permission in the current destination. Rename changes
-only the display label. Introduce an identity with a confirmed mapping-file
-import.
-```
-
-No flags.
-
 ## agent-archive migrate
 
 Guide: [Migrate the archive](../guides/catalog-migration.md).
@@ -916,7 +917,9 @@ requires an unchanged catalog and leaves collection paused.
   --format FORMAT  Destination format; only catalog-v4
   --prefix PREFIX  Isolated destination prefix (or use --bucket)
   --bucket BUCKET  Isolated destination bucket (or use --prefix)
-  --rollback       Return to retained source; leave collection paused
+  --scoped-picker  Build complete scoped indexes; uses the current catalog when
+                   destination options are omitted
+  --rollback       Retain the original data and leave collection paused
 ```
 
 | Flag | Takes | Default |
@@ -925,6 +928,7 @@ requires an unchanged catalog and leaves collection paused.
 | `--format` | a value | — |
 | `--prefix` | a value | — |
 | `--rollback` | no value | — |
+| `--scoped-picker` | no value | — |
 
 ## agent-archive handoff
 

@@ -1,11 +1,18 @@
 # Bounded repository windows and picker startup
 
-Status: PR 1 reserves the format and integrates refusal controls. Bounded indexed
-picker construction, reads and production activation remain unimplemented.
+Status: scoped construction/upgrade, typed reader, local merge and interactive
+browser source are implemented in the dependent picker stack. Matched synthetic
+CLI qualification completed at `cc26f45aba6c76307aecf3c9d32b2650aef79eed`:16
+processes / 104 cases, including both 10k/100k cold/warm/changed and native matrices.
+[Exact results and limits](../maintainers/picker-qualification/results-20261013.md)
+retain source/harness/body evidence. Final source review and required hosted
+checks are tracked in [PR499](https://github.com/wangjohn/agent-archive/pull/499);
+production release gates remain separate.
+Production activation remains refused pending provider and credential authority.
 Prepared 2026-10-13 against main
 `4b9b612ff9fbac454c93a292435bb151f7cde75f`.
 
-This is the next source implementation slice of
+This implemented source slice extends
 [listing at scale](listing-at-scale.md) and
 [CLI performance](cli-performance.md). It preserves the product behavior in
 [session finding](../specs/session-finding.md). Production activation remains
@@ -32,9 +39,13 @@ This work adds scoped ordering and paged consumers. It does not replace these
 foundations, enable production providers, implement fragments or reconcile the
 entire older historical-publication PR stack.
 
-## Current source to understand first
+## Preparation source map
 
-| Concern | Existing source | Present limitation |
+This map records the limitations that motivated the approved seven-slice design.
+The implementation boundaries below describe the dependent source changes; the
+remaining qualification evidence is tracked separately.
+
+| Concern | Preparation source | Limitation at preparation |
 | --- | --- | --- |
 | Scope identity and fallback | `internal/cli/scope.go`, `scope_browse.go` | Correct matcher operates on an already loaded universe. |
 | Handoff setup and local merge | `internal/cli/handoff_select.go` | Loads all archive metadata; Older increases an in-memory limit. |
@@ -447,9 +458,16 @@ successor; no prefix without that boundary is a scope match.
 
 Canonical harness filtering must preserve the original harness/session tie
 discriminator used by the exhaustive caller oracle; aliases cannot silently
-change identity ordering. Order keys reuse `orderKeys` activity/capture timestamp formatting and
-`descendingIdentity(canonicalMetadataObjectKey)` exactly; range traversal uses
-the existing descending activity/capture and identity tie comparator. RepoKey
+change identity ordering. Order keys reuse `orderKeys` activity/capture timestamp
+formatting, followed by `descendingIdentity(rawHarness + NUL + sessionID + NUL)`.
+Validated identity components forbid NUL; the terminated tuple uniquely determines
+the physical metadata key and preserves component prefix ordering. Reverse range
+traversal matches the exhaustive comparator: activity/capture descending, then
+raw harness/session ascending. The tuple suffix is smaller than the previous
+full-path suffix and retains the existing 4096-byte key bound.
+`MetadataObjectKey` preserves the exact raw harness
+spelling; canonical harness normalization is only filter/group authority, never
+permission to substitute an exact source identity. RepoKey
 membership includes only validated nonempty RepoKeys. Project-any includes every
 matching ProjectID; project-missing includes only empty RepoKey. Global + project-any + either repo or project-missing, times two harness tiers
 and two memberships, is at most 12 memberships per session. Handoff excludes
@@ -527,3 +545,113 @@ count attempts including failures and expose partial/unknown state on its explic
 finite work budget. Complete archive search retains all matcher fields and child
 parent grouping through context/error-aware loading, with no loaded-page substitute
 on failure.
+
+### PR 2 consumed mutation and row codec
+
+The candidate protocol-11/schema-5 mutation path now derives `CatalogEntry.Picker`
+from checksum-verified full metadata, maintains its scoped Project memberships in
+that mutation's existing head CAS, and updates parent child aggregates in every
+copy without changing the metadata revision. `BuildPickerRow` and
+`PickerMembershipKeys` are shared construction helpers for the upgrade owner.
+A scoped candidate refuses a preexisting live identity missing its facts;
+construction must build the complete universe before activation. Protocol-10
+mutations refuse supplied Picker fields and continue emitting the old envelope.
+Head and coordinator operational decoding still refuse protocol 11; this slice
+cannot activate a new destination or bypass provider qualification.
+
+Picker Project values use the existing strict `CatalogEntry` envelope with its
+`metadata-v10` compact Summary and a bounded, strict Picker member. Identity and
+other order entries preserve the same facts during automatic overflow compaction.
+`DecodePickerRow` consumes this envelope in Project snapshot decoding and GC,
+validates exact scope/harness/membership/order correspondence, and reads no body.
+The Picker member is at most 8192 encoded bytes; each UTF-8 label prefix is at
+most 256 bytes; the complete compact picker envelope is at most 16384 bytes.
+The row schema is recorded in `schemas/catalog-picker-row.schema.json`; runtime
+also enforces byte limits and exact immutable checksum keys. Selected body
+verification recomputes metadata-derived facts while retaining separately
+validated live index child counts. A projection never authorizes source loading.
+Required row facts must be explicit and non-null, including empty labels and
+zero child counts; unknown prompts omit the count field. Selected picker rows
+match the exact compact projection of their pinned identity even when that
+identity fits inline, then gain full-body provenance only after verified hydration.
+
+
+### Canonical association lookup copy
+
+Every live scoped-format identity, including child/replay/known-zero roots and
+entries without ProjectID or RepoKey, additionally receives one Project leaf:
+`!picker-identity/v1/<canonical-harness-hex>/<session-id-hex>/<raw-session-key-hex>`.
+Hex is lowercase encoding of exact UTF-8 bytes. Harness group identity uses the
+existing `CanonicalHarness`; the session ID and raw metadata-object-key suffix
+retain exact identity. The raw metadata object key is at most 1024 bytes; the
+complete lookup key is at most 4096 bytes. Structural identities are never
+truncated. `PickerIdentityRange` validates nonempty safe identity components and
+returns the full prefix ending in `/`; its exclusive lexical upper bound replaces
+that trailing slash with `0`. This is one additional copy beyond the maximum
+twelve ordinary browse/handoff memberships (thirteen total picker copies).
+
+`PickerIdentityKey` and the same strict compact CatalogEntry/PickerRow decoder
+serve construction, mutation, snapshot and GC. Insertion, rewrite, deletion and
+parent aggregate updates maintain the lookup copy with all other roots in the
+same candidate CAS. Default Project ranges remain `project/..project0` and do not
+include these copies. Operational protocol-10 writes still emit no Picker fields,
+and protocol-11 activation remains refused in this slice.
+
+A canonical group may contain multiple physical raw-harness aliases. They remain
+separate entries with their exact pinned revision/reference/source identity;
+lookup must never silently choose or deduplicate them. The bounded reader counts
+this exact prefix: zero proves absence, one yields a unique pinned entry, and more
+than one returns explicit ambiguity while fetching at most two rows as evidence.
+PR 4 owns that API and its captured-view/request budgets; PR 3 must construct and
+validate every additional lookup copy before activation.
+
+### PR 3 construction and activation boundary
+
+Qualified stores can now construct and activate complete protocol-11 catalogs.
+`OpenScopedMigration` uses the isolated legacy-source route while ordinary
+`OpenMigration` remains protocol 10. `OpenPickerUpgrade` is a distinct operation
+bound to its exact catalog source head, destination, reviewed protocol-11 proof
+and seal owner. Its coordinator CAS record retains the candidate roots and finite
+identity-page progress. The old active view remains readable while building;
+unknown owners and unresolved local publication evidence refuse progress.
+
+Construction verifies immutable bodies, retains revisions/tombstones/receipts and
+rebuilds every ordinary ordering copy, scoped membership and canonical identity
+copy. Verification checks each expected value and auxiliary cardinality to prove
+there are no extra or missing copies. Activation persists the stronger
+coordinator fence before one complete head CAS and keeps publication sealed until
+configuration version 14 is saved. Mixed states refuse protected writes.
+
+New protocol-11 pending descriptors carry an explicit journal protocol. Original
+protocol-10 journal fields and digest bytes are unchanged; their frozen owners
+drain before activation, and completed old journals permit only local cleanup.
+Scoped rollback preserves the original fully indexed data under the stronger
+head/coordinator/configuration fences and refuses any later head change.
+Production provider qualification is unchanged. Typed readers, local merging and
+shared browser consumers extend this construction boundary in the dependent
+picker stack. Their integrated CLI acceptance evidence is recorded separately
+below; construction protocol tests do not establish command startup performance.
+
+## CLI acceptance protocol
+
+PR7 adds [real first-frame and Older qualification](../maintainers/picker-qualification/README.md)
+over complete 10k/100k synthetic catalogs. A separate 140-entry production
+construction comparison checks every tree leaf/value/body reference and retained
+receipt root; full-size bulk fixture creation is excluded from command cost.
+The same repaired terminal/oracle harness is copied to production baseline
+`a187e1b883924fd36c9d6700606a5c2756fc2b6f` with the protocol 10 format adapter;
+the candidate uses protocol 11 over the same logical data. Retain exact production,
+harness and fixture pins with cold/warm/changed phase measurements. GET/LIST/Stat,
+returned bytes/header estimates, latency/allocations, sampled runtime heap and
+native R observations are distinct. Actual provider wire/latency/RSS and distributed
+lifecycle claims require their own evidence. This protocol does not turn missing,
+timed-out or unexecuted measurement cases into PASS. The
+[2026-10-13 matched matrix](../maintainers/picker-qualification/results-20261013.md)
+completed all 16 processes / 104 cases with 52 identical logical-fixture pairs at
+candidate `cc26f45aba6c76307aecf3c9d32b2650aef79eed`, baseline
+`a187e1b883924fd36c9d6700606a5c2756fc2b6f`. Every supported measured first/Older
+phase had zero metadata/source body GETs, LISTs and non-Project root reads.
+Sampled heap includes fixture residency; process RSS includes construction/setup
+and was higher for the complete protocol11 fixture. This synthetic scope evidence
+does not establish provider transport, general full-load or rollout readiness;
+independent PR7 review and hosted gates remain required.

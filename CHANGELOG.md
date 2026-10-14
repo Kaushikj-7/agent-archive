@@ -6,6 +6,29 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Keep exhaustive full CLI CI coverage within ordinary process deadlines by
+  partitioning compiled tests, fuzz seeds and examples, with source-bound raw
+  coverage checks and unchanged race, test and overall job limits.
+
+- Open supported catalog list/show browsers using bounded repository pages.
+  Older sessions advances each scope independently; complete archive search
+  starts when filtering and reports loading or read failures. Cancelling a
+  search or page read joins its provider work before selection or exit.
+  Synthetic first-screen/Older controls distinguish archive request/body costs
+  from native registration work; production S3/R2 activation remains gated.
+  Handoff search caps attempted native label reads, including failures, and
+  distinguishes observed matches from unknown local eligibility.
+
+- Load the handoff picker from bounded repository pages on supported scoped
+  catalogs, merge current local activity, and continue native eligibility checks
+  with Older sessions. Changed or expired archive selections require refresh.
+  Local read failures leave eligibility unknown instead of proving an empty
+  repository; archive-only handoff reports read errors rather than no matches.
+
+- Add complete scoped catalog construction and resumable `migrate --scoped-picker`
+  upgrades, with verified activation and a permanent stronger writer fence.
+  Production S3/R2 qualification and credential authority remain required.
+
 - Refuse reserved scoped-picker catalog and configuration formats before admitting
   writes; existing catalog formats and picker behavior remain supported.
 
@@ -22,10 +45,12 @@ follow [Semantic Versioning](https://semver.org/).
 - Show planning progress during backfill and setup's recent-session import:
   a running count of sessions found, then completed/total counts and a percentage
   while checking sessions. Each step is named on live terminals.
+- Move historical project controls to `backfill projects list|rename|enable|disable`
+  and remove the top-level `historical-project` command.
 - Import complete sessions from vanished repositories into stable historical-only
   projects with bounded `backfill --mapping-file` assignments. Historical imports
   freeze filtered evidence without adding live capture roots. Rename or disable
-  their destination-bound permission with `historical-project`; pairing preserves
+  their destination-bound permission with `backfill projects`; pairing preserves
   local policy. Native deletion, privacy/parser maintenance, retention and exact
   undo keep ownership and capture age. A permanent v10 fence refuses older writers.
 - Validate original Codex thread cwd and producer facts independently of selected

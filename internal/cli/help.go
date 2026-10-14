@@ -26,7 +26,9 @@ requires an unchanged catalog and leaves collection paused.
   --format FORMAT  Destination format; only catalog-v4
   --prefix PREFIX  Isolated destination prefix (or use --bucket)
   --bucket BUCKET  Isolated destination bucket (or use --prefix)
-  --rollback       Return to retained source; leave collection paused
+  --scoped-picker  Build complete scoped indexes; uses the current catalog when
+                   destination options are omitted
+  --rollback       Retain the original data and leave collection paused
 `,
 	"recover": `Usage: agent-archive recover SESSION_ID [--confirm]
 
@@ -691,10 +693,10 @@ Example: claude "$(agent-archive handoff --latest --harness codex)"
 Example: agent-archive handoff SESSION_ID --to claude --worktree
 Example: agent-archive handoff SESSION_ID --to codex -- --model o3
 `,
-	"historical-project": `Usage: agent-archive historical-project list
-       agent-archive historical-project rename PROJECT_ID LABEL
-       agent-archive historical-project enable PROJECT_ID
-       agent-archive historical-project disable PROJECT_ID
+	"backfill projects": `Usage: agent-archive backfill projects list
+       agent-archive backfill projects rename PROJECT_ID LABEL
+       agent-archive backfill projects enable PROJECT_ID
+       agent-archive backfill projects disable PROJECT_ID
 
 Manage stable historical project identities without authorizing native capture.
 Enable and disable affect permission in the current destination. Rename changes
@@ -703,6 +705,7 @@ import.
 `,
 	"backfill": `Usage: agent-archive backfill [options]
        agent-archive backfill history
+       agent-archive backfill projects list|rename|enable|disable
        agent-archive backfill undo [IMPORT_ID] [--project DIR] [--yes]
                                 [--restore-retention]
 
@@ -732,7 +735,8 @@ publication. History reports admitted and remotely verified uploads separately.
   --yes                 Skip the confirmation (required without a terminal)
   --background          Stage and register sessions, then exit; the background
                         collector verifies and uploads them
-See agent-archive help backfill history and agent-archive help backfill undo.
+See agent-archive help backfill history, agent-archive help backfill projects,
+and agent-archive help backfill undo.
 Example: agent-archive backfill --dry-run --since 30d
 `,
 	"backfill history": `Usage: agent-archive backfill history
@@ -749,7 +753,7 @@ Example: agent-archive backfill history
                                 [--restore-retention]
 
 Historical identities and destination permissions remain explicit settings;
-use historical-project disable PROJECT_ID to stop their retained maintenance.
+use backfill projects disable PROJECT_ID to stop their retained maintenance.
 
 Remove the latest import, or the import IMPORT_ID from backfill history: its
 sessions are deleted from the bucket and this machine, and the projects it added

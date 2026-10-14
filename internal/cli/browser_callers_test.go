@@ -19,6 +19,7 @@ var chooserCallers = []struct {
 	chain []string
 }{
 	{"list", []string{"runListCommand"}},
+	{"list (bounded catalog)", []string{"runListCommand", "runBoundedListBrowser"}},
 	{"show (no ID)", []string{"runShowCommand", "runBareShow"}},
 	{"show --json (no ID)", []string{"runShowCommand", "runBareShow", "selectArchivedSession"}},
 	{`show "<words>", several matches`, []string{"runShowCommand", "resolveShowQuery"}},

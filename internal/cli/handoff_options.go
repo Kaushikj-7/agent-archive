@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"io"
@@ -24,6 +25,8 @@ func handoffConfig(home string, opts handoffOptions) (config.Config, bool, error
 }
 
 type handoffOptions struct {
+	readCtx   context.Context
+	selection **handoffPickerSelection
 	config    *handoffConfigState
 	native    bool
 	sessionID string

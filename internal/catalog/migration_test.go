@@ -317,3 +317,19 @@ func TestMigrationEndpointAliasesCannotEvadeIsolation(t *testing.T) {
 		}
 	}
 }
+
+func migrationRows(ctx context.Context, snapshot *Snapshot) ([]Row, error) {
+	var rows []Row
+	cursor := ""
+	for {
+		page, err := snapshot.Query(ctx, Query{Index: IdentityIndex}, cursor, 1000)
+		if err != nil {
+			return nil, err
+		}
+		rows = append(rows, page.Rows...)
+		if page.Next == "" {
+			return rows, nil
+		}
+		cursor = page.Next
+	}
+}

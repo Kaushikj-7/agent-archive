@@ -74,14 +74,15 @@ func (h *CatalogHead) validateReferences() error {
 //
 //revive:disable-next-line:exported -- Keep the accepted protocol API name.
 type CatalogHead struct {
-	Protocol   uint64    `json:"Protocol"`
-	Schema     uint64    `json:"Schema"`
-	Generation uint64    `json:"Generation"`
-	Epoch      string    `json:"Epoch"`
-	Identity   ObjectRef `json:"Identity"`
-	Capture    ObjectRef `json:"Capture"`
-	Activity   ObjectRef `json:"Activity"`
-	Project    ObjectRef `json:"Project"`
+	Picker     *scopedPickerFormat `json:"Picker,omitempty"`
+	Protocol   uint64              `json:"Protocol"`
+	Schema     uint64              `json:"Schema"`
+	Generation uint64              `json:"Generation"`
+	Epoch      string              `json:"Epoch"`
+	Identity   ObjectRef           `json:"Identity"`
+	Capture    ObjectRef           `json:"Capture"`
+	Activity   ObjectRef           `json:"Activity"`
+	Project    ObjectRef           `json:"Project"`
 	// Receipts are committed with the roots, so a retry can prove its prior
 	// commit even when a newer publication replaced the same session.
 	Receipts           ObjectRef            `json:"Receipts"`
@@ -107,6 +108,7 @@ type HeadWitness struct {
 //
 //revive:disable-next-line:exported -- Keep the accepted protocol API name.
 type CatalogEntry struct {
+	Picker *PickerRow `json:"Picker,omitempty"`
 	// SummaryOverflow marks a lazy index projection resolved through Metadata.
 	SummaryOverflow  string           `json:"SummaryOverflow,omitempty"`
 	OrdinaryChildren uint64           `json:"OrdinaryChildren"`
@@ -265,6 +267,16 @@ func (w *Writer) readHead(ctx context.Context) (CatalogHead, storage.CatalogObje
 	raw, version, err := w.versioned.GetCatalogVersion(ctx, HeadKey, 16<<10)
 	etag := version.ETag
 	if errors.Is(err, storage.ErrNotFound) {
+		state, _, e := w.Coordinator().read(ctx)
+		if e != nil {
+			return CatalogHead{}, storage.CatalogObjectVersion{}, e
+		}
+		if state.Protocol == 11 && state.Upgrade == nil {
+			if state.Mode != admissionCandidate || state.Seal == "" {
+				return CatalogHead{}, storage.CatalogObjectVersion{}, errScopedPickerUnavailable
+			}
+			return CatalogHead{Schema: 5, Protocol: 11, Picker: pickerFormat()}, storage.CatalogObjectVersion{}, nil
+		}
 		return CatalogHead{Schema: 4, Protocol: 10}, storage.CatalogObjectVersion{}, nil
 	}
 	if err != nil {
@@ -279,7 +291,10 @@ func (w *Writer) readHead(ctx context.Context) (CatalogHead, storage.CatalogObje
 	if err = decoder.Decode(&h); err != nil {
 		return h, storage.CatalogObjectVersion{}, err
 	}
-	if h.Schema != 4 || h.Protocol != 10 || h.Generation == 0 || h.Epoch == "" || h.PublicationEpoch == "" || etag == "" {
+	if !h.validFormat() || h.Generation == 0 || h.Epoch == "" || h.PublicationEpoch == "" || etag == "" {
+		if h.Protocol == 11 {
+			return h, storage.CatalogObjectVersion{}, errScopedPickerUnavailable
+		}
 		return h, storage.CatalogObjectVersion{}, errors.New("invalid catalog head")
 	}
 	if err = h.validateReferences(); err != nil {
@@ -298,6 +313,9 @@ func (w *Writer) Find(ctx context.Context, key string) (*CatalogEntry, string, e
 		return nil, "", err
 	}
 	r, err := w.find(ctx, h.Identity, key)
+	if err == nil {
+		err = h.validateLiveEntry(r.Entry)
+	}
 	return r.Entry, r.Revision, err
 }
 
@@ -363,6 +381,12 @@ func allOrderKeys(key string, e *CatalogEntry) [][]string {
 			prefix := ChildPrefix(e.Summary.Harness.Name, e.Summary.ParentSessionID, e.Summary.Replay != nil)
 			result[2] = append(result[2], prefix+keys[0])
 		}
+	}
+	if e.Picker != nil {
+		picker, _ := PickerMembershipKeys(key, *e.Picker)
+		result[2] = append(result[2], picker...)
+		identity, _ := PickerIdentityKey(*e.Picker)
+		result[2] = append(result[2], identity)
 	}
 	return result
 }
@@ -514,6 +538,13 @@ func (w *Writer) receipt(ctx context.Context, h CatalogHead, id, digest string) 
 
 func (w *Writer) prepareCommit(ctx context.Context, h CatalogHead, m CatalogMutation, revision, digest string, existing bool) (CatalogHead, error) {
 	base := h
+	scoped := h.Protocol == scopedPickerProtocol && h.Schema == scopedPickerSchema
+	if !scoped && (h.Protocol != 10 || h.Schema != 4) {
+		return h, errors.New("unsupported mutation head format")
+	}
+	if !scoped && m.Next != nil && m.Next.Picker != nil {
+		return h, errors.New("protocol 10 mutation cannot carry picker facts")
+	}
 	if m.Next != nil {
 		if err := w.verifyEntry(ctx, m.SessionKey, m.Next); err != nil {
 			return h, err
@@ -529,6 +560,15 @@ func (w *Writer) prepareCommit(ctx context.Context, h CatalogHead, m CatalogMuta
 	next := m.Next
 	if next != nil {
 		next.Revision = revision
+		if scoped {
+			next.Picker, err = BuildPickerRow(m.SessionKey, *next)
+			if err != nil {
+				return h, err
+			}
+		}
+	}
+	if scoped && old.Entry != nil && old.Entry.Picker == nil {
+		return h, errors.New("scoped identity is missing picker facts")
 	}
 	if err = w.updateOrders(ctx, &h, m.SessionKey, old.Entry, next); err != nil {
 		return h, err

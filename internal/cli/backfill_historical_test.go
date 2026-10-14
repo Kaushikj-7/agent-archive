@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -52,6 +53,10 @@ func TestHistoricalImportSurvivesNativeDeletionWithoutLiveProject(t *testing.T) 
 	if len(cfg.Archive.Projects) != 0 || len(cfg.HistoricalProjects) != 1 || !cfg.HistoricalProjectProtection {
 		t.Fatalf("historical authority leaked into live config: %+v", cfg)
 	}
+	var listOut, listErr bytes.Buffer
+	if code := Run([]string{"backfill", "projects", "list"}, nil, &listOut, &listErr, env); code != 0 || !strings.Contains(listOut.String(), projectID+"  Retired service  enabled (import only, current destination)") {
+		t.Fatalf("list historical projects: exit %d %s %s", code, &listOut, &listErr)
+	}
 	must(t, os.RemoveAll(filepath.Join(userHome, ".claude")))
 	result, err := runOnePass(env, true)
 	must(t, err)
@@ -72,7 +77,7 @@ func TestHistoricalImportSurvivesNativeDeletionWithoutLiveProject(t *testing.T) 
 	if prior.ProjectName != "Retired service" {
 		t.Fatalf("label %q", prior.ProjectName)
 	}
-	run("historical-project", "rename", projectID, "Renamed service")
+	run("backfill", "projects", "rename", projectID, "Renamed service")
 	result, err = runOnePass(env, true)
 	must(t, err)
 	if len(result.Errors) > 0 {
@@ -85,13 +90,13 @@ func TestHistoricalImportSurvivesNativeDeletionWithoutLiveProject(t *testing.T) 
 	if renamed.ProjectName != "Renamed service" || !renamed.CapturedAt.Equal(prior.CapturedAt) {
 		t.Fatalf("rename changed evidence: %s %v %v", renamed.ProjectName, renamed.CapturedAt, prior.CapturedAt)
 	}
-	run("historical-project", "disable", projectID)
+	run("backfill", "projects", "disable", projectID)
 	cfg, _, err = config.Load(home)
 	must(t, err)
 	if cfg.AcceptSession(regs[0]) {
 		t.Fatal("disabled import still accepted")
 	}
-	run("historical-project", "enable", projectID)
+	run("backfill", "projects", "enable", projectID)
 	batches, err := backfill.LoadBatches(home)
 	must(t, err)
 	if len(batches) != 1 {
