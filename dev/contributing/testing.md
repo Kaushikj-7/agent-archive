@@ -139,17 +139,25 @@ Predicted bin loads are logged separately from measured worker phase durations.
 Git invocation and worker0 vet costs stay separate from weights; the assigned
 Git package stays isolated on whichever worker receives it.
 
-The current hints use the four successful representative shard artifacts from
-run38525632395 at tested source2a120d1fd2074122fb245e9d3ea2b384069368dc.
-The overall workflow failed a CI test fixture; it is not a successful workflow
-observation. Artifact IDs, archive digests, exact settings, raw-file hashes and
-immutable historical catalog bytes are pinned, and prior requests are retained.
-The source-audit move uses an explicit observed residual: builtin package
-246.889s minus its sequential whole-source audit244.930s leaves1.959s of
-observed remaining package cost. This is derived advice, not a measured run of
-the changed scheduling. Local shards without independent audit ownership restore
-the excluded244.930s ranking cost. Observed vet42.087s and isolated Git3.265s
-seed fixed scheduling offsets; listing/startup/queue delays stay separate.
+The current hints use the complete four-worker observation from successful
+run38536640565 at tested merge0cd8a00e32255b89dbe22d737c30848bf5c08a7d.
+Artifact IDs, archive digests, exact settings, raw-file hashes and immutable
+historical catalog bytes are pinned; prior requests remain in the attribution.
+Fetch that exact commit before regeneration. The importer resolves its Git tree
+and regular catalog blob independently, checks the requested catalog bytes, and
+verifies the separate named plain audit body and package PASS against that tree.
+Each sample supplies an explicit `audit_directory`; audit report and raw stream
+hashes are included. This historical import path does not change the live
+verdict's current tracked-source/event guard.
+
+The observed owned builtin package already skips the relocated race audit, so
+its elapsed cost is used directly, without another subtraction. Local shards
+without ownership add the verified same-source plain audit body cost only as
+ranking advice; this is not a measurement of race cost. Vet2.214s and isolated
+Git3.012s are observed invocation advice. All four caches restored a previous
+source prefix (exact hit false); CLI listing/build/TestMain took24–26s. These
+samples are neither empty-cache cold nor exact-cache warm controls. The body
+weights rank logical work and do not predict worker elapsed or CPU time.
 Four workers remain a hosted trial. Current whole-job latency and allocation
 must justify retaining them; no five-minute target or wall-time saving is
 claimed from these logical rankings. The generic partition helper accepts1..16

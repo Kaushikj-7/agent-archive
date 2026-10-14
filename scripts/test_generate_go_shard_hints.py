@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import tempfile
+import subprocess
 import unittest
 from unittest import mock
 
@@ -249,6 +250,63 @@ class GeneratorTests(unittest.TestCase):
                 with self.assertRaises(hints.runner.Failure):
                     hints.generate(self.samples, 'wrong-request-source', SETTINGS, PKGS, NAMES)
                 self.assertEqual(os.environ.get('GITHUB_SHA'), event_source)
+
+    def test_measured_source_requires_real_commit_regular_git_catalog_bytes(self):
+        repo = self.root / 'git-proof'; repo.mkdir()
+        def git(*args):
+            return subprocess.check_output(['git', '-C', str(repo), *args], stderr=subprocess.PIPE, timeout=20).decode().strip()
+        git('init', '-q'); git('config', 'user.name', 'Test'); git('config', 'user.email', 'test@example.invalid')
+        (repo/'scripts').mkdir(); catalog_path=repo/'scripts/ci_tiers.json'
+        raw=json.dumps({'schema':1,'restorations':[]})+'\n'; catalog_path.write_text(raw)
+        git('add', '.'); git('commit', '-qm', 'catalog'); source=git('rev-parse','HEAD')
+        with mock.patch.object(hints.runner,'ROOT',repo):
+            proof, actual=hints.measured_source(source,raw)
+            self.assertEqual(proof,{'source':source,'tree':git('rev-parse','HEAD^{tree}')})
+            self.assertEqual(actual,raw)
+            for bad in ('f'*40, 'HEAD', git('rev-parse','HEAD^{tree}')):
+                with self.assertRaises(hints.runner.Failure):hints.measured_source(bad,raw)
+            with self.assertRaises(hints.runner.Failure):hints.measured_source(source,raw+' ')
+            # Construct the symlink Git mode without following a host link.
+            blob=git('rev-parse','HEAD:scripts/ci_tiers.json')
+            git('update-index','--cacheinfo','120000,'+blob+',scripts/ci_tiers.json')
+            git('commit','-qm','symlink')
+            with self.assertRaises(hints.runner.Failure):hints.measured_source(git('rev-parse','HEAD'))
+
+    def test_owned_historical_audit_uses_git_proof_and_preserves_live_guard(self):
+        catalog=run_ci_tier.catalog(); proof={'source':'accepted-source','tree':'b'*40}
+        settings=copy.deepcopy(SETTINGS)
+        for value in settings.values():value['plain_audit_owned']=True
+        for _,sample in self.samples:
+            for i in range(2):
+                path=sample/str(i)/'manifest.json';m=json.loads(path.read_text());m['settings']=settings[str(i)];path.write_text(json.dumps(m))
+        audit=self.root/'audit';audit.mkdir()
+        rows=[{'Package':run_ci_tier.SOURCE_AUDIT_PACKAGE,'Test':run_ci_tier.SOURCE_AUDIT_TEST,'Action':'run'},
+              {'Package':run_ci_tier.SOURCE_AUDIT_PACKAGE,'Test':run_ci_tier.SOURCE_AUDIT_TEST,'Action':'pass','Elapsed':5},
+              {'Package':run_ci_tier.SOURCE_AUDIT_PACKAGE,'Action':'pass','Elapsed':6}]
+        stream(audit/'source-audit.jsonl',rows)
+        report={'schema':1,'source':proof['source'],'source_proof':proof,'success':True,'tier':'pr','suite':'audit',
+                'invocations':[{'command':run_ci_tier.SOURCE_AUDIT_COMMAND,'log':'source-audit.jsonl',
+                                'performance_enabled':False,'real_systemd_enabled':False,
+                                'evidence':run_ci_tier.source_audit_body((audit/'source-audit.jsonl').read_text())}]}
+        (audit/'tier.json').write_text(json.dumps(report))
+        def generate():
+            return hints.generate(self.samples,proof['source'],settings,PKGS,NAMES,catalog,
+                                  audit_directories={sid:audit for sid,_ in self.samples})
+        with mock.patch.object(hints,'measured_source',return_value=(proof,json.dumps(catalog))), mock.patch.object(run_ci_tier.full_race,'source_proof',return_value={'source':'current','tree':'c'*40}):
+            result=generate()
+            self.assertEqual(result['owned_plain_audit_exclusions_ms'][run_ci_tier.SOURCE_AUDIT_PACKAGE],5000)
+            self.assertEqual(len(result['provenance']['samples'][0]['plain_audit']['files']),2)
+            with self.assertRaises(run_ci_tier.Failure):run_ci_tier.verify_source_audit(audit,proof['source'])
+            with self.assertRaises(hints.runner.Failure):hints.generate(self.samples,proof['source'],settings,PKGS,NAMES,catalog)
+            for update in (lambda r:r['source_proof'].update(tree='c'*40),lambda r:r.update(source='wrong'),
+                           lambda r:r['invocations'][0]['command'].append('-race')):
+                bad=copy.deepcopy(report);update(bad);(audit/'tier.json').write_text(json.dumps(bad))
+                with self.assertRaises(hints.runner.Failure):generate()
+            (audit/'tier.json').write_text(json.dumps(report))
+            for bad in (rows[1:], rows[:-1], rows+[rows[-1]], [dict(r,Action='skip') if r.get('Test') and r['Action']=='pass' else r for r in rows], [rows[-1]]):
+                stream(audit/'source-audit.jsonl',bad)
+                with self.assertRaises(hints.runner.Failure):generate()
+
 
     def test_parent_elapsed_larger_than_envelope_and_missing_start(self):
         rows = [{'Test': 'TestAlpha', 'Action': 'run', 'Time': '2026-01-01T00:00:00Z'},
