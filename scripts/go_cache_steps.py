@@ -151,6 +151,10 @@ def main():
                     emit({'save_ready': 'false'}, env['GITHUB_OUTPUT'])
                     return 0
                 from ci_cache import publish_manifest
+                # PR snapshots contain compiler objects/tools only. Immutable
+                # dependency bundles remain in the two trusted-main seeds;
+                # fresh go mod download/verify repopulates modules on PR hits.
+                prepare_paths(plan, clear=True, modules_only=True)
                 try:
                     size = publish_manifest(plan, context)
                 except InvalidContext:

@@ -17,8 +17,8 @@ pins. Darwin additionally includes selected Xcode/SDK metadata and deployment
 and SDK overrides. ImageVersion remains part of the compilation key; existing
 independent vet receipt image compatibility policy is unchanged.
 
-`compilation-seeds.yml` runs only on push to main, on two standard runners,
-Linux and macOS. It checks exact source and the push event before publication.
+`compilation-seeds.yml` runs only on push to main, in three bounded standard-runner roles: Linux product, macOS product,
+and Linux shared-checker compilation. It checks exact source and the push event before publication.
 No PR-target workflow or PR code executes with main publication authority.
 GitHub's branch cache isolation also prevents PR-scoped entries becoming a
 main seed. A PR or fork can restore available default-branch seeds read-only;
@@ -39,7 +39,7 @@ machines are introduced. Only these directories are cached:
 - `$RUNNER_TEMP/pr-go-build`
 - `$RUNNER_TEMP/pr-go-modules`
 
-Main seeds have one immutable key per exact context and module dependency set,
+Main seeds have one immutable key per product/shared profile, exact context and module dependency set,
 without a new key for each source tree or worker. All Linux workers share one
 PR-scoped compilation snapshot; only successful same-repository worker zero
 publishes it. Worker count still participates in PR namespace compatibility,
@@ -48,8 +48,8 @@ Source-specific PR keys can be evicted normally; their contents are Go
 compilation, never worker evidence. New runner/compiler/module contexts create
 new seeds, and older variants remain subject to the same 10 GB LRU limit.
 
-Each publication has a one-GiB uncompressed budget. Before capture, only Go's
-recoverable action/object files can be removed, oldest first, to target 90% of
+Each publication has a two-GiB uncompressed budget. Before capture, only Go's
+recoverable action/object files can be removed, oldest first, to target 98% of
 the budget. Modules, pinned tools and receipts are never edited by pruning.
 Missing objects cause ordinary fresh compilation. If the immutable portion
 alone exceeds the cap, publication is skipped with a notice rather than
@@ -57,8 +57,17 @@ raising storage limits. `cache_bytes` reports actual inventory bytes. This cap
 bounds each entry, not an assertion about live account storage: observe cache
 inventory and actual restore/upload costs on hosted runs before qualification.
 
-At the maximum, two current main variants consume up to two GiB, plus one
-entry per recently active PR source/context rather than eight entries per PR.
+PR snapshots contain compiler objects and immutable tool binaries only; module
+contents are cleared after successful current tests and module verification,
+before publication. A PR snapshot hit downloads/verifies current product
+modules normally. This avoids copying the roughly 0.57 GB measured module
+bundle into each recent PR entry. The read-only main seeds retain modules for
+general checker and native consumers. Linux product seeds omit the unused
+macOS golangci/deadcode binaries; shared-checker compilation has a separate
+allowlisted profile to avoid evicting product compilation.
+
+At the maximum, three current main profiles consume up to six GiB, plus one
+narrower entry per recent PR source/context rather than eight entries per PR.
 The shared repository LRU may evict old entries before every PR remains warm;
 cache misses are correct and must remain functional.
 
@@ -79,7 +88,10 @@ Git binary. The runner-current case remains unchanged.
 
 The pinned Levenshtein implementation intentionally rebuilds helpers and
 addresses/checksums the resulting bytes on each call. Only its Go compilation
-and module state is reused here. Its `--cache-dir` contains result/analysis
+and module state is reused here. The shared profile verifies the exact pinned
+shared source and all four module graphs (CLI, lint, actionlint, govulncheck) on
+restore; module verification failures retry once cold. Its main role compiles
+those exact helpers without invoking checks or scanners. Its `--cache-dir` contains result/analysis
 state as well as helpers and is never restored. Changing that shared binary
 contract requires a separately reviewed upstream interface, not copying XDG or
 verification state into this repository's cache.
@@ -90,8 +102,10 @@ Run `test_go_cache_context.py`, `test_go_cache_steps.py`, `test_ci_cache.py` and
 the workflow/tier/shard contracts. Qualify actual hosted Linux and Darwin cold,
 hit, incompatible, corrupt and fork cases, with source/flag/compiler mutation
 and the existing complete worker receipt reconciliation. Report compilation
-saved versus restore/hash/upload time and actual bytes. Local measurements are
-not Linux or hosted Darwin evidence.
+saved versus restore/hash/upload time and actual bytes. A local Darwin measurement of full production/catalog-race compilation and
+pinned lint/deadcode generated 1,307,981,087 compiler/tool bytes and 569,314,948
+module bytes; this informed the two-GiB cap. Local measurements are not Linux
+or hosted Darwin evidence.
 
 General consumers can revert the composite restore step to remain cold without
 changing checks. Worker restore/save steps and main seed workflow can be disabled

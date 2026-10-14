@@ -310,18 +310,20 @@ def outputs(plan):
             'seed': plan.seed}
 
 
-def prepare_paths(plan, clear=False):
-    prepare_owned_paths(plan.paths, clear)
+def prepare_paths(plan, clear=False, modules_only=False):
+    prepare_owned_paths(plan.paths, clear, modules_only)
 
 
-def prepare_owned_paths(paths, clear=False):
+def prepare_owned_paths(paths, clear=False, modules_only=False):
     roots = {Path(p).parent for p in paths}
     if len(roots) != 1 or [Path(p).name for p in paths] != ['pr-go-build', 'pr-go-modules']:
         raise InvalidContext('cache paths outside controlled directories')
     root = roots.pop()
     if not root.is_absolute() or root.resolve() != root:
         raise InvalidContext('cache root is not canonical')
-    for raw in paths:
+    for index, raw in enumerate(paths):
+        if modules_only and index == 0:
+            continue
         path = Path(raw)
         if path.is_symlink() or (path.exists() and not path.is_dir()):
             raise InvalidContext('unsafe cache path')

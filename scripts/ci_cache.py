@@ -22,14 +22,14 @@ from go_cache_context import (InvalidContext, CachePlan, digest, execute,
 from go_cache_steps import emit, execute_modules
 
 SCHEMA = 'aa-compilation-v2'
-MAX_BYTES = 1024 * 1024 * 1024
+MAX_BYTES = 2 * 1024 * 1024 * 1024
 MANIFEST = '.aa-compilation-manifest.json'
 
 
-def file_inventory(paths):
-    """Reject links/devices and checksum bytes before letting Go consume them."""
-    result = {}
-    size = 0
+def cache_files(paths):
+    """Walk once: retain stat metadata for size budgeting and checksum capture."""
+    import stat
+    result = []
     for index, raw in enumerate(paths):
         root = Path(raw)
         if root.is_symlink() or not root.is_dir():
@@ -42,54 +42,68 @@ def file_inventory(paths):
                 path = Path(current)/name
                 if index == 0 and path == root/MANIFEST:
                     continue
-                if path.is_symlink() or not path.is_file():
+                info = path.lstat()
+                if not stat.S_ISREG(info.st_mode):
                     raise InvalidContext('cache member is not regular')
-                size += path.stat().st_size
-                if size > MAX_BYTES:
-                    raise InvalidContext('cache exceeds one GiB publication budget')
-                sha = hashlib.sha256()
-                with path.open('rb') as handle:
-                    for chunk in iter(lambda: handle.read(1024 * 1024), b''):
-                        sha.update(chunk)
-                result[f'{index}/{path.relative_to(root).as_posix()}'] = sha.hexdigest()
+                result.append((path, f'{index}/{path.relative_to(root).as_posix()}',
+                               info.st_size, info.st_mtime_ns))
+    return result
+
+
+def file_inventory(paths, files=None):
+    """Checksum bytes before Go consumes them; no redundant per-file stats."""
+    files = cache_files(paths) if files is None else files
+    size = sum(item[2] for item in files)
+    if size > MAX_BYTES:
+        raise InvalidContext('cache exceeds two GiB publication budget')
+    result = {}
+    for path, key, length, _ in files:
+        sha = hashlib.sha256()
+        observed = 0
+        with path.open('rb') as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b''):
+                observed += len(chunk)
+                sha.update(chunk)
+        if observed != length:
+            raise InvalidContext('cache member changed during checksum capture')
+        result[key] = sha.hexdigest()
     return result, size
 
 
-def bound_compilation(plan):
+def bound_compilation(plan, files=None):
     """Drop only Go's recoverable action/object entries, oldest first.
 
     Module contents, pinned binaries, manifests and receipts are never edited.
-    A missing Go cache object is an ordinary cold compilation, not a skipped
-    check. Preserve 90% of the cap as the publication target for manifest room.
+    Preserve 98% of the cap for manifest room. Missing Go objects trigger normal
+    fresh compilation. Enumerated metadata avoids an extra tree walk/stat pass.
     """
-    size = sum(path.stat().st_size for raw in plan.paths for path in Path(raw).rglob('*')
-               if path.is_file() and not path.is_symlink())
-    target = int(MAX_BYTES * .9)
-    if size <= target:
-        return 0
-    candidates = []
-    build = Path(plan.paths[0])
-    for directory in build.iterdir():
-        if not re.fullmatch(r'[0-9a-f]{2}', directory.name) or directory.is_symlink() or not directory.is_dir():
-            continue
-        for path in directory.iterdir():
-            if (not path.is_symlink() and path.is_file()
-                    and re.fullmatch(r'[0-9a-f]{64}-[ad]', path.name)):
-                candidates.append(path)
+    files = cache_files(plan.paths) if files is None else files
+    size = sum(item[2] for item in files)
+    target = int(MAX_BYTES * .98)
     removed = 0
-    for path in sorted(candidates, key=lambda item: item.stat().st_mtime_ns):
+    candidates = []
+    for item in files:
+        path, key, length, modified = item
+        parts = key.split('/')
+        if (len(parts) == 3 and parts[0] == '0' and re.fullmatch(r'[0-9a-f]{2}', parts[1])
+                and re.fullmatch(r'[0-9a-f]{64}-[ad]', parts[2])):
+            candidates.append(item)
+    discarded = set()
+    for path, key, length, modified in sorted(candidates, key=lambda item: item[3]):
         if size <= target:
             break
-        length = path.stat().st_size
         path.unlink()
+        discarded.add(key)
         size -= length
         removed += length
+    files[:] = [item for item in files if item[1] not in discarded]
     return removed
 
 
 def publish_manifest(plan, context):
-    bound_compilation(plan)
-    files, size = file_inventory(plan.paths)
+    candidates = cache_files(plan.paths)
+    bound_compilation(plan, candidates)
+    files, size = file_inventory(plan.paths, candidates)
     (Path(plan.paths[0])/MANIFEST).write_text(json.dumps({
         'schema': SCHEMA, 'context': digest(context),
         'dependency': plan.source['dependency'], 'source': plan.source,
@@ -167,6 +181,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('phase', choices=('prepare', 'verify', 'complete'))
     parser.add_argument('--source', default='.')
+    parser.add_argument('--profile', choices=('product', 'shared'), default='product')
+    parser.add_argument('--shared-source', default='')
     args = parser.parse_args()
     env = os.environ
     try:
@@ -174,11 +190,21 @@ def main():
         event = json.loads(Path(env['GITHUB_EVENT_PATH']).read_text())
         tested = env['GITHUB_SHA']
         current = current_source(source, tested)
-        context = validate_context(runtime_context(native=True), native=True)
+        runtime = validate_context(runtime_context(native=True), native=True)
+        shared = None
+        if args.profile == 'shared':
+            from warm_shared_tools import shared_identity, verify_modules
+            if not args.shared_source:
+                raise InvalidContext('shared profile requires pinned source')
+            shared = Path(args.shared_source).resolve(strict=True)
+            shared_proof = shared_identity(shared)
+        context = runtime if shared is None else {'runtime': runtime, 'profile': 'shared', 'shared': shared_proof}
         plan = general_plan(context, current, Path(env['RUNNER_TEMP']))
         def guard(expected):
-            if current_source(source, tested) != expected or runtime_context(native=True) != context:
+            if current_source(source, tested) != expected or runtime_context(native=True) != runtime:
                 raise InvalidContext('source/compiler changed during compilation cache use')
+            if shared is not None and shared_identity(shared) != shared_proof:
+                raise InvalidContext('shared compiler source changed during cache use')
         state_path = Path(env['RUNNER_TEMP'])/'compilation-cache-plan.json'
         saved = {'plan': asdict(plan), 'context': context}
         if args.phase == 'prepare':
@@ -191,6 +217,15 @@ def main():
             if args.phase == 'verify':
                 state = restore_compilation(plan, context, env.get('RESTORE_OUTCOME'),
                                             env.get('MATCHED_KEY'), guard)
+                if shared is not None:
+                    try:
+                        verify_modules(shared)
+                    except subprocess.SubprocessError:
+                        if state != 'trusted':
+                            raise
+                        state = restore_compilation(plan, context, 'failure', '', guard)
+                        verify_modules(shared)
+                    guard(current)
                 emit({'restore_state': state}, env['GITHUB_OUTPUT'])
             else:
                 guard(current)
@@ -199,6 +234,8 @@ def main():
                 if not trusted_main(env, event):
                     raise InvalidContext('trusted cache writes require exact push-main event')
                 execute_modules(['go', 'mod', 'verify'])
+                if shared is not None:
+                    verify_modules(shared)
                 try:
                     size = publish_manifest(plan, context)
                 except InvalidContext:

@@ -59,6 +59,8 @@ jobs:
         uses: ./app/.github/actions/verified-go-cache
         with:
           source: app
+          profile: shared
+          shared-source: levenshtein
       - name: Stage and scan with the release compiler
         env:
           PYTHONDONTWRITEBYTECODE: '1'
@@ -106,6 +108,8 @@ jobs:
         uses: ./app/.github/actions/verified-go-cache
         with:
           source: app
+          profile: shared
+          shared-source: levenshtein
       - name: Stage PR inputs and select checks
         if: github.event_name == 'pull_request'
         id: stage

@@ -16,6 +16,7 @@ import go_cache_context as keys
 from go_cache_steps import verify_restored, restore_result
 import pinned_git
 import verified_tools
+import warm_shared_tools
 from test_go_cache_context import ContextTests
 from test_ci_workflow import jobs, ROOT
 
@@ -114,6 +115,17 @@ class CompilationTests(unittest.TestCase):
         self.assertFalse(discard.exists())
         self.assertEqual(tool.read_bytes(), b'pinned tool')
         self.assertEqual((Path(self.plan.paths[1])/'module').read_bytes(), b'verified dependency')
+
+    def test_narrow_pr_publication_clears_only_owned_modules_after_checks(self):
+        build, modules = map(Path, self.plan.paths)
+        outside = self.root/'outside-module'
+        outside.mkdir()
+        (outside/'keep').write_text('unrelated')
+        (modules/'link').symlink_to(outside, target_is_directory=True)
+        keys.prepare_paths(self.plan, clear=True, modules_only=True)
+        self.assertEqual(list(modules.iterdir()), [])
+        self.assertEqual((build/'object').read_bytes(), b'compiled source')
+        self.assertEqual((outside/'keep').read_text(), 'unrelated')
 
     def test_pr_worker_trusted_seed_hit_and_corrupt_fallback(self):
         cache.publish_manifest(self.plan, self.context)
@@ -227,6 +239,24 @@ class ToolTests(unittest.TestCase):
             receipt = json.loads((root/'deadcode.json').read_text())
             self.assertEqual(receipt['version'], 'v0.50.0')
 
+    def test_shared_module_graphs_and_builds_are_exact_and_never_run_checks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            calls = []
+            def command(argv, **kwargs):
+                calls.append((argv, kwargs))
+            proof = {'tested': keys.TOOL_PINS['shared']}
+            with mock.patch.object(warm_shared_tools, 'shared_identity', return_value=proof):
+                warm_shared_tools.warm(root, root/'outside-tool', command)
+            builds = [(argv, options) for argv, options in calls if argv[:2] == ['go','build']]
+            self.assertEqual(len(builds),4)
+            self.assertEqual([options['cwd'] for _,options in builds],
+                             [root/directory for directory,_ in warm_shared_tools.MODULES])
+            self.assertEqual(sum(argv == ['go','mod','verify'] for argv,_ in calls),4)
+            self.assertTrue(all('verify' not in argv[0] for argv,_ in calls))
+            self.assertEqual(builds[0][1]['env']['CGO_ENABLED'],'0')
+            self.assertEqual(builds[0][1]['env']['GOFLAGS'],'-mod=readonly -buildvcs=false')
+
     def test_git_archive_rejects_traversal_devices_and_symlink_children(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -249,7 +279,9 @@ class WorkflowTests(unittest.TestCase):
         self.assertNotIn('pull_request:', text)
         self.assertNotIn('pull_request_target:', text)
         self.assertNotIn('schedule:', text)
-        self.assertIn('os: [ubuntu-latest, macos-14]', text)
+        self.assertEqual(text.count('          - os:'), 3)
+        self.assertIn('profile: shared', text)
+        self.assertIn('profile: product', text)
         self.assertIn('scripts/ci_cache.py complete', text)
         self.assertIn("steps.complete.outputs.save_ready == 'true'", text)
         self.assertNotIn('retention-days:', text)  # Caches use default repo 10 GB LRU.
