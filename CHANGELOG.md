@@ -20,9 +20,10 @@ follow [Semantic Versioning](https://semver.org/).
 - A Codex thread whose abandoned branches fit while being read, but left too
   little of the per-session read memory to publish the thread, is captured
   without those branches instead of being recorded as too large to capture.
-  Whenever a branch is left out, `status` now says so ("Codex left out part
-  of a session"), with only the app, the project and the time; `status
-  --json` carries it as the capture diagnostic `revision_left_out`.
+  Whenever a branch is left out from a session that is otherwise captured,
+  `status` now says so ("Codex left out part of a session"), with only the
+  app, the project and the time; `status --json` carries it as the capture
+  diagnostic `revision_left_out`.
 
 ## [0.2.1]
 

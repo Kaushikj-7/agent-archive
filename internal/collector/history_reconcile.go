@@ -101,17 +101,27 @@ func (s *sessionScan) reconcileRevisions(read sourceRead, active archive.SourceB
 		return nil, err
 	}
 	s.offChainKept = offChain.offChainKept
-	if offChain.offChainLeftOut > 0 {
-		s.noteRevisionLeftOut()
-	}
+	s.offChainLeftOut = offChain.offChainLeftOut > 0
 	return plan, nil
 }
 
 // noteRevisionLeftOut records, content-free, that the scan left out an
 // off-chain revision of the thread: the app and the configured project
-// only, as the hooks' capture diagnostics do. A diagnostic is advisory, so
-// failing to write one does not stop the scan.
-func (s *sessionScan) noteRevisionLeftOut() {
+// only, as the hooks' capture diagnostics do. It runs once the scan has
+// ended (err is how), and records nothing when the scan ends with the
+// session recorded as a capture gap, such as too large to read
+// (overCeiling): the diagnostic says the rest of the session was captured.
+// A diagnostic is advisory, so failing to write one does not fail the scan.
+func (s *sessionScan) noteRevisionLeftOut(err error) {
+	if !s.offChainLeftOut || s.gap != "" {
+		return
+	}
+	if s.overSessionCeiling(err) {
+		// overCeiling records the gap unless an upload is owed.
+		if owed, owedErr := s.local.Outstanding(s.reg, false); owedErr != nil || !owed.Upload {
+			return
+		}
+	}
 	if err := capture.RecordSessionDiagnostic(s.local.Home(), capture.DiagnosticRevisionLeftOut, s.reg.Harness.Name, s.reg.ProjectRoot, s.now); err != nil {
 		s.warn(fmt.Errorf("record capture diagnostic: %w", err))
 	}

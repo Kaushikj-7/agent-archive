@@ -12,6 +12,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/capture"
+	"github.com/wangjohn/agent-archive/internal/state"
 )
 
 // offChainTexts is n synthetic transcript messages of size bytes each that
@@ -135,31 +136,25 @@ func hasRevisionLeftOut(t *testing.T, scan *sessionScan) bool {
 // nothing.
 func TestLeftOutOffChainRevisionRecordsAContentFreeDiagnostic(t *testing.T) {
 	t.Parallel()
-	scan, lookup := reconciliationFixture(t)
-	read, ok, err := scan.read()
-	if err != nil || !ok {
-		t.Fatal("native read", err)
-	}
-	active, _, err := scan.build(read)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := scan.reconcileRevisions(read, active); err != nil {
-		t.Fatal(err)
+	scan, _ := reconciliationFixture(t)
+	captured, ids := capturedChain(t, scan, scanErr(t, scan))
+	if !captured || !slices.Contains(ids, revisionB) {
+		t.Fatalf("B was not kept: captured %v, inputs %v", captured, ids)
 	}
 	if hasRevisionLeftOut(t, scan) {
 		t.Fatal("recorded a diagnostic with nothing left out")
 	}
+	scan, lookup := reconciliationFixture(t)
 	// B no longer reads as a Codex rollout of this thread.
 	bPath := lookup.refs[revisionB][0].Path
 	if err := os.WriteFile(bPath, []byte("B-only is not a rollout\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	plan, err := scan.reconcileRevisions(read, active)
-	if err != nil {
-		t.Fatal("an unreadable off-chain rollout blocked the chain: ", err)
+	captured, ids = capturedChain(t, scan, scanErr(t, scan))
+	if !captured {
+		t.Fatal("an unreadable off-chain rollout blocked the chain")
 	}
-	if slices.ContainsFunc(plan.Preserved, func(ref archive.RevisionReference) bool { return ref.RevisionID == revisionB }) {
+	if slices.Contains(ids, revisionB) {
 		t.Fatal("B was kept")
 	}
 	if len(scan.warnings) != 0 {
@@ -181,5 +176,51 @@ func TestLeftOutOffChainRevisionRecordsAContentFreeDiagnostic(t *testing.T) {
 		if strings.Contains(string(raw), private) {
 			t.Errorf("the diagnostic records %q: %s", private, raw)
 		}
+	}
+}
+
+// scanErr runs one scan of the session and returns how it ended.
+func scanErr(t *testing.T, scan *sessionScan) error {
+	t.Helper()
+	_, err := scan.run(scan.ctx)
+	return err
+}
+
+// The diagnostic says the rest of the session was captured, so a scan that
+// left an off-chain revision out records it only once it ends without the
+// session recorded as a capture gap: not when the session met its own read
+// ceiling with no upload owed (overCeiling records it as too large to read),
+// nor when the scan recorded another gap.
+func TestRevisionLeftOutIsNotRecordedForASessionLeftAsAGap(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name    string
+		ceiling bool
+		gap     state.BlockedReason
+		want    bool
+	}{
+		{"captured", false, "", true},
+		{"too large to read", true, "", false},
+		{"rewritten", false, state.BlockedReasonTranscriptRewritten, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			scan, _ := reconciliationFixture(t)
+			budget := scan.readBudget()
+			t.Cleanup(budget.BeginScope(1 << 20))
+			var err error
+			if c.ceiling {
+				budget.Refuse(1 << 40)
+				err = errRetainedBudget
+				if !scan.overSessionCeiling(err) {
+					t.Fatal("not a refusal at the session's ceiling")
+				}
+			}
+			scan.offChainLeftOut, scan.gap = true, c.gap
+			scan.noteRevisionLeftOut(err)
+			if got := hasRevisionLeftOut(t, scan); got != c.want {
+				t.Fatalf("recorded %v, want %v", got, c.want)
+			}
+		})
 	}
 }

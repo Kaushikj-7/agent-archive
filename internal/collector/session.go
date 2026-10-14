@@ -101,8 +101,10 @@ type sessionScan struct {
 	// offChainKept counts the off-chain (best-effort) revisions the last
 	// reconciliation kept: what they retained counts against the session's
 	// read ceiling until the scan ends. withoutOffChain is set when the scan
-	// runs again without them (see run).
+	// runs again without them (see run). offChainLeftOut reports that it
+	// left at least one out (see noteRevisionLeftOut).
 	offChainKept    int
+	offChainLeftOut bool
 	withoutOffChain bool
 }
 
@@ -143,9 +145,11 @@ func (s *sessionScan) id() string { return s.reg.ArchiveSessionID }
 // ceiling only on its own. A scan that saved a publication before the
 // refusal is not run again: the publication is owed as it is
 // (overCeiling defers it), and its later passes resume it without the
-// reconciliation's retained work.
-func (s *sessionScan) run(ctx context.Context) (sessionOutcome, error) {
-	outcome, err := s.scanOnce(ctx)
+// reconciliation's retained work. Whether an off-chain revision was left
+// out is recorded once, as the scan ends (noteRevisionLeftOut).
+func (s *sessionScan) run(ctx context.Context) (outcome sessionOutcome, err error) {
+	defer func() { s.noteRevisionLeftOut(err) }()
+	outcome, err = s.scanOnce(ctx)
 	if err == nil || s.offChainKept == 0 || s.withoutOffChain || !s.overSessionCeiling(err) {
 		return outcome, err
 	}
@@ -158,7 +162,7 @@ func (s *sessionScan) run(ctx context.Context) (sessionOutcome, error) {
 	s.readBudget().ForgetScopeExceeded()
 	s.filtered, s.lastRead, s.revisions, s.rewritten = nil, nil, nil, nil
 	s.gap, s.sizeLimit, s.readyAt, s.subagentRunning = "", nil, time.Time{}, false
-	s.offChainKept, s.withoutOffChain = 0, true
+	s.offChainKept, s.offChainLeftOut, s.withoutOffChain = 0, false, true
 	return s.scanOnce(ctx)
 }
 
