@@ -6,6 +6,11 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Search conversation text with a private local index. Explicitly index one
+  archived session with `search --refresh --session ID --harness NAME`, query
+  cached titles/messages with `search "WORDS"`, and read exact matching passages.
+  Coverage is partial and refresh is manual; no background work is installed.
+
 - Capture Codex sessions again while Codex is running. A thread's history is
   now read by following Codex's own record of its current rollout back through
   the rollout each one continues from, instead of waiting for a full inventory

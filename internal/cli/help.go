@@ -13,6 +13,32 @@ import (
 )
 
 var commandHelp = map[string]string{
+	"search": `Usage: agent-archive search "QUERY" [options]
+       agent-archive search --refresh --session SESSION_ID --harness NAME
+       agent-archive search --read REF [--offset N] [--max-bytes N]
+
+Search indexed titles and visible conversation messages. Normal queries use
+only the local index; they never refresh or read storage. Coverage is partial
+until sessions have been explicitly indexed. Refresh reads one session and its
+preserved revisions with checksum verification. No automatic job is installed.
+Words are ANDed, quotes match phrases, and a trailing * enables prefix matching.
+Punctuation splits words; this is keyword search, not substring/semantic search.
+References bind exact source revisions. Reads print escaped, quoted text.
+  --refresh           Index exactly --session from verified archive sources
+  --session SESSION_ID  Exact session; needs --refresh and --harness
+  --harness NAME      Session harness: codex, claude or cursor
+  --read REF          Read a source-bound reference printed by search
+  --offset N          Absolute UTF-8 byte offset (default passage start, -1)
+  --max-bytes N       Maximum context text bytes, 4–8192 (default 4096)
+  --project DIR|NAME  Restrict to a project (default current repository)
+  --all-projects      Search every project's indexed sessions
+  --since DATE|AGE    Inclusive capture start, date/RFC3339 time/age
+  --until DATE|AGE    Inclusive capture end, date/RFC3339 time/age
+  --replays MODE      hide (default), include or only replay sessions
+  --children MODE     hide (default), include or only child sessions
+  --limit N           Maximum returned sessions, 1–100 (default 20)
+  --cursor CURSOR     Continue a page; index writes require restarting
+`,
 	"migrate": `Usage: agent-archive migrate --format catalog-v4 [options]
 
 Copies an isolated destination in durable bounded batches, verifies all metadata

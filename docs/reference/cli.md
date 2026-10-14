@@ -39,6 +39,7 @@ Manage capture
 
 Inspect history
   agent-archive list        Find archived sessions
+  agent-archive search      Search indexed conversation text
   agent-archive show        Read a session's summary or transcript
   agent-archive stats       See your usage: tokens, cost, agents, projects
   agent-archive feedback    Add explicit feedback from a local file
@@ -587,6 +588,55 @@ Example: agent-archive list --skill review-pr --skill-sha256 HASH --since 7d
 | `--skill-sha256` | a value | — |
 | `--skill-usage` | a value | `used` |
 | `--verbose` | no value | — |
+
+## agent-archive search
+
+Guide: [Search conversation text](../guides/search.md).
+
+```text
+Usage: agent-archive search "QUERY" [options]
+       agent-archive search --refresh --session SESSION_ID --harness NAME
+       agent-archive search --read REF [--offset N] [--max-bytes N]
+
+Search indexed titles and visible conversation messages. Normal queries use
+only the local index; they never refresh or read storage. Coverage is partial
+until sessions have been explicitly indexed. Refresh reads one session and its
+preserved revisions with checksum verification. No automatic job is installed.
+Words are ANDed, quotes match phrases, and a trailing * enables prefix matching.
+Punctuation splits words; this is keyword search, not substring/semantic search.
+References bind exact source revisions. Reads print escaped, quoted text.
+  --refresh           Index exactly --session from verified archive sources
+  --session SESSION_ID  Exact session; needs --refresh and --harness
+  --harness NAME      Session harness: codex, claude or cursor
+  --read REF          Read a source-bound reference printed by search
+  --offset N          Absolute UTF-8 byte offset (default passage start, -1)
+  --max-bytes N       Maximum context text bytes, 4–8192 (default 4096)
+  --project DIR|NAME  Restrict to a project (default current repository)
+  --all-projects      Search every project's indexed sessions
+  --since DATE|AGE    Inclusive capture start, date/RFC3339 time/age
+  --until DATE|AGE    Inclusive capture end, date/RFC3339 time/age
+  --replays MODE      hide (default), include or only replay sessions
+  --children MODE     hide (default), include or only child sessions
+  --limit N           Maximum returned sessions, 1–100 (default 20)
+  --cursor CURSOR     Continue a page; index writes require restarting
+```
+
+| Flag | Takes | Default |
+| --- | --- | --- |
+| `--all-projects` | no value | — |
+| `--children` | a value | `hide` |
+| `--cursor` | a value | — |
+| `--harness` | a value | — |
+| `--limit` | a value | `20` |
+| `--max-bytes` | a value | `4096` |
+| `--offset` | a value | `-1` |
+| `--project` | a value | — |
+| `--read` | a value | — |
+| `--refresh` | no value | — |
+| `--replays` | a value | `hide` |
+| `--session` | a value | — |
+| `--since` | a value | — |
+| `--until` | a value | — |
 
 ## agent-archive show
 
