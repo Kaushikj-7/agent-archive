@@ -32,6 +32,7 @@ seven-day import and the status prompt for existing installations. See the
 | Record | Status |
 | --- | --- |
 | [CLI reliability and keep forever](cli-reliability-and-retention.md) | A–G implementation landed; [exact implementation-SHA evidence](../maintainers/acceptance/cli-reliability-and-retention-2026-10-11.md) recorded. Final-head checks/review and signed-release/provider/app/platform acceptance remain open; retain the plan here while those gates are pending. |
+| [v0.2 release review fixes](v0.2-release-review-fixes.md) | A/B/C merged in PR519/518/521 with independent source verification and passing exact-source Test/Levenshtein/Extended at `42288a85`; see linked completion evidence. D documentation review/checks/merge, E release-build alignment, final post-D/E candidate campaign and artifact/provider/app/platform acceptance remain pending. |
 | [Release remediation](release-remediation.md) | Implementation record; disposable provider/per-app acceptance and release sign-off remain open. |
 | [Native name comparisons](../maintainers/native-session-name-comparisons.md) | Partial sandbox evidence; native UI acceptance blocked. |
 | [Published-release acceptance](../maintainers/open-source-acceptance.md) | Maintainer runbook for candidate/provider/app checks; implementation does not imply a passing release gate. |
