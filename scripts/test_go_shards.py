@@ -83,6 +83,45 @@ class CatalogTest(unittest.TestCase):
                 runner.coverage(text, {'ordinary/a': has_tests})
 
 
+class WorkerCountTest(unittest.TestCase):
+    def test_two_and_four_assignments_are_deterministic_exhaustive_disjoint(self):
+        units = [f'Test{i}' for i in range(12)]
+        for workers in (2, 4):
+            bins = runner.partition(units, {}, workers)
+            self.assertEqual(len(bins), workers)
+            self.assertEqual(bins, runner.partition(list(reversed(units)), {}, workers))
+            flattened = [n for b in bins for n in b]
+            self.assertEqual(set(flattened), set(units))
+            self.assertEqual(len(flattened), len(set(flattened)))
+        for invalid in (0, 1, 3, 5, True, '4'):
+            with self.assertRaises(runner.Failure): runner.partition(units, {}, invalid)
+        with self.assertRaises(runner.Failure): runner.partition(['a', 'b'], {}, 4)
+
+    def test_four_worker_reconciliation_requires_every_terminal_and_assignment(self):
+        import run_ci_tier
+        with tempfile.TemporaryDirectory() as directory:
+            catalog = {'source': os.environ.get('GITHUB_SHA', 'abc'), 'workers': 4,
+                       'packages': {CLI: True, **{f'p{i}': True for i in range(4)}},
+                       'cli': [f'Test{i}' for i in range(4)],
+                       'assignments': [{'packages': [f'p{i}'], 'cli': [f'Test{i}']} for i in range(4)]}
+            for i in range(4):
+                path = Path(directory)/str(i); path.mkdir()
+                ordinary = records(event('pass', f'p{i}', Test='TestOrdinary'), event('pass', f'p{i}'))
+                cli = records(event('pass', Test=f'Test{i}'), event('pass'))
+                (path/'ordinary.json').write_text(ordinary); (path/'cli.json').write_text(cli)
+                (path/'manifest.json').write_text(json.dumps({'shard': i, 'tier': 'pr', 'success': True,
+                    'catalog': catalog, 'catalog_sha256': runner.digest(catalog), 'coverage': catalog['assignments'][i], 'settings': {'workers': 4},
+                    'body_evidence': run_ci_tier.body_evidence(ordinary+'\n'+cli, True)}))
+            runner.reconcile(directory, 4)
+            with self.assertRaises(runner.Failure): runner.reconcile(directory, 2)
+            path = Path(directory)/'3'/'manifest.json'; original = path.read_text()
+            for change in ({'success': False}, {'shard': 2}, {'coverage': {'packages': [], 'cli': []}}):
+                m = json.loads(original); m.update(change); path.write_text(json.dumps(m))
+                with self.assertRaises(runner.Failure): runner.reconcile(directory, 4)
+            path.unlink()
+            with self.assertRaises(runner.Failure): runner.reconcile(directory, 4)
+
+
 class GateTest(unittest.TestCase):
     def test_event_verdict_fail_closed(self):
         pr = {j: {'result': s} for j, s in [('linux-short', 'success'), ('linux-full', 'success'), ('script-tests', 'success'), ('macos-smoke','success'), ('tier-plan','success')]}
