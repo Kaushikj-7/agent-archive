@@ -6,12 +6,22 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.0]
+
+Candidate scope for the intended `v0.2.0` tag; no release date or publication
+is established here. Published installation examples remain pinned to v0.1.1
+until the tested candidate is promoted. Production S3/R2 scoped catalog
+activation remains refused pending provider qualification and credential
+authority.
+
+### Latest development changes
+
 - Bound active-source downloads by their validated compressed size before
   allocating the body; refuse oversized references and stores without bounded
   reads while preserving transcript verification and existing read limits.
 
 - Stop handoff exact-ID lookup on cancellation or read errors, require
-  --harness for shared IDs, release read
+  `--harness` for IDs shared by supported registered harnesses, release read
   signal ownership before launch, retain the captured catalog client through
   target loading, and preserve spaces in Git worktree paths.
 
@@ -322,8 +332,6 @@ follow [Semantic Versioning](https://semver.org/).
   incomplete related histories are not imported or newly captured.
 - Backfill reports a transcript that changed during reading as retryable,
   rather than an unsafe format, while continuing other imports.
-
-## [0.2.0]
 
 ### Documentation
 
