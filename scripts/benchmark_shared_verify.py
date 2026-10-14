@@ -88,7 +88,10 @@ def execute(shared, source, directory, cache_directory, jobs, env, plan):
         except subprocess.TimeoutExpired:
             # A stopped diagnostic must not leave checker/compiler children
             # writing into scratch while its owner removes that directory.
-            os.killpg(process.pid, signal.SIGTERM)
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
             try:
                 process.wait(timeout=5)
             except subprocess.TimeoutExpired:
