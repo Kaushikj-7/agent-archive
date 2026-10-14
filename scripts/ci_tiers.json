@@ -231,6 +231,16 @@
         "10000",
         "100000"
       ]
+    },
+    {
+      "package": "internal/agents/builtin",
+      "test": "TestNativeCaptureWholeSourceBoundary",
+      "restore": "weekly",
+      "pr": "race body NOT RUN only under explicit independent plain audit ownership; required plain body PASS",
+      "plain_counterpart": {
+        "suite": "audit",
+        "test": "TestNativeCaptureWholeSourceBoundary"
+      }
     }
   ]
 }
