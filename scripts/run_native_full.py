@@ -16,6 +16,10 @@ ROOT = tier.ROOT
 WORKERS = 3
 RACE = full.COMMON + ['-p', '1', '-parallel', '2']
 LIST = RACE + ['-list', '^(Test|Fuzz|Example)', './...']
+# The full 100k fixture tree passed in 964s on a hosted worker, but sharing
+# its package-wide 20m test timer with the other CLI trees exhausted that timer.
+# Keep its assigned worker and full assertions, with an independent Go timer.
+OWN_CLI_INVOCATION = {'TestPickerQualificationRealCLIPhases'}
 Failure = full.shards.Failure
 
 
@@ -97,8 +101,11 @@ def schedule(package_map, names):
                                 'selected': {p: selected[p] for p in ordinary}})
         if full.CLI in selected:
             cli = selected[full.CLI]
-            invocations.append({'command': RACE+(['-run', full.shards.selector(cli)] if cli else [])+[full.CLI],
-                                'selected': {full.CLI: cli}})
+            separate = sorted(set(cli) & OWN_CLI_INVOCATION)
+            remaining = [name for name in cli if name not in OWN_CLI_INVOCATION]
+            for parents in ([remaining] if remaining or not cli else []) + [[name] for name in separate]:
+                invocations.append({'command': RACE+(['-run', full.shards.selector(parents)] if parents else [])+[full.CLI],
+                                    'selected': {full.CLI: parents}})
         assignments.append(selected)
         commands.append(invocations)
     return {'workers': WORKERS, 'weight_basis': 'historical full Darwin logical costs; advisory, not current elapsed time',

@@ -11,12 +11,15 @@ import run_native_full as native
 CLI = native.full.CLI
 OTHER = native.tier.MODULE+'internal/archive'
 EMPTY = native.tier.MODULE+'cmd/empty'
+GIANT = 'TestPickerQualificationRealCLIPhases'
 PROOF = {'source': 'a'*40, 'tree': 'b'*40}
 ENV = {'GOOS': 'darwin', 'GOARCH': 'arm64', 'CGO_ENABLED': '1', 'GOMAXPROCS': '2',
        'GOFLAGS': '', 'AGENT_ARCHIVE_REAL_SYSTEMD': '0'}
 CATALOG = {'schema': 1, 'restorations': [
     {'package': 'internal/archive', 'test': 'TestSame', 'restore': 'weekly'},
-    {'package': 'internal/cli', 'test': 'TestFull', 'restore': 'weekly', 'full_children': ['large']}]}
+    {'package': 'internal/cli', 'test': 'TestFull', 'restore': 'weekly', 'full_children': ['large']},
+    {'package': 'internal/cli', 'test': GIANT, 'restore': 'weekly',
+     'full_children': ['100000/handoff', '100000/list', '100000/show']}]}
 
 
 def stream(items):
@@ -31,6 +34,9 @@ def bodies(selected, packages):
             events.append(dict(Package=pkg, Test=name, Action='run'))
             if name == 'TestFull':
                 events.extend([dict(Package=pkg, Test=name+'/large', Action=a) for a in ('run','pass')])
+            if name == GIANT:
+                for child in ('100000/handoff', '100000/list', '100000/show'):
+                    events.extend(dict(Package=pkg, Test=name+'/'+child, Action=a) for a in ('run','pass'))
             events.append(dict(Package=pkg, Test=name, Action='pass'))
         if not packages[pkg]:
             events.append(dict(Package=pkg, Action='output', Output='? '+pkg+' [no test files]\n'))
@@ -51,7 +57,7 @@ class NativeFullTest(unittest.TestCase):
         mock.start()
         self.addCleanup(mock.stop)
         self.packages = {OTHER: True, EMPTY: False, CLI: True}
-        self.names = {OTHER: ['TestSame'], EMPTY: [], CLI: ['TestSame','TestFull','FuzzSeed','ExampleOutput']}
+        self.names = {OTHER: ['TestSame'], EMPTY: [], CLI: ['TestSame','TestFull','FuzzSeed','ExampleOutput',GIANT]}
         plan_out = self.out/'native-plan'
         plan_out.mkdir()
         (plan_out/'packages.json').write_text(stream([
@@ -146,6 +152,35 @@ class NativeFullTest(unittest.TestCase):
         for count in (0,17,True):
             with self.assertRaises(native.Failure):
                 native.full.shards.partition(['a','b','c'], {}, count)
+
+    def test_giant_tree_has_own_timer_on_same_worker_with_exhaustive_other_trees(self):
+        for assigned, units in zip(self.plan['schedule']['assignments'], self.plan['schedule']['commands']):
+            cli_units = [u for u in units if CLI in u['selected']]
+            parents = [name for u in cli_units for name in u['selected'][CLI]]
+            self.assertCountEqual(parents, assigned.get(CLI, []))
+            self.assertEqual(len(parents), len(set(parents)))
+            if GIANT in parents:
+                unit = next(u for u in cli_units if GIANT in u['selected'][CLI])
+                self.assertEqual(unit['selected'], {CLI:[GIANT]})
+                self.assertEqual(unit['command'], native.RACE+['-run', native.full.shards.selector([GIANT]),CLI])
+        self.complete()
+        native.reconcile(self.out, self.needs)
+        index = next(i for i,a in enumerate(self.plan['schedule']['assignments']) if GIANT in a.get(CLI,[]))
+        path = self.out/f'native-worker-{index}'/'receipt.json'
+        original = path.read_text()
+        for change in ('missing', 'duplicate', 'weakened'):
+            receipt = json.loads(original)
+            n = next(i for i,u in enumerate(self.plan['schedule']['commands'][index]) if GIANT in u['selected'].get(CLI,[]))
+            if change == 'missing':
+                receipt['invocations'].pop(n)
+            elif change == 'duplicate':
+                receipt['invocations'].append(copy.deepcopy(receipt['invocations'][n]))
+            else:
+                receipt['invocations'][n]['command'][receipt['invocations'][n]['command'].index('20m')] = '30m'
+            path.write_text(json.dumps(receipt))
+            with self.assertRaises(native.Failure):
+                native.reconcile(self.out, self.needs)
+        path.write_text(original)
 
     def test_complete_evidence_passes_and_retains_full_restoration_children(self):
         self.complete()
