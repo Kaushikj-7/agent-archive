@@ -19,6 +19,7 @@ python3 scripts/test_install.py
 python3 scripts/test_install_from_source.py
 python3 scripts/test_purge_recipe.py                     # runs the bucket purge recipes in the docs
 python3 scripts/test_ci_workflow.py                      # Extended keeps the validated systemd image
+python3 -B scripts/test_ci_lane_verdict.py                # mandatory script and cross-target lanes
 python3 scripts/test_ci_tiers.py                         # cadence, source proof and body evidence
 python3 scripts/test_go_shards.py                         # discovery, coverage, verdict, and process cleanup
 python3 -B scripts/test_generate_go_shard_hints.py         # matched artifact medians and pause envelopes
@@ -30,17 +31,30 @@ VERSION=dev ./scripts/build-release.sh                   # the release build (CI
 ```
 
 CI's [Test workflow](../../.github/workflows/test.yml) runs the short race
-suite across four Ubuntu trial workers for each pull request. Each worker discovers all
-packages and CLI top-level tests, fuzz seeds and executable examples, assigns
-ordinary packages once and CLI names to disjoint bins, and retains complete
-subtest trees. Timing hints only rank discovered units; new units are assigned
+suite across eight Ubuntu trial workers for each pull request. Each worker discovers all
+packages and top-level tests, fuzz seeds and executable examples. Light packages
+remain whole; CLI, catalog, statshtml and state parents are assigned to disjoint
+bins and retain complete subtest trees. Timing hints only rank discovered units; new units are assigned
 and logged. The assigned native Git identity package runs first on a quiet worker because
 its observers have fixed 500 ms deadlines. The workers then overlap bounded
-ordinary-package and CLI processes; vet runs once. Each worker records its source, catalog, assignment and
-terminal coverage; the stable required `linux-race` verdict reconciles all four
-artifacts and fails on any missing, failed or cancelled worker. All Linux
-Python gates, including purge, staging, scope and shard-runner regressions, run
-in a parallel script job required by that verdict. A separate exact-source plan
+ordinary-package and parent processes. The independent plain audit and each worker
+retain actual vet evidence bound to their source and compiler context. Each worker
+records its source, catalog, assignment and terminal coverage; the stable required
+`linux-race` verdict reconciles all eight artifacts and fails on any missing, failed or cancelled worker. All Linux
+Python gates run in independent `script-static`, `script-install` and
+`script-purge` jobs. Only purge waits for the tier plan; static and installer
+fixtures start immediately. Each lane uses isolated HOME/XDG/temp directories.
+Purge discovers every complete unittest method and assigns sorted methods to two
+standard Linux workers. Each parent retains all runtime-generated cases; only
+its existing tier selection changes repeated resume boundaries. The aggregate
+checks both current-source catalogs, assignments, passing parent terminals and
+bound child streams, including the exact existing resume/cadence case union.
+Missing, duplicate or unexpected workers, parents or cases fail closed.
+The stable required `script-tests` verdict rejects missing, failed, skipped or
+cancelled lanes and remains a dependency of `linux-race`. The independent
+Linux/arm64 build+vet, Darwin/arm64 no-cgo vet and Linux release build+verification
+also run in separate standard Linux jobs behind the stable `cross-build` verdict.
+A separate exact-source plan
 selects focused representative regressions for sensitive PR changes. Its proof
 compares event base, actual head and tested merge, checks tracked bytes/types/modes,
 and includes both paths of renames and deletions. CLI, catalog, recovery, archive,
