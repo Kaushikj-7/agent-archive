@@ -80,8 +80,8 @@ Pure functions over `listRow`, with no I/O:
   `relativeAge` and `compactAge` both move onto it.
 - `dayBucket(now, t, loc) bucket` — local-time day groups, with "this week"
   starting Monday.
-- `listTitle(display string) string` — the readable list title (see
-  [PR 2](#pr-2--readable-list-titles)). The full `DisplayTitle` is kept for
+- `listTitle(display string) string` — the readable list title 
+  PR 2 below). The full `DisplayTitle` is kept for
   the strip, `show` and search.
 
 ### Layout (`list_table.go`)
@@ -97,7 +97,7 @@ Pure functions over `listRow`, with no I/O:
 - **`withColumns`** (list_format.go) keeps its job of hiding constant
   harness/project columns and moving them into the heading. It feeds
   `sessionLayout`.
-- **`sessionTableGroups`** gains day grouping (see
+- **`sessionTableGroups`** gains day grouping 
   [decision 1](#decisions)). Groups keep `continued` for paging.
 - **The verbose table** (`--verbose`) stays as it is. It is a debugging view.
 
@@ -152,7 +152,7 @@ Notes:
 - Move the skill/subagent hints out of the title cell. The count shows as a
   dim `+4` after the title only when it fits; the full text goes to the
   strip in PR 5.
-- Change the piped table to `WHEN AGENT PROJECT PR ID TITLE` (see
+- Change the piped table to `WHEN AGENT PROJECT PR ID TITLE` 
   [decision 3](#decisions)).
 - Update all 7 list goldens in `testdata/browse`.
 - Add width-matrix tests: 60/80/100/140/220 columns, asserting no line
