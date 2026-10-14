@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -113,5 +114,137 @@ func TestLookupAllowanceRunningOutMidScanDefersTheSession(t *testing.T) {
 	result = collectWith(t, store, bucket, cfg, root, now.Add(2*time.Minute), exhaustingLookup{third})
 	if len(result.Errors) != 0 || len(result.Deferred) != 1 {
 		t.Fatalf("change check result=%+v, want one session deferred", result)
+	}
+}
+
+// nearlySpentLookup begins each collector allowance with almost none of it
+// left, so the first lookup operation's deadline passes inside it, as when
+// the allowance runs out part way through a slow native index read.
+type nearlySpentLookup struct{ *CodexRolloutLookup }
+
+func (l nearlySpentLookup) BeginCollection() {
+	l.CodexRolloutLookup.BeginCollection()
+	l.remaining = time.Nanosecond
+}
+
+// The allowance usually runs out inside a lookup call, whose interrupted step
+// then reports a context deadline or an unavailable index rather than the
+// allowance. That session is deferred too, not failed with "context deadline
+// exceeded".
+func TestLookupAllowanceRunningOutInsideAnOperationDefersTheSession(t *testing.T) {
+	t.Parallel()
+	store, cfg, root, now, lookup := admittedRollout(t)
+	result := collectWith(t, store, storagetest.NewMemoryStore(), cfg, root, now, nearlySpentLookup{lookup})
+	if len(result.Errors) != 0 || len(result.Published) != 0 || len(result.Deferred) != 1 {
+		t.Fatalf("result=%+v, want one session deferred", result)
+	}
+	for id, reason := range result.Deferred {
+		if reason != collector.DeferredLookupAllowance {
+			t.Fatalf("deferred %s for %q, want %q", id, reason, collector.DeferredLookupAllowance)
+		}
+	}
+}
+
+// slowThreadLookup makes each Thread call a lookup operation of the shared
+// lookup that takes at least delay, as a slow native read would.
+type slowThreadLookup struct {
+	*CodexRolloutLookup
+	delay time.Duration
+	calls int
+}
+
+func (l *slowThreadLookup) Thread(ctx context.Context, id string) (agentapi.CodexRolloutSet, error) {
+	l.calls++
+	_, done, err := l.beginOperation(ctx)
+	if err != nil {
+		return agentapi.CodexRolloutSet{}, err
+	}
+	time.Sleep(l.delay)
+	done(&err)
+	if err != nil {
+		return agentapi.CodexRolloutSet{}, err
+	}
+	return l.CodexRolloutLookup.Thread(ctx, id)
+}
+
+// Discovery charges its time to the lookup's allowance once: the lookup
+// calls it makes are part of that time, and charge themselves, so they are
+// not charged again (which spent the allowance up to twice as fast).
+func TestDiscoveryChargesItsLookupCallsOnce(t *testing.T) {
+	t.Parallel()
+	store, cfg, at, root := fixture(t)
+	writeRollout(t, root, cfg.Archive.Projects[0].Root, at.Add(time.Minute), 1, "sessions")
+	lookup, err := NewCodexRolloutLookup(t.Context(), store, []string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = lookup.Close() })
+	slow := &slowThreadLookup{CodexRolloutLookup: lookup, delay: 500 * time.Millisecond}
+	before := lookup.remaining
+	started := time.Now()
+	if h, err := runWithAdapters(t.Context(), store, cfg, Options{Sources: builtin.NewBuiltins(), Rollouts: lookup, CodexRollouts: slow, Now: func() time.Time { return at.Add(2 * time.Minute) }}, registeredAdapters()); err != nil {
+		t.Fatalf("%v (health %+v)", err, h)
+	}
+	elapsed := time.Since(started)
+	if slow.calls == 0 {
+		t.Fatal("discovery made no lookup call")
+	}
+	if lookup.remaining < before-elapsed {
+		t.Fatalf("discovery charged %v of the allowance in %v", before-lookup.remaining, elapsed)
+	}
+}
+
+// The collector's allowance includes its own header probes: discovery using
+// all of the pass's does not leave the collector unable to read a thread's
+// current rollout header.
+func TestCollectorAllowanceHasItsOwnHeaderProbes(t *testing.T) {
+	t.Parallel()
+	store, cfg, at, root := fixture(t)
+	native := writeRollout(t, root, cfg.Archive.Projects[0].Root, at.Add(time.Minute), 1, "sessions")
+	path := filepath.Join(root, "sessions", "rollout-2026-10-01T12-00-00-"+native+".jsonl")
+	addHint(t, hintDatabase(t, root, false), native, path, at.Add(time.Minute))
+	lookup, err := NewCodexRolloutLookup(t.Context(), store, []string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = lookup.Close() })
+	lookup.probes = HeaderProbes // discovery probed as many headers as a pass may
+	lookup.BeginCollection()
+	set, err := lookup.Thread(t.Context(), native)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if set.Current == nil || set.Current.Path != path {
+		t.Fatalf("current=%+v, want %s", set.Current, path)
+	}
+}
+
+// A native index read cut off by a deadline (discovery's, or an allowance
+// running out) says nothing about the index. It is not kept as unavailable,
+// so a later allowance in the same pass, such as the collector's, still finds
+// threads' current rollouts in it.
+func TestIndexReadCutOffByADeadlineIsNotKeptAsUnavailable(t *testing.T) {
+	t.Parallel()
+	store, cfg, at, root := fixture(t)
+	native := writeRollout(t, root, cfg.Archive.Projects[0].Root, at.Add(time.Minute), 1, "sessions")
+	path := filepath.Join(root, "sessions", "rollout-2026-10-01T12-00-00-"+native+".jsonl")
+	addHint(t, hintDatabase(t, root, false), native, path, at.Add(time.Minute))
+	lookup, err := NewCodexRolloutLookup(t.Context(), store, []string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = lookup.Close() })
+	expired, cancel := context.WithDeadline(t.Context(), time.Now().Add(-time.Second))
+	defer cancel()
+	if _, err := lookup.index(expired, root, false); err == nil {
+		t.Fatal("index read under an expired deadline succeeded")
+	}
+	lookup.BeginCollection()
+	set, err := lookup.Thread(t.Context(), native)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if set.Current == nil || set.Current.Path != path {
+		t.Fatalf("current=%+v, want %s from the native index", set.Current, path)
 	}
 }

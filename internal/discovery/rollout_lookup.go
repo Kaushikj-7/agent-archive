@@ -283,14 +283,13 @@ func (l *CodexRolloutLookup) inspect(ctx context.Context, path, thread string) (
 // archived_sessions/. The source provider reopens each and checks its header
 // identity. A Key is the observed thread, or empty for a locator found by
 // name alone.
-func (l *CodexRolloutLookup) Rollout(ctx context.Context, id string) ([]agentapi.SourceRef, error) {
-	var done func()
-	var operationErr error
-	ctx, done, operationErr = l.beginOperation(ctx)
-	if operationErr != nil {
-		return nil, operationErr
+func (l *CodexRolloutLookup) Rollout(ctx context.Context, id string) (_ []agentapi.SourceRef, err error) {
+	var done func(*error)
+	ctx, done, err = l.beginOperation(ctx)
+	if err != nil {
+		return nil, err
 	}
-	defer done()
+	defer done(&err)
 	if err := l.checkBudget(ctx); err != nil {
 		return nil, err
 	}
@@ -354,14 +353,13 @@ func (l *CodexRolloutLookup) RegisteredThread(ctx context.Context, id string) (a
 	return l.thread(ctx, id)
 }
 
-func (l *CodexRolloutLookup) thread(ctx context.Context, id string) (agentapi.CodexRolloutSet, error) {
-	var done func()
-	var operationErr error
-	ctx, done, operationErr = l.beginOperation(ctx)
-	if operationErr != nil {
-		return agentapi.CodexRolloutSet{}, operationErr
+func (l *CodexRolloutLookup) thread(ctx context.Context, id string) (_ agentapi.CodexRolloutSet, err error) {
+	var done func(*error)
+	ctx, done, err = l.beginOperation(ctx)
+	if err != nil {
+		return agentapi.CodexRolloutSet{}, err
 	}
-	defer done()
+	defer done(&err)
 	if err := l.checkBudget(ctx); err != nil {
 		return agentapi.CodexRolloutSet{}, err
 	}
@@ -520,14 +518,13 @@ func (l *CodexRolloutLookup) candidateDigests(paths []string) []rolloutObservati
 
 // Check revalidates selection within the pass. One private refresh per home is
 // allowed; later same-generation appends replay into that existing private view.
-func (l *CodexRolloutLookup) Check(ctx context.Context, id, revision string) error {
-	var done func()
-	var operationErr error
-	ctx, done, operationErr = l.beginOperation(ctx)
-	if operationErr != nil {
-		return operationErr
+func (l *CodexRolloutLookup) Check(ctx context.Context, id, revision string) (err error) {
+	var done func(*error)
+	ctx, done, err = l.beginOperation(ctx)
+	if err != nil {
+		return err
 	}
-	defer done()
+	defer done(&err)
 	if err := l.checkBudget(ctx); err != nil {
 		return err
 	}
@@ -654,7 +651,10 @@ func (l *CodexRolloutLookup) indexDeadline(ctx context.Context, root string, ref
 	capturedStamps := indexStamps(root)
 	snapshot, err := snapshotCurrentIndexBudget(ctx, root, nil, l.readBudget)
 	if err != nil {
-		if agentapi.Failure(err) == agentapi.Limit {
+		// A read cut off by a deadline or cancellation says nothing about
+		// the index: a later call, under a later allowance of the same pass
+		// (the collector's after discovery's), reads it again.
+		if agentapi.Failure(err) == agentapi.Limit || ctx.Err() != nil {
 			delete(l.indexes, root)
 			return nil, err
 		}
@@ -819,7 +819,13 @@ var (
 	_ agentapi.CodexRolloutAllowance = (*CodexRolloutLookup)(nil)
 )
 
-func (l *CodexRolloutLookup) beginOperation(ctx context.Context) (context.Context, func(), error) {
+// beginOperation starts one lookup call within the allowance left, and
+// returns its end, which charges the call's time to the allowance. A call
+// that fails because the allowance ran out while it ran (its own deadline
+// passed, its caller's did not) fails as one past the allowance, whatever the
+// interrupted step reported (a context error, an index unavailable), so the
+// caller can put the source off rather than fail it.
+func (l *CodexRolloutLookup) beginOperation(ctx context.Context) (context.Context, func(*error), error) {
 	if err := l.checkBudget(ctx); err != nil {
 		return ctx, nil, err
 	}
@@ -827,7 +833,13 @@ func (l *CodexRolloutLookup) beginOperation(ctx context.Context) (context.Contex
 	deadline := started.Add(l.remaining)
 	l.deadline = deadline
 	operation, cancel := context.WithDeadline(ctx, deadline)
-	return operation, func() { cancel(); l.remaining -= time.Since(started) }, nil
+	return operation, func(err *error) {
+		if *err != nil && ctx.Err() == nil && errors.Is(operation.Err(), context.DeadlineExceeded) {
+			*err = allowanceSpent("native lookup pass deadline")
+		}
+		cancel()
+		l.remaining -= time.Since(started)
+	}, nil
 }
 
 // NativeReadBudget is the pass-owned shared native/source/cache charge ledger.

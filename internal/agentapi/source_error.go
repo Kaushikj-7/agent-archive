@@ -105,7 +105,7 @@ const (
 var causeText = map[SourceCause]string{
 	CauseHistoryBaseUnavailable: "a Codex rollout this thread continues from was not found",
 	CauseRolloutTipAmbiguous:    "Codex thread has no single current rollout",
-	CauseLookupAllowanceSpent:   "this pass ran out of time for finding Codex rollouts; the next pass reads it",
+	CauseLookupAllowanceSpent:   "this pass's allowance for finding Codex rollouts (its time or header reads) ran out; the next pass reads it",
 }
 
 // SourceError retains a local cause and a bounded public classification.

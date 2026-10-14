@@ -27,7 +27,12 @@ follow [Semantic Versioning](https://semver.org/).
   pass after this pass's time for finding Codex rollouts ran out";
   `deferred_sessions` code `lookup_allowance`), and the pass's remaining
   Codex sessions are left for the next pass without being opened, so they
-  no longer slow the rest of the pass.
+  no longer slow the rest of the pass. A Codex session whose lookup is cut
+  off part way when the allowance runs out is put off the same way rather
+  than failing with "context deadline exceeded"; a native index read cut
+  off by a deadline is read again later in the pass instead of being
+  treated as unavailable; and discovery's lookups are charged to the
+  allowance once, not twice.
 
 ## [0.2.1]
 
