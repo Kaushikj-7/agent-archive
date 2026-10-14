@@ -311,7 +311,8 @@ class SourceProofTest(unittest.TestCase):
             target=root/'internal/scheduler/old.go';target.parent.mkdir(parents=True);target.write_text('package scheduler\n')
             git('add','.');git('commit','-qm','base');base=git('rev-parse','HEAD');main=git('branch','--show-current')
             git('checkout','-qb','fixture-change');git('mv','internal/scheduler/old.go','internal/scheduler/new.go');git('commit','-qm','rename');head=git('rev-parse','HEAD')
-            git('checkout',main);git('merge','--no-ff','-m','tested merge','fixture-change');tested=git('rev-parse','HEAD')
+            git('checkout',main);git('merge','--no-ff','-m','tested merge',head);tested=git('rev-parse','HEAD')
+            self.assertEqual(git('rev-list','--parents','-n','1',tested).split(),[tested,base,head])
             event={'pull_request':{'base':{'sha':base},'head':{'sha':head}}}
             with mock.patch.object(tier,'ROOT',root):
                 plan=tier.pr_extras(event,tested)
