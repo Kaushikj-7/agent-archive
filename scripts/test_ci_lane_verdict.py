@@ -54,7 +54,8 @@ class LaneVerdictTest(unittest.TestCase):
                 'test_stage_release_vulnerability_scan.py', 'test_measure_hook.py',
                 'test_linux_acceptance.py', 'test_go_shards.py', 'test_generate_go_shard_hints.py',
                 'test_ci_tiers.py', 'test_native_full.py', 'test_go_cache_context.py',
-                'test_go_cache_steps.py', 'test_ci_lane_verdict.py', 'test_report_ci_timing.py', 'test_purge_ci.py'},
+                'test_go_cache_steps.py', 'test_ci_lane_verdict.py', 'test_report_ci_timing.py', 'test_purge_ci.py',
+                'test_go_parent_shards.py', 'test_pr_reference.py'},
         }
         import re
         found = jobs((ROOT/'.github/workflows/test.yml').read_text())
