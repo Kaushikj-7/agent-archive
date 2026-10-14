@@ -119,6 +119,19 @@ func qualificationRef(tb testing.TB, store storage.ObjectStore, kind string, raw
 	return ref
 }
 
+// qualificationLeafSize counts the wire produced by qualificationJSON without
+// re-encoding a complete entry just for the node budget. Fixture values already
+// come from that canonical encoder; the final node still uses it and checks its
+// actual bytes against the production limit.
+func qualificationLeafSize(tb testing.TB, leaf qualificationLeaf) int {
+	tb.Helper()
+	valueBytes := len(leaf.Value)
+	if valueBytes == 0 {
+		valueBytes = len("null")
+	}
+	return len(qualificationJSON(tb, leaf.Key)) + valueBytes + len(`{"Key":,"Value":}`)
+}
+
 func qualificationTree(tb testing.TB, store storage.ObjectStore, leaves []qualificationLeaf) (catalog.ObjectRef, int) {
 	tb.Helper()
 	if len(leaves) == 0 {
@@ -130,7 +143,7 @@ func qualificationTree(tb testing.TB, store storage.ObjectStore, leaves []qualif
 		end := start
 		encodedBytes := 64 // Count/leaves framing, including decimal count and commas.
 		for end < len(leaves) && end-start < 32 {
-			leafBytes := len(qualificationJSON(tb, leaves[end])) + 1
+			leafBytes := qualificationLeafSize(tb, leaves[end]) + 1
 			if encodedBytes+leafBytes > 128<<10 {
 				break
 			}
@@ -204,6 +217,7 @@ func buildQualificationFixture(tb testing.TB, metadata []archive.Metadata) quali
 	raw := &qualifiedCLIStore{storagetest.NewMemoryStore()}
 	head := qualificationSeed(tb, raw)
 	entries := make([]catalog.CatalogEntry, len(metadata))
+	entryWire := make([]json.RawMessage, len(metadata))
 	children := map[string][2]uint64{}
 	for _, m := range metadata {
 		if m.ParentSessionID != "" {
@@ -225,6 +239,7 @@ func buildQualificationFixture(tb testing.TB, metadata []archive.Metadata) quali
 		n := children[m.Harness.Name+"/"+m.SessionID]
 		entry := catalog.CatalogEntry{Revision: fmt.Sprintf("fixture-%08d", i), Metadata: ref, Summary: m, OrdinaryChildren: n[0], ReplayChildren: n[1]}
 		entries[i] = qualificationEntry(tb, entry)
+		entryWire[i] = qualificationJSON(tb, entries[i])
 	}
 	var roots [4]catalog.ObjectRef
 	height := 0
@@ -245,7 +260,7 @@ func buildQualificationFixture(tb testing.TB, metadata []archive.Metadata) quali
 			}
 			order := qualificationOrderKeys(key, m)
 			for _, k := range order[tree-1] {
-				leaves = append(leaves, qualificationLeaf{k, qualificationJSON(tb, entry)})
+				leaves = append(leaves, qualificationLeaf{k, entryWire[i]})
 			}
 			if tree == 3 {
 				leaves = append(leaves, qualificationPickerLeaves(tb, key, entry)...)

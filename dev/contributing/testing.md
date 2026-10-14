@@ -244,7 +244,12 @@ collector, nativecodec and capture scopes require all five intended compiled par
 and actual body PASS. Missing parents, missing packages or an unexpected performance
 match in the compilation-only scope fail validation; archive is never counted as a
 plain performance body.
-Daily remains smoke plus expanded short native integration and published writer.
+Daily remains smoke plus expanded short native integration and published writer. Full qualification
+fixture construction reuses canonical entry bytes across ordering memberships and
+counts their leaf framing without serializing nested payloads again just for the
+byte budget. Final node encoding and the 128 KiB limits remain unchanged; a bounded
+reference encoder pins node bytes, hashes and topology. Full 10k/100k qualification
+sizes and CLI phase assertions still run in the full native catalog.
 
 `scripts/native_full_hints.json` contains advisory costs imported from the
 successful historical Darwin full artifact at `11ccad84`, with source/settings,
