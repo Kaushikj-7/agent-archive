@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -39,6 +40,7 @@ func (s *exactFailureStore) Get(ctx context.Context, key string) ([]byte, error)
 	<-ctx.Done()
 	return nil, ctx.Err()
 }
+
 func (s *exactFailureStore) List(ctx context.Context, prefix string) ([]storage.Object, error) {
 	s.lists.Add(1)
 	return s.ObjectStore.List(ctx, prefix)
@@ -51,10 +53,11 @@ func TestHandoffExactReadFailureStopsBeforeFallbackAndSideEffects(t *testing.T) 
 				f := newPickerFixture(t)
 				got := launchRecorder(t, &f)
 				signals := make(chan os.Signal, 1)
-				store := &exactFailureStore{ObjectStore: f.mem, signals: signals}
+				var failure error
 				if !interrupted {
-					store.failure = errors.New("synthetic read failure")
+					failure = errors.New("synthetic read failure")
 				}
+				store := &exactFailureStore{ObjectStore: f.mem, signals: signals, failure: failure}
 				phases := 0
 				f.env.Interrupts = func() (<-chan os.Signal, func()) { phases++; return signals, func() {} }
 				f.env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return store, nil }
@@ -113,6 +116,7 @@ func publishZeroPromptIdentity(t *testing.T, f *pickerFixture) {
 	_, err = reader.LoadSource(t.Context(), f.mem, m, reader.Limits{})
 	must(t, err)
 }
+
 func TestHandoffSharedFullIDRequiresHarnessBeforePromptEligibility(t *testing.T) {
 	for _, worktree := range []bool{false, true} {
 		t.Run(map[bool]string{false: "launch", true: "worktree"}[worktree], func(t *testing.T) {
@@ -141,6 +145,7 @@ func TestHandoffSharedFullIDRequiresHarnessBeforePromptEligibility(t *testing.T)
 		})
 	}
 }
+
 func TestHandoffMissingFullIDStillMatchesLocalTitle(t *testing.T) {
 	f := newPickerFixture(t)
 	query := "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
@@ -150,6 +155,7 @@ func TestHandoffMissingFullIDStillMatchesLocalTitle(t *testing.T) {
 		t.Fatalf("code=%d stderr=%q output=%q", code, stderr, out)
 	}
 }
+
 func TestHandoffWorktreePreservesTrailingSpacePathsAndNestedEdits(t *testing.T) {
 	repo := newTestRepo(t)
 	top := repo + " "
@@ -197,5 +203,52 @@ func TestHandoffLocalFullIDAmbiguityPrecedesTitleEligibility(t *testing.T) {
 	out, stderr, code := runHandoff(t, f.env, f.notUploaded, "--source", "local", "--harness", "codex")
 	if code != 0 || !strings.Contains(out, "Not uploaded yet") {
 		t.Fatalf("qualified local lookup: code=%d stderr=%q", code, stderr)
+	}
+}
+
+func TestHandoffExactLocalScanFailureCannotSelectArchiveTitle(t *testing.T) {
+	t.Parallel()
+	f := newPickerFixture(t)
+	query := "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+	f.addSession(t, "codex", "archive-title", "Explain "+query, f.env.now().Add(time.Hour))
+	f.sync(t)
+	must(t, os.WriteFile(filepath.Join(f.home, "registrations", "broken.json"), []byte("{"), 0600))
+	output := filepath.Join(t.TempDir(), "handoff.md")
+	_, stderr, code := runHandoff(t, f.env, query, "--output", output)
+	if code != 1 || !strings.Contains(stderr, "read registration") {
+		t.Fatalf("code=%d stderr=%q", code, stderr)
+	}
+	if _, err := os.Stat(output); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("output created: %v", err)
+	}
+	// Ordinary words retain best-effort archive search, and an explicit
+	// archive source does not inspect local registrations.
+	for _, args := range [][]string{{"Explain"}, {query, "--source", "archive"}} {
+		out, stderr, code := runHandoff(t, f.env, args...)
+		if code != 0 || !strings.Contains(out, "Explain "+query) || (len(args) > 1 && !strings.Contains(out, "source: archive")) {
+			t.Fatalf("args=%v code=%d stderr=%q output=%q", args, code, stderr, out)
+		}
+	}
+}
+
+func TestHandoffQueryReleasesReadSignalsBeforeLaunch(t *testing.T) {
+	t.Parallel()
+	f := newPickerFixture(t)
+	got := launchRecorder(t, &f)
+	active := atomic.Int32{}
+	f.env.Interrupts = func() (<-chan os.Signal, func()) {
+		active.Add(1)
+		return make(chan os.Signal), func() { active.Add(-1) }
+	}
+	launch := f.env.LaunchHandoff
+	f.env.LaunchHandoff = func(spec launchSpec, in io.Reader, out, stderr io.Writer) error {
+		if count := active.Load(); count != 0 {
+			t.Errorf("%d archive read signal owners still active during launch", count)
+		}
+		return launch(spec, in, out, stderr)
+	}
+	_, stderr, code := runHandoff(t, f.env, f.notUploaded, "--to", "claude")
+	if code != 0 || got.Dir == "" || active.Load() != 0 {
+		t.Fatalf("code=%d stderr=%q launch=%+v active=%d", code, stderr, got, active.Load())
 	}
 }

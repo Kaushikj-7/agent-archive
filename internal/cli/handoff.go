@@ -156,6 +156,13 @@ func runHandoffCommand(args []string, stdin io.Reader, stdout, stderr io.Writer,
 			return 1
 		}
 	}
+	// Reading is complete. Release signal ownership before destination
+	// prompts and launched agents take over terminal interaction.
+	if opts.readCtx != nil {
+		if owner := readPhase(opts.readCtx); owner != nil {
+			owner.Pause()
+		}
+	}
 	if opts.readCtx != nil && opts.readCtx.Err() != nil {
 		terminal.Printf(stderr, "agent-archive: handoff: %v\n", opts.readCtx.Err())
 		return 1

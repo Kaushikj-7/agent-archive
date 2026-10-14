@@ -164,6 +164,9 @@ func (r *handoffQueryResolver) resolve() (code int, done bool) {
 	if opts.source != "archive" {
 		var err error
 		if regs, err = state.OpenReadOnly(r.home).LoadRegistrations(); err != nil {
+			if isArchiveSessionID(r.query) {
+				return r.fail(err)
+			}
 			terminal.Printf(r.stderr, "agent-archive: handoff: note: could not read this machine's sessions, searching the archive only: %v\n", err)
 		}
 		identities := map[string]bool{}
