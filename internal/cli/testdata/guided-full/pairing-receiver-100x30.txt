@@ -25,7 +25,8 @@ Step 3 of 3 · Review and start
   Codex     Included projects only
   Skills    Metadata, including user folders
   Storage   s3://synthetic/agent-archive/
-  Keep for  90 days
+  Keep for  90 days · Sessions older than 90 days are deleted from your bucket; change with Edit a
+            setting, or keep forever
   ! Storage not checked yet · Connection will be checked after you confirm these settings
   ! Bucket privacy unknown · public-access settings could not be read
     Make sure public access is off:

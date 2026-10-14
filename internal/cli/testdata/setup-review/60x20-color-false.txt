@@ -4,7 +4,9 @@ Step 3 of 3 · Review and start
   Projects  ~/src/長い-project-path
   Skills    Metadata, including user folders
   Storage   s3://team-archive/agent-archive/
-  Keep for  90 days
+  Keep for  90 days · Sessions older than 90 days are
+            deleted from your bucket; change with Edit a
+            setting, or keep forever
   ✓ Storage connected
   ✓ Bucket is private
   ! Setup imports the last 7 days of included projects; older history is separate.
@@ -31,7 +33,9 @@ Full settings and privacy
               setting
   Storage     s3://team-archive/agent-archive/ · us-east-1 ·
               profile default
-  Keep for    90 days
+  Keep for    90 days · Sessions older than 90 days are
+              deleted from your bucket; change with Edit a
+              setting, or keep forever
   Hook files  Claude Code: ~/.claude/settings.json
               Cursor: ~/.cursor/hooks.json
   ✓ Storage connected       write, read, list, delete
@@ -49,7 +53,9 @@ Step 3 of 3 · Review and start
   Projects  ~/src/長い-project-path
   Skills    Metadata, including user folders
   Storage   s3://team-archive/agent-archive/
-  Keep for  90 days
+  Keep for  90 days · Sessions older than 90 days are
+            deleted from your bucket; change with Edit a
+            setting, or keep forever
   ✓ Storage connected
   ✓ Bucket is private
   ! Setup imports the last 7 days of included projects; older history is separate.

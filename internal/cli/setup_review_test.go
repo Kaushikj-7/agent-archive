@@ -407,6 +407,36 @@ func TestSetupReviewBeforeProbeDoesNotClaimStorageConnected(t *testing.T) {
 	}
 }
 
+// The Keep for row says what finite retention does, with the configured
+// days, and that keep forever never deletes automatically.
+func TestSetupReviewRetentionRowExplainsExpiry(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name       string
+		cfg        config.Config
+		wantValue  string
+		wantDetail string
+	}{
+		{"finite", config.Config{RetentionDays: 30}, "30 days", "Sessions older than 30 days are deleted from your bucket; change with Edit a setting, or keep forever"},
+		{"one day", config.Config{RetentionDays: 1}, "1 day", "Sessions older than 1 day are deleted from your bucket; change with Edit a setting, or keep forever"},
+		{"forever", config.Config{RetentionDays: 0, RetentionProtection: true}, "Keep forever", "Sessions are never deleted automatically"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			for _, row := range reviewRows(tc.cfg, nil, false, "") {
+				if row.label != "Keep for" {
+					continue
+				}
+				if len(row.values) != 1 || row.values[0] != tc.wantValue || row.detail != tc.wantDetail {
+					t.Fatalf("Keep for row = %+v, want value %q detail %q", row, tc.wantValue, tc.wantDetail)
+				}
+				return
+			}
+			t.Fatal("no Keep for row")
+		})
+	}
+}
+
 // Configuration establishes hook capture, but cannot establish app approval.
 // Regression: 2026-10 setup review P2-R1-09.
 func TestSetupHookOnlyCompletionDoesNotClaimAutomaticCaptureOn(t *testing.T) {

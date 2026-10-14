@@ -108,7 +108,11 @@ func reviewRows(cfg config.Config, discoveries map[string]applicationDiscovery, 
 		rows = append(rows, reviewRow{label: "Machine", values: []string{machine}})
 	}
 	days := config.RetentionLabel(cfg.RetentionDays)
-	return append(rows, reviewRow{label: "Keep for", values: []string{days}})
+	retentionDetail := "Sessions are never deleted automatically"
+	if cfg.RetentionDays != 0 {
+		retentionDetail = fmt.Sprintf("Sessions older than %s are deleted from your bucket; change with Edit a setting, or keep forever", days)
+	}
+	return append(rows, reviewRow{label: "Keep for", values: []string{days}, detail: retentionDetail})
 }
 
 // storageAddress is where sessions are stored, as one address such as

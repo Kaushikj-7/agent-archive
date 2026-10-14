@@ -234,7 +234,7 @@ Step 3 of 3 · Review and start
   Codex      Included projects only
   Skills     Metadata, including user folders
   Storage    s3://team-archive/agent-archive/
-  Keep for   90 days
+  Keep for   90 days · Sessions older than 90 days are deleted from your bucket; change with Edit a setting, or keep forever
 
   ✓ Storage connected
   ✓ Bucket is private
@@ -247,8 +247,10 @@ project paths and exceptions, discovery/copy behavior, hook status, credential
 ownership, storage checks and privacy documentation. Longer details use the
 pager and return to the same draft and decision. **Name this machine** (`m`) and
 **Cancel; keep draft** (`q`) are separate shortcuts. Narrow displays wrap values
-and warnings without dropping them. The default retention is 90 days; older
-sessions are deleted from the bucket automatically.
+and warnings without dropping them. The default retention is 90 days, and
+the Keep for row says what that means: sessions older than 90 days are
+deleted from your bucket automatically; change it with Edit a setting, or
+keep forever, in which case sessions are never deleted automatically.
 
 The Skills row controls filesystem skill evidence. Fresh setup uses
 `metadata` (names and filtered hashes, no body). Choose Edit a setting to

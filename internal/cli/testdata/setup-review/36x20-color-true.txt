@@ -9,7 +9,10 @@
   Storage
     s3://team-archive/agent-archive/
   Keep for
-    90 days
+    90 days · Sessions older than 90
+    days are deleted from your
+    bucket; change with Edit a
+    setting, or keep forever
   ✓ Storage connected
   ✓ Bucket is private
   \e[33m!\e[0m Setup imports the last 7 days of included projects; older history is separate.
@@ -43,7 +46,10 @@
     s3://team-archive/agent-archive/
     · us-east-1 · profile default
   Keep for
-    90 days
+    90 days · Sessions older than 90
+    days are deleted from your
+    bucket; change with Edit a
+    setting, or keep forever
   Hook files
     Claude Code:
     ~/.claude/settings.json
@@ -75,7 +81,10 @@
   Storage
     s3://team-archive/agent-archive/
   Keep for
-    90 days
+    90 days · Sessions older than 90
+    days are deleted from your
+    bucket; change with Edit a
+    setting, or keep forever
   ✓ Storage connected
   ✓ Bucket is private
   \e[33m!\e[0m Setup imports the last 7 days of included projects; older history is separate.
