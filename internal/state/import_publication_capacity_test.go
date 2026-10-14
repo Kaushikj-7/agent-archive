@@ -33,12 +33,12 @@ func TestImportDataKeepsPublicationSpaceAtChargedBoundary(t *testing.T) {
 			}
 			ceiling := durableStorageQuota - importPublicationHeadroom
 			sparseDurable(t, filepath.Join(s.home, "pending", "accounted.json"), (ceiling-existing-additional)/2+1)
-			err := config.WithDurableStorage(s.home, func(g config.DurableStorageGuard) error {
+			err := config.WithDurableStorage(s.home, func(g config.DurableStorageGuard) (err error) {
 				q, err := s.openDurableQuota(g)
 				if err != nil {
 					return err
 				}
-				defer q.Close()
+				defer func() { err = errors.Join(err, q.Close()) }()
 				write := func(w io.Writer) error { _, err := w.Write(make([]byte, nextSize)); return err }
 				if err := q.writeWithHeadroom(path, nextSize, write, nil, importPublicationHeadroom); !errors.Is(err, ErrDurableStorageCapacity) {
 					t.Fatalf("consumed publication reserve: %v", err)
@@ -75,12 +75,12 @@ func TestImportShrinkAndControlRemainUsableAboveAdmissionCeiling(t *testing.T) {
 	path := importStageRelative("selected")
 	sparseDurable(t, filepath.Join(s.home, path), 32)
 	sparseDurable(t, filepath.Join(s.home, "pending", "accounted.json"), (durableStorageQuota-durableControlBytes-64-128)/2)
-	err := config.WithDurableStorage(s.home, func(g config.DurableStorageGuard) error {
+	err := config.WithDurableStorage(s.home, func(g config.DurableStorageGuard) (err error) {
 		q, err := s.openDurableQuota(g)
 		if err != nil {
 			return err
 		}
-		defer q.Close()
+		defer func() { err = errors.Join(err, q.Close()) }()
 		for _, n := range []int64{32, 16} {
 			if err := q.writeWithHeadroom(path, n, func(w io.Writer) error { _, err := w.Write(make([]byte, n)); return err }, nil, importPublicationHeadroom); err != nil {
 				return err
