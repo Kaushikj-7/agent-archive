@@ -197,8 +197,8 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("steps.go-cache-verify.outputs.restore_state != 'exact'", save)
         self.assertIn('github.event.pull_request.head.repo.full_name == github.repository', save)
         self.assertNotIn('always()', save)
-        self.assertTrue(any('scripts/test_go_cache_context.py' in s for s in steps(self.workflows['test']['script-tests'])))
-        self.assertTrue(any('scripts/test_go_cache_steps.py' in s for s in steps(self.workflows['test']['script-tests'])))
+        self.assertTrue(any('scripts/test_go_cache_context.py' in s for s in steps(self.workflows['test']['script-static'])))
+        self.assertTrue(any('scripts/test_go_cache_steps.py' in s for s in steps(self.workflows['test']['script-static'])))
 
 
 if __name__ == '__main__':

@@ -114,7 +114,7 @@ class RealSystemdJobTest(unittest.TestCase):
 
 class PurgePrerequisiteTest(unittest.TestCase):
     def test_every_purge_job_provisions_tools_before_running_bodies(self):
-        workflows = [(ROOT / '.github/workflows/test.yml', 'script-tests'),
+        workflows = [(ROOT / '.github/workflows/test.yml', 'script-purge'),
                      (EXTENDED_YML, 'linux-race'), (EXTENDED_YML, 'macos-full')]
         for path, name in workflows:
             with self.subTest(workflow=path.name, job=name):
@@ -152,7 +152,7 @@ class CandidateCampaignTest(unittest.TestCase):
     def test_candidate_validation_never_restores_shared_go_build_state(self):
         # Candidate evidence must come from fresh source/module verification,
         # not executable build state restored from another workflow's cache.
-        expected = {'test': 8, 'levenshtein': 2, 'extended': 8}
+        expected = {'test': 10, 'levenshtein': 2, 'extended': 8}
         for name, count in expected.items():
             workflow = (ROOT / '.github/workflows' / f'{name}.yml').read_text()
             setup = [step for job in jobs(workflow).values() for step in steps(job)
@@ -177,9 +177,9 @@ class CandidateCampaignTest(unittest.TestCase):
     def test_candidate_test_keeps_all_pr_gates(self):
         workflow = (ROOT / '.github/workflows/test.yml').read_text()
         self.assertIn('  pull_request:', workflow)
-        self.assertEqual(set(jobs(workflow)), {'linux-race', 'linux-short', 'linux-full', 'script-tests', 'git-identity-compatibility', 'macos-smoke', 'cross-build', 'lint', 'tier-plan', 'source-audit'})
+        self.assertEqual(set(jobs(workflow)), {'linux-race', 'linux-short', 'linux-full', 'script-tests', 'git-identity-compatibility', 'macos-smoke', 'cross-build', 'lint', 'tier-plan', 'source-audit', 'script-static', 'script-install', 'script-purge', 'cross-linux-arm64', 'cross-darwin-nocgo', 'cross-linux-release'})
         for name, text in jobs(workflow).items():
-            if name not in ('linux-race', 'linux-short', 'linux-full', 'source-audit'):
+            if name not in ('linux-race', 'linux-short', 'linux-full', 'source-audit', 'script-tests', 'cross-build'):
                 self.assertIsNone(job_key(text, 'if'), name)
         self.assertIn('--tier full --suite linux', workflow)
         self.assertIn('github.event.pull_request.number || github.ref', workflow)
@@ -243,7 +243,7 @@ class CadenceTest(unittest.TestCase):
         self.assertNotIn('|| true', execute)
 
     def test_scoping_helper_suite_is_a_mandatory_pr_gate(self):
-        linux = jobs((ROOT / '.github/workflows/test.yml').read_text())['script-tests']
+        linux = jobs((ROOT / '.github/workflows/test.yml').read_text())['script-static']
         step = next(step for step in steps(linux) if 'python3 -B scripts/test_scope_native_verify.py' in step)
         self.assertIsNone(step_key(step, 'if'))
 
@@ -260,10 +260,10 @@ class CadenceTest(unittest.TestCase):
         self.assertEqual(job_key(found['linux-race'],'needs'),'[linux-short, linux-full, script-tests, macos-smoke, tier-plan, source-audit]')
         self.assertIn('--verdict', found['linux-race'])
         self.assertIn('--reconcile', found['linux-race'])
-        self.assertIn('--tier "$tier" --evidence', found['script-tests'])
+        self.assertIn('--tier "$tier" --evidence', found['script-purge'])
         self.assertIn('fetch-depth: 0', found['tier-plan'])
         for script in ('test_release_candidate.py','test_ci_workflow.py','test_stage_native_verify.py','test_scope_native_verify.py','test_go_shards.py','test_ci_tiers.py'):
-            step=next(step for step in steps(found['script-tests']) if script in step)
+            step=next(step for step in steps(found['script-static']) if script in step)
             self.assertIsNone(step_key(step,'if'))
 
     def test_plain_audit_is_required_source_bound_and_owned_short_only(self):
