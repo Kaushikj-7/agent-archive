@@ -214,7 +214,9 @@ def checked(command, output, deadline, env=None):
 
 def discover(packages, out, deadline, race=False):
     """Exact selected-name/fuzz discovery; ordinary unrestricted runs need no listing."""
-    text = checked(['go', 'test', *(['-race'] if race else []), '-count=1', '-json', '-list', '^(Test|Fuzz|Example)', *packages], out, deadline, dict(os.environ, AGENT_ARCHIVE_REAL_SYSTEMD='0'))
+    env = dict(os.environ, AGENT_ARCHIVE_REAL_SYSTEMD='0')
+    env.pop('AGENT_ARCHIVE_PERF', None)
+    text = checked(['go', 'test', *(['-race'] if race else []), '-count=1', '-json', '-list', '^(Test|Fuzz|Example)', *packages], out, deadline, env)
     names, ended = {}, set()
     for line in text.splitlines():
         item = json.loads(line)
@@ -278,7 +280,8 @@ def run_suite(tier, suite, out, extras=None, seconds=2400):
     deadline = time.monotonic()+seconds
     def execute(command, name, short=False, selected=None, children=None, env=None, real_manager=False):
         if env is None:
-            env = dict(os.environ, AGENT_ARCHIVE_REAL_SYSTEMD='0', AGENT_ARCHIVE_PERF='0')
+            env = dict(os.environ, AGENT_ARCHIVE_REAL_SYSTEMD='0')
+            env.pop('AGENT_ARCHIVE_PERF', None)
         invocation = {'command': command, 'log': name+'.jsonl', 'evidence': None,
                       'performance_enabled': env.get('AGENT_ARCHIVE_PERF') == '1',
                       'real_systemd_enabled': env.get('AGENT_ARCHIVE_REAL_SYSTEMD') == '1'}
