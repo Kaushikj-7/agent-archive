@@ -169,39 +169,11 @@ func (r *handoffQueryResolver) resolve() (code int, done bool) {
 			}
 			terminal.Printf(r.stderr, "agent-archive: handoff: note: could not read this machine's sessions, searching the archive only: %v\n", err)
 		}
-		identities := map[string]bool{}
-		for _, reg := range regs {
-			name := archive.CanonicalHarness(reg.Harness.Name)
-			if reg.ArchiveSessionID == r.query && (opts.harness == "" || name == opts.harness) {
-				identities[name] = true
-			}
-		}
-		if ctx.Err() != nil {
-			return r.fail(ctx.Err())
-		}
-		if len(identities) > 1 {
-			return r.fail(exactHandoffAmbiguity(r.query))
-		}
-		for name := range identities {
-			opts.sessionID, opts.harness = r.query, name
-			return 0, false
-		}
 	}
-	if opts.source != "local" && isArchiveSessionID(r.query) {
-		harness, outcome, err := r.exactArchiveSession(ctx)
-		if err != nil {
-			return r.fail(err)
-		}
-		if ctx.Err() != nil {
-			return r.fail(ctx.Err())
-		}
-		if outcome == exactAmbiguous {
-			return r.fail(exactHandoffAmbiguity(r.query))
-		}
-		if outcome == exactUnique {
-			opts.sessionID, opts.harness = r.query, harness
-			return 0, false
-		}
+	if resolved, err := r.resolveExactIdentity(ctx, regs); err != nil {
+		return r.fail(err)
+	} else if resolved {
+		return 0, false
 	}
 	// Only a title needs the scope, and looking it up can run git.
 	var err error
@@ -261,6 +233,49 @@ func (r *handoffQueryResolver) resolve() (code int, done bool) {
 	}
 	terminal.Println(r.stderr, r.noMatchMessage(scanned))
 	return 1, true
+}
+
+// resolveExactIdentity resolves physical identities before title eligibility.
+// A local identity wins without opening the archive; only a genuine miss
+// permits the title search to continue.
+func (r *handoffQueryResolver) resolveExactIdentity(ctx context.Context, regs []archive.SessionRegistration) (bool, error) {
+	opts := r.opts
+	if opts.source != "archive" {
+		identities := map[string]bool{}
+		for _, reg := range regs {
+			name := archive.CanonicalHarness(reg.Harness.Name)
+			if reg.ArchiveSessionID == r.query && (opts.harness == "" || name == opts.harness) {
+				identities[name] = true
+			}
+		}
+		if ctx.Err() != nil {
+			return false, ctx.Err()
+		}
+		if len(identities) > 1 {
+			return false, exactHandoffAmbiguity(r.query)
+		}
+		for name := range identities {
+			opts.sessionID, opts.harness = r.query, name
+			return true, nil
+		}
+	}
+	if opts.source != "local" && isArchiveSessionID(r.query) {
+		harness, outcome, err := r.exactArchiveSession(ctx)
+		if err != nil {
+			return false, err
+		}
+		if ctx.Err() != nil {
+			return false, ctx.Err()
+		}
+		if outcome == exactAmbiguous {
+			return false, exactHandoffAmbiguity(r.query)
+		}
+		if outcome == exactUnique {
+			opts.sessionID, opts.harness = r.query, harness
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // inScope settles on the matches in the scope, this machine's before the
