@@ -28,6 +28,43 @@ def event(action, package=CLI, **kw):
     return dict(Action=action, Package=package, **kw)
 
 
+def synthetic_vet_context(image='unit1'):
+    """Synthetic unit identity; never evidence of hosted/native execution."""
+    import go_cache_context
+    go = dict.fromkeys(go_cache_context.GO_FIELDS, '')
+    go.update(GOVERSION='go1.27.2', GOOS='linux', GOHOSTOS='linux', GOARCH='amd64',
+              GOHOSTARCH='amd64', CGO_ENABLED='1', GOTOOLCHAIN='local', GOWORK='off',
+              GOFLAGS='-mod=readonly')
+    return {'go': go, 'version': 'go version go1.27.2 linux/amd64', 'runner_os': 'Linux',
+            'runner_arch': 'X64', 'image': {'ImageOS': 'ubuntu24', 'ImageVersion': image},
+            'os_release': 'a'*64, 'cc': {'binary': 'b'*64, 'version': 'c'*64},
+            'cxx': {'binary': 'd'*64, 'version': 'e'*64},
+            'toolchain': dict.fromkeys(('go','compile','asm','link','cgo','vet'), 'f'*64),
+            'race': False, 'tags': [], 'schema': go_cache_context.SCHEMA}
+
+
+def synthetic_worker_receipt(directory, manifest, image='unit1'):
+    """Construct canonical-format UNIT fixture, not successful actual vet proof."""
+    context = synthetic_vet_context(image)
+    stdout, stderr = b'unit stdout\n', b'unit stderr\n'
+    receipt = {'schema': 1, 'identity_schema': 'full-v1', 'command': ['go','vet','./...'],
+        'log': 'plain-vet.txt', 'stderr_log': 'plain-vet.stderr', 'exit_code': 0,
+        'success': True, 'performance_enabled': False, 'real_systemd_enabled': False,
+        'pre_source_proof': manifest['settings']['plain_vet_source_proof'],
+        'post_source_proof': manifest['settings']['plain_vet_source_proof'],
+        'context': context, 'post_context': copy.deepcopy(context), 'invocation_seconds': .01,
+        'log_sha256': __import__('hashlib').sha256(stdout).hexdigest(),
+        'stderr_sha256': __import__('hashlib').sha256(stderr).hexdigest()}
+    manifest['settings'].pop('plain_vet_identity_schema', None)
+    manifest['settings'].update(plain_vet_receipt_schema=1, plain_vet_context=context,
+                                plain_vet_context_sha256=runner.digest(context))
+    manifest['plain_vet'] = receipt
+    (directory/'plain-vet.txt').write_bytes(stdout)
+    (directory/'plain-vet.stderr').write_bytes(stderr)
+    (directory/'plain-vet-receipt.json').write_text(json.dumps(receipt))
+    return receipt
+
+
 class CatalogTest(unittest.TestCase):
     def test_object_stream_offset_parser_preserves_concatenation_and_errors(self):
         objects=[{'Action':'run','nested':{'value':'} inside string'}},{'Action':'pass'}]
@@ -145,18 +182,25 @@ class WorkerCountTest(unittest.TestCase):
                 path=Path(directory)/str(i)/'manifest.json';value=json.loads(path.read_text())
                 value['settings'].update(plain_vet_owned=True,plain_vet_identity_schema=run_ci_tier.PLAIN_VET_IDENTITY_SCHEMA,plain_vet_context_sha256='d'*64,plain_vet_source_proof={'source':catalog['source'],'tree':'b'*40})
                 path.write_text(json.dumps(value))
-            with mock.patch.object(run_ci_tier,'verify_source_audit',return_value={'source_proof':{'source':catalog['source'],'tree':'b'*40}}) as audit:
+            proof={'source':catalog['source'],'tree':'b'*40}
+            # Projected compatibility without own execution is an acceptance gap.
+            with mock.patch.object(run_ci_tier,'verify_source_audit',return_value={'source_proof':proof}), self.assertRaises(runner.Failure):
                 runner.reconcile(directory,4,Path('/audit'),require_plain_vet=True)
-                self.assertTrue(audit.call_args.kwargs['require_plain_vet'])
-                self.assertEqual(audit.call_args.kwargs['expected_vet_context_sha256'],'d'*64)
+            for i in range(4):
+                path=Path(directory)/str(i)/'manifest.json';value=json.loads(path.read_text())
+                synthetic_worker_receipt(path.parent,value,'unit'+str(i))
+                path.write_text(json.dumps(value))
+            with mock.patch.object(run_ci_tier,'verify_source_audit',return_value={'source_proof':proof}) as audit:
+                runner.reconcile(directory,4,Path('/audit'),require_plain_vet=True)
+                self.assertNotIn('require_plain_vet',audit.call_args.kwargs)
             path=Path(directory)/'0'/'manifest.json';value=json.loads(path.read_text())
-            for update in (dict(plain_vet_owned=False),dict(plain_vet_context_sha256='e'*64),dict(plain_vet_identity_schema=None)):
+            for update in (dict(plain_vet_owned=False),dict(plain_vet_context_sha256='e'*64),dict(plain_vet_receipt_schema=None)):
                 bad=copy.deepcopy(value);bad['settings'].update(update);path.write_text(json.dumps(bad))
                 with mock.patch.object(run_ci_tier,'verify_source_audit',return_value={}),self.assertRaises(runner.Failure):runner.reconcile(directory,4,Path('/audit'))
             path.write_text(json.dumps(value))
             for i in range(4):
                 path=Path(directory)/str(i)/'manifest.json';value=json.loads(path.read_text())
-                value['settings'].pop('plain_vet_identity_schema');value['settings'].pop('plain_vet_owned');value['settings'].pop('plain_vet_context_sha256');value['settings'].pop('plain_vet_source_proof')
+                value.pop('plain_vet');value['settings'].pop('plain_vet_receipt_schema');value['settings'].pop('plain_vet_context');value['settings'].pop('plain_vet_owned');value['settings'].pop('plain_vet_context_sha256');value['settings'].pop('plain_vet_source_proof')
                 path.write_text(json.dumps(value))
             for i in range(4):
                 path=Path(directory)/str(i)/'manifest.json'; value=json.loads(path.read_text())
@@ -169,15 +213,18 @@ class WorkerCountTest(unittest.TestCase):
             path.unlink()
             with self.assertRaises(runner.Failure): runner.reconcile(directory, 4)
 
-    def test_worker_default_vet_remains_and_explicit_ownership_removes_only_vet(self):
+    def test_worker_default_and_owned_vet_use_canonical_command_and_shared_deadline(self):
         import run_ci_tier
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);(root/'scripts').mkdir()
             hints={'packages':{'p0':10,'p1':10},'cli':{'TestA':10,'TestB':10},
                    'auxiliary_costs_ms':{'vet':5,'git_invocation':0}}
             (root/'scripts/go_shard_hints.json').write_text(json.dumps(hints))
-            calls=[]
-            def supervise(commands,deadline):
+            calls=[]; deadlines=[]
+            def supervise(commands,deadline,*,stderr_path=None,terminal=None):
+                deadlines.append(deadline)
+                if stderr_path is not None: stderr_path.write_bytes(b'unit stderr\n')
+                if terminal is not None: terminal[:] = [0]
                 for command,path,env in commands:
                     calls.append(command)
                     if command[1]=='list':
@@ -190,17 +237,75 @@ class WorkerCountTest(unittest.TestCase):
                         path.write_text(records(*[event('pass',Test=n) for n in ['TestA','TestB'] if re.fullmatch(pattern,n)],event('pass')))
                     else:path.write_text(records(*[event('pass',p) for p in ['p0','p1'] if p in command]))
                 return [0.01]*len(commands)
-            with mock.patch.object(runner,'ROOT',root),mock.patch.object(runner,'supervise',side_effect=supervise),mock.patch.object(runner.os,'sched_getaffinity',return_value={0,1,2,3},create=True),mock.patch.object(runner.subprocess,'check_output',return_value='head\n'),mock.patch.object(run_ci_tier,'plain_vet_context',return_value={'image':{'ImageOS':'ubuntu24','ImageVersion':'1'}}),mock.patch.object(run_ci_tier.full_race,'source_proof',return_value={'source':'head','tree':'b'*40}),mock.patch.dict(os.environ,{'GITHUB_SHA':'head'}),contextlib.redirect_stdout(io.StringIO()):
+            with mock.patch.object(runner,'ROOT',root),mock.patch.object(runner,'supervise',side_effect=supervise),mock.patch.object(runner.os,'sched_getaffinity',return_value={0,1,2,3},create=True),mock.patch.object(runner.subprocess,'check_output',return_value='head\n'),mock.patch.object(run_ci_tier,'plain_vet_context',return_value=synthetic_vet_context()),mock.patch.object(run_ci_tier.full_race,'source_proof',return_value={'source':'head','tree':'b'*40}),mock.patch.dict(os.environ,{'GITHUB_SHA':'head'}),contextlib.redirect_stdout(io.StringIO()):
                 runner.run(0,root/'default',30)
                 self.assertEqual(sum(c==['go','vet','./...'] for c in calls),1)
-                calls.clear();runner.run(0,root/'owned',30,plain_vet_owned=True)
-                self.assertFalse(any(c[1]=='vet' for c in calls))
+                calls.clear();deadlines.clear();runner.run(0,root/'owned',30,plain_vet_owned=True)
+                self.assertEqual(sum(c==['go','vet','./...'] for c in calls),1)
+                self.assertEqual(len(set(deadlines)),1)
+                self.assertTrue((root/'owned/plain-vet.stderr').exists())
+                self.assertTrue((root/'owned/plain-vet-receipt.json').exists())
             default=json.loads((root/'default/manifest.json').read_text());owned=json.loads((root/'owned/manifest.json').read_text())
             self.assertEqual(default['scheduling']['fixed_vet_ms'],[5,0])
             self.assertEqual(owned['scheduling']['fixed_vet_ms'],[0,0])
             self.assertTrue(owned['settings']['plain_vet_owned'])
             self.assertIn('vet_seconds',default['phases']);self.assertNotIn('vet_seconds',owned['phases'])
 
+
+
+class WorkerVetReceiptTest(unittest.TestCase):
+    """Synthetic unit controls; real hosted positives remain unimplemented."""
+    def test_raw_context_source_command_and_terminal_tampering_reject(self):
+        import run_ci_tier
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory); proof={'source':'a'*40,'tree':'b'*40}
+            original={'settings':{'plain_vet_owned':True,'plain_vet_source_proof':proof}}
+            receipt=synthetic_worker_receipt(path,original)
+            runner.verify_worker_vet(path,original,proof)
+            for field,value in [('exit_code',1),('exit_code',True),('success',False),
+                    ('identity_schema','compatible-v1'),('command',['go','vet','-race','./...']),
+                    ('pre_source_proof',{}),('post_source_proof',{}),('post_context',{})]:
+                with self.subTest(field=field,value=value):
+                    manifest=copy.deepcopy(original);bad=copy.deepcopy(receipt);bad[field]=value
+                    manifest['plain_vet']=bad;(path/'plain-vet-receipt.json').write_text(json.dumps(bad))
+                    with self.assertRaises((runner.Failure,run_ci_tier.Failure)):
+                        runner.verify_worker_vet(path,manifest,proof)
+            (path/'plain-vet-receipt.json').write_text(json.dumps(receipt))
+            for name in ('plain-vet.txt','plain-vet.stderr'):
+                raw=(path/name).read_bytes();(path/name).write_bytes(raw+b'changed')
+                with self.assertRaises((runner.Failure,run_ci_tier.Failure)):
+                    runner.verify_worker_vet(path,original,proof)
+                (path/name).write_bytes(raw)
+            bad=copy.deepcopy(receipt);bad['context']['image']['ImageVersion']='other'
+            bad['post_context']=copy.deepcopy(bad['context']);manifest=copy.deepcopy(original)
+            manifest['plain_vet']=bad;(path/'plain-vet-receipt.json').write_text(json.dumps(bad))
+            with self.assertRaises(runner.Failure):runner.verify_worker_vet(path,manifest,proof)
+
+    def test_failed_cancelled_nonzero_and_context_drift_leave_rejected_receipt(self):
+        import run_ci_tier
+        proof={'source':'a'*40,'tree':'b'*40};context=synthetic_vet_context()
+        settings={'plain_vet_source_proof':proof,'plain_vet_context':context,
+                  'plain_vet_context_sha256':runner.digest(context)}
+        for mode in ('failure','cancel','nonzero','drift'):
+            with self.subTest(mode=mode),tempfile.TemporaryDirectory() as directory:
+                path=Path(directory)
+                def supervise(commands,deadline,*,stderr_path=None,terminal=None):
+                    self.assertEqual(deadline,12345)
+                    self.assertEqual(commands[0][0],['go','vet','./...'])
+                    commands[0][1].write_bytes(b'raw stdout');stderr_path.write_bytes(b'raw stderr')
+                    terminal[:]=[7 if mode=='nonzero' else 0]
+                    if mode=='failure':raise runner.Failure('unit child failure')
+                    if mode=='cancel':raise KeyboardInterrupt('unit cancellation')
+                changed=copy.deepcopy(context);changed['image']['ImageVersion']='drift'
+                contexts=[context,changed] if mode=='drift' else [context,context,context]
+                with mock.patch.object(runner,'supervise',side_effect=supervise),mock.patch.object(run_ci_tier.full_race,'source_proof',return_value=proof),mock.patch.object(run_ci_tier,'plain_vet_context',side_effect=contexts):
+                    with self.assertRaises((runner.Failure,run_ci_tier.Failure,KeyboardInterrupt)):
+                        runner.execute_worker_vet(path,12345,settings)
+                receipt=json.loads((path/'plain-vet-receipt.json').read_text())
+                self.assertFalse(receipt['success']);self.assertIn('error',receipt)
+                self.assertEqual(receipt['exit_code'],7 if mode=='nonzero' else 0)
+                self.assertEqual((path/'plain-vet.txt').read_bytes(),b'raw stdout')
+                self.assertEqual((path/'plain-vet.stderr').read_bytes(),b'raw stderr')
 
 
 class GateTest(unittest.TestCase):
@@ -439,6 +544,17 @@ class ProcessTest(unittest.TestCase):
         if pidfile.exists():
             pid = int(pidfile.read_text())
             self.assertFalse(Path(f'/proc/{pid}').exists(), 'test grandchild must be reaped, including zombies')
+
+    def test_separate_raw_streams_and_nonzero_terminal_cleanup(self):
+        with tempfile.TemporaryDirectory() as d:
+            terminal=[];out=Path(d)/'stdout';err=Path(d)/'stderr'
+            code="import sys;print('raw stdout');print('raw stderr',file=sys.stderr);raise SystemExit(7)"
+            with self.assertRaises(runner.Failure):
+                runner.supervise([([sys.executable,'-c',code],out,os.environ.copy())],
+                    time.monotonic()+3,stderr_path=err,terminal=terminal)
+            self.assertEqual(terminal,[7])
+            self.assertEqual(out.read_bytes(),b'raw stdout\n')
+            self.assertEqual(err.read_bytes(),b'raw stderr\n')
 
     def test_failed_child_and_shared_timeout_stop_sibling_descendants(self):
         for failure in (False, True):
