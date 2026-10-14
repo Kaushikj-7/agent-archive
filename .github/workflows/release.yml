@@ -168,6 +168,16 @@ jobs:
             exit 1
           fi
 
+      # The required purge matrix executes the documented recipes in both
+      # shells. Provision its tools before spending time on Go validation.
+      - name: Install purge prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes jq zsh
+          for tool in jq bash zsh; do
+            command -v "$tool" >/dev/null || { echo "::error::required purge prerequisite $tool is missing" >&2; exit 1; }
+          done
+
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.27.2'

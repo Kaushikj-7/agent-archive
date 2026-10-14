@@ -18,15 +18,26 @@ follow [Semantic Versioning](https://semver.org/).
   cannot be read, or does not fit beside the thread's own history, is left out
   rather than failing the thread's capture.
 
-## [0.2.0]
+## [0.2.1]
 
-Candidate scope for the intended `v0.2.0` tag; no release date or publication
+Candidate scope for the intended `v0.2.1` tag; no release date or publication
 is established here. Published installation examples remain pinned to v0.1.1
 until the tested candidate is promoted. Production S3/R2 scoped catalog
 activation remains refused pending provider qualification and credential
 authority.
 
+The original `v0.2.0` candidate tag remains at commit
+`22267534cc85af61858dd53162a5020d90fc815b`. Its
+[tagged build run](https://github.com/wangjohn/agent-archive/actions/runs/38593942465)
+passed the macOS build; Linux attempt 2 passed full Go validation but failed
+on missing purge prerequisites before building binaries. Publishing was skipped;
+no release assets were signed or published. This candidate retains the original
+0.2 scope and includes the Linux prerequisite fix below.
+
 ### Latest development changes
+
+- Provision Linux purge acceptance prerequisites before tagged release
+  validation, matching the ordinary CI and Extended Linux jobs.
 
 - Bound active-source downloads by their validated compressed size before
   allocating the body; refuse oversized references and stores without bounded
@@ -1672,7 +1683,7 @@ The first release.
   `credential_process` fails there. See
   [configuration](docs/reference/configuration.md#environment-variables).
 
-[Unreleased]: https://github.com/wangjohn/agent-archive/compare/v0.2.0...HEAD
-[0.2.0]: https://github.com/wangjohn/agent-archive/compare/v0.1.1...v0.2.0
+[Unreleased]: https://github.com/wangjohn/agent-archive/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/wangjohn/agent-archive/compare/v0.1.1...v0.2.1
 [0.1.1]: https://github.com/wangjohn/agent-archive/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/wangjohn/agent-archive/releases/tag/v0.1.0
