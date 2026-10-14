@@ -501,8 +501,13 @@ def native_commands(sensitive):
     commands = [('native-packages', NATIVE_COMMON+NATIVE_PACKAGES)]
     for pkg, names in selected.items():
         pattern = '^('+'|'.join(re.escape(n) for n in names)+')$'
+        common = list(NATIVE_COMMON)
+        if sensitive:
+            # Conditional regressions previously owned a 20-minute package
+            # deadline. Consolidation must not shorten that existing budget.
+            common[common.index('-timeout')+1] = '20m'
         commands.append(('native-'+pkg.rsplit('/', 1)[1],
-                         NATIVE_COMMON+['-run', pattern, './'+pkg[len(MODULE):]]))
+                         common+['-run', pattern, './'+pkg[len(MODULE):]]))
     return commands
 
 
@@ -518,9 +523,13 @@ def verify_native_smoke(directory, report, sensitive):
             or native.get('build_command') != ['go', 'build', './...']
             or native.get('build_sha256') != hashlib.sha256((directory/'native-build.log').read_bytes()).hexdigest()):
         raise Failure('native production build/source/context mismatch')
-    listing = discover_from_log((directory/'native-list.jsonl').read_text())
     selected = native_selections(sensitive)
     packages = {MODULE+p[2:] for p in NATIVE_PACKAGES}
+    try:
+        listing = full_race.listing((directory/'native-list.jsonl').read_text(),
+                                   {p: True for p in packages | set(selected)})
+    except full_race.shards.Failure as error:
+        raise Failure(str(error)) from error
     if set(listing) != packages | set(selected) or listing != native.get('discovery'):
         raise Failure('native compiled inventory mismatch')
     if any(not set(names) <= set(listing.get(pkg, [])) for pkg, names in selected.items()):

@@ -65,6 +65,7 @@ class NativeSmokeTest(unittest.TestCase):
                 self.verify(Path(d), report, sensitive)
                 cli = [i for i in report['invocations'] if i['log'] == 'native-cli.jsonl']
                 self.assertEqual(len(cli), 1)
+                self.assertEqual(cli[0]['command'][cli[0]['command'].index('-timeout')+1], '20m' if sensitive else '10m')
                 self.assertEqual(len(tier.native_selections(sensitive)[tier.MODULE+'internal/cli']), 15 if sensitive else 12)
                 self.assertFalse(any('writer' in str(i) for i in report['invocations']))
 
