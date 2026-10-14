@@ -126,11 +126,11 @@ func RecordSessionDiagnostic(home string, code DiagnosticCode, harness, root str
 	if err != nil || !found || !cfg.Archive.Enabled {
 		return err
 	}
-	diagnostic := Diagnostic{Code: code, Harness: archive.CanonicalHarness(harness), ObservedAt: at}
+	projectRoot := ""
 	if project, owned := ConfiguredProjectActivationFor(cfg, root); owned && project.Included {
-		diagnostic.ProjectRoot = project.Root
+		projectRoot = project.Root
 	}
-	return RecordDiagnostic(home, diagnostic)
+	return RecordDiagnostic(home, Diagnostic{Code: code, Harness: archive.CanonicalHarness(harness), ProjectRoot: projectRoot, ObservedAt: at})
 }
 
 // recordDiagnostic can report diagnostics-lock contention to callers whose

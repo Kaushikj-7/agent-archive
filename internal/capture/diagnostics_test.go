@@ -413,7 +413,8 @@ func TestSessionDiagnosticNamesOnlyTheIncludedProject(t *testing.T) {
 	t.Parallel()
 	at := time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
 	for _, c := range []struct {
-		root, want string
+		root string
+		want string
 	}{
 		{"/work/kept", "/work/kept"},
 		{"/work/kept/nested/dir", "/work/kept"},
