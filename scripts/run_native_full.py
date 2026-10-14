@@ -208,13 +208,16 @@ def _run(out, deadline, report, report_path):
     for name, command, assigned_packages in commands(catalog, cpus):
         # No overlapping unit processes: each gets a fresh package lifetime,
         # while discovery and all work still consume the same suite budget.
+        invocation = {'command': command, 'log': name+'.jsonl', 'evidence': None,
+                      'performance_enabled': False, 'real_systemd_enabled': False}
+        report['invocations'].append(invocation)
+        report_path.write_text(json.dumps(report, indent=2)+'\n')
         text = tier.checked(command, out/(name+'.jsonl'), deadline, env)
         selected = {package: names[package] for package in assigned_packages}
         if assigned_packages == [shard.CLI]:
             selected[shard.CLI] = catalog['assignments'][int(name.rsplit('-', 1)[1])]
         proof = coverage(text, {p: packages[p] for p in assigned_packages}, selected)
-        report['invocations'].append({'command': command, 'log': name+'.jsonl', 'evidence': proof,
-                                      'performance_enabled': False, 'real_systemd_enabled': False})
+        invocation['evidence'] = proof
         report_path.write_text(json.dumps(report, indent=2)+'\n')
     verify(out, report, require_obligations=False)
 
