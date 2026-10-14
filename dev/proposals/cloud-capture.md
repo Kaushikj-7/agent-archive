@@ -88,10 +88,51 @@ a marketplace from a GitHub repository or Git URL.
 
 So the existing Claude capture runs in the cloud as it does locally. What the
 plugin must add is the `agent-archive` Linux binary and upload credentials;
-section 3 (ephemeral capture) and section 6 (credentials) apply. Open:
-whether plugin configuration values set on claude.ai reach the session (which
-would carry the upload key without environment variables), plugin size limits
-for a bundled binary, and whether `SessionEnd` fires.
+section 3 (ephemeral capture) and section 6 (credentials) apply.
+
+A second probe (plugin 0.0.3, same day) answered the packaging questions:
+
+| Question | Result |
+| --- | --- |
+| Can the plugin carry the Linux binary? | Yes. A 12.4 MB upload (34.5 MB binary) was accepted, synced with mode `0755`, and `agent-archive version` ran from a hook. claude.ai rejects a top-level `bin/` directory ("claude.ai-hosted plugins may not ship bin/ executables"), so the binary lives in `libexec/` and only declared hooks run it |
+| Can the session download a release instead? | Yes by default: `github.com` releases and `api.github.com` returned 200 at the default network level. A restricted environment would block it |
+| Can `Stop` upload without delaying the session? | Yes. A hook with `"async": true` finished a 20-second task |
+| Can plugin options carry the upload key? | **No.** claude.ai did not prompt for the plugin's `userConfig` on upload, no `CLAUDE_PLUGIN_OPTION_*` variables reached any hook, and a hook whose command referenced `${user_config.…}` did not run |
+| Does `SessionEnd` fire? | Not observable: its only evidence would vanish with the VM. `Stop` already gives an upload point every turn |
+
+### Proposed onboarding: a personal plugin
+
+Because uploaded plugins cannot take options, the plugin carries its own
+configuration, and the user uploads it once:
+
+1. `agent-archive cloud setup` on the user's Mac or Linux machine creates a
+   write-only upload credential scoped to a cloud prefix (section 6), then
+   builds a personal plugin zip. The zip holds the hooks, a config file with
+   the destination and that credential, and the pinned Linux binary in
+   `libexec/`. It opens claude.ai's plugin page and says what to upload.
+2. The user uploads the zip under Settings → Plugins → Add → Upload plugin.
+   No repository commits, environment variables or per-environment steps.
+3. In every cloud session the user starts, `SessionStart` registers the session
+   with the existing fresh-start proof; `Stop` and `SubagentStop` run capture
+   in an `async` hook and upload with read-back (section 3).
+4. The Mac reads cloud sessions from the cloud prefix like any other machine's
+   sessions, and sweeps them (section 7).
+
+Trade-offs:
+
+- **Key exposure.** The credential sits in a file the cloud agent can read, the
+  same exposure as an environment variable. It is write-only and prefix-scoped,
+  so a leak lets someone add objects under that prefix, not read the archive.
+  Encrypting uploads to a key that never leaves the Mac would also make leaked
+  objects unreadable; that is a separate design choice.
+- **Updates.** A new agent-archive version means building and uploading a new
+  zip, which `status` can prompt for. Alternatively the hook downloads a pinned,
+  checksum-verified release into `CLAUDE_PLUGIN_DATA`, which keeps the zip
+  small but fails when the environment restricts network access.
+- **Routines** do not receive account plugins, so they stay uncaptured unless
+  their repository carries hooks.
+- **Credential rotation** means a new zip; `cloud rotate` (section 8) would
+  build it.
 
 ## Codex probe: CLI in a cloud worker, not hosted capture
 
