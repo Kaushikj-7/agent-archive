@@ -518,14 +518,18 @@ def native_commands(sensitive):
     return commands
 
 
-def verify_native_smoke(directory, report, sensitive):
-    """Reconcile compiled inventories and complete fresh native streams."""
+def verify_native_smoke(directory, report, sensitive, *, local=False):
+    """Reconcile whole native package obligations and selected compiled parents."""
     directory = Path(directory)
     native = report.get('native_smoke', {})
-    proof = full_race.source_proof(ROOT)
-    if (native.get('schema') != 1 or native.get('source_proof') != proof
+    if local and (os.environ.get('GITHUB_ACTIONS') == 'true' or os.environ.get('GITHUB_EVENT_NAME')):
+        raise Failure('local native diagnostics cannot qualify a hosted event')
+    proof = None if local else full_race.source_proof(ROOT)
+    if (native.get('qualification') != ('local-diagnostic-only' if local else 'hosted')
+            or native.get('schema') != 1 or native.get('source_proof') != proof
             or native.get('post_source_proof') != proof
-            or native.get('context') != {'GOOS': 'darwin', 'CGO_ENABLED': '1', 'GOVERSION': 'go1.27.2'}
+            or native.get('context') != (None if local else {'GOOS': 'darwin', 'CGO_ENABLED': '1', 'GOVERSION': 'go1.27.2'})
+            or local and not valid_native_local_guard(native.get('local_guard'))
             or native.get('sensitive') is not sensitive
             or native.get('build_command') != ['go', 'build', './...']
             or native.get('build_sha256') != hashlib.sha256((directory/'native-build.log').read_bytes()).hexdigest()):
@@ -534,10 +538,10 @@ def verify_native_smoke(directory, report, sensitive):
     packages = {MODULE+p[2:] for p in NATIVE_PACKAGES}
     try:
         listing = full_race.listing((directory/'native-list.jsonl').read_text(),
-                                   {p: True for p in packages | set(selected)})
+                                   {p: True for p in selected})
     except full_race.shards.Failure as error:
         raise Failure(str(error)) from error
-    if set(listing) != packages | set(selected) or listing != native.get('discovery'):
+    if set(listing) != set(selected) or listing != native.get('discovery'):
         raise Failure('native compiled inventory mismatch')
     if any(not set(names) <= set(listing.get(pkg, [])) for pkg, names in selected.items()):
         raise Failure('native selected test missing from compiled inventory')
@@ -551,9 +555,16 @@ def verify_native_smoke(directory, report, sensitive):
                 or invocation.get('real_systemd_enabled')):
             raise Failure('native invocation command/environment mismatch')
         raw = (directory/invocation['log']).read_text()
-        expected = ({p: listing[p] for p in packages} if name == 'native-packages'
-                    else native_selected_phases(sensitive)[name])
-        verify_pr_stream(raw, expected)
+        expected = native_selected_phases(sensitive).get(name)
+        if name == 'native-packages':
+            # The immutable unrestricted command owns the whole ordinary
+            # package obligations. No second listing/test process is needed.
+            try:
+                full_race.shards.coverage(raw, {p: True for p in packages})
+            except full_race.shards.Failure as error:
+                raise Failure(str(error)) from error
+        else:
+            verify_pr_stream(raw, expected)
         evidence = body_evidence(raw, True)
         if evidence != invocation['evidence']:
             raise Failure('native raw evidence mismatch')
@@ -563,8 +574,11 @@ def verify_native_smoke(directory, report, sensitive):
                 (r['package'], r['test']) for r in evidence['actual']}:
             raise Failure('native bodies lack unique actual run/terminal lifecycle')
         observed = {(r['package'], r['test'].split('/')[0]) for r in evidence['actual']}
-        if observed != {(p, n) for p, names in expected.items() for n in names}:
-            raise Failure('native compiled parents did not all terminate')
+        if name == 'native-packages':
+            if {p for p, _ in observed} != packages:
+                raise Failure('native ordinary package body evidence missing')
+        elif observed != {(p, n) for p, names in expected.items() for n in names}:
+            raise Failure('native selected parents did not all terminate')
         # Ordinary native packages retain their established opt-in skips (real
         # Keychain, unavailable host capabilities). Every selected CLI/catalog
         # regression and every observed child must actually pass.
@@ -576,12 +590,27 @@ def verify_native_smoke(directory, report, sensitive):
         raise Failure('native phase timings missing or malformed')
 
 
-def run_native_smoke(out, deadline, report, save, execute, sensitive):
+def valid_native_local_guard(context):
+    # This is the original standalone platform/cgo precondition, explicitly
+    # not a compiler/cache identity or hosted qualification receipt.
+    return (isinstance(context, dict) and set(context) == {'GOOS', 'CGO_ENABLED', 'GOVERSION'}
+            and context['GOOS'] == 'darwin' and context['CGO_ENABLED'] == '1'
+            and isinstance(context['GOVERSION'], str) and bool(context['GOVERSION']))
+
+
+def run_native_smoke(out, deadline, report, save, execute, sensitive, *, local=False):
     context = json.loads(subprocess.check_output(['go', 'env', '-json', 'GOOS', 'CGO_ENABLED', 'GOVERSION'], timeout=30))
-    if context != {'GOOS': 'darwin', 'CGO_ENABLED': '1', 'GOVERSION': 'go1.27.2'}:
+    if (not valid_native_local_guard(context) or not local
+            and context['GOVERSION'] != 'go1.27.2'):
         raise Failure('macOS smoke requires native Darwin/cgo Go 1.27.2')
-    native = report['native_smoke'] = {'schema': 1, 'source_proof': full_race.source_proof(ROOT),
-        'context': context, 'sensitive': sensitive, 'build_command': ['go', 'build', './...'], 'phase_seconds': {}}
+    if local and (os.environ.get('GITHUB_ACTIONS') == 'true' or os.environ.get('GITHUB_EVENT_NAME')):
+        raise Failure('local native diagnostics cannot qualify a hosted event')
+    if local:
+        print('native smoke: local diagnostics only; no hosted compiler/source qualification', flush=True)
+    native = report['native_smoke'] = {'schema': 1, 'source_proof': None if local else full_race.source_proof(ROOT),
+        'context': None if local else context,
+        'qualification': 'local-diagnostic-only' if local else 'hosted',
+        **({'local_guard': context} if local else {}), 'sensitive': sensitive, 'build_command': ['go', 'build', './...'], 'phase_seconds': {}}
     save()
     def timed(name, operation):
         start = time.monotonic()
@@ -595,7 +624,7 @@ def run_native_smoke(out, deadline, report, save, execute, sensitive):
     native['build_sha256'] = hashlib.sha256((out/'native-build.log').read_bytes()).hexdigest()
     selected = native_selections(sensitive)
     listing = timed('discovery', lambda: discover(
-        NATIVE_PACKAGES+['./'+p[len(MODULE):] for p in selected],
+        ['./'+p[len(MODULE):] for p in selected],
         out/'native-list.jsonl', deadline, race=True))
     native['discovery'] = listing
     if any(not set(names) <= set(listing.get(pkg, [])) for pkg, names in selected.items()):
@@ -608,12 +637,15 @@ def run_native_smoke(out, deadline, report, save, execute, sensitive):
     for name, command in native_commands(sensitive):
         chosen = native_selected_phases(sensitive).get(name)
         timed(name, lambda: execute(command, name, short=True, selected=chosen or None))
-    native['post_source_proof'] = full_race.source_proof(ROOT)
+    native['post_source_proof'] = None if local else full_race.source_proof(ROOT)
     save()
-    verify_native_smoke(out, report, sensitive)
+    verify_native_smoke(out, report, sensitive, local=local)
 
 
-def run_suite(tier, suite, out, extras=None, seconds=2400, *, own_plain_vet=False):
+def run_suite(tier, suite, out, extras=None, seconds=2400, *, own_plain_vet=False, native_local=False):
+    if native_local and (tier != 'pr' or suite != 'macos'
+            or os.environ.get('GITHUB_ACTIONS') == 'true' or os.environ.get('GITHUB_EVENT_NAME')):
+        raise Failure('local native diagnostics require an explicit local PR smoke run')
     if own_plain_vet and (tier != 'pr' or suite != 'audit'):
         raise Failure('plain vet ownership requires PR source-audit suite')
     out.mkdir(parents=True, exist_ok=True)
@@ -628,7 +660,7 @@ def run_suite(tier, suite, out, extras=None, seconds=2400, *, own_plain_vet=Fals
     path.write_text(json.dumps(report, indent=2)+'\n')
     deadline = time.monotonic()+seconds
     if tier == 'pr':
-        report['source_proof'] = full_race.source_proof(ROOT)
+        report['source_proof'] = None if native_local else full_race.source_proof(ROOT)
     def execute(command, name, short=False, selected=None, children=None, env=None, real_manager=False):
         if env is None:
             env = dict(os.environ, AGENT_ARCHIVE_REAL_SYSTEMD='0')
@@ -680,7 +712,7 @@ def run_suite(tier, suite, out, extras=None, seconds=2400, *, own_plain_vet=Fals
     if suite == 'macos' and tier in ('pr', 'daily'):
         run_native_smoke(out, deadline, report,
             lambda: path.write_text(json.dumps(report, indent=2)+'\n'), execute,
-            sensitive=bool(tier == 'pr' and extras and extras['native']))
+            sensitive=bool(tier == 'pr' and extras and extras['native']), local=native_local)
     if suite == 'macos' and tier == 'daily':
         execute(common + ['-short', './internal/config', './internal/catalog', './internal/capture', './internal/sourceio'], 'native-integration', True)
     if suite in ('linux', 'extra') or suite == 'macos' and tier == 'full':
@@ -766,7 +798,7 @@ def run_suite(tier, suite, out, extras=None, seconds=2400, *, own_plain_vet=Fals
             raise Failure(str(error)) from error
     if own_plain_vet:
         report['plain_vet'] = execute_plain_vet(out, deadline)
-    if tier == 'pr' and full_race.source_proof(ROOT) != report['source_proof']:
+    if tier == 'pr' and not native_local and full_race.source_proof(ROOT) != report['source_proof']:
         raise Failure('PR regression source changed during execution')
     report['success'] = True
     path.write_text(json.dumps(report,indent=2)+'\n')
@@ -937,12 +969,15 @@ def main():
     parser.add_argument('--verify', action='store_true')
     parser.add_argument('--verify-audit', action='store_true')
     parser.add_argument('--own-plain-vet', action='store_true')
+    parser.add_argument('--native-local', action='store_true', help='local native diagnostics only; cannot qualify hosted CI')
     parser.add_argument('--tier', choices=['pr','daily','full'])
     parser.add_argument('--suite', choices=['linux','macos','fuzz','systemd','extra','audit'], default='linux')
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--extra-plan', type=Path)
     parser.add_argument('--seconds', type=int, default=2400)
     args = parser.parse_args()
+    if args.native_local and (args.plan or args.verify or args.verify_audit or args.own_plain_vet):
+        parser.error('--native-local only supports local native test execution')
     if args.seconds <= 0:
         parser.error('--seconds must be positive')
     def interrupted(signum, frame):
@@ -990,7 +1025,7 @@ def main():
                 raise Failure('extra plan source mismatch')
             if tier == 'pr' and args.suite not in ('extra', 'macos', 'audit'):
                 raise Failure('PR ordinary coverage belongs to exhaustive shards')
-            run_suite(tier,args.suite,args.output,extra,args.seconds,own_plain_vet=args.own_plain_vet)
+            run_suite(tier,args.suite,args.output,extra,args.seconds,own_plain_vet=args.own_plain_vet,native_local=args.native_local)
     except (Failure,ValueError,KeyError,TypeError,OSError,subprocess.SubprocessError) as error:
         print('tier gate failed: '+str(error),file=sys.stderr)
         return 1

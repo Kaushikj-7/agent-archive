@@ -26,13 +26,15 @@ class NativeSmokeTest(unittest.TestCase):
         inventory = {p: sorted(names) for p, names in inventory.items()}
         listing = []
         for package, names in inventory.items():
+            if package not in selected:
+                continue
             listing += [dict(Action='output', Package=package, Output=name+'\n') for name in names]
             listing.append(dict(Action='pass', Package=package))
         (directory/'native-list.jsonl').write_text(lines(listing))
         (directory/'native-build.log').write_text('')
         native = dict(schema=1, source_proof=copy.deepcopy(PROOF), post_source_proof=copy.deepcopy(PROOF),
-                      context=copy.deepcopy(CONTEXT), sensitive=sensitive, build_command=['go', 'build', './...'],
-                      build_sha256=hashlib.sha256(b'').hexdigest(), discovery=inventory,
+                      context=copy.deepcopy(CONTEXT), qualification='hosted', sensitive=sensitive, build_command=['go', 'build', './...'],
+                      build_sha256=hashlib.sha256(b'').hexdigest(), discovery={p: inventory[p] for p in selected},
                       phase_seconds={'build': 1.0, 'discovery': 1.0})
         report = dict(invocations=[], native_smoke=native)
         for name, command in tier.native_commands(sensitive):
@@ -88,13 +90,20 @@ class NativeSmokeTest(unittest.TestCase):
                     self.verify(Path(d), report, True)
 
     def test_missing_child_failed_lane_malformed_stream_and_missing_compiled_name(self):
-        for corruption in ('child', 'failed', 'malformed', 'name', 'parent', 'no-run', 'skipped'):
+        for corruption in ('child', 'failed', 'malformed', 'name', 'parent', 'no-run', 'skipped', 'ordinary-package', 'ordinary-body', 'ordinary-failed'):
             with self.subTest(corruption=corruption), tempfile.TemporaryDirectory() as d:
                 directory = Path(d)
                 report = self.fixture(directory, True)
-                target = directory/'native-cli.jsonl'
+                ordinary = corruption.startswith('ordinary-')
+                target = directory/('native-packages.jsonl' if ordinary else 'native-cli.jsonl')
                 events = [json.loads(line) for line in target.read_text().splitlines()]
-                if corruption == 'child':
+                if corruption == 'ordinary-package':
+                    events = [e for e in events if e['Package'] != tier.MODULE+'internal/credentials']
+                elif corruption == 'ordinary-body':
+                    events = [e for e in events if e['Package'] != tier.MODULE+'internal/credentials' or not e.get('Test')]
+                elif corruption == 'ordinary-failed':
+                    events[-1]['Action'] = 'fail'
+                elif corruption == 'child':
                     events = [e for e in events if not (e.get('Test', '').endswith('/child') and e['Action'] == 'pass')]
                 elif corruption == 'failed':
                     events[-1]['Action'] = 'fail'
@@ -113,9 +122,9 @@ class NativeSmokeTest(unittest.TestCase):
                 target.write_text('not-json\n' if corruption == 'malformed' else lines(events))
                 # Recompute summarized evidence when possible: the verifier must
                 # reject incomplete raw evidence, not only stale summary bytes.
-                if corruption in ('failed', 'parent', 'no-run', 'skipped'):
+                if ordinary or corruption in ('failed', 'parent', 'no-run', 'skipped'):
                     try:
-                        report['invocations'][1]['evidence'] = tier.body_evidence(target.read_text(), True)
+                        report['invocations'][0 if ordinary else 1]['evidence'] = tier.body_evidence(target.read_text(), True)
                     except tier.Failure:
                         pass
                 with self.assertRaises((tier.Failure, ValueError)):
@@ -161,6 +170,32 @@ class NativeSmokeTest(unittest.TestCase):
                 self.assertNotIn('post_source_proof', report['native_smoke'])
                 with self.assertRaises(tier.Failure):
                     self.verify(directory, report)
+
+    def test_local_diagnostics_allow_dirty_inputs_and_never_qualify_hosted_receipts(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {}, clear=True):
+            directory = Path(d)
+            template = self.fixture(directory)
+            commands = {tuple(command): name+'.jsonl' for name, command in tier.native_commands(False)}
+            def checked(command, output, deadline, env=None):
+                text = '' if command == ['go', 'build', './...'] else (directory/commands[tuple(command)]).read_text()
+                output.write_text(text)
+                return text
+            with mock.patch.object(tier.subprocess, 'check_output', return_value=json.dumps(dict(CONTEXT, GOVERSION='go1.28.0')).encode()), mock.patch.object(tier, 'git', return_value='a'*40), mock.patch.object(tier.full_race, 'source_proof', side_effect=AssertionError('dirty local inputs must not claim a source proof')), mock.patch.object(tier, 'checked', side_effect=checked), mock.patch.object(tier, 'discover', return_value=template['native_smoke']['discovery']):
+                tier.run_suite('pr', 'macos', directory, native_local=True)
+            report = json.loads((directory/'tier.json').read_text())
+            self.assertTrue(report['success'])
+            self.assertEqual(report['native_smoke']['qualification'], 'local-diagnostic-only')
+            self.assertIsNone(report['native_smoke']['context'])
+            self.assertIsNone(report['source_proof'])
+            self.assertIsNone(report['native_smoke']['post_source_proof'])
+            with mock.patch.object(tier.full_race, 'source_proof', return_value=PROOF):
+                with self.assertRaises(tier.Failure):
+                    tier.verify_native_smoke(directory, report, False)
+            with mock.patch.dict(os.environ, {'GITHUB_ACTIONS': 'true'}):
+                with self.assertRaises(tier.Failure):
+                    tier.run_suite('pr', 'macos', directory, native_local=True)
+                with self.assertRaises(tier.Failure):
+                    tier.verify_native_smoke(directory, report, False, local=True)
 
 
 if __name__ == '__main__':

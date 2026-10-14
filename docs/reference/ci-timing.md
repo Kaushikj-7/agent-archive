@@ -106,9 +106,18 @@ including any compilation inside that phase. Failed phases retain their elapsed
 time without a successful source/coverage receipt. Base and conditional CLI
 commands keep separate package lifetimes and their original 10/20-minute
 budgets; sharing discovery does not pool deadlines or skip a native test body.
-The seven ordinary native package inventories are reconciled against actual
-parent/child lifecycles. Established ordinary capability/Keychain opt-in skips
+The unrestricted native command must yield all seven package PASS streams and
+actual body lifecycles. Selected CLI/catalog parents are independently reconciled
+against their compiled listing and actual parent/child terminals. Established ordinary capability/Keychain opt-in skips
 remain explicit; selected CLI/catalog parents and all observed children must pass.
+
+Outside GitHub Actions, `./scripts/test_macos_smoke.sh --output native-tier-results`
+selects explicit local diagnostics. It runs the same build and native bodies,
+including dirty local source, but labels its evidence `local-diagnostic-only`
+and emits no hosted compiler/source qualification receipt. A hosted event cannot
+use that mode or accept its receipt as native qualification. Direct local tier
+invocations may use `--native-local --tier pr --suite macos`; the local guard
+checks Darwin/cgo without claiming a GitHub runner image.
 
 Append `--evidence path/to/go-shard-0` (repeat for each worker) to summarize the
 existing manifests, flags/compiler context, runner image/cache observation,
