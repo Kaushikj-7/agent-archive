@@ -331,6 +331,13 @@ class PlainVetTest(unittest.TestCase):
              'GOARCH':'amd64','GOHOSTARCH':'amd64','CGO_ENABLED':'1','GOTOOLCHAIN':'local',
              'GOWORK':'off','GOFLAGS':'-mod=readonly'}}
 
+    import go_cache_context as context_keys
+    context.update(schema=context_keys.SCHEMA,os_release='d'*64,
+                   cc={'binary':'d'*64,'version':'d'*64},cxx={'binary':'d'*64,'version':'d'*64},
+                   toolchain={name:'d'*64 for name in ('go','compile','asm','link','cgo','vet')},
+                   image={'ImageOS':'ubuntu24','ImageVersion':'20261001.1.0'})
+    context['go']={**dict.fromkeys(context_keys.GO_FIELDS,''),**context['go']}
+
     def test_actual_checked_vet_receipt_and_failures_bind_source_and_context(self):
         import run_go_shard
         with tempfile.TemporaryDirectory() as d, mock.patch.object(tier.full_race,'source_proof',return_value=self.proof), mock.patch.object(tier,'plain_vet_context',return_value=self.context):
@@ -352,7 +359,7 @@ class PlainVetTest(unittest.TestCase):
                            lambda r:r['context']['go'].update(GOVERSION='go1.27.1'),
                            lambda r:r['context']['go'].update(GOARCH='arm64'),
                            lambda r:r['context']['go'].update(GOFLAGS='-tags=other'),
-                           lambda r:r.update(log_sha256='c'*64)):
+                           lambda r:r.update(log_sha256='c'*64),lambda r:r['context'].pop('toolchain')):
                 bad=copy.deepcopy(receipt);update(bad)
                 with self.assertRaises(tier.Failure):tier.verify_plain_vet(out,{'plain_vet':bad},self.proof,fingerprint)
             for key,value in (('GOVERSION','go1.27.1'),('GOARCH','arm64'),('GOOS','darwin'),('CGO_ENABLED','0')):
