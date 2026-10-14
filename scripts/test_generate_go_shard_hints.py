@@ -130,6 +130,15 @@ class GeneratorTests(unittest.TestCase):
         for bad in ('2026-01-01T00:00:00.1234567890Z', '2026-02-30T00:00:00Z', '2026-01-01T25:00:00Z'):
             with self.assertRaises(hints.runner.Failure): hints.stamp({'Time': bad})
 
+    def test_timezone_offsets_reject_normalized_invalid_minutes(self):
+        utc = hints.stamp({'Time': '2026-01-01T00:00:00.123456789Z'})
+        for valid in ('2026-01-01T01:30:00.123456789+01:30',
+                      '2025-12-31T22:30:00.123456789-01:30'):
+            self.assertEqual(hints.stamp({'Time': valid}), utc)
+        for offset in ('+00:60', '-00:60', '+01:99', '-01:99', '+24:00', '-24:00'):
+            with self.subTest(offset=offset), self.assertRaises(hints.runner.Failure):
+                hints.stamp({'Time': '2026-01-01T00:00:00' + offset})
+
     def test_failed_manifest_rejected(self):
         self.mutate(lambda m: m.update(success=False))
         with self.assertRaises(hints.runner.Failure): self.generate()

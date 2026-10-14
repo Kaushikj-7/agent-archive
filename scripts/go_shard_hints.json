@@ -2610,7 +2610,7 @@
       }
     },
     "body_catalog_sha256": "d487d093cc230f683148e04ad5f4a1e4397913e3015aea50f0f2a0ab8913e8ec",
-    "generator_sha256": "f807915be53872258a35ec1a8bfe99845b404ad1f57aa626334f74dfd066a6c1",
+    "generator_sha256": "3ea3a66e1d6658a7617ab7123bcba99b199fec54f085503f1e7bd37389b89bcb",
     "policy": "median seconds then half-up integer ms, minimum 1; package terminal elapsed; CLI recursively exclusive elapsed plus descendant bodies; unknown discovered units 1000ms; auxiliary phases excluded",
     "runner_contract_sha256": "a7cdbf34efb17f1698b4c6c47c63f868d3355764bdc77de015a74a7887ecebe9",
     "samples": [
