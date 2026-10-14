@@ -559,6 +559,10 @@ def run(index, out, seconds, workers=2, plain_audit_owned=False, plain_vet_owned
                'assignments': [{'packages': package_bins[i], 'cli': cli_bins[i]} for i in range(workers)]}
     manifest = {'shard': index, 'catalog': catalog, 'catalog_sha256': digest(catalog), 'success': False,
                 'phases': phases,
+                'timing_observation': {'schema': 1, 'cache_restore_state': os.environ.get('CI_CACHE_RESTORE_STATE', 'unknown'),
+                    'runner_image': os.environ.get('ImageOS', ''), 'runner_image_version': os.environ.get('ImageVersion', ''),
+                    'run_id': os.environ.get('GITHUB_RUN_ID', ''), 'run_attempt': os.environ.get('GITHUB_RUN_ATTEMPT', ''),
+                    'commands_overlap': cpus > 1, 'note': 'invocation durations include compilation; parallel durations are not additive'},
                 'scheduling': {'fixed_vet_ms': fixed, 'cli_fixed_auxiliary_ms': cli_fixed,
                                'usage': 'logical ranking plus observed fixed invocation advice; not elapsed forecast'},
                 'settings': {'plain_audit_owned': plain_audit_owned, 'workers': workers, 'cpus': cpus, 'cli_cpus': cli_cpus, 'ordinary_cpus': ordinary_cpus, 'package_p': 1,

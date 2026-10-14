@@ -1101,7 +1101,7 @@ type Status struct {
 	IssueCounts map[string]int `json:"issue_counts,omitempty"`
 	// DeferredSessions gives, per archive session ID, why the last pass put
 	// off its scan without failing it (a collector.Deferred* reason, such as
-	// codex_history_coverage): the source could not be read completely yet,
+	// source_changed): the source could not be read completely yet,
 	// and the next pass retries. Such a session is pending; a deferral alone
 	// never makes it one of the SessionIssues.
 	DeferredSessions map[string]string `json:"deferred_sessions,omitempty"`

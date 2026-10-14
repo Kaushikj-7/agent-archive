@@ -69,7 +69,7 @@ func TestHistoryUnterminatedBoundaryRequiresSharedScratchAndRetries(t *testing.T
 	if !reservation.Reserve(pressure) {
 		t.Fatal("reserve pressure")
 	}
-	if _, err := pass.graph(t.Context(), selection.leaf, selection.set); !errors.Is(err, agentapi.ErrReadBudget) {
+	if _, err := pass.graph(t.Context(), selection.leaf); !errors.Is(err, agentapi.ErrReadBudget) {
 		t.Fatal("newline scratch allocated under pressure", err)
 	}
 	used, _ := ledger.Charged()
