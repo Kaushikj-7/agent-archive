@@ -79,7 +79,7 @@ class PurgeUnionTest(unittest.TestCase):
         for bad in (good[:1], good + good[:1], [good[0], good[0]]):
             with self.assertRaises(ValueError):
                 ci.verify(bad, 'pr', PROOF)
-        for key, value in [('worker', True), ('workers', 2.0), ('schema', 1), ('success', False),
+        for key, value in [('worker', True), ('workers', 2.0), ('schema', 1), ('schema', 2.0), ('success', False),
                            ('tier', 'full'), ('source', 'x'), ('source_proof', {}),
                            ('post_source_proof', {}), ('catalog', []), ('assigned', []),
                            ('catalog_sha256', 'x'), ('shells', ['bash']), ('cases', None),
