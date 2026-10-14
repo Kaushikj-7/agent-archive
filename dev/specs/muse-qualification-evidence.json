@@ -1,0 +1,1166 @@
+{
+  "schema_version": 1,
+  "date": "2026-10-14",
+  "reviewed_head": "7d8aee13c7146ceb38d15df7188d7daa31f464eb",
+  "scope": {
+    "repository_code_changed": false,
+    "pull_requests_created": false,
+    "paid_provider_calls": false,
+    "archive_publication_tested": false,
+    "host": "macOS x86_64",
+    "meta_auth_configured": false,
+    "linux_runtime_available": false
+  },
+  "native_builds": [
+    {
+      "cli": "1.4.7-R6101.1",
+      "native_build_sha": "d8c53d25bd"
+    },
+    {
+      "cli": "1.4.8-R6256.1",
+      "binary_sha256": "94ea8fd1c73664c22e5c6157d8706945b667b11bd1c7c51691811e79f17dfcf1"
+    }
+  ],
+  "schema_fingerprints": {
+    "1.4.7_stable": "sha256:6de32db08bbbe0deb478d2bfcaba001e9fb490986bc80db3aceb4d996abf7df9",
+    "1.4.8_stable": "sha256:4e3200c3c9dc0cd7919d11022630d43f9bc1c5cdda375381e90b0183b5665069"
+  },
+  "campaigns": [
+    {
+      "results_file": "descendant-results.json",
+      "sha256": "b891f9283116bacbeed21f7305e09296f9c32be9a5f27a07632c8952ffa143fb",
+      "observations": [
+        {
+          "name": "msp_build_and_schema",
+          "status": "pass",
+          "detail": {
+            "serverInfo": {
+              "name": "muse",
+              "version": "1.4.7"
+            },
+            "schemaFingerprint": null,
+            "sessionDurability": "durable"
+          }
+        },
+        {
+          "name": "serve_independent_child_log",
+          "status": "pass",
+          "detail": {
+            "root_id": "01a13c38-d3bb-7f01-88d0-94de4030de71",
+            "agent_id": "subagent-1",
+            "child_id": "01a13c38-e194-7a32-b7e1-f8d489bcd626",
+            "child_log": "descendant-control/data/muse/sessions/2026/10/14/01a13c38-d3bb-7f01-88d0-94de4030de71/subagent/01a13c38-e194-7a32-b7e1-f8d489bcd626/session.jsonl",
+            "child_model_calls": 9
+          }
+        },
+        {
+          "name": "subagent/readResult:2",
+          "status": "pass",
+          "detail": {
+            "response": {
+              "result": {
+                "commandId": "01a13c39-0ec4-7ff7-aa22-21c6617ae3c5",
+                "status": "accepted"
+              },
+              "error": null
+            },
+            "same_child_prefix": true,
+            "child_model_calls": 9
+          }
+        },
+        {
+          "name": "subagent/followupTask:3",
+          "status": "pass",
+          "detail": {
+            "response": {
+              "result": {
+                "commandId": "01a13c39-12b0-7ea8-8aed-148af89821fd",
+                "status": "accepted"
+              },
+              "error": null
+            },
+            "same_child_prefix": true,
+            "child_model_calls": 10
+          }
+        },
+        {
+          "name": "subagent/close:4",
+          "status": "unqualified",
+          "detail": {
+            "response": {
+              "result": null,
+              "error": {
+                "code": -32030,
+                "message": "subagent/close command 01a13c39-1c27-762b-9142-f26104ac7779 rejected: subagent_state_ineligible",
+                "data": {
+                  "kind": "commandRejected",
+                  "retryable": false,
+                  "commandId": "01a13c39-1c27-762b-9142-f26104ac7779",
+                  "reason": "subagent_state_ineligible"
+                }
+              }
+            },
+            "same_child_prefix": true,
+            "child_model_calls": 10
+          }
+        },
+        {
+          "name": "subagent/reopen:5",
+          "status": "unqualified",
+          "detail": {
+            "response": {
+              "result": null,
+              "error": {
+                "code": -32030,
+                "message": "subagent/reopen command 01a13c39-1fa7-7bd0-a906-f572e944be27 rejected: subagent_state_ineligible",
+                "data": {
+                  "kind": "commandRejected",
+                  "retryable": false,
+                  "commandId": "01a13c39-1fa7-7bd0-a906-f572e944be27",
+                  "reason": "subagent_state_ineligible"
+                }
+              }
+            },
+            "same_child_prefix": true,
+            "child_model_calls": 10
+          }
+        },
+        {
+          "name": "subagent/followupTask:6",
+          "status": "pass",
+          "detail": {
+            "response": {
+              "result": {
+                "commandId": "01a13c39-2561-7e2d-a1a1-2a8ba7c79408",
+                "status": "accepted"
+              },
+              "error": null
+            },
+            "same_child_prefix": true,
+            "child_model_calls": 11
+          }
+        },
+        {
+          "name": "parent_restart_resume",
+          "status": "unqualified",
+          "detail": {
+            "response_keys": [],
+            "error": {
+              "code": -32602,
+              "message": "invalid session/resume params: missing field `commandId`",
+              "data": {
+                "kind": "invalidParams"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "results_file": "recovery-fixed-results.json",
+      "sha256": "7f11e320b3dac04058130aa20825051c82e5311c490c0ce1df001b9f6ee4facf",
+      "observations": [
+        {
+          "name": "initial_child_result_settled",
+          "status": "pass",
+          "detail": {
+            "agent_id": "subagent-1",
+            "child_id": "01a13c4c-3318-7873-91cd-c0d2be33baaf",
+            "ready_events": 1
+          }
+        },
+        {
+          "name": "followup_native_settlement",
+          "status": "pass",
+          "detail": {
+            "response": {
+              "commandId": "01a13c4c-569e-779e-9c35-203ddb4bb27c",
+              "status": "accepted"
+            },
+            "prefix_preserved": true,
+            "new_ready_events": 1
+          }
+        },
+        {
+          "name": "close_settled_child",
+          "status": "pass",
+          "detail": {
+            "response": {
+              "commandId": "01a13c4c-701b-7790-999c-6fc1f63a8510",
+              "status": "accepted"
+            },
+            "owner_states": [
+              "running",
+              "closed"
+            ]
+          }
+        },
+        {
+          "name": "reopen_closed_child",
+          "status": "unqualified",
+          "detail": {
+            "response": {
+              "code": -32030,
+              "message": "subagent/reopen command 01a13c4c-743c-79b2-b4b1-7a99055013a7 rejected: subagent_state_ineligible",
+              "data": {
+                "kind": "commandRejected",
+                "retryable": false,
+                "commandId": "01a13c4c-743c-79b2-b4b1-7a99055013a7",
+                "reason": "subagent_state_ineligible"
+              }
+            },
+            "new_ready_events": 0,
+            "child_session_bindings": [
+              "01a13c4c-3318-7873-91cd-c0d2be33baaf"
+            ]
+          }
+        },
+        {
+          "name": "probe_exception",
+          "status": "unqualified",
+          "detail": {
+            "type": "AssertionError",
+            "message": "{'jsonrpc': '2.0', 'id': 7, 'error': {'code': -32030, 'message': 'subagent/followupTask command 01a13c4c-7614-70a2-9556-6ae8fb3f91ab rejected: subagent_state_ineligible', 'data': {'kind': 'commandRejected', 'retryable': False, 'commandId': '01a13c4c-7614-70a2-9556-6ae8fb3f91ab', 'reason': 'subagent_state_ineligible'}}}"
+          }
+        }
+      ]
+    },
+    {
+      "results_file": "crash-upgrade-results.json",
+      "sha256": "fa91490667f99358397f993a6c1337a8573bc3b4df16c40f62d63d4c548b7772",
+      "observations": [
+        {
+          "name": "initial_child_result_settled",
+          "status": "pass",
+          "detail": {
+            "agent_id": "subagent-1",
+            "child_id": "01a13c4e-ef5b-7623-b403-e641c949d6ab",
+            "ready_events": 1
+          }
+        },
+        {
+          "name": "followup_native_settlement",
+          "status": "pass",
+          "detail": {
+            "response": {
+              "commandId": "01a13c4f-126b-704d-980c-2c13ba2abfc7",
+              "status": "accepted"
+            },
+            "prefix_preserved": true,
+            "new_ready_events": 1
+          }
+        },
+        {
+          "name": "hard_kill_parent_resume",
+          "status": "pass",
+          "detail": {
+            "error": null,
+            "root_prefix_preserved": true,
+            "child_prefix_preserved": true
+          }
+        },
+        {
+          "name": "child_after_crash_recovery",
+          "status": "pass",
+          "detail": {
+            "response": {
+              "commandId": "01a13c4f-4efe-738c-8121-b2c77df1d096",
+              "status": "accepted"
+            },
+            "new_ready_events": 1
+          }
+        },
+        {
+          "name": "upgrade_1.4.7_to_1.4.8",
+          "status": "pass",
+          "detail": {
+            "server_version": "1.4.8",
+            "schema": {
+              "version": 1,
+              "fingerprint": "sha256:4e3200c3c9dc0cd7919d11022630d43f9bc1c5cdda375381e90b0183b5665069"
+            },
+            "error": null,
+            "root_prefix_preserved": true,
+            "child_prefix_preserved": true
+          }
+        },
+        {
+          "name": "child_after_native_upgrade",
+          "status": "pass",
+          "detail": {
+            "response": {
+              "commandId": "01a13c4f-8965-7441-9bf9-fc81948193ab",
+              "status": "accepted"
+            },
+            "new_ready_events": 1
+          }
+        }
+      ]
+    },
+    {
+      "results_file": "compaction-results.json",
+      "sha256": "5391cfbafe52aed543663aa4112af0a2ca458d234ab1fab005342d9d165b77c4",
+      "observations": [
+        {
+          "name": "resolved_model_profile",
+          "status": "pass",
+          "detail": {
+            "exit": 0
+          }
+        },
+        {
+          "name": "manual_compaction_explicit_strategy",
+          "status": "unqualified",
+          "detail": {
+            "response": {
+              "code": -32030,
+              "message": "session/compact command 01a13c3a-f864-7ced-8e6a-5319ee309718 rejected: compaction_unavailable",
+              "data": {
+                "kind": "commandRejected",
+                "retryable": false,
+                "commandId": "01a13c3a-f864-7ced-8e6a-5319ee309718",
+                "reason": "compaction_unavailable"
+              }
+            },
+            "root_prefix_preserved": true,
+            "compaction_payloads": {},
+            "compaction_kinds": {},
+            "frame_shapes": {
+              "session_permission_transaction": 1,
+              "None": 221
+            }
+          }
+        },
+        {
+          "name": "checkpoint_production_observed",
+          "status": "unqualified",
+          "detail": {
+            "root_bytes": 483570,
+            "other_root_files": [
+              "session.jsonl",
+              ".session.lock",
+              "session.peer-history.sqlite3",
+              "session.peer-history.sqlite3.rebuild.lock",
+              "cron.db"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "results_file": "compaction-context-results.json",
+      "sha256": "f848cfa47d7ef5be9e7e04f0e4c299a94fa92d9c508fc752fb413e1635c40c94",
+      "observations": [
+        {
+          "name": "native_catalog_context",
+          "status": "observed",
+          "detail": {
+            "rows": [
+              {
+                "id": null,
+                "modelId": "muse-spark-1.3",
+                "contextWindowTokens": null,
+                "reasoningEffortVariants": []
+              }
+            ],
+            "error": null
+          }
+        },
+        {
+          "name": "manual_compaction_with_context_limit",
+          "status": "unavailable",
+          "detail": {
+            "response": {
+              "code": -32030,
+              "message": "session/compact command 01a13c3c-5d1a-7ff8-a8f4-37247575efab rejected: compaction_unavailable",
+              "data": {
+                "kind": "commandRejected",
+                "retryable": false,
+                "commandId": "01a13c3c-5d1a-7ff8-a8f4-37247575efab",
+                "reason": "compaction_unavailable"
+              }
+            },
+            "prefix_preserved": true,
+            "records": {},
+            "events": {},
+            "provider_requests": 39
+          }
+        }
+      ]
+    },
+    {
+      "results_file": "branch-results.json",
+      "sha256": "7b55881f83858a2a8f746fb1751d0c3237625223130079d0b471474a927f603c",
+      "observations": [
+        {
+          "name": "parent_turns",
+          "status": "pass",
+          "detail": {
+            "turn_ids": [
+              "01a13c57-9694-74c0-9ea9-94d2d2b5e25f",
+              "01a13c57-af02-744b-ab41-79162bc5450c"
+            ],
+            "schema": {
+              "version": 1,
+              "fingerprint": "sha256:4e3200c3c9dc0cd7919d11022630d43f9bc1c5cdda375381e90b0183b5665069"
+            }
+          }
+        },
+        {
+          "name": "session/fork",
+          "status": "unqualified",
+          "detail": {
+            "error": {
+              "code": -32023,
+              "message": "invalid fork boundary for session 01a13c57-856e-7ab0-953e-ef5c65724094: InvalidCut",
+              "data": {
+                "kind": "forkBoundaryInvalid",
+                "retryable": false,
+                "reason": "invalid_cut",
+                "sessionId": "01a13c57-856e-7ab0-953e-ef5c65724094",
+                "lastTurnId": "01a13c57-9694-74c0-9ea9-94d2d2b5e25f",
+                "seedPath": "runtime_checkpoint_tail"
+              }
+            }
+          }
+        },
+        {
+          "name": "session/sideChat",
+          "status": "pass",
+          "detail": {
+            "branch_id": "01a13c57-cdec-7b13-b68b-72c5c52edb05",
+            "session_relation_fields": {
+              "createdAt": "2026-10-14T21:35:49.74Z",
+              "forkedFrom": null,
+              "sideFrom": {
+                "sessionId": "01a13c57-856e-7ab0-953e-ef5c65724094",
+                "cutCursor": "session:01a13c57-856e-7ab0-953e-ef5c65724094:turn:0",
+                "commandId": "01a13c57-cdea-7440-89f2-cf6d1e46e1d1"
+              }
+            },
+            "copied_record_types": {
+              "session.fork.created": 1,
+              "session.fork.compaction": 1,
+              "session.side.started": 1,
+              "session.side.boundary": 1
+            },
+            "own_turn_completed": true,
+            "prefix_preserved": true
+          }
+        },
+        {
+          "name": "msp_compaction_1.4.8",
+          "status": "unavailable",
+          "detail": {
+            "response": {
+              "code": -32030,
+              "message": "session/compact command 01a13c57-ea5e-7c4b-95a6-aff87846f0a8 rejected: compaction_unavailable",
+              "data": {
+                "kind": "commandRejected",
+                "retryable": false,
+                "commandId": "01a13c57-ea5e-7c4b-95a6-aff87846f0a8",
+                "reason": "compaction_unavailable"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "results_file": "checkpoint-resume-results.json",
+      "sha256": "c3b5ac3acdb2706f130e154767b8404784809ed677666c60f2ff93d8283fde27",
+      "observations": [
+        {
+          "name": "periodic_checkpoint_produced",
+          "status": "pass",
+          "detail": {
+            "count": 1,
+            "checkpoints": [
+              {
+                "schema_version": 3,
+                "checkpoint_id": "checkpoint-48",
+                "installed_compaction_id": "checkpoint-48",
+                "history": "preserved",
+                "replacement_kind": "summary_text",
+                "validation": {
+                  "covered_records": 47,
+                  "suffix_records": 0,
+                  "model_message_count": 4
+                },
+                "pruned_prefix_value_type": "dict",
+                "usage_keys": [
+                  "input_tokens",
+                  "output_tokens",
+                  "cached_tokens",
+                  "cache_write_tokens",
+                  "cache_read_tokens",
+                  "reasoning_tokens"
+                ]
+              }
+            ],
+            "raw_prefix_bytes": 572269
+          }
+        },
+        {
+          "name": "probe_exception",
+          "status": "unqualified",
+          "detail": {
+            "type": "Empty",
+            "message": ""
+          }
+        }
+      ]
+    },
+    {
+      "results_file": "checkpoint-live-results.json",
+      "sha256": "e037bf2107cccf933acf555556f0a92ca31ff196aa4a13885b24e849297be94e",
+      "observations": [
+        {
+          "name": "checkpoint_live_produced",
+          "status": "pass",
+          "detail": {
+            "root_id": "01a13c66-145a-7d12-94f4-c40a69d6e0cc",
+            "checkpoint_count": 1,
+            "raw_bytes": 573185
+          }
+        },
+        {
+          "name": "checkpoint_resume_same_provider",
+          "status": "pass",
+          "detail": {
+            "error": null,
+            "elapsed_seconds": 4.857,
+            "prefix_preserved": true
+          }
+        },
+        {
+          "name": "checkpoint_restored_own_turn",
+          "status": "pass",
+          "detail": {
+            "prefix_preserved": true,
+            "bytes_after": 956949
+          }
+        }
+      ]
+    },
+    {
+      "results_file": "skill-results.json",
+      "sha256": "679ac9b2142044874956a9e5bc10744a19971142dd4ec0b273af5e3c99d59278",
+      "observations": [
+        {
+          "name": "project_skill_catalog_False",
+          "status": "pass",
+          "detail": {
+            "exit": 0,
+            "synthetic_skill_present": false,
+            "output_keys": [
+              "skills",
+              "diagnostics"
+            ]
+          }
+        },
+        {
+          "name": "project_skill_catalog_True",
+          "status": "pass",
+          "detail": {
+            "exit": 0,
+            "synthetic_skill_present": true,
+            "output_keys": [
+              "skills",
+              "diagnostics"
+            ]
+          }
+        },
+        {
+          "name": "probe_exception",
+          "status": "unqualified",
+          "detail": {
+            "type": "JSONDecodeError",
+            "message": "Extra data: line 1 column 288 (char 287)"
+          }
+        },
+        {
+          "name": "native_skill_read_corrected_hook_decode",
+          "status": "pass",
+          "detail": {
+            "successful_read_hooks": 1,
+            "native_event": "skill_read_observed",
+            "evidence_kind": "read_skill_tool"
+          }
+        },
+        {
+          "name": "activation_user-only",
+          "status": "pass",
+          "detail": {
+            "exit": 0,
+            "foreign_hooks_preserved": true,
+            "foreign_mcp_preserved": false,
+            "removed_mcp_fields": [
+              "cwd",
+              "required",
+              "startup_timeout_sec",
+              "tool_timeout_sec",
+              "type"
+            ]
+          }
+        },
+        {
+          "name": "activation_disable",
+          "status": "pass",
+          "detail": {
+            "exit": 0,
+            "foreign_hooks_preserved": true,
+            "foreign_mcp_preserved": false,
+            "removed_mcp_fields": [
+              "cwd",
+              "required",
+              "startup_timeout_sec",
+              "tool_timeout_sec",
+              "type"
+            ]
+          }
+        },
+        {
+          "name": "activation_enable",
+          "status": "pass",
+          "detail": {
+            "exit": 0,
+            "foreign_hooks_preserved": true,
+            "foreign_mcp_preserved": false,
+            "removed_mcp_fields": [
+              "cwd",
+              "required",
+              "startup_timeout_sec",
+              "tool_timeout_sec",
+              "type"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "results_file": "mcp-results.json",
+      "sha256": "df95c6caaf8406ab84e1342b8dea5001946bed8c7fac3eac81b65ebb15912a53",
+      "observations": [
+        {
+          "name": "mcp_success",
+          "status": "unqualified",
+          "detail": {
+            "exit": 0,
+            "catalog": [
+              {
+                "namespace": "mcp__qualification_fs",
+                "name": "read_text_file"
+              }
+            ],
+            "hook_events": [],
+            "committed_batches": 1,
+            "result_summaries": [
+              {
+                "keys": [
+                  "tool_call_index",
+                  "tool_call_id",
+                  "text"
+                ],
+                "tool_call_id": "call_1",
+                "has_sentinel": false,
+                "typed_error_fields": {},
+                "result_keys": []
+              }
+            ]
+          }
+        },
+        {
+          "name": "mcp_error",
+          "status": "unqualified",
+          "detail": {
+            "exit": 0,
+            "catalog": [
+              {
+                "namespace": "mcp__qualification_fs",
+                "name": "read_text_file"
+              }
+            ],
+            "hook_events": [],
+            "committed_batches": 1,
+            "result_summaries": [
+              {
+                "keys": [
+                  "tool_call_index",
+                  "tool_call_id",
+                  "text"
+                ],
+                "tool_call_id": "call_1",
+                "has_sentinel": false,
+                "typed_error_fields": {},
+                "result_keys": []
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "results_file": "mcp-canonical-results.json",
+      "sha256": "b039c86d1425cb7d2be6975d1a13a5e42baaa4aa56fb12bd4491dec40f7d67bc",
+      "observations": [
+        {
+          "name": "mcp_success",
+          "status": "observed",
+          "detail": {
+            "exit": 0,
+            "catalog": [
+              {
+                "namespace": "mcp__qualification_fs",
+                "name": "read_text_file"
+              }
+            ],
+            "hook_events": [
+              "PostToolUse"
+            ],
+            "committed_batches": 1,
+            "result_summaries": [
+              {
+                "keys": [
+                  "tool_call_index",
+                  "tool_call_id",
+                  "text"
+                ],
+                "tool_call_id": "call_1",
+                "has_sentinel": true,
+                "typed_error_fields": {},
+                "result_keys": []
+              }
+            ]
+          }
+        },
+        {
+          "name": "mcp_error",
+          "status": "observed",
+          "detail": {
+            "exit": 0,
+            "catalog": [
+              {
+                "namespace": "mcp__qualification_fs",
+                "name": "read_text_file"
+              }
+            ],
+            "hook_events": [
+              "PostToolUseFailure"
+            ],
+            "committed_batches": 1,
+            "result_summaries": [
+              {
+                "keys": [
+                  "tool_call_index",
+                  "tool_call_id",
+                  "text"
+                ],
+                "tool_call_id": "call_1",
+                "has_sentinel": false,
+                "typed_error_fields": {},
+                "result_keys": []
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "results_file": "native-1.4.8-results.json",
+      "sha256": "256a872892a05543170d7cbe3e4ea43a91734b2ff930c4e651c41cc55ad3e4aa",
+      "observations": [
+        {
+          "name": "workflow_exception",
+          "status": "unqualified",
+          "detail": {
+            "type": "RuntimeError",
+            "message": "CLI timeout: muse: workspace root: <qualification-root>/native-workflow-1.4.8/workspace (explicit)\nmuse: workspace trust: trusted source=run-flag\n"
+          }
+        },
+        {
+          "name": "isolated_1.4.8",
+          "status": "pass",
+          "detail": {
+            "exit": 0,
+            "retained_files": 2,
+            "edges": [
+              [
+                "01a13c6f-1ae8-7fc1-b264-9fdf61d0a69b",
+                "6cd522ab-0241-7117-8e9d-259d7608189f"
+              ]
+            ],
+            "workflow_statuses": [
+              "scheduled",
+              "started",
+              "usage",
+              "completed",
+              "terminal"
+            ],
+            "worktree_record_types": [
+              "subagent.worktree.cleanup_effect.settled",
+              "subagent.worktree.cleanup_effect.started",
+              "subagent.worktree.cleanup_outcome",
+              "subagent.worktree.lease_state",
+              "subagent.worktree.operation_requested",
+              "subagent.worktree.prepared"
+            ],
+            "managed_replay_marker_observed": false,
+            "user_marker_observed": false,
+            "managed_environment_line_count": 14
+          }
+        },
+        {
+          "name": "nested-direct_exception",
+          "status": "unqualified",
+          "detail": {
+            "type": "RuntimeError",
+            "message": "CLI timeout: muse: workspace root: <qualification-root>/native-nested-direct-1.4.8/workspace (explicit)\nmuse: workspace trust: trusted source=run-flag\nmuse: Workspace information is unavailable: Workspace receipt 78cd7f9c-0012-5420-ae1d-95fbde2f6b6b: background task"
+          }
+        }
+      ]
+    },
+    {
+      "results_file": "managed-direct-results.json",
+      "sha256": "799183670fa1471def64d82b9b6ccd3ab11a1cf10e34da7ff8ddebe60e9fd9f5",
+      "observations": [
+        {
+          "name": "managed_direct_recorder_1.4.8",
+          "status": "pass",
+          "detail": {
+            "exit": 0,
+            "workflow_statuses": [
+              "scheduled",
+              "started",
+              "usage",
+              "completed",
+              "terminal"
+            ],
+            "user_hooks": 1,
+            "managed_hooks": 4,
+            "managed_child_hooks": 2,
+            "all_managed_markers_match": true,
+            "all_child_markers_match": true,
+            "user_marker_observed": false
+          }
+        }
+      ]
+    },
+    {
+      "results_file": "tui-compaction-results.json",
+      "sha256": "95a56a3570bc25e2d276cf1cb8553bc2cc2b23f5e0ef62844c601188f7c983aa",
+      "observations": [
+        {
+          "name": "probe_exception",
+          "status": "unqualified",
+          "detail": {
+            "type": "AssertionError",
+            "message": ""
+          }
+        }
+      ]
+    },
+    {
+      "results_file": "tui-compaction-ui-results.json",
+      "sha256": "95a56a3570bc25e2d276cf1cb8553bc2cc2b23f5e0ef62844c601188f7c983aa",
+      "observations": [
+        {
+          "name": "probe_exception",
+          "status": "unqualified",
+          "detail": {
+            "type": "AssertionError",
+            "message": ""
+          }
+        }
+      ]
+    }
+  ],
+  "frame_mutations": {
+    "source_build": "1.4.8-R6256.1",
+    "source_frame_sha256": "e74bb4df18a569804814836d786839fc0679ee6f848a8b25f4c5a3253d94c726",
+    "cases": [
+      {
+        "name": "baseline",
+        "exit": 0,
+        "diagnostics": {
+          "unparseable_lines": 0,
+          "unknown_payload_kinds": 0,
+          "gaps": 0,
+          "omitted_live_only": 0,
+          "duplicate_records": 0
+        },
+        "output_keys": [
+          "export_schema_version",
+          "redaction",
+          "exporter_version",
+          "session_terminated_abnormally",
+          "sessions",
+          "events",
+          "diagnostics"
+        ]
+      },
+      {
+        "name": "outer_key_order",
+        "exit": 0,
+        "diagnostics": {
+          "unparseable_lines": 1,
+          "unknown_payload_kinds": 0,
+          "gaps": 0,
+          "omitted_live_only": 0,
+          "duplicate_records": 0
+        },
+        "output_keys": [
+          "export_schema_version",
+          "redaction",
+          "exporter_version",
+          "session_terminated_abnormally",
+          "sessions",
+          "events",
+          "diagnostics"
+        ]
+      },
+      {
+        "name": "checksum_zero",
+        "exit": 0,
+        "diagnostics": {
+          "unparseable_lines": 1,
+          "unknown_payload_kinds": 0,
+          "gaps": 0,
+          "omitted_live_only": 0,
+          "duplicate_records": 0
+        },
+        "output_keys": [
+          "export_schema_version",
+          "redaction",
+          "exporter_version",
+          "session_terminated_abnormally",
+          "sessions",
+          "events",
+          "diagnostics"
+        ]
+      },
+      {
+        "name": "child_text_change",
+        "exit": 0,
+        "diagnostics": {
+          "unparseable_lines": 1,
+          "unknown_payload_kinds": 0,
+          "gaps": 0,
+          "omitted_live_only": 0,
+          "duplicate_records": 0
+        },
+        "output_keys": [
+          "export_schema_version",
+          "redaction",
+          "exporter_version",
+          "session_terminated_abnormally",
+          "sessions",
+          "events",
+          "diagnostics"
+        ]
+      },
+      {
+        "name": "record_reserialization",
+        "exit": 0,
+        "diagnostics": {
+          "unparseable_lines": 1,
+          "unknown_payload_kinds": 0,
+          "gaps": 0,
+          "omitted_live_only": 0,
+          "duplicate_records": 0
+        },
+        "output_keys": [
+          "export_schema_version",
+          "redaction",
+          "exporter_version",
+          "session_terminated_abnormally",
+          "sessions",
+          "events",
+          "diagnostics"
+        ]
+      },
+      {
+        "name": "reversed_children",
+        "exit": 0,
+        "diagnostics": {
+          "unparseable_lines": 1,
+          "unknown_payload_kinds": 0,
+          "gaps": 0,
+          "omitted_live_only": 0,
+          "duplicate_records": 0
+        },
+        "output_keys": [
+          "export_schema_version",
+          "redaction",
+          "exporter_version",
+          "session_terminated_abnormally",
+          "sessions",
+          "events",
+          "diagnostics"
+        ]
+      },
+      {
+        "name": "outer_ordinal_change",
+        "exit": 0,
+        "diagnostics": {
+          "unparseable_lines": 1,
+          "unknown_payload_kinds": 0,
+          "gaps": 0,
+          "omitted_live_only": 0,
+          "duplicate_records": 0
+        },
+        "output_keys": [
+          "export_schema_version",
+          "redaction",
+          "exporter_version",
+          "session_terminated_abnormally",
+          "sessions",
+          "events",
+          "diagnostics"
+        ]
+      },
+      {
+        "name": "transaction_id_change",
+        "exit": 0,
+        "diagnostics": {
+          "unparseable_lines": 1,
+          "unknown_payload_kinds": 0,
+          "gaps": 0,
+          "omitted_live_only": 0,
+          "duplicate_records": 0
+        },
+        "output_keys": [
+          "export_schema_version",
+          "redaction",
+          "exporter_version",
+          "session_terminated_abnormally",
+          "sessions",
+          "events",
+          "diagnostics"
+        ]
+      },
+      {
+        "name": "unknown_frame_version",
+        "exit": 0,
+        "diagnostics": {
+          "unparseable_lines": 1,
+          "unknown_payload_kinds": 0,
+          "gaps": 0,
+          "omitted_live_only": 0,
+          "duplicate_records": 0
+        },
+        "output_keys": [
+          "export_schema_version",
+          "redaction",
+          "exporter_version",
+          "session_terminated_abnormally",
+          "sessions",
+          "events",
+          "diagnostics"
+        ]
+      },
+      {
+        "name": "missing_hash",
+        "exit": 0,
+        "diagnostics": {
+          "unparseable_lines": 1,
+          "unknown_payload_kinds": 0,
+          "gaps": 0,
+          "omitted_live_only": 0,
+          "duplicate_records": 0
+        },
+        "output_keys": [
+          "export_schema_version",
+          "redaction",
+          "exporter_version",
+          "session_terminated_abnormally",
+          "sessions",
+          "events",
+          "diagnostics"
+        ]
+      },
+      {
+        "name": "frame_key_first_other_keys_reversed",
+        "exit": 0,
+        "diagnostics": {
+          "unparseable_lines": 1,
+          "unknown_payload_kinds": 0,
+          "gaps": 0,
+          "omitted_live_only": 0,
+          "duplicate_records": 0
+        }
+      },
+      {
+        "name": "outer_spaces",
+        "exit": 0,
+        "diagnostics": {
+          "unparseable_lines": 1,
+          "unknown_payload_kinds": 0,
+          "gaps": 0,
+          "omitted_live_only": 0,
+          "duplicate_records": 0
+        }
+      },
+      {
+        "name": "outer_first_colon_space",
+        "exit": 0,
+        "diagnostics": {
+          "unparseable_lines": 1,
+          "unknown_payload_kinds": 0,
+          "gaps": 0,
+          "omitted_live_only": 0,
+          "duplicate_records": 0
+        }
+      }
+    ],
+    "baseline_reserialization_is_byte_identical": true
+  },
+  "mcp_native_task_pairing": {
+    "successful_read": {
+      "call_id": "call_1",
+      "intent_idempotency_key": "tool:call_1",
+      "task_terminal": "completed",
+      "sentinel_returned": true
+    },
+    "missing_file": {
+      "call_id": "call_1",
+      "intent_idempotency_key": "tool:call_1",
+      "task_terminal": "failed",
+      "failure_hook": "PostToolUseFailure"
+    },
+    "result_text_has_typed_error_field": false,
+    "server_package": "@modelcontextprotocol/server-filesystem@1.0.0",
+    "node": "24.19.0"
+  },
+  "existing_collector_benchmark": {
+    "command": "go test -short -run '^$' -bench '^BenchmarkScanSettledRegistrations/sessions-1000$' -benchtime=1x -count=1 ./internal/collector",
+    "iterations": 1,
+    "warm_scan_ns": 3129738798,
+    "allocated_bytes": 32359360,
+    "allocations": 297756,
+    "filters": 0,
+    "bundle_decodes": 0,
+    "remote_reads": 0,
+    "total_command_seconds": 589.089,
+    "cpu": "Intel Core i7-8559U @ 2.70GHz",
+    "limitation": "Existing synthetic Codex registrations; not Muse performance, not a latency guarantee."
+  },
+  "saved_fixture_checks": [
+    {
+      "file": "permission-frame-1.4.8.jsonl",
+      "verified_sha256": "e74bb4df18a569804814836d786839fc0679ee6f848a8b25f4c5a3253d94c726",
+      "native_export": {
+        "exit": 0,
+        "unparseable_lines": 0
+      }
+    },
+    {
+      "file": "permission-frame-invalid-checksum.jsonl",
+      "verified_sha256": "f569b97fa06878b3e58243cf157cf34af2d4e182eaca069f7360ae787ef07bbb",
+      "native_export": {
+        "exit": 0,
+        "unparseable_lines": 1
+      }
+    }
+  ]
+}

@@ -24,6 +24,7 @@ Historical-only ownership status reconciled 2026-10-12 after #433 merged as
 | [Git HEAD](git-head.md) | Implemented session-start commit metadata. |
 | [Eval export](eval-export.md) | Implemented archived/local/bulk export; schema and golden fixtures define the contract. |
 | [Replay sessions](replay-sessions.md) | Implemented replay classification and default-history exclusion. |
+| [Muse Code integration](muse-integration.md) | Proposed fourth-agent integration; [native plan validation](muse-plan-validation.md) passed core feasibility; [senior review](muse-plan-review.md) tightened the design; [qualification/readiness](muse-qualification-readiness.md) records 1.4.8 recovery, checkpoints, MCP/skills and future subagent packets. Implementation and full parity remain gated. |
 | [Setup recent import](setup-recent-import.md) | Implemented: §1–§3 merged in #386; §4 status prompt now implemented in `status_pre_setup.go` and `refused_starts.go`. |
 
 For the implementation queue and outstanding acceptance records, use the
