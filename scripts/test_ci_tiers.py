@@ -214,7 +214,7 @@ class FocusedPRTest(unittest.TestCase):
                           dict(Action='pass', Package=package))
             output.write_text(text)
             return text
-        with tempfile.TemporaryDirectory() as d, mock.patch.object(tier, 'git', return_value='a'*40), mock.patch.object(tier.full_race, 'source_proof', return_value={'source':'a'*40, 'tree':'b'*40}), mock.patch.object(tier, 'checked', side_effect=checked):
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {'GITHUB_SHA': 'a'*40}), mock.patch.object(tier, 'git', return_value='a'*40), mock.patch.object(tier.full_race, 'source_proof', return_value={'source':'a'*40, 'tree':'b'*40}), mock.patch.object(tier, 'checked', side_effect=checked):
             tier.run_suite('pr', 'macos', Path(d), tier.representative_fallback())
             report = json.loads((Path(d)/'tier.json').read_text())
             self.assertTrue(report['success'])
