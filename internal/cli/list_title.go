@@ -33,10 +33,6 @@ const maxListNumberDigits = 2
 // drops the sentences after it, so "Hi. Fix the scroll bug" stays whole.
 const minSentenceWords = 3
 
-// maxTitlePasses bounds how many times cleanTitle repeats its rules; each pass
-// only shortens the text, so a handful always reaches a fixed point.
-const maxTitlePasses = 8
-
 // sentenceAbbreviations are words ending in "." that do not end a sentence.
 var sentenceAbbreviations = map[string]bool{
 	"e.g.": true, "i.e.": true, "vs.": true, "etc.": true, "cf.": true,
@@ -69,10 +65,14 @@ func listTitle(display string) string {
 	return display
 }
 
-// cleanTitle applies listTitle's rules until the text stops changing. It may
-// return "".
+// cleanTitle applies listTitle's rules until the text stops changing, however
+// deeply markup nests ("> > > > fix it"), so listTitle is a fixed point. A
+// pass that changes the text strips at least one byte, or only capitalizes a
+// first letter (which can add a byte) that the next change must strip, so
+// 2*len(text)+2 passes always reach the fixed point. Titles are at most 128
+// runes (archive's sessionTitleLimit), so this stays small. It may return "".
 func cleanTitle(text string) string {
-	for range maxTitlePasses {
+	for range 2*len(text) + 2 {
 		next := cleanTitleOnce(text)
 		if next == text {
 			break

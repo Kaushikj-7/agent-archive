@@ -93,6 +93,8 @@ func TestListTitle(t *testing.T) {
 		{name: "abbreviation from the list", in: "compare a vs. b in the list output", want: "Compare a vs. b in the list output"},
 		{name: "quotes at both ends that are not a pair", in: "\"foo\" or \"bar\"", want: "\"foo\" or \"bar\""},
 		{name: "nested markup", in: "> - \"quoted bullet item\"", want: "Quoted bullet item"},
+		{name: "deeply nested blockquotes", in: strings.Repeat("> ", 12) + "fix the bug", want: "Fix the bug"},
+		{name: "many list numbers", in: "1. 2. 3. 4. 5. 6. 7. 8. 9. 10. fix the picker", want: "Fix the picker"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -116,6 +118,7 @@ func FuzzListTitle(f *testing.F) {
 		"# Files pasted by the user: ## \"agent-archive · 72 sessions\": /Users/wangjo…",
 		"/code-review d3e525605855086e5f0f2acf1115dd6df0d6fbf6...351890220f3581bb8478807c22c7a54f855afa7b",
 		"\"`'“‘", "élan", "a\u200bb", "\x1b]52;c;x\x07", "\xff\xfe", "ǆungla", "e.g. x. y z",
+		"> > > > > > > > > > > x", "fix the bug.”.”.”.”",
 	} {
 		f.Add(seed)
 	}
