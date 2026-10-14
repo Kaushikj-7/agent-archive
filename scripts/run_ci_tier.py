@@ -193,6 +193,8 @@ def checked(command, output, deadline, env=None):
     old = {sig: signal.signal(sig, cancel) for sig in (signal.SIGTERM, signal.SIGINT)}
     process = None
     try:
+        if time.monotonic() >= deadline:
+            raise Failure('tier deadline already exceeded')
         with output.open('w') as handle:
             process = subprocess.Popen(command, stdout=handle, start_new_session=True, env=env)
             try:
@@ -203,14 +205,22 @@ def checked(command, output, deadline, env=None):
                 raise Failure('tier command failed')
         return output.read_text()
     finally:
-        if process:
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            process.wait()
-        for sig, handler in old.items():
-            signal.signal(sig, handler)
+        try:
+            # Cleanup must survive a second cancellation and has its own bound.
+            for sig in old:
+                signal.signal(sig, signal.SIG_IGN)
+            if process:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired as error:
+                    raise Failure('killed tier command did not exit within cleanup deadline') from error
+        finally:
+            for sig, handler in old.items():
+                signal.signal(sig, handler)
 
 
 def discover(packages, out, deadline, race=False):
@@ -326,7 +336,10 @@ def run_suite(tier, suite, out, extras=None, seconds=2400):
     if suite in ('linux', 'extra') or suite == 'macos' and tier == 'full':
         packages = extras['packages'] if suite == 'extra' else ['./...']
         if packages:
-            if tier == 'full':
+            if tier == 'full' and suite == 'macos':
+                import run_native_full
+                run_native_full.run(out, deadline, report, path)
+            elif tier == 'full':
                 try:
                     full_race.run(packages, out, deadline, report,
                                   lambda: path.write_text(json.dumps(report, indent=2)+'\n'),
@@ -352,8 +365,10 @@ def run_suite(tier, suite, out, extras=None, seconds=2400):
                 execute(common+['-run', pattern, './'+pkg[len(MODULE):]], 'medium-'+pkg.rsplit('/',1)[1], selected={pkg:names}, children=children)
         if tier == 'full' and packages:
             performance_env = dict(os.environ, AGENT_ARCHIVE_PERF='1', AGENT_ARCHIVE_REAL_SYSTEMD='0')
+            expected_source = (report['native_full']['catalog']['source_proof'] if suite == 'macos'
+                               else report['full_schedule']['source_proof'])
             report['performance_compile'] = prepare_performance(
-                out, deadline, performance_env, report['full_schedule']['source_proof'])
+                out, deadline, performance_env, expected_source)
             path.write_text(json.dumps(report, indent=2)+'\n')
             execute(PERFORMANCE, 'performance', env=performance_env)
     if suite == 'macos':
@@ -386,6 +401,9 @@ def run_suite(tier, suite, out, extras=None, seconds=2400):
             if not any(selected.values()):
                 raise Failure('real systemd selection empty')
             execute(['go','test','-count=1','-json','-timeout','8m','-run',pattern,relative], 'systemd-'+pkg, selected=selected, env=dict(os.environ,AGENT_ARCHIVE_REAL_SYSTEMD='1'), real_manager=True)
+    if suite == 'macos' and tier == 'full':
+        import run_native_full
+        run_native_full.verify(out, report)
     if tier == 'full' and report.get('full_schedule'):
         try:
             full_race.verify(out, report, packages, ROOT, body_evidence, verify_selected, catalog()['restorations'])
@@ -509,4 +527,6 @@ def main():
 
 
 if __name__ == '__main__':
+    # Helpers import this module; share the script's Failure type and globals.
+    sys.modules['run_ci_tier'] = sys.modules[__name__]
     sys.exit(main())

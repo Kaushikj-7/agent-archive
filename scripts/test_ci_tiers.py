@@ -8,10 +8,12 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 
 import run_ci_tier as tier
+import run_native_full as native
 import test_purge_recipe as purge
 
 
@@ -189,6 +191,40 @@ class PerformanceCompileTest(unittest.TestCase):
 
 
 class SourceProofTest(unittest.TestCase):
+    def test_native_source_guard_rejects_index_hidden_bytes_and_wrong_head(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            def git(*args):
+                return subprocess.check_output(['git','-C',str(root),*args],stderr=subprocess.PIPE,text=True).strip()
+            git('init','-q');git('config','user.name','CI fixture');git('config','user.email','ci@example.invalid')
+            (root/'.gitignore').write_text('ignored/\ngo.work\n');(root/'file').write_text('tracked\n');git('add','.');git('commit','-qm','source');source=git('rev-parse','HEAD')
+            with mock.patch.object(tier,'ROOT',root),mock.patch.dict(os.environ,{'GITHUB_SHA':source}):
+                native.source_guard(source)
+                git('update-index','--assume-unchanged','file');(root/'file').write_text('hidden\n')
+                self.assertEqual(git('status','--porcelain'),'')
+                with self.assertRaises(tier.Failure):native.source_guard(source)
+                with self.assertRaises(tier.Failure):native.source_guard('b'*40)
+                (root/'file').write_text('tracked\n');(root/'added.go').write_text('package fixture\n')
+                with self.assertRaises(tier.Failure):native.source_guard(source)
+                git('add','added.go')
+                with self.assertRaises(tier.Failure):native.source_guard(source)
+                git('reset','-q','HEAD','added.go');(root/'added.go').unlink()
+                out=root/'evidence';out.mkdir();(out/'tier.json').write_text('{}')
+                native.source_guard(source,out)
+                compile_log=out/'performance-compile.log';compile_log.write_text('compile only')
+                native.source_guard(source,out)
+                compile_log.unlink();compile_log.symlink_to(out/'tier.json')
+                with self.assertRaises(tier.Failure):native.source_guard(source,out)
+                compile_log.unlink()
+                unexpected=out/'unexpected.log';unexpected.write_text('unexpected input')
+                with self.assertRaises(tier.Failure):native.source_guard(source,out)
+                unexpected.unlink()
+                for ignored in ('go.work', 'ignored/extra.go'):
+                    item=root/ignored;item.parent.mkdir(parents=True,exist_ok=True);item.write_text('unexpected input\n')
+                    with self.assertRaises(tier.Failure):native.source_guard(source,out)
+                    item.unlink()
+                (out/'extra.go').write_text('package fixture\n')
+                with self.assertRaises(tier.Failure):native.source_guard(source,out)
     def test_full_source_proof_rejects_hidden_modes_symlinks_and_ignored_go_inputs(self):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d)
@@ -215,8 +251,9 @@ class SourceProofTest(unittest.TestCase):
             git('init','-q');git('config','user.name','CI fixture');git('config','user.email','ci@example.invalid')
             target=root/'internal/scheduler/old.go';target.parent.mkdir(parents=True);target.write_text('package scheduler\n')
             git('add','.');git('commit','-qm','base');base=git('rev-parse','HEAD');main=git('branch','--show-current')
-            git('checkout','-qb','head');git('mv','internal/scheduler/old.go','internal/scheduler/new.go');git('commit','-qm','rename');head=git('rev-parse','HEAD')
-            git('checkout',main);git('merge','--no-ff','-m','tested merge','head');tested=git('rev-parse','HEAD')
+            # "head" aliases HEAD on case-insensitive macOS filesystems.
+            git('checkout','-qb','fixture-head');git('mv','internal/scheduler/old.go','internal/scheduler/new.go');git('commit','-qm','rename');head=git('rev-parse','HEAD')
+            git('checkout',main);git('merge','--no-ff','-m','tested merge','fixture-head');tested=git('rev-parse','HEAD')
             event={'pull_request':{'base':{'sha':base},'head':{'sha':head}}}
             with mock.patch.object(tier,'ROOT',root):
                 plan=tier.pr_extras(event,tested)
@@ -335,6 +372,167 @@ class ExecutionPlanTest(unittest.TestCase):
         for event,ref in [('push','refs/heads/release-candidate/final'),('workflow_dispatch','refs/heads/main')]:
             with tempfile.TemporaryDirectory() as d,mock.patch.object(sys,'argv',['run_ci_tier','--tier','daily','--suite','linux','--output',d]),mock.patch.dict(os.environ,{'GITHUB_EVENT_NAME':event,'GITHUB_REF':ref,'CI_SUITE':'all'}),mock.patch.object(tier,'run_suite') as run:
                 self.assertEqual(tier.main(),0);self.assertEqual(run.call_args.args[0],'full')
+
+
+class NativeFullTest(unittest.TestCase):
+    packages={native.shard.CLI:True,'ordinary/a':True,'ordinary/fileless':False,
+              **{tier.MODULE+p:True for p in ('internal/collector','internal/archive','internal/agents/nativecodec','internal/capture','internal/config')}}
+    names={native.shard.CLI:['TestA','TestChildHelper','TestFull','FuzzSeed','ExampleCase'],
+           'ordinary/a':['TestFull'],'ordinary/fileless':[],
+           tier.MODULE+'internal/collector':['TestStayFast'],tier.MODULE+'internal/archive':[],
+           tier.MODULE+'internal/agents/nativecodec':['TestFiveMegabyte'],
+           tier.MODULE+'internal/capture':['TestCursorOverlappingHooksRegisterOnce'],
+           tier.MODULE+'internal/config':['TestPublishedWriterRefusesProtectedConfiguration']}
+
+    def listing(self):
+        lines=[]
+        for package,names in self.names.items():
+            lines.extend({'Action':'output','Package':package,'Output':name+'\n'} for name in names)
+            if not self.packages[package]:lines.append({'Action':'output','Package':package,'Output':'? '+package+' [no test files]\n'})
+            lines.append({'Action':'pass' if self.packages[package] else 'skip','Package':package})
+        return events(*lines)
+
+    def body(self,selected):
+        lines=[]
+        for package,names in selected.items():
+            for name in names:
+                lines.append({'Action':'run','Package':package,'Test':name})
+                if name=='TestA':
+                    lines.extend([{'Action':'run','Package':package,'Test':name+'/full'},
+                                  {'Action':'pass','Package':package,'Test':name+'/full'}])
+                if name=='TestChildHelper':lines.append({'Action':'output','Package':package,'Test':name,'Output':'child-only helper\n'})
+                lines.append({'Action':'skip' if name=='TestChildHelper' else 'pass','Package':package,'Test':name})
+            if not self.packages[package]:lines.append({'Action':'output','Package':package,'Output':'? '+package+' [no test files]\n'})
+            lines.append({'Action':'pass' if self.packages[package] else 'skip','Package':package})
+        return events(*lines)
+
+    def test_native_units_discover_every_body_reconcile_raw_proof_and_preserve_full_obligations(self):
+        import copy
+        calls=[]
+        def performance_names(command, flag):
+            pattern=command[command.index(flag)+1]
+            selected={tier.MODULE+p[2:]:[n for n in self.names[tier.MODULE+p[2:]] if __import__('re').search(pattern,n)] for p in command if p.startswith('./')}
+            # A plain-only build-tagged test must be covered even when it is
+            # absent from the race listing.
+            selected[tier.MODULE+'internal/collector'].append('TestPlainOnlyStayFast')
+            return selected
+        def checked(command,output,deadline,env):
+            calls.append((command,deadline,env))
+            if command[:2]==['go','list']:
+                text=events(*[{'ImportPath':p,'Dir':'/tmp','TestGoFiles':['x_test.go'] if has_tests else []} for p,has_tests in self.packages.items()])
+            elif '-c' in command:
+                temporary = Path(command[command.index('-o')+1])
+                for package in command[7:]:
+                    (temporary/(package.rsplit('/', 1)[1]+'.test')).write_text('compile only')
+                text = ''
+            elif output.name=='native-performance-list.jsonl':
+                selected=performance_names(command,'-list')
+                text=events(*[event for package,names in selected.items() for event in ([{'Action':'output','Package':package,'Output':name+'\n'} for name in names]+[{'Action':'pass','Package':package}])])
+            elif '-list' in command:text=self.listing()
+            elif output.name.startswith('native-'):
+                if '-run' in command:
+                    pattern=command[command.index('-run')+1]
+                    selected={native.shard.CLI:[n for n in self.names[native.shard.CLI] if __import__('re').fullmatch(pattern,n)]}
+                else:selected={p:n for p,n in self.names.items() if p!=native.shard.CLI}
+                text=self.body(selected)
+            elif command[0]=='bash':
+                text=self.body({tier.MODULE+'internal/config':['TestPublishedWriterRefusesProtectedConfiguration']})
+            else:
+                text=self.body(performance_names(command,'-run'))
+            output.write_text(text);return text
+        restorations={'restorations':[{'package':'internal/cli','test':'TestA','restore':'weekly','full_children':['full']}]}
+        with tempfile.TemporaryDirectory() as d,mock.patch.object(tier.full_race,'source_proof',return_value={'source':'a'*40,'tree':'b'*40}),mock.patch.object(native,'source_guard') as guard,mock.patch.object(tier,'git',return_value='a'*40),mock.patch.object(tier,'checked',side_effect=checked),mock.patch.object(tier,'catalog',return_value=restorations),mock.patch.dict(os.environ,{'GITHUB_SHA':'a'*40,'AGENT_ARCHIVE_PERF':'0'}),contextlib.redirect_stdout(io.StringIO()):
+            out=Path(d);tier.run_suite('full','macos',out)
+            report=json.loads((out/'tier.json').read_text());self.assertTrue(report['success']);self.assertGreaterEqual(guard.call_count,3)
+            self.assertNotIn('full_schedule',report)
+            self.assertEqual(report['performance_compile'], dict(source_proof={'source':'a'*40,'tree':'b'*40}, packages=tier.PERFORMANCE[-4:], parallel=2, completed=True))
+            self.assertEqual(len([c for c,_,_ in calls if '-c' in c]),1)
+            self.assertTrue(all(not Path(c[c.index('-o')+1]).exists() for c,_,_ in calls if '-c' in c))
+            self.assertTrue(all(i['command'][0:2] != ['go','test'] or '-c' not in i['command'] for i in report['invocations']))
+            for mutate in (lambda r:r.pop('performance_compile'), lambda r:r['performance_compile'].update(parallel=4), lambda r:r['performance_compile'].update(completed=False), lambda r:r['performance_compile']['source_proof'].update(tree='c'*40)):
+                bad=copy.deepcopy(report);mutate(bad)
+                with self.assertRaises(tier.Failure):native.verify(out,bad)
+            observed={(r['package'],r['test']) for r in report['native_full']['evidence']['actual'] if '/' not in r['test']}
+            self.assertEqual(observed,{(p,n) for p,names in self.names.items() for n in names})
+            self.assertEqual(sum(r['test']=='TestFull' for r in report['native_full']['evidence']['actual']),2)
+            self.assertEqual(len(set(deadline for _,deadline,_ in calls)),1)
+            units=[c for c,_,_ in calls if '-race' in c and '-list' not in c]
+            self.assertEqual(len(units),3)
+            self.assertTrue(all('-short' not in c and c[c.index('-timeout')+1]=='20m' and c[c.index('-p')+1]=='1' for c in units))
+            self.assertTrue(all(env['GOMAXPROCS']==str(report['native_full']['cpus']) for c,_,env in calls if c in units))
+            # Collector's performance gate tests nonempty getenv, so even
+            # "0" skips its ordinary race bodies. Clear inherited opt-in too.
+            self.assertTrue(all('AGENT_ARCHIVE_PERF' not in env for c,_,env in calls if '-race' in c))
+            self.assertTrue(any(env.get('AGENT_ARCHIVE_PERF')=='1' for _,_,env in calls))
+            self.assertTrue(any(c[0]=='bash' for c,_,_ in calls))
+            helper=next(r for r in report['native_full']['evidence']['actual'] if r['test']=='TestChildHelper')
+            self.assertEqual(helper['status'],'skip');self.assertIn('child-only helper',helper['reason'])
+            for key,value in [('catalog_sha256','bad'),('cpus',0),('evidence',{})]:
+                bad=copy.deepcopy(report);bad['native_full'][key]=value
+                with self.assertRaises(tier.Failure):native.verify(out,bad)
+            for omitted in ('performance.jsonl','published-writer.jsonl','native-cli-1.jsonl'):
+                bad=copy.deepcopy(report);bad['invocations']=[i for i in bad['invocations'] if i['log']!=omitted]
+                with self.assertRaises(tier.Failure):native.verify(out,bad)
+            bad=copy.deepcopy(report);bad['native_full']['catalog']['assignments'][1]+=bad['native_full']['catalog']['assignments'][0]
+            bad['native_full']['catalog_sha256']=native.shard.digest(bad['native_full']['catalog'])
+            with self.assertRaises(tier.Failure):native.verify(out,bad)
+            bad=copy.deepcopy(report);bad['invocations'][0]['command'].append('-short')
+            with self.assertRaises(tier.Failure):native.verify(out,bad)
+            for name in ('performance.jsonl','published-writer.jsonl'):
+                log=out/name;good=log.read_text()
+                skipped=events(*[dict(record,Action='skip') if record.get('Test') and record['Action']=='pass' else record for record in [json.loads(line) for line in good.splitlines()]])
+                for text in ('', skipped, good+'\n'+events({'Action':'run','Package':tier.MODULE+'internal/config','Test':'TestUnassignedHelper/child'}, {'Action':'pass','Package':tier.MODULE+'internal/config','Test':'TestUnassignedHelper/child'})):
+                    bad=copy.deepcopy(report);log.write_text(text)
+                    next(i for i in bad['invocations'] if i['log']==name)['evidence']=tier.body_evidence(text,False)
+                    with self.assertRaises(tier.Failure):native.verify(out,bad)
+                log.write_text(good)
+            log=out/'native-cli-0.jsonl';good=log.read_text();log.write_text(good+'\n'+events({'Action':'fail','Package':native.shard.CLI}))
+            with self.assertRaises(tier.Failure):native.verify(out,report)
+            log.write_text(good)
+            # Even freshly recomputed per-unit evidence cannot substitute a
+            # smaller restoration child for the required full-scale body.
+            item=next(i for i in report['invocations'] if any(r['test']=='TestA' for r in i['evidence']['actual']))
+            log=out/item['log'];text=log.read_text().replace('TestA/full','TestA/wrong');log.write_text(text)
+            item['evidence']=tier.body_evidence(text,False)
+            with self.assertRaises(tier.Failure):native.verify(out,report)
+
+    def test_cancelled_native_work_cannot_report_success_or_start_followup_obligations(self):
+        with tempfile.TemporaryDirectory() as d,mock.patch.object(tier.full_race,'source_proof',return_value={'source':'a'*40,'tree':'b'*40}),mock.patch.object(native,'source_guard'),mock.patch.object(tier,'git',return_value='a'*40),mock.patch.object(tier,'checked',side_effect=tier.Failure('tier command cancelled')) as command,mock.patch.dict(os.environ,{'GITHUB_SHA':'a'*40}):
+            with self.assertRaises(tier.Failure):tier.run_suite('full','macos',Path(d))
+            self.assertEqual(command.call_count,1)
+            report=json.loads((Path(d)/'tier.json').read_text());self.assertFalse(report['success']);self.assertEqual(report['invocations'],[])
+
+    def test_coverage_rejects_missing_duplicate_unexpected_nested_and_failed_events(self):
+        package=native.shard.CLI;selected={package:['TestA']};good=self.body(selected)
+        native.coverage(good,{package:True},selected)
+        items=[json.loads(line) for line in good.splitlines()]
+        broken=[items[:-1], [r for r in items if r.get('Test')!='TestA/full'],
+                items+[{'Action':'pass','Package':package,'Test':'TestA'}],
+                items+[{'Action':'run','Package':package,'Test':'TestOther/child'}],
+                items+[{'Action':'run','Package':package,'Test':'TestA/new'}],
+                items+[{'Action':'build-fail','Package':package}],
+                items+[{'Action':'run','Package':'wrong','Test':'TestA'}]]
+        # Missing required restoration children is checked during reconciliation,
+        # not ordinary selection coverage, so exclude that case here.
+        for records in broken[:1]+broken[2:]:
+            with self.assertRaises((tier.Failure,native.shard.Failure)):native.coverage(events(*records),{package:True},selected)
+        for text in (self.listing()+'\n'+events({'Action':'output','Package':package,'Output':'TestA\n'}),
+                     self.listing().replace('ExampleCase','TestMain')):
+            with self.assertRaises(tier.Failure):native.listing(text,self.packages)
+
+    def test_darwin_watchdog_kills_and_reaps_owned_job_and_restores_signal_handlers(self):
+        import signal
+        before={sig:signal.getsignal(sig) for sig in (signal.SIGTERM,signal.SIGINT)}
+        with tempfile.TemporaryDirectory() as d,mock.patch.object(tier.sys,'platform','darwin'):
+            output=Path(d)/'job';pidfile=Path(d)/'pid'
+            script='import os,time,pathlib;pathlib.Path('+repr(str(pidfile))+').write_text(str(os.getpid()));time.sleep(20)'
+            with self.assertRaises(tier.Failure):tier.checked([sys.executable,'-c',script],output,time.monotonic()+.3)
+            pid=int(pidfile.read_text())
+            with self.assertRaises(ProcessLookupError):os.kill(pid,0)
+            with mock.patch.object(tier.subprocess,'Popen') as spawn,self.assertRaises(tier.Failure):
+                tier.checked([sys.executable,'-c','pass'],output,time.monotonic()-1)
+            spawn.assert_not_called()
+        self.assertEqual({sig:signal.getsignal(sig) for sig in before},before)
 
 
 class PurgeSelectionTest(unittest.TestCase):
@@ -494,32 +692,31 @@ class FullRaceTest(unittest.TestCase):
                     events(dict(Action='pass',Package='unknown'))):
             with self.subTest(raw=raw),self.assertRaises(full.shards.Failure):full.listing(raw,{pkg:True})
 
-    def test_native_full_and_linux_enforce_the_same_compiled_schedule(self):
-        for suite in ('linux','macos'):
-            with tempfile.TemporaryDirectory() as d:
-                directory=Path(d);report=self.fixture(directory);raw={p.name:p.read_text() for p in directory.iterdir()}
-                calls=[]
-                def checked(command,output,deadline,env=None):
-                    calls.append((command,deadline,env['AGENT_ARCHIVE_REAL_SYSTEMD']))
-                    if command[:2]==['go','list']:text=raw['full-packages.json']
-                    elif '-c' in command:
-                        temporary = Path(command[command.index('-o')+1])
-                        for package in command[7:]:
-                            (temporary/(package.rsplit('/', 1)[1]+'.test')).write_text('compile only')
-                        text = ''
-                    elif command == tier.PERFORMANCE:
-                        self.assertTrue(all(not Path(c[6]).exists() for c, _, _ in calls if '-c' in c))
-                        text = raw[output.name]
-                    elif '-list' in command:text=raw['full-list.jsonl']
-                    elif command[0]=='bash':text=events(dict(Action='pass',Package=tier.MODULE+'internal/config',Test='TestPublishedWriterRefusesProtectedConfiguration'))
-                    else:text=raw[output.name]
-                    output.write_text(text);return text
-                with mock.patch.object(tier,'git',return_value='a'*40),mock.patch.object(tier.full_race,'source_proof',return_value={'source':'a'*40,'tree':'b'*40}),mock.patch.object(tier,'checked',side_effect=checked),mock.patch.object(tier,'catalog',return_value={'restorations':[]}),mock.patch.dict(os.environ,{'GITHUB_SHA':'a'*40}),contextlib.redirect_stdout(io.StringIO()):
-                    tier.run_suite('full',suite,directory,seconds=37)
-                result=json.loads((directory/'tier.json').read_text());self.assertTrue(result['success'])
-                self.assertEqual(len([i for i in result['invocations'] if i['log'].startswith('race')]),2)
-                self.assertEqual(len({deadline for _,deadline,_ in calls}),1)
-                self.assertTrue(all(enabled=='0' for _,_,enabled in calls))
+    def test_linux_full_enforces_the_compiled_schedule(self):
+        with tempfile.TemporaryDirectory() as d:
+            directory=Path(d);report=self.fixture(directory);raw={p.name:p.read_text() for p in directory.iterdir()}
+            calls=[]
+            def checked(command,output,deadline,env=None):
+                calls.append((command,deadline,env['AGENT_ARCHIVE_REAL_SYSTEMD']))
+                if command[:2]==['go','list']:text=raw['full-packages.json']
+                elif '-c' in command:
+                    temporary = Path(command[command.index('-o')+1])
+                    for package in command[7:]:
+                        (temporary/(package.rsplit('/', 1)[1]+'.test')).write_text('compile only')
+                    text = ''
+                elif command == tier.PERFORMANCE:
+                    self.assertTrue(all(not Path(c[6]).exists() for c, _, _ in calls if '-c' in c))
+                    text = raw[output.name]
+                elif '-list' in command:text=raw['full-list.jsonl']
+                elif command[0]=='bash':text=events(dict(Action='pass',Package=tier.MODULE+'internal/config',Test='TestPublishedWriterRefusesProtectedConfiguration'))
+                else:text=raw[output.name]
+                output.write_text(text);return text
+            with mock.patch.object(tier,'git',return_value='a'*40),mock.patch.object(tier.full_race,'source_proof',return_value={'source':'a'*40,'tree':'b'*40}),mock.patch.object(tier,'checked',side_effect=checked),mock.patch.object(tier,'catalog',return_value={'restorations':[]}),mock.patch.dict(os.environ,{'GITHUB_SHA':'a'*40}),contextlib.redirect_stdout(io.StringIO()):
+                tier.run_suite('full','linux',directory,seconds=37)
+            result=json.loads((directory/'tier.json').read_text());self.assertTrue(result['success'])
+            self.assertEqual(len([i for i in result['invocations'] if i['log'].startswith('race')]),2)
+            self.assertEqual(len({deadline for _,deadline,_ in calls}),1)
+            self.assertTrue(all(enabled=='0' for _,_,enabled in calls))
 
 
 if __name__=='__main__':
