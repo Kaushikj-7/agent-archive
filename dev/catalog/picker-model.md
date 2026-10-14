@@ -17,8 +17,10 @@ The browser layer owns that reconstruction rather than an unused model method.
 Supported bare handoff setup consumes this model through `picker_handoff.go`.
 The format probe and typed scope guard run before local activity/label reads.
 Unsupported formats and named project scopes retain the complete compatibility
-loader. List/show browser operation integration and cancellable asynchronous
-search are the next UI layer; this PR does not claim terminal operation states.
+loader. The shared list/show browser layer connects bounded pages, remote Older and
+cancellable asynchronous search; its state and selected references use the same
+captured view. Actual command-scale costs are tracked by
+[picker qualification](../maintainers/picker-qualification/README.md).
 
 Exact canonical lookup classifies all relevant top-level non-replay local
 registrations in batches of at most 100. It shares the page snapshot and finds
@@ -80,7 +82,8 @@ Complete compatibility search stays lazy. Its bounded opt-in uses one strict
 activity inventory; a batch failure fails search explicitly. Ordinary local label
 failures preserve known archive matches with a partial local-eligibility notice
 and never poison the shared known-negative label cache. Legacy callers retain
-their two-result/native best-effort API defaults. Until the next UI layer supplies an
-error-bearing search operation, a search load error prevents selection rather
-than substituting the loaded browse prefix. Search-only selections also retain
+their two-result/native best-effort API defaults. Context/error-bearing browser
+search reports loading, cancellation and read failure instead of substituting
+the loaded browse prefix. Clearing search restores the valid paged view.
+Search-only selections also retain
 exact captured references, including child rows.

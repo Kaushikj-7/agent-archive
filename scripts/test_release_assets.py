@@ -522,6 +522,32 @@ class ReleaseWorkflowTest(unittest.TestCase):
             produced += block_lines(job_text(self.workflow, job), 'path: |')
         self.assertEqual(sorted(produced), sorted(self.dist))
 
+    def test_builds_require_verified_full_tag_coverage_before_build_and_retain_raw_evidence(self):
+        for job, suite in [('build', 'macos'), ('build-linux', 'linux')]:
+            with self.subTest(job=job):
+                text = job_text(self.workflow, job)
+                bodies = steps(text)
+                test = next(body for body in bodies if 'name: Test\n' in body)
+                plan = 'python3 -B scripts/run_ci_tier.py --plan --tier full --output release-tier-results/plan.json'
+                run = f'python3 -B scripts/run_ci_tier.py --tier full --suite {suite} --seconds 2400 --output release-tier-results'
+                verify = f'python3 -B scripts/run_ci_tier.py --verify --tier full --suite {suite} --extra-plan release-tier-results/plan.json --output release-tier-results'
+                self.assertLess(test.index(plan), test.index(run))
+                self.assertLess(test.index(run), test.index(verify))
+                self.assertIn('go vet ./...', test)
+                self.assertNotIn('go test ', test)
+                for script in ('release_signing', 'release_assets', 'release_candidate', 'install', 'purge_recipe'):
+                    self.assertIn(f'python3 scripts/test_{script}.py', test)
+                evidence = next(body for body in bodies if 'name: Preserve source-bound release validation evidence' in body)
+                self.assertIn('if: always()', evidence)
+                self.assertIn(f'name: release-validation-{suite}', evidence)
+                self.assertIn('path: release-tier-results', evidence)
+                self.assertIn('if-no-files-found: error', evidence)
+                build = next(body for body in bodies if 'name: Build\n' in body)
+                self.assertLess(bodies.index(test), bodies.index(evidence))
+                self.assertLess(bodies.index(evidence), bodies.index(build))
+                # Retain the existing default job bound rather than increasing it.
+                self.assertNotIn('timeout-minutes:', text)
+
     def test_only_the_macos_binaries_are_signed_and_notarized(self):
         for name in ('Codesign', 'Notarize'):
             with self.subTest(step=name):
@@ -611,8 +637,8 @@ class ReleaseWorkflowTest(unittest.TestCase):
         def uploads(job):
             return re.findall(r'upload-artifact@\S+[^\n]*\n\s+with:\n\s+name: (\S+)', job_text(self.workflow, job))
 
-        self.assertEqual(uploads('build'), ['unsigned'])
-        self.assertEqual(uploads('build-linux'), ['linux'])
+        self.assertEqual(uploads('build'), ['release-validation-macos', 'unsigned'])
+        self.assertEqual(uploads('build-linux'), ['release-validation-linux', 'linux'])
         downloads = re.findall(
             r'download-artifact@\S+[^\n]*\n\s+with:\n\s+name: (\S+)\n\s+path: (\S+)\n', self.publish
         )
@@ -672,12 +698,17 @@ class ReleaseWorkflowTest(unittest.TestCase):
 
     def test_release_critical_steps_are_not_skippable_or_allowed_to_fail(self):
         self.assertNotIn('continue-on-error', self.workflow)
-        # The only conditional step is the keychain cleanup.
+        # Conditional steps only clean up or retain diagnostic evidence.
         for job in ('build', 'build-linux', 'publish'):
             for text in steps(job_text(self.workflow, job)):
                 if re.search(r'(?m)^        if:', text):
                     with self.subTest(job=job):
-                        self.assertIn('name: Clean up signing keychain', text)
+                        if job == 'publish':
+                            self.assertIn('name: Clean up signing keychain', text)
+                        else:
+                            self.assertIn('name: Preserve source-bound release validation evidence', text)
+                            self.assertIn('if: always()', text)
+                            self.assertNotIn('run:', text)
         for job, names in {
             'publish': ('Codesign', 'Notarize', 'Recompute checksums after signing'),
             'build-linux': ('Verify build reports the release version', 'Build', 'Test'),
