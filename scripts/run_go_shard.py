@@ -216,7 +216,7 @@ def worker_count(workers):
     return workers
 
 
-def partition(units, hints, workers=2):
+def partition(units, hints, workers=2, initial_loads=None):
     # Generic bounded LPT scheduling is shared with native full coverage.
     # Representative PR topology is independently restricted by worker_count.
     if type(workers) is not int or not 1 <= workers <= 16:
@@ -233,7 +233,10 @@ def partition(units, hints, workers=2):
             print(f'unknown unit assigned: {name}, default={value}ms', flush=True)
     for name in sorted(set(hints) - set(units)):
         print(f'stale hint ignored: {name}', flush=True)
-    bins, loads = [[] for _ in range(workers)], [0] * workers
+    loads = [0] * workers if initial_loads is None else list(initial_loads)
+    if len(loads) != workers or any(type(v) is not int or v < 0 for v in loads):
+        raise Failure('invalid initial scheduling loads')
+    bins = [[] for _ in range(workers)]
     for name in sorted(units, key=lambda n: (-weights[n], n)):
         index = min(range(workers), key=lambda i: (loads[i], i))
         bins[index].append(name)
@@ -295,7 +298,7 @@ def digest(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 
 
-def reconcile(directory, workers=2):
+def reconcile(directory, workers=2, audit_evidence=None):
     worker_count(workers)
     paths = sorted(Path(directory).glob('**/manifest.json'))
     if len(paths) != workers:
@@ -306,6 +309,14 @@ def reconcile(directory, workers=2):
     first = manifests[0]['catalog']
     if first.get('workers', 2) != workers or len(first.get('assignments', [])) != workers:
         raise Failure('catalog worker count mismatch')
+    if any(m.get('settings', {}).get('plain_audit_owned') for m in manifests):
+        if not all(m.get('settings', {}).get('plain_audit_owned') is True for m in manifests) or audit_evidence is None:
+            raise Failure('owned plain audit requires complete independent evidence')
+        import run_ci_tier
+        try:
+            run_ci_tier.verify_source_audit(audit_evidence, first['source'])
+        except run_ci_tier.Failure as error:
+            raise Failure(str(error)) from error
     for manifest in manifests:
         if (manifest.get('success') is not True or manifest.get('catalog') != first
                 or manifest.get('catalog_sha256') != digest(first)
@@ -328,6 +339,11 @@ def reconcile(directory, workers=2):
         actual_cli = coverage((directory / 'cli.json').read_text(), {CLI: True}, expected['cli'])
         if {'packages': actual_packages['packages'], 'cli': actual_cli['cli']} != expected:
             raise Failure('actual terminal coverage differs from assignment')
+        if manifest.get('settings', {}).get('plain_audit_owned') and run_ci_tier.SOURCE_AUDIT_PACKAGE in expected['packages']:
+            try:
+                run_ci_tier.verify_owned_audit_skip(raw)
+            except run_ci_tier.Failure as error:
+                raise Failure(str(error)) from error
         if manifest['body_evidence'] != run_ci_tier.body_evidence(raw, short=True):
             raise Failure('actual shard body evidence differs from manifest')
     assignments = first['assignments']
@@ -342,9 +358,9 @@ def reconcile(directory, workers=2):
 
 def verdict(event, ref, needs):
     expected = {'linux-short': 'success', 'linux-full': 'success', 'script-tests': 'success',
-                'macos-smoke': 'success', 'tier-plan': 'success'}
+                'macos-smoke': 'success', 'tier-plan': 'success', 'source-audit': 'success'}
     if event == 'push' and ref.startswith('refs/heads/release-candidate/') and ref != 'refs/heads/release-candidate/':
-        expected['linux-short'], expected['linux-full'] = 'skipped', 'success'
+        expected['linux-short'], expected['linux-full'], expected['source-audit'] = 'skipped', 'success', 'skipped'
     elif event != 'pull_request':
         raise Failure('unsupported gate event/ref')
     if not isinstance(needs, dict) or set(needs) != set(expected):
@@ -353,7 +369,7 @@ def verdict(event, ref, needs):
         raise Failure('required job result did not succeed or intentionally skip')
 
 
-def run(index, out, seconds, workers=2):
+def run(index, out, seconds, workers=2, plain_audit_owned=False):
     worker_count(workers)
     if type(index) is not int or index not in range(workers):
         raise Failure("invalid worker index")
@@ -362,6 +378,10 @@ def run(index, out, seconds, workers=2):
     (out / 'manifest.json').unlink(missing_ok=True)
     deadline = time.monotonic() + seconds
     env = os.environ.copy()
+    if plain_audit_owned:
+        env['AGENT_ARCHIVE_PLAIN_SOURCE_AUDIT_OWNED'] = '1'
+    else:
+        env.pop('AGENT_ARCHIVE_PLAIN_SOURCE_AUDIT_OWNED', None)
     cpus = max(1, len(os.sched_getaffinity(0)))
     quota_file = Path('/sys/fs/cgroup/cpu.max')
     if quota_file.exists():
@@ -380,12 +400,31 @@ def run(index, out, seconds, workers=2):
     names = listed_names((out / 'listing.json').read_text())
     hints = json.loads((ROOT / 'scripts/go_shard_hints.json').read_text())
     ordinary = sorted(set(packages) - {CLI})
-    package_bins, cli_bins = partition(ordinary, hints['packages'], workers), partition(names, hints['cli'], workers)
+    auxiliary = hints.get('auxiliary_costs_ms', {'vet': 0, 'git_invocation': 0})
+    if set(auxiliary) != {'vet', 'git_invocation'} or any(type(v) is not int or v < 0 for v in auxiliary.values()):
+        raise Failure('invalid auxiliary scheduling hints')
+    fixed = [auxiliary['vet']] + [0] * (workers - 1)
+    package_hints = dict(hints['packages'])
+    exclusions = hints.get('owned_plain_audit_exclusions_ms', {})
+    if any(type(v) is not int or v < 0 for v in exclusions.values()):
+        raise Failure('invalid owned audit cost hints')
+    if not plain_audit_owned:
+        for package, elapsed in exclusions.items():
+            if package in ordinary:
+                package_hints[package] = package_hints.get(package, 1000) + elapsed
+    if GIT_IDENTITY in ordinary:
+        package_hints[GIT_IDENTITY] = max(package_hints.get(GIT_IDENTITY, 1000), auxiliary['git_invocation'])
+    package_bins = partition(ordinary, package_hints, workers, fixed)
+    cli_fixed = [fixed[i] + (auxiliary['git_invocation'] if GIT_IDENTITY in package_bins[i] else 0)
+                 for i in range(workers)]
+    cli_bins = partition(names, hints['cli'], workers, cli_fixed)
     catalog = {'source': source, 'workers': workers, 'packages': packages, 'cli': names,
                'assignments': [{'packages': package_bins[i], 'cli': cli_bins[i]} for i in range(workers)]}
     manifest = {'shard': index, 'catalog': catalog, 'catalog_sha256': digest(catalog), 'success': False,
                 'phases': phases,
-                'settings': {'workers': workers, 'cpus': cpus, 'cli_cpus': cli_cpus, 'ordinary_cpus': ordinary_cpus, 'package_p': 1,
+                'scheduling': {'fixed_vet_ms': fixed, 'cli_fixed_auxiliary_ms': cli_fixed,
+                               'usage': 'logical ranking plus observed fixed invocation advice; not elapsed forecast'},
+                'settings': {'plain_audit_owned': plain_audit_owned, 'workers': workers, 'cpus': cpus, 'cli_cpus': cli_cpus, 'ordinary_cpus': ordinary_cpus, 'package_p': 1,
                              'ordinary_parallel': ordinary_cpus, 'cli_parallel': cli_cpus, 'deadline_seconds': seconds}}
     path = out / 'manifest.json'
     path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + '\n')
@@ -446,6 +485,8 @@ def main():
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument('--shard', type=int)
     parser.add_argument('--workers', type=int, choices=(2, 4), default=2)
+    parser.add_argument('--plain-audit-owned', action='store_true')
+    parser.add_argument('--audit-evidence', type=Path)
     group.add_argument('--reconcile', type=Path)
     group.add_argument('--verdict', action='store_true')
     parser.add_argument('--output', type=Path, default=Path('shard-results'))
@@ -461,10 +502,10 @@ def main():
         if args.verdict:
             verdict(os.environ['GITHUB_EVENT_NAME'], os.environ['GITHUB_REF'], json.loads(os.environ['NEEDS']))
         elif args.reconcile is not None:
-            reconcile(args.reconcile, args.workers)
+            reconcile(args.reconcile, args.workers, args.audit_evidence)
         else:
             os.chdir(ROOT)
-            run(args.shard, args.output, args.seconds, args.workers)
+            run(args.shard, args.output, args.seconds, args.workers, args.plain_audit_owned)
     except (Failure, ValueError, KeyError, OSError) as error:
         print(f'shard gate failed: {error}', file=sys.stderr)
         return 1

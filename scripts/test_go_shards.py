@@ -99,6 +99,12 @@ class WorkerCountTest(unittest.TestCase):
             with self.assertRaises(runner.Failure): runner.worker_count(invalid)
         with self.assertRaises(runner.Failure): runner.partition(['a', 'b'], {}, 4)
 
+    def test_fixed_overhead_offsets_rebalance_without_changing_union(self):
+        units=['a','b','c','d']
+        self.assertEqual(runner.partition(units,dict.fromkeys(units,10),2,[20,0]),[['c'],['a','b','d']])
+        for bad in ([0], [0,-1], [0,True], [0,'1']):
+            with self.assertRaises(runner.Failure): runner.partition(units,{},2,bad)
+
     def test_four_worker_reconciliation_requires_every_terminal_and_assignment(self):
         import run_ci_tier
         with tempfile.TemporaryDirectory() as directory:
@@ -115,6 +121,18 @@ class WorkerCountTest(unittest.TestCase):
                     'catalog': catalog, 'catalog_sha256': runner.digest(catalog), 'coverage': catalog['assignments'][i], 'settings': {'workers': 4},
                     'body_evidence': run_ci_tier.body_evidence(ordinary+'\n'+cli, True)}))
             runner.reconcile(directory, 4)
+            for i in range(4):
+                path=Path(directory)/str(i)/'manifest.json'; value=json.loads(path.read_text())
+                value['settings']['plain_audit_owned']=True; path.write_text(json.dumps(value))
+            with self.assertRaises(runner.Failure): runner.reconcile(directory,4)
+            with mock.patch.object(run_ci_tier,'verify_source_audit',return_value={}) as audit:
+                runner.reconcile(directory,4,Path('/audit'))
+                audit.assert_called_once_with(Path('/audit'),catalog['source'])
+            with mock.patch.object(run_ci_tier,'verify_source_audit',side_effect=run_ci_tier.Failure('missing body')):
+                with self.assertRaises(runner.Failure): runner.reconcile(directory,4,Path('/audit'))
+            for i in range(4):
+                path=Path(directory)/str(i)/'manifest.json'; value=json.loads(path.read_text())
+                value['settings']['plain_audit_owned']=False; path.write_text(json.dumps(value))
             with self.assertRaises(runner.Failure): runner.reconcile(directory, 2)
             path = Path(directory)/'3'/'manifest.json'; original = path.read_text()
             for change in ({'success': False}, {'shard': 2}, {'coverage': {'packages': [], 'cli': []}}):
@@ -126,10 +144,10 @@ class WorkerCountTest(unittest.TestCase):
 
 class GateTest(unittest.TestCase):
     def test_event_verdict_fail_closed(self):
-        pr = {j: {'result': s} for j, s in [('linux-short', 'success'), ('linux-full', 'success'), ('script-tests', 'success'), ('macos-smoke','success'), ('tier-plan','success')]}
+        pr = {j: {'result': s} for j, s in [('linux-short', 'success'), ('linux-full', 'success'), ('script-tests', 'success'), ('macos-smoke','success'), ('tier-plan','success'), ('source-audit','success')]}
         runner.verdict('pull_request', 'refs/pull/1/merge', pr)
         candidate = copy.deepcopy(pr)
-        candidate['linux-short']['result'], candidate['linux-full']['result'] = 'skipped', 'success'
+        candidate['linux-short']['result'], candidate['linux-full']['result'], candidate['source-audit']['result'] = 'skipped', 'success', 'skipped'
         runner.verdict('push', 'refs/heads/release-candidate/x', candidate)
         for event_name, ref, needs in [('push', 'refs/heads/main', pr), ('schedule', '', pr), ('pull_request', '', {}),
                                        ('push', 'refs/heads/release-candidate/', candidate)]:

@@ -34,6 +34,11 @@ type capturePackage struct {
 }
 
 func TestNativeCaptureWholeSourceBoundary(t *testing.T) {
+	// The independently required plain gate runs this exact body without race
+	// instrumentation. Local short runs retain the audit unless that gate owns it.
+	if testing.Short() && os.Getenv("AGENT_ARCHIVE_PLAIN_SOURCE_AUDIT_OWNED") == "1" {
+		t.Skip("whole-source audit owned by required plain source-audit gate; race body NOT RUN")
+	}
 	cmd := exec.CommandContext(t.Context(), "go", "list", "-p=1", "-deps", "-compiled", "-test", "-export", "-json", "github.com/wangjohn/agent-archive/...")
 	raw, err := cmd.Output()
 	if err != nil {
