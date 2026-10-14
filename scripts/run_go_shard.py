@@ -24,6 +24,16 @@ class Failure(RuntimeError):
     """Discovery, execution, or evidence did not establish complete coverage."""
 
 
+class CleanupFailure(Failure):
+    """Cleanup failed after all bounded attempts, possibly during another failure."""
+
+    def __init__(self, errors, primary=None):
+        self.errors = tuple(errors)
+        self.primary = primary
+        message = 'process cleanup failed: ' + '; '.join(self.errors)
+        super().__init__(f'{primary}; {message}' if primary is not None else message)
+
+
 def json_stream(text):
     """Decode concatenated objects without repeatedly copying the remaining log."""
     decoder, items, offset = json.JSONDecoder(), [], 0
@@ -62,25 +72,49 @@ def child_pids():
 
 def stop_processes(processes, previous_children):
     # As a Linux subreaper, this process owns orphaned test grandchildren too.
+    errors = []
+
+    def record(operation, error):
+        detail = f'{operation}: {type(error).__name__} errno={getattr(error, "errno", None)}: {error}'
+        if detail not in errors:
+            errors.append(detail)
+
     handlers = {sig: signal.signal(sig, signal.SIG_IGN) for sig in (signal.SIGTERM, signal.SIGINT)}
     try:
         for sig in (signal.SIGTERM, signal.SIGKILL):
             for process in processes:
                 try:
+                    # The private group can outlive its leader. Do not skip a
+                    # reaped leader and leave its test descendants running.
                     os.killpg(process.pid, sig)
                 except ProcessLookupError:
                     pass
+                except OSError as error:
+                    record(f'killpg pgid={process.pid} signal={signal.Signals(sig).name}', error)
             if sig == signal.SIGTERM:
                 end = time.monotonic() + 1
-                while time.monotonic() < end and any(p.poll() is None for p in processes):
+                while time.monotonic() < end:
+                    running = False
+                    for process in processes:
+                        try:
+                            running |= process.poll() is None
+                        except OSError as error:
+                            record(f'poll pid={process.pid}', error)
+                            running = True
+                    if not running:
+                        break
                     time.sleep(.02)
         end = time.monotonic() + 5
         for process in processes:
             try:
                 process.wait(timeout=max(.01, end-time.monotonic()))
             except subprocess.TimeoutExpired as error:
-                raise Failure('killed child did not exit within cleanup deadline') from error
+                record(f'wait pid={process.pid} cleanup deadline', error)
+            except OSError as error:
+                record(f'wait pid={process.pid}', error)
         if previous_children is None:
+            if errors:
+                raise CleanupFailure(errors)
             return  # Native runners retain process-group cleanup and direct-child reaping.
         # PTY harnesses create sessions/groups outside the Go command's
         # group. Once their parent dies they are adopted by this subreaper;
@@ -88,7 +122,11 @@ def stop_processes(processes, previous_children):
         grace = min(end, time.monotonic()+1)
         signalled = set()
         while True:
-            adopted = child_pids() - previous_children
+            try:
+                adopted = child_pids() - previous_children
+            except (OSError, Failure) as error:
+                record('enumerate adopted children', error)
+                break
             if not adopted:
                 break
             for pid in adopted:
@@ -96,14 +134,28 @@ def stop_processes(processes, previous_children):
                     reaped, _ = os.waitpid(pid, os.WNOHANG)
                     if reaped:
                         continue
-                    if pid not in signalled or time.monotonic() >= grace:
-                        os.kill(pid, signal.SIGKILL if time.monotonic() >= grace else signal.SIGTERM)
-                        signalled.add(pid)
                 except (ChildProcessError, ProcessLookupError):
-                    pass
+                    continue
+                except OSError as error:
+                    record(f'waitpid pid={pid}', error)
+                # A failed wait does not establish that an owned child exited.
+                # Still attempt its independent signal within the same deadline.
+                if pid not in signalled or time.monotonic() >= grace:
+                    sig = signal.SIGKILL if time.monotonic() >= grace else signal.SIGTERM
+                    signalled.add(pid)
+                    try:
+                        os.kill(pid, sig)
+                    except ProcessLookupError:
+                        pass
+                    except OSError as error:
+                        record(f'kill pid={pid} signal={signal.Signals(sig).name}', error)
             if time.monotonic() >= end:
-                raise Failure('test descendant did not exit within cleanup deadline')
+                errors.append('test descendants did not exit within cleanup deadline: ' +
+                              ','.join(str(pid) for pid in sorted(adopted)))
+                break
             time.sleep(.02)
+        if errors:
+            raise CleanupFailure(errors)
     finally:
         for sig, handler in handlers.items():
             signal.signal(sig, handler)
@@ -176,8 +228,13 @@ def supervise(commands, deadline, *, stderr_path=None, terminal=None):
                 raise Failure('shared discovery/test deadline exceeded')
             time.sleep(.05)
     finally:
+        primary = sys.exc_info()[1]
         try:
             stop_processes(processes, previous_children)
+        except CleanupFailure as error:
+            if primary is not None:
+                raise CleanupFailure(error.errors, primary) from primary
+            raise
         finally:
             if terminal is not None:
                 terminal[:] = [process.returncode for process in processes]
@@ -559,6 +616,10 @@ def run(index, out, seconds, workers=2, plain_audit_owned=False, plain_vet_owned
                'assignments': [{'packages': package_bins[i], 'cli': cli_bins[i]} for i in range(workers)]}
     manifest = {'shard': index, 'catalog': catalog, 'catalog_sha256': digest(catalog), 'success': False,
                 'phases': phases,
+                'timing_observation': {'schema': 1, 'cache_restore_state': os.environ.get('CI_CACHE_RESTORE_STATE', 'unknown'),
+                    'runner_image': os.environ.get('ImageOS', ''), 'runner_image_version': os.environ.get('ImageVersion', ''),
+                    'run_id': os.environ.get('GITHUB_RUN_ID', ''), 'run_attempt': os.environ.get('GITHUB_RUN_ATTEMPT', ''),
+                    'commands_overlap': cpus > 1, 'note': 'invocation durations include compilation; parallel durations are not additive'},
                 'scheduling': {'fixed_vet_ms': fixed, 'cli_fixed_auxiliary_ms': cli_fixed,
                                'usage': 'logical ranking plus observed fixed invocation advice; not elapsed forecast'},
                 'settings': {'plain_audit_owned': plain_audit_owned, 'workers': workers, 'cpus': cpus, 'cli_cpus': cli_cpus, 'ordinary_cpus': ordinary_cpus, 'package_p': 1,
