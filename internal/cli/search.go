@@ -156,6 +156,11 @@ func contentSearchLocation(home string, cfg config.Config) (string, string) {
 }
 
 func refreshSearchSession(ctx context.Context, env searchCommandDependencies, cfg config.Config, index *search.Store, opts contentSearchOptions, stdout, stderr io.Writer) error {
+	release, err := index.LockWork(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
 	objects, err := env.openStore(cfg)
 	if err != nil {
 		return err

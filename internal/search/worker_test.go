@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"testing"
 	"time"
 
@@ -45,7 +46,7 @@ func TestWorkerReusesMetadataAndResumesAfterRestart(t *testing.T) {
 		t.Fatalf("%+v gets=%d %v", progress, counted.gets, err)
 	}
 	metadata.Branch = "renamed"
-	metadata.CapturedAt = at.Add(time.Second)
+	metadata.RepoKey = "renamed-repository"
 	if err = s.Observe(t.Context(), metadata, parsers, at, 0); err != nil {
 		t.Fatal(err)
 	}
@@ -227,7 +228,7 @@ func BenchmarkWorkerMetadataRefresh(b *testing.B) {
 	counted := &countedObjects{ObjectStore: objects}
 	b.ResetTimer()
 	for i := range b.N {
-		metadata.CapturedAt = at.Add(time.Duration(i+1) * time.Second)
+		metadata.RepoKey = strconv.Itoa(i + 1)
 		if err := s.Observe(b.Context(), metadata, parsers, at, 0); err != nil {
 			b.Fatal(err)
 		}
@@ -526,5 +527,102 @@ func TestWorkerBusyWriterLeavesRecoverableDesiredState(t *testing.T) {
 	progress, err := s.Run(t.Context(), objects, parsers, at, Budget{})
 	if err != nil || progress.Committed != 1 || progress.Pending != 0 {
 		t.Fatalf("busy state not recoverable %+v %v", progress, err)
+	}
+}
+
+func TestWorkerCompletedArrivalsDoNotStarveOlderActiveWork(t *testing.T) {
+	t.Parallel()
+	metadata, bundle, objects := verifiedFixture(t, "claude", workerTranscript)
+	metadata.State = archive.MetadataStateActive
+	at := metadata.CapturedAt
+	bundle.ArchiveSessionID = "new-completed"
+	bundle.Capture.CapturedAt = at.Add(time.Second)
+	newer, _, newObjects := publishFixture(t, bundle, claude.Parser{})
+	newer.State = archive.MetadataStateClosed
+	data, err := newObjects.Get(t.Context(), newer.SourceBundle.Key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = objects.Put(t.Context(), newer.SourceBundle.Key, data); err != nil {
+		t.Fatal(err)
+	}
+	s := openTest(t)
+	parsers := builtin.NewBuiltins()
+	if err = s.Observe(t.Context(), metadata, parsers, at, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Observe(t.Context(), newer, parsers, at.Add(time.Second), 0); err != nil {
+		t.Fatal(err)
+	}
+	progress, err := s.Run(t.Context(), objects, parsers, at.Add(time.Second), Budget{Sources: 1, Sessions: 1})
+	if err != nil || progress.Committed != 1 || progress.Pending != 1 {
+		t.Fatalf("%+v %v", progress, err)
+	}
+	page, err := s.Search(t.Context(), Query{Text: "checksum"})
+	if err != nil || len(page.Hits) != 1 || page.Hits[0].SessionID != metadata.SessionID {
+		t.Fatalf("older active work starved %+v %v", page, err)
+	}
+}
+
+func TestWorkLockSerializesStoreHandlesWithoutBlockingQueries(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	first, err := Open(t.Context(), dir, "test/context")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = first.Close() }()
+	second, err := Open(t.Context(), dir, "test/context")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = second.Close() }()
+	release, err := first.LockWork(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	if _, err = second.LockWork(t.Context()); !errors.Is(err, ErrWorkBusy) {
+		t.Fatalf("overlap lock: %v", err)
+	}
+	if _, err = second.Search(t.Context(), Query{Text: "checksum"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestWorkerDoesNotReuseSourcesAcrossReaderIdentityChanges(t *testing.T) {
+	t.Parallel()
+	for _, change := range []struct {
+		name   string
+		mutate func(*archive.Metadata)
+	}{
+		{"native-session", func(m *archive.Metadata) { m.NativeSessionID = "different-native-session" }},
+		{"project", func(m *archive.Metadata) { m.ProjectID = "different-project" }},
+		{"parent", func(m *archive.Metadata) { m.ParentSessionID = "different-parent" }},
+		{"capture-time", func(m *archive.Metadata) { m.CapturedAt = m.CapturedAt.Add(time.Second) }},
+		{"producer", func(m *archive.Metadata) { m.Harness.Version = "different-producer" }},
+	} {
+		t.Run(change.name, func(t *testing.T) {
+			t.Parallel()
+			metadata, _, objects := verifiedFixture(t, "claude", workerTranscript)
+			s := openTest(t)
+			parsers := builtin.NewBuiltins()
+			at := metadata.CapturedAt
+			if err := s.Observe(t.Context(), metadata, parsers, at, 0); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.Run(t.Context(), objects, parsers, at, Budget{}); err != nil {
+				t.Fatal(err)
+			}
+			change.mutate(&metadata)
+			if err := s.Observe(t.Context(), metadata, parsers, at, 0); err != nil {
+				t.Fatal(err)
+			}
+			counted := &countedObjects{ObjectStore: objects}
+			progress, err := s.Run(t.Context(), counted, parsers, at, Budget{})
+			if err != nil || progress.Loaded != 1 || progress.Committed != 0 || progress.Failed != 1 || counted.gets != 1 {
+				t.Fatalf("reader identity mismatch bypassed %+v %v gets=%d", progress, err, counted.gets)
+			}
+		})
 	}
 }

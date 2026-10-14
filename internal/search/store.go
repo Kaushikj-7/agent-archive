@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	_ "modernc.org/sqlite" // Register the same pure-Go driver used by the metadata catalog.
 )
@@ -24,6 +25,7 @@ import (
 type Store struct {
 	db          *sql.DB
 	destination string
+	dir         string
 }
 
 // Open creates or opens a private content database with short bounded writes.
@@ -70,7 +72,7 @@ func Open(ctx context.Context, dir, destination string) (*Store, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	s := &Store{db: db, destination: destination}
+	s := &Store{db: db, destination: destination, dir: dir}
 	if err = s.initialize(ctx); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -98,7 +100,7 @@ func (s *Store) initialize(ctx context.Context) error {
  CREATE INDEX IF NOT EXISTS search_membership ON search_passages(session);
  CREATE VIRTUAL TABLE IF NOT EXISTS search_fts USING fts5(title,body,tokenize='unicode61 remove_diacritics 0');
  CREATE TABLE IF NOT EXISTS search_work (id TEXT PRIMARY KEY, metadata BLOB NOT NULL, desired TEXT NOT NULL, indexed TEXT NOT NULL DEFAULT '', source_identity TEXT NOT NULL,indexed_sources TEXT NOT NULL DEFAULT '', generation INTEGER NOT NULL, due INTEGER NOT NULL, touched INTEGER NOT NULL, failures INTEGER NOT NULL DEFAULT 0, last_error TEXT NOT NULL DEFAULT '', blocked INTEGER NOT NULL DEFAULT 0,priority INTEGER NOT NULL DEFAULT 1);
- CREATE INDEX IF NOT EXISTS search_work_due ON search_work(blocked,due,touched);
+ CREATE INDEX IF NOT EXISTS search_work_eligible ON search_work(touched,priority,id) WHERE desired!=indexed AND blocked=0;
  CREATE INDEX IF NOT EXISTS search_work_clock ON search_work(touched);
  CREATE INDEX IF NOT EXISTS search_work_pending ON search_work(touched,priority,id) WHERE desired!=indexed;
  CREATE TABLE IF NOT EXISTS search_sources (session TEXT NOT NULL, identity TEXT NOT NULL, projection BLOB NOT NULL, PRIMARY KEY(session,identity));
@@ -121,6 +123,31 @@ func (s *Store) initialize(ctx context.Context) error {
 
 // Close releases the database. No worker or goroutine is started by Open.
 func (s *Store) Close() error { return s.db.Close() }
+
+// ErrWorkBusy means another refresh or indexing pass owns this physical index.
+var ErrWorkBusy = errors.New("another search refresh is running")
+
+// LockWork acquires the dedicated, nonblocking index work lock. Composition must
+// hold it from authoritative metadata discovery through Observe and Run, then
+// defer release on every path. Queries and content-free hints do not take it.
+// Never acquire it while holding the collector lock; Run does not nest this lock.
+func (s *Store) LockWork(ctx context.Context) (func(), error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	release, err := local.NamedLock(s.dir, "search-worker.lock")
+	if errors.Is(err, local.ErrBusy) {
+		return nil, ErrWorkBusy
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err = ctx.Err(); err != nil {
+		release()
+		return nil, err
+	}
+	return release, nil
+}
 
 // WriteStats separates metadata-only updates from passage/FTS mutations.
 type WriteStats struct {

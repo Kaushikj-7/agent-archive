@@ -26,7 +26,7 @@ type Budget struct {
 	Limits          reader.Limits
 }
 
-// Progress describes actual work, including reuse and finite pending state.
+// Progress describes actual work and the known pending/failed state after a pass.
 type Progress struct {
 	Loaded          int
 	Reused          int
@@ -39,6 +39,7 @@ type Progress struct {
 }
 
 type sourceRequest struct {
+	Ownership string                  `json:"Ownership"`
 	Revision  string                  `json:"Revision"`
 	Reference archive.SourceReference `json:"Reference"`
 	Filter    string                  `json:"Filter"`
@@ -64,7 +65,7 @@ func requests(metadata archive.Metadata, parsers agentapi.ParsersLookup) ([]sour
 			version = parser.Version()
 		}
 	}
-	out := []sourceRequest{{Reference: metadata.SourceBundle, Filter: metadata.FilterVersion, Parser: version, Extractor: ExtractorVersion}}
+	out := []sourceRequest{{Reference: metadata.SourceBundle, Filter: metadata.FilterVersion, Parser: version, Extractor: ExtractorVersion, Ownership: sourceOwnership(metadata, metadata.Harness, metadata.CapturedAt)}}
 	if metadata.History != nil {
 		revisions, e := reader.Revisions(metadata)
 		if e != nil {
@@ -72,14 +73,20 @@ func requests(metadata archive.Metadata, parsers agentapi.ParsersLookup) ([]sour
 		}
 		out = nil
 		for _, revision := range revisions {
-			out = append(out, sourceRequest{Revision: revision.RevisionID, Reference: revision.Source, Filter: revision.FilterVersion, Schema: revision.SourceSchemaVersion, Parser: version, Extractor: ExtractorVersion})
+			out = append(out, sourceRequest{Revision: revision.RevisionID, Reference: revision.Source, Filter: revision.FilterVersion, Schema: revision.SourceSchemaVersion, Parser: version, Extractor: ExtractorVersion, Ownership: sourceOwnership(metadata, archive.Harness{Name: metadata.Harness.Name}, revision.CapturedAt)})
 		}
 	}
 	return out, nil
 }
 
-// Observe records an authoritative snapshot. Callers must serialize remote
-// observations per session: arrival order cannot establish remote causality.
+// sourceOwnership mirrors reader's identity checks. Display facts such as title,
+// repository labels and PR links cannot change this verification fingerprint.
+func sourceOwnership(metadata archive.Metadata, harness archive.Harness, capturedAt time.Time) string {
+	return digest([]any{metadata.SessionID, metadata.NativeSessionID, metadata.ProjectID, metadata.ParentSessionID, harness, capturedAt})
+}
+
+// Observe records an authoritative snapshot. Composition holds LockWork across
+// authoritative reads and Observe/Run; arrival order cannot establish causality.
 // Repeated observations do not reset eligibility; updates coalesce until due.
 // Unknown/changed privacy provenance immediately removes old searchable text.
 func (s *Store) Observe(ctx context.Context, metadata archive.Metadata, parsers agentapi.ParsersLookup, at time.Time, interval time.Duration) error {
@@ -158,7 +165,7 @@ func (s *Store) Observe(ctx context.Context, metadata archive.Metadata, parsers 
 	if touched > 0 && interval > 0 {
 		due = max(due, touched+int64(interval))
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO search_work(id,metadata,desired,source_identity,generation,due,touched,priority) VALUES(?,?,?,?,1,?,0,?) ON CONFLICT(id) DO UPDATE SET metadata=excluded.metadata,desired=excluded.desired,source_identity=excluded.source_identity,priority=excluded.priority,generation=generation+1,due=CASE WHEN desired!=indexed THEN due ELSE excluded.due END,failures=0,last_error='',blocked=0`, id, data, desired, sourceID, due, metadata.State != archive.MetadataStateClosed && metadata.State != archive.MetadataStateIdle)
+	_, err = tx.ExecContext(ctx, `INSERT INTO search_work(id,metadata,desired,source_identity,generation,due,touched,priority) VALUES(?,?,?,?,1,?,?,?) ON CONFLICT(id) DO UPDATE SET metadata=excluded.metadata,desired=excluded.desired,source_identity=excluded.source_identity,priority=excluded.priority,generation=generation+1,due=CASE WHEN desired!=indexed THEN due ELSE excluded.due END,failures=0,last_error='',blocked=0`, id, data, desired, sourceID, due, at.UnixNano(), metadata.State != archive.MetadataStateClosed && metadata.State != archive.MetadataStateIdle)
 	if err != nil {
 		return err
 	}
@@ -187,7 +194,7 @@ type workItem struct {
 func (s *Store) nextWork(ctx context.Context, at time.Time) (workItem, error) {
 	item := workItem{}
 	var data []byte
-	err := s.db.QueryRowContext(ctx, `SELECT id,metadata,generation,failures,source_identity,indexed_sources FROM search_work WHERE desired!=indexed AND blocked=0 AND due<=? ORDER BY touched,priority,id LIMIT 1`, at.UnixNano()).Scan(&item.id, &data, &item.generation, &item.failures, &item.sourceID, &item.indexedSources)
+	err := s.db.QueryRowContext(ctx, `SELECT id,metadata,generation,failures,source_identity,indexed_sources FROM search_work INDEXED BY search_work_eligible WHERE desired!=indexed AND blocked=0 AND due<=? ORDER BY touched,priority,id LIMIT 1`, at.UnixNano()).Scan(&item.id, &data, &item.generation, &item.failures, &item.sourceID, &item.indexedSources)
 	if err != nil {
 		return item, err
 	}
@@ -196,7 +203,8 @@ func (s *Store) nextWork(ctx context.Context, at time.Time) (workItem, error) {
 }
 
 // Run performs bounded resumable work over observed snapshots. Downloads and
-// parsing happen without a database transaction. Source staging and final
+// parsing happen without a database transaction. Composition holds LockWork.
+// Source staging and final
 // membership replacement both reject superseded generations atomically.
 func (s *Store) Run(ctx context.Context, objects storage.ObjectStore, parsers agentapi.ParsersLookup, at time.Time, budget Budget) (Progress, error) {
 	progress := Progress{}
@@ -244,7 +252,7 @@ func (s *Store) Run(ctx context.Context, objects storage.ObjectStore, parsers ag
 			break
 		}
 	}
-	err := s.db.QueryRowContext(ctx, "SELECT count(*) FROM search_work WHERE desired!=indexed").Scan(&progress.Pending)
+	err := s.db.QueryRowContext(ctx, "SELECT count(*),coalesce(sum(failures>0),0) FROM search_work WHERE desired!=indexed").Scan(&progress.Pending, &progress.Failed)
 	return progress, err
 }
 

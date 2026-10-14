@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -192,5 +193,77 @@ func TestContentSearchDestinationIsolation(t *testing.T) {
 	}
 	if filepath.Dir(dirA) != filepath.Join(home, "search") {
 		t.Fatal(dirA)
+	}
+}
+
+type searchRefreshStore struct {
+	storage.ObjectStore
+	before    func()
+	reads     int
+	interrupt chan<- os.Signal
+}
+
+func (s *searchRefreshStore) GetLimited(ctx context.Context, key string, limit int64) ([]byte, error) {
+	s.reads++
+	if s.before != nil {
+		callback := s.before
+		s.before = nil
+		callback()
+	}
+	if s.interrupt != nil {
+		signal := s.interrupt
+		s.interrupt = nil
+		signal <- os.Interrupt
+		<-ctx.Done()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return s.ObjectStore.(storage.LimitedGetter).GetLimited(ctx, key, limit)
+}
+
+func TestContentSearchConcurrentRefreshDoesNotReadMetadata(t *testing.T) {
+	t.Parallel()
+	env, objects, id := publishedFixture(t)
+	wrapped := &searchRefreshStore{ObjectStore: objects}
+	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return wrapped, nil }
+	wrapped.before = func() {
+		before := wrapped.reads
+		var out, errOut bytes.Buffer
+		if code := Run([]string{"search", "--refresh", "--session", id, "--harness", "codex"}, nil, &out, &errOut, env); code != 1 || !strings.Contains(errOut.String(), "another search refresh is running") {
+			t.Fatalf("overlap code=%d %s %s", code, &out, &errOut)
+		}
+		if wrapped.reads != before {
+			t.Fatal("overlapping refresh read archive metadata or source")
+		}
+	}
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"search", "--refresh", "--session", id, "--harness", "codex"}, nil, &out, &errOut, env); code != 0 {
+		t.Fatalf("%d %s %s", code, &out, &errOut)
+	}
+	// A later independent invocation acquires the released work lock.
+	out.Reset()
+	errOut.Reset()
+	if code := Run([]string{"search", "--refresh", "--session", id, "--harness", "codex"}, nil, &out, &errOut, env); code != 0 {
+		t.Fatalf("lock retained %d %s %s", code, &out, &errOut)
+	}
+}
+
+func TestContentSearchInterruptedRefreshReleasesWorkLock(t *testing.T) {
+	t.Parallel()
+	env, objects, id := publishedFixture(t)
+	signals := make(chan os.Signal, 1)
+	env.Interrupts = func() (<-chan os.Signal, func()) { return signals, func() {} }
+	wrapped := &searchRefreshStore{ObjectStore: objects, interrupt: signals}
+	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return wrapped, nil }
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"search", "--refresh", "--session", id, "--harness", "codex"}, nil, &out, &errOut, env); code != 1 || !strings.Contains(errOut.String(), "context canceled") {
+		t.Fatalf("%d %s %s", code, &out, &errOut)
+	}
+	env.Interrupts = noInterrupts
+	out.Reset()
+	errOut.Reset()
+	if code := Run([]string{"search", "--refresh", "--session", id, "--harness", "codex"}, nil, &out, &errOut, env); code != 0 {
+		t.Fatalf("lock retained after cancellation %d %s %s", code, &out, &errOut)
 	}
 }
