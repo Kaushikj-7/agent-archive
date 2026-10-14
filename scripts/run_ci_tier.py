@@ -320,6 +320,7 @@ def source_audit_body(raw):
 
 
 PLAIN_VET_COMMAND = ['go', 'vet', './...']
+PLAIN_VET_IDENTITY_SCHEMA = 'plain-vet-compatible-v1'
 
 
 def plain_vet_context():
@@ -334,18 +335,18 @@ def plain_vet_context():
     return dict(context, race=False)
 
 
-def plain_vet_context_sha256(context):
-    """Bind actual runtime inputs, allowing only hosted image release-label rollout."""
-    image = context.get('image', {})
-    if (not isinstance(image, dict) or set(image) != {'ImageOS', 'ImageVersion'}
-            or any(not isinstance(v, str) or not re.fullmatch(r'[A-Za-z0-9_.-]+', v)
+def plain_vet_identity(context):
+    """Cross-job vet identity excludes only the runner image release label.
+
+    Raw context and cache keys retain that label. Go/compiler/tool/OS identity
+    and ImageOS remain part of this projection, including any future fields.
+    """
+    image = context.get('image') if isinstance(context, dict) else None
+    if (not isinstance(image, dict) or set(image) != {'ImageOS','ImageVersion'}
+            or any(not isinstance(v,str) or not re.fullmatch('[A-Za-z0-9_.-]+',v)
                    for v in image.values())):
-        raise Failure('plain vet runner image identity malformed')
-    # Provisioning releases may overlap across jobs with identical OS bytes,
-    # compiler/toolchain binaries and Go flags. Retain the full original label in
-    # receipts and strict cache keys; only cross-job vet equivalence omits it.
-    runtime = dict(context, image={'ImageOS': image['ImageOS']})
-    return full_race.shards.digest(runtime)
+        raise Failure('plain vet raw image provenance missing')
+    return dict(context, image={'ImageOS':image['ImageOS']})
 
 
 def execute_plain_vet(out, deadline):
@@ -360,6 +361,7 @@ def execute_plain_vet(out, deadline):
         raise Failure('plain vet source or context changed during execution')
     return {'command': PLAIN_VET_COMMAND, 'log': 'plain-vet.txt', 'exit_code': 0,
             'pre_source_proof': before, 'post_source_proof': after, 'context': context,
+            'identity_schema': PLAIN_VET_IDENTITY_SCHEMA,
             'log_sha256': hashlib.sha256(raw.encode()).hexdigest(),
             'invocation_seconds': time.monotonic()-started,
             'performance_enabled': False, 'real_systemd_enabled': False}
@@ -367,12 +369,21 @@ def execute_plain_vet(out, deadline):
 
 def verify_plain_vet(directory, report, expected, expected_context_sha256, historical=False):
     """Require canonical successful execution receipt separately from audit bodies."""
+    import run_go_shard
     receipt = report.get('plain_vet')
     if not isinstance(receipt, dict):
         raise Failure('owned plain vet receipt missing')
     context = receipt.get('context', {})
     if not isinstance(context, dict) or not isinstance(context.get('go'), dict):
         raise Failure('plain vet recorded context malformed')
+    identity_schema = receipt.get('identity_schema')
+    if identity_schema == PLAIN_VET_IDENTITY_SCHEMA:
+        compatibility = plain_vet_identity(context)
+    elif historical and identity_schema is None:
+        plain_vet_identity(context)  # Validate full raw image provenance too.
+        compatibility = context  # Old full-digest receipts remain historical facts only.
+    else:
+        raise Failure('plain vet compatibility identity schema missing or unsupported')
     go = context['go']
     import go_cache_context
     hashes = [context.get('os_release')]
@@ -397,10 +408,9 @@ def verify_plain_vet(directory, report, expected, expected_context_sha256, histo
                 'GOTOOLCHAIN':'local','GOWORK':'off','GOFLAGS':'-mod=readonly'}.items())
             or not isinstance(expected_context_sha256,str)
             or not re.fullmatch('[0-9a-f]{64}',expected_context_sha256)
-            or (plain_vet_context_sha256(context) != expected_context_sha256
-                and (not historical or full_race.shards.digest(context) != expected_context_sha256))):
+            or run_go_shard.digest(compatibility) != expected_context_sha256):
         raise Failure('plain vet recorded context mismatch')
-    if not historical and plain_vet_context_sha256(context) != plain_vet_context_sha256(plain_vet_context()):
+    if not historical and compatibility != plain_vet_identity(plain_vet_context()):
         raise Failure('plain vet current context mismatch')
     if (receipt.get('command') != PLAIN_VET_COMMAND or receipt.get('log') != 'plain-vet.txt'
             or type(receipt.get('exit_code')) is not int or receipt['exit_code'] != 0
@@ -618,7 +628,8 @@ def run_suite(tier, suite, out, extras=None, seconds=2400, *, own_plain_vet=Fals
     report['success'] = True
     path.write_text(json.dumps(report,indent=2)+'\n')
     if suite == 'audit':
-        context_hash = plain_vet_context_sha256(report['plain_vet']['context']) if own_plain_vet else None
+        import run_go_shard
+        context_hash = run_go_shard.digest(plain_vet_identity(report['plain_vet']['context'])) if own_plain_vet else None
         verify_source_audit(out, source, require_plain_vet=own_plain_vet, expected_vet_context_sha256=context_hash)
 
 
@@ -792,7 +803,8 @@ def main():
         if event == 'schedule' and args.tier and args.tier != resolved:
             raise Failure('explicit tier conflicts with scheduled cadence')
         if args.verify_audit:
-            context_hash = plain_vet_context_sha256(plain_vet_context()) if args.own_plain_vet else None
+            import run_go_shard
+            context_hash = run_go_shard.digest(plain_vet_identity(plain_vet_context())) if args.own_plain_vet else None
             verify_source_audit(args.output, os.environ['GITHUB_SHA'],
                 require_plain_vet=args.own_plain_vet, expected_vet_context_sha256=context_hash)
             return 0

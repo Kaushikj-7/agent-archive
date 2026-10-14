@@ -2,7 +2,6 @@
 import contextlib
 import copy
 import io
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -340,48 +339,8 @@ class PlainVetTest(unittest.TestCase):
                    image={'ImageOS':'ubuntu24','ImageVersion':'20261001.1.0'})
     context['go']={**dict.fromkeys(context_keys.GO_FIELDS,''),**context['go']}
 
-    def test_image_release_rollout_preserves_every_actual_vet_runtime_input(self):
-        import go_cache_context
-        older=copy.deepcopy(self.context)
-        older['image']['ImageVersion']='20261004.327.1'
-        newer=copy.deepcopy(self.context)
-        newer['image']['ImageVersion']='20261012.334.1'
-        self.assertNotEqual(go_cache_context.digest(older),go_cache_context.digest(newer))
-        fingerprint=tier.plain_vet_context_sha256(older)
-        self.assertEqual(fingerprint,tier.plain_vet_context_sha256(newer))
-        with tempfile.TemporaryDirectory() as d:
-            out=Path(d).resolve()
-            source={'tested':'a'*40,'tree':'b'*40,'dependency':'c'*64}
-            self.assertNotEqual(go_cache_context.cache_plan(42,0,older,source,out).prefix,
-                                go_cache_context.cache_plan(42,0,newer,source,out).prefix)
-            (out/'plain-vet.txt').write_text('')
-            receipt={'command':tier.PLAIN_VET_COMMAND,'log':'plain-vet.txt','exit_code':0,
-                     'pre_source_proof':self.proof,'post_source_proof':self.proof,
-                     'context':older,'log_sha256':hashlib.sha256(b'').hexdigest(),
-                     'performance_enabled':False,'real_systemd_enabled':False}
-            with mock.patch.object(tier,'plain_vet_context',return_value=newer):
-                tier.verify_plain_vet(out,{'plain_vet':receipt},self.proof,fingerprint)
-                self.assertEqual(receipt['context']['image']['ImageVersion'],'20261004.327.1')
-                for change in (lambda c:c['image'].update(ImageOS='ubuntu26'),
-                               lambda c:c.update(os_release='e'*64),
-                               lambda c:c['cc'].update(binary='e'*64),
-                               lambda c:c['cxx'].update(version='e'*64),
-                               lambda c:c['toolchain'].update(vet='e'*64),
-                               lambda c:c['go'].update(CGO_CFLAGS='-O0'),
-                               lambda c:c['go'].update(GOEXPERIMENT='other'),
-                               lambda c:c.update(version='go version go1.27.1 linux/amd64'),
-                               lambda c:c.update(race=True),lambda c:c.update(tags=['other']),
-                               lambda c:c['image'].pop('ImageVersion'),
-                               lambda c:c['image'].update(ImageVersion='unsafe\nlabel'),
-                               lambda c:c['image'].update(extra='unreviewed')):
-                    bad=copy.deepcopy(receipt);change(bad['context'])
-                    with self.assertRaises(tier.Failure):
-                        tier.verify_plain_vet(out,{'plain_vet':bad},self.proof,fingerprint)
-            # Cross-job compatibility never permits a context change within vet.
-            with mock.patch.object(tier.full_race,'source_proof',return_value=self.proof), mock.patch.object(tier,'plain_vet_context',side_effect=[older,newer]), mock.patch.object(tier,'checked',return_value=''):
-                with self.assertRaises(tier.Failure):tier.execute_plain_vet(out,123)
-
     def test_actual_checked_vet_receipt_and_failures_bind_source_and_context(self):
+        import run_go_shard
         with tempfile.TemporaryDirectory() as d, mock.patch.object(tier.full_race,'source_proof',return_value=self.proof), mock.patch.object(tier,'plain_vet_context',return_value=self.context):
             out=Path(d)
             def checked(command,path,deadline,env):
@@ -389,7 +348,7 @@ class PlainVetTest(unittest.TestCase):
                 self.assertNotIn('AGENT_ARCHIVE_PERF',env);self.assertEqual(env['AGENT_ARCHIVE_REAL_SYSTEMD'],'0')
                 path.write_text('');return ''
             with mock.patch.object(tier,'checked',side_effect=checked):receipt=tier.execute_plain_vet(out,123)
-            report={'plain_vet':receipt};fingerprint=tier.plain_vet_context_sha256(self.context)
+            report={'plain_vet':receipt};fingerprint=run_go_shard.digest(tier.plain_vet_identity(self.context))
             tier.verify_plain_vet(out,report,self.proof,fingerprint)
             # A nonzero/failed supervisor can never produce a successful receipt.
             with mock.patch.object(tier,'checked',side_effect=tier.Failure('exit1')):
@@ -406,15 +365,15 @@ class PlainVetTest(unittest.TestCase):
                 with self.assertRaises(tier.Failure):tier.verify_plain_vet(out,{'plain_vet':bad},self.proof,fingerprint)
             for key,value in (('GOVERSION','go1.27.1'),('GOARCH','arm64'),('GOOS','darwin'),('CGO_ENABLED','0')):
                 bad=copy.deepcopy(receipt);bad['context']['go'][key]=value
-                forged_digest=tier.plain_vet_context_sha256(bad['context'])
+                forged_digest=run_go_shard.digest(bad['context'])
                 with self.assertRaises(tier.Failure):
                     tier.verify_plain_vet(out,{'plain_vet':bad},self.proof,forged_digest,historical=True)
             with mock.patch.object(tier,'plain_vet_context',return_value=dict(self.context,image={'ImageVersion':'different'})):
                 with self.assertRaises(tier.Failure):tier.verify_plain_vet(out,report,self.proof,fingerprint)
             tier.verify_plain_vet(out,report,self.proof,fingerprint,historical=True)
-            legacy_fingerprint=tier.full_race.shards.digest(self.context)
-            tier.verify_plain_vet(out,report,self.proof,legacy_fingerprint,historical=True)
-            with self.assertRaises(tier.Failure):tier.verify_plain_vet(out,report,self.proof,legacy_fingerprint)
+            old=copy.deepcopy(receipt);old.pop('identity_schema')
+            tier.verify_plain_vet(out,{'plain_vet':old},self.proof,run_go_shard.digest(self.context),historical=True)
+            with self.assertRaises(tier.Failure):tier.verify_plain_vet(out,{'plain_vet':old},self.proof,run_go_shard.digest(self.context))
             with self.assertRaises(tier.Failure):tier.verify_plain_vet(out,{},self.proof,fingerprint)
             (out/'plain-vet.txt').unlink()
             with self.assertRaises(tier.Failure):tier.verify_plain_vet(out,report,self.proof,fingerprint)
@@ -423,7 +382,49 @@ class PlainVetTest(unittest.TestCase):
             with mock.patch.object(tier,'plain_vet_context',side_effect=[self.context,dict(self.context,version='changed')]),mock.patch.object(tier,'checked',side_effect=checked):
                 with self.assertRaises(tier.Failure):tier.execute_plain_vet(out,123)
 
+    def test_cross_job_identity_ignores_only_image_release_and_never_downgrades_live(self):
+        import run_go_shard
+        old=copy.deepcopy(self.context);old['image']['ImageVersion']='20261004.327.1'
+        new=copy.deepcopy(old);new['image']['ImageVersion']='20261012.334.1'
+        self.assertNotEqual(run_go_shard.digest(old),run_go_shard.digest(new))
+        self.assertEqual(tier.plain_vet_identity(old),tier.plain_vet_identity(new))
+        import go_cache_context
+        with tempfile.TemporaryDirectory() as d:
+            source={'tested':'a'*40,'tree':'b'*40,'dependency':'c'*64}
+            root=Path(d).resolve()
+            self.assertNotEqual(go_cache_context.cache_plan(42,0,old,source,root).prefix,
+                                go_cache_context.cache_plan(42,0,new,source,root).prefix)
+        with tempfile.TemporaryDirectory() as d,mock.patch.object(tier.full_race,'source_proof',return_value=self.proof),mock.patch.object(tier,'plain_vet_context',return_value=old):
+            out=Path(d)
+            def checked(command,path,deadline,env):path.write_text('');return ''
+            with mock.patch.object(tier,'checked',side_effect=checked):receipt=tier.execute_plain_vet(out,123)
+            fingerprint=run_go_shard.digest(tier.plain_vet_identity(new))
+            with mock.patch.object(tier,'plain_vet_context',return_value=new):
+                tier.verify_plain_vet(out,{'plain_vet':receipt},self.proof,fingerprint)
+            self.assertEqual(receipt['context']['image']['ImageVersion'],'20261004.327.1')
+            with mock.patch.object(tier,'plain_vet_context',side_effect=[old,new]),mock.patch.object(tier,'checked',side_effect=checked):
+                with self.assertRaises(tier.Failure):tier.execute_plain_vet(out,123)
+            for path,value in ((('cc','binary'),'e'*64),(('cxx','version'),'e'*64),
+                               (('toolchain','vet'),'e'*64),(('go','CGO_CFLAGS'),'-different'),
+                               (('go','GOAMD64'),'v3'),(('os_release',),'e'*64),
+                               (('image','ImageOS'),'ubuntuOther')):
+                bad=copy.deepcopy(receipt);target=bad['context']
+                for component in path[:-1]:target=target[component]
+                target[path[-1]]=value
+                recomputed=run_go_shard.digest(tier.plain_vet_identity(bad['context']))
+                with self.assertRaises(tier.Failure):tier.verify_plain_vet(out,{'plain_vet':bad},self.proof,recomputed)
+            for schema in (None,'unsupported'):
+                bad=copy.deepcopy(receipt);bad['identity_schema']=schema
+                with self.assertRaises(tier.Failure):tier.verify_plain_vet(out,{'plain_vet':bad},self.proof,fingerprint)
+            bad=copy.deepcopy(receipt);bad['context']['image'].pop('ImageVersion')
+            with self.assertRaises(tier.Failure):tier.verify_plain_vet(out,{'plain_vet':bad},self.proof,fingerprint)
+            for image in ({'ImageOS':'ubuntu24','ImageVersion':'unsafe\nlabel'},
+                          {'ImageOS':'ubuntu24','ImageVersion':'valid','extra':'unreviewed'}):
+                bad=copy.deepcopy(receipt);bad['context']['image']=image
+                with self.assertRaises(tier.Failure):tier.verify_plain_vet(out,{'plain_vet':bad},self.proof,fingerprint)
+
     def test_audit_body_and_vet_are_independent_required_proofs(self):
+        import run_go_shard
         with tempfile.TemporaryDirectory() as d, mock.patch.object(tier,'git',return_value='a'*40), mock.patch.object(tier.full_race,'source_proof',return_value=self.proof), mock.patch.object(tier,'plain_vet_context',return_value=self.context), mock.patch.dict(os.environ,{'GITHUB_SHA':'a'*40}):
             out=Path(d);calls=[]
             def checked(command,path,deadline,env):
@@ -432,7 +433,7 @@ class PlainVetTest(unittest.TestCase):
                 path.write_text(raw);return raw
             with mock.patch.object(tier,'checked',side_effect=checked):tier.run_suite('pr','audit',out,own_plain_vet=True)
             self.assertEqual(calls,[tier.SOURCE_AUDIT_COMMAND,tier.PLAIN_VET_COMMAND])
-            fingerprint=tier.plain_vet_context_sha256(self.context)
+            fingerprint=run_go_shard.digest(tier.plain_vet_identity(self.context))
             report=tier.verify_source_audit(out,'a'*40,require_plain_vet=True,expected_vet_context_sha256=fingerprint)
             saved=copy.deepcopy(report);report.pop('plain_vet');(out/'tier.json').write_text(json.dumps(report))
             tier.verify_source_audit(out,'a'*40) # Historical unowned evidence remains valid.
