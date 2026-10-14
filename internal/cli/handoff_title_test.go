@@ -98,10 +98,10 @@ func TestHandoffArchiveSessionIDBeatsALocalTitleMatch(t *testing.T) {
 	if code != 0 || !strings.Contains(out, "source: archive") || !strings.Contains(out, "Archived elsewhere") {
 		t.Fatalf("code=%d stderr=%s\n%s", code, errOut, out)
 	}
-	// With the archive unreachable, the local title match is all there is.
+	// An unreachable exact identity cannot authorize a different local title match.
 	takeArchiveOffline(&f.env)
 	out, errOut, code = runHandoff(t, f.env, f.archiveOnly)
-	if code != 0 || !strings.Contains(out, "Compare with") {
+	if code != 1 || out != "" || !strings.Contains(errOut, "offline") {
 		t.Fatalf("offline: code=%d stderr=%s", code, errOut)
 	}
 }
