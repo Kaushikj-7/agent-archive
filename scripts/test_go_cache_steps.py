@@ -18,10 +18,11 @@ class PhaseTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        root = Path(self.temp.name)
+        # Healthy cache fixtures require a canonical runner temporary root.
+        self.root = Path(self.temp.name).resolve()
         prefix = 'aa-pr-go-v1-pr42-w0-'+'c'*64+'-'+'d'*64+'-'
         self.plan = CachePlan(prefix+'a'*40, prefix,
-                              (str(root/'pr-go-build'), str(root/'pr-go-modules')),
+                              (str(self.root/'pr-go-build'), str(self.root/'pr-go-modules')),
                               {'tested': 'b'*40, 'tree': 'a'*40, 'dependency': 'd'*64})
 
     def test_module_commands_use_job_budget_instead_of_metadata_probe_deadline(self):
@@ -37,7 +38,7 @@ class PhaseTests(unittest.TestCase):
         build.mkdir()
         (build/'old').write_text('partial')
         env = {'GITHUB_EVENT_NAME': 'pull_request', 'PR_NUMBER': '42', 'SHARD': '0',
-               'GITHUB_WORKSPACE': self.temp.name, 'RUNNER_TEMP': self.temp.name,
+               'GITHUB_WORKSPACE': str(self.root), 'RUNNER_TEMP': str(self.root),
                'GOCACHE': str(build), 'GOMODCACHE': str(modules)}
         with mock.patch.dict(os.environ, env, clear=True), \
                 mock.patch('sys.argv', ['go_cache_steps.py', 'paths']), \
@@ -51,12 +52,12 @@ class PhaseTests(unittest.TestCase):
 
     def test_paths_phase_rejects_symlink_owned_directory_before_tool_use(self):
         build, modules = map(Path, self.plan.paths)
-        outside = Path(self.temp.name)/'outside'
+        outside = self.root/'outside'
         outside.mkdir()
         (outside/'keep').write_text('unrelated')
         build.symlink_to(outside, target_is_directory=True)
         env = {'GITHUB_EVENT_NAME': 'pull_request', 'PR_NUMBER': '42', 'SHARD': '0',
-               'GITHUB_WORKSPACE': self.temp.name, 'RUNNER_TEMP': self.temp.name,
+               'GITHUB_WORKSPACE': str(self.root), 'RUNNER_TEMP': str(self.root),
                'GOCACHE': str(build), 'GOMODCACHE': str(modules)}
         with contextlib.redirect_stderr(io.StringIO()), mock.patch.dict(os.environ, env, clear=True), \
                 mock.patch('sys.argv', ['go_cache_steps.py', 'paths']), \
@@ -83,7 +84,7 @@ class PhaseTests(unittest.TestCase):
         nested.mkdir(parents=True)
         (nested/'go.mod').write_text('module fixture')
         nested.chmod(0o555)
-        outside = Path(self.temp.name)/'outside'
+        outside = self.root/'outside'
         outside.mkdir()
         (outside/'keep').write_text('unrelated')
         (modules/'linked').symlink_to(outside, target_is_directory=True)
@@ -112,7 +113,7 @@ class PhaseTests(unittest.TestCase):
                 worker_success(self.plan, dict(good, **changed), lambda source: None, 0)
 
     def test_action_output_injection_cannot_write_partial_file(self):
-        output = Path(self.temp.name)/'outputs'
+        output = self.root/'outputs'
         with self.assertRaises(InvalidContext):
             emit({'primary': 'safe', 'gocache': 'bad\ninjected=true'}, output)
         self.assertFalse(output.exists())

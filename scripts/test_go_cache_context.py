@@ -20,7 +20,8 @@ class ContextTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
+        # macOS may expose its temporary directory through /var symlinks.
+        self.root = Path(self.temp.name).resolve()
         self.release = self.root/'os-release'
         self.release.write_text('ID=ubuntu\nVERSION_ID="24.04"\n')
         self.go = metadata()
