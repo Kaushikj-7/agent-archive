@@ -297,6 +297,9 @@ func qualificationRun(tb testing.TB, fixture qualificationFixture, home, command
 
 func qualificationRunScoped(tb testing.TB, fixture qualificationFixture, home, command, state string, registrations int, configure func(*Env) sessionScope) qualificationResult {
 	tb.Helper()
+	// Every command owns its mutable remote state, even when callers reuse a
+	// universe across scope, registration, cache-state or command matrices.
+	fixture = cloneQualificationFixture(tb, fixture)
 	// TempDir subdirectories inherit the process umask. Real native reads
 	// require a private archive home, independently of the runner's umask.
 	if err := os.Chmod(home, 0o700); err != nil {
@@ -491,21 +494,11 @@ func qualificationBudget(tb testing.TB, r qualificationReads, height, registrati
 	}
 }
 
-var qualificationDefaultSeed struct {
-	once    sync.Once
-	fixture qualificationFixture
-}
-
-// qualificationDefaultFixture shares only immutable catalog/source objects.
-// Every invocation still creates its own request cache, meter, Env and home.
+// qualificationDefaultFixture returns private writable state from the cached
+// full-size universe; construction is excluded from instrumented CLI phases.
 func qualificationDefaultFixture(tb testing.TB) qualificationFixture {
 	tb.Helper()
-	qualificationDefaultSeed.once.Do(func() {
-		started := time.Now()
-		qualificationDefaultSeed.fixture = newQualificationFixture(tb, qualificationMetadata(1400, 0))
-		tb.Logf("shared immutable1400 seed setup: %s (excluded from phase metrics)", time.Since(started))
-	})
-	return qualificationDefaultSeed.fixture
+	return newQualificationFixture(tb, qualificationMetadata(1400, 0))
 }
 
 func TestPickerQualificationRealCLIPhases(t *testing.T) {
