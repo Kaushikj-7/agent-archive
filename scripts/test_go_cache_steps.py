@@ -178,7 +178,7 @@ class WorkflowTests(unittest.TestCase):
                         self.assertIn('cache: false', step)
         short = self.workflows['test']['linux-short']
         self.assertIn("if: github.event_name == 'pull_request'", short)
-        self.assertIn('shard: [0, 1, 2, 3]', short)
+        self.assertIn('shard: [0, 1, 2, 3, 4, 5, 6, 7]', short)
         self.assertIn('fetch-depth: 0', short)
         self.assertLess(short.index('scripts/go_cache_steps.py paths'), short.index('actions/setup-go@'))
 

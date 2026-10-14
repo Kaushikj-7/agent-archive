@@ -396,6 +396,7 @@ else:
                 for index in (0, 1):runner.run(index, root/str(index), 30)
                 runner.reconcile(root)
             calls = [json.loads(line) for line in command_log.read_text().splitlines()]
+            self.assertTrue(all('-race' in call['args'] for call in calls if call['args'][0]=='list'))
             listings = [call for call in calls if '-list' in call['args']]
             self.assertEqual(len(listings),2)
             self.assertTrue(all('-count=1' in call['args'] and '-race' in call['args'] and '-short' in call['args'] for call in listings))

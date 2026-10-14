@@ -566,7 +566,7 @@ def run(index, out, seconds, workers=2, plain_audit_owned=False, plain_vet_owned
     import run_ci_tier
     source_proof = run_ci_tier.full_race.source_proof(ROOT)
     phases = {}
-    phases['package_discovery_seconds'] = supervise([(['go', 'list', '-json', './...'], out / 'packages.json', env)], deadline)[0]
+    phases['package_discovery_seconds'] = supervise([(['go', 'list', '-race', '-json', './...'], out / 'packages.json', env)], deadline)[0]
     packages = metadata((out / 'packages.json').read_text())
     phases['cli_listing_race_build_testmain_seconds'] = supervise([(['go', 'test', '-race', '-short', '-count=1', '-json', '-list', '^(Test|Fuzz|Example)', CLI], out / 'listing.json', env)], deadline)[0]
     names = listed_names((out / 'listing.json').read_text())

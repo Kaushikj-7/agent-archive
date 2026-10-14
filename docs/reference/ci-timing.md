@@ -37,10 +37,10 @@ interface so processing untrusted PR artifacts cannot populate trusted caches.
     "source": "API-head-sha-shared-by-both-workflows",
     "cohort": "source-only",
     "cache_state": "warm",
-    "comparable_group": "four-workers-complete-parent-v2",
+    "comparable_group": "eight-workers-complete-parent-v2",
     "event_at": "2026-10-14T00:00:00Z",
     "required_jobs": {
-      "Test": ["tier-plan", "source-audit", "linux-short (0)", "linux-short (1)", "linux-short (2)", "linux-short (3)", "linux-full", "script-tests", "lint", "cross-build", "macos-smoke", "linux-race", "Git identity (runner-current)", "Git identity (upstream-2.30.2)", "Git identity (upstream-2.39.2)"],
+      "Test": ["tier-plan", "source-audit", "linux-short (0)", "linux-short (1)", "linux-short (2)", "linux-short (3)", "linux-short (4)", "linux-short (5)", "linux-short (6)", "linux-short (7)", "linux-full", "script-tests", "lint", "cross-build", "macos-smoke", "linux-race", "Git identity (runner-current)", "Git identity (upstream-2.30.2)", "Git identity (upstream-2.39.2)"],
       "Levenshtein": ["verify", "native-release-vulnerabilities"]
     },
     "workflows": [{"run": {}, "jobs": {"total_count": 0, "jobs": []}}]
@@ -148,8 +148,8 @@ Parallel-parent intervals include descendant waits and contention; they are
 scheduling advice, not additive CPU time or promised wall time. Catalog seeding
 may repeat across workers and must be measured in hosted trials.
 
-The initial version-2 qualification uses four standard Linux workers before the
-eight-worker trial. Use distinct comparison groups for four/eight workers and
+The initial version-2 qualification used four standard Linux workers; the current
+topology uses eight standard Linux workers. Use distinct comparison groups for four/eight workers and
 for the earlier whole-package scheduler. Keep prior run inventories unchanged.
 The eight-worker inventory must explicitly add `linux-short (4)` through
 `linux-short (7)` and its comparison group must change to
@@ -159,3 +159,36 @@ both four and eight are supported by the catalog and cache guards. Keep the
 stable `linux-race` aggregate required check. Do not mix schema-less historical
 manifests into live reconciliation; only the explicit historical hint-import
 interface accepts those old records.
+
+### Optional unrestricted same-source reference
+
+For a bounded coverage comparison, select Extended's manual `pr-reference` suite
+and provide `reference_source` as the full immutable **tested merge commit** from
+the eight-worker artifacts. Select a workflow ref containing this helper and mode;
+the job checks out the exact reference source, verifies its tracked source/tree and
+compiler before/after execution, and records the workflow ref SHA separately.
+Blank/mutable refs fail before checkout. Other Extended suites and schedules do
+not include this job; it is never a new PR gate or a recurring full campaign.
+
+The reference compiles the whole listing and executes unrestricted-name
+`go test -race -short -count=1 -json -timeout 20m -p 1 ./...`. No `-run`, `-skip`,
+parent shard selection or timing hint is used. Package concurrency1 isolates the
+native Git observer package and does not reduce bodies. Committed fuzz seeds run;
+mutation campaigns and exhaustive non-short scales retain their separate policy.
+The race source-audit placeholder records the same owned skip as PR workers;
+comparison separately verifies the real plain source audit and all worker own-vet
+receipts, plus a fresh reference own-vet receipt. Seven-day artifacts retain raw
+listing/body streams, contexts, source proof and failed receipts.
+
+After verifying artifact archive/API digests and fetching the exact tested commit,
+run `python3 -B scripts/run_pr_reference.py compare --reference <reference-dir>
+--workers <worker-root> --audit <audit-dir> --output <comparison.json>` on one line.
+This invokes canonical worker reconciliation then compares all compiled parent and
+package obligations against actual unrestricted terminals. Short/platform skip
+identities must match in both directions; raw reasons remain in each body receipt.
+An extra/missing skip is a failure to investigate, not automatic permission to
+accept skipped coverage. Compiler/flags/tool/OS identity must match using the
+existing ImageVersion-only compatibility projection; raw full contexts remain
+verified. The final reference must use the same source SHA/tree as the worker
+artifacts, not merely a related branch head. This qualification is correctness
+evidence, not a runner-time or150-second benchmark.

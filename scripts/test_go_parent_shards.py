@@ -181,9 +181,9 @@ class ParentScheduling(unittest.TestCase):
         workflow=(Path(__file__).resolve().parent.parent/'.github/workflows/test.yml').read_text()
         short=workflow
         self.assertIn('      - run: python3 -B scripts/test_go_parent_shards.py', workflow)
-        self.assertIn('WORKERS: 4',short)
-        self.assertIn('shard: [0, 1, 2, 3]',short)
-        self.assertEqual(short.count('run_go_shard.py --workers 4'),2)
+        self.assertIn('WORKERS: 8',short)
+        self.assertIn('shard: [0, 1, 2, 3, 4, 5, 6, 7]',short)
+        self.assertEqual(short.count('run_go_shard.py --workers 8'),2)
         for n in (2,4,8):self.assertEqual(r.worker_count(n),n)
         self.assertIn('linux-short',workflow.split('  linux-race:',1)[1])
 
