@@ -174,8 +174,8 @@ def performance_names(plan):
         if p in PERFORMANCE_COMPILE_ONLY:
             if names:
                 raise Failure('compile-only performance package unexpectedly selects bodies: '+p)
-        elif not names or not PERFORMANCE_REQUIRED.get(p, set()) <= set(names):
-            raise Failure('plain performance package missing required compiled bodies: '+p)
+        elif set(names) != PERFORMANCE_REQUIRED.get(p, set()):
+            raise Failure('plain performance package differs from required compiled bodies: '+p)
         selected[p] = names
     if set(selected) != PERFORMANCE_COMPILE_ONLY | set(PERFORMANCE_REQUIRED):
         raise Failure('plain performance package scope differs from its named contract')

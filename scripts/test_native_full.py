@@ -296,6 +296,11 @@ class NativeFullTest(unittest.TestCase):
                 bad['schedule']['names'][pkg].remove(name)
                 with self.assertRaises(native.Failure):
                     native.performance_names(bad)
+        for pkg in native.PERFORMANCE_REQUIRED:
+            bad = copy.deepcopy(fixture)
+            bad['schedule']['names'][pkg].append('TestUnexpectedStayFast')
+            with self.assertRaises(native.Failure):
+                native.performance_names(bad)
         for pkg in selected:
             bad = copy.deepcopy(fixture)
             del bad['schedule']['names'][pkg]
