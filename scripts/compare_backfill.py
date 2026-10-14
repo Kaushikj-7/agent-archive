@@ -25,6 +25,8 @@ def main():
     parser.add_argument("candidate", type=Path)
     args = parser.parse_args()
     before, after = read(args.baseline), read(args.candidate)
+    if not before or not after:
+        raise SystemExit("At least five matched samples required; input is empty")
     if before.keys() != after.keys():
         raise SystemExit("Scenario/mode/state/trace sets differ")
     print("| Scenario / mode / state | Sessions / bytes | Original seconds (range) | Candidate seconds (range) | Imported/s original → candidate | CPU seconds original → candidate | RSS MiB original → candidate | Speedup |")
