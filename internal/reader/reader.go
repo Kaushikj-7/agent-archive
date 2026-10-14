@@ -694,7 +694,14 @@ func LoadSource(ctx context.Context, store storage.ObjectStore, metadata archive
 	if err := metadata.ValidateSourceReference(); err != nil {
 		return archive.SourceBundle{}, err
 	}
-	data, err := store.Get(ctx, metadata.SourceBundle.Key)
+	if metadata.SourceBundle.CompressedBytes <= 0 || metadata.SourceBundle.CompressedBytes > limits.compressed() {
+		return archive.SourceBundle{}, fmt.Errorf("%w: source declared compressed size must be between 1 and %d bytes", storage.ErrObjectTooLarge, limits.compressed())
+	}
+	bounded, ok := store.(storage.LimitedGetter)
+	if !ok {
+		return archive.SourceBundle{}, errors.New("source reads require allocation-bounded object reads")
+	}
+	data, err := bounded.GetLimited(ctx, metadata.SourceBundle.Key, int64(metadata.SourceBundle.CompressedBytes))
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
 			return archive.SourceBundle{}, ErrRefreshRequired
