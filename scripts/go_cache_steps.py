@@ -86,7 +86,7 @@ def main():
         if env.get('GITHUB_EVENT_NAME') != 'pull_request':
             raise InvalidContext('cache steps require PR event')
         workers = int(env.get('WORKERS', '2'))
-        if workers not in (2, 4) or not re.fullmatch(r'[1-9][0-9]*', env.get('PR_NUMBER', '')) or env.get('SHARD') not in tuple(str(i) for i in range(workers)):
+        if workers not in (2, 4, 8) or not re.fullmatch(r'[1-9][0-9]*', env.get('PR_NUMBER', '')) or env.get('SHARD') not in tuple(str(i) for i in range(workers)):
             raise InvalidContext('unsafe PR worker identifiers')
         source = Path(env['GITHUB_WORKSPACE']).resolve()
         runner_temp = Path(env['RUNNER_TEMP'])
