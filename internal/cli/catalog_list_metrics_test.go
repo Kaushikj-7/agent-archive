@@ -51,6 +51,7 @@ func (s *catalogListReads) GetCatalogVersion(ctx context.Context, key string, li
 	return s.MeasuredStore.GetCatalogVersion(ctx, key, limit)
 }
 
+//lint:ignore tparallel sequential corpora bound catalog fixture memory across the three parallel roots
 func TestRealCLICatalogDefaultList50Bounded(t *testing.T) {
 	t.Parallel()
 	sizes := []int{128}
@@ -133,6 +134,7 @@ func TestRealCLICatalogDefaultList50Bounded(t *testing.T) {
 	}
 }
 
+//lint:ignore tparallel sequential corpora bound catalog fixture memory across the three parallel roots
 func TestRealCLICatalogListNonMultiplePageLimit(t *testing.T) {
 	t.Parallel()
 	if testing.Short() {
