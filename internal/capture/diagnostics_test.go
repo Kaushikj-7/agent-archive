@@ -405,3 +405,42 @@ func TestResumeBeforeActivationRecordsActivationDiagnostic(t *testing.T) {
 		t.Fatalf("diagnostics %+v", ds)
 	}
 }
+
+// A diagnostic the collector records for a session names the configured
+// project that includes the session's root, never the root itself, and
+// nothing for a root no included project owns.
+func TestSessionDiagnosticNamesOnlyTheIncludedProject(t *testing.T) {
+	t.Parallel()
+	at := time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
+	for _, c := range []struct {
+		root, want string
+	}{
+		{"/work/kept", "/work/kept"},
+		{"/work/kept/nested/dir", "/work/kept"},
+		{"/work/excluded", ""},
+		{"/elsewhere", ""},
+	} {
+		home := t.TempDir()
+		twoProjectConfig(t, home, "/work/kept")
+		if err := RecordSessionDiagnostic(home, DiagnosticRevisionLeftOut, "claude", c.root, at); err != nil {
+			t.Fatal(err)
+		}
+		diagnostics, err := ReadDiagnostics(home)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.want == "" {
+			if len(diagnostics) != 0 {
+				t.Errorf("%s: recorded %+v", c.root, diagnostics)
+			}
+			continue
+		}
+		if len(diagnostics) != 1 || diagnostics[0] != (Diagnostic{Code: DiagnosticRevisionLeftOut, Harness: "claude", ProjectRoot: c.want, ObservedAt: at}) {
+			t.Errorf("%s: recorded %+v", c.root, diagnostics)
+		}
+		// The code's spelling is what status --json documents.
+		if raw, err := os.ReadFile(DiagnosticsPath(home)); err != nil || !strings.Contains(string(raw), `"revision_left_out"`) {
+			t.Errorf("%s: stored %s (%v)", c.root, raw, err)
+		}
+	}
+}

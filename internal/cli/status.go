@@ -1708,7 +1708,11 @@ func (sc statusScreen) captureRows(view statusView) []statusRow {
 		if diagnostic.ProjectRoot != "" {
 			location = " in " + sc.path(diagnostic.ProjectRoot)
 		}
-		rows = append(rows, statusRow{mark: sc.style.warnMark(), cells: []string{fmt.Sprintf("%s skipped a session%s %s: %s", appName(diagnostic.Harness), location, relativeAge(sc.now, diagnostic.ObservedAt), capture.DiagnosticMessage(diagnostic.Code))}})
+		what := "skipped a session"
+		if capture.DiagnosticPartial(diagnostic.Code) {
+			what = "left out part of a session"
+		}
+		rows = append(rows, statusRow{mark: sc.style.warnMark(), cells: []string{fmt.Sprintf("%s %s%s %s: %s", appName(diagnostic.Harness), what, location, relativeAge(sc.now, diagnostic.ObservedAt), capture.DiagnosticMessage(diagnostic.Code))}})
 	}
 	if !sc.verbose {
 		return rows
@@ -2675,7 +2679,11 @@ func printStatusDetails(out io.Writer, view statusView) {
 		terminal.Printf(out, "  %-14s %s\n", skillLabel(path)+":", line)
 	}
 	for _, diagnostic := range view.CaptureDiagnostics {
-		terminal.Printf(out, "  Capture skipped in %s (%s): %s at %s.\n", diagnostic.ProjectRoot, appName(diagnostic.Harness), capture.DiagnosticMessage(diagnostic.Code), formatTimeOrNever(diagnostic.ObservedAt))
+		what := "skipped"
+		if capture.DiagnosticPartial(diagnostic.Code) {
+			what = "left out part of a session"
+		}
+		terminal.Printf(out, "  Capture %s in %s (%s): %s at %s.\n", what, diagnostic.ProjectRoot, appName(diagnostic.Harness), capture.DiagnosticMessage(diagnostic.Code), formatTimeOrNever(diagnostic.ObservedAt))
 	}
 	// Each problem as the collector recorded it, one per line; a status
 	// file from before LastErrors has only the joined text, shown as is.

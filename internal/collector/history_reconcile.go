@@ -3,12 +3,14 @@ package collector
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/state"
 )
 
@@ -92,13 +94,27 @@ func (s *sessionScan) reconcileRevisions(read sourceRead, active archive.SourceB
 	if read.observed.observation.Signature.Provider == "import-stage" {
 		return s.reconcileStagedRevisions(read, planner, plan)
 	}
-	err = provider.revisions(s.ctx, read.adapter, read.observed, s.opts.maxTranscriptBytes(), active.History != nil, func(filtered archive.FilteredTranscript, binding *archive.CodexSourceBinding) error {
+	offChain, err := provider.revisions(s.ctx, read.adapter, read.observed, s.opts.maxTranscriptBytes(), active.History != nil, !s.withoutOffChain, func(filtered archive.FilteredTranscript, binding *archive.CodexSourceBinding) error {
 		return s.addNativeRevision(&planner, filtered, binding, metadata, cached, previous)
 	})
 	if err != nil {
 		return nil, err
 	}
+	s.offChainKept = offChain.offChainKept
+	if offChain.offChainLeftOut > 0 {
+		s.noteRevisionLeftOut()
+	}
 	return plan, nil
+}
+
+// noteRevisionLeftOut records, content-free, that the scan left out an
+// off-chain revision of the thread: the app and the configured project
+// only, as the hooks' capture diagnostics do. A diagnostic is advisory, so
+// failing to write one does not stop the scan.
+func (s *sessionScan) noteRevisionLeftOut() {
+	if err := capture.RecordSessionDiagnostic(s.local.Home(), capture.DiagnosticRevisionLeftOut, s.reg.Harness.Name, s.reg.ProjectRoot, s.now); err != nil {
+		s.warn(fmt.Errorf("record capture diagnostic: %w", err))
+	}
 }
 
 func revisionID(b archive.SourceBundle) string {
