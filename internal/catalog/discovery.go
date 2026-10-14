@@ -90,7 +90,15 @@ func (s *Snapshot) ScanIdentities(ctx context.Context, after string, limit int) 
 
 type discoveryBudgetKey struct{}
 
-func readDiscoveryVersion(ctx context.Context, getter storage.CatalogVersionedGetter, key string, limit int64) ([]byte, storage.CatalogObjectVersion, error) {
+type discoveryRecord string
+
+const (
+	discoveryHead        discoveryRecord = HeadKey
+	discoveryCoordinator discoveryRecord = CoordinatorKey
+)
+
+func readDiscoveryVersion(ctx context.Context, getter storage.CatalogVersionedGetter, record discoveryRecord, limit int64) ([]byte, storage.CatalogObjectVersion, error) {
+	key := string(record)
 	work, _ := ctx.Value(pickerWorkKey{}).(*pickerWork)
 	_, enabled := ctx.Value(discoveryBudgetKey{}).(bool)
 	if work == nil || !enabled {
@@ -101,10 +109,10 @@ func readDiscoveryVersion(ctx context.Context, getter storage.CatalogVersionedGe
 	if limit <= 0 {
 		return nil, storage.CatalogObjectVersion{}, ErrPickerBudget
 	}
-	switch key {
-	case HeadKey:
+	switch record {
+	case discoveryHead:
 		work.cost.HeadObservations++
-	case CoordinatorKey:
+	case discoveryCoordinator:
 		work.cost.CoordinatorReads++
 	}
 	raw, version, err := getter.GetCatalogVersion(ctx, key, limit)

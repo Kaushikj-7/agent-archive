@@ -26,6 +26,7 @@ type discoveryArchive struct {
 }
 
 func (*discoveryArchive) CatalogAtomicQualification() error { return nil }
+
 func (a *discoveryArchive) GetLimited(ctx context.Context, key string, limit int64) ([]byte, error) {
 	if a.beforeRead != nil {
 		a.beforeRead(key)
