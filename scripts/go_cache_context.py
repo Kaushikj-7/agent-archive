@@ -337,3 +337,27 @@ def prepare_owned_paths(paths, clear=False, modules_only=False):
                     item.chmod(item.stat().st_mode | stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
             shutil.rmtree(path)
         path.mkdir(parents=True, exist_ok=True)
+
+
+def discard_extracted_modules(plan):
+    """Keep immutable module download archives, discard recoverable source trees.
+
+    Called only after successful builds and module verification. Restores still
+    run go mod download/verify, which reconstruct and verify current module
+    sources from these archives. Never touch Go objects or checked-out source.
+    """
+    root = Path(plan.paths[1])
+    if plan.paths != owned_paths(root.parent):
+        raise InvalidContext('module pruning paths differ from controlled roots')
+    prepare_owned_paths(plan.paths)
+    for path in root.iterdir():
+        if path.name == 'cache' and path.is_dir() and not path.is_symlink():
+            continue
+        if path.is_symlink() or not path.is_dir():
+            path.unlink()
+            continue
+        for current, _, _ in os.walk(path, followlinks=False):
+            item = Path(current)
+            if not item.is_symlink():
+                item.chmod(item.stat().st_mode | stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
+        shutil.rmtree(path)

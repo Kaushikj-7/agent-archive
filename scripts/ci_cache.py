@@ -18,7 +18,7 @@ import sys
 
 from go_cache_context import (InvalidContext, CachePlan, digest, execute,
                               owned_paths, prepare_paths, runtime_context,
-                              source_identity, validate_context)
+                              source_identity, validate_context, discard_extracted_modules)
 from go_cache_steps import emit, execute_modules
 
 SCHEMA = 'aa-compilation-v2'
@@ -236,6 +236,7 @@ def main():
                 execute_modules(['go', 'mod', 'verify'])
                 if shared is not None:
                     verify_modules(shared)
+                discard_extracted_modules(plan)
                 try:
                     size = publish_manifest(plan, context)
                 except InvalidContext:

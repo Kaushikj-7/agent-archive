@@ -127,6 +127,20 @@ class CompilationTests(unittest.TestCase):
         self.assertEqual((build/'object').read_bytes(), b'compiled source')
         self.assertEqual((outside/'keep').read_text(), 'unrelated')
 
+    def test_main_seed_keeps_module_archives_and_drops_only_extracted_sources(self):
+        build, modules = map(Path, self.plan.paths)
+        archive = modules/'cache/download/example.org/module/@v/v1.zip'
+        archive.parent.mkdir(parents=True)
+        archive.write_bytes(b'verified immutable archive')
+        extracted = modules/'example.org/module@v1'
+        extracted.mkdir(parents=True)
+        (extracted/'go.mod').write_bytes(b'module example.org/module')
+        extracted.chmod(0o555)
+        keys.discard_extracted_modules(self.plan)
+        self.assertFalse(extracted.exists())
+        self.assertEqual(archive.read_bytes(), b'verified immutable archive')
+        self.assertEqual((build/'object').read_bytes(), b'compiled source')
+
     def test_pr_worker_trusted_seed_hit_and_corrupt_fallback(self):
         cache.publish_manifest(self.plan, self.context)
         plan = replace(self.plan, primary='pr-key', prefix='pr-prefix-')
