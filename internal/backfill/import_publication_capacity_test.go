@@ -3,6 +3,7 @@ package backfill
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -38,14 +39,12 @@ func TestImportCapacityPublishesCanonicalEvidenceBeforeContinuingAdmission(t *te
 			t.Fatal(err)
 		}
 		if _, err = file.WriteString(codexTranscript(next.NativeSessionID, next.NativeSessionID, next.ProjectRoot, next.StartedAt)); err != nil {
-			file.Close()
-			t.Fatal(err)
+			t.Fatal(errors.Join(err, file.Close()))
 		}
 		row := `{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"` + strings.Repeat("a", 32<<10) + `"}]}}` + "\n"
 		for range retained / (32 << 10) {
 			if _, err = file.WriteString(row); err != nil {
-				file.Close()
-				t.Fatal(err)
+				t.Fatal(errors.Join(err, file.Close()))
 			}
 		}
 		if err = file.Close(); err != nil {
