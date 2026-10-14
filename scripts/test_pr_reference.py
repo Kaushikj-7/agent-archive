@@ -103,7 +103,7 @@ class ReferenceTests(unittest.TestCase):
         self.assertIn('retention-days: 7',job)
         self.assertIn('persist-credentials: false',job)
         self.assertIn('cache: false',job)
-        self.assertIn('python3 -B scripts/test_pr_reference.py',jobs((base/'.github/workflows/test.yml').read_text())['script-tests'])
+        self.assertIn('python3 -B scripts/test_pr_reference.py',jobs((base/'.github/workflows/test.yml').read_text())['script-static'])
 
 
 if __name__=='__main__':unittest.main()
