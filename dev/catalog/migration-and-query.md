@@ -3,7 +3,11 @@
 Catalog-v4 is an opt-in destination format. Production S3 and R2 remain refused
 until reviewed live conditional-write, same-version timestamp and provider-clock
 qualification exists. Migration also requires a provider authority proving old
-write credentials revoked, the source read-only, and every writer on protocol 10.
+write credentials revoked, the source read-only, and every writer supporting the
+destination protocol. The original catalog uses protocol 10; scoped-picker
+destinations require protocol 11/schema 5 and configuration 14 with the exact
+`scoped-picker-v1` writer fence. See the
+[scoped construction and rollback contract](../../docs/guides/catalog-migration.md).
 An operator flag cannot substitute for this evidence.
 
 `agent-archive migrate --format catalog-v4 --prefix NEW_PREFIX` copies into an
@@ -34,7 +38,8 @@ uses a fresh request view.
 | Global capture/activity root list, ordinary or replay, no dates | O(log N + returned rows) | No canonical LIST |
 | All-session capture range including replays | O(log N + returned rows) | No canonical LIST |
 | Direct project-tree range | O(log N + returned rows) | No canonical LIST |
-| Scope tiers, title/text, ID prefix, complex predicates, date-filtered root child counts | Complete summary fallback | No canonical LIST |
+| Supported scoped ordinary-root activity window, at most 32 disjoint ranges, optional exact harness (protocol 11) | Bounded typed picker page and continuation | No canonical LIST or first-page metadata body reads |
+| Original protocol-10 scope tiers; named/title/text/ID-prefix/complex predicates; date-filtered root child counts | Complete summary fallback | No canonical LIST |
 
 Ordinary/replay immediate child counters use the existing harness+parent key.
 Writers derive them in the same CAS as child changes; the full metadata body and
@@ -70,10 +75,15 @@ than every full body.
 
 ## Large metadata and writer version
 
-The catalog uses writer protocol 10 and the exact `catalog-v4-v11` configuration
-fence. Protocol numbers describe the wire format, independently of PR numbering.
-Heads, admission records, pending journals and migration checkpoints reject older
-protocol 9 state before admission. This format is opt-in and is not deployed here.
+The original catalog uses writer protocol 10 and the exact `catalog-v4-v11`
+configuration fence. Its heads, admission records, pending journals and migration
+checkpoints reject older protocol 9 state before admission. The scoped-picker
+upgrade adds protocol 11/schema 5 and configuration 14 with the exact
+`scoped-picker-v1` fence; older writers must refuse that destination. Protocol
+numbers describe the wire format, independently of PR numbering. These formats
+are opt-in and production provider qualification remains on HOLD. See the
+[upgrade and rollback guide](../../docs/guides/catalog-migration.md) and the
+[typed reader contract](picker-reader.md).
 
 Tree nodes remain bounded to 128 KiB. Each serialized leaf, including its key and
 record/count/revision wrappers, is measured at every update. Entries larger than
@@ -174,3 +184,15 @@ independent date seed for stats, never an inferred descendant of an unknown
 parent. Earlier source bundles may lack the optional native-child marker even
 when metadata now records native ownership; existing exact source identity,
 parent and reference verification still governs those supported legacy sources.
+
+## Scoped picker acceptance boundary
+
+The [bounded picker source plan](../proposals/bounded-repository-picker.md) extends
+ordinary catalog windows with complete protocol11/schema5 scopes and a permanent
+configuration14 writer fence. Existing protocol10 destinations retain their
+complete-summary path until guarded scoped construction/upgrade completes.
+The [qualification fixture](../maintainers/picker-qualification/README.md)
+compares a complete synthetic bulk universe with actual production construction
+before measuring supported interactive command pages. It excludes migration
+throughput and cannot attest real credential revocation, distributed writer
+cutover or provider atomic/clock evidence. Those release gates remain HOLD.

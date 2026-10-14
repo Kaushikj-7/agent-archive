@@ -32,6 +32,11 @@ type countingStore struct {
 	gets atomic.Int32
 }
 
+func (s *countingStore) GetLimited(ctx context.Context, key string, limit int64) ([]byte, error) {
+	s.gets.Add(1)
+	return s.MemoryStore.GetLimited(ctx, key, limit)
+}
+
 func (s *countingStore) Get(ctx context.Context, key string) ([]byte, error) {
 	s.gets.Add(1)
 	return s.MemoryStore.Get(ctx, key)
