@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -738,5 +739,113 @@ func TestWorkerDecompressedOversizeStaysBlocked(t *testing.T) {
 	progress, err = s.Run(t.Context(), counted, parsers, at.Add(time.Hour), Budget{Limits: reader.Limits{MaxUncompressedBytes: 1}})
 	if err != nil || progress.Loaded != 0 || counted.gets != 1 {
 		t.Fatalf("impossible unit retried: %+v gets=%d %v", progress, counted.gets, err)
+	}
+}
+
+// Keep this memory-heavy real-reader/parser fixture sequential.
+func TestWorkerCumulativeOversizeDiscardsStagingAndStaysBlocked(t *testing.T) {
+	metadata, active, originalObjects := workerHistory(t)
+	previous := metadata.History.Preserved[0]
+	old, err := reader.LoadRevision(t.Context(), originalObjects, metadata, previous.RevisionID, reader.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	active.NativeRecords[0]["payload"] = map[string]any{"type": "message", "role": "user", "content": strings.Repeat("x", 15<<20)}
+	old.NativeRecords[0]["payload"] = map[string]any{"type": "message", "role": "user", "content": strings.Repeat("y", 15<<20)}
+	metadata, _, objects := publishFixture(t, active, codex.Parser{})
+	oldMetadata, _, oldObjects := publishFixture(t, old, codex.Parser{})
+	previous.Source = oldMetadata.SourceBundle
+	metadata.History.Preserved = []archive.RevisionReference{previous}
+	data, err := oldObjects.Get(t.Context(), previous.Source.Key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = objects.Put(t.Context(), previous.Source.Key, data); err != nil {
+		t.Fatal(err)
+	}
+	s := openTest(t)
+	parsers := builtin.NewBuiltins()
+	at := metadata.CapturedAt
+	if err = s.Observe(t.Context(), metadata, parsers, at, 0); err != nil {
+		t.Fatal(err)
+	}
+	counted := &countedObjects{ObjectStore: objects}
+	progress, err := s.Run(t.Context(), counted, parsers, at, Budget{Sources: 1})
+	if err != nil || progress.Loaded != 1 || progress.Committed != 0 || progress.Failed != 0 {
+		t.Fatalf("first source did not stage: %+v %v", progress, err)
+	}
+	var staged int
+	if err = s.db.QueryRowContext(t.Context(), "SELECT count(*) FROM search_sources").Scan(&staged); err != nil || staged != 1 {
+		t.Fatalf("first staging: %d %v", staged, err)
+	}
+	progress, err = s.Run(t.Context(), counted, parsers, at, Budget{Sources: 1})
+	if err != nil || progress.Loaded != 1 || progress.Reused != 1 || progress.Failed != 1 || progress.Committed != 0 {
+		t.Fatalf("cumulative limit not enforced: %+v %v", progress, err)
+	}
+	if err = s.db.QueryRowContext(t.Context(), "SELECT count(*) FROM search_sources").Scan(&staged); err != nil || staged != 0 {
+		t.Fatalf("oversized staging retained: %d %v", staged, err)
+	}
+	progress, err = s.Run(t.Context(), counted, parsers, at.Add(time.Hour), Budget{})
+	if err != nil || progress.Loaded != 0 || progress.Failed != 1 || counted.gets != 2 {
+		t.Fatalf("impossible projection retried: %+v gets=%d %v", progress, counted.gets, err)
+	}
+}
+
+func TestWorkerOversizeCleanupIsAtomicAndGenerationFenced(t *testing.T) {
+	t.Parallel()
+	metadata, _, objects := verifiedFixture(t, "claude", workerTranscript)
+	s := openTest(t)
+	parsers := builtin.NewBuiltins()
+	at := metadata.CapturedAt
+	if err := s.Observe(t.Context(), metadata, parsers, at, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Run(t.Context(), objects, parsers, at, Budget{}); err != nil {
+		t.Fatal(err)
+	}
+	metadata.Name = "pending title"
+	if err := s.Observe(t.Context(), metadata, parsers, at, 0); err != nil {
+		t.Fatal(err)
+	}
+	stale, err := s.nextWork(t.Context(), at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata.Name = "newer pending title"
+	if err = s.Observe(t.Context(), metadata, parsers, at, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.failWork(t.Context(), stale, at, storage.ErrObjectTooLarge); err != nil {
+		t.Fatal(err)
+	}
+	current, err := s.nextWork(t.Context(), at)
+	if err != nil {
+		t.Fatalf("stale failure blocked newer work: %v", err)
+	}
+	var staged int
+	if err = s.db.QueryRowContext(t.Context(), "SELECT count(*) FROM search_sources").Scan(&staged); err != nil || staged != 1 {
+		t.Fatalf("stale failure deleted newer cache: %d %v", staged, err)
+	}
+	if _, err = s.db.ExecContext(t.Context(), `CREATE TRIGGER stop_cleanup BEFORE DELETE ON search_sources BEGIN SELECT RAISE(ABORT,'synthetic interrupted cleanup'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.failWork(t.Context(), current, at, storage.ErrObjectTooLarge); err == nil {
+		t.Fatal("interrupted cache cleanup succeeded")
+	}
+	if _, err = s.nextWork(t.Context(), at); err != nil {
+		t.Fatalf("failed cleanup committed blocked state: %v", err)
+	}
+	if _, err = s.db.ExecContext(t.Context(), "DROP TRIGGER stop_cleanup"); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.failWork(t.Context(), current, at, storage.ErrObjectTooLarge); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.db.QueryRowContext(t.Context(), "SELECT count(*) FROM search_sources").Scan(&staged); err != nil || staged != 0 {
+		t.Fatalf("blocked cache retained: %d %v", staged, err)
+	}
+	page, err := s.Search(t.Context(), Query{Text: "checksum"})
+	if err != nil || len(page.Hits) != 1 {
+		t.Fatalf("oversize cleanup removed installed view: %+v %v", page, err)
 	}
 }

@@ -283,6 +283,7 @@ func (s *Store) runItem(ctx context.Context, objects storage.ObjectStore, parser
 	for _, req := range reqs {
 		var p Projection
 		var data []byte
+		loadedNew := false
 		err = s.db.QueryRowContext(ctx, "SELECT projection FROM search_sources WHERE session=? AND identity=?", item.id, digest(req)).Scan(&data)
 		if errors.Is(err, sql.ErrNoRows) {
 			if progress.Loaded >= budget.Sources || req.Reference.CompressedBytes > budget.CompressedBytes-progress.CompressedBytes {
@@ -299,13 +300,7 @@ func (s *Store) runItem(ctx context.Context, objects storage.ObjectStore, parser
 				return false, e
 			}
 			p = loaded
-			data, e = json.Marshal(p)
-			if e != nil {
-				return false, e
-			}
-			if e = s.stageSource(ctx, item, digest(req), data); e != nil {
-				return false, e
-			}
+			loadedNew = true
 		} else if err != nil {
 			return false, err
 		} else {
@@ -326,6 +321,15 @@ func (s *Store) runItem(ctx context.Context, objects storage.ObjectStore, parser
 				return false, storage.ErrObjectTooLarge
 			}
 			totalText += len(passage.Text)
+		}
+		if loadedNew {
+			data, err = json.Marshal(p)
+			if err != nil {
+				return false, err
+			}
+			if err = s.stageSource(ctx, item, digest(req), data); err != nil {
+				return false, err
+			}
 		}
 		projections = append(projections, p)
 	}
@@ -408,11 +412,27 @@ func (s *Store) failWork(ctx context.Context, item workItem, at time.Time, cause
 		blocked = true
 	}
 	// Do not persist native source contents through an arbitrary error string.
-	_, err := s.db.ExecContext(ctx, `UPDATE search_work SET failures=failures+1,last_error=?,due=?,touched=?,blocked=? WHERE id=? AND generation=?`, message, at.Add(delay).UnixNano(), at.UnixNano(), blocked, item.id, item.generation)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("record search retry: %w", err)
 	}
-	return nil
+	defer func() { _ = tx.Rollback() }()
+	result, err := tx.ExecContext(ctx, `UPDATE search_work SET failures=failures+1,last_error=?,due=?,touched=?,blocked=? WHERE id=? AND generation=?`, message, at.Add(delay).UnixNano(), at.UnixNano(), blocked, item.id, item.generation)
+	if err != nil {
+		return fmt.Errorf("record search retry: %w", err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if blocked && changed > 0 {
+		// Permanently impossible work must not retain private staged text.
+		// The generation-guarded update and cache deletion share this write lock.
+		if _, err = tx.ExecContext(ctx, "DELETE FROM search_sources WHERE session=?", item.id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (s *Store) pruneSourcesTx(ctx context.Context, tx *sql.Tx, id string, reqs []sourceRequest) error {
