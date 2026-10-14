@@ -64,8 +64,8 @@ class LaneVerdictTest(unittest.TestCase):
             self.assertEqual(set(actual), scripts, lane)
             self.assertEqual(len(actual), len(set(actual)), lane)
             all_scripts.extend(actual)
-            self.assertIn('HOME: ${{ runner.temp }}/'+lane+'-home', found[lane])
-            self.assertIn('XDG_CONFIG_HOME: ${{ runner.temp }}/'+lane+'-xdg', found[lane])
+            self.assertIn('HOME=%s/'+lane+'-home', found[lane])
+            self.assertIn('XDG_CONFIG_HOME=%s/'+lane+'-xdg', found[lane])
             self.assertIn('if: always()', found[lane])
         self.assertEqual(len(all_scripts), len(set(all_scripts)))
 

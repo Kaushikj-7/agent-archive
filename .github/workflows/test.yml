@@ -203,15 +203,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      HOME: ${{ runner.temp }}/script-static-home
-      XDG_CONFIG_HOME: ${{ runner.temp }}/script-static-xdg
       PYTHONDONTWRITEBYTECODE: '1'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Create isolated script environment
-        run: mkdir -p "$HOME" "$XDG_CONFIG_HOME"
+        run: |
+          mkdir -p "$RUNNER_TEMP/script-static-home" "$RUNNER_TEMP/script-static-xdg"
+          printf 'HOME=%s/script-static-home\nXDG_CONFIG_HOME=%s/script-static-xdg\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - run: python3 scripts/test_release_signing.py
       - run: python3 scripts/test_release_assets.py
       - run: python3 scripts/test_release_candidate.py
@@ -235,41 +235,41 @@ jobs:
       - run: python3 -B scripts/test_ci_lane_verdict.py
       - name: Remove isolated script environment
         if: always()
-        run: rm -rf -- "$HOME" "$XDG_CONFIG_HOME"
+        run: rm -rf -- "$RUNNER_TEMP/script-static-home" "$RUNNER_TEMP/script-static-xdg"
 
   script-install:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      HOME: ${{ runner.temp }}/script-install-home
-      XDG_CONFIG_HOME: ${{ runner.temp }}/script-install-xdg
       PYTHONDONTWRITEBYTECODE: '1'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Create isolated script environment
-        run: mkdir -p "$HOME" "$XDG_CONFIG_HOME"
+        run: |
+          mkdir -p "$RUNNER_TEMP/script-install-home" "$RUNNER_TEMP/script-install-xdg"
+          printf 'HOME=%s/script-install-home\nXDG_CONFIG_HOME=%s/script-install-xdg\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - run: python3 scripts/test_install.py
       - run: python3 scripts/test_install_from_source.py
       - name: Remove isolated script environment
         if: always()
-        run: rm -rf -- "$HOME" "$XDG_CONFIG_HOME"
+        run: rm -rf -- "$RUNNER_TEMP/script-install-home" "$RUNNER_TEMP/script-install-xdg"
 
   script-purge:
     needs: [tier-plan]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      HOME: ${{ runner.temp }}/script-purge-home
-      XDG_CONFIG_HOME: ${{ runner.temp }}/script-purge-xdg
       PYTHONDONTWRITEBYTECODE: '1'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Create isolated script environment
-        run: mkdir -p "$HOME" "$XDG_CONFIG_HOME"
+        run: |
+          mkdir -p "$RUNNER_TEMP/script-purge-home" "$RUNNER_TEMP/script-purge-xdg"
+          printf 'HOME=%s/script-purge-home\nXDG_CONFIG_HOME=%s/script-purge-xdg\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Install purge prerequisites
         run: |
           sudo apt-get update
@@ -290,7 +290,7 @@ jobs:
           if-no-files-found: error
       - name: Remove isolated script environment
         if: always()
-        run: rm -rf -- "$HOME" "$XDG_CONFIG_HOME"
+        run: rm -rf -- "$RUNNER_TEMP/script-purge-home" "$RUNNER_TEMP/script-purge-xdg"
 
   script-tests:
     if: always()
