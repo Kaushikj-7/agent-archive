@@ -298,7 +298,7 @@ def digest(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 
 
-def reconcile(directory, workers=2, audit_evidence=None):
+def reconcile(directory, workers=2, audit_evidence=None, *, expected_source_proof=None):
     worker_count(workers)
     paths = sorted(Path(directory).glob('**/manifest.json'))
     if len(paths) != workers:
@@ -314,7 +314,10 @@ def reconcile(directory, workers=2, audit_evidence=None):
             raise Failure('owned plain audit requires complete independent evidence')
         import run_ci_tier
         try:
-            run_ci_tier.verify_source_audit(audit_evidence, first['source'])
+            if expected_source_proof is None:
+                run_ci_tier.verify_source_audit(audit_evidence, first['source'])
+            else:
+                run_ci_tier.verify_source_audit(audit_evidence, first['source'], expected_source_proof=expected_source_proof)
         except run_ci_tier.Failure as error:
             raise Failure(str(error)) from error
     for manifest in manifests:
