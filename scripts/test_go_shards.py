@@ -433,6 +433,47 @@ class CleanupErrorTest(unittest.TestCase):
         self.assertIn('wait pid=123 cleanup deadline', str(raised.exception))
         self.assertIn('signal=SIGKILL', str(raised.exception))
 
+    def test_poll_error_preserves_primary_and_attempts_every_cleanup_phase(self):
+        first, sibling = mock.Mock(pid=123), mock.Mock(pid=456)
+        sibling.poll.return_value = 0
+        commands = [(['synthetic'], mock.Mock(), None)] * 2
+        primary = runner.Failure('original execution failure')
+        polls = 0
+        def rejected():
+            nonlocal polls
+            polls += 1
+            if polls == 1:
+                raise primary
+            raise PermissionError(errno.EPERM, 'injected poll rejection')
+        first.poll.side_effect = rejected
+        with mock.patch.object(runner.sys, 'platform', 'darwin'), \
+                mock.patch('builtins.open', mock.mock_open()), \
+                mock.patch.object(runner.subprocess, 'Popen', side_effect=[first, sibling]), \
+                mock.patch.object(runner.os, 'killpg') as signals:
+            with self.assertRaises(runner.CleanupFailure) as raised:
+                runner.supervise(commands, time.monotonic()+5)
+        self.assertIs(raised.exception.primary, primary)
+        self.assertIs(raised.exception.__cause__, primary)
+        self.assertIn('poll pid=123: PermissionError errno=1', str(raised.exception))
+        self.assertIn('original execution failure', str(raised.exception))
+        self.assertEqual(signals.call_args_list, [
+            mock.call(p.pid, sig) for sig in (signal.SIGTERM, signal.SIGKILL)
+            for p in (first, sibling)])
+        first.wait.assert_called_once()
+        sibling.wait.assert_called_once()
+
+    def test_adopted_wait_error_still_attempts_signal_and_later_child(self):
+        with mock.patch.object(runner, 'child_pids', side_effect=[{123, 456}, set()]), \
+                mock.patch.object(runner.os, 'waitpid', side_effect=PermissionError(errno.EPERM, 'injected')) as waits, \
+                mock.patch.object(runner.os, 'kill') as signals:
+            with self.assertRaises(runner.CleanupFailure) as raised:
+                runner.stop_processes([], set())
+        self.assertCountEqual(waits.call_args_list,
+                              [mock.call(pid, os.WNOHANG) for pid in (123, 456)])
+        self.assertCountEqual(signals.call_args_list,
+                              [mock.call(pid, signal.SIGTERM) for pid in (123, 456)])
+        self.assertIn('waitpid pid=123: PermissionError errno=1', str(raised.exception))
+
     def test_adopted_child_signal_error_does_not_abandon_other_children(self):
         def rejected(pid, sig):
             if pid == 123:

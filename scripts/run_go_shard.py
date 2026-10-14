@@ -93,7 +93,16 @@ def stop_processes(processes, previous_children):
                     record(f'killpg pgid={process.pid} signal={signal.Signals(sig).name}', error)
             if sig == signal.SIGTERM:
                 end = time.monotonic() + 1
-                while time.monotonic() < end and any(p.poll() is None for p in processes):
+                while time.monotonic() < end:
+                    running = False
+                    for process in processes:
+                        try:
+                            running |= process.poll() is None
+                        except OSError as error:
+                            record(f'poll pid={process.pid}', error)
+                            running = True
+                    if not running:
+                        break
                     time.sleep(.02)
         end = time.monotonic() + 5
         for process in processes:
@@ -121,20 +130,25 @@ def stop_processes(processes, previous_children):
             if not adopted:
                 break
             for pid in adopted:
-                operation = f'waitpid pid={pid}'
                 try:
                     reaped, _ = os.waitpid(pid, os.WNOHANG)
                     if reaped:
                         continue
-                    if pid not in signalled or time.monotonic() >= grace:
-                        sig = signal.SIGKILL if time.monotonic() >= grace else signal.SIGTERM
-                        operation = f'kill pid={pid} signal={signal.Signals(sig).name}'
-                        signalled.add(pid)
-                        os.kill(pid, sig)
                 except (ChildProcessError, ProcessLookupError):
-                    pass
+                    continue
                 except OSError as error:
-                    record(operation, error)
+                    record(f'waitpid pid={pid}', error)
+                # A failed wait does not establish that an owned child exited.
+                # Still attempt its independent signal within the same deadline.
+                if pid not in signalled or time.monotonic() >= grace:
+                    sig = signal.SIGKILL if time.monotonic() >= grace else signal.SIGTERM
+                    signalled.add(pid)
+                    try:
+                        os.kill(pid, sig)
+                    except ProcessLookupError:
+                        pass
+                    except OSError as error:
+                        record(f'kill pid={pid} signal={signal.Signals(sig).name}', error)
             if time.monotonic() >= end:
                 errors.append('test descendants did not exit within cleanup deadline: ' +
                               ','.join(str(pid) for pid in sorted(adopted)))
