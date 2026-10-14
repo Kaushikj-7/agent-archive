@@ -199,12 +199,24 @@ func TestContentSearchDestinationIsolation(t *testing.T) {
 type searchRefreshStore struct {
 	storage.ObjectStore
 	before    func()
+	inspect   func(context.Context)
 	reads     int
 	interrupt chan<- os.Signal
 }
 
+func (s *searchRefreshStore) Get(ctx context.Context, key string) ([]byte, error) {
+	s.reads++
+	if s.inspect != nil {
+		s.inspect(ctx)
+	}
+	return s.ObjectStore.Get(ctx, key)
+}
+
 func (s *searchRefreshStore) GetLimited(ctx context.Context, key string, limit int64) ([]byte, error) {
 	s.reads++
+	if s.inspect != nil {
+		s.inspect(ctx)
+	}
 	if s.before != nil {
 		callback := s.before
 		s.before = nil
@@ -265,5 +277,24 @@ func TestContentSearchInterruptedRefreshReleasesWorkLock(t *testing.T) {
 	errOut.Reset()
 	if code := Run([]string{"search", "--refresh", "--session", id, "--harness", "codex"}, nil, &out, &errOut, env); code != 0 {
 		t.Fatalf("lock retained after cancellation %d %s %s", code, &out, &errOut)
+	}
+}
+
+func TestContentSearchRefreshBoundsWholePass(t *testing.T) {
+	t.Parallel()
+	env, objects, id := publishedFixture(t)
+	wrapped := &searchRefreshStore{ObjectStore: objects, inspect: func(ctx context.Context) {
+		deadline, ok := ctx.Deadline()
+		if !ok || time.Until(deadline) <= 0 || time.Until(deadline) > 30*time.Second {
+			t.Fatalf("refresh archive read has no finite pass deadline: %v %v", deadline, ok)
+		}
+	}}
+	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return wrapped, nil }
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"search", "--refresh", "--session", id, "--harness", "codex"}, nil, &out, &errOut, env); code != 0 {
+		t.Fatalf("%d %s %s", code, &out, &errOut)
+	}
+	if wrapped.reads < 2 {
+		t.Fatalf("did not exercise metadata and source reads: %d", wrapped.reads)
 	}
 }

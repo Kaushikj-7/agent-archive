@@ -73,7 +73,11 @@ func requests(metadata archive.Metadata, parsers agentapi.ParsersLookup) ([]sour
 		}
 		out = nil
 		for _, revision := range revisions {
-			out = append(out, sourceRequest{Revision: revision.RevisionID, Reference: revision.Source, Filter: revision.FilterVersion, Schema: revision.SourceSchemaVersion, Parser: version, Extractor: ExtractorVersion, Ownership: sourceOwnership(metadata, archive.Harness{Name: metadata.Harness.Name}, revision.CapturedAt)})
+			harness := archive.Harness{Name: metadata.Harness.Name}
+			if revision.Active {
+				harness = metadata.Harness
+			}
+			out = append(out, sourceRequest{Revision: revision.RevisionID, Reference: revision.Source, Filter: revision.FilterVersion, Schema: revision.SourceSchemaVersion, Parser: version, Extractor: ExtractorVersion, Ownership: sourceOwnership(metadata, harness, revision.CapturedAt)})
 		}
 	}
 	return out, nil
@@ -132,7 +136,7 @@ func (s *Store) Observe(ctx context.Context, metadata archive.Metadata, parsers 
 		if e != nil {
 			return e
 		}
-		privacyChanged := false
+		privacyChanged := metadata.FilterVersion != old.FilterVersion
 		membershipChanged := len(reqs) != len(oldReqs)
 		for _, oldReq := range oldReqs[min(1, len(oldReqs)):] {
 			if !slices.Contains(reqs, oldReq) {
@@ -397,7 +401,7 @@ func (s *Store) failWork(ctx context.Context, item workItem, at time.Time, cause
 	delay := time.Second << min(item.failures, 8)
 	message := "source_unavailable"
 	blocked := false
-	if errors.Is(cause, storage.ErrObjectTooLarge) {
+	if errors.Is(cause, storage.ErrObjectTooLarge) || errors.Is(cause, archive.ErrSourceTooLarge) {
 		message = "source_or_projection_too_large"
 		blocked = true
 	}

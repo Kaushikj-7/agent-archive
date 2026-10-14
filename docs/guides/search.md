@@ -78,7 +78,8 @@ snapshots are still parsed in full; indexing is not an append-only parser.
 Refresh reports pending and failed work. Temporary failures use persisted
 exponential backoff (one second up to 256 seconds); retry after that delay.
 Oversized work stays blocked until its desired snapshot changes. A pass reads at
-most 64 sources and 32 MiB compressed data, so sessions with many retained
+most 64 sources and 32 MiB compressed data, with a 30-second deadline covering
+authoritative metadata reads and indexing, so sessions with many retained
 revisions may require another refresh. Each pass can also advance previously
 observed pending sessions. There is no automatic archive discovery or scheduled
 worker in this release. Cached search results report known pending/failed state,

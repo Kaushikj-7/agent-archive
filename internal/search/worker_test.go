@@ -13,6 +13,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agents/claude"
 	"github.com/wangjohn/agent-archive/internal/agents/codex"
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
@@ -624,5 +625,76 @@ func TestWorkerDoesNotReuseSourcesAcrossReaderIdentityChanges(t *testing.T) {
 				t.Fatalf("reader identity mismatch bypassed %+v %v gets=%d", progress, err, counted.gets)
 			}
 		})
+	}
+}
+
+// The active history source must retain reader's full producer identity checks.
+func TestWorkerHistoryActiveProducerChangeRequiresVerification(t *testing.T) {
+	t.Parallel()
+	metadata, _, objects := workerHistory(t)
+	s := openTest(t)
+	parsers := builtin.NewBuiltins()
+	at := metadata.CapturedAt
+	if err := s.Observe(t.Context(), metadata, parsers, at, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Run(t.Context(), objects, parsers, at, Budget{}); err != nil {
+		t.Fatal(err)
+	}
+	metadata.Harness.Version = "different-producer"
+	if err := s.Observe(t.Context(), metadata, parsers, at, 0); err != nil {
+		t.Fatal(err)
+	}
+	counted := &countedObjects{ObjectStore: objects}
+	progress, err := s.Run(t.Context(), counted, parsers, at, Budget{})
+	if err != nil || progress.Loaded != 1 || progress.Committed != 0 || progress.Failed != 1 || counted.gets != 1 {
+		t.Fatalf("active history identity bypassed verification: %+v gets=%d %v", progress, counted.gets, err)
+	}
+}
+
+// A new active revision can be the same publication that tightens privacy.
+func TestWorkerPrivacyChangeInvalidatesAcrossActiveRevisionRotation(t *testing.T) {
+	t.Parallel()
+	metadata, _, objects := workerHistory(t)
+	s := openTest(t)
+	parsers := builtin.NewBuiltins()
+	at := metadata.CapturedAt
+	if err := s.Observe(t.Context(), metadata, parsers, at, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Run(t.Context(), objects, parsers, at, Budget{}); err != nil {
+		t.Fatal(err)
+	}
+	metadata.History.CurrentRevision = "44444444-4444-4444-8444-444444444444"
+	metadata.FilterVersion = "6"
+	if metadata.FilterVersion == archive.FilterVersion {
+		metadata.FilterVersion = "7"
+	}
+	if err := s.Observe(t.Context(), metadata, parsers, at, 0); err != nil {
+		t.Fatal(err)
+	}
+	page, err := s.Search(t.Context(), Query{Text: "checksum"})
+	if err != nil || len(page.Hits) != 0 {
+		t.Fatalf("old privacy text served across rotation: %+v %v", page, err)
+	}
+}
+
+func TestWorkerDecompressedOversizeStaysBlocked(t *testing.T) {
+	t.Parallel()
+	metadata, _, objects := verifiedFixture(t, "claude", workerTranscript)
+	s := openTest(t)
+	parsers := builtin.NewBuiltins()
+	at := metadata.CapturedAt
+	if err := s.Observe(t.Context(), metadata, parsers, at, 0); err != nil {
+		t.Fatal(err)
+	}
+	counted := &countedObjects{ObjectStore: objects}
+	progress, err := s.Run(t.Context(), counted, parsers, at, Budget{Limits: reader.Limits{MaxUncompressedBytes: 1}})
+	if err != nil || progress.Failed != 1 || counted.gets != 1 {
+		t.Fatalf("initial limit: %+v %v", progress, err)
+	}
+	progress, err = s.Run(t.Context(), counted, parsers, at.Add(time.Hour), Budget{Limits: reader.Limits{MaxUncompressedBytes: 1}})
+	if err != nil || progress.Loaded != 0 || counted.gets != 1 {
+		t.Fatalf("impossible unit retried: %+v gets=%d %v", progress, counted.gets, err)
 	}
 }
