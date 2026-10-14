@@ -31,6 +31,7 @@ concurrency:
 # Every action is pinned to a full commit SHA; keep these in step with test.yml.
 jobs:
   linux-race:
+    name: Extended Linux race
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'linux'))
     runs-on: ubuntu-latest
     timeout-minutes: 30
