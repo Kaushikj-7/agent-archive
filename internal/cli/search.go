@@ -28,12 +28,15 @@ type searchCommandDependencies interface {
 }
 
 type contentSearchOptions struct {
-	query            search.Query
-	refresh          bool
-	session, read    string
-	offset, maxBytes int
-	project          string
-	all, hasQuery    bool
+	query    search.Query
+	refresh  bool
+	session  string
+	read     string
+	offset   int
+	maxBytes int
+	project  string
+	all      bool
+	hasQuery bool
 }
 
 func runSearchCommand(args []string, stdout, stderr io.Writer, env searchCommandDependencies) int {
@@ -250,13 +253,13 @@ func searchCommandError(stderr io.Writer, err error) int {
 func contentSearchFilters(fs *commandFlags, opts *contentSearchOptions, replay, children, since, until string, now time.Time) int {
 	for _, flag := range []struct {
 		value  string
-		target *string
+		target *search.Inclusion
 	}{{replay, &opts.query.Replay}, {children, &opts.query.Children}} {
 		parsed, valid := replayFilterFlag(replaysFlag(flag.value))
 		if !valid {
 			return fs.usageError("--replays and --children accept hide, include or only")
 		}
-		*flag.target = string(parsed)
+		*flag.target = search.Inclusion(parsed)
 	}
 	for _, flag := range []struct {
 		value  string

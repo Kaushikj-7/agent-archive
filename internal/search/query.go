@@ -18,53 +18,73 @@ import (
 
 // Scope mirrors repository/name/project fallback without loading metadata during search.
 type Scope struct {
-	Restricted, Named    bool
-	RepoKey, ProjectName string
-	ProjectIDs           []string
+	Restricted  bool     `json:"Restricted"`
+	Named       bool     `json:"Named"`
+	RepoKey     string   `json:"RepoKey"`
+	ProjectName string   `json:"ProjectName"`
+	ProjectIDs  []string `json:"ProjectIDs"`
 }
+
+// Inclusion selects all, hidden, or exclusively included replay/child sessions.
+type Inclusion string
+
+// Inclusion values preserve the existing serialized scope vocabulary.
+const (
+	IncludeAll Inclusion = ""
+	Hide       Inclusion = "hide"
+	Only       Inclusion = "only"
+)
 
 // Query applies scope before ranking/grouping. Empty Project means all projects.
 // Replay and Children accept "" (all), "hide", or "only".
 type Query struct {
-	Scope                  Scope
-	Text, Project, Harness string
-	From, To               time.Time
-	Replay, Children       string
-	Limit                  int
-	Cursor                 string
+	Scope    Scope     `json:"Scope"`
+	Text     string    `json:"Text"`
+	Project  string    `json:"Project"`
+	Harness  string    `json:"Harness"`
+	From     time.Time `json:"From"`
+	To       time.Time `json:"To"`
+	Replay   Inclusion `json:"Replay"`
+	Children Inclusion `json:"Children"`
+	Limit    int       `json:"Limit"`
+	Cursor   string    `json:"Cursor"`
 }
 
 // Hit is one session's best bounded match. Title matches have nil Reference;
 // MatchCount counts matching passages, not substring occurrences (overlap may
 // contribute additional passages for long messages).
 type Hit struct {
-	SessionID, Title, Snippet, Role, Harness string
-	Reference                                *Reference
-	MatchCount                               int
-	CapturedAt                               time.Time
-	Gaps                                     []Gap
+	SessionID  string     `json:"SessionID"`
+	Title      string     `json:"Title"`
+	Snippet    string     `json:"Snippet"`
+	Role       string     `json:"Role"`
+	Harness    string     `json:"Harness"`
+	Reference  *Reference `json:"Reference"`
+	MatchCount int        `json:"MatchCount"`
+	CapturedAt time.Time  `json:"CapturedAt"`
+	Gaps       []Gap      `json:"Gaps"`
 }
 
 // Page is bounded output from one short read transaction. Cursors expire on an
 // index write; callers restart explicitly rather than silently skip results.
 type Page struct {
-	Hits        []Hit
-	Next        string
-	Generation  int64
-	Observation Observation
+	Hits        []Hit       `json:"Hits"`
+	Next        string      `json:"Next"`
+	Generation  int64       `json:"Generation"`
+	Observation Observation `json:"Observation"`
 }
 
 // ErrCursorChanged requires restarting pagination after indexing changes.
 var ErrCursorChanged = errors.New("search index changed during pagination; restart search")
 
 type pageCursor struct {
-	Generation int64
-	Query      string
-	TitleHit   int
-	Score      float64
-	Role       int
-	Captured   int64
-	Session    string
+	Generation int64   `json:"Generation"`
+	Query      string  `json:"Query"`
+	TitleHit   int     `json:"TitleHit"`
+	Score      float64 `json:"Score"`
+	Role       int     `json:"Role"`
+	Captured   int64   `json:"Captured"`
+	Session    string  `json:"Session"`
 }
 
 // MatchExpression accepts literal whitespace-separated terms, quoted phrases,
@@ -166,8 +186,8 @@ func (s *Store) Search(ctx context.Context, q Query) (Page, error) {
 	if err != nil {
 		return page, err
 	}
-	for _, v := range []string{q.Replay, q.Children} {
-		if v != "" && v != "hide" && v != "only" {
+	for _, v := range []Inclusion{q.Replay, q.Children} {
+		if v != IncludeAll && v != Hide && v != Only {
 			return page, errors.New("invalid search scope")
 		}
 	}
@@ -209,6 +229,7 @@ func (s *Store) Search(ctx context.Context, q Query) (Page, error) {
 	if err != nil {
 		return page, err
 	}
+	defer func() { _ = rows.Close() }()
 	type selected struct {
 		pid      int64
 		session  string
@@ -222,13 +243,11 @@ func (s *Store) Search(ctx context.Context, q Query) (Page, error) {
 	for rows.Next() {
 		var v selected
 		if err = rows.Scan(&v.pid, &v.session, &v.titleHit, &v.score, &v.role, &v.captured, &v.matches); err != nil {
-			_ = rows.Close()
 			return page, err
 		}
 		chosen = append(chosen, v)
 	}
 	err = rows.Err()
-	_ = rows.Close()
 	if err != nil {
 		return page, err
 	}
@@ -237,11 +256,8 @@ func (s *Store) Search(ctx context.Context, q Query) (Page, error) {
 		chosen = chosen[:q.Limit]
 	}
 	for _, v := range chosen {
-		var hit Hit
+		hit := Hit{MatchCount: v.matches, CapturedAt: time.Unix(0, v.captured).UTC()}
 		var ref, gaps []byte
-		hit.SessionID = v.session
-		hit.MatchCount = v.matches
-		hit.CapturedAt = time.Unix(0, v.captured).UTC()
 		// Only selected session hits invoke snippet(), never all FTS candidates.
 		err = tx.QueryRowContext(ctx, `SELECT s.session_id,s.harness,s.title,p.reference,p.role,s.gaps,snippet(search_fts,?,'','',' … ',32) FROM search_fts JOIN search_passages p ON p.id=search_fts.rowid JOIN search_sessions s ON s.id=p.session WHERE search_fts MATCH ? AND search_fts.rowid=?`, 1-v.titleHit, expression, v.pid).Scan(&hit.SessionID, &hit.Harness, &hit.Title, &ref, &hit.Role, &gaps, &hit.Snippet)
 		if err != nil {

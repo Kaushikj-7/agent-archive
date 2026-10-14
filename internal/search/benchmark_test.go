@@ -15,7 +15,8 @@ import (
 
 type countedObjects struct {
 	storage.ObjectStore
-	gets, bytes int
+	gets  int
+	bytes int
 }
 
 func (s *countedObjects) GetLimited(ctx context.Context, key string, limit int64) ([]byte, error) {

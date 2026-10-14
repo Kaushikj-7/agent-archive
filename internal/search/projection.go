@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -21,24 +22,27 @@ import (
 
 // ExtractorVersion changes whenever passage visibility or addressing changes.
 const ExtractorVersion = "1"
+
 const passageBytes = 8192
+
 const overlapBytes = 1024
 
 // maxSessionBytes bounds the eager explicit-refresh slice before S2 adds per-source work.
 const maxSessionBytes = 32 << 20
+
 const maxSessionPassages = 100000
 
 // Source identifies both exact bytes and their interpretation, independently of
 // display metadata. Destination must include the installation/privacy context.
 type Source struct {
-	Destination      string
-	SessionID        string
-	RevisionID       string
-	Reference        archive.SourceReference
-	ParserVersion    string
-	FilterVersion    string
-	SchemaVersion    int
-	ExtractorVersion string
+	Destination      string                  `json:"Destination"`
+	SessionID        string                  `json:"SessionID"`
+	RevisionID       string                  `json:"RevisionID"`
+	Reference        archive.SourceReference `json:"Reference"`
+	ParserVersion    string                  `json:"ParserVersion"`
+	FilterVersion    string                  `json:"FilterVersion"`
+	SchemaVersion    int                     `json:"SchemaVersion"`
+	ExtractorVersion string                  `json:"ExtractorVersion"`
 }
 
 // Key binds reuse to ownership and interpretation, not just the byte checksum.
@@ -51,29 +55,32 @@ func (s Source) Key() string {
 // Reference addresses byte bounds in a normalized turn's presentation text.
 // Record is a retained native record index, never a rendered line number.
 type Reference struct {
-	Source Source
-	Record int
-	Start  int
-	End    int
+	Source Source `json:"Source"`
+	Record int    `json:"Record"`
+	Start  int    `json:"Start"`
+	End    int    `json:"End"`
 }
 
 // Passage is a bounded projection; Physical identifies a proven history record
 // for within-session deduplication. Empty Physical never authorizes text dedup.
 type Passage struct {
-	Reference Reference
-	Role      string
-	Text      string
-	Physical  string
+	Reference Reference `json:"Reference"`
+	Role      string    `json:"Role"`
+	Text      string    `json:"Text"`
+	Physical  string    `json:"Physical"`
 }
 
 // Gap records unsupported retained coverage without storing source content.
-type Gap struct{ RevisionID, Reason string }
+type Gap struct {
+	RevisionID string `json:"RevisionID"`
+	Reason     string `json:"Reason"`
+}
 
 // Projection contains one source's disposable searchable passages.
 type Projection struct {
-	Source   Source
-	Passages []Passage
-	Gap      *Gap
+	Source   Source    `json:"Source"`
+	Passages []Passage `json:"Passages"`
+	Gap      *Gap      `json:"Gap"`
 }
 
 // Extract projects an already interpreted verified bundle. The caller supplies
@@ -86,9 +93,7 @@ func Extract(source Source, bundle archive.SourceBundle, analysis archive.Analys
 	if source.SessionID != bundle.ArchiveSessionID || source.FilterVersion != bundle.Capture.FilterVersion || source.SchemaVersion != bundle.SchemaVersion || source.ExtractorVersion != ExtractorVersion {
 		return out, errors.New("search projection provenance disagrees with verified source")
 	}
-	filterVersion, versionErr := strconv.Atoi(bundle.Capture.FilterVersion)
-	currentFilterVersion, _ := strconv.Atoi(archive.FilterVersion)
-	if versionErr != nil || filterVersion < 6 || filterVersion > currentFilterVersion {
+	if historicalVisibilityUnavailable(bundle.Capture.FilterVersion) {
 		out.Gap = &Gap{source.RevisionID, "historical_visibility"}
 		return out, nil
 	}
@@ -263,8 +268,10 @@ var (
 // Context contains a bounded byte interval within the referenced passage.
 // Next is an absolute byte offset; zero means the passage is complete.
 type Context struct {
-	Text             string
-	Start, End, Next int
+	Text  string `json:"Text"`
+	Start int    `json:"Start"`
+	End   int    `json:"End"`
+	Next  int    `json:"Next"`
 }
 
 // ReadPassage rechecks authoritative metadata and verified bytes, then resolves
@@ -293,14 +300,7 @@ func ReadPassage(ctx context.Context, objects storage.ObjectStore, parsers agent
 	if e != nil {
 		return Context{}, fmt.Errorf("%w: %w", ErrUnavailable, e)
 	}
-	member := false
-	for _, source := range refs {
-		if source == ref.Source.Reference {
-			member = true
-			break
-		}
-	}
-	if !member {
+	if !slices.Contains(refs, ref.Source.Reference) {
 		return Context{}, ErrChanged
 	}
 	p, err := LoadProjection(ctx, objects, parsers, ref.Source.Destination, m, ref.Source.RevisionID, limits)
@@ -334,4 +334,13 @@ func ReadPassage(ctx context.Context, objects storage.ObjectStore, parsers agent
 		}
 	}
 	return Context{}, ErrChanged
+}
+
+func historicalVisibilityUnavailable(version string) bool {
+	filterVersion, err := strconv.Atoi(version)
+	if err != nil {
+		return true
+	}
+	currentFilterVersion, _ := strconv.Atoi(archive.FilterVersion)
+	return filterVersion < 6 || filterVersion > currentFilterVersion
 }

@@ -117,8 +117,9 @@ func (s *Store) Close() error { return s.db.Close() }
 
 // WriteStats separates metadata-only updates from passage/FTS mutations.
 type WriteStats struct {
-	Deleted, Inserted int
-	Unchanged         bool
+	Deleted   int  `json:"Deleted"`
+	Inserted  int  `json:"Inserted"`
+	Unchanged bool `json:"Unchanged"`
 }
 
 // Replace atomically installs a complete observed session projection. This is
@@ -275,8 +276,9 @@ func (s *Store) project(metadata archive.Metadata, projections []Projection) ([]
 // Observation is query coverage at a known local observation, not a promise of
 // immediately current remote archive contents. S3 supplies reconciliation facts.
 type Observation struct {
-	LastReconciled  time.Time
-	Pending, Failed int
-	Complete        bool
-	Limitations     []string
+	LastReconciled time.Time `json:"LastReconciled"`
+	Pending        int       `json:"Pending"`
+	Failed         int       `json:"Failed"`
+	Complete       bool      `json:"Complete"`
+	Limitations    []string  `json:"Limitations"`
 }

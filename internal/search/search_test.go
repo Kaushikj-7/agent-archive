@@ -25,15 +25,15 @@ import (
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
-func openTest(t testing.TB) *Store {
-	t.Helper()
-	s, err := Open(context.Background(), t.TempDir(), "test/context")
+func openTest(tb testing.TB) *Store {
+	tb.Helper()
+	s, err := Open(context.Background(), tb.TempDir(), "test/context")
 	if err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
-	t.Cleanup(func() {
+	tb.Cleanup(func() {
 		if err := s.Close(); err != nil {
-			t.Error(err)
+			tb.Error(err)
 		}
 	})
 	return s
@@ -67,7 +67,7 @@ func TestScopedLiteralSearchAndSnippets(t *testing.T) {
 		}
 	}
 	for _, query := range []string{"checksum", `"foo_bar.go: ENOENT"`, "café", "Ελληνικά", "日本語", "OR", "NEAR", "prefix*", `"literal OR"`} {
-		page, err := s.Search(t.Context(), Query{Text: query, Project: "p", Harness: "codex", Replay: "hide", Children: "hide", From: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)})
+		page, err := s.Search(t.Context(), Query{Text: query, Project: "p", Harness: "codex", Replay: Hide, Children: Hide, From: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)})
 		if err != nil {
 			t.Fatalf("%s: %v", query, err)
 		}
@@ -232,74 +232,74 @@ func TestPrivateDestinationStorageAndReopen(t *testing.T) {
 
 // verifiedFixture uses the production filter, bundle codec, metadata builder,
 // object store reader and parser. No native home, app or bucket is accessed.
-func verifiedFixture(t testing.TB, harness, raw string) (archive.Metadata, archive.SourceBundle, *storagetest.MemoryStore) {
-	t.Helper()
+func verifiedFixture(tb testing.TB, harness, raw string) (archive.Metadata, archive.SourceBundle, *storagetest.MemoryStore) {
+	tb.Helper()
 	var adapter interface {
 		archive.Adapter
 		FilterJSONL(io.Reader) (archive.FilteredTranscript, error)
 	}
 	var parser agentapi.TranscriptParser
-	switch harness {
-	case "codex":
+	switch fixtureHarness(harness) {
+	case fixtureCodex:
 		adapter = codex.Filter{}
 		parser = codex.Parser{}
-	case "claude":
+	case fixtureClaude:
 		adapter = claude.Filter{}
 		parser = claude.Parser{}
-	case "cursor":
+	case fixtureCursor:
 		adapter = cursor.Filter{}
 		parser = cursor.Parser{}
 	default:
-		t.Fatal("bad fixture harness")
+		tb.Fatal("bad fixture harness")
 	}
 	filtered, err := adapter.FilterJSONL(strings.NewReader(raw))
 	if err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	reg := archive.SessionRegistration{ArchiveSessionID: "session", NativeSessionID: "native", ProjectID: "p", ProjectRoot: "/synthetic", Harness: archive.Harness{Name: harness}, SessionStartedAt: at}
 	bundle, err := archive.NewSourceBundle(reg, adapter, filtered, at, nil)
 	if err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
-	return publishFixture(t, bundle, parser)
+	return publishFixture(tb, bundle, parser)
 }
 
-func publishFixture(t testing.TB, bundle archive.SourceBundle, parser agentapi.TranscriptParser) (archive.Metadata, archive.SourceBundle, *storagetest.MemoryStore) {
-	t.Helper()
+func publishFixture(tb testing.TB, bundle archive.SourceBundle, parser agentapi.TranscriptParser) (archive.Metadata, archive.SourceBundle, *storagetest.MemoryStore) {
+	tb.Helper()
 	compressed, err := archive.BuildCompressedSource(bundle)
 	if err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	key, err := archive.SourceObjectKey(bundle, compressed.SHA256)
 	if err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	objects := storagetest.NewMemoryStore()
 	if err = objects.Put(context.Background(), key, compressed.Bytes); err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	analysis, parseErr := parser.Parse(context.Background(), bundle)
 	m, err := archive.BuildMetadataWithAnalysis(bundle, analysis, parseErr, "synthetic", bundle.Capture.CapturedAt, bundle.Capture.CapturedAt, archive.SourceReference{Key: key, SHA256: compressed.SHA256, CompressedBytes: len(compressed.Bytes)}, archive.ParserInfo{Version: parser.Version()})
 	if err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
-	putMetadata(t, objects, m)
+	putMetadata(tb, objects, m)
 	return m, bundle, objects
 }
 
-func putMetadata(t testing.TB, objects *storagetest.MemoryStore, m archive.Metadata) {
-	t.Helper()
+func putMetadata(tb testing.TB, objects *storagetest.MemoryStore, m archive.Metadata) {
+	tb.Helper()
 	key, err := archive.MetadataObjectKey(m.Harness.Name, m.SessionID)
 	if err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	b, err := json.Marshal(m)
 	if err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	if err = objects.Put(context.Background(), key, b); err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 }
 
@@ -637,5 +637,46 @@ func TestHistoricalVisibilityIsAnExplicitGap(t *testing.T) {
 		if _, err = ReadPassage(t.Context(), objects, builtin.NewBuiltins(), ref, 0, 8192, reader.Limits{}); !errors.Is(err, ErrUnsupported) {
 			t.Fatalf("%s passage read: %v", version, err)
 		}
+	}
+}
+
+type fixtureHarness string
+
+const (
+	fixtureCodex  fixtureHarness = "codex"
+	fixtureClaude fixtureHarness = "claude"
+	fixtureCursor fixtureHarness = "cursor"
+)
+
+func TestPersistedReferenceAndCursorJSONRemainCompatible(t *testing.T) {
+	const legacyReference = `{"Source":{"Destination":"","SessionID":"","RevisionID":"","Reference":{"key":"","sha256":"","compressed_bytes":0},"ParserVersion":"","FilterVersion":"","SchemaVersion":0,"ExtractorVersion":""},"Record":0,"Start":0,"End":0}`
+	var reference Reference
+	if err := json.Unmarshal([]byte(legacyReference), &reference); err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(reference)
+	if err != nil || string(encoded) != legacyReference {
+		t.Fatalf("persisted reference changed: %s %v", encoded, err)
+	}
+	const legacyCursor = `{"Generation":1,"Query":"identity","TitleHit":0,"Score":-0.5,"Role":1,"Captured":7,"Session":"codex/s"}`
+	var cursor pageCursor
+	if err = json.Unmarshal([]byte(legacyCursor), &cursor); err != nil {
+		t.Fatal(err)
+	}
+	encoded, err = json.Marshal(cursor)
+	if err != nil || string(encoded) != legacyCursor {
+		t.Fatalf("cursor changed: %s %v", encoded, err)
+	}
+	const legacyQuery = `{"Scope":{"Restricted":false,"Named":false,"RepoKey":"","ProjectName":"","ProjectIDs":null},"Text":"checksum","Project":"","Harness":"","From":"0001-01-01T00:00:00Z","To":"0001-01-01T00:00:00Z","Replay":"hide","Children":"only","Limit":0,"Cursor":""}`
+	var query Query
+	if err = json.Unmarshal([]byte(legacyQuery), &query); err != nil {
+		t.Fatal(err)
+	}
+	encoded, err = json.Marshal(query)
+	if err != nil || string(encoded) != legacyQuery {
+		t.Fatalf("query identity encoding changed: %s %v", encoded, err)
+	}
+	if query.Replay != Hide || query.Children != Only {
+		t.Fatalf("legacy choices changed: %+v", query)
 	}
 }
