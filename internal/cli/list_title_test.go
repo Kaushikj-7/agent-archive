@@ -90,6 +90,8 @@ func TestListTitle(t *testing.T) {
 		{name: "slash command with a long number", in: "/code-review 1728912345678", want: "/code-review 1728912345678"},
 		{name: "slash command with a letters-only hex run", in: "/code-review deadbeefcafebabe", want: "/code-review deadbeefcafebabe"},
 		{name: "longer short ID", in: "abcdefab-", want: "abcdefab-"},
+		{name: "abbreviation from the list", in: "compare a vs. b in the list output", want: "Compare a vs. b in the list output"},
+		{name: "quotes at both ends that are not a pair", in: "\"foo\" or \"bar\"", want: "\"foo\" or \"bar\""},
 		{name: "nested markup", in: "> - \"quoted bullet item\"", want: "Quoted bullet item"},
 	}
 	for _, tc := range cases {
