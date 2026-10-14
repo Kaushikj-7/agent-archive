@@ -474,6 +474,122 @@ def verify_source_audit(directory, source, *, expected_source_proof=None, requir
     return report
 
 
+
+NATIVE_PACKAGES = ['./internal/credentials', './internal/scheduler/launchd',
+                   './internal/scheduler/host', './internal/terminal',
+                   './internal/termlaunch', './internal/sourcefacts', './internal/discovery']
+NATIVE_CLI = ['TestScreens', 'TestGuidedPromptTerminalCells',
+              'TestGuidedPromptEmissionPreservesTerminalOwnership',
+              'TestGuidedCommandsTerminalOwnership', 'TestPairingCodeDisplayRecognizesWrappedTerminal',
+              'TestGuidedPromptCollapseRequiresOwnedVisibleRows', 'TestGuidedEOFNeverResolvesDefault',
+              'TestFirstSetupLaunchctlSequence', 'TestSetupAndUninstallNeedATerminal',
+              'TestBrowserKeysRestoreTheTerminal', 'TestStatsScreenOnARealTerminal',
+              'TestSupportedDiscoveryPublishesWithoutHooksAndAcceptsRecentCopy']
+NATIVE_COMMON = ['go', 'test', '-race', '-short', '-count=1', '-json', '-timeout', '10m']
+
+
+def native_selections(sensitive):
+    cli = NATIVE_CLI + (PR_REGRESSIONS['cli']['internal/cli'] if sensitive else [])
+    selected = {MODULE+'internal/cli': sorted(cli)}
+    if sensitive:
+        selected[MODULE+'internal/catalog'] = sorted(PR_REGRESSIONS['catalog']['internal/catalog'])
+    return selected
+
+
+def native_commands(sensitive):
+    selected = native_selections(sensitive)
+    commands = [('native-packages', NATIVE_COMMON+NATIVE_PACKAGES)]
+    for pkg, names in selected.items():
+        pattern = '^('+'|'.join(re.escape(n) for n in names)+')$'
+        commands.append(('native-'+pkg.rsplit('/', 1)[1],
+                         NATIVE_COMMON+['-run', pattern, './'+pkg[len(MODULE):]]))
+    return commands
+
+
+def verify_native_smoke(directory, report, sensitive):
+    """Reconcile compiled inventories and complete fresh native streams."""
+    directory = Path(directory)
+    native = report.get('native_smoke', {})
+    proof = full_race.source_proof(ROOT)
+    if (native.get('schema') != 1 or native.get('source_proof') != proof
+            or native.get('post_source_proof') != proof
+            or native.get('context') != {'GOOS': 'darwin', 'CGO_ENABLED': '1', 'GOVERSION': 'go1.27.2'}
+            or native.get('sensitive') is not sensitive
+            or native.get('build_command') != ['go', 'build', './...']
+            or native.get('build_sha256') != hashlib.sha256((directory/'native-build.log').read_bytes()).hexdigest()):
+        raise Failure('native production build/source/context mismatch')
+    listing = discover_from_log((directory/'native-list.jsonl').read_text())
+    selected = native_selections(sensitive)
+    packages = {MODULE+p[2:] for p in NATIVE_PACKAGES}
+    if set(listing) != packages | set(selected) or listing != native.get('discovery'):
+        raise Failure('native compiled inventory mismatch')
+    if any(not set(names) <= set(listing.get(pkg, [])) for pkg, names in selected.items()):
+        raise Failure('native selected test missing from compiled inventory')
+    allowed = dict(native_commands(sensitive))
+    invocations = [i for i in report['invocations'] if i['log'].startswith('native-')]
+    if len(invocations) != len(allowed) or {i['log'] for i in invocations} != {n+'.jsonl' for n in allowed}:
+        raise Failure('native invocation coverage mismatch')
+    for invocation in invocations:
+        name = invocation['log'][:-6]
+        if (invocation['command'] != allowed[name] or invocation.get('performance_enabled')
+                or invocation.get('real_systemd_enabled')):
+            raise Failure('native invocation command/environment mismatch')
+        raw = (directory/invocation['log']).read_text()
+        expected = ({p: listing[p] for p in packages} if name == 'native-packages'
+                    else {p: names for p, names in selected.items() if name == 'native-'+p.rsplit('/', 1)[1]})
+        verify_pr_stream(raw, expected)
+        evidence = body_evidence(raw, True)
+        if evidence != invocation['evidence']:
+            raise Failure('native raw evidence mismatch')
+        observed = {(r['package'], r['test'].split('/')[0]) for r in evidence['actual']}
+        if observed != {(p, n) for p, names in expected.items() for n in names}:
+            raise Failure('native compiled parents did not all terminate')
+        # Ordinary native packages retain their established opt-in skips (real
+        # Keychain, unavailable host capabilities). Every selected CLI/catalog
+        # regression and every observed child must actually pass.
+        if name != 'native-packages':
+            verify_selected(evidence['actual'], expected)
+    phases = native.get('phase_seconds', {})
+    if set(phases) != {'build', 'discovery', *allowed} or any(
+            type(v) not in (int, float) or not 0 <= v < float('inf') for v in phases.values()):
+        raise Failure('native phase timings missing or malformed')
+
+
+def run_native_smoke(out, deadline, report, save, execute, sensitive):
+    context = json.loads(subprocess.check_output(['go', 'env', '-json', 'GOOS', 'CGO_ENABLED', 'GOVERSION'], timeout=30))
+    if context != {'GOOS': 'darwin', 'CGO_ENABLED': '1', 'GOVERSION': 'go1.27.2'}:
+        raise Failure('macOS smoke requires native Darwin/cgo Go 1.27.2')
+    native = report['native_smoke'] = {'schema': 1, 'source_proof': full_race.source_proof(ROOT),
+        'context': context, 'sensitive': sensitive, 'build_command': ['go', 'build', './...'], 'phase_seconds': {}}
+    save()
+    start = time.monotonic()
+    checked(native['build_command'], out/'native-build.log', deadline)
+    native['phase_seconds']['build'] = time.monotonic()-start
+    native['build_sha256'] = hashlib.sha256((out/'native-build.log').read_bytes()).hexdigest()
+    selected = native_selections(sensitive)
+    start = time.monotonic()
+    listing = discover(NATIVE_PACKAGES+['./'+p[len(MODULE):] for p in selected], out/'native-list.jsonl', deadline, race=True)
+    native['phase_seconds']['discovery'] = time.monotonic()-start
+    native['discovery'] = listing
+    if any(not set(names) <= set(listing.get(pkg, [])) for pkg, names in selected.items()):
+        raise Failure('native selected test missing from compiled inventory')
+    save()
+    # Keep host-sensitive groups serial: launchd observers and PTY tests must
+    # not compete with a second test process mutating shared native resources.
+    # One CLI process covers both base and conditional parents, avoiding a
+    # second race startup, listing, linking and repeated TestMain execution.
+    for name, command in native_commands(sensitive):
+        start = time.monotonic()
+        chosen = {p: names for p, names in selected.items()
+                  if name == 'native-'+p.rsplit('/', 1)[1]}
+        execute(command, name, short=True, selected=chosen or None)
+        native['phase_seconds'][name] = time.monotonic()-start
+        save()
+    native['post_source_proof'] = full_race.source_proof(ROOT)
+    save()
+    verify_native_smoke(out, report, sensitive)
+
+
 def run_suite(tier, suite, out, extras=None, seconds=2400, *, own_plain_vet=False):
     if own_plain_vet and (tier != 'pr' or suite != 'audit'):
         raise Failure('plain vet ownership requires PR source-audit suite')
@@ -539,21 +655,11 @@ def run_suite(tier, suite, out, extras=None, seconds=2400, *, own_plain_vet=Fals
             raise Failure('plain source audit source changed during execution')
     common = ['go', 'test', '-race', '-count=1', '-json', '-timeout', '20m']
     if suite == 'macos' and tier in ('pr', 'daily'):
-        execute(['bash', 'scripts/test_macos_smoke.sh'], 'native-smoke', short=True)
-        if not report['invocations'][-1]['evidence']['actual']:
-            raise Failure('native smoke executed no bodies')
+        run_native_smoke(out, deadline, report,
+            lambda: path.write_text(json.dumps(report, indent=2)+'\n'), execute,
+            sensitive=bool(tier == 'pr' and extras and extras['native']))
     if suite == 'macos' and tier == 'daily':
         execute(common + ['-short', './internal/config', './internal/catalog', './internal/capture', './internal/sourceio'], 'native-integration', True)
-    if suite == 'macos' and tier == 'pr' and extras and extras['native']:
-        selected = {MODULE+'internal/cli': ['TestCodexExceptionRequiresNamedOtherAppConsentBeforeAdmission', 'TestRealCLIOverflowShowKeepsFullBodyAndSourceAuthority', 'TestRealCLICatalogDefaultList50Bounded'],
-                    MODULE+'internal/catalog': ['TestPublicationBoundsAndCoordinatorMutationRefuseBeforeWrite', 'TestMissingCorruptAndOversizedNodesFailClosed', 'TestPickerUnsupportedAndBudgetAreNotEmptyProofs']}
-        for pkg, names in selected.items():
-            relative = './'+pkg[len(MODULE):]
-            listing = discover([relative], out/('native-list-'+pkg.rsplit('/',1)[1]+'.jsonl'), deadline, race=True)
-            if not set(names) <= set(listing.get(pkg, [])):
-                raise Failure('native sensitive regression absent from discovery')
-            pattern = '^('+'|'.join(re.escape(n) for n in names)+')$'
-            execute(common + ['-short', '-run', pattern, relative], 'native-sensitive-'+pkg.rsplit('/',1)[1], True, selected={pkg:names})
     if suite in ('linux', 'extra') or suite == 'macos' and tier == 'full':
         packages = extras['packages'] if suite == 'extra' else ['./...']
         if packages:
