@@ -26,7 +26,9 @@ follow [Semantic Versioning](https://semver.org/).
   Code subagent finishing in that window was never captured. Discovery now
   asks for proof about its own session only; the census stays in force for
   everything else, and the next pass certifies the discovered session without
-  a full rebuild.
+  a full rebuild. A subagent that finishes while recovery is genuinely pending,
+  or while the capture lock is busy, is now queued and replayed by the next
+  collector pass instead of being dropped.
 
 ## [0.2.1]
 
