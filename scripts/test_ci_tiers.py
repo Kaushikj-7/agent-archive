@@ -172,7 +172,16 @@ class FocusedPRTest(unittest.TestCase):
                            lambda r:r['extras'].update(ordinary_coverage='omitted')):
                 changed=copy.deepcopy(original);mutate(changed);(out/'tier.json').write_text(json.dumps(changed))
                 with self.assertRaises(tier.Failure):tier.verify_full(out,plan)
+            # A truncated stream can retain every selected body PASS and the
+            # same body evidence while losing the package's final verdict.
             (out/'tier.json').write_text(json.dumps(original))
+            log = out/original['invocations'][0]['log']
+            complete = log.read_text()
+            log.write_text(events(dict(Action='run',Package=package,Test=name),
+                                  dict(Action='pass',Package=package,Test=name)))
+            self.assertEqual(tier.body_evidence(log.read_text(), True), original['invocations'][0]['evidence'])
+            with self.assertRaises(tier.Failure):tier.verify_full(out,plan)
+            log.write_text(complete)
             (out/'representative-list.jsonl').write_text(events(dict(Action='pass',Package=package)))
             with self.assertRaises(tier.Failure):tier.verify_full(out,plan)
 
@@ -186,6 +195,30 @@ class FocusedPRTest(unittest.TestCase):
         result=tier.extra_for_paths(['internal/cli/list.go'])
         self.assertFalse(result['systemd'])
         self.assertEqual(set(result['regressions']), {'internal/cli'})
+
+    def test_shared_setup_identity_dispatch_and_recovery_keep_manager_integration(self):
+        for path in ('internal/cli/cli.go', 'internal/cli/install_paths.go',
+                     'internal/cli/status.go', 'internal/setupjournal/recovery.go',
+                     'internal/setupresources/resource.go'):
+            with self.subTest(path=path):
+                self.assertTrue(tier.extra_for_paths([path])['systemd'])
+        self.assertFalse(tier.extra_for_paths(['internal/cli/list.go'])['systemd'])
+
+    def test_pr_native_smoke_does_not_download_the_scheduled_published_writer(self):
+        package = tier.MODULE+'internal/credentials'
+        name = 'TestNativeSmoke'
+        def checked(command, output, deadline, env=None):
+            self.assertEqual(command, ['bash', 'scripts/test_macos_smoke.sh'])
+            text = events(dict(Action='run', Package=package, Test=name),
+                          dict(Action='pass', Package=package, Test=name),
+                          dict(Action='pass', Package=package))
+            output.write_text(text)
+            return text
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(tier, 'git', return_value='a'*40), mock.patch.object(tier.full_race, 'source_proof', return_value={'source':'a'*40, 'tree':'b'*40}), mock.patch.object(tier, 'checked', side_effect=checked):
+            tier.run_suite('pr', 'macos', Path(d), tier.representative_fallback())
+            report = json.loads((Path(d)/'tier.json').read_text())
+            self.assertTrue(report['success'])
+            self.assertEqual([i['log'] for i in report['invocations']], ['native-smoke.jsonl'])
 
     def test_short_scale_counterparts_restore_explicit_weekly_children(self):
         entries={e['test']:e for e in tier.catalog()['restorations']}

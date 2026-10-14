@@ -67,6 +67,11 @@ PR_REGRESSIONS = {
 }
 
 
+# Shared CLI dispatch, installation identity and status observation participate
+# in setup/uninstall even though their filenames do not name those commands.
+SYSTEMD_SHARED_CLI = {'cli.go', 'install_paths.go', 'status.go'}
+
+
 def representative_fallback():
     # The required verdict reconciles the exact-source unrestricted Linux short
     # shards and native smoke. Unknown inputs do not duplicate that complete run.
@@ -95,7 +100,9 @@ def extra_for_paths(paths):
             if not found:
                 uncertain = True
             groups.update(found)
-            if len(components) > 2 and (components[1] == 'scheduler' or components[1] == 'cli' and any(word in components[-1] for word in ('setup', 'uninstall', 'systemd', 'scheduler'))):
+            if len(components) > 2 and (components[1] in {'scheduler', 'setupjournal', 'setupresources'}
+                    or components[1] == 'cli' and (components[-1] in SYSTEMD_SHARED_CLI
+                        or any(word in components[-1] for word in ('setup', 'uninstall', 'systemd', 'scheduler')))):
                 result['systemd'] = True
         else:
             uncertain = True
@@ -327,6 +334,8 @@ def run_suite(tier, suite, out, extras=None, seconds=2400):
             text = '\n'.join(line for line in text.splitlines() if line.startswith('{'))
         proof = body_evidence(text, short)
         if selected:
+            if tier == 'pr':
+                verify_pr_stream(text, selected)
             verify_selected(proof['actual'], selected, children, real_manager=real_manager)
         invocation['evidence'] = proof
         path.write_text(json.dumps(report, indent=2)+'\n')
@@ -389,7 +398,7 @@ def run_suite(tier, suite, out, extras=None, seconds=2400):
                 out, deadline, performance_env, report['full_schedule']['source_proof'])
             path.write_text(json.dumps(report, indent=2)+'\n')
             execute(PERFORMANCE, 'performance', env=performance_env)
-    if suite == 'macos':
+    if suite == 'macos' and tier in ('daily', 'full'):
         execute(['bash','scripts/test_published_writer.sh'],'published-writer', selected={MODULE+'internal/config':['TestPublishedWriterRefusesProtectedConfiguration']})
     if suite == 'fuzz' or suite == 'extra' and extras['fuzz']:
         listing = discover(['./...'], out/'fuzz-list.jsonl', deadline)
@@ -490,6 +499,15 @@ def verify_full(directory, plan):
         raise Failure('required full fuzz campaign missing')
 
 
+def verify_pr_stream(text, selected):
+    # Body PASS events alone do not establish a complete successful package.
+    try:
+        full_race.shards.coverage(text, {p: True for p in selected},
+                                  [n for names in selected.values() for n in names])
+    except full_race.shards.Failure as error:
+        raise Failure(str(error)) from error
+
+
 def verify_pr(directory, report, plan):
     """Recompute exact-source focused short evidence without calling it full."""
     if (report.get('schema') != 1 or report.get('success') is not True
@@ -531,6 +549,7 @@ def verify_pr(directory, report, plan):
             selected = selected_by_log[name]
             if any(not set(names) <= set(listing.get(pkg, [])) for pkg,names in selected.items()):
                 raise Failure('PR selected compiled parent absent')
+            verify_pr_stream((directory/name).read_text(), selected)
             verify_selected(proof['actual'], selected)
         if not short:
             listing = discover_from_log((directory/('systemd-list.jsonl' if name == 'systemd-systemd.jsonl' else 'cli-list.jsonl')).read_text())
@@ -538,6 +557,7 @@ def verify_pr(directory, report, plan):
             selected = {p:[n for n in names if re.search(pattern,n)] for p,names in listing.items()}
             if not any(selected.values()) or not invocation.get('real_systemd_enabled'):
                 raise Failure('PR real-manager selection empty/disabled')
+            verify_pr_stream((directory/name).read_text(), selected)
             verify_selected(proof['actual'], selected, real_manager=True)
 
 
