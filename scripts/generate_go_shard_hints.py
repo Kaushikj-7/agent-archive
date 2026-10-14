@@ -71,6 +71,10 @@ def stamp(event):
     try:
         if not match:
             raise ValueError('invalid RFC3339 timestamp')
+        # fromisoformat normalizes offsets such as +00:60 instead of rejecting
+        # them. RFC3339 requires an hour from 00 through 23 and minute 00..59.
+        if match[3] != 'Z' and (int(match[3][1:3]) > 23 or int(match[3][4:6]) > 59):
+            raise ValueError('invalid RFC3339 timezone offset')
         parsed = datetime.fromisoformat(match[1] + match[3].replace('Z', '+00:00'))
         return Decimal(str(parsed.timestamp())) + Decimal('0.' + (match[2] or '0'))
     except (ValueError, TypeError) as error:
