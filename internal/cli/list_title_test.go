@@ -12,7 +12,9 @@ import (
 // the edge cases its rules must leave alone.
 func TestListTitle(t *testing.T) {
 	cases := []struct {
-		name, in, want string
+		name string
+		in   string
+		want string
 	}{
 		{
 			name: "question with quoted phrase",

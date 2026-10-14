@@ -161,7 +161,7 @@ func pastedFilesTitle(text string) (string, bool) {
 		return "", false
 	}
 	rest := strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(text[len(pastedFilesPrefix):]), "#"))
-	name := ""
+	var name string
 	switch {
 	case strings.HasPrefix(rest, `"`):
 		name, _, _ = strings.Cut(rest[1:], `"`)
