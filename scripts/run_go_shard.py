@@ -27,13 +27,25 @@ class Failure(RuntimeError):
 def json_stream(text):
     decoder = json.JSONDecoder()
     items = []
-    while text.strip():
-        text = text.lstrip()
-        item, end = decoder.raw_decode(text)
+    index = 0
+    while index < len(text):
+        # Keep the complete input: copying each remaining suffix makes full
+        # race-log verification quadratic. isspace preserves strip's accepted
+        # separators, including concatenated pretty-printed go-list objects.
+        while index < len(text) and text[index].isspace():
+            index += 1
+        if index == len(text):
+            break
+        try:
+            item, end = decoder.raw_decode(text, index)
+        except json.JSONDecodeError as error:
+            # Preserve the previous record-relative error document/position.
+            # Only malformed input makes one suffix copy before termination.
+            raise json.JSONDecodeError(error.msg, text[index:], error.pos - index) from None
+        index = end
         if not isinstance(item, dict):
             raise Failure('JSON record is not an object')
         items.append(item)
-        text = text[end:]
     return items
 
 
