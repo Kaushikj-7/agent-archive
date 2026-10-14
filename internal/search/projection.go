@@ -87,7 +87,8 @@ func Extract(source Source, bundle archive.SourceBundle, analysis archive.Analys
 		return out, errors.New("search projection provenance disagrees with verified source")
 	}
 	filterVersion, versionErr := strconv.Atoi(bundle.Capture.FilterVersion)
-	if versionErr != nil || filterVersion < 6 {
+	currentFilterVersion, _ := strconv.Atoi(archive.FilterVersion)
+	if versionErr != nil || filterVersion < 6 || filterVersion > currentFilterVersion {
 		out.Gap = &Gap{source.RevisionID, "historical_visibility"}
 		return out, nil
 	}

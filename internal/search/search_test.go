@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -621,12 +622,20 @@ func TestExplicitSessionCapsAggregateReadsAndProjectionText(t *testing.T) {
 
 func TestHistoricalVisibilityIsAnExplicitGap(t *testing.T) {
 	_, bundle, _ := verifiedFixture(t, "claude", `{"type":"user","message":{"role":"user","content":"possibly generated checksum"}}`)
-	for _, version := range []string{"3", "5", "unknown"} {
+	current, err := strconv.Atoi(archive.FilterVersion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, version := range []string{"3", "5", "unknown", strconv.Itoa(current + 1)} {
 		bundle.Capture.FilterVersion = version
 		metadata, _, objects := publishFixture(t, bundle, claude.Parser{})
 		p, err := LoadSession(t.Context(), objects, builtin.NewBuiltins(), "test/context", metadata, reader.Limits{})
 		if err != nil || p[0].Gap == nil || p[0].Gap.Reason != "historical_visibility" || len(p[0].Passages) != 0 {
 			t.Fatalf("%s: %+v %v", version, p, err)
+		}
+		ref := Reference{Source: p[0].Source, Record: 0, Start: 0, End: 27}
+		if _, err = ReadPassage(t.Context(), objects, builtin.NewBuiltins(), ref, 0, 8192, reader.Limits{}); !errors.Is(err, ErrUnsupported) {
+			t.Fatalf("%s passage read: %v", version, err)
 		}
 	}
 }

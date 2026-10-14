@@ -25,9 +25,10 @@ are not attributed to the child's own conversation. Preserved alternatives are
 indexed; overlapping physical rollout/thread/ordinal records with identical
 role/text/chunk bounds are deduplicated within their session, preferring active.
 There is no cross-session deduplication. Text-only sources and missing/failed
-parsers return explicit coverage gaps. Sources with unknown privacy versions or versions older than 6 report a
-`historical_visibility` gap and contribute no message text; flags never retained
-cannot be reconstructed.
+parsers return explicit coverage gaps. Sources with unknown privacy versions,
+versions newer than this binary, or versions older than 6 report a
+`historical_visibility` gap and contribute no message text; their visibility
+rules cannot be interpreted safely.
 
 Each reference binds destination/privacy context, session, source key/checksum/
 size, revision membership, parser/filter/schema/extractor versions, retained

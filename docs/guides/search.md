@@ -53,8 +53,9 @@ parser, and changes on other machines may be absent. Refreshing a session reads
 its latest archive sources; querying does not prove remote freshness. Tools,
 reasoning, attachments, generated harness context and copied other-thread history
 are excluded according to the existing parser's ownership/visibility rules.
-Sources with privacy filters older than version 6 (or unknown versions) report
-a coverage gap because their visibility flags cannot be reconstructed.
+Sources with privacy filters older than version 6, newer than this binary, or
+unknown versions report a coverage gap because their visibility rules cannot be
+interpreted safely.
 
 The index is stored under `AGENT_ARCHIVE_HOME/search/` (or the normal private
 data directory), separate from the metadata cache. It is partitioned by archive
