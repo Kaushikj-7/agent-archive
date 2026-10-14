@@ -6,6 +6,10 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Reserve publication space before new ordinary Codex backfill staging fills the durable quota,
+  allowing foreground imports to publish verified sessions and continue admission.
+  Already saturated retained evidence still requires separate recovery.
+
 ## [0.2.0]
 
 Candidate scope for the intended `v0.2.0` tag; no release date or publication
