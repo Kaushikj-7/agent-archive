@@ -346,6 +346,42 @@ class WorkflowTests(unittest.TestCase):
         for setting in ("GOENV: 'off'",'GOTOOLCHAIN: local',"GOWORK: 'off'","GOFLAGS: '-mod=readonly'"):
             self.assertIn(setting,reference)
 
+    def test_release_scanner_uses_product_toolchain_before_strict_cache(self):
+        import re
+        from test_release_assets import steps
+        lane = jobs((ROOT/'.github/workflows/levenshtein.yml').read_text())['native-release-vulnerabilities']
+        compiler = re.findall(r'^toolchain go(\S+)$', (ROOT/'go.mod').read_text(), re.M)
+        self.assertEqual(compiler, ['1.27.2'])
+        setup = next(step for step in steps(lane) if 'uses: actions/setup-go@' in step)
+        self.assertIn("go-version: '"+compiler[0]+"'", setup)
+        self.assertNotIn('go-version-file:', setup)
+        self.assertLess(lane.index('uses: actions/setup-go@'), lane.index('uses: ./app/.github/actions/verified-go-cache'))
+        self.assertIn('scripts/stage_release_vulnerability_scan.py --source ./app', lane)
+        self.assertIn('--destination "$RUNNER_TEMP/release-vuln-source" --shared ./levenshtein', lane)
+        self.assertIn('./levenshtein/verify native-release-vulnerabilities', lane)
+        self.assertIn('--source "$RUNNER_TEMP/release-vuln-source" --jobs 1', lane)
+        self.assertIn('--cache-dir "$RUNNER_TEMP/release-vuln-verification"', lane)
+
+    def test_composite_leaves_environment_ownership_to_every_caller(self):
+        from test_release_assets import steps
+        composite = (ROOT/'.github/actions/verified-go-cache/action.yml').read_text()
+        self.assertNotIn('GITHUB_ENV', composite)
+        consumers = 0
+        for filename in ('test.yml', 'levenshtein.yml', 'compilation-seeds.yml'):
+            workflow = jobs((ROOT/'.github/workflows'/filename).read_text())
+            for lane in workflow.values():
+                found = steps(lane)
+                for index, step in enumerate(found):
+                    if '/.github/actions/verified-go-cache' not in step:
+                        continue
+                    consumers += 1
+                    previous = found[index-1]
+                    self.assertIn('Set controlled compilation/module paths', previous)
+                    self.assertIn('GOCACHE=%s/pr-go-build', previous)
+                    self.assertIn('GOMODCACHE=%s/pr-go-modules', previous)
+                    self.assertIn('"$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"', previous)
+        self.assertEqual(consumers, 10)
+
     def test_every_hit_still_executes_current_checks_and_forks_never_save(self):
         workflow = jobs((ROOT/'.github/workflows/test.yml').read_text())
         short = workflow['linux-short']

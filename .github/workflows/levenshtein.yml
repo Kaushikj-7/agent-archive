@@ -53,8 +53,12 @@ jobs:
       - name: Install product release compiler
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: app/go.mod
+          go-version: '1.27.2' # Exact product release toolchain, not go.mod's minimum Go version.
           cache: false
+      - name: Set controlled compilation/module paths
+        shell: bash
+        run: |
+          printf 'GOCACHE=%s/pr-go-build\nGOMODCACHE=%s/pr-go-modules\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Restore verified trusted-main compilation seed
         uses: ./app/.github/actions/verified-go-cache
         with:
@@ -104,6 +108,10 @@ jobs:
         with:
           go-version-file: levenshtein/.go-version
           cache: false
+      - name: Set controlled compilation/module paths
+        shell: bash
+        run: |
+          printf 'GOCACHE=%s/pr-go-build\nGOMODCACHE=%s/pr-go-modules\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Restore verified trusted-main compilation seed
         uses: ./app/.github/actions/verified-go-cache
         with:
