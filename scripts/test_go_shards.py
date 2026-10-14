@@ -1,6 +1,7 @@
 """Behavior checks for discovery, complete coverage and bounded process cleanup."""
 import copy
 import contextlib
+import errno
 import copy
 import io
 import json
@@ -415,6 +416,84 @@ else:
             self.assertFalse((root/'0/ordinary.json').exists(), 'empty batch must not default to testing the module root')
 
 
+class CleanupErrorTest(unittest.TestCase):
+    def test_signal_and_wait_errors_do_not_abandon_later_owned_groups(self):
+        # A terminal leader does not prove its private group has no descendants.
+        first, sibling = mock.Mock(pid=123), mock.Mock(pid=456)
+        first.poll.return_value = sibling.poll.return_value = 0
+        first.wait.side_effect = subprocess.TimeoutExpired('synthetic command', 5)
+        def rejected(pgid, sig):
+            if pgid == first.pid:
+                raise PermissionError(errno.EPERM, 'injected')
+            raise ProcessLookupError(errno.ESRCH, 'already gone')
+        with mock.patch.object(runner.os, 'killpg', side_effect=rejected) as signals:
+            with self.assertRaises(runner.CleanupFailure) as raised:
+                runner.stop_processes([first, sibling], None)
+        self.assertEqual(signals.call_args_list, [
+            mock.call(p.pid, sig) for sig in (signal.SIGTERM, signal.SIGKILL)
+            for p in (first, sibling)])
+        first.wait.assert_called_once()
+        sibling.wait.assert_called_once()
+        self.assertIn('wait pid=123 cleanup deadline', str(raised.exception))
+        self.assertIn('signal=SIGKILL', str(raised.exception))
+
+    def test_poll_error_preserves_primary_and_attempts_every_cleanup_phase(self):
+        first, sibling = mock.Mock(pid=123), mock.Mock(pid=456)
+        sibling.poll.return_value = 0
+        commands = [(['synthetic'], mock.Mock(), None)] * 2
+        primary = runner.Failure('original execution failure')
+        polls = 0
+        def rejected():
+            nonlocal polls
+            polls += 1
+            if polls == 1:
+                raise primary
+            raise PermissionError(errno.EPERM, 'injected poll rejection')
+        first.poll.side_effect = rejected
+        with mock.patch.object(runner.sys, 'platform', 'darwin'), \
+                mock.patch('builtins.open', mock.mock_open()), \
+                mock.patch.object(runner.subprocess, 'Popen', side_effect=[first, sibling]), \
+                mock.patch.object(runner.os, 'killpg') as signals:
+            with self.assertRaises(runner.CleanupFailure) as raised:
+                runner.supervise(commands, time.monotonic()+5)
+        self.assertIs(raised.exception.primary, primary)
+        self.assertIs(raised.exception.__cause__, primary)
+        self.assertIn('poll pid=123: PermissionError errno=1', str(raised.exception))
+        self.assertIn('original execution failure', str(raised.exception))
+        self.assertEqual(signals.call_args_list, [
+            mock.call(p.pid, sig) for sig in (signal.SIGTERM, signal.SIGKILL)
+            for p in (first, sibling)])
+        first.wait.assert_called_once()
+        sibling.wait.assert_called_once()
+
+    def test_adopted_wait_error_still_attempts_signal_and_later_child(self):
+        with mock.patch.object(runner, 'child_pids', side_effect=[{123, 456}, set()]), \
+                mock.patch.object(runner.os, 'waitpid', side_effect=PermissionError(errno.EPERM, 'injected')) as waits, \
+                mock.patch.object(runner.os, 'kill') as signals:
+            with self.assertRaises(runner.CleanupFailure) as raised:
+                runner.stop_processes([], set())
+        self.assertCountEqual(waits.call_args_list,
+                              [mock.call(pid, os.WNOHANG) for pid in (123, 456)])
+        self.assertCountEqual(signals.call_args_list,
+                              [mock.call(pid, signal.SIGTERM) for pid in (123, 456)])
+        self.assertIn('waitpid pid=123: PermissionError errno=1', str(raised.exception))
+
+    def test_adopted_child_signal_error_does_not_abandon_other_children(self):
+        def rejected(pid, sig):
+            if pid == 123:
+                raise PermissionError(errno.EPERM, 'injected')
+        with mock.patch.object(runner, 'child_pids', side_effect=[{123, 456}, set()]), \
+                mock.patch.object(runner.os, 'waitpid', return_value=(0, 0)) as waits, \
+                mock.patch.object(runner.os, 'kill', side_effect=rejected) as signals:
+            with self.assertRaises(runner.CleanupFailure) as raised:
+                runner.stop_processes([], set())
+        self.assertCountEqual(waits.call_args_list,
+                              [mock.call(pid, os.WNOHANG) for pid in (123, 456)])
+        self.assertCountEqual(signals.call_args_list,
+                              [mock.call(pid, signal.SIGTERM) for pid in (123, 456)])
+        self.assertIn('kill pid=123 signal=SIGTERM: PermissionError errno=1', str(raised.exception))
+
+
 @unittest.skipUnless(sys.platform in ('linux', 'darwin'), 'supported process-group platforms')
 class PortableBatchProcessTest(unittest.TestCase):
     def commands(self, directory, *codes):
@@ -458,6 +537,19 @@ class PortableBatchProcessTest(unittest.TestCase):
             for invalid in ({0:0},{0:1},{1:2},{2:0}):
                 with self.assertRaises(runner.Failure):runner.supervise(failed,time.monotonic()+3,after=invalid)
 
+    def test_cleanup_failure_preserves_primary_with_unlaunched_successor(self):
+        with tempfile.TemporaryDirectory() as d:
+            commands = self.commands(d, 'raise SystemExit(7)',
+                                     "raise AssertionError('successor must not launch')")
+            terminal = []
+            with mock.patch.object(runner.os, 'killpg', side_effect=PermissionError(errno.EPERM, 'injected')):
+                with self.assertRaises(runner.CleanupFailure) as raised:
+                    runner.supervise(commands, time.monotonic()+5, after={1:0}, terminal=terminal)
+            self.assertIsInstance(raised.exception.primary, runner.Failure)
+            self.assertIn('child command failed: [7, None]', str(raised.exception.primary))
+            self.assertEqual(terminal, [7, None])
+            self.assertFalse(commands[1][1].exists())
+
     def test_expired_shared_deadline_launches_nothing(self):
         import run_ci_tier
         with tempfile.TemporaryDirectory() as d, mock.patch.object(runner.subprocess,'Popen') as launch:
@@ -498,6 +590,67 @@ class PortableBatchProcessTest(unittest.TestCase):
                 self.assertLess(time.monotonic()-started, 3)
                 if reason in ('exit', 'timeout'):
                     self.assertEqual(commands[0][1].read_text(), 'completed\n')
+
+    def test_signal_error_preserves_timeout_and_still_joins_both_commands(self):
+        with tempfile.TemporaryDirectory() as d:
+            children, waits, signals = [], [], []
+            popen, killpg = subprocess.Popen, os.killpg
+            def launch(*args, **kwargs):
+                child = popen(*args, **kwargs)
+                children.append(child)
+                wait = child.wait
+                def joined(*args, **kwargs):
+                    waits.append(child.pid)
+                    return wait(*args, **kwargs)
+                child.wait = joined
+                return child
+            def signal_group(pgid, sig):
+                signals.append((pgid, sig))
+                if pgid == children[0].pid and sig == signal.SIGTERM:
+                    raise PermissionError(errno.EPERM, 'injected signal rejection')
+                return killpg(pgid, sig)
+            terminal = []
+            commands = self.commands(d, *['import time;time.sleep(60)']*2)
+            started = time.monotonic()
+            try:
+                with mock.patch.object(runner.subprocess, 'Popen', side_effect=launch), \
+                        mock.patch.object(runner.os, 'killpg', side_effect=signal_group):
+                    with self.assertRaises(runner.CleanupFailure) as raised:
+                        runner.supervise(commands, started+.2, terminal=terminal)
+                error = raised.exception
+                self.assertIsInstance(error.primary, runner.Failure)
+                self.assertIs(error.__cause__, error.primary)
+                for text in ('shared discovery/test deadline exceeded',
+                             f'pgid={children[0].pid}', 'signal=SIGTERM', 'errno=1'):
+                    self.assertIn(text, str(error))
+                self.assertIn((children[1].pid, signal.SIGTERM), signals)
+                self.assertIn((children[0].pid, signal.SIGKILL), signals)
+                self.assertEqual(set(waits), {p.pid for p in children})
+                self.assertTrue(all(status is not None and status != 0 for status in terminal))
+                self.assertLess(time.monotonic()-started, 3)
+                for child in children:
+                    with self.assertRaises(ProcessLookupError):
+                        os.kill(child.pid, 0)
+            finally:
+                for child in children:
+                    if child.poll() is None:
+                        child.kill()
+                    child.wait(timeout=3)
+
+    def test_cleanup_signal_error_rejects_success_with_terminal_receipt(self):
+        import run_ci_tier
+        with tempfile.TemporaryDirectory() as d:
+            commands = self.commands(d, 'print("completed",flush=True)')
+            with mock.patch.object(runner.os, 'killpg', side_effect=PermissionError(errno.EPERM, 'injected')):
+                with self.assertRaisesRegex(run_ci_tier.Failure, 'process cleanup failed.*signal=SIGTERM.*errno=1'):
+                    run_ci_tier.checked_many(commands, time.monotonic()+5)
+            terminal = []
+            with mock.patch.object(runner.os, 'killpg', side_effect=PermissionError(errno.EPERM, 'injected')):
+                with self.assertRaises(runner.CleanupFailure) as raised:
+                    runner.supervise(commands, time.monotonic()+5, terminal=terminal)
+            self.assertIsNone(raised.exception.primary)
+            self.assertEqual(terminal, [0])
+            self.assertEqual(commands[0][1].read_text(), 'completed\n')
 
     def test_launch_failure_stops_and_reaps_the_already_started_sibling(self):
         with tempfile.TemporaryDirectory() as d:
