@@ -25,6 +25,10 @@ const (
 	shortHashLength = 7
 )
 
+// maxListNumberDigits is the longest number stripTitleMarkup reads as an
+// ordered-list marker ("12. "), so "2024. " is left alone.
+const maxListNumberDigits = 2
+
 // minSentenceWords is how many words a first sentence needs before listTitle
 // drops the sentences after it, so "Hi. Fix the scroll bug" stays whole.
 const minSentenceWords = 3
@@ -95,7 +99,7 @@ func cleanTitleOnce(text string) string {
 }
 
 // stripTitleMarkup removes one leading markdown heading marker, list bullet
-// or blockquote, then the quotes or backticks around the text: a pair that
+// or blockquote, then one ordered-list number ("1. ", "2) "), then the quotes or backticks around the text: a pair that
 // wraps all of it, or an opening or closing mark with no partner.
 func stripTitleMarkup(text string) string {
 	if hashes := len(text) - len(strings.TrimLeft(text, "#")); hashes > 0 && hashes <= 6 && strings.HasPrefix(text[hashes:], " ") {
@@ -105,6 +109,13 @@ func stripTitleMarkup(text string) string {
 		if rest, ok := strings.CutPrefix(text, bullet); ok {
 			text = strings.TrimSpace(rest)
 			break
+		}
+	}
+	if digits := len(text) - len(strings.TrimLeft(text, "0123456789")); digits > 0 && digits <= maxListNumberDigits {
+		if rest, ok := strings.CutPrefix(text[digits:], ". "); ok {
+			text = strings.TrimSpace(rest)
+		} else if rest, ok := strings.CutPrefix(text[digits:], ") "); ok {
+			text = strings.TrimSpace(rest)
 		}
 	}
 	for _, pair := range [][2]string{{`"`, `"`}, {"`", "`"}, {"“", "”"}, {"‘", "’"}, {"'", "'"}} {
@@ -196,7 +207,7 @@ func shortSlashCommand(text string) (string, bool) {
 }
 
 // shortenHashes cuts each run of at least minHashRun hexadecimal digits (with
-// at least one decimal digit) in text to its first shortHashLength digits and
+// a decimal digit and a letter) in text to its first shortHashLength digits and
 // "…", dropping the far end of a range ("<hash>..<hash>" or "<hash>...<hash>").
 // It reports whether it cut any.
 func shortenHashes(text string) (string, bool) {
@@ -241,9 +252,10 @@ func alnumRunEnd(text string, start int) int {
 }
 
 // isHashRun reports whether run looks like a commit hash: at least minHashRun
-// hexadecimal digits, one of them a decimal digit.
+// hexadecimal digits, with both a decimal digit and a letter, so a plain number
+// (a timestamp, an issue ID) is never cut.
 func isHashRun(run string) bool {
-	return len(run) >= minHashRun && isHexRun(run) && strings.ContainsAny(run, "0123456789")
+	return len(run) >= minHashRun && isHexRun(run) && strings.ContainsAny(run, "0123456789") && strings.ContainsAny(run, "abcdefABCDEF")
 }
 
 // isHexRun reports whether run is one or more hexadecimal digits.
@@ -266,10 +278,10 @@ func isASCIIAlnum(r rune) bool {
 
 // firstSentence returns text up to the end of its first sentence: a ".", "!"
 // or "?" followed by a space and more text. A "." in an ellipsis, an
-// abbreviation ("e.g.") or an initial does not end one, nor does one inside a
-// word ("v0.2.1", "list_table.go", a URL). The ending "." is dropped; "!" and
-// "?" are kept. A first sentence under minSentenceWords words keeps the text
-// whole.
+// abbreviation ("e.g.", "(e.g.", "U.S.") or an initial does not end one, nor
+// does one inside a word ("v0.2.1", "list_table.go", a URL). A first sentence
+// under minSentenceWords words keeps the text whole. The "." that ends the
+// result is dropped (see trimFinalPeriod); "!" and "?" are kept.
 func firstSentence(text string) string {
 	for i := 0; i+2 < len(text); i++ {
 		c := text[i]
@@ -281,28 +293,59 @@ func firstSentence(text string) string {
 			if i > 0 && text[i-1] == '.' {
 				continue
 			}
-			word := head[strings.LastIndex(head, " ")+1:]
-			if sentenceAbbreviations[strings.ToLower(word)] || utf8.RuneCountInString(word) == 2 && unicode.IsUpper(firstRune(word)) {
+			if isAbbreviation(head[strings.LastIndex(head, " ")+1:]) {
 				continue
 			}
 			head = text[:i]
 		}
 		if len(strings.Fields(head)) < minSentenceWords {
-			return text
+			return trimFinalPeriod(text)
 		}
 		return strings.TrimSpace(head)
 	}
-	return text
+	return trimFinalPeriod(text)
+}
+
+// trimFinalPeriod drops one "." that ends text, as firstSentence drops the one
+// that ends a first sentence, so "Fix the bug." reads as "Fix the bug". It
+// keeps an ellipsis, an abbreviation or initial, and a lone ".".
+func trimFinalPeriod(text string) string {
+	head, ok := strings.CutSuffix(text, ".")
+	if !ok || head == "" || strings.HasSuffix(head, ".") || strings.HasSuffix(head, " ") || isAbbreviation(text[strings.LastIndex(text, " ")+1:]) {
+		return text
+	}
+	return head
+}
+
+// isAbbreviation reports whether word, which ends in ".", is an abbreviation
+// rather than the end of a sentence: one in sentenceAbbreviations, an initial
+// ("J."), or letters joined by dots ("U.S.", "a.m."). Opening brackets and
+// quotes before it ("(e.g.") do not count.
+func isAbbreviation(word string) bool {
+	word = strings.TrimLeft(word, "([{\"'`“‘")
+	if sentenceAbbreviations[strings.ToLower(word)] || utf8.RuneCountInString(word) == 2 && unicode.IsUpper(firstRune(word)) {
+		return true
+	}
+	parts := strings.Split(strings.TrimSuffix(word, "."), ".")
+	if len(parts) < 2 {
+		return false
+	}
+	for _, part := range parts {
+		if utf8.RuneCountInString(part) != 1 || !unicode.IsLetter(firstRune(part)) {
+			return false
+		}
+	}
+	return true
 }
 
 // capitalizeTitle upper-cases the first letter of text when its first word is
 // plain lower-case words ("help", "let’s", "when,"), leaving commands, paths,
 // versions, identifiers ("iPhone", "go.mod", "v0.2.1") and a lone short ID
-// as they are.
+// (hex digits, perhaps with the dashes of a longer UUID prefix) as they are.
 func capitalizeTitle(text string) string {
 	word, _, _ := strings.Cut(text, " ")
 	first := firstRune(word)
-	if !unicode.IsLower(first) || len(text) >= minShortSessionID && isHexRun(text) {
+	if !unicode.IsLower(first) || len(text) >= minShortSessionID && isHexRun(strings.ReplaceAll(text, "-", "")) {
 		return text
 	}
 	for _, r := range strings.TrimRight(word, ".,:;!?…") {

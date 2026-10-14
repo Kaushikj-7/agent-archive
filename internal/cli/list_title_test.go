@@ -77,6 +77,20 @@ func TestListTitle(t *testing.T) {
 		{name: "camel case left alone", in: "iPhone build fails", want: "iPhone build fails"},
 		{name: "path left alone", in: "/Users/me/notes.md says what", want: "/Users/me/notes.md says what"},
 		{name: "first line only", in: "fix it\nwith more", want: "Fix it"},
+		{name: "abbreviation after a bracket", in: "add flags (e.g. --json) to the list command", want: "Add flags (e.g. --json) to the list command"},
+		{name: "dotted initialism", in: "fix the bug in the U.S. version please", want: "Fix the bug in the U.S. version please"},
+		{name: "final period dropped", in: "Fix the bug in the picker.", want: "Fix the bug in the picker"},
+		{name: "final period after a short first sentence", in: "ok. please create a PR.", want: "Ok. please create a PR"},
+		{name: "final ellipsis kept", in: "so the list wraps...", want: "So the list wraps..."},
+		{name: "final abbreviation kept", in: "add flags to it, e.g.", want: "Add flags to it, e.g."},
+		{name: "lone period", in: ".", want: "."},
+		{name: "ordered list number", in: "1. fix the bug in the picker", want: "Fix the bug in the picker"},
+		{name: "ordered list parenthesis", in: "2) update the docs", want: "Update the docs"},
+		{name: "year is not a list number", in: "2024. was a year of releases", want: "2024. was a year of releases"},
+		{name: "slash command with a long number", in: "/code-review 1728912345678", want: "/code-review 1728912345678"},
+		{name: "slash command with a letters-only hex run", in: "/code-review deadbeefcafebabe", want: "/code-review deadbeefcafebabe"},
+		{name: "longer short ID", in: "abcdefab-", want: "abcdefab-"},
+		{name: "nested markup", in: "> - \"quoted bullet item\"", want: "Quoted bullet item"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
