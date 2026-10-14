@@ -19,17 +19,8 @@ import run_ci_tier
 DEFAULT_MS = 1000
 
 
-def json_stream(text):
-    """Same helper object-stream contract without repeatedly copying the tail."""
-    decoder, items, offset = json.JSONDecoder(), [], 0
-    while True:
-        offset = re.compile(r'\s*').match(text, offset).end()
-        if offset == len(text):
-            return items
-        item, offset = decoder.raw_decode(text, offset)
-        if not isinstance(item, dict):
-            raise runner.Failure('JSON record is not an object')
-        items.append(item)
+# Historical import and live execution share the same object-stream parser.
+json_stream = runner.json_stream
 
 
 @contextlib.contextmanager
@@ -272,7 +263,8 @@ def read_sample(directory, source, expected_settings, body_catalog=None, package
                 proof['plain_audit'] = {'expected_source_proof': expected,
                     'observed_plain_body_seconds': terminal['Elapsed'],
                     'files': [{'file': name, 'sha256': hashlib.sha256((audit_directory / name).read_bytes()).hexdigest()}
-                              for name in ('tier.json', 'source-audit.jsonl')]}
+                              for name in (['tier.json', 'source-audit.jsonl'] +
+                                  (['plain-vet.txt'] if any(v.get('plain_vet_owned') for v in expected_settings.values()) else []))]}
             return catalog, packages, cli, proof
         except run_ci_tier.Failure as error:
             raise runner.Failure(str(error)) from error

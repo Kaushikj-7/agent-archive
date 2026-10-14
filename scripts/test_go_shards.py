@@ -1,9 +1,11 @@
 """Behavior checks for discovery, complete coverage and bounded process cleanup."""
 import copy
 import contextlib
+import copy
 import io
 import json
 import os
+import re
 from pathlib import Path
 import signal
 import subprocess
@@ -27,6 +29,13 @@ def event(action, package=CLI, **kw):
 
 
 class CatalogTest(unittest.TestCase):
+    def test_object_stream_offset_parser_preserves_concatenation_and_errors(self):
+        objects=[{'Action':'run','nested':{'value':'} inside string'}},{'Action':'pass'}]
+        self.assertEqual(runner.json_stream(' \n\t'+''.join(json.dumps(o) for o in objects)+' \n'),objects)
+        self.assertEqual(runner.json_stream(' \t\n'),[])
+        for raw in ('{} trailing','{} {','[]','{} 1','null','{"x": NaN} bad'):
+            with self.assertRaises((ValueError,runner.Failure)):runner.json_stream(raw)
+
     def test_metadata_keeps_fileless_packages_and_rejects_errors(self):
         items = [dict(ImportPath=n, Dir='/tmp', TestGoFiles=['x_test.go'] if n == CLI else [])
                  for n in (CLI, 'ordinary/a', 'ordinary/b')]
@@ -130,6 +139,25 @@ class WorkerCountTest(unittest.TestCase):
                 audit.assert_called_once_with(Path('/audit'),catalog['source'])
             with mock.patch.object(run_ci_tier,'verify_source_audit',side_effect=run_ci_tier.Failure('missing body')):
                 with self.assertRaises(runner.Failure): runner.reconcile(directory,4,Path('/audit'))
+            with mock.patch.object(run_ci_tier,'verify_source_audit',return_value={}),self.assertRaises(runner.Failure):
+                runner.reconcile(directory,4,Path('/audit'),require_plain_vet=True)
+            for i in range(4):
+                path=Path(directory)/str(i)/'manifest.json';value=json.loads(path.read_text())
+                value['settings'].update(plain_vet_owned=True,plain_vet_context_sha256='d'*64,plain_vet_source_proof={'source':catalog['source'],'tree':'b'*40})
+                path.write_text(json.dumps(value))
+            with mock.patch.object(run_ci_tier,'verify_source_audit',return_value={'source_proof':{'source':catalog['source'],'tree':'b'*40}}) as audit:
+                runner.reconcile(directory,4,Path('/audit'),require_plain_vet=True)
+                self.assertTrue(audit.call_args.kwargs['require_plain_vet'])
+                self.assertEqual(audit.call_args.kwargs['expected_vet_context_sha256'],'d'*64)
+            path=Path(directory)/'0'/'manifest.json';value=json.loads(path.read_text())
+            for update in (dict(plain_vet_owned=False),dict(plain_vet_context_sha256='e'*64)):
+                bad=copy.deepcopy(value);bad['settings'].update(update);path.write_text(json.dumps(bad))
+                with mock.patch.object(run_ci_tier,'verify_source_audit',return_value={}),self.assertRaises(runner.Failure):runner.reconcile(directory,4,Path('/audit'))
+            path.write_text(json.dumps(value))
+            for i in range(4):
+                path=Path(directory)/str(i)/'manifest.json';value=json.loads(path.read_text())
+                value['settings'].pop('plain_vet_owned');value['settings'].pop('plain_vet_context_sha256');value['settings'].pop('plain_vet_source_proof')
+                path.write_text(json.dumps(value))
             for i in range(4):
                 path=Path(directory)/str(i)/'manifest.json'; value=json.loads(path.read_text())
                 value['settings']['plain_audit_owned']=False; path.write_text(json.dumps(value))
@@ -140,6 +168,39 @@ class WorkerCountTest(unittest.TestCase):
                 with self.assertRaises(runner.Failure): runner.reconcile(directory, 4)
             path.unlink()
             with self.assertRaises(runner.Failure): runner.reconcile(directory, 4)
+
+    def test_worker_default_vet_remains_and_explicit_ownership_removes_only_vet(self):
+        import run_ci_tier
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);(root/'scripts').mkdir()
+            hints={'packages':{'p0':10,'p1':10},'cli':{'TestA':10,'TestB':10},
+                   'auxiliary_costs_ms':{'vet':5,'git_invocation':0}}
+            (root/'scripts/go_shard_hints.json').write_text(json.dumps(hints))
+            calls=[]
+            def supervise(commands,deadline):
+                for command,path,env in commands:
+                    calls.append(command)
+                    if command[1]=='list':
+                        path.write_text(records(*[{'ImportPath':p,'Dir':'/tmp','TestGoFiles':['test.go']} for p in ['p0','p1',CLI]]))
+                    elif '-list' in command:
+                        path.write_text(records(event('output',Output='TestA\n'),event('output',Output='TestB\n'),event('pass')))
+                    elif command[1]=='vet':path.write_text('')
+                    elif CLI in command:
+                        pattern=command[command.index('-run')+1]
+                        path.write_text(records(*[event('pass',Test=n) for n in ['TestA','TestB'] if re.fullmatch(pattern,n)],event('pass')))
+                    else:path.write_text(records(*[event('pass',p) for p in ['p0','p1'] if p in command]))
+                return [0.01]*len(commands)
+            with mock.patch.object(runner,'ROOT',root),mock.patch.object(runner,'supervise',side_effect=supervise),mock.patch.object(runner.os,'sched_getaffinity',return_value={0,1,2,3},create=True),mock.patch.object(runner.subprocess,'check_output',return_value='head\n'),mock.patch.object(run_ci_tier,'plain_vet_context',return_value={'test':'context'}),mock.patch.object(run_ci_tier.full_race,'source_proof',return_value={'source':'head','tree':'b'*40}),mock.patch.dict(os.environ,{'GITHUB_SHA':'head'}),contextlib.redirect_stdout(io.StringIO()):
+                runner.run(0,root/'default',30)
+                self.assertEqual(sum(c==['go','vet','./...'] for c in calls),1)
+                calls.clear();runner.run(0,root/'owned',30,plain_vet_owned=True)
+                self.assertFalse(any(c[1]=='vet' for c in calls))
+            default=json.loads((root/'default/manifest.json').read_text());owned=json.loads((root/'owned/manifest.json').read_text())
+            self.assertEqual(default['scheduling']['fixed_vet_ms'],[5,0])
+            self.assertEqual(owned['scheduling']['fixed_vet_ms'],[0,0])
+            self.assertTrue(owned['settings']['plain_vet_owned'])
+            self.assertIn('vet_seconds',default['phases']);self.assertNotIn('vet_seconds',owned['phases'])
+
 
 
 class GateTest(unittest.TestCase):
