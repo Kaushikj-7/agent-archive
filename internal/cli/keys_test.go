@@ -74,7 +74,7 @@ func TestKeyPickerBurstsMoveOnFromEachKey(t *testing.T) {
 		"  \x1b[B":                   "32-46",
 		"\x1b[6~\x1b[B\x1b[B\x1b[6~": "33-47",
 	} {
-		_, _, screens := runKeyPicker(t, &sessionPicker{env: fixedTerminal{120, 20}}, sessions, listFormatOptions{}, chunk, "q")
+		_, _, screens := runKeyPicker(t, &sessionPicker{env: fixedTerminal{120, 19}}, sessions, listFormatOptions{}, chunk, "q")
 		if len(screens) != 2 || rowSpan(screens[1]) != want {
 			t.Errorf("%q: rows %s, want %s", chunk, rowSpan(screens[len(screens)-1]), want)
 		}

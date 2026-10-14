@@ -650,12 +650,12 @@ func (l *sessionPicker) pickRowsContext(ctx context.Context, p *prompter, stdout
 		l.printHeading(stdout, width)
 		if paged {
 			l.start = pages[page].start
-			if err := printSessionGroups(stdout, pageSessionGroups(v.groups, pages[page]), v.format); err != nil {
+			if err := printSessionGroups(stdout, pageSessionGroups(v.groups, pages[page]), v.formatFor(width)); err != nil {
 				return listRow{}, false, err
 			}
 		} else {
 			l.start = 0
-			if err := printSessionGroups(stdout, v.groups, v.format); err != nil {
+			if err := printSessionGroups(stdout, v.groups, v.formatFor(width)); err != nil {
 				return listRow{}, false, err
 			}
 		}
@@ -855,11 +855,17 @@ func (l *sessionPicker) split(groups []sessionTableGroup, format listFormatOptio
 }
 
 // tableLines is how many terminal rows the table's rows pg take, with
-// their headings, on a terminal width columns wide.
+// their headings, on a terminal width columns wide. Laid out for a known
+// width, every heading and row is one line, so they are counted, not drawn;
+// the verbose table is drawn and its wrapped lines counted.
 func (l *sessionPicker) tableLines(groups []sessionTableGroup, format listFormatOptions, pg pickerPage, width int) int {
 	l.rendered += pg.end - pg.start
+	page := pageSessionGroups(groups, pg)
+	if width > 0 && !format.Verbose {
+		return sessionLines(page)
+	}
 	var buf bytes.Buffer
-	_ = printSessionGroups(&buf, pageSessionGroups(groups, pg), format)
+	_ = printSessionGroups(&buf, page, format)
 	return displayLines(buf.String(), width)
 }
 

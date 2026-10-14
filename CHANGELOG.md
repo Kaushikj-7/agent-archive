@@ -6,6 +6,21 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- The session list fits your terminal: every session is one line that never
+  wraps, as `#`, the agent (a colored dot and "Claude", "Codex" or "Cursor"),
+  a readable title cut at a word, the project, the PR and a short time ("2m",
+  "Mon", "Oct 9"), with the project, PR and time kept next to the title. On a
+  narrow terminal the project column goes first, then the PR, then the
+  agent's name. The ID leaves the interactive list (you can still type a
+  number or a unique short ID, and `show` has the ID), and the skill and
+  subagent notes leave the title; a session's subagents show as a dim "+4"
+  where there is room. This applies to `list`, `show` and `handoff`.
+- **Changed for scripts:** piped `list` output (not a terminal) is now one
+  plain line per session, newest first with no project headings, in the
+  columns `WHEN AGENT PROJECT PR ID TITLE`, with WHEN the short time and
+  TITLE last and uncut. Anything parsing the old `TITLE PR WHEN HARNESS
+  PROJECT ID` text should switch to `list --json`, which is unchanged and is
+  the stable format. `list --verbose` is unchanged.
 - `show` gives when a session was last active as a weekday ("Mon") or date
   ("Oct 9", "2025-03-01") once it is before today, instead of a count of
   hours or days ago; activity earlier today still reads "2h ago".
