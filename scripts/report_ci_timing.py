@@ -256,7 +256,8 @@ def worker_evidence(directory):
     import run_go_shard
     manifest = json.loads((directory / 'manifest.json').read_text())
     packages, parents = [], []
-    for filename in ('ordinary.json', 'cli.json', 'git-identity.json'):
+    filenames = ['ordinary.json','cli.json','git-identity.json'] + sorted(p.name for p in directory.glob('parents-*.json'))
+    for filename in filenames:
         path = directory / filename
         if not path.exists():
             continue

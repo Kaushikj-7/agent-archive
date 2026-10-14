@@ -123,6 +123,16 @@ class GeneratorTests(unittest.TestCase):
                    e('TestAlpha/private/child', 'pass', 24, 3), e('TestAlpha', 'pass', 24, 5)]
         self.assertEqual(hints.cli_durations(records, ['TestAlpha']), {'TestAlpha': 8})
 
+    def test_complete_parent_waits_for_parallel_children_not_go_parent_elapsed(self):
+        e = self.timed
+        records = [e('TestAlpha','run',0),e('TestAlpha','pause',1),
+                   e('TestAlpha','cont',30),e('TestAlpha/child','run',31),
+                   e('TestAlpha/child','pass',178,147),e('TestAlpha','pass',178,.03)]
+        self.assertEqual(hints.complete_parent_durations(records,['TestAlpha']),{'TestAlpha':148})
+        self.assertEqual(hints.complete_parent_durations([e('TestBeta','run',0),e('TestBeta','pass',148,.03)],['TestBeta']),{'TestBeta':148})
+        for broken in (records[:-1],records+[records[-1]],list(reversed(records))):
+            with self.assertRaises(hints.runner.Failure):hints.complete_parent_durations(broken,['TestAlpha'])
+
     def test_rfc3339_nanoseconds_parse_without_float_rounding(self):
         self.assertEqual(hints.stamp({'Time': '2026-01-01T00:00:00.123456789Z'}) -
                          hints.stamp({'Time': '2026-01-01T00:00:00Z'}), hints.Decimal('.123456789'))

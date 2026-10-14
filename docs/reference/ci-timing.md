@@ -37,7 +37,7 @@ interface so processing untrusted PR artifacts cannot populate trusted caches.
     "source": "API-head-sha-shared-by-both-workflows",
     "cohort": "source-only",
     "cache_state": "warm",
-    "comparable_group": "four-workers-per-worker-vet-v1",
+    "comparable_group": "four-workers-complete-parent-v2",
     "event_at": "2026-10-14T00:00:00Z",
     "required_jobs": {
       "Test": ["tier-plan", "source-audit", "linux-short (0)", "linux-short (1)", "linux-short (2)", "linux-short (3)", "linux-full", "script-tests", "lint", "cross-build", "macos-smoke", "linux-race", "Git identity (runner-current)", "Git identity (upstream-2.30.2)", "Git identity (upstream-2.39.2)"],
@@ -126,3 +126,36 @@ coverage; it is historical context, not an equivalent performance comparison.
 Investigate total runner-minute growth over 20% against a genuinely comparable
 baseline. Keep standard runners, seven-day diagnostic artifacts and the existing
 10 GB cache capacity policy; reporting must not enable paid capacity.
+
+## Complete-parent scheduler topology
+
+The version-2 shard catalog discovers compiled Test/Fuzz/Example parents for CLI,
+catalog, statshtml and state in the exact race-short configuration. Light packages
+remain whole-package obligations, including no-test compilation and TestMain.
+The catalog records source/tree proof, discovery configuration, explicit unit IDs,
+worker count and exhaustive disjoint assignments. Unknown names are automatically
+included; hints cannot remove coverage. Selected descendants remain under their
+complete top-level parent. Per-worker whole-source vet retains its own full-context
+receipt and independent plain audit coverage.
+
+Each worker groups its assigned parents into one invocation per package. An
+ordinary lane sequences those package groups and whole light packages; a separate
+CLI lane can overlap it with an explicit CPU budget. Git observer tests execute
+first in isolation. Invocation duration excludes waiting for a predecessor, and
+parent timing uses the same cont-to-terminal/run-to-terminal lifecycle helper as
+the diagnostic reporter. Include `parents-*.json` when inspecting raw body evidence.
+Parallel-parent intervals include descendant waits and contention; they are
+scheduling advice, not additive CPU time or promised wall time. Catalog seeding
+may repeat across workers and must be measured in hosted trials.
+
+The initial version-2 qualification uses four standard Linux workers before the
+eight-worker trial. Use distinct comparison groups for four/eight workers and
+for the earlier whole-package scheduler. Keep prior run inventories unchanged.
+The eight-worker inventory must explicitly add `linux-short (4)` through
+`linux-short (7)` and its comparison group must change to
+`eight-workers-complete-parent-v2`. To roll back concurrency, change matrix,
+WORKERS, runner/reconciler arguments and workflow contract tests together to four;
+both four and eight are supported by the catalog and cache guards. Keep the
+stable `linux-race` aggregate required check. Do not mix schema-less historical
+manifests into live reconciliation; only the explicit historical hint-import
+interface accepts those old records.

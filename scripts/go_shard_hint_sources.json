@@ -28,6 +28,7 @@
       }
     ],
     "body_catalog_git_blob": "09b1948d5eb8a180a61f16213c4b8658f3fcc4f5",
+    "complete_parent_hints": "Heavy ordinary parent weights use verified raw logs from this exact historical source and the shared complete-parent lifecycle helper; cont-to-terminal (run-to-terminal for unpaused parents), including descendant waits. Source remains historical and hints advisory; remeasure after fixture and topology changes.",
     "head": "513eb9954c78ce7aed50ffa22e9cde8a7fe70c6c",
     "measured_parents": [
       "d6f1f5dcc902d780a63892bcc4ea7bf9bf9d1841",

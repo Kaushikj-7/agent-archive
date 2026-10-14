@@ -67,9 +67,12 @@ class ContextTests(unittest.TestCase):
         source = self.plan().source
         two = keys.cache_plan(12, 0, self.context(), source, self.root, 2)
         four = keys.cache_plan(12, 0, self.context(), source, self.root, 4)
+        eight = keys.cache_plan(12, 7, self.context(), source, self.root, 8)
+        self.assertNotEqual(four.prefix,eight.prefix)
+        self.assertIn('-n8-w7-',eight.prefix)
         self.assertNotEqual(two.prefix, four.prefix)
         self.assertNotEqual(four.prefix, keys.cache_plan(12, 3, self.context(), source, self.root, 4).prefix)
-        for workers, worker in ((3, 0), (4, 4), (2, 2), (True, 0), ('4', 0)):
+        for workers, worker in ((3, 0), (4, 4), (8, 8), (2, 2), (True, 0), ('4', 0)):
             with self.assertRaises(keys.InvalidContext):
                 keys.cache_plan(12, worker, self.context(), source, self.root, workers)
 

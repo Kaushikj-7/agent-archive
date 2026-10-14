@@ -134,8 +134,60 @@ def cli_durations(records, names):
     return {name: cost(name) for name in names}
 
 
+def complete_parent_durations(records, names):
+    """Use the shared lifecycle measure; timing errors cannot become weights."""
+    from report_ci_timing import parent_tree_timings
+    selected = [e for e in records if e.get('Test', '').split('/',1)[0] in names]
+    # Preserve exact RFC3339Nano validation before consuming diagnostic rows.
+    for e in selected:
+        if e.get('Action') != 'output':
+            stamp(e)
+    rows = parent_tree_timings(selected)
+    if (len(rows) != len(names) or {row['parent'] for row in rows} != set(names)
+            or any(row['timing_issues'] or row['seconds'] is None
+                   or row['status'] not in ('pass','skip') for row in rows)):
+        raise runner.Failure('invalid complete-parent timing lifecycle')
+    return {row['parent']:Decimal(str(row['seconds'])) for row in rows}
+
+
+def _read_parent_sample(directory, source, expected_settings, package_cost_exclusions):
+    import go_parent_shards as parents
+    if package_cost_exclusions:
+        raise runner.Failure('parent catalog cannot import legacy package exclusions')
+    workers = runner.worker_count(len(expected_settings))
+    if set(expected_settings) != {str(i) for i in range(workers)}:
+        raise runner.Failure('invalid parent settings worker count')
+    paths = sorted(Path(directory).glob('**/manifest.json'))
+    catalog = json.loads(paths[0].read_text())['catalog']
+    packages, cli, parent_values, phases, fingerprints = {}, {}, {}, {}, []
+    for path in paths:
+        m = json.loads(path.read_text()); index = str(m['shard'])
+        if m['settings'] != expected_settings[index] or catalog['source'] != source:
+            raise runner.Failure('parent sample settings/source mismatch')
+        assignment = catalog['assignments'][m['shard']]
+        raw = parents.verify_logs(path.parent, catalog, assignment)
+        records = runner.json_stream(raw)
+        for e in records:
+            if not e.get('Test') and e.get('Action') in ('pass','skip') and e.get('Package') in assignment['packages']:
+                packages[e['Package']] = e['Elapsed']
+        for package, names in {runner.CLI:assignment['cli'], **assignment['parents']}.items():
+            timed = complete_parent_durations([e for e in records if e.get('Package') == package], names)
+            if package == runner.CLI:
+                cli.update(timed)
+            else:
+                parent_values.update({parents.unit(package,n):v for n,v in timed.items()})
+        phases[index] = m['phases']
+        for file in sorted(path.parent.glob('*.json')):
+            fingerprints.append({'shard':m['shard'],'file':file.name,'sha256':hashlib.sha256(file.read_bytes()).hexdigest()})
+    return catalog, packages, cli, {'files':fingerprints,'phases':phases,'package_cost_exclusions':[],
+                                   'parent_values':{n:str(v) for n,v in parent_values.items()}}
+
+
 def _read_sample(directory, source, expected_settings, package_cost_exclusions=None):
     directory = Path(directory)
+    paths = sorted(directory.glob('**/manifest.json'))
+    if paths and 'schema' in json.loads(paths[0].read_text())['catalog']:
+        return _read_parent_sample(directory, source, expected_settings, package_cost_exclusions)
     workers = runner.worker_count(len(expected_settings))
     if set(expected_settings) != {str(i) for i in range(workers)}:
         raise runner.Failure('invalid settings worker count')
@@ -158,7 +210,7 @@ def _read_sample(directory, source, expected_settings, package_cost_exclusions=N
         if (len(flattened) != len(set(flattened)) or not all(bins)
                 or set(flattened) != universe):
             raise runner.Failure('incomplete/overlapping partition')
-    package_values, cli_values, fingerprints, phases, exclusions = {}, {}, [], {}, []
+    package_values, cli_values, fingerprints, phases, exclusions, parent_values = {}, {}, [], {}, [], {}
     for path, m in zip(paths, manifests):
         index = m['shard']
         if (m.get('success') is not True or m['catalog'] != catalog
@@ -207,6 +259,11 @@ def _read_sample(directory, source, expected_settings, package_cost_exclusions=N
                                'observed_package_seconds': package_values[package],
                                'derived_remaining_seconds': str(remaining)})
             package_values[package] = remaining
+        import go_parent_shards as parent_shards
+        for package in set(assignments[index]['packages']) & set(parent_shards.HEAVY):
+            events = [e for e in runner.json_stream(raw) if e.get('Package') == package]
+            top_names = sorted({e['Test'] for e in events if e.get('Test') and '/' not in e['Test']})
+            parent_values.update({parent_shards.unit(package,n):str(v) for n,v in complete_parent_durations(events,top_names).items()})
         cli_values.update(cli_durations(runner.json_stream(cli_raw), assignments[index]['cli']))
         # Auxiliary phases are provenance only, not arbitrary package weights.
         phases[str(index)] = m['phases']
@@ -215,7 +272,7 @@ def _read_sample(directory, source, expected_settings, package_cost_exclusions=N
                                  'sha256': hashlib.sha256(f.read_bytes()).hexdigest()})
     if set(package_cost_exclusions or {}) != {e['package'] for e in exclusions}:
         raise runner.Failure('excluded package body absent from successful sample')
-    return catalog, package_values, cli_values, {'files': fingerprints, 'phases': phases, 'package_cost_exclusions': exclusions}
+    return catalog, package_values, cli_values, {'files': fingerprints, 'phases': phases, 'package_cost_exclusions': exclusions, 'parent_values': parent_values}
 
 
 def measured_source(source, body_catalog_json=None):
@@ -251,7 +308,7 @@ def read_sample(directory, source, expected_settings, body_catalog=None, package
             raise runner.Failure('historical audit requires the measured Git body catalog')
     with contract_parser(source, body_catalog):
         try:
-            runner.reconcile(directory, len(expected_settings), audit_directory, expected_source_proof=expected)
+            runner.reconcile(directory, len(expected_settings), audit_directory, expected_source_proof=expected, historical_legacy=True)
             catalog, packages, cli, proof = _read_sample(directory, source, expected_settings, package_cost_exclusions)
             if audit_directory is not None:
                 if not all(v.get('plain_audit_owned') is True for v in expected_settings.values()):
@@ -278,11 +335,13 @@ def generate(samples, source, settings, discovered_packages, discovered_cli, bod
         raise runner.Failure('duplicate samples cannot count twice')
     if set(audit_directories or {}) - {sid for sid, _ in samples}:
         raise runner.Failure('audit directory names an unknown sample')
-    package_samples, cli_samples, evidence = {}, {}, []
+    package_samples, cli_samples, parent_samples, evidence = {}, {}, {}, []
     universe = None
     for sample_id, directory in samples:
         catalog, packages, cli, proof = read_sample(directory, source, settings, body_catalog, package_cost_exclusions, audit_directory=(audit_directories or {}).get(sample_id))
-        current = (catalog['packages'], catalog['cli'])
+        current = (catalog['packages'], catalog['cli'], catalog.get('parents'))
+        for name,value in proof.get('parent_values', {}).items():
+            parent_samples.setdefault(name, []).append(Decimal(value))
         if universe is not None and current != universe:
             raise runner.Failure('mixed discovery catalogs')
         universe = current
@@ -305,7 +364,8 @@ def generate(samples, source, settings, discovered_packages, discovered_cli, bod
                 raise runner.Failure('owned audit samples must not subtract the skipped race audit again')
             excluded_samples.setdefault(run_ci_tier.SOURCE_AUDIT_PACKAGE, []).append(
                 Decimal(str(sample['plain_audit']['observed_plain_body_seconds'])))
-    return {'owned_plain_audit_exclusions_ms': {p: positive_ms(median(values)) for p, values in sorted(excluded_samples.items())},
+    return {'parents': {n:positive_ms(median(vs)) for n,vs in sorted(parent_samples.items())},
+            'owned_plain_audit_exclusions_ms': {p: positive_ms(median(values)) for p, values in sorted(excluded_samples.items())},
             'packages': weights(discovered_packages, package_samples),
             'cli': weights(discovered_cli, cli_samples),
             'provenance': {'source': source, 'settings': settings, 'samples': evidence,
@@ -313,7 +373,7 @@ def generate(samples, source, settings, discovered_packages, discovered_cli, bod
                                Path(runner.__file__).read_bytes()).hexdigest(),
                            'body_catalog_sha256': runner.digest(body_catalog) if body_catalog is not None else None,
                            'policy': 'median seconds then half-up integer ms, minimum 1; '
-                                     'package terminal elapsed; CLI recursively exclusive elapsed plus descendant bodies; '
+                                     'legacy: package terminal elapsed and CLI recursive logical cost; schema2: complete parent active lifecycle wall cost including descendant waits; '
                                      'unknown discovered units 1000ms; auxiliary phases excluded; '
                                      'owned audit plain body cost only restores advisory unowned local ranking',
                            'usage': 'advisory ranking only; dynamic discovery and current CI are authoritative'}}

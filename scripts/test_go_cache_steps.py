@@ -49,6 +49,20 @@ class PhaseTests(unittest.TestCase):
         source.assert_not_called()
         context.assert_not_called()
 
+    def test_eighth_worker_owned_paths_guard_accepts_only_matching_topology(self):
+        build,modules=map(Path,self.plan.paths)
+        env={'GITHUB_EVENT_NAME':'pull_request','PR_NUMBER':'42','WORKERS':'8','SHARD':'7',
+             'GITHUB_WORKSPACE':str(self.root),'RUNNER_TEMP':str(self.root),
+             'GOCACHE':str(build),'GOMODCACHE':str(modules)}
+        with mock.patch.dict(os.environ,env,clear=True),mock.patch('sys.argv',['go_cache_steps.py','paths']):
+            self.assertEqual(main(),0)
+        env['WORKERS']='4'
+        with contextlib.redirect_stderr(io.StringIO()),mock.patch.dict(os.environ,env,clear=True),mock.patch('sys.argv',['go_cache_steps.py','paths']):
+            self.assertEqual(main(),1)
+        manifest={'success':True,'tier':'pr','shard':7,'settings':{'workers':8},'catalog':{'source':'b'*40,'workers':8}}
+        self.assertTrue(worker_success(self.plan,manifest,lambda source:None,7,8))
+        with self.assertRaises(InvalidContext):worker_success(self.plan,manifest,lambda source:None,7,4)
+
     def test_paths_phase_rejects_symlink_owned_directory_before_tool_use(self):
         build, modules = map(Path, self.plan.paths)
         outside = self.root/'outside'
