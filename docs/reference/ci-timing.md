@@ -37,7 +37,7 @@ interface so processing untrusted PR artifacts cannot populate trusted caches.
     "source": "API-head-sha-shared-by-both-workflows",
     "cohort": "source-only",
     "cache_state": "warm",
-    "comparable_group": "eight-workers-complete-parent-v2",
+    "comparable_group": "eight-workers-lane-aware-parent-v3",
     "event_at": "2026-10-14T00:00:00Z",
     "required_jobs": {
       "Test": ["tier-plan", "source-audit", "linux-short (0)", "linux-short (1)", "linux-short (2)", "linux-short (3)", "linux-short (4)", "linux-short (5)", "linux-short (6)", "linux-short (7)", "linux-full", "script-tests", "lint", "cross-build", "macos-smoke", "linux-race", "Git identity (runner-current)", "Git identity (upstream-2.30.2)", "Git identity (upstream-2.39.2)"],
@@ -154,8 +154,8 @@ baseline. Keep standard runners, seven-day diagnostic artifacts and the existing
 
 ## Complete-parent scheduler topology
 
-The version-2 shard catalog discovers compiled Test/Fuzz/Example parents for CLI,
-catalog, statshtml and state in the exact race-short configuration. Light packages
+The version-3 shard catalog discovers compiled Test/Fuzz/Example parents for CLI,
+catalog, collector, statshtml and state in the exact race-short configuration. Light packages
 remain whole-package obligations, including no-test compilation and TestMain.
 The catalog records source/tree proof, discovery configuration, explicit unit IDs,
 worker count and exhaustive disjoint assignments. Unknown names are automatically
@@ -173,12 +173,14 @@ Parallel-parent intervals include descendant waits and contention; they are
 scheduling advice, not additive CPU time or promised wall time. Catalog seeding
 may repeat across workers and must be measured in hosted trials.
 
-The initial version-2 qualification used four standard Linux workers; the current
+The initial version-2 qualification used four standard Linux workers; the later
 topology uses eight standard Linux workers. Use distinct comparison groups for four/eight workers and
 for the earlier whole-package scheduler. Keep prior run inventories unchanged.
 The eight-worker inventory must explicitly add `linux-short (4)` through
 `linux-short (7)` and its comparison group must change to
-`eight-workers-complete-parent-v2`. To roll back concurrency, change matrix,
+`eight-workers-complete-parent-v2` for that historical algorithm. The current
+lane-aware collector trial uses `eight-workers-lane-aware-parent-v3`. To roll back
+concurrency, change matrix,
 WORKERS, runner/reconciler arguments and workflow contract tests together to four;
 both four and eight are supported by the catalog and cache guards. Keep the
 stable `linux-race` aggregate required check. Do not mix schema-less historical
@@ -309,3 +311,36 @@ move between selected parents. Retain package bootstrap and lane timings when
 choosing further changes. Production allocation/CPU policy stays unchanged here;
 any lane-aware balancing or additional selected packages needs separate measured
 hosted comparison, unchanged coverage reconciliation and review.
+
+
+## Lane-aware collector trial
+
+Catalog schema 3 identifies `independent-lanes-lpt-v1`. The existing generic LPT
+helper ranks CLI and ordinary units separately, then pairs higher ordinary
+advice with lower CLI advice. Sparse lanes may have empty bins, but the combined
+worker catalog remains nonempty, exhaustive and disjoint. Initial fixed-cost
+advice is included once on the ordinary side. Stale/absent hints cannot remove
+units; new compiled collector parents initially use the explicit 1000ms default.
+Those unmeasured defaults are not a claim that collector contains414 compiled
+parents or that each parent takes one second. The hosted exact compiler listing
+will establish its actual Test/Fuzz/Example inventory before any selected body.
+
+Collector is the only added selected package; reader remains a whole-package
+obligation. Every selected parent retains all runtime descendants. Per-worker
+package grouping still runs TestMain/lazy fixture work once per package process,
+including the real96-row catalog seed whenever a selected parent needs it.
+Ordinary groups stay sequential while CLI overlaps with the existing fixed2+2
+CPU budget; native Git observers remain isolated before overlap. Race/count1,
+assertions, named skips/restorations, source/fullcompiler/every-worker vet and
+independent plain audit contracts and all test deadlines are unchanged.
+
+Producer, raw-log verifier, aggregate, hint generator and unrestricted comparator
+use schema3 together. Old schema2 live catalogs are rejected. Historical schema2
+advice retains its pinned source and immutable import provenance; its assignment
+is not reused as live coverage. Verify the normal eight-worker trial against the
+same-source unrestricted reference before accepting the new algorithm. Refresh
+collector weights only from those verified current compiled/body logs. Compare
+actual lane/group/bootstrap/listing/restore/upload/aggregate durations and total
+runner-minutes after verified warm compilation. Advisory balance alone is not
+150-second success; CPU oversubscription and further test deferral are outside
+this trial.

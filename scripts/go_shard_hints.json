@@ -2838,6 +2838,12 @@
         "test_stage_release_vulnerability_scan.py": "9e885aa20424b57165be1b626c6e24057c23b3994a1c7f6463aefc432525cd07",
         "test_summarize_picker_qualification.py": "ce24489997e76934e3c857b60e3cf6809692345aa6c5ca47ea414c0296addb16"
       },
+      "next_live_catalog": {
+        "added_selected_package": "github.com/wangjohn/agent-archive/internal/collector",
+        "allocation": "independent-lanes-lpt-v1",
+        "new_parent_weight_policy": "Unmeasured1000ms fallback; current exact hosted compiled listing/body logs remain authoritative. Raw observed414 is not asserted as the new compiled inventory.",
+        "schema": 3
+      },
       "package_bootstrap": "package terminal and parent lifecycles include contended setup/TestMain/once-only fixture effects; one sample cannot isolate repeated per-worker seed cost",
       "previous_request_sha256": "595af1500214b3ab09681ed149cba00aea7b5d60171c1d4120759f71e1eeb592",
       "qualification": "one verified source observation; scheduling advice, not balanced wall forecast or p95",

@@ -373,7 +373,7 @@ def generate(samples, source, settings, discovered_packages, discovered_cli, bod
                                Path(runner.__file__).read_bytes()).hexdigest(),
                            'body_catalog_sha256': runner.digest(body_catalog) if body_catalog is not None else None,
                            'policy': 'median seconds then half-up integer ms, minimum 1; '
-                                     'legacy: package terminal elapsed and CLI recursive logical cost; schema2: complete parent active lifecycle wall cost including descendant waits; '
+                                     'legacy: package terminal elapsed and CLI recursive logical cost; versioned parent catalogs: complete parent active lifecycle wall cost including descendant waits; '
                                      'unknown discovered units 1000ms; auxiliary phases excluded; '
                                      'owned audit plain body cost only restores advisory unowned local ranking',
                            'usage': 'advisory ranking only; dynamic discovery and current CI are authoritative'}}

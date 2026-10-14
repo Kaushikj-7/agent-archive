@@ -80,7 +80,7 @@ class ReferenceTests(unittest.TestCase):
             reference=root/'reference';snapshot(reference,c)
             result=ref.compare(reference,workers,root/'audit')
             self.assertTrue(result['success']);self.assertEqual(result['workers'],8)
-            self.assertEqual(result['parents'],19)
+            self.assertEqual(result['parents'], len(c['cli']) + sum(map(len,c['parents'].values())) + 1)
             # A newly skipped body cannot be hidden by successful parent/package terminals.
             path=next(workers.glob('*/parents-*.json'));events=shards.json_stream(path.read_text())
             target=next(e for e in events if e.get('Action')=='pass' and '/' in e.get('Test',''))
