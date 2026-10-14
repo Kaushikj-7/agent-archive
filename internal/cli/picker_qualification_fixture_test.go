@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -198,7 +199,7 @@ func qualificationOrderKeys(key string, m archive.Metadata) [3][]string {
 	return result
 }
 
-func newQualificationFixture(tb testing.TB, metadata []archive.Metadata) qualificationFixture {
+func buildQualificationFixture(tb testing.TB, metadata []archive.Metadata) qualificationFixture {
 	tb.Helper()
 	raw := &qualifiedCLIStore{storagetest.NewMemoryStore()}
 	head := qualificationSeed(tb, raw)
@@ -266,5 +267,98 @@ func newQualificationFixture(tb testing.TB, metadata []archive.Metadata) qualifi
 	if err != nil {
 		tb.Fatal(err)
 	}
-	return qualificationFixture{head: head, raw: raw, store: wrapped, metadata: metadata, manifest: storage.SHA256Hex(manifest), height: height}
+	var privateMetadata []archive.Metadata
+	if err := json.Unmarshal(manifest, &privateMetadata); err != nil {
+		tb.Fatal(err)
+	}
+	return qualificationFixture{head: head, raw: raw, store: wrapped, metadata: privateMetadata, manifest: storage.SHA256Hex(manifest), height: height}
+}
+
+// qualificationSeeds retains wire bytes only. Writable stores, providers and
+// nested metadata never escape from a seed into a command or another test.
+var qualificationSeeds = struct {
+	sync.Mutex
+	fixtures map[string]qualificationFrozenFixture
+}{fixtures: make(map[string]qualificationFrozenFixture)}
+
+type qualificationFrozenFixture struct {
+	objects        storagetest.MemorySnapshot
+	head, metadata []byte
+	manifest       string
+	height         int
+}
+
+func freezeQualificationFixture(tb testing.TB, fixture qualificationFixture) qualificationFrozenFixture {
+	tb.Helper()
+	snapshot, err := storagetest.SnapshotMemoryStore(tb.Context(), fixture.raw.MemoryStore)
+	if err != nil {
+		tb.Fatal(err)
+	}
+	return qualificationFrozenFixture{objects: snapshot, head: qualificationJSON(tb, fixture.head), metadata: qualificationJSON(tb, fixture.metadata), manifest: fixture.manifest, height: fixture.height}
+}
+
+func (seed qualificationFrozenFixture) clone(tb testing.TB) qualificationFixture {
+	tb.Helper()
+	memory, err := seed.objects.Clone(tb.Context())
+	if err != nil {
+		tb.Fatal(err)
+	}
+	fixture := qualificationFixture{raw: &qualifiedCLIStore{memory}, manifest: seed.manifest, height: seed.height}
+	if err := json.Unmarshal(seed.head, &fixture.head); err != nil {
+		tb.Fatal(err)
+	}
+	if err := json.Unmarshal(seed.metadata, &fixture.metadata); err != nil {
+		tb.Fatal(err)
+	}
+	fixture.store, err = catalog.Wrap(fixture.raw)
+	if err != nil {
+		tb.Fatal(err)
+	}
+	return fixture
+}
+
+// newQualificationFixture caches ordinary universes, then returns a writable
+// deep copy. The manifest keys all metadata fields, including scope, ordering,
+// overflow, generation and source references. Large performance universes retain
+// the uncached constructor so one-use 10k/100k seeds do not live for the whole
+// package process or add a second frozen copy to their setup peak.
+func newQualificationFixture(tb testing.TB, metadata []archive.Metadata) qualificationFixture {
+	tb.Helper()
+	if len(metadata) > 1400 {
+		return buildQualificationFixture(tb, metadata)
+	}
+	key := storage.SHA256Hex(qualificationJSON(tb, metadata))
+	seed := func() qualificationFrozenFixture {
+		qualificationSeeds.Lock()
+		defer qualificationSeeds.Unlock()
+		seed, ok := qualificationSeeds.fixtures[key]
+		if !ok {
+			seed = freezeQualificationFixture(tb, buildQualificationFixture(tb, metadata))
+			qualificationSeeds.fixtures[key] = seed
+		}
+		return seed
+	}()
+	return seed.clone(tb)
+}
+
+func cloneQualificationFixture(tb testing.TB, fixture qualificationFixture) qualificationFixture {
+	tb.Helper()
+	// Each command owns its map, provider and metadata. MemoryStore's internal
+	// immutable bodies can be reused without another multi-gigabyte wire copy.
+	memory, err := storagetest.CloneMemoryStore(tb.Context(), fixture.raw.MemoryStore)
+	if err != nil {
+		tb.Fatal(err)
+	}
+	copy := qualificationFixture{raw: &qualifiedCLIStore{memory}, manifest: fixture.manifest, height: fixture.height}
+	if err := json.Unmarshal(qualificationJSON(tb, fixture.head), &copy.head); err != nil {
+		tb.Fatal(err)
+	}
+	if err := json.Unmarshal(qualificationJSON(tb, fixture.metadata), &copy.metadata); err != nil {
+		tb.Fatal(err)
+	}
+	copy.store, err = catalog.Wrap(copy.raw)
+	if err != nil {
+		tb.Fatal(err)
+	}
+	return copy
 }

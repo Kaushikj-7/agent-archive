@@ -32,16 +32,20 @@ def json_stream(text):
 
 
 @contextlib.contextmanager
-def contract_parser(source):
+def contract_parser(source, body_catalog=None):
     """Reconcile imported artifacts against their requested source, not CI's SHA."""
     original = runner.json_stream
+    original_catalog = run_ci_tier.catalog
     event_source = os.environ.get('GITHUB_SHA')
     runner.json_stream = json_stream
+    if body_catalog is not None:
+        run_ci_tier.catalog = lambda: body_catalog
     os.environ['GITHUB_SHA'] = source
     try:
         yield
     finally:
         runner.json_stream = original
+        run_ci_tier.catalog = original_catalog
         if event_source is None:
             os.environ.pop('GITHUB_SHA', None)
         else:
@@ -61,67 +65,106 @@ def positive_ms(seconds):
 
 
 def stamp(event):
+    """Parse Go RFC3339 nanoseconds exactly, including on Python 3.9."""
+    value = event.get('Time')
+    match = re.fullmatch(r'(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,9}))?(Z|[+-]\d{2}:\d{2})', value) if isinstance(value, str) else None
     try:
-        value = event['Time']
-        if not isinstance(value, str):
-            raise ValueError('timestamp is not text')
-        parsed = datetime.fromisoformat(value.replace('Z', '+00:00'))
-        if parsed.tzinfo is None:
-            raise ValueError('timestamp lacks timezone')
-        return parsed.timestamp()
-    except (KeyError, ValueError, TypeError) as error:
+        if not match:
+            raise ValueError('invalid RFC3339 timestamp')
+        # fromisoformat normalizes offsets such as +00:60 instead of rejecting
+        # them. RFC3339 requires an hour from 00 through 23 and minute 00..59.
+        if match[3] != 'Z' and (int(match[3][1:3]) > 23 or int(match[3][4:6]) > 59):
+            raise ValueError('invalid RFC3339 timezone offset')
+        parsed = datetime.fromisoformat(match[1] + match[3].replace('Z', '+00:00'))
+        return Decimal(str(parsed.timestamp())) + Decimal('0.' + (match[2] or '0'))
+    except (ValueError, TypeError) as error:
         raise runner.Failure('timed CLI evidence lacks valid timestamp') from error
 
 
 def cli_durations(records, names):
-    """Parent active envelope includes parallel descendants, never their sum."""
-    result, groups = {}, {}
+    """Account logical test body cost without parent waits or subtree queueing.
+
+    Go's parent Elapsed includes synchronous child execution, but excludes its
+    final wait for parallel children. Subtract each direct child's synchronous
+    run-to-pause (parallel) or run-to-terminal (sequential) interval before adding
+    that child's recursively accounted cost. Thus parallel preludes and ordinary
+    descendants count once, and cohort queueing does not become a body weight.
+    These logical costs are neither CPU time nor worker wall-time predictions.
+    """
+    trees = {}
     for record in records:
-        name = record.get('Test')
-        if name:
-            groups.setdefault(name.split('/', 1)[0], []).append(record)
-    for name in names:
-        subtree = groups.get(name, [])
-        own = [r for r in subtree if r.get('Test') == name]
-        terminal = [r for r in own if r['Action'] in ('pass', 'skip')]
-        if len(terminal) != 1:
-            raise runner.Failure('missing/duplicate CLI duration terminal')
-        # The final cont excludes the initial pause; descendant cohort queueing
-        # remains within the envelope. Do not sum sibling elapsed values.
-        starts = [r for r in own if r['Action'] == 'cont'] or [r for r in own if r['Action'] == 'run']
-        if not starts:
-            raise runner.Failure('CLI duration lacks active start')
-        start = stamp(starts[-1])
-        ends = [stamp(r) for r in subtree if r['Action'] in ('pass', 'skip')
-                and (r.get('Test') == name or r.get('Test', '').startswith(name + '/'))]
-        envelope = max(ends) - start
-        if envelope < 0:
+        name, action = record.get('Test'), record.get('Action')
+        if not name or name.split('/', 1)[0] not in names or action == 'output':
+            continue
+        if action not in ('run', 'pause', 'cont', 'pass', 'skip'):
+            raise runner.Failure('invalid CLI timing action')
+        trees.setdefault(name, []).append(record)
+    nodes, children_by_parent = {}, {}
+    for name, events in trees.items():
+        actions = [r['Action'] for r in events]
+        if actions not in (['run', 'pass'], ['run', 'skip'],
+                           ['run', 'pause', 'cont', 'pass'], ['run', 'pause', 'cont', 'skip']):
+            raise runner.Failure('invalid CLI timing lifecycle')
+        times = [stamp(r) for r in events]
+        if any(b < a for a, b in zip(times, times[1:])):
             raise runner.Failure('backwards CLI clock')
-        body = terminal[0].get('Elapsed')
-        positive_ms(body)
-        result[name] = max(float(body), envelope)
-    return result
+        elapsed = events[-1].get('Elapsed')
+        positive_ms(elapsed)
+        nodes[name] = (Decimal(str(elapsed)), times[1] - times[0], times)
+    # A single t.Run name can contain slashes. A matching path component is
+    # an executed parent only if its lifecycle contains the child and it was
+    # active when the child started; otherwise it is a selector-only prefix.
+    for name, (_, _, times) in nodes.items():
+        parent = name.rsplit('/', 1)[0] if '/' in name else None
+        while parent is not None:
+            candidate = nodes.get(parent)
+            if candidate is not None:
+                parent_times = candidate[2]
+                active = (len(parent_times) == 2 or times[0] < parent_times[1]
+                          or times[0] >= parent_times[2])
+                if active and parent_times[0] <= times[0] and parent_times[-1] >= times[-1]:
+                    children_by_parent.setdefault(parent, []).append(name)
+                    break
+            if '/' not in parent:
+                raise runner.Failure('CLI timing descendant lacks active enclosing parent')
+            parent = parent.rsplit('/', 1)[0]
+    def cost(name):
+        if name not in nodes:
+            raise runner.Failure('CLI duration lacks active start or terminal')
+        elapsed, _, times = nodes[name]
+        children = children_by_parent.get(name, [])
+        for child in children:
+            child_times = nodes[child][2]
+            if child_times[0] < times[0] or child_times[-1] > times[-1]:
+                raise runner.Failure('CLI timing child outside parent lifecycle')
+        synchronous = sum((nodes[n][1] for n in children), Decimal(0))
+        return max(Decimal(0), elapsed - synchronous) + sum((cost(n) for n in children), Decimal(0))
+    return {name: cost(name) for name in names}
 
 
 def _read_sample(directory, source, expected_settings):
     directory = Path(directory)
+    workers = runner.worker_count(len(expected_settings))
+    if set(expected_settings) != {str(i) for i in range(workers)}:
+        raise runner.Failure('invalid settings worker count')
     paths = sorted(directory.glob('**/manifest.json'))
-    if len(paths) != 2:
-        raise runner.Failure('sample requires exactly two manifests')
+    if len(paths) != workers:
+        raise runner.Failure('sample requires complete worker manifests')
     manifests = [json.loads(p.read_text()) for p in paths]
-    if {m.get('shard') for m in manifests} != {0, 1}:
+    if {m.get('shard') for m in manifests} != set(range(workers)):
         raise runner.Failure('duplicate/missing shards')
     catalog = manifests[0]['catalog']
     if catalog.get('source') != source:
         raise runner.Failure('unexpected source')
     assignments = catalog['assignments']
-    if len(assignments) != 2:
+    if len(assignments) != workers or catalog.get('workers', 2) != workers:
         raise runner.Failure('invalid assignment count')
     for kind in ('packages', 'cli'):
-        a, b = [s[kind] for s in assignments]
+        bins = [s[kind] for s in assignments]
+        flattened = [n for b in bins for n in b]
         universe = set(catalog[kind]) - ({runner.CLI} if kind == 'packages' else set())
-        if (len(a) != len(set(a)) or len(b) != len(set(b)) or not a or not b
-                or set(a) & set(b) or set(a) | set(b) != universe):
+        if (len(flattened) != len(set(flattened)) or not all(bins)
+                or set(flattened) != universe):
             raise runner.Failure('incomplete/overlapping partition')
     package_values, cli_values, fingerprints, phases = {}, {}, [], {}
     for path, m in zip(paths, manifests):
@@ -161,16 +204,16 @@ def _read_sample(directory, source, expected_settings):
     return catalog, package_values, cli_values, {'files': fingerprints, 'phases': phases}
 
 
-def read_sample(directory, source, expected_settings):
-    with contract_parser(source):
+def read_sample(directory, source, expected_settings, body_catalog=None):
+    with contract_parser(source, body_catalog):
         try:
-            runner.reconcile(directory)
+            runner.reconcile(directory, len(expected_settings))
             return _read_sample(directory, source, expected_settings)
         except run_ci_tier.Failure as error:
             raise runner.Failure(str(error)) from error
 
 
-def generate(samples, source, settings, discovered_packages, discovered_cli):
+def generate(samples, source, settings, discovered_packages, discovered_cli, body_catalog=None):
     if not samples:
         raise runner.Failure('no successful samples')
     if (len({sid for sid, _ in samples}) != len(samples)
@@ -179,7 +222,7 @@ def generate(samples, source, settings, discovered_packages, discovered_cli):
     package_samples, cli_samples, evidence = {}, {}, []
     universe = None
     for sample_id, directory in samples:
-        catalog, packages, cli, proof = read_sample(directory, source, settings)
+        catalog, packages, cli, proof = read_sample(directory, source, settings, body_catalog)
         current = (catalog['packages'], catalog['cli'])
         if universe is not None and current != universe:
             raise runner.Failure('mixed discovery catalogs')
@@ -198,8 +241,9 @@ def generate(samples, source, settings, discovered_packages, discovered_cli):
             'provenance': {'source': source, 'settings': settings, 'samples': evidence,
                            'runner_contract_sha256': hashlib.sha256(
                                Path(runner.__file__).read_bytes()).hexdigest(),
+                           'body_catalog_sha256': runner.digest(body_catalog) if body_catalog is not None else None,
                            'policy': 'median seconds then half-up integer ms, minimum 1; '
-                                     'package terminal elapsed; CLI max(parent elapsed, active subtree envelope); '
+                                     'package terminal elapsed; CLI recursively exclusive elapsed plus descendant bodies; '
                                      'unknown discovered units 1000ms; auxiliary phases excluded',
                            'usage': 'advisory ranking only; dynamic discovery and current CI are authoritative'}}
 
@@ -216,12 +260,22 @@ def main():
     if not samples:
         raise runner.Failure('no successful samples')
     manifests = sorted(samples[0][1].glob('**/manifest.json'))
-    if len(manifests) != 2:
-        raise runner.Failure('sample requires exactly two manifests')
+    if len(manifests) != runner.worker_count(len(request['settings'])):
+        raise runner.Failure('sample requires complete worker manifests')
     catalog = json.loads(manifests[0].read_text())['catalog']
+    body_catalog_json = request.get('body_catalog_json')
+    body_catalog = None
+    if body_catalog_json is not None:
+        if (not isinstance(body_catalog_json, str) or hashlib.sha256(body_catalog_json.encode()).hexdigest()
+                != request.get('body_catalog_sha256')):
+            raise runner.Failure('invalid pinned source body catalog bytes')
+        body_catalog = json.loads(body_catalog_json)
+        if (not isinstance(body_catalog, dict) or body_catalog.get('schema') != 1
+                or not isinstance(body_catalog.get('restorations'), list)):
+            raise runner.Failure('invalid pinned source body catalog')
     result = generate(samples, request['source'], request['settings'],
                       request.get('packages', sorted(set(catalog['packages']) - {runner.CLI})),
-                      request.get('cli', catalog['cli']))
+                      request.get('cli', catalog['cli']), body_catalog)
     result['provenance']['attribution'] = request.get('attribution', {})
     result['provenance']['generator_sha256'] = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
     Path(args.output).write_text(json.dumps(result, indent=2, sort_keys=True) + '\n')

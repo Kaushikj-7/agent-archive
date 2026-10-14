@@ -30,14 +30,14 @@ VERSION=dev ./scripts/build-release.sh                   # the release build (CI
 ```
 
 CI's [Test workflow](../../.github/workflows/test.yml) runs the short race
-suite across two Ubuntu workers for each pull request. Each worker discovers all
+suite across four Ubuntu trial workers for each pull request. Each worker discovers all
 packages and CLI top-level tests, fuzz seeds and executable examples, assigns
 ordinary packages once and CLI names to disjoint bins, and retains complete
 subtest trees. Timing hints only rank discovered units; new units are assigned
 and logged. The assigned native Git identity package runs first on a quiet worker because
 its observers have fixed 500 ms deadlines. The workers then overlap bounded
 ordinary-package and CLI processes; vet runs once. Each worker records its source, catalog, assignment and
-terminal coverage; the stable required `linux-race` verdict reconciles both
+terminal coverage; the stable required `linux-race` verdict reconciles all four
 artifacts and fails on any missing, failed or cancelled worker. All Linux
 Python gates, including purge, staging, scope and shard-runner regressions, run
 in a parallel script job required by that verdict. A separate exact-source plan
@@ -92,8 +92,9 @@ improves latency only if measured scheduling benefits outweigh that extra work.
 For local coverage validation on Linux, run one worker at a time:
 
 ```sh
-python3 scripts/run_go_shard.py --shard 0 --output /tmp/go-shard-0
-python3 scripts/run_go_shard.py --shard 1 --output /tmp/go-shard-1
+for worker in 0 1 2 3; do
+  python3 scripts/run_go_shard.py --workers 4 --shard "$worker" --output "/tmp/go-shard-$worker"
+done
 ```
 
 The checked-in timing hints are advisory integer milliseconds from successful
@@ -111,7 +112,9 @@ python3 -B scripts/generate_go_shard_hints.py \
   --output scripts/go_shard_hints.json
 ```
 
-The generator rejects source/settings/catalog mixtures, failed or incomplete
+Imported evidence pins the measured source body catalog and its hash, so later
+scale catalog additions cannot rewrite a historical manifest. Current CI uses
+the current catalog. The generator rejects source/settings/catalog mixtures, failed or incomplete
 streams, reused samples and mismatched manifest body evidence. Reconciliation
 checks the request's pinned artifact source independently of the regenerating
 workflow's `GITHUB_SHA`. The request may provide fresh `packages`/`cli` discovery
@@ -122,20 +125,31 @@ IDs and runtime-source equivalence require independent API/source verification;
 raw JSON alone cannot attest those caller-supplied provenance fields.
 
 Ordinary weights are median package-terminal elapsed seconds, rounded half-up
-to positive milliseconds (minimum 1). CLI weights take the larger of parent
-elapsed and the active envelope from the last top-level continuation (or run)
-through the latest parent/descendant terminal. This excludes the initial parent
-pause and never sums sibling elapsed values. Descendant cohort waits and
-overlapping parent envelopes remain, so these rankings are not wall-time or CPU
-forecasts. Git invocation and worker0 vet costs stay separate from weights;
-the assigned Git package stays isolated on whichever worker receives it.
+to positive milliseconds (minimum 1). CLI weights recursively account logical
+body cost: subtract each direct child's synchronous run-to-pause (parallel) or
+run-to-terminal (sequential) interval from the parent's elapsed value, then add
+each child's accounted cost. This avoids charging parallel cohort queueing and
+counting sequential children twice, while including parallel descendant bodies.
+Slash-containing child names use observed active enclosing lifecycles rather
+than inventing a parent for each selector component. Nanosecond RFC3339 clocks
+and complete run/pause/cont/terminal lifecycles are validated. Skipped bodies
+retain their actual elapsed cost and remain skips in coverage evidence.
+These costs rank logical work; they are not elapsed-time or CPU forecasts.
+Predicted bin loads are logged separately from measured worker phase durations.
+Git invocation and worker0 vet costs stay separate from weights; the assigned
+Git package stays isolated on whichever worker receives it.
 
-The current hints use two cached ancestor-runtime observations (prefix and
-exact restore). The recorded D base subsequently added catalog/config protocol
-changes in PR485, so these are not exact D-base timings. Current CI must discover
-and execute the new bodies and expose materially changed affected-package costs
-before merge; do not combine durations from different sources as matched samples
-or claim savings without a current-source control. Hosted comparisons must
+The current hints use one successful hosted Linux short observation pair from
+run38513512721 at cd39753074cade7174a25dc0beb8e1b83b0300c8. Artifact IDs,
+archive digests, exact worker settings and raw-file hashes are retained along
+with the previous measurement request. This small sample has equivalent representative runtime inputs at the base and is advice,
+not current-candidate or native Darwin full timing. Live discovery assigns unknown
+names the 1000ms fallback and ignores stale hints. Four workers are a hosted
+trial; retain that default only after current-candidate whole-job measurements
+justify the extra compilation, allocation and startup costs. The runner accepts
+explicit two or four workers; the full-race scheduling caller retains its two
+partition default. Worker-count cache ownership prevents two/four trial cache
+identities from mixing. Hosted comparisons must
 record whole-job latency and rounded runner allocation, including scripts,
 verdict and native verification, against both the original spend and the new
 single-worker fixture baseline. A local warm serial run proves coverage rather
@@ -194,8 +208,31 @@ campaign when manual dispatch is unavailable. Extended skips its duplicate
 Linux suite on these branches because Test runs full non-short Linux race
 coverage and plain full-size performance assertions. Extended supplies full
 non-short macOS race coverage and plain full-size performance assertions.
+Extended full Darwin coverage uses a compiled native CGO/race catalog at the
+exact source SHA, followed by three independent `macos-14` hosts. Whole ordinary
+packages and disjoint CLI parent trees share a deterministic weighted assignment;
+fuzz seeds and executable examples are discovered from the compiled test mains.
+Each host bounds Go package concurrency to one and test concurrency/CPU to two,
+with private temporary/build state. The `macos-full` check retains its stable name
+and reconciles all three workers, source/context/catalog identity, raw package and
+body terminals, and every named full restoration child. A separate native job
+compiles and runs plain performance bodies plus the pinned published writer once.
+Daily remains smoke plus expanded short native integration and published writer.
+
+`scripts/native_full_hints.json` contains advisory costs imported from the
+successful historical Darwin full artifact at `11ccad84`, with source/settings,
+archive and raw-file fingerprints. It reuses the logical-duration helper from
+`scripts/generate_go_shard_hints.py`; it does not use Linux short costs. One older
+serial run cannot predict current worker elapsed time. Unknown/changed restoration
+CLI trees receive a positive unmeasured one-second weight; unknown/changed ordinary
+packages receive one second per compiled parent (minimum one). Other costs remain
+historical advice even when dependencies or CPU bounds change. Qualification and
+rebalancing require the current candidate's three-worker timings. Ordinary PR
+checks do not run this Extended full matrix. Full scheduled jobs can take longer
+than the four-to-five-minute PR goal.
+
 Test, Levenshtein and Extended disable setup-go's shared module/build cache
-for every trigger; only the two PR representative workers have explicit
+for every trigger; only the PR representative workers have explicit
 restore/save actions. Candidate validation cannot restore executable build
 state from another run. Go still verifies downloaded modules against go.sum;
 fresh runners may take longer while downloading and compiling dependencies.
