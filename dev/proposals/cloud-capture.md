@@ -31,13 +31,13 @@ Three strategies exist. They differ in fidelity and in where credentials live.
 
 Push is the primary strategy. Pull is a fallback only where push is impossible or unreliable.
 
-**Exception: Claude Code on the web (2026-10-13).** Claude Code's session API lists every cloud session and returns the transcript records the VM wrote, so pull keeps native-record fidelity there and needs no hooks or VM credentials. Claude Code cloud capture now starts with pull; see [Claude Code cloud sessions: pull capture](claude-code-cloud-pull.md). Push remains the plan for CI runners and the other vendors.
+**Claude Code on the web: push through an account plugin (2026-10-14).** Pull from Claude Code's session API works technically but is blocked: it needs the user's Claude Code login, which Anthropic's terms forbid third-party tools to collect ([pull capture](claude-code-cloud-pull.md)). Instead, a plugin the user adds once to their claude.ai account is synced into every cloud session they start, and its hooks fire there ([verified](#verified-behavior-account-plugins)). That gives push capture with no repository commits.
 
 ## Support matrix
 
 | Agent | Hooks run in cloud | Native transcript in VM | Upload path | Credential channel | Pull fallback | Plan |
 | --- | --- | --- | --- | --- | --- | --- |
-| Claude Code on the web | *Verified*: repo `.claude/settings.json`, single-repository sessions only | *Verified*: `/root/.claude/projects/<cwd-slug>/<session_id>.jsonl` | *Verified* reachable: S3 and R2 through the proxy's TLS tunnel (default Trusted level) | Environment variables, readable by anyone using the environment *Verified* list: `GET /v1/code/sessions`; transcript records through the API `--teleport` uses (undocumented). See [pull capture](claude-code-cloud-pull.md) | Pull first |
+| Claude Code on the web | *Verified*: repo `.claude/settings.json`, single-repository sessions only; *verified* 2026-10-14: claude.ai account plugins in sessions the user starts (not routines) | *Verified*: `/root/.claude/projects/<cwd-slug>/<session_id>.jsonl` | *Verified* reachable: S3 and R2 through the proxy's TLS tunnel (default Trusted level) | Environment variables, readable by anyone using the environment | Technically possible, blocked by Anthropic's terms ([pull capture](claude-code-cloud-pull.md)) | Phase 1, through an account plugin |
 | Claude Code in CI (`claude-code-action`, `claude -p`) | *Documented*: repo settings and a `settings` input | *Documented*: `transcript_path` | Runner egress | CI secrets | Not needed | Phase 1 |
 | Cursor Cloud Agents | *Documented*: repo `.cursor/hooks.json`; `sessionStart` and `sessionEnd` do not run; hooks skip early read-only turns | *Unknown*; `transcript_path` may be null ("if transcripts disabled") | *Documented*: all egress allowed by default | Runtime Secrets (redacted from transcripts) | *Documented*: v0 `GET /v0/agents/{id}/conversation` (messages only, no tool calls); v1 run stream (retention-limited) | Phase 0 probe, Phase 2 |
 | Codex cloud | *Unknown*: hooks documented for the CLI only; project hooks require trust review | *Unknown* | *Documented*: agent-phase internet off by default; an optional GET/HEAD/OPTIONS-only mode would block uploads | Secrets are removed before the agent phase; only plain environment variables remain | *None*: `codex cloud` returns status and diffs, not transcripts | Phase 0 probe, Phase 3 if the probe passes |
@@ -58,6 +58,40 @@ Probes ran as one-off routines on the default Anthropic cloud environment, Claud
 - The transcript contains record types the Claude adapter does not allow (`atis-latch`, `attachment`, `last-prompt`, `queue-operation`) and new top-level keys (`wireToolInputs`, `turnOrigin`, `atis`, `classifierBoundary`, `apiBlockIndex`, `queueSkipAttachments`, `rendered`, `sourceToolAssistantUUID`). Today these are dropped with `unknown_record_type` and `unknown_field_omitted` gaps, so nothing fails, but coverage is incomplete.
 - The egress proxy passes `*.amazonaws.com` and `<account>.r2.cloudflarestorage.com` through a CONNECT tunnel, so the client sees the provider's own certificate and SigV4 signing works unchanged. An unauthenticated HEAD returns 405 from S3 and 400 from R2. A made-up R2 account hostname fails the TLS handshake everywhere, so a reachability check must use a real account ID.
 - Anthropic's own `launcher-settings.json` installs a `Stop` hook; repository hooks run alongside it.
+
+## Verified behavior: account plugins
+
+Probed 2026-10-14 with a marker-only plugin
+([`dev/probes/cloud-plugin-probe`](../probes/cloud-plugin-probe/)) uploaded on
+claude.ai under Settings → Plugins → Add → Upload plugin. claude.ai also accepts
+a marketplace from a GitHub repository or Git URL.
+
+- **Sessions the user starts sync it.** In a session started on claude.ai/code,
+  the plugin appeared under
+  `~/.claude/plugins/synced/<org>_<account>/aa-probe/` with a data directory,
+  and `CLAUDE_PLUGIN_ROOT` pointed at it.
+- **Routines do not.** Two routine runs had an empty synced directory and no
+  hook activity, before and after the upload had settled. Routine sessions need
+  another route (repository hooks) or stay uncaptured.
+- **Hooks fire, with the same inputs as on a Mac:**
+  - `SessionStart` with `source: startup` and an existing 0-byte transcript, so
+    the fresh-start proof passes unchanged.
+  - `UserPromptSubmit` on every turn.
+  - `Stop` at the end of each turn, when the transcript already holds that
+    turn (356 KB after a one-turn session).
+  - `SubagentStop` with `agent_transcript_path` under
+    `<session_id>/subagents/agent-<id>.jsonl`. One of two calls named a
+    subagent transcript that was never written, the case local capture already
+    treats as a phantom subagent.
+- `Stop` input also carries `last_assistant_message`, `background_tasks` and
+  `session_crons`; `SessionStart` carries `scratchpad_dir`.
+
+So the existing Claude capture runs in the cloud as it does locally. What the
+plugin must add is the `agent-archive` Linux binary and upload credentials;
+section 3 (ephemeral capture) and section 6 (credentials) apply. Open:
+whether plugin configuration values set on claude.ai reach the session (which
+would carry the upload key without environment variables), plugin size limits
+for a bundled binary, and whether `SessionEnd` fires.
 
 ## Codex probe: CLI in a cloud worker, not hosted capture
 
@@ -185,7 +219,7 @@ Commands:
 - **`agent-archive cloud provision [--harness claude,cursor,codex] [--ci github]`**, run on a configured macOS or Linux machine; a repository is required only when generating repository files. It is optional; every step can also be done by hand from the printed instructions.
   1. **Storage.** For R2, it asks once for a bootstrap Cloudflare API token with permission to create account API tokens (Account API Tokens: Edit), stores it in the platform credential store under its own reference, and uses it only for `provision` and `rotate`. It creates the cloud bucket if missing (default `agent-archive-cloud`), adds a lifecycle rule at the cloud retention period plus a margin, and mints a bucket-scoped object token. For S3 it creates a bucket-prefix-scoped IAM user and access key with `PutObject` and `GetObject` only, or, for GitHub Actions, an OIDC role with no stored key. It then runs the synthetic write, read-back and delete test.
   2. **Environment bootstrap (default).** Generate a pinned installation command and non-secret configuration for the vendor's environment setup field or a controlled runner. `cloud setup` (proposed below) installs runtime hooks before agent launch. It writes no tracked repository files by default. Report the required setup field and hook trust step, rather than promising one paste for an unverified vendor.
-     **Repository fallback (explicit).** A proposed `--repo-hooks` option writes or merges only the selected harness's repository hook configuration plus a pinned bootstrap script. Use owned-entry merge/removal and preserve unrelated handlers. Generated files require review; nothing is committed automatically. Claude web runtime-generated project hooks need a fresh-worker probe before this can be recommended without a commit.
+     **Repository fallback (explicit).** A proposed `--repo-hooks` option writes or merges only the selected harness's repository hook configuration plus a pinned bootstrap script. Use owned-entry merge/removal and preserve unrelated handlers. Generated files require review; nothing is committed automatically. For Claude Code on the web, an account plugin replaces repository hooks ([verified](#verified-behavior-account-plugins)); repository hooks remain the fallback for routines.
   3. **Environments.** With `--ci github`, it sets the repository secrets through `gh`. For each vendor without an API, it prints one block of `AGENT_ARCHIVE_*` variables in `.env` form and the settings location, and states who can read the values there (for example, anyone using a Claude Code environment, and the agent itself). The secret is printed once, to the terminal, never to a file.
 - **`agent-archive cloud rotate`** mints a new scoped credential, updates every target it can update programmatically, prints the paste block for the rest, and deletes the old credential only after the user confirms that the paste is done. A `cloud verify` pass, run in a new cloud session after the paste, confirms that the environment has switched to the new credential.
 - **`agent-archive cloud verify`**, run inside a cloud VM (or by the setup script), reports configuration, hook discovery/trust, transcript access, and storage readiness separately. A storage test writes and reads a unique object in a reserved verification prefix; it does not require List or Delete from the worker credential. A lifecycle rule or privileged maintenance client cleans up verification objects. Provisioning may perform a delete with its separate administrative credential. A successful storage test alone never means capture is verified. Errors contain no credential values.

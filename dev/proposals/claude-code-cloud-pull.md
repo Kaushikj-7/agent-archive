@@ -1,10 +1,20 @@
 # Claude Code cloud sessions: pull capture
 
-> **Proposed.** Not implemented or scheduled. See the [documentation index](../../docs/README.md) for what exists today.
+> **Blocked; do not build.** Kept as a research record. See the [documentation index](../../docs/README.md) for what exists today.
 
-Status: proposed plan for review, prepared 2026-10-13. It is the Claude Code
-part of [cloud capture](cloud-capture.md) and replaces push (hooks inside the
-cloud VM) as the first Claude Code cloud strategy. Facts marked *verified* come
+Status: blocked on Anthropic's terms, 2026-10-14. The Claude Code [legal and
+compliance](https://code.claude.com/docs/en/legal-and-compliance) page says
+"developers may not collect, store, or intermediate Claude.ai credentials or
+session tokens — sign-in to a Claude account must complete through
+Anthropic's own flow". Every design below reads the Claude Code login and calls
+Anthropic's API with it, so agent-archive cannot ship it. Anthropic has enforced
+this rule against other third-party tools without notice. Claude Code cloud
+capture instead uses an account plugin whose hooks run inside the cloud session;
+see [cloud capture](cloud-capture.md#verified-behavior-account-plugins). This
+document stays useful if Anthropic offers a supported export, and its API facts
+explain what the cloud service stores.
+
+Prepared 2026-10-13 as the Claude Code part of [cloud capture](cloud-capture.md). Facts marked *verified* come
 from probes of the owner's account on 2026-10-13 with Claude Code CLI 2.1.287.
 Facts marked *from the CLI* were read from that CLI's bundled code. All seven
 [pre-build checks](#pre-build-checks) are done.

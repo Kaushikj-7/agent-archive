@@ -1,0 +1,1 @@
+{"name": "aa-probe", "version": "0.0.1", "description": "agent-archive probe: records which hooks fire in cloud sessions. Writes markers to /tmp only."}

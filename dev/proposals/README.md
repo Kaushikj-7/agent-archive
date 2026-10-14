@@ -21,8 +21,8 @@ Historical-only ownership status reconciled 2026-10-12 after #433 merged as
 | [Historical backfill recovery](historical-backfill-recovery.md) | Diagnostics, portable recovery, rollout lookup, history lifecycle and native child capture; recovery hardening; historical-only ownership and bounded bulk mappings (#433). | [Fragment format foundation](../specs/codex-fragments.md) is proposed with schema checks; decoder/filter/consumer, lifecycle, opt-in import, repair journal and the combined acceptance matrix remain gated. |
 | [CLI performance](cli-performance.md) | Synthetic command and historical listing benchmark harnesses with output validation. | Matched repaired-harness measurements and proposed follow-ups. |
 | [Archive listing at scale](listing-at-scale.md) | Parallel listing, tracing, bounded metadata-body reads; 10k benchmark and 10k/20k operation-count coverage. | Full 1k/10k/100k measurement matrix and an index that bounds LIST header cost. |
-| [Cloud capture](cloud-capture.md) | No cloud collector/push or vendor pull implementation. | Proposed, unscheduled; requires producer probes and runtime/authentication design. |
-| [Claude Code cloud pull](claude-code-cloud-pull.md) | All seven pre-build checks done on a live account (`setup-token` rejected; CLI self-refresh works); nothing implemented. | Six PRs (full `/events` log with a new codec, incremental fetch). |
+| [Cloud capture](cloud-capture.md) | No cloud collector/push or vendor pull implementation. Claude Code account-plugin hooks verified in cloud sessions (2026-10-14). | Proposed, unscheduled; plugin packaging (binary, upload key) and runtime/authentication design remain. |
+| [Claude Code cloud pull](claude-code-cloud-pull.md) | Research record; all seven pre-build checks done on a live account. | Blocked by Anthropic's terms (no third-party use of Claude.ai session tokens). Cloud capture moved to an account plugin; see [cloud capture](cloud-capture.md). |
 
 [Setup recent import](../specs/setup-recent-import.md) now includes both automatic
 seven-day import and the status prompt for existing installations. See the
