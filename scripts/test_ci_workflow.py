@@ -148,7 +148,7 @@ class CandidateCampaignTest(unittest.TestCase):
     def test_candidate_validation_never_restores_shared_go_build_state(self):
         # Candidate evidence must come from fresh source/module verification,
         # not executable build state restored from another workflow's cache.
-        expected = {'test': 7, 'levenshtein': 2, 'extended': 4}
+        expected = {'test': 8, 'levenshtein': 2, 'extended': 4}
         for name, count in expected.items():
             workflow = (ROOT / '.github/workflows' / f'{name}.yml').read_text()
             setup = [step for job in jobs(workflow).values() for step in steps(job)
@@ -253,6 +253,18 @@ class CadenceTest(unittest.TestCase):
         self.assertIn('--plain-audit-owned',found['linux-short'])
         self.assertIn('--plain-vet-owned',found['linux-short'])
         self.assertIn('--plain-vet-owned --reconcile',found['linux-race'])
+        # Live receipt validation independently hashes the installed Go/compiler
+        # context; its verifier must use the same exact runtime policy as audit.
+        verifier=found['linux-race']
+        for setting in ("GOTOOLCHAIN: local", "GOWORK: 'off'", "GOFLAGS: '-mod=readonly'"):
+            self.assertIn(setting,verifier)
+        verifier_steps=list(steps(verifier))
+        setup=[step for step in verifier_steps if 'uses: actions/setup-go@' in step]
+        self.assertEqual(len(setup),1)
+        self.assertEqual(step_key(setup[0],'if'),"github.event_name == 'pull_request'")
+        self.assertIn("go-version: '1.27.2'",setup[0])
+        self.assertIn('cache: false',setup[0])
+        self.assertLess(verifier.index('uses: actions/setup-go@'),verifier.index('--plain-vet-owned --reconcile'))
         self.assertIn('--audit-evidence "$RUNNER_TEMP/source-audit-evidence"',found['linux-race'])
         self.assertIn('source-audit',job_key(found['linux-race'],'needs'))
         boundary=(ROOT/'internal/agents/builtin/nativecapture_boundary_test.go').read_text()
