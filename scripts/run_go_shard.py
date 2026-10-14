@@ -24,6 +24,16 @@ class Failure(RuntimeError):
     """Discovery, execution, or evidence did not establish complete coverage."""
 
 
+class CleanupFailure(Failure):
+    """Cleanup failed after all bounded attempts, possibly during another failure."""
+
+    def __init__(self, errors, primary=None):
+        self.errors = tuple(errors)
+        self.primary = primary
+        message = 'process cleanup failed: ' + '; '.join(self.errors)
+        super().__init__(f'{primary}; {message}' if primary is not None else message)
+
+
 def json_stream(text):
     """Decode concatenated objects without repeatedly copying the remaining log."""
     decoder, items, offset = json.JSONDecoder(), [], 0
@@ -62,25 +72,49 @@ def child_pids():
 
 def stop_processes(processes, previous_children):
     # As a Linux subreaper, this process owns orphaned test grandchildren too.
+    errors = []
+
+    def record(operation, error):
+        detail = f'{operation}: {type(error).__name__} errno={getattr(error, "errno", None)}: {error}'
+        if detail not in errors:
+            errors.append(detail)
+
     handlers = {sig: signal.signal(sig, signal.SIG_IGN) for sig in (signal.SIGTERM, signal.SIGINT)}
     try:
         for sig in (signal.SIGTERM, signal.SIGKILL):
             for process in processes:
                 try:
+                    # The private group can outlive its leader. Do not skip a
+                    # reaped leader and leave its test descendants running.
                     os.killpg(process.pid, sig)
                 except ProcessLookupError:
                     pass
+                except OSError as error:
+                    record(f'killpg pgid={process.pid} signal={signal.Signals(sig).name}', error)
             if sig == signal.SIGTERM:
                 end = time.monotonic() + 1
-                while time.monotonic() < end and any(p.poll() is None for p in processes):
+                while time.monotonic() < end:
+                    running = False
+                    for process in processes:
+                        try:
+                            running |= process.poll() is None
+                        except OSError as error:
+                            record(f'poll pid={process.pid}', error)
+                            running = True
+                    if not running:
+                        break
                     time.sleep(.02)
         end = time.monotonic() + 5
         for process in processes:
             try:
                 process.wait(timeout=max(.01, end-time.monotonic()))
             except subprocess.TimeoutExpired as error:
-                raise Failure('killed child did not exit within cleanup deadline') from error
+                record(f'wait pid={process.pid} cleanup deadline', error)
+            except OSError as error:
+                record(f'wait pid={process.pid}', error)
         if previous_children is None:
+            if errors:
+                raise CleanupFailure(errors)
             return  # Native runners retain process-group cleanup and direct-child reaping.
         # PTY harnesses create sessions/groups outside the Go command's
         # group. Once their parent dies they are adopted by this subreaper;
@@ -88,7 +122,11 @@ def stop_processes(processes, previous_children):
         grace = min(end, time.monotonic()+1)
         signalled = set()
         while True:
-            adopted = child_pids() - previous_children
+            try:
+                adopted = child_pids() - previous_children
+            except (OSError, Failure) as error:
+                record('enumerate adopted children', error)
+                break
             if not adopted:
                 break
             for pid in adopted:
@@ -96,20 +134,34 @@ def stop_processes(processes, previous_children):
                     reaped, _ = os.waitpid(pid, os.WNOHANG)
                     if reaped:
                         continue
-                    if pid not in signalled or time.monotonic() >= grace:
-                        os.kill(pid, signal.SIGKILL if time.monotonic() >= grace else signal.SIGTERM)
-                        signalled.add(pid)
                 except (ChildProcessError, ProcessLookupError):
-                    pass
+                    continue
+                except OSError as error:
+                    record(f'waitpid pid={pid}', error)
+                # A failed wait does not establish that an owned child exited.
+                # Still attempt its independent signal within the same deadline.
+                if pid not in signalled or time.monotonic() >= grace:
+                    sig = signal.SIGKILL if time.monotonic() >= grace else signal.SIGTERM
+                    signalled.add(pid)
+                    try:
+                        os.kill(pid, sig)
+                    except ProcessLookupError:
+                        pass
+                    except OSError as error:
+                        record(f'kill pid={pid} signal={signal.Signals(sig).name}', error)
             if time.monotonic() >= end:
-                raise Failure('test descendant did not exit within cleanup deadline')
+                errors.append('test descendants did not exit within cleanup deadline: ' +
+                              ','.join(str(pid) for pid in sorted(adopted)))
+                break
             time.sleep(.02)
+        if errors:
+            raise CleanupFailure(errors)
     finally:
         for sig, handler in handlers.items():
             signal.signal(sig, handler)
 
 
-def supervise(commands, deadline, *, stderr_path=None, terminal=None):
+def supervise(commands, deadline, *, stderr_path=None, terminal=None, after=None):
     """Record each complete invocation; file streams cannot block on pipe output."""
     if time.monotonic() >= deadline:
         raise Failure('shared discovery/test deadline already exceeded')
@@ -126,22 +178,34 @@ def supervise(commands, deadline, *, stderr_path=None, terminal=None):
         raise Failure('unsupported process supervisor platform')
     if stderr_path is not None and len(commands) != 1:
         raise Failure('separate stderr requires one invocation')
-    processes, files, started, durations, monitors, pending = [], [], [], [], [], []
+    after = {} if after is None else after
+    if any(type(i) is not int or type(previous) is not int or not 0 <= previous < i < len(commands)
+           for i,previous in after.items()):
+        raise Failure('invalid sequential invocation dependency')
+    processes, files = [None]*len(commands), []
+    started, durations = [None]*len(commands), [None]*len(commands)
+    monitors, pending = [None]*len(commands), [b'']*len(commands)
     try:
-        for command, output, env in commands:
+        def launch(index):
+            command, output, env = commands[index]
             handle = open(output, 'w', encoding='utf-8')
             files.append(handle)
             print('command:', json.dumps(command), flush=True)
-            started.append(time.monotonic())
+            started[index] = time.monotonic()
             stderr_handle = open(stderr_path, 'wb') if stderr_path is not None else None
             if stderr_handle is not None:
                 files.append(stderr_handle)
-            processes.append(subprocess.Popen(command, stdout=handle, stderr=stderr_handle, env=env,
-                                              start_new_session=True))
-            durations.append(None)
-            monitors.append(open(output, 'rb') if 'test' in command and '-json' in command else None)
-            pending.append(b'')
+            processes[index] = subprocess.Popen(command, stdout=handle, stderr=stderr_handle, env=env,
+                                                start_new_session=True)
+            monitors[index] = open(output, 'rb') if 'test' in command and '-json' in command else None
+        for index in range(len(commands)):
+            if index not in after:
+                launch(index)
         while True:
+            for index, previous in after.items():
+                if processes[index] is None and processes[previous] is not None and processes[previous].poll() == 0:
+                    launch(index)
+
             # Go continues other packages after a test fails. Inspect complete
             # JSON lines live so the first failure stops both commands promptly.
             for index, monitor in enumerate(monitors):
@@ -162,7 +226,7 @@ def supervise(commands, deadline, *, stderr_path=None, terminal=None):
                     if record.get('Action') in ('fail', 'build-fail'):
                         raise Failure('live Go failure: ' + str(record.get('Package')) + '/' + str(record.get('Test', '')))
 
-            statuses = [p.poll() for p in processes]
+            statuses = [p.poll() if p is not None else None for p in processes]
             for index, status in enumerate(statuses):
                 if status is not None and durations[index] is None:
                     durations[index] = time.monotonic()-started[index]
@@ -176,11 +240,16 @@ def supervise(commands, deadline, *, stderr_path=None, terminal=None):
                 raise Failure('shared discovery/test deadline exceeded')
             time.sleep(.05)
     finally:
+        primary = sys.exc_info()[1]
         try:
-            stop_processes(processes, previous_children)
+            stop_processes([p for p in processes if p is not None], previous_children)
+        except CleanupFailure as error:
+            if primary is not None:
+                raise CleanupFailure(error.errors, primary) from primary
+            raise
         finally:
             if terminal is not None:
-                terminal[:] = [process.returncode for process in processes]
+                terminal[:] = [process.returncode if process is not None else None for process in processes]
             for handle in files + [m for m in monitors if m is not None]:
                 handle.close()
 
@@ -225,8 +294,8 @@ def listed_names(text):
 
 
 def worker_count(workers):
-    if type(workers) is not int or workers not in (2, 4):
-        raise Failure("worker count must be 2 or 4")
+    if type(workers) is not int or workers not in (2, 4, 8):
+        raise Failure("worker count must be 2, 4 or 8")
     return workers
 
 
@@ -394,7 +463,7 @@ def verify_worker_vet(directory, manifest, expected):
         raise Failure('worker vet raw stderr mismatch')
 
 
-def reconcile(directory, workers=2, audit_evidence=None, *, expected_source_proof=None, require_plain_vet=False):
+def reconcile(directory, workers=2, audit_evidence=None, *, expected_source_proof=None, require_plain_vet=False, historical_legacy=False):
     worker_count(workers)
     paths = sorted(Path(directory).glob('**/manifest.json'))
     if len(paths) != workers:
@@ -403,6 +472,16 @@ def reconcile(directory, workers=2, audit_evidence=None, *, expected_source_proo
     if any(type(m.get('shard')) is not int for m in manifests) or {m.get('shard') for m in manifests} != set(range(workers)):
         raise Failure('missing/duplicate shard evidence')
     first = manifests[0]['catalog']
+    import go_parent_shards as parent_shards
+    versioned = 'schema' in first
+    if versioned:
+        parent_shards.validate(first, workers)
+        import run_ci_tier
+        proof = expected_source_proof if expected_source_proof is not None else run_ci_tier.full_race.source_proof(ROOT)
+        if first['source_proof'] != proof:
+            raise Failure('parent catalog differs from verified source tree')
+    elif workers == 8 or not historical_legacy:
+        raise Failure('live workers require complete-parent catalog schema')
     if first.get('workers', 2) != workers or len(first.get('assignments', [])) != workers:
         raise Failure('catalog worker count mismatch')
     if any(m.get('settings', {}).get('plain_audit_owned') for m in manifests):
@@ -467,15 +546,23 @@ def reconcile(directory, workers=2, audit_evidence=None, *, expected_source_proo
             raise Failure('shard evidence does not cover its complete assignment')
         import run_ci_tier
         directory = paths[manifests.index(manifest)].parent
-        logs = [directory / name for name in ('git-identity.json', 'ordinary.json', 'cli.json') if (directory / name).exists()]
-        if not (directory / 'cli.json').exists():
-            raise Failure('actual shard CLI evidence missing')
-        raw = '\n'.join(log.read_text() for log in logs)
-        ordinary_raw = '\n'.join(log.read_text() for log in logs if log.name != 'cli.json')
-        actual_packages = coverage(ordinary_raw, {n: first['packages'][n] for n in expected['packages']})
-        actual_cli = coverage((directory / 'cli.json').read_text(), {CLI: True}, expected['cli'])
-        if {'packages': actual_packages['packages'], 'cli': actual_cli['cli']} != expected:
-            raise Failure('actual terminal coverage differs from assignment')
+        if versioned:
+            raw = parent_shards.verify_logs(directory, first, expected)
+            if manifest.get('settings', {}).get('source_proof') != first['source_proof']:
+                raise Failure('parent catalog/worker source proof differs')
+            actual_config = manifest.get('settings', {}).get('plain_vet_context', {}).get('go', {})
+            if manifest.get('settings', {}).get('plain_vet_owned') and {key: actual_config.get(key) for key in parent_shards.CONFIG_FIELDS} != first['configuration']:
+                raise Failure('parent catalog/actual worker compiler differs')
+        else:
+            logs = [directory / name for name in ('git-identity.json', 'ordinary.json', 'cli.json') if (directory / name).exists()]
+            if not (directory / 'cli.json').exists():
+                raise Failure('actual shard CLI evidence missing')
+            raw = '\n'.join(log.read_text() for log in logs)
+            ordinary_raw = '\n'.join(log.read_text() for log in logs if log.name != 'cli.json')
+            actual_packages = coverage(ordinary_raw, {n: first['packages'][n] for n in expected['packages']})
+            actual_cli = coverage((directory / 'cli.json').read_text(), {CLI: True}, expected['cli'])
+            if {'packages': actual_packages['packages'], 'cli': actual_cli['cli']} != expected:
+                raise Failure('actual terminal coverage differs from assignment')
         if manifest.get('settings', {}).get('plain_audit_owned') and run_ci_tier.SOURCE_AUDIT_PACKAGE in expected['packages']:
             try:
                 run_ci_tier.verify_owned_audit_skip(raw)
@@ -483,13 +570,14 @@ def reconcile(directory, workers=2, audit_evidence=None, *, expected_source_proo
                 raise Failure(str(error)) from error
         if manifest['body_evidence'] != run_ci_tier.body_evidence(raw, short=True):
             raise Failure('actual shard body evidence differs from manifest')
-    assignments = first['assignments']
-    for kind in ('packages', 'cli'):
-        bins = [s[kind] for s in assignments]
-        flattened = [n for b in bins for n in b]
-        universe = set(first[kind]) - ({CLI} if kind == 'packages' else set())
-        if len(flattened) != len(set(flattened)) or set(flattened) != universe or not all(bins):
-            raise Failure('manifest partition is not exhaustive/disjoint')
+    if not versioned:
+        assignments = first['assignments']
+        for kind in ('packages', 'cli'):
+            bins = [s[kind] for s in assignments]
+            flattened = [n for b in bins for n in b]
+            universe = set(first[kind]) - ({CLI} if kind == 'packages' else set())
+            if len(flattened) != len(set(flattened)) or set(flattened) != universe or not all(bins):
+                raise Failure('manifest partition is not exhaustive/disjoint')
     print('reconciled source/catalog:', first['source'], digest(first))
 
 
@@ -513,6 +601,8 @@ def run(index, out, seconds, workers=2, plain_audit_owned=False, plain_vet_owned
     started = time.monotonic()
     out.mkdir(parents=True, exist_ok=True)
     (out / 'manifest.json').unlink(missing_ok=True)
+    for old in [*out.glob('parents-*.json'), *(out/n for n in ('ordinary.json','cli.json','git-identity.json'))]:
+        old.unlink(missing_ok=True)
     deadline = time.monotonic() + seconds
     env = os.environ.copy()
     if plain_audit_owned:
@@ -530,38 +620,53 @@ def run(index, out, seconds, workers=2, plain_audit_owned=False, plain_vet_owned
     source = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
     if os.environ.get('GITHUB_SHA', source) != source:
         raise Failure('checkout differs from event SHA')
+    import run_ci_tier
+    source_proof = run_ci_tier.full_race.source_proof(ROOT)
     phases = {}
-    phases['package_discovery_seconds'] = supervise([(['go', 'list', '-json', './...'], out / 'packages.json', env)], deadline)[0]
+    phases['package_discovery_seconds'] = supervise([(['go', 'list', '-race', '-json', './...'], out / 'packages.json', env)], deadline)[0]
     packages = metadata((out / 'packages.json').read_text())
     phases['cli_listing_race_build_testmain_seconds'] = supervise([(['go', 'test', '-race', '-short', '-count=1', '-json', '-list', '^(Test|Fuzz|Example)', CLI], out / 'listing.json', env)], deadline)[0]
     names = listed_names((out / 'listing.json').read_text())
+    import go_parent_shards as parent_shards
+    import run_ci_tier
+    heavy = sorted(set(parent_shards.HEAVY) & set(packages))
+    if heavy:
+        phases['parent_listing_race_build_testmain_seconds'] = supervise([
+            (['go','test','-race','-short','-count=1','-json','-p','1','-list','^(Test|Fuzz|Example)'] + heavy,
+             out/'listing-parents.json', env)], deadline)[0]
+    else:
+        (out/'listing-parents.json').write_text('')
+    parents = parent_shards.listing((out/'listing-parents.json').read_text(), heavy)
+    config = json.loads(subprocess.check_output(['go','env','-json', *parent_shards.CONFIG_FIELDS], env=env, text=True))
+    (out/'discovery-config.json').write_text(json.dumps(config, sort_keys=True)+'\n')
+    if run_ci_tier.full_race.source_proof(ROOT) != source_proof:
+        raise Failure('source changed during compiled discovery')
     hints = json.loads((ROOT / 'scripts/go_shard_hints.json').read_text())
-    ordinary = sorted(set(packages) - {CLI})
-    auxiliary = hints.get('auxiliary_costs_ms', {'vet': 0, 'git_invocation': 0})
-    if set(auxiliary) != {'vet', 'git_invocation'} or any(type(v) is not int or v < 0 for v in auxiliary.values()):
+    auxiliary = hints.get('auxiliary_costs_ms', {'vet':0, 'git_invocation':0})
+    if set(auxiliary) != {'vet','git_invocation'} or any(type(v) is not int or v < 0 for v in auxiliary.values()):
         raise Failure('invalid auxiliary scheduling hints')
-    fixed = [0 if plain_vet_owned else auxiliary['vet']] + [0] * (workers - 1)
-    package_hints = dict(hints['packages'])
-    exclusions = hints.get('owned_plain_audit_exclusions_ms', {})
-    if any(type(v) is not int or v < 0 for v in exclusions.values()):
-        raise Failure('invalid owned audit cost hints')
+    ranking = json.loads(json.dumps(hints))
     if not plain_audit_owned:
-        for package, elapsed in exclusions.items():
-            if package in ordinary:
-                package_hints[package] = package_hints.get(package, 1000) + elapsed
-    if GIT_IDENTITY in ordinary:
-        package_hints[GIT_IDENTITY] = max(package_hints.get(GIT_IDENTITY, 1000), auxiliary['git_invocation'])
-    package_bins = partition(ordinary, package_hints, workers, fixed)
-    cli_fixed = [fixed[i] + (auxiliary['git_invocation'] if GIT_IDENTITY in package_bins[i] else 0)
-                 for i in range(workers)]
-    cli_bins = partition(names, hints['cli'], workers, cli_fixed)
-    catalog = {'source': source, 'workers': workers, 'packages': packages, 'cli': names,
-               'assignments': [{'packages': package_bins[i], 'cli': cli_bins[i]} for i in range(workers)]}
+        for package,elapsed in hints.get('owned_plain_audit_exclusions_ms',{}).items():
+            ranking['packages'][package] = ranking['packages'].get(package,1000) + elapsed
+    if GIT_IDENTITY in packages:
+        ranking['packages'][GIT_IDENTITY] = max(ranking['packages'].get(GIT_IDENTITY,1000),auxiliary['git_invocation'])
+    fixed = [0 if plain_vet_owned else auxiliary['vet']] + [0] * (workers-1)
+    catalog = parent_shards.build(source, source_proof, config, packages, names, parents, ranking, workers, fixed)
+    parent_shards.validate(catalog, workers)
+    assignment = catalog['assignments'][index]
+    package_bins = [a['packages'] for a in catalog['assignments']]
+    cli_bins = [a['cli'] for a in catalog['assignments']]
+    cli_fixed = [0] * workers
     manifest = {'shard': index, 'catalog': catalog, 'catalog_sha256': digest(catalog), 'success': False,
                 'phases': phases,
+                'timing_observation': {'schema': 1, 'cache_restore_state': os.environ.get('CI_CACHE_RESTORE_STATE', 'unknown'),
+                    'runner_image': os.environ.get('ImageOS', ''), 'runner_image_version': os.environ.get('ImageVersion', ''),
+                    'run_id': os.environ.get('GITHUB_RUN_ID', ''), 'run_attempt': os.environ.get('GITHUB_RUN_ATTEMPT', ''),
+                    'commands_overlap': cpus > 1, 'note': 'invocation durations include compilation; parallel durations are not additive'},
                 'scheduling': {'fixed_vet_ms': fixed, 'cli_fixed_auxiliary_ms': cli_fixed,
                                'usage': 'logical ranking plus observed fixed invocation advice; not elapsed forecast'},
-                'settings': {'plain_audit_owned': plain_audit_owned, 'workers': workers, 'cpus': cpus, 'cli_cpus': cli_cpus, 'ordinary_cpus': ordinary_cpus, 'package_p': 1,
+                'settings': {'source_proof': source_proof, 'plain_audit_owned': plain_audit_owned, 'workers': workers, 'cpus': cpus, 'cli_cpus': cli_cpus, 'ordinary_cpus': ordinary_cpus, 'package_p': 1,
                              'ordinary_parallel': ordinary_cpus, 'cli_parallel': cli_cpus, 'deadline_seconds': seconds}}
     if plain_vet_owned:
         import run_ci_tier
@@ -590,8 +695,27 @@ def run(index, out, seconds, workers=2, plain_audit_owned=False, plain_vet_owned
     if overlapping:
         commands.append((common + ['-parallel', str(ordinary_cpus)] + overlapping,
                          out / 'ordinary.json', other_env))
-    commands.append((common + ['-parallel', str(cli_cpus), '-run', selector(cli_bins[index]), CLI],
-                     out / 'cli.json', cli_env))
+    if cli_bins[index]:
+        commands.append((common + ['-parallel', str(cli_cpus), '-run', selector(cli_bins[index]), CLI],
+                         out / 'cli.json', cli_env))
+    for package, selected in assignment['parents'].items():
+        commands.append((common + ['-parallel', str(cpus), '-run', selector(selected), package],
+                         out / parent_shards.log_name(package), dict(env, GOMAXPROCS=str(cpus))))
+    # One ordinary lane executes package groups sequentially while the CLI lane
+    # overlaps it. TestMain/seed setup occurs once per assigned package, and at
+    # most two commands share the CPU budget. Git observers stay isolated first.
+    ordinary_indices = [i for i,(_,log,_) in enumerate(commands) if log.name != 'cli.json']
+    after = {current:previous for previous,current in zip(ordinary_indices,ordinary_indices[1:])}
+    has_cli = bool(cli_bins[index])
+    lane_cpus = max(1,cpus//2) if has_cli and ordinary_indices else cpus
+    for command, log, child_env in commands:
+        budget = cpus-lane_cpus if log.name == 'cli.json' and ordinary_indices else lane_cpus
+        budget = max(1,budget)
+        command[command.index('-parallel')+1] = str(budget)
+        child_env['GOMAXPROCS'] = str(budget)
+    manifest['settings']['execution_lanes'] = int(bool(ordinary_indices))+int(has_cli)
+    manifest['settings']['lane_cpus'] = lane_cpus
+    manifest['settings']['sequential_after'] = {str(i):previous for i,previous in after.items()}
     # Validate every command before executing any selected tests.
     for command, _, child_env in isolated_commands + commands:
         size = sum(len(v.encode()) + 1 for v in command) + sum(len((k+'='+v).encode()) + 1 for k, v in child_env.items())
@@ -606,26 +730,22 @@ def run(index, out, seconds, workers=2, plain_audit_owned=False, plain_vet_owned
         for command in commands:
             durations.extend(supervise([command], deadline))
     else:
-        durations = supervise(commands, deadline)
-    if overlapping:
-        phases['ordinary_invocation_seconds'] = durations[0]
-    phases['cli_invocation_seconds'] = durations[-1]
-    ordinary_text = '\n'.join((out / filename).read_text() for filename in
-                              (['git-identity.json'] if isolated else []) + (['ordinary.json'] if overlapping else []))
-    p = coverage(ordinary_text, {n: packages[n] for n in package_bins[index]})
-    c = coverage((out / 'cli.json').read_text(), {CLI: True}, cli_bins[index])
-    if plain_vet_owned and run_ci_tier.full_race.source_proof(ROOT) != manifest['settings']['plain_vet_source_proof']:
-        raise Failure('owned vet worker source changed during execution')
+        durations = supervise(commands, deadline, after=after)
+    for (_, log, _), duration in zip(commands, durations):
+        phases[log.stem + '_invocation_seconds'] = duration
+    raw = parent_shards.verify_logs(out, catalog, assignment)
+    if run_ci_tier.full_race.source_proof(ROOT) != source_proof:
+        raise Failure('worker source changed during execution')
     if plain_vet_owned:
         manifest['plain_vet'] = execute_worker_vet(out, deadline, manifest['settings'])
     if index == 0 and not plain_vet_owned:
         phases['vet_seconds'] = supervise([(['go', 'vet', './...'], out / 'vet.txt', env)], deadline)[0]
     import run_ci_tier
     manifest['tier'] = 'pr'
-    manifest['body_evidence'] = run_ci_tier.body_evidence(ordinary_text + '\n' + (out / 'cli.json').read_text(), short=True)
+    manifest['body_evidence'] = run_ci_tier.body_evidence(raw, short=True)
     phases['worker_total_seconds'] = time.monotonic() - started
     print('actual worker phases (seconds):', json.dumps(phases, sort_keys=True), flush=True)
-    manifest.update(success=True, phases=phases, coverage={'packages': p['packages'], 'cli': c['cli']})
+    manifest.update(success=True, phases=phases, coverage=assignment)
     path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + '\n')
 
 
@@ -633,7 +753,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument('--shard', type=int)
-    parser.add_argument('--workers', type=int, choices=(2, 4), default=2)
+    parser.add_argument('--workers', type=int, choices=(2, 4, 8), default=2)
     parser.add_argument('--plain-audit-owned', action='store_true')
     parser.add_argument('--plain-vet-owned', action='store_true')
     parser.add_argument('--audit-evidence', type=Path)
