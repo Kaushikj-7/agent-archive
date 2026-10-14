@@ -41,6 +41,10 @@ jobs:
       - name: Prepare exact immutable shared source
         if: matrix.profile == 'shared'
         run: python3 -B scripts/warm_shared_tools.py --checkout-only
+      - name: Set controlled compilation/module paths
+        shell: bash
+        run: |
+          printf 'GOCACHE=%s/pr-go-build\nGOMODCACHE=%s/pr-go-modules\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - id: restored
         uses: ./.github/actions/verified-go-cache
         with:

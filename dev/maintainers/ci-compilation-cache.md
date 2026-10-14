@@ -16,7 +16,10 @@ state are deliberately fresh, including the vulnerability database.
 
 `go_cache_context.py` remains the identity/path/source authority. The worker
 adapter is `go_cache_steps.py`; `ci_cache.py` adapts the same authority for
-read-only consumers and main seed publication. Identity includes actual Go
+read-only consumers and main seed publication. Calling workflows explicitly set
+the two controlled Go cache paths before invoking the composite; the composite
+does not mutate its caller environment. The release scanner installs the exact
+product toolchain pin rather than go.mod's minimum language version. Identity includes actual Go
 and compiler binary checksums/version, module lockfile hashes, Go flags and
 architecture/cgo controls, exact runner image, OS release and immutable tool
 pins. Darwin additionally includes selected Xcode/SDK metadata and deployment
