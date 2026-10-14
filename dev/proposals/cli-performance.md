@@ -44,8 +44,9 @@ foundation. The [matched synthetic result ledger](../maintainers/picker-qualific
 records all 16 processes / 104 cases at candidate `cc26f45aba6c76307aecf3c9d32b2650aef79eed`
 against baseline `a187e1b883924fd36c9d6700606a5c2756fc2b6f`, with exact fixture/harness
 hashes, all cold/warm/changed/native phases, allocation deltas and separately
-labeled fixture-inclusive heap/process memory. Independent PR7 review and hosted
-checks remain required. Production provider and broader command performance
+labeled fixture-inclusive heap/process memory. Final source review and required
+hosted checks are tracked in [PR499](https://github.com/wangjohn/agent-archive/pull/499).
+Production provider and broader command performance
 gates below remain separate.
 
 The [default listing contract](../maintainers/list-performance.md) now
@@ -352,10 +353,11 @@ a separate proposal; refresh catalog rows when published metadata changes.
 
 ## Scoped picker acceptance evidence
 
-Use the [real CLI first-frame/Older protocol](../maintainers/picker-qualification/README.md)
-for the next matched measurement. The baseline pin is merged contract-only
-`a187e1b883924fd36c9d6700606a5c2756fc2b6f`; compare its protocol 10 UI with the same
-complete logical archive on the final protocol 11 source. Shared harness and
+The [recorded matched results](../maintainers/picker-qualification/results-20261013.md)
+use the [real CLI first-frame/Older protocol](../maintainers/picker-qualification/README.md)
+at baseline `a187e1b883924fd36c9d6700606a5c2756fc2b6f` and measured candidate
+`cc26f45aba6c76307aecf3c9d32b2650aef79eed`. Use the same protocol for future
+matched comparisons of equivalent complete logical archives. Shared harness and
 fixture hashes, exact production source, returned-byte/request counts,
 phase latency/allocations, sampled heap/native R costs and limitations must be
 retained. Historical phase3/model/JSON samples cannot satisfy this comparison.

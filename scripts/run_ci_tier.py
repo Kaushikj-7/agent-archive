@@ -9,6 +9,7 @@ import re
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 
 import full_race
@@ -234,6 +235,28 @@ def discover(packages, out, deadline, race=False):
     return {p: sorted(n) for p, n in names.items()}
 
 
+def prepare_performance(out, deadline, env, expected_source):
+    """Compile dependencies with two workers; never run initialization or tests."""
+    packages = PERFORMANCE[-4:]
+    def require_source():
+        try:
+            if full_race.source_proof(ROOT) != expected_source:
+                raise Failure('performance compilation source changed')
+        except full_race.shards.Failure as error:
+            raise Failure(str(error)) from error
+    require_source()
+    with tempfile.TemporaryDirectory(prefix='agent-archive-ci-compile-') as directory:
+        command = ['go', 'test', '-c', '-p', '2', '-o', directory, *packages]
+        checked(command, out/'performance-compile.log', deadline, env)
+        for package in packages:
+            binary = Path(directory)/(package.rsplit('/', 1)[1]+'.test')
+            if binary.is_symlink() or not binary.is_file():
+                raise Failure('performance compilation lacks required binary')
+        require_source()
+    return {'source_proof': expected_source, 'packages': packages,
+            'parallel': 2, 'completed': True}
+
+
 def expected_real_manager_skip(record):
     """One fake-manager case is unrepresentable on the actual user manager."""
     name = 'TestRealUserManagerConformance/UnreadableAndAbsentDefinitions'
@@ -325,7 +348,11 @@ def run_suite(tier, suite, out, extras=None, seconds=2400):
                 pattern = '^('+'|'.join(re.escape(n) for n in names)+')$'
                 execute(common+['-run', pattern, './'+pkg[len(MODULE):]], 'medium-'+pkg.rsplit('/',1)[1], selected={pkg:names}, children=children)
         if tier == 'full' and packages:
-            execute(PERFORMANCE, 'performance', env=dict(os.environ, AGENT_ARCHIVE_PERF='1', AGENT_ARCHIVE_REAL_SYSTEMD='0'))
+            performance_env = dict(os.environ, AGENT_ARCHIVE_PERF='1', AGENT_ARCHIVE_REAL_SYSTEMD='0')
+            report['performance_compile'] = prepare_performance(
+                out, deadline, performance_env, report['full_schedule']['source_proof'])
+            path.write_text(json.dumps(report, indent=2)+'\n')
+            execute(PERFORMANCE, 'performance', env=performance_env)
     if suite == 'macos':
         execute(['bash','scripts/test_published_writer.sh'],'published-writer', selected={MODULE+'internal/config':['TestPublishedWriterRefusesProtectedConfiguration']})
     if suite == 'fuzz' or suite == 'extra' and extras['fuzz']:
@@ -389,6 +416,10 @@ def verify_full(directory, plan):
             full_race.verify(directory, report, expected_packages, ROOT, body_evidence, verify_selected, catalog()['restorations'])
         except full_race.shards.Failure as error:
             raise Failure(str(error)) from error
+        expected_compile = {'source_proof': report['full_schedule']['source_proof'],
+                            'packages': PERFORMANCE[-4:], 'parallel': 2, 'completed': True}
+        if report.get('performance_compile') != expected_compile:
+            raise Failure('performance compilation proof missing or changed')
     elif report['invocations'] or report.get('full_schedule') or report.get('full_discovery') or any(directory.glob('full-*')) or any(directory.glob('race*')):
         raise Failure('empty extra contains unexpected execution/discovery')
     for invocation in report['invocations']:

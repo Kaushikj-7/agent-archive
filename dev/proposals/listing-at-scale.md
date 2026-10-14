@@ -8,8 +8,9 @@ completed 2026-10-13:16 processes / 104 cases, baseline
 `a187e1b883924fd36c9d6700606a5c2756fc2b6f` and candidate
 `cc26f45aba6c76307aecf3c9d32b2650aef79eed`.
 [Results, hashes and limits](../maintainers/picker-qualification/results-20261013.md)
-cover10k/100k cold/warm/changed and native 20/120 cases. Independent PR7 review,
-required hosted checks and production provider release gates remain open.
+cover10k/100k cold/warm/changed and native 20/120 cases. Final source review and
+required hosted checks are tracked in [PR499](https://github.com/wangjohn/agent-archive/pull/499);
+production release gates remain separate.
 This scoped query subset does not qualify every historical listing/full-load path.
 Reconciled 2026-10-11 at `db2ccd3e`. The current
 [listing contract](../maintainers/list-performance.md) specifies indexed bounded
@@ -37,8 +38,9 @@ Older actions for supported interactive paths. Its
 [CLI qualification controls](../maintainers/picker-qualification/README.md)
 separate complete synthetic construction, actual command work and nativeR costs.
 Final integrated-source synthetic paired measurements are recorded above;
-independent review/required hosted checks and provider release acceptance remain
-gates. Legacy destinations retain proportional header discovery.
+final source review and required hosted checks are tracked in
+[PR499](https://github.com/wangjohn/agent-archive/pull/499), with provider release
+acceptance remaining separate. Legacy destinations retain proportional header discovery.
 
 The phase designs below preserve the original plan.
 Each phase lands before the next one starts. Each phase's PR updates its

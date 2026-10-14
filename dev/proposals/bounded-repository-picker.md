@@ -5,8 +5,9 @@ browser source are implemented in the dependent picker stack. Matched synthetic
 CLI qualification completed at `cc26f45aba6c76307aecf3c9d32b2650aef79eed`:16
 processes / 104 cases, including both 10k/100k cold/warm/changed and native matrices.
 [Exact results and limits](../maintainers/picker-qualification/results-20261013.md)
-retain source/harness/body evidence. Independent PR7 review and required hosted
-checks still gate completion.
+retain source/harness/body evidence. Final source review and required hosted
+checks are tracked in [PR499](https://github.com/wangjohn/agent-archive/pull/499);
+production release gates remain separate.
 Production activation remains refused pending provider and credential authority.
 Prepared 2026-10-13 against main
 `4b9b612ff9fbac454c93a292435bb151f7cde75f`.
