@@ -61,7 +61,9 @@ find none say so without creating the data directory.
   subagent sessions whose parent session is not registered yet go after
   every other queued session. `status` lists a session a pass did not reach
   as **queued for the next pass, N ahead**, where N counts the queued
-  sessions that pass had in front of it.
+  sessions that pass had in front of it. N is a rough guide, not a place in
+  line: the next pass orders the queue again, with any sessions queued
+  since, so it may reach the session sooner or later than N suggests.
 
   A Codex thread whose history spans several rollout files is read by
   following Codex's own record of its current file back through the file

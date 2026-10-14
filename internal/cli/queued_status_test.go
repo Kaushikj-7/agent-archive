@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -44,11 +45,11 @@ func TestStatusListsUnreachedSessionsAsQueued(t *testing.T) {
 		states[session.ArchiveSessionID] = session
 	}
 	for id, ahead := range map[string]int{"never-published": 372, "published-before": 12, "front-of-queue": 0} {
-		if got := states[id]; got.State != uploadingQueued || got.QueuedAhead != ahead || got.Issue != "" {
+		if got := states[id]; got.State != uploadingQueued || got.QueuedAhead == nil || *got.QueuedAhead != ahead || got.Issue != "" {
 			t.Errorf("%s = %+v, want queued with %d ahead", id, got, ahead)
 		}
 	}
-	if got := states["failed"]; got.State != uploadingFailing {
+	if got := states["failed"]; got.State != uploadingFailing || got.QueuedAhead != nil {
 		t.Errorf("failed session = %+v", got)
 	}
 
@@ -83,7 +84,7 @@ func TestStatusListsUnreachedSessionsAsQueued(t *testing.T) {
 			Uploading []struct {
 				ArchiveSessionID string         `json:"archive_session_id"`
 				State            uploadingState `json:"state"`
-				QueuedAhead      int            `json:"queued_ahead"`
+				QueuedAhead      *int           `json:"queued_ahead"`
 			} `json:"uploading"`
 		} `json:"applications"`
 	}
@@ -93,14 +94,24 @@ func TestStatusListsUnreachedSessionsAsQueued(t *testing.T) {
 	if fields.Collector.UnreachedSessions["never-published"] != 372 {
 		t.Fatalf("status --json unreached_sessions = %v", fields.Collector.UnreachedSessions)
 	}
-	found := false
+	// Every queued session has queued_ahead, the one at the front of the
+	// queue (0 ahead) too; no other session has it.
+	wantAhead := map[string]int{"never-published": 372, "published-before": 12, "front-of-queue": 0}
+	seen := 0
 	for _, session := range fields.Apps[0].Uploading {
-		if session.ArchiveSessionID == "never-published" {
-			found = session.State == uploadingQueued && session.QueuedAhead == 372
+		want, queued := wantAhead[session.ArchiveSessionID]
+		switch {
+		case queued && (session.State != uploadingQueued || session.QueuedAhead == nil || *session.QueuedAhead != want):
+			t.Errorf("status --json lists %s as %s with queued_ahead %v, want queued with %d", session.ArchiveSessionID, session.State, session.QueuedAhead, want)
+		case !queued && session.QueuedAhead != nil:
+			t.Errorf("status --json gives %s (%s) queued_ahead %d", session.ArchiveSessionID, session.State, *session.QueuedAhead)
+		}
+		if queued {
+			seen++
 		}
 	}
-	if !found {
-		t.Fatalf("status --json does not list never-published as queued with 372 ahead:\n%s", out.String())
+	if seen != len(wantAhead) {
+		t.Fatalf("status --json lists %d of the %d queued sessions:\n%s", seen, len(wantAhead), out.String())
 	}
 }
 
@@ -108,12 +119,17 @@ func TestSyncCountsSessionsLeftForTheNextPass(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		unreached map[string]int
+		errors    map[string]error
 		want      string
 	}{
-		{nil, "Scanned 2 session(s): 2 published, 0 unchanged, 0 failed."},
-		{map[string]int{"a": 0, "b": 1, "c": 2}, "Scanned 2 session(s): 2 published, 0 unchanged, 0 failed; 3 left for the next pass."},
+		{nil, nil, "Scanned 2 session(s): 2 published, 0 unchanged, 0 failed."},
+		{map[string]int{"a": 0, "b": 1, "c": 2}, nil, "Scanned 2 session(s): 2 published, 0 unchanged, 0 failed; 3 left for the next pass."},
+		// A session that failed is counted as failed only, as a deferred
+		// one is.
+		{map[string]int{"a": 0, "b": 1}, map[string]error{"a": errors.New("unreadable")}, "Scanned 2 session(s): 2 published, 0 unchanged, 1 failed; 1 left for the next pass."},
+		{map[string]int{"a": 0}, map[string]error{"a": errors.New("unreadable")}, "Scanned 2 session(s): 2 published, 0 unchanged, 1 failed."},
 	} {
-		result := collector.Result{Scanned: 2, Published: []string{"x", "y"}, Unreached: tc.unreached}
+		result := collector.Result{Scanned: 2, Published: []string{"x", "y"}, Unreached: tc.unreached, Errors: tc.errors}
 		if got := syncSummary(result); got != tc.want {
 			t.Errorf("sync summary = %q, want %q", got, tc.want)
 		}

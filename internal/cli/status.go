@@ -162,8 +162,10 @@ type uploadingSession struct {
 	Issue            string         `json:"issue,omitempty"`
 	Deferred         string         `json:"deferred,omitempty"`
 	// QueuedAhead is, for a queued session, how many queued sessions the
-	// last pass had ordered ahead of it.
-	QueuedAhead int  `json:"queued_ahead,omitempty"`
+	// last pass had ordered ahead of it. It is set exactly when State is
+	// uploadingQueued, so the JSON has it for every queued session, 0 for
+	// the one at the front, and for no other.
+	QueuedAhead *int `json:"queued_ahead,omitempty"`
 	Imported    bool `json:"imported,omitempty"`
 }
 
@@ -845,7 +847,8 @@ func (s statusSessions) addUploading(app *appStatus, project *projectCaptureStat
 	case unreachedThisPass(s.unreached, reg.ArchiveSessionID):
 		// The last pass ended before its turn; it is waiting in the queue,
 		// not for anything to go right.
-		session.State, session.QueuedAhead = uploadingQueued, s.unreached[reg.ArchiveSessionID]
+		ahead := s.unreached[reg.ArchiveSessionID]
+		session.State, session.QueuedAhead = uploadingQueued, &ahead
 	case !o.Published:
 		session.State = uploadingFirst
 	}
@@ -861,11 +864,11 @@ func unreachedThisPass(unreached map[string]int, id string) bool {
 }
 
 // queuedWhat words a queued session's place in the queue.
-func queuedWhat(ahead int) string {
-	if ahead == 0 {
+func queuedWhat(ahead *int) string {
+	if ahead == nil || *ahead == 0 {
 		return "queued for the next pass"
 	}
-	return fmt.Sprintf("queued for the next pass, %d ahead", ahead)
+	return fmt.Sprintf("queued for the next pass, %d ahead", *ahead)
 }
 
 // sortUploading puts failing sessions first, then the most recently
