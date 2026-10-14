@@ -6,18 +6,6 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-- Capture Codex sessions again while Codex is running. A thread's history is
-  now read by following Codex's own record of its current rollout back through
-  the rollout each one continues from, instead of waiting for a full inventory
-  of every Codex file that new files kept invalidating; sessions no longer sit
-  "waiting for Codex history coverage". A missing earlier rollout is reported
-  as a failure the next pass retries ("a Codex rollout this thread continues
-  from was not found"). Other rollouts of the same thread, such as a branch
-  abandoned by a rollback, no longer hold a thread back; they are kept as
-  earlier revisions when the scan has seen them and they can be read; one that
-  cannot be read, or does not fit beside the thread's own history, is left out
-  rather than failing the thread's capture.
-
 ## [0.2.2]
 
 Candidate scope for the intended, unused `v0.2.2` tag; this tag has not been
@@ -48,6 +36,18 @@ new source requires a new candidate campaign and tag. Earlier passing campaigns
 and the cleanup repair do not turn either failed tagged gate into a pass.
 
 ### Latest development changes
+
+- Capture Codex sessions again while Codex is running. A thread's history is
+  now read by following Codex's own record of its current rollout back through
+  the rollout each one continues from, instead of waiting for a full inventory
+  of every Codex file that new files kept invalidating; sessions no longer sit
+  "waiting for Codex history coverage". A missing earlier rollout is reported
+  as a failure the next pass retries ("a Codex rollout this thread continues
+  from was not found"). Other rollouts of the same thread, such as a branch
+  abandoned by a rollback, no longer hold a thread back; they are kept as
+  earlier revisions when the scan has seen them and they can be read; one that
+  cannot be read, or does not fit beside the thread's own history, is left out
+  rather than failing the thread's capture.
 
 - Preserve the primary validation failure alongside cleanup diagnostics, and
   continue bounded cleanup of other owned processes after signal, poll or wait
