@@ -96,18 +96,31 @@ func (s *Store) RequestSessionIndexAbsence(key agentmeta.SessionKey) error {
 //
 // Every absence write is fenced under hooks.lock, which requests also hold:
 // the marker must still be the same complete version-1 census and the token
-// unchanged. A request therefore preceded the token read, its key's earlier
+// unchanged. The token itself is read under hooks.lock, after its requester
+// wrote both token and entry. A request therefore preceded the token read, its key's earlier
 // registrations (an index lost silently) are in this census, and its retained
 // entry has refused every later registration of that key. Owner and candidate
 // repairs use the existing request-lock validation.
 func (s *Store) certifyRequestedAbsences(ctx context.Context, allowance time.Duration) (bool, error) {
-	request, pending, requestErr := s.readAbsenceRequest()
-	if requestErr == nil && !pending {
+	if _, pending, err := s.readAbsenceRequest(); err == nil && !pending {
 		return true, nil
 	}
-	var marker sessionIndexMarker
-	if err := readRecoveryJSON(filepath.Join(s.home, sessionIndexMarkerFile), &marker); err != nil {
+	// A requester writes its token and then its entry under one hooks.lock
+	// hold. Reading the token and marker under that lock means every entry
+	// carrying this token already exists before the directory listing below.
+	unlock, err := s.namedLockWait("hooks.lock", time.Second)
+	if err != nil {
 		return false, err
+	}
+	request, _, requestErr := s.readAbsenceRequest()
+	var marker sessionIndexMarker
+	markerErr := readRecoveryJSON(filepath.Join(s.home, sessionIndexMarkerFile), &marker)
+	unlock()
+	if requestErr == nil && !request.pending() {
+		return true, nil
+	}
+	if markerErr != nil {
+		return false, markerErr
 	}
 	if requestErr != nil || marker.Version != 1 || !marker.Complete {
 		// Without a usable token only a full census covers retained requests.

@@ -117,7 +117,8 @@ Discovery's request for a census-certified absence is not damage. Under a
 complete version-1 marker, `RequestSessionIndexAbsence` writes a fresh opaque
 token to `session-index-absence.json` and then the key's retained request
 entry, under hooks.lock, without changing the marker: other keys' misses stay
-allowed. The next slice reads the token, enumerates the complete registration
+allowed. The next slice reads the token under hooks.lock, so every entry
+carrying it already exists, then enumerates the complete registration
 and candidate inventory, and applies requested misses with the ordinary
 owner/candidate repair. Each absence write is fenced under hooks.lock on the
 same complete marker generation and an unchanged token, so every applied

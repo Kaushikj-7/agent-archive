@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/local"
@@ -193,5 +194,63 @@ func TestAbsenceRequestWithoutCensusRequestsRecovery(t *testing.T) {
 	}
 	if yes, err := s.SessionIndexAbsent(wanted); !yes || err != nil {
 		t.Fatalf("absence after full census: %v %v", yes, err)
+	}
+}
+
+// A slice that read the token a request had just written, before that
+// request's entry existed, would certify the token without the entry and
+// strand it under a complete census with nothing pending.
+func TestAbsenceRequestTokenReadBeforeEntryStaysPending(t *testing.T) {
+	t.Parallel()
+	s := completedAbsenceStore(t)
+	wanted := agentmeta.SessionKey{Agent: agentmeta.Codex, NativeID: "token-before-entry"}
+	var sliceErr error
+	done := make(chan struct{})
+	s.onIndexStep = func(step string) error {
+		if step != "absence-request-marked" {
+			return nil
+		}
+		s.onIndexStep = nil
+		// The requester holds hooks.lock between the token and its entry. A
+		// collector slice running now must not certify the new token.
+		go func() {
+			defer close(done)
+			collector := *s
+			collector.onIndexStep = nil
+			_, sliceErr = collector.RecoverSessionIndexScheduled(context.Background(), SessionIndexRecoverySlice)
+		}()
+		select {
+		case <-done:
+		case <-time.After(300 * time.Millisecond):
+		}
+		return nil
+	}
+	unlock, err := local.NamedLock(s.home, "hooks.lock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = s.RequestSessionIndexAbsence(wanted)
+	unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-done
+	if sliceErr != nil && !errors.Is(sliceErr, local.ErrBusy) {
+		t.Fatalf("concurrent slice: %v", sliceErr)
+	}
+	// Either the slice waited for the entry and certified it, or the token
+	// is still pending; never a certified token with a retained entry.
+	_, pending, err := s.readAbsenceRequest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if absent, err := s.SessionIndexAbsent(wanted); !pending && (!absent || err != nil) {
+		t.Fatalf("token certified before its entry: absent=%v err=%v", absent, err)
+	}
+	if complete, err := s.RecoverSessionIndexScheduled(context.Background(), SessionIndexRecoverySlice); err != nil || !complete {
+		t.Fatalf("next slice complete=%v err=%v", complete, err)
+	}
+	if yes, err := s.SessionIndexAbsent(wanted); !yes || err != nil {
+		t.Fatalf("absence: %v %v", yes, err)
 	}
 }
