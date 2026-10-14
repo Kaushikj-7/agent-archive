@@ -126,6 +126,7 @@ jobs:
         run: python3 -B scripts/go_cache_steps.py verify
       - name: Discovered race-short shard
         env:
+          CI_CACHE_RESTORE_STATE: ${{ steps.go-cache-verify.outputs.restore_state }}
           SHARD: ${{ matrix.shard }}
         run: python3 -B scripts/run_go_shard.py --workers 4 --plain-audit-owned --plain-vet-owned --shard "$SHARD" --output shard-results
       - name: Require unchanged source and current PR worker success before cache save
@@ -227,6 +228,7 @@ jobs:
 
       - run: python3 scripts/test_go_shards.py
       - run: python3 -B scripts/test_generate_go_shard_hints.py
+      - run: python3 -B scripts/test_report_ci_timing.py
       - run: python3 scripts/test_ci_tiers.py
       - run: python3 -B scripts/test_native_full.py
       - run: python3 -B scripts/test_go_cache_context.py
