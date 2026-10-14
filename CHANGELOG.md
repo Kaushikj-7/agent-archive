@@ -8,9 +8,10 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [0.2.2]
 
-Candidate scope for the intended, unused `v0.2.2` tag; this tag has not been
-created and no release date or publication is established here. Freeze the final
-code/documentation SHA and complete a fresh exact-commit campaign before tagging.
+Candidate scope prepared on 2026-10-14 for the intended `v0.2.2` tag, which
+had not been created at that preparation snapshot. This record establishes no
+release date or publication. Freeze the final code/documentation SHA and complete
+a fresh exact-commit campaign before tagging.
 Published installation examples remain pinned to v0.1.1 until the tested candidate
 is promoted. Production S3/R2 scoped catalog activation remains refused pending
 provider qualification and credential authority.
