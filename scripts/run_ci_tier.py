@@ -496,18 +496,25 @@ def native_selections(sensitive):
     return selected
 
 
+def native_selected_phases(sensitive):
+    phases = {'native-cli': {MODULE+'internal/cli': sorted(NATIVE_CLI)}}
+    if sensitive:
+        phases['native-sensitive-cli'] = {MODULE+'internal/cli': sorted(PR_REGRESSIONS['cli']['internal/cli'])}
+        phases['native-sensitive-catalog'] = {MODULE+'internal/catalog': sorted(PR_REGRESSIONS['catalog']['internal/catalog'])}
+    return phases
+
+
 def native_commands(sensitive):
-    selected = native_selections(sensitive)
     commands = [('native-packages', NATIVE_COMMON+NATIVE_PACKAGES)]
-    for pkg, names in selected.items():
+    for phase, selected in native_selected_phases(sensitive).items():
+        pkg, names = next(iter(selected.items()))
         pattern = '^('+'|'.join(re.escape(n) for n in names)+')$'
         common = list(NATIVE_COMMON)
-        if sensitive:
-            # Conditional regressions previously owned a 20-minute package
-            # deadline. Consolidation must not shorten that existing budget.
+        if phase.startswith('native-sensitive-'):
+            # Keep original command/deadline ownership: 10m base smoke and
+            # separate 20m conditional regressions. Never pool their budgets.
             common[common.index('-timeout')+1] = '20m'
-        commands.append(('native-'+pkg.rsplit('/', 1)[1],
-                         common+['-run', pattern, './'+pkg[len(MODULE):]]))
+        commands.append((phase, common+['-run', pattern, './'+pkg[len(MODULE):]]))
     return commands
 
 
@@ -545,7 +552,7 @@ def verify_native_smoke(directory, report, sensitive):
             raise Failure('native invocation command/environment mismatch')
         raw = (directory/invocation['log']).read_text()
         expected = ({p: listing[p] for p in packages} if name == 'native-packages'
-                    else {p: names for p, names in selected.items() if name == 'native-'+p.rsplit('/', 1)[1]})
+                    else native_selected_phases(sensitive)[name])
         verify_pr_stream(raw, expected)
         evidence = body_evidence(raw, True)
         if evidence != invocation['evidence']:
@@ -596,11 +603,10 @@ def run_native_smoke(out, deadline, report, save, execute, sensitive):
     save()
     # Keep host-sensitive groups serial: launchd observers and PTY tests must
     # not compete with a second test process mutating shared native resources.
-    # One CLI process covers both base and conditional parents, avoiding a
-    # second race startup, listing, linking and repeated TestMain execution.
+    # Share only compiled discovery. Base and conditional CLI executions
+    # retain their original separate package lifetimes and TestMain isolation.
     for name, command in native_commands(sensitive):
-        chosen = {p: names for p, names in selected.items()
-                  if name == 'native-'+p.rsplit('/', 1)[1]}
+        chosen = native_selected_phases(sensitive).get(name)
         timed(name, lambda: execute(command, name, short=True, selected=chosen or None))
     native['post_source_proof'] = full_race.source_proof(ROOT)
     save()

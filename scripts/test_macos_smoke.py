@@ -37,7 +37,7 @@ class NativeSmokeTest(unittest.TestCase):
         report = dict(invocations=[], native_smoke=native)
         for name, command in tier.native_commands(sensitive):
             wanted = ({p: inventory[p] for p in inventory if p not in selected} if name == 'native-packages'
-                      else {p: names for p, names in selected.items() if name == 'native-'+p.rsplit('/', 1)[1]})
+                      else tier.native_selected_phases(sensitive)[name])
             raw = []
             for package, names in wanted.items():
                 for parent in names:
@@ -58,14 +58,17 @@ class NativeSmokeTest(unittest.TestCase):
         with mock.patch.object(tier.full_race, 'source_proof', return_value=PROOF):
             tier.verify_native_smoke(directory, report, sensitive)
 
-    def test_base_and_conditional_complete_and_cli_executes_once(self):
+    def test_base_and_conditional_complete_with_original_separate_deadlines(self):
         for sensitive in (False, True):
             with self.subTest(sensitive=sensitive), tempfile.TemporaryDirectory() as d:
                 report = self.fixture(Path(d), sensitive)
                 self.verify(Path(d), report, sensitive)
                 cli = [i for i in report['invocations'] if i['log'] == 'native-cli.jsonl']
                 self.assertEqual(len(cli), 1)
-                self.assertEqual(cli[0]['command'][cli[0]['command'].index('-timeout')+1], '20m' if sensitive else '10m')
+                self.assertEqual(cli[0]['command'][cli[0]['command'].index('-timeout')+1], '10m')
+                if sensitive:
+                    extra = next(i for i in report['invocations'] if i['log'] == 'native-sensitive-cli.jsonl')
+                    self.assertEqual(extra['command'][extra['command'].index('-timeout')+1], '20m')
                 self.assertEqual(len(tier.native_selections(sensitive)[tier.MODULE+'internal/cli']), 15 if sensitive else 12)
                 self.assertFalse(any('writer' in str(i) for i in report['invocations']))
 
