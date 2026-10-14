@@ -453,9 +453,30 @@ func (s *Store) savePreparedImportStage(ctx context.Context, reg archive.Session
 				return s.commitFreshSettledStage(ctx, g, reg, stage.SkillEvidence, rename)
 			})
 		}
-		return s.writeDurableGuard(ctx, g, importStageRelative(reg.ArchiveSessionID), stage)
+		return s.writeDurableGuardHeadroom(ctx, g, importStageRelative(reg.ArchiveSessionID), stage, nil, stage.publicationHeadroom())
 	})
 	return digest, err
+}
+
+// publicationHeadroom classifies only the complete, already validated selected
+// stage. It changes admission policy, never grants source or release authority.
+// Unknown, related, child, grouped and historical selections keep the full quota.
+func (p ImportStage) publicationHeadroom() int64 {
+	reg, bundle := p.Registration, p.Bundle
+	if (p.Version != 1 && p.Version != 2) || p.CursorFacts != nil || reg.Harness.Name != archive.HarnessCodex ||
+		reg.SourceKind != archive.SourceKindFile || reg.Origin != archive.SessionOriginImport || reg.IsChild() || reg.ParentNativeSessionID != "" || reg.SubagentID != "" ||
+		(reg.NativeRootSessionID != "" && reg.NativeRootSessionID != reg.NativeSessionID) ||
+		reg.HistoricalProject != nil || reg.CaptureFrozen || reg.PreviousGenerationID != "" ||
+		bundle.IsChild() || bundle.PreviousGenerationID != "" || bundle.History != nil || len(bundle.LinkedSessions) != 0 ||
+		len(p.Preserved) != 0 || len(p.Children) != 0 {
+		return 0
+	}
+	binding := reg.CodexBinding
+	if binding == nil || binding.Child || binding.ParentID != "" || binding.OwnStart != nil || binding.ProducerSource != "cli" ||
+		binding.NativeThreadID != reg.NativeSessionID || binding.PhysicalRolloutID != reg.NativeSessionID || binding.RootID != reg.NativeSessionID {
+		return 0
+	}
+	return importPublicationHeadroom
 }
 
 // Admission must not select a journal that the scheduled reader cannot load
