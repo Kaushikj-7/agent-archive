@@ -97,6 +97,19 @@ The existing shard phases separately expose discovery and CLI compilation/listin
 Tier commands print batch wall time and per-command durations; overlapping
 commands are explicitly marked and their durations must not be added.
 
+The macOS smoke artifact keeps `tier.json`, `native-build.log`, compiled
+`native-list.jsonl`, and one raw JSON stream per actual native test invocation.
+`tier.json`'s `native_smoke.phase_seconds` separates the whole production build,
+compiled discovery, unrestricted native packages, mandatory CLI parents, and
+conditional sensitive CLI/catalog regressions. These are serial phase durations,
+including any compilation inside that phase. Failed phases retain their elapsed
+time without a successful source/coverage receipt. Base and conditional CLI
+commands keep separate package lifetimes and their original 10/20-minute
+budgets; sharing discovery does not pool deadlines or skip a native test body.
+The seven ordinary native package inventories are reconciled against actual
+parent/child lifecycles. Established ordinary capability/Keychain opt-in skips
+remain explicit; selected CLI/catalog parents and all observed children must pass.
+
 Append `--evidence path/to/go-shard-0` (repeat for each worker) to summarize the
 existing manifests, flags/compiler context, runner image/cache observation,
 phases, slow package terminals, and complete top-level parent trees. Parent
