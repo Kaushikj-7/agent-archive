@@ -38,12 +38,8 @@ func TestCatalogCheckpointSurvivesObservationDeadlineAndReopensFairly(t *testing
 		t.Fatal(err)
 	}
 	lookup.remaining = time.Second + 20*time.Millisecond
-	if !lookup.coverage.request(wanted) || !lookup.coverage.request(fresh) {
-		t.Fatal("requests refused")
-	}
-	lookup.coverageDirty = true
 	adapter := deadlineCatalogAdapter{SourceAdapter: codexAdapter{supported: syntheticSupport}}
-	health, err := runWithAdapters(t.Context(), store, cfg, Options{Rollouts: lookup, inventoryOnly: true}, []SourceAdapter{adapter})
+	health, err := runWithAdapters(t.Context(), store, cfg, Options{Rollouts: lookup}, []SourceAdapter{adapter})
 	if err != nil || !health.Pending {
 		t.Fatalf("bounded observation lost its checkpoint: pending=%t err=%v", health.Pending, err)
 	}
@@ -55,8 +51,8 @@ func TestCatalogCheckpointSurvivesObservationDeadlineAndReopensFairly(t *testing
 	if err := local.Read(path, &checkpoint); err != nil {
 		t.Fatal(err)
 	}
-	if len(checkpoint.Queue) != 2 || len(checkpoint.Coverage.Requests) != 2 || checkpoint.Coverage.Phase == coverageComplete {
-		t.Fatal("deadline erased queue/requests or fabricated completion", checkpoint)
+	if len(checkpoint.Queue) != 2 {
+		t.Fatal("deadline erased the queue", checkpoint)
 	}
 	if err := lookup.Close(); err != nil {
 		t.Fatal(err)
@@ -73,17 +69,17 @@ func TestCatalogCheckpointSurvivesObservationDeadlineAndReopensFairly(t *testing
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, err = runWithAdapters(t.Context(), reopened, cfg, Options{Rollouts: lookup, inventoryOnly: true}, []SourceAdapter{codexAdapter{supported: syntheticSupport}})
+		_, err = runWithAdapters(t.Context(), reopened, cfg, Options{Rollouts: lookup}, []SourceAdapter{codexAdapter{supported: syntheticSupport}})
 		if err != nil {
 			t.Fatal(err)
 		}
-		complete := true
+		complete := lookup.catalog != nil && len(lookup.catalog.Queue) == 0
 		for _, id := range []string{wanted, fresh} {
 			set, err := lookup.Thread(t.Context(), id)
 			if err != nil {
 				t.Fatal(err)
 			}
-			complete = complete && set.Complete && len(set.Candidates) == 1
+			complete = complete && len(set.Candidates) == 1
 		}
 		if err := lookup.Close(); err != nil {
 			t.Fatal(err)
@@ -91,15 +87,11 @@ func TestCatalogCheckpointSurvivesObservationDeadlineAndReopensFairly(t *testing
 		if used, _ := lookup.NativeReadBudget().Charged(); used != 0 {
 			t.Fatal("reopened checkpoint owner leaked", used)
 		}
-		regs, err := reopened.LoadRegistrations()
-		if err != nil || len(regs) != 0 {
-			t.Fatal("inventory admitted owners", regs, err)
-		}
 		if complete {
 			return
 		}
 	}
-	t.Fatal("reopened requested and fresh coverage did not converge")
+	t.Fatal("reopened observation did not converge")
 }
 
 func TestCatalogCheckpointStillStopsOnOuterCancellation(t *testing.T) {
@@ -111,7 +103,7 @@ func TestCatalogCheckpointStillStopsOnOuterCancellation(t *testing.T) {
 	}
 	defer func() { _ = lookup.Close() }()
 	path := filepath.Join(store.Home(), "discovery-catalog.json")
-	checkpoint := catalog{Version: catalogVersion, Roots: []string{root}, Queue: []directory{{Root: root, Path: "sessions"}, {Root: root, Path: "archived_sessions"}}, Coverage: lookup.coverage}
+	checkpoint := catalog{Version: catalogVersion, Roots: []string{root}, Queue: []directory{{Root: root, Path: "sessions"}, {Root: root, Path: "archived_sessions"}}}
 	if err := local.WriteCompact(path, checkpoint); err != nil {
 		t.Fatal(err)
 	}
@@ -122,15 +114,12 @@ func TestCatalogCheckpointStillStopsOnOuterCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	adapter := deadlineCatalogAdapter{SourceAdapter: codexAdapter{supported: syntheticSupport}, cancelOuter: cancel}
-	_, err = runWithAdapters(ctx, store, cfg, Options{Rollouts: lookup, inventoryOnly: true}, []SourceAdapter{adapter})
+	_, err = runWithAdapters(ctx, store, cfg, Options{Rollouts: lookup}, []SourceAdapter{adapter})
 	if !errors.Is(err, context.Canceled) || errors.Is(err, agentapi.ErrReadBudget) {
 		t.Fatal("outer cancellation did not stop checkpoint with its own cause", err)
 	}
 	after, err := os.ReadFile(path)
 	if err != nil || !bytes.Equal(before, after) {
 		t.Fatal("canceled checkpoint replaced durable bytes", err)
-	}
-	if len(lookup.coverage.Requests) != 0 || lookup.coverage.Phase == coverageComplete {
-		t.Fatal("cancellation fabricated proof")
 	}
 }

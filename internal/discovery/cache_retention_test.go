@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"github.com/wangjohn/agent-archive/internal/codexmeta"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 	"path/filepath"
@@ -15,13 +14,8 @@ import (
 func TestRetainedHintsPruneWithoutResettingMigrationProof(t *testing.T) {
 	t.Parallel()
 	store, _, at, root := fixture(t)
-	coverage := newCoverage([]string{root})
-	coverage.request("wanted")
 	path := filepath.Join(root, "sessions", "wanted.jsonl")
-	req := coverage.Requests["wanted"]
-	req.Candidates[path] = coverageCandidate{Source: SourceDescriptor{Root: root, Locator: path}, Identity: codexmeta.CodexIdentity{ThreadID: "wanted", RolloutID: "physical"}}
-	coverage.Requests["wanted"] = req
-	c := catalog{Version: catalogVersion, Roots: []string{root}, Cache: map[string]cached{}, Queue: []directory{{Root: root, Path: "sessions", Offset: 7}}, Coverage: coverage, Recovery: sourcefacts.RecoveryInventory{Context: "migration-context", Cursor: 7}}
+	c := catalog{Version: catalogVersion, Roots: []string{root}, Cache: map[string]cached{}, Queue: []directory{{Root: root, Path: "sessions", Offset: 7}}, Recovery: sourcefacts.RecoveryInventory{Context: "migration-context", Cursor: 7}}
 	for n := range 8191 {
 		c.Cache[fmt.Sprintf("%s/sessions/%d.jsonl", root, n)] = cached{Checked: at}
 	}
@@ -46,9 +40,8 @@ func TestRetainedHintsPruneWithoutResettingMigrationProof(t *testing.T) {
 	}
 	before := proof(struct {
 		Queue    []directory
-		Coverage *coverageInventory
 		Recovery sourcefacts.RecoveryInventory
-	}{l.catalog.Queue, l.coverage, l.catalog.Recovery})
+	}{l.catalog.Queue, l.catalog.Recovery})
 	pruneCatalog(l.catalog)
 	if len(l.catalog.Cache) != maxObservationCache {
 		t.Fatal("retention limit not applied")
@@ -69,14 +62,10 @@ func TestRetainedHintsPruneWithoutResettingMigrationProof(t *testing.T) {
 	defer func() { _ = restored.Close() }()
 	after := proof(struct {
 		Queue    []directory
-		Coverage *coverageInventory
 		Recovery sourcefacts.RecoveryInventory
-	}{restored.catalog.Queue, restored.coverage, restored.catalog.Recovery})
+	}{restored.catalog.Queue, restored.catalog.Recovery})
 	if !bytes.Equal(before, after) {
-		t.Fatal("queue/coverage/recovery changed during pruning")
-	}
-	if len(restored.coverage.Requests["wanted"].Candidates) != 1 {
-		t.Fatal("requested candidate lost")
+		t.Fatal("queue/recovery changed during pruning")
 	}
 	if len(restored.catalog.Cache) != maxObservationCache {
 		t.Fatal("restored cache reset")
@@ -102,7 +91,7 @@ func testRetainedHintsWarmSourcesAndFreshProgress(t *testing.T, count int) {
 	for n := range count {
 		writeRollout(t, root, cfg.Archive.Projects[0].Root, at.Add(-time.Hour), n+1, "sessions")
 	}
-	adapter := &measuredCoverageAdapter{SourceAdapter: codexAdapter{supported: syntheticSupport}}
+	adapter := &measuredAdapter{SourceAdapter: codexAdapter{supported: syntheticSupport}}
 	finish := func() {
 		t.Helper()
 		for pass := range 100 {

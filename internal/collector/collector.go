@@ -45,8 +45,6 @@ type Options struct {
 	Labels           agentapi.LabelsLookup
 	LabelEnvironment agentapi.LabelEnvironment
 	labels           map[string]state.LabelEntry
-	// PrepareCodexCoverage advances caller-owned qualified coverage once after admission work loads.
-	PrepareCodexCoverage func(context.Context, []archive.SessionRegistration) error
 	// CodexRollouts is one caller-owned bounded locator view shared by the pass.
 	CodexRollouts agentapi.CodexRolloutLookup
 	// PendingCodexRollouts observes locator evidence only after a history fence.
@@ -370,12 +368,6 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	}
 	p.loadDeferredSince()
 	p.reconcileNativeLinks()
-	if p.opts.PrepareCodexCoverage != nil {
-		if err := p.opts.PrepareCodexCoverage(ctx, p.registrations); err != nil {
-			p.result.Errors["native-coverage"] = err
-		}
-
-	}
 	p.observeLabels(ctx)
 	p.repairListingIndex()
 	orderOldestRequestsFirst(p.registrations, p.requests)

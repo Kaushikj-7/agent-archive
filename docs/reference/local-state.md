@@ -185,7 +185,7 @@ encoding scratch, and local pending/published input. It charges bytes held in
 memory, never the length of a transcript read through its descriptor: a
 rollout is streamed a record at a time, so its charge follows its longest
 record and what the filter keeps. Each session's scan may hold at most
-160 MiB of it; the other 96 MiB holds what the pass keeps between sessions (cached rollout headers and prefixes, Codex coverage and catalog), so a session within its share always fits and one large session cannot leave the others without room. A
+160 MiB of it; the other 96 MiB holds what the pass keeps between sessions (cached rollout headers and prefixes, Codex rollout observations, listings and catalog), so a session within its share always fits and one large session cannot leave the others without room. A
 session that needs more than that is recorded once as a `transcript_too_large`
 gap naming the per-session read limit; one refused only because other owners
 held the ledger is deferred (`read_budget`) to a later pass. Reservations precede the
@@ -225,11 +225,11 @@ expiry retires generation routing before removing content, then prunes packed
 identities after request locks release. Retired generations use an explicit
 absence override rather than redirecting native hooks to a retained ancestor.
 
-The scheduled collector primes qualified history requests from accepted existing registrations before opening native snapshots. The CLI advances one shared inventory observation and validation slice with the same lookup deadline and read budget. That slice cannot admit owners; scheduled IDs never replace provider identity, confinement, project or consent checks. Preview planning remains read-only.
+The scheduled collector finds each Codex thread's lineage when it reads the thread: the rollout Codex's thread index names, then each rollout its history base names, found by ID in the day directories its UUIDv7 time selects and in archived_sessions/. No inventory of the whole native home is needed first. Lookup IDs never replace provider identity, confinement, project or consent checks. Preview planning remains read-only.
 
 Explicit generation recovery previews use the same trusted Codex homes and
-lookup as capture. Preview cleanup discards newly requested coverage and leaves
-the capture catalog unchanged. Filtered preview and returned publication data
+lookup as capture. Preview cleanup discards new observations and leaves the
+capture catalog unchanged. Filtered preview and returned publication data
 retain their shared lease through confirmation; cleanup returns it on refusal,
 cancellation, error or completion. Confirmation charges full recovery-journal
 reads and encoding, and validates canonical source bytes by streaming their
@@ -241,5 +241,4 @@ initial view ends before its locked reread, and completed receipts release their
 input before the next journal. Resource refusal preserves that journal and
 reports pending recovery while smaller journals and unrelated captures continue.
 Malformed schemas and caller cancellation still stop recovery. Lookup revision
-digests reserve both encoded owners; a refused digest leaves the requested
-coverage attempt undelivered for retry.
+digests reserve both encoded owners; a refused digest is retried later.

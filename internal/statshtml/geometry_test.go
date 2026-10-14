@@ -78,10 +78,77 @@ func deepCopy(s stats.Stats) stats.Stats {
 // sizes are the attributes that are lengths, which are never negative.
 var sizes = map[string]bool{"width": true, "height": true, "r": true, "rx": true, "stroke-width": true}
 
-var (
-	svgNumber = regexp.MustCompile(`\s(x|y|x1|x2|y1|y2|cx|cy|r|rx|width|height|stroke-width|stroke-dashoffset)="([^"]*)"`)
-	dashArray = regexp.MustCompile(`stroke-dasharray="([^"]*)"`)
+type geometryAttribute string
+
+const (
+	geometryX                geometryAttribute = "x"
+	geometryY                geometryAttribute = "y"
+	geometryX1               geometryAttribute = "x1"
+	geometryX2               geometryAttribute = "x2"
+	geometryY1               geometryAttribute = "y1"
+	geometryY2               geometryAttribute = "y2"
+	geometryCX               geometryAttribute = "cx"
+	geometryCY               geometryAttribute = "cy"
+	geometryR                geometryAttribute = "r"
+	geometryRX               geometryAttribute = "rx"
+	geometryWidth            geometryAttribute = "width"
+	geometryHeight           geometryAttribute = "height"
+	geometryStrokeWidth      geometryAttribute = "stroke-width"
+	geometryStrokeDashOffset geometryAttribute = "stroke-dashoffset"
 )
+
+// geometryNumbers visits the same quoted attributes as the original regular
+// expressions. Indexing the quote delimiters avoids running the regexp VM over
+// every byte of the full self-contained page for every poisoned numeric leaf.
+// The HTML remains untrusted input: this only extracts assertion candidates.
+func geometryNumbers(page string, visit func(name, value string)) {
+	space := func(c byte) bool { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' }
+	for offset := 0; offset < len(page); {
+		rel := strings.Index(page[offset:], `="`)
+		if rel < 0 {
+			break
+		}
+		eq := offset + rel
+		offset = eq + 2
+		start := eq
+		for start > 0 && eq-start <= len("stroke-dashoffset") && !space(page[start-1]) {
+			start--
+		}
+		if start == 0 || !space(page[start-1]) {
+			continue
+		}
+		name := page[start:eq]
+		switch geometryAttribute(name) {
+		case geometryX, geometryY, geometryX1, geometryX2, geometryY1, geometryY2, geometryCX, geometryCY, geometryR, geometryRX, geometryWidth, geometryHeight, geometryStrokeWidth, geometryStrokeDashOffset:
+		default:
+			continue
+		}
+		end := strings.IndexByte(page[offset:], '"')
+		if end < 0 {
+			break
+		}
+		visit(name, page[offset:offset+end])
+		// Like FindAllStringSubmatch, consume non-overlapping matches.
+		offset += end + 1
+	}
+}
+
+func geometryDashArrays(page string, visit func(value string)) {
+	const prefix = `stroke-dasharray="`
+	for offset := 0; offset < len(page); {
+		rel := strings.Index(page[offset:], prefix)
+		if rel < 0 {
+			break
+		}
+		start := offset + rel + len(prefix)
+		end := strings.IndexByte(page[start:], '"')
+		if end < 0 {
+			break
+		}
+		visit(page[start : start+end])
+		offset = start + end + 1
+	}
+}
 
 // assertSaneGeometry fails when the page has a length or coordinate that is
 // not a finite number, a negative size, or a percentage outside its bounds,
@@ -93,30 +160,30 @@ func assertSaneGeometry(t *testing.T, page, what string) {
 			t.Errorf("%s: the page contains %q", what, bad)
 		}
 	}
-	for _, m := range svgNumber.FindAllStringSubmatch(page, -1) {
-		name, value := m[1], strings.TrimSuffix(m[2], "%")
+	geometryNumbers(page, func(name, raw string) {
+		value := strings.TrimSuffix(raw, "%")
 		if value == "" {
-			continue
+			return
 		}
 		n, err := strconv.ParseFloat(value, 64)
 		if err != nil || math.IsNaN(n) || math.IsInf(n, 0) {
-			t.Errorf("%s: %s=%q is not a number", what, name, m[2])
-			continue
+			t.Errorf("%s: %s=%q is not a number", what, name, raw)
+			return
 		}
 		if sizes[name] && n < 0 {
-			t.Errorf("%s: %s=%q is negative", what, name, m[2])
+			t.Errorf("%s: %s=%q is negative", what, name, raw)
 		}
-		if strings.HasSuffix(m[2], "%") && (n < 0 || n > 100) {
-			t.Errorf("%s: %s=%q is outside 0 to 100 percent", what, name, m[2])
+		if strings.HasSuffix(raw, "%") && (n < 0 || n > 100) {
+			t.Errorf("%s: %s=%q is outside 0 to 100 percent", what, name, raw)
 		}
-	}
-	for _, m := range dashArray.FindAllStringSubmatch(page, -1) {
-		for f := range strings.FieldsSeq(m[1]) {
+	})
+	geometryDashArrays(page, func(raw string) {
+		for f := range strings.FieldsSeq(raw) {
 			if n, err := strconv.ParseFloat(f, 64); err != nil || n < 0 || math.IsNaN(n) || math.IsInf(n, 0) {
-				t.Errorf("%s: stroke-dasharray=%q", what, m[1])
+				t.Errorf("%s: stroke-dasharray=%q", what, raw)
 			}
 		}
-	}
+	})
 }
 
 // Whatever number the stats hold, however wrong (NaN, infinite, negative, a
