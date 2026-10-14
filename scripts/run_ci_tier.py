@@ -59,52 +59,62 @@ def git(*args):
     return subprocess.check_output(['git', '-C', str(ROOT), *args], stderr=subprocess.PIPE, timeout=20).decode().strip()
 
 
+PR_REGRESSIONS = {
+    'catalog': {'internal/catalog': ['TestPublicationBoundsAndCoordinatorMutationRefuseBeforeWrite', 'TestMissingCorruptAndOversizedNodesFailClosed', 'TestPickerUnsupportedAndBudgetAreNotEmptyProofs']},
+    'archive': {'internal/state': ['TestImportStageCapacityEncodedBoundary', 'TestImportStageCapacityRefilterBoundary'], 'internal/agents/codex': ['TestRelatedCachedRecordCountLimitIsTypedAndReleasesBudget']},
+    'recovery': {'internal/state': ['TestImportStageCapacityEncodedBoundary', 'TestImportStageCapacityRefilterBoundary']},
+    'cli': {'internal/cli': ['TestCodexExceptionRequiresNamedOtherAppConsentBeforeAdmission', 'TestRealCLIOverflowShowKeepsFullBodyAndSourceAuthority', 'TestRealCLICatalogDefaultList50Bounded']},
+}
+
+
+def representative_fallback():
+    # The required verdict reconciles the exact-source unrestricted Linux short
+    # shards and native smoke. Unknown inputs do not duplicate that complete run.
+    return {'packages': [], 'regressions': {}, 'ordinary_coverage': 'required-linux-short-shards',
+            'native': False, 'systemd': False, 'fuzz': False, 'purge': False}
+
+
 def extra_for_paths(paths):
-    """Reviewed semantic dependency families; unmapped inputs require all backstops."""
-    result = {'packages': [], 'native': False, 'systemd': False, 'fuzz': False, 'purge': False}
+    """Explicit targeted PR backstops on top of mandatory complete short coverage."""
+    result = representative_fallback()
     families = {
-        'catalog': {'reader', 'catalog', 'cli', 'storage', 'state', 'sourcefacts', 'collector', 'discovery'},
+        'catalog': {'reader', 'catalog', 'storage'},
         'recovery': {'state', 'backfill', 'retention', 'revocation', 'setupjournal', 'collector', 'sourceio', 'discovery'},
         'archive': {'archive', 'agents', 'capture', 'nativecodec', 'transcriptio', 'sourcefacts'},
-        'platform': {'scheduler', 'config', 'credentials', 'platform', 'setupresources', 'skillownership', 'termlaunch', 'terminal', 'sourcefacts', 'sourceio', 'discovery', 'capture'},
-        'presentation': {'stats', 'statshtml', 'statsfmt', 'cli'},
-        'purge': {'purge', 'retention', 'storage'},
+        'platform': {'scheduler', 'config', 'credentials', 'platform', 'setupresources', 'skillownership', 'termlaunch', 'terminal'},
+        'presentation': {'stats', 'statshtml', 'statsfmt'},
+        'purge': {'purge'}, 'cli': {'cli'},
     }
-    groups = set()
+    groups, uncertain = set(), False
     for path in paths:
-        if path in {'CHANGELOG.md','CONTRIBUTING.md','CODE_OF_CONDUCT.md','LICENSE'}:
-            continue  # ordinary doc/link and script gates cover these reviewed prose inputs
-        if path.startswith('internal/archive/'):
-            # Shared metadata/history/limits feed every product family.
-            return dict(result, packages=['./...'], native=True, systemd=True, fuzz=True, purge=True)
+        if path.startswith(('docs/', 'dev/')) or path.endswith('.md') or path == 'LICENSE':
+            continue
         if path.startswith('internal/'):
             components = path.split('/')
-            if len(components) < 3 or components[1] == 'testutil':
-                return dict(result, packages=['./...'], native=True, systemd=True, fuzz=True, purge=True)
-            found = {name for name, members in families.items() if components[1] in members}
+            found = {name for name, members in families.items() if len(components) > 2 and components[1] in members}
             if not found:
-                return dict(result, packages=['./...'], native=True, systemd=True, fuzz=True, purge=True)
+                uncertain = True
             groups.update(found)
-            if components[1] == 'cli':
-                groups.update(families)  # setup, consent, purge and presentation share this facade
-        elif path in ('docs/security/archive-cleanup.md', 'docs/getting-started/uninstall.md'):
-            groups.add('purge')
+            if len(components) > 2 and (components[1] == 'scheduler' or components[1] == 'cli' and any(word in components[-1] for word in ('setup', 'uninstall', 'systemd', 'scheduler'))):
+                result['systemd'] = True
         else:
-            # Even unknown docs/config/test changes may affect declarative contracts.
-            return dict(result, packages=['./...'], native=True, systemd=True, fuzz=True, purge=True)
-    packages = set()
+            uncertain = True
+    # Keep critical targeted integration backstops even alongside unknown paths.
+    if uncertain:
+        groups.update(('catalog', 'archive', 'cli'))
+    selected = {}
     for group in groups:
-        for member in families[group]:
-            if (ROOT / 'internal' / member).is_dir():
-                packages.add('./internal/' + member + '/...')
-    result.update(packages=sorted(packages), native='platform' in groups,
-                  systemd='platform' in groups, fuzz='archive' in groups, purge='purge' in groups)
+        for package, names in PR_REGRESSIONS.get(group, {}).items():
+            selected.setdefault(package, set()).update(names)
+    result.update(regressions={p: sorted(n) for p,n in sorted(selected.items())},
+                  packages=['./'+p for p in sorted(selected)],
+                  native=bool(groups & {'platform', 'archive', 'catalog', 'cli'}))
     return result
 
 
 def pr_extras(event, tested):
-    """Require exact base/head/tested-merge proof; uncertainty selects full."""
-    full = {'packages': ['./...'], 'native': True, 'systemd': True, 'fuzz': True, 'purge': True}
+    """Require exact base/head/tested-merge proof; uncertainty repeats all short."""
+    full = extra_for_paths(['unmapped-source-proof'])
     try:
         base, head = event['pull_request']['base']['sha'], event['pull_request']['head']['sha']
         for sha in (base, head, tested):
@@ -137,7 +147,7 @@ def pr_extras(event, tested):
             paths.update(p.decode() for p in raw.split(b'\0') if p)
         return dict(extra_for_paths(sorted(paths)), reason='verified base/head/tested merge', base=base, head=head, paths=sorted(paths))
     except (KeyError, TypeError, ValueError, OSError, subprocess.SubprocessError, Failure):
-        return dict(full, reason='full fallback: source proof unavailable')
+        return dict(full, reason='representative fallback: source proof unavailable')
 
 
 def terminals(text):
@@ -301,6 +311,8 @@ def run_suite(tier, suite, out, extras=None, seconds=2400):
     path = out / 'tier.json'
     path.write_text(json.dumps(report, indent=2)+'\n')
     deadline = time.monotonic()+seconds
+    if tier == 'pr':
+        report['source_proof'] = full_race.source_proof(ROOT)
     def execute(command, name, short=False, selected=None, children=None, env=None, real_manager=False):
         if env is None:
             env = dict(os.environ, AGENT_ARCHIVE_REAL_SYSTEMD='0')
@@ -319,10 +331,22 @@ def run_suite(tier, suite, out, extras=None, seconds=2400):
         invocation['evidence'] = proof
         path.write_text(json.dumps(report, indent=2)+'\n')
     common = ['go', 'test', '-race', '-count=1', '-json', '-timeout', '20m']
-    if suite == 'macos' and tier == 'daily':
+    if suite == 'macos' and tier in ('pr', 'daily'):
         execute(['bash', 'scripts/test_macos_smoke.sh'], 'native-smoke', short=True)
         if not report['invocations'][-1]['evidence']['actual']:
             raise Failure('native smoke executed no bodies')
+    if suite == 'macos' and tier == 'daily':
+        execute(common + ['-short', './internal/config', './internal/catalog', './internal/capture', './internal/sourceio'], 'native-integration', True)
+    if suite == 'macos' and tier == 'pr' and extras and extras['native']:
+        selected = {MODULE+'internal/cli': ['TestCodexExceptionRequiresNamedOtherAppConsentBeforeAdmission', 'TestRealCLIOverflowShowKeepsFullBodyAndSourceAuthority', 'TestRealCLICatalogDefaultList50Bounded'],
+                    MODULE+'internal/catalog': ['TestPublicationBoundsAndCoordinatorMutationRefuseBeforeWrite', 'TestMissingCorruptAndOversizedNodesFailClosed', 'TestPickerUnsupportedAndBudgetAreNotEmptyProofs']}
+        for pkg, names in selected.items():
+            relative = './'+pkg[len(MODULE):]
+            listing = discover([relative], out/('native-list-'+pkg.rsplit('/',1)[1]+'.jsonl'), deadline, race=True)
+            if not set(names) <= set(listing.get(pkg, [])):
+                raise Failure('native sensitive regression absent from discovery')
+            pattern = '^('+'|'.join(re.escape(n) for n in names)+')$'
+            execute(common + ['-short', '-run', pattern, relative], 'native-sensitive-'+pkg.rsplit('/',1)[1], True, selected={pkg:names})
     if suite in ('linux', 'extra') or suite == 'macos' and tier == 'full':
         packages = extras['packages'] if suite == 'extra' else ['./...']
         if packages:
@@ -335,7 +359,16 @@ def run_suite(tier, suite, out, extras=None, seconds=2400):
                 except full_race.shards.Failure as error:
                     raise Failure(str(error)) from error
             else:
-                execute(common + ['-short'] + packages, 'race', True)
+                if tier == 'pr':
+                    report['representative_discovery'] = discover(packages, out/'representative-list.jsonl', deadline, race=True)
+                    for relative, names in extras['regressions'].items():
+                        pkg = MODULE+relative
+                        if not set(names) <= set(report['representative_discovery'].get(pkg, [])):
+                            raise Failure('PR targeted regression missing from compiled source')
+                        pattern = '^('+'|'.join(re.escape(n) for n in names)+')$'
+                        execute(common + ['-short', '-run', pattern, './'+relative], 'regression-'+relative.replace('/', '-'), True, selected={pkg:names})
+                else:
+                    execute(common + ['-short'] + packages, 'race', True)
         if tier == 'daily' and suite == 'linux':
             chosen = [e for e in catalog()['restorations'] if e['restore'] == 'daily']
             by_pkg = {}
@@ -391,6 +424,8 @@ def run_suite(tier, suite, out, extras=None, seconds=2400):
             full_race.verify(out, report, packages, ROOT, body_evidence, verify_selected, catalog()['restorations'])
         except full_race.shards.Failure as error:
             raise Failure(str(error)) from error
+    if tier == 'pr' and full_race.source_proof(ROOT) != report['source_proof']:
+        raise Failure('PR regression source changed during execution')
     report['success'] = True
     path.write_text(json.dumps(report,indent=2)+'\n')
 
@@ -401,6 +436,9 @@ def verify_full(directory, plan):
     report = json.loads(path.read_text())
     if plan.get('source') != os.environ['GITHUB_SHA']:
         raise Failure('plan source mismatch')
+    if report.get('tier') == 'pr':
+        verify_pr(directory, report, plan)
+        return
     if (report.get('schema') != 1 or report.get('success') is not True
             or report.get('source') != os.environ['GITHUB_SHA'] or report.get('tier') != 'full'):
         raise Failure('full tier source/status mismatch')
@@ -452,6 +490,76 @@ def verify_full(directory, plan):
         raise Failure('required full fuzz campaign missing')
 
 
+def verify_pr(directory, report, plan):
+    """Recompute exact-source focused short evidence without calling it full."""
+    if (report.get('schema') != 1 or report.get('success') is not True
+            or report.get('source') != os.environ['GITHUB_SHA'] or report.get('suite') != 'extra'
+            or report.get('extras') != plan or plan.get('tier') != 'pr'
+            or report.get('event') != os.environ.get('GITHUB_EVENT_NAME', 'local')
+            or report.get('ref') != os.environ.get('GITHUB_REF', '')
+            or report.get('schedule') != os.environ.get('CI_SCHEDULE', '')
+            or report.get('source_proof') != full_race.source_proof(ROOT)):
+        raise Failure('PR regression source/status/plan mismatch')
+    if plan.get('ordinary_coverage') != 'required-linux-short-shards':
+        raise Failure('PR plan omits mandatory ordinary coverage')
+    allowed, selected_by_log = {}, {}
+    for relative, names in plan.get('regressions', {}).items():
+        name = 'regression-'+relative.replace('/', '-')+'.jsonl'
+        pattern = '^('+'|'.join(re.escape(n) for n in names)+')$'
+        allowed[name] = ['go', 'test', '-race', '-count=1', '-json', '-timeout', '20m', '-short', '-run', pattern, './'+relative]
+        selected_by_log[name] = {MODULE+relative:names}
+    if plan['systemd']:
+        for name, pattern, relative in [('systemd', '^TestReal', './internal/scheduler/systemd'), ('cli', '^TestRealSystemd', './internal/cli')]:
+            allowed['systemd-'+name+'.jsonl'] = ['go', 'test', '-count=1', '-json', '-timeout', '8m', '-run', pattern, relative]
+    if report.get('full_schedule') or report.get('performance_compile') or report.get('fuzz_completed'):
+        raise Failure('PR evidence contains unexpected full campaign')
+    invocations = report.get('invocations', [])
+    if len(invocations) != len(allowed) or {i['log'] for i in invocations} != set(allowed):
+        raise Failure('missing or unexpected PR regression invocation')
+    for invocation in invocations:
+        name = invocation['log']
+        if invocation['command'] != allowed[name] or invocation.get('performance_enabled'):
+            raise Failure('weakened PR regression invocation')
+        short = name.startswith('regression-')
+        proof = body_evidence((directory/name).read_text(), short)
+        if invocation['evidence'] != proof or not proof['actual']:
+            raise Failure('PR regression raw evidence mismatch/empty')
+        if short:
+            listing = discover_from_log((directory/'representative-list.jsonl').read_text())
+            if report.get('representative_discovery') != listing:
+                raise Failure('PR compiled discovery differs from raw evidence')
+            selected = selected_by_log[name]
+            if any(not set(names) <= set(listing.get(pkg, [])) for pkg,names in selected.items()):
+                raise Failure('PR selected compiled parent absent')
+            verify_selected(proof['actual'], selected)
+        if not short:
+            listing = discover_from_log((directory/('systemd-list.jsonl' if name == 'systemd-systemd.jsonl' else 'cli-list.jsonl')).read_text())
+            pattern = allowed[name][-2]
+            selected = {p:[n for n in names if re.search(pattern,n)] for p,names in listing.items()}
+            if not any(selected.values()) or not invocation.get('real_systemd_enabled'):
+                raise Failure('PR real-manager selection empty/disabled')
+            verify_selected(proof['actual'], selected, real_manager=True)
+
+
+def discover_from_log(text):
+    names, ended = {}, set()
+    for line in text.splitlines():
+        item = json.loads(line)
+        if item.get('Action') in ('fail', 'build-fail', 'run'):
+            raise Failure('invalid PR compiled listing')
+        if item.get('Action') in ('pass', 'skip') and not item.get('Test'):
+            ended.add(item.get('Package'))
+        if item.get('Action') == 'output':
+            name = item.get('Output', '').strip()
+            if re.fullmatch(r'(Test|Fuzz|Example)\w*', name) and name != 'TestMain':
+                if name in names.setdefault(item['Package'], []):
+                    raise Failure('duplicate PR compiled listing name')
+                names[item['Package']].append(name)
+    if not ended or set(names) - ended:
+        raise Failure('PR compiled listing lacks package terminals')
+    return {p:sorted(n) for p,n in names.items()}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--plan', action='store_true')
@@ -499,9 +607,9 @@ def main():
             extra = json.loads(args.extra_plan.read_text()) if args.extra_plan else None
             if extra and extra['source'] != git('rev-parse','HEAD'):
                 raise Failure('extra plan source mismatch')
-            if tier == 'pr' and args.suite != 'extra':
+            if tier == 'pr' and args.suite not in ('extra', 'macos'):
                 raise Failure('PR ordinary coverage belongs to exhaustive shards')
-            run_suite('full' if args.suite == 'extra' else tier,args.suite,args.output,extra,args.seconds)
+            run_suite(tier,args.suite,args.output,extra,args.seconds)
     except (Failure,ValueError,KeyError,TypeError,OSError,subprocess.SubprocessError) as error:
         print('tier gate failed: '+str(error),file=sys.stderr)
         return 1

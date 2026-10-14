@@ -42,23 +42,34 @@ class PolicyTest(unittest.TestCase):
         boundary = {e['test'] for e in tier.catalog()['restorations'] if e['package']=='internal/backfill'}
         self.assertIn('TestImportStagingAccountsForEncodedTextAndRefilterScratch',boundary)
 
-    def test_dependency_map_and_unknown_changes_are_conservative(self):
-        self.assertTrue(tier.extra_for_paths(['internal/scheduler/systemd/manage.go'])['systemd'])
-        self.assertTrue(tier.extra_for_paths(['internal/config/consent.go'])['native'])
-        archive=tier.extra_for_paths(['internal/archive/redact.go'])
-        self.assertEqual(archive['packages'],['./...'])
-        self.assertTrue(all(archive[k] for k in ('native','systemd','fuzz','purge')))
-        self.assertTrue(tier.extra_for_paths(['docs/security/archive-cleanup.md'])['purge'])
-        for path in ('internal/newfamily/x.go','internal/testutil/helper.go','go.mod','scripts/run_ci_tier.py','.github/workflows/test.yml','unknown.md'):
-            result=tier.extra_for_paths([path]);self.assertEqual(result['packages'],['./...']);self.assertTrue(all(result[k] for k in ('native','systemd','fuzz','purge')))
-        self.assertEqual(tier.extra_for_paths([])['packages'],[])
-        self.assertEqual(tier.extra_for_paths(['CHANGELOG.md','CONTRIBUTING.md'])['packages'],[])
+    def test_explicit_pr_routes_keep_sensitive_bodies_and_defer_scale(self):
+        for path, packages, native, systemd in (
+                ('internal/cli/list.go', './internal/cli/...', True, False),
+                ('internal/catalog/limits.go', './internal/catalog/...', True, False),
+                ('internal/archive/history.go', './internal/archive/...', True, False),
+                ('internal/config/consent.go', './internal/config/...', True, False),
+                ('internal/scheduler/systemd/manage.go', './internal/scheduler/...', True, True)):
+            result = tier.extra_for_paths([path])
+            self.assertTrue(result['ordinary_coverage']); self.assertTrue(result['regressions'] or systemd or native)
+            self.assertEqual(result['native'], native)
+            self.assertEqual(result['systemd'], systemd)
+            self.assertFalse(result['fuzz']); self.assertFalse(result['purge'])
+            self.assertNotEqual(result['packages'], ['./...'])
+        for path in ('internal/newfamily/x.go', 'internal/testutil/helper.go', 'go.mod',
+                     'scripts/run_ci_tier.py', '.github/workflows/test.yml'):
+            result = tier.extra_for_paths([path])
+            self.assertTrue(result['regressions']); self.assertEqual(result['ordinary_coverage'], 'required-linux-short-shards')
+            self.assertFalse(any(result[k] for k in ('systemd', 'fuzz', 'purge')))
+        for path in ('docs/security/archive-cleanup.md', 'unknown.md', 'CHANGELOG.md', 'CONTRIBUTING.md'):
+            self.assertEqual(tier.extra_for_paths([path])['packages'], [])
+        self.assertEqual(tier.extra_for_paths([])['packages'], [])
 
-    def test_history_error_falls_back_full_not_empty(self):
+    def test_history_uncertainty_requires_complete_representative_coverage(self):
         with mock.patch.object(tier,'git',side_effect=OSError('history unavailable')):
             result=tier.pr_extras({'pull_request':{'base':{'sha':'a'*40},'head':{'sha':'b'*40}}},'c'*40)
-        self.assertEqual(result['packages'],['./...'])
-        self.assertTrue(result['systemd'])
+        self.assertTrue(result['regressions'])
+        self.assertEqual(result['reason'], 'representative fallback: source proof unavailable')
+        self.assertFalse(result['fuzz']); self.assertFalse(result['purge'])
 
     def test_bad_catalog_fails_instead_of_empty_selection(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -130,6 +141,57 @@ class EvidenceTest(unittest.TestCase):
             with mock.patch.dict(os.environ,{'GITHUB_SHA':'a'*40}):tier.run_suite('full','extra',Path(d),extra)
             self.assertFalse(command.called)
             proof=json.loads((Path(d)/'tier.json').read_text());self.assertTrue(proof['success']);self.assertEqual(proof['invocations'],[])
+
+
+class FocusedPRTest(unittest.TestCase):
+    def test_source_bound_focused_body_verdict_refuses_missing_and_weakened_evidence(self):
+        package = tier.MODULE+'internal/catalog'
+        name = 'TestMissingCorruptAndOversizedNodesFailClosed'
+        plan = dict(tier.representative_fallback(), source='a'*40, tier='pr',
+                    packages=['./internal/catalog'], regressions={'internal/catalog':[name]})
+        source = {'source':'a'*40, 'tree':'b'*40}
+        def checked(command, output, deadline, env=None):
+            self.assertEqual(env['AGENT_ARCHIVE_REAL_SYSTEMD'], '0')
+            self.assertNotIn('AGENT_ARCHIVE_PERF', env)
+            self.assertIn('-race', command)
+            if '-list' in command:
+                text=events(dict(Action='output',Package=package,Output=name+'\n'),dict(Action='pass',Package=package))
+            else:
+                self.assertIn('-short',command)
+                text=events(dict(Action='run',Package=package,Test=name),dict(Action='pass',Package=package,Test=name),dict(Action='pass',Package=package))
+            output.write_text(text); return text
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(tier,'git',return_value='a'*40), mock.patch.object(tier.full_race,'source_proof',return_value=source), mock.patch.object(tier,'checked',side_effect=checked), mock.patch.dict(os.environ,{'GITHUB_SHA':'a'*40,'GITHUB_EVENT_NAME':'pull_request','GITHUB_REF':'refs/pull/1/merge','CI_SCHEDULE':'','AGENT_ARCHIVE_PERF':'1'}):
+            out=Path(d); tier.run_suite('pr','extra',out,plan)
+            original=json.loads((out/'tier.json').read_text())
+            self.assertEqual(original['tier'],'pr'); self.assertNotIn('full_schedule',original)
+            tier.verify_full(out,plan)
+            for mutate in (lambda r:r['invocations'].clear(),
+                           lambda r:r['invocations'][0]['command'].remove('-short'),
+                           lambda r:r['source_proof'].update(tree='c'*40),
+                           lambda r:r['invocations'][0]['evidence']['actual'].clear(),
+                           lambda r:r['extras'].update(ordinary_coverage='omitted')):
+                changed=copy.deepcopy(original);mutate(changed);(out/'tier.json').write_text(json.dumps(changed))
+                with self.assertRaises(tier.Failure):tier.verify_full(out,plan)
+            (out/'tier.json').write_text(json.dumps(original))
+            (out/'representative-list.jsonl').write_text(events(dict(Action='pass',Package=package)))
+            with self.assertRaises(tier.Failure):tier.verify_full(out,plan)
+
+    def test_cli_setup_deletion_and_rename_old_path_keep_manager_integration(self):
+        for paths in (['internal/cli/setup_linux.go'], ['internal/cli/uninstall.go'],
+                      ['internal/cli/setup.go','internal/cli/new_flow.go'],
+                      ['internal/scheduler/old.go','internal/newfamily/new.go']):
+            result=tier.extra_for_paths(paths)
+            self.assertTrue(result['systemd'])
+            self.assertFalse(result['fuzz']);self.assertFalse(result['purge'])
+        result=tier.extra_for_paths(['internal/cli/list.go'])
+        self.assertFalse(result['systemd'])
+        self.assertEqual(set(result['regressions']), {'internal/cli'})
+
+    def test_short_scale_counterparts_restore_explicit_weekly_children(self):
+        entries={e['test']:e for e in tier.catalog()['restorations']}
+        self.assertEqual(entries['TestPickerFirstPageWorkDoesNotScaleWithUnrelatedArchive']['full_children'],['10000','100000'])
+        self.assertEqual(entries['TestPickerQualificationRealCLIPhases']['full_children'],['1400','10000','100000'])
+        self.assertTrue(all(entries[n]['restore']=='weekly' for n in ('TestPickerFirstPageWorkDoesNotScaleWithUnrelatedArchive','TestPickerQualificationRealCLIPhases')))
 
 
 class PerformanceCompileTest(unittest.TestCase):
@@ -209,24 +271,24 @@ class SourceProofTest(unittest.TestCase):
 
     def test_verified_merge_includes_renamed_paths_and_hidden_working_edits_force_full(self):
         with tempfile.TemporaryDirectory() as directory:
-            root=Path(directory)
+            root=Path(directory).resolve()
             def git(*args):
                 return subprocess.check_output(['git','-C',str(root),*args],stderr=subprocess.PIPE,text=True).strip()
             git('init','-q');git('config','user.name','CI fixture');git('config','user.email','ci@example.invalid')
             target=root/'internal/scheduler/old.go';target.parent.mkdir(parents=True);target.write_text('package scheduler\n')
             git('add','.');git('commit','-qm','base');base=git('rev-parse','HEAD');main=git('branch','--show-current')
-            git('checkout','-qb','head');git('mv','internal/scheduler/old.go','internal/scheduler/new.go');git('commit','-qm','rename');head=git('rev-parse','HEAD')
-            git('checkout',main);git('merge','--no-ff','-m','tested merge','head');tested=git('rev-parse','HEAD')
+            git('checkout','-qb','fixture-change');git('mv','internal/scheduler/old.go','internal/scheduler/new.go');git('commit','-qm','rename');head=git('rev-parse','HEAD')
+            git('checkout',main);git('merge','--no-ff','-m','tested merge','fixture-change');tested=git('rev-parse','HEAD')
             event={'pull_request':{'base':{'sha':base},'head':{'sha':head}}}
             with mock.patch.object(tier,'ROOT',root):
                 plan=tier.pr_extras(event,tested)
                 self.assertEqual(plan['reason'],'verified base/head/tested merge')
                 self.assertEqual(plan['paths'],['internal/scheduler/new.go','internal/scheduler/old.go'])
-                self.assertTrue(plan['systemd']);self.assertNotEqual(plan['packages'],['./...'])
+                self.assertTrue(plan['systemd']);self.assertEqual(plan['packages'],[])
                 git('update-index','--assume-unchanged','internal/scheduler/new.go')
                 (root/'internal/scheduler/new.go').write_text('hidden edit\n')
                 self.assertEqual(git('status','--porcelain'),'')
-                self.assertEqual(tier.pr_extras(event,tested)['packages'],['./...'])
+                self.assertTrue(tier.pr_extras(event,tested)['regressions'])
 
 
 class ExecutionPlanTest(unittest.TestCase):
