@@ -101,6 +101,7 @@ class NativeSmokeTest(unittest.TestCase):
                     name = tier.NATIVE_CLI[0]
                     listing = directory/'native-list.jsonl'
                     listing.write_text(lines([e for e in map(json.loads, listing.read_text().splitlines()) if e.get('Output') != name+'\n']))
+                    report['native_smoke']['discovery'] = tier.discover_from_log(listing.read_text())
                 target.write_text('not-json\n' if corruption == 'malformed' else lines(events))
                 # Recompute summarized evidence when possible: the verifier must
                 # reject incomplete raw evidence, not only stale summary bytes.

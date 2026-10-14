@@ -562,14 +562,20 @@ def run_native_smoke(out, deadline, report, save, execute, sensitive):
     native = report['native_smoke'] = {'schema': 1, 'source_proof': full_race.source_proof(ROOT),
         'context': context, 'sensitive': sensitive, 'build_command': ['go', 'build', './...'], 'phase_seconds': {}}
     save()
-    start = time.monotonic()
-    checked(native['build_command'], out/'native-build.log', deadline)
-    native['phase_seconds']['build'] = time.monotonic()-start
+    def timed(name, operation):
+        start = time.monotonic()
+        try:
+            return operation()
+        finally:
+            native['phase_seconds'][name] = time.monotonic()-start
+            save()
+            print('native phase timing: '+json.dumps({name: native['phase_seconds'][name]}), flush=True)
+    timed('build', lambda: checked(native['build_command'], out/'native-build.log', deadline))
     native['build_sha256'] = hashlib.sha256((out/'native-build.log').read_bytes()).hexdigest()
     selected = native_selections(sensitive)
-    start = time.monotonic()
-    listing = discover(NATIVE_PACKAGES+['./'+p[len(MODULE):] for p in selected], out/'native-list.jsonl', deadline, race=True)
-    native['phase_seconds']['discovery'] = time.monotonic()-start
+    listing = timed('discovery', lambda: discover(
+        NATIVE_PACKAGES+['./'+p[len(MODULE):] for p in selected],
+        out/'native-list.jsonl', deadline, race=True))
     native['discovery'] = listing
     if any(not set(names) <= set(listing.get(pkg, [])) for pkg, names in selected.items()):
         raise Failure('native selected test missing from compiled inventory')
@@ -579,12 +585,9 @@ def run_native_smoke(out, deadline, report, save, execute, sensitive):
     # One CLI process covers both base and conditional parents, avoiding a
     # second race startup, listing, linking and repeated TestMain execution.
     for name, command in native_commands(sensitive):
-        start = time.monotonic()
         chosen = {p: names for p, names in selected.items()
                   if name == 'native-'+p.rsplit('/', 1)[1]}
-        execute(command, name, short=True, selected=chosen or None)
-        native['phase_seconds'][name] = time.monotonic()-start
-        save()
+        timed(name, lambda: execute(command, name, short=True, selected=chosen or None))
     native['post_source_proof'] = full_race.source_proof(ROOT)
     save()
     verify_native_smoke(out, report, sensitive)
