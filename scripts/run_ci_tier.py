@@ -550,6 +550,11 @@ def verify_native_smoke(directory, report, sensitive):
         evidence = body_evidence(raw, True)
         if evidence != invocation['evidence']:
             raise Failure('native raw evidence mismatch')
+        starts = [(e.get('Package'), e['Test']) for e in full_race.shards.json_stream(raw)
+                  if e.get('Test') and e.get('Action') == 'run']
+        if len(starts) != len(set(starts)) or set(starts) != {
+                (r['package'], r['test']) for r in evidence['actual']}:
+            raise Failure('native bodies lack unique actual run/terminal lifecycle')
         observed = {(r['package'], r['test'].split('/')[0]) for r in evidence['actual']}
         if observed != {(p, n) for p, names in expected.items() for n in names}:
             raise Failure('native compiled parents did not all terminate')

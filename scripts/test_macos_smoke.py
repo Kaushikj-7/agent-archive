@@ -85,7 +85,7 @@ class NativeSmokeTest(unittest.TestCase):
                     self.verify(Path(d), report, True)
 
     def test_missing_child_failed_lane_malformed_stream_and_missing_compiled_name(self):
-        for corruption in ('child', 'failed', 'malformed', 'name', 'parent'):
+        for corruption in ('child', 'failed', 'malformed', 'name', 'parent', 'no-run', 'skipped'):
             with self.subTest(corruption=corruption), tempfile.TemporaryDirectory() as d:
                 directory = Path(d)
                 report = self.fixture(directory, True)
@@ -95,6 +95,10 @@ class NativeSmokeTest(unittest.TestCase):
                     events = [e for e in events if not (e.get('Test', '').endswith('/child') and e['Action'] == 'pass')]
                 elif corruption == 'failed':
                     events[-1]['Action'] = 'fail'
+                elif corruption == 'no-run':
+                    events = [e for e in events if e['Action'] != 'run']
+                elif corruption == 'skipped':
+                    events = [dict(e, Action='skip') if e.get('Test', '').endswith('/child') and e['Action'] == 'pass' else e for e in events]
                 elif corruption == 'parent':
                     missing = tier.NATIVE_CLI[0]
                     events = [e for e in events if e.get('Test', '').split('/')[0] != missing]
@@ -106,7 +110,7 @@ class NativeSmokeTest(unittest.TestCase):
                 target.write_text('not-json\n' if corruption == 'malformed' else lines(events))
                 # Recompute summarized evidence when possible: the verifier must
                 # reject incomplete raw evidence, not only stale summary bytes.
-                if corruption in ('failed', 'parent'):
+                if corruption in ('failed', 'parent', 'no-run', 'skipped'):
                     try:
                         report['invocations'][1]['evidence'] = tier.body_evidence(target.read_text(), True)
                     except tier.Failure:
