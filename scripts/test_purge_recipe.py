@@ -139,9 +139,13 @@ class EvidenceResult(unittest.TextTestResult):
     def startTest(self, test):
         super().startTest(test)
         self.method_started = time.monotonic()
+        self.method_case_start = len(CASE_EVIDENCE)
 
     def stopTest(self, test):
-        METHOD_TIMINGS.append({'test': test.id(), 'seconds': time.monotonic() - self.method_started})
+        import purge_ci
+        children = CASE_EVIDENCE[self.method_case_start:]
+        METHOD_TIMINGS.append({'test': test.id(), 'seconds': time.monotonic() - self.method_started,
+                               'case_count': len(children), 'cases_sha256': purge_ci.digest(children)})
         super().stopTest(test)
 
     def addSubTest(self, test, subtest, err):
@@ -944,16 +948,40 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument('--tier', choices=('pr', 'daily', 'full'), default='full')
     parser.add_argument('--evidence', type=Path)
+    parser.add_argument('--workers', type=int, choices=(1, 2), default=1)
+    parser.add_argument('--shard', type=int)
     args, remaining = parser.parse_known_args()
     TIER = args.tier
     if os.environ.get('GITHUB_ACTIONS') == 'true' and (not shutil.which('jq') or not all(shutil.which(s) for s in ('bash','zsh'))):
         raise SystemExit('CI purge requires jq, bash and zsh; missing prerequisites are not passes')
+    import purge_ci
+    catalog = purge_ci.methods()
+    proof, assigned = None, catalog
+    if args.workers == 2:
+        if args.shard not in (0, 1) or remaining or not args.evidence:
+            raise SystemExit('sharded purge requires --shard 0/1, evidence and the complete discovered suite')
+        if PurgeRecipeTest.shells != ['bash', 'zsh']:
+            raise SystemExit('sharded purge requires bash and zsh')
+        assigned = purge_ci.assignments(catalog)[args.shard]
+        proof = purge_ci.source_proof()
+    elif args.shard is not None:
+        raise SystemExit('--shard requires --workers 2')
     program = unittest.main(argv=[sys.argv[0], *remaining], exit=False,
+                            defaultTest=[f'PurgeRecipeTest.{name}' for name in assigned] if proof else None,
                             testRunner=unittest.TextTestRunner(resultclass=EvidenceResult))
     if args.evidence:
         source = subprocess.check_output(['git','-C',str(DOCS.parent),'rev-parse','HEAD'],text=True).strip()
         args.evidence.parent.mkdir(parents=True,exist_ok=True)
-        args.evidence.write_text(json.dumps({'schema':1, 'source':source, 'tier':TIER,
-                                            'success':program.result.wasSuccessful(), 'cases':CASE_EVIDENCE,
-                                            'method_timings': METHOD_TIMINGS},indent=2)+'\n')
+        receipt = {'schema':1, 'source':source, 'tier':TIER,
+                   'success':program.result.wasSuccessful(), 'cases':CASE_EVIDENCE,
+                   'method_timings': METHOD_TIMINGS}
+        if proof:
+            post_proof = purge_ci.source_proof()
+            if post_proof != proof:
+                raise SystemExit('purge source changed during execution')
+            receipt.update(schema=2, worker=args.shard, workers=args.workers,
+                           source_proof=proof, post_source_proof=post_proof,
+                           catalog=catalog, catalog_sha256=purge_ci.digest(catalog),
+                           assigned=assigned, shells=PurgeRecipeTest.shells)
+        args.evidence.write_text(json.dumps(receipt,indent=2)+'\n')
     sys.exit(not program.result.wasSuccessful())

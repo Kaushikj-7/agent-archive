@@ -4,7 +4,7 @@ import os
 import sys
 
 LANES = {
-    'script-tests': frozenset(('script-static', 'script-install', 'script-purge')),
+    'script-tests': frozenset(('script-static', 'script-install', 'script-purge', 'tier-plan')),
     'cross-build': frozenset(('cross-linux-arm64', 'cross-darwin-nocgo', 'cross-linux-release')),
 }
 

@@ -211,8 +211,8 @@ jobs:
           persist-credentials: false
       - name: Create isolated script environment
         run: |
-          mkdir -p "$RUNNER_TEMP/script-static-home" "$RUNNER_TEMP/script-static-xdg"
-          printf 'HOME=%s/script-static-home\nXDG_CONFIG_HOME=%s/script-static-xdg\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/script-static-home" "$RUNNER_TEMP/script-static-xdg" "$RUNNER_TEMP/script-static-tmp"
+          printf 'HOME=%s/script-static-home\nXDG_CONFIG_HOME=%s/script-static-xdg\nTMPDIR=%s/script-static-tmp\n' "$RUNNER_TEMP" "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - run: python3 scripts/test_release_signing.py
       - run: python3 scripts/test_release_assets.py
       - run: python3 scripts/test_release_candidate.py
@@ -235,9 +235,10 @@ jobs:
       - run: python3 -B scripts/test_go_cache_steps.py
 
       - run: python3 -B scripts/test_ci_lane_verdict.py
+      - run: python3 -B scripts/test_purge_ci.py
       - name: Remove isolated script environment
         if: always()
-        run: rm -rf -- "$RUNNER_TEMP/script-static-home" "$RUNNER_TEMP/script-static-xdg"
+        run: rm -rf -- "$RUNNER_TEMP/script-static-home" "$RUNNER_TEMP/script-static-xdg" "$RUNNER_TEMP/script-static-tmp"
 
   script-install:
     runs-on: ubuntu-latest
@@ -250,18 +251,22 @@ jobs:
           persist-credentials: false
       - name: Create isolated script environment
         run: |
-          mkdir -p "$RUNNER_TEMP/script-install-home" "$RUNNER_TEMP/script-install-xdg"
-          printf 'HOME=%s/script-install-home\nXDG_CONFIG_HOME=%s/script-install-xdg\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/script-install-home" "$RUNNER_TEMP/script-install-xdg" "$RUNNER_TEMP/script-install-tmp"
+          printf 'HOME=%s/script-install-home\nXDG_CONFIG_HOME=%s/script-install-xdg\nTMPDIR=%s/script-install-tmp\n' "$RUNNER_TEMP" "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - run: python3 scripts/test_install.py
       - run: python3 scripts/test_install_from_source.py
       - name: Remove isolated script environment
         if: always()
-        run: rm -rf -- "$RUNNER_TEMP/script-install-home" "$RUNNER_TEMP/script-install-xdg"
+        run: rm -rf -- "$RUNNER_TEMP/script-install-home" "$RUNNER_TEMP/script-install-xdg" "$RUNNER_TEMP/script-install-tmp"
 
   script-purge:
     needs: [tier-plan]
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1]
     env:
       PYTHONDONTWRITEBYTECODE: '1'
     steps:
@@ -270,8 +275,8 @@ jobs:
           persist-credentials: false
       - name: Create isolated script environment
         run: |
-          mkdir -p "$RUNNER_TEMP/script-purge-home" "$RUNNER_TEMP/script-purge-xdg"
-          printf 'HOME=%s/script-purge-home\nXDG_CONFIG_HOME=%s/script-purge-xdg\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/script-purge-home" "$RUNNER_TEMP/script-purge-xdg" "$RUNNER_TEMP/script-purge-tmp"
+          printf 'HOME=%s/script-purge-home\nXDG_CONFIG_HOME=%s/script-purge-xdg\nTMPDIR=%s/script-purge-tmp\n' "$RUNNER_TEMP" "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Install purge prerequisites
         run: |
           sudo apt-get update
@@ -280,24 +285,25 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           FULL_PURGE: ${{ needs.tier-plan.outputs.purge }}
+          SHARD: ${{ matrix.shard }}
         run: |
           tier=pr
           if [ "$EVENT" != pull_request ] || [ "$FULL_PURGE" = true ]; then tier=full; fi
-          python3 scripts/test_purge_recipe.py --tier "$tier" --evidence "$RUNNER_TEMP/purge-tier.json"
+          python3 scripts/test_purge_recipe.py --workers 2 --shard "$SHARD" --tier "$tier" --evidence "$RUNNER_TEMP/purge-tier.json"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
-          name: purge-tier
+          name: purge-tier-${{ matrix.shard }}
           path: ${{ runner.temp }}/purge-tier.json
           if-no-files-found: error
           retention-days: 7
       - name: Remove isolated script environment
         if: always()
-        run: rm -rf -- "$RUNNER_TEMP/script-purge-home" "$RUNNER_TEMP/script-purge-xdg"
+        run: rm -rf -- "$RUNNER_TEMP/script-purge-home" "$RUNNER_TEMP/script-purge-xdg" "$RUNNER_TEMP/script-purge-tmp"
 
   script-tests:
     if: always()
-    needs: [script-static, script-install, script-purge]
+    needs: [script-static, script-install, script-purge, tier-plan]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -308,6 +314,19 @@ jobs:
         env:
           NEEDS: ${{ toJSON(needs) }}
         run: python3 -B scripts/ci_lane_verdict.py script-tests
+      - name: Download complete purge worker evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: purge-tier-*
+          path: ${{ runner.temp }}/purge-evidence
+      - name: Reconcile current-source complete purge method and case union
+        env:
+          EVENT: ${{ github.event_name }}
+          FULL_PURGE: ${{ needs.tier-plan.outputs.purge }}
+        run: |
+          tier=pr
+          if [ "$EVENT" != pull_request ] || [ "$FULL_PURGE" = true ]; then tier=full; fi
+          python3 -B scripts/purge_ci.py --tier "$tier" --evidence "$RUNNER_TEMP/purge-evidence"
 
   # Keep this required check stable and fail closed when a worker fails/skips.
   linux-race:

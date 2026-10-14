@@ -42,7 +42,13 @@ terminal coverage; the stable required `linux-race` verdict reconciles all four
 artifacts and fails on any missing, failed or cancelled worker. All Linux
 Python gates run in independent `script-static`, `script-install` and
 `script-purge` jobs. Only purge waits for the tier plan; static and installer
-fixtures start immediately. Each lane uses an isolated HOME/XDG environment.
+fixtures start immediately. Each lane uses isolated HOME/XDG/temp directories.
+Purge discovers every complete unittest method and assigns sorted methods to two
+standard Linux workers. Each parent retains all runtime-generated cases; only
+its existing tier selection changes repeated resume boundaries. The aggregate
+checks both current-source catalogs, assignments, passing parent terminals and
+bound child streams, including the exact existing resume/cadence case union.
+Missing, duplicate or unexpected workers, parents or cases fail closed.
 The stable required `script-tests` verdict rejects missing, failed, skipped or
 cancelled lanes and remains a dependency of `linux-race`. The independent
 Linux/arm64 build+vet, Darwin/arm64 no-cgo vet and Linux release build+verification
