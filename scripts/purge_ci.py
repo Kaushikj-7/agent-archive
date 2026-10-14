@@ -4,7 +4,6 @@ import hashlib
 import json
 import math
 from pathlib import Path
-import sys
 import unittest
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -53,7 +52,8 @@ def verify(receipts, tier, proof):
             raise ValueError('malformed purge worker')
         worker = receipt.get('worker')
         if (type(worker) is not int or worker not in range(WORKERS) or worker in seen_workers
-                or receipt.get('schema') != 2 or type(receipt.get('workers')) is not int or receipt['workers'] != WORKERS
+                or type(receipt.get('schema')) is not int or receipt['schema'] != 2
+                or type(receipt.get('workers')) is not int or receipt['workers'] != WORKERS
                 or receipt.get('source') != proof['source']
                 or receipt.get('source_proof') != proof or receipt.get('post_source_proof') != proof
                 or receipt.get('tier') != tier or receipt.get('success') is not True

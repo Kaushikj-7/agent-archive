@@ -31,15 +31,16 @@ VERSION=dev ./scripts/build-release.sh                   # the release build (CI
 ```
 
 CI's [Test workflow](../../.github/workflows/test.yml) runs the short race
-suite across four Ubuntu trial workers for each pull request. Each worker discovers all
-packages and CLI top-level tests, fuzz seeds and executable examples, assigns
-ordinary packages once and CLI names to disjoint bins, and retains complete
-subtest trees. Timing hints only rank discovered units; new units are assigned
+suite across eight Ubuntu trial workers for each pull request. Each worker discovers all
+packages and top-level tests, fuzz seeds and executable examples. Light packages
+remain whole; CLI, catalog, statshtml and state parents are assigned to disjoint
+bins and retain complete subtest trees. Timing hints only rank discovered units; new units are assigned
 and logged. The assigned native Git identity package runs first on a quiet worker because
 its observers have fixed 500 ms deadlines. The workers then overlap bounded
-ordinary-package and CLI processes; vet runs once. Each worker records its source, catalog, assignment and
-terminal coverage; the stable required `linux-race` verdict reconciles all four
-artifacts and fails on any missing, failed or cancelled worker. All Linux
+ordinary-package and parent processes. The independent plain audit and each worker
+retain actual vet evidence bound to their source and compiler context. Each worker
+records its source, catalog, assignment and terminal coverage; the stable required
+`linux-race` verdict reconciles all eight artifacts and fails on any missing, failed or cancelled worker. All Linux
 Python gates run in independent `script-static`, `script-install` and
 `script-purge` jobs. Only purge waits for the tier plan; static and installer
 fixtures start immediately. Each lane uses isolated HOME/XDG/temp directories.

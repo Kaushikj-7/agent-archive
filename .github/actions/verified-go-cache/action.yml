@@ -25,10 +25,6 @@ runs:
         CACHE_PROFILE: ${{ inputs.profile }}
         CACHE_SHARED_SOURCE: ${{ inputs.shared-source }}
       run: python3 -B "$CACHE_SOURCE/scripts/ci_cache.py" prepare --source "$CACHE_SOURCE" --profile "$CACHE_PROFILE" --shared-source "$CACHE_SHARED_SOURCE"
-    - name: Set controlled compilation/module paths
-      shell: bash
-      run: |
-        printf 'GOCACHE=%s/pr-go-build\nGOMODCACHE=%s/pr-go-modules\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
     - name: Restore read-only trusted-main seed
       id: restore
       continue-on-error: true

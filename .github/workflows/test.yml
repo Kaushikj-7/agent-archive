@@ -55,6 +55,10 @@ jobs:
         with:
           go-version: '1.27.2'
           cache: false
+      - name: Set controlled compilation/module paths
+        shell: bash
+        run: |
+          printf 'GOCACHE=%s/pr-go-build\nGOMODCACHE=%s/pr-go-modules\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Restore verified trusted-main compilation seed
         uses: ./.github/actions/verified-go-cache
       - name: Require exact Go version
@@ -434,6 +438,10 @@ jobs:
         with:
           go-version: '1.27.2'
           cache: false
+      - name: Set controlled compilation/module paths
+        shell: bash
+        run: |
+          printf 'GOCACHE=%s/pr-go-build\nGOMODCACHE=%s/pr-go-modules\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Restore verified trusted-main compilation seed
         uses: ./.github/actions/verified-go-cache
       - name: Restore verified pinned upstream Git or build cold
@@ -477,6 +485,10 @@ jobs:
         with:
           go-version: '1.27.2'
           cache: false
+      - name: Set controlled compilation/module paths
+        shell: bash
+        run: |
+          printf 'GOCACHE=%s/pr-go-build\nGOMODCACHE=%s/pr-go-modules\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Restore verified trusted-main compilation seed
         uses: ./.github/actions/verified-go-cache
       - name: Require Go 1.27.2 (go.mod's toolchain line)
@@ -519,6 +531,10 @@ jobs:
         with:
           go-version: '1.27.2'
           cache: false
+      - name: Set controlled compilation/module paths
+        shell: bash
+        run: |
+          printf 'GOCACHE=%s/pr-go-build\nGOMODCACHE=%s/pr-go-modules\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Restore verified trusted-main compilation seed
         uses: ./.github/actions/verified-go-cache
       - name: Require Go 1.27.2 (go.mod's toolchain line)
@@ -550,6 +566,10 @@ jobs:
         with:
           go-version: '1.27.2'
           cache: false
+      - name: Set controlled compilation/module paths
+        shell: bash
+        run: |
+          printf 'GOCACHE=%s/pr-go-build\nGOMODCACHE=%s/pr-go-modules\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Restore verified trusted-main compilation seed
         uses: ./.github/actions/verified-go-cache
       - name: Require Go 1.27.2 (go.mod's toolchain line)
@@ -579,6 +599,10 @@ jobs:
         with:
           go-version: '1.27.2'
           cache: false
+      - name: Set controlled compilation/module paths
+        shell: bash
+        run: |
+          printf 'GOCACHE=%s/pr-go-build\nGOMODCACHE=%s/pr-go-modules\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Restore verified trusted-main compilation seed
         uses: ./.github/actions/verified-go-cache
       - name: Require Go 1.27.2 (go.mod's toolchain line)
@@ -627,6 +651,10 @@ jobs:
         with:
           go-version: '1.27.2'
           cache: false
+      - name: Set controlled compilation/module paths
+        shell: bash
+        run: |
+          printf 'GOCACHE=%s/pr-go-build\nGOMODCACHE=%s/pr-go-modules\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Restore verified trusted-main compilation seed
         uses: ./.github/actions/verified-go-cache
       # Built with this job's Go (install-mode: goinstall) rather than
