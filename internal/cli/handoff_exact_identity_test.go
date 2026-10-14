@@ -271,8 +271,16 @@ func TestHandoffQueryReleasesReadSignalsBeforeLaunch(t *testing.T) {
 // Discovery and target loading must retain one client rather than reset its view.
 func TestHandoffArchiveQueryRetainsCapturedCatalogClient(t *testing.T) {
 	t.Parallel()
-	for _, query := range []string{"full ID", "qualified ID", "title"} {
-		t.Run(query, func(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		query   string
+		harness string
+	}{
+		{name: "full ID"},
+		{name: "qualified ID", harness: "codex"},
+		{name: "title", query: "Archived elsewhere"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			f := newPickerFixture(t)
 			remote := scopedPickerCatalog(t, f.mem)
@@ -281,12 +289,13 @@ func TestHandoffArchiveQueryRetainsCapturedCatalogClient(t *testing.T) {
 				opens++
 				return catalog.Wrap(remote.ObjectStore)
 			}
-			args := []string{f.archiveOnly, "--source", "archive"}
-			switch query {
-			case "qualified ID":
-				args = append(args, "--harness", "codex")
-			case "title":
-				args[0] = "Archived elsewhere"
+			query := test.query
+			if query == "" {
+				query = f.archiveOnly
+			}
+			args := []string{query, "--source", "archive"}
+			if test.harness != "" {
+				args = append(args, "--harness", test.harness)
 			}
 			out, stderr, code := runHandoff(t, f.env, args...)
 			if code != 0 || opens != 1 || !strings.Contains(out, "Archived elsewhere") || !strings.Contains(out, "source: archive") {
