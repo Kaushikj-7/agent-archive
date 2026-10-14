@@ -288,6 +288,7 @@ jobs:
           name: purge-tier
           path: ${{ runner.temp }}/purge-tier.json
           if-no-files-found: error
+          retention-days: 7
       - name: Remove isolated script environment
         if: always()
         run: rm -rf -- "$RUNNER_TEMP/script-purge-home" "$RUNNER_TEMP/script-purge-xdg"

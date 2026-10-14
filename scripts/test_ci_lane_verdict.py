@@ -67,6 +67,12 @@ class LaneVerdictTest(unittest.TestCase):
             self.assertIn('HOME=%s/'+lane+'-home', found[lane])
             self.assertIn('XDG_CONFIG_HOME=%s/'+lane+'-xdg', found[lane])
             self.assertIn('if: always()', found[lane])
+            # runner is only available after assignment, not in job-level env.
+            prefix = found[lane].split('    steps:', 1)[0]
+            self.assertNotIn('${{ runner.', prefix)
+            cleanup = next(step for step in steps(found[lane]) if 'Remove isolated' in step)
+            self.assertIn('"$RUNNER_TEMP/'+lane+'-home"', cleanup)
+            self.assertNotIn('"$HOME"', cleanup)
         self.assertEqual(len(all_scripts), len(set(all_scripts)))
 
     def test_all_cross_target_commands_preserved(self):

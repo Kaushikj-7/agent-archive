@@ -19,6 +19,7 @@ python3 scripts/test_install.py
 python3 scripts/test_install_from_source.py
 python3 scripts/test_purge_recipe.py                     # runs the bucket purge recipes in the docs
 python3 scripts/test_ci_workflow.py                      # Extended keeps the validated systemd image
+python3 -B scripts/test_ci_lane_verdict.py                # mandatory script and cross-target lanes
 python3 scripts/test_ci_tiers.py                         # cadence, source proof and body evidence
 python3 scripts/test_go_shards.py                         # discovery, coverage, verdict, and process cleanup
 python3 -B scripts/test_generate_go_shard_hints.py         # matched artifact medians and pause envelopes
@@ -39,8 +40,14 @@ its observers have fixed 500 ms deadlines. The workers then overlap bounded
 ordinary-package and CLI processes; vet runs once. Each worker records its source, catalog, assignment and
 terminal coverage; the stable required `linux-race` verdict reconciles all four
 artifacts and fails on any missing, failed or cancelled worker. All Linux
-Python gates, including purge, staging, scope and shard-runner regressions, run
-in a parallel script job required by that verdict. A separate exact-source plan
+Python gates run in independent `script-static`, `script-install` and
+`script-purge` jobs. Only purge waits for the tier plan; static and installer
+fixtures start immediately. Each lane uses an isolated HOME/XDG environment.
+The stable required `script-tests` verdict rejects missing, failed, skipped or
+cancelled lanes and remains a dependency of `linux-race`. The independent
+Linux/arm64 build+vet, Darwin/arm64 no-cgo vet and Linux release build+verification
+also run in separate standard Linux jobs behind the stable `cross-build` verdict.
+A separate exact-source plan
 selects focused representative regressions for sensitive PR changes. Its proof
 compares event base, actual head and tested merge, checks tracked bytes/types/modes,
 and includes both paths of renames and deletions. CLI, catalog, recovery, archive,
