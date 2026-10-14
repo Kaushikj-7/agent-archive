@@ -17,7 +17,7 @@ from go_cache_steps import verify_restored, restore_result
 import pinned_git
 import verified_tools
 import warm_shared_tools
-from test_go_cache_context import ContextTests
+from test_go_cache_context import metadata
 from test_ci_workflow import jobs, ROOT
 
 
@@ -181,7 +181,17 @@ class CompilationTests(unittest.TestCase):
         self.assertFalse(cache.trusted_main(env, dict(event, repository={'full_name': 'attacker/fork'})))
 
 
-class NativeIdentityTests(ContextTests):
+class NativeIdentityTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name).resolve()
+        self.release = self.root/'os-release'
+        self.release.write_text('ID=ubuntu\nVERSION_ID="24.04"\n')
+        self.go = metadata()
+        self.env = {'RUNNER_OS':'Linux','RUNNER_ARCH':'X64',
+                    'ImageOS':'ubuntu24','ImageVersion':'20261001.1.0'}
+
     def test_sdk_xcode_and_compiler_bytes_are_native_identity(self):
         self.go.update(GOOS='darwin', GOHOSTOS='darwin', GOARCH='arm64', GOHOSTARCH='arm64')
         self.env.update(RUNNER_OS='macOS', RUNNER_ARCH='ARM64', ImageOS='macos14')
