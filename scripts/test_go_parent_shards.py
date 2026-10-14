@@ -109,9 +109,23 @@ class ParentScheduling(unittest.TestCase):
             p.verify_logs(worker, c, c['assignments'][index])
 
     def test_enclosing_parent_lifecycle_is_required_without_virtual_slash_nodes(self):
-        from test_coverage_gap_witness import CoverageGapWitness
-        case = CoverageGapWitness('test_parent_pass_before_child_run_refuses_lifecycle')
-        case.test_parent_pass_before_child_run_refuses_lifecycle()
+        c = catalog(4)
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d); evidence(root, c)
+            index, package = next((i, n) for i, a in enumerate(c['assignments']) for n in a['parents'])
+            worker = root/str(index); path = worker/p.log_name(package)
+            original = path.read_text(); events = r.json_stream(original)
+            parent = events[0]['Test']; child = events[1]['Test']
+            parent_end = next(e for e in events if e.get('Test') == parent and e.get('Action') == 'pass')
+            bad = [e for e in events if e is not parent_end]; bad.insert(1, parent_end)
+            # Every node still has run/pass; only enclosing order is invalid.
+            for name in (parent, child):
+                self.assertEqual([e['Action'] for e in bad if e.get('Test') == name], ['run', 'pass'])
+            path.write_text(rows(bad))
+            with self.assertRaisesRegex(r.Failure, 'lifecycle|parent terminal'):
+                p.verify_logs(worker, c, c['assignments'][index])
+            path.write_text(original)
+            p.verify_logs(worker, c, c['assignments'][index])
         package = p.HEAVY[0]
         # A slash-containing name need not emit intermediate runtime nodes.
         events = [event(package, 'run', Test='TestA'),

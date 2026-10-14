@@ -8,6 +8,7 @@ import unittest
 from unittest import mock
 
 import run_pr_reference as ref
+import go_parent_shards as parents
 import run_ci_tier as tier
 import run_go_shard as shards
 from test_go_parent_shards import SOURCE, catalog, evidence, body, rows, event, listing
@@ -92,9 +93,32 @@ class ReferenceTests(unittest.TestCase):
             with self.assertRaisesRegex(shards.Failure,'skip'):ref.compare(reference,workers,root/'audit')
 
     def test_all_runtime_body_identities_and_enclosing_order_regressions(self):
-        from test_coverage_gap_witness import CoverageGapWitness
-        case = CoverageGapWitness('test_missing_both_successful_child_events_refuses_exact_coverage')
-        case.test_missing_both_successful_child_events_refuses_exact_coverage()
+        c = catalog(8)
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(tier, 'verify_owned_audit_skip'), mock.patch.object(tier, 'verify_source_audit', return_value={'source_proof': SOURCE}), mock.patch.object(ref.hints, 'measured_source', return_value=(SOURCE, json.dumps(tier.catalog()))):
+            root = Path(d); workers = root/'workers'; workers.mkdir(); evidence(workers, c)
+            for manifest in workers.glob('*/manifest.json'):
+                m = json.loads(manifest.read_text())
+                m['settings'].update(plain_vet_owned=True, plain_vet_source_proof=SOURCE)
+                synthetic_worker_receipt(manifest.parent, m, image='unit-'+str(m['shard']))
+                manifest.write_text(json.dumps(m))
+            reference = root/'reference'; snapshot(reference, c)
+            self.assertTrue(ref.compare(reference, workers, root/'audit')['success'])
+            path = next(workers.glob('*/parents-*.json'))
+            original = path.read_text(); events = shards.json_stream(original)
+            target = next(e['Test'] for e in events if e.get('Action') == 'pass' and '/' in e.get('Test', ''))
+            removed = [e for e in events if e.get('Test') == target]
+            self.assertEqual([e['Action'] for e in removed], ['run', 'pass'])
+            path.write_text(rows([e for e in events if e.get('Test') != target]))
+            manifest = path.parent/'manifest.json'; m = json.loads(manifest.read_text())
+            # Honest regeneration avoids an unrelated stale/missing-field failure.
+            raw = parents.verify_logs(path.parent, c, c['assignments'][m['shard']])
+            m['body_evidence'] = tier.body_evidence(raw, True); manifest.write_text(json.dumps(m))
+            with self.assertRaisesRegex(shards.Failure, 'body identity/status union'):
+                ref.compare(reference, workers, root/'audit')
+            path.write_text(original)
+            raw = parents.verify_logs(path.parent, c, c['assignments'][m['shard']])
+            m['body_evidence'] = tier.body_evidence(raw, True); manifest.write_text(json.dumps(m))
+            self.assertTrue(ref.compare(reference, workers, root/'audit')['success'])
 
     def test_manual_workflow_is_exclusive_and_registered_test_is_required(self):
         from test_ci_workflow import jobs,job_key,condition_matches
