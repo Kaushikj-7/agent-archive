@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -14,7 +15,13 @@ import (
 // fixture's project, and records the launch a run makes.
 func launchRecorder(t *testing.T, f *pickerFixture) *launchSpec {
 	t.Helper()
-	initTestRepo(t, f.project)
+	mustGit(t, f.project, "init", "-q", "-b", "main")
+	// A disposable launch fixture must own every Git writer until cleanup.
+	// Configure this repository before its first commit can detach maintenance.
+	mustGit(t, f.project, "config", "maintenance.auto", "false")
+	mustGit(t, f.project, "config", "gc.auto", "0")
+	mustGit(t, f.project, "add", ".")
+	mustGit(t, f.project, "commit", "-q", "-m", "initial")
 	f.env.Executable = func() (string, error) { return "/opt/agent-archive", nil }
 	f.env.RunGit = testGit
 	// On a terminal, so the agent runs here rather than in a new window.
@@ -30,6 +37,43 @@ func launchRecorder(t *testing.T, f *pickerFixture) *launchSpec {
 		return nil
 	}
 	return got
+}
+
+// Trace actual Git processes: a successful commit alone does not prove that its
+// detached maintenance has stopped writing to the fixture's object directory.
+func TestHandoffLaunchFixtureStartsNoBackgroundGitMaintenance(t *testing.T) {
+	type gitTraceCommand string
+	const (
+		gitMaintenance gitTraceCommand = "maintenance"
+		gitGC          gitTraceCommand = "gc"
+		gitCommit      gitTraceCommand = "commit"
+	)
+	trace := filepath.Join(t.TempDir(), "git-trace.json")
+	t.Setenv("GIT_TRACE2_EVENT", trace)
+	f := newPickerFixture(t)
+	launchRecorder(t, &f)
+	mustGit(t, f.project, "commit", "-q", "--allow-empty", "-m", "later fixture commit")
+	data, err := os.ReadFile(trace)
+	must(t, err)
+	commits := 0
+	for line := range strings.SplitSeq(strings.TrimSpace(string(data)), "\n") {
+		var event struct {
+			Event string            `json:"event"`
+			Argv  []gitTraceCommand `json:"argv"`
+		}
+		must(t, json.Unmarshal([]byte(line), &event))
+		for _, arg := range event.Argv {
+			if event.Event == "child_start" && (arg == gitMaintenance || arg == gitGC) {
+				t.Fatalf("fixture started automatic housekeeping: %s", line)
+			}
+			if event.Event == "start" && arg == gitCommit {
+				commits++
+			}
+		}
+	}
+	if commits != 2 {
+		t.Fatalf("observed %d Git commits, want initial and later fixture commits", commits)
+	}
 }
 
 // A title with --to is one step: the match is launched, with the document of
