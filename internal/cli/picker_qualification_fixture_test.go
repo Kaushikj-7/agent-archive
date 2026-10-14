@@ -204,6 +204,12 @@ func buildQualificationFixture(tb testing.TB, metadata []archive.Metadata) quali
 	raw := &qualifiedCLIStore{storagetest.NewMemoryStore()}
 	head := qualificationSeed(tb, raw)
 	entries := make([]catalog.CatalogEntry, len(metadata))
+	// Each order membership carries the same immutable entry envelope. Encode it
+	// once per session; the per-key decoder and node checks still validate every
+	// leaf. These bytes belong only to this construction, never a process seed.
+	entryJSON := make([]json.RawMessage, len(metadata))
+	entryKeys := make([]string, len(metadata))
+	orderKeys := make([][3][]string, len(metadata))
 	children := map[string][2]uint64{}
 	for _, m := range metadata {
 		if m.ParentSessionID != "" {
@@ -225,16 +231,20 @@ func buildQualificationFixture(tb testing.TB, metadata []archive.Metadata) quali
 		n := children[m.Harness.Name+"/"+m.SessionID]
 		entry := catalog.CatalogEntry{Revision: fmt.Sprintf("fixture-%08d", i), Metadata: ref, Summary: m, OrdinaryChildren: n[0], ReplayChildren: n[1]}
 		entries[i] = qualificationEntry(tb, entry)
+		entryJSON[i] = qualificationJSON(tb, entries[i])
+		key, err := archive.MetadataObjectKey(m.Harness.Name, m.SessionID)
+		if err != nil {
+			tb.Fatal(err)
+		}
+		entryKeys[i] = key
+		orderKeys[i] = qualificationOrderKeys(key, m)
 	}
 	var roots [4]catalog.ObjectRef
 	height := 0
 	for tree := range roots {
 		var leaves []qualificationLeaf
-		for i, m := range metadata {
-			key, err := archive.MetadataObjectKey(m.Harness.Name, m.SessionID)
-			if err != nil {
-				tb.Fatal(err)
-			}
+		for i := range metadata {
+			key := entryKeys[i]
 			entry := entries[i]
 			if tree == 0 {
 				leaves = append(leaves, qualificationLeaf{key, qualificationJSON(tb, struct {
@@ -243,9 +253,8 @@ func buildQualificationFixture(tb testing.TB, metadata []archive.Metadata) quali
 				}{entry.Revision, &entry})})
 				continue
 			}
-			order := qualificationOrderKeys(key, m)
-			for _, k := range order[tree-1] {
-				leaves = append(leaves, qualificationLeaf{k, qualificationJSON(tb, entry)})
+			for _, k := range orderKeys[i][tree-1] {
+				leaves = append(leaves, qualificationLeaf{k, entryJSON[i]})
 			}
 			if tree == 3 {
 				leaves = append(leaves, qualificationPickerLeaves(tb, key, entry)...)

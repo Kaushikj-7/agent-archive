@@ -197,38 +197,23 @@ def body_evidence(text, short):
     return {'actual': actual, 'full_restorations': scale}
 
 
-def checked(command, output, deadline, env=None):
-    """Linux retains the existing subreaper; Darwin stops the entire process group."""
-    if sys.platform == 'linux':
-        import run_go_shard
-        try:
-            run_go_shard.supervise([(command, output, env or os.environ.copy())], deadline)
-        except run_go_shard.Failure as error:
-            raise Failure(str(error)) from error
-        return output.read_text()
+def checked_many(commands, deadline):
+    """One bounded supervisor owns every process and joins the complete batch."""
     def cancel(signum, frame):
         raise Failure('tier command cancelled')
     old = {sig: signal.signal(sig, cancel) for sig in (signal.SIGTERM, signal.SIGINT)}
-    process = None
     try:
-        with output.open('w') as handle:
-            process = subprocess.Popen(command, stdout=handle, start_new_session=True, env=env)
-            try:
-                status = process.wait(timeout=max(.01, deadline-time.monotonic()))
-            except subprocess.TimeoutExpired as error:
-                raise Failure('tier deadline exceeded') from error
-            if status:
-                raise Failure('tier command failed')
-        return output.read_text()
+        full_race.shards.supervise(commands, deadline)
+    except full_race.shards.Failure as error:
+        raise Failure(str(error)) from error
     finally:
-        if process:
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            process.wait()
         for sig, handler in old.items():
             signal.signal(sig, handler)
+
+
+def checked(command, output, deadline, env=None):
+    checked_many([(command, output, env or os.environ.copy())], deadline)
+    return output.read_text()
 
 
 def discover(packages, out, deadline, race=False):
@@ -486,6 +471,26 @@ def run_suite(tier, suite, out, extras=None, seconds=2400, *, own_plain_vet=Fals
             verify_selected(proof['actual'], selected, children, real_manager=real_manager)
         invocation['evidence'] = proof
         path.write_text(json.dumps(report, indent=2)+'\n')
+    def execute_full_batch(batch):
+        if len(batch) == 1:
+            command, name = batch[0]
+            execute(command, name)
+            return
+        # Record both exact ordered entries before launching. The supervisor is
+        # synchronous; no threads mutate the report or execute callbacks.
+        env = dict(os.environ, AGENT_ARCHIVE_REAL_SYSTEMD='0')
+        env.pop('AGENT_ARCHIVE_PERF', None)
+        invocations = [{'command': command, 'log': name+'.jsonl', 'evidence': None,
+                        'performance_enabled': False, 'real_systemd_enabled': False}
+                       for command, name in batch]
+        report['invocations'].extend(invocations)
+        path.write_text(json.dumps(report, indent=2)+'\n')
+        commands = [(invocation['command'], out/invocation['log'], dict(env))
+                    for invocation in invocations]
+        checked_many(commands, deadline)
+        for invocation in invocations:
+            invocation['evidence'] = body_evidence((out/invocation['log']).read_text(), False)
+        path.write_text(json.dumps(report, indent=2)+'\n')
     if suite == 'audit' or tier == 'daily' and suite == 'linux':
         audit_source = full_race.source_proof(ROOT)
         report['audit_source_proof'] = audit_source
@@ -518,7 +523,7 @@ def run_suite(tier, suite, out, extras=None, seconds=2400, *, own_plain_vet=Fals
                 try:
                     full_race.run(packages, out, deadline, report,
                                   lambda: path.write_text(json.dumps(report, indent=2)+'\n'),
-                                  checked, execute, ROOT, body_evidence, verify_selected,
+                                  checked, execute_full_batch, ROOT, body_evidence, verify_selected,
                                   catalog()['restorations'])
                 except full_race.shards.Failure as error:
                     raise Failure(str(error)) from error

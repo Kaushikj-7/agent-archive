@@ -95,8 +95,11 @@ def schedule(package_map, names, patterns, hints):
         if group:
             assignments.append({CLI: group})
             commands.append(COMMON + ['-run', shards.selector(group), CLI])
+    # Keep the all-package invocation alone. Only later private CLI processes
+    # overlap; each keeps its own package deadline and raw stream.
+    batches = [[0], [1, 2]] if second and isolated else [[i] for i in range(len(commands))]
     return {'schema': 1, 'packages': package_map, 'names': names,
-            'assignments': assignments, 'commands': commands}
+            'assignments': assignments, 'commands': commands, 'batches': batches}
 
 
 def coverage(text, package_map, selected, body_evidence):
@@ -160,7 +163,7 @@ def verify(directory, report, patterns, root, body_evidence, verify_selected, re
     verify_selected(all_actual, required, children)
 
 
-def run(patterns, out, deadline, report, persist, checked, execute, root, body_evidence, verify_selected, restorations):
+def run(patterns, out, deadline, report, persist, checked, execute_batch, root, body_evidence, verify_selected, restorations):
     proof = source_proof(root)
     if proof['source'] != report['source']:
         raise shards.Failure('full discovery starts from another source')
@@ -184,6 +187,10 @@ def run(patterns, out, deadline, report, persist, checked, execute, root, body_e
     if source_proof(root) != proof:
         raise shards.Failure('full discovery source changed')
     persist()
-    for index, command in enumerate(report['full_schedule']['commands']):
-        execute(command, f'race-{index}')
+    for batch in report['full_schedule']['batches']:
+        if source_proof(root) != proof:
+            raise shards.Failure('full batch source changed')
+        execute_batch([(report['full_schedule']['commands'][index], f'race-{index}') for index in batch])
+        if source_proof(root) != proof:
+            raise shards.Failure('full batch source changed')
     verify(out, report, patterns, root, body_evidence, verify_selected, restorations)
