@@ -146,6 +146,9 @@ revisions coalesce, while a short transaction rejects superseded generations.
 Source projections are staged in the same private search database; full source
 bundles are not cached. This adds a second local copy of projected message text
 alongside FTS, bounded per current session membership and discarded on rebuild.
+Legacy preserved sidecars may omit privacy/schema provenance that verified source
+bytes supply. Their unchanged reader-bound requests reuse certified projections;
+new unknown requests still invalidate old text and verify source provenance.
 
 Reproduce deterministic work counts and the small lifetime workload with:
 

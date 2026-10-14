@@ -89,6 +89,12 @@ func sourceOwnership(metadata archive.Metadata, harness archive.Harness, capture
 	return digest([]any{metadata.SessionID, metadata.NativeSessionID, metadata.ProjectID, metadata.ParentSessionID, harness, capturedAt})
 }
 
+func newUnknownPrivacy(req sourceRequest, previous []sourceRequest) bool {
+	// Legacy sidecars may omit provenance supplied by verified immutable bytes.
+	// Only an unchanged reader-bound request can retain that projection.
+	return historicalVisibilityUnavailable(req.Filter) && !slices.Contains(previous, req)
+}
+
 // Observe records an authoritative snapshot. Composition holds LockWork across
 // authoritative reads and Observe/Run; arrival order cannot establish causality.
 // Repeated observations do not reset eligibility; updates coalesce until due.
@@ -144,7 +150,7 @@ func (s *Store) Observe(ctx context.Context, metadata archive.Metadata, parsers 
 			}
 		}
 		for i, req := range reqs {
-			if historicalVisibilityUnavailable(req.Filter) || (i < len(oldReqs) && req.Revision == oldReqs[i].Revision && req.Filter != oldReqs[i].Filter) {
+			if newUnknownPrivacy(req, oldReqs) || (i < len(oldReqs) && req.Revision == oldReqs[i].Revision && req.Filter != oldReqs[i].Filter) {
 				privacyChanged = true
 			}
 		}
