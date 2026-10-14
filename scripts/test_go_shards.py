@@ -84,17 +84,19 @@ class CatalogTest(unittest.TestCase):
 
 
 class WorkerCountTest(unittest.TestCase):
-    def test_two_and_four_assignments_are_deterministic_exhaustive_disjoint(self):
+    def test_shared_one_two_three_four_bins_are_deterministic_exhaustive_disjoint(self):
         units = [f'Test{i}' for i in range(12)]
-        for workers in (2, 4):
+        for workers in (1, 2, 3, 4):
             bins = runner.partition(units, {}, workers)
             self.assertEqual(len(bins), workers)
             self.assertEqual(bins, runner.partition(list(reversed(units)), {}, workers))
             flattened = [n for b in bins for n in b]
             self.assertEqual(set(flattened), set(units))
             self.assertEqual(len(flattened), len(set(flattened)))
-        for invalid in (0, 1, 3, 5, True, '4'):
+        for invalid in (0, 17, True, '4'):
             with self.assertRaises(runner.Failure): runner.partition(units, {}, invalid)
+        for invalid in (0, 1, 3, 5, True, '4'):
+            with self.assertRaises(runner.Failure): runner.worker_count(invalid)
         with self.assertRaises(runner.Failure): runner.partition(['a', 'b'], {}, 4)
 
     def test_four_worker_reconciliation_requires_every_terminal_and_assignment(self):

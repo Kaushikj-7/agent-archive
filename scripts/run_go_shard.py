@@ -217,7 +217,10 @@ def worker_count(workers):
 
 
 def partition(units, hints, workers=2):
-    worker_count(workers)
+    # Generic bounded LPT scheduling is shared with native full coverage.
+    # Representative PR topology is independently restricted by worker_count.
+    if type(workers) is not int or not 1 <= workers <= 16:
+        raise Failure('partition count must be an integer from 1 through 16')
     if len(set(units)) != len(units):
         raise Failure('duplicate partition units')
     weights = {}
