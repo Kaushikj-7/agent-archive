@@ -24,7 +24,7 @@ GitHub's branch cache isolation also prevents PR-scoped entries becoming a
 main seed. A PR or fork can restore available default-branch seeds read-only;
 forks never save. Missing seeds do not add a seed-build dependency to a PR.
 
-All restored files are inventoried and checksummed before Go can consume them.
+All restored cache members are inventoried and checksummed before Go can consume them.
 Broken extraction, absent/incompatible manifests and corrupt files are cleared
 from the two controlled directories. Modules download and verify on hits and
 misses. A restored module verification failure retries once from empty caches;
@@ -37,7 +37,7 @@ LRU eviction. No paid cache capacity, paid runners, images or self-hosted
 machines are introduced. Only these directories are cached:
 
 - `$RUNNER_TEMP/pr-go-build`
-- `$RUNNER_TEMP/pr-go-modules`
+- `$RUNNER_TEMP/pr-go-modules/cache` (trusted seed archives only)
 
 Main seeds have one immutable key per product/shared profile, exact context and module dependency set,
 without a new key for each source tree or worker. All Linux workers share one
@@ -48,6 +48,13 @@ Source-specific PR keys can be evicted normally; their contents are Go
 compilation, never worker evidence. New runner/compiler/module contexts create
 new seeds, and older variants remain subject to the same 10 GB LRU limit.
 
+Main seed archives contain only Go objects/tools and immutable module download
+archives, not extracted module source trees. Restore still runs Go module
+download/verification to reconstruct current dependency sources from those
+archives. PR snapshots contain Go objects/tools only and never copy the
+immutable module bundle. Separate restore actions preserve GitHub cache path
+version compatibility for these two layouts.
+
 Each publication has a two-GiB uncompressed budget. Before capture, only Go's
 recoverable action/object files can be removed, oldest first, to target 98% of
 the budget. Modules, pinned tools and receipts are never edited by pruning.
@@ -57,14 +64,13 @@ raising storage limits. `cache_bytes` reports actual inventory bytes. This cap
 bounds each entry, not an assertion about live account storage: observe cache
 inventory and actual restore/upload costs on hosted runs before qualification.
 
-PR snapshots contain compiler objects and immutable tool binaries only; module
-contents are cleared after successful current tests and module verification,
-before publication. A PR snapshot hit downloads/verifies current product
-modules normally. This avoids copying the roughly 0.57 GB measured module
-bundle into each recent PR entry. The read-only main seeds retain modules for
-general checker and native consumers. Linux product seeds omit the unused
-macOS golangci/deadcode binaries; shared-checker compilation has a separate
-allowlisted profile to avoid evicting product compilation.
+PR snapshots contain compiler objects and immutable tool binaries only. A PR
+snapshot hit downloads/verifies current product modules normally. This avoids
+copying the roughly 0.57 GB measured extracted module bundle into each recent
+PR entry. Trusted seeds retain module archives for general checker and native
+consumers. Linux product seeds omit unused macOS golangci/deadcode binaries;
+shared-checker compilation has a separate allowlisted profile to avoid evicting
+product compilation.
 
 At the maximum, three current main profiles consume up to six GiB, plus one
 narrower entry per recent PR source/context rather than eight entries per PR.

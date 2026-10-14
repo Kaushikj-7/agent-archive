@@ -109,7 +109,7 @@ def source_identity(source, tested, git=scope.git, matches=scope.working_input_m
             # Dedicated evidence only: never allow new Go/module/production
             # inputs under a blanket ignored directory.
             evidence = ('source-audit-results/', 'native-tier-results/')
-            if path.startswith(evidence) and Path(path).suffix in ('.json', '.jsonl', '.log', '.txt'):
+            if path.startswith(evidence) and Path(path).suffix in ('.json', '.jsonl', '.log', '.txt', '.stderr'):
                 continue
             if re.fullmatch(r'dist/(agent-archive-linux-(amd64|arm64)|SHA256SUMS)', path):
                 continue
@@ -310,20 +310,18 @@ def outputs(plan):
             'seed': plan.seed}
 
 
-def prepare_paths(plan, clear=False, modules_only=False):
-    prepare_owned_paths(plan.paths, clear, modules_only)
+def prepare_paths(plan, clear=False):
+    prepare_owned_paths(plan.paths, clear)
 
 
-def prepare_owned_paths(paths, clear=False, modules_only=False):
+def prepare_owned_paths(paths, clear=False):
     roots = {Path(p).parent for p in paths}
     if len(roots) != 1 or [Path(p).name for p in paths] != ['pr-go-build', 'pr-go-modules']:
         raise InvalidContext('cache paths outside controlled directories')
     root = roots.pop()
     if not root.is_absolute() or root.resolve() != root:
         raise InvalidContext('cache root is not canonical')
-    for index, raw in enumerate(paths):
-        if modules_only and index == 0:
-            continue
+    for raw in paths:
         path = Path(raw)
         if path.is_symlink() or (path.exists() and not path.is_dir()):
             raise InvalidContext('unsafe cache path')
@@ -338,26 +336,3 @@ def prepare_owned_paths(paths, clear=False, modules_only=False):
             shutil.rmtree(path)
         path.mkdir(parents=True, exist_ok=True)
 
-
-def discard_extracted_modules(plan):
-    """Keep immutable module download archives, discard recoverable source trees.
-
-    Called only after successful builds and module verification. Restores still
-    run go mod download/verify, which reconstruct and verify current module
-    sources from these archives. Never touch Go objects or checked-out source.
-    """
-    root = Path(plan.paths[1])
-    if plan.paths != owned_paths(root.parent):
-        raise InvalidContext('module pruning paths differ from controlled roots')
-    prepare_owned_paths(plan.paths)
-    for path in root.iterdir():
-        if path.name == 'cache' and path.is_dir() and not path.is_symlink():
-            continue
-        if path.is_symlink() or not path.is_dir():
-            path.unlink()
-            continue
-        for current, _, _ in os.walk(path, followlinks=False):
-            item = Path(current)
-            if not item.is_symlink():
-                item.chmod(item.stat().st_mode | stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
-        shutil.rmtree(path)

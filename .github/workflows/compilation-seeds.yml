@@ -85,5 +85,5 @@ jobs:
           key: ${{ steps.complete.outputs.seed }}
           path: |
             ${{ runner.temp }}/pr-go-build
-            ${{ runner.temp }}/pr-go-modules
+            ${{ runner.temp }}/pr-go-modules/cache
           enableCrossOsArchive: false

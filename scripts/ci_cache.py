@@ -18,7 +18,7 @@ import sys
 
 from go_cache_context import (InvalidContext, CachePlan, digest, execute,
                               owned_paths, prepare_paths, runtime_context,
-                              source_identity, validate_context, discard_extracted_modules)
+                              source_identity, validate_context)
 from go_cache_steps import emit, execute_modules
 
 SCHEMA = 'aa-compilation-v2'
@@ -100,22 +100,36 @@ def bound_compilation(plan, files=None):
     return removed
 
 
-def publish_manifest(plan, context):
-    candidates = cache_files(plan.paths)
+def snapshot_paths(plan, kind):
+    if kind == 'compilation':
+        return (plan.paths[0],)
+    if kind == 'seed':
+        return (plan.paths[0], str(Path(plan.paths[1])/'cache'))
+    raise InvalidContext('unknown compilation snapshot kind')
+
+
+def publish_manifest(plan, context, kind='seed'):
+    paths = snapshot_paths(plan, kind)
+    for path in paths:
+        Path(path).mkdir(parents=True, exist_ok=True)
+    candidates = cache_files(paths)
     bound_compilation(plan, candidates)
-    files, size = file_inventory(plan.paths, candidates)
+    files, size = file_inventory(paths, candidates)
     (Path(plan.paths[0])/MANIFEST).write_text(json.dumps({
-        'schema': SCHEMA, 'context': digest(context),
+        'schema': SCHEMA, 'kind': kind, 'context': digest(context),
         'dependency': plan.source['dependency'], 'source': plan.source,
         'files': files, 'bytes': size}, sort_keys=True))
     return size
 
 
-def validate_manifest(plan, context):
+def validate_manifest(plan, context, kind='seed'):
     manifest = json.loads((Path(plan.paths[0])/MANIFEST).read_text())
-    files, size = file_inventory(plan.paths)
+    if not isinstance(manifest, dict) or manifest.get('kind') != kind:
+        raise InvalidContext('compilation manifest kind differs')
+    paths = snapshot_paths(plan, manifest.get('kind'))
+    files, size = file_inventory(paths)
     if (not isinstance(manifest, dict) or set(manifest) != {
-            'schema', 'context', 'dependency', 'source', 'files', 'bytes'}
+            'schema', 'kind', 'context', 'dependency', 'source', 'files', 'bytes'}
             or manifest['schema'] != SCHEMA or manifest['context'] != digest(context)
             or manifest['dependency'] != plan.source['dependency']
             or manifest['files'] != files or manifest['bytes'] != size
@@ -236,7 +250,6 @@ def main():
                 execute_modules(['go', 'mod', 'verify'])
                 if shared is not None:
                     verify_modules(shared)
-                discard_extracted_modules(plan)
                 try:
                     size = publish_manifest(plan, context)
                 except InvalidContext:

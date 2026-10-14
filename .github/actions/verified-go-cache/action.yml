@@ -37,7 +37,7 @@ runs:
         key: ${{ steps.key.outputs.seed }}
         path: |
           ${{ runner.temp }}/pr-go-build
-          ${{ runner.temp }}/pr-go-modules
+          ${{ runner.temp }}/pr-go-modules/cache
         enableCrossOsArchive: false
         fail-on-cache-miss: false
     - name: Verify checksums/modules or rebuild cold

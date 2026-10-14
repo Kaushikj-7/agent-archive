@@ -56,7 +56,7 @@ def verify_restored(plan, outcome, matched, exact, guard, command=execute_module
     if context is not None and state not in ('miss', 'error'):
         from ci_cache import validate_manifest
         try:
-            validate_manifest(plan, context)
+            validate_manifest(plan, context, kind='seed' if state == 'trusted' else 'compilation')
         except (InvalidContext, OSError, ValueError, TypeError):
             prepare_paths(plan, clear=True)
             state = 'corrupt-rebuilt'
@@ -151,12 +151,8 @@ def main():
                     emit({'save_ready': 'false'}, env['GITHUB_OUTPUT'])
                     return 0
                 from ci_cache import publish_manifest
-                # PR snapshots contain compiler objects/tools only. Immutable
-                # dependency bundles remain in the two trusted-main seeds;
-                # fresh go mod download/verify repopulates modules on PR hits.
-                prepare_paths(plan, clear=True, modules_only=True)
                 try:
-                    size = publish_manifest(plan, context)
+                    size = publish_manifest(plan, context, kind='compilation')
                 except InvalidContext:
                     emit({'save_ready': 'false'}, env['GITHUB_OUTPUT'])
                     return 0

@@ -31,7 +31,8 @@ class CompilationTests(unittest.TestCase):
         self.plan = cache.general_plan(self.context, self.source, self.root)
         keys.prepare_paths(self.plan)
         (Path(self.plan.paths[0])/'object').write_bytes(b'compiled source')
-        (Path(self.plan.paths[1])/'module').write_bytes(b'verified dependency')
+        (Path(self.plan.paths[1])/'cache').mkdir()
+        (Path(self.plan.paths[1])/'cache/module').write_bytes(b'verified dependency')
 
     def call(self, matched=None, outcome='success'):
         calls = []
@@ -114,32 +115,20 @@ class CompilationTests(unittest.TestCase):
         self.assertEqual(removed, 200)
         self.assertFalse(discard.exists())
         self.assertEqual(tool.read_bytes(), b'pinned tool')
-        self.assertEqual((Path(self.plan.paths[1])/'module').read_bytes(), b'verified dependency')
+        self.assertEqual((Path(self.plan.paths[1])/'cache/module').read_bytes(), b'verified dependency')
 
-    def test_narrow_pr_publication_clears_only_owned_modules_after_checks(self):
-        build, modules = map(Path, self.plan.paths)
-        outside = self.root/'outside-module'
-        outside.mkdir()
-        (outside/'keep').write_text('unrelated')
-        (modules/'link').symlink_to(outside, target_is_directory=True)
-        keys.prepare_paths(self.plan, clear=True, modules_only=True)
-        self.assertEqual(list(modules.iterdir()), [])
-        self.assertEqual((build/'object').read_bytes(), b'compiled source')
-        self.assertEqual((outside/'keep').read_text(), 'unrelated')
-
-    def test_main_seed_keeps_module_archives_and_drops_only_extracted_sources(self):
-        build, modules = map(Path, self.plan.paths)
-        archive = modules/'cache/download/example.org/module/@v/v1.zip'
-        archive.parent.mkdir(parents=True)
-        archive.write_bytes(b'verified immutable archive')
-        extracted = modules/'example.org/module@v1'
-        extracted.mkdir(parents=True)
-        (extracted/'go.mod').write_bytes(b'module example.org/module')
-        extracted.chmod(0o555)
-        keys.discard_extracted_modules(self.plan)
-        self.assertFalse(extracted.exists())
-        self.assertEqual(archive.read_bytes(), b'verified immutable archive')
-        self.assertEqual((build/'object').read_bytes(), b'compiled source')
+    def test_snapshot_kinds_separate_modules_from_pr_compilation(self):
+        cache.publish_manifest(self.plan, self.context, kind='compilation')
+        (Path(self.plan.paths[1])/'cache/module').write_bytes(b'fresh modules are verified separately')
+        cache.validate_manifest(self.plan, self.context, kind='compilation')
+        manifest = json.loads((Path(self.plan.paths[0])/cache.MANIFEST).read_text())
+        self.assertEqual(manifest['kind'], 'compilation')
+        self.assertTrue(all(key.startswith('0/') for key in manifest['files']))
+        cache.publish_manifest(self.plan, self.context, kind='seed')
+        manifest = json.loads((Path(self.plan.paths[0])/cache.MANIFEST).read_text())
+        self.assertTrue(any(key.startswith('1/') for key in manifest['files']))
+        with self.assertRaises(keys.InvalidContext):
+            cache.snapshot_paths(self.plan, 'unreviewed')
 
     def test_pr_worker_trusted_seed_hit_and_corrupt_fallback(self):
         cache.publish_manifest(self.plan, self.context)
@@ -150,7 +139,7 @@ class CompilationTests(unittest.TestCase):
                                          lambda source: None, lambda argv: calls.append(argv),
                                          self.context), 'trusted')
         self.assertEqual(calls, [['go', 'mod', 'download'], ['go', 'mod', 'verify']])
-        (Path(self.plan.paths[1])/'module').write_bytes(b'changed')
+        (Path(self.plan.paths[1])/'cache/module').write_bytes(b'changed')
         self.assertEqual(verify_restored(plan, 'success', self.plan.seed, 'false',
                                          lambda source: None, lambda argv: None,
                                          self.context), 'corrupt-rebuilt')

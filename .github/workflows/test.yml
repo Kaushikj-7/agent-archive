@@ -116,20 +116,29 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           key: ${{ steps.go-cache-key.outputs.primary }}
-          restore-keys: |
-            ${{ steps.go-cache-key.outputs.restore_prefix }}
-            ${{ steps.go-cache-key.outputs.seed }}
+          restore-keys: ${{ steps.go-cache-key.outputs.restore_prefix }}
           path: |
             ${{ runner.temp }}/pr-go-build
-            ${{ runner.temp }}/pr-go-modules
+          enableCrossOsArchive: false
+          fail-on-cache-miss: false
+      - name: Restore trusted-main seed when PR snapshot is unavailable
+        id: go-cache-seed
+        if: steps.go-cache-restore.outcome != 'success' || steps.go-cache-restore.outputs.cache-matched-key == ''
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          key: ${{ steps.go-cache-key.outputs.seed }}
+          path: |
+            ${{ runner.temp }}/pr-go-build
+            ${{ runner.temp }}/pr-go-modules/cache
           enableCrossOsArchive: false
           fail-on-cache-miss: false
       - name: Verify restored modules or compile with empty caches
         id: go-cache-verify
         env:
-          RESTORE_OUTCOME: ${{ steps.go-cache-restore.outcome }}
-          MATCHED_KEY: ${{ steps.go-cache-restore.outputs.cache-matched-key }}
-          EXACT_HIT: ${{ steps.go-cache-restore.outputs.cache-hit }}
+          RESTORE_OUTCOME: ${{ steps.go-cache-restore.outcome == 'success' && steps.go-cache-restore.outputs.cache-matched-key != '' && steps.go-cache-restore.outcome || steps.go-cache-seed.outcome }}
+          MATCHED_KEY: ${{ steps.go-cache-restore.outcome == 'success' && steps.go-cache-restore.outputs.cache-matched-key || steps.go-cache-seed.outputs.cache-matched-key }}
+          EXACT_HIT: ${{ steps.go-cache-restore.outcome == 'success' && steps.go-cache-restore.outputs.cache-matched-key != '' && steps.go-cache-restore.outputs.cache-hit || 'false' }}
         run: python3 -B scripts/go_cache_steps.py verify
       - name: Discovered race-short shard
         env:
@@ -149,10 +158,9 @@ jobs:
           key: ${{ steps.go-cache-key.outputs.primary }}
           path: |
             ${{ runner.temp }}/pr-go-build
-            ${{ runner.temp }}/pr-go-modules
           enableCrossOsArchive: false
       - name: Report accelerator service failures
-        if: always() && (steps.go-cache-restore.outcome == 'failure' || steps.go-cache-save.outcome == 'failure')
+        if: always() && (steps.go-cache-restore.outcome == 'failure' || steps.go-cache-seed.outcome == 'failure' || steps.go-cache-save.outcome == 'failure')
         run: echo '::warning::Go cache service failed; current module/source/test verdicts remain authoritative'
       - name: Preserve catalog and execution evidence
         if: always()
