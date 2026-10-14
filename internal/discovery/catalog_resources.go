@@ -23,17 +23,18 @@ var errCatalogTooLarge = errors.New("native catalog exceeds its size cap")
 var errCatalogChanged = errors.New("native catalog changed while read")
 
 // maxCatalogBytes caps what the lookup keeps for its whole life: the
-// restored catalog and the coverage facts it adds. It is part of
+// restored catalog and the directory queue it adds. It is part of
 // agentapi.PassCacheReserve (see PassCacheBytes).
 const maxCatalogBytes = 32 << 20
 
 // PassCacheBytes is the most the lookup keeps between sessions: catalog,
-// coverage observations and metadata inventory, all charged unscoped.
-const PassCacheBytes = maxCatalogBytes + maxCoverageBytes/2 + metadataBytes
+// rollout observations and listings, and metadata inventory, all charged
+// unscoped.
+const PassCacheBytes = maxCatalogBytes + maxObservationBytes + maxListingBytes + metadataBytes
 
-// reserveCatalog keeps restored facts and new observation/coverage allocations
-// charged for the lookup lifetime. The catalog and its coverage borrow the same
-// owner; assigning their pointers does not charge a second decoded document.
+// reserveCatalog keeps restored facts and new catalog allocations charged for
+// the lookup lifetime. Assigning the catalog pointer does not charge a second
+// decoded document.
 func (l *CodexRolloutLookup) reserveCatalog(n int64) bool {
 	if n < 0 || l.catalogCharge+l.restoredCharge+n > maxCatalogBytes || !l.readBudget.ReserveUnscoped(n) {
 		return false
@@ -110,8 +111,8 @@ func (l *CodexRolloutLookup) releaseRestored() {
 }
 
 // writeCatalog writes c within maxCatalogBytes, the most the next read
-// accepts: a catalog written past it would be rejected, rebuilt and its
-// coverage restarted on every pass. Over the cap, the observation cache (hints
+// accepts: a catalog written past it would be rejected and rebuilt on every
+// pass. Over the cap, the observation cache (hints
 // that only spare header reads) is dropped and the rest written. Still over,
 // nothing is written: the previous file, which the next read accepts, stays,
 // and errCatalogTooLarge says so.

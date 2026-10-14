@@ -252,10 +252,6 @@ type sourceSelection struct {
 	set            agentapi.CodexRolloutSet
 	thread         string
 	headers        []*rolloutFile
-
-	// lineage reports that selectLineage chose leaf from set's candidates
-	// alone, without a current locator.
-	lineage bool
 }
 
 func (p *relatedSourcePass) selectSource(ctx context.Context, ref agentapi.SourceRef) (sourceSelection, error) {
@@ -328,13 +324,14 @@ func (p *relatedSourcePass) openSelectedSeed(ctx context.Context, ref agentapi.S
 		if set.Current != nil {
 			return p.open(ctx, *set.Current)
 		}
-		if set.Complete && len(set.Candidates) > 0 && len(set.Candidates) <= archive.MaxHistorySpans {
-			return p.open(ctx, set.Candidates[0])
-		}
-		if p.coverageUnproven(set) {
-			// Codex may have renamed it (into archived_sessions/ or back): it
-			// is missing only once coverage finds no rollout by its ID.
-			return nil, coverageIncomplete("registered rollout not found; coverage incomplete")
+		// Codex may have renamed it (into archived_sessions/ or back). Any
+		// observed same-thread rollout seeds the tip selection instead.
+		for _, candidate := range set.Candidates[:min(len(set.Candidates), archive.MaxHistorySpans)] {
+			found, openErr := p.open(ctx, candidate)
+			if errors.Is(openErr, os.ErrNotExist) {
+				continue
+			}
+			return found, openErr
 		}
 	}
 	return seed, err
@@ -345,15 +342,29 @@ func (p *relatedSourcePass) legacyOrdinarySeed(seed *rolloutFile) bool {
 	return p.env.LegacyUnboundRegistration && seed.meta.HistoryMode == "" && seed.meta.LocalExecutionSource() && !hasRelated(seed) && id.ParentID == "" && id.ForkOrdinal == nil && id.SubagentOrdinal == nil && (id.RootID == "" || id.RootID == id.ThreadID)
 }
 
+// selectLineage chooses the tip of a thread whose current locator Codex's
+// index does not name (no row, or an older Codex): among the seed and the
+// observed same-thread rollouts, the one rollout no other continues from.
+// Rollouts the walk back from that tip does not reach are off the thread's
+// chain and are ignored. Observed candidates are hints, not a proof that no
+// newer segment exists: a segment created since is picked up by a later pass,
+// whose changed lookup revision makes the source look changed.
 func (p *relatedSourcePass) selectLineage(ctx context.Context, selected sourceSelection) (sourceSelection, error) {
 	set := selected.set
-	if !set.Complete {
-		return selected, coverageIncomplete("rollout lineage incomplete")
-	}
-	candidates := map[string]*rolloutFile{}
+	candidates := map[string]*rolloutFile{selected.leaf.identity.RolloutID: selected.leaf}
 	bases := map[string]bool{}
+	if base := selected.leaf.identity.HistoryBase; base != nil {
+		bases[base.RolloutID] = true
+	}
 	for _, candidate := range set.Candidates {
+		if candidate.Path == selected.leaf.ref.Path {
+			continue
+		}
 		f, e := p.open(ctx, candidate)
+		if errors.Is(e, os.ErrNotExist) {
+			// An observation can outlive its file (Codex renamed it).
+			continue
+		}
 		if e != nil {
 			return selected, e
 		}
@@ -363,38 +374,77 @@ func (p *relatedSourcePass) selectLineage(ctx context.Context, selected sourceSe
 			return selected, sourceFailure(agentapi.Unsafe, "rollout candidate identity mismatch")
 		}
 		if prior := candidates[id.RolloutID]; prior != nil && prior.ref.Path != f.ref.Path {
-			return selected, p.coverageRefusal(set, "ambiguous physical rollout")
+			return selected, sourceRefusal(agentapi.Unavailable, agentapi.CauseRolloutTipAmbiguous, "ambiguous physical rollout")
 		}
 		candidates[id.RolloutID] = f
 		if id.HistoryBase != nil {
 			bases[id.HistoryBase.RolloutID] = true
 		}
 	}
-	var tip *rolloutFile
+	var tips []*rolloutFile
 	for id, f := range candidates {
 		if !bases[id] {
-			if tip != nil {
-				return selected, p.coverageRefusal(set, "ambiguous rollout tips")
-			}
-			tip = f
+			tips = append(tips, f)
 		}
 	}
+	if len(tips) > 1 {
+		// An observed rollout can look like a tip only because a segment
+		// between it and a later one was never observed. Walk each apparent
+		// tip's chain back by rollout ID, so an ancestor is not a tip.
+		for _, f := range tips {
+			if err := p.markAncestors(ctx, f, bases); err != nil {
+				return selected, err
+			}
+		}
+		tips = slices.DeleteFunc(tips, func(f *rolloutFile) bool { return bases[f.identity.RolloutID] })
+	}
+	if len(tips) > 1 {
+		return selected, sourceRefusal(agentapi.Unavailable, agentapi.CauseRolloutTipAmbiguous, "ambiguous rollout tips")
+	}
+	var tip *rolloutFile
+	if len(tips) == 1 {
+		tip = tips[0]
+	}
 	if tip == nil {
-		return selected, p.coverageRefusal(set, "no complete rollout tip")
-	}
-	spans, err := p.graph(ctx, tip, set)
-	if err != nil {
-		return selected, err
-	}
-	for _, span := range spans {
-		delete(candidates, span.file.identity.RolloutID)
-	}
-	if len(candidates) != 0 {
-		return selected, p.coverageRefusal(set, "disconnected rollout lineage")
+		return selected, sourceRefusal(agentapi.Unavailable, agentapi.CauseRolloutTipAmbiguous, "no rollout tip")
 	}
 	selected.leaf = tip
-	selected.lineage = true
 	return selected, nil
+}
+
+// markAncestors records in bases every rollout the chain behind f reaches,
+// found by rollout ID as graph finds them. It stops where a base cannot be
+// resolved: that only leaves a tip ambiguous, and the chosen tip's own walk
+// names an unresolved base.
+func (p *relatedSourcePass) markAncestors(ctx context.Context, f *rolloutFile, bases map[string]bool) error {
+	seen := map[string]bool{f.identity.RolloutID: true}
+	for current := f; current.identity.HistoryBase != nil && len(seen) <= archive.MaxHistorySpans; {
+		id := current.identity.HistoryBase.RolloutID
+		if seen[id] {
+			return nil
+		}
+		seen[id] = true
+		bases[id] = true
+		refs, err := p.env.CodexRollouts.Rollout(ctx, id)
+		if err != nil {
+			return err
+		}
+		if len(refs) != 1 {
+			return nil
+		}
+		base, err := p.open(ctx, refs[0])
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if base.identity.RolloutID != id {
+			return nil
+		}
+		current = base
+	}
+	return nil
 }
 
 type physicalSpan struct {
@@ -405,7 +455,7 @@ type physicalSpan struct {
 	digest       [32]byte
 }
 
-func (p *relatedSourcePass) graph(ctx context.Context, leaf *rolloutFile, set agentapi.CodexRolloutSet) ([]physicalSpan, error) {
+func (p *relatedSourcePass) graph(ctx context.Context, leaf *rolloutFile) ([]physicalSpan, error) {
 	var reversed []physicalSpan
 	seen := map[string]bool{}
 	current := leaf
@@ -441,9 +491,14 @@ func (p *relatedSourcePass) graph(ctx context.Context, leaf *rolloutFile, set ag
 			return nil, err
 		}
 		if len(refs) != 1 {
-			return nil, p.coverageRefusal(set, "history dependency missing or ambiguous")
+			return nil, sourceRefusal(agentapi.Unavailable, agentapi.CauseHistoryBaseUnavailable, "history dependency missing or ambiguous")
 		}
 		base, err := p.open(ctx, refs[0])
+		if errors.Is(err, os.ErrNotExist) {
+			// Gone since the lookup found it (Codex renamed it, say): the
+			// base is unavailable, not the thread's own source missing.
+			return nil, sourceRefusal(agentapi.Unavailable, agentapi.CauseHistoryBaseUnavailable, "history dependency missing")
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -501,7 +556,7 @@ func (p *relatedSourcePass) Signature(ctx context.Context, ref agentapi.SourceRe
 	if p.env.RequireConfinedHistory && p.env.Policy.Root == "" {
 		return agentapi.SourceObservation{}, sourceRefusal(agentapi.Unavailable, agentapi.CauseRelatedHistoryRequiresAdmittedConfinedSourceHome, "related history requires admitted confined source home")
 	}
-	spans, err := p.graph(ctx, selection.leaf, selection.set)
+	spans, err := p.graph(ctx, selection.leaf)
 	if err != nil {
 		return agentapi.SourceObservation{}, err
 	}
@@ -534,7 +589,7 @@ func checkHeaders(ctx context.Context, files []*rolloutFile) error {
 
 func (p *relatedSourcePass) observation(ctx context.Context, selection sourceSelection, spans []physicalSpan) (agentapi.SourceObservation, error) {
 	h := sha256.New()
-	_, _ = fmt.Fprint(h, "codex-history-v1\x00", selection.set.LineageToken(), "\x00", selection.leaf.ref.Path)
+	_, _ = fmt.Fprint(h, "codex-history-v1\x00", selection.set.Revision, "\x00", selection.leaf.ref.Path)
 	candidatePaths := make([]string, 0, len(selection.set.Candidates))
 	for _, ref := range selection.set.Candidates {
 		candidatePaths = append(candidatePaths, string(ref.Kind)+"\x00"+ref.Path+"\x00"+ref.Key)
@@ -580,12 +635,6 @@ func (p *relatedSourcePass) Read(ctx context.Context, ref agentapi.SourceRef, li
 		}
 		return fail(err)
 	}
-	if selection.lineage && selection.set.Retained {
-		// A retained proof can lack a segment created since it, so the tip it
-		// yields may be stale. It still lets Signature recognize an unchanged
-		// source; content waits for this pass's own coverage proof.
-		return fail(coverageIncomplete("rollout lineage incomplete"))
-	}
 	return p.readSelection(ctx, limits, selection)
 }
 
@@ -609,7 +658,7 @@ func (p *relatedSourcePass) readHistorySelection(ctx context.Context, limits age
 		return nil, sourceRefusal(agentapi.Unavailable, agentapi.CauseRelatedHistoryRequiresAdmittedConfinedSourceHome, "related history requires admitted confined source home")
 	}
 	fail := p.readFailure
-	spans, err := p.graph(ctx, selection.leaf, selection.set)
+	spans, err := p.graph(ctx, selection.leaf)
 	if err != nil {
 		return fail(err)
 	}
@@ -1085,7 +1134,7 @@ func (p *relatedSourcePass) ValidateSourceAdmission(ctx context.Context, ref age
 	if p.env.RequireConfinedHistory && p.env.Policy.Root == "" && hasRelated(selection.leaf) {
 		return sourceRefusal(agentapi.Unavailable, agentapi.CauseRelatedAdmissionRequiresConfinedSourceHome, "related admission requires confined source home")
 	}
-	spans, err := p.graph(ctx, selection.leaf, selection.set)
+	spans, err := p.graph(ctx, selection.leaf)
 	if err != nil {
 		return err
 	}
@@ -1294,64 +1343,77 @@ func (p *relatedSourcePass) ReadRevision(ctx context.Context, ref agentapi.Sourc
 	return snapshot, nil
 }
 
-func (s *historySnapshot) RevisionCandidates(ctx context.Context) ([]agentapi.SourceRef, error) {
+func (s *historySnapshot) RevisionCandidates(ctx context.Context) (agentapi.RevisionCandidateSet, error) {
 	if s.closed || s.owner.closed {
-		return nil, agentapi.ErrClosed
+		return agentapi.RevisionCandidateSet{}, agentapi.ErrClosed
 	}
 	if err := s.check(ctx); err != nil {
-		return nil, err
+		return agentapi.RevisionCandidateSet{}, err
 	}
-	if s.owner.env.CodexRollouts != nil && !s.selection.set.Complete {
-		return nil, coverageIncomplete("historical candidate coverage incomplete")
-	}
-	out := make([]agentapi.SourceRef, 0, archive.MaxHistorySpans)
+	var out agentapi.RevisionCandidateSet
 	seen := map[string]bool{}
-	add := func(ref agentapi.SourceRef) error {
-		if seen[ref.Path] {
-			return nil
+	// The thread's own segments on its chain are required.
+	for _, span := range s.spans {
+		if span.file.identity.ThreadID != s.selection.thread || seen[span.file.ref.Path] {
+			continue
 		}
-		if len(out) >= archive.MaxHistorySpans {
-			return sourceRefusal(agentapi.Limit, agentapi.CauseHistoricalCandidateLimit, "historical candidate limit")
+		if len(out.Chain) >= archive.MaxHistorySpans {
+			return agentapi.RevisionCandidateSet{}, sourceRefusal(agentapi.Limit, agentapi.CauseHistoricalCandidateLimit, "historical candidate limit")
+		}
+		seen[span.file.ref.Path] = true
+		out.Chain = append(out.Chain, span.file.ref)
+	}
+	// Observed same-thread rollouts off it (an abandoned branch, say) follow
+	// as best-effort historical revisions; one whose file is gone since is
+	// passed over, and past the limit further ones are left out rather than
+	// refusing the chain's own capture.
+	for _, ref := range presentCandidates(s.selection.set.Candidates) {
+		if seen[ref.Path] {
+			continue
+		}
+		if len(out.Chain)+len(out.BestEffort) >= archive.MaxHistorySpans {
+			break
 		}
 		seen[ref.Path] = true
-		out = append(out, ref)
-		return nil
-	}
-	for _, span := range s.spans {
-		if span.file.identity.ThreadID == s.selection.thread {
-			if err := add(span.file.ref); err != nil {
-				return nil, err
-			}
-		}
-	}
-	for _, ref := range s.selection.set.Candidates {
-		if err := add(ref); err != nil {
-			return nil, err
-		}
+		out.BestEffort = append(out.BestEffort, ref)
 	}
 	return out, nil
 }
 
-func (s *ordinarySnapshot) RevisionCandidates(ctx context.Context) ([]agentapi.SourceRef, error) {
+func (s *ordinarySnapshot) RevisionCandidates(ctx context.Context) (agentapi.RevisionCandidateSet, error) {
 	if _, err := s.AdmissionFacts(ctx); err != nil {
-		return nil, err
+		return agentapi.RevisionCandidateSet{}, err
 	}
-	if s.owner.env.CodexRollouts != nil && !s.selection.set.Complete {
-		return nil, coverageIncomplete("historical candidate coverage incomplete")
-	}
-	out := []agentapi.SourceRef{s.source.ref}
-	seen := map[string]bool{s.source.ref.Path: true}
-	for _, ref := range s.selection.set.Candidates {
-		if seen[ref.Path] {
+	// An ordinary rollout is the whole chain; observed same-thread rollouts
+	// off it follow as best-effort historical revisions.
+	out := agentapi.RevisionCandidateSet{Chain: []agentapi.SourceRef{s.source.ref}}
+	for _, ref := range presentCandidates(s.selection.set.Candidates) {
+		if ref.Path == s.source.ref.Path {
 			continue
 		}
-		if len(out) >= archive.MaxHistorySpans {
-			return nil, sourceRefusal(agentapi.Limit, agentapi.CauseHistoricalCandidateLimit, "historical candidate limit")
+		if 1+len(out.BestEffort) >= archive.MaxHistorySpans {
+			// Further off-chain rollouts are left out rather than refusing
+			// the rollout's own capture.
+			break
 		}
-		seen[ref.Path] = true
-		out = append(out, ref)
+		out.BestEffort = append(out.BestEffort, ref)
 	}
 	return out, nil
+}
+
+// presentCandidates are the observed candidates whose files still exist,
+// newest first, so the newest fill the slots the chain leaves. An
+// observation can outlive its file (Codex renamed it); the reader reopens and
+// rechecks every one it is given.
+func presentCandidates(candidates []agentapi.SourceRef) []agentapi.SourceRef {
+	var out []agentapi.SourceRef
+	for _, ref := range candidates {
+		if info, err := os.Lstat(ref.Path); err == nil && info.Mode().IsRegular() {
+			out = append(out, ref)
+		}
+	}
+	slices.SortFunc(out, func(a, b agentapi.SourceRef) int { return codexmeta.NewestRolloutFirst(a.Path, b.Path) })
+	return out
 }
 
 func (p *relatedSourcePass) historyBindingFacts(ctx context.Context, selection sourceSelection, spans []physicalSpan, own *uint64, known *archive.CodexSourceBinding) (archive.CodexSourceBinding, error) {
@@ -1377,7 +1439,7 @@ func (p *relatedSourcePass) historyBindingFacts(ctx context.Context, selection s
 			}
 			if candidate.identity.ThreadID == selection.thread && candidate.identity.RolloutID == selection.thread {
 				if original != nil && original.ref.Path != candidate.ref.Path {
-					return archive.CodexSourceBinding{}, p.coverageRefusal(selection.set, "original native identity ambiguous")
+					return archive.CodexSourceBinding{}, sourceRefusal(agentapi.Unavailable, agentapi.CauseHistoryBaseUnavailable, "original native identity ambiguous")
 				}
 				original = candidate
 			}
@@ -1396,7 +1458,7 @@ func (p *relatedSourcePass) historyBindingFacts(ctx context.Context, selection s
 			facts.OwnStart = own
 		}
 	} else {
-		return archive.CodexSourceBinding{}, p.coverageRefusal(selection.set, "original native creation facts unavailable")
+		return archive.CodexSourceBinding{}, sourceRefusal(agentapi.Unavailable, agentapi.CauseNativeCreationEvidenceUnavailable, "original native creation facts unavailable")
 	}
 	for _, span := range spans {
 		id := span.file.identity
@@ -1628,8 +1690,6 @@ func (p *relatedSourcePass) initialLookupRef(ctx context.Context, ref agentapi.S
 		}
 		if set.Current != nil {
 			ref = *set.Current
-		} else if set.Complete && len(set.Candidates) > 0 {
-			ref = set.Candidates[0]
 		}
 	}
 	return ref, nil

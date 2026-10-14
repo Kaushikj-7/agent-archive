@@ -548,6 +548,57 @@ class ReleaseWorkflowTest(unittest.TestCase):
                 # Retain the existing default job bound rather than increasing it.
                 self.assertNotIn('timeout-minutes:', text)
 
+    def linux_prerequisites(self):
+        bodies = steps(job_text(self.workflow, 'build-linux'))
+        matching = [body for body in bodies if 'name: Install purge prerequisites\n' in body]
+        self.assertEqual(len(matching), 1)
+        return bodies, matching[0]
+
+    def test_linux_provisions_purge_tools_after_tag_guard_before_go_validation(self):
+        bodies, prerequisites = self.linux_prerequisites()
+        guard = next(body for body in bodies if 'name: Require a vX.Y.Z tag' in body)
+        setup = next(body for body in bodies if 'actions/setup-go@' in body)
+        test = next(body for body in bodies if 'name: Test\n' in body)
+        self.assertLess(bodies.index(guard), bodies.index(prerequisites))
+        self.assertLess(bodies.index(prerequisites), bodies.index(setup))
+        self.assertLess(bodies.index(setup), bodies.index(test))
+        self.assertNotRegex(prerequisites, r'(?m)^\s+(if|continue-on-error):')
+
+    def test_linux_prerequisite_bootstrap_installs_tools_and_fails_if_any_is_missing(self):
+        _, prerequisites = self.linux_prerequisites()
+        script = '\n'.join(block_lines(prerequisites, 'run: |'))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            log = root / 'sudo.log'
+            sudo = root / 'sudo'
+            sudo.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$BOOTSTRAP_LOG"\n')
+            sudo.chmod(0o755)
+            for tool in ('jq', 'bash', 'zsh'):
+                (root / tool).symlink_to('/bin/sh')
+
+            def run():
+                log.unlink(missing_ok=True)
+                return subprocess.run(
+                    [BASH, '-e', '-o', 'pipefail', '-c', script],
+                    env={'PATH': str(root), 'BOOTSTRAP_LOG': str(log)},
+                    capture_output=True, text=True,
+                )
+
+            result = run()
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(log.read_text().splitlines(), [
+                'apt-get update', 'apt-get install --yes jq zsh',
+            ])
+            # A successful package-manager exit is insufficient: the tools
+            # must actually be available to the subsequent required matrix.
+            for tool in ('jq', 'bash', 'zsh'):
+                with self.subTest(missing=tool):
+                    (root / tool).unlink()
+                    result = run()
+                    self.assertNotEqual(result.returncode, 0, result.stdout)
+                    self.assertIn(f'required purge prerequisite {tool} is missing', result.stderr)
+                    (root / tool).symlink_to('/bin/sh')
+
     def test_only_the_macos_binaries_are_signed_and_notarized(self):
         for name in ('Codesign', 'Notarize'):
             with self.subTest(step=name):

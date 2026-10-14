@@ -14,36 +14,21 @@ type CodexRolloutLookup interface {
 	Check(context.Context, string, string) error
 }
 
-// CodexRolloutSet separates a native current locator from complete lineage evidence.
-// Complete must never be inferred from a prunable observation cache alone.
-// Revision changes whenever the current locator, candidate membership, or candidate
-// identity evidence changes. Check must revalidate this token within the same budget.
+// CodexRolloutSet is a thread's native current locator and, without one, the
+// same-thread rollouts the lookup has observed. Current is the tip Codex's own
+// thread index names; the source walks each rollout's history base back from
+// it, so the chain it reaches is the thread's complete lineage and no proof of
+// absence over the whole native home is needed. Candidates are the same-thread
+// rollouts the lookup has observed: hints for choosing a tip when there is no
+// current locator, and otherwise historical revisions offered beside the
+// chain. They never prove that no other same-thread rollout exists. Revision
+// changes whenever the current locator, the candidates or their observed
+// identity evidence change. Check must revalidate this token within the same
+// budget.
 type CodexRolloutSet struct {
 	Current    *SourceRef
 	Candidates []SourceRef
 	Revision   string
-	Complete   bool
-	// Lineage identifies the same current locator and candidate evidence as
-	// Revision, leaving out whether coverage was complete. Persisted source
-	// signatures use it (see LineageToken), so coverage changing between
-	// passes does not by itself make an unchanged source look changed.
-	Lineage string
-	// Retained reports that Complete rests on an earlier coverage epoch's
-	// proof rather than this pass's. That proof stays sound for every
-	// candidate it names (each is reopened and rechecked), but a segment
-	// created since it, in a directory not listed again yet, can be missing.
-	// A reader may still use it to recognize an unchanged source, but not to
-	// choose a lineage tip from the candidates alone.
-	Retained bool
-}
-
-// LineageToken is Lineage, or Revision for a lookup whose Revision never
-// depends on coverage completeness.
-func (s CodexRolloutSet) LineageToken() string {
-	if s.Lineage != "" {
-		return s.Lineage
-	}
-	return s.Revision
 }
 
 // CodexHistoryHeader and CodexHistoryRecord frame selected identity and physical records.
@@ -106,10 +91,21 @@ type SourceRevisions interface {
 	ReadRevision(context.Context, SourceRef, SourceAdmission, ReadLimits) (SourceSnapshot, error)
 }
 
+// RevisionCandidateSet is a thread's bounded historical revision candidates.
+// Chain lists the thread's own segments on the selected lineage: a failure
+// reading one fails the reconciliation. BestEffort lists observed same-thread
+// rollouts off that chain (an abandoned branch, say), kept as historical
+// revisions when they can be read: a failure reading one only leaves it out,
+// so it never blocks the chain's own capture.
+type RevisionCandidateSet struct {
+	Chain      []SourceRef
+	BestEffort []SourceRef
+}
+
 // SourceRevisionCandidates exposes bounded same-thread candidates from validated
 // graph and lookup evidence; these observations never grant capture admission.
 type SourceRevisionCandidates interface {
-	RevisionCandidates(context.Context) ([]SourceRef, error)
+	RevisionCandidates(context.Context) (RevisionCandidateSet, error)
 }
 
 // OwnTaskFacts contains the first owned native task observation, never permission.
