@@ -94,7 +94,7 @@ func resolveHandoffQuery(opts *handoffOptions, home string, interactive bool, in
 		// resolveHandoffTarget reports both.
 		return 0, false
 	}
-	r := handoffQueryResolver{opts: opts, query: query, q: parseSessionQuery(query), labels: projectLabels(cfg), skip: skippedSessions(opts, env), home: home, cfg: cfg, interactive: interactive, in: in, stdout: stdout, stderr: stderr, env: env, knownAgents: agentmeta.Names(catalogFor(env))}
+	r := handoffQueryResolver{opts: opts, query: query, q: parseSessionQuery(query), labels: projectLabels(cfg), skip: skippedSessions(opts, env), home: home, cfg: cfg, interactive: interactive, in: in, stdout: stdout, stderr: stderr, env: env, ctx: opts.readCtx}
 	code, done = r.resolve()
 	if done {
 		return code, true
@@ -113,9 +113,9 @@ func resolveHandoffQuery(opts *handoffOptions, home string, interactive bool, in
 }
 
 type handoffQueryResolver struct {
-	knownAgents []string
-	opts        *handoffOptions
-	query       string
+	ctx   context.Context
+	opts  *handoffOptions
+	query string
 	// q is the query's words, and labels the configured project names the
 	// matcher reads.
 	q           sessionQuery
@@ -149,7 +149,16 @@ type handoffQueryResolver struct {
 }
 
 func (r *handoffQueryResolver) resolve() (code int, done bool) {
-	ctx := context.Background()
+	ctx := r.ctx
+	if ctx == nil {
+		var stop func()
+		ctx, stop = readCommandContext(r.env)
+		defer stop()
+		r.ctx = ctx
+	}
+	if ctx.Err() != nil {
+		return r.fail(ctx.Err())
+	}
 	opts := r.opts
 	var regs []archive.SessionRegistration
 	if opts.source != "archive" {
@@ -157,18 +166,36 @@ func (r *handoffQueryResolver) resolve() (code int, done bool) {
 		if regs, err = state.OpenReadOnly(r.home).LoadRegistrations(); err != nil {
 			terminal.Printf(r.stderr, "agent-archive: handoff: note: could not read this machine's sessions, searching the archive only: %v\n", err)
 		}
+		identities := map[string]bool{}
 		for _, reg := range regs {
-			if reg.ArchiveSessionID == r.query && (opts.harness == "" || archive.CanonicalHarness(reg.Harness.Name) == opts.harness) {
-				opts.sessionID = r.query
-				return 0, false
+			name := archive.CanonicalHarness(reg.Harness.Name)
+			if reg.ArchiveSessionID == r.query && (opts.harness == "" || name == opts.harness) {
+				identities[name] = true
 			}
+		}
+		if ctx.Err() != nil {
+			return r.fail(ctx.Err())
+		}
+		if len(identities) > 1 {
+			return r.fail(exactHandoffAmbiguity(r.query))
+		}
+		for name := range identities {
+			opts.sessionID, opts.harness = r.query, name
+			return 0, false
 		}
 	}
 	if opts.source != "local" && isArchiveSessionID(r.query) {
-		readCtx, stopReads := readCommandContext(r.env)
-		harness, ok := r.exactArchiveSession(readCtx)
-		stopReads()
-		if ok {
+		harness, outcome, err := r.exactArchiveSession(ctx)
+		if err != nil {
+			return r.fail(err)
+		}
+		if ctx.Err() != nil {
+			return r.fail(ctx.Err())
+		}
+		if outcome == exactAmbiguous {
+			return r.fail(exactHandoffAmbiguity(r.query))
+		}
+		if outcome == exactUnique {
 			opts.sessionID, opts.harness = r.query, harness
 			return 0, false
 		}
@@ -225,6 +252,9 @@ func (r *handoffQueryResolver) resolve() (code int, done bool) {
 		if matches := r.match(r.subagents); len(matches) > 0 {
 			return r.choose(matches)
 		}
+	}
+	if ctx.Err() != nil {
+		return r.fail(ctx.Err())
 	}
 	terminal.Println(r.stderr, r.noMatchMessage(scanned))
 	return 1, true
@@ -322,40 +352,59 @@ func (r *handoffQueryResolver) openArchive() (storage.ObjectStore, error) {
 	return store, nil
 }
 
-// exactArchiveSession reads the archive for the query as a full session ID.
-// A miss, and an archive that cannot be read, both leave the title search to
-// go on.
-func (r *handoffQueryResolver) exactArchiveSession(ctx context.Context) (harness string, ok bool) {
+type exactHandoffOutcome uint8
+
+const (
+	exactNotFound exactHandoffOutcome = iota
+	exactUnique
+	exactAmbiguous
+)
+
+func exactHandoffAmbiguity(id string) error {
+	return fmt.Errorf("session ID %q exists under several harnesses; specify --harness", id)
+}
+
+func (r *handoffQueryResolver) fail(err error) (int, bool) {
+	terminal.Printf(r.stderr, "agent-archive: handoff: %v\n", err)
+	return 1, true
+}
+
+// exactArchiveSession distinguishes physical identities before title eligibility.
+func (r *handoffQueryResolver) exactArchiveSession(ctx context.Context) (string, exactHandoffOutcome, error) {
 	store, err := r.openArchive()
 	if err != nil {
-		r.archiveErr = err
-		return "", false
+		return "", exactNotFound, err
 	}
-	harnesses := r.knownAgents
+	var keys []string
 	if r.opts.harness != "" {
-		harnesses = []string{r.opts.harness}
-	}
-	var found []string
-	for _, name := range harnesses {
-		key, err := archive.MetadataObjectKey(name, r.query)
-		if err != nil {
-			return "", false
+		key, keyErr := archive.MetadataObjectKey(r.opts.harness, r.query)
+		if keyErr != nil {
+			return "", exactNotFound, keyErr
 		}
-		if _, err := store.Get(ctx, key); err != nil {
-			if !errors.Is(err, storage.ErrNotFound) {
-				r.archiveErr = err
-				return "", false
-			}
-			continue
+		_, err = store.Get(ctx, key)
+		if err == nil {
+			keys = []string{key}
 		}
-		found = append(found, name)
+		if errors.Is(err, storage.ErrNotFound) {
+			err = nil
+		}
+	} else {
+		keys, err = reader.NewMetadataFinder(catalogFor(r.env)).FindMetadataKeys(ctx, store, "sessions", r.query)
 	}
-	// The same ID under several harnesses is not guessed; the title search
-	// reports whatever else matches.
-	if len(found) != 1 {
-		return "", false
+	if err != nil {
+		return "", exactNotFound, err
 	}
-	return found[0], true
+	if err = ctx.Err(); err != nil {
+		return "", exactNotFound, err
+	}
+	if len(keys) == 0 {
+		return "", exactNotFound, nil
+	}
+	if len(keys) > 1 {
+		return "", exactAmbiguous, nil
+	}
+	parts := strings.Split(keys[0], "/")
+	return parts[len(parts)-3], exactUnique, nil
 }
 
 // archiveRows is the archive's top-level sessions, read once, which also reads
@@ -373,7 +422,7 @@ func (r *handoffQueryResolver) archiveRows() []handoffPickerRow {
 		return nil
 	}
 	stop := startActivity(r.stdout, "Finding sessions…")
-	sessions, err := loadSessionsForBrowse(r.env, store, listOptions{filter: reader.Filter{Harness: r.opts.harness}}, r.stderr, "handoff")
+	sessions, err := loadSessionsForBrowseContext(r.ctx, r.env, store, listOptions{filter: reader.Filter{Harness: r.opts.harness}}, r.stderr, "handoff")
 	stop()
 	if err != nil {
 		r.archiveErr = err
@@ -400,6 +449,9 @@ func handoffRowKey(m archive.Metadata) string {
 
 // choose settles on one of several or one matching row.
 func (r *handoffQueryResolver) choose(matches []handoffPickerRow) (code int, done bool) {
+	if r.ctx != nil && r.ctx.Err() != nil {
+		return r.fail(r.ctx.Err())
+	}
 	row := matches[0]
 	if len(matches) > 1 {
 		// A parent's hint counts the archive's subagents, when it was read.
@@ -414,7 +466,7 @@ func (r *handoffQueryResolver) choose(matches []handoffPickerRow) (code int, don
 		}
 		format.Style, format.GroupByProject, format.Numbered = styleFor(r.stdout), true, true
 		rows := formatHandoffRows(matches, format)
-		picked, selected, code := runBrowser(context.Background(), r.env, r.in.prompter(r.stdout), r.stdout, r.stderr, browserSpec{Mode: pickSession, Verb: "Hand off", Choices: rowChoices(rows, format), Query: r.query, Command: "handoff"})
+		picked, selected, code := runBrowser(r.ctx, r.env, r.in.prompter(r.stdout), r.stdout, r.stderr, browserSpec{Mode: pickSession, Verb: "Hand off", Choices: rowChoices(rows, format), Query: r.query, Command: "handoff"})
 		if code != 0 {
 			return code, true
 		}
@@ -430,6 +482,9 @@ func (r *handoffQueryResolver) choose(matches []handoffPickerRow) (code int, don
 			return 1, true
 		}
 		row = matches[i]
+	}
+	if r.ctx != nil && r.ctx.Err() != nil {
+		return r.fail(r.ctx.Err())
 	}
 	r.opts.sessionID, r.opts.harness = row.metadata.SessionID, row.metadata.Harness.Name
 	return 0, false

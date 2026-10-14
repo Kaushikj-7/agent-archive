@@ -127,6 +127,9 @@ func runHandoffCommand(args []string, stdin io.Reader, stdout, stderr io.Writer,
 	}
 	if !opts.native {
 		if opts.sessionID != "" {
+			readCtx, stopQueryReads := readCommandContext(env)
+			defer stopQueryReads()
+			opts.readCtx = catalog.WithReadView(readCtx)
 			if code, done := resolveHandoffQuery(&opts, home, interactive, input, stdout, stderr, env); done {
 				return code
 			}
@@ -152,6 +155,10 @@ func runHandoffCommand(args []string, stdin io.Reader, stdout, stderr io.Writer,
 			}
 			return 1
 		}
+	}
+	if opts.readCtx != nil && opts.readCtx.Err() != nil {
+		terminal.Printf(stderr, "agent-archive: handoff: %v\n", opts.readCtx.Err())
+		return 1
 	}
 	if target.describe != "" {
 		terminal.Printf(stderr, "handoff: using %s\n", target.describe)
@@ -206,6 +213,10 @@ func runHandoffCommand(args []string, stdin io.Reader, stdout, stderr io.Writer,
 		}
 		dest = choice.dest
 		p.close()
+	}
+	if opts.readCtx != nil && opts.readCtx.Err() != nil {
+		terminal.Printf(stderr, "agent-archive: handoff: %v\n", opts.readCtx.Err())
+		return 1
 	}
 	if dest != "" {
 		// Run from inside an agent (interaction is off there), without a
@@ -454,6 +465,9 @@ type handoffResolver struct {
 // byID resolves an explicit archive session ID: the local registration first
 // (fresh, and available while paused or offline), then the archive.
 func (r handoffResolver) byID(id string) (handoffTarget, error) {
+	if err := r.ctx.Err(); err != nil {
+		return handoffTarget{}, err
+	}
 	// localErr is why the local transcript could not be used; with --source
 	// auto the archive's published copy is tried next, and both reasons are
 	// reported if it fails too.

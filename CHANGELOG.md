@@ -6,6 +6,9 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Stop handoff exact-ID lookup on cancellation or read errors, require
+  --harness for shared IDs, and preserve spaces in Git worktree paths.
+
 - Keep exhaustive full CLI CI coverage within ordinary process deadlines by
   partitioning compiled tests, fuzz seeds and examples, with source-bound raw
   coverage checks and unchanged race, test and overall job limits.
