@@ -170,6 +170,11 @@ class GeneratorTests(unittest.TestCase):
         with self.assertRaises(hints.runner.Failure):
             hints.generate(self.samples,'accepted-source',SETTINGS,PKGS,NAMES,package_cost_exclusions=exclusions)
 
+    def test_current_advisory_parent_inventory_keeps_unmeasured_new_names(self):
+        result=hints.generate(self.samples,'accepted-source',SETTINGS,PKGS,NAMES,discovered_parents=['example/new::TestRenamed'])
+        self.assertEqual(result['parents'],{'example/new::TestRenamed':1000})
+        with self.assertRaises(hints.runner.Failure):hints.generate(self.samples,'accepted-source',SETTINGS,PKGS,NAMES,discovered_parents=['new','new'])
+
     def test_failed_manifest_rejected(self):
         self.mutate(lambda m: m.update(success=False))
         with self.assertRaises(hints.runner.Failure): self.generate()

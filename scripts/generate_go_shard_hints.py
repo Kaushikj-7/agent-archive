@@ -327,7 +327,7 @@ def read_sample(directory, source, expected_settings, body_catalog=None, package
             raise runner.Failure(str(error)) from error
 
 
-def generate(samples, source, settings, discovered_packages, discovered_cli, body_catalog=None, package_cost_exclusions=None, *, audit_directories=None):
+def generate(samples, source, settings, discovered_packages, discovered_cli, body_catalog=None, package_cost_exclusions=None, *, audit_directories=None, discovered_parents=None):
     if not samples:
         raise runner.Failure('no successful samples')
     if (len({sid for sid, _ in samples}) != len(samples)
@@ -364,7 +364,7 @@ def generate(samples, source, settings, discovered_packages, discovered_cli, bod
                 raise runner.Failure('owned audit samples must not subtract the skipped race audit again')
             excluded_samples.setdefault(run_ci_tier.SOURCE_AUDIT_PACKAGE, []).append(
                 Decimal(str(sample['plain_audit']['observed_plain_body_seconds'])))
-    return {'parents': {n:positive_ms(median(vs)) for n,vs in sorted(parent_samples.items())},
+    return {'parents': weights(discovered_parents if discovered_parents is not None else list(parent_samples),parent_samples),
             'owned_plain_audit_exclusions_ms': {p: positive_ms(median(values)) for p, values in sorted(excluded_samples.items())},
             'packages': weights(discovered_packages, package_samples),
             'cli': weights(discovered_cli, cli_samples),
@@ -409,7 +409,7 @@ def main():
                       request.get('packages', sorted(set(catalog['packages']) - {runner.CLI})),
                       request.get('cli', catalog['cli']), body_catalog, request.get('package_cost_exclusions'),
                       audit_directories={s['id']: args.artifacts_root / s['audit_directory']
-                                         for s in request['samples'] if 'audit_directory' in s})
+                                         for s in request['samples'] if 'audit_directory' in s}, discovered_parents=request.get('parents'))
     if request.get('auxiliary_costs_ms') is not None:
         auxiliary = request['auxiliary_costs_ms']
         if set(auxiliary) != {'vet', 'git_invocation'} or any(type(v) is not int or v < 0 for v in auxiliary.values()):

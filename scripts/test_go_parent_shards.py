@@ -90,6 +90,24 @@ class ParentScheduling(unittest.TestCase):
                 (Path(d)/'0'/'manifest.json').unlink()
                 with self.assertRaises(r.Failure):r.reconcile(d,workers)
 
+    def test_parent_and_descendant_lifecycles_reject_duplicate_or_unordered_events(self):
+        c = catalog(4)
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d); evidence(root, c)
+            index, package = next((i, n) for i, a in enumerate(c['assignments']) for n in a['parents'])
+            worker = root/str(index); path = worker/p.log_name(package)
+            original = path.read_text(); events = r.json_stream(original)
+            for name in (events[0]['Test'], events[1]['Test']):
+                for malformed in (['run', 'run', 'pass'], ['pass', 'run'],
+                                  ['run', 'pause', 'pass'], ['run', 'cont', 'pass']):
+                    bad = [e for e in events if e.get('Test') != name]
+                    bad[0:0] = [event(package, action, Test=name) for action in malformed]
+                    path.write_text(rows(bad))
+                    with self.assertRaises(r.Failure):
+                        p.verify_logs(worker, c, c['assignments'][index])
+            path.write_text(original)
+            p.verify_logs(worker, c, c['assignments'][index])
+
     def test_timing_report_includes_new_parent_logs_with_shared_lifecycle_semantics(self):
         import report_ci_timing
         c=catalog(4)
@@ -162,9 +180,10 @@ class ParentScheduling(unittest.TestCase):
     def test_workflow_matrix_worker_count_cache_and_aggregate_are_consistent(self):
         workflow=(Path(__file__).resolve().parent.parent/'.github/workflows/test.yml').read_text()
         short=workflow
-        self.assertIn('WORKERS: 4',short)
-        self.assertIn('shard: [0, 1, 2, 3]',short)
-        self.assertEqual(short.count('run_go_shard.py --workers 4'),2)
+        self.assertIn('      - run: python3 -B scripts/test_go_parent_shards.py', workflow)
+        self.assertIn('WORKERS: 8',short)
+        self.assertIn('shard: [0, 1, 2, 3, 4, 5, 6, 7]',short)
+        self.assertEqual(short.count('run_go_shard.py --workers 8'),2)
         for n in (2,4,8):self.assertEqual(r.worker_count(n),n)
         self.assertIn('linux-short',workflow.split('  linux-race:',1)[1])
 

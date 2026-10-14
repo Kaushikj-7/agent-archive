@@ -171,6 +171,15 @@ def verify_logs(directory, catalog, assignment):
         terminals = {(e.get('Package'),e.get('Test')) for e in events if e.get('Action') in ('pass','skip') and e.get('Test')}
         if runs != terminals or not runs:
             raise r.Failure('missing/unexecuted parent or descendant terminal')
+        lifecycles = {}
+        for e in events:
+            if e.get('Test') and e.get('Action') != 'output':
+                lifecycles.setdefault(e['Test'], []).append(e['Action'])
+        if any(actions not in (['run', 'pass'], ['run', 'skip'],
+                               ['run', 'pause', 'cont', 'pass'],
+                               ['run', 'pause', 'cont', 'skip'])
+               for actions in lifecycles.values()):
+            raise r.Failure('invalid parent or descendant lifecycle')
         if any(e.get('Test') and e['Test'].split('/')[0] not in names for e in events):
             raise r.Failure('unassigned descendant')
         run_ci_tier.terminals(raw)
