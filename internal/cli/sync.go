@@ -88,11 +88,21 @@ func deferredSummary(deferred map[string]string, failed map[string]error) string
 }
 
 // syncSummary is the line sync reports a pass on: what it published, held,
-// left unchanged, failed and deferred. A deferred session is not counted
-// as failed, and has no error line of its own.
+// left unchanged, failed and deferred, and how many queued sessions it ran
+// out of time for. A deferred or unreached session is not counted as
+// failed, and has no error line of its own.
 func syncSummary(result collector.Result) string {
-	return fmt.Sprintf("Scanned %d session(s): %d published, %s%d unchanged, %d failed%s%s.",
-		result.Scanned, len(result.Published), waitingSummary(result.Waiting, result.NextReadyAt), len(result.Skipped), len(result.Errors), deferredSummary(result.Deferred, result.Errors), subagentsSummary(result))
+	return fmt.Sprintf("Scanned %d session(s): %d published, %s%d unchanged, %d failed%s%s%s.",
+		result.Scanned, len(result.Published), waitingSummary(result.Waiting, result.NextReadyAt), len(result.Skipped), len(result.Errors), deferredSummary(result.Deferred, result.Errors), subagentsSummary(result), unreachedSummary(result.Unreached))
+}
+
+// unreachedSummary counts the queued sessions a pass ended before reaching
+// (collector.Result.Unreached), or is "" when it reached them all.
+func unreachedSummary(unreached map[string]int) string {
+	if len(unreached) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("; %d left for the next pass", len(unreached))
 }
 
 // runSyncCommand implements `agent-archive sync`: one explicit collection

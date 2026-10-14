@@ -260,6 +260,12 @@ type Result struct {
 	// journal and is counted as pending; that journal still does not defer
 	// its expiry (see state.Outstanding.DefersExpiry).
 	Deferred map[string]string
+	// Unreached maps each session with a pending request that the pass
+	// ended before (Options.Stop, or the context ending) to how many such
+	// sessions it ordered ahead of it. Its request is untouched and the next
+	// pass carries on with it; it is counted as pending, and is neither a
+	// failure nor a deferral.
+	Unreached map[string]int
 }
 
 // Run performs one collector pass over every registered session: for each,
@@ -370,7 +376,7 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	p.reconcileNativeLinks()
 	p.observeLabels(ctx)
 	p.repairListingIndex()
-	orderOldestRequestsFirst(p.registrations, p.requests)
+	orderRequests(p.registrations, p.requests)
 	for i, reg := range p.registrations {
 		// A pass past its deadline ends like a stopped one: nothing more can
 		// reach storage, so the rest keep their work rather than each
@@ -552,14 +558,24 @@ func (p *pass) loadWork() error {
 }
 
 // leaveForNextPass counts the sessions an early end did not reach whose
-// work (a request) is left for the next pass.
+// work (a request) is left for the next pass, and records each of them in
+// Result.Unreached with how many of those were ahead of it.
 func (p *pass) leaveForNextPass(rest []archive.SessionRegistration) {
+	ahead := 0
 	for _, reg := range rest {
 		accepted := p.opts.AcceptSession == nil || p.opts.AcceptSession(reg)
 		if accepted {
 			p.carryDeferredSince(reg.ArchiveSessionID)
 		}
-		if !p.durableCounted[reg.ArchiveSessionID] && p.requests[reg.ArchiveSessionID].Token != "" && accepted {
+		if p.requests[reg.ArchiveSessionID].Token == "" || !accepted {
+			continue
+		}
+		if p.result.Unreached == nil {
+			p.result.Unreached = map[string]int{}
+		}
+		p.result.Unreached[reg.ArchiveSessionID] = ahead
+		ahead++
+		if !p.durableCounted[reg.ArchiveSessionID] {
 			p.pending++
 		}
 	}
@@ -776,10 +792,11 @@ func (p *pass) saveStatus() error {
 		QuarantinedFiles:       p.local.QuarantinedFiles(),
 		UnrefreshableSummaries: p.countRefreshSkips(),
 		PendingNativeLinks:     p.result.PendingNativeLinks, NativeLinkPendingReasons: p.result.NativeLinkPendingReasons,
-		DeferredSessions: p.result.Deferred,
-		DeferredSince:    p.deferredAt,
-		WaitingSubagents: len(p.result.WaitingSubagents),
-		RunningSubagents: len(p.result.RunningSubagents),
+		DeferredSessions:  p.result.Deferred,
+		DeferredSince:     p.deferredAt,
+		UnreachedSessions: p.result.Unreached,
+		WaitingSubagents:  len(p.result.WaitingSubagents),
+		RunningSubagents:  len(p.result.RunningSubagents),
 		// The pass rebuilds everything else from scratch; this list is a
 		// week of history, so it carries the previous pass's forward.
 		ExpiredSubagents: state.CarryExpiredSubagents(previous.ExpiredSubagents, p.expiredSubagents, p.now),
@@ -806,19 +823,88 @@ func addError(errs map[string]error, archiveSessionID string, err error) {
 	errs[archiveSessionID] = err
 }
 
-// orderOldestRequestsFirst puts the sessions with a pending request first,
-// oldest start first, and leaves the rest in archive session ID order. An
-// import queues its whole history at once; the oldest transcripts are the
-// ones the apps delete next, so they are uploaded first.
-func orderOldestRequestsFirst(registrations []archive.SessionRegistration, requests map[string]state.Request) {
+// orderRequests puts the sessions with a pending request first and leaves
+// the rest in archive session ID order. A pass that runs out of time
+// (Options.Stop) reaches only the front of this order, so it decides which
+// sessions wait; Result.Unreached records the ones that did.
+//
+// Requested sessions run oldest start first: an import queues its whole
+// history at once, and the oldest transcripts are the ones the apps delete
+// next, so they are uploaded first. Two things keep that order from
+// starving everything behind a backlog:
+//
+//   - A native child not linked to a registered parent (no ParentSessionID
+//     once reconcileNativeLinks has run) goes after every other requested
+//     session. It cannot be linked yet, and publishing it now only means
+//     publishing it again once its parent registers; Codex discovery can
+//     queue hundreds of them at once.
+//   - The first slot, and every liveLaneEvery-th after it, goes to the
+//     most recently started requested session that was not imported, if
+//     any is left (reserveLiveLane), so a live session waits at most a few
+//     slots however long the backlog in front of it is. A backlog of imports
+//     alone keeps its strict oldest-first order.
+func orderRequests(registrations []archive.SessionRegistration, requests map[string]state.Request) {
+	requested := func(reg archive.SessionRegistration) bool { return requests[reg.ArchiveSessionID].Token != "" }
 	sort.SliceStable(registrations, func(i, j int) bool {
 		a, b := registrations[i], registrations[j]
-		aRequested, bRequested := requests[a.ArchiveSessionID].Token != "", requests[b.ArchiveSessionID].Token != ""
+		aRequested, bRequested := requested(a), requested(b)
 		if aRequested != bRequested {
 			return aRequested
 		}
-		return aRequested && a.SessionStartedAt.Before(b.SessionStartedAt)
+		if !aRequested {
+			return false
+		}
+		if aWaits, bWaits := waitsForParent(a), waitsForParent(b); aWaits != bWaits {
+			return bWaits
+		}
+		return a.SessionStartedAt.Before(b.SessionStartedAt)
 	})
+	ready := 0
+	for ready < len(registrations) && requested(registrations[ready]) && !waitsForParent(registrations[ready]) {
+		ready++
+	}
+	reserveLiveLane(registrations[:ready])
+}
+
+// waitsForParent reports a native child whose parent is not registered yet,
+// which orderRequests puts after the other requested sessions.
+func waitsForParent(reg archive.SessionRegistration) bool {
+	return reg.NativeChild && reg.ParentSessionID == ""
+}
+
+// liveLaneEvery is how often orderRequests gives a slot to the newest
+// requested session that was not imported: one slot in every four,
+// starting with the first, so a pass begins with the live session most
+// likely to be looked for and three of every four slots still go to the
+// oldest.
+const liveLaneEvery = 4
+
+// reserveLiveLane reorders queue, which is oldest start first, so that the
+// first slot and every liveLaneEvery-th after it take the most recently
+// started session left that was not imported, and every other slot (or a
+// lane slot with no such session left) takes the oldest left.
+func reserveLiveLane(queue []archive.SessionRegistration) {
+	ordered := make([]archive.SessionRegistration, 0, len(queue))
+	taken := make([]bool, len(queue))
+	front, back := 0, len(queue)-1
+	for len(ordered) < len(queue) {
+		if len(ordered)%liveLaneEvery == 0 {
+			for back >= 0 && (taken[back] || queue[back].Imported()) {
+				back--
+			}
+			if back >= 0 {
+				taken[back] = true
+				ordered = append(ordered, queue[back])
+				continue
+			}
+		}
+		for taken[front] {
+			front++
+		}
+		taken[front] = true
+		ordered = append(ordered, queue[front])
+	}
+	copy(queue, ordered)
 }
 
 // cursorTextSourceFormat labels a Cursor transcript captured as plain text.

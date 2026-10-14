@@ -6,6 +6,17 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Stop a new session from waiting for hours behind a long upload queue.
+  Each collection pass now starts with the most recently started session
+  that was not imported, and gives it one slot in every four; the rest still
+  go oldest first, so imports keep uploading their oldest sessions first.
+  Codex subagent sessions whose parent session is not registered yet go
+  after every other queued session. A session a pass runs out of time
+  before reaching is now listed by `status` as "queued for the next pass,
+  N ahead" instead of "waiting for its first upload", `sync` adds "N left
+  for the next pass" to its summary, and `status --json` reports them in
+  `collector.unreached_sessions` and as the `queued` uploading state.
+
 - Capture Codex sessions again while Codex is running. A thread's history is
   now read by following Codex's own record of its current rollout back through
   the rollout each one continues from, instead of waiting for a full inventory

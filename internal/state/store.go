@@ -1110,10 +1110,16 @@ type Status struct {
 	// deferred for collector.MaxDeferral) or did not reach, when the run of
 	// passes that each deferred its scan began. A session deferred for
 	// collector.MaxDeferral fails instead, on every pass that defers it.
-	DeferredSince   map[string]time.Time `json:"deferred_since,omitempty"`
-	LastScanAt      time.Time            `json:"last_scan_at,omitzero"`
-	LastPublishedAt time.Time            `json:"last_published_at,omitzero"`
-	PendingCount    int                  `json:"pending_count"`
+	DeferredSince map[string]time.Time `json:"deferred_since,omitempty"`
+	// UnreachedSessions gives, per archive session ID, each session with a
+	// pending request that the last pass ran out of time before reaching,
+	// and how many such sessions the pass had ordered ahead of it
+	// (collector.Result.Unreached). Such a session is pending and queued for
+	// the next pass; it is neither a failure nor a deferral.
+	UnreachedSessions map[string]int `json:"unreached_sessions,omitempty"`
+	LastScanAt        time.Time      `json:"last_scan_at,omitzero"`
+	LastPublishedAt   time.Time      `json:"last_published_at,omitzero"`
+	PendingCount      int            `json:"pending_count"`
 	// LastError is every problem the last pass recorded, joined with "; ".
 	// It is kept, with the same contents, for older readers; LastErrors
 	// holds the same problems one per entry. Set both with SetLastErrors
