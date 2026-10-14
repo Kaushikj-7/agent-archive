@@ -167,18 +167,18 @@ class WorkerCountTest(unittest.TestCase):
                 (path/'manifest.json').write_text(json.dumps({'shard': i, 'tier': 'pr', 'success': True,
                     'catalog': catalog, 'catalog_sha256': runner.digest(catalog), 'coverage': catalog['assignments'][i], 'settings': {'workers': 4},
                     'body_evidence': run_ci_tier.body_evidence(ordinary+'\n'+cli, True)}))
-            runner.reconcile(directory, 4)
+            runner.reconcile(directory, 4, historical_legacy=True)
             for i in range(4):
                 path=Path(directory)/str(i)/'manifest.json'; value=json.loads(path.read_text())
                 value['settings']['plain_audit_owned']=True; path.write_text(json.dumps(value))
-            with self.assertRaises(runner.Failure): runner.reconcile(directory,4)
+            with self.assertRaises(runner.Failure): runner.reconcile(directory,4,historical_legacy=True)
             with mock.patch.object(run_ci_tier,'verify_source_audit',return_value={}) as audit:
-                runner.reconcile(directory,4,Path('/audit'))
+                runner.reconcile(directory,4,Path('/audit'),historical_legacy=True)
                 audit.assert_called_once_with(Path('/audit'),catalog['source'])
             with mock.patch.object(run_ci_tier,'verify_source_audit',side_effect=run_ci_tier.Failure('missing body')):
-                with self.assertRaises(runner.Failure): runner.reconcile(directory,4,Path('/audit'))
+                with self.assertRaises(runner.Failure): runner.reconcile(directory,4,Path('/audit'),historical_legacy=True)
             with mock.patch.object(run_ci_tier,'verify_source_audit',return_value={}),self.assertRaises(runner.Failure):
-                runner.reconcile(directory,4,Path('/audit'),require_plain_vet=True)
+                runner.reconcile(directory,4,Path('/audit'),historical_legacy=True,require_plain_vet=True)
             for i in range(4):
                 path=Path(directory)/str(i)/'manifest.json';value=json.loads(path.read_text())
                 value['settings'].update(plain_vet_owned=True,plain_vet_identity_schema=run_ci_tier.PLAIN_VET_IDENTITY_SCHEMA,plain_vet_context_sha256='d'*64,plain_vet_source_proof={'source':catalog['source'],'tree':'b'*40})
@@ -186,18 +186,18 @@ class WorkerCountTest(unittest.TestCase):
             proof={'source':catalog['source'],'tree':'b'*40}
             # Projected compatibility without own execution is an acceptance gap.
             with mock.patch.object(run_ci_tier,'verify_source_audit',return_value={'source_proof':proof}), self.assertRaises(runner.Failure):
-                runner.reconcile(directory,4,Path('/audit'),require_plain_vet=True)
+                runner.reconcile(directory,4,Path('/audit'),historical_legacy=True,require_plain_vet=True)
             for i in range(4):
                 path=Path(directory)/str(i)/'manifest.json';value=json.loads(path.read_text())
                 synthetic_worker_receipt(path.parent,value,'unit'+str(i))
                 path.write_text(json.dumps(value))
             with mock.patch.object(run_ci_tier,'verify_source_audit',return_value={'source_proof':proof}) as audit:
-                runner.reconcile(directory,4,Path('/audit'),require_plain_vet=True)
+                runner.reconcile(directory,4,Path('/audit'),historical_legacy=True,require_plain_vet=True)
                 self.assertNotIn('require_plain_vet',audit.call_args.kwargs)
             path=Path(directory)/'0'/'manifest.json';value=json.loads(path.read_text())
             for update in (dict(plain_vet_owned=False),dict(plain_vet_context_sha256='e'*64),dict(plain_vet_receipt_schema=None)):
                 bad=copy.deepcopy(value);bad['settings'].update(update);path.write_text(json.dumps(bad))
-                with mock.patch.object(run_ci_tier,'verify_source_audit',return_value={}),self.assertRaises(runner.Failure):runner.reconcile(directory,4,Path('/audit'))
+                with mock.patch.object(run_ci_tier,'verify_source_audit',return_value={}),self.assertRaises(runner.Failure):runner.reconcile(directory,4,Path('/audit'),historical_legacy=True)
             path.write_text(json.dumps(value))
             for i in range(4):
                 path=Path(directory)/str(i)/'manifest.json';value=json.loads(path.read_text())
@@ -206,13 +206,13 @@ class WorkerCountTest(unittest.TestCase):
             for i in range(4):
                 path=Path(directory)/str(i)/'manifest.json'; value=json.loads(path.read_text())
                 value['settings']['plain_audit_owned']=False; path.write_text(json.dumps(value))
-            with self.assertRaises(runner.Failure): runner.reconcile(directory, 2)
+            with self.assertRaises(runner.Failure): runner.reconcile(directory, 2, historical_legacy=True)
             path = Path(directory)/'3'/'manifest.json'; original = path.read_text()
             for change in ({'success': False}, {'shard': 2}, {'coverage': {'packages': [], 'cli': []}}):
                 m = json.loads(original); m.update(change); path.write_text(json.dumps(m))
-                with self.assertRaises(runner.Failure): runner.reconcile(directory, 4)
+                with self.assertRaises(runner.Failure): runner.reconcile(directory, 4, historical_legacy=True)
             path.unlink()
-            with self.assertRaises(runner.Failure): runner.reconcile(directory, 4)
+            with self.assertRaises(runner.Failure): runner.reconcile(directory, 4, historical_legacy=True)
 
     def test_worker_default_and_owned_vet_use_canonical_command_and_shared_deadline(self):
         import run_ci_tier
@@ -222,7 +222,7 @@ class WorkerCountTest(unittest.TestCase):
                    'auxiliary_costs_ms':{'vet':5,'git_invocation':0}}
             (root/'scripts/go_shard_hints.json').write_text(json.dumps(hints))
             calls=[]; deadlines=[]
-            def supervise(commands,deadline,*,stderr_path=None,terminal=None):
+            def supervise(commands,deadline,*,stderr_path=None,terminal=None,after=None):
                 deadlines.append(deadline)
                 if stderr_path is not None: stderr_path.write_bytes(b'unit stderr\n')
                 if terminal is not None: terminal[:] = [0]
@@ -235,10 +235,10 @@ class WorkerCountTest(unittest.TestCase):
                     elif command[1]=='vet':path.write_text('')
                     elif CLI in command:
                         pattern=command[command.index('-run')+1]
-                        path.write_text(records(*[event('pass',Test=n) for n in ['TestA','TestB'] if re.fullmatch(pattern,n)],event('pass')))
+                        path.write_text(records(*[event(action,Test=n) for n in ['TestA','TestB'] if re.fullmatch(pattern,n) for action in ('run','pass')],event('pass')))
                     else:path.write_text(records(*[event('pass',p) for p in ['p0','p1'] if p in command]))
                 return [0.01]*len(commands)
-            with mock.patch.object(runner,'ROOT',root),mock.patch.object(runner,'supervise',side_effect=supervise),mock.patch.object(runner.os,'sched_getaffinity',return_value={0,1,2,3},create=True),mock.patch.object(runner.subprocess,'check_output',return_value='head\n'),mock.patch.object(run_ci_tier,'plain_vet_context',return_value=synthetic_vet_context()),mock.patch.object(run_ci_tier.full_race,'source_proof',return_value={'source':'head','tree':'b'*40}),mock.patch.dict(os.environ,{'GITHUB_SHA':'head'}),contextlib.redirect_stdout(io.StringIO()):
+            with mock.patch.object(runner,'ROOT',root),mock.patch.object(runner,'supervise',side_effect=supervise),mock.patch.object(runner.os,'sched_getaffinity',return_value={0,1,2,3},create=True),mock.patch.object(runner.subprocess,'check_output',side_effect=lambda command,**kw: json.dumps({k:synthetic_vet_context()['go'][k] for k in __import__('go_parent_shards').CONFIG_FIELDS}) if command[:2]==['go','env'] else 'a'*40+'\n'),mock.patch.object(run_ci_tier,'plain_vet_context',return_value=synthetic_vet_context()),mock.patch.object(run_ci_tier.full_race,'source_proof',return_value={'source':'a'*40,'tree':'b'*40}),mock.patch.dict(os.environ,{'GITHUB_SHA':'a'*40}),contextlib.redirect_stdout(io.StringIO()):
                 runner.run(0,root/'default',30)
                 self.assertEqual(sum(c==['go','vet','./...'] for c in calls),1)
                 calls.clear();deadlines.clear();runner.run(0,root/'owned',30,plain_vet_owned=True)
@@ -290,7 +290,7 @@ class WorkerVetReceiptTest(unittest.TestCase):
         for mode in ('failure','cancel','nonzero','drift'):
             with self.subTest(mode=mode),tempfile.TemporaryDirectory() as directory:
                 path=Path(directory)
-                def supervise(commands,deadline,*,stderr_path=None,terminal=None):
+                def supervise(commands,deadline,*,stderr_path=None,terminal=None,after=None):
                     self.assertEqual(deadline,12345)
                     self.assertEqual(commands[0][0],['go','vet','./...'])
                     commands[0][1].write_bytes(b'raw stdout');stderr_path.write_bytes(b'raw stderr')
@@ -343,16 +343,16 @@ class GateTest(unittest.TestCase):
                 proof = run_ci_tier.body_evidence(ordinary_text+'\n'+cli_text,True)
                 path.write_text(json.dumps({'shard': i, 'catalog': catalog, 'catalog_sha256': runner.digest(catalog),
                                             'success': True, 'tier': 'pr', 'body_evidence': proof, 'coverage': catalog['assignments'][i]}))
-            runner.reconcile(directory)
+            runner.reconcile(directory,historical_legacy=True)
             good = paths[1].read_text()
             for key, value in [('success', False), ('shard', 0), ('coverage', {'packages': [], 'cli': []}),
                                ('catalog_sha256', 'different'), ('body_evidence', {})]:
                 item = json.loads(good);item[key] = value;paths[1].write_text(json.dumps(item))
                 with self.assertRaises(runner.Failure):
-                    runner.reconcile(directory)
+                    runner.reconcile(directory,historical_legacy=True)
             paths[1].unlink()
             with self.assertRaises(runner.Failure):
-                runner.reconcile(directory)
+                runner.reconcile(directory,historical_legacy=True)
 
 
 @unittest.skipUnless(sys.platform == 'linux', 'Linux worker uses procfs and child subreaping')
@@ -382,7 +382,8 @@ elif '-run' in args:
  pattern=args[args.index('-run')+1]
  for name in ['TestA','FuzzB','Example']:
   if re.fullmatch(pattern,name):
-   if name!='Example':emit('pass',cli,Test=name+'/child')
+   emit('run',cli,Test=name)
+   if name!='Example':emit('run',cli,Test=name+'/child');emit('pass',cli,Test=name+'/child')
    emit('pass',cli,Test=name)
  emit('pass',cli)
 else:
@@ -392,10 +393,11 @@ else:
   else:emit('pass',package,Test='TestGit');emit('pass',package)
 ''')
             fake.chmod(0o755)
-            with mock.patch.object(runner, 'ROOT', root), mock.patch.object(runner.subprocess, 'check_output', return_value='head\n'), mock.patch.dict(os.environ, {'PATH': str(bindir)+os.pathsep+os.environ['PATH'], 'GITHUB_SHA': 'head', 'TASK_COMMAND_LOG': str(command_log)}), contextlib.redirect_stdout(io.StringIO()):
+            with mock.patch.object(runner, 'ROOT', root), mock.patch('run_ci_tier.full_race.source_proof',return_value={'source':'a'*40,'tree':'b'*40}), mock.patch.object(runner.subprocess, 'check_output', side_effect=lambda command,**kw: json.dumps({k:synthetic_vet_context()['go'][k] for k in __import__('go_parent_shards').CONFIG_FIELDS}) if command[:2]==['go','env'] else 'a'*40+'\n'), mock.patch.dict(os.environ, {'PATH': str(bindir)+os.pathsep+os.environ['PATH'], 'GITHUB_SHA': 'a'*40, 'TASK_COMMAND_LOG': str(command_log)}), contextlib.redirect_stdout(io.StringIO()):
                 for index in (0, 1):runner.run(index, root/str(index), 30)
                 runner.reconcile(root)
             calls = [json.loads(line) for line in command_log.read_text().splitlines()]
+            self.assertTrue(all('-race' in call['args'] for call in calls if call['args'][0]=='list'))
             listings = [call for call in calls if '-list' in call['args']]
             self.assertEqual(len(listings),2)
             self.assertTrue(all('-count=1' in call['args'] and '-race' in call['args'] and '-short' in call['args'] for call in listings))
@@ -404,7 +406,7 @@ else:
                 self.assertEqual(sum(package in call['args'] for call in executed), 1)
             git_call = next(call for call in executed if runner.GIT_IDENTITY in call['args'])
             self.assertNotIn('-run', git_call['args'])
-            self.assertEqual(sum(runner.CLI in call['args'] for call in executed), 2)
+            self.assertEqual(sum(runner.CLI in call['args'] for call in executed), 1)
             first = json.loads((root/'0/manifest.json').read_text())
             self.assertEqual(first['settings']['isolated_packages'], [runner.GIT_IDENTITY])
             self.assertIn('git_identity_invocation_seconds', first['phases'])
@@ -514,6 +516,37 @@ class PortableBatchProcessTest(unittest.TestCase):
                 self.assertIsNotNone(child.returncode)
                 with self.assertRaises(ProcessLookupError):
                     os.kill(child.pid, 0)
+
+    def test_sequential_lane_preserves_overlap_and_stops_before_successor_on_failure(self):
+        with tempfile.TemporaryDirectory() as d:
+            marker=Path(d)/'first-completed'
+            commands=self.commands(d,
+                "import time;from pathlib import Path;time.sleep(.15);Path("+repr(str(marker))+").write_text('ready')",
+                "from pathlib import Path;assert Path("+repr(str(marker))+").read_text()=='ready';print('second')",
+                "import time;time.sleep(.1);print('overlap')")
+            durations=runner.supervise(commands,time.monotonic()+3,after={1:0})
+            self.assertEqual(commands[1][1].read_text().strip(),'second')
+            self.assertEqual(commands[2][1].read_text().strip(),'overlap')
+            self.assertEqual(len(durations),3)
+            marker.unlink()
+            failed=self.commands(d,'raise SystemExit(7)',"from pathlib import Path;Path("+repr(str(marker))+").write_text('must not launch')")
+            with self.assertRaises(runner.Failure):runner.supervise(failed,time.monotonic()+3,after={1:0})
+            self.assertFalse(marker.exists())
+            for invalid in ({0:0},{0:1},{1:2},{2:0}):
+                with self.assertRaises(runner.Failure):runner.supervise(failed,time.monotonic()+3,after=invalid)
+
+    def test_cleanup_failure_preserves_primary_with_unlaunched_successor(self):
+        with tempfile.TemporaryDirectory() as d:
+            commands = self.commands(d, 'raise SystemExit(7)',
+                                     "raise AssertionError('successor must not launch')")
+            terminal = []
+            with mock.patch.object(runner.os, 'killpg', side_effect=PermissionError(errno.EPERM, 'injected')):
+                with self.assertRaises(runner.CleanupFailure) as raised:
+                    runner.supervise(commands, time.monotonic()+5, after={1:0}, terminal=terminal)
+            self.assertIsInstance(raised.exception.primary, runner.Failure)
+            self.assertIn('child command failed: [7, None]', str(raised.exception.primary))
+            self.assertEqual(terminal, [7, None])
+            self.assertFalse(commands[1][1].exists())
 
     def test_expired_shared_deadline_launches_nothing(self):
         import run_ci_tier
