@@ -42,8 +42,12 @@ def catalog():
 
 def resolve(event, ref='', schedule='', suite='all'):
     if event == 'pull_request':
+        if ref.startswith('refs/tags/'):
+            raise Failure('release tag cannot be a pull request event')
         return 'pr'
     if event == 'push' and ref.startswith('refs/heads/release-candidate/') and ref != 'refs/heads/release-candidate/':
+        return 'full'
+    if event == 'push' and re.fullmatch(r'refs/tags/v[0-9]+\.[0-9]+\.[0-9]+', ref):
         return 'full'
     if event == 'workflow_dispatch' and suite in ('all', 'linux', 'macos', 'fuzz', 'systemd'):
         return 'full'
@@ -633,10 +637,13 @@ def run_suite(tier, suite, out, extras=None, seconds=2400, *, own_plain_vet=Fals
         verify_source_audit(out, source, require_plain_vet=own_plain_vet, expected_vet_context_sha256=context_hash)
 
 
-def verify_full(directory, plan):
+def verify_full(directory, plan, expected_suite=None):
     """Required verdict demands exact-source successful full/empty-extra proof."""
     path = directory / 'tier.json'
     report = json.loads(path.read_text())
+    if (expected_suite is not None and report.get('suite') != expected_suite
+            and not (expected_suite == 'linux' and report.get('suite') == 'extra')):
+        raise Failure('full verdict platform suite mismatch')
     if plan.get('source') != os.environ['GITHUB_SHA']:
         raise Failure('plan source mismatch')
     if report.get('tier') == 'pr':
@@ -652,7 +659,7 @@ def verify_full(directory, plan):
     extra = report.get('suite') == 'extra'
     if extra and report.get('extras') != plan:
         raise Failure('extra coverage differs from exact-source plan')
-    if not extra and report.get('suite') != 'linux':
+    if not extra and report.get('suite') not in ('linux', 'macos'):
         raise Failure('unexpected full verdict suite')
     expected_packages = plan['packages'] if extra else ['./...']
     if expected_packages:
@@ -678,6 +685,17 @@ def verify_full(directory, plan):
     allowed = {f'race-{n}.jsonl': cmd for n, cmd in enumerate(report.get('full_schedule', {}).get('commands', []))}
     if expected_packages:
         allowed['performance.jsonl'] = PERFORMANCE
+    if report.get('suite') == 'macos':
+        allowed['published-writer.jsonl'] = ['bash', 'scripts/test_published_writer.sh']
+        selected = {MODULE+'internal/config': ['TestPublishedWriterRefusesProtectedConfiguration']}
+        writer = (directory/'published-writer.jsonl').read_text()
+        writer = '\n'.join(line for line in writer.splitlines() if line.startswith('{'))
+        verify_pr_stream(writer, selected)
+        verify_selected(body_evidence(writer, False)['actual'], selected)
+        receipt = [i for i in report['invocations'] if i['log'] == 'published-writer.jsonl']
+        if (len(receipt) != 1 or receipt[0].get('performance_enabled') is not False
+                or receipt[0].get('real_systemd_enabled') is not False):
+            raise Failure('published writer environment weakened')
     if extra and plan['systemd']:
         for name, pattern, relative in [('systemd', '^TestReal', './internal/scheduler/systemd'), ('cli', '^TestRealSystemd', './internal/cli')]:
             allowed['systemd-'+name+'.jsonl'] = ['go', 'test', '-count=1', '-json', '-timeout', '8m', '-run', pattern, relative]
@@ -795,6 +813,8 @@ def main():
     try:
         event = os.environ.get('GITHUB_EVENT_NAME')
         resolved = resolve(event,os.environ.get('GITHUB_REF',''),os.environ.get('CI_SCHEDULE',''),os.environ.get('CI_SUITE','all')) if event else None
+        if event == 'push' and os.environ.get('GITHUB_REF', '').startswith('refs/tags/') and args.tier not in (None, 'full'):
+            raise Failure('release tags require the full tier')
         tier = args.tier or resolved
         if tier is None:
             raise Failure('local execution requires an explicit tier')
@@ -809,7 +829,7 @@ def main():
                 require_plain_vet=args.own_plain_vet, expected_vet_context_sha256=context_hash)
             return 0
         if args.verify:
-            verify_full(args.output, json.loads(args.extra_plan.read_text()))
+            verify_full(args.output, json.loads(args.extra_plan.read_text()), expected_suite=args.suite)
             return 0
         if args.plan:
             tier = resolved or tier  # event-owned planning cannot be downgraded by a flag

@@ -12,8 +12,8 @@ draft or mismatched release fails closed before signing.
 
 1. **build** (macOS runner, read-only token, no secrets). Refuses a tag that
    isn't exactly `vX.Y.Z` or whose commit is not on `main`
-   (`git merge-base --is-ancestor`), runs `go vet`, `go test -race ./...`,
-   and the script tests, cross-builds `darwin/amd64` and `darwin/arm64`
+   (`git merge-base --is-ancestor`), runs `go vet`, the existing source-bound
+   full macOS tier, and the script tests, cross-builds `darwin/amd64` and `darwin/arm64`
    with `scripts/build-release.sh darwin` (the same script contributors
    run), and checks the embedded version.
 2. **build-linux** (`ubuntu-24.04`, read-only token, no secrets). The same
@@ -33,6 +33,17 @@ draft or mismatched release fails closed before signing.
    for all four and the candidate manifest, then stages a **prerelease with
    latest=false**. It retains the signed workflow artifact for 30 days before
    creating the release. The current public latest release stays unchanged.
+
+Both build jobs explicitly select the full tier for the release tag, retaining
+all discovered Test/Fuzz/Example parents and their children, race, `-count=1`,
+and each invocation's 20-minute package timeout. The existing standalone
+`[[0], [1, 2]]` schedule gives the qualification parent its own package lifetime;
+discovery, race invocations and full-size plain performance checks share the
+unchanged 2400-second tier deadline. macOS also retains its protected-configuration
+writer check. The jobs verify exact-source/raw-body evidence before Build and
+upload separate `release-validation-macos` and `release-validation-linux`
+artifacts even on failure. These validation artifacts are separate from the
+release assets; they do not authorize signing or promotion.
 
 The candidate and promoted release have six assets: `agent-archive-darwin-amd64`,
 `agent-archive-darwin-arm64`, `agent-archive-linux-amd64`,

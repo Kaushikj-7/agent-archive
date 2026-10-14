@@ -27,6 +27,12 @@ class PolicyTest(unittest.TestCase):
         self.assertEqual(tier.resolve('schedule', schedule=config['daily_cron']), 'daily')
         self.assertEqual(tier.resolve('schedule', schedule=config['weekly_cron']), 'full')
         self.assertEqual(tier.resolve('pull_request'), 'pr')
+        self.assertEqual(tier.resolve('push', 'refs/tags/v0.2.0'), 'full')
+        with self.assertRaises(tier.Failure):
+            tier.resolve('pull_request', 'refs/tags/v0.2.0')
+        for ref in ('refs/tags/v0.2.0-rc1', 'refs/tags/v0.2', 'refs/tags/0.2.0', 'refs/tags/v0.2.0/extra'):
+            with self.assertRaises(tier.Failure):
+                tier.resolve('push', ref)
         for suite in ('all','linux','macos','fuzz','systemd'):
             self.assertEqual(tier.resolve('workflow_dispatch', schedule=config['daily_cron'], suite=suite), 'full')
         self.assertEqual(tier.resolve('push','refs/heads/release-candidate/final',config['daily_cron']), 'full')
@@ -598,6 +604,25 @@ class ExecutionPlanTest(unittest.TestCase):
             with tempfile.TemporaryDirectory() as d,mock.patch.object(sys,'argv',['run_ci_tier','--tier','daily','--suite','linux','--output',d]),mock.patch.dict(os.environ,{'GITHUB_EVENT_NAME':event,'GITHUB_REF':ref,'CI_SUITE':'all'}),mock.patch.object(tier,'run_suite') as run:
                 self.assertEqual(tier.main(),0);self.assertEqual(run.call_args.args[0],'full')
 
+    def test_release_tag_parser_selects_full_on_both_platforms_and_refuses_downgrades(self):
+        for suite in ('linux', 'macos'):
+            with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {'GITHUB_EVENT_NAME':'push', 'GITHUB_REF':'refs/tags/v0.2.0', 'GITHUB_SHA':'a'*40}), mock.patch.object(tier, 'git', return_value='a'*40):
+                output=Path(d)/'plan.json'
+                with mock.patch.object(sys,'argv',['run_ci_tier','--plan','--tier','full','--suite',suite,'--output',str(output)]):
+                    self.assertEqual(tier.main(),0)
+                plan=json.loads(output.read_text())
+                self.assertEqual(plan['tier'],'full');self.assertEqual(plan['source'],'a'*40)
+                with mock.patch.object(tier,'run_suite') as run, mock.patch.object(sys,'argv',['run_ci_tier','--tier','full','--suite',suite,'--output',d]):
+                    self.assertEqual(tier.main(),0)
+                    self.assertEqual(run.call_args.args[:2],('full',suite))
+                    self.assertEqual(run.call_args.args[4],2400)
+                with mock.patch.object(tier,'verify_full') as verify, mock.patch.object(sys,'argv',['run_ci_tier','--verify','--tier','full','--suite',suite,'--extra-plan',str(output),'--output',d]):
+                    self.assertEqual(tier.main(),0)
+                    self.assertEqual(verify.call_args.kwargs,{'expected_suite':suite})
+                for weaker in ('pr','daily'):
+                    with mock.patch.object(tier,'run_suite') as run, mock.patch.object(sys,'argv',['run_ci_tier','--tier',weaker,'--suite',suite,'--output',d]), contextlib.redirect_stderr(io.StringIO()):
+                        self.assertEqual(tier.main(),1);run.assert_not_called()
+
 
 class PurgeSelectionTest(unittest.TestCase):
     def test_default_full_matrix_matches_original_cartesian_boundaries(self):
@@ -679,6 +704,38 @@ class FullRaceTest(unittest.TestCase):
             for key,value in [('event','push'),('ref','refs/heads/foreign'),('schedule','foreign')]:
                 bad=copy.deepcopy(report);bad[key]=value
                 with self.subTest(key=key),self.assertRaises(tier.Failure):self.verify(directory,bad)
+
+    def test_tag_full_verdict_rejects_forged_source_coverage_and_platform_obligations(self):
+        for suite in ('linux', 'macos'):
+            with tempfile.TemporaryDirectory() as d:
+                directory=Path(d)
+                with mock.patch.object(tier,'catalog',return_value={'restorations':[]}):
+                    report=self.fixture(directory,isolated=True)
+                report.update(suite=suite,event='push',ref='refs/tags/v0.2.0')
+                if suite == 'macos':
+                    raw=events(dict(Action='run',Package=tier.MODULE+'internal/config',Test='TestPublishedWriterRefusesProtectedConfiguration'),dict(Action='pass',Package=tier.MODULE+'internal/config',Test='TestPublishedWriterRefusesProtectedConfiguration'),dict(Action='pass',Package=tier.MODULE+'internal/config'))
+                    (directory/'published-writer.jsonl').write_text(raw)
+                    report['invocations'].append(dict(command=['bash','scripts/test_published_writer.sh'],log='published-writer.jsonl',evidence=tier.body_evidence(raw,False),performance_enabled=False,real_systemd_enabled=False))
+                def verify(value, restorations=None):
+                    (directory/'tier.json').write_text(json.dumps(value))
+                    with mock.patch.dict(os.environ,{'GITHUB_SHA':'a'*40,'GITHUB_EVENT_NAME':'push','GITHUB_REF':'refs/tags/v0.2.0','CI_SCHEDULE':''}),mock.patch.object(tier.full_race,'source_proof',return_value={'source':'a'*40,'tree':'b'*40}),mock.patch.object(tier,'catalog',return_value={'restorations':restorations or []}),contextlib.redirect_stdout(io.StringIO()):
+                        tier.verify_full(directory,report['extras'],expected_suite=suite)
+                verify(report)
+                changes=[lambda r:r.update(success=False),lambda r:r.update(source='c'*40),lambda r:r.update(ref='refs/tags/v0.2.1'),lambda r:r.update(suite='linux' if suite=='macos' else 'macos'),lambda r:r['full_schedule']['source_proof'].update(tree='c'*40),lambda r:r['invocations'][0]['command'].remove('-count=1')]
+                if suite == 'macos':
+                    changes += [lambda r:r['invocations'].pop(),lambda r:r['invocations'][-1].update(command=['bash','scripts/test_macos_smoke.sh']),lambda r:r['invocations'][-1].update(real_systemd_enabled=True),lambda r:r['invocations'][-1].update(performance_enabled=True)]
+                for change in changes:
+                    bad=copy.deepcopy(report);change(bad)
+                    with self.assertRaises((tier.Failure,tier.full_race.shards.Failure)):
+                        verify(bad)
+                # A claimed-success receipt must still reconcile every raw descendant.
+                target=directory/'race-2.jsonl';original=target.read_text()
+                target.write_text(events(*[row for row in tier.full_race.shards.json_stream(original) if not row.get('Test','').endswith('/100000')]))
+                bad=copy.deepcopy(report);bad['invocations'][2]['evidence']=tier.body_evidence(target.read_text(),False)
+                # Catalogued children enforce restored scale, independently of parent PASS.
+                entry=dict(package='internal/cli',test='TestPickerQualificationRealCLIPhases',restore='weekly',full_children=['100000'])
+                with self.assertRaises((tier.Failure,tier.full_race.shards.Failure)):
+                    verify(bad,[entry])
 
     def test_partition_preserves_colliding_package_names_and_new_fuzz_examples(self):
         with tempfile.TemporaryDirectory() as d:
@@ -863,7 +920,7 @@ class FullRaceTest(unittest.TestCase):
                         self.assertTrue(all(not Path(c[6]).exists() for c, _, _ in calls if '-c' in c))
                         text = raw[output.name]
                     elif '-list' in command:text=raw['full-list.jsonl']
-                    elif command[0]=='bash':text=events(dict(Action='pass',Package=tier.MODULE+'internal/config',Test='TestPublishedWriterRefusesProtectedConfiguration'))
+                    elif command[0]=='bash':text=events(dict(Action='run',Package=tier.MODULE+'internal/config',Test='TestPublishedWriterRefusesProtectedConfiguration'),dict(Action='pass',Package=tier.MODULE+'internal/config',Test='TestPublishedWriterRefusesProtectedConfiguration'),dict(Action='pass',Package=tier.MODULE+'internal/config'))
                     else:text=raw[output.name]
                     output.write_text(text);return text
                 def checked_many(commands, deadline):
@@ -876,6 +933,18 @@ class FullRaceTest(unittest.TestCase):
                         checked(command,output,deadline,env)
                 with mock.patch.object(tier,'git',return_value='a'*40),mock.patch.object(tier.full_race,'source_proof',return_value={'source':'a'*40,'tree':'b'*40}),mock.patch.object(tier,'checked',side_effect=checked),mock.patch.object(tier,'checked_many',side_effect=checked_many),mock.patch.object(tier,'catalog',return_value={'restorations':[]}),mock.patch.dict(os.environ,{'GITHUB_SHA':'a'*40}),contextlib.redirect_stdout(io.StringIO()):
                     tier.run_suite('full',suite,directory,seconds=37)
+                    result=json.loads((directory/'tier.json').read_text())
+                    self.verify(directory, dict(result, event='local', ref='', schedule='', extras=report['extras']))
+                    if suite == 'macos':
+                        original=(directory/'published-writer.jsonl').read_text()
+                        for bad in ('', events(dict(Action='skip',Package=tier.MODULE+'internal/config',Test='TestPublishedWriterRefusesProtectedConfiguration'),dict(Action='pass',Package=tier.MODULE+'internal/config'))):
+                            (directory/'published-writer.jsonl').write_text(bad)
+                            altered=json.loads((directory/'tier.json').read_text())
+                            altered['invocations'][-1]['evidence']=tier.body_evidence(bad,False)
+                            with self.assertRaises((tier.Failure,tier.full_race.shards.Failure)):
+                                self.verify(directory,altered)
+                        (directory/'published-writer.jsonl').write_text(original)
+                        self.verify(directory,dict(result,event='local',ref='',schedule='',extras=report['extras']))
                 result=json.loads((directory/'tier.json').read_text());self.assertTrue(result['success'])
                 self.assertEqual(len([i for i in result['invocations'] if i['log'].startswith('race')]),3)
                 self.assertEqual(batches,[['race-1.jsonl','race-2.jsonl']])

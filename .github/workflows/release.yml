@@ -87,17 +87,28 @@ jobs:
           go version
           go version | grep -q ' go1\.27\.2 ' || { echo "expected go1.27.2, matching go.mod's toolchain line" >&2; exit 1; }
 
-      # Full Darwin race coverage also runs after merges in extended.yml;
-      # the release repeats it on the exact tagged commit.
+      # Repeat the existing source-bound full tier on the exact tagged commit.
+      # Discovery and all invocations share its unchanged 40-minute deadline.
       - name: Test
         run: |
           go vet ./...
-          go test -race -timeout 20m ./...   # as test.yml, for internal/cli
+          python3 -B scripts/run_ci_tier.py --plan --tier full --output release-tier-results/plan.json
+          python3 -B scripts/run_ci_tier.py --tier full --suite macos --seconds 2400 --output release-tier-results
+          python3 -B scripts/run_ci_tier.py --verify --tier full --suite macos --extra-plan release-tier-results/plan.json --output release-tier-results
           python3 scripts/test_release_signing.py
           python3 scripts/test_release_assets.py
           python3 scripts/test_release_candidate.py
           python3 scripts/test_install.py
           python3 scripts/test_purge_recipe.py
+
+      - name: Preserve source-bound release validation evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-validation-macos
+          path: release-tier-results
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Build
         run: ./scripts/build-release.sh darwin
@@ -167,17 +178,28 @@ jobs:
           go version
           go version | grep -q ' go1\.27\.2 ' || { echo "expected go1.27.2, matching go.mod's toolchain line" >&2; exit 1; }
 
-      # The same gate as a pull request's Linux test job: nothing is built
-      # for release from a commit whose tests fail on Linux.
+      # Repeat exhaustive candidate coverage, including full-size performance,
+      # on the exact tagged commit before building.
       - name: Test
         run: |
           go vet ./...
-          go test -race -timeout 20m ./...   # as test.yml, for internal/cli
+          python3 -B scripts/run_ci_tier.py --plan --tier full --output release-tier-results/plan.json
+          python3 -B scripts/run_ci_tier.py --tier full --suite linux --seconds 2400 --output release-tier-results
+          python3 -B scripts/run_ci_tier.py --verify --tier full --suite linux --extra-plan release-tier-results/plan.json --output release-tier-results
           python3 scripts/test_release_signing.py
           python3 scripts/test_release_assets.py
           python3 scripts/test_release_candidate.py
           python3 scripts/test_install.py
           python3 scripts/test_purge_recipe.py
+
+      - name: Preserve source-bound release validation evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-validation-linux
+          path: release-tier-results
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Build
         run: ./scripts/build-release.sh linux
