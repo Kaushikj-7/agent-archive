@@ -108,6 +108,26 @@ class ParentScheduling(unittest.TestCase):
             path.write_text(original)
             p.verify_logs(worker, c, c['assignments'][index])
 
+    def test_enclosing_parent_lifecycle_is_required_without_virtual_slash_nodes(self):
+        from test_coverage_gap_witness import CoverageGapWitness
+        case = CoverageGapWitness('test_parent_pass_before_child_run_refuses_lifecycle')
+        case.test_parent_pass_before_child_run_refuses_lifecycle()
+        package = p.HEAVY[0]
+        # A slash-containing name need not emit intermediate runtime nodes.
+        events = [event(package, 'run', Test='TestA'),
+                  event(package, 'run', Test='TestA/virtual/name'),
+                  event(package, 'pause', Test='TestA/virtual/name'),
+                  event(package, 'cont', Test='TestA/virtual/name'),
+                  event(package, 'pass', Test='TestA/virtual/name'),
+                  event(package, 'pass', Test='TestA')]
+        p.verify_lifecycle_containment(events)
+        # A completed sibling can share the lexical prefix of a later slash name.
+        sibling = [event(package, 'run', Test='TestA'),
+                   event(package, 'run', Test='TestA/virtual'),
+                   event(package, 'pass', Test='TestA/virtual'),
+                   *events[1:-1], event(package, 'pass', Test='TestA')]
+        p.verify_lifecycle_containment(sibling)
+
     def test_timing_report_includes_new_parent_logs_with_shared_lifecycle_semantics(self):
         import report_ci_timing
         c=catalog(4)

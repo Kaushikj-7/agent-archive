@@ -130,6 +130,30 @@ def log_name(package):
     return 'parents-' + r.digest(package)[:16] + '.json'
 
 
+def verify_lifecycle_containment(events):
+    """Every observed descendant stays inside its top-level runtime body.
+
+    Go JSON does not identify the immediate caller of t.Run. A slash-containing
+    sibling name can resemble a nested parent, so do not infer virtual ancestry.
+    Paused parallel bodies remain active until their actual terminal.
+    """
+    import run_go_shard as r
+    active = set()
+    for e in events:
+        name, action, package = e.get('Test'), e.get('Action'), e.get('Package')
+        if not name or action == 'output':
+            continue
+        key = (package, name)
+        if '/' in name and (package, name.split('/')[0]) not in active:
+            raise r.Failure('descendant lifecycle outside enclosing runtime parent')
+        if action == 'run':
+            active.add(key)
+        elif action in ('pass', 'skip'):
+            if key not in active or ('/' not in name and any(p == package and n.startswith(name + '/') for p, n in active)):
+                raise r.Failure('parent terminal precedes descendant lifecycle completion')
+            active.remove(key)
+
+
 def verify_logs(directory, catalog, assignment):
     import run_go_shard as r
     import run_ci_tier
@@ -156,6 +180,7 @@ def verify_logs(directory, catalog, assignment):
     raw_whole = '\n'.join((directory/n).read_text() for n in ('git-identity.json','ordinary.json') if n in expected_logs)
     r.coverage(raw_whole, {p:catalog['packages'][p] for p in whole})
     records = r.json_stream(raw_whole)
+    verify_lifecycle_containment(records)
     for package in whole:
         if not catalog['packages'][package] and not any(e.get('Package') == package and not e.get('Test') and e.get('Action') == 'skip' for e in records):
             raise r.Failure('no-test package did not establish compilation terminal')
@@ -180,6 +205,7 @@ def verify_logs(directory, catalog, assignment):
                                ['run', 'pause', 'cont', 'skip'])
                for actions in lifecycles.values()):
             raise r.Failure('invalid parent or descendant lifecycle')
+        verify_lifecycle_containment(events)
         if any(e.get('Test') and e['Test'].split('/')[0] not in names for e in events):
             raise r.Failure('unassigned descendant')
         run_ci_tier.terminals(raw)

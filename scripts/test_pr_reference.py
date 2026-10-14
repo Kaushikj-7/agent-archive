@@ -91,6 +91,11 @@ class ReferenceTests(unittest.TestCase):
             m['body_evidence']=tier.body_evidence(raw,True);manifest.write_text(json.dumps(m))
             with self.assertRaisesRegex(shards.Failure,'skip'):ref.compare(reference,workers,root/'audit')
 
+    def test_all_runtime_body_identities_and_enclosing_order_regressions(self):
+        from test_coverage_gap_witness import CoverageGapWitness
+        case = CoverageGapWitness('test_missing_both_successful_child_events_refuses_exact_coverage')
+        case.test_missing_both_successful_child_events_refuses_exact_coverage()
+
     def test_manual_workflow_is_exclusive_and_registered_test_is_required(self):
         from test_ci_workflow import jobs,job_key,condition_matches
         base=Path(__file__).resolve().parent.parent
