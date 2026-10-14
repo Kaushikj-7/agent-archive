@@ -30,28 +30,40 @@ VERSION=dev ./scripts/build-release.sh                   # the release build (CI
 ```
 
 CI's [Test workflow](../../.github/workflows/test.yml) runs the short race
-suite across two Ubuntu workers for each pull request. Each worker discovers all
+suite across four Ubuntu trial workers for each pull request. Each worker discovers all
 packages and CLI top-level tests, fuzz seeds and executable examples, assigns
 ordinary packages once and CLI names to disjoint bins, and retains complete
 subtest trees. Timing hints only rank discovered units; new units are assigned
 and logged. The assigned native Git identity package runs first on a quiet worker because
 its observers have fixed 500 ms deadlines. The workers then overlap bounded
 ordinary-package and CLI processes; vet runs once. Each worker records its source, catalog, assignment and
-terminal coverage; the stable required `linux-race` verdict reconciles both
+terminal coverage; the stable required `linux-race` verdict reconciles all four
 artifacts and fails on any missing, failed or cancelled worker. All Linux
 Python gates, including purge, staging, scope and shard-runner regressions, run
-in a parallel script job required by that verdict. A separate exact-source plan selects conservative full coverage for sensitive PR
-changes. Its proof compares the event base, actual head and tested merge, checks
-tracked bytes/types/modes, and includes both paths of renames and deletions.
-Catalog/recovery/archive/presentation/platform/purge families have explicit
-backstops; unmapped inputs, shared helpers, configuration or unavailable history
-select all full backstops. Shared archive metadata/history/limits also select
-all backstops. Required native and real-systemd coverage runs when
-selected; the real manager is started only on a disposable GitHub-hosted runner.
-The stable `linux-full` job now succeeds on PRs with actual full extra bodies or
-an explicit empty selection, whose evidence says no full bodies ran. The stable
-`linux-race` verdict requires this evidence and the native check as well as both
-representative shards and Python gates. An empty extra plan does not install Go.
+in a parallel script job required by that verdict. A separate exact-source plan
+selects focused representative regressions for sensitive PR changes. Its proof
+compares event base, actual head and tested merge, checks tracked bytes/types/modes,
+and includes both paths of renames and deletions. CLI, catalog, recovery, archive,
+presentation, platform and purge routes are explicit. CLI edits select CLI coverage;
+they do not select every other family. CI/configuration outside mapped product
+packages, shared helpers, unknown code and unavailable history require the complete
+unrestricted short shards already checked by the verdict, plus focused critical
+refusal/limit integration backstops. They do not duplicate the short suite. Every PR also builds all Darwin production packages with
+cgo and runs native smoke. Sensitive product changes additionally run explicitly named
+native short consent, source-authority and catalog refusal regressions. Scheduler protocol and CLI setup/uninstall/scheduler changes require the
+actual systemd integration on a disposable runner during a PR. Shared CLI
+dispatch, installation identity, status observation, setup journal and setup
+resource changes also retain this integration. The daily run
+retains the full real-manager suite.
+
+The stable `linux-full` check records source-bound focused PR bodies (or an explicit
+empty selection) and exhaustive candidate bodies. PR reports retain compiled parent
+discovery, commands and actual terminals; omitted parents, forged source/plan/logs
+or weakened flags fail. Short bodies always mark scale restorations **NOT RUN**.
+Unknown inputs do not select exhaustive mutation, native scale or purge matrices.
+PR purge retains its representative refusal/recovery cases; expanded products run
+daily and exhaustive matrices weekly/candidates. The stable `linux-race` verdict
+requires extras, native smoke, unrestricted short shards and Python gates.
 Candidates run exhaustive full Linux race coverage, plain full-size performance
 assertions and vet. Full Linux and native macOS coverage discovers every selected
 package and compiled Test/Fuzz/Example parent on the tested source. The CLI's
@@ -80,8 +92,9 @@ improves latency only if measured scheduling benefits outweigh that extra work.
 For local coverage validation on Linux, run one worker at a time:
 
 ```sh
-python3 scripts/run_go_shard.py --shard 0 --output /tmp/go-shard-0
-python3 scripts/run_go_shard.py --shard 1 --output /tmp/go-shard-1
+for worker in 0 1 2 3; do
+  python3 scripts/run_go_shard.py --workers 4 --shard "$worker" --output "/tmp/go-shard-$worker"
+done
 ```
 
 The checked-in timing hints are advisory integer milliseconds from successful
@@ -99,7 +112,9 @@ python3 -B scripts/generate_go_shard_hints.py \
   --output scripts/go_shard_hints.json
 ```
 
-The generator rejects source/settings/catalog mixtures, failed or incomplete
+Imported evidence pins the measured source body catalog and its hash, so later
+scale catalog additions cannot rewrite a historical manifest. Current CI uses
+the current catalog. The generator rejects source/settings/catalog mixtures, failed or incomplete
 streams, reused samples and mismatched manifest body evidence. Reconciliation
 checks the request's pinned artifact source independently of the regenerating
 workflow's `GITHUB_SHA`. The request may provide fresh `packages`/`cli` discovery
@@ -110,20 +125,31 @@ IDs and runtime-source equivalence require independent API/source verification;
 raw JSON alone cannot attest those caller-supplied provenance fields.
 
 Ordinary weights are median package-terminal elapsed seconds, rounded half-up
-to positive milliseconds (minimum 1). CLI weights take the larger of parent
-elapsed and the active envelope from the last top-level continuation (or run)
-through the latest parent/descendant terminal. This excludes the initial parent
-pause and never sums sibling elapsed values. Descendant cohort waits and
-overlapping parent envelopes remain, so these rankings are not wall-time or CPU
-forecasts. Git invocation and worker0 vet costs stay separate from weights;
-the assigned Git package stays isolated on whichever worker receives it.
+to positive milliseconds (minimum 1). CLI weights recursively account logical
+body cost: subtract each direct child's synchronous run-to-pause (parallel) or
+run-to-terminal (sequential) interval from the parent's elapsed value, then add
+each child's accounted cost. This avoids charging parallel cohort queueing and
+counting sequential children twice, while including parallel descendant bodies.
+Slash-containing child names use observed active enclosing lifecycles rather
+than inventing a parent for each selector component. Nanosecond RFC3339 clocks
+and complete run/pause/cont/terminal lifecycles are validated. Skipped bodies
+retain their actual elapsed cost and remain skips in coverage evidence.
+These costs rank logical work; they are not elapsed-time or CPU forecasts.
+Predicted bin loads are logged separately from measured worker phase durations.
+Git invocation and worker0 vet costs stay separate from weights; the assigned
+Git package stays isolated on whichever worker receives it.
 
-The current hints use two cached ancestor-runtime observations (prefix and
-exact restore). The recorded D base subsequently added catalog/config protocol
-changes in PR485, so these are not exact D-base timings. Current CI must discover
-and execute the new bodies and expose materially changed affected-package costs
-before merge; do not combine durations from different sources as matched samples
-or claim savings without a current-source control. Hosted comparisons must
+The current hints use one successful hosted Linux short observation pair from
+run38513512721 at cd39753074cade7174a25dc0beb8e1b83b0300c8. Artifact IDs,
+archive digests, exact worker settings and raw-file hashes are retained along
+with the previous measurement request. This small sample has equivalent representative runtime inputs at the base and is advice,
+not current-candidate or native Darwin full timing. Live discovery assigns unknown
+names the 1000ms fallback and ignores stale hints. Four workers are a hosted
+trial; retain that default only after current-candidate whole-job measurements
+justify the extra compilation, allocation and startup costs. The runner accepts
+explicit two or four workers; the full-race scheduling caller retains its two
+partition default. Worker-count cache ownership prevents two/four trial cache
+identities from mixing. Hosted comparisons must
 record whole-job latency and rounded runner allocation, including scripts,
 verdict and native verification, against both the original spend and the new
 single-worker fixture baseline. A local warm serial run proves coverage rather
@@ -145,7 +171,11 @@ same-root warm SQL /128+/512, actual CLI1100/1050 pagination and physical
 million-record related-history limit. The small cached-prefix history test pins
 aggregate refusal/release/retry; it does not prove million-record physical
 streaming. Metadata 16384, retained warm sources 2000 and physical/indexed
-five-sweep 1100*2 bodies restore weekly. The exact names and existing 32 MiB
+five-sweep 1100*2 bodies restore weekly. The picker catalog first-page bounds use 128/512 records on PRs and restore
+10000/100000 records weekly/candidates. CLI first/Older page qualification retains
+1400 records to preserve over 100 eligible rows after synthetic membership filters,
+and explicitly restores its 10000/100000-record matrices weekly/candidates.
+The exact names and existing 32 MiB
 import/encoded-text/refilter restorations are in `scripts/ci_tiers.json`.
 Scaled-capacity state tests and smaller import recovery still run on every PR.
 Unknown tests run in the ordinary unrestricted short suite by default; the tier
@@ -179,7 +209,7 @@ Linux suite on these branches because Test runs full non-short Linux race
 coverage and plain full-size performance assertions. Extended supplies full
 non-short macOS race coverage and plain full-size performance assertions.
 Test, Levenshtein and Extended disable setup-go's shared module/build cache
-for every trigger; only the two PR representative workers have explicit
+for every trigger; only the PR representative workers have explicit
 restore/save actions. Candidate validation cannot restore executable build
 state from another run. Go still verifies downloaded modules against go.sum;
 fresh runners may take longer while downloading and compiling dependencies.
@@ -194,7 +224,8 @@ architecture, or signed-installer acceptance; see [releasing](../maintainers/rel
 The [Extended workflow](../../.github/workflows/extended.yml) uses separate
 daily `17 8 * * 1-6` and weekly `17 8 * * 0` cron events, avoiding a duplicate
 daily campaign on Sunday. Daily runs all Linux representative race bodies plus
-the four named full restorations, native Darwin platform smoke and the pinned
+the four named full restorations, native Darwin platform smoke, expanded native
+config/catalog/capture/source-I/O integration and the pinned
 published writer, actual systemd scheduler/setup/timer/uninstall, five seconds
 of mutations on every discovered fuzz target and expanded purge cases. Weekly
 runs complete default Linux and Darwin race suites, plain full-size performance

@@ -45,11 +45,12 @@ jobs:
       GOFLAGS: '-mod=readonly'
       PYTHONDONTWRITEBYTECODE: '1'
       SHARD: ${{ matrix.shard }}
+      WORKERS: 4
       PR_NUMBER: ${{ github.event.pull_request.number }}
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1]
+        shard: [0, 1, 2, 3]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -96,7 +97,7 @@ jobs:
       - name: Discovered race-short shard
         env:
           SHARD: ${{ matrix.shard }}
-        run: python3 -B scripts/run_go_shard.py --shard "$SHARD" --output shard-results
+        run: python3 -B scripts/run_go_shard.py --workers 4 --shard "$SHARD" --output shard-results
       - name: Require unchanged source and current PR worker success before cache save
         id: go-cache-complete
         run: python3 -B scripts/go_cache_steps.py complete
@@ -127,7 +128,7 @@ jobs:
   linux-full:
     # PR extras are distinct from the exhaustive representative shards.
     needs: [tier-plan]
-    # This job also exercises the real manager for sensitive PRs.
+    # Focused protocol regressions exercise the real manager for scheduler PRs.
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -146,7 +147,7 @@ jobs:
       - name: Start real manager for required platform extra coverage
         if: github.event_name == 'pull_request' && needs.tier-plan.outputs.systemd == 'true'
         run: bash scripts/start_ci_systemd.sh
-      - name: Full candidate or conservative full PR extras
+      - name: Full candidate or focused PR regressions
         env:
           AGENT_ARCHIVE_REAL_SYSTEMD: ${{ needs.tier-plan.outputs.systemd == 'true' && '1' || '0' }}
           EVENT: ${{ github.event_name }}
@@ -154,12 +155,12 @@ jobs:
         run: |
           if [ "$EVENT" != pull_request ] || [ "$FULL_LINUX" = true ]; then go version | grep -q ' go1\.27\.2 '; fi
           if [ "$EVENT" = pull_request ]; then
-            python3 scripts/run_ci_tier.py --tier full --suite extra --extra-plan "$RUNNER_TEMP/tier-plan/extra-plan.json" --output tier-results --seconds 3300
+            python3 scripts/run_ci_tier.py --tier pr --suite extra --extra-plan "$RUNNER_TEMP/tier-plan/extra-plan.json" --output tier-results --seconds 3300
           else
             python3 scripts/run_ci_tier.py --tier full --suite linux --output tier-results
             go vet ./...
           fi
-      - name: Preserve actual full and extra body evidence
+      - name: Preserve source-bound full or focused body evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -229,7 +230,7 @@ jobs:
         env:
           NEEDS: ${{ toJSON(needs) }}
         run: python3 scripts/run_go_shard.py --verdict
-      - name: Download both successful shard catalogs
+      - name: Download all four successful shard catalogs
         if: github.event_name == 'pull_request'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -237,7 +238,7 @@ jobs:
           path: shard-evidence
       - name: Reconcile actual source and exhaustive shard coverage
         if: github.event_name == 'pull_request'
-        run: python3 scripts/run_go_shard.py --reconcile shard-evidence
+        run: python3 scripts/run_go_shard.py --workers 4 --reconcile shard-evidence
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: ci-tier-plan
@@ -246,7 +247,7 @@ jobs:
         with:
           name: go-full-tier
           path: full-evidence
-      - name: Require actual full or explicit empty extra coverage
+      - name: Require source-bound full or focused PR evidence
         run: python3 scripts/run_ci_tier.py --verify --tier full --output full-evidence --extra-plan "$RUNNER_TEMP/tier-plan/extra-plan.json"
 
   git-identity-compatibility:
@@ -338,17 +339,21 @@ jobs:
         run: |
           go version
           go version | grep -q ' go1\.27\.2 ' || { echo "expected go1.27.2, matching go.mod's toolchain line" >&2; exit 1; }
-      - name: Native representative smoke or required full platform extras
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ci-tier-plan
+          path: ${{ runner.temp }}/tier-plan
+      - name: Native production build, smoke and targeted sensitive regressions
         env:
-          FULL_NATIVE: ${{ needs.tier-plan.outputs.native }}
+          EVENT: ${{ github.event_name }}
         run: |
-          if [ "$FULL_NATIVE" = true ]; then
-            python3 scripts/run_ci_tier.py --tier full --suite macos --output native-tier-results
+          if [ "$EVENT" = pull_request ]; then
+            python3 -B scripts/run_ci_tier.py --tier pr --suite macos --extra-plan "$RUNNER_TEMP/tier-plan/extra-plan.json" --output native-tier-results
           else
             ./scripts/test_macos_smoke.sh
           fi
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        if: always() && needs.tier-plan.outputs.native == 'true'
+        if: always() && github.event_name == 'pull_request'
         with:
           name: native-full-tier
           path: native-tier-results

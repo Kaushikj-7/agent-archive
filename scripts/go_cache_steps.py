@@ -57,11 +57,12 @@ def verify_restored(plan, outcome, matched, exact, guard, command=execute_module
     return result.state
 
 
-def worker_success(plan, manifest, guard, worker):
+def worker_success(plan, manifest, guard, worker, workers=2):
     guard(plan.source)
     if (not isinstance(manifest, dict) or manifest.get('success') is not True
             or manifest.get('catalog', {}).get('source') != plan.source['tested']
-            or manifest.get('tier') != 'pr' or manifest.get('shard') != worker):
+            or manifest.get('tier') != 'pr' or manifest.get('shard') != worker
+            or manifest.get('catalog', {}).get('workers', 2) != workers):
         raise InvalidContext('current PR worker evidence is incomplete')
     # Production's required verdict still verifies exact coverage/body logs.
     return True
@@ -84,7 +85,8 @@ def main():
     try:
         if env.get('GITHUB_EVENT_NAME') != 'pull_request':
             raise InvalidContext('cache steps require PR event')
-        if not re.fullmatch(r'[1-9][0-9]*', env.get('PR_NUMBER', '')) or env.get('SHARD') not in ('0', '1'):
+        workers = int(env.get('WORKERS', '2'))
+        if workers not in (2, 4) or not re.fullmatch(r'[1-9][0-9]*', env.get('PR_NUMBER', '')) or env.get('SHARD') not in tuple(str(i) for i in range(workers)):
             raise InvalidContext('unsafe PR worker identifiers')
         source = Path(env['GITHUB_WORKSPACE']).resolve()
         runner_temp = Path(env['RUNNER_TEMP'])
@@ -99,7 +101,7 @@ def main():
         pr_ancestry(source, env['GITHUB_SHA'], event, int(env['PR_NUMBER']))
         current = source_identity(source, env['GITHUB_SHA'])
         context = runtime_context()
-        plan = cache_plan(int(env['PR_NUMBER']), int(env['SHARD']), context, current, runner_temp)
+        plan = cache_plan(int(env['PR_NUMBER']), int(env['SHARD']), context, current, runner_temp, workers)
         if env.get('GOCACHE') != plan.paths[0] or env.get('GOMODCACHE') != plan.paths[1]:
             raise InvalidContext('worker caches differ from saved paths')
         def guard(expected):
@@ -122,7 +124,7 @@ def main():
                 emit({'restore_state': state}, env['GITHUB_OUTPUT'])
             else:
                 manifest = json.loads((source/'shard-results/manifest.json').read_text())
-                worker_success(plan, manifest, guard, int(env['SHARD']))
+                worker_success(plan, manifest, guard, int(env['SHARD']), workers)
                 emit({'save_ready': 'true'}, env['GITHUB_OUTPUT'])
         return 0
     except InvalidContext as error:
