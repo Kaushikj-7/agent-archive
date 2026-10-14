@@ -502,10 +502,11 @@ class PurgeSelectionTest(unittest.TestCase):
 
 
 class FullRaceTest(unittest.TestCase):
-    def fixture(self, directory):
+    def fixture(self, directory, isolated=False):
         full=tier.full_race;cli=full.CLI;ordinary=tier.MODULE+'internal/other';empty=tier.MODULE+'internal/empty'
         packages={cli:True,ordinary:True,empty:False}
         names={cli:['ExampleWorks','FuzzSeed','TestCollision','TestNew','TestRestore'],ordinary:['TestCollision'],empty:[]}
+        if isolated:names[cli]=sorted(names[cli]+['TestPickerQualificationRealCLIPhases'])
         (directory/'full-packages.json').write_text(events(*[
             dict(ImportPath=p,TestGoFiles=['fixture_test.go'] if tested else []) for p,tested in packages.items()]))
         records=[]
@@ -525,6 +526,9 @@ class FullRaceTest(unittest.TestCase):
                 for name in tests:
                     rows.append(dict(Action='run',Package=pkg,Test=name))
                     if name=='TestRestore':rows += [dict(Action='run',Package=pkg,Test=name+'/512'),dict(Action='pass',Package=pkg,Test=name+'/512')]
+                    if name=='TestPickerQualificationRealCLIPhases':
+                        for child in ('1400','10000','100000'):
+                            rows += [dict(Action='run',Package=pkg,Test=name+'/'+child),dict(Action='pass',Package=pkg,Test=name+'/'+child)]
                     rows.append(dict(Action='pass',Package=pkg,Test=name))
                 if not packages[pkg]:rows.append(dict(Action='output',Package=pkg,Output='[no test files]\n'))
                 rows.append(dict(Action='pass' if packages[pkg] else 'skip',Package=pkg))
@@ -567,6 +571,58 @@ class FullRaceTest(unittest.TestCase):
             self.assertEqual(set(assignments[0][cli])|set(assignments[1][cli]),set(report['full_schedule']['names'][cli]))
             self.assertFalse(set(assignments[0][cli])&set(assignments[1][cli]))
             self.assertIn('FuzzSeed',report['full_schedule']['names'][cli]);self.assertIn('ExampleWorks',report['full_schedule']['names'][cli])
+
+    def test_measured_full_parent_has_its_own_package_lifetime(self):
+        full=tier.full_race;cli=full.CLI;other=tier.MODULE+'internal/other'
+        isolated='TestPickerQualificationRealCLIPhases'
+        names={cli:['FuzzNew','TestA','TestB',isolated],other:['TestOther']}
+        with contextlib.redirect_stdout(io.StringIO()):
+            schedule=full.schedule({cli:True,other:True},names,['./...'],{})
+        self.assertEqual(len(schedule['commands']),3)
+        self.assertEqual(schedule['assignments'][2],{cli:[isolated]})
+        self.assertEqual(schedule['commands'][2],full.COMMON+['-run','^('+isolated+')$',cli])
+        assigned=[n for a in schedule['assignments'] for n in a.get(cli,[])]
+        self.assertCountEqual(assigned,names[cli])
+        self.assertEqual(len(assigned),len(set(assigned)))
+        self.assertTrue(all('-short' not in c and c[6]=='20m' for c in schedule['commands']))
+        # A global -skip would also suppress this name in another package.
+        names[other].append(isolated)
+        with contextlib.redirect_stdout(io.StringIO()):
+            collision=full.schedule({cli:True,other:True},names,['./...'],{})
+        self.assertEqual(len(collision['commands']),2)
+        self.assertIn(isolated,collision['assignments'][0][cli])
+        self.assertIn(isolated,collision['assignments'][0][other])
+
+    def test_isolated_full_parent_verdict_rejects_assignment_and_raw_evidence_tampering(self):
+        with tempfile.TemporaryDirectory() as d:
+            directory=Path(d);original=self.fixture(directory,isolated=True)
+            required=[e for e in tier.catalog()['restorations'] if e['test']=='TestPickerQualificationRealCLIPhases']
+            self.verify(directory,original,required)
+            self.assertEqual(len(original['full_schedule']['assignments']),3)
+            for change in (lambda r:r['invocations'].pop(2),
+                           lambda r:r['full_schedule']['assignments'][2][tier.full_race.CLI].clear(),
+                           lambda r:r['invocations'][2]['command'].__setitem__(8,'.*')):
+                bad=copy.deepcopy(original);change(bad)
+                with self.assertRaises((tier.Failure,tier.full_race.shards.Failure)):
+                    self.verify(directory,bad,required)
+            path=directory/'race-2.jsonl'
+            raw=path.read_text()
+            rows=[json.loads(l) for l in raw.splitlines()]
+            # Even matching claimed evidence cannot replace a missing raw parent.
+            changed=events(*[r for r in rows if not r.get('Test')])
+            path.write_text(changed);bad=copy.deepcopy(original)
+            bad['invocations'][2]['evidence']=tier.body_evidence(changed,False)
+            with self.assertRaises((tier.Failure,tier.full_race.shards.Failure)):
+                self.verify(directory,bad,required)
+
+            path.write_text(raw)
+            # Isolating the parent cannot waive any required full-scale child.
+            for child in ('1400','10000','100000'):
+                changed=events(*[r for r in rows if r.get('Test')!='TestPickerQualificationRealCLIPhases/'+child])
+                path.write_text(changed);bad=copy.deepcopy(original)
+                bad['invocations'][2]['evidence']=tier.body_evidence(changed,False)
+                with self.assertRaises((tier.Failure,tier.full_race.shards.Failure)):
+                    self.verify(directory,bad,required)
 
     def test_verdict_rejects_omitted_overlapping_names_source_commands_and_unknown_invocations(self):
         with tempfile.TemporaryDirectory() as d:
