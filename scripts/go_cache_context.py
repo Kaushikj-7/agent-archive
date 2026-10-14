@@ -14,6 +14,7 @@ import shlex
 import subprocess
 import shutil
 import stat
+import tempfile
 
 import scope_native_verify as scope
 
@@ -50,6 +51,13 @@ def digest(value):
 
 
 def execute(argv):
+    if argv[:2] == ['go', 'env']:
+        # CGO metadata probes use Go's compiler-stat/flag memoization. A new
+        # runner can rewrite those entries even with identical compiler bytes.
+        # Never let identity discovery mutate a restored or captured inventory.
+        with tempfile.TemporaryDirectory(prefix='aa-go-identity-') as temporary:
+            return subprocess.check_output(argv, stderr=subprocess.PIPE, timeout=30,
+                                           env=dict(os.environ, GOCACHE=temporary))
     return subprocess.check_output(argv, stderr=subprocess.PIPE, timeout=30)
 
 

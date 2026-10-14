@@ -34,6 +34,10 @@ main seed. A PR or fork can restore available default-branch seeds read-only;
 forks never save. Missing seeds do not add a seed-build dependency to a PR.
 
 All restored cache members are inventoried and checksummed before Go can consume them.
+Go environment identity probes use disposable compilation directories: their
+cgo compiler-stat memoization must not change restored or published inventories
+before checksum verification, even when identical compiler bytes have different
+host file timestamps. The actual source/compiler/context checks remain strict.
 Broken extraction, absent/incompatible manifests and corrupt files are cleared
 from the two controlled directories. Modules download and verify on hits and
 misses. A restored module verification failure retries once from empty caches;

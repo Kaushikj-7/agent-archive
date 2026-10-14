@@ -83,6 +83,26 @@ class CompilationTests(unittest.TestCase):
         with self.assertRaises(keys.InvalidContext):
             cache.validate_manifest(other, self.context)
 
+    def test_identity_probe_cannot_mutate_restored_or_published_inventory(self):
+        cache.publish_manifest(self.plan, self.context, kind='compilation')
+        probes = []
+        def command(argv, **options):
+            # Real Go env CGO_* probes rewrite compiler-stat memoization when
+            # host executable mtimes differ, before returning identical metadata.
+            environment = options.get('env', os.environ)
+            path = Path(environment['GOCACHE'])/'compiler-stat'
+            path.write_bytes(b'current host compiler stat')
+            probes.append(path.parent)
+            self.assertEqual(environment['GOFLAGS'], '-mod=readonly')
+            return b'{}'
+        with mock.patch.dict(os.environ, GOCACHE=self.plan.paths[0], GOFLAGS='-mod=readonly'), \
+                mock.patch.object(keys.subprocess, 'check_output', side_effect=command):
+            keys.execute(['go', 'env', '-json', *keys.GO_FIELDS])
+            cache.validate_manifest(self.plan, self.context, kind='compilation')
+            self.assertEqual(os.environ['GOCACHE'], self.plan.paths[0])
+        self.assertNotEqual(probes, [Path(self.plan.paths[0])])
+        self.assertTrue(all(not path.exists() for path in probes))
+
     def test_restored_module_verification_retries_cold_once(self):
         cache.publish_manifest(self.plan, self.context)
         calls = []

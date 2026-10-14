@@ -554,6 +554,15 @@ def _verify_native_smoke(directory, report, sensitive, *, local, source_proof, c
             or native.get('build_command') != ['go', 'build', './...']
             or native.get('build_sha256') != hashlib.sha256((directory/'native-build.log').read_bytes()).hexdigest()):
         raise Failure('native production build/source/context mismatch')
+    if native.get('cache_observation') is not None:
+        import native_smoke_reference as reference
+        try:
+            observation = json.loads((directory/'cache-observation.json').read_text())
+            if observation != native['cache_observation']:
+                raise reference.Failure('native cache observation raw receipt mismatch')
+            reference.verify_observation(observation, proof, context)
+        except reference.Failure as error:
+            raise Failure(str(error)) from error
     selected = native_selections(sensitive)
     packages = {MODULE+p[2:] for p in NATIVE_PACKAGES}
     try:
@@ -636,6 +645,11 @@ def run_native_smoke(out, deadline, report, save, execute, sensitive, *, local=F
         'context_sha256': None if local else cache_keys.digest(context),
         'qualification': 'local-diagnostic-only' if local else 'hosted',
         **({'local_guard': context} if local else {}), 'sensitive': sensitive, 'build_command': ['go', 'build', './...'], 'phase_seconds': {}}
+    observation = out/'cache-observation.json'
+    if observation.exists():
+        if local:
+            raise Failure('local diagnostics cannot claim a hosted cache observation')
+        native['cache_observation'] = json.loads(observation.read_text())
     save()
     def timed(name, operation):
         start = time.monotonic()

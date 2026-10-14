@@ -253,6 +253,7 @@ jobs:
       - run: python3 -B scripts/test_benchmark_shared_verify.py
       - run: python3 scripts/test_ci_tiers.py
       - run: python3 -B scripts/test_macos_smoke.py
+      - run: python3 -B scripts/test_native_smoke_reference.py
       - run: python3 -B scripts/test_native_full.py
       - run: python3 -B scripts/test_go_cache_context.py
       - run: python3 -B scripts/test_go_cache_steps.py
@@ -490,7 +491,12 @@ jobs:
         run: |
           printf 'GOCACHE=%s/pr-go-build\nGOMODCACHE=%s/pr-go-modules\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Restore verified trusted-main compilation seed
+        id: native_cache
         uses: ./.github/actions/verified-go-cache
+      - name: Record final verified native cache state
+        env:
+          NATIVE_CACHE_STATE: ${{ steps.native_cache.outputs.restore-state }}
+        run: python3 -B scripts/native_smoke_reference.py observe --output native-tier-results/cache-observation.json
       - name: Require Go 1.27.2 (go.mod's toolchain line)
         run: |
           go version
@@ -687,10 +693,13 @@ jobs:
       # them, and only if someone formats the key), and
       # the terminal UI layer in internal/cli/ui.go, whose parts the
       # onboarding screens adopt one PR at a time (they are listed by name:
-      # remove each as it gains a caller, and the exception once none is left).
+      # remove each as it gains a caller, and the exception once none is left),
+      # and internal/cli/list_title.go, the list's readable titles, which the
+      # width-aware rows of dev/specs/session-list-ui.md will call (remove the
+      # exception in that PR).
       - name: No unreachable production code
         run: |
-          shared='^internal/(state/statetest|storage/storagetest|cloudflare/cloudflaretest|testutil)/|^internal/credentials/keychain_darwin\.go:[0-9]+:[0-9]+: unreachable func: lookupForbidsUI$|^internal/state/published\.go:[0-9]+:[0-9]+: unreachable func: PublishedStateLoads$|^internal/cli/ui\.go:[0-9]+:[0-9]+: unreachable func: (textStyle\.(spin|spinEvery)|spinner\.stop)$|^internal/cloudflare/r2\.go:[0-9]+:[0-9]+: unreachable func: S3Credentials\.(String|GoString)$'
+          shared='^internal/(state/statetest|storage/storagetest|cloudflare/cloudflaretest|testutil)/|^internal/credentials/keychain_darwin\.go:[0-9]+:[0-9]+: unreachable func: lookupForbidsUI$|^internal/state/published\.go:[0-9]+:[0-9]+: unreachable func: PublishedStateLoads$|^internal/cli/ui\.go:[0-9]+:[0-9]+: unreachable func: (textStyle\.(spin|spinEvery)|spinner\.stop)$|^internal/cloudflare/r2\.go:[0-9]+:[0-9]+: unreachable func: S3Credentials\.(String|GoString)$|^internal/cli/list_title\.go:[0-9]+:[0-9]+: unreachable func: '
           linux_only='|^internal/credentials/keychain_errors\.go:[0-9]+:[0-9]+: unreachable func: errorForOSStatus$'
           # check LABEL EXCEPTIONS: deadcode's output for the current
           # GOOS/CGO_ENABLED, minus the exceptions, must be empty.
