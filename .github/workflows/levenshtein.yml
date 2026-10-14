@@ -183,6 +183,10 @@ jobs:
         with:
           go-version-file: levenshtein/.go-version
           cache: false
+      - name: Set controlled compilation/module paths
+        shell: bash
+        run: |
+          printf 'GOCACHE=%s/pr-go-build\nGOMODCACHE=%s/pr-go-modules\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Restore verified trusted-main compilation seed
         uses: ./app/.github/actions/verified-go-cache
         with:

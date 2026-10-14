@@ -56,7 +56,7 @@ class LaneVerdictTest(unittest.TestCase):
                 'test_ci_tiers.py', 'test_macos_smoke.py', 'test_native_full.py', 'test_go_cache_context.py',
                 'test_go_cache_steps.py', 'test_ci_cache.py', 'test_ci_lane_verdict.py', 'test_report_ci_timing.py', 'test_purge_ci.py',
                 'test_go_parent_shards.py', 'test_pr_reference.py',
-                'test_macos_smoke.py', 'test_benchmark_shared_verify.py'},
+                'test_benchmark_shared_verify.py'},
         }
         import re
         found = jobs((ROOT/'.github/workflows/test.yml').read_text())

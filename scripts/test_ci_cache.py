@@ -380,7 +380,7 @@ class WorkflowTests(unittest.TestCase):
                     self.assertIn('GOCACHE=%s/pr-go-build', previous)
                     self.assertIn('GOMODCACHE=%s/pr-go-modules', previous)
                     self.assertIn('"$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"', previous)
-        self.assertEqual(consumers, 10)
+        self.assertEqual(consumers, 11)
 
     def test_every_hit_still_executes_current_checks_and_forks_never_save(self):
         workflow = jobs((ROOT/'.github/workflows/test.yml').read_text())
