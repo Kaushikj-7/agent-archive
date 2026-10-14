@@ -146,13 +146,26 @@ func TestHandoffSharedFullIDRequiresHarnessBeforePromptEligibility(t *testing.T)
 	}
 }
 
+// exactListCountingStore observes legacy enumeration without changing reads.
+type exactListCountingStore struct {
+	storage.ObjectStore
+	lists atomic.Int64
+}
+
+func (s *exactListCountingStore) List(ctx context.Context, prefix string) ([]storage.Object, error) {
+	s.lists.Add(1)
+	return s.ObjectStore.List(ctx, prefix)
+}
+
 func TestHandoffMissingFullIDStillMatchesLocalTitle(t *testing.T) {
 	f := newPickerFixture(t)
 	query := "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
 	f.addSession(t, "codex", "mention-missing", "Explain "+query, f.env.now().Add(time.Hour))
+	store := &exactListCountingStore{ObjectStore: f.mem}
+	f.env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return store, nil }
 	out, stderr, code := runHandoff(t, f.env, query)
-	if code != 0 || !strings.Contains(out, "Explain "+query) || !strings.Contains(out, "source: local") {
-		t.Fatalf("code=%d stderr=%q output=%q", code, stderr, out)
+	if code != 0 || !strings.Contains(out, "Explain "+query) || !strings.Contains(out, "source: local") || store.lists.Load() != 0 {
+		t.Fatalf("code=%d stderr=%q output=%q lists=%d", code, stderr, out, store.lists.Load())
 	}
 }
 

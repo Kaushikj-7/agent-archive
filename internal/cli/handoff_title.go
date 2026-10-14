@@ -406,8 +406,10 @@ func (r *handoffQueryResolver) exactArchiveSession(ctx context.Context) (string,
 		if errors.Is(err, storage.ErrNotFound) {
 			err = nil
 		}
-	} else {
+	} else if reader.CatalogAuthority(store) {
 		keys, err = reader.NewMetadataFinder(catalogFor(r.env)).FindMetadataKeys(ctx, store, "sessions", r.query)
+	} else {
+		keys, err = r.exactRegisteredKeys(ctx, store)
 	}
 	if err != nil {
 		return "", exactNotFound, err
@@ -423,6 +425,27 @@ func (r *handoffQueryResolver) exactArchiveSession(ctx context.Context) (string,
 	}
 	parts := strings.Split(keys[0], "/")
 	return parts[len(parts)-3], exactUnique, nil
+}
+
+// exactRegisteredKeys probes only registered harnesses in a legacy store.
+// A full-ID miss must not enumerate the archive before a local title match.
+func (r *handoffQueryResolver) exactRegisteredKeys(ctx context.Context, store storage.ObjectStore) ([]string, error) {
+	var keys []string
+	for _, name := range agentmeta.Names(catalogFor(r.env)) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		key, err := archive.MetadataObjectKey(name, r.query)
+		if err != nil {
+			return nil, err
+		}
+		if _, err = store.Get(ctx, key); err == nil {
+			keys = append(keys, key)
+		} else if !errors.Is(err, storage.ErrNotFound) {
+			return nil, fmt.Errorf("read metadata %q: %w", key, err)
+		}
+	}
+	return keys, nil
 }
 
 // archiveRows is the archive's top-level sessions, read once, which also reads
