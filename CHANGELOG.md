@@ -8,7 +8,8 @@ follow [Semantic Versioning](https://semver.org/).
 
 - Stop a new session from waiting for hours behind a long upload queue.
   Each collection pass now starts with the most recently started session
-  that was not imported, and gives it one slot in every four; the rest still
+  that was not imported (a session before its own subagents), and gives
+  such sessions one slot in every four; the rest still
   go oldest first, so imports keep uploading their oldest sessions first.
   Codex subagent sessions whose parent session is not registered yet go
   after every other queued session. A session a pass runs out of time

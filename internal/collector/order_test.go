@@ -192,6 +192,12 @@ func TestOrderRequestsReservesLiveLane(t *testing.T) {
 	reg := func(id string, startedDaysAgo int, origin archive.SessionOrigin, waitsForParent bool) archive.SessionRegistration {
 		return archive.SessionRegistration{ArchiveSessionID: id, Origin: origin, NativeChild: waitsForParent, SessionStartedAt: base.Add(-time.Duration(startedDaysAgo) * 24 * time.Hour)}
 	}
+	// subagent links r to parent: a native Codex child once
+	// reconcileNativeLinks has run, or a Claude Code subagent.
+	subagent := func(r archive.SessionRegistration, parent string, native bool) archive.SessionRegistration {
+		r.ParentSessionID, r.NativeChild = parent, native
+		return r
+	}
 	for _, tc := range []struct {
 		name string
 		regs []archive.SessionRegistration
@@ -208,6 +214,15 @@ func TestOrderRequestsReservesLiveLane(t *testing.T) {
 			reg("i5", 5, archive.SessionOriginImport, false), reg("i4", 4, archive.SessionOriginImport, false),
 			reg("h1", 1, archive.SessionOriginHook, false), reg("d0", 0, archive.SessionOriginDiscovery, false),
 		}, []string{"d0", "i9", "i8", "i7", "h1", "i6", "i5", "i4"}},
+		// Regression: a live session's own subagents start after it, so
+		// newest-first alone gave each of them the lane before the session.
+		{"the live lane takes a session before its subagents", []archive.SessionRegistration{
+			reg("i9", 9, archive.SessionOriginImport, false), reg("i8", 8, archive.SessionOriginImport, false),
+			reg("i7", 7, archive.SessionOriginImport, false), reg("i6", 6, archive.SessionOriginImport, false),
+			reg("i5", 5, archive.SessionOriginImport, false), reg("live", 2, archive.SessionOriginHook, false),
+			subagent(reg("s1", 1, archive.SessionOriginHook, false), "live", true),
+			subagent(reg("s0", 0, archive.SessionOriginHook, false), "live", false),
+		}, []string{"live", "i9", "i8", "i7", "s0", "i6", "i5", "s1"}},
 		{"children waiting for a parent last, unrequested after them", []archive.SessionRegistration{
 			reg("unrequested", 20, archive.SessionOriginHook, false),
 			reg("c10", 10, archive.SessionOriginDiscovery, true), reg("c11", 11, archive.SessionOriginDiscovery, true),

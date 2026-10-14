@@ -54,8 +54,10 @@ find none say so without creating the data directory.
 
   They keep their place and the next pass carries on. Each pass takes the
   most recently started session that was not imported first, and one slot
-  in every four after that; the rest go oldest first, so an import's oldest
-  sessions, which the apps delete first, are uploaded first. Codex
+  in every four after that, taking sessions before subagents so a live
+  session is not held up by its own; the rest go oldest first, so an
+  import's oldest sessions, which the apps delete first, are uploaded
+  first. Codex
   subagent sessions whose parent session is not registered yet go after
   every other queued session. `status` lists a session a pass did not reach
   as **queued for the next pass, N ahead**, where N counts the queued

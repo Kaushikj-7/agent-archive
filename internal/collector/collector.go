@@ -839,9 +839,10 @@ func addError(errs map[string]error, archiveSessionID string, err error) {
 //     publishing it again once its parent registers; Codex discovery can
 //     queue hundreds of them at once.
 //   - The first slot, and every liveLaneEvery-th after it, goes to the
-//     most recently started requested session that was not imported, if
-//     any is left (reserveLiveLane), so a live session waits at most a few
-//     slots however long the backlog in front of it is. A backlog of imports
+//     most recently started requested top-level session that was not
+//     imported, if any is left (reserveLiveLane), so a live session waits
+//     at most a few slots however long the backlog in front of it is, and
+//     however many subagents it has started. A backlog of imports
 //     alone keeps its strict oldest-first order.
 func orderRequests(registrations []archive.SessionRegistration, requests map[string]state.Request) {
 	requested := func(reg archive.SessionRegistration) bool { return requests[reg.ArchiveSessionID].Token != "" }
@@ -881,20 +882,32 @@ const liveLaneEvery = 4
 
 // reserveLiveLane reorders queue, which is oldest start first, so that the
 // first slot and every liveLaneEvery-th after it take the most recently
-// started session left that was not imported, and every other slot (or a
-// lane slot with no such session left) takes the oldest left.
+// started top-level session left that was not imported, then, once none is
+// left, the most recently started such child (a subagent), and every other
+// slot (or a lane slot with neither left) takes the oldest left. Top-level
+// sessions come before children in the lane because a live session's own
+// subagents start after it: newest-first alone would give the lane to each
+// of them before the session itself.
 func reserveLiveLane(queue []archive.SessionRegistration) {
+	lane := make([]int, 0, len(queue))
+	for _, children := range []bool{false, true} {
+		for i := len(queue) - 1; i >= 0; i-- {
+			if !queue[i].Imported() && queue[i].IsChild() == children {
+				lane = append(lane, i)
+			}
+		}
+	}
 	ordered := make([]archive.SessionRegistration, 0, len(queue))
 	taken := make([]bool, len(queue))
-	front, back := 0, len(queue)-1
+	front, next := 0, 0
 	for len(ordered) < len(queue) {
 		if len(ordered)%liveLaneEvery == 0 {
-			for back >= 0 && (taken[back] || queue[back].Imported()) {
-				back--
+			for next < len(lane) && taken[lane[next]] {
+				next++
 			}
-			if back >= 0 {
-				taken[back] = true
-				ordered = append(ordered, queue[back])
+			if next < len(lane) {
+				taken[lane[next]] = true
+				ordered = append(ordered, queue[lane[next]])
 				continue
 			}
 		}
