@@ -60,7 +60,7 @@ type Cache struct {
 func New(dir string) *Cache { return &Cache{dir: dir, maxEntries: MaxEntries, maxBytes: MaxBytes} }
 
 func (k Key) valid() bool {
-	return k.Agent == "codex" && len(k.SourceIdentity) > 0 && len(k.SourceIdentity) <= 16384 && len(k.AdapterVersion) > 0 && len(k.AdapterVersion) <= 128 && len(k.FilterVersion) > 0 && len(k.FilterVersion) <= 128 && k.InspectionVersion == 1 && k.Proof.Version == 1 && k.Proof.Provider == "codex-ordinary" && k.Proof.SHA256 != [32]byte{} && k.Proof.Boundary >= 0 && k.RawBytes > 0 && k.RecordBytes > 0 && k.FilteredBytes > 0 && k.Records >= 0
+	return k.Agent == "codex" && len(k.SourceIdentity) > 0 && len(k.SourceIdentity) <= 16384 && len(k.AdapterVersion) > 0 && len(k.AdapterVersion) <= 128 && len(k.FilterVersion) > 0 && len(k.FilterVersion) <= 128 && k.InspectionVersion == 2 && k.Proof.Version == 1 && k.Proof.Provider == "codex-ordinary" && k.Proof.SHA256 != [32]byte{} && k.Proof.Boundary >= 0 && k.RawBytes > 0 && k.RecordBytes > 0 && k.FilteredBytes > 0 && k.Records >= 0
 }
 
 func (k Key) token() string {

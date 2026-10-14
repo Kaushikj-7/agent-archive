@@ -125,6 +125,12 @@ type cacheFaultSnapshot struct {
 	faults cacheFaultSources
 }
 
+// ContentProofFor explicitly retains the delegated input for fault injection.
+func (s cacheFaultSnapshot) ContentProofFor(snapshot agentapi.SourceSnapshot, in agentapi.NativeInput) bool {
+	actual, ok := snapshot.(cacheFaultSnapshot)
+	return ok && actual.SourceSnapshot == s.SourceSnapshot && s.proof.ContentProofFor(s.SourceSnapshot, in)
+}
+
 func (s cacheFaultSnapshot) ContentProof(ctx context.Context) (agentapi.SourceContentProof, error) {
 	if s.faults.proofFailure != nil {
 		return agentapi.SourceContentProof{}, s.faults.proofFailure

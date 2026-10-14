@@ -219,6 +219,10 @@ type SourceContentProof struct {
 // VerifiedContentSnapshot exposes provider-owned content equality while its
 // snapshot remains live. Unsupported providers retain the full inspection path.
 type VerifiedContentSnapshot interface {
+	// ContentProofFor attests the actual snapshot and every field of its input.
+	// Embedded capabilities must decline decorators unless they explicitly own
+	// the delegated input and its full inspection/error semantics.
+	ContentProofFor(SourceSnapshot, NativeInput) bool
 	ContentProof(context.Context) (SourceContentProof, error)
 	VerifyContent(context.Context) error
 }

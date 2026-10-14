@@ -17,7 +17,7 @@ import (
 )
 
 func cacheTestObservation() Observation {
-	return Observation{Key: Key{Agent: "codex", SourceIdentity: "file\x00/synthetic/rollout.jsonl\x00thread", AdapterVersion: "1", FilterVersion: "18", InspectionVersion: 1, Proof: agentapi.SourceContentProof{Version: 1, Provider: "codex-ordinary", SHA256: [32]byte{1}, Boundary: 128}, RawBytes: 1024, RecordBytes: 512, FilteredBytes: 1024}, Summary: agentapi.ImportSummary{Conversation: true, NativeStartAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), RetainedBytes: 32, RetainedRecords: 1}}
+	return Observation{Key: Key{Agent: "codex", SourceIdentity: "file\x00/synthetic/rollout.jsonl\x00thread", AdapterVersion: "1", FilterVersion: "18", InspectionVersion: 2, Proof: agentapi.SourceContentProof{Version: 1, Provider: "codex-ordinary", SHA256: [32]byte{1}, Boundary: 128}, RawBytes: 1024, RecordBytes: 512, FilteredBytes: 1024}, Summary: agentapi.ImportSummary{Conversation: true, NativeStartAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), RetainedBytes: 32, RetainedRecords: 1}}
 }
 
 func TestCacheMissingColdWarmAndCorrupt(t *testing.T) {
@@ -271,5 +271,35 @@ func TestCacheProductionDiskCapsAndDirectoryTraversalBound(t *testing.T) {
 	}
 	if err := cache.StoreBatch(t.Context(), []Observation{cacheTestObservation()}); err == nil {
 		t.Fatal("unbounded cache directory accepted")
+	}
+}
+
+func TestCacheInvalidatesFactsFromUnqualifiedInspectionVersion(t *testing.T) {
+	cache := New(filepath.Join(t.TempDir(), "inspection"))
+	observed := cacheTestObservation()
+	legacy := observed.Key
+	legacy.InspectionVersion = 1
+	if err := os.Mkdir(cache.dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	token := legacy.token()
+	data, err := json.Marshal(record{formatVersion, token, observed.Summary, summaryDigest(token, observed.Summary)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cache.path(legacy), data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, hit := cache.Lookup(t.Context(), legacy); hit {
+		t.Fatal("unqualified inspection version still accepted")
+	}
+	if _, hit := cache.Lookup(t.Context(), observed.Key); hit {
+		t.Fatal("qualified inspection reused old facts")
+	}
+	if err := cache.StoreBatch(t.Context(), []Observation{observed}); err != nil {
+		t.Fatal(err)
+	}
+	if got, hit := cache.Lookup(t.Context(), observed.Key); !hit || got != observed.Summary {
+		t.Fatalf("current qualified facts unavailable: %+v, %v", got, hit)
 	}
 }
