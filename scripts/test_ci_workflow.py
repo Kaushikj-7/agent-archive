@@ -148,7 +148,7 @@ class CandidateCampaignTest(unittest.TestCase):
     def test_candidate_validation_never_restores_shared_go_build_state(self):
         # Candidate evidence must come from fresh source/module verification,
         # not executable build state restored from another workflow's cache.
-        expected = {'test': 6, 'levenshtein': 2, 'extended': 4}
+        expected = {'test': 7, 'levenshtein': 2, 'extended': 4}
         for name, count in expected.items():
             workflow = (ROOT / '.github/workflows' / f'{name}.yml').read_text()
             setup = [step for job in jobs(workflow).values() for step in steps(job)
@@ -173,9 +173,9 @@ class CandidateCampaignTest(unittest.TestCase):
     def test_candidate_test_keeps_all_pr_gates(self):
         workflow = (ROOT / '.github/workflows/test.yml').read_text()
         self.assertIn('  pull_request:', workflow)
-        self.assertEqual(set(jobs(workflow)), {'linux-race', 'linux-short', 'linux-full', 'script-tests', 'git-identity-compatibility', 'macos-smoke', 'cross-build', 'lint', 'tier-plan'})
+        self.assertEqual(set(jobs(workflow)), {'linux-race', 'linux-short', 'linux-full', 'script-tests', 'git-identity-compatibility', 'macos-smoke', 'cross-build', 'lint', 'tier-plan', 'source-audit'})
         for name, text in jobs(workflow).items():
-            if name not in ('linux-race', 'linux-short', 'linux-full'):
+            if name not in ('linux-race', 'linux-short', 'linux-full', 'source-audit'):
                 self.assertIsNone(job_key(text, 'if'), name)
         self.assertIn('--tier full --suite linux', workflow)
         self.assertIn('github.event.pull_request.number || github.ref', workflow)
@@ -233,9 +233,9 @@ class CadenceTest(unittest.TestCase):
         self.assertIn('--tier full --suite linux', found['linux-full'])
         self.assertIn('shard: [0, 1, 2, 3]', found['linux-short'])
         self.assertIn('fail-fast: false', found['linux-short'])
-        self.assertIn('python3 -B scripts/run_go_shard.py --workers 4 --shard',found['linux-short'])
+        self.assertIn('python3 -B scripts/run_go_shard.py --workers 4 --plain-audit-owned --shard',found['linux-short'])
         self.assertEqual(job_key(found['linux-race'],'if'),'always()')
-        self.assertEqual(job_key(found['linux-race'],'needs'),'[linux-short, linux-full, script-tests, macos-smoke, tier-plan]')
+        self.assertEqual(job_key(found['linux-race'],'needs'),'[linux-short, linux-full, script-tests, macos-smoke, tier-plan, source-audit]')
         self.assertIn('--verdict', found['linux-race'])
         self.assertIn('--reconcile', found['linux-race'])
         self.assertIn('--tier "$tier" --evidence', found['script-tests'])
@@ -243,6 +243,19 @@ class CadenceTest(unittest.TestCase):
         for script in ('test_release_candidate.py','test_ci_workflow.py','test_stage_native_verify.py','test_scope_native_verify.py','test_go_shards.py','test_ci_tiers.py'):
             step=next(step for step in steps(found['script-tests']) if script in step)
             self.assertIsNone(step_key(step,'if'))
+
+    def test_plain_audit_is_required_source_bound_and_owned_short_only(self):
+        workflow=(ROOT/'.github/workflows/test.yml').read_text(); found=jobs(workflow)
+        audit=found['source-audit']
+        self.assertEqual(job_key(audit,'if'), "github.event_name == 'pull_request'")
+        self.assertIn('--tier pr --suite audit --seconds 780', audit)
+        self.assertIn('name: go-source-audit', audit)
+        self.assertIn('--plain-audit-owned',found['linux-short'])
+        self.assertIn('--audit-evidence "$RUNNER_TEMP/source-audit-evidence"',found['linux-race'])
+        self.assertIn('source-audit',job_key(found['linux-race'],'needs'))
+        boundary=(ROOT/'internal/agents/builtin/nativecapture_boundary_test.go').read_text()
+        self.assertIn('testing.Short() && os.Getenv("AGENT_ARCHIVE_PLAIN_SOURCE_AUDIT_OWNED") == "1"', boundary)
+        self.assertIn('"-p=1", "-deps", "-compiled", "-test", "-export"',boundary)
 
     def test_extended_event_matrix_and_full_size_backstops(self):
         workflow = EXTENDED_YML.read_text()
@@ -273,7 +286,7 @@ class CadenceTest(unittest.TestCase):
         runner=(ROOT/'scripts/run_ci_tier.py').read_text()
         self.assertIn("if tier == 'full':", runner)
         self.assertIn('full_race.run(packages, out, deadline', runner)
-        self.assertIn("execute(common + ['-short'] + packages, 'race', True)", runner)
+        self.assertIn("execute(common + ['-short'] + packages, 'race', True, env=short_env)", runner)
         full = (ROOT / 'scripts/full_race.py').read_text()
         self.assertIn("COMMON = ['go', 'test', '-race', '-count=1', '-json', '-timeout', '20m']", full)
         self.assertNotIn("'-short'", full)

@@ -306,6 +306,58 @@ def verify_selected(actual, selected, children=None, real_manager=False):
                     raise Failure('required full-scale child missing')
 
 
+SOURCE_AUDIT_PACKAGE = MODULE + 'internal/agents/builtin'
+SOURCE_AUDIT_TEST = 'TestNativeCaptureWholeSourceBoundary'
+SOURCE_AUDIT_ENV = 'AGENT_ARCHIVE_PLAIN_SOURCE_AUDIT_OWNED'
+SOURCE_AUDIT_SKIP = 'whole-source audit owned by required plain source-audit gate; race body NOT RUN'
+SOURCE_AUDIT_COMMAND = ['go', 'test', '-count=1', '-json', '-timeout', '12m', '-p', '1',
+                        '-parallel', '1', '-run', '^' + SOURCE_AUDIT_TEST + '$', './internal/agents/builtin']
+
+
+def verify_owned_audit_skip(raw):
+    actual = terminals(raw)
+    audit = [r for r in actual if r['package'] == SOURCE_AUDIT_PACKAGE and r['test'] == SOURCE_AUDIT_TEST]
+    if len(audit) != 1 or audit[0]['status'] != 'skip' or SOURCE_AUDIT_SKIP not in audit[0].get('reason', ''):
+        raise Failure('owned race audit must record explicit NOT RUN skip')
+
+
+def source_audit_body(raw):
+    selected = {SOURCE_AUDIT_PACKAGE: [SOURCE_AUDIT_TEST]}
+    verify_pr_stream(raw, selected)
+    lifecycle = [r['Action'] for r in full_race.shards.json_stream(raw)
+                 if r.get('Test') == SOURCE_AUDIT_TEST and r.get('Action') != 'output']
+    if lifecycle != ['run', 'pass']:
+        raise Failure('plain source audit lacks actual named passing body')
+    actual = body_evidence(raw, short=False)
+    verify_selected(actual['actual'], selected)
+    return actual
+
+
+def verify_source_audit(directory, source):
+    """Require exact-source plain named body and package PASS, never compilation."""
+    directory = Path(directory)
+    report = json.loads((directory / 'tier.json').read_text())
+    proof = report.get('source_proof', {})
+    if (report.get('schema') != 1 or report.get('success') is not True
+            or report.get('source') != source or proof.get('source') != source
+            or not re.fullmatch('[0-9a-f]{40}', proof.get('tree', ''))
+            or report.get('tier') != 'pr' or report.get('suite') != 'audit'
+            or len(report.get('invocations', [])) != 1):
+        raise Failure('plain source audit source/status mismatch')
+    if proof != full_race.source_proof(ROOT):
+        raise Failure('plain source audit tracked source proof mismatch')
+    invocation = report['invocations'][0]
+    if (invocation.get('command') != SOURCE_AUDIT_COMMAND or invocation.get('log') != 'source-audit.jsonl'
+            or invocation.get('performance_enabled') is not False
+            or invocation.get('real_systemd_enabled') is not False):
+        raise Failure('plain source audit command/environment mismatch')
+    raw = (directory / 'source-audit.jsonl').read_text()
+    actual = source_audit_body(raw)
+    if invocation.get('evidence') != actual:
+        raise Failure('plain source audit raw body evidence mismatch')
+    return report
+
+
 def run_suite(tier, suite, out, extras=None, seconds=2400):
     out.mkdir(parents=True, exist_ok=True)
     source = git('rev-parse', 'HEAD')
@@ -332,13 +384,21 @@ def run_suite(tier, suite, out, extras=None, seconds=2400):
         text = checked(command, out/(name+'.jsonl'), deadline, env)
         if command[0] == 'bash':
             text = '\n'.join(line for line in text.splitlines() if line.startswith('{'))
-        proof = body_evidence(text, short)
+        proof = source_audit_body(text) if command == SOURCE_AUDIT_COMMAND else body_evidence(text, short)
         if selected:
-            if tier == 'pr':
+            if tier == 'pr' or command == SOURCE_AUDIT_COMMAND:
                 verify_pr_stream(text, selected)
             verify_selected(proof['actual'], selected, children, real_manager=real_manager)
         invocation['evidence'] = proof
         path.write_text(json.dumps(report, indent=2)+'\n')
+    if suite == 'audit' or tier == 'daily' and suite == 'linux':
+        audit_source = full_race.source_proof(ROOT)
+        report['audit_source_proof'] = audit_source
+        audit_started = time.monotonic()
+        execute(SOURCE_AUDIT_COMMAND, 'source-audit', selected={SOURCE_AUDIT_PACKAGE: [SOURCE_AUDIT_TEST]})
+        report['audit_plain_seconds'] = time.monotonic() - audit_started
+        if full_race.source_proof(ROOT) != audit_source:
+            raise Failure('plain source audit source changed during execution')
     common = ['go', 'test', '-race', '-count=1', '-json', '-timeout', '20m']
     if suite == 'macos' and tier in ('pr', 'daily'):
         execute(['bash', 'scripts/test_macos_smoke.sh'], 'native-smoke', short=True)
@@ -377,7 +437,11 @@ def run_suite(tier, suite, out, extras=None, seconds=2400):
                         pattern = '^('+'|'.join(re.escape(n) for n in names)+')$'
                         execute(common + ['-short', '-run', pattern, './'+relative], 'regression-'+relative.replace('/', '-'), True, selected={pkg:names})
                 else:
-                    execute(common + ['-short'] + packages, 'race', True)
+                    short_env = dict(os.environ, AGENT_ARCHIVE_REAL_SYSTEMD='0', **{SOURCE_AUDIT_ENV: '1'})
+                    short_env.pop('AGENT_ARCHIVE_PERF', None)
+                    execute(common + ['-short'] + packages, 'race', True, env=short_env)
+                    if tier == 'daily':
+                        verify_owned_audit_skip((out/'race.jsonl').read_text())
         if tier == 'daily' and suite == 'linux':
             chosen = [e for e in catalog()['restorations'] if e['restore'] == 'daily']
             by_pkg = {}
@@ -437,6 +501,8 @@ def run_suite(tier, suite, out, extras=None, seconds=2400):
         raise Failure('PR regression source changed during execution')
     report['success'] = True
     path.write_text(json.dumps(report,indent=2)+'\n')
+    if suite == 'audit':
+        verify_source_audit(out, source)
 
 
 def verify_full(directory, plan):
@@ -584,8 +650,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--plan', action='store_true')
     parser.add_argument('--verify', action='store_true')
+    parser.add_argument('--verify-audit', action='store_true')
     parser.add_argument('--tier', choices=['pr','daily','full'])
-    parser.add_argument('--suite', choices=['linux','macos','fuzz','systemd','extra'], default='linux')
+    parser.add_argument('--suite', choices=['linux','macos','fuzz','systemd','extra','audit'], default='linux')
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--extra-plan', type=Path)
     parser.add_argument('--seconds', type=int, default=2400)
@@ -606,6 +673,9 @@ def main():
             tier = 'full'  # exact candidates and manual suites cannot be downgraded
         if event == 'schedule' and args.tier and args.tier != resolved:
             raise Failure('explicit tier conflicts with scheduled cadence')
+        if args.verify_audit:
+            verify_source_audit(args.output, os.environ['GITHUB_SHA'])
+            return 0
         if args.verify:
             verify_full(args.output, json.loads(args.extra_plan.read_text()))
             return 0
@@ -627,7 +697,7 @@ def main():
             extra = json.loads(args.extra_plan.read_text()) if args.extra_plan else None
             if extra and extra['source'] != git('rev-parse','HEAD'):
                 raise Failure('extra plan source mismatch')
-            if tier == 'pr' and args.suite not in ('extra', 'macos'):
+            if tier == 'pr' and args.suite not in ('extra', 'macos', 'audit'):
                 raise Failure('PR ordinary coverage belongs to exhaustive shards')
             run_suite(tier,args.suite,args.output,extra,args.seconds)
     except (Failure,ValueError,KeyError,TypeError,OSError,subprocess.SubprocessError) as error:

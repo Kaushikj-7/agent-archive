@@ -139,17 +139,38 @@ Predicted bin loads are logged separately from measured worker phase durations.
 Git invocation and worker0 vet costs stay separate from weights; the assigned
 Git package stays isolated on whichever worker receives it.
 
-The current hints use one successful hosted Linux short observation pair from
-run38513512721 at cd39753074cade7174a25dc0beb8e1b83b0300c8. Artifact IDs,
-archive digests, exact worker settings and raw-file hashes are retained along
-with the previous measurement request. This small sample has equivalent representative runtime inputs at the base and is advice,
-not current-candidate or native Darwin full timing. Live discovery assigns unknown
-names the 1000ms fallback and ignores stale hints. Four workers are a hosted
-trial; retain that default only after current-candidate whole-job measurements
-justify the extra compilation, allocation and startup costs. The runner accepts
-explicit two or four workers; the full-race scheduling caller retains its two
-partition default. Worker-count cache ownership prevents two/four trial cache
-identities from mixing. Hosted comparisons must
+The current hints use the four successful representative shard artifacts from
+run38525632395 at tested source2a120d1fd2074122fb245e9d3ea2b384069368dc.
+The overall workflow failed a CI test fixture; it is not a successful workflow
+observation. Artifact IDs, archive digests, exact settings, raw-file hashes and
+immutable historical catalog bytes are pinned, and prior requests are retained.
+The source-audit move uses an explicit observed residual: builtin package
+246.889s minus its sequential whole-source audit244.930s leaves1.959s of
+observed remaining package cost. This is derived advice, not a measured run of
+the changed scheduling. Local shards without independent audit ownership restore
+the excluded244.930s ranking cost. Observed vet42.087s and isolated Git3.265s
+seed fixed scheduling offsets; listing/startup/queue delays stay separate.
+Four workers remain a hosted trial. Current whole-job latency and allocation
+must justify retaining them; no five-minute target or wall-time saving is
+claimed from these logical rankings. The generic partition helper accepts1..16
+bins for shared native scheduling; representative PR topology/cache ownership
+accepts only two/four and the full-race default stays two.
+
+Every PR runs the exact whole-source architecture/type audit in a separate
+required plain job, with count=1, package concurrency1 and its existing inner
+go list-export concurrency1. Assertions are unchanged. The job retains actual
+named run/PASS, package PASS, command and tracked source proof. Representative
+shards skip only that short race body under explicit --plain-audit-owned; raw
+artifacts mark the race body NOT RUN and retain its skip reason. Required shard
+reconciliation fails without the independently passing plain audit evidence.
+Local short tests without this ownership still run the audit. Daily Linux
+coverage executes the same actual plain audit before owned short race coverage.
+Weekly/candidate non-short Linux and Darwin coverage execute the original body;
+only the redundant candidate PR audit job intentionally skips. This is a static
+architecture/type audit; relocation does not substitute compilation for a test
+body or change its source/permission assertions.
+
+Hosted comparisons must
 record whole-job latency and rounded runner allocation, including scripts,
 verdict and native verification, against both the original spend and the new
 single-worker fixture baseline. A local warm serial run proves coverage rather

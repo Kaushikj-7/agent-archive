@@ -324,10 +324,54 @@ class SourceProofTest(unittest.TestCase):
                 self.assertTrue(tier.pr_extras(event,tested)['regressions'])
 
 
+class SourceAuditTest(unittest.TestCase):
+    proof = {'source': 'a'*40, 'tree': 'b'*40}
+
+    def raw(self):
+        return events({'Action': 'run', 'Package': tier.SOURCE_AUDIT_PACKAGE, 'Test': tier.SOURCE_AUDIT_TEST},
+                      {'Action': 'pass', 'Package': tier.SOURCE_AUDIT_PACKAGE, 'Test': tier.SOURCE_AUDIT_TEST},
+                      {'Action': 'pass', 'Package': tier.SOURCE_AUDIT_PACKAGE})
+
+    def test_plain_gate_requires_exact_source_command_body_and_package_pass(self):
+        import copy
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(tier, 'git', return_value='a'*40), mock.patch.object(tier.full_race, 'source_proof', return_value=self.proof), mock.patch.dict(os.environ, {'GITHUB_SHA': 'a'*40}):
+            out = Path(d)
+            def checked(command, output, deadline, env):
+                self.assertEqual(command, tier.SOURCE_AUDIT_COMMAND)
+                self.assertNotIn('-race', command); self.assertNotIn('-short', command)
+                self.assertEqual(command[command.index('-p')+1], '1')
+                output.write_text(self.raw()); return self.raw()
+            with mock.patch.object(tier, 'checked', side_effect=checked): tier.run_suite('pr', 'audit', out)
+            report = tier.verify_source_audit(out, 'a'*40)
+            self.assertGreaterEqual(report['audit_plain_seconds'], 0)
+            for update in (lambda r: r.update(success=False), lambda r: r['source_proof'].update(tree='c'*40),
+                           lambda r: r.update(source='c'*40), lambda r: r['invocations'][0]['command'].append('-race'),
+                           lambda r: r['invocations'][0].update(evidence={}), lambda r: r['invocations'].append(r['invocations'][0])):
+                bad = copy.deepcopy(report); update(bad); (out/'tier.json').write_text(json.dumps(bad))
+                with self.assertRaises(tier.Failure): tier.verify_source_audit(out, 'a'*40)
+            (out/'tier.json').write_text(json.dumps(report))
+            rows = [json.loads(line) for line in self.raw().splitlines()]
+            for bad in (rows[1:], rows[:-1], rows + [rows[-1]],
+                        [dict(r, Action='skip') if r.get('Test') and r['Action']=='pass' else r for r in rows],
+                        rows + [{'Action': 'run', 'Package': tier.SOURCE_AUDIT_PACKAGE, 'Test': 'TestOther'}]):
+                (out/'source-audit.jsonl').write_text(events(*bad))
+                with self.assertRaises(tier.Failure): tier.verify_source_audit(out, 'a'*40)
+
+    def test_owned_race_skip_is_explicit_and_plain_pass_cannot_replace_it(self):
+        raw = events({'Action':'run','Package':tier.SOURCE_AUDIT_PACKAGE,'Test':tier.SOURCE_AUDIT_TEST},
+                     {'Action':'output','Package':tier.SOURCE_AUDIT_PACKAGE,'Test':tier.SOURCE_AUDIT_TEST,'Output':tier.SOURCE_AUDIT_SKIP},
+                     {'Action':'skip','Package':tier.SOURCE_AUDIT_PACKAGE,'Test':tier.SOURCE_AUDIT_TEST})
+        tier.verify_owned_audit_skip(raw)
+        for bad in ('', self.raw(), raw.replace(tier.SOURCE_AUDIT_SKIP, 'unrelated skip')):
+            with self.assertRaises(tier.Failure): tier.verify_owned_audit_skip(bad)
+
+
 class ExecutionPlanTest(unittest.TestCase):
     def test_daily_executes_all_short_and_four_exact_full_bodies_with_expected_children(self):
         entries=[e for e in tier.catalog()['restorations'] if e['restore']=='daily']
         def command(args,output,deadline,env=None):
+            if args == tier.SOURCE_AUDIT_COMMAND:
+                text = SourceAuditTest().raw(); output.write_text(text); return text
             lines=[]
             for pkg in sorted({tier.MODULE+e['package'] for e in entries}):
                 selected=[e for e in entries if tier.MODULE+e['package']==pkg]
@@ -343,14 +387,18 @@ class ExecutionPlanTest(unittest.TestCase):
                         lines.append({'Action':'pass','Package':pkg,'Test':e['test']+'/'+child})
                     lines.append({'Action':'pass','Package':pkg,'Test':e['test']})
                 lines.append({'Action':'pass','Package':pkg})
+            if '-short' in args:
+                self.assertEqual(env[tier.SOURCE_AUDIT_ENV], '1')
+                lines += [{'Action':'run','Package':tier.SOURCE_AUDIT_PACKAGE,'Test':tier.SOURCE_AUDIT_TEST}, {'Action':'output','Package':tier.SOURCE_AUDIT_PACKAGE,'Test':tier.SOURCE_AUDIT_TEST,'Output':tier.SOURCE_AUDIT_SKIP}, {'Action':'skip','Package':tier.SOURCE_AUDIT_PACKAGE,'Test':tier.SOURCE_AUDIT_TEST}, {'Action':'pass','Package':tier.SOURCE_AUDIT_PACKAGE}]
             text=events(*lines);output.write_text(text);return text
-        with tempfile.TemporaryDirectory() as d,mock.patch.object(tier,'git',return_value='a'*40),mock.patch.object(tier,'checked',side_effect=command),mock.patch.dict(os.environ,{'GITHUB_SHA':'a'*40}):
+        with tempfile.TemporaryDirectory() as d,mock.patch.object(tier.full_race,'source_proof',return_value=SourceAuditTest.proof),mock.patch.object(tier,'git',return_value='a'*40),mock.patch.object(tier,'checked',side_effect=command),mock.patch.dict(os.environ,{'GITHUB_SHA':'a'*40}):
             tier.run_suite('daily','linux',Path(d))
             report=json.loads((Path(d)/'tier.json').read_text())
-            self.assertTrue(report['success']);self.assertEqual(len(report['invocations']),4)
-            self.assertIn('-short',report['invocations'][0]['command'])
-            self.assertTrue(all('-short' not in i['command'] for i in report['invocations'][1:]))
-            restored={r['test'] for i in report['invocations'][1:] for r in i['evidence']['actual'] if '/' not in r['test']}
+            self.assertTrue(report['success']);self.assertEqual(len(report['invocations']),5)
+            self.assertEqual(report['invocations'][0]['command'], tier.SOURCE_AUDIT_COMMAND)
+            self.assertIn('-short',report['invocations'][1]['command'])
+            self.assertTrue(all('-short' not in i['command'] for i in report['invocations'][2:]))
+            restored={r['test'] for i in report['invocations'][2:] for r in i['evidence']['actual'] if '/' not in r['test']}
             self.assertEqual(restored,{e['test'] for e in entries})
 
     def test_real_manager_is_enabled_only_for_dedicated_bodies_not_race_perf_listing(self):
