@@ -2,6 +2,17 @@
 
 Status: Implemented for supported ordinary-session publication; history-source name refresh and broader native acceptance remain incomplete. Prepared October 6, 2026; status reconciled October 11, 2026. Claude generated/custom titles, Codex external label evidence and collector refresh, and injected-context cleanup are implemented. Codex defaults to verified settled file lookup; bounded native metadata lookup requires explicit `codex_name_lookup: "native"` opt-in because startup can write native state and desktop coexistence remains unverified. Real sidebar/picker comparisons remain pending in the linked acceptance record. The design below preserves the original plan; current code and user documentation own the shipped contract.
 
+
+Status checked against main `28e6ac88` on 2026-10-13. Implementations
+[#346](https://github.com/wangjohn/agent-archive/pull/346),
+[#350](https://github.com/wangjohn/agent-archive/pull/350), and
+[#353](https://github.com/wangjohn/agent-archive/pull/353) supply the ordinary
+publication path. The [comparison record](../../maintainers/native-session-name-comparisons.md)
+remains PARTIAL: synthetic checks passed; native UI acceptance is blocked.
+History-source refresh and desktop coexistence remain separate acceptance gaps.
+The producer versions and implementation descriptions below are historical
+observations from preparation, not new runtime probes.
+
 Agent Archive should display the name a person recognizes from Codex or Claude Code, using a cleaned prompt preview only when a native name is unavailable. Capture names during collection, retain the filtered evidence, refresh them after renames, and publish them through the existing archive pipeline. Ordinary `list` must continue to work from archived metadata without launching an agent or reading local conversations.
 
 ## User visible behavior
@@ -24,7 +35,7 @@ Codex 0.159.2 also has `$CODEX_HOME/session_index.jsonl`, containing `id`, `thre
 
 Recent Codex storage distinguishes database `name`, `title`, and `preview`, and legacy and paginated histories have different display rules. Thus a name index alone is not a universal implementation of `thread.name`. Let the native API resolve that distinction; restrict a file-index fallback to explicitly verified producer/history combinations. [Codex storage implementation](https://github.com/openai/codex/blob/main/codex-rs/state/src/runtime/threads.rs)
 
-The repository currently has no Codex name capture. `internal/discovery/index.go` reads a bounded number of SQLite rollout-path hints, deliberately skips live WAL databases, and never selects names. `CodexRolloutLookup` supplies history locators, not labels. Neither should be overloaded to become a name or identity authority.
+At proposal preparation, the repository had no Codex name capture. `internal/discovery/index.go` reads a bounded number of SQLite rollout-path hints, deliberately skips live WAL databases, and never selects names. `CodexRolloutLookup` supplies history locators, not labels. Neither should be overloaded to become a name or identity authority.
 
 ### Claude Code
 
@@ -34,7 +45,7 @@ Anthropic's official SDK session reader recognizes `customTitle` and `aiTitle`, 
 
 The generated title is carried by an `ai-title` record with `aiTitle`, while explicit renames use `custom-title` with `customTitle`. Reported native head/tail blind spots can miss an old rename in a long transcript. Retained full-source parsing should preserve explicit-name precedence rather than reproduce that sampling defect. Verify the installed producer during acceptance. [Producer record examples and resolution behavior](https://github.com/anthropics/claude-code/issues/93115)
 
-Current code already filters `custom-title` records in `internal/agents/nativecodec/filter_session_labels.go`, derives their latest value in `parse.go`, and prefers `Metadata.Name` in `internal/archive/session_labels.go`. `ai-title` is not handled by that label filter. The documentation explicitly leaves automatic CLI naming unverified. The existing `TestSessionLabelsLastCustomTitleWins` passes.
+At proposal preparation, code filtered `custom-title` records in `internal/agents/nativecodec/filter_session_labels.go`, derives their latest value in `parse.go`, and prefers `Metadata.Name` in `internal/archive/session_labels.go`. `ai-title` was not yet handled by that label filter; it is now retained by the implemented typed filter. The documentation explicitly leaves automatic CLI naming unverified. The existing `TestSessionLabelsLastCustomTitleWins` passes.
 
 ## Shared design
 

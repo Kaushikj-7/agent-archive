@@ -18,7 +18,7 @@ and source status are linked here.
 
 ## Current reconciliation
 
-Reconciled against main `4b9b612f` (2026-10-13). Closed original PRs were
+Reconciled against main `28e6ac88` (2026-10-13). Closed original PRs were
 source-superseded rather than merged unchanged. Their historical measurements
 do not establish current-main performance acceptance.
 
@@ -32,13 +32,30 @@ do not establish current-main performance acceptance.
 | #383 stats selection | Source-superseded by #460; original year-window benchmark preserved in #466 | Full-window and matched-performance qualification remain open. |
 | #375 prepared stats, #380 ranking | #375, #470 ranking and #474 scratch reuse merged; original #380 source-superseded | Source review, CI and combined integration completed for the merged stack. Fresh matched performance acceptance remains open. |
 
-[#473](https://github.com/wangjohn/agent-archive/pull/473) supplies Older actions,
-but handoff still loads complete archive metadata before showing the picker.
-Repository scope still uses complete-summary fallback. The next source slice is
-the [bounded repository picker plan](bounded-repository-picker.md), which defines
-versioned scoped indexes, complete construction/upgrade, bounded reader pages,
-local/archive merging and remote Older actions. Its seven PRs extend the delivered
-foundation; production provider and performance gates below remain separate.
+The bounded repository picker source is now integrated. PRs
+[#485](https://github.com/wangjohn/agent-archive/pull/485),
+[#486](https://github.com/wangjohn/agent-archive/pull/486),
+[#488](https://github.com/wangjohn/agent-archive/pull/488),
+[#487](https://github.com/wangjohn/agent-archive/pull/487),
+[#492](https://github.com/wangjohn/agent-archive/pull/492), and
+[#493](https://github.com/wangjohn/agent-archive/pull/493) add the format boundary,
+scoped indexes, construction/upgrade, bounded readers, local/archive merging,
+and browser remote Older and lazy complete search. Supported catalog queries
+can use bounded first pages. Legacy and unsupported queries retain complete
+fallbacks. Production catalog activation remains refused by the provider gate.
+The [bounded repository picker plan](bounded-repository-picker.md) preserves
+its original design; its earlier status is not current integration evidence.
+
+Further allocation reductions landed in
+[#502](https://github.com/wangjohn/agent-archive/pull/502) (collector fixtures),
+[#506](https://github.com/wangjohn/agent-archive/pull/506) (source JSONL encoding),
+and [#508](https://github.com/wangjohn/agent-archive/pull/508) (complete search
+candidate buffers). These changes do not close end-to-end performance gates.
+As of this reconciliation,
+[#503](https://github.com/wangjohn/agent-archive/pull/503) (matched command harness),
+[#504](https://github.com/wangjohn/agent-archive/pull/504) (lifecycle acceptance),
+and [#499](https://github.com/wangjohn/agent-archive/pull/499) (picker scale
+qualification) remain open. Their proposed evidence is not merged acceptance.
 
 The [default listing contract](../maintainers/list-performance.md) now
 distinguishes legacy header enumeration and private summary reuse from

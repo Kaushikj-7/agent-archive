@@ -14,13 +14,19 @@ actively working on it. Code and user documentation remain the current contract.
 Historical-only ownership status reconciled 2026-10-12 after #433 merged as
 `18ca0c48`; fragment and combined acceptance work remain open.
 
+Performance and native-name rows reconciled 2026-10-13 against main `28e6ac88`.
+The [performance record](cli-performance.md#current-reconciliation) separates
+merged source from open qualification PRs. Native names retain their existing
+[implemented design](implemented/native-session-names.md); no duplicate proposal
+or broader UI acceptance is added.
+
 ## Remaining implementation
 
 | Proposal | Implemented | Remaining |
 | --- | --- | --- |
 | [Historical backfill recovery](historical-backfill-recovery.md) | Diagnostics, portable recovery, rollout lookup, history lifecycle and native child capture; recovery hardening; historical-only ownership and bounded bulk mappings (#433). | [Fragment format foundation](../specs/codex-fragments.md) is proposed with schema checks; decoder/filter/consumer, lifecycle, opt-in import, repair journal and the combined acceptance matrix remain gated. |
-| [CLI performance](cli-performance.md) | Synthetic command and historical listing benchmark harnesses with output validation. | Matched repaired-harness measurements and proposed follow-ups. |
-| [Archive listing at scale](listing-at-scale.md) | Parallel listing, tracing, bounded metadata-body reads; 10k benchmark and 10k/20k operation-count coverage. | Full 1k/10k/100k measurement matrix and an index that bounds LIST header cost. |
+| [CLI performance](cli-performance.md) | Concurrent reads, cache/query/stats work, opt-in catalog and bounded picker source; historical benchmark controls and allocation reductions. | Fresh matched command/scale measurements, production provider/cutover qualification and acceptance. |
+| [Archive listing at scale](listing-at-scale.md) | Parallel listing, tracing, bounded metadata bodies and opt-in scoped catalog pages with remote Older. | Default legacy LIST headers still scale with archive size; provider activation and fresh matched scale measurements remain open. |
 | [Cloud capture](cloud-capture.md) | No cloud collector/push or vendor pull implementation. | Proposed, unscheduled; requires producer probes and runtime/authentication design. |
 
 [Setup recent import](../specs/setup-recent-import.md) now includes both automatic
