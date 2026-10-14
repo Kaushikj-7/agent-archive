@@ -17,6 +17,17 @@ follow [Semantic Versioning](https://semver.org/).
   earlier revisions when the scan has seen them and they can be read; one that
   cannot be read, or does not fit beside the thread's own history, is left out
   rather than failing the thread's capture.
+- Stop failing every Codex session in a pass that found many new Codex
+  files. Finding where a Codex thread's rollouts are has a time allowance
+  per pass, and discovery could use all of it, so each Codex session the
+  collector then read failed ("filter transcript: source limit") while
+  Claude Code sessions published. The collector now has its own allowance.
+  When that runs out too, the Codex session being read is put off until the
+  next pass instead of failing (`sync` and `status` say "left for the next
+  pass after this pass's time for finding Codex rollouts ran out";
+  `deferred_sessions` code `lookup_allowance`), and the pass's remaining
+  Codex sessions are left for the next pass without being opened, so they
+  no longer slow the rest of the pass.
 
 ## [0.2.1]
 

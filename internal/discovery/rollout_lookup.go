@@ -208,9 +208,33 @@ func (l *CodexRolloutLookup) checkBudget(ctx context.Context) error {
 		return err
 	}
 	if l.remaining <= 0 {
-		return agentapi.Wrap(agentapi.Limit, errors.New("native lookup pass deadline"))
+		return allowanceSpent("native lookup pass deadline")
 	}
 	return nil
+}
+
+// allowanceSpent is the refusal of a lookup call past the pass's allowance:
+// a limit of this pass, not of the source, which the next pass reads.
+func allowanceSpent(what string) error {
+	return agentapi.WithCause(agentapi.Wrap(agentapi.Limit, errors.New(what)), agentapi.CauseLookupAllowanceSpent)
+}
+
+// AllowanceSpent reports whether this pass's lookup time is used up, so that
+// every further Rollout, Thread and Check call fails (see
+// agentapi.CodexRolloutAllowance).
+func (l *CodexRolloutLookup) AllowanceSpent() bool { return !l.closed && l.remaining <= 0 }
+
+// BeginCollection gives a collector pass its own lookup allowance, a fresh
+// Budget of lookup time and HeaderProbes header probes, separate from what
+// discovery (or import registration) spent of the same lookup before it.
+// Discovery takes as much of Budget as it can use, so without this a pass
+// with a large discovery backlog left the collector none, and every Codex
+// session failed. Observations and cached threads carry over: they are the
+// same pass's validated facts, and every consumer rechecks a locator before
+// using it.
+func (l *CodexRolloutLookup) BeginCollection() {
+	l.remaining = Budget
+	l.probes = 0
 }
 
 func (l *CodexRolloutLookup) inspect(ctx context.Context, path, thread string) (*agentapi.SourceRef, error) {
@@ -230,7 +254,7 @@ func (l *CodexRolloutLookup) inspect(ctx context.Context, path, thread string) (
 		}
 	}
 	if l.probes >= HeaderProbes {
-		return nil, agentapi.Wrap(agentapi.Limit, errors.New("native header probe limit"))
+		return nil, allowanceSpent("native header probe limit")
 	}
 	const headerCharge = int64(sourcefacts.HeaderBytes + 128<<10)
 	if !reservation.Reserve(headerCharge) {
@@ -790,7 +814,10 @@ func (l *CodexRolloutLookup) closeWithContext(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-var _ agentapi.CodexRolloutLookup = (*CodexRolloutLookup)(nil)
+var (
+	_ agentapi.CodexRolloutLookup    = (*CodexRolloutLookup)(nil)
+	_ agentapi.CodexRolloutAllowance = (*CodexRolloutLookup)(nil)
+)
 
 func (l *CodexRolloutLookup) beginOperation(ctx context.Context) (context.Context, func(), error) {
 	if err := l.checkBudget(ctx); err != nil {

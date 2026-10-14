@@ -57,6 +57,13 @@ find none say so without creating the data directory.
   **waiting for Codex history coverage** for a long time; that wait no
   longer exists.
 
+  Finding a Codex thread's files has a time allowance per pass. A Codex
+  session being read when it runs out is listed as **left for the next pass
+  after this pass's time for finding Codex rollouts ran out**, not as
+  failed, and the Codex sessions after it wait for the next pass, which has
+  a fresh allowance. Claude Code and Cursor sessions in the same pass are
+  not held up.
+
   None of these is a failure, and none changes the exit code. Claude Code
   reports some background agents with a transcript it never writes; such a
   subagent waits up to 30 minutes, then is not captured and its parent
