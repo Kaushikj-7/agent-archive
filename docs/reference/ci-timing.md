@@ -275,3 +275,37 @@ existing ImageVersion-only compatibility projection; raw full contexts remain
 verified. The final reference must use the same source SHA/tree as the worker
 artifacts, not merely a related branch head. This qualification is correctness
 evidence, not a runner-time or150-second benchmark.
+
+## Post-fixture eight-worker hint refresh
+
+`go_shard_hint_sources.json` now pins Test run `38643152910`, attempt 1,
+source `c48ffb13008afd1751b50248fef198a7072474b7`, tree
+`e8f06a9fcf48627539077377fdc4d78921872598`, and nine API-digest-verified
+worker/audit archives. This is one mixed prefix/miss observation. Regenerated
+package, CLI and heavy-parent weights replace the earlier pre-fixture estimates;
+the new geometry scanner parent is measured rather than assigned a default.
+Current compiled discovery and successful body receipts remain coverage authority.
+
+This historical sample predates the compiler-context schema change. Reproduction
+must use the **immutable measured source's** Python generator/reconciler modules,
+whose hashes are recorded in the request attribution, with access to that exact
+Git source and body catalog. Export its `scripts/*.py` into a task-owned directory;
+load that directory first in an isolated Python process, point the imported
+runner/tier `ROOT` at the Git checkout containing the measured commit, and call
+that unchanged generator's `main` with the committed request, artifact root and
+output. The artifact root contains `workers/` and `audit/`. This uses the existing
+historical import interface to validate its recorded schema; do not bypass the
+live context validator, alter receipts, or relabel the old context as current.
+Keep the request, raw artifacts and pinned historical source together. Future
+warm data should use the then-current producer and matching verifier.
+
+Hint equality is not proof of balanced wall time. In this sample, a prefix-hit
+worker's ordinary lane took 298.78 seconds, including whole collector 156.352
+and reader 47.122 seconds, while its overlapping CLI took 107.03 seconds and
+own-vet 1.20 seconds. Cold cache fixes alone cannot eliminate that body lane.
+Global summed CLI/ordinary parent weights can hide unequal lanes; complete-parent
+wall intervals may overlap, and lazy once-per-process catalog fixture costs can
+move between selected parents. Retain package bootstrap and lane timings when
+choosing further changes. Production allocation/CPU policy stays unchanged here;
+any lane-aware balancing or additional selected packages needs separate measured
+hosted comparison, unchanged coverage reconciliation and review.
