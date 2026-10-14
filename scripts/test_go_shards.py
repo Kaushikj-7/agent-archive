@@ -26,6 +26,67 @@ def event(action, package=CLI, **kw):
     return dict(Action=action, Package=package, **kw)
 
 
+class JSONStreamTest(unittest.TestCase):
+    def test_concatenated_multiline_objects_and_all_strip_whitespace(self):
+        items = [{'ImportPath': 'synthetic/pkg', 'Nested': {'a': [1, True, None]}},
+                 event('output', Output='quoted braces {} and newline\n'), {}]
+        for separator in ('', '\n', ' \t\r\n', '\v\f\u0085\u00a0\u2003'):
+            with self.subTest(separator=separator):
+                text = separator + separator.join(json.dumps(item, indent=2) for item in items) + separator
+                self.assertEqual(runner.json_stream(text), items)
+        for text in ('', ' \t\r\n\v\f\u0085\u00a0\u2003'):
+            self.assertEqual(runner.json_stream(text), [])
+
+    def test_malformed_trailing_input_and_nonobject_records_still_fail(self):
+        for text in ('{', '{} bad-json', '{} {"incomplete":', '{}\n{"x":1,}', '{}\x00'):
+            with self.subTest(text=text), self.assertRaises(json.JSONDecodeError):
+                runner.json_stream(text)
+        for value in ([], 'text', 1, True, None):
+            with self.subTest(value=value), self.assertRaisesRegex(runner.Failure, 'JSON record is not an object'):
+                runner.json_stream('{}\n' + json.dumps(value))
+
+    def test_malformed_error_retains_record_relative_document_and_position(self):
+        malformed = '{\n  "x": 1,\n}'
+        with self.assertRaises(json.JSONDecodeError) as expected:
+            json.JSONDecoder().raw_decode(malformed)
+        with self.assertRaises(json.JSONDecodeError) as actual:
+            runner.json_stream('{} \n\u2003' + malformed)
+        for field in ('msg', 'doc', 'pos', 'lineno', 'colno'):
+            self.assertEqual(getattr(actual.exception, field), getattr(expected.exception, field))
+        self.assertEqual(str(actual.exception), str(expected.exception))
+
+    def test_large_stream_decodes_original_input_at_advancing_indices_without_suffix_copies(self):
+        class ImmutableInput(str):
+            def strip(self, *args):
+                raise AssertionError('whole-stream strip scans the remaining suffix')
+
+            def lstrip(self, *args):
+                raise AssertionError('whole-stream lstrip copies the remaining suffix')
+
+            def __getitem__(self, key):
+                if isinstance(key, slice):
+                    raise AssertionError('JSON stream copied a suffix')
+                return super().__getitem__(key)
+
+        count = 4096
+        row = event('output', Output='synthetic ' * 128)
+        text = ImmutableInput('\n' + (json.dumps(row) + '\n') * count)
+        decoder = json.JSONDecoder()
+        indices = []
+
+        def decode(source, index):
+            self.assertIs(source, text)
+            self.assertGreater(index, indices[-1] if indices else -1)
+            indices.append(index)
+            return decoder.raw_decode(source, index)
+
+        with mock.patch.object(runner.json, 'JSONDecoder', return_value=mock.Mock(raw_decode=decode)):
+            actual = runner.json_stream(text)
+        self.assertEqual(actual, [row] * count)
+        self.assertEqual(len(indices), count)
+        self.assertEqual(indices[0], 1)
+
+
 class CatalogTest(unittest.TestCase):
     def test_metadata_keeps_fileless_packages_and_rejects_errors(self):
         items = [dict(ImportPath=n, Dir='/tmp', TestGoFiles=['x_test.go'] if n == CLI else [])
