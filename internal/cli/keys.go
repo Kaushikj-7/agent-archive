@@ -284,7 +284,9 @@ func (k *keyInput) buffered() bool {
 }
 
 // next returns the next key press, waiting for one.
-func (k *keyInput) next() (key, error) {
+func (k *keyInput) next() (key, error) { return k.nextWait(-1) }
+
+func (k *keyInput) nextWait(wait time.Duration) (key, error) {
 	for len(k.pending) == 0 {
 		// An error that ended the last burst (Ctrl-Z during the wait for
 		// an escape sequence's rest, say) is handled as a read's would be.
@@ -292,7 +294,10 @@ func (k *keyInput) next() (key, error) {
 		err := k.failed
 		k.failed = nil
 		if err == nil {
-			data, err = k.readBurst()
+			data, err = k.readBurstWait(wait)
+			if err == nil && len(data) == 0 && wait >= 0 {
+				return key{kind: keyResize}, nil
+			}
 		}
 		if err != nil {
 			// What came before a resize or Ctrl-Z is not continued after.
@@ -372,11 +377,9 @@ func (k *keyInput) decode(data []byte) []key {
 // maxBurst bounds the bytes read as one burst.
 const maxBurst = 4096
 
-// readBurst waits for input, then takes whatever else is already there,
-// and waits briefly for the rest of an escape sequence cut off at its end.
-func (k *keyInput) readBurst() ([]byte, error) {
+func (k *keyInput) readBurstWait(wait time.Duration) ([]byte, error) {
 	buf := make([]byte, 256)
-	n, err := k.term.read(buf, -1)
+	n, err := k.term.read(buf, wait)
 	if err != nil {
 		return nil, err
 	}
