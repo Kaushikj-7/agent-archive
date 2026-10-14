@@ -276,6 +276,20 @@ func (b *NativeReadBudget) ScopeExceeded() bool {
 	return b.scope != nil && b.scope.exceeded
 }
 
+// ForgetScopeExceeded clears the current scope's record of a refusal at its
+// own ceiling, for an owner that left out the work refused and released what
+// it held for it, so a later refusal in the scope is classified on its own.
+func (b *NativeReadBudget) ForgetScopeExceeded() {
+	if b == nil {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.scope != nil {
+		b.scope.exceeded = false
+	}
+}
+
 // Available returns remaining capacity for a bounded optional cache: the
 // lesser of the shared and the current scope's remaining capacity.
 func (b *NativeReadBudget) Available() int64 {

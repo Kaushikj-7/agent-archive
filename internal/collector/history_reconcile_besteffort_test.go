@@ -150,27 +150,141 @@ func TestRevisionPlannerRefusalLeavesThePlanUnchanged(t *testing.T) {
 func TestLeaveOutBestEffortOnlyForLastingFailures(t *testing.T) {
 	t.Parallel()
 	for _, c := range []struct {
-		name     string
-		err      error
-		consumer bool
-		out      bool
+		name        string
+		err         error
+		consumer    bool
+		overCeiling bool
+		out         bool
 	}{
-		{"missing", os.ErrNotExist, false, true},
-		{"unsafe", agentapi.Wrap(agentapi.Unsafe, errors.New("unsafe source format")), false, true},
-		{"format", agentapi.Wrap(agentapi.FormatMismatch, errors.New("format")), false, true},
-		{"base unavailable", agentapi.WithCause(agentapi.Wrap(agentapi.Unavailable, errors.New("base")), agentapi.CauseHistoryBaseUnavailable), false, true},
-		{"budget left by the chain", agentapi.Wrap(agentapi.Limit, errors.New("historical raw budget exceeded")), false, true},
-		{"shared read budget", agentapi.ReadBudgetLimit(errors.New("pass")), false, false},
-		{"changed", agentapi.Wrap(agentapi.Changed, errors.New("rollout dependency changed")), false, false},
-		{"canceled", context.Canceled, false, false},
-		{"deadline", agentapi.Wrap(agentapi.Unavailable, context.DeadlineExceeded), false, false},
-		{"consumer limit", agentapi.Wrap(agentapi.Limit, errors.New("revision stage limit exceeded")), true, true},
-		{"consumer import budget", errors.Join(agentapi.ErrReadBudget, errRevisionDoesNotFit), true, true},
-		{"consumer shared budget", agentapi.ReadBudgetLimit(errors.New("retained")), true, false},
-		{"consumer other", errors.New("store unavailable"), true, false},
+		{"missing", os.ErrNotExist, false, false, true},
+		{"unsafe", agentapi.Wrap(agentapi.Unsafe, errors.New("unsafe source format")), false, false, true},
+		{"format", agentapi.Wrap(agentapi.FormatMismatch, errors.New("format")), false, false, true},
+		{"base unavailable", agentapi.WithCause(agentapi.Wrap(agentapi.Unavailable, errors.New("base")), agentapi.CauseHistoryBaseUnavailable), false, false, true},
+		{"budget left by the chain", agentapi.Wrap(agentapi.Limit, errors.New("historical raw budget exceeded")), false, false, true},
+		{"shared read budget", agentapi.ReadBudgetLimit(errors.New("pass")), false, false, false},
+		{"changed", agentapi.Wrap(agentapi.Changed, errors.New("rollout dependency changed")), false, false, false},
+		{"canceled", context.Canceled, false, false, false},
+		{"deadline", agentapi.Wrap(agentapi.Unavailable, context.DeadlineExceeded), false, false, false},
+		{"consumer limit", agentapi.Wrap(agentapi.Limit, errors.New("revision stage limit exceeded")), true, false, true},
+		{"consumer import budget", errors.Join(agentapi.ErrReadBudget, errRevisionDoesNotFit), true, false, true},
+		{"consumer shared budget", agentapi.ReadBudgetLimit(errors.New("retained")), true, false, false},
+		{"consumer other", errors.New("store unavailable"), true, false, false},
+		{"read budget at the session ceiling", agentapi.ReadBudgetLimit(errors.New("pass")), false, true, true},
+		{"consumer budget at the session ceiling", agentapi.ReadBudgetLimit(errors.New("retained")), true, true, true},
+		{"changed at the session ceiling", errors.Join(agentapi.ReadBudgetLimit(errors.New("pass")), agentapi.Wrap(agentapi.Changed, errors.New("changed"))), false, true, false},
+		{"canceled at the session ceiling", errors.Join(agentapi.ReadBudgetLimit(errors.New("pass")), context.Canceled), false, true, false},
 	} {
-		if got := leaveOutBestEffort(c.err, c.consumer); got != c.out {
+		if got := leaveOutBestEffort(c.err, c.consumer, c.overCeiling); got != c.out {
 			t.Errorf("%s: left out %v, want %v", c.name, got, c.out)
 		}
+	}
+}
+
+// An off-chain rollout that would take the session past its own read
+// ceiling, whether reading it or staging it, is left out: the ceiling is the
+// session's own, so a later pass meets it again, and failing would record the
+// whole session as too large to read although its own chain fits. Leaving it
+// out also releases what it held and forgets the ceiling refusal, so a later
+// refusal in the scan is classified on its own.
+func TestBestEffortRevisionPastTheSessionCeilingIsLeftOut(t *testing.T) {
+	for _, where := range []string{"read", "consumer"} {
+		t.Run(where, func(t *testing.T) {
+			scan, _ := reconciliationFixture(t)
+			read, ok, err := scan.read()
+			if err != nil || !ok {
+				t.Fatal("native read", err)
+			}
+			active, _, err := scan.build(read)
+			if err != nil {
+				t.Fatal(err)
+			}
+			r, ok := newSourceReader(scan.reg, scan.opts)
+			if !ok {
+				t.Fatal("no source reader")
+			}
+			provider, ok := r.(providerReader)
+			if !ok {
+				t.Fatal("no provider reader")
+			}
+			budget := scan.readBudget()
+			end := budget.BeginScope(64 << 20)
+			defer end()
+			held, holding := budget.Reservation(), int64(0)
+			defer func() { held.Release(holding) }()
+			var consumed []string
+			var retained int
+			err = provider.revisions(scan.ctx, read.adapter, read.observed, scan.opts.maxTranscriptBytes(), active.History != nil, func(_ archive.FilteredTranscript, binding *archive.CodexSourceBinding) error {
+				id := binding.PhysicalRolloutID
+				if id == revisionB {
+					if budget.Reservation().Reserve(128 << 20) {
+						t.Error("reserved past the session ceiling")
+					}
+					return errRetainedBudget
+				}
+				consumed = append(consumed, id)
+				if id == revisionC && where == "read" {
+					// The chain's own retained work fills the session's share.
+					holding = held.Available()
+					if !held.Reserve(holding) {
+						t.Error("could not fill the session ceiling")
+					}
+				}
+				retained = len(scan.retainedReleases)
+				return nil
+			})
+			if err != nil {
+				t.Fatal("an off-chain rollout past the session ceiling blocked the chain: ", err)
+			}
+			if !slices.Contains(consumed, revisionThread) || !slices.Contains(consumed, revisionC) || slices.Contains(consumed, revisionB) {
+				t.Fatalf("consumed %v", consumed)
+			}
+			if budget.ScopeExceeded() {
+				t.Fatal("the left-out revision's ceiling refusal outlived it")
+			}
+			if len(scan.retainedReleases) != retained {
+				t.Fatalf("the left-out revision kept %d retained leases", len(scan.retainedReleases)-retained)
+			}
+		})
+	}
+}
+
+// A native revision the planner refuses releases what staging it retained.
+func TestRefusedNativeRevisionReleasesWhatItRetained(t *testing.T) {
+	scan, _ := reconciliationFixture(t)
+	read, ok, err := scan.read()
+	if err != nil || !ok {
+		t.Fatal("native read", err)
+	}
+	active, _, err := scan.build(read)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, ok := newSourceReader(scan.reg, scan.opts)
+	if !ok {
+		t.Fatal("no source reader")
+	}
+	provider, ok := r.(providerReader)
+	if !ok {
+		t.Fatal("no provider reader")
+	}
+	// No stage bytes: every historical revision is refused once compressed.
+	planner := revisionPlanner{budget: scan.readBudget(), plan: &revisionPlan{Current: revisionC}, active: active, adapter: read.adapter, compress: scan.compressSource}
+	refused := 0
+	err = provider.revisions(scan.ctx, read.adapter, read.observed, scan.opts.maxTranscriptBytes(), active.History != nil, func(filtered archive.FilteredTranscript, binding *archive.CodexSourceBinding) error {
+		mark := len(scan.retainedReleases)
+		used, _ := scan.readBudget().Charged()
+		err := scan.addNativeRevision(&planner, filtered, binding, archive.Metadata{}, archive.SourceBundle{}, archive.SourceBundle{})
+		if err == nil {
+			return nil
+		}
+		refused++
+		after, _ := scan.readBudget().Charged()
+		if len(scan.retainedReleases) != mark || after != used {
+			t.Errorf("refused revision kept %d leases and %d bytes", len(scan.retainedReleases)-mark, after-used)
+		}
+		return err
+	})
+	if refused == 0 || !agentapi.HasFailure(err, agentapi.Limit) {
+		t.Fatalf("no revision refused for its stage bytes: %v", err)
 	}
 }

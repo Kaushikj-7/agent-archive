@@ -72,12 +72,18 @@ func (r providerReader) revisions(ctx context.Context, adapter agentapi.Transcri
 	// reading, cancellation) still fails, so the session defers and a later
 	// pass reads the candidate: leaving it out would record a signature that
 	// an abandoned branch never changes again. The consumer's other failures
-	// still fail.
+	// still fail. A refusal at the session's own read ceiling is lasting, not
+	// the shared budget's pressure: the session meets it again every pass, and
+	// failing would record the whole session as too large although its chain
+	// fits, so the candidate is left out. A left-out candidate releases what
+	// it retained and its ceiling refusal is forgotten, so neither counts
+	// against what the scan does next.
+	readBudget := r.retainedBudget()
 	for _, ref := range set.BestEffort {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		before := budget
+		before, mark, exceeded := budget, r.retainedMark(), readBudget.ScopeExceeded()
 		var consumeErr error
 		err := r.readRevision(ctx, historical, adapter, ref, limits, maxBytes, &budget, func(filtered archive.FilteredTranscript, binding *archive.CodexSourceBinding) error {
 			consumeErr = consume(filtered, binding)
@@ -86,10 +92,14 @@ func (r providerReader) revisions(ctx context.Context, adapter agentapi.Transcri
 		if err == nil {
 			continue
 		}
-		if ctx.Err() != nil || !leaveOutBestEffort(err, consumeErr != nil) {
+		if ctx.Err() != nil || !leaveOutBestEffort(err, consumeErr != nil, readBudget.ScopeExceeded()) {
 			return errors.Join(err, ctx.Err())
 		}
 		budget = before
+		r.releaseRetainedAfter(mark)
+		if !exceeded {
+			readBudget.ForgetScopeExceeded()
+		}
 	}
 	final, err := pass.Signature(ctx, r.ref)
 	if err != nil {
@@ -109,18 +119,46 @@ var errRevisionDoesNotFit = errors.New("historical revision does not fit")
 
 // leaveOutBestEffort reports whether a best-effort revision's failure only
 // leaves it out: a failure that will not clear on its own (a missing,
-// unreadable or unsafe rollout, or a limit). One that can clear (the pass's
-// shared read budget, a source changed while reading, cancellation) fails the
-// reconciliation so it is retried. A consumer's failures are left out only
-// for its limits, which leave its state unchanged.
-func leaveOutBestEffort(err error, consumer bool) bool {
+// unreadable or unsafe rollout, a limit, or a read budget refusal at the
+// session's own ceiling, overCeiling). One that can clear (the pass's shared
+// read budget held by others, a source changed while reading, cancellation)
+// fails the reconciliation so it is retried. A consumer's failures are left
+// out only for its limits, which leave its state unchanged.
+func leaveOutBestEffort(err error, consumer, overCeiling bool) bool {
 	if errors.Is(err, errRevisionDoesNotFit) {
 		return true
 	}
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, agentapi.ErrReadBudget) || agentapi.HasFailure(err, agentapi.Changed) {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || agentapi.HasFailure(err, agentapi.Changed) {
 		return false
 	}
+	if errors.Is(err, agentapi.ErrReadBudget) {
+		return overCeiling
+	}
 	return !consumer || agentapi.HasFailure(err, agentapi.Limit)
+}
+
+// retainedBudget is the ledger the session's scan charges, whose scope
+// tells a refusal at the session's own ceiling from shared pressure.
+func (r providerReader) retainedBudget() *agentapi.NativeReadBudget {
+	if r.resourceOwner == nil {
+		return nil
+	}
+	return r.resourceOwner.readBudget()
+}
+
+// retainedMark and releaseRetainedAfter bound what one revision retained in
+// the session's scan, so a left-out revision releases it.
+func (r providerReader) retainedMark() int {
+	if r.resourceOwner == nil {
+		return 0
+	}
+	return len(r.resourceOwner.retainedReleases)
+}
+
+func (r providerReader) releaseRetainedAfter(mark int) {
+	if r.resourceOwner != nil {
+		r.resourceOwner.releaseRetainedAfter(mark)
+	}
 }
 
 // revisionBudget is what one reconciliation's historical reads may still

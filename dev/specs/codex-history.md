@@ -102,11 +102,14 @@ best-effort historical revisions, up to the 64-candidate limit with the
 chain's own segments first; off-chain ones past it are left out rather than
 refusing the capture. The source marks them best effort: a failure reading one
 (its own base gone, an unreadable header, the reconciliation's byte budget
-spent) or staging one (the revision planner's stage count or bytes, or an
-import's stage budget, none of which a refusal changes) only leaves that
-branch out, while a failure reading a segment of the current chain still fails
-the reconciliation. A best-effort failure that can clear on its own (the
-pass's shared read budget, a rollout changed while reading, cancellation)
+spent, or the session's own read ceiling, which the session meets again on
+every pass) or staging one (the revision planner's stage count or bytes, an
+import's stage budget, or the session's read ceiling, none of which a refusal
+changes) only leaves that branch out and releases what it held, while a
+failure reading a segment of the current chain still fails the
+reconciliation. A best-effort failure that can clear on its own (the pass's
+shared read budget held by others, a rollout changed while reading,
+cancellation)
 still fails it too, so the session defers and a later pass reads the branch:
 leaving it out would record a signature that an abandoned branch never
 changes again. Without an admitted source home
