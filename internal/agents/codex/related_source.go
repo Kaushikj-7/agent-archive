@@ -1391,7 +1391,8 @@ func (s *ordinarySnapshot) RevisionCandidates(ctx context.Context) (agentapi.Rev
 	return out, nil
 }
 
-// presentCandidates are the observed candidates whose files still exist. An
+// presentCandidates are the observed candidates whose files still exist,
+// newest first, so the newest fill the slots the chain leaves. An
 // observation can outlive its file (Codex renamed it); the reader reopens and
 // rechecks every one it is given.
 func presentCandidates(candidates []agentapi.SourceRef) []agentapi.SourceRef {
@@ -1401,6 +1402,7 @@ func presentCandidates(candidates []agentapi.SourceRef) []agentapi.SourceRef {
 			out = append(out, ref)
 		}
 	}
+	slices.SortFunc(out, func(a, b agentapi.SourceRef) int { return codexmeta.NewestRolloutFirst(a.Path, b.Path) })
 	return out
 }
 

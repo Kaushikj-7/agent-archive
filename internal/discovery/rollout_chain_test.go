@@ -550,3 +550,87 @@ func TestRolloutSearchPastAnUnreadableDirectoryStillFindsTheRollout(t *testing.T
 		t.Fatal("an unreadable directory hid nothing: ", refs)
 	}
 }
+
+// Beside a current locator, a thread with more observed same-thread rollouts
+// than the history span limit (many abandoned branches) is still captured:
+// its chain comes first and the newest off-chain rollouts fill the remaining
+// slots. Without a current locator its tip would be chosen from all of them,
+// so it is still refused.
+func TestThreadPastTheCandidateLimitBesideCurrentLocatorKeepsNewest(t *testing.T) {
+	t.Parallel()
+	root := chainRoot(t)
+	thread, basePath, tip, tipPath := twoSegmentThread(t, root, 8, "")
+	raw, err := os.ReadFile(basePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	position := codexmeta.CodexHistoryPosition{RolloutID: thread, EndOrdinal: 2, EndByteOffset: uint64(len(raw))}
+	const branches = archive.MaxHistorySpans + 6
+	paths, rollouts := []string{basePath, tipPath}, []string{thread, tip}
+	var off []string
+	for n := range branches {
+		id := v7ID(chainEpoch.Add(26*time.Hour+time.Duration(n)*time.Minute), 100+n)
+		path, _ := chainRollout(t, root, dayFolder(id), id, thread, 2, &position, fmt.Sprint("branch ", n))
+		paths, rollouts = append(paths, path), append(rollouts, id)
+		off = append(off, path)
+	}
+	observed := func() *CodexRolloutLookup {
+		t.Helper()
+		lookup := chainLookup(t, root)
+		for i, path := range paths {
+			header := sourcefacts.ReadHeader(t.Context(), root, path)
+			if header.Identity == nil {
+				t.Fatal("synthetic header unreadable", header.Outcome)
+			}
+			info, err := os.Stat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			lookup.Observe(SourceDescriptor{Kind: archive.SourceKindFile, Root: root, Locator: path, StableKey: rollouts[i]}, Fingerprint{Size: info.Size(), Mtime: info.ModTime().UnixNano()}, header.Identity)
+		}
+		return lookup
+	}
+	before, err := observed().Thread(t.Context(), thread)
+	if agentapi.Failure(err) != agentapi.Limit {
+		t.Fatal("chose a tip from part of the observed rollouts: ", before, err)
+	}
+	db := hintDatabase(t, root, false)
+	addHint(t, db, thread, tipPath, chainEpoch)
+	lookup := observed()
+	set, err := lookup.Thread(t.Context(), thread)
+	if err != nil {
+		t.Fatal("observed rollouts past the limit refused a thread with a current locator: ", err)
+	}
+	if set.Current == nil || len(set.Candidates) != archive.MaxHistorySpans {
+		t.Fatalf("current %v, %d candidates", set.Current, len(set.Candidates))
+	}
+	s, err := chainPass(t, root, lookup).Read(t.Context(), agentapi.SourceRef{Kind: archive.SourceKindFile, Path: tipPath, Key: thread}, agentapi.ReadLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Close() }()
+	candidates, ok := s.(agentapi.SourceRevisionCandidates)
+	if !ok {
+		t.Fatal("snapshot lists no revision candidates")
+	}
+	revisions, err := candidates.RevisionCandidates(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var chain, best []string
+	for _, ref := range revisions.Chain {
+		chain = append(chain, ref.Path)
+	}
+	for _, ref := range revisions.BestEffort {
+		best = append(best, ref.Path)
+	}
+	if !slices.Equal(chain, []string{basePath, tipPath}) {
+		t.Fatalf("chain = %v", chain)
+	}
+	// The newest off-chain rollouts fill the slots the chain leaves.
+	newest := slices.Clone(off[branches-(archive.MaxHistorySpans-2):])
+	slices.Reverse(newest)
+	if !slices.Equal(best, newest) {
+		t.Fatalf("best effort = %v, want the newest %d off-chain rollouts %v", best, len(newest), newest)
+	}
+}

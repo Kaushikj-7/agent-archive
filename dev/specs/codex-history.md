@@ -110,9 +110,14 @@ pass's shared read budget, a rollout changed while reading, cancellation)
 still fails it too, so the session defers and a later pass reads the branch:
 leaving it out would record a signature that an abandoned branch never
 changes again. Without an admitted source home
-they are not read at all. One known limit remains: a thread with more than 64
-observed same-thread rollouts is refused with a limit failure even beside a
-current locator. Only rollouts the lookup has observed (a
+they are not read at all. Beside a current locator, a thread with more than 64
+observed same-thread rollouts is still captured: the lookup offers the 64
+newest that still exist, the chain's own segments come first and the newest
+off-chain rollouts fill the remaining slots. A current chain itself longer than
+64 segments is still refused with the rollout history depth limit. Without a
+current locator such a thread is refused with a limit failure, since its tip
+is chosen from all of its observed rollouts and a subset could choose the
+wrong one. Only rollouts the lookup has observed (a
 discovery listing or the restored cache) are offered: no proof says every
 abandoned branch was found, and a branch captured while it was current stays
 preserved through the published revision history either way. A discovery

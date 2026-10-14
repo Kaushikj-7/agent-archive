@@ -413,20 +413,35 @@ func (l *CodexRolloutLookup) registrationHint(ctx context.Context, id string) {
 // a newly observed segment changes it. They are hints: without a current
 // locator the source chooses a tip from them, and beside one it offers them
 // as historical revisions; they never prove that no other rollout exists.
+//
+// Past archive.MaxHistorySpans observed rollouts, a thread without a current
+// locator is refused: its tip is chosen from all of them. Beside a current
+// locator the chain comes from walking history bases, not from these hints,
+// so only the newest ones that still exist are kept, as best-effort
+// historical revisions, and the rest are left out.
 func (l *CodexRolloutLookup) withCandidates(ctx context.Context, id string, set agentapi.CodexRolloutSet) (agentapi.CodexRolloutSet, error) {
-	if len(l.byThread[id]) > archive.MaxHistorySpans {
-		return agentapi.CodexRolloutSet{}, agentapi.Wrap(agentapi.Limit, errors.New("thread candidate limit"))
-	}
-	set.Candidates = nil
+	paths := make([]string, 0, len(l.byThread[id]))
 	for path := range l.byThread[id] {
+		paths = append(paths, path)
+	}
+	if len(paths) > archive.MaxHistorySpans {
+		if set.Current == nil {
+			return agentapi.CodexRolloutSet{}, agentapi.Wrap(agentapi.Limit, errors.New("thread candidate limit"))
+		}
+		paths = slices.DeleteFunc(paths, func(path string) bool { return !rolloutPresent(path) })
+		slices.SortFunc(paths, codexmeta.NewestRolloutFirst)
+		paths = paths[:min(len(paths), archive.MaxHistorySpans)]
+	}
+	slices.Sort(paths)
+	set.Candidates = nil
+	for _, path := range paths {
 		set.Candidates = append(set.Candidates, agentapi.SourceRef{Kind: archive.SourceKindFile, Path: path, Key: id})
 	}
-	slices.SortFunc(set.Candidates, func(a, b agentapi.SourceRef) int { return strings.Compare(a.Path, b.Path) })
 	value := struct {
 		Current      *agentapi.SourceRef        `json:"Current"`
 		Candidates   []agentapi.SourceRef       `json:"Candidates"`
 		Observations []rolloutObservationDigest `json:"Observations"`
-	}{Current: set.Current, Candidates: set.Candidates, Observations: l.candidateDigests(id)}
+	}{Current: set.Current, Candidates: set.Candidates, Observations: l.candidateDigests(paths)}
 	revision, err := l.revisionDigest(ctx, value)
 	if err != nil {
 		return agentapi.CodexRolloutSet{}, err
@@ -469,13 +484,13 @@ type rolloutObservationDigest struct {
 	Identity codexmeta.CodexIdentity `json:"Identity"`
 }
 
-func (l *CodexRolloutLookup) candidateDigests(id string) []rolloutObservationDigest {
-	var out []rolloutObservationDigest
-	for path := range l.byThread[id] {
+// candidateDigests is the observed identity evidence of sorted paths.
+func (l *CodexRolloutLookup) candidateDigests(paths []string) []rolloutObservationDigest {
+	out := make([]rolloutObservationDigest, 0, len(paths))
+	for _, path := range paths {
 		o := l.observations[path]
 		out = append(out, rolloutObservationDigest{path, o.stamp, o.identity})
 	}
-	slices.SortFunc(out, func(a, b rolloutObservationDigest) int { return strings.Compare(a.Path, b.Path) })
 	return out
 }
 
