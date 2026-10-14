@@ -135,7 +135,7 @@ func executeContentSearch(opts contentSearchOptions, stdout, stderr io.Writer, e
 	}
 	defer func() { _ = index.Close() }()
 	if opts.refresh {
-		if err = refreshSearchSession(ctx, env, cfg, index, namespace, opts, stdout, stderr); err != nil {
+		if err = refreshSearchSession(ctx, env, cfg, index, opts, stdout, stderr); err != nil {
 			return searchCommandError(stderr, err)
 		}
 	}
@@ -155,7 +155,7 @@ func contentSearchLocation(home string, cfg config.Config) (string, string) {
 	return namespace, filepath.Join(home, "search", hex.EncodeToString(sum[:]))
 }
 
-func refreshSearchSession(ctx context.Context, env searchCommandDependencies, cfg config.Config, index *search.Store, namespace string, opts contentSearchOptions, stdout, stderr io.Writer) error {
+func refreshSearchSession(ctx context.Context, env searchCommandDependencies, cfg config.Config, index *search.Store, opts contentSearchOptions, stdout, stderr io.Writer) error {
 	objects, err := env.openStore(cfg)
 	if err != nil {
 		return err
@@ -171,20 +171,21 @@ func refreshSearchSession(ctx context.Context, env searchCommandDependencies, cf
 	if metadata.SessionID != opts.session || metadata.Harness.Name != opts.query.Harness {
 		return errors.New("search metadata disagrees with requested session")
 	}
-	projections, err := search.LoadSession(ctx, objects, parsersFor(env), namespace, metadata, reader.Limits{})
+	if err = index.Observe(ctx, metadata, parsersFor(env), env.now(), 0); err != nil {
+		return err
+	}
+	progress, err := index.Run(ctx, objects, parsersFor(env), env.now(), search.Budget{Sources: 64, Sessions: 64, Limits: reader.Limits{}})
 	if err != nil {
 		return err
 	}
-	stats, err := index.Replace(ctx, metadata, projections)
-	if err != nil {
-		return err
+	terminal.Printf(stdout, "Observed %s; indexed %d work item(s), %d passage/title writes; %d pending, %d failed.\n", metadata.SessionID, progress.Committed, progress.Writes.Inserted, progress.Pending, progress.Failed)
+	for _, gap := range progress.Gaps {
+		terminal.Printf(stderr, "Search coverage gap for revision %s: %s\n", gap.RevisionID, gap.Reason)
 	}
-	terminal.Printf(stdout, "Indexed %s (%d passage/title writes).\n", metadata.SessionID, stats.Inserted)
-	for _, p := range projections {
-		if p.Gap != nil {
-			terminal.Printf(stderr, "Search coverage gap for revision %s: %s\n", p.Gap.RevisionID, p.Gap.Reason)
-		}
+	if progress.Failed > 0 {
+		return errors.New("search refresh has failed work; retry after backoff or inspect coverage")
 	}
+
 	return nil
 }
 

@@ -203,6 +203,9 @@ func (s *Store) Search(ctx context.Context, q Query) (Page, error) {
 		return page, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if err = tx.QueryRowContext(ctx, "SELECT count(*),coalesce(sum(failures>0),0) FROM search_work WHERE desired!=indexed").Scan(&page.Observation.Pending, &page.Observation.Failed); err != nil {
+		return page, err
+	}
 	if err = tx.QueryRowContext(ctx, "SELECT generation FROM search_state WHERE id=1").Scan(&page.Generation); err != nil {
 		return page, err
 	}

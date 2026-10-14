@@ -10,6 +10,8 @@ follow [Semantic Versioning](https://semver.org/).
   archived session with `search --refresh --session ID --harness NAME`, query
   cached titles/messages with `search "WORDS"`, and read exact matching passages.
   Coverage is partial and refresh is manual; no background work is installed.
+  Refresh now resumes bounded work after interruption, reuses unchanged sources,
+  and records retry/backoff state without delaying archive publication.
 
 - Capture Codex sessions again while Codex is running. A thread's history is
   now read by following Codex's own record of its current rollout back through

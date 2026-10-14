@@ -134,3 +134,39 @@ GETs, source verification, unchanged-body FTS avoidance, scoped grouping,
 selected-only snippets and complete retained alternatives. S2 must measure growing
 session lifetime amplification and worker fairness; S3 discovery accounting;
 S4 CLI startup and pagination under writes; S5 capture/lock interference.
+
+## Bounded worker evidence (S2)
+
+Production refresh now uses `Store.Observe` and `Store.Run`; eager `LoadSession`
+and `Replace` remain only as test fixture conveniences. One source is loaded at
+once. Desired/indexed source identity is separate from searchable metadata, so
+metadata-only refresh does not deserialize cached passage text. A changed source
+can update exact references without replacing equal FTS text. Intermediate
+revisions coalesce, while a short transaction rejects superseded generations.
+Source projections are staged in the same private search database; full source
+bundles are not cached. This adds a second local copy of projected message text
+alongside FTS, bounded per current session membership and discarded on rebuild.
+
+Reproduce deterministic work counts and the small lifetime workload with:
+
+```sh
+go test ./internal/search -run Worker -count=1
+go test ./internal/search -run '^$' -bench Worker -benchmem -benchtime=3x -count=1
+```
+
+On the same non-isolated Intel Mac / Go 1.27.2, one run before final metadata
+fast-path optimization measured about 1.53 ms per metadata refresh, zero source
+GETs and zero FTS writes. Ten growing synthetic publications indexed separately
+measured about 27.9 ms total, ten GETs / parses, 3443 compressed bytes and eleven
+FTS inserts (one title plus ten messages). Observing the same ten revisions before
+one worker pass measured about 7.71 ms, one GET / parse, 373 compressed bytes and
+the same eleven inserts. Full parsing processes 55 cumulative message records in
+the first workload versus ten when coalesced. This demonstrates work reduction,
+not constant lifetime parsing cost; changed snapshots still parse in full.
+
+Fixtures cover source staging and restart, stale-generation rejection, unchanged
+preserved-source reuse, metadata-only work, equal-text reference updates, retry
+backoff, finite oversized units, privacy invalidation, cancellation, busy writer
+recovery and atomic failure of the final indexed-state transaction. Timing values
+are advisory; operation counts are the deterministic contract. These tiny local
+sources do not model real network delay, peak RSS, or large tool-heavy histories.

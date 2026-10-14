@@ -67,3 +67,19 @@ this does not delete archived sources. No downloaded source cache is retained.
 See [privacy](../security/privacy.md) for what archive filtering retains and
 [engine contracts](../../dev/proposals/content-search-engine.md) for measured
 performance, tokenization and history limitations.
+
+Explicit refresh records desired state in the same search database and executes
+bounded indexing work. Completed sources survive interruption and are reused on
+retry. Unchanged sources, including retained alternatives, need no new download
+or parse; changing only titles or display/filter metadata avoids source reads.
+Body passages are rewritten only when their projection changes. Changed source
+snapshots are still parsed in full; indexing is not an append-only parser.
+
+Refresh reports pending and failed work. Temporary failures use persisted
+exponential backoff (one second up to 256 seconds); retry after that delay.
+Oversized work stays blocked until its desired snapshot changes. A pass reads at
+most 64 sources and 32 MiB compressed data, so sessions with many retained
+revisions may require another refresh. Each pass can also advance previously
+observed pending sessions. There is no automatic archive discovery or scheduled
+worker in this release. Cached search results report known pending/failed state,
+which does not establish coverage of sessions never observed on this machine.

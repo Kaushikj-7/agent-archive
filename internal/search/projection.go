@@ -27,7 +27,7 @@ const passageBytes = 8192
 
 const overlapBytes = 1024
 
-// maxSessionBytes bounds the eager explicit-refresh slice before S2 adds per-source work.
+// maxSessionBytes bounds compressed membership and projected text per session.
 const maxSessionBytes = 32 << 20
 
 const maxSessionPassages = 100000
@@ -102,6 +102,7 @@ func Extract(source Source, bundle archive.SourceBundle, analysis archive.Analys
 		return out, nil
 	}
 	seen := map[string]bool{}
+	totalText := 0
 	for _, turn := range analysis.View.Turns {
 		if turn.Kind != archive.TurnKindHumanPrompt && turn.Kind != archive.TurnKindAssistant {
 			continue
@@ -140,9 +141,10 @@ func Extract(source Source, bundle archive.SourceBundle, analysis archive.Analys
 			for end < len(text) && !utf8.RuneStart(text[end]) {
 				end--
 			}
-			if len(out.Passages) >= maxSessionPassages {
+			if len(out.Passages) >= maxSessionPassages || end-start > maxSessionBytes-totalText {
 				return out, storage.ErrObjectTooLarge
 			}
+			totalText += end - start
 			out.Passages = append(out.Passages, Passage{Reference: Reference{source, turn.RecordIndex, start, end}, Role: turn.Role, Text: text[start:end], Physical: physical})
 			if end == len(text) {
 				break
@@ -206,54 +208,6 @@ func LoadProjection(ctx context.Context, objects storage.ObjectStore, parsers ag
 		return Projection{Source: source, Gap: &Gap{revisionID, "parse_failed"}}, nil
 	}
 	return Extract(source, bundle, analysis)
-}
-
-// LoadSession includes active and every supported preserved alternative. Failures
-// are returned for retry; unsupported formats are explicit projection gaps.
-func LoadSession(ctx context.Context, objects storage.ObjectStore, parsers agentapi.ParsersLookup, destination string, metadata archive.Metadata, limits reader.Limits) ([]Projection, error) {
-	ids := []string{""}
-	if metadata.History != nil {
-		revisions, err := reader.Revisions(metadata)
-		if err != nil {
-			return nil, err
-		}
-		ids = nil
-		for _, r := range revisions {
-			ids = append(ids, r.RevisionID)
-		}
-	}
-	var out []Projection
-	totalCompressed := 0
-	refs, err := metadata.SourceReferences()
-	if err != nil {
-		return nil, err
-	}
-	for _, ref := range refs {
-		if ref.CompressedBytes > maxSessionBytes-totalCompressed {
-			return nil, storage.ErrObjectTooLarge
-		}
-		totalCompressed += ref.CompressedBytes
-	}
-	totalText := 0
-	totalPassages := 0
-	for _, id := range ids {
-		p, err := LoadProjection(ctx, objects, parsers, destination, metadata, id, limits)
-		if err != nil {
-			return nil, err
-		}
-		if len(p.Passages) > maxSessionPassages-totalPassages {
-			return nil, storage.ErrObjectTooLarge
-		}
-		totalPassages += len(p.Passages)
-		for _, passage := range p.Passages {
-			if len(passage.Text) > maxSessionBytes-totalText {
-				return nil, storage.ErrObjectTooLarge
-			}
-			totalText += len(passage.Text)
-		}
-		out = append(out, p)
-	}
-	return out, nil
 }
 
 // Source-bound context failures distinguish observed membership change, deletion,

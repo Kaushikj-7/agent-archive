@@ -11,8 +11,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/search"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
@@ -41,7 +43,7 @@ func TestContentSearchExplicitRefreshAndOfflineQuery(t *testing.T) {
 		t.Fatalf("query created index: %v", err)
 	}
 	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return objects, nil }
-	if code, out, errOut := run("--refresh", "--session", id, "--harness", "codex"); code != 0 || !strings.Contains(out, "Indexed "+id) {
+	if code, out, errOut := run("--refresh", "--session", id, "--harness", "codex"); code != 0 || !strings.Contains(out, "Observed "+id) {
 		t.Fatalf("%d %s %s", code, out, errOut)
 	}
 	env.OpenStore = func(config.Config) (storage.ObjectStore, error) {
@@ -90,7 +92,9 @@ func TestContentSearchExplicitRefreshAndOfflineQuery(t *testing.T) {
 }
 
 func TestContentSearchScopeBeforeLimit(t *testing.T) {
-	env, _, _ := publishedFixture(t)
+	env, objects, originalID := publishedFixture(t)
+	_, seed, err := reader.RefreshAndLoad(t.Context(), objects, "sessions/codex/"+originalID+"/metadata.json", reader.Limits{})
+	must(t, err)
 	home, _ := env.readHome()
 	cfg, _, err := config.Load(home)
 	if err != nil {
@@ -103,11 +107,30 @@ func TestContentSearchScopeBeforeLimit(t *testing.T) {
 	}
 	for i, m := range []archive.Metadata{{SessionID: "outside", ProjectID: "outside", ProjectName: "outside", RepoKey: "outside-repo"}, {SessionID: "inside", ProjectID: "inside", ProjectName: "inside", RepoKey: "inside-repo"}} {
 		m.Name = "checksum"
-		m.Harness = archive.Harness{Name: "codex"}
 		m.CapturedAt = env.now().AddDate(0, 0, i)
-		source := search.Source{Destination: namespace, SessionID: m.SessionID, ExtractorVersion: search.ExtractorVersion}
-		if _, err = index.Replace(t.Context(), m, []search.Projection{{Source: source}}); err != nil {
-			t.Fatal(err)
+		bundle := seed
+		bundle.ArchiveSessionID = m.SessionID
+		bundle.ProjectID = m.ProjectID
+		bundle.Capture.CapturedAt = m.CapturedAt
+		packed, e := archive.BuildCompressedSource(bundle)
+		must(t, e)
+		key, e := archive.SourceObjectKey(bundle, packed.SHA256)
+		must(t, e)
+		must(t, objects.Put(t.Context(), key, packed.Bytes))
+		parser, ok := parsersFor(env).LookupParser("codex")
+		if !ok {
+			t.Fatal("missing parser")
+		}
+		analysis, parseErr := agentapi.Analyze(t.Context(), parser, bundle)
+		verified, e := archive.BuildMetadataWithAnalysis(bundle, analysis, parseErr, "synthetic", m.CapturedAt, m.CapturedAt, archive.SourceReference{Key: key, SHA256: packed.SHA256, CompressedBytes: len(packed.Bytes)}, archive.ParserInfo{Version: parser.Version()})
+		must(t, e)
+		verified.Name = m.Name
+		verified.ProjectName = m.ProjectName
+		verified.RepoKey = m.RepoKey
+		must(t, index.Observe(t.Context(), verified, parsersFor(env), env.now(), 0))
+		progress, e := index.Run(t.Context(), objects, parsersFor(env), env.now(), search.Budget{})
+		if e != nil || progress.Committed != 1 {
+			t.Fatalf("%+v %v", progress, e)
 		}
 	}
 	if err = index.Close(); err != nil {
