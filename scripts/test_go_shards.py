@@ -1,9 +1,11 @@
 """Behavior checks for discovery, complete coverage and bounded process cleanup."""
 import copy
 import contextlib
+import copy
 import io
 import json
 import os
+import re
 from pathlib import Path
 import signal
 import subprocess
@@ -27,6 +29,13 @@ def event(action, package=CLI, **kw):
 
 
 class CatalogTest(unittest.TestCase):
+    def test_object_stream_offset_parser_preserves_concatenation_and_errors(self):
+        objects=[{'Action':'run','nested':{'value':'} inside string'}},{'Action':'pass'}]
+        self.assertEqual(runner.json_stream(' \n\t'+''.join(json.dumps(o) for o in objects)+' \n'),objects)
+        self.assertEqual(runner.json_stream(' \t\n'),[])
+        for raw in ('{} trailing','{} {','[]','{} 1','null','{"x": NaN} bad'):
+            with self.assertRaises((ValueError,runner.Failure)):runner.json_stream(raw)
+
     def test_metadata_keeps_fileless_packages_and_rejects_errors(self):
         items = [dict(ImportPath=n, Dir='/tmp', TestGoFiles=['x_test.go'] if n == CLI else [])
                  for n in (CLI, 'ordinary/a', 'ordinary/b')]
@@ -83,12 +92,123 @@ class CatalogTest(unittest.TestCase):
                 runner.coverage(text, {'ordinary/a': has_tests})
 
 
+class WorkerCountTest(unittest.TestCase):
+    def test_shared_one_two_three_four_bins_are_deterministic_exhaustive_disjoint(self):
+        units = [f'Test{i}' for i in range(12)]
+        for workers in (1, 2, 3, 4):
+            bins = runner.partition(units, {}, workers)
+            self.assertEqual(len(bins), workers)
+            self.assertEqual(bins, runner.partition(list(reversed(units)), {}, workers))
+            flattened = [n for b in bins for n in b]
+            self.assertEqual(set(flattened), set(units))
+            self.assertEqual(len(flattened), len(set(flattened)))
+        for invalid in (0, 17, True, '4'):
+            with self.assertRaises(runner.Failure): runner.partition(units, {}, invalid)
+        for invalid in (0, 1, 3, 5, True, '4'):
+            with self.assertRaises(runner.Failure): runner.worker_count(invalid)
+        with self.assertRaises(runner.Failure): runner.partition(['a', 'b'], {}, 4)
+
+    def test_fixed_overhead_offsets_rebalance_without_changing_union(self):
+        units=['a','b','c','d']
+        self.assertEqual(runner.partition(units,dict.fromkeys(units,10),2,[20,0]),[['c'],['a','b','d']])
+        for bad in ([0], [0,-1], [0,True], [0,'1']):
+            with self.assertRaises(runner.Failure): runner.partition(units,{},2,bad)
+
+    def test_four_worker_reconciliation_requires_every_terminal_and_assignment(self):
+        import run_ci_tier
+        with tempfile.TemporaryDirectory() as directory:
+            catalog = {'source': os.environ.get('GITHUB_SHA', 'abc'), 'workers': 4,
+                       'packages': {CLI: True, **{f'p{i}': True for i in range(4)}},
+                       'cli': [f'Test{i}' for i in range(4)],
+                       'assignments': [{'packages': [f'p{i}'], 'cli': [f'Test{i}']} for i in range(4)]}
+            for i in range(4):
+                path = Path(directory)/str(i); path.mkdir()
+                ordinary = records(event('pass', f'p{i}', Test='TestOrdinary'), event('pass', f'p{i}'))
+                cli = records(event('pass', Test=f'Test{i}'), event('pass'))
+                (path/'ordinary.json').write_text(ordinary); (path/'cli.json').write_text(cli)
+                (path/'manifest.json').write_text(json.dumps({'shard': i, 'tier': 'pr', 'success': True,
+                    'catalog': catalog, 'catalog_sha256': runner.digest(catalog), 'coverage': catalog['assignments'][i], 'settings': {'workers': 4},
+                    'body_evidence': run_ci_tier.body_evidence(ordinary+'\n'+cli, True)}))
+            runner.reconcile(directory, 4)
+            for i in range(4):
+                path=Path(directory)/str(i)/'manifest.json'; value=json.loads(path.read_text())
+                value['settings']['plain_audit_owned']=True; path.write_text(json.dumps(value))
+            with self.assertRaises(runner.Failure): runner.reconcile(directory,4)
+            with mock.patch.object(run_ci_tier,'verify_source_audit',return_value={}) as audit:
+                runner.reconcile(directory,4,Path('/audit'))
+                audit.assert_called_once_with(Path('/audit'),catalog['source'])
+            with mock.patch.object(run_ci_tier,'verify_source_audit',side_effect=run_ci_tier.Failure('missing body')):
+                with self.assertRaises(runner.Failure): runner.reconcile(directory,4,Path('/audit'))
+            with mock.patch.object(run_ci_tier,'verify_source_audit',return_value={}),self.assertRaises(runner.Failure):
+                runner.reconcile(directory,4,Path('/audit'),require_plain_vet=True)
+            for i in range(4):
+                path=Path(directory)/str(i)/'manifest.json';value=json.loads(path.read_text())
+                value['settings'].update(plain_vet_owned=True,plain_vet_identity_schema=run_ci_tier.PLAIN_VET_IDENTITY_SCHEMA,plain_vet_context_sha256='d'*64,plain_vet_source_proof={'source':catalog['source'],'tree':'b'*40})
+                path.write_text(json.dumps(value))
+            with mock.patch.object(run_ci_tier,'verify_source_audit',return_value={'source_proof':{'source':catalog['source'],'tree':'b'*40}}) as audit:
+                runner.reconcile(directory,4,Path('/audit'),require_plain_vet=True)
+                self.assertTrue(audit.call_args.kwargs['require_plain_vet'])
+                self.assertEqual(audit.call_args.kwargs['expected_vet_context_sha256'],'d'*64)
+            path=Path(directory)/'0'/'manifest.json';value=json.loads(path.read_text())
+            for update in (dict(plain_vet_owned=False),dict(plain_vet_context_sha256='e'*64),dict(plain_vet_identity_schema=None)):
+                bad=copy.deepcopy(value);bad['settings'].update(update);path.write_text(json.dumps(bad))
+                with mock.patch.object(run_ci_tier,'verify_source_audit',return_value={}),self.assertRaises(runner.Failure):runner.reconcile(directory,4,Path('/audit'))
+            path.write_text(json.dumps(value))
+            for i in range(4):
+                path=Path(directory)/str(i)/'manifest.json';value=json.loads(path.read_text())
+                value['settings'].pop('plain_vet_identity_schema');value['settings'].pop('plain_vet_owned');value['settings'].pop('plain_vet_context_sha256');value['settings'].pop('plain_vet_source_proof')
+                path.write_text(json.dumps(value))
+            for i in range(4):
+                path=Path(directory)/str(i)/'manifest.json'; value=json.loads(path.read_text())
+                value['settings']['plain_audit_owned']=False; path.write_text(json.dumps(value))
+            with self.assertRaises(runner.Failure): runner.reconcile(directory, 2)
+            path = Path(directory)/'3'/'manifest.json'; original = path.read_text()
+            for change in ({'success': False}, {'shard': 2}, {'coverage': {'packages': [], 'cli': []}}):
+                m = json.loads(original); m.update(change); path.write_text(json.dumps(m))
+                with self.assertRaises(runner.Failure): runner.reconcile(directory, 4)
+            path.unlink()
+            with self.assertRaises(runner.Failure): runner.reconcile(directory, 4)
+
+    def test_worker_default_vet_remains_and_explicit_ownership_removes_only_vet(self):
+        import run_ci_tier
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);(root/'scripts').mkdir()
+            hints={'packages':{'p0':10,'p1':10},'cli':{'TestA':10,'TestB':10},
+                   'auxiliary_costs_ms':{'vet':5,'git_invocation':0}}
+            (root/'scripts/go_shard_hints.json').write_text(json.dumps(hints))
+            calls=[]
+            def supervise(commands,deadline):
+                for command,path,env in commands:
+                    calls.append(command)
+                    if command[1]=='list':
+                        path.write_text(records(*[{'ImportPath':p,'Dir':'/tmp','TestGoFiles':['test.go']} for p in ['p0','p1',CLI]]))
+                    elif '-list' in command:
+                        path.write_text(records(event('output',Output='TestA\n'),event('output',Output='TestB\n'),event('pass')))
+                    elif command[1]=='vet':path.write_text('')
+                    elif CLI in command:
+                        pattern=command[command.index('-run')+1]
+                        path.write_text(records(*[event('pass',Test=n) for n in ['TestA','TestB'] if re.fullmatch(pattern,n)],event('pass')))
+                    else:path.write_text(records(*[event('pass',p) for p in ['p0','p1'] if p in command]))
+                return [0.01]*len(commands)
+            with mock.patch.object(runner,'ROOT',root),mock.patch.object(runner,'supervise',side_effect=supervise),mock.patch.object(runner.os,'sched_getaffinity',return_value={0,1,2,3},create=True),mock.patch.object(runner.subprocess,'check_output',return_value='head\n'),mock.patch.object(run_ci_tier,'plain_vet_context',return_value={'image':{'ImageOS':'ubuntu24','ImageVersion':'1'}}),mock.patch.object(run_ci_tier.full_race,'source_proof',return_value={'source':'head','tree':'b'*40}),mock.patch.dict(os.environ,{'GITHUB_SHA':'head'}),contextlib.redirect_stdout(io.StringIO()):
+                runner.run(0,root/'default',30)
+                self.assertEqual(sum(c==['go','vet','./...'] for c in calls),1)
+                calls.clear();runner.run(0,root/'owned',30,plain_vet_owned=True)
+                self.assertFalse(any(c[1]=='vet' for c in calls))
+            default=json.loads((root/'default/manifest.json').read_text());owned=json.loads((root/'owned/manifest.json').read_text())
+            self.assertEqual(default['scheduling']['fixed_vet_ms'],[5,0])
+            self.assertEqual(owned['scheduling']['fixed_vet_ms'],[0,0])
+            self.assertTrue(owned['settings']['plain_vet_owned'])
+            self.assertIn('vet_seconds',default['phases']);self.assertNotIn('vet_seconds',owned['phases'])
+
+
+
 class GateTest(unittest.TestCase):
     def test_event_verdict_fail_closed(self):
-        pr = {j: {'result': s} for j, s in [('linux-short', 'success'), ('linux-full', 'success'), ('script-tests', 'success'), ('macos-smoke','success'), ('tier-plan','success')]}
+        pr = {j: {'result': s} for j, s in [('linux-short', 'success'), ('linux-full', 'success'), ('script-tests', 'success'), ('macos-smoke','success'), ('tier-plan','success'), ('source-audit','success')]}
         runner.verdict('pull_request', 'refs/pull/1/merge', pr)
         candidate = copy.deepcopy(pr)
-        candidate['linux-short']['result'], candidate['linux-full']['result'] = 'skipped', 'success'
+        candidate['linux-short']['result'], candidate['linux-full']['result'], candidate['source-audit']['result'] = 'skipped', 'success', 'skipped'
         runner.verdict('push', 'refs/heads/release-candidate/x', candidate)
         for event_name, ref, needs in [('push', 'refs/heads/main', pr), ('schedule', '', pr), ('pull_request', '', {}),
                                        ('push', 'refs/heads/release-candidate/', candidate)]:
@@ -184,6 +304,126 @@ else:
             self.assertIn('git_identity_invocation_seconds', first['phases'])
             self.assertIn('vet_seconds', first['phases'])
             self.assertFalse((root/'0/ordinary.json').exists(), 'empty batch must not default to testing the module root')
+
+
+@unittest.skipUnless(sys.platform in ('linux', 'darwin'), 'supported process-group platforms')
+class PortableBatchProcessTest(unittest.TestCase):
+    def commands(self, directory, *codes):
+        return [([sys.executable, '-B', '-c', code], Path(directory)/f'out-{i}', os.environ.copy())
+                for i, code in enumerate(codes)]
+
+    def run_batch(self, commands, seconds):
+        import run_ci_tier
+        children = []
+        popen = subprocess.Popen
+        def launch(*args, **kwargs):
+            child = popen(*args, **kwargs)
+            children.append(child)
+            return child
+        try:
+            with mock.patch.object(runner.subprocess, 'Popen', side_effect=launch):
+                run_ci_tier.checked_many(commands, time.monotonic()+seconds)
+        finally:
+            # poll/wait in the supervisor must have joined every direct child,
+            # on success and every exceptional exit, leaving no zombies.
+            for child in children:
+                self.assertIsNotNone(child.returncode)
+                with self.assertRaises(ProcessLookupError):
+                    os.kill(child.pid, 0)
+
+    def test_expired_shared_deadline_launches_nothing(self):
+        import run_ci_tier
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(runner.subprocess,'Popen') as launch:
+            with self.assertRaisesRegex(run_ci_tier.Failure,'already exceeded'):
+                run_ci_tier.checked_many(self.commands(d,'raise SystemExit(0)'),time.monotonic()-1)
+            launch.assert_not_called()
+
+    def test_two_private_processes_must_overlap_and_complete_their_own_streams(self):
+        with tempfile.TemporaryDirectory() as d:
+            codes = []
+            for i in range(2):
+                own, other = Path(d)/f'private-{i}', Path(d)/f'private-{1-i}'
+                # Independent ephemeral ports/data, with a readiness barrier that
+                # cannot finish if the second command is only launched later.
+                codes.append("import socket,time;from pathlib import Path;s=socket.socket();s.bind(('127.0.0.1',0));p=Path("+repr(str(own))+");p.write_text(str(s.getsockname()[1]));q=Path("+repr(str(other))+");\nwhile not q.exists():time.sleep(.01)\nprint(p.read_text(),flush=True);s.close()")
+            commands = self.commands(d, *codes)
+            self.run_batch(commands, 5)
+            ports = [int(output.read_text()) for _, output, _ in commands]
+            self.assertEqual(len(set(ports)), 2)
+            self.assertEqual(ports, [int((Path(d)/f'private-{i}').read_text()) for i in range(2)])
+
+    def test_partial_failure_timeout_and_live_failure_join_every_child(self):
+        import run_ci_tier
+        for reason in ('exit', 'timeout', 'live'):
+            with self.subTest(reason=reason), tempfile.TemporaryDirectory() as d:
+                if reason == 'exit':
+                    codes = ['print("completed",flush=True)', 'import time;time.sleep(.1);raise SystemExit(7)']
+                elif reason == 'timeout':
+                    codes = ['print("completed",flush=True)', 'import time;time.sleep(60)']
+                else:
+                    codes = ['import time;time.sleep(60)', 'import json,time;time.sleep(.1);print(json.dumps({"Action":"fail","Package":"p","Test":"TestA"}),flush=True);time.sleep(60)']
+                commands = self.commands(d, *codes)
+                if reason == 'live':
+                    commands[1][0].extend(['test', '-json'])
+                started = time.monotonic()
+                with self.assertRaises(run_ci_tier.Failure):
+                    self.run_batch(commands, .5 if reason == 'timeout' else 5)
+                self.assertLess(time.monotonic()-started, 3)
+                if reason in ('exit', 'timeout'):
+                    self.assertEqual(commands[0][1].read_text(), 'completed\n')
+
+    def test_launch_failure_stops_and_reaps_the_already_started_sibling(self):
+        with tempfile.TemporaryDirectory() as d:
+            commands = self.commands(d, 'import time;time.sleep(60)')
+            commands.append(([str(Path(d)/'missing-command')], Path(d)/'missing.out', os.environ.copy()))
+            with self.assertRaises(FileNotFoundError):
+                self.run_batch(commands, 5)
+
+    def test_group_cleanup_stops_and_reaps_an_owned_descendant(self):
+        import run_ci_tier
+        with tempfile.TemporaryDirectory() as d:
+            pidfile=Path(d)/'descendant'
+            # A cooperative parent joins its child on group termination; this
+            # exercises native group signals as well as Linux subreaping.
+            code="import subprocess,signal,sys,time;from pathlib import Path;child=subprocess.Popen([sys.executable,'-c','import time;time.sleep(60)']);signal.signal(signal.SIGTERM,lambda *a:(child.wait(timeout=2),sys.exit(0)));Path("+repr(str(pidfile))+").write_text(str(child.pid));time.sleep(60)"
+            with self.assertRaises(run_ci_tier.Failure):
+                self.run_batch(self.commands(d,code,'import time;time.sleep(60)'),.5)
+            self.assertTrue(pidfile.exists())
+            with self.assertRaises(ProcessLookupError):
+                os.kill(int(pidfile.read_text()),0)
+
+    def test_batch_cleanup_preserves_a_preexisting_unrelated_child(self):
+        import run_ci_tier
+        unrelated = subprocess.Popen([sys.executable, '-c', 'import time;time.sleep(60)'], start_new_session=True)
+        try:
+            with tempfile.TemporaryDirectory() as d, self.assertRaises(run_ci_tier.Failure):
+                self.run_batch(self.commands(d, 'import time;time.sleep(60)', 'import time;time.sleep(60)'), .2)
+            self.assertIsNone(unrelated.poll())
+        finally:
+            unrelated.terminate(); unrelated.wait(timeout=3)
+
+    def test_cancellation_joins_both_recorded_private_children(self):
+        with tempfile.TemporaryDirectory() as d:
+            paths = [Path(d)/f'pid-{i}' for i in range(2)]
+            commands = self.commands(d, *["import os,time;from pathlib import Path;Path("+repr(str(p))+").write_text(str(os.getpid()));time.sleep(60)" for p in paths])
+            # Run the signal owner in a separate process so cancellation cannot
+            # interrupt unittest or signal unrelated test workers.
+            arguments = [(command, str(output), None) for command, output, _ in commands]
+            code = "import sys,time;from pathlib import Path;sys.path.insert(0,"+repr(str(Path(runner.__file__).parent))+");import run_ci_tier as t;t.checked_many([(c,Path(p),e) for c,p,e in "+repr(arguments)+"],time.monotonic()+60)"
+            owner = subprocess.Popen([sys.executable, '-B', '-c', code], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            try:
+                end = time.monotonic()+5
+                while not all(p.exists() for p in paths) and time.monotonic()<end:
+                    time.sleep(.02)
+                self.assertTrue(all(p.exists() for p in paths))
+                owner.send_signal(signal.SIGTERM)
+                self.assertNotEqual(owner.wait(timeout=5), 0)
+                for path in paths:
+                    with self.assertRaises(ProcessLookupError):
+                        os.kill(int(path.read_text()), 0)
+            finally:
+                if owner.poll() is None:
+                    owner.kill(); owner.wait()
 
 
 @unittest.skipUnless(sys.platform == 'linux', 'Linux process groups and child subreaping')

@@ -10,6 +10,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
 type handoffConfigState struct {
@@ -25,14 +26,16 @@ func handoffConfig(home string, opts handoffOptions) (config.Config, bool, error
 }
 
 type handoffOptions struct {
-	readCtx   context.Context
-	selection **handoffPickerSelection
-	config    *handoffConfigState
-	native    bool
-	sessionID string
-	revision  string
-	project   string
-	harness   string
+	readCtx context.Context
+	// archiveStore retains the exact client bound to the query read view.
+	archiveStore storage.ObjectStore
+	selection    **handoffPickerSelection
+	config       *handoffConfigState
+	native       bool
+	sessionID    string
+	revision     string
+	project      string
+	harness      string
 	// allProjects searches and lists every project, not only the working
 	// directory's repository.
 	allProjects bool

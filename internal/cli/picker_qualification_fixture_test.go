@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -118,6 +119,19 @@ func qualificationRef(tb testing.TB, store storage.ObjectStore, kind string, raw
 	return ref
 }
 
+// qualificationLeafSize counts the wire produced by qualificationJSON without
+// re-encoding a complete entry just for the node budget. Fixture values already
+// come from that canonical encoder; the final node still uses it and checks its
+// actual bytes against the production limit.
+func qualificationLeafSize(tb testing.TB, leaf qualificationLeaf) int {
+	tb.Helper()
+	valueBytes := len(leaf.Value)
+	if valueBytes == 0 {
+		valueBytes = len("null")
+	}
+	return len(qualificationJSON(tb, leaf.Key)) + valueBytes + len(`{"Key":,"Value":}`)
+}
+
 func qualificationTree(tb testing.TB, store storage.ObjectStore, leaves []qualificationLeaf) (catalog.ObjectRef, int) {
 	tb.Helper()
 	if len(leaves) == 0 {
@@ -129,7 +143,7 @@ func qualificationTree(tb testing.TB, store storage.ObjectStore, leaves []qualif
 		end := start
 		encodedBytes := 64 // Count/leaves framing, including decimal count and commas.
 		for end < len(leaves) && end-start < 32 {
-			leafBytes := len(qualificationJSON(tb, leaves[end])) + 1
+			leafBytes := qualificationLeafSize(tb, leaves[end]) + 1
 			if encodedBytes+leafBytes > 128<<10 {
 				break
 			}
@@ -198,11 +212,17 @@ func qualificationOrderKeys(key string, m archive.Metadata) [3][]string {
 	return result
 }
 
-func newQualificationFixture(tb testing.TB, metadata []archive.Metadata) qualificationFixture {
+func buildQualificationFixture(tb testing.TB, metadata []archive.Metadata) qualificationFixture {
 	tb.Helper()
 	raw := &qualifiedCLIStore{storagetest.NewMemoryStore()}
 	head := qualificationSeed(tb, raw)
 	entries := make([]catalog.CatalogEntry, len(metadata))
+	// Each order membership carries the same immutable entry envelope. Encode it
+	// once per session; the per-key decoder and node checks still validate every
+	// leaf. These bytes belong only to this construction, never a process seed.
+	entryWire := make([]json.RawMessage, len(metadata))
+	entryKeys := make([]string, len(metadata))
+	orderKeys := make([][3][]string, len(metadata))
 	children := map[string][2]uint64{}
 	for _, m := range metadata {
 		if m.ParentSessionID != "" {
@@ -224,16 +244,20 @@ func newQualificationFixture(tb testing.TB, metadata []archive.Metadata) qualifi
 		n := children[m.Harness.Name+"/"+m.SessionID]
 		entry := catalog.CatalogEntry{Revision: fmt.Sprintf("fixture-%08d", i), Metadata: ref, Summary: m, OrdinaryChildren: n[0], ReplayChildren: n[1]}
 		entries[i] = qualificationEntry(tb, entry)
+		entryWire[i] = qualificationJSON(tb, entries[i])
+		key, err := archive.MetadataObjectKey(m.Harness.Name, m.SessionID)
+		if err != nil {
+			tb.Fatal(err)
+		}
+		entryKeys[i] = key
+		orderKeys[i] = qualificationOrderKeys(key, m)
 	}
 	var roots [4]catalog.ObjectRef
 	height := 0
 	for tree := range roots {
 		var leaves []qualificationLeaf
-		for i, m := range metadata {
-			key, err := archive.MetadataObjectKey(m.Harness.Name, m.SessionID)
-			if err != nil {
-				tb.Fatal(err)
-			}
+		for i := range metadata {
+			key := entryKeys[i]
 			entry := entries[i]
 			if tree == 0 {
 				leaves = append(leaves, qualificationLeaf{key, qualificationJSON(tb, struct {
@@ -242,9 +266,8 @@ func newQualificationFixture(tb testing.TB, metadata []archive.Metadata) qualifi
 				}{entry.Revision, &entry})})
 				continue
 			}
-			order := qualificationOrderKeys(key, m)
-			for _, k := range order[tree-1] {
-				leaves = append(leaves, qualificationLeaf{k, qualificationJSON(tb, entry)})
+			for _, k := range orderKeys[i][tree-1] {
+				leaves = append(leaves, qualificationLeaf{k, entryWire[i]})
 			}
 			if tree == 3 {
 				leaves = append(leaves, qualificationPickerLeaves(tb, key, entry)...)
@@ -266,5 +289,99 @@ func newQualificationFixture(tb testing.TB, metadata []archive.Metadata) qualifi
 	if err != nil {
 		tb.Fatal(err)
 	}
-	return qualificationFixture{head: head, raw: raw, store: wrapped, metadata: metadata, manifest: storage.SHA256Hex(manifest), height: height}
+	var privateMetadata []archive.Metadata
+	if err := json.Unmarshal(manifest, &privateMetadata); err != nil {
+		tb.Fatal(err)
+	}
+	return qualificationFixture{head: head, raw: raw, store: wrapped, metadata: privateMetadata, manifest: storage.SHA256Hex(manifest), height: height}
+}
+
+// qualificationSeeds retains wire bytes only. Writable stores, providers and
+// nested metadata never escape from a seed into a command or another test.
+var qualificationSeeds = struct {
+	sync.Mutex
+	fixtures map[string]qualificationFrozenFixture
+}{fixtures: make(map[string]qualificationFrozenFixture)}
+
+type qualificationFrozenFixture struct {
+	objects  storagetest.MemorySnapshot
+	head     []byte
+	metadata []byte
+	manifest string
+	height   int
+}
+
+func freezeQualificationFixture(tb testing.TB, fixture qualificationFixture) qualificationFrozenFixture {
+	tb.Helper()
+	snapshot, err := storagetest.SnapshotMemoryStore(tb.Context(), fixture.raw.MemoryStore)
+	if err != nil {
+		tb.Fatal(err)
+	}
+	return qualificationFrozenFixture{objects: snapshot, head: qualificationJSON(tb, fixture.head), metadata: qualificationJSON(tb, fixture.metadata), manifest: fixture.manifest, height: fixture.height}
+}
+
+func (seed qualificationFrozenFixture) clone(tb testing.TB) qualificationFixture {
+	tb.Helper()
+	memory, err := seed.objects.Clone(tb.Context())
+	if err != nil {
+		tb.Fatal(err)
+	}
+	fixture := qualificationFixture{raw: &qualifiedCLIStore{memory}, manifest: seed.manifest, height: seed.height}
+	if err := json.Unmarshal(seed.head, &fixture.head); err != nil {
+		tb.Fatal(err)
+	}
+	if err := json.Unmarshal(seed.metadata, &fixture.metadata); err != nil {
+		tb.Fatal(err)
+	}
+	fixture.store, err = catalog.Wrap(fixture.raw)
+	if err != nil {
+		tb.Fatal(err)
+	}
+	return fixture
+}
+
+// newQualificationFixture caches ordinary universes, then returns a writable
+// deep copy. The manifest keys all metadata fields, including scope, ordering,
+// overflow, generation and source references. Large performance universes retain
+// the uncached constructor so one-use 10k/100k seeds do not live for the whole
+// package process or add a second frozen copy to their setup peak.
+func newQualificationFixture(tb testing.TB, metadata []archive.Metadata) qualificationFixture {
+	tb.Helper()
+	if len(metadata) > 1400 {
+		return buildQualificationFixture(tb, metadata)
+	}
+	key := storage.SHA256Hex(qualificationJSON(tb, metadata))
+	seed := func() qualificationFrozenFixture {
+		qualificationSeeds.Lock()
+		defer qualificationSeeds.Unlock()
+		seed, ok := qualificationSeeds.fixtures[key]
+		if !ok {
+			seed = freezeQualificationFixture(tb, buildQualificationFixture(tb, metadata))
+			qualificationSeeds.fixtures[key] = seed
+		}
+		return seed
+	}()
+	return seed.clone(tb)
+}
+
+func cloneQualificationFixture(tb testing.TB, fixture qualificationFixture) qualificationFixture {
+	tb.Helper()
+	// Each command owns its map, provider and metadata. MemoryStore's internal
+	// immutable bodies can be reused without another multi-gigabyte wire copy.
+	memory, err := storagetest.CloneMemoryStore(tb.Context(), fixture.raw.MemoryStore)
+	if err != nil {
+		tb.Fatal(err)
+	}
+	cloned := qualificationFixture{raw: &qualifiedCLIStore{memory}, manifest: fixture.manifest, height: fixture.height}
+	if err := json.Unmarshal(qualificationJSON(tb, fixture.head), &cloned.head); err != nil {
+		tb.Fatal(err)
+	}
+	if err := json.Unmarshal(qualificationJSON(tb, fixture.metadata), &cloned.metadata); err != nil {
+		tb.Fatal(err)
+	}
+	cloned.store, err = catalog.Wrap(cloned.raw)
+	if err != nil {
+		tb.Fatal(err)
+	}
+	return cloned
 }

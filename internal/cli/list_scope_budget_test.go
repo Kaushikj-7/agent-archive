@@ -36,6 +36,14 @@ func (s *scopeBudgetStore) GetVersioned(ctx context.Context, key string) ([]byte
 	return s.MemoryStore.GetVersioned(ctx, key)
 }
 
+func (s *scopeBudgetStore) GetLimited(ctx context.Context, key string, limit int64) ([]byte, error) {
+	s.gets.Add(1)
+	if !strings.HasSuffix(key, "/metadata.json") {
+		s.sourceGets.Add(1)
+	}
+	return s.MemoryStore.GetLimited(ctx, key, limit)
+}
+
 func (s *scopeBudgetStore) Get(ctx context.Context, key string) ([]byte, error) {
 	s.gets.Add(1)
 	if !strings.HasSuffix(key, "/metadata.json") {
