@@ -214,6 +214,9 @@ def main():
             shared_proof = shared_identity(shared)
         context = runtime if shared is None else {'runtime': runtime, 'profile': 'shared', 'shared': shared_proof}
         plan = general_plan(context, current, Path(env['RUNNER_TEMP']))
+        if args.phase != 'prepare' and (env.get('GOCACHE') != plan.paths[0]
+                                            or env.get('GOMODCACHE') != plan.paths[1]):
+            raise InvalidContext('Go caches differ from controlled paths')
         def guard(expected):
             if current_source(source, tested) != expected or runtime_context(native=True) != runtime:
                 raise InvalidContext('source/compiler changed during compilation cache use')

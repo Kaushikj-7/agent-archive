@@ -260,6 +260,28 @@ class ToolTests(unittest.TestCase):
             self.assertEqual(builds[0][1]['env']['CGO_ENABLED'],'0')
             self.assertEqual(builds[0][1]['env']['GOFLAGS'],'-mod=readonly -buildvcs=false')
 
+    def test_git_cache_hit_validates_actual_executable_and_checksum(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cache_dir = root/'cache'
+            cache_dir.mkdir()
+            installation = root/'initial'
+            (installation/'bin').mkdir(parents=True)
+            git = installation/'bin/git'
+            git.write_text('#!/bin/sh\necho "git version 2.39.2"\n')
+            git.chmod(0o755)
+            archive = cache_dir/'upstream-2.39.2.tar.gz'
+            with tarfile.open(archive,'w:gz') as handle:
+                handle.add(installation/'bin',arcname='bin')
+            tag,commit,expected = pinned_git.PINS['upstream-2.39.2']
+            import hashlib
+            receipt = {'tag':tag,'commit':commit,'expected':expected,'flags':pinned_git.FLAGS,
+                       'sha256':hashlib.sha256(archive.read_bytes()).hexdigest()}
+            (cache_dir/'upstream-2.39.2.json').write_text(json.dumps(receipt))
+            binary_dir = pinned_git.ensure('upstream-2.39.2', cache_dir, root/'install')
+            self.assertEqual(subprocess.check_output([str(binary_dir/'git'),'--version']).decode().strip(),expected)
+            self.assertEqual(binary_dir,root/'install/bin')
+
     def test_git_archive_rejects_traversal_devices_and_symlink_children(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

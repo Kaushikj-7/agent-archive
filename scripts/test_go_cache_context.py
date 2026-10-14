@@ -79,7 +79,7 @@ class ContextTests(unittest.TestCase):
     def test_actual_go_metadata_fails_closed(self):
         for key, value in [('GOVERSION', 'go1.27.3'), ('CGO_ENABLED', '0'),
                            ('GOHOSTARCH', 'arm64'), ('GOFLAGS', '-mod=mod'),
-                           ('GOTOOLCHAIN', 'auto'), ('GOWORK', '/tmp/other')]:
+                           ('GOTOOLCHAIN', 'auto'), ('GOWORK', '/tmp/other'), ('GOCACHEPROG', '/tmp/external-cache')]:
             with self.subTest(key=key):
                 original = self.go[key]
                 self.go[key] = value

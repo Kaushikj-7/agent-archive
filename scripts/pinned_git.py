@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import json
+import inspect
 import os
 from pathlib import Path, PurePosixPath
 import shutil
@@ -39,7 +40,14 @@ def extract(archive, destination):
         if any(any(parent.as_posix() in links for parent in PurePosixPath(m.name).parents)
                for m in members):
             raise InvalidContext('archive writes beneath symlink')
-        handle.extractall(destination, members=members, filter='data')
+        destination = Path(destination)
+        if destination.is_symlink() or (destination.exists() and any(destination.iterdir())):
+            raise InvalidContext('Git extraction requires empty real destination')
+        destination.mkdir(parents=True, exist_ok=True)
+        # Python 3.9 on developer macOS lacks tar filters. The complete member
+        # validation above plus an empty destination also protects that path.
+        options = {'filter': 'data'} if 'filter' in inspect.signature(handle.extractall).parameters else {}
+        handle.extractall(destination, members=members, **options)
 
 
 def ensure(name, cache, destination, command=subprocess.check_output):

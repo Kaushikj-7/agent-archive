@@ -21,7 +21,7 @@ SCHEMA = 'aa-pr-go-v2'
 GO_FIELDS = ('GOVERSION GOOS GOARCH GOHOSTOS GOHOSTARCH GOAMD64 GOARM64 '
              'CGO_ENABLED GOEXPERIMENT GOFLAGS GOTOOLCHAIN CC CXX '
              'CGO_CFLAGS CGO_CPPFLAGS CGO_CXXFLAGS CGO_LDFLAGS GOWORK GOROOT GOTOOLDIR '
-             'GOENV GOFIPS140 GODEBUG GOARM GO386 GOMIPS GOMIPS64 GOPPC64 GORISCV64 GOWASM').split()
+             'GOENV GOFIPS140 GODEBUG GOCACHEPROG GOARM GO386 GOMIPS GOMIPS64 GOPPC64 GORISCV64 GOWASM').split()
 SHA = re.compile(r'[0-9a-f]{40}')
 # One policy identity covers every accelerator consumer's immutable tools and
 # supported compilation modes; Go still keys each actual action by its inputs.
@@ -168,7 +168,7 @@ def runtime_context(run=execute, env=None, os_release=Path('/etc/os-release'),
             or go['GOARCH'] != go['GOHOSTARCH'] or go['GOARCH'] not in ('amd64', 'arm64')
             or go['CGO_ENABLED'] != '1'
             or go['GOTOOLCHAIN'] != 'local' or go['GOWORK'] != 'off'
-            or go['GOFLAGS'] != '-mod=readonly'):
+            or go['GOFLAGS'] != '-mod=readonly' or go['GOCACHEPROG'] != ''):
         raise InvalidContext('unsupported or inconsistent Go build context')
     if version != f'go version {go["GOVERSION"]} {go["GOHOSTOS"]}/{go["GOHOSTARCH"]}':
         raise InvalidContext('Go executable and metadata disagree')
@@ -236,7 +236,7 @@ def validate_context(context, *, native=False):
             or context['runner_os'] != {'linux': 'Linux', 'darwin': 'macOS'}[system]
             or context['runner_arch'] != {'amd64': 'X64', 'arm64': 'ARM64'}[arch]
             or any(go[k] != v for k, v in {'GOVERSION': 'go1.27.2', 'CGO_ENABLED': '1',
-                    'GOTOOLCHAIN': 'local', 'GOWORK': 'off', 'GOFLAGS': '-mod=readonly'}.items())):
+                    'GOTOOLCHAIN': 'local', 'GOWORK': 'off', 'GOFLAGS': '-mod=readonly', 'GOCACHEPROG': ''}.items())):
         raise InvalidContext('runtime build/runner identity differs')
     image = context['image']
     if (not isinstance(image, dict) or set(image) != {'ImageOS', 'ImageVersion'}
@@ -335,4 +335,3 @@ def prepare_owned_paths(paths, clear=False):
                     item.chmod(item.stat().st_mode | stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
             shutil.rmtree(path)
         path.mkdir(parents=True, exist_ok=True)
-

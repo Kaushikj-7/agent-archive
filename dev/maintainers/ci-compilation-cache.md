@@ -117,3 +117,17 @@ General consumers can revert the composite restore step to remain cold without
 changing checks. Worker restore/save steps and main seed workflow can be disabled
 while leaving all source/module verification and current test bodies intact.
 Do not bypass failures of the source/coverage verifier to rescue an accelerator.
+
+## Local layout measurements
+
+On a local Darwin/amd64 Go 1.27.2 experiment (not hosted qualification), a
+post-experiment compiler working set plus archive-only dependencies occupied
+905,763,308 bytes: manifest capture 3.68 seconds and verification 3.45 seconds.
+The narrower compiler snapshot occupied 789,130,606 bytes: capture 2.93 seconds
+and verification 3.20 seconds. Compression/upload and full hosted native/shared
+working sets remain separate measurements. The original fresh product build,
+catalog race compilation and pinned-tool setup had produced 1.75 GiB including
+extracted module sources. A rejected one-GiB pruning experiment forced costly
+recompilation; neither its cap nor its extracted-module deletion is shipped.
+Two actual race `-count=1` executions of `TestProviderGate` emitted their own
+run/pass records, including the warm repeat; cached outcomes were not used.
