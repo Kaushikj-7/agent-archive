@@ -367,6 +367,7 @@ func (r *handoffQueryResolver) openArchive() (storage.ObjectStore, error) {
 		return nil, fmt.Errorf("open storage: %w", err)
 	}
 	r.store = store
+	r.opts.archiveStore = store
 	return store, nil
 }
 

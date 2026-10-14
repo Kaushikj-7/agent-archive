@@ -15,6 +15,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/catalog"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/state"
@@ -263,5 +264,33 @@ func TestHandoffQueryReleasesReadSignalsBeforeLaunch(t *testing.T) {
 	_, stderr, code := runHandoff(t, f.env, f.notUploaded, "--to", "claude")
 	if code != 0 || got.Dir == "" || active.Load() != 0 {
 		t.Fatalf("code=%d stderr=%q launch=%+v active=%d", code, stderr, got, active.Load())
+	}
+}
+
+// Production storage opens give separate catalog clients distinct authority keys.
+// Discovery and target loading must retain one client rather than reset its view.
+func TestHandoffArchiveQueryRetainsCapturedCatalogClient(t *testing.T) {
+	t.Parallel()
+	for _, query := range []string{"full ID", "qualified ID", "title"} {
+		t.Run(query, func(t *testing.T) {
+			t.Parallel()
+			f := newPickerFixture(t)
+			remote := scopedPickerCatalog(t, f.mem)
+			opens := 0
+			f.env.OpenStore = func(config.Config) (storage.ObjectStore, error) {
+				opens++
+				return catalog.Wrap(remote.ObjectStore)
+			}
+			args := []string{f.archiveOnly, "--source", "archive"}
+			if query == "qualified ID" {
+				args = append(args, "--harness", "codex")
+			} else if query == "title" {
+				args[0] = "Archived elsewhere"
+			}
+			out, stderr, code := runHandoff(t, f.env, args...)
+			if code != 0 || opens != 1 || !strings.Contains(out, "Archived elsewhere") || !strings.Contains(out, "source: archive") {
+				t.Fatalf("code=%d opens=%d stderr=%q output=%q", code, opens, stderr, out)
+			}
+		})
 	}
 }

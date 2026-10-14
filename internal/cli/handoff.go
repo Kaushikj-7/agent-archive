@@ -265,7 +265,7 @@ func resolveHandoffTarget(opts handoffOptions, home string, stderr io.Writer, en
 		defer stopReads()
 	}
 	resolver := handoffResolver{ctx: ctx, env: env, home: home, cfg: cfg,
-		revision: opts.revision, harness: opts.harness, source: opts.source, skip: skip, gate: gate, stderr: stderr}
+		revision: opts.revision, harness: opts.harness, source: opts.source, skip: skip, gate: gate, stderr: stderr, store: opts.archiveStore}
 	if opts.selection != nil && *opts.selection != nil {
 		return resolver.selectedPicker(*opts.selection)
 	}
@@ -449,6 +449,8 @@ func hasPrompt(analysis archive.Analysis) bool {
 }
 
 type handoffResolver struct {
+	// store preserves the query read view's destination authority.
+	store    storage.ObjectStore
 	revision string
 	ctx      context.Context
 	env      handoffResolverDependencies
@@ -505,9 +507,13 @@ func (r handoffResolver) byID(id string) (handoffTarget, error) {
 }
 
 func (r handoffResolver) archiveByID(id string) (handoffTarget, error) {
-	store, err := r.env.openStore(r.cfg)
-	if err != nil {
-		return handoffTarget{}, fmt.Errorf("open storage: %w", err)
+	store := r.store
+	if store == nil {
+		var err error
+		store, err = r.env.openStore(r.cfg)
+		if err != nil {
+			return handoffTarget{}, fmt.Errorf("open storage: %w", err)
+		}
 	}
 	key, err := locateMetadataKey(r.ctx, store, r.harness, id)
 	if err != nil {
