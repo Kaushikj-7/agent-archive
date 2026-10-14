@@ -3,9 +3,9 @@ package reader
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -17,14 +17,16 @@ import (
 // sourceReadMeter deliberately hides optional capabilities unless forwarded.
 type sourceReadMeter struct {
 	storage.ObjectStore
-	gets, bounded int
-	ceiling       int64
+	gets    int
+	bounded int
+	ceiling int64
 }
 
 func (s *sourceReadMeter) Get(ctx context.Context, key string) ([]byte, error) {
 	s.gets++
 	return s.ObjectStore.Get(ctx, key)
 }
+
 func (s *sourceReadMeter) GetLimited(ctx context.Context, key string, limit int64) ([]byte, error) {
 	s.bounded++
 	s.ceiling = limit
@@ -80,9 +82,11 @@ func TestLoadSourceRequiresBoundedStore(t *testing.T) {
 
 // sourceHTTP feeds the real S3 adapter without network or provider state.
 type sourceHTTP struct {
-	data        []byte
-	reads, gets int
+	data  []byte
+	reads int
+	gets  int
 }
+
 type sourceBody struct {
 	io.Reader
 	owner *sourceHTTP
@@ -93,11 +97,14 @@ func (b sourceBody) Read(p []byte) (int, error) {
 	b.owner.reads += n
 	return n, err
 }
+
 func (sourceBody) Close() error { return nil }
+
 func (h *sourceHTTP) Do(*http.Request) (*http.Response, error) {
 	h.gets++
-	return &http.Response{StatusCode: 200, Header: http.Header{}, Body: sourceBody{strings.NewReader(string(h.data)), h}, ContentLength: int64(len(h.data))}, nil
+	return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: sourceBody{strings.NewReader(string(h.data)), h}, ContentLength: int64(len(h.data))}, nil
 }
+
 func TestLoadSourceRealAdapterStopsAtDeclaredSize(t *testing.T) {
 	t.Parallel()
 	metadata, _, memory := fixture(t)
@@ -106,7 +113,8 @@ func TestLoadSourceRealAdapterStopsAtDeclaredSize(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, excess := range []bool{false, true} {
-		t.Run(fmt.Sprint(excess), func(t *testing.T) {
+		t.Run(strconv.FormatBool(excess), func(t *testing.T) {
+			t.Parallel()
 			data := raw
 			if excess {
 				data = append(append([]byte(nil), raw...), []byte(strings.Repeat("x", 4096))...)

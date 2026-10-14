@@ -20,6 +20,7 @@ type sourceConsumerHTTP struct {
 	mu          sync.Mutex
 	sourceBytes int
 }
+
 type sourceConsumerBody struct {
 	io.Reader
 	transport *sourceConsumerHTTP
@@ -35,7 +36,9 @@ func (b sourceConsumerBody) Read(p []byte) (int, error) {
 	}
 	return n, err
 }
+
 func (sourceConsumerBody) Close() error { return nil }
+
 func (h *sourceConsumerHTTP) Do(req *http.Request) (*http.Response, error) {
 	key := strings.TrimPrefix(req.URL.Path, "/synthetic/")
 	data, ok := h.objects[key]
@@ -71,6 +74,7 @@ func TestArchiveSourceConsumersUseBoundedS3Reads(t *testing.T) {
 	}
 	for _, command := range [][]string{{"show", f.id, "--harness", "codex", "--normalized"}, {"handoff", f.id, "--source", "archive"}, {"eval", "export", f.id}} {
 		t.Run(command[0], func(t *testing.T) {
+			t.Parallel()
 			for _, excess := range []bool{false, true} {
 				transport := &sourceConsumerHTTP{objects: map[string][]byte{}}
 				for key, data := range snapshot {
