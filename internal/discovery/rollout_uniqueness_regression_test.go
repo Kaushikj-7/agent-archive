@@ -16,6 +16,15 @@ import (
 	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 )
 
+type uniquenessScenario string
+
+const uniquenessUnobservedCopy uniquenessScenario = "unobserved-copy"
+const uniquenessBothObserved uniquenessScenario = "both-observed"
+const uniquenessArchiveNotDirectory uniquenessScenario = "archive-not-directory"
+const uniquenessOtherHomeNotDirectory uniquenessScenario = "other-home-not-directory"
+const uniquenessOtherHomeCopy uniquenessScenario = "other-home-copy"
+const uniquenessHardlinkCopy uniquenessScenario = "hardlink-copy"
+
 // Only real parsed native header facts enter the actual lookup.
 func uniquenessObserve(t *testing.T, lookup *CodexRolloutLookup, root, path string) {
 	t.Helper()
@@ -46,8 +55,8 @@ func uniquenessClose(t *testing.T, pass agentapi.SourcePass, lookup *CodexRollou
 // Fresh actual passes delimit each phase; this does not assert fresh directory
 // membership after a listing was already cached in a pass.
 func TestRolloutUniquenessRealProviderCausal(t *testing.T) {
-	for _, scenario := range []string{"unobserved-copy", "both-observed", "archive-not-directory", "other-home-not-directory", "other-home-copy", "hardlink-copy"} {
-		t.Run(scenario, func(t *testing.T) {
+	for _, scenario := range []uniquenessScenario{uniquenessUnobservedCopy, uniquenessBothObserved, uniquenessArchiveNotDirectory, uniquenessOtherHomeNotDirectory, uniquenessOtherHomeCopy, uniquenessHardlinkCopy} {
+		t.Run(string(scenario), func(t *testing.T) {
 			root, other := chainRoot(t), chainRoot(t)
 			thread, basePath, _, tipPath := twoSegmentThread(t, root, 730, "")
 			db := hintDatabase(t, root, false)
@@ -64,7 +73,7 @@ func TestRolloutUniquenessRealProviderCausal(t *testing.T) {
 			newLookup := func() *CodexRolloutLookup {
 				t.Helper()
 				homes := []string{root}
-				if scenario == "other-home-not-directory" || scenario == "other-home-copy" {
+				if scenario == uniquenessOtherHomeNotDirectory || scenario == uniquenessOtherHomeCopy {
 					homes = append(homes, other)
 				}
 				lookup, err := NewCodexRolloutLookup(t.Context(), store, homes)
@@ -131,12 +140,12 @@ func TestRolloutUniquenessRealProviderCausal(t *testing.T) {
 			positive()
 			t.Log("UNIQUENESS_POSITIVE", scenario)
 			badRoot := root
-			if scenario == "other-home-not-directory" || scenario == "other-home-copy" {
+			if scenario == uniquenessOtherHomeNotDirectory || scenario == uniquenessOtherHomeCopy {
 				badRoot = other
 			}
 			archivePath := filepath.Join(badRoot, "archived_sessions")
 			duplicate := filepath.Join(archivePath, filepath.Base(basePath))
-			uncertain := scenario == "archive-not-directory" || scenario == "other-home-not-directory"
+			uncertain := scenario == uniquenessArchiveNotDirectory || scenario == uniquenessOtherHomeNotDirectory
 			if uncertain {
 				if err := os.WriteFile(archivePath, []byte("not a directory"), 0600); err != nil {
 					t.Fatal(err)
@@ -145,7 +154,7 @@ func TestRolloutUniquenessRealProviderCausal(t *testing.T) {
 				if err := os.MkdirAll(archivePath, 0700); err != nil {
 					t.Fatal(err)
 				}
-				if scenario == "hardlink-copy" {
+				if scenario == uniquenessHardlinkCopy {
 					if err := os.Link(basePath, duplicate); err != nil {
 						t.Fatal(err)
 					}
@@ -154,7 +163,7 @@ func TestRolloutUniquenessRealProviderCausal(t *testing.T) {
 				}
 			}
 			lookup := newLookup()
-			if scenario == "both-observed" {
+			if scenario == uniquenessBothObserved {
 				uniquenessObserve(t, lookup, badRoot, duplicate)
 			}
 			refs, lookupErr := lookup.Rollout(t.Context(), thread)

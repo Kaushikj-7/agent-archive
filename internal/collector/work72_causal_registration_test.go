@@ -90,7 +90,7 @@ func TestWork72RealRegistrationUnobservedBaseRestoration(t *testing.T) {
 	a, aBytes := write(aID, 0, "", 0, 0, "A unique")
 	// Establish absence using the real bounded recovery API before admission.
 	complete := false
-	for n := 0; n < 8; n++ {
+	for range 8 {
 		var err error
 		complete, err = store.RecoverSessionIndexScheduled(t.Context(), state.SessionIndexRecoverySlice)
 		if err != nil {
@@ -104,7 +104,7 @@ func TestWork72RealRegistrationUnobservedBaseRestoration(t *testing.T) {
 		t.Fatal("real session-index recovery did not finish in the existing slice bound")
 	}
 	var reg archive.SessionRegistration
-	for n := 0; n < 8; n++ {
+	for range 8 {
 		h, err := discovery.Run(t.Context(), store, cfg, discovery.Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(time.Minute) }})
 		if err != nil {
 			t.Fatal("real discovery admission", h, err)
