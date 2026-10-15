@@ -176,7 +176,10 @@ func publishedWriterProtectedFixtures() []publishedWriterProtectedFixture {
 	stagedFinite.ImportStagingProtection = true
 	stagedForever.ImportStagingProtection = true
 	historical, _ := historicalPolicyFixture()
+	native := publishedWriterFiniteControl()
+	native.NativeRoots = []archive.NativeRoot{{Agent: "synthetic", Configured: "/native", Canonical: "/native", Revision: "one"}}
 	return []publishedWriterProtectedFixture{
+		{name: "native-authority", cfg: native, writer: nativeAuthorityWriter},
 		{name: "historical-projects", cfg: historical, writer: historicalProjectWriter},
 		{name: "consent-disabled-finite", cfg: disabled, writer: discoveryWriter},
 		{name: "consent-enabled-finite", cfg: enabled, writer: discoveryWriter},
