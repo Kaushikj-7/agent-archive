@@ -22,6 +22,48 @@ FIXTURES = pathlib.Path(__file__).resolve().parent.parent / "internal/agents/mus
 
 
 class QualificationTests(unittest.TestCase):
+    def test_unknown_binary_refused_before_output_or_process_creation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            with mock.patch.object(probe, "file_digest", return_value="0" * 64), mock.patch.object(probe, "run_process") as run, mock.patch.object(probe, "Case") as case:
+                with self.assertRaisesRegex(ValueError, "not a pinned"):
+                    probe.native_run(root / "binary", root / "output", ["exec-utc"])
+            self.assertFalse((root / "output").exists())
+            run.assert_not_called()
+            case.assert_not_called()
+
+    def test_both_pins_record_the_actual_producer_and_runner_hash(self):
+        for checksum, producer in probe.PINNED_BUILDS.items():
+            with self.subTest(producer=producer), tempfile.TemporaryDirectory() as directory:
+                root = pathlib.Path(directory)
+                with mock.patch.object(probe, "file_digest", side_effect=[checksum, "runner-hash"]), mock.patch.object(probe, "verify_version", return_value={"exit": 0}) as version, mock.patch.object(probe, "Case") as case:
+                    report = probe.native_run(root / "binary", root / "output", ["no-cases"])
+                self.assertEqual(report["binary_sha256"], checksum)
+                self.assertEqual(report["producer"], producer)
+                self.assertEqual(report["runner_sha256"], "runner-hash")
+                version.assert_called_once_with(root / "binary", producer, root / "output/version")
+                case.assert_not_called()
+
+    def test_version_command_requires_exact_build_and_success_in_isolation(self):
+        for producer in probe.PINNED_BUILDS.values():
+            good = {"exit": 0, "timeout": False, "stderr": "", "stdout":
+                    "Muse Code " + producer.split("-", 1)[0] + " (" + producer + ")\n"}
+            variants = [good, dict(good, exit=1), dict(good, timeout=True),
+                        dict(good, stderr="warning"), dict(good, stdout="Muse Code unknown\n")]
+            for index, result in enumerate(variants):
+                with self.subTest(producer=producer, variant=index), tempfile.TemporaryDirectory() as directory:
+                    root = pathlib.Path(directory) / "version"
+                    with mock.patch.object(probe, "run_process", return_value=result) as run:
+                        if index == 0:
+                            self.assertEqual(probe.verify_version(pathlib.Path("/synthetic/muse"), producer, root), result)
+                        else:
+                            with self.assertRaisesRegex(ValueError, "exact expected version"):
+                                probe.verify_version(pathlib.Path("/synthetic/muse"), producer, root)
+                    self.assertEqual(run.call_args.args[0], ["/synthetic/muse", "--version"])
+                    self.assertEqual(run.call_args.kwargs["env"]["HOME"], str(root / "home"))
+                    self.assertEqual(run.call_args.kwargs["cwd"], root)
+                    self.assertEqual(run.call_args.kwargs["timeout"], 15)
+
     def test_environment_constructs_file_only_credentials_and_private_roots(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
@@ -122,7 +164,7 @@ class QualificationTests(unittest.TestCase):
             case = mock.Mock(root=root)
             case.logs.return_value = []
             (root / "hooks.jsonl").write_bytes(b"x" * 33)
-            with mock.patch.object(probe, "file_digest", return_value=probe.PINNED_SHA256), mock.patch.object(probe, "Case", return_value=case), mock.patch.object(probe, "probe_exec", return_value={"assertions": {"synthetic": True}}), mock.patch.object(probe, "HOOK_LIMIT", 32):
+            with mock.patch.object(probe, "file_digest", return_value=next(iter(probe.PINNED_BUILDS))), mock.patch.object(probe, "verify_version", return_value={}), mock.patch.object(probe, "Case", return_value=case), mock.patch.object(probe, "probe_exec", return_value={"assertions": {"synthetic": True}}), mock.patch.object(probe, "HOOK_LIMIT", 32):
                 report = probe.native_run(root / "binary", root / "output", ["exec-utc"])
             self.assertEqual(report["cases"]["exec-utc"]["failed"], "RuntimeError")
             self.assertIn("file byte limit", report["cases"]["exec-utc"]["detail"])
