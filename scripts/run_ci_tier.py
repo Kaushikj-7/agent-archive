@@ -136,15 +136,23 @@ def pr_extras(event, tested):
                 raise Failure('event commit unavailable')
         if git('rev-parse', 'HEAD') != tested or git('rev-parse', '--is-shallow-repository') != 'false':
             raise Failure('tested source/history unavailable')
-        if git('show', '-s', '--format=%P', tested).split() != [base, head]:
+        # The event records a base snapshot, while GitHub may test a merge
+        # against a newer descendant. Pin the PR parent exactly and prove the
+        # actual first parent contains the recorded base; never relabel either.
+        parents = git('show', '-s', '--format=%P', tested).split()
+        if len(parents) != 2 or parents[1] != head:
             raise Failure('unexpected tested merge')
+        tested_base = parents[0]
+        if git('rev-parse', '--verify', tested_base+'^{commit}') != tested_base:
+            raise Failure('actual tested base unavailable')
+        git('merge-base', '--is-ancestor', base, tested_base)
         git('merge-base', '--is-ancestor', base, tested)
         git('merge-base', '--is-ancestor', head, tested)
         if git('status', '--porcelain', '--untracked-files=all'):
             raise Failure('dirty source')
         # Reuse the verifier's tracked-byte/type/mode proof, including index-hidden edits.
         import scope_native_verify as scope
-        for sha in (base, head, tested):
+        for sha in dict.fromkeys((base, tested_base, head, tested)):
             for record in scope.records(scope.git(ROOT, 'ls-tree', '-r', '-z', sha)):
                 metadata, raw_path = record.split(b'\t', 1)
                 mode, kind, oid = metadata.split(b' ')
@@ -159,9 +167,47 @@ def pr_extras(event, tested):
             if raw and not raw.endswith(b'\0'):
                 raise Failure('invalid changed paths')
             paths.update(p.decode() for p in raw.split(b'\0') if p)
-        return dict(extra_for_paths(sorted(paths)), reason='verified base/head/tested merge', base=base, head=head, paths=sorted(paths))
+        return dict(extra_for_paths(sorted(paths)), reason='verified base/head/tested merge', base=base, tested_base=tested_base, head=head, paths=sorted(paths))
     except (KeyError, TypeError, ValueError, OSError, subprocess.SubprocessError, Failure):
         return dict(full, reason='representative fallback: source proof unavailable')
+
+
+def read_unique_json(path):
+    def unique(pairs):
+        value = dict(pairs)
+        if len(value) != len(pairs):
+            raise Failure('duplicate JSON field in plan evidence')
+        return value
+    return json.loads(Path(path).read_text(), object_pairs_hook=unique)
+
+
+def verify_plan(path, expected):
+    source = git('rev-parse', 'HEAD')
+    if (not isinstance(expected, dict) or expected.get('source') != source or source != os.environ.get('GITHUB_SHA', source)
+            or read_unique_json(path) != expected):
+        raise Failure('canonical and independently recomputed tier plans differ')
+
+
+def verify_native_plan(directory, expected):
+    """Bind native selection; Darwin still owns its raw/context verification."""
+    report = read_unique_json(Path(directory)/'tier.json')
+    proof = full_race.source_proof(ROOT)
+    if not isinstance(expected, dict) or not isinstance(report, dict):
+        raise Failure('malformed native plan evidence')
+    native = report.get('native_smoke', {})
+    if not isinstance(native, dict):
+        raise Failure('malformed native selection evidence')
+    if (expected.get('tier') != 'pr' or proof.get('source') != expected.get('source')
+            or expected.get('source') != os.environ['GITHUB_SHA']
+            or report.get('source') != expected['source'] or report.get('source_proof') != proof
+            or report.get('schema') != 1 or report.get('success') is not True
+            or report.get('tier') != 'pr' or report.get('suite') != 'macos'
+            or report.get('event') != os.environ.get('GITHUB_EVENT_NAME')
+            or report.get('ref') != os.environ.get('GITHUB_REF', '')
+            or report.get('extras') != expected
+            or native.get('sensitive') is not bool(expected.get('native'))
+            or native.get('source_proof') != proof or native.get('post_source_proof') != proof):
+        raise Failure('native coverage selection differs from independent current tier plan')
 
 
 def terminals(text):
@@ -1021,6 +1067,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--plan', action='store_true')
     parser.add_argument('--verify', action='store_true')
+    parser.add_argument('--verify-plan', action='store_true')
+    parser.add_argument('--verify-native-plan', action='store_true')
+    parser.add_argument('--require-pr-proof', action='store_true', help='local fan-out planning refuses history/source fallback')
     parser.add_argument('--verify-audit', action='store_true')
     parser.add_argument('--own-plain-vet', action='store_true')
     parser.add_argument('--native-local', action='store_true', help='local native diagnostics only; cannot qualify hosted CI')
@@ -1030,7 +1079,11 @@ def main():
     parser.add_argument('--extra-plan', type=Path)
     parser.add_argument('--seconds', type=int, default=2400)
     args = parser.parse_args()
-    if args.native_local and (args.plan or args.verify or args.verify_audit or args.own_plain_vet):
+    if (args.verify_plan or args.verify_native_plan) and args.extra_plan is None:
+        parser.error('plan verification requires --extra-plan')
+    if args.require_pr_proof and not args.plan:
+        parser.error('--require-pr-proof requires --plan')
+    if args.native_local and (args.plan or args.verify or args.verify_audit or args.verify_plan or args.verify_native_plan or args.own_plain_vet):
         parser.error('--native-local only supports local native test execution')
     if args.seconds <= 0:
         parser.error('--seconds must be positive')
@@ -1050,6 +1103,12 @@ def main():
             tier = 'full'  # exact candidates and manual suites cannot be downgraded
         if event == 'schedule' and args.tier and args.tier != resolved:
             raise Failure('explicit tier conflicts with scheduled cadence')
+        if args.verify_plan:
+            verify_plan(args.output, read_unique_json(args.extra_plan))
+            return 0
+        if args.verify_native_plan:
+            verify_native_plan(args.output, read_unique_json(args.extra_plan))
+            return 0
         if args.verify_audit:
             import run_go_shard
             context_hash = run_go_shard.digest(plain_vet_identity(plain_vet_context())) if args.own_plain_vet else None
@@ -1066,6 +1125,9 @@ def main():
             if source != os.environ.get('GITHUB_SHA',source):
                 raise Failure('plan source mismatch')
             extra = pr_extras(json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text()),source) if tier == 'pr' else {'packages':[],'native':False,'systemd':False,'fuzz':False,'purge':False}
+            if (args.require_pr_proof and tier == 'pr'
+                    and extra.get('reason') != 'verified base/head/tested merge'):
+                raise Failure('local fan-out planning requires verified PR source and complete history')
             plan = dict(extra, source=source, tier=tier)
             args.output.parent.mkdir(parents=True,exist_ok=True)
             args.output.write_text(json.dumps(plan,indent=2)+'\n')
