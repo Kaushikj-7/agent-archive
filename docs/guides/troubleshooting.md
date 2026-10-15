@@ -61,8 +61,11 @@ find none say so without creating the data directory.
   session being read when it runs out is listed as **left for the next pass
   after this pass's time for finding Codex rollouts ran out**, not as
   failed, and the Codex sessions after it wait for the next pass, which has
-  a fresh allowance. Claude Code and Cursor sessions in the same pass are
-  not held up.
+  a fresh allowance. On the following passes that session is read after
+  the other Codex sessions, so one session that needs the whole allowance
+  does not hold the rest back; if it is still not read after 24 hours it
+  is reported as failed, and it stays behind the others. Claude Code and
+  Cursor sessions in the same pass are not held up.
 
   None of these is a failure, and none changes the exit code. Claude Code
   reports some background agents with a transcript it never writes; such a

@@ -36,6 +36,13 @@ follow [Semantic Versioning](https://semver.org/).
   off by a deadline is read again later in the pass instead of being
   treated as unavailable; and discovery's lookups are charged to the
   allowance once, not twice.
+- Stop one Codex session that needs more than a pass's whole time for
+  finding Codex rollouts from holding back every Codex session after it.
+  Such a session was first in line on every pass, spent the allowance, and
+  left the rest for the next pass, every pass. A Codex session put off for
+  that reason (`lookup_allowance`) is now read after the other Codex
+  sessions on the following passes, including once it has been put off for
+  24 hours and is reported as failed.
 
 ## [0.2.1]
 

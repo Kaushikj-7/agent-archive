@@ -372,6 +372,7 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	p.observeLabels(ctx)
 	p.repairListingIndex()
 	orderOldestRequestsFirst(p.registrations, p.requests)
+	p.orderLookupAllowanceDeferralsLast()
 	for i, reg := range p.registrations {
 		// A pass past its deadline ends like a stopped one: nothing more can
 		// reach storage, so the rest keep their work rather than each
@@ -469,6 +470,9 @@ type pass struct {
 	result             Result
 	durableObligations []state.DurableStorageObligation
 	durableCounted     map[string]bool
+	// priorDeferred is the previous pass's state.Status.DeferredSessions
+	// (see orderLookupAllowanceDeferralsLast).
+	priorDeferred map[string]string
 	// priorDeferredSince is the previous pass's state.Status.DeferredSince,
 	// and deferredAt this pass's (see deferredSince, keepDeferredSince).
 	priorDeferredSince map[string]time.Time

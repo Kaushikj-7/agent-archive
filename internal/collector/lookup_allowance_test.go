@@ -2,8 +2,10 @@ package collector
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -96,5 +98,160 @@ func TestSpentCodexLookupAllowanceLeavesCodexSessionsWithoutFailing(t *testing.T
 	}
 	if len(result.Published) != 1 || result.Published[0] != codexReg.ArchiveSessionID || len(result.Errors) != 0 {
 		t.Fatalf("next pass result=%+v, want the Codex session published", result)
+	}
+}
+
+// allowanceLookup is a Codex lookup that finds no rollout, so each
+// registered legacy session is read from its registered transcript, and
+// whose collector allowance is fresh when a pass begins and spent once spent
+// is set.
+type allowanceLookup struct {
+	threadCountingLookup
+	spent atomic.Bool
+}
+
+func (l *allowanceLookup) RegisteredThread(context.Context, string) (agentapi.CodexRolloutSet, error) {
+	return agentapi.CodexRolloutSet{}, nil
+}
+
+func (l *allowanceLookup) BeginCollection() { l.spent.Store(false) }
+
+func (l *allowanceLookup) AllowanceSpent() bool { return l.spent.Load() }
+
+// allowanceSpendingSources serves the built-in sources, except that reading
+// the transcript at path spends all of lookup's allowance and is refused as
+// the real lookup refuses a call past it: that session's lookups alone need
+// more than the whole allowance.
+type allowanceSpendingSources struct {
+	path   string
+	lookup *allowanceLookup
+}
+
+func (s allowanceSpendingSources) LookupSources(name string) (agentapi.SourceProvider, agentapi.TranscriptFilter, bool) {
+	p, f, ok := testSources.LookupSources(name)
+	if !ok {
+		return nil, nil, false
+	}
+	return allowanceSpendingProvider{SourceProvider: p, sources: s}, f, true
+}
+
+type allowanceSpendingProvider struct {
+	agentapi.SourceProvider
+	sources allowanceSpendingSources
+}
+
+func (p allowanceSpendingProvider) OpenPass(ctx context.Context, env agentapi.SourceEnvironment) (agentapi.SourcePass, error) {
+	pass, err := p.SourceProvider.OpenPass(ctx, env)
+	if err != nil {
+		return nil, err
+	}
+	return allowanceSpendingPass{SourcePass: pass, sources: p.sources}, nil
+}
+
+type allowanceSpendingPass struct {
+	agentapi.SourcePass
+	sources allowanceSpendingSources
+}
+
+func (p allowanceSpendingPass) Read(ctx context.Context, ref agentapi.SourceRef, limits agentapi.ReadLimits) (agentapi.SourceSnapshot, error) {
+	if ref.Path == p.sources.path {
+		p.sources.lookup.spent.Store(true)
+		return nil, lookupAllowanceSpent()
+	}
+	return p.SourcePass.Read(ctx, ref, limits)
+}
+
+// A Codex session whose lookups alone use up the pass's whole Codex lookup
+// allowance does not keep the Codex sessions after it from being captured:
+// once deferred for it, the session waits behind the other Codex sessions on
+// the following passes, including once its deferral has outlasted
+// MaxDeferral and it fails instead.
+func TestCodexSessionThatExhaustsTheLookupAllowanceDoesNotBlockLaterCodexSessions(t *testing.T) {
+	t.Parallel()
+	local := newTestStore(t)
+	dir := t.TempDir()
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	save := func(n int) archive.SessionRegistration {
+		t.Helper()
+		reg := registration(t, writeTranscript(t, dir, fmt.Sprintf("codex-%d.jsonl", n), codexTranscript))
+		reg.ArchiveSessionID, reg.NativeSessionID = fmt.Sprintf("session-%d", n), fmt.Sprintf("native-%d", n)
+		reg.SessionStartedAt, reg.RegisteredAt = start.Add(time.Duration(n)*time.Minute), start.Add(time.Duration(n)*time.Minute+time.Second)
+		if err := local.SaveRegistration(reg); err != nil {
+			t.Fatal(err)
+		}
+		if err := local.SaveRequest(reg.ArchiveSessionID, "stop", reg.RegisteredAt); err != nil {
+			t.Fatal(err)
+		}
+		return reg
+	}
+	heavy := save(1)
+	lookup := &allowanceLookup{}
+	store := storagetest.NewMemoryStore()
+	run := func(at time.Time) Result {
+		t.Helper()
+		result, err := Run(t.Context(), local, store, Options{Sources: allowanceSpendingSources{path: heavy.TranscriptPath, lookup: lookup}, Parsers: testParsers, MachineID: "m", CodexRollouts: lookup, Now: func() time.Time { return at }})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return result
+	}
+	now := start.Add(time.Hour)
+
+	// The heavy session is the oldest, so the first pass reads it first; it
+	// spends the allowance and the session after it is left unopened.
+	later := save(2)
+	result := run(now)
+	if result.Deferred[heavy.ArchiveSessionID] != DeferredLookupAllowance || len(result.Published) != 0 {
+		t.Fatalf("first pass result=%+v, want the heavy session deferred for the lookup allowance and nothing published", result)
+	}
+
+	// The next pass gives the allowance to the later session first.
+	result = run(now.Add(time.Hour))
+	if len(result.Published) != 1 || result.Published[0] != later.ArchiveSessionID || len(result.Errors) != 0 {
+		t.Fatalf("second pass result=%+v, want the later Codex session published", result)
+	}
+	if result.Deferred[heavy.ArchiveSessionID] != DeferredLookupAllowance {
+		t.Fatalf("second pass deferred=%v, want the heavy session deferred again", result.Deferred)
+	}
+
+	// Past MaxDeferral the heavy session fails instead of being deferred,
+	// and still waits behind a newer Codex session on this pass and the next.
+	newer := save(3)
+	result = run(now.Add(MaxDeferral + time.Hour))
+	if len(result.Published) != 1 || result.Published[0] != newer.ArchiveSessionID || result.Errors[heavy.ArchiveSessionID] == nil {
+		t.Fatalf("pass past MaxDeferral result=%+v, want the newer session published and the heavy session failed", result)
+	}
+	newest := save(4)
+	result = run(now.Add(MaxDeferral + 2*time.Hour))
+	if len(result.Published) != 1 || result.Published[0] != newest.ArchiveSessionID || result.Errors[heavy.ArchiveSessionID] == nil {
+		t.Fatalf("pass after the heavy session failed result=%+v, want the newest session published and the heavy session failed", result)
+	}
+}
+
+// Only Codex sessions whose deferral the lookup allowance may be keeping
+// going move, and only into slots Codex sessions held: every other session
+// keeps its place, and a Codex session deferred because its source changed
+// keeps its turn.
+func TestLookupAllowanceDeferralsMoveBehindOnlyOtherCodexSessions(t *testing.T) {
+	t.Parallel()
+	since := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	reg := func(id, harness string) archive.SessionRegistration {
+		return archive.SessionRegistration{ArchiveSessionID: id, Harness: archive.Harness{Name: harness}}
+	}
+	p := &pass{
+		registrations: []archive.SessionRegistration{
+			reg("heavy", "codex"), reg("claude", "claude"), reg("expired", "codex"), reg("changed", "codex"), reg("cursor", "cursor"), reg("plain", "codex"),
+		},
+		priorDeferred:      map[string]string{"heavy": DeferredLookupAllowance, "changed": DeferredSourceChanged, "claude": DeferredLookupAllowance},
+		priorDeferredSince: map[string]time.Time{"heavy": since, "expired": since, "changed": since, "claude": since},
+	}
+	p.orderLookupAllowanceDeferralsLast()
+	var got []string
+	for _, r := range p.registrations {
+		got = append(got, r.ArchiveSessionID)
+	}
+	want := []string{"changed", "claude", "plain", "heavy", "cursor", "expired"}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("order=%v, want %v", got, want)
 	}
 }
