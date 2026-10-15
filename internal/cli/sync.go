@@ -55,8 +55,9 @@ func subagentsSummary(result collector.Result) string {
 // deferredWhat words each reason a pass deferred a session's scan, after a
 // count, for sync and status.
 var deferredWhat = map[string]string{
-	collector.DeferredSourceChanged: "rechecking after the source changed while being read",
-	collector.DeferredReadBudget:    "waiting for read memory other sessions held",
+	collector.DeferredSourceChanged:   "rechecking after the source changed while being read",
+	collector.DeferredReadBudget:      "waiting for read memory other sessions held",
+	collector.DeferredLookupAllowance: "left for the next pass after this pass's time for finding Codex rollouts ran out",
 }
 
 // deferredReasonWhat words one deferral reason, with a general wording for a
@@ -88,11 +89,29 @@ func deferredSummary(deferred map[string]string, failed map[string]error) string
 }
 
 // syncSummary is the line sync reports a pass on: what it published, held,
-// left unchanged, failed and deferred. A deferred session is not counted
-// as failed, and has no error line of its own.
+// left unchanged, failed and deferred, and how many queued sessions it ran
+// out of time for. A deferred or unreached session is not counted as
+// failed, and has no error line of its own.
 func syncSummary(result collector.Result) string {
-	return fmt.Sprintf("Scanned %d session(s): %d published, %s%d unchanged, %d failed%s%s.",
-		result.Scanned, len(result.Published), waitingSummary(result.Waiting, result.NextReadyAt), len(result.Skipped), len(result.Errors), deferredSummary(result.Deferred, result.Errors), subagentsSummary(result))
+	return fmt.Sprintf("Scanned %d session(s): %d published, %s%d unchanged, %d failed%s%s%s.",
+		result.Scanned, len(result.Published), waitingSummary(result.Waiting, result.NextReadyAt), len(result.Skipped), len(result.Errors), deferredSummary(result.Deferred, result.Errors), subagentsSummary(result), unreachedSummary(result.Unreached, result.Errors))
+}
+
+// unreachedSummary counts the queued sessions a pass ended before reaching
+// (collector.Result.Unreached), or is "" when it reached them all. As with
+// deferredSummary, a session in failed (one whose local state could not be
+// read, say) is counted there only.
+func unreachedSummary(unreached map[string]int, failed map[string]error) string {
+	left := 0
+	for id := range unreached {
+		if failed[id] == nil {
+			left++
+		}
+	}
+	if left == 0 {
+		return ""
+	}
+	return fmt.Sprintf("; %d left for the next pass", left)
 }
 
 // runSyncCommand implements `agent-archive sync`: one explicit collection
