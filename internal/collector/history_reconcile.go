@@ -101,8 +101,46 @@ func (s *sessionScan) reconcileRevisions(read sourceRead, active archive.SourceB
 		return nil, err
 	}
 	s.offChainKept = offChain.offChainKept
-	s.offChainLeftOut = offChain.offChainLeftOut > 0
+	if !s.withoutOffChain {
+		s.offChainLeftOut = offChain.offChainLeftOut > 0
+		s.offChainUnread, s.offChainPlanned = s.offChainLeftOut, plan.stagedReferences()
+		return plan, nil
+	}
+	// Run again without its off-chain revisions (see run), the scan leaves
+	// out what the scan that read them left unread and what that scan
+	// staged and this plan does not publish as it was staged. A branch an
+	// earlier publication preserves by reference, and that the scan that
+	// read it found unchanged, is not staged, so it is not left out. One
+	// that changed since is staged; this plan preserves or stages only an
+	// earlier version of it (an earlier publication's reference, or the last
+	// published or pending capture), which lacks what it added, so it is
+	// left out.
+	s.offChainLeftOut = s.offChainUnread || !plan.publishesAll(s.offChainPlanned)
 	return plan, nil
+}
+
+// publishesAll reports whether the plan publishes each of staged with the
+// source staged, either staging it again or preserving it by reference.
+func (p *revisionPlan) publishesAll(staged []archive.RevisionReference) bool {
+	for _, want := range staged {
+		if !slices.ContainsFunc(p.Preserved, func(ref archive.RevisionReference) bool {
+			return ref.RevisionID == want.RevisionID && ref.Source == want.Source
+		}) {
+			return false
+		}
+	}
+	return true
+}
+
+// stagedReferences lists the revisions the plan stages to publish beside
+// the current one, as opposed to preserving them by an earlier
+// publication's reference, each with the source it stages.
+func (p *revisionPlan) stagedReferences() []archive.RevisionReference {
+	refs := make([]archive.RevisionReference, 0, len(p.Sources))
+	for _, stage := range p.Sources {
+		refs = append(refs, archive.RevisionReference{RevisionID: revisionID(stage.Bundle), Source: stage.Reference})
+	}
+	return refs
 }
 
 // noteRevisionLeftOut records, content-free, that the scan left out an

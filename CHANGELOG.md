@@ -59,6 +59,11 @@ follow [Semantic Versioning](https://semver.org/).
   `status` now says so ("Codex left out part of a session"), with only the
   app, the project and the time; `status --json` carries it as the capture
   diagnostic `revision_left_out`.
+- `status` no longer says Codex left out part of a session when the only
+  branch not read again was already kept from an earlier capture of the
+  session and has not changed since: that branch is still in the archive.
+  A branch that grew since that capture is still reported, since what it
+  added is left out.
 - Stop failing every Codex session in a pass that found many new Codex
   files. Finding where a Codex thread's rollouts are has a time allowance
   per pass, and discovery could use all of it, so each Codex session the
