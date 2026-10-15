@@ -11,6 +11,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/trace"
 	"github.com/wangjohn/agent-archive/internal/transcriptio"
 )
 
@@ -68,7 +69,9 @@ func FilterJSONL(ctx context.Context, in agentapi.NativeInput, c agentapi.Filter
 		return archive.FilteredTranscript{}, errors.Join(Classify(err), Classify(in.File.Check()), ctx.Err())
 	}
 	input := Reader(ctx, in.File, boundary)
-	r := &recordReader{r: input, limit: limit}
+	measured, finish := trace.CountReads(input, trace.FilterBytes)
+	defer finish()
+	r := &recordReader{r: measured, limit: limit}
 	out, err := filter(r)
 	if r.exceeded {
 		return archive.FilteredTranscript{}, errors.Join(agentapi.Wrap(agentapi.Limit, archive.ErrRecordTooLarge), input.ReadError(), Classify(in.File.Check()), ctx.Err())

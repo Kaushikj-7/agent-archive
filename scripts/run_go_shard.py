@@ -35,17 +35,28 @@ class CleanupFailure(Failure):
 
 
 def json_stream(text):
-    """Decode concatenated objects without repeatedly copying the remaining log."""
-    decoder, items, offset = json.JSONDecoder(), [], 0
-    whitespace = re.compile(r'\s*')
-    while True:
-        offset = whitespace.match(text, offset).end()
-        if offset == len(text):
-            return items
-        item, offset = decoder.raw_decode(text, offset)
+    decoder = json.JSONDecoder()
+    items = []
+    index = 0
+    while index < len(text):
+        # Keep the complete input: copying each remaining suffix makes full
+        # race-log verification quadratic. isspace preserves strip's accepted
+        # separators, including concatenated pretty-printed go-list objects.
+        while index < len(text) and text[index].isspace():
+            index += 1
+        if index == len(text):
+            break
+        try:
+            item, end = decoder.raw_decode(text, index)
+        except json.JSONDecodeError as error:
+            # Preserve the previous record-relative error document/position.
+            # Only malformed input makes one suffix copy before termination.
+            raise json.JSONDecodeError(error.msg, text[index:], error.pos - index) from None
+        index = end
         if not isinstance(item, dict):
             raise Failure('JSON record is not an object')
         items.append(item)
+    return items
 
 
 def child_pids():

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/trace"
 )
 
 // ErrNotRegularFile rejects sources that could block or read without end.
@@ -303,7 +304,9 @@ func (s *Snapshot) CheckPrefix(ctx context.Context, length int64, digest [32]byt
 		return err
 	}
 	h := sha256.New()
-	if _, err := io.Copy(h, &contextReader{ctx, io.NewSectionReader(s, 0, length)}); err != nil {
+	n, err := io.Copy(h, &contextReader{ctx, io.NewSectionReader(s, 0, length)})
+	trace.Add(trace.VerificationBytes, n)
+	if err != nil {
 		return err
 	}
 	var got [32]byte
