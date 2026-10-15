@@ -251,6 +251,8 @@ jobs:
       - run: python3 -B scripts/test_generate_go_shard_hints.py
       - run: python3 -B scripts/test_report_ci_timing.py
       - run: python3 scripts/test_ci_tiers.py
+      - run: python3 -B scripts/test_macos_smoke.py
+      - run: python3 -B scripts/test_native_smoke_reference.py
       - run: python3 -B scripts/test_native_full.py
       - run: python3 -B scripts/test_go_cache_context.py
       - run: python3 -B scripts/test_go_cache_steps.py
@@ -488,7 +490,12 @@ jobs:
         run: |
           printf 'GOCACHE=%s/pr-go-build\nGOMODCACHE=%s/pr-go-modules\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Restore verified trusted-main compilation seed
+        id: native_cache
         uses: ./.github/actions/verified-go-cache
+      - name: Record final verified native cache state
+        env:
+          NATIVE_CACHE_STATE: ${{ steps.native_cache.outputs.restore-state }}
+        run: python3 -B scripts/native_smoke_reference.py observe --output native-tier-results/cache-observation.json
       - name: Require Go 1.27.2 (go.mod's toolchain line)
         run: |
           go version
@@ -504,7 +511,7 @@ jobs:
           if [ "$EVENT" = pull_request ]; then
             python3 -B scripts/run_ci_tier.py --tier pr --suite macos --extra-plan "$RUNNER_TEMP/tier-plan/extra-plan.json" --output native-tier-results
           else
-            ./scripts/test_macos_smoke.sh
+            ./scripts/test_macos_smoke.sh --output native-tier-results
           fi
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always() && github.event_name == 'pull_request'
