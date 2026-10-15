@@ -53,6 +53,9 @@ type Options struct {
 	// ConfiguredCodexHomes supplies confined migration roots from configuration,
 	// independently of current-locator hints. Native evidence still validates identity.
 	ConfiguredCodexHomes []string
+	// NativeRoots are committed setup roots, never launch-environment defaults.
+	NativeRoots    []archive.NativeRoot
+	NativeLocators agentapi.NativeLocatorLookup
 	// ResolveCodexReadHomes revalidates trusted default/hook/import/config roots
 	// against current configuration; lookup observations never supply authority.
 	ResolveCodexReadHomes func(config.Config) ([]string, error)

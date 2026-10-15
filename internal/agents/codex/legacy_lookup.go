@@ -119,7 +119,10 @@ func (s legacyOrdinarySnapshot) RelocatedFrom(registered agentapi.SourceRef) (ag
 }
 
 func (s legacyOrdinarySnapshot) ValidateAdmission(ctx context.Context, a agentapi.SourceAdmission) error {
-	if a.Binding != nil || !a.NativeCreatedAt.IsZero() {
+	if err := a.Binding.ValidateFor("codex"); err != nil {
+		return err
+	}
+	if a.Binding.CodexBinding() != nil || !a.NativeCreatedAt.IsZero() {
 		return sourceFailure(agentapi.Unavailable, "legacy compatibility requires unbound admission")
 	}
 	return s.SourceSnapshot.(agentapi.SourceAdmissionValidator).ValidateAdmission(ctx, a)

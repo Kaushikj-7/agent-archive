@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "producer": "1.4.8-R6256.1",
+  "binary_sha256": "94ea8fd1c73664c22e5c6157d8706945b667b11bd1c7c51691811e79f17dfcf1",
+  "vectors": [
+    {
+      "file": "permission-exact.jsonl",
+      "sha256": "175d18cde4dc677c093804632f66e0e0400a6b3e8fd62d2ad9314697ab0bbebf",
+      "source_campaign": "muse-q0-hooks-20261015 exec-utc",
+      "native_export_unparseable_lines": 0,
+      "independent_integrity_verified": false,
+      "review": "Exact first permission transaction. Only synthetic workspace paths, built-in permission configuration and native IDs; no prompts/provider context/credentials."
+    }
+  ]
+}

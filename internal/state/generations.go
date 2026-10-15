@@ -138,6 +138,11 @@ func (s *Store) beginGenerationRecoveryGuard(g config.DurableStorageGuard, id st
 	if err != nil {
 		return "", err
 	}
+	if old.NativeBinding != nil {
+		if err := s.checkNativeRegistrationWrite(s.registrationPath(id), old); err != nil {
+			return "", err
+		}
+	}
 	next, err := local.ID()
 	if err != nil {
 		return "", err

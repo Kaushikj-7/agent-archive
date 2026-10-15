@@ -41,7 +41,7 @@ const (
 type SourceAdmission struct {
 	NativeID                  string
 	Cwd                       string
-	Binding                   *archive.CodexSourceBinding
+	Binding                   *SourceBinding
 	NativeCreatedAt           time.Time
 	InitialProducerVersion    string
 	InitialProducerOriginator string
@@ -88,7 +88,7 @@ type CodexRolloutSlice interface {
 
 // SourceAdmissionFacts exposes bounded facts from the actual opened snapshot.
 type SourceAdmissionFacts interface {
-	AdmissionFacts(context.Context) (archive.CodexSourceBinding, error)
+	AdmissionFacts(context.Context) (SourceBinding, error)
 }
 
 // SourceAdmissionSignature validates opened native facts without decoding a
@@ -147,7 +147,7 @@ type SourceOwnTaskFacts interface {
 
 // AdmissionEvidence combines facts from one opened snapshot before admission.
 type AdmissionEvidence struct {
-	Binding archive.CodexSourceBinding
+	Binding SourceBinding
 	Task    OwnTaskFacts
 }
 

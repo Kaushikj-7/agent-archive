@@ -341,6 +341,7 @@ type ProjectResolution struct {
 // SessionStartedAt is when the conversation began. It is not the capture
 // boundary: project activation and the storage destination compare Admitted().
 type SessionRegistration struct {
+	NativeBinding      *NativeSourceBinding    `json:"native_binding,omitempty"`
 	HistoricalProject  *HistoricalProjectProof `json:"historical_project,omitempty"`
 	ProjectResolution  *ProjectResolution      `json:"project_resolution,omitempty"`
 	CodexBinding       *CodexSourceBinding     `json:"codex_binding,omitempty"`
@@ -453,6 +454,9 @@ func (r SessionRegistration) Validate() error {
 		return err
 	}
 
+	if err := r.validateNativeBinding(); err != nil {
+		return err
+	}
 	if r.CodexBinding != nil {
 		if r.Harness.Name != "codex" || r.CodexBinding.NativeThreadID != r.NativeSessionID {
 			return errors.New("codex binding requires matching codex registration")
