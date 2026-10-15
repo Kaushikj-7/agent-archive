@@ -19,19 +19,29 @@ import (
 // assertions distinguish the new waiter lane from the parent's oldest-first
 // execution, and exercise the nonnil acceptance slice separately from the census.
 func TestLookupWaiterLaneWithAcceptedExecutionAndStop(t *testing.T) {
-	for _, filtered := range []bool{false, true} {
-		name := "nil predicate"
-		if filtered {
-			name = "accepted queue"
-		}
-		t.Run(name, func(t *testing.T) {
+	type acceptanceCase struct {
+		name string
+		filtered bool
+		searchIndexing bool
+	}
+	for _, tc := range []acceptanceCase{{"nil predicate", false, false}, {"accepted queue", true, false}, {"schema16 accepted queue", true, true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			filtered := tc.filtered
 			local := newTestStore(t)
 			dir := t.TempDir()
 			now := time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)
 			cfg := config.Config{}
+			if tc.searchIndexing {
+				if err := config.SetSearchIndexing(&cfg, true); err != nil {
+					t.Fatal(err)
+				}
+				if cfg.SchemaVersion != 16 || !cfg.SearchIndexing || !cfg.SearchLifecycleProtection {
+					t.Fatalf("search consent fixture: %+v", cfg)
+				}
+			}
 			originals := map[string][]byte{}
 			tokens := map[string]string{}
-			save := func(id string, age time.Duration, rejected, child bool) {
+			save := func(id string, age time.Duration, rejected, child bool) archive.SessionRegistration {
 				t.Helper()
 				reg := registration(t, writeTranscript(t, dir, id+".jsonl", codexTranscript))
 				reg.ArchiveSessionID, reg.NativeSessionID = id, "native-"+id
@@ -69,9 +79,10 @@ func TestLookupWaiterLaneWithAcceptedExecutionAndStop(t *testing.T) {
 					}
 					originals[path] = raw
 				}
+				return reg
 			}
 			save("heavy", 4*time.Hour, false, false)
-			save("waiter", 3*time.Hour, false, false)
+			waiter := save("waiter", 3*time.Hour, false, false)
 			if filtered {
 				save("rejected-top", 5*time.Hour, true, false)
 				save("rejected-child", 6*time.Hour, true, true)
@@ -92,6 +103,9 @@ func TestLookupWaiterLaneWithAcceptedExecutionAndStop(t *testing.T) {
 			}
 			if !slices.Equal(order, []string{"waiter"}) || !slices.Equal(result.Published, []string{"waiter"}) || result.Scanned != 1 || len(result.Errors) != 0 || len(result.Deferred) != 0 {
 				t.Fatalf("waiter lane execution: order=%v result=%+v", order, result)
+			}
+			if want := []PublicationCandidate{{Harness: waiter.Harness.Name, ArchiveSessionID: waiter.ArchiveSessionID}}; !slices.Equal(result.PublicationCandidates, want) {
+				t.Fatalf("waiter publication candidates: %v, want %v", result.PublicationCandidates, want)
 			}
 			status, err := local.LoadStatus()
 			rank, present := result.Unreached["heavy"]
