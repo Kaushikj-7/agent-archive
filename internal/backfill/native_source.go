@@ -87,8 +87,14 @@ func filterImportSource(ctx context.Context, env Environment, w *work, started t
 	}
 	// Children and supported forks require their first own native task.
 	// Ordinary historical and paginated imports retain their compatibility.
-	if evidence.Binding.RequiresOwnTask() && !evidence.Task.ValidNativeCreation(evidence.Binding.NativeCreatedAt) {
-		cause := ownTaskRefusalCause(evidence.Task, evidence.Binding.NativeCreatedAt)
+	if err := evidence.Binding.ValidateFor("codex"); err != nil {
+		return out, summary, release, err
+	}
+	if evidence.Binding.Codex == nil {
+		return out, summary, release, agentapi.ErrInvalidSourceBinding
+	}
+	if evidence.Binding.Codex.RequiresOwnTask() && !evidence.Task.ValidNativeCreation(evidence.Binding.Codex.NativeCreatedAt) {
+		cause := ownTaskRefusalCause(evidence.Task, evidence.Binding.Codex.NativeCreatedAt)
 		return out, summary, release, agentapi.WithCause(agentapi.Wrap(agentapi.Unavailable, errors.New("native own task unavailable")), cause)
 	}
 	trace.Add(trace.AdapterInvocations, 1)
@@ -100,7 +106,7 @@ func filterImportSource(ctx context.Context, env Environment, w *work, started t
 	if err != nil {
 		return out, summary, release, err
 	}
-	binding := evidence.Binding
+	binding := *evidence.Binding.Codex
 	if binding.FirstNativeTaskAt.IsZero() && evidence.Task.Native {
 		binding.FirstNativeTaskAt, binding.FirstNativeTaskID = evidence.Task.StartedAt, evidence.Task.TurnID
 	}
