@@ -278,9 +278,45 @@ verified. The final reference must use the same source SHA/tree as the worker
 artifacts, not merely a related branch head. This qualification is correctness
 evidence, not a runner-time or150-second benchmark.
 
-## Verified schema 3 hint refresh
+## Current schema 4 hint refresh
 
-`go_shard_hint_sources.json` pins Test run `38670278594`, attempt 1, actual
+The current `go_shard_hint_sources.json` uses one complete successful normal
+PR observation: Test `38816393618` and Levenshtein `38816394218`, attempt 1.
+The actual tested merge is `39c550ebd40bf68e62e8a2cf4e58fd69b3c954dc`, tree
+`50441a17a1429358a4ba591ef7f8b2b215ab68a9`, with head
+`3c6ec79309d21dfa90721d809a97dba7f230472e` and tested/event base
+`ed8da985be05e1178647681b64dd972a120e3a0e`. This source includes the recent
+fixture and UI changes. It is not a timing measurement of the refresh commit
+or subsequent main. Earlier incompatible source observations are not pooled.
+
+The existing strict importer verifies all eight schema 4 workers, combined
+compiled listings and derivatives, actual body streams, independent plain audit
+and source/compiler-bound vet receipts. The matched workload contains 88 packages
+and 3356 disjoint units: 2343 CLI parents, 930 selected heavy parents and
+83 whole packages. The request pins actual source/catalog/configuration, full
+compiler and image contexts, API archive IDs/digests, exact helper bytes and
+Test run identity; generated provenance retains raw receipt hashes. All eight
+workers reported compilation-cache `prefix`, not exact hits or empty cold caches.
+
+Using these same refreshed weights to evaluate both assignments, the maximum
+CLI advisory sum falls from 1358.920 to 978.695 seconds and the ordinary advisory
+sum from 293.160 to 162.187 seconds. The existing independent-lane LPT scheduler
+already balances these sums; only its data changes. These non-additive lifecycle
+sums include descendant waits and are neither CPU time nor worker elapsed.
+Measured worker phases on the original assignment were 157.114, 297.236,
+209.368, 195.657, 200.080, 201.726, 225.047 and 180.554 seconds, excluding
+additional job setup/upload costs. No hosted speedup or latency quantile is
+established by this single sample or by the balanced advisory sums.
+
+Reproduce with the generator command below after fetching the exact measured
+merge and extracting each digest-verified archive under `workers/` or `audit/`.
+The schema 4 importer needs no compatibility relaxation. Dynamic discovery,
+1000 ms unknown-unit fallback, exhaustive coverage, eight workers and original
+CPU/deadline budgets remain authoritative and unchanged.
+
+## Historical schema 3 hint refresh
+
+The preceding request pinned Test run `38670278594`, attempt 1, actual
 source `bb84d9fd58b0665fde9b201050b80a19e68920b0`, tree
 `af4e8d922b9628cf40a94f967012667e01937613` (head 98fe), and nine
 API-digest-verified worker/audit archives. Complete compiled discovery and raw
