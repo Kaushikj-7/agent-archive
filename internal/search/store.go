@@ -80,15 +80,35 @@ func Open(ctx context.Context, dir, destination string) (*Store, error) {
 	return s, nil
 }
 
+// initializationConnection keeps transaction cleanup tied to its reserved
+// connection, including database/sql's asynchronous cancellation rollback.
+type initializationConnection interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+	BeginTx(context.Context, *sql.TxOptions) (*sql.Tx, error)
+	Close() error
+}
+
 func (s *Store) initialize(ctx context.Context) error {
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	return s.initializeConnection(ctx, conn)
+}
+
+func (s *Store) initializeConnection(ctx context.Context, conn initializationConnection) error {
+	// Tx.Rollback can return ErrTxDone while a cancellation-triggered rollback
+	// still owns the transaction. Conn.Close waits for that operation to finish;
+	// DB.Close alone does not wait for connections already in use.
+	defer func() { _ = conn.Close() }()
 	var version int
-	if err := s.db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
+	if err := conn.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
 	if version < 0 || version > schemaVersion {
 		return errors.New("unsupported search schema; rebuild index")
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := conn.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
