@@ -7,6 +7,11 @@ contributions are held to a few firm rules; everything else is ordinary Go.
 
 - For anything bigger than a small fix, open an issue first so we can agree
   on the approach.
+- Larger changes are planned in a [proposal](dev/proposals/README.md) (the
+  implementation path: problem, decisions, PR breakdown, live checks). Lasting
+  formats, rules and behavior are described in a [spec](dev/specs/README.md)
+  (long-term understanding of the system), which stays current after the
+  proposal lands.
 - A session or field that should have been captured and wasn't: use the
   **capture gap** issue template.
 - Vulnerabilities go through [SECURITY.md](SECURITY.md), never a public issue.

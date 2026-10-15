@@ -19,6 +19,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/inspectioncache"
 	"github.com/wangjohn/agent-archive/internal/trace"
 	"github.com/wangjohn/agent-archive/internal/transcriptio"
 )
@@ -102,9 +103,10 @@ const maxBytesInFlight = 128 << 20
 
 // work is one transcript and the facts the plan decides its reason from.
 type work struct {
-	t   *transcript
-	c   Candidate
-	res resolution
+	inspectionObservation *inspectioncache.Observation
+	t                     *transcript
+	c                     Candidate
+	res                   resolution
 	// state is the archive's reason, from ArchiveState.
 	state SkipReason
 	// chat is a chat found only in Cursor's database, and messageFolders
@@ -753,9 +755,7 @@ func runAdapter(ctx context.Context, env Environment, w *work) {
 	if w.sourceChanged || w.vanished || w.tooLarge {
 		return
 	}
-	defer func() {
-		w.checkSource(env)
-	}()
+	defer w.finishInspectionObservation(ctx, env)
 	if env.Imports == nil {
 		w.unsafe = true
 		return
@@ -781,7 +781,6 @@ func runAdapter(ctx context.Context, env Environment, w *work) {
 		freshStart = created.UTC()
 		w.c.StartedAt, w.c.StartedAtSource = freshStart, archive.StartedAtSourceFileCreated
 	}
-	trace.Add(trace.AdapterInvocations, 1)
 	summaryInspector, supportsSummary := inspector.(agentapi.SummaryImportInspector)
 	filtered, summary, release, err := filterImportSource(ctx, env, w, freshStart, supportsSummary && summaryInspector.SummaryFor(inspector) && summaryInspector.SupportsImportSummary())
 	defer release()
@@ -996,4 +995,12 @@ func importNativeCandidate(source agentapi.DiscoveryCandidate, t *transcript) Ca
 		}
 	}
 	return Candidate{Harness: string(source.Session.Agent), TranscriptPath: t.path, SourceKind: source.Source.Kind, SourceKey: key, Bytes: t.size, NativeSessionID: t.nativeID, NativeChild: child, RelatedHistory: related, ParentNativeID: parent, RootNativeID: root, NativeHome: home}
+}
+
+func (w *work) finishInspectionObservation(ctx context.Context, env Environment) {
+	w.checkSource(env)
+	if w.inspectionObservation != nil && env.ObserveInspection != nil && ctx.Err() == nil && w.validated && !w.empty && !w.unsafe && !w.sourceChanged && !w.vanished && !w.tooLarge && w.sourceErr == nil {
+		env.ObserveInspection(*w.inspectionObservation)
+	}
+	w.inspectionObservation = nil
 }
