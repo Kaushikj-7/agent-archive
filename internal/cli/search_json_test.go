@@ -311,3 +311,24 @@ func TestContentSearchCancelledRefreshJSONKeepsObservationUnknown(t *testing.T) 
 		t.Fatalf("unknown cancelled observation %d %+v %s", code, doc, diag)
 	}
 }
+
+func TestContentSearchQueryAfterWaitFailureReturnsOneDocumentAndCachedPage(t *testing.T) {
+	env, objects, id := publishedFixture(t)
+	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return objects, nil }
+	code, _, diag := searchJSONRun(t, env, "--refresh", "--session", id, "--harness", "codex")
+	if code != 0 {
+		t.Fatal(diag)
+	}
+	home, _ := env.readHome()
+	release, err := local.NamedLock(home, "search-worker.lock")
+	must(t, err)
+	defer release()
+	env.OpenStore = func(config.Config) (storage.ObjectStore, error) {
+		t.Fatal("busy refresh or cached query opened archive")
+		return nil, errors.New("offline")
+	}
+	code, doc, diag := searchJSONRun(t, env, "visible", "--all-projects", "--refresh", "--wait", "1s")
+	if code != 1 || doc.Error == nil || doc.Error.Code != "wait_timeout" || doc.Refresh == nil || len(doc.Results) != 1 || doc.Coverage == nil || !doc.Coverage.Present {
+		t.Fatalf("combined document %d %+v %s", code, doc, diag)
+	}
+}
