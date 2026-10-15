@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/testutil/recoverytest"
 )
@@ -404,5 +405,63 @@ func strandAbsenceRequest(t *testing.T, s *Store, deleted bool) {
 	request.Certified = request.Requested
 	if err := local.Write(path, request); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// A rescheduled request applies the same requested-miss repair as a full
+// census: a key whose registration survived gets its owner back, and a
+// candidate whose parent is gone stays held rather than becoming absent.
+// Neither starts a full census, however often the key is requested again.
+func TestRescheduledAbsenceRequestNeverCertifiesOwnedKeys(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"owner", "orphan-candidate"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			s := completedAbsenceStore(t)
+			generation := readMarkerGeneration(t, s)
+			key := agentmeta.SessionKey{Agent: agentmeta.Codex, NativeID: "native-0000"}
+			if name == "owner" {
+				if err := os.Remove(qualifiedSessionIndexPath(s.home, key)); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				key = agentmeta.SessionKey{Agent: agentmeta.Claude, NativeID: "gone-parent:subagent:a1"}
+				candidate := SubagentCandidate{ArchiveSessionID: "orphan-child", NativeSessionID: key.NativeID, ParentArchiveSessionID: "gone-parent-archive", ParentNativeSessionID: "gone-parent", ProjectID: "p", ProjectRoot: "/synthetic", Harness: archive.Harness{Name: "claude"}, AgentID: "a1", TranscriptPath: "/synthetic/child.jsonl", ObservedAt: time.Now()}
+				if err := local.Write(s.subagentCandidatePath(candidate.ArchiveSessionID), candidate); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := s.RequestSessionIndexAbsence(key); err != nil {
+				t.Fatal(err)
+			}
+			// A repaired owner is no longer a retained request; the orphan
+			// stays one and is requested again.
+			rounds := 1
+			if name != "owner" {
+				rounds = 2
+			}
+			for range rounds {
+				strandAbsenceRequest(t, s, true)
+				if err := s.RequestSessionIndexRecovery(key); err != nil {
+					t.Fatal(err)
+				}
+				if got := readMarkerGeneration(t, s); got != generation {
+					t.Fatal("rescheduled request started a new census")
+				}
+				if complete, err := s.RecoverSessionIndexScheduled(context.Background(), SessionIndexRecoverySlice); err != nil || !complete {
+					t.Fatalf("certification slice complete=%v err=%v", complete, err)
+				}
+				if yes, _ := s.SessionIndexAbsent(key); yes {
+					t.Fatal("owned key certified absent")
+				}
+			}
+			id, found, err := s.ArchiveSessionID(key)
+			if name == "owner" && (err != nil || !found || id != "owner-0000") {
+				t.Fatalf("owner not repaired: %q %v %v", id, found, err)
+			}
+			if name != "owner" && !errors.Is(err, ErrSessionIndexRecoveryRequired) {
+				t.Fatalf("orphan candidate key released: %q %v %v", id, found, err)
+			}
+		})
 	}
 }
