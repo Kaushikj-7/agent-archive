@@ -62,7 +62,12 @@ jobs:
           go version
           go version | grep -q ' go1\.27\.2 ' || { echo "expected go1.27.2, matching go.mod's toolchain line" >&2; exit 1; }
       - name: Actual source and tier race bodies
-        run: python3 scripts/run_ci_tier.py --suite linux --output tier-results
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] || [ "$CI_SCHEDULE" = '17 8 * * 0' ]; then
+            # Soft Go-managed memory target; race/native allocations also need headroom.
+            export GOMEMLIMIT=3GiB
+          fi
+          python3 scripts/run_ci_tier.py --suite linux --output tier-results
       - run: go vet ./...
       - run: python3 scripts/test_release_signing.py
       - run: python3 scripts/test_release_assets.py

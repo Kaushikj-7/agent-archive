@@ -15,6 +15,7 @@ import tempfile
 import textwrap
 import unittest
 
+import run_ci_tier as tiers
 from test_release_assets import run_texts, steps
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -86,14 +87,15 @@ def step_key(text, key):
 
 class LinuxFullMemoryTest(unittest.TestCase):
     def consumers(self):
-        for workflow, job in [('test', 'linux-full'), ('release', 'build-linux')]:
+        for workflow, job in [('test', 'linux-full'), ('release', 'build-linux'),
+                              ('extended', 'linux-race')]:
             text = jobs((ROOT / f'.github/workflows/{workflow}.yml').read_text())[job]
             consumer = [step for step in steps(text)
-                        if '--tier full --suite linux' in step]
+                        if 'scripts/run_ci_tier.py' in step and '--suite linux' in step]
             self.assertEqual(len(consumer), 1, workflow)
             yield workflow, consumer[0]
 
-    def execute_consumer(self, step, event='push'):
+    def execute_consumer(self, step, event='push', schedule=''):
         # Execute the real workflow shell with only that step's literal env.
         # Private Python/Go stand-ins keep this a fast, synthetic check; the
         # Python stand-in launches a child Go process just as the tier runner does.
@@ -119,7 +121,7 @@ class LinuxFullMemoryTest(unittest.TestCase):
                             sys.exit('full Linux child has no 3GiB Go memory budget')
                 elif ('scripts/run_ci_tier.py' in args and '--suite' in args
                       and args[args.index('--suite') + 1] == 'linux'
-                      and '--verify' not in args):
+                      and '--verify' not in args and os.environ['FIXTURE_TIER'] == 'full'):
                     subprocess.run(['go', 'test', 'full-linux-fixture'], check=True)
                 """)
             for tool in ('python3', 'go'):
@@ -128,7 +130,10 @@ class LinuxFullMemoryTest(unittest.TestCase):
                 path.chmod(0o755)
             (binary / 'grep').symlink_to(shutil.which('grep'))
             env = {'PATH': str(binary), 'CALLS': str(root / 'calls'),
-                   'EVENT': event, 'FULL_LINUX': 'true', 'RUNNER_TEMP': directory}
+                   'EVENT': event, 'FULL_LINUX': 'true', 'RUNNER_TEMP': directory,
+                   'GITHUB_EVENT_NAME': event, 'CI_SCHEDULE': schedule,
+                   'FIXTURE_TIER': tiers.resolve(event, 'refs/heads/release-candidate/fixture',
+                                                  schedule, 'linux')}
             # Read only env: belonging to the actual execution step. The shell
             # must export its budget to the tier runner and its Go child.
             match = re.search(r'(?ms)^        env:\n(.*?)(?=^        \w|\Z)', step)
@@ -145,7 +150,8 @@ class LinuxFullMemoryTest(unittest.TestCase):
     def test_full_linux_consumers_forward_memory_budget_to_child_go(self):
         for workflow, step in self.consumers():
             with self.subTest(workflow=workflow):
-                result, calls = self.execute_consumer(step)
+                result, calls = self.execute_consumer(
+                    step, event='workflow_dispatch' if workflow == 'extended' else 'push')
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertIn(['go', ['test', 'full-linux-fixture'], '3GiB'], calls)
                 if workflow == 'release':
@@ -162,11 +168,28 @@ class LinuxFullMemoryTest(unittest.TestCase):
         self.assertIn('pr', extras[0][0])
         self.assertIsNone(extras[0][1])
 
+    def test_extended_weekly_full_run_forwards_budget_and_daily_keeps_environment(self):
+        step = next(step for workflow, step in self.consumers() if workflow == 'extended')
+        for schedule, expected in [(tiers.catalog()['weekly_cron'], '3GiB'),
+                                   (tiers.catalog()['daily_cron'], None)]:
+            with self.subTest(schedule=schedule):
+                result, calls = self.execute_consumer(step, event='schedule', schedule=schedule)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                runner = [(args, budget) for tool, args, budget in calls
+                          if tool == 'python3' and 'scripts/run_ci_tier.py' in args]
+                self.assertEqual(len(runner), 1)
+                self.assertEqual(runner[0][1], expected)
+                if expected:
+                    self.assertIn(['go', ['test', 'full-linux-fixture'], expected], calls)
+                else:
+                    self.assertFalse(any(tool == 'go' for tool, _, _ in calls))
+
     def test_full_linux_consumers_fail_without_their_exported_memory_budget(self):
         for workflow, step in self.consumers():
             with self.subTest(workflow=workflow):
-                unbudgeted = re.sub(r'^ +export GOMEMLIMIT=.*\n', '', step, flags=re.M)
-                result, calls = self.execute_consumer(unbudgeted)
+                unbudgeted = re.sub(r'^( +)export GOMEMLIMIT=.*$', r'\1:', step, flags=re.M)
+                result, calls = self.execute_consumer(
+                    unbudgeted, event='workflow_dispatch' if workflow == 'extended' else 'push')
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn('full Linux child has no 3GiB Go memory budget', result.stderr)
                 self.assertIn(['go', ['test', 'full-linux-fixture'], None], calls)
