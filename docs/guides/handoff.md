@@ -787,3 +787,13 @@ preserve the previous output.
 `--format json` prints the structured handoff document the prompt is rendered
 from; see [JSON output](../reference/json-output.md). The format is specified
 in the [handoff design](../../dev/proposals/implemented/handoff.md).
+
+### Muse explicit files
+
+Use `agent-archive handoff --file /path/to/session.jsonl --harness muse` to read
+a complete supported ordinary exec/MSP root without setup. Add `--format json`,
+`--output FILE`, or `--to codex` (also Claude/Cursor) as usual. The handoff keeps
+safe own visible conversation and the validated reserved start. Tool results,
+usage/cost, model switches and children are unavailable. Automatic Muse browse,
+capture, backfill and launching into Muse remain unavailable. Forks, children,
+checkpoints, unknown authority and incomplete files are refused as a whole.

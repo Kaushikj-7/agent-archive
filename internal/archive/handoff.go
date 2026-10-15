@@ -91,8 +91,8 @@ type Handoff struct {
 	Plan         []HandoffPlanItem `json:"plan,omitempty"`
 	FilesTouched []string          `json:"files_touched,omitempty"`
 	Exchanges    []HandoffExchange `json:"exchanges"`
-	// ToolResultsUnavailable is true when the harness records no tool
-	// results at all (Cursor), so their absence is stated once.
+	// ToolResultsUnavailable is true when retained evidence cannot establish
+	// tool results, so their unavailability is stated once.
 	ToolResultsUnavailable bool             `json:"tool_results_unavailable,omitempty"`
 	Gaps                   []HandoffGap     `json:"capture_gaps,omitempty"`
 	Elisions               []HandoffElision `json:"elisions,omitempty"`
@@ -842,6 +842,12 @@ func BuildHandoffWithAnalysis(bundle SourceBundle, analysis Analysis, metadata *
 		Plan:                   plan,
 		FilesTouched:           files,
 		Gaps:                   countGaps(bundle.Capture.Gaps),
+	}
+	// NativeStartedAt is the integration's original logical session start,
+	// including empty conversations. Prompt and file times are fallbacks only.
+	if !analysis.Facts.NativeStartedAt.IsZero() {
+		at := analysis.Facts.NativeStartedAt.UTC()
+		h.Session.StartedAt = &at
 	}
 	return displayHandoff(h), nil
 }

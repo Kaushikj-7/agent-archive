@@ -681,3 +681,14 @@ Pause stops automatic indexing/reconciliation after an active pass ends, or
 refuses before changing settings. Explicit refresh remains available while
 paused. Disabling keeps cached text; local-data purge removes the index, its
 SQLite companions and search logs while holding the search lifecycle fence.
+
+### Explicit Muse local handoff
+
+`handoff --file PATH --harness muse` reads a complete supported ordinary exec/MSP
+root without setup or registration. It validates the initial permission frame
+and startup locally, retains only minimal safe authority and linked own visible
+conversation, and applies shared credential/instruction redaction. Permission
+profiles, provider/model context, hidden reasoning and native checksum/child
+strings are never retained. Unsupported authority or incomplete files refuse
+without producing a successful artifact. Usage/cost, tools, model switches and
+children remain unavailable; this local operation grants no capture consent.
