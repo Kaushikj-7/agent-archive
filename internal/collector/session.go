@@ -102,10 +102,16 @@ type sessionScan struct {
 	// reconciliation kept: what they retained counts against the session's
 	// read ceiling until the scan ends. withoutOffChain is set when the scan
 	// runs again without them (see run). offChainLeftOut reports that it
-	// left at least one out (see noteRevisionLeftOut).
+	// left at least one out of what is published (see noteRevisionLeftOut).
+	// offChainPlanned and offChainUnread are what the last reconciliation
+	// that read them planned to publish beside the current revision and
+	// whether it left any unread; they outlive the run again, which reports
+	// only what they no longer hold (see reconcileRevisions).
 	offChainKept    int
 	offChainLeftOut bool
 	withoutOffChain bool
+	offChainPlanned []string
+	offChainUnread  bool
 }
 
 // filteredSource is a source read and filtered once in a scan.

@@ -27,6 +27,9 @@ follow [Semantic Versioning](https://semver.org/).
   `status` now says so ("Codex left out part of a session"), with only the
   app, the project and the time; `status --json` carries it as the capture
   diagnostic `revision_left_out`.
+- `status` no longer says Codex left out part of a session when the only
+  branch not read again was already kept from an earlier capture of the
+  session: that branch is still in the archive.
 
 ## [0.2.1]
 
