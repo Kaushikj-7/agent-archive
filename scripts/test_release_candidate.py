@@ -466,7 +466,7 @@ class CommandsTest(unittest.TestCase):
                     with self.assertRaises(RuntimeError):
                         rc.GitHub(REPO).release(TAG)
 
-    def test_security_verifies_manifest_and_binaries_constrained_provenance_and_darwin_only(self):
+    def test_security_verifies_every_asset_with_constrained_provenance_and_darwin_only(self):
         with tempfile.TemporaryDirectory() as temp, patch.object(rc, 'run', return_value=b'') as command:
             directory = Path(temp)
             for name in rc.BINARIES:
@@ -474,7 +474,9 @@ class CommandsTest(unittest.TestCase):
             rc.verify_security(directory, TAG, COMMIT, REPO)
         calls = [c.args[0] for c in command.call_args_list]
         provenance = [c for c in calls if c[0] == 'gh']
-        self.assertEqual(len(provenance), 5)
+        self.assertEqual(len(provenance), 6)
+        self.assertEqual(sorted(Path(args[3]).name for args in provenance),
+                         sorted(rc.BINARIES + ['SHA256SUMS', rc.MANIFEST]))
         for args in provenance:
             self.assertIn('--deny-self-hosted-runners', args)
             self.assertEqual(args[args.index('--source-digest')+1], COMMIT)
