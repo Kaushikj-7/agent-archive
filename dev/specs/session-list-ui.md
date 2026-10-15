@@ -1,9 +1,9 @@
 # Session list UI — engineering plan
 
 Status: in progress; planned 2026-10-14, [decisions](#decisions) confirmed the same day.
-PR 6 (remaining callers and `show`) is implemented in #560, on top of PR 4
-(#558, merged); PR 5 (cursor, detail strip, footer) is still in progress, so the
-live check below has not run.
+PRs 1–4 and 6 are merged (PR 6, remaining callers and `show`, in #560);
+PR 5 (cursor, detail strip, footer) is in #562, so the live check below has
+not run.
 Where this plan and the code differ once PRs merge, the code is the reference
 and differences go under Deviations.
 
@@ -232,6 +232,20 @@ Confirmed by the owner 2026-10-14:
   whose sessions all fall on one day still shows that day's heading.
 - PR 4: the verbose table is one flat table. It was grouped by project
   before; day groups add nothing to a debugging view with full timestamps.
+- PR 5: the heading is the scope heading the code already draws
+  (`agent-archive · 42 sessions · … · a all projects`), now with
+  `· N subagents hidden`. A prompt line (`Number or ID to show:`) stays
+  under the footer line so typed numbers echo, and a message takes the
+  footer line's place until the next key. The `1–14 of 86` position counts
+  the rows loaded (the `o older` batch), not the scope's total, which the
+  heading names; `o older` is the last key a narrow footer drops but Enter.
+  Esc out of the filter keeps the highlighted row when the unfiltered table
+  has it, else the first row; `/` keeps the highlight until words are
+  typed. The cursor mark is the existing `▸`. The strip has no
+  "+ N more projects": a session records one project. A screen never takes
+  more lines than the terminal has while one row fits: where three rows and
+  their day headings do not fit, the strip goes first, then rows, down to
+  one (the line-mode pages keep their three-row minimum).
 - PR 6: the non-interactive candidate table (`show` / `handoff` words with
   several matches, on stderr) shows the full display title, not
   `listTitle`, following decision 3's piped table: it is what an agent or a
