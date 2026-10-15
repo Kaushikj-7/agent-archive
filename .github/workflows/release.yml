@@ -194,6 +194,8 @@ jobs:
         run: |
           go vet ./...
           python3 -B scripts/run_ci_tier.py --plan --tier full --output release-tier-results/plan.json
+          # Soft Go-managed memory target; race/native allocations also need headroom.
+          export GOMEMLIMIT=3GiB
           python3 -B scripts/run_ci_tier.py --tier full --suite linux --seconds 2400 --output release-tier-results
           python3 -B scripts/run_ci_tier.py --verify --tier full --suite linux --extra-plan release-tier-results/plan.json --output release-tier-results
           python3 scripts/test_release_signing.py
