@@ -660,16 +660,16 @@ func (l *sessionPicker) pickRowsContext(ctx context.Context, p *prompter, stdout
 		l.printHeading(stdout, width)
 		if paged {
 			l.start = pages[page].start
-			if err := printSessionGroups(stdout, pageSessionGroups(v.groups, pages[page]), v.format); err != nil {
+			if err := printSessionGroups(stdout, pageSessionGroups(v.groups, pages[page]), searchWidthFormat(v.format, width)); err != nil {
 				return listRow{}, false, err
 			}
 		} else {
 			l.start = 0
-			if err := printSessionGroups(stdout, v.groups, v.format); err != nil {
+			if err := printSessionGroups(stdout, v.groups, searchWidthFormat(v.format, width)); err != nil {
 				return listRow{}, false, err
 			}
 		}
-		terminal.Print(stdout, v.footer)
+		terminal.Print(stdout, l.displayFooter(v.footer, width))
 		if paged {
 			terminal.Println(stdout, pageLine(page, len(pages), len(v.rows)))
 		}
@@ -832,6 +832,7 @@ func (l *sessionPicker) pages(stdout io.Writer, groups []sessionTableGroup, form
 	if c := l.cache; c != nil && c.width == width && c.height == height && c.rows == n && c.footer == footer && c.question == question {
 		return c.pages, width, true
 	}
+	footer = l.displayFooter(footer, width)
 	pages = l.split(groups, format, n, width, height, footer, question)
 	l.cache = &pickerPages{width: width, height: height, rows: n, footer: footer, question: question, pages: pages}
 	return pages, width, true
@@ -860,7 +861,7 @@ func (l *sessionPicker) split(groups []sessionTableGroup, format listFormatOptio
 	for start := 0; start < n; {
 		// The most rows that fit: a page's height only grows with its
 		// rows, and no more rows than budget lines can fit.
-		lo, hi := 1, min(n-start, max(budget, minPickerPageRows))
+		lo, hi := 1, min(n-start, max(budget, l.minimumRows()))
 		for lo < hi {
 			mid := (lo + hi + 1) / 2
 			if tableLines(pickerPage{start, start + mid}) <= budget {
@@ -869,7 +870,7 @@ func (l *sessionPicker) split(groups []sessionTableGroup, format listFormatOptio
 				hi = mid - 1
 			}
 		}
-		rows := max(lo, min(minPickerPageRows, n-start))
+		rows := max(lo, min(l.minimumRows(), n-start))
 		pages = append(pages, pickerPage{start, start + rows})
 		start += rows
 	}
@@ -881,7 +882,7 @@ func (l *sessionPicker) split(groups []sessionTableGroup, format listFormatOptio
 func (l *sessionPicker) tableLines(groups []sessionTableGroup, format listFormatOptions, pg pickerPage, width int) int {
 	l.rendered += pg.end - pg.start
 	var buf bytes.Buffer
-	_ = printSessionGroups(&buf, pageSessionGroups(groups, pg), format)
+	_ = printSessionGroups(&buf, pageSessionGroups(groups, pg), searchWidthFormat(format, width))
 	return displayLines(buf.String(), width)
 }
 
@@ -1229,6 +1230,10 @@ func (b *sessionBrowser) searchDetails(ctx context.Context, row listRow) (browse
 			}
 		}
 		switch answer {
+		case "pgdn", "pgup", "down", "up", "home", "end":
+			move := map[string]scrollMove{"pgdn": scrollPageDown, "pgup": scrollPageUp, "down": scrollLineDown, "up": scrollLineUp, "home": scrollTop, "end": scrollBottom}[answer]
+			screen.scroll(move)
+			top = screen.top
 		case "b", "":
 			return browseBack, nil
 		case "q":

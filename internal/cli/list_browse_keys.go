@@ -116,10 +116,10 @@ func (l *sessionPicker) pickKeysContext(ctx context.Context, p *prompter, stdout
 		if l.filtering {
 			groups = highlightGroups(groups, l.cursor)
 		}
-		if err := printSessionGroups(&frame, pageSessionGroups(groups, pickerPage{screen.start, screen.end}), v.format); err != nil {
+		if err := printSessionGroups(&frame, pageSessionGroups(groups, pickerPage{screen.start, screen.end}), searchWidthFormat(v.format, screen.width)); err != nil {
 			return listRow{}, false, err
 		}
-		frame.WriteString(v.footer)
+		frame.WriteString(l.displayFooter(v.footer, screen.width))
 		status := screen.status()
 		if l.contentSearch != nil {
 			status = strings.ReplaceAll(status, "/ filter · ", "r rerun · ")
@@ -289,8 +289,8 @@ func (l *sessionPicker) screen(stdout io.Writer, groups []sessionTableGroup, for
 	s.width = width
 	// Below the table: the footer, the status line, the message line (or a
 	// blank one), and the prompt with what is typed.
-	chrome := l.headRows() + displayLines(footer, width) + 1 + 1 + displayLines(prompt, width)
-	s.budget = max(height-chrome, minPickerPageRows)
+	chrome := l.headRows() + displayLines(l.displayFooter(footer, width), width) + 1 + 1 + displayLines(prompt, width)
+	s.budget = max(height-chrome, l.minimumRows())
 	s.bottom = l.lastScreen(s)
 	s.start = min(l.start, s.bottom)
 	l.start = s.start
@@ -301,7 +301,7 @@ func (l *sessionPicker) screen(stdout io.Writer, groups []sessionTableGroup, for
 // fit is how many rows, from start, fill the screen's lines: as many as
 // fit, but at least a few.
 func (l *sessionPicker) fit(s listScreen, start int) int {
-	lo, hi := 1, min(s.n-start, max(s.budget, minPickerPageRows))
+	lo, hi := 1, min(s.n-start, max(s.budget, l.minimumRows()))
 	for lo < hi {
 		mid := (lo + hi + 1) / 2
 		if l.tableLines(s.groups, s.format, pickerPage{start, start + mid}, s.width) <= s.budget {
@@ -310,13 +310,13 @@ func (l *sessionPicker) fit(s listScreen, start int) int {
 			hi = mid - 1
 		}
 	}
-	return max(lo, min(minPickerPageRows, s.n-start))
+	return max(lo, min(l.minimumRows(), s.n-start))
 }
 
 // reachesEnd reports whether the screen starting at start shows the last
 // row.
 func (l *sessionPicker) reachesEnd(s listScreen, start int) bool {
-	return s.n-start <= minPickerPageRows || s.n-start <= s.budget && l.tableLines(s.groups, s.format, pickerPage{start, s.n}, s.width) <= s.budget
+	return s.n-start <= l.minimumRows() || s.n-start <= s.budget && l.tableLines(s.groups, s.format, pickerPage{start, s.n}, s.width) <= s.budget
 }
 
 // lastScreen is the first row of the screen that shows the last row, the
@@ -327,7 +327,7 @@ func (l *sessionPicker) lastScreen(s listScreen) int {
 	}
 	// Only a screen with fewer rows than lines can reach the end, and one
 	// reaching it still does from a later row.
-	lo, hi := max(s.n-max(s.budget, minPickerPageRows), 0), s.n-1
+	lo, hi := max(s.n-max(s.budget, l.minimumRows()), 0), s.n-1
 	for lo < hi {
 		mid := (lo + hi) / 2
 		if l.reachesEnd(s, mid) {
@@ -346,7 +346,7 @@ func (l *sessionPicker) previousScreen(s listScreen) int {
 	if s.budget == 0 {
 		return 0
 	}
-	lo, hi := max(s.start-max(s.budget, minPickerPageRows), 0), s.start
+	lo, hi := max(s.start-max(s.budget, l.minimumRows()), 0), s.start
 	for lo < hi {
 		mid := (lo + hi) / 2
 		if mid+l.fit(s, mid) >= s.start {

@@ -158,7 +158,9 @@ A title match has no body reference and explains that instead of opening an
 unrelated transcript. In details, `n`/`p` navigate matching **body** passages,
 `m` follows the displayed raw-byte continuation in the current message, arrows
 and page keys scroll the current bounded text, `b` returns, and `q` exits.
-The line fallback accepts the same letter actions.
+The line fallback accepts the same letter actions and pgup/pgdn, up/down,
+home/end to scroll the current text. Long unbroken Unicode text wraps into
+physical rows so its tail remains reachable on narrow terminals.
 
 The list's `n`/`p` or page keys page already loaded results. `o` requests the next
 local indexed result page; `r` explicitly reruns the original query. At most

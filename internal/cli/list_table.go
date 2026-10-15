@@ -80,6 +80,9 @@ func sessionTableGroups(rows []listRow, opts listFormatOptions) []sessionTableGr
 // printSessionGroups writes groups as the human list table: each group's
 // heading, when it has one, then its column header and rows.
 func printSessionGroups(w io.Writer, groups []sessionTableGroup, opts listFormatOptions) error {
+	if opts.Search {
+		return printContentSearchRows(w, groups, opts.SearchWidth)
+	}
 	for i, group := range groups {
 		if group.label != "" {
 			if i > 0 {
@@ -261,18 +264,6 @@ func printSessionRow(tw io.Writer, r listRow, opts listFormatOptions) {
 		return
 	}
 	terminal.Println(tw, strings.Join(tableCells(r, opts), "\t"))
-	if r.searchSnippet != "" {
-		cells := tableCells(r, opts)
-		for i := range cells {
-			cells[i] = ""
-		}
-		at := 0
-		if opts.Numbered {
-			at = 1
-		}
-		cells[at] = r.searchSnippet
-		terminal.Println(tw, strings.Join(cells, "\t"))
-	}
 }
 
 // columnGap is the room between the columns of a table.

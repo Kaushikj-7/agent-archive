@@ -38,7 +38,7 @@ type contentSearchBrowser struct {
 
 func runContentSearchBrowser(ctx context.Context, env searchCommandDependencies, cfg config.Config, namespace string, index *search.Store, page search.Page, opts contentSearchOptions, stdout, stderr io.Writer) (listRow, bool, *typedInput, int) {
 	s := &contentSearchBrowser{env: env, cfg: cfg, namespace: namespace, index: index, opts: opts, page: page, hits: page.Hits, pages: 1}
-	format := listFormatOptions{Numbered: true, HideProject: true, Now: env.now(), NarrowHint: "o next indexed results, or narrow the content query and rerun."}
+	format := listFormatOptions{Search: true, Numbered: true, HideProject: true, Now: env.now(), NarrowHint: "o next indexed results, or narrow the content query and rerun."}
 	s.choices = rowChoices(nil, format)
 	s.choices.loadOlder = &browserLoadAction{LoadContext: s.load, Available: func() bool { return true }}
 	s.installRows()
@@ -60,10 +60,10 @@ func (s *contentSearchBrowser) installRows() {
 		key := childKey(h.Harness, h.SessionID)
 		s.byKey[key] = h
 		snippet := archive.DisplayLine(h.Snippet)
-		if h.MatchCount > 1 {
-			snippet += fmt.Sprintf(" · %d other indexed title/body matches", h.MatchCount-1)
+		if len(h.Gaps) > 0 {
+			snippet += " · source coverage gaps"
 		}
-		rows = append(rows, listRow{selectionKey: key, Index: i + 1, SessionID: h.SessionID, ShortID: shorts[i], HarnessKey: h.Harness, Harness: archive.DisplayLine(h.Harness), Title: archive.DisplayLine(h.Title), When: h.CapturedAt.Format("2006-01-02"), Project: "-", searchSnippet: snippet})
+		rows = append(rows, listRow{selectionKey: key, Index: i + 1, SessionID: h.SessionID, ShortID: shorts[i], HarnessKey: h.Harness, Harness: archive.DisplayLine(h.Harness), Title: archive.DisplayLine(h.Title), When: h.CapturedAt.Format("2006-01-02"), Project: "-", searchSnippet: snippet, searchMatches: h.MatchCount})
 	}
 	scope := archive.DisplayLine(s.opts.query.Scope.ProjectName)
 	if s.opts.all {
@@ -241,9 +241,20 @@ func (b *sessionBrowser) readSearchSelection(ctx context.Context, ref search.Ref
 
 func searchContextLines(h search.Hit, ref *search.Reference, out search.Surrounding, notice string) []string {
 	text := archive.DisplayLine(h.Harness) + " / " + archive.DisplayLine(h.SessionID) + "\n" + archive.DisplayLine(h.Title) + "\n"
+	for _, gap := range h.Gaps[:min(len(h.Gaps), 3)] {
+		text += "Coverage gap: " + oneRow(archive.DisplayLine(gap.RevisionID+": "+gap.Reason), 160) + "\n"
+	}
+	if len(h.Gaps) > 3 {
+		text += "Additional source coverage gaps are reported in JSON.\n"
+	}
 	if ref == nil {
 		text += "Title match: no body passage reference. n loads matching body passages if available.\n"
 	} else {
+		revision := "active source"
+		if ref.Source.RevisionID != "" {
+			revision = archive.DisplayLine(ref.Source.RevisionID)
+		}
+		text += "Source revision: " + revision + "\n"
 		text += fmt.Sprintf("Reference: message %d · raw bytes %d–%d · source %s\n", ref.Record, ref.Start, ref.End, archive.DisplayLine(ref.Source.Reference.SHA256))
 		for _, v := range out.Before {
 			text += "[before · " + archive.DisplayLine(v.Role) + "]\n" + searchDisplayText(v.Context.Text) + "\n"
@@ -272,9 +283,16 @@ func searchDisplayText(text string) string {
 	return strings.Join(lines, "\n")
 }
 
-const searchDetailsQuestion = "n next match · p previous match · m more context · h Hand off current session · r rerun · b back · q quit"
+const searchDetailsQuestion = "↑↓/PgUp/PgDn (or pgup/pgdn) scroll · n next match · p previous match · m more context · h Hand off current session · r rerun · b back · q quit"
 
 func (b *sessionBrowser) drawSearchDetails(lines []string, top int) detailsScreen {
+	if width, _, ok := b.env.terminalSize(b.stdout); ok && width > 0 {
+		var wrapped []string
+		for _, line := range lines {
+			wrapped = append(wrapped, splitColumns(line, width)...)
+		}
+		lines = wrapped
+	}
 	screen, _ := b.measureDetails(lines, top, false, "", browseNotice{})
 	for _, line := range lines[screen.top : screen.top+screen.shown] {
 		terminal.Println(b.stdout, line)
@@ -382,4 +400,57 @@ func (s *contentSearchBrowser) moveMatch(ctx context.Context, hit search.Hit, re
 	nav.position = next
 	selected := nav.page.References[next]
 	return &selected, nil
+}
+
+// printContentSearchRows is the finite search presentation of shared browser
+// groups. It bounds each snippet to two physical rows, without widening other
+// columns or changing the layout of existing metadata pickers.
+func printContentSearchRows(out io.Writer, groups []sessionTableGroup, width int) error {
+	if width <= 0 {
+		width = 80
+	}
+	var frame strings.Builder
+	frame.WriteString(oneRow("Ranked content matches", width) + "\n")
+	for _, group := range groups {
+		for _, row := range group.rows {
+			frame.WriteString(oneRow(fmt.Sprintf("%d. %s", row.Index, row.Title), width) + "\n")
+			frame.WriteString(oneRow(row.Harness+" · "+row.ShortID+" · "+row.When, width) + "\n")
+			snippets := splitColumns(row.searchSnippet, max(width-2, 1))
+			for i, line := range snippets[:min(len(snippets), 2)] {
+				if i == 1 && len(snippets) > 2 {
+					line = oneRow(line+"…", max(width-2, 1))
+				}
+				frame.WriteString("  " + line + "\n")
+			}
+			if row.searchMatches > 1 {
+				frame.WriteString(oneRow(fmt.Sprintf("%d other indexed title/body matches", row.searchMatches-1), width) + "\n")
+			}
+		}
+	}
+	return writeOutput(out, []byte(frame.String()))
+}
+
+func searchWidthFormat(format listFormatOptions, width int) listFormatOptions {
+	if format.Search {
+		format.SearchWidth = width
+	}
+	return format
+}
+
+func (l *sessionPicker) minimumRows() int {
+	if l.contentSearch != nil {
+		return 1
+	}
+	return minPickerPageRows
+}
+
+func (l *sessionPicker) displayFooter(footer string, width int) string {
+	if l.contentSearch == nil || width <= 0 {
+		return footer
+	}
+	lines := strings.Split(footer, "\n")
+	for i := range lines {
+		lines[i] = oneRow(lines[i], width)
+	}
+	return strings.Join(lines, "\n")
 }

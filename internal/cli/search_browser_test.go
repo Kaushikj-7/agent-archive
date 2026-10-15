@@ -234,3 +234,55 @@ func TestSearchRowsKeepRankFullIdentityAndEscapeText(t *testing.T) {
 		t.Fatal("numeric selection lost qualified identity")
 	}
 }
+
+func TestSearchDetailsWrapLongUnicodeLinesForScrolling(t *testing.T) {
+	env := testEnv(t, t.TempDir(), time.Now())
+	env.TerminalSize = fixedTerminal{36, 20}.terminalSize
+	b := &sessionBrowser{env: env, stdout: io.Discard, prompt: newPrompter(strings.NewReader(""), io.Discard), search: &contentSearchBrowser{}}
+	lines := []string{strings.Repeat("界", 2000) + "TAILMARK"}
+	screen := b.drawSearchDetails(lines, 0)
+	if !screen.cut || screen.bottom == 0 || len(screen.lines) < 100 {
+		t.Fatalf("long line cannot scroll: %+v", screen)
+	}
+	for _, line := range screen.lines {
+		if visibleWidth(line) > 36 {
+			t.Fatalf("oversized physical row: %d", visibleWidth(line))
+		}
+	}
+	screen.scroll(scrollBottom)
+	if !strings.Contains(strings.Join(screen.lines[screen.top:screen.top+screen.shown], ""), "TAILMARK") {
+		t.Fatal("tail unreachable")
+	}
+}
+
+func TestSearchSnippetRowsFitNarrowSharedBrowserMeasurements(t *testing.T) {
+	env := testEnv(t, t.TempDir(), time.Now())
+	env.TerminalSize = fixedTerminal{36, 20}.terminalSize
+	state := &contentSearchBrowser{}
+	rows := make([]listRow, 10)
+	for i := range rows {
+		rows[i] = listRow{Index: i + 1, Title: strings.Repeat("title", 100), Harness: "codex", ShortID: "12345678", When: "2026-01-01", searchSnippet: strings.Repeat("界", 256), searchMatches: 8}
+	}
+	format := listFormatOptions{Search: true, Numbered: true}
+	groups := sessionTableGroups(rows, format)
+	l := &sessionPicker{env: env, contentSearch: state}
+	screen := l.screen(io.Discard, groups, format, len(rows), "coverage\nquery\nnext page\n", "Enter number: ")
+	if screen.end >= len(rows) || screen.end < 1 {
+		t.Fatalf("not paged: %+v", screen)
+	}
+	if used := l.tableLines(groups, format, pickerPage{screen.start, screen.end}, 36); used > screen.budget {
+		t.Fatalf("%d rendered lines exceed budget%d", used, screen.budget)
+	}
+	var rendered bytes.Buffer
+	if err := printSessionGroups(&rendered, pageSessionGroups(groups, pickerPage{screen.start, screen.end}), searchWidthFormat(format, 36)); err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(rendered.String(), "\n") {
+		if visibleWidth(line) > 36 {
+			t.Fatalf("oversized row: %q", line)
+		}
+	}
+	if !strings.Contains(rendered.String(), "7 other indexed title/body matches") {
+		t.Fatalf("known count missing: %s", &rendered)
+	}
+}

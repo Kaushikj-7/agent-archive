@@ -67,6 +67,8 @@ type listRow struct {
 
 // listFormatOptions controls how session rows are built and printed.
 type listFormatOptions struct {
+	Search         bool
+	SearchWidth    int
 	Now            time.Time
 	Verbose        bool
 	Numbered       bool

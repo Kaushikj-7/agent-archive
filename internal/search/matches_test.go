@@ -102,3 +102,35 @@ func TestMatchPagesPreserveScopeRoleOrderAndGeneration(t *testing.T) {
 		t.Fatalf("changed generation: %v", err)
 	}
 }
+
+func BenchmarkSessionMatchPages(b *testing.B) {
+	s := openTest(b)
+	benchmarkCorpus(b, s, 250, 45)
+	q := Query{Text: "common"}
+	results, err := s.Search(b.Context(), q)
+	if err != nil {
+		b.Fatal(err)
+	}
+	first, err := s.Matches(b.Context(), q, "codex", "session-000000", results.Generation, "")
+	if err != nil {
+		b.Fatal(err)
+	}
+	second, err := s.Matches(b.Context(), q, "codex", "session-000000", results.Generation, first.Next)
+	if err != nil {
+		b.Fatal(err)
+	}
+	for _, tc := range []struct{ name, cursor string }{{"first", ""}, {"forward", first.Next}, {"reverse", second.Previous}} {
+		b.Run(tc.name, func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				page, err := s.Matches(b.Context(), q, "codex", "session-000000", results.Generation, tc.cursor)
+				if err != nil || len(page.References) != 20 {
+					b.Fatalf("%+v %v", page, err)
+				}
+			}
+			b.ReportMetric(11250, "corpus_passages")
+			b.ReportMetric(20, "retained_refs/op")
+			b.ReportMetric(0, "source_GET/op")
+		})
+	}
+}
