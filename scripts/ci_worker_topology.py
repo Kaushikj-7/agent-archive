@@ -28,7 +28,7 @@ def selection(event, repository):
     return (int(match[1]), 'full-pipeline-experiment') if match else (DEFAULT_WORKERS, 'normal')
 
 
-def validate(env, event, source, tree, parents):
+def validate(env, event, source, tree, parents, is_ancestor=None):
     repository = env.get('GITHUB_REPOSITORY', '')
     pr = event['pull_request']
     number = pr['number']
@@ -47,9 +47,12 @@ def validate(env, event, source, tree, parents):
             or env.get('GITHUB_WORKFLOW_SHA') != source
             or env.get('GITHUB_WORKFLOW_REF') != repository + '/.github/workflows/test.yml@' + ref
             or any(not isinstance(s, str) or not SHA.fullmatch(s)
-                   for s in (source, tree, pr['base']['sha'], pr['head']['sha']))
-            or parents != [pr['base']['sha'], pr['head']['sha']]):
+                   for s in (source, tree, pr['base']['sha'], pr['head']['sha'], *parents))
+            or len(parents) != 2 or parents[1] != pr['head']['sha']):
         raise ValueError('workflow, checkout, event and merge parents differ')
+    if (parents[0] != pr['base']['sha']
+            and (is_ancestor is None or not is_ancestor(pr['base']['sha'], parents[0]))):
+        raise ValueError('tested first parent is not the captured base or its proven descendant')
     workers, observation = selection(event, repository)
     if env.get('WORKERS') is not None and env['WORKERS'] != str(workers):
         raise ValueError('matrix count differs from captured PR topology')
@@ -59,6 +62,7 @@ def validate(env, event, source, tree, parents):
     return {'schema': 1, 'repository': repository, 'pr_number': number,
             'workers': workers, 'observation_kind': observation,
             'source': source, 'tree': tree, 'parents': parents,
+            'event_base': pr['base']['sha'], 'tested_base': parents[0],
             'head': pr['head']['sha'], 'head_ref': pr['head']['ref'],
             'head_repository': pr['head']['repo']['full_name'], 'base_ref': pr['base']['ref'],
             'workflow_source': env['GITHUB_WORKFLOW_SHA'],
@@ -74,13 +78,26 @@ def main():
         def git(*argv):
             return subprocess.check_output(['git', *argv], text=True, timeout=10).strip()
         source = git('rev-parse', 'HEAD')
-        # Read raw commit headers: this works on shallow audit checkouts too.
+        if git('rev-parse', '--is-shallow-repository') != 'false':
+            raise ValueError('full history is required to prove captured base ancestry')
+        # Read ordered raw headers; never substitute retained event metadata.
         parents = [line.split()[1] for line in git('cat-file', '-p', source).split('\n\n', 1)[0].splitlines()
                    if line.startswith('parent ')]
         if git('status', '--porcelain', '--untracked-files=no'):
             raise ValueError('tracked source must be clean')
-        result = validate(os.environ, json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text()),
-                          source, git('rev-parse', 'HEAD^{tree}'), parents)
+        def is_ancestor(base, descendant):
+            try:
+                git('merge-base', '--is-ancestor', base, descendant)
+                return True
+            except subprocess.CalledProcessError as error:
+                if error.returncode == 1:
+                    return False
+                raise
+        event = json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text())
+        for revision in (event['pull_request']['base']['sha'], event['pull_request']['head']['sha'], *parents):
+            if not isinstance(revision, str) or not SHA.fullmatch(revision) or git('rev-parse', '--verify', revision+'^{commit}') != revision:
+                raise ValueError('event or actual parent commit unavailable')
+        result = validate(os.environ, event, source, git('rev-parse', 'HEAD^{tree}'), parents, is_ancestor)
         if args.lint_base_ref is not None:
             if args.lint_base_ref != os.environ['GITHUB_BASE_REF']:
                 raise ValueError('lint ref differs from captured PR base ref')

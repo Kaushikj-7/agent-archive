@@ -32,7 +32,45 @@ def receipt(branch='ordinary', fork=False):
 
 
 class TopologyTests(unittest.TestCase):
-    def test_cli_reads_actual_ordered_commit_headers_even_when_shallow(self):
+    def test_real_descendant_base_and_unrelated_reversed_wrong_head_negatives(self):
+        script = Path(topology.__file__).resolve()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = dict(os.environ, GIT_AUTHOR_NAME='CI test', GIT_AUTHOR_EMAIL='ci@example.invalid',
+                       GIT_COMMITTER_NAME='CI test', GIT_COMMITTER_EMAIL='ci@example.invalid')
+            def git(*args, data=None):
+                return subprocess.check_output(['git', *args], cwd=root, env=env, input=data, text=True).strip()
+            git('init', '-q')
+            tree = git('write-tree')
+            base = git('commit-tree', tree, data='event base\n')
+            newer = git('commit-tree', tree, '-p', base, data='newer base\n')
+            head = git('commit-tree', tree, '-p', base, data='event head\n')
+            unrelated = git('commit-tree', tree, data='unrelated\n')
+            payload = event()
+            payload['pull_request']['base']['sha'] = base
+            payload['pull_request']['head']['sha'] = head
+            (root/'event.json').write_text(json.dumps(payload))
+            (root/'environment').touch()
+            for first, second, accepted in ((newer, head, True), (unrelated, head, False),
+                                            (head, newer, False), (newer, unrelated, False)):
+                merge = git('commit-tree', tree, '-p', first, '-p', second, data='tested merge\n')
+                git('reset', '--hard', merge)
+                env.update(environment(), GITHUB_SHA=merge, GITHUB_WORKFLOW_SHA=merge,
+                           GITHUB_EVENT_PATH=str(root/'event.json'), GITHUB_ENV=str(root/'environment'))
+                output = root/(merge+'.json')
+                result = subprocess.run([sys.executable, '-B', str(script), '--output', str(output)],
+                                        cwd=root, env=env, capture_output=True, text=True)
+                self.assertEqual(result.returncode == 0, accepted, result.stderr)
+                if accepted:
+                    proof = json.loads(output.read_text())
+                    self.assertEqual(proof['event_base'], base)
+                    self.assertEqual(proof['tested_base'], newer)
+                    self.assertEqual(proof['parents'], [newer, head])
+                    self.assertEqual(proof['source'], merge)
+                else:
+                    self.assertFalse(output.exists())
+
+    def test_cli_proves_full_history_and_records_actual_lint_endpoints(self):
         script = Path(topology.__file__).resolve()
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -56,13 +94,17 @@ class TopologyTests(unittest.TestCase):
             env.update(environment(payload['pull_request']['head']['ref']), GITHUB_SHA=merge,
                        GITHUB_WORKFLOW_SHA=merge, WORKERS='4', SHARD='3',
                        GITHUB_EVENT_PATH=str(root/'event.json'), GITHUB_ENV=str(root/'environment'))
-            subprocess.run([sys.executable, '-B', str(script), '--output', str(root/'receipt.json')],
-                           cwd=root, env=env, check=True, capture_output=True, text=True)
+            command = [sys.executable, '-B', str(script), '--output', str(root/'receipt.json')]
+            rejected = subprocess.run(command, cwd=root, env=env, capture_output=True, text=True)
+            self.assertNotEqual(rejected.returncode, 0)
+            self.assertIn('full history', rejected.stderr)
+            self.assertFalse((root/'receipt.json').exists())
+            (root/'.git/shallow').unlink()
+            subprocess.run(command, cwd=root, env=env, check=True, capture_output=True, text=True)
             result = json.loads((root/'receipt.json').read_text())
             self.assertEqual(result['parents'], [base, head])
             self.assertEqual(result['source'], merge)
             self.assertEqual((root/'environment').read_text(), 'WORKERS=4\n')
-            (root/'.git/shallow').unlink()
             git('update-ref', 'refs/remotes/origin/main', base)
             argv = [sys.executable, '-B', str(script), '--lint-base-ref', 'main',
                     '--output', str(root/'receipt.json')]
@@ -155,6 +197,7 @@ class TopologyTests(unittest.TestCase):
             guard = next(v for v in steps(found[name]) if 'ci_worker_topology.py' in v)
             self.assertEqual(step_key(guard, 'if'), "github.event_name == 'pull_request'")
             self.assertNotIn('continue-on-error:', guard)
+            self.assertIn('fetch-depth: 0', next(v for v in steps(found[name]) if 'uses: actions/checkout@' in v))
         self.assertNotIn('workflow_run:', workflow)
         self.assertNotIn('labeled', workflow)
         diagnostic = next(v for v in steps(found['linux-race']) if 'collect_ci_timing.py' in v)

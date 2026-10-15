@@ -105,7 +105,7 @@ def validate_run(run, name, topology):
             or not isinstance(associations, list) or len(associations) != 1
             or associations[0].get('number') != topology['pr_number']
             or associations[0].get('head', {}).get('sha') != topology['head']
-            or associations[0].get('base', {}).get('sha') != topology['parents'][0]
+            or associations[0].get('base', {}).get('sha') != topology['event_base']
             or type(run.get('id')) is not int or run['id'] <= 0
             or type(run.get('run_attempt')) is not int or not 1 <= run['run_attempt'] <= 10):
         raise ValueError('run does not belong to exact PR/workflow/revision context')
@@ -200,9 +200,10 @@ def main():
         if (topology.get('repository') != REPOSITORY or topology.get('schema') != 1
                 or topology.get('observation_kind') not in ('normal', 'full-pipeline-experiment')
                 or any(not isinstance(topology.get(key), str) or not ci_worker_topology.SHA.fullmatch(topology[key])
-                       for key in ('head', 'source', 'tree'))
+                       for key in ('head', 'source', 'tree', 'event_base', 'tested_base'))
                 or not isinstance(topology.get('parents'), list) or len(topology['parents']) != 2
                 or topology['parents'][1] != topology['head']
+                or topology['parents'][0] != topology['tested_base']
                 or any(not isinstance(v, str) or not ci_worker_topology.SHA.fullmatch(v) for v in topology['parents'])
                 or type(topology.get('pr_number')) is not int or topology['pr_number'] <= 0
                 or not isinstance(topology.get('head_ref'), str)):

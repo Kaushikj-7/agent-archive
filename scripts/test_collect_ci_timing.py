@@ -63,6 +63,50 @@ class Response(io.BytesIO):
 
 
 class CollectionTests(unittest.TestCase):
+    def test_event_base_association_stays_distinct_from_actual_newer_merge_parent(self):
+        proof = receipt()
+        proof['parents'][0] = proof['tested_base'] = 'e'*40
+        result = collector.collect(FakeAPI(), proof, 1, 2)
+        retained = result['report']['samples'][0]['tested_checkout']
+        self.assertEqual(retained['event_base'], 'b'*40)
+        self.assertEqual(retained['tested_base'], 'e'*40)
+        self.assertEqual(retained['parents'], ['e'*40, 'c'*40])
+        # An API association rewritten to the actual first parent is a different
+        # retained event context, not interchangeable with the event base.
+        api = FakeAPI()
+        api.runs[2]['pull_requests'][0]['base']['sha'] = 'e'*40
+        with self.assertRaises(ValueError):
+            collector.collect(api, proof, 1, 2)
+
+    def test_p1_malformed_rows_and_nonterminal_inventory_remain_diagnostic(self):
+        api = FakeAPI()
+        broken = copy.deepcopy(api.jobs[1][0])
+        broken.update(id=999, name='cancelled diagnostic', runner_id=None, runner_name=None,
+                      conclusion='cancelled', steps=[], completed_at='2026-10-14T00:00:00Z')
+        api.jobs[1].append(broken)
+        result = collector.collect(api, receipt(), 1, 2)
+        row = next(v for v in result['report']['samples'][0]['jobs'] if v['id'] == 999)
+        self.assertEqual(row['runner_allocation'], 'unknown')
+        self.assertIsNone(row['runner_seconds'])
+        self.assertTrue(row['timestamp_issues'])
+        self.assertIsNone(result['report']['samples'][0]['linux_runner_minutes'])
+        api = FakeAPI()
+        api.jobs[1][0]['started_at'] = 'malformed'
+        api.jobs[1][0]['steps'][0]['completed_at'] = 'malformed'
+        result = collector.collect(api, receipt(), 1, 2, experiment=True)
+        row = result['report']['samples'][0]['jobs'][0]
+        self.assertIsNone(row['runner_seconds'])
+        self.assertIsNone(row['steps'][0]['seconds'])
+        self.assertTrue(row['timestamp_issues'])
+        self.assertEqual(result['report']['samples'][0]['observation_kind'], 'full-pipeline-experiment')
+        self.assertFalse(result['report']['samples'][0]['qualifying'])
+        api = FakeAPI()
+        api.runs[1].update(status='in_progress', conclusion=None)
+        result = collector.collect(api, receipt(), 1, 2)
+        self.assertEqual(result['snapshot_status'], 'partial')
+        self.assertIsNone(result['report']['samples'][0]['actual_runner_minutes'])
+        self.assertIsNone(result['report']['samples'][0]['required_completed_at'])
+
     def test_full_inventory_matches_surviving_workflow_roles_and_static_names(self):
         workflow = (Path(__file__).resolve().parent.parent/'.github/workflows/test.yml').read_text()
         found = workflow_jobs(workflow)

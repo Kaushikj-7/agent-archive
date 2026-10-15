@@ -808,3 +808,24 @@ focused, native and purge proof checks remain. Lower total job count is not
 proof of a lower initial burst, fewer runner-minutes, or less queueing. Record
 these costs and actual overlap in the full-pipeline comparison before adopting
 four or claiming throughput improvement.
+
+
+### Captured base versus actual tested merge base
+
+A normal PR may be tested by GitHub on a newer descendant of the base SHA retained
+in its triggering event. This is accepted only with exactly two actual merge
+parents, the second equal to the captured head, and real full-history Git proof
+that `event_base` is an ancestor of the actual first parent `tested_base`. Every
+receipt retains these two distinct values plus actual source/tree/ordered parents;
+it never rewrites the captured event base. Unrelated/reversed/wrong-head parents,
+missing commits or shallow history fail the guard. Source-audit now explicitly
+fetches full history for that proof, an additional fetch cost to include in usage.
+
+The collector's API PR association base is checked against `event_base`, not
+silently against `parents[0]`. The aggregate's independent plan and native/cache
+source guards similarly retain the authentic identities. Accepting this ordinary
+GitHub base race does not qualify differing campaign content: the four/eight
+experiment still independently requires comparable actual tested trees, policies,
+compiler/cache/image cohorts and runtime lint selected diff endpoints. Different
+source SHAs remain different. The main integration also preserves new product
+and test bodies; older coverage or cost artifacts are not relabeled for this tree.
