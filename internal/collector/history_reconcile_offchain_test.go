@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -15,6 +16,9 @@ import (
 	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/state"
 )
+
+// revisionD is an off-chain rollout of the thread that does not read as one.
+const revisionD = "44444444-4444-4444-8444-444444444444"
 
 // offChainTexts is n synthetic transcript messages of size bytes each that
 // compress little, so a revision staged from them retains about as much as
@@ -227,6 +231,43 @@ func TestOffChainCeilingRetryResumesTheReplacementItSaved(t *testing.T) {
 	}
 	if hasRevisionLeftOut(t, scan) {
 		t.Fatal("recorded a diagnostic with nothing left out")
+	}
+}
+
+// A replacement the first scan saved without an off-chain revision it could
+// not read is still reported as leaving it out when the second scan resumes
+// it: the second scan never reconciles, so the first scan's record stands.
+func TestOffChainCeilingRetryKeepsTheLeftOutRecordOfTheReplacementItResumes(t *testing.T) {
+	t.Parallel()
+	withUnreadable := func() *sessionScan {
+		scan := withEarlierReplaceablePublication(t)
+		lookup := scan.opts.CodexRollouts.(*reconciliationLookup)
+		d := agentapi.SourceRef{Path: filepath.Join(scan.reg.ProjectRoot, "rollout-2026-10-01T12-00-00-"+revisionD+".jsonl"), Key: revisionThread}
+		if err := os.WriteFile(d.Path, []byte("D-only is not a rollout\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		lookup.set.Candidates = append(lookup.set.Candidates, d)
+		lookup.refs[revisionD] = []agentapi.SourceRef{d}
+		return scan
+	}
+	scan := withUnreadable()
+	t.Cleanup(scan.readBudget().BeginScope(64 << 20))
+	_, err := scan.run(scan.ctx)
+	if captured, ids := capturedChain(t, scan, err); !captured || scan.withoutOffChain || !slices.Contains(ids, revisionB) || slices.Contains(ids, revisionD) {
+		t.Fatalf("with room, B was not kept or D was: captured %v, inputs %v, retried %v", captured, ids, scan.withoutOffChain)
+	}
+	_, peak := scan.readBudget().Charged()
+	scan = withUnreadable()
+	t.Cleanup(scan.readBudget().BeginScope(peak - 2<<10))
+	_, err = scan.run(scan.ctx)
+	if !scan.withoutOffChain {
+		t.Fatal("the scan did not meet the ceiling with B kept; the fixture no longer exercises the retry: ", err)
+	}
+	if captured, ids := capturedChain(t, scan, err); !captured || !slices.Contains(ids, revisionB) || slices.Contains(ids, revisionD) {
+		t.Fatalf("the retry did not resume the saved replacement: captured %v, inputs %v, err %v", captured, ids, err)
+	}
+	if !hasRevisionLeftOut(t, scan) {
+		t.Fatal("no diagnostic for D, left out of the replacement the retry resumed")
 	}
 }
 

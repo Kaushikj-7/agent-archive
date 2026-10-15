@@ -169,7 +169,9 @@ func (s *sessionScan) run(ctx context.Context) (outcome sessionOutcome, err erro
 	s.readBudget().ForgetScopeExceeded()
 	s.filtered, s.lastRead, s.revisions, s.rewritten = nil, nil, nil, nil
 	s.gap, s.sizeLimit, s.readyAt, s.subagentRunning = "", nil, time.Time{}, false
-	s.offChainKept, s.offChainLeftOut, s.withoutOffChain = 0, false, true
+	// offChainLeftOut stands until the second scan reconciles: one that
+	// resumes the first scan's replacement leaves out what the first did.
+	s.offChainKept, s.withoutOffChain = 0, true
 	return s.scanOnce(ctx)
 }
 
