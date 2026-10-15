@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
@@ -67,7 +68,7 @@ func (s *Store) checkNativeRegistrationWrite(path string, next archive.SessionRe
 		}
 	}
 	// Ordinary existing integrations keep their established compatibility paths.
-	if next.NativeBinding == nil && (next.Harness.Name == "codex" || next.Harness.Name == "claude" || next.Harness.Name == "cursor") {
+	if next.NativeBinding == nil && (agentmeta.ID(next.Harness.Name) == agentmeta.Codex || agentmeta.ID(next.Harness.Name) == agentmeta.Claude || agentmeta.ID(next.Harness.Name) == agentmeta.Cursor) {
 		return nil
 	}
 	cfg, found, err := config.Load(s.home)

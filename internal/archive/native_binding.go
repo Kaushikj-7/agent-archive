@@ -66,9 +66,11 @@ func (b *NativeSourceBinding) PreservesFacts(previous *NativeSourceBinding) bool
 func nativeIdentity(agent, id string) bool {
 	return len(agent) <= 128 && (agentmeta.SessionKey{Agent: agentmeta.ID(agent), NativeID: id}).Validate() == nil && nativeToken(id)
 }
+
 func nativeToken(s string) bool {
 	return s != "" && len(s) <= 4096 && utf8.ValidString(s) && !strings.ContainsAny(s, "\x00\r\n")
 }
+
 func nativePath(s string) bool {
 	return nativeToken(s) && filepath.IsAbs(s) && filepath.Clean(s) == s
 }

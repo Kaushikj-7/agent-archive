@@ -102,7 +102,7 @@ func unwrapNativeConfig(raw []byte) ([]byte, bool, error) {
 	if err := decoder.Decode(&version); err != nil {
 		return nil, false, err
 	}
-	if err := decoder.Decode(new(any)); err != io.EOF {
+	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
 		return nil, false, errors.New("invalid native authority fence")
 	}
 	if version.Version != 16 || version.Writer != nativeAuthorityWriter || !bytes.Equal(bytes.TrimSpace(doc["native_authority_protection"]), []byte("true")) {
@@ -171,13 +171,24 @@ func exactAuthorityObject(raw []byte, names []string) error {
 	return nil
 }
 
+type nativeConfigSelector string
+
+const (
+	nativeSchemaSelector     nativeConfigSelector = "schema_version"
+	nativeProtectionSelector nativeConfigSelector = "native_authority_protection"
+	nativeRootsSelector      nativeConfigSelector = "native_roots"
+	nativeStagedSelector     nativeConfigSelector = "staged_selection_protection"
+	nativeSettledSelector    nativeConfigSelector = "settled_cursor_selection_protection"
+	nativeScopedSelector     nativeConfigSelector = "scoped_picker_protection"
+)
+
 func checkNativeConfigSelectors(raw []byte) error {
 	d := json.NewDecoder(bytes.NewReader(raw))
 	token, err := d.Token()
 	if err != nil || token != json.Delim('{') {
 		return errors.New("invalid configuration object")
 	}
-	seen := map[string]int{}
+	seen := map[nativeConfigSelector]int{}
 	exact := true
 	native := false
 	for d.More() {
@@ -193,18 +204,18 @@ func checkNativeConfigSelectors(raw []byte) error {
 		if err = d.Decode(&value); err != nil {
 			return err
 		}
-		for _, name := range []string{"schema_version", "native_authority_protection", "native_roots", "staged_selection_protection", "settled_cursor_selection_protection", "scoped_picker_protection"} {
-			if strings.EqualFold(key, name) {
+		for _, name := range []nativeConfigSelector{nativeSchemaSelector, nativeProtectionSelector, nativeRootsSelector, nativeStagedSelector, nativeSettledSelector, nativeScopedSelector} {
+			if strings.EqualFold(key, string(name)) {
 				seen[name]++
-				exact = exact && key == name && seen[name] == 1
-				if name == "native_authority_protection" || name == "native_roots" {
+				exact = exact && key == string(name) && seen[name] == 1
+				if name == nativeProtectionSelector || name == nativeRootsSelector {
 					native = true
 					exact = exact && !bytes.Equal(bytes.TrimSpace(value), []byte("null"))
 				}
 			}
 		}
 	}
-	if native && (!exact || seen["schema_version"] != 1) {
+	if native && (!exact || seen[nativeSchemaSelector] != 1) {
 		return errors.New("ambiguous native configuration authority")
 	}
 	return nil

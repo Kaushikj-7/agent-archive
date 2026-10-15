@@ -18,6 +18,7 @@ type syntheticNativeProvider struct{}
 func (syntheticNativeProvider) Describe(agentapi.SourceRef) (agentapi.SourceSemantics, error) {
 	return agentapi.SourceSemantics{}, nil
 }
+
 func (syntheticNativeProvider) OpenPass(_ context.Context, env agentapi.SourceEnvironment) (agentapi.SourcePass, error) {
 	return &syntheticNativePass{env: env}, nil
 }
@@ -25,9 +26,11 @@ func (syntheticNativeProvider) OpenPass(_ context.Context, env agentapi.SourceEn
 type syntheticNativePass struct{ env agentapi.SourceEnvironment }
 
 func (*syntheticNativePass) Close() error { return nil }
+
 func (*syntheticNativePass) Signature(context.Context, agentapi.SourceRef) (agentapi.SourceObservation, error) {
 	return agentapi.SourceObservation{}, nil
 }
+
 func (p *syntheticNativePass) Read(_ context.Context, ref agentapi.SourceRef, _ agentapi.ReadLimits) (agentapi.SourceSnapshot, error) {
 	file, err := transcriptio.Open(p.env.Files, ref.Path, p.env.Policy)
 	if err != nil {
@@ -45,18 +48,22 @@ type syntheticNativeSnapshot struct {
 func (s *syntheticNativeSnapshot) Observation() agentapi.SourceObservation {
 	return agentapi.SourceObservation{Present: true, Size: s.Length()}
 }
+
 func (s *syntheticNativeSnapshot) Input() agentapi.NativeInput {
 	return agentapi.NativeInput{File: s.Snapshot}
 }
+
 func (s *syntheticNativeSnapshot) ValidateAdmission(context.Context, agentapi.SourceAdmission) error {
 	return s.Check()
 }
+
 func (s *syntheticNativeSnapshot) AdmissionFacts(context.Context) (agentapi.SourceBinding, error) {
 	if err := s.Check(); err != nil {
 		return agentapi.SourceBinding{}, err
 	}
 	return agentapi.SourceBinding{Native: &archive.NativeSourceBinding{Agent: s.root.Agent, Version: 1, NativeID: s.ref.Key, NativeCreatedAt: time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC), Cwd: "/project", Path: s.ref.Path, StreamID: "stream", RootRevision: s.root.Revision}}, nil
 }
+
 func TestNativeRootConfinesFirstUnboundReadAndOpenedAuthority(t *testing.T) {
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
@@ -69,10 +76,11 @@ func TestNativeRootConfinesFirstUnboundReadAndOpenedAuthority(t *testing.T) {
 	authority := archive.NativeRoot{Agent: "synthetic", Configured: root, Canonical: root, Revision: "one"}
 	for _, pooled := range []bool{false, true} {
 		t.Run(map[bool]string{false: "standalone", true: "shared-pass"}[pooled], func(t *testing.T) {
-			r := providerReader{harness: "synthetic", nativeRoot: &authority, ref: agentapi.SourceRef{Path: path, Key: "native"}, admission: agentapi.SourceAdmission{NativeID: "native"}}
+			var passes *sourcePassSet
 			if pooled {
-				r.passes = &sourcePassSet{passes: map[sourcePassKey]agentapi.SourcePass{}}
+				passes = &sourcePassSet{passes: map[sourcePassKey]agentapi.SourcePass{}}
 			}
+			r := providerReader{harness: "synthetic", nativeRoot: &authority, ref: agentapi.SourceRef{Path: path, Key: "native"}, admission: agentapi.SourceAdmission{NativeID: "native"}, passes: passes}
 			pass, closePass, err := r.pass(t.Context(), syntheticNativeProvider{}, "synthetic")
 			if err != nil {
 				t.Fatal(err)

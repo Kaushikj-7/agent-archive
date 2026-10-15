@@ -370,7 +370,7 @@ func writerHasPermissionFloors(writer configWriter) bool {
 	switch writer {
 	case generationWriter, codexHistoryWriter, durableStorageWriter, retentionWriter, importStagingWriter, historicalProjectWriter, catalogWriter, publicationCompositionWriter, stagedSelectionWriter, settledCursorSelectionWriter, scopedPickerWriter:
 		return true
-	case legacyDiscoveryWriter, discoveryWriter, legacyCodexWriter, codexWriter:
+	case legacyDiscoveryWriter, discoveryWriter, legacyCodexWriter, codexWriter, nativeAuthorityWriter:
 		return false
 	default:
 		return false

@@ -20,12 +20,14 @@ func nativeAuthorityRegistration(t *testing.T) archive.SessionRegistration {
 	reg.NativeBinding = &archive.NativeSourceBinding{Agent: "synthetic", Version: 1, NativeID: reg.NativeSessionID, NativeCreatedAt: reg.SessionStartedAt, Cwd: reg.ProjectRoot, Path: reg.TranscriptPath, RootRevision: "one", StreamID: "stream", RootID: "root", ParentID: "parent"}
 	return reg
 }
+
 func protectNativeAuthority(t *testing.T, s *Store) {
 	t.Helper()
 	if err := config.Save(s.home, config.Config{RetentionDays: 90, NativeRoots: []archive.NativeRoot{{Agent: "synthetic", Configured: "/native", Canonical: "/native", Revision: "one"}}}); err != nil {
 		t.Fatal(err)
 	}
 }
+
 func TestNativeBindingRequiresFenceAndCannotLoseAuthority(t *testing.T) {
 	s := newTestStore(t)
 	reg := nativeAuthorityRegistration(t)
@@ -74,6 +76,7 @@ func TestNativeBindingRequiresFenceAndCannotLoseAuthority(t *testing.T) {
 		t.Fatal("authority lost", err)
 	}
 }
+
 func TestMissingNativeBindingCannotBootstrapFromSurvivingLocator(t *testing.T) {
 	s := newTestStore(t)
 	protectNativeAuthority(t, s)

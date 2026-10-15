@@ -852,6 +852,7 @@ func applyOwnTaskEvidence(codex, known *archive.CodexSourceBinding, task agentap
 	}
 	return nil
 }
+
 func (r providerReader) validateNativeBinding(native *archive.NativeSourceBinding) error {
 	if r.nativeRoot == nil || native.Agent != r.nativeRoot.Agent || native.RootRevision != r.nativeRoot.Revision || native.NativeID != r.admission.NativeID || !local.PathWithin(native.Path, r.nativeRoot.Canonical) || native.Path != r.ref.Path {
 		return agentapi.ErrInvalidSourceBinding

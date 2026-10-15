@@ -1810,6 +1810,7 @@ func (s *ordinarySnapshot) AdmissionFacts(ctx context.Context) (agentapi.SourceB
 	}
 	return agentapi.SourceBinding{Codex: &b}, nil
 }
+
 func (s *historySnapshot) AdmissionFacts(ctx context.Context) (agentapi.SourceBinding, error) {
 	b, err := s.codexAdmissionFacts(ctx)
 	if err != nil {

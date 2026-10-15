@@ -31,6 +31,7 @@ func nativeJournalFixture(t *testing.T) (Journal, []byte, []byte) {
 	}
 	return Journal{FilesOnly: true, Changes: []fileapply.Change{{Path: filepath.Join(t.TempDir(), "config.json"), Before: before, After: after, Existed: true, Mode: 0600}}}, before, after
 }
+
 func TestNativeJournalWireRefusesOldRecoveryAndPreservesSemantics(t *testing.T) {
 	j, _, _ := nativeJournalFixture(t)
 	for _, filesOnly := range []bool{false, true} {
@@ -68,6 +69,7 @@ func TestNativeJournalWireRefusesOldRecoveryAndPreservesSemantics(t *testing.T) 
 		}
 	}
 }
+
 func TestPriorSetupCannotRecoverNativeAuthorityJournal(t *testing.T) {
 	binary := os.Getenv("AGENT_ARCHIVE_SOURCE_OLD_BINARY")
 	if binary == "" {
