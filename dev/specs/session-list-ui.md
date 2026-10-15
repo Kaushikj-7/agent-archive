@@ -1,6 +1,9 @@
 # Session list UI — engineering plan
 
 Status: in progress; planned 2026-10-14, [decisions](#decisions) confirmed the same day.
+PR 6 (remaining callers and `show`) is implemented in #560, on top of PR 4
+(#558); PR 5 (cursor, detail strip, footer) is still in progress, so the
+live check below has not run.
 Where this plan and the code differ once PRs merge, the code is the reference
 and differences go under Deviations.
 
