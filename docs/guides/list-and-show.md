@@ -12,10 +12,10 @@ spent choosing a session or scrolling in the pager has no read deadline.
 ```sh
 # The most recently active archived sessions matching the filters (at most
 # 50 by default), top-level sessions only, from this repository when you are
-# in one: title (the name your agent gave the session, else a preview of the
-# first filtered prompt), pull request, how long ago it was last active
-# (WHEN: its latest record, so a session backfill imported is dated by when
-# it ran, not the import), harness, project, and short ID. --json keeps the
+# in one: when it was last active (WHEN: its latest record, so a session
+# backfill imported is dated by when it ran, not the import), agent,
+# project, pull request, short ID, and title (the name your agent gave the
+# session, else a preview of the first filtered prompt). --json keeps the
 # newest captured first. Metadata only, never full transcript text. On an
 # interactive terminal, pick a numbered row to see that session's summary
 # (see below).
@@ -73,7 +73,7 @@ A summary looks like this:
 
 ```text
 Stabilize the OAuth tests
-claude · agent-archive · 2h ago                                      ✓ completed
+Claude · agent-archive · last active 2 hours ago                     ✓ completed
 
   Prompt    Fix flaky OAuth callback tests
   When      Sep 29, 10:14 → 10:58 (44m)
@@ -97,7 +97,9 @@ claude · agent-archive · 2h ago                                      ✓ compl
   JSON:       agent-archive show 03e60c25f1a04b7c9d2e8f6a1b3c5d7e --harness claude --json
 ```
 
-Rows the metadata has no data for are left out; a count that is unknown is
+The line under the title names the agent as the session lists do (`Claude`,
+`Codex`, `Cursor`, in its color on a color terminal), the project, and how
+long ago the session was last active. Rows the metadata has no data for are left out; a count that is unknown is
 not shown as zero, and shell commands, compactions, and edited files are
 listed only when there were some. A model's count is how many responses it
 gave, and Tools lists the most-called tools (`tools_used`). Times are in
@@ -146,16 +148,52 @@ checkouts are one list.
 **Top-level sessions only.** A subagent session is left out of the table and the
 browser, before `--limit` counts, so `--limit 50` is 50 sessions you started. The
 footer says how many were left out (`42 sessions (318 subagent sessions hidden;
-search to find one).`) and a parent carries `· 45 subagents`. Words find a
+search to find one).`) and a parent carries `+45` on a terminal, `· 45 subagents`
+in the plain table. Words find a
 subagent (see below). `list --json` keeps every row, subagents included; each has
 `parent_session_id`.
 
-**Columns.** TITLE, PR (the last pull request the session linked or created,
-when some row has one), WHEN, HARNESS, PROJECT, and ID. A HARNESS or PROJECT that
-every row shares is left out and named in the heading instead; `--verbose` keeps
-every column. The leading `●` that marks a session active in the last 2
-minutes is for the [handoff picker](handoff.md#the-picker): `list` reads the
-archive, which says nothing about what is running here.
+**Columns.** On a terminal each session takes one line, cut to the window's
+width: its number, the agent (a colored `●` and `Claude`, `Codex`, or
+`Cursor`), the title, the project, the PR (the last pull request the session
+linked or created, when some row has one), and when it was last active, in
+short (`2m`, `13h`, `Mon`, `Oct 9`, `2025-03-01`). The title is a readable
+form of the session's name or first prompt (a leading markdown heading or a
+pasted-files preamble is shortened, for example), cut at a word with `…` to
+fit; `show` and `--json` keep the full title. On a narrow terminal the project
+goes first, then the PR, then the agent's name. There is no ID column; type a
+row's number, or its short ID from `show` or `list | cat`.
+
+```text
+agent-archive · 5 sessions · claude · a all projects
+TODAY
+1  Fix the retry budget in the upload queue                  #213  live
+2  Stop rereading the config on every hook call                      4m
+3  Add a status line for paused collection                   #212   38m
+4  Investigate slow listings on a large archive                      5h
+
+LAST WEEK
+5  Rename the export flag and update the docs                #204   Sun
+```
+
+Piped or run by an agent, `list` prints a plain table with one line per
+session and no day headings or color: `WHEN AGENT PROJECT PR ID TITLE`. The
+title comes last and whole (the session's full display title, with any
+`· 45 subagents` note after it), and an empty PR is `-`. Scripts should read
+`list --json`; the plain table's columns are for people and may change.
+
+```text
+agent-archive · 5 sessions · claude · --all-projects lists every project
+WHEN  PR    ID        TITLE
+now   #213  d7a77938  Fix the retry budget in the upload queue
+4m    -     36a7d5ee  Stop rereading the config on every hook call
+38m   #212  76941c69  Add a status line for paused collection
+```
+
+An AGENT or PROJECT column that every row shares is left out and named in the
+heading instead; `--verbose` keeps every column. A session active in the last
+2 minutes reads `live` in WHEN only in the [handoff picker](handoff.md#the-picker):
+`list` reads the archive, which says nothing about what is running here.
 
 **Words.** `list "<words>"` shows only the sessions the words find, by the
 rules `show` and `handoff` use. Every word must appear, in any case, in some
@@ -316,8 +354,8 @@ Cursor chat's name). Otherwise it shows the `title`, a short preview of the
 first filtered human prompt, derived at publish time. Older sidecars without
 either fall back to the short SESSION_ID in that column. `project_name`
 in metadata labels the project when present; otherwise `list` uses this machine's
-configured project basename. The ID column is a short prefix you can pass to
-`show`; if multiple archived IDs share that prefix, use a longer ID from
+configured project basename. The plain table's ID column (`list | cat`) is a
+short prefix you can pass to `show`; if multiple archived IDs share that prefix, use a longer ID from
 `list --verbose` or add `--harness`. Projects with the same basename show the
 same name in the PROJECT column; `--project DIR` lists one of them.
 
@@ -330,9 +368,9 @@ this capture contract. The separate `title` remains the first human prompt.
 
 Codex currently uses the first-prompt preview because its sidebar title is
 stored separately from the transcript. The table leaves subagent sessions
-out: the footer says how many, and a parent carries a `· N subagents` hint.
-Words find one, as for `list "<words>"`, and its row reads `· subagent of`
-its parent's short ID; a Claude Code subagent's name is the description its
+out: the footer says how many, and a parent carries a `+N` (`· N subagents`
+in the plain table) hint. Words find one, as for `list "<words>"`, and its
+row reads `subagent of` its parent's short ID; a Claude Code subagent's name is the description its
 parent gave the task (see below). New and refreshed previews keep up to 128
 characters from parser `0.17.1`; older metadata keeps its shorter saved
 preview.
