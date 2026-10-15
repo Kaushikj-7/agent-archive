@@ -15,7 +15,7 @@ sessions: `list`, bare `show`, `show <words>`, `handoff` and the `/` filter.
 ## Today's problems (from the 2026-10-14 screenshot)
 
 1. **Every row wraps onto two lines.** `columnWriter`
-   ([list_table.go](../../internal/cli/list_table.go)) pads each column to its
+   ([list_table.go](../../../internal/cli/list_table.go)) pads each column to its
    widest cell, and titles are up to 128 runes plus the dim skill and
    subagent hints. Nothing fits rows to the terminal width (`oneRow` only
    cuts the heading, status and notice), so `HARNESS  ID` and every row's

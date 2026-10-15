@@ -52,6 +52,7 @@ seven-day import and the status prompt for existing installations. See the
 | [Storage setup with default bucket creation](implemented/storage-setup-default-creation.md) | Implemented; R2 creation generally available; further live coverage tracked. |
 | [Git activity in metadata](implemented/git-activity.md) | Implemented in parser 0.15.0. |
 | [List and browse UX](implemented/list-browse-ux.md) | Implemented; see [list and show](../../docs/guides/list-and-show.md). |
+| [Session list UI](implemented/session-list-ui.md) | One-line rows, day groups, cursor and detail strip; PRs 1–6 merged 2026-10-15 (#537, #536, #550, #558, #562, #560). Owner live check not recorded. |
 | [Platform abstraction](implemented/platform-abstraction.md) | Implemented; follow-ups and verification gaps recorded in the design. |
 | [Portable handoff, guided setup, and Linux](implemented/portable-handoff-and-onboarding.md) | Implemented; guided R2 creation generally available; further coverage tracked. |
 
