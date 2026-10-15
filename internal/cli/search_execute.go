@@ -163,7 +163,7 @@ func runContentSearchPass(ctx context.Context, home string, expected config.Conf
 		if e != nil {
 			return result, e
 		}
-		metadata, e := reader.ReadMetadata(ctx, objects, key)
+		metadata, e := search.ReadCurrentMetadata(ctx, objects, key)
 		if e != nil {
 			return result, e
 		}

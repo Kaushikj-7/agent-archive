@@ -324,7 +324,7 @@ func verifiedReferenceProjection(ctx context.Context, objects storage.ObjectStor
 	if slash < 0 {
 		return Projection{}, ErrChanged
 	}
-	m, err := reader.ReadMetadata(ctx, objects, ref.Source.Reference.Key[:slash]+"/metadata.json")
+	m, err := ReadCurrentMetadata(ctx, objects, ref.Source.Reference.Key[:slash]+"/metadata.json")
 	if errors.Is(err, storage.ErrNotFound) {
 		return Projection{}, ErrDeleted
 	}

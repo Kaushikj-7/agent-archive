@@ -342,3 +342,23 @@ func (s *contentSearchCountingStore) GetLimitedVersioned(ctx context.Context, ke
 	}
 	return s.MemoryStore.GetLimitedVersioned(ctx, key, limit)
 }
+
+func TestContentSearchNamedRefreshAndContextUseCatalogSelection(t *testing.T) {
+	env, objects, id := publishedFixture(t)
+	remote := privateCatalogFromLegacy(t, objects)
+	key, err := archive.MetadataObjectKey("codex", id)
+	must(t, err)
+	if _, err = remote.ObjectStore.Get(t.Context(), key); !errors.Is(err, storage.ErrNotFound) {
+		t.Fatalf("catalog fixture has a physical canonical sidecar: %v", err)
+	}
+	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return remote, nil }
+	code, doc, diag := searchJSONRun(t, env, "visible", "--all-projects", "--refresh", "--session", id, "--harness", "codex")
+	if code != 0 || len(doc.Results) != 1 || doc.Results[0].Reference == nil {
+		t.Fatalf("catalog named refresh %d %+v %s", code, doc, diag)
+	}
+	token := *doc.Results[0].Reference
+	code, doc, diag = searchJSONRun(t, env, "--read", token, "--before", "1", "--after", "1")
+	if code != 0 || doc.Context == nil || !strings.Contains(doc.Context.Selected.Text, "visible") {
+		t.Fatalf("catalog context %d %+v %s", code, doc, diag)
+	}
+}
