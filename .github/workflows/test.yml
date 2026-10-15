@@ -250,6 +250,7 @@ jobs:
       - run: python3 -B scripts/test_pr_reference.py
       - run: python3 -B scripts/test_generate_go_shard_hints.py
       - run: python3 -B scripts/test_report_ci_timing.py
+      - run: python3 -B scripts/test_benchmark_shared_verify.py
       - run: python3 scripts/test_ci_tiers.py
       - run: python3 -B scripts/test_historical_vet_contract.py
       - run: python3 -B scripts/test_macos_smoke.py
