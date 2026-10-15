@@ -250,6 +250,7 @@ jobs:
       - run: python3 -B scripts/test_report_ci_timing.py
       - run: python3 -B scripts/test_ci_worker_topology.py
       - run: python3 -B scripts/test_ci_timing_history.py
+      - run: python3 -B scripts/test_ci_performance_gate.py
       - run: python3 -B scripts/test_collect_ci_timing.py
       - run: python3 -B scripts/test_benchmark_shared_verify.py
       - run: python3 scripts/test_ci_tiers.py
@@ -342,6 +343,7 @@ jobs:
     permissions:
       contents: read
       actions: read
+      pull-requests: read
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
@@ -428,6 +430,33 @@ jobs:
         run: python3 -B scripts/run_ci_tier.py --verify-native-plan --output "$RUNNER_TEMP/native-plan-evidence" --extra-plan "$RUNNER_TEMP/tier-plan/extra-plan.json"
       - name: Require source-bound full or focused PR evidence
         run: python3 scripts/run_ci_tier.py --verify --tier full --output full-evidence --extra-plan "$RUNNER_TEMP/tier-plan/extra-plan.json"
+
+      - name: Required performance budgets from trusted tested base
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          trusted_base=$(git rev-parse HEAD^1)
+          export CI_PERFORMANCE_TRUSTED_BASE="$trusted_base"
+          if git cat-file -e "$trusted_base:scripts/ci_performance_gate.py" 2>/dev/null; then
+            mkdir -p "$RUNNER_TEMP/trusted-performance"
+            git archive "$trusted_base" scripts | tar -x -C "$RUNNER_TEMP/trusted-performance"
+            python3 -B "$RUNNER_TEMP/trusted-performance/scripts/ci_performance_gate.py" \
+              --policy "$RUNNER_TEMP/trusted-performance/scripts/ci_performance_policy.json" \
+              --exceptions scripts/ci_performance_exceptions.json \
+              --topology "$RUNNER_TEMP/worker-topology.json" \
+              --workers shard-evidence --output "$RUNNER_TEMP/performance-verdict.json"
+          else
+            echo '::warning::One-time performance gate installation: tested base has no enforcer. Subsequent PRs require trusted-base policy.'
+          fi
+      - name: Preserve bounded performance decision
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ci-performance-decision-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/performance-verdict.json
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Advisory partial CI resource snapshot
         if: success() && github.event_name == 'pull_request'

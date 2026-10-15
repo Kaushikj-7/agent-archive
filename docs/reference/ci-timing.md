@@ -944,3 +944,102 @@ The required aggregate must also reconcile coverage before any policy uses it. T
 gate owns approval and trusted-main promotion. Queue eligibility remains unknown
 without independent telemetry, and runner allocation remains accounted by the
 existing full-pipeline reporter rather than by summing test durations.
+
+## Required test-cost gate
+
+The existing required `linux-race` aggregate runs the performance gate after
+source/coverage reconciliation. It adds no worker and executes no Go. For a PR,
+it extracts the enforcer, imports, and policy from the tested merge's **first
+parent**, rather than executing the PR's proposed policy. Removing or changing
+that policy in a PR therefore cannot authorize that PR's increased allowance.
+The sole installation bootstrap is a tested first parent without an enforcer.
+Once main contains the enforcer, absent/invalid policy or missing evidence fails.
+There is no disabled or permanent warning-only mode.
+
+`ci_performance_policy.json` contains a reviewed individual top-level-parent
+inventory, including tests in whole-package shard units. This inventory is
+separate from measured baseline timings: existing tests with fewer than three
+verified comparable observations are explicitly reported as insufficiently
+calibrated, not assigned invented historical durations. Comparison cohorts bind
+compiler/settings, runner image, and cache state. Different/unknown cohorts do
+not manufacture a regression comparison.
+
+A new parent warns above 10 seconds and fails above 30 seconds. Measured cost is
+the greater of its own terminal Go Elapsed and its slowest descendant's terminal
+Elapsed. Active lifecycle wall is reported separately because parallel slot
+contention and descendant waiting can inflate it. A new parallel family with
+more than 100 parallel descendants or more than 30 seconds of summed parallel
+terminal Elapsed also requires an explicit family budget. That sum is a
+**nonadditive review indicator**, not CPU time or end-to-end elapsed time; nested
+parallel intervals can overlap. Small cheap parallel tests need no annotation.
+Existing tests fail when their comparable measured cost exceeds both 1.5 times
+the baseline median and the median plus 10 seconds. Baselines require at least
+three eligible observations before this relative rule activates. These rules do
+not promise statistical confidence from three observations; they are reviewed
+admission policy, with source-bound evidence and an explicit override.
+
+Deterministic `work_budgets` bind a test, fixture, phase, and operation counter.
+Missing required counters and excess work fail independently of time. Repeated
+metrics for that exact phase are accumulated; parent and child phases are never
+summed or subtracted as disjoint durations. `parallel_budgets` can explicitly
+bound a new family's observed descendant count and elapsed-work indicator.
+
+### Exceptions and hosting protection
+
+Proposed exceptions live in `scripts/ci_performance_exceptions.json`. Each entry
+has exactly one `test_id` or package `family`, `maximum_seconds`, nonempty
+`reason` and `owner`, and optional ISO-date `expires`. Large parallel-family
+exceptions additionally need `maximum_parallel_descendants` and
+`maximum_parallel_elapsed_work_seconds`. Overlapping selectors are rejected.
+An exception cannot override missing evidence, source/coverage checks, correctness
+failures, or deterministic operation budgets.
+
+An exception used by a run requires the latest submitted review by a designated
+maintainer to be APPROVED, from a human other than the PR author, with
+`review.commit_id` equal to the live/event PR head. Dismissed, stale, bot, author,
+and unlisted-user reviews do not authorize it. Pushes invalidate that approval.
+Approve the revision, then rerun CI; a rerun or label alone grants nothing. There
+is no self-referential head SHA in the exception file. The bounded decision
+artifact records the exact source, trusted policy digest, exception and review.
+Expired exceptions fail even when unused, so remove them promptly.
+
+The enforcer protects the budget decision **when the required workflow runs**.
+CODEOWNERS text alone does not prevent a PR changing the workflow to omit the
+enforcer. Hosting rules must independently protect the workflow/enforcer/policy
+and required checks, enforce review by the appropriate maintainers, invalidate
+stale approvals, and ensure the validated merge candidate is the candidate
+merged. A repository with only one maintainer cannot obtain that maintainer's
+non-author approval on their own PR. Do not claim tamper-proof enforcement until
+those hosting requirements are configured and verified. An exception remains
+blocked when no eligible independent approver exists.
+
+### Reviewed baseline admission
+
+After the normal production pair completes successfully, retain its validated
+terminal collector JSON, exact topology, and complete worker artifacts. Prepare
+a review candidate without rerunning tests:
+
+```sh
+python3 -B scripts/admit_ci_performance_baseline.py \
+  --policy scripts/ci_performance_policy.json \
+  --topology /path/to/worker-topology.json \
+  --pipeline /path/to/terminal-pipeline.json \
+  --workers /path/to/shard-evidence \
+  --output /path/to/policy-candidate.json
+```
+
+Review the original authenticated artifact provenance, source/normal-production
+identity, complete compiled/executed inventory, and any allowances before
+committing that candidate. The command does not promote it or grant approval.
+It records real initial observations without fabricating additional sample size.
+Multiple comparable successful observations are required to establish relative
+budgets; updating existing baselines must preserve their reviewed sample
+provenance. Experimental, failed, partial, or source-mismatched inputs are not
+admitted. No scheduled benchmark campaign is required: use ordinary CI traffic.
+
+For additional comparable normal runs, repeat
+`--history-sample TOPOLOGY PIPELINE WORKERS`. Each sample undergoes the same
+full-pipeline validation. Physical run/attempt/shard duplicates cannot increase
+its observation count, and removed historical parents are excluded from the
+current inventory. The candidate retains sample identities and pipeline hashes
+so a reviewer can inspect the original evidence.

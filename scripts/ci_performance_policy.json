@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "maintainers": ["wangjohn"],
+  "new_warning_seconds": 10,
+  "new_failure_seconds": 30,
+  "regression_factor": 1.5,
+  "regression_seconds": 10,
+  "minimum_observations": 3,
+  "new_parallel_descendants": 100,
+  "new_parallel_elapsed_work_seconds": 30,
+  "baseline": {"inventory": [], "provenance": null, "groups": []},
+  "parallel_budgets": {},
+  "work_budgets": []
+}
