@@ -500,7 +500,7 @@ def reconcile(directory, workers=2, audit_evidence=None, *, expected_source_proo
     import go_parent_shards as parent_shards
     versioned = 'schema' in first
     if versioned:
-        parent_shards.validate(first, workers)
+        parent_shards.validate(first, workers, allow_legacy=historical_legacy)
         import run_ci_tier
         proof = expected_source_proof if expected_source_proof is not None else run_ci_tier.full_race.source_proof(ROOT)
         if first['source_proof'] != proof:
@@ -574,7 +574,7 @@ def reconcile(directory, workers=2, audit_evidence=None, *, expected_source_proo
         import run_ci_tier
         directory = paths[manifests.index(manifest)].parent
         if versioned:
-            raw = parent_shards.verify_logs(directory, first, expected)
+            raw = parent_shards.verify_logs(directory, first, expected, allow_legacy=historical_legacy)
             if manifest.get('settings', {}).get('source_proof') != first['source_proof']:
                 raise Failure('parent catalog/worker source proof differs')
             actual_config = manifest.get('settings', {}).get('plain_vet_context', {}).get('go', {})
@@ -653,17 +653,20 @@ def run(index, out, seconds, workers=2, plain_audit_owned=False, plain_vet_owned
     phases = {}
     phases['package_discovery_seconds'] = supervise([(['go', 'list', '-race', '-json', './...'], out / 'packages.json', env)], deadline)[0]
     packages = metadata((out / 'packages.json').read_text())
-    phases['cli_listing_race_build_testmain_seconds'] = supervise([(['go', 'test', '-race', '-short', '-count=1', '-json', '-list', '^(Test|Fuzz|Example)', CLI], out / 'listing.json', env)], deadline)[0]
-    names = listed_names((out / 'listing.json').read_text())
     import go_parent_shards as parent_shards
-    import run_ci_tier
     heavy = sorted(set(parent_shards.HEAVY) & set(packages))
-    if heavy:
-        phases['parent_listing_race_build_testmain_seconds'] = supervise([
-            (['go','test','-race','-short','-count=1','-json','-p','1','-list','^(Test|Fuzz|Example)'] + heavy,
-             out/'listing-parents.json', env)], deadline)[0]
-    else:
-        (out/'listing-parents.json').write_text('')
+    # One Go invocation loads the shared dependency graph for CLI and heavy
+    # packages once. Each package still compiles, runs default vet and executes
+    # its own TestMain with the same race/short/count/list flags. -p 1 preserves
+    # the heavy discovery concurrency bound, without adding workers/barriers.
+    phases['compiled_listing_race_build_testmain_seconds'] = supervise([
+        (['go', 'test', '-race', '-short', '-count=1', '-json', '-p', '1',
+          '-list', '^(Test|Fuzz|Example)', CLI] + heavy,
+         out/'listing-combined.json', env)], deadline)[0]
+    cli_listing, parent_listing = parent_shards.split_listing((out/'listing-combined.json').read_text(), heavy)
+    (out/'listing.json').write_text(cli_listing)
+    (out/'listing-parents.json').write_text(parent_listing)
+    names = listed_names(cli_listing)
     parents = parent_shards.listing((out/'listing-parents.json').read_text(), heavy)
     config = json.loads(subprocess.check_output(['go','env','-json', *parent_shards.CONFIG_FIELDS], env=env, text=True))
     (out/'discovery-config.json').write_text(json.dumps(config, sort_keys=True)+'\n')
@@ -692,9 +695,10 @@ def run(index, out, seconds, workers=2, plain_audit_owned=False, plain_vet_owned
                     'runner_image': os.environ.get('ImageOS', ''), 'runner_image_version': os.environ.get('ImageVersion', ''),
                     'run_id': os.environ.get('GITHUB_RUN_ID', ''), 'run_attempt': os.environ.get('GITHUB_RUN_ATTEMPT', ''),
                     'commands_overlap': cpus > 1, 'note': 'invocation durations include compilation; parallel durations are not additive'},
+                'hint_diagnostics': parent_shards.hint_diagnostics(catalog, hints),
                 'scheduling': {'fixed_vet_ms': fixed, 'cli_fixed_auxiliary_ms': cli_fixed,
                                'usage': 'logical ranking plus observed fixed invocation advice; not elapsed forecast'},
-                'settings': {'source_proof': source_proof, 'plain_audit_owned': plain_audit_owned, 'workers': workers, 'cpus': cpus, 'cli_cpus': cli_cpus, 'ordinary_cpus': ordinary_cpus, 'package_p': 1,
+                'settings': {'source_proof': source_proof, 'compiled_discovery_schema': 1, 'plain_audit_owned': plain_audit_owned, 'workers': workers, 'cpus': cpus, 'cli_cpus': cli_cpus, 'ordinary_cpus': ordinary_cpus, 'package_p': 1,
                              'ordinary_parallel': ordinary_cpus, 'cli_parallel': cli_cpus, 'deadline_seconds': seconds}}
     if plain_vet_owned:
         import run_ci_tier
@@ -707,6 +711,7 @@ def run(index, out, seconds, workers=2, plain_audit_owned=False, plain_vet_owned
     path = out / 'manifest.json'
     path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + '\n')
     print('effective catalog:', json.dumps(catalog, sort_keys=True), flush=True)
+    print('scheduling hint diagnostics:', json.dumps(manifest['hint_diagnostics'], sort_keys=True), flush=True)
     common = ['go', 'test', '-race', '-short', '-count=1', '-json', '-timeout', '20m', '-p', '1']
     # Native Git observers have fixed 500ms process deadlines. The overlapping
     # workload exposed timeout failures; run this assigned package first with

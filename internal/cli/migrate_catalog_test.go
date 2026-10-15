@@ -18,6 +18,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
+	"github.com/wangjohn/agent-archive/internal/testutil/fixturecost"
 )
 
 type qualifiedCLIStore struct{ *storagetest.MemoryStore }
@@ -78,7 +79,11 @@ func normalizePrivateCatalogSources(t *testing.T, source *storagetest.MemoryStor
 
 func privateCatalogFromLegacy(t *testing.T, source *storagetest.MemoryStore) *catalog.Store {
 	t.Helper()
+	normalization := fixturecost.Start(t, "private_catalog", "normalize", nil)
 	normalizePrivateCatalogSources(t, source)
+	normalization.Finish()
+	construction := fixturecost.Start(t, "private_catalog", "construct", map[string]int64{"constructors": 1})
+	construction.Add("constructors", 1)
 	raw := &qualifiedCLIStore{storagetest.NewMemoryStore()}
 	objects, err := source.List(t.Context(), "sessions/")
 	if err != nil {
@@ -102,6 +107,9 @@ func privateCatalogFromLegacy(t *testing.T, source *storagetest.MemoryStore) *ca
 			t.Fatal(err)
 		}
 	}
+	construction.Finish()
+	publication := fixturecost.Start(t, "private_catalog", "publication", map[string]int64{"commits": int64(len(metadata))})
+	publication.Add("commits", 0)
 	for _, obj := range metadata {
 		bytes, err := source.Get(t.Context(), obj.Key)
 		if err != nil {
@@ -115,10 +123,14 @@ func privateCatalogFromLegacy(t *testing.T, source *storagetest.MemoryStore) *ca
 		if err != nil {
 			t.Fatal(err)
 		}
+		publication.Add("commits", 1)
 		if _, err = w.Commit(t.Context(), catalog.CatalogMutation{ID: "private/" + storage.SHA256Hex([]byte(obj.Key)), SessionKey: obj.Key, Next: &catalog.CatalogEntry{Metadata: ref, Summary: summary}}); err != nil {
 			t.Fatal(err)
 		}
 	}
+	publication.Add("rows", int64(len(metadata)))
+	publication.Finish()
+	activation := fixturecost.Start(t, "private_catalog", "activation", nil)
 	c := w.Coordinator()
 	owner, err := c.Seal(t.Context())
 	if err != nil {
@@ -134,6 +146,7 @@ func privateCatalogFromLegacy(t *testing.T, source *storagetest.MemoryStore) *ca
 	if err != nil {
 		t.Fatal(err)
 	}
+	activation.Finish()
 	return remote
 }
 

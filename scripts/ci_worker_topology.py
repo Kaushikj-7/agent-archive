@@ -28,7 +28,7 @@ def selection(event, repository):
     return (int(match[1]), 'full-pipeline-experiment') if match else (DEFAULT_WORKERS, 'normal')
 
 
-def validate(env, event, source, tree, parents, is_ancestor=None):
+def validate(env, event, source, tree, parents, is_ancestor=None, workflow_path=".github/workflows/test.yml"):
     repository = env.get('GITHUB_REPOSITORY', '')
     pr = event['pull_request']
     number = pr['number']
@@ -45,7 +45,7 @@ def validate(env, event, source, tree, parents, is_ancestor=None):
             or env.get('GITHUB_BASE_REF') != pr['base']['ref']
             or env.get('GITHUB_SHA') != source
             or env.get('GITHUB_WORKFLOW_SHA') != source
-            or env.get('GITHUB_WORKFLOW_REF') != repository + '/.github/workflows/test.yml@' + ref
+            or env.get('GITHUB_WORKFLOW_REF') != repository + '/' + workflow_path + '@' + ref
             or any(not isinstance(s, str) or not SHA.fullmatch(s)
                    for s in (source, tree, pr['base']['sha'], pr['head']['sha'], *parents))
             or len(parents) != 2 or parents[1] != pr['head']['sha']):

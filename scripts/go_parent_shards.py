@@ -6,7 +6,8 @@ import json
 from pathlib import Path
 import re
 
-SCHEMA = 3
+SCHEMA = 4
+LEGACY_SCHEMAS = (3,)
 ALLOCATION = 'independent-lanes-lpt-v1'
 MODULE = 'github.com/wangjohn/agent-archive/'
 HEAVY = tuple(MODULE + 'internal/' + name for name in ('catalog', 'statshtml', 'state', 'collector'))
@@ -42,6 +43,50 @@ def listing(text, expected):
             raise r.Failure('missing/failed parent listing terminal')
         result[package] = sorted(names)
     return result
+
+
+def split_listing(text, heavy):
+    """Partition one compiled-list command without dropping any Go event.
+
+    The primary receipt retains the actual invocation. Derivative logs keep
+    the established CLI/heavy parsing contracts, not fictitious invocations.
+    """
+    import run_go_shard as r
+    groups = {r.CLI: [], **{package: [] for package in heavy}}
+    for event in r.json_stream(text):
+        if event.get('Package') not in groups:
+            raise r.Failure('unexpected combined listing package')
+        groups[event['Package']].append(event)
+    for events in groups.values():
+        actions = [event.get('Action') for event in events]
+        if (not actions or actions[0] != 'start' or actions.count('start') != 1
+                or actions[-1] not in ('pass', 'skip')
+                or any(action not in ('start', 'output', 'pass', 'skip') for action in actions)):
+            raise r.Failure('combined listing lacks one complete package lifetime')
+    def encode(events):
+        return ''.join(json.dumps(event, sort_keys=True) + '\n' for event in events)
+    cli = encode(groups.pop(r.CLI))
+    parents = encode([event for events in groups.values() for event in events])
+    r.listed_names(cli)
+    listing(parents, heavy)
+    return cli, parents
+
+
+def hint_diagnostics(catalog, hints):
+    """Describe advisory gaps against compiled units, never filter coverage."""
+    import run_go_shard as r
+    split = {package for package, names in catalog['parents'].items() if names}
+    eligible_packages = set(catalog['packages']) - {r.CLI} - split
+    eligible_cli = set(catalog['cli'])
+    eligible_parents = {unit(package, name) for package, names in catalog['parents'].items() for name in names}
+    groups = [('packages', eligible_packages), ('cli', eligible_cli), ('parents', eligible_parents)]
+    return {'schema': 1, 'default_ms': 1000,
+            'unknown_units': sorted([unit(r.CLI, name) if key == 'cli' else name
+                for key, eligible in groups for name in eligible - set(hints.get(key, {}))]),
+            'stale_hints': {key: sorted(set(hints.get(key, {})) - (set(catalog['packages']) if key == 'packages' else eligible))
+                            for key, eligible in groups},
+            'inactive_package_hints': sorted(set(hints.get('packages', {})) & (split | {r.CLI})),
+            'usage': 'advisory only; all compiled units remain assigned; refresh with verified comparable successful samples'}
 
 
 def unit(package, parent=None):
@@ -103,9 +148,9 @@ def build(source, source_proof, config, packages, cli, parents, hints, workers, 
             'cli': cli, 'parents': parents, 'units': sorted(units), 'assignments': assignments}
 
 
-def validate(catalog, workers):
+def validate(catalog, workers, *, allow_legacy=False):
     import run_go_shard as r
-    if (type(catalog.get('schema')) is not int or catalog['schema'] != SCHEMA
+    if (type(catalog.get('schema')) is not int or catalog['schema'] not in ((SCHEMA, *LEGACY_SCHEMAS) if allow_legacy else (SCHEMA,))
             or catalog.get('workers') != workers or catalog.get('allocation') != ALLOCATION
             or set(catalog) != {'schema','source','source_proof','configuration','workers',
                                 'packages','cli','parents','units','assignments','allocation'}):
@@ -159,10 +204,19 @@ def log_name(package):
     return 'parents-' + r.digest(package)[:16] + '.json'
 
 
-def verify_logs(directory, catalog, assignment):
+def verify_logs(directory, catalog, assignment, *, allow_legacy=False):
     import run_go_shard as r
     import run_ci_tier
     directory = Path(directory)
+    validate(catalog, catalog['workers'], allow_legacy=allow_legacy)
+    if catalog['schema'] == SCHEMA:
+        try:
+            cli, parents = split_listing((directory/'listing-combined.json').read_text(), catalog['parents'])
+        except OSError as error:
+            raise r.Failure('missing combined compiled listing receipt') from error
+        if (r.json_stream(cli) != r.json_stream((directory/'listing.json').read_text())
+                or r.json_stream(parents) != r.json_stream((directory/'listing-parents.json').read_text())):
+            raise r.Failure('compiled listing derivatives differ from actual invocation')
     discovered = r.metadata((directory/'packages.json').read_text())
     cli = r.listed_names((directory/'listing.json').read_text())
     parents = listing((directory/'listing-parents.json').read_text(), catalog['parents'])
