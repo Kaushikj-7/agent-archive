@@ -242,3 +242,43 @@ input before the next journal. Resource refusal preserves that journal and
 reports pending recovery while smaller journals and unrelated captures continue.
 Malformed schemas and caller cancellation still stop recovery. Lookup revision
 digests reserve both encoded owners; a refused digest is retried later.
+
+Native source authority has an inert foundation for future integrations:
+`config.json` can retain at most one `native_roots` entry per non-Codex agent
+(up to 16 total). Each entry records `agent`, the approved absolute `configured`
+spelling, the absolute `canonical` confinement root, and a bounded `revision`.
+Changing either path requires a new reconciliation revision. These roots carry
+no admission consent and do not replace Codex discovery homes.
+
+A registration's optional `native_binding` v1 records original native identity,
+creation, cwd, stream, parent/root identity, locator and root revision. It stays
+local. Existing Codex registrations retain their exact `codex_binding` shape.
+Native authority cannot disappear or contradict previously recorded facts;
+relocation is refused until a separately reviewed continuity contract exists.
+A surviving native locator without its original binding cannot establish fresh
+authority. Ordinary hook observations and freezing preserve the binding.
+
+Before roots or native bindings become durable, configuration uses the sticky
+`native_authority_protection: true` and an outer writer fence:
+`{"version":16,"writer":"native-authority-v16","base":1}`. `base` is either
+numeric 1 or the exact existing protected writer object. Each lower writer's
+permission floors and storage constraints still apply. Older writers refuse the
+unknown outer fence before mutation. Removing roots, saving a replacement config
+or serializing rollback snapshots retains the protection. The private contract
+is [native source authority](../../schemas/native-source-authority.schema.json).
+This foundation registers no Muse operations or capture capabilities.
+
+Setup journals carrying native authority also fence the existing `files_only`
+boolean as `{"version":1,"writer":"native-authority-v16","value":true}`
+(the value remains the journal's actual files-only choice). Their
+`native_authority_protection` is true. Earlier setup binaries decode this known
+field as a boolean and refuse before recovery can apply raw rollback bytes,
+which happens before ordinary configuration loading. Current recovery validates
+this exact typed wrapper and retains both files-only and scheduler semantics.
+
+Introducing or reconciling native roots refuses while a setup journal is pending;
+new or enriched bindings also refuse pending setup. Native binding publishers
+must hold the existing `hooks.lock` across their fresh root, owner, project,
+destination, admission, pause and removal checks and the short state commit.
+The state writer adds request-lock checks without creating another admission
+store. No production native binding publisher is enabled by this foundation.
