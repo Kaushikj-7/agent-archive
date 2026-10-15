@@ -3,6 +3,7 @@ import hashlib
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import signal
 import stat
@@ -409,15 +410,12 @@ class InstallScriptTest(InstallScriptBase):
         """A gh stand-in: logs its arguments, accepts only the exact
         attestation-verify form against an existing file, then behaves as
         told."""
-        say = f'echo "{output}" >&2\n' if output else ''
+        say = f'echo {shlex.quote(output)} >&2\n' if output else ''
         return (
             f'echo "gh $@" >> {order_log}\n'
             '[ "$1" = attestation ] && [ "$2" = verify ] || exit 9\n'
             '[ -f "$3" ] || exit 8\n'
             '[ "$4" = --repo ] && [ "$5" = wangjohn/agent-archive ] || exit 9\n'
-            '[ "$#" -eq 9 ] || exit 9\n'
-            '[ "$6" = --hostname ] && [ "$7" = github.com ] || exit 9\n'
-            '[ "$8" = --signer-workflow ] && [ "$9" = github.com/wangjohn/agent-archive/.github/workflows/release.yml ] || exit 9\n'
             f'{say}exit {exit_code}'
         )
 
@@ -454,15 +452,113 @@ class InstallScriptTest(InstallScriptBase):
         self.assertLess(result.stdout.index(verified), result.stdout.index('✓ installed'))
         self.assertEqual(self.installed_output(), self.linux_output('amd64'))
 
-    def test_linux_gh_attestation_pins_public_release_policy_despite_enterprise_host(self):
+    # gh's real messages for a check it could not perform.
+    GH_UNAUTHENTICATED = 'To get started with GitHub CLI, please run:  gh auth login'
+    GH_TOO_OLD = 'unknown command "attestation" for "gh"'
+    GH_NETWORK = 'dial tcp: network unreachable'
+
+    def test_linux_gh_attestation_mismatch_installs_and_runs_nothing_in_either_mode(self):
+        order = self.root / 'order.log'
+        self.order_logging_linux_binary(order)
+        curl, _ = self.fake_release_curl()
+        for strict in ('', '1'):
+            for output in ('verification failed: no attestation found',
+                           'Error: failed to verify the attestation'):
+                with self.subTest(strict=strict, output=output):
+                    order.unlink(missing_ok=True)
+                    result = self.run_linux_from_github_base(
+                        {'curl': curl, 'gh': self.fake_gh(order, exit_code=1, output=output)},
+                        {'AGENT_ARCHIVE_REQUIRE_ATTESTATION': strict})
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn('attestation verification failed', result.stderr)
+                    self.assertIn(output, result.stderr)
+                    self.assertIn('Checksum verified', result.stdout)
+                    self.assertNotIn('Continuing without attestation verification', result.stdout)
+                    self.assertNotIn('✓ installed', result.stdout)
+                    self.assertNotIn('ran', order.read_text().splitlines())
+                    self.assert_nothing_installed()
+
+    def test_linux_gh_that_cannot_check_warns_and_installs_when_not_strict(self):
+        order = self.root / 'order.log'
+        curl, _ = self.fake_release_curl()
+        for strict in ('', '0'):
+            for output in (self.GH_UNAUTHENTICATED, self.GH_TOO_OLD, self.GH_NETWORK, ''):
+                with self.subTest(strict=strict, output=output):
+                    order.unlink(missing_ok=True)
+                    shutil.rmtree(self.home / '.local', ignore_errors=True)
+                    result = self.run_linux_from_github_base(
+                        {'curl': curl, 'gh': self.fake_gh(order, exit_code=4, output=output)},
+                        {'AGENT_ARCHIVE_REQUIRE_ATTESTATION': strict})
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    warning = 'Warning: could not verify the attestation for agent-archive-linux-amd64 with gh: '
+                    self.assertIn(warning + (output or 'gh attestation verify failed with no output'),
+                                  result.stdout)
+                    advice = 'Continuing without attestation verification because gh could not check it'
+                    self.assertIn(advice, result.stdout)
+                    self.assertIn('gh attestation verify', result.stdout)
+                    self.assertLess(result.stdout.index(warning), result.stdout.index('✓ installed'))
+                    self.assertLess(result.stdout.index(advice), result.stdout.index('✓ installed'))
+                    self.assertEqual(self.installed_output(), self.linux_output('amd64'))
+
+    def test_linux_gh_that_cannot_check_fails_closed_in_strict_mode(self):
+        order = self.root / 'order.log'
+        self.order_logging_linux_binary(order)
+        curl, _ = self.fake_release_curl()
+        for output in (self.GH_UNAUTHENTICATED, self.GH_TOO_OLD, self.GH_NETWORK, ''):
+            with self.subTest(output=output):
+                order.unlink(missing_ok=True)
+                result = self.run_linux_from_github_base(
+                    {'curl': curl, 'gh': self.fake_gh(order, exit_code=4, output=output)},
+                    {'AGENT_ARCHIVE_REQUIRE_ATTESTATION': '1'})
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('could not verify the attestation', result.stderr)
+                if output:
+                    self.assertIn(output, result.stderr)
+                else:
+                    self.assertIn('gh attestation verify failed with no output', result.stderr)
+                self.assertNotIn('Continuing without attestation verification', result.stdout)
+                self.assertNotIn('✓ installed', result.stdout)
+                self.assertNotIn('ran', order.read_text().splitlines())
+                self.assert_nothing_installed()
+
+    def gh_argv(self, order):
+        lines = [line for line in order.read_text().splitlines() if line.startswith('gh ')]
+        self.assertEqual(len(lines), 1, lines)
+        return lines[0].split()[1:]
+
+    def test_linux_gh_attestation_pins_the_release_workflow_and_host(self):
+        order = self.root / 'order.log'
+        curl, _ = self.fake_release_curl()
+        for version, ref in ((None, None), ('0.2.0', 'refs/tags/v0.2.0'), ('v0.2.0', 'refs/tags/v0.2.0')):
+            with self.subTest(version=version):
+                order.unlink(missing_ok=True)
+                shutil.rmtree(self.home / '.local', ignore_errors=True)
+                env = {'AGENT_ARCHIVE_VERSION': version} if version else {}
+                result = self.run_linux_from_github_base({'curl': curl, 'gh': self.fake_gh(order)}, env)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                argv = self.gh_argv(order)
+                self.assertEqual(argv[:2], ['attestation', 'verify'])
+                self.assertEqual(argv[argv.index('--repo') + 1], 'wangjohn/agent-archive')
+                self.assertEqual(argv[argv.index('--signer-workflow') + 1],
+                                 'wangjohn/agent-archive/.github/workflows/release.yml')
+                self.assertEqual(argv[argv.index('--hostname') + 1], 'github.com')
+                self.assertIn('--deny-self-hosted-runners', argv)
+                if ref:
+                    self.assertEqual(argv[argv.index('--source-ref') + 1], ref)
+                else:
+                    self.assertNotIn('--source-ref', argv)
+
+    def test_linux_gh_attestation_pins_public_host_despite_enterprise_gh_host(self):
+        order = self.root / 'order.log'
+        curl, _ = self.fake_release_curl()
         for strict in (False, True):
             with self.subTest(strict=strict):
-                order = self.root / ('enterprise-strict.log' if strict else 'enterprise-default.log')
+                order.unlink(missing_ok=True)
+                shutil.rmtree(self.home / '.local', ignore_errors=True)
                 self.order_logging_linux_binary(order)
-                curl, _ = self.fake_release_curl()
-                # Keep the enterprise host present in the verifier environment:
-                # explicit argv, rather than clearing the user's setting, must
-                # select the public host and the exact release workflow.
+                # The enterprise host stays in gh's environment: the explicit
+                # --hostname, not clearing the user's setting, must select
+                # the public host.
                 gh = ('[ "${GH_HOST:-}" = github.corporate.example ] || exit 10\n'
                       + self.fake_gh(order))
                 env = {'GH_HOST': 'github.corporate.example'}
@@ -470,35 +566,56 @@ class InstallScriptTest(InstallScriptBase):
                     env['AGENT_ARCHIVE_REQUIRE_ATTESTATION'] = '1'
                 result = self.run_linux_from_github_base({'curl': curl, 'gh': gh}, env)
                 self.assertEqual(result.returncode, 0, result.stderr)
+                argv = self.gh_argv(order)
+                self.assertEqual(argv[argv.index('--hostname') + 1], 'github.com')
+                self.assertEqual(argv[argv.index('--signer-workflow') + 1],
+                                 'wangjohn/agent-archive/.github/workflows/release.yml')
                 lines = order.read_text().splitlines()
-                gh_lines = [line for line in lines if line.startswith('gh ')]
-                self.assertEqual(len(gh_lines), 1, lines)
-                self.assertTrue(gh_lines[0].endswith(
-                    ' --repo wangjohn/agent-archive --hostname github.com'
-                    ' --signer-workflow github.com/wangjohn/agent-archive/.github/workflows/release.yml'),
-                    gh_lines)
-                self.assertLess(lines.index(gh_lines[0]), lines.index('ran'))
+                self.assertLess(next(i for i, l in enumerate(lines) if l.startswith('gh ')),
+                                lines.index('ran'))
                 self.assertIn('Attestation verified', result.stdout)
                 self.assertEqual(self.installed_output(), self.linux_output('amd64'))
 
-    def test_linux_gh_attestation_failure_installs_and_runs_nothing(self):
-        order = self.root / 'order.log'
-        self.order_logging_linux_binary(order)
+    def test_linux_printed_advice_carries_the_same_pins(self):
         curl, _ = self.fake_release_curl()
-        for output, expected in (
-                ('verification failed: no attestation found', 'attestation verification failed'),
-                ('dial tcp: network unreachable', 'could not verify the attestation'),
-                ('', 'gh attestation verify failed with no output')):
-            with self.subTest(output=output):
-                order.unlink(missing_ok=True)
+        result = self.run_linux_from_github_base({'curl': curl}, {'AGENT_ARCHIVE_VERSION': 'v0.2.0'})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        line = next(l for l in result.stdout.splitlines() if 'gh attestation verify' in l)
+        self.assertTrue(line.endswith(
+            ' --repo wangjohn/agent-archive'
+            ' --signer-workflow wangjohn/agent-archive/.github/workflows/release.yml'
+            ' --deny-self-hosted-runners --hostname github.com --source-ref refs/tags/v0.2.0'), line)
+
+    def test_linux_gh_attestation_is_time_bounded_when_timeout_exists(self):
+        order = self.root / 'order.log'
+        curl, _ = self.fake_release_curl()
+        timeout_log = self.root / 'timeout.log'
+        passthrough = f'echo "$1" >> {timeout_log}\nshift\nexec "$@"'
+        result = self.run_linux_from_github_base(
+            {'curl': curl, 'gh': self.fake_gh(order), 'timeout': passthrough})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(timeout_log.read_text().split(), ['120'])
+        self.assertEqual(self.gh_argv(order)[:2], ['attestation', 'verify'])
+        for strict, code in (('', 0), ('1', 1)):
+            with self.subTest(strict=strict):
+                shutil.rmtree(self.home / '.local', ignore_errors=True)
                 result = self.run_linux_from_github_base(
-                    {'curl': curl, 'gh': self.fake_gh(order, exit_code=1, output=output)})
+                    {'curl': curl, 'gh': self.fake_gh(order), 'timeout': 'exit 124'},
+                    {'AGENT_ARCHIVE_REQUIRE_ATTESTATION': strict})
+                self.assertEqual(result.returncode, code, result.stderr)
+                self.assertIn('did not finish within 120 seconds', result.stdout + result.stderr)
+
+    def test_linux_require_attestation_accepts_only_1_or_0(self):
+        curl, curl_log = self.fake_release_curl()
+        for value in ('yes', 'true', '2', ' 1'):
+            with self.subTest(value=value):
+                result = self.run_linux_from_github_base(
+                    {'curl': curl}, {'AGENT_ARCHIVE_REQUIRE_ATTESTATION': value})
                 self.assertNotEqual(result.returncode, 0)
-                self.assertIn(expected, result.stderr)
-                self.assertIn(output, result.stderr)
-                self.assertIn('Checksum verified', result.stdout)
-                self.assertNotIn('✓ installed', result.stdout)
-                self.assertNotIn('ran', order.read_text().splitlines())
+                self.assertIn('AGENT_ARCHIVE_REQUIRE_ATTESTATION must be 1', result.stderr)
+                self.assertIn(value, result.stderr)
+                self.assertNotIn('Downloading', result.stdout)
+                self.assertFalse(curl_log.exists())
                 self.assert_nothing_installed()
 
     def test_linux_without_gh_warns_before_installing_and_proceeds(self):
