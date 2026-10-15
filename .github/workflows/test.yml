@@ -14,30 +14,6 @@ concurrency:
 # Every action is pinned to a full commit SHA (a tag can be moved); the
 # comment names the release it is. Dependabot proposes updates.
 jobs:
-  tier-plan:
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    outputs:
-      native: ${{ steps.plan.outputs.native }}
-      systemd: ${{ steps.plan.outputs.systemd }}
-      linux: ${{ steps.plan.outputs.linux }}
-      purge: ${{ steps.plan.outputs.purge }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          fetch-depth: 0
-      - name: Resolve exact-source tier and conservative extra coverage
-        id: plan
-        env:
-          PYTHONDONTWRITEBYTECODE: '1'
-        run: python3 -B scripts/run_ci_tier.py --plan --output "$RUNNER_TEMP/extra-plan.json"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: ci-tier-plan
-          path: ${{ runner.temp }}/extra-plan.json
-          if-no-files-found: error
-
   source-audit:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
@@ -177,7 +153,6 @@ jobs:
 
   linux-full:
     # PR extras are distinct from the exhaustive representative shards.
-    needs: [tier-plan]
     # Focused protocol regressions exercise the real manager for scheduler PRs.
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -185,23 +160,32 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+          fetch-depth: 0
+      - name: Resolve exact-source local tier before consumer work
+        id: plan
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: python3 -B scripts/run_ci_tier.py --plan --require-pr-proof --output "$RUNNER_TEMP/tier-plan/extra-plan.json"
+      - name: Preserve canonical exact-source plan without gating consumer eligibility
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ci-tier-plan
-          path: ${{ runner.temp }}/tier-plan
-      - if: github.event_name != 'pull_request' || needs.tier-plan.outputs.linux == 'true'
+          path: ${{ runner.temp }}/tier-plan/extra-plan.json
+          if-no-files-found: error
+          retention-days: 7
+      - if: github.event_name != 'pull_request' || steps.plan.outputs.linux == 'true'
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.27.2'
           cache: false
       - name: Start real manager for required platform extra coverage
-        if: github.event_name == 'pull_request' && needs.tier-plan.outputs.systemd == 'true'
+        if: github.event_name == 'pull_request' && steps.plan.outputs.systemd == 'true'
         run: bash scripts/start_ci_systemd.sh
       - name: Full candidate or focused PR regressions
         env:
-          AGENT_ARCHIVE_REAL_SYSTEMD: ${{ needs.tier-plan.outputs.systemd == 'true' && '1' || '0' }}
+          AGENT_ARCHIVE_REAL_SYSTEMD: ${{ steps.plan.outputs.systemd == 'true' && '1' || '0' }}
           EVENT: ${{ github.event_name }}
-          FULL_LINUX: ${{ needs.tier-plan.outputs.linux }}
+          FULL_LINUX: ${{ steps.plan.outputs.linux }}
         run: |
           if [ "$EVENT" != pull_request ] || [ "$FULL_LINUX" = true ]; then go version | grep -q ' go1\.27\.2 '; fi
           if [ "$EVENT" = pull_request ]; then
@@ -217,6 +201,7 @@ jobs:
           name: go-full-tier
           path: tier-results
           if-no-files-found: error
+          retention-days: 7
 
 
   script-static:
@@ -253,6 +238,7 @@ jobs:
       - run: python3 -B scripts/test_report_ci_timing.py
       - run: python3 -B scripts/test_benchmark_shared_verify.py
       - run: python3 scripts/test_ci_tiers.py
+      - run: python3 -B scripts/test_local_ci_plan.py
       - run: python3 -B scripts/test_historical_vet_contract.py
       - run: python3 -B scripts/test_macos_smoke.py
       - run: python3 -B scripts/test_native_smoke_reference.py
@@ -287,7 +273,6 @@ jobs:
         run: rm -rf -- "$RUNNER_TEMP/script-install-home" "$RUNNER_TEMP/script-install-xdg" "$RUNNER_TEMP/script-install-tmp"
 
   script-purge:
-    needs: [tier-plan]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -300,6 +285,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
+      - name: Resolve exact-source local tier before consumer work
+        id: plan
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: python3 -B scripts/run_ci_tier.py --plan --require-pr-proof --output "$RUNNER_TEMP/tier-plan/extra-plan.json"
       - name: Create isolated script environment
         run: |
           mkdir -p "$RUNNER_TEMP/script-purge-home" "$RUNNER_TEMP/script-purge-xdg" "$RUNNER_TEMP/script-purge-tmp"
@@ -311,7 +302,7 @@ jobs:
       - name: Representative purge or required full purge extras
         env:
           EVENT: ${{ github.event_name }}
-          FULL_PURGE: ${{ needs.tier-plan.outputs.purge }}
+          FULL_PURGE: ${{ steps.plan.outputs.purge }}
           SHARD: ${{ matrix.shard }}
         run: |
           tier=pr
@@ -331,13 +322,19 @@ jobs:
   script-tests:
     # Fail closed on failed prerequisites while allowing superseded runs to cancel.
     if: ${{ !cancelled() }}
-    needs: [script-static, script-install, script-purge, tier-plan]
+    needs: [script-static, script-install, script-purge]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
+      - name: Resolve exact-source local tier before consumer work
+        id: plan
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: python3 -B scripts/run_ci_tier.py --plan --require-pr-proof --output "$RUNNER_TEMP/tier-plan/extra-plan.json"
       - name: Require every independent lane to succeed
         env:
           NEEDS: ${{ toJSON(needs) }}
@@ -350,7 +347,7 @@ jobs:
       - name: Reconcile current-source complete purge method and case union
         env:
           EVENT: ${{ github.event_name }}
-          FULL_PURGE: ${{ needs.tier-plan.outputs.purge }}
+          FULL_PURGE: ${{ steps.plan.outputs.purge }}
         run: |
           tier=pr
           if [ "$EVENT" != pull_request ] || [ "$FULL_PURGE" = true ]; then tier=full; fi
@@ -360,7 +357,7 @@ jobs:
   linux-race:
     # Fail closed on failed prerequisites while allowing superseded runs to cancel.
     if: ${{ !cancelled() }}
-    needs: [linux-short, linux-full, script-tests, macos-smoke, tier-plan, source-audit]
+    needs: [linux-short, linux-full, script-tests, macos-smoke, source-audit]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
@@ -372,6 +369,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
+      - name: Resolve exact-source local tier before consumer work
+        id: plan
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: python3 -B scripts/run_ci_tier.py --plan --require-pr-proof --output "$RUNNER_TEMP/tier-plan/extra-plan.json"
       - name: Require complete event-specific worker results
         env:
           NEEDS: ${{ toJSON(needs) }}
@@ -396,11 +399,22 @@ jobs:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: ci-tier-plan
-          path: ${{ runner.temp }}/tier-plan
+          path: ${{ runner.temp }}/canonical-tier-plan
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: go-full-tier
           path: full-evidence
+      - name: Require canonical plan to equal independent current-source plan
+        run: python3 -B scripts/run_ci_tier.py --verify-plan --output "$RUNNER_TEMP/canonical-tier-plan/extra-plan.json" --extra-plan "$RUNNER_TEMP/tier-plan/extra-plan.json"
+      - name: Download actual native selection evidence
+        if: github.event_name == 'pull_request'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: native-full-tier
+          path: ${{ runner.temp }}/native-plan-evidence
+      - name: Require actual native extras to match independent current-source plan
+        if: github.event_name == 'pull_request'
+        run: python3 -B scripts/run_ci_tier.py --verify-native-plan --output "$RUNNER_TEMP/native-plan-evidence" --extra-plan "$RUNNER_TEMP/tier-plan/extra-plan.json"
       - name: Require source-bound full or focused PR evidence
         run: python3 scripts/run_ci_tier.py --verify --tier full --output full-evidence --extra-plan "$RUNNER_TEMP/tier-plan/extra-plan.json"
 
@@ -442,7 +456,6 @@ jobs:
           if-no-files-found: error
 
   macos-smoke:
-    needs: [tier-plan]
     # Compile every Darwin/cgo package, then exercise the native Keychain,
     # launchd, terminal, and setup paths before merging. The full race suite
     # runs on candidates and weekly in extended.yml.
@@ -457,6 +470,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
+      - name: Resolve exact-source local tier before consumer work
+        id: plan
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: python3 -B scripts/run_ci_tier.py --plan --require-pr-proof --output "$RUNNER_TEMP/tier-plan/extra-plan.json"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.27.2'
@@ -476,10 +495,6 @@ jobs:
         run: |
           go version
           go version | grep -q ' go1\.27\.2 ' || { echo "expected go1.27.2, matching go.mod's toolchain line" >&2; exit 1; }
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: ci-tier-plan
-          path: ${{ runner.temp }}/tier-plan
       - name: Native production build, smoke and targeted sensitive regressions
         env:
           EVENT: ${{ github.event_name }}
@@ -495,6 +510,7 @@ jobs:
           name: native-full-tier
           path: native-tier-results
           if-no-files-found: error
+          retention-days: 7
 
   cross-linux-arm64:
     runs-on: ubuntu-latest

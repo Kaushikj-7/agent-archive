@@ -313,7 +313,7 @@ class WorkerVetReceiptTest(unittest.TestCase):
 
 class GateTest(unittest.TestCase):
     def test_event_verdict_fail_closed(self):
-        pr = {j: {'result': s} for j, s in [('linux-short', 'success'), ('linux-full', 'success'), ('script-tests', 'success'), ('macos-smoke','success'), ('tier-plan','success'), ('source-audit','success')]}
+        pr = {j: {'result': s} for j, s in [('linux-short', 'success'), ('linux-full', 'success'), ('script-tests', 'success'), ('macos-smoke','success'), ('source-audit','success')]}
         runner.verdict('pull_request', 'refs/pull/1/merge', pr)
         candidate = copy.deepcopy(pr)
         candidate['linux-short']['result'], candidate['linux-full']['result'], candidate['source-audit']['result'] = 'skipped', 'success', 'skipped'
