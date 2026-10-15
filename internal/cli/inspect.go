@@ -29,8 +29,8 @@ const archiveSessionsPrefix = "sessions"
 // configured archive print, to stderr with exit 1 like sync and pause,
 // when setup has never run: its output is often
 // captured (claude "$(agent-archive handoff --latest)"), and must not pass
-// the message off as a result. It is deliberately the same line `status`
-// prints, so a first-time user gets one consistent answer.
+// the message off as a result. It names the same next step `status`
+// names, so a first-time user gets one consistent answer.
 const notSetUpMessage = "Not set up. Run `agent-archive setup` to get started."
 
 // notSetUpHandoffMessage is what list, show, and stats print before

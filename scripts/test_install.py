@@ -998,6 +998,8 @@ class InstallRefreshTest(InstallScriptBase):
         self.assertIn('  refreshed Claude Code hooks and 2 skill files\n', result.stdout)
         self.assertIn('agent-archive setup --refresh', result.stdout)
         self.assertNotIn('To get started', result.stdout)
+        # The fresh-install handoff next step is not for a set-up machine.
+        self.assertNotIn('agent-archive handoff', result.stdout)
         self.assertEqual(result.stderr, '')
 
     def test_honors_agent_archive_home(self):
