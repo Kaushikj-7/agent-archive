@@ -102,6 +102,42 @@ func TestSessionSummaryGolden(t *testing.T) {
 	golden.Check(t, filepath.Join("testdata", "show", "summary-color.txt"), []byte(renderSummaryText(summaryFixture(), opts)))
 }
 
+// The line under the title says the agent, project and time in the session
+// list's words: the agent's name, colored as the list's dot when there is
+// color, and the detail strip's "last active" phrase.
+func TestSummaryContextUsesTheListWords(t *testing.T) {
+	t.Parallel()
+	meta := func(harness string, active time.Time) archive.Metadata {
+		return archive.Metadata{Harness: archive.Harness{Name: harness}, ProjectName: "agent-archive", CapturedAt: active, StartedAt: active}
+	}
+	plain := summaryOptions{Now: summaryNow}
+	for _, tc := range []struct {
+		name string
+		m    archive.Metadata
+		want string
+	}{
+		{"claude", meta("claude", summaryNow.Add(-2*time.Minute)), "Claude · agent-archive · last active 2 minutes ago"},
+		{"codex hours", meta("codex", summaryNow.Add(-5*time.Hour)), "Codex · agent-archive · last active 5 hours ago"},
+		{"days", meta("cursor", summaryNow.Add(-72*time.Hour)), "Cursor · agent-archive · last active 3 days ago"},
+		{"other harness", meta("aider", summaryNow), "Aider · agent-archive · last active just now"},
+		{"no harness or time", archive.Metadata{ProjectName: "agent-archive"}, "agent-archive"},
+	} {
+		if got := summaryContext(tc.m, plain, 80); got != tc.want {
+			t.Errorf("%s: got %q, want %q", tc.name, got, tc.want)
+		}
+	}
+	color := summaryOptions{Now: summaryNow, Style: textStyle{color: true}}
+	s := color.Style
+	m := meta("claude", summaryNow.Add(-2*time.Minute))
+	if got, want := summaryContext(m, color, 80), s.agent("claude", "Claude")+s.dim(" · agent-archive · last active 2 minutes ago"); got != want {
+		t.Errorf("color: got %q, want %q", got, want)
+	}
+	// Cut inside the agent's name, the line is dim, and fits.
+	if got := summaryContext(m, color, 4); got != s.dim(ellipsize("Claude · agent-archive", 4)) || visibleWidth(got) > 4 {
+		t.Errorf("cut: got %q", got)
+	}
+}
+
 // Unknown counts are left out, not shown as zero, and a session with no
 // gaps, links, models, or skills has no rows for them.
 func TestSessionSummaryOmitsAbsentData(t *testing.T) {
@@ -657,7 +693,7 @@ func TestSessionSummaryImportWithoutAnEndIsNotSpannedToTheImport(t *testing.T) {
 	if want := "  When      " + formatSummaryTime(view.StartedAt, summaryOptions{Now: summaryNow, Location: time.UTC}) + "\n"; !strings.Contains(text, want) {
 		t.Errorf("no When row %q:\n%s", want, text)
 	}
-	if strings.Contains(text, "span") || strings.Contains(text, "1h ago") {
+	if strings.Contains(text, "span") || strings.Contains(text, "1 hour ago") {
 		t.Errorf("the summary dates an import by the import:\n%s", text)
 	}
 }

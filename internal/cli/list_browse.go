@@ -650,12 +650,12 @@ func (l *sessionPicker) pickRowsContext(ctx context.Context, p *prompter, stdout
 		l.printHeading(stdout, width)
 		if paged {
 			l.start = pages[page].start
-			if err := printSessionGroups(stdout, pageSessionGroups(v.groups, pages[page]), v.format); err != nil {
+			if err := printSessionGroups(stdout, pageSessionGroups(v.groups, pages[page]), v.formatFor(width)); err != nil {
 				return listRow{}, false, err
 			}
 		} else {
 			l.start = 0
-			if err := printSessionGroups(stdout, v.groups, v.format); err != nil {
+			if err := printSessionGroups(stdout, v.groups, v.formatFor(width)); err != nil {
 				return listRow{}, false, err
 			}
 		}
@@ -827,9 +827,10 @@ func (l *sessionPicker) split(groups []sessionTableGroup, format listFormatOptio
 	}
 	// Below the table: the footer, a blank line, and the prompt.
 	chrome := l.headRows() + displayLines(footer, width) + 1 + displayLines(question, width)
-	// Every row, and the column header, takes a line at least, so a table
-	// with more rows than the terminal has lines is not drawn to find out.
-	if n+1+chrome <= height && tableLines(all[0])+chrome <= height {
+	// Every row takes a line at least, so a table with more rows than the
+	// terminal has lines is not measured to find out. (A table laid out for
+	// the width has no column header: its rows may fill every line.)
+	if n+chrome <= height && tableLines(all[0])+chrome <= height {
 		return all
 	}
 	// The widest the page line gets.
@@ -855,11 +856,17 @@ func (l *sessionPicker) split(groups []sessionTableGroup, format listFormatOptio
 }
 
 // tableLines is how many terminal rows the table's rows pg take, with
-// their headings, on a terminal width columns wide.
+// their headings, on a terminal width columns wide. Laid out for a known
+// width, every heading and row is one line, so they are counted, not drawn;
+// the verbose table is drawn and its wrapped lines counted.
 func (l *sessionPicker) tableLines(groups []sessionTableGroup, format listFormatOptions, pg pickerPage, width int) int {
 	l.rendered += pg.end - pg.start
+	page := pageSessionGroups(groups, pg)
+	if width > 0 && !format.Verbose {
+		return sessionLines(page)
+	}
 	var buf bytes.Buffer
-	_ = printSessionGroups(&buf, pageSessionGroups(groups, pg), format)
+	_ = printSessionGroups(&buf, page, format)
 	return displayLines(buf.String(), width)
 }
 
@@ -1028,7 +1035,7 @@ func findBrowseSessions(ctx context.Context, env sessionSelectionDependencies, s
 		terminal.Printf(stderr, "agent-archive: %s: %v\n", command, err)
 		return nil, false, 1
 	}
-	format := listFormatOptions{Now: env.now(), Projects: projectLabels(cfg), Style: styleFor(stdout), GroupByProject: true, Numbered: true}
+	format := listFormatOptions{Now: env.now(), Projects: projectLabels(cfg), Style: styleFor(stdout), GroupByDay: true, Numbered: true}
 	bounded, used, boundedErr := boundedArchiveChoices(ctx, env, store, listOptions{filter: reader.Filter{Harness: harness, Replays: reader.ReplaysHidden}}, scope, format, stderr, command)
 	if used {
 		if boundedErr != nil {

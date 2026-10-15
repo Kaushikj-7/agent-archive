@@ -220,7 +220,8 @@ func (r providerReader) readRevision(ctx context.Context, historical agentapi.So
 
 func (r providerReader) filterRevision(ctx context.Context, snapshot agentapi.SourceSnapshot, adapter agentapi.TranscriptFilter, ref agentapi.SourceRef, limits agentapi.ReadLimits, maxBytes int64, recordsLeft *int) (filtered archive.FilteredTranscript, binding *archive.CodexSourceBinding, err error) {
 	defer func() { err = errors.Join(err, snapshot.Close()) }()
-	binding, err = r.snapshotBinding(ctx, snapshot)
+	carrier, admissionErr := r.snapshotBinding(ctx, snapshot)
+	binding, err = carrier.CodexBinding(), admissionErr
 	if err != nil || binding == nil {
 		return filtered, binding, errors.Join(err, missingRevisionBinding(binding))
 	}

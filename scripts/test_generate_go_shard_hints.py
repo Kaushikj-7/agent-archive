@@ -307,7 +307,10 @@ class GeneratorTests(unittest.TestCase):
         def generate():
             return hints.generate(self.samples,proof['source'],settings,PKGS,NAMES,catalog,
                                   audit_directories={sid:audit for sid,_ in self.samples})
-        with mock.patch.object(hints,'measured_source',return_value=(proof,json.dumps(catalog))), mock.patch.object(run_ci_tier.full_race,'source_proof',return_value={'source':'current','tree':'c'*40}):
+        # This existing v2 fixture mocks measured_source with a non-Git label.
+        # It grants no old-contract authority; real Git resolution is witnessed
+        # separately for both reviewed immutable historical contracts.
+        with mock.patch('historical_vet_contract.resolve', return_value=None), mock.patch.object(hints,'measured_source',return_value=(proof,json.dumps(catalog))), mock.patch.object(run_ci_tier.full_race,'source_proof',return_value={'source':'current','tree':'c'*40}):
             result=generate()
             self.assertEqual(result['owned_plain_audit_exclusions_ms'][run_ci_tier.SOURCE_AUDIT_PACKAGE],5000)
             self.assertEqual(len(result['provenance']['samples'][0]['plain_audit']['files']),2)

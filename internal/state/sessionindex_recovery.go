@@ -140,8 +140,24 @@ func (s *Store) RequestSessionIndexRecovery(key agentmeta.SessionKey) error {
 	var prior qualifiedSessionIndexEntry
 	readErr := readRecoveryJSON(qualifiedSessionIndexPath(s.home, key), &prior)
 	var marker sessionIndexMarker
-	if readErr == nil && prior.Version == 1 && prior.Agent == key.Agent && prior.NativeID == key.NativeID && (prior.Recovery != prior.Absent) && prior.ArchiveSessionID == "" && prior.Reservation == "" && !prior.Conflict && readRecoveryJSON(filepath.Join(s.home, sessionIndexMarkerFile), &marker) == nil && recoveryMarkerVersion(marker.Version) && !marker.Complete && marker.Generation != "" {
-		return nil
+	if readErr == nil && prior.Version == 1 && prior.Agent == key.Agent && prior.NativeID == key.NativeID && (prior.Recovery != prior.Absent) && prior.ArchiveSessionID == "" && prior.Reservation == "" && !prior.Conflict && readRecoveryJSON(filepath.Join(s.home, sessionIndexMarkerFile), &marker) == nil && recoveryMarkerVersion(marker.Version) {
+		if !marker.Complete && marker.Generation != "" {
+			return nil
+		}
+		// A retained absence request under a complete census is not damage to
+		// the census. It is already scheduled while a token is pending; with
+		// the token lost or certified it is scheduled again, since its entry
+		// has refused every later registration of key and the next slice
+		// enumerates after reading the fresh token.
+		if marker.Complete && marker.Version == 1 && prior.Recovery {
+			if _, pending, err := s.readAbsenceRequest(); err == nil && pending {
+				return nil
+			}
+			return s.retainAbsenceRequest(key)
+		}
+	}
+	if handled, err := s.requestDuringPendingCensus(key); handled || err != nil {
+		return err
 	}
 	if err := s.MarkSessionIndexRecoveryNeeded(); err != nil {
 		return err
@@ -157,6 +173,55 @@ func (s *Store) RequestSessionIndexRecovery(key agentmeta.SessionKey) error {
 		}
 	}
 	return local.Write(qualifiedSessionIndexPath(s.home, key), qualifiedSessionIndexEntry{Version: 1, Agent: key.Agent, NativeID: key.NativeID, Recovery: true})
+}
+
+// requestDuringPendingCensus keeps a request whose hook was refused only
+// because a census is pending from restarting that census. A new generation
+// fences the census's completion, so on a busy machine refused session
+// starts and subagents, and each SubagentStop's healthy parent, could keep
+// recovery from finishing. While the marker is incomplete no miss is allowed,
+// so no registration of a key without an owner is admitted after the census
+// enumerates: an owned key needs nothing, and a key with no entry or a
+// certified absence is retained with an absence token. The census certifies
+// that entry, or the next slice does when the census listing missed it.
+// Anything else takes the full request. The caller holds hooks.lock.
+func (s *Store) requestDuringPendingCensus(key agentmeta.SessionKey) (bool, error) {
+	version, pending := s.pendingCensusVersion()
+	if !pending {
+		return false, nil
+	}
+	owned, unowned := s.pendingCensusRequestKind(key)
+	if owned {
+		return true, nil
+	}
+	if !unowned || version != 1 {
+		return false, nil
+	}
+	return true, s.retainAbsenceRequest(key)
+}
+
+// pendingCensusVersion reports the marker version of a census in progress.
+func (s *Store) pendingCensusVersion() (int, bool) {
+	var marker sessionIndexMarker
+	if readRecoveryJSON(filepath.Join(s.home, sessionIndexMarkerFile), &marker) != nil {
+		return 0, false
+	}
+	return marker.Version, recoveryMarkerVersion(marker.Version) && !marker.Complete && marker.Generation != ""
+}
+
+// pendingCensusRequestKind reports a key whose entry names a valid owner, or
+// one with no entry or a certified absence. Damaged or uncertain evidence is
+// neither and keeps the full request.
+func (s *Store) pendingCensusRequestKind(key agentmeta.SessionKey) (owned, unowned bool) {
+	entry, found, err := s.readQualifiedIndex(key)
+	if err != nil {
+		return false, false
+	}
+	if found && !entry.Absent {
+		valid, err := s.matchingRegistration(key, entry.ArchiveSessionID)
+		return err == nil && valid, false
+	}
+	return false, true
 }
 
 // sessionIndexDirectoriesLost detects total derived-index loss even when Open
@@ -403,7 +468,9 @@ func (s *Store) recoverCandidateIndex(ctx context.Context, candidate SubagentCan
 	return nil
 }
 
-func (s *Store) recoverRequestedMiss(ctx context.Context, file os.DirEntry, inventory map[agentmeta.SessionKey][]string, candidates map[agentmeta.SessionKey][]SubagentCandidate) error {
+// fence, when set, runs under hooks.lock right before an absence is written;
+// an error from it leaves the request in place and is returned as is.
+func (s *Store) recoverRequestedMiss(ctx context.Context, file os.DirEntry, inventory map[agentmeta.SessionKey][]string, candidates map[agentmeta.SessionKey][]SubagentCandidate, fence func() error) error {
 
 	if err := ctx.Err(); err != nil {
 		return err
@@ -452,8 +519,9 @@ func (s *Store) recoverRequestedMiss(ctx context.Context, file os.DirEntry, inve
 	// Capture/import registration is serialized by hooks.lock. This narrow
 	// application lock never covers the inventory enumeration or disk sync.
 	err := s.writeUnderLock(lockedWrite{
-		lock: func() (func(), error) { return local.NamedLockWait(s.home, "hooks.lock", time.Second) },
-		path: path,
+		lock:  func() (func(), error) { return local.NamedLockWait(s.home, "hooks.lock", time.Second) },
+		path:  path,
+		check: fence,
 		change: func(current fileSnapshot) (any, bool, error) {
 			var latest qualifiedSessionIndexEntry
 			if err := json.Unmarshal(current.data, &latest); err != nil {
