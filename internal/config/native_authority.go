@@ -10,7 +10,7 @@ import (
 
 // nativeAuthorityWriter wraps an exact base fence instead of replacing its
 // permission floors or mutually exclusive storage-mode requirements. SchemaVersion
-// in memory still describes that base; 16 is exclusively the outer wire version.
+// in memory still describes that base, which can itself be search lifecycle version 16.
 const nativeAuthorityWriter configWriter = "native-authority-v16"
 
 type nativeAuthorityVersion struct {
@@ -89,6 +89,14 @@ func unwrapNativeConfig(raw []byte) ([]byte, bool, error) {
 	}
 	if err := json.Unmarshal(versionRaw, &peek); err != nil {
 		return nil, false, err
+	}
+	// Search has its own exact version16 base fence. Let its decoder validate
+	// that shape; native protection is still rejected below without a wrapper.
+	if peek.Version == 16 && peek.Writer == searchLifecycleWriter {
+		if doc["native_roots"] != nil || doc["native_authority_protection"] != nil {
+			return nil, false, errors.New("native authority requires its permanent writer fence")
+		}
+		return raw, false, nil
 	}
 	if peek.Version != 16 && peek.Writer != nativeAuthorityWriter {
 		return raw, false, nil
@@ -180,6 +188,7 @@ const (
 	nativeStagedSelector     nativeConfigSelector = "staged_selection_protection"
 	nativeSettledSelector    nativeConfigSelector = "settled_cursor_selection_protection"
 	nativeScopedSelector     nativeConfigSelector = "scoped_picker_protection"
+	nativeSearchSelector     nativeConfigSelector = "search_lifecycle_protection"
 )
 
 func checkNativeConfigSelectors(raw []byte) error {
@@ -204,7 +213,7 @@ func checkNativeConfigSelectors(raw []byte) error {
 		if err = d.Decode(&value); err != nil {
 			return err
 		}
-		for _, name := range []nativeConfigSelector{nativeSchemaSelector, nativeProtectionSelector, nativeRootsSelector, nativeStagedSelector, nativeSettledSelector, nativeScopedSelector} {
+		for _, name := range []nativeConfigSelector{nativeSchemaSelector, nativeProtectionSelector, nativeRootsSelector, nativeStagedSelector, nativeSettledSelector, nativeScopedSelector, nativeSearchSelector} {
 			if strings.EqualFold(key, string(name)) {
 				seen[name]++
 				exact = exact && key == string(name) && seen[name] == 1

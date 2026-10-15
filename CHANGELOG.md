@@ -6,6 +6,14 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Preserve both native source authority and search indexing lifecycle protection
+  when their configuration and setup recovery records are combined.
+
+- Add explicit machine-local `setup --yes --search-indexing on|off` consent,
+  an independent bounded search indexing job, and best-effort content-free
+  publication hints after collection releases its lock. Pause and teardown
+  fence running indexing; legacy collector-only lifecycle records stay compatible.
+
 - Search adds bounded JSON, explicit wait/rebuild, source context neighbors and
   existing-only cached readers; queries require explicit project broadening.
   Named refresh removes cached text when fresh authority confirms deletion,
@@ -17,7 +25,7 @@ follow [Semantic Versioning](https://semver.org/).
   `search --refresh` now resumes bounded namespace-wide archive catch-up, including
   other-machine metadata/privacy changes and confirmed removals. Coverage reports
   local observation and stable-snapshot discovery separately from indexing gaps.
-  Refresh is manual; no background work is installed.
+  Automatic refresh remains off until explicitly enabled for this machine.
   Refresh now resumes bounded work after interruption, reuses unchanged sources,
   and records retry/backoff state without delaying archive publication.
   Verified unsupported source formats report coverage gaps instead of retrying

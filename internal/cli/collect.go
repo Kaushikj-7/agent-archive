@@ -103,7 +103,18 @@ type passOptions struct {
 	stop     func() bool
 }
 
-func runPass(env Env, quietOnBusy bool, pass passOptions) (result collector.Result, resultErr error) {
+func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, error) {
+	var changes passChanges
+	result, err := runPassLocked(env, quietOnBusy, pass, &changes)
+	// Every inner defer has now finished: verification, retention, registration,
+	// staged-data closure and collector unlock precede any consumer hint work.
+	if changes.enabled {
+		dispatchSessionChanges(context.Background(), changes.destination, result.PublicationCandidates, env.changeConsumers(changes.home, changes.namespace))
+	}
+	return result, err
+}
+
+func runPassLocked(env Env, quietOnBusy bool, pass passOptions, changes *passChanges) (result collector.Result, resultErr error) {
 	// Read-only until the configuration is found: sync before setup leaves
 	// no data directory behind.
 	home, err := env.readHome()
@@ -188,6 +199,12 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (result collector.Resu
 	if err != nil {
 		return collector.Result{}, err
 	}
+
+	namespace := ""
+	if cfg.SearchIndexing {
+		namespace, _ = contentSearchLocation(home, cfg)
+	}
+	*changes = passChanges{home: home, destination: cfg.DestinationID(), namespace: namespace, enabled: cfg.SearchIndexing}
 
 	// Registration gets an independent budget after capture and retention,
 	// including their failure paths. It cannot cause either to be skipped.

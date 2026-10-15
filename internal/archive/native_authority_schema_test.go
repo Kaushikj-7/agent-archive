@@ -42,3 +42,30 @@ func TestNativeAuthoritySchemaAcceptsOpaqueFactsAndRejectsControls(t *testing.T)
 		}
 	}
 }
+
+func TestNativeAuthoritySchemaAcceptsOnlyExactSearchLifecycleBase(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join(schemaDir, "native-source-authority.schema.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := doc.(map[string]any)["$id"].(string)
+	compiler := jsonschema.NewCompiler()
+	if err = compiler.AddResource(id, doc); err != nil {
+		t.Fatal(err)
+	}
+	schema, err := compiler.Compile(id + "#/$defs/fence")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, writer := range []string{"search-lifecycle-v16", "future"} {
+		value := map[string]any{"version": 16, "writer": "native-authority-v16", "base": map[string]any{"version": 16, "writer": writer}}
+		err = schema.Validate(value)
+		if (err == nil) != (writer == "search-lifecycle-v16") {
+			t.Fatal("search base schema authority differs", writer, err)
+		}
+	}
+}

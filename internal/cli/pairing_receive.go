@@ -305,6 +305,13 @@ func reviewPairingDestination(p *prompter, payload pairing.Payload, existing con
 
 func pairingCaptureSettings(p *prompter, payload pairing.Payload, cfg, existing config.Config, userHome string, opts setupOptions, env Env) (config.Config, error) {
 	var err error
+	// Pairing carries storage/capture settings, never another machine's search consent.
+	cfg.SearchIndexing = existing.SearchIndexing
+	if opts.searchIndexing != "" {
+		if err := config.SetSearchIndexing(&cfg, opts.searchIndexing == searchIndexingOn); err != nil {
+			return cfg, err
+		}
+	}
 	cfg.RetentionDays = payload.RetentionDays
 	if payload.RetentionDays == 0 {
 		cfg.RetentionProtection = true

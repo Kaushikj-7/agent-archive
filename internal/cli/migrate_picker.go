@@ -54,6 +54,12 @@ func runPickerUpgrade(stdout, stderr io.Writer, env Env, rollback bool) int {
 		return fail(err)
 	}
 	defer unlock()
+	releaseSearch, err := lockSearchDestination(home, cfg)
+	if err != nil {
+		return fail(err)
+	}
+	defer releaseSearch()
+
 	if err = ensurePickerPendingDrained(home); err != nil {
 		return fail(err)
 	}

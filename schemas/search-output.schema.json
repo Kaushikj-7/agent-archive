@@ -189,6 +189,7 @@
           ]
         },
         "last_observed": {
+          "description": "Maximum retained settled identity observation or discovery time; may decrease while pending rechecks invalidate identity timestamps. Not a historical high-water mark.",
           "anyOf": [
             {
               "type": "string"
@@ -232,6 +233,10 @@
           "items": {
             "type": "string"
           }
+        },
+        "pending_rechecks": {
+          "type": "integer",
+          "minimum": 0
         }
       },
       "required": [
@@ -247,7 +252,8 @@
         "pending_sessions",
         "failed_sessions",
         "unsupported_sessions",
-        "limitations"
+        "limitations",
+        "pending_rechecks"
       ],
       "additionalProperties": false
     },

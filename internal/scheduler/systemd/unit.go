@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/wangjohn/agent-archive/internal/scheduler"
 )
 
 // The unit files are written and read here and nowhere else. A unit file is
@@ -59,6 +61,18 @@ const reinstall = "install agent-archive in a directory whose path has no such c
 // There is no PrivateTmp or other sandboxing: the collector reads the
 // user's own agent files.
 func renderService(executable, dataHome string, environment map[string]string) ([]byte, error) {
+	return renderRoleService(executable, dataHome, environment, scheduler.Collector)
+}
+
+func renderRoleService(executable, dataHome string, environment map[string]string, role scheduler.Role) ([]byte, error) {
+	command, err := role.Command()
+	if err != nil {
+		return nil, err
+	}
+	name := "collector"
+	if role == scheduler.Search {
+		name = "search"
+	}
 	if !filepath.IsAbs(executable) || !filepath.IsAbs(dataHome) {
 		return nil, errors.New("a systemd unit's paths must be absolute")
 	}
@@ -85,14 +99,14 @@ func renderService(executable, dataHome string, environment map[string]string) (
 	}
 	return []byte(`# Written by agent-archive setup; setup and setup --refresh rewrite this file.
 [Unit]
-Description=agent-archive background collector
+Description=agent-archive background ` + name + `
 
 [Service]
 Type=oneshot
 WorkingDirectory=/
-ExecStart=` + word(executable, true) + ` _collect
-` + env.String() + `StandardOutput=append:` + percent(filepath.Join(dataHome, "collector.log")) + `
-StandardError=append:` + percent(filepath.Join(dataHome, "collector-error.log")) + "\n"), nil
+ExecStart=` + word(executable, true) + ` ` + command + `
+` + env.String() + `StandardOutput=append:` + percent(filepath.Join(dataHome, name+".log")) + `
+StandardError=append:` + percent(filepath.Join(dataHome, name+"-error.log")) + "\n"), nil
 }
 
 // renderTimer is the collector's timer unit: it starts the service a minute
@@ -101,9 +115,17 @@ StandardError=append:` + percent(filepath.Join(dataHome, "collector-error.log"))
 // never fires until the service has run once, and there is no Persistent=:
 // a missed run is not made up, the next one is a minute away.
 func renderTimer(ref string) []byte {
+	return renderRoleTimer(ref, scheduler.Collector)
+}
+
+func renderRoleTimer(ref string, role scheduler.Role) []byte {
+	name := "collector"
+	if role == scheduler.Search {
+		name = "search"
+	}
 	return []byte(`# Written by agent-archive setup; setup and setup --refresh rewrite this file.
 [Unit]
-Description=agent-archive background collector schedule
+Description=agent-archive background ` + name + ` schedule
 
 [Timer]
 OnBootSec=60s
