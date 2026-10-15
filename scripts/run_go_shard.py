@@ -310,9 +310,11 @@ def worker_count(workers):
     return workers
 
 
-def partition(units, hints, workers=2, initial_loads=None):
+def partition(units, hints, workers=2, initial_loads=None, *, allow_empty=False):
     # Generic bounded LPT scheduling is shared with native full coverage.
     # Representative PR topology is independently restricted by worker_count.
+    if type(allow_empty) is not bool:
+        raise Failure('invalid empty-lane policy')
     if type(workers) is not int or not 1 <= workers <= 16:
         raise Failure('partition count must be an integer from 1 through 16')
     if len(set(units)) != len(units):
@@ -335,7 +337,7 @@ def partition(units, hints, workers=2, initial_loads=None):
         index = min(range(workers), key=lambda i: (loads[i], i))
         bins[index].append(name)
         loads[index] += weights[name]
-    if (not all(bins) or sum(len(b) for b in bins) != len(set(n for b in bins for n in b))
+    if ((not allow_empty and not all(bins)) or sum(len(b) for b in bins) != len(set(n for b in bins for n in b))
             or set(n for b in bins for n in b) != set(units)):
         raise Failure('partition is not nonempty, disjoint and exhaustive')
     print("predicted logical loads (ms; not worker elapsed):", loads, flush=True)

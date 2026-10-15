@@ -6,9 +6,10 @@ import json
 from pathlib import Path
 import re
 
-SCHEMA = 2
+SCHEMA = 3
+ALLOCATION = 'independent-lanes-lpt-v1'
 MODULE = 'github.com/wangjohn/agent-archive/'
-HEAVY = tuple(MODULE + 'internal/' + name for name in ('catalog', 'statshtml', 'state'))
+HEAVY = tuple(MODULE + 'internal/' + name for name in ('catalog', 'statshtml', 'state', 'collector'))
 CONFIG_FIELDS = ('GOVERSION GOOS GOARCH GOHOSTOS GOHOSTARCH CGO_ENABLED GOFLAGS '
                  'GOTOOLCHAIN GOWORK GOEXPERIMENT GOAMD64').split()
 
@@ -55,7 +56,35 @@ def build(source, source_proof, config, packages, cli, parents, hints, workers, 
     weights = dict(hints['packages'])
     weights.update({unit(r.CLI, n): v for n, v in hints['cli'].items()})
     weights.update(hints.get('parents', {}))
-    bins = r.partition(units, weights, workers, initial_loads)
+    # CLI parents overlap a sequential ordinary lane. A single mixed sum can
+    # hide an overloaded ordinary lane behind many overlapping CLI wall weights.
+    # Rank each lane independently; pair high ordinary advice with low CLI
+    # advice. These weights remain non-additive advice, never coverage authority.
+    cli_units = [unit(r.CLI, name) for name in cli]
+    ordinary_units = sorted(set(units) - set(cli_units))
+    ordinary = r.partition(ordinary_units, {n: weights[n] for n in ordinary_units if n in weights},
+                           workers, initial_loads, allow_empty=True)
+    cli_bins = r.partition(cli_units, {n: weights[n] for n in cli_units if n in weights},
+                           workers, allow_empty=True)
+    def load(names):
+        return sum(max(1, weights.get(name, 1000)) for name in names)
+    fixed = [0] * workers if initial_loads is None else list(initial_loads)
+    ordinary_order = sorted(range(workers), key=lambda i: (bool(ordinary[i]), fixed[i] + load(ordinary[i]), i))
+    cli_order = sorted(range(workers), key=lambda i: (-load(cli_bins[i]), i))
+    bins = [list(names) for names in ordinary]
+    for ordinary_index, cli_index in zip(ordinary_order, cli_order):
+        bins[ordinary_index].extend(cli_bins[cli_index])
+    # Extreme advisory fixed costs or sparse lanes can leave a worker empty.
+    # Hints cannot make executable units disappear or prevent a valid catalog.
+    for index in [i for i, names in enumerate(bins) if not names]:
+        donors = [i for i, names in enumerate(bins) if len(names) > 1]
+        if not donors:
+            raise r.Failure('not enough execution units for nonempty workers')
+        donor = max(donors, key=lambda i: (fixed[i] + load(bins[i]), -i))
+        moved = min(bins[donor], key=lambda name: (max(1, weights.get(name, 1000)), name))
+        bins[donor].remove(moved)
+        bins[index].append(moved)
+    bins = [sorted(names) for names in bins]
     assignments = []
     for names in bins:
         assignment = {'packages': [], 'cli': [], 'parents': {}}
@@ -69,7 +98,7 @@ def build(source, source_proof, config, packages, cli, parents, hints, workers, 
                 else:
                     assignment['parents'].setdefault(package, []).append(parent)
         assignments.append(assignment)
-    return {'schema': SCHEMA, 'source': source, 'source_proof': source_proof,
+    return {'schema': SCHEMA, 'allocation': ALLOCATION, 'source': source, 'source_proof': source_proof,
             'configuration': config, 'workers': workers, 'packages': packages,
             'cli': cli, 'parents': parents, 'units': sorted(units), 'assignments': assignments}
 
@@ -77,9 +106,9 @@ def build(source, source_proof, config, packages, cli, parents, hints, workers, 
 def validate(catalog, workers):
     import run_go_shard as r
     if (type(catalog.get('schema')) is not int or catalog['schema'] != SCHEMA
-            or catalog.get('workers') != workers
+            or catalog.get('workers') != workers or catalog.get('allocation') != ALLOCATION
             or set(catalog) != {'schema','source','source_proof','configuration','workers',
-                                'packages','cli','parents','units','assignments'}):
+                                'packages','cli','parents','units','assignments','allocation'}):
         raise r.Failure('unsupported parent catalog schema or worker count')
     config = catalog['configuration']
     if (not isinstance(config, dict) or set(config) != set(CONFIG_FIELDS)
