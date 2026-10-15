@@ -1,0 +1,735 @@
+{
+  "version": 1,
+  "format": "muse-jsonl",
+  "status": "Explicit local ordinary-root conversation only; capture unavailable",
+  "record_schema": "schemas/muse-retained-v1.schema.json",
+  "envelope": [
+    "v",
+    "pos",
+    "id",
+    "stream",
+    "seq",
+    "ts_us",
+    "schema",
+    "type",
+    "payload_schema",
+    "record_type",
+    "durability",
+    "causation_id",
+    "fields"
+  ],
+  "variants": [
+    {
+      "type": "runtime.session.permission_format_declared",
+      "payload_schema": 1,
+      "fields": [
+        "schema_version",
+        "format"
+      ],
+      "fixed_fields": {
+        "schema_version": 1,
+        "format": "profile_v1"
+      }
+    },
+    {
+      "type": "runtime.session.permission_profile_committed",
+      "payload_schema": 1,
+      "fields": [
+        "schema_version",
+        "permission_epoch",
+        "cause"
+      ],
+      "fixed_fields": {
+        "schema_version": 1,
+        "permission_epoch": 1,
+        "cause": "new_session_default"
+      }
+    },
+    {
+      "type": "runtime.session.metadata",
+      "payload_schema": 1,
+      "fields": [
+        "kind",
+        "workspace_root",
+        "provider_id",
+        "model_id",
+        "tool_surface_version"
+      ],
+      "fixed_fields": {
+        "kind": "metadata"
+      },
+      "optional_fields": [
+        "model_id"
+      ]
+    },
+    {
+      "type": "session.opened.observed",
+      "payload_schema": 1,
+      "fields": [
+        "kind",
+        "session_id",
+        "resume"
+      ],
+      "fixed_fields": {
+        "kind": "session_opened"
+      }
+    },
+    {
+      "type": "runtime.session.capture_selection",
+      "payload_schema": 1,
+      "fields": [
+        "schema_version",
+        "selection",
+        "publication_id"
+      ],
+      "fixed_fields": {
+        "schema_version": 1
+      }
+    },
+    {
+      "type": "runtime.command_intake.received",
+      "payload_schema": 2,
+      "fields": [
+        "kind",
+        "command_id",
+        "command_kind",
+        "workspace_root",
+        "provider_id",
+        "model_id",
+        "tool_surface_version"
+      ],
+      "fixed_fields": {
+        "kind": "command_intake",
+        "command_kind": "session_start"
+      }
+    },
+    {
+      "type": "runtime.command_intake.received",
+      "payload_schema": 1,
+      "fields": [
+        "kind",
+        "command_id",
+        "command_kind"
+      ],
+      "fixed_fields": {
+        "kind": "command_intake",
+        "command_kind": "turn_queue_submit"
+      }
+    },
+    {
+      "type": "runtime.session_start.intake_v3",
+      "payload_schema": 3,
+      "fields": [
+        "kind",
+        "command_id",
+        "activation_source",
+        "workspace_root",
+        "provider_id",
+        "model_id",
+        "tool_surface_version"
+      ],
+      "fixed_fields": {
+        "kind": "session_start_intake_v3"
+      }
+    },
+    {
+      "type": "session.started",
+      "payload_schema": 1,
+      "fields": [
+        "kind",
+        "command_id"
+      ],
+      "fixed_fields": {
+        "kind": "session_started"
+      }
+    },
+    {
+      "type": "session.resumed",
+      "payload_schema": 1,
+      "fields": [
+        "kind",
+        "session_id"
+      ],
+      "fixed_fields": {
+        "kind": "session_resumed"
+      }
+    },
+    {
+      "type": "session.end",
+      "payload_schema": 1,
+      "fields": [
+        "kind",
+        "session_id"
+      ],
+      "fixed_fields": {
+        "kind": "session_end"
+      }
+    },
+    {
+      "type": "runtime.session.route_facts",
+      "payload_schema": 2,
+      "fields": [
+        "kind",
+        "cwd"
+      ],
+      "fixed_fields": {
+        "kind": "route_facts"
+      }
+    },
+    {
+      "type": "runtime.user_intent.accepted",
+      "payload_schema": 1,
+      "fields": [
+        "intent_id",
+        "source_session_id",
+        "surface",
+        "semantic_kind"
+      ],
+      "fixed_fields": {
+        "surface": "main",
+        "semantic_kind": "chat"
+      }
+    },
+    {
+      "type": "runtime.user_intent.materialized",
+      "payload_schema": 1,
+      "fields": [
+        "intent_id",
+        "envelope_record_id",
+        "envelope_sequence",
+        "source_session_id",
+        "run_id",
+        "run_started_session_record_id",
+        "run_started_source_record_id",
+        "outcome_kind"
+      ],
+      "fixed_fields": {
+        "outcome_kind": "top_level_turn_started"
+      }
+    },
+    {
+      "type": "session.name.changed",
+      "payload_schema": 1,
+      "fields": [
+        "session_id",
+        "new_name",
+        "previous_name",
+        "source",
+        "operation_id"
+      ]
+    },
+    {
+      "type": "run.model.configured",
+      "payload_schema": 1,
+      "fields": [
+        "kind",
+        "command_id",
+        "run_id"
+      ],
+      "fixed_fields": {
+        "kind": "run_model"
+      }
+    },
+    {
+      "type": "runtime.session",
+      "payload_schema": 2,
+      "fields": [
+        "kind",
+        "root_agent_id",
+        "root_session_id"
+      ],
+      "fixed_fields": {
+        "kind": "agent_tree_initialized"
+      }
+    },
+    {
+      "type": "runtime.session",
+      "payload_schema": 1,
+      "fields": [
+        "kind",
+        "event_kind",
+        "run_id",
+        "source_run_record_id",
+        "source_run_record_sequence",
+        "prompt"
+      ],
+      "fixed_fields": {
+        "kind": "run",
+        "event_kind": "started"
+      }
+    },
+    {
+      "type": "runtime.session",
+      "payload_schema": 1,
+      "fields": [
+        "kind",
+        "event_kind",
+        "run_id",
+        "source_run_record_id",
+        "source_run_record_sequence",
+        "message_id",
+        "response_id",
+        "text"
+      ],
+      "fixed_fields": {
+        "kind": "run",
+        "event_kind": "assistant_message_committed"
+      }
+    },
+    {
+      "type": "runtime.session",
+      "payload_schema": 1,
+      "fields": [
+        "kind",
+        "event_kind"
+      ],
+      "fixed_fields": {
+        "kind": "run",
+        "event_kind": "hook_run_started"
+      }
+    },
+    {
+      "type": "runtime.session",
+      "payload_schema": 1,
+      "fields": [
+        "kind",
+        "event_kind"
+      ],
+      "fixed_fields": {
+        "kind": "run",
+        "event_kind": "hook_run_terminal"
+      }
+    },
+    {
+      "type": "runtime.session",
+      "payload_schema": 1,
+      "fields": [
+        "kind",
+        "event_kind"
+      ],
+      "fixed_fields": {
+        "kind": "run",
+        "event_kind": "context_block_diagnostic"
+      }
+    },
+    {
+      "type": "runtime.session",
+      "payload_schema": 1,
+      "fields": [
+        "kind",
+        "event_kind"
+      ],
+      "fixed_fields": {
+        "kind": "run",
+        "event_kind": "model_request_configured"
+      }
+    },
+    {
+      "type": "runtime.session",
+      "payload_schema": 1,
+      "fields": [
+        "kind",
+        "event_kind"
+      ],
+      "fixed_fields": {
+        "kind": "run",
+        "event_kind": "context_block_updated"
+      }
+    },
+    {
+      "type": "runtime.session",
+      "payload_schema": 1,
+      "fields": [
+        "kind",
+        "event_kind"
+      ],
+      "fixed_fields": {
+        "kind": "run",
+        "event_kind": "provider_request_options_configured"
+      }
+    },
+    {
+      "type": "runtime.session",
+      "payload_schema": 1,
+      "fields": [
+        "kind",
+        "event_kind"
+      ],
+      "fixed_fields": {
+        "kind": "run",
+        "event_kind": "model_input_trace_recorded"
+      }
+    },
+    {
+      "type": "runtime.session",
+      "payload_schema": 1,
+      "fields": [
+        "kind",
+        "event_kind"
+      ],
+      "fixed_fields": {
+        "kind": "run",
+        "event_kind": "task_stream_linked"
+      }
+    },
+    {
+      "type": "runtime.session",
+      "payload_schema": 1,
+      "fields": [
+        "kind",
+        "event_kind"
+      ],
+      "fixed_fields": {
+        "kind": "run",
+        "event_kind": "model_response_created"
+      }
+    },
+    {
+      "type": "runtime.session",
+      "payload_schema": 1,
+      "fields": [
+        "kind",
+        "event_kind"
+      ],
+      "fixed_fields": {
+        "kind": "run",
+        "event_kind": "goal_usage_attribution"
+      }
+    },
+    {
+      "type": "runtime.session",
+      "payload_schema": 1,
+      "fields": [
+        "kind",
+        "event_kind"
+      ],
+      "fixed_fields": {
+        "kind": "run",
+        "event_kind": "model_completed"
+      }
+    },
+    {
+      "type": "runtime.session",
+      "payload_schema": 1,
+      "fields": [
+        "kind",
+        "event_kind"
+      ],
+      "fixed_fields": {
+        "kind": "run",
+        "event_kind": "resource_usage_sampled"
+      }
+    },
+    {
+      "type": "runtime.session",
+      "payload_schema": 1,
+      "fields": [
+        "kind",
+        "event_kind"
+      ],
+      "fixed_fields": {
+        "kind": "run",
+        "event_kind": "terminal"
+      }
+    },
+    {
+      "type": "runtime.session",
+      "payload_schema": 1,
+      "fields": [
+        "kind",
+        "event_kind"
+      ],
+      "fixed_fields": {
+        "kind": "run",
+        "event_kind": "assistant_tool_calls_committed"
+      }
+    },
+    {
+      "type": "runtime.session",
+      "payload_schema": 1,
+      "fields": [
+        "kind",
+        "event_kind"
+      ],
+      "fixed_fields": {
+        "kind": "run",
+        "event_kind": "tool_result_batch_committed"
+      }
+    },
+    {
+      "type": "runtime.session",
+      "payload_schema": 1,
+      "fields": [
+        "kind",
+        "event_kind"
+      ],
+      "fixed_fields": {
+        "kind": "run",
+        "event_kind": "side_effect_intent"
+      }
+    },
+    {
+      "type": "runtime.session",
+      "payload_schema": 1,
+      "fields": [
+        "kind",
+        "event_kind"
+      ],
+      "fixed_fields": {
+        "kind": "run",
+        "event_kind": "completed"
+      }
+    },
+    {
+      "type": "runtime.session",
+      "payload_schema": 1,
+      "fields": [
+        "kind",
+        "event_kind"
+      ],
+      "fixed_fields": {
+        "kind": "run",
+        "event_kind": "failed"
+      }
+    },
+    {
+      "type": "runtime.session",
+      "payload_schema": 1,
+      "fields": [
+        "kind",
+        "event_kind"
+      ],
+      "fixed_fields": {
+        "kind": "task",
+        "event_kind": "proposed"
+      }
+    },
+    {
+      "type": "runtime.session",
+      "payload_schema": 1,
+      "fields": [
+        "kind",
+        "event_kind"
+      ],
+      "fixed_fields": {
+        "kind": "task",
+        "event_kind": "accepted"
+      }
+    },
+    {
+      "type": "runtime.session",
+      "payload_schema": 1,
+      "fields": [
+        "kind",
+        "event_kind"
+      ],
+      "fixed_fields": {
+        "kind": "task",
+        "event_kind": "scheduled"
+      }
+    },
+    {
+      "type": "runtime.session",
+      "payload_schema": 1,
+      "fields": [
+        "kind",
+        "event_kind"
+      ],
+      "fixed_fields": {
+        "kind": "task",
+        "event_kind": "side_effect_intent"
+      }
+    },
+    {
+      "type": "runtime.session",
+      "payload_schema": 1,
+      "fields": [
+        "kind",
+        "event_kind"
+      ],
+      "fixed_fields": {
+        "kind": "task",
+        "event_kind": "started"
+      }
+    },
+    {
+      "type": "runtime.session",
+      "payload_schema": 1,
+      "fields": [
+        "kind",
+        "event_kind"
+      ],
+      "fixed_fields": {
+        "kind": "task",
+        "event_kind": "status"
+      }
+    },
+    {
+      "type": "runtime.session",
+      "payload_schema": 1,
+      "fields": [
+        "kind",
+        "event_kind"
+      ],
+      "fixed_fields": {
+        "kind": "task",
+        "event_kind": "completed"
+      }
+    },
+    {
+      "type": "runtime.session",
+      "payload_schema": 1,
+      "fields": [
+        "kind",
+        "event_kind"
+      ],
+      "fixed_fields": {
+        "kind": "task",
+        "event_kind": "failed"
+      }
+    },
+    {
+      "type": "runtime.session",
+      "payload_schema": 1,
+      "fields": [
+        "kind",
+        "event_kind"
+      ],
+      "fixed_fields": {
+        "kind": "task",
+        "event_kind": "cancelled"
+      }
+    },
+    {
+      "type": "runtime.session.task",
+      "payload_schema": 1,
+      "fields": [
+        "event_kind"
+      ],
+      "fixed_fields": {
+        "event_kind": "proposed"
+      }
+    },
+    {
+      "type": "runtime.session.task",
+      "payload_schema": 1,
+      "fields": [
+        "event_kind"
+      ],
+      "fixed_fields": {
+        "event_kind": "accepted"
+      }
+    },
+    {
+      "type": "runtime.session.task",
+      "payload_schema": 1,
+      "fields": [
+        "event_kind"
+      ],
+      "fixed_fields": {
+        "event_kind": "scheduled"
+      }
+    },
+    {
+      "type": "runtime.session.task",
+      "payload_schema": 1,
+      "fields": [
+        "event_kind"
+      ],
+      "fixed_fields": {
+        "event_kind": "side_effect_intent"
+      }
+    },
+    {
+      "type": "runtime.session.task",
+      "payload_schema": 1,
+      "fields": [
+        "event_kind"
+      ],
+      "fixed_fields": {
+        "event_kind": "started"
+      }
+    },
+    {
+      "type": "runtime.session.task",
+      "payload_schema": 1,
+      "fields": [
+        "event_kind"
+      ],
+      "fixed_fields": {
+        "event_kind": "status"
+      }
+    },
+    {
+      "type": "runtime.session.task",
+      "payload_schema": 1,
+      "fields": [
+        "event_kind"
+      ],
+      "fixed_fields": {
+        "event_kind": "completed"
+      }
+    },
+    {
+      "type": "runtime.session.task",
+      "payload_schema": 1,
+      "fields": [
+        "event_kind"
+      ],
+      "fixed_fields": {
+        "event_kind": "failed"
+      }
+    },
+    {
+      "type": "runtime.session.task",
+      "payload_schema": 1,
+      "fields": [
+        "event_kind"
+      ],
+      "fixed_fields": {
+        "event_kind": "cancelled"
+      }
+    },
+    {
+      "type": "runtime.retained_fact",
+      "payload_schema": 1,
+      "fields": [
+        "kind"
+      ],
+      "fixed_fields": {
+        "kind": "retained_runtime_fact"
+      }
+    },
+    {
+      "type": "runtime.command_intake.session_name.received",
+      "payload_schema": 1,
+      "fields": [
+        "kind"
+      ],
+      "fixed_fields": {
+        "kind": "command_intake"
+      }
+    },
+    {
+      "type": "runtime.command_intake.settled",
+      "payload_schema": 1,
+      "fields": [
+        "kind",
+        "command_id"
+      ],
+      "fixed_fields": {
+        "kind": "command_intake"
+      }
+    }
+  ],
+  "privacy": "Shared policy applies to every retained string/key; changed authority refuses; no raw record_json, permission bodies, native checksums, provider/context or native binding paths",
+  "unavailable": [
+    "usage",
+    "cache",
+    "reasoning",
+    "cost",
+    "tools",
+    "model_switches",
+    "children"
+  ]
+}

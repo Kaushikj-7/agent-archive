@@ -23,7 +23,7 @@ Historical-only ownership status reconciled 2026-10-12 after #433 merged as
 | Spec | Implementation status and remaining work |
 | --- | --- |
 | [Archive](archive.md) | Original design reference; mostly implemented. Remaining gaps in [capture capabilities](../../docs/reference/capture-capabilities.md). |
-| [Privacy filter](privacy-filter.md) | Implemented current rules; filter 18. |
+| [Privacy filter](privacy-filter.md) | Implemented current rules; filter 19, including the explicit local Muse conversation subset. |
 | [Privacy filter changelog](privacy-filter-changelog.md) | Version history; maintained alongside the filter contract. |
 | [Backfill](backfill.md) | Implemented original file/database import and historical-only ownership/bounded bulk mappings (#433). Cursor subagent import remains a follow-up; broader [historical recovery](../proposals/historical-backfill-recovery.md) remains partial. |
 | [Codex history](codex-history.md) | Implemented retained-history reader, lookup, lifecycle, native child admission and historical-only ownership (#433). Fragment artifacts (6b) and combined acceptance remain gated. |

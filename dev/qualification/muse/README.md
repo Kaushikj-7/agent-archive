@@ -193,3 +193,13 @@ local qualification, not automatically run against developer machines in CI.
 1.4.9 for noninteractive behavior and environment cleanup only. It does not
 qualify that producer for retained decoding or capture, current-session identity,
 resume, children or monitors. The authority gates above remain open.
+
+## Production local v1 policy
+
+The [versioned local v1 allowlist](retained-allowlist-local-v1.json) and
+[inner schema](../../../schemas/muse-retained-v1.schema.json) define the exact
+implemented `muse-jsonl` projection. They explicitly add minimal permission,
+mode-specific startup and agent-tree authority facts. The original
+[Q0 allowlist](retained-allowlist.json), projector, five derived manifests and
+corpus retain their original bytes/hashes. Their broader ceiling does not claim
+production accounting or native integrity validity of redacted corpus bytes.

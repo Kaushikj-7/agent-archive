@@ -7,11 +7,36 @@ qualified. A separate runtime-presence subset detects noninteractive shell
 commands and clears inherited session keys when launching supported agents;
 [its evidence and limits](../qualification/muse/runtime-presence.md) do not enable
 capture, exact current-session selection or any other Muse operation.
-Remaining implementation still requires separate authorization.
+Explicit-file local reading now adds the strict source/filter and retained-only
+own-conversation parser described below. Capture and full parity remain pending.
 
 This is the single implementation plan. Qualification findings and design
 decisions are incorporated below, and §6 and §7 record the probe results the
 design depends on.
+
+## Delivered local subset and residual ownership
+
+The first production source slice combines original P1 source work with the
+minimum P4 own-conversation interpretation needed by the real existing
+`handoff --file PATH --harness muse` path. It supports complete ordinary exec/MSP
+roots, `muse-jsonl` v1, safe own main/chat prompts and committed assistant text,
+reserved logical creation time, retained refilter and existing destinations.
+Only Source/Filter, Parser and prior Runtime are bound. Collection remains
+refused before native reads/filtering/PUT, including injected registrations.
+No durable binding or consent is created. The synthetic 1.4.9 exec held-out has
+two own turns; 1.4.9 MSP root evidence has zero turns. Conversational MSP
+interpretation is synthetic plus the separate 1.4.8 evidence, not new 1.4.9
+native conversational acceptance.
+
+Original P1/P4 residual requirements remain: qualified usage authority, cache,
+reasoning/cost, task/call and MCP/Git/tool pairing, model switches, complete
+export/view agreement, names/version/skills, native automatic browse and
+headers/preview, launch into Muse and replay. Those metrics are unavailable in
+the current local output. P2 capture/admission/storage/read-back and P3 child,
+checkpoint/rewrite, platform, privacy/retention and resource/release gates retain
+their original owners and acceptance below. The next local slice owns automatic
+handoff discovery/headers/preview; capture is a later separate slice. This
+partial delivery does not redefine full integration success or qualify capture.
 
 ## 1. Scope and success criteria
 
@@ -682,3 +707,5 @@ Primary references: [extending/hooks](https://dev.meta.ai/docs/muse-code/extendi
 [SDK preview](https://meta-models.github.io/muse-code-sdk/), and
 [changelog](https://dev.meta.ai/docs/muse-code/changelog). Preview documentation
 had older-build assumptions; pin evidence to actual native builds and formats.
+
+The [production local v1 field policy](../qualification/muse/retained-allowlist-local-v1.json) is the exact current retained projection. The original `retained-allowlist.json` and derived corpus remain byte-frozen historical Q0 evidence; their broader metrics ceiling is not a production promise.

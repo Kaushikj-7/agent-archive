@@ -1081,7 +1081,7 @@ given.
                         With --latest, the directory it searches, and where
                         the agent starts
   --all-projects        Pick from and search every project
-  --harness NAME        claude, codex, or cursor
+  --harness NAME        claude, codex, cursor; muse with --file
   --file PATH           Render a native transcript directly (needs --harness);
                         works for sessions the archive never captured
   --revision REVISION_ID
@@ -1123,6 +1123,7 @@ Example: agent-archive handoff
 Example: agent-archive handoff --to codex
 Example: agent-archive handoff "fix the auth bug" --harness codex --to claude
 Example: agent-archive handoff "#212"
+Example: agent-archive handoff --file /path/to/session.jsonl --harness muse
 Example: codex "$(agent-archive handoff --latest --harness claude)"
 Example: claude "$(agent-archive handoff --latest --harness codex)"
 Example: agent-archive handoff SESSION_ID --to claude --worktree
