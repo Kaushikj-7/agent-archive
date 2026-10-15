@@ -563,6 +563,42 @@ func TestKeyPickerRedrawsOnResize(t *testing.T) {
 	checkKeyScreensFit(t, screens[3:], 80, 40)
 }
 
+// A window made shorter keeps the highlighted row on screen when the rows
+// scrolled to have room for the detail strip that the rows scrolled from
+// had not: days of a row each, then a long one.
+func TestKeyPickerResizeKeepsTheHighlightUnderTheStrip(t *testing.T) {
+	t.Parallel()
+	sessions := pickerSessions(30, oneProject)
+	for i := range sessions {
+		hours := 60*24 + i
+		if i < 4 {
+			hours = []int{0, 26, 6 * 24, 15 * 24}[i]
+		}
+		sessions[i].CapturedAt = pickerNow.Add(-time.Duration(hours) * time.Hour)
+	}
+	for downs := 1; downs <= 15; downs++ {
+		for height := 9; height <= 16; height++ {
+			adjustable := &adjustableTerminal{size: fixedTerminal{120, 60}}
+			fake := newFakeKeys(strings.Repeat("\x1b[B", downs), string(fakeResize), "q")
+			fake.onResize = func() { adjustable.resize(fixedTerminal{120, height}) }
+			picker := &sessionPicker{env: adjustable, keys: startKeys(fake)}
+			var out bytes.Buffer
+			picker.clear = func() { out.WriteString(screenBreak) }
+			_, _, err := picker.pick(newPrompter(strings.NewReader(""), &out), &out, sessions, listFormatOptions{Now: pickerNow, GroupByDay: true}, "show")
+			picker.keys.close()
+			if err != nil {
+				t.Fatal(err)
+			}
+			screens := strings.Split(out.String(), screenBreak)
+			resized := screens[len(screens)-1]
+			checkKeyScreensFit(t, []string{resized}, 120, height)
+			if highlightedRow(resized) != downs+1 {
+				t.Fatalf("%d ↓ then %d lines: row %d is not on screen:\n%s", downs, height, downs+1, resized)
+			}
+		}
+	}
+}
+
 // The detail strip spells out the highlighted row: its full title (not the
 // list's cleaned one), the agent, the project, the PR, its subagents, when
 // it was last active, and its short ID, each line cut to the width. Its

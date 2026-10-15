@@ -402,11 +402,17 @@ func (l *sessionPicker) filterScreen(stdout io.Writer, v *pickerView, prompt str
 	}
 	l.cursor = min(max(l.cursor, 0), len(v.order)-1)
 	s.cursor = l.cursor
-	if s.budget == 0 || l.cursor >= s.start && l.cursor < s.end {
-		return s
+	// A screen scrolled to without the detail strip can have room for it,
+	// and then for fewer rows: it is scrolled again, measured with the
+	// strip, which a later start keeps or leaves out to show more rows.
+	for range 3 {
+		if s.budget == 0 || l.cursor >= s.start && l.cursor < s.end {
+			break
+		}
+		l.start = l.revealStart(s, l.cursor)
+		s = measure()
 	}
-	l.start = l.revealStart(s, l.cursor)
-	return measure()
+	return s
 }
 
 // revealStart is the first row of the screen that shows row at, scrolling
