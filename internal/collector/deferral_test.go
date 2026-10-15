@@ -14,6 +14,12 @@ import (
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
+// lookupAllowanceSpent is the refusal of a Codex lookup call made after the
+// pass's lookup allowance ran out.
+func lookupAllowanceSpent() error {
+	return agentapi.WithCause(agentapi.Wrap(agentapi.Limit, errors.New("native lookup pass deadline")), agentapi.CauseLookupAllowanceSpent)
+}
+
 // failingReadSources serves the built-in sources, except that every read
 // fails with err, after calling cancel when it is set.
 type failingReadSources struct {
@@ -107,6 +113,9 @@ func TestRunDefersScansTheNextPassCanFinish(t *testing.T) {
 		{"source changed", agentapi.Wrap(agentapi.Changed, errors.New("native index changed during snapshot")), nil, DeferredSourceChanged},
 		{"source changed beside a refusal", errors.Join(agentapi.Wrap(agentapi.Changed, errors.New("changed")), agentapi.Wrap(agentapi.Unsafe, errors.New("refused"))), nil, ""},
 		{"unsafe source", agentapi.Wrap(agentapi.Unsafe, errors.New("refused")), &threadCountingLookup{}, ""},
+		{"lookup allowance spent", lookupAllowanceSpent(), nil, DeferredLookupAllowance},
+		{"lookup allowance spent wrapped with context", fmt.Errorf("filter transcript: %w", errors.Join(lookupAllowanceSpent())), nil, DeferredLookupAllowance},
+		{"other source limit", agentapi.Wrap(agentapi.Limit, errors.New("thread candidate limit")), &threadCountingLookup{}, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -181,6 +190,11 @@ func TestDeferralReasonNeedsEveryFailureToBeDeferrable(t *testing.T) {
 		{"wrapped join with a refusal", fmt.Errorf("read: %w", errors.Join(changed, unsafe)), ""},
 		{"changed beside a plain error", errors.Join(changed, errors.New("close failed")), ""},
 		{"unsafe wrapping changed", agentapi.Wrap(agentapi.Unsafe, changed), ""},
+		{"lookup allowance spent", lookupAllowanceSpent(), DeferredLookupAllowance},
+		{"lookup allowance spent beside changed", errors.Join(lookupAllowanceSpent(), changed), DeferredLookupAllowance},
+		{"lookup allowance spent beside a refusal", errors.Join(lookupAllowanceSpent(), unsafe), ""},
+		{"source limit without the allowance cause", agentapi.Wrap(agentapi.Limit, errors.New("native lookup pass deadline")), ""},
+		{"unsafe wrapping a spent allowance", agentapi.Wrap(agentapi.Unsafe, lookupAllowanceSpent()), ""},
 	} {
 		reason, ok := deferralReason(tc.err)
 		if reason != tc.reason || ok != (tc.reason != "") {
