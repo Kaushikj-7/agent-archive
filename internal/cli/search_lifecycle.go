@@ -120,9 +120,11 @@ func lockSearchDestination(home string, expected config.Config) (func(), error) 
 		return nil, fmt.Errorf("search indexing is finishing; retry migration: %w", err)
 	}
 	current, found, err := config.Load(home)
-	if err != nil || !found || current.DestinationID() != expected.DestinationID() || setupjournal.TransactionPending(home) {
+	currentNamespace, _ := contentSearchLocation(home, current)
+	expectedNamespace, _ := contentSearchLocation(home, expected)
+	if err != nil || !found || currentNamespace != expectedNamespace || current.Storage != expected.Storage || current.SearchIndexing != expected.SearchIndexing || current.Paused != expected.Paused || current.Archive.Enabled != expected.Archive.Enabled || setupjournal.TransactionPending(home) {
 		release()
-		return nil, errors.New("destination changed or setup pending; retry migration")
+		return nil, errors.New("destination or search lifecycle changed, or setup pending; retry migration")
 	}
 	return release, nil
 }
