@@ -319,6 +319,10 @@ func (r providerReader) Signature(ctx context.Context) (out sourceState, err err
 }
 
 func (r providerReader) Filter(ctx context.Context, adapter archive.Adapter, maxBytes int64) (out archive.FilteredTranscript, observed sourceState, err error) {
+	return r.filter(ctx, adapter, maxBytes, nil)
+}
+
+func (r providerReader) filter(ctx context.Context, adapter archive.Adapter, maxBytes int64, summary **agentapi.ImportSummary) (out archive.FilteredTranscript, observed sourceState, err error) {
 	ctx, cancel := r.validationContext(ctx)
 	defer cancel()
 	provider, _, err := r.binding()
@@ -364,7 +368,23 @@ func (r providerReader) Filter(ctx context.Context, adapter archive.Adapter, max
 		}
 	}
 
-	out, err = r.filterOwned(ctx, f, in, agentapi.FilterContext{Filename: filepath.Base(r.ref.Path), StartedAt: r.startedAt, Limits: limits})
+	streaming, supports := f.(agentapi.StreamingImportFilter)
+	canInspect := summary != nil && supports && streaming.InspectionFor(f) && streaming.SupportsImportInspection(in)
+	if canInspect && r.resourceOwner != nil {
+		limits.ReadBudget = r.resourceOwner.readBudget()
+	}
+	c := agentapi.FilterContext{Filename: filepath.Base(r.ref.Path), StartedAt: r.startedAt, Limits: limits}
+	if canInspect {
+		var inspected agentapi.ImportSummary
+		inspected, err = streaming.InspectFilteredImport(ctx, in, c)
+		if err == nil {
+			*summary = &inspected
+			out.NativeStartAt = inspected.NativeStartAt
+			out.Boundary = archive.CaptureBoundary{RetainedRecords: inspected.RetainedRecords, RetainedBytes: int(inspected.RetainedBytes)}
+		}
+	} else {
+		out, err = r.filterOwned(ctx, f, in, c)
+	}
 	if err != nil {
 		return out, observed, translateSourceError(r.observePendingHistory(ctx, err))
 	}

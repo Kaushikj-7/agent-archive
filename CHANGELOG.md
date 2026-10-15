@@ -59,6 +59,11 @@ follow [Semantic Versioning](https://semver.org/).
   `status` now says so ("Codex left out part of a session"), with only the
   app, the project and the time; `status --json` carries it as the capture
   diagnostic `revision_left_out`.
+- `status` no longer says Codex left out part of a session when the only
+  branch not read again was already kept from an earlier capture of the
+  session and has not changed since: that branch is still in the archive.
+  A branch that grew since that capture is still reported, since what it
+  added is left out.
 - Stop failing every Codex session in a pass that found many new Codex
   files. Finding where a Codex thread's rollouts are has a time allowance
   per pass, and discovery could use all of it, so each Codex session the
@@ -100,6 +105,11 @@ follow [Semantic Versioning](https://semver.org/).
   for the next pass" to its summary, and `status --json` reports them in
   `collector.unreached_sessions` and as the `queued` uploading state.
 - Add inert native source authority contracts and permanent writer protection, preserving existing agent capture behavior. No Muse capture operations are enabled.
+
+- Reserve publication space before new ordinary Codex backfill staging fills the durable quota,
+  including validated legacy imports with live rollout lookup and no modern binding,
+  allowing foreground imports to publish verified sessions and continue admission.
+  Already saturated retained evidence still requires separate recovery.
 
 - The session list fits your terminal: every session is one line that never
   wraps, as `#`, the agent (a colored dot and "Claude", "Codex" or "Cursor"),

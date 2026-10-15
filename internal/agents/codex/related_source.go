@@ -19,6 +19,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/codexmeta"
 	"github.com/wangjohn/agent-archive/internal/sourceio"
+	"github.com/wangjohn/agent-archive/internal/trace"
 	"github.com/wangjohn/agent-archive/internal/transcriptio"
 )
 
@@ -166,7 +167,9 @@ func (p *relatedSourcePass) open(ctx context.Context, ref agentapi.SourceRef) (*
 		return fail(agentapi.ReadBudgetLimit(errors.New("shared source and index budget exhausted")))
 	}
 	ownedCharge = sourceHeaderCharge
-	reader := bufio.NewReaderSize(io.NewSectionReader(f, 0, min(f.Length(), int64(64<<10)+1)), 4096)
+	headerInput, headerFinish := trace.CountReads(io.NewSectionReader(f, 0, min(f.Length(), int64(64<<10)+1)), trace.HeaderBytes)
+	defer headerFinish()
+	reader := bufio.NewReaderSize(headerInput, 4096)
 	line, err := reader.ReadBytes('\n')
 	if err != nil || len(line) > 64<<10 {
 		return fail(sourceRefusal(agentapi.Unavailable, agentapi.CauseRolloutMetadataIncomplete, "rollout metadata incomplete"))
@@ -829,10 +832,13 @@ func (s *historySnapshot) Next(ctx context.Context) (agentapi.NativeRecord, bool
 	for s.span < len(s.spans) {
 		span := s.spans[s.span]
 		if s.lines == nil {
-			lines, err := s.owner.newChargedLineReader(io.NewSectionReader(span.reader(), 0, span.end), s.recordLimit)
+			filterInput, finish := trace.CountReads(io.NewSectionReader(span.reader(), 0, span.end), trace.FilterBytes)
+			lines, err := s.owner.newChargedLineReader(filterInput, s.recordLimit)
 			if err != nil {
+				finish()
 				return agentapi.NativeRecord{}, false, err
 			}
+			lines.traceFinish = finish
 			s.lines = lines
 			s.nextOrdinal = span.startOrdinal
 		}
@@ -895,7 +901,9 @@ func (p *relatedSourcePass) ordinary(ctx context.Context, limits agentapi.ReadLi
 		}
 	}()
 	h := sha256.New()
-	if _, err := io.Copy(h, io.LimitReader(f.file.Reader(ctx), f.boundary)); err != nil {
+	n, err := io.Copy(h, io.LimitReader(f.file.Reader(ctx), f.boundary))
+	trace.Add(trace.HashBytes, n)
+	if err != nil {
 		return nil, err
 	}
 	stamp := f.file.Stamp()
@@ -1263,7 +1271,9 @@ func (s *historySnapshot) validateSpan(ctx context.Context, span *physicalSpan) 
 	facts := prefixValidation{startOrdinal: span.startOrdinal, endOrdinal: span.startOrdinal, taskOwned: span.file.identity.ThreadID == s.selection.thread, taskBoundary: boundary}
 
 	h := sha256.New()
-	lines, err := s.owner.newChargedLineReader(io.TeeReader(io.NewSectionReader(span.reader(), 0, span.end), h), s.recordLimit)
+	hashInput, hashFinish := trace.CountReads(io.TeeReader(io.NewSectionReader(span.reader(), 0, span.end), h), trace.HashBytes)
+	defer hashFinish()
+	lines, err := s.owner.newChargedLineReader(hashInput, s.recordLimit)
 	if err != nil {
 		return facts, err
 	}
