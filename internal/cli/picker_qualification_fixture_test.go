@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -122,15 +123,45 @@ func qualificationRef(tb testing.TB, store storage.ObjectStore, kind string, raw
 
 // qualificationLeafSize counts the wire produced by qualificationJSON without
 // re-encoding a complete entry just for the node budget. Fixture values already
-// come from that canonical encoder; the final node still uses it and checks its
+// come from that canonical encoder; node framing reuses them and checks the
 // actual bytes against the production limit.
 func qualificationLeafSize(tb testing.TB, leaf qualificationLeaf) int {
 	tb.Helper()
+	return qualificationLeafSizeForKey(leaf, len(qualificationJSON(tb, leaf.Key)))
+}
+
+func qualificationLeafSizeForKey(leaf qualificationLeaf, keyBytes int) int {
 	valueBytes := len(leaf.Value)
 	if valueBytes == 0 {
 		valueBytes = len("null")
 	}
-	return len(qualificationJSON(tb, leaf.Key)) + valueBytes + len(`{"Key":,"Value":}`)
+	return keyBytes + valueBytes + len(`{"Key":,"Value":}`)
+}
+
+// qualificationLeafNodeJSON frames values already produced by qualificationJSON.
+// Reusing those canonical bytes avoids asking json.RawMessage to scan and
+// reformat the same entry for every order membership. Keys still use the JSON
+// encoder, and the independent reference-tree test pins every resulting byte.
+func qualificationLeafNodeJSON(leaves []qualificationLeaf, keys [][]byte, capacity int) []byte {
+	raw := make([]byte, 0, capacity)
+	raw = append(raw, `{"Count":`...)
+	raw = strconv.AppendInt(raw, int64(len(leaves)), 10)
+	raw = append(raw, `,"leaves":[`...)
+	for i, leaf := range leaves {
+		if i > 0 {
+			raw = append(raw, ',')
+		}
+		raw = append(raw, `{"Key":`...)
+		raw = append(raw, keys[i]...)
+		raw = append(raw, `,"Value":`...)
+		if len(leaf.Value) == 0 {
+			raw = append(raw, "null"...)
+		} else {
+			raw = append(raw, leaf.Value...)
+		}
+		raw = append(raw, '}')
+	}
+	return append(raw, ']', '}')
 }
 
 func qualificationTree(tb testing.TB, store storage.ObjectStore, leaves []qualificationLeaf) (catalog.ObjectRef, int) {
@@ -142,24 +173,26 @@ func qualificationTree(tb testing.TB, store storage.ObjectStore, leaves []qualif
 	var layer []qualificationBranch
 	for start := 0; start < len(leaves); {
 		end := start
+		var keys [32][]byte
 		encodedBytes := 64 // Count/leaves framing, including decimal count and commas.
 		for end < len(leaves) && end-start < 32 {
-			leafBytes := qualificationLeafSize(tb, leaves[end]) + 1
+			key := qualificationJSON(tb, leaves[end].Key)
+			leafBytes := qualificationLeafSizeForKey(leaves[end], len(key)) + 1
 			if encodedBytes+leafBytes > 128<<10 {
 				break
 			}
+			keys[end-start] = key
 			encodedBytes += leafBytes
 			end++
 		}
 		if end == start {
 			tb.Fatal("fixture leaf exceeds production node limit")
 		}
-		n := qualificationNode{Count: uint64(end - start), Leaves: leaves[start:end]}
-		raw := qualificationJSON(tb, n)
+		raw := qualificationLeafNodeJSON(leaves[start:end], keys[:end-start], encodedBytes)
 		if len(raw) > 128<<10 {
 			tb.Fatal("fixture leaf framing exceeds production node limit")
 		}
-		layer = append(layer, qualificationBranch{Max: leaves[end-1].Key, Ref: qualificationRef(tb, store, "nodes", raw), Count: n.Count})
+		layer = append(layer, qualificationBranch{Max: leaves[end-1].Key, Ref: qualificationRef(tb, store, "nodes", raw), Count: uint64(end - start)})
 		start = end
 	}
 	height := 1
