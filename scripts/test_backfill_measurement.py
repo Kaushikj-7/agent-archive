@@ -24,7 +24,7 @@ class MeasurementEvidence(unittest.TestCase):
         fields = ['host', 'logical_cpus', 'gomaxprocs', 'fixture_version', 'toolchain',
                   'planning_workers', 'default_adapter_workers', 'byte_budget',
                   'sessions', 'selected', 'imported', 'skipped', 'input_bytes',
-                  'artifact_sha256', 'elapsed_seconds', 'command_cpu_seconds',
+                  'artifact_sha256', 'plan_sha256', 'elapsed_seconds', 'command_cpu_seconds',
                   'command_peak_rss_at_return_bytes']
         rows = [dict.fromkeys(fields, 1) | {'scenario': 'recent', 'mode': 'import',
                 'sample': i, 'state': 'cold', 'trace': False} for i in range(samples)]
@@ -60,6 +60,14 @@ class MeasurementEvidence(unittest.TestCase):
     def test_different_host_rejected(self):
         with self.assertRaisesRegex(SystemExit, 'Non-equivalent host'):
             self.compare(lambda rows: rows[-1].update(host='other-host'))
+
+    def test_different_plan_decisions_rejected(self):
+        with self.assertRaisesRegex(SystemExit, 'Non-equivalent plan_sha256'):
+            self.compare(lambda rows: rows[-1].update(plan_sha256='different-selection'))
+
+    def test_different_uploaded_artifacts_rejected(self):
+        with self.assertRaisesRegex(SystemExit, 'Non-equivalent artifact_sha256'):
+            self.compare(lambda rows: rows[-1].update(artifact_sha256='different-metadata'))
 
     def test_runner_does_not_inherit_fixture_flags(self):
         runner = module('measure_backfill')

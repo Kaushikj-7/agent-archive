@@ -60,13 +60,13 @@ does not test it.
 
 ## Execute and record
 
-After the intended `v0.2.0` candidate is staged and its six assets are verified,
-set `tag` to that explicit candidate tag and install its pinned script and asset
+After the intended, currently unused `v0.2.2` candidate is staged and its six
+assets are verified, set `tag` to that explicit candidate tag and install its pinned script and asset
 into the disposable account. This example does not establish that the candidate
 is published or accepted; never substitute the latest URL:
 
 ```sh
-tag=v0.2.0
+tag=v0.2.2
 curl -fsSL "https://raw.githubusercontent.com/wangjohn/agent-archive/${tag}/install.sh" |
   AGENT_ARCHIVE_VERSION="$tag" AGENT_ARCHIVE_INSTALL_DIR="$HOME/bin" sh
 export PATH="$HOME/bin:$PATH"
@@ -128,13 +128,17 @@ every unresolved failure and coverage gap named.
 ## v0.2 release review follow-up
 
 The [review implementation record](../proposals/v0.2-release-review-fixes.md)
-tracks merged A/B/C source changes and D review/checks/merge progress with exact
-merge/review/check evidence. Those records do not populate candidate acceptance
-results. Separate E release-build full-tier alignment and a fresh post-D/E main
-campaign remain pretag gates. The final postmerge
-code/documentation SHA, staged assets and independent provider/app/platform
-results remain pending until recorded under the existing runbook and evidence
-schema. Keep published v0.1.1 installation pins until same-asset promotion.
+tracks merged A–D changes, E release-build alignment, Linux prerequisites and the
+reviewed supervisor repair. It preserves failed immutable `v0.2.0` and `v0.2.1`
+tagged attempts; neither produced signed or published release assets. Those tags
+must not move. The intended `v0.2.2` tag does not exist yet. These implementation
+and historical campaign results do not populate candidate acceptance cells.
+Freeze the final post-documentation main SHA and run a fresh exact-commit Test,
+Levenshtein and Extended campaign before staging the new tag. The tagged build,
+six verified assets and independent provider/app/platform results remain pending
+under the existing runbook and evidence schema. Protected human release approval
+and disposable resources remain required. Keep published v0.1.1 installation pins
+until same-asset promotion.
 
 ## Deferred native name comparisons
 

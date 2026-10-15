@@ -69,7 +69,7 @@ func (c candidateList) print(w io.Writer) {
 		}
 		title := cappedLine(row.Title, matchFieldWidth)
 		if row.Parent != "" {
-			title += subagentHint(row)
+			title += subagentNote(row)
 		}
 		terminal.Println(tw, strings.Join(append(cells, title), "\t"))
 	}

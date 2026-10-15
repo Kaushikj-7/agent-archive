@@ -996,15 +996,35 @@ func importCapacityDrain(env Env, stdout io.Writer, home string, store *state.St
 		}
 		result, err := collector.Run(ctx, store, remote, collector.Options{Sources: env.agentRegistry(), Parsers: parsersFor(env), Decoders: env.agentRegistry(), MachineID: current.MachineID, Now: env.Now, AcceptSession: current.AcceptSession, HistoricalProjectLabel: current.HistoricalProjectLabel, SkillEvidence: current.EffectiveSkillEvidence(), RequireSkillUse: current.RequireSkillUse, CursorDatabase: env.cursorDatabase(), CodexRollouts: lookup, ConfiguredCodexHomes: readHomes, RepoKey: env.repoKey, Stop: stop})
 		defer result.CloseStagedResults()
-		if err != nil {
-			return err
-		}
-		if len(result.Published) == 0 {
-			return state.ErrDurableStorageCapacity
-		}
-		terminal.Printf(stdout, "Freed staging capacity after remotely verifying %s; continuing admission.\n", countNoun(len(result.Published), "session"))
-		return nil
+		return reportImportCapacityDrain(stdout, result, err)
 	}
+}
+
+// reportImportCapacityDrain preserves owner failures even when collection's
+// top-level result is nil. Actual publication permits retry, never all-success.
+func reportImportCapacityDrain(stdout io.Writer, result collector.Result, collectErr error) error {
+	ids := make([]string, 0, len(result.Errors))
+	for id := range result.Errors {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	var ownerErrs []error
+	for _, id := range ids {
+		ownerErr := fmt.Errorf("session %s: %w", id, result.Errors[id])
+		ownerErrs = append(ownerErrs, ownerErr)
+		terminal.Printf(stdout, "Staging capacity publication failed for %s: %v\n", id, result.Errors[id])
+	}
+	if len(result.Deferred) > 0 {
+		terminal.Printf(stdout, "Staging capacity publication deferred for %s; retained evidence remains pending.\n", countNoun(len(result.Deferred), "session"))
+	}
+	if collectErr != nil {
+		return errors.Join(collectErr, errors.Join(ownerErrs...))
+	}
+	if len(result.Published) == 0 {
+		return errors.Join(state.ErrDurableStorageCapacity, errors.Join(ownerErrs...))
+	}
+	terminal.Printf(stdout, "Freed staging capacity after remotely verifying %s; continuing admission.\n", countNoun(len(result.Published), "session"))
+	return nil
 }
 
 func prepareImportLookup(registrationCtx context.Context, lookup *discovery.CodexRolloutLookup, candidates []backfill.Candidate) error {
