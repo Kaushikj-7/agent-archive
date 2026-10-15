@@ -31,7 +31,12 @@ import termios
 import uuid
 
 
+# Historical corpus provenance stays pinned to 1.4.8; new runs use PINNED_BUILDS.
 PINNED_SHA256 = "94ea8fd1c73664c22e5c6157d8706945b667b11bd1c7c51691811e79f17dfcf1"
+PINNED_BUILDS = {
+    "94ea8fd1c73664c22e5c6157d8706945b667b11bd1c7c51691811e79f17dfcf1": "1.4.8-R6256.1",
+    "4c6ed04ccd5a453bd7b38799aeb9eb290b8635b32c95b5a35e6950a2f20446cb": "1.4.9-R6297.1",
+}
 MODEL = "archive-synthetic-model"
 PROMPT = "Synthetic qualification prompt: hello λ.\nSecond synthetic line."
 REPLY = "Synthetic qualification answer λ.\nSecond synthetic line."
@@ -631,15 +636,30 @@ def probe_pty(case):
         os.close(master)
 
 
+def verify_version(binary, producer, root):
+    """Require the pinned binary to report its exact build in a private environment."""
+    root.mkdir()
+    result = run_process([str(binary), "--version"], env=isolated_env(root), cwd=root,
+                         timeout=15)
+    expected = "Muse Code " + producer.split("-", 1)[0] + " (" + producer + ")\n"
+    if (result["exit"] != 0 or result["timeout"] or result["stderr"] or
+            result["stdout"] != expected):
+        raise ValueError("pinned binary did not report its exact expected version")
+    return result
+
+
 def native_run(binary, output, selected=None):
-    if file_digest(binary) != PINNED_SHA256:
-        raise ValueError("binary SHA-256 differs from pinned macOS x86_64 1.4.8 build")
+    binary_sha256 = file_digest(binary)
+    producer = PINNED_BUILDS.get(binary_sha256)
+    if producer is None:
+        raise ValueError("binary SHA-256 is not a pinned macOS x86_64 Muse build")
     output.mkdir(mode=0o700)
-    report = {"schema": 1, "binary_sha256": PINNED_SHA256,
+    report = {"schema": 1, "binary_sha256": binary_sha256, "producer": producer,
               "runner_sha256": file_digest(pathlib.Path(__file__)),
               "integrity_encoding": "unresolved; native exporter is not an independent verifier",
               "cases": {}}
     try:
+        report["version_command"] = verify_version(binary, producer, output / "version")
         for name, probe, timezone in (("exec-utc", probe_exec, "UTC"),
                                       ("exec-minus12", probe_exec, "Etc/GMT+12"),
                                       ("exec-plus14", probe_exec, "Pacific/Kiritimati"),
