@@ -2,9 +2,9 @@
 
 > **Status: implemented** (`internal/gitremote/head.go`,
 > `internal/capture/hook.go`, `internal/archive/git_head.go`). This is the
-> design record; the [metadata schema](../../schemas/metadata.schema.json),
-> [JSON output](../../docs/reference/json-output.md#show), and
-> [privacy](../../docs/security/privacy.md#what-is-uploaded) are the
+> design record; the [metadata schema](../../../schemas/metadata.schema.json),
+> [JSON output](../../../docs/reference/json-output.md#show), and
+> [privacy](../../../docs/security/privacy.md#what-is-uploaded) are the
 > contract. Written 2026-09-30 against `main` at `dc443c7`.
 
 ## Purpose
@@ -150,7 +150,7 @@ status output is tested for emptiness and discarded in `gitremote`. A commit
 name is not secret from someone who can read the repository, but it does let
 anyone who can read the bucket match a session to a commit in a repository
 they can also read, which is spelled out in
-[privacy](../../docs/security/privacy.md#what-is-uploaded). The commit may
+[privacy](../../../docs/security/privacy.md#what-is-uploaded). The commit may
 exist only on the capturing Mac (never pushed, or later rewritten); the
 metadata makes no claim that it is reachable anywhere else.
 

@@ -185,7 +185,7 @@ never as unfiltered rows.
   record the parser reads. It is no longer reported as an omitted key.
 - Changelog section, `dev/specs/privacy-filter.md`,
   `docs/security/privacy.md` (a session's name is now archived), and
-  regenerated goldens, per [versions](../maintainers/versions.md).
+  regenerated goldens, per [versions](../../maintainers/versions.md).
 
 A filter bump makes the collector re-read and republish every session whose
 transcript still exists. That is the only way to recover names the old
@@ -951,7 +951,7 @@ the answer goes into the guide.
   Row projections remain presentation only; selection verifies the immutable
   metadata/body and current authority before reading sources. Local inventoryR
   and unsupported query costs are separate from bounded archive startup. See
-  [picker qualification](../maintainers/picker-qualification/README.md) for the
+  [picker qualification](../../maintainers/picker-qualification/README.md) for the
   actual CLI10k/100k first-screen/Older evidence protocol and release limits.
 
 - PR 2: `custom-title` and `pr-link` are rebuilt from typed values
@@ -1319,4 +1319,4 @@ The v3 session-addressed revision index, with v2 read compatibility, now supplie
 freshly covered canonical headers. Noninteractive tables, including implicit repository scopes, can select
 their top-level limit before metadata bodies are read. Interactive browsing,
 named explicit project scopes and search retain exhaustive reads. See
-[listing performance and revision protocol](../maintainers/list-performance.md).
+[listing performance and revision protocol](../../maintainers/list-performance.md).

@@ -3,7 +3,7 @@
 Status: implemented (PRs 1 to 7, 2026-09-29 to 2026-09-30); the
 [follow-ups](#follow-ups) are not. Planned 2026-09-29, decisions confirmed the
 same day. Where this plan and the code differ, the code and the
-[user guide](../../docs/guides/agent-skills.md) describe current behavior.
+[user guide](../../../docs/guides/agent-skills.md) describe current behavior.
 Goal: a person inside Claude Code, Codex, or Cursor can say
 "pull in the XYZ session from Codex" and the agent runs the right
 `agent-archive` command, with no setup beyond `agent-archive setup`. Live
@@ -347,7 +347,7 @@ Parallel packages rely on these; change them here first.
 Each PR is one reviewable concern, wires what it adds into a command, and
 leaves `main` releasable. CI's `deadcode` step fails on unreachable code.
 Every PR adds a `CHANGELOG.md` line and follows the
-[testing](../contributing/testing.md) rules: injected `Env`, no real home
+[testing](../../contributing/testing.md) rules: injected `Env`, no real home
 directory. The list below is in dependency order; PR 1 starts immediately
 and the rest wait on handoff v2.
 
@@ -538,7 +538,7 @@ it renames the package.
   would, tightened what the live check contradicted, and added what an agent
   can read through the skill to the privacy document.
 - Live check, in the sandbox recipe of
-  [testing](../contributing/testing.md): Claude Code end to end, an upgrade
+  [testing](../../contributing/testing.md): Claude Code end to end, an upgrade
   through `install.sh` that refreshes two stale skills, Codex's skill
   discovery and sandbox with the `codex` binary bundled in ChatGPT.app, and
   Cursor from its documentation only. The results are in

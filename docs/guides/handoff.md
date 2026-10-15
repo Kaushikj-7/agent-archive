@@ -784,4 +784,4 @@ ordinary file and rejects symbolic links and other file types. Failed writes
 preserve the previous output.
 `--format json` prints the structured handoff document the prompt is rendered
 from; see [JSON output](../reference/json-output.md). The format is specified
-in the [handoff design](../../dev/specs/handoff.md).
+in the [handoff design](../../dev/proposals/implemented/handoff.md).
