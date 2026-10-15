@@ -79,7 +79,7 @@ class LaneVerdictTest(unittest.TestCase):
             'script-static': {
                 'test_release_signing.py', 'test_release_assets.py', 'test_release_candidate.py',
                 'test_ci_workflow.py', 'test_stage_native_verify.py', 'test_git_identity_versions.py', 'test_scope_native_verify.py',
-                'test_stage_release_vulnerability_scan.py', 'test_measure_hook.py',
+                'test_stage_release_vulnerability_scan.py', 'test_measure_hook.py', 'test_muse_qualification.py',
                 'test_linux_acceptance.py', 'test_go_shards.py', 'test_generate_go_shard_hints.py',
                 'test_ci_tiers.py', 'test_local_ci_plan.py', 'test_historical_vet_contract.py', 'test_macos_smoke.py', 'test_native_smoke_reference.py', 'test_native_full.py', 'test_go_cache_context.py',
                 'test_go_cache_steps.py', 'test_ci_cache.py', 'test_ci_lane_verdict.py', 'test_report_ci_timing.py', 'test_purge_ci.py',
