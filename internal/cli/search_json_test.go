@@ -418,3 +418,37 @@ func TestContentSearchEscapedContextBudgetAlwaysAdvancesUTF8(t *testing.T) {
 		t.Fatalf("context fitting lost progress: %+v", selected)
 	}
 }
+
+func TestContentSearchPassRejectsChangedContextBeforeWritableOpen(t *testing.T) {
+	for _, change := range []struct {
+		name  string
+		apply func(*config.Config)
+	}{
+		{"destination", func(c *config.Config) { c.Storage.Prefix += "-other" }},
+		{"installation", func(c *config.Config) { c.MachineID += "-other" }},
+		{"activation", func(c *config.Config) { c.DestinationSince = c.DestinationSince.Add(time.Second) }},
+	} {
+		t.Run(change.name, func(t *testing.T) {
+			home := t.TempDir()
+			now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+			setUpTestConfig(t, home, t.TempDir(), now)
+			env := testEnv(t, home, now)
+			env.OpenStore = func(config.Config) (storage.ObjectStore, error) {
+				t.Fatal("changed context opened archive")
+				return nil, errors.New("unexpected storage admission")
+			}
+			expected, _, err := config.Load(home)
+			must(t, err)
+			changed := expected
+			change.apply(&changed)
+			must(t, config.Save(home, changed))
+			result, err := runContentSearchPass(t.Context(), home, expected, env, contentSearchOptions{refresh: true})
+			if err == nil || !strings.Contains(err.Error(), "configuration changed") || result.Observed || result.Rebuilt {
+				t.Fatalf("changed context admitted: %+v %v", result, err)
+			}
+			if _, err = os.Stat(filepath.Join(home, "search")); !os.IsNotExist(err) {
+				t.Fatalf("changed context created writable index: %v", err)
+			}
+		})
+	}
+}

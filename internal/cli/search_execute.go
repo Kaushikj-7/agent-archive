@@ -140,10 +140,11 @@ func runContentSearchPass(ctx context.Context, home string, expected config.Conf
 	if err != nil {
 		return result, err
 	}
-	if !found || cfg.DestinationID() != expected.DestinationID() || cfg.MachineID != expected.MachineID || !cfg.DestinationSince.Equal(expected.DestinationSince) {
+	namespace, dir := contentSearchLocation(home, cfg)
+	expectedNamespace, _ := contentSearchLocation(home, expected)
+	if !found || namespace != expectedNamespace {
 		return result, errors.New("search configuration changed; retry command")
 	}
-	namespace, dir := contentSearchLocation(home, cfg)
 	index, err := search.Open(ctx, dir, namespace)
 	if err != nil {
 		return result, err
