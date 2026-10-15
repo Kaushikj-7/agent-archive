@@ -13,6 +13,7 @@ import (
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/catalog"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/reader"
@@ -448,6 +449,46 @@ func TestContentSearchPassRejectsChangedContextBeforeWritableOpen(t *testing.T) 
 			}
 			if _, err = os.Stat(filepath.Join(home, "search")); !os.IsNotExist(err) {
 				t.Fatalf("changed context created writable index: %v", err)
+			}
+		})
+	}
+}
+
+// A previous complete observation cannot make a failed refresh attempt complete.
+func TestContentSearchFailedRefreshPreservesCoverageWithoutClaimingCompletion(t *testing.T) {
+	t.Parallel()
+	env, objects, _ := publishedFixture(t)
+	remote := privateCatalogFromLegacy(t, objects)
+	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return remote, nil }
+	complete := false
+	for range 16 {
+		code, seeded, diag := searchJSONRun(t, env, "--refresh")
+		if code != 0 {
+			t.Fatalf("seed complete observation: code=%d document=%+v diagnostics=%s", code, seeded, diag)
+		}
+		if seeded.Refresh.Completed && seeded.Coverage.Complete {
+			complete = true
+			break
+		}
+	}
+	if !complete {
+		t.Fatal("bounded fixture did not reach complete coverage")
+	}
+	// Simulate an unavailable current authority while the durable local
+	// observation remains complete. No pending source work can supply fresh proof.
+	must(t, remote.ObjectStore.Put(t.Context(), catalog.HeadKey, []byte("broken")))
+	for _, mode := range []string{"single", "wait"} {
+		t.Run(mode, func(t *testing.T) {
+			args := []string{"visible", "--all-projects", "--refresh"}
+			if mode == "wait" {
+				args = append(args, "--wait", "1s")
+			}
+			code, failed, diagnostics := searchJSONRun(t, env, args...)
+			if code != 1 || failed.Error == nil || failed.Refresh == nil || failed.Refresh.Completed {
+				t.Fatalf("failed attempt claimed completion: code=%d document=%+v diagnostics=%s", code, failed, diagnostics)
+			}
+			if failed.Coverage == nil || !failed.Coverage.Complete || len(failed.Results) != 1 {
+				t.Fatalf("historical coverage or cached page lost: document=%+v", failed)
 			}
 		})
 	}
