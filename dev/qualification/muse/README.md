@@ -1,7 +1,7 @@
 # Muse Q0 qualification
 
 Status: **reproducibility delivered; authority gates OPEN; capture unavailable**.
-This campaign supports the [integration spec](../../specs/muse-integration.md)
+This campaign supports the [integration spec](../../proposals/muse-integration.md)
 at source base `37609182169b658c380e9113888b0cd11d387c05`. It does not implement
 an adapter, setup, publication, retained filter or capture permission.
 

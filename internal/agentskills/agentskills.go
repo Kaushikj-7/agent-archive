@@ -7,7 +7,7 @@
 // setup's by its content alone (a marker line), and an installation's by
 // the data directory its command names; anything else at the path is left
 // alone. Stale finds the files an upgrade has outdated. The plan is
-// dev/specs/agent-skill.md.
+// dev/proposals/implemented/agent-skill.md.
 package agentskills
 
 import (

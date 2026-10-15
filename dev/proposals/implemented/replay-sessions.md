@@ -2,9 +2,9 @@
 
 > **Status: implemented** (`internal/archive/replay.go`, `internal/capture`,
 > `internal/reader`, `internal/cli`). This is the design record; the
-> [metadata schema](../../schemas/metadata.schema.json),
-> [JSON output](../../docs/reference/json-output.md), and
-> [privacy](../../docs/security/privacy.md#what-is-uploaded) are the contract.
+> [metadata schema](../../../schemas/metadata.schema.json),
+> [JSON output](../../../docs/reference/json-output.md), and
+> [privacy](../../../docs/security/privacy.md#what-is-uploaded) are the contract.
 > Written 2026-09-30 against `main` at `dc443c7`.
 
 ## Purpose
@@ -84,13 +84,13 @@ not the person's own work, and must not appear as such in `list`, `stats`, or
    with its own `AGENT_ARCHIVE_HOME`, and include the replay's checkout as a
    project. Capture follows the usual rules: only sessions that start fresh in
    an included, activated project are admitted
-   ([session eligibility](../../docs/reference/session-eligibility.md)).
+   ([session eligibility](../../../docs/reference/session-eligibility.md)).
 2. Start each agent with `AGENT_ARCHIVE_REPLAY=<run id>` in its environment.
 3. Read the runs back with `list --json --replays only`, and select a run's
    sessions by `replay.run_id`.
 
 Whether a given app passes its environment to its hooks is recorded in
-[capture capabilities](../../docs/reference/capture-capabilities.md): Claude
+[capture capabilities](../../../docs/reference/capture-capabilities.md): Claude
 Code and Codex run hooks as child processes of the agent. Cursor's desktop app
 runs them from the app, whose environment is the one it was launched with, so a
 runner driving Cursor must launch the app (or the Cursor agent CLI) with the
@@ -99,7 +99,7 @@ variable set.
 ## Privacy
 
 The marker adds one opaque identifier the runner chose, or nothing, to the
-metadata. It is listed in [privacy](../../docs/security/privacy.md#what-is-uploaded).
+metadata. It is listed in [privacy](../../../docs/security/privacy.md#what-is-uploaded).
 Nothing else from the environment is read.
 
 ## Tests
