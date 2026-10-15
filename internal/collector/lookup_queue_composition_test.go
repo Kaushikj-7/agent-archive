@@ -81,10 +81,11 @@ func TestLookupWaiterLaneWithAcceptedExecutionAndStop(t *testing.T) {
 				t.Fatal(err)
 			}
 			var order []string
-			opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return now }, Progress: func(p Progress) { order = append(order, p.ArchiveSessionID) }, Stop: func() bool { return len(order) == 1 }}
+			var acceptSession func(archive.SessionRegistration) bool
 			if filtered {
-				opts.AcceptSession = cfg.AcceptSession
+				acceptSession = cfg.AcceptSession
 			}
+			opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "m", AcceptSession: acceptSession, Now: func() time.Time { return now }, Progress: func(p Progress) { order = append(order, p.ArchiveSessionID) }, Stop: func() bool { return len(order) == 1 }}
 			result, err := Run(context.Background(), local, storagetest.NewMemoryStore(), opts)
 			if err != nil {
 				t.Fatal(err)
