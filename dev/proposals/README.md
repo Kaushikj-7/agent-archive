@@ -21,6 +21,7 @@ Historical-only ownership status reconciled 2026-10-12 after #433 merged as
 | [Conversation search](content-search.md) | Delivery branches contain engine, worker state, reconciliation, CLI and terminal implementations; final integration/review pending. | Six dependency-ordered PRs cover those components and opt-in background hints/scheduling. Combined acceptance and supported-platform/provider evidence remain required; this is not a merged-release claim. |
 | [Historical backfill recovery](historical-backfill-recovery.md) | Diagnostics, portable recovery, rollout lookup, history lifecycle and native child capture; recovery hardening; historical-only ownership and bounded bulk mappings (#433). | [Fragment format foundation](../specs/codex-fragments.md) is proposed with schema checks; decoder/filter/consumer, lifecycle, opt-in import, repair journal and the combined acceptance matrix remain gated. |
 | [CLI performance](cli-performance.md) | Synthetic command and historical listing benchmark harnesses with output validation. | Matched repaired-harness measurements and proposed follow-ups. |
+| [Backfill transcript performance](backfill-performance.md) | Source-path investigation; no optimization implemented. | Matched backfill measurements, early date exclusion, streaming inspection summaries and bounded verified reuse; read-pass consolidation conditional on profiles. |
 | [Archive listing at scale](listing-at-scale.md) | Parallel listing, tracing, bounded metadata-body reads; 10k benchmark and 10k/20k operation-count coverage. | Full 1k/10k/100k measurement matrix and an index that bounds LIST header cost. |
 | [Cloud capture](cloud-capture.md) | No cloud collector/push or vendor pull implementation. | Proposed, unscheduled; requires producer probes and runtime/authentication design. |
 
@@ -52,6 +53,7 @@ seven-day import and the status prompt for existing installations. See the
 | [Storage setup with default bucket creation](implemented/storage-setup-default-creation.md) | Implemented; R2 creation generally available; further live coverage tracked. |
 | [Git activity in metadata](implemented/git-activity.md) | Implemented in parser 0.15.0. |
 | [List and browse UX](implemented/list-browse-ux.md) | Implemented; see [list and show](../../docs/guides/list-and-show.md). |
+| [Session list UI](implemented/session-list-ui.md) | One-line rows, day groups, cursor and detail strip; PRs 1–6 merged 2026-10-15 (#537, #536, #550, #558, #562, #560). Owner live check not recorded. |
 | [Platform abstraction](implemented/platform-abstraction.md) | Implemented; follow-ups and verification gaps recorded in the design. |
 | [Portable handoff, guided setup, and Linux](implemented/portable-handoff-and-onboarding.md) | Implemented; guided R2 creation generally available; further coverage tracked. |
 
