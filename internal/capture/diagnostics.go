@@ -35,7 +35,19 @@ const (
 	DiagnosticHookBusy DiagnosticCode = "hook_busy"
 	// DiagnosticSessionIndexRecovery records bounded identity lookup damage.
 	DiagnosticSessionIndexRecovery DiagnosticCode = "session_index_recovery_required"
+	// DiagnosticRevisionLeftOut records that the collector left out an
+	// earlier revision of a thread that its current history does not
+	// continue (a Codex rollout abandoned by a rollback), because it could
+	// not be read or did not fit beside the thread's own history. The rest
+	// of the session was captured.
+	DiagnosticRevisionLeftOut DiagnosticCode = "revision_left_out"
 )
+
+// DiagnosticPartial reports whether code records part of a session left
+// out, rather than a session that was not captured.
+func DiagnosticPartial(code DiagnosticCode) bool {
+	return code == DiagnosticRevisionLeftOut
+}
 
 // Diagnostic is deliberately content-free. It records only the
 // integration boundary that prevented capture; native session identifiers,
@@ -102,6 +114,23 @@ var errDiagnosticsKeptChanging = fmt.Errorf("capture diagnostics kept changing w
 // of the two runs first.
 func RecordDiagnostic(home string, diagnostic Diagnostic) error {
 	return recordDiagnostic(home, diagnostic, false)
+}
+
+// RecordSessionDiagnostic records a diagnostic the collector found while
+// capturing a registered session whose project root is root. It names the
+// configured project that includes root, never root itself, and nothing for
+// a root no included project owns, except as Codex's all-projects scope
+// records it (with no project).
+func RecordSessionDiagnostic(home string, code DiagnosticCode, harness, root string, at time.Time) error {
+	cfg, found, err := config.Load(home)
+	if err != nil || !found || !cfg.Archive.Enabled {
+		return err
+	}
+	projectRoot := ""
+	if project, owned := ConfiguredProjectActivationFor(cfg, root); owned && project.Included {
+		projectRoot = project.Root
+	}
+	return RecordDiagnostic(home, Diagnostic{Code: code, Harness: archive.CanonicalHarness(harness), ProjectRoot: projectRoot, ObservedAt: at})
 }
 
 // recordDiagnostic can report diagnostics-lock contention to callers whose
@@ -341,6 +370,8 @@ func DiagnosticMessage(code DiagnosticCode) string {
 		return "local session identity bookkeeping needs collector recovery; eligible deferred starts remain queued"
 	case DiagnosticHookBusy:
 		return "a hook could not acquire the capture lock before its deadline; a first-start intent may be recovered on the next collector pass; check status and start a new session if capture did not resume"
+	case DiagnosticRevisionLeftOut:
+		return "an abandoned branch of the thread (an earlier revision its current history does not continue) could not be read or did not fit within the capture limits, so it was left out; the rest of the session was captured"
 	default:
 		return "capture evidence was not accepted"
 	}

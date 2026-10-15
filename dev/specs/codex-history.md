@@ -112,7 +112,15 @@ shared read budget held by others, a rollout changed while reading,
 cancellation)
 still fails it too, so the session defers and a later pass reads the branch:
 leaving it out would record a signature that an abandoned branch never
-changes again. Without an admitted source home
+changes again. A branch kept while reconciling holds what it retained for
+the rest of the scan; if guarding, settling or publishing then meets the
+session's read ceiling before any publication is saved, the scan runs once
+more from the start with every off-chain branch left out, so the branches
+never make the chain's own capture too large to read. A branch left out is
+recorded as the local capture diagnostic `revision_left_out` (the app, the
+included project and the time only) once the scan ends without the session
+recorded as a capture gap; an import leaves branches out without one.
+Without an admitted source home
 they are not read at all. Beside a current locator, a thread with more than 64
 observed same-thread rollouts is still captured: the lookup offers the 64
 newest that still exist, the chain's own segments come first and the newest

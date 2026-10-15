@@ -98,6 +98,14 @@ type sessionScan struct {
 	retainedReleases []func()
 	revisions        *revisionPlan
 	rewritten        *archive.SourceBundle
+	// offChainKept counts the off-chain (best-effort) revisions the last
+	// reconciliation kept: what they retained counts against the session's
+	// read ceiling until the scan ends. withoutOffChain is set when the scan
+	// runs again without them (see run). offChainLeftOut reports that it
+	// left at least one out (see noteRevisionLeftOut).
+	offChainKept    int
+	offChainLeftOut bool
+	withoutOffChain bool
 }
 
 // filteredSource is a source read and filtered once in a scan.
@@ -127,7 +135,39 @@ const (
 
 func (s *sessionScan) id() string { return s.reg.ArchiveSessionID }
 
-func (s *sessionScan) run(ctx context.Context) (sessionOutcome, error) {
+// run scans the session once (scanOnce). A scan that kept off-chain
+// revisions and then met the session's own read ceiling (guarding,
+// settling or publishing with their retained bytes still held) is run again
+// from the start without them: they are best effort, and the whole session
+// recorded as too large to read, although its own chain fits, would stop
+// its capture on every pass. Everything the first scan retained is released
+// and its ceiling refusal forgotten first, so the second scan meets the
+// ceiling only on its own. A scan that saved a publication before the
+// refusal is not run again: the publication is owed as it is
+// (overCeiling defers it), and its later passes resume it without the
+// reconciliation's retained work. Whether an off-chain revision was left
+// out is recorded once, as the scan ends (noteRevisionLeftOut).
+func (s *sessionScan) run(ctx context.Context) (outcome sessionOutcome, err error) {
+	defer func() { s.noteRevisionLeftOut(err) }()
+	outcome, err = s.scanOnce(ctx)
+	if err == nil || s.offChainKept == 0 || s.withoutOffChain || !s.overSessionCeiling(err) {
+		return outcome, err
+	}
+	if owed, owedErr := s.local.Outstanding(s.reg, false); owedErr != nil {
+		return outcome, errors.Join(err, owedErr)
+	} else if owed.Upload {
+		return outcome, err
+	}
+	s.releaseRetained()
+	s.readBudget().ForgetScopeExceeded()
+	s.filtered, s.lastRead, s.revisions, s.rewritten = nil, nil, nil, nil
+	s.gap, s.sizeLimit, s.readyAt, s.subagentRunning = "", nil, time.Time{}, false
+	s.offChainKept, s.offChainLeftOut, s.withoutOffChain = 0, false, true
+	return s.scanOnce(ctx)
+}
+
+// scanOnce is one scan of the session, the steps above.
+func (s *sessionScan) scanOnce(ctx context.Context) (sessionOutcome, error) {
 	if err := s.prepareRetainedOwnership(); err != nil {
 		return outcomeSkipped, err
 	}
