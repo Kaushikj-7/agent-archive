@@ -302,14 +302,29 @@ def measured_source(source, body_catalog_json=None):
 
 def read_sample(directory, source, expected_settings, body_catalog=None, package_cost_exclusions=None, *, audit_directory=None):
     expected = None
+    historical_contract = None
     if audit_directory is not None:
         expected, catalog_raw = measured_source(source)
         if body_catalog != json.loads(catalog_raw):
             raise runner.Failure('historical audit requires the measured Git body catalog')
+        # Only timing import may request the reviewed old-data decoder. Merely
+        # resolving a source proof (as reference comparison does) grants none.
+        if any(v.get('plain_vet_owned') for v in expected_settings.values()):
+            import historical_vet_contract as old_vet
+            import go_cache_context
+            try:
+                historical_contract = old_vet.resolve(runner.ROOT, expected)
+            except go_cache_context.InvalidContext as error:
+                raise runner.Failure(str(error)) from error
     with contract_parser(source, body_catalog):
         try:
-            runner.reconcile(directory, len(expected_settings), audit_directory, expected_source_proof=expected, historical_legacy=True)
+            runner.reconcile(directory, len(expected_settings), audit_directory, expected_source_proof=expected, historical_legacy=True,
+                             historical_vet_contract=historical_contract)
             catalog, packages, cli, proof = _read_sample(directory, source, expected_settings, package_cost_exclusions)
+            if historical_contract is not None:
+                proof['historical_vet_contract'] = {
+                    'source': historical_contract.source, 'tree': historical_contract.tree,
+                    'blobs': list(historical_contract.blobs)}
             if audit_directory is not None:
                 if not all(v.get('plain_audit_owned') is True for v in expected_settings.values()):
                     raise runner.Failure('imported plain audit requires owned short sample settings')
