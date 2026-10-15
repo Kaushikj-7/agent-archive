@@ -531,9 +531,8 @@ func TestSearchHighlightedNavigationAndCompactFooter(t *testing.T) {
 	}
 	keys := startKeys(newFakeKeys("/", "\x1b[B", "\r"))
 	defer keys.close()
-	l := &sessionPicker{env: fixedTerminal{160, 40}, keys: keys, contentSearch: &contentSearchBrowser{}, older: &browserLoadAction{Label: "next indexed results"}}
 	var out bytes.Buffer
-	l.clear = func() { out.WriteString(screenBreak) }
+	l := &sessionPicker{env: fixedTerminal{160, 40}, keys: keys, contentSearch: &contentSearchBrowser{}, older: &browserLoadAction{Label: "next indexed results"}, clear: func() { out.WriteString(screenBreak) }}
 	row, ok, err := l.pickRowsContext(t.Context(), newPrompter(strings.NewReader(""), &out), &out, rows, len(rows), false, listFormatOptions{Search: true, Numbered: true, Note: "Coverage incomplete.\nLast observed: unknown.\n"}, "read")
 	if err != nil || !ok || rowIdentity(row) != rowIdentity(rows[1]) || l.filtering {
 		t.Fatalf("highlight selection lost full identity: row%+v ok%v err%v", row, ok, err)
