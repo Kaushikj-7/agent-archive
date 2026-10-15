@@ -132,7 +132,7 @@ func TestOpenRolloutChargesHeldBytesNotFileLength(t *testing.T) {
 	if _, err := pass.Read(t.Context(), ref, agentapi.ReadLimits{}); !errors.Is(err, agentapi.ErrReadBudget) {
 		t.Fatal("cached read bypassed its scratch reservation", err)
 	}
-	if pass.files[ref.Path] != file || facts.PhysicalProducerVersion != "0.160.0" {
+	if pass.files[ref.Path] != file || facts.Codex.PhysicalProducerVersion != "0.160.0" {
 		t.Fatal("refusal evicted live header facts")
 	}
 	reservation.Release(pressure)

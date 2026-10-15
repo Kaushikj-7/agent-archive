@@ -73,12 +73,15 @@ const (
 // private file elsewhere; see destination.Config.R2CredentialRef)
 // and S3 credentials are resolved through the named AWS profile.
 type Config struct {
-	ScopedPickerProtection           bool                `json:"scoped_picker_protection,omitempty"`
-	SettledCursorSelectionProtection bool                `json:"settled_cursor_selection_protection,omitempty"`
-	StagedSelectionProtection        bool                `json:"staged_selection_protection,omitempty"`
-	PublicationCompositionProtection bool                `json:"publication_composition_protection,omitempty"`
-	HistoricalProjects               []HistoricalProject `json:"historical_projects,omitempty"`
-	HistoricalProjectProtection      bool                `json:"historical_project_protection,omitempty"`
+	// NativeAuthorityProtection permanently refuses writers unable to preserve native roots and bindings.
+	NativeAuthorityProtection        bool                 `json:"native_authority_protection,omitempty"`
+	NativeRoots                      []archive.NativeRoot `json:"native_roots,omitempty"`
+	ScopedPickerProtection           bool                 `json:"scoped_picker_protection,omitempty"`
+	SettledCursorSelectionProtection bool                 `json:"settled_cursor_selection_protection,omitempty"`
+	StagedSelectionProtection        bool                 `json:"staged_selection_protection,omitempty"`
+	PublicationCompositionProtection bool                 `json:"publication_composition_protection,omitempty"`
+	HistoricalProjects               []HistoricalProject  `json:"historical_projects,omitempty"`
+	HistoricalProjectProtection      bool                 `json:"historical_project_protection,omitempty"`
 	// CodexNameLookup selects files (default) or explicitly opted-in native startup.
 	CodexNameLookup CodexNameLookup     `json:"codex_name_lookup,omitempty"`
 	CodexCapture    *CodexCaptureConfig `json:"codex_capture,omitempty"`
@@ -319,6 +322,14 @@ func SaveWithCatalog(home string, cfg Config, c agentmeta.Catalog) error {
 	}
 	if found {
 		PreserveWriterFence(&cfg, previous)
+		if err := validateNativeRootTransition(cfg, previous); err != nil {
+			return err
+		}
+	}
+	if (cfg.NativeAuthorityProtection || len(cfg.NativeRoots) > 0) && (!previous.NativeAuthorityProtection || !slices.Equal(cfg.NativeRoots, previous.NativeRoots)) {
+		if _, err := os.Lstat(filepath.Join(home, "setup-transaction.json")); !errors.Is(err, os.ErrNotExist) {
+			return errors.New("setup pending before native source authority change")
+		}
 	}
 	if cfg.RetentionDays == 0 {
 		cfg.RetentionProtection = true

@@ -357,9 +357,9 @@ class GateTest(unittest.TestCase):
                 runner.reconcile(directory,historical_legacy=True)
 
 
-@unittest.skipUnless(sys.platform == 'linux', 'Linux worker uses procfs and child subreaping')
+@unittest.skipUnless(sys.platform in ('linux', 'darwin'), 'worker fixture requires a supported process supervisor')
 class RunPlanTest(unittest.TestCase):
-    def test_complete_runner_executes_each_package_once_and_reconciles_both_bins(self):
+    def test_complete_runner_executes_whole_packages_and_cli_parents_once_and_reconciles_both_bins(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root/'scripts').mkdir()
@@ -395,7 +395,7 @@ else:
   else:emit('pass',package,Test='TestGit');emit('pass',package)
 ''')
             fake.chmod(0o755)
-            with mock.patch.object(runner, 'ROOT', root), mock.patch('run_ci_tier.full_race.source_proof',return_value={'source':'a'*40,'tree':'b'*40}), mock.patch.object(runner.subprocess, 'check_output', side_effect=lambda command,**kw: json.dumps({k:synthetic_vet_context()['go'][k] for k in __import__('go_parent_shards').CONFIG_FIELDS}) if command[:2]==['go','env'] else 'a'*40+'\n'), mock.patch.dict(os.environ, {'PATH': str(bindir)+os.pathsep+os.environ['PATH'], 'GITHUB_SHA': 'a'*40, 'TASK_COMMAND_LOG': str(command_log)}), contextlib.redirect_stdout(io.StringIO()):
+            with mock.patch.object(runner, 'ROOT', root), mock.patch.object(runner.os, 'sched_getaffinity', return_value={0,1,2,3}, create=True), mock.patch('run_ci_tier.full_race.source_proof',return_value={'source':'a'*40,'tree':'b'*40}), mock.patch.object(runner.subprocess, 'check_output', side_effect=lambda command,**kw: json.dumps({k:synthetic_vet_context()['go'][k] for k in __import__('go_parent_shards').CONFIG_FIELDS}) if command[:2]==['go','env'] else 'a'*40+'\n'), mock.patch.dict(os.environ, {'PATH': str(bindir)+os.pathsep+os.environ['PATH'], 'GITHUB_SHA': 'a'*40, 'TASK_COMMAND_LOG': str(command_log)}), contextlib.redirect_stdout(io.StringIO()):
                 for index in (0, 1):runner.run(index, root/str(index), 30)
                 runner.reconcile(root)
             calls = [json.loads(line) for line in command_log.read_text().splitlines()]
@@ -408,7 +408,13 @@ else:
                 self.assertEqual(sum(package in call['args'] for call in executed), 1)
             git_call = next(call for call in executed if runner.GIT_IDENTITY in call['args'])
             self.assertNotIn('-run', git_call['args'])
-            self.assertEqual(sum(runner.CLI in call['args'] for call in executed), 1)
+            # Independent CLI lanes can run this package on both workers;
+            # coverage is each complete compiled parent exactly once.
+            cli_calls = [call for call in executed if runner.CLI in call['args']]
+            self.assertEqual(len(cli_calls), 2)
+            for parent in ('TestA', 'FuzzB', 'Example'):
+                self.assertEqual(sum(re.fullmatch(call['args'][call['args'].index('-run')+1], parent)
+                                     is not None for call in cli_calls), 1)
             first = json.loads((root/'0/manifest.json').read_text())
             self.assertEqual(first['settings']['isolated_packages'], [runner.GIT_IDENTITY])
             self.assertIn('git_identity_invocation_seconds', first['phases'])
