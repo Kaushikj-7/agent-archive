@@ -237,7 +237,10 @@ func requestBatchIndexRecovery(home string, store *state.Store, cfg config.Confi
 	if err != nil {
 		return err
 	}
-	recoveryErr := store.RequestSessionIndexRecovery(key)
+	var recoveryErr error
+	if !errors.As(cause, new(childIndexRecoveryRequested)) {
+		recoveryErr = store.RequestSessionIndexRecovery(key)
+	}
 	_, queueErr := queueEventBatchInGeneration(home, batch, now, cfg.PauseGeneration, lastHead, nil, replay)
 	project, owned := hookProjectActivation(cfg, event, now)
 	var diagnosticErr error

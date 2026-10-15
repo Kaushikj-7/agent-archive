@@ -2,6 +2,7 @@ package capture
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -135,5 +136,41 @@ func TestClaudeHooksCaptureWhileDiscoveryAwaitsAbsenceProof(t *testing.T) {
 	}
 	if diagnostics, err := ReadDiagnostics(home); err != nil || len(diagnostics) != 0 {
 		t.Fatalf("diagnostics=%+v err=%v", diagnostics, err)
+	}
+}
+
+// A resumed subagent stops again while its child identity is still held for
+// the next slice's absence proof. Its parent is already owned, so the refusal
+// must leave the complete census alone: only the child waits, and every other
+// key's miss is still admitted.
+func TestResumedSubagentStopKeepsCompleteCensusForOwnedParent(t *testing.T) {
+	t.Parallel()
+	home, project := t.TempDir(), t.TempDir()
+	at := time.Date(2026, 9, 29, 10, 0, 0, 0, time.UTC)
+	setUpTestConfig(t, home, project, at.Add(-time.Hour))
+	parentPath := writeTestTranscript(t, "parent.jsonl", "")
+	if err := HandleEvent(home, "claude", map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-parent", "cwd": project, "transcript_path": parentPath}, at, WithDecoders(testDecoders)); err != nil {
+		t.Fatal(err)
+	}
+	store, err := state.Open(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := recoverytest.Exhaust(context.Background(), store, state.SessionIndexRecoverySlice, false); err != nil {
+		t.Fatal(err)
+	}
+	child := agentmeta.SessionKey{Agent: agentmeta.Claude, NativeID: "native-parent:subagent:agent-1"}
+	if err := store.RequestSessionIndexAbsence(child); err != nil {
+		t.Fatal(err)
+	}
+	stop := map[string]any{"hook_event_name": "SubagentStop", "session_id": "native-parent", "agent_id": "agent-1", "agent_transcript_path": "/never/written.jsonl"}
+	if err := HandleEvent(home, "claude", stop, at.Add(time.Minute), WithDecoders(testDecoders)); err != nil && !errors.Is(err, state.ErrSessionIndexRecoveryRequired) {
+		t.Fatal(err)
+	}
+	if status, err := store.SessionIndexRecoveryStatus(); err != nil || !status.Complete || status.Pending {
+		t.Fatalf("census after resumed subagent stop: %+v err=%v", status, err)
+	}
+	if _, created, err := store.EnsureArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.Claude, NativeID: "unrelated"}); err != nil || !created {
+		t.Fatalf("unrelated miss: created=%v err=%v", created, err)
 	}
 }
