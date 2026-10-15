@@ -392,3 +392,24 @@ images or sources remain separate unqualified comparisons. It cannot replace
 raw native body verification, required CI or ordinary-traffic tail measurements.
 Keep manual head and PR synthetic merge identities distinct; any tree-equivalence
 claim requires independent Git evidence and does not relabel their source SHAs.
+
+## Verified cache payload observations
+
+`ci_cache.py verify` logs one `compilation-cache-observation:` JSON record only
+after final module/shared-module verification and source/compiler guards. Its
+`raw_payload_bytes` is the accepted manifest's already-validated uncompressed
+payload inventory, excluding manifest metadata. A miss, corrupt restore or cold
+fallback reports null bytes; discarded trusted bytes never remain in the final
+observation. `complete` logs the existing captured size as `ready-for-save` after
+its final guard, or null as `not-captured` when publication is declined. Ready
+means prepared for the later cache service save, not confirmation of an upload.
+These records add no cache scan, hash pass, compiler probe or Go command.
+
+Keep raw payload bytes separate from compressed archive transfer/storage bytes
+and API cache inventories. A key hit alone does not prove that expensive test,
+vet or audit compilation was avoided. Report the three trusted-main seed jobs'
+actual runner-minutes and measured payload/transfer/storage bytes separately
+from PR Test+Levenshtein usage. Disclose amortization assumptions, including main
+pushes per PR and new-context cold versus trusted-hit seed runs. Do not hide
+postmerge seed overhead inside claimed PR savings or infer billed bytes from raw
+payload size. Existing standard-runner and10GB cache policies remain unchanged.
