@@ -68,7 +68,8 @@ def policy_check(policy):
         if group['key'] in group_keys:
             raise ValueError('duplicate baseline cohort')
         group_keys.add(group['key'])
-        if group['key'] != normalize_ci_timing.digest(group['identity']):
+        if (set(group['identity']) != {'configuration_sha256', 'cohort'}
+                or group['key'] != normalize_ci_timing.digest(group['identity'])):
             raise ValueError('baseline cohort identity invalid')
         for ident, row in group['tests'].items():
             if ident not in ids or type(row['observations']) is not int or row['observations'] < 1:
@@ -128,8 +129,7 @@ def observations(rows, topology, run_id, attempt, actual_attempts=None):
                 or not isinstance(cohort.get('compiler'), dict) or not cohort['compiler']
                 or not re.fullmatch('[0-9a-f]{64}', row['configuration_sha256'])):
             raise ValueError('worker cohort evidence invalid')
-        key = normalize_ci_timing.digest({'configuration_sha256': row['configuration_sha256'],
-                                         'compiled_inventory_sha256': inventory, 'cohort': cohort})
+        key = normalize_ci_timing.digest({'configuration_sha256': row['configuration_sha256'], 'cohort': cohort})
         local_tests = set()
         for test in row['tests']:
             ident = test['test_id']
@@ -180,7 +180,44 @@ def current_worker_attempts(api, topology, run_id, attempt):
     return worker_attempts(jobs, topology, run_id, attempt)
 
 
-def normalize_workers(paths, topology):
+def verify_raw_coverage(paths, topology):
+    """Recheck complete compiled assignments before preparing an admission."""
+    import go_parent_shards
+    import run_go_shard
+    first = None
+    shards = set()
+    for path in paths:
+        manifest = read(path)
+        for raw in path.parent.glob('*.json'):
+            if raw.is_symlink() or raw.stat().st_size > normalize_ci_timing.MAX_LOG_BYTES:
+                raise ValueError('raw compiled evidence exceeds bound or is a symlink')
+        catalog = manifest['catalog']
+        shard = manifest['shard']
+        try:
+            go_parent_shards.validate(catalog, topology['workers'])
+        except run_go_shard.Failure as error:
+            raise ValueError('raw compiled catalog invalid: ' + str(error)) from error
+        if (type(shard) is not int or shard not in range(topology['workers']) or shard in shards
+                or catalog['source_proof'] != {'source': topology['source'], 'tree': topology['tree']}
+                or manifest.get('success') is not True
+                or manifest.get('catalog_sha256') != run_go_shard.digest(catalog)
+                or manifest.get('coverage') != catalog['assignments'][shard]):
+            raise ValueError('raw compiled assignment/source evidence invalid')
+        if first is not None and catalog != first:
+            raise ValueError('raw compiled catalogs differ')
+        first = catalog
+        shards.add(shard)
+        try:
+            go_parent_shards.verify_logs(path.parent, catalog, catalog['assignments'][shard])
+        except run_go_shard.Failure as error:
+            raise ValueError('raw compiled coverage invalid: ' + str(error)) from error
+    if shards != set(range(topology['workers'])):
+        raise ValueError('raw compiled worker coverage incomplete')
+
+
+def normalize_workers(paths, topology, *, verify_coverage=False):
+    if verify_coverage:
+        verify_raw_coverage(paths, topology)
     rows = []
     for path in paths:
         if path.is_symlink() or path.stat().st_size > MAX_BYTES:
@@ -269,10 +306,11 @@ def exceptions_check(document, today):
             raise ValueError('invalid parallel family exception budget')
         if any(not isinstance(row.get(key), str) or not row[key].strip() for key in ('reason', 'owner')):
             raise ValueError('exception reason and owner required')
-        if 'expires' in row:
-            expiry = datetime.strptime(row['expires'], '%Y-%m-%d').date()
-            if expiry < today:
-                raise ValueError('expired performance exception')
+        if not isinstance(row.get('expires'), str):
+            raise ValueError('performance exception expiry required')
+        expiry = datetime.strptime(row['expires'], '%Y-%m-%d').date()
+        if expiry < today:
+            raise ValueError('expired performance exception')
         rows.append(row)
     return rows
 
@@ -283,6 +321,7 @@ def evaluate(policy, rows, topology, run_id, attempt, exceptions, api=None, toda
     overrides = exceptions_check(exceptions, today or datetime.now(timezone.utc).date())
     known = set(policy['baseline']['inventory'])
     groups = {group['key']: group for group in policy['baseline']['groups']}
+    measured = {ident for group in groups.values() for ident in group['tests']}
     warnings, failures, decisions = [], [], []
     authorization = None
     for ident, (test, key, cohort) in sorted(tests.items()):
@@ -293,15 +332,21 @@ def evaluate(policy, rows, topology, run_id, attempt, exceptions, api=None, toda
             raise ValueError('invalid parallel-descendant inventory')
         budget = None
         reason = None
-        if ident not in known:
+        new_cost = ident not in known or (ident not in measured and test['status'] == 'pass')
+        family_budget = policy['parallel_budgets'].get(ident)
+        if family_budget is None and new_cost:
+            family_budget = {'maximum_descendants': policy['new_parallel_descendants'],
+                             'maximum_elapsed_work_seconds': policy['new_parallel_elapsed_work_seconds']}
+        parallel_exceeded = family_budget is not None and (
+            parallel > family_budget['maximum_descendants']
+            or elapsed_work > family_budget['maximum_elapsed_work_seconds'])
+        if parallel_exceeded:
+            budget, reason = policy['new_failure_seconds'], 'parallel-family-budget'
+        if new_cost:
             if test['parent_wall_seconds'] > policy['new_failure_seconds']:
                 warnings.append({'test_id': ident, 'reason': 'parent-lifecycle-wall-not-isolated-cost', 'seconds': test['parent_wall_seconds']})
-            family_budget = policy['parallel_budgets'].get(ident, {
-                'maximum_descendants': policy['new_parallel_descendants'],
-                'maximum_elapsed_work_seconds': policy['new_parallel_elapsed_work_seconds']})
-            if (parallel > family_budget['maximum_descendants']
-                    or elapsed_work > family_budget['maximum_elapsed_work_seconds']):
-                budget, reason = policy['new_failure_seconds'], 'new-parallel-family-requires-explicit-budget'
+            if parallel_exceeded:
+                reason = 'new-parallel-family-requires-explicit-budget'
             if elapsed > policy['new_warning_seconds']:
                 warnings.append({'test_id': ident, 'seconds': elapsed, 'reason': 'new-test-warning'})
             if elapsed > policy['new_failure_seconds']:
@@ -322,7 +367,7 @@ def evaluate(policy, rows, topology, run_id, attempt, exceptions, api=None, toda
         if len(matches) > 1:
             raise ValueError('overlapping test and family exceptions')
         if (matches and elapsed <= matches[0]['maximum_seconds']
-                and (reason != 'new-parallel-family-requires-explicit-budget'
+                and (not parallel_exceeded
                      or (parallel <= matches[0].get('maximum_parallel_descendants', 0)
                          and elapsed_work <= matches[0].get('maximum_parallel_elapsed_work_seconds', 0)))):
             if authorization is None:

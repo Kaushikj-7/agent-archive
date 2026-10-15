@@ -119,6 +119,22 @@ class GateTests(unittest.TestCase):
         self.exception(maximum_parallel_descendants=40, maximum_parallel_elapsed_work_seconds=40)
         self.assertTrue(self.run_gate(API([approved()]))['passed'])
 
+    def test_slow_large_parallel_family_needs_both_exception_budgets(self):
+        self.new_test(own_elapsed_seconds=45, parallel_descendants=101,
+                      parallel_elapsed_work_seconds=60)
+        self.exception()
+        self.assertFalse(self.run_gate(API([approved()]))['passed'])
+        self.exception(maximum_parallel_descendants=120)
+        self.assertFalse(self.run_gate(API([approved()]))['passed'])
+        self.exception(maximum_parallel_descendants=120, maximum_parallel_elapsed_work_seconds=90)
+        self.assertTrue(self.run_gate(API([approved()]))['passed'])
+
+    def test_exception_must_have_an_expiry_even_if_unused(self):
+        self.exception()
+        del self.exceptions['exceptions'][0]['expires']
+        with self.assertRaisesRegex(ValueError, 'expiry required'):
+            self.run_gate()
+
     def test_exception_requires_live_current_head_non_author_human_maintainer(self):
         self.new_test(own_elapsed_seconds=84)
         self.exception()
@@ -137,7 +153,7 @@ class GateTests(unittest.TestCase):
 
     def test_comparable_regression_requires_three_verified_baseline_observations(self):
         test = self.rows[0]['tests'][0]
-        identity = {'configuration_sha256': 'e'*64, 'compiled_inventory_sha256': 'd'*64, 'cohort': self.rows[0]['cohort']}
+        identity = {'configuration_sha256': 'e'*64, 'cohort': self.rows[0]['cohort']}
         group = {'key': norm.digest(identity), 'identity': identity, 'tests': {
             test['test_id']: {'observations': 2, 'own_elapsed_median_seconds': 20}}}
         self.policy['baseline']['groups'] = [group]
@@ -148,8 +164,77 @@ class GateTests(unittest.TestCase):
         test['own_elapsed_seconds'] = 30
         self.assertTrue(self.run_gate()['passed'])
         test['own_elapsed_seconds'] = 99
-        self.rows[0]['cohort'] = dict(self.rows[0]['cohort'], runner_image='different')
+        original = copy.deepcopy(self.rows[0])
+        for change in ({'runner_image': 'different'}, {'cache_state': 'miss'},
+                       {'compiler': {'GOVERSION': 'different'}}):
+            self.rows[0] = copy.deepcopy(original)
+            self.rows[0]['cohort'].update(change)
+            with self.subTest(change=change):
+                self.assertTrue(self.run_gate()['passed'])
+        self.rows[0] = original
+        self.rows[0]['configuration_sha256'] = 'f'*64
         self.assertTrue(self.run_gate()['passed'])
+
+    def test_explicit_family_budget_survives_baseline_admission(self):
+        test = self.rows[0]['tests'][0]
+        self.policy['parallel_budgets'][test['test_id']] = {
+            'maximum_descendants': 120, 'maximum_elapsed_work_seconds': 90}
+        test.update(parallel_descendants=121)
+        self.assertFalse(self.run_gate()['passed'])
+        test.update(parallel_descendants=120, parallel_elapsed_work_seconds=91)
+        self.assertFalse(self.run_gate()['passed'])
+        test.update(parallel_elapsed_work_seconds=90)
+        self.assertTrue(self.run_gate()['passed'])
+
+    def test_inventory_addition_does_not_erase_existing_parent_regression(self):
+        pipeline = collect_ci_timing.collect(FakeAPI(), receipt(), 1, 2)
+        for row in self.rows:
+            row['run_id'] = '1'
+        samples = []
+        for run_id in (20, 30):
+            api = FakeAPI()
+            api.runs[run_id] = api.runs.pop(1)
+            api.runs[run_id]['id'] = run_id
+            api.jobs[run_id] = api.jobs.pop(1)
+            for job in api.jobs[run_id]:
+                job['run_id'] = run_id
+            rows = copy.deepcopy(self.rows)
+            for row in rows:
+                row.update(run_id=str(run_id), compiled_inventory_sha256=str(run_id)[0]*64)
+            samples.append((rows, receipt(), collect_ci_timing.collect(api, receipt(), run_id, 2)))
+        self.policy = admission.admit(self.policy, self.rows, receipt(), pipeline, samples)
+        baseline = next(iter(self.policy['baseline']['groups'][0]['tests'].values()))
+        self.assertEqual(baseline['observations'], 3)
+        for row in self.rows:
+            row.update(run_id='12', compiled_inventory_sha256='f'*64)
+        old = self.rows[0]['tests'][0]
+        old['own_elapsed_seconds'] = 20
+        new = copy.deepcopy(old)
+        new.update(test_id=PREFIX + 'TestAdded', own_elapsed_seconds=35)
+        self.rows[0]['tests'].append(new)
+        result = self.run_gate()
+        self.assertEqual({row['reason'] for row in result['failures']},
+                         {'existing-test-regression', 'new-test-budget'})
+        self.assertEqual(len(result['failures']), 2)
+
+    def test_first_actual_execution_of_known_skip_has_no_unbounded_allowance(self):
+        test = self.rows[0]['tests'][0]
+        test['own_elapsed_seconds'] = 90
+        self.assertEqual(self.run_gate()['failures'][0]['reason'], 'new-test-budget')
+        test.update(own_elapsed_seconds=1, parallel_descendants=101)
+        self.assertFalse(self.run_gate()['passed'])
+        test.update(status='skip', parallel_descendants=0, own_elapsed_seconds=0)
+        self.assertTrue(self.run_gate()['passed'])
+        test.update(status='pass', own_elapsed_seconds=90)
+        identity = {'configuration_sha256': 'e'*64, 'cohort': self.rows[0]['cohort']}
+        group = {'key': norm.digest(identity), 'identity': identity, 'tests': {
+            test['test_id']: {'observations': 1, 'own_elapsed_median_seconds': 1}}}
+        self.policy['baseline']['groups'] = [group]
+        for count in (1, 2):
+            group['tests'][test['test_id']]['observations'] = count
+            result = self.run_gate()
+            self.assertTrue(result['passed'])
+            self.assertIn('insufficient-comparable-baseline', [row['reason'] for row in result['warnings']])
 
     def test_fixture_budget_hard_failure_has_no_timing_override(self):
         ident = self.rows[0]['tests'][0]['test_id']
@@ -250,6 +335,40 @@ class GateTests(unittest.TestCase):
             log.write_text('\n'.join(json.dumps(row) for row in events))
             with self.assertRaisesRegex(ValueError, 'missing terminal'):
                 gate.normalize_workers([path], receipt())
+
+    def test_admission_rechecks_raw_compiled_assignment_and_bodies(self):
+        import test_go_parent_shards as parent_fixture
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            catalog = parent_fixture.catalog()
+            parent_fixture.evidence(root, catalog)
+            paths = sorted(root.glob('*/manifest.json'))
+            topology = dict(receipt(), source=parent_fixture.SOURCE['source'],
+                            tree=parent_fixture.SOURCE['tree'])
+            gate.verify_raw_coverage(paths, topology)
+            original = paths[0].read_text()
+            for mutate in (lambda m: m.update(catalog_sha256='0'*64),
+                           lambda m: m.update(coverage={}),
+                           lambda m: m['catalog']['source_proof'].update(tree='f'*40)):
+                manifest = json.loads(original)
+                mutate(manifest)
+                paths[0].write_text(json.dumps(manifest))
+                with self.assertRaises(ValueError):
+                    gate.verify_raw_coverage(paths, topology)
+            paths[0].write_text(original)
+            manifest = json.loads(original)
+            assignment = manifest['coverage']
+            package = next(iter(assignment['parents']))
+            log = paths[0].parent / parent_fixture.p.log_name(package)
+            events = parent_fixture.r.json_stream(log.read_text())
+            missing = assignment['parents'][package][0]
+            events = [e for e in events if e.get('Test', '').split('/')[0] != missing]
+            log.write_text(parent_fixture.rows(events))
+            # A successful manifest and enclosing pipeline cannot replace a
+            # missing actual selected parent body in the raw evidence.
+            self.assertTrue(manifest['success'])
+            with self.assertRaisesRegex(ValueError, 'raw compiled coverage invalid'):
+                gate.verify_raw_coverage(paths, topology)
 
     def test_json_duplicate_keys_nonfinite_and_symlink_rejected(self):
         with tempfile.TemporaryDirectory() as directory:

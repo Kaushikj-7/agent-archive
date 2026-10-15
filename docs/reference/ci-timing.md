@@ -969,7 +969,13 @@ separate from measured baseline timings: existing tests with fewer than three
 verified comparable observations are explicitly reported as insufficiently
 calibrated, not assigned invented historical durations. Comparison cohorts bind
 compiler/settings, runner image, and cache state. Different/unknown cohorts do
-not manufacture a regression comparison.
+not manufacture a regression comparison. Exact compiled inventories remain
+source-bound admission evidence, while comparison keys use configuration and
+cohort: adding a new parent does not erase the measured history of surviving
+parents. New identities receive only the new-test rules. A previously skipped
+parent with no actual admitted measurement also receives the new-cost time and
+family caps when it first passes. Continuing legitimate skips remain unmeasured;
+one or two real observations retain the insufficient-calibration rule.
 
 A new parent warns above 10 seconds and fails above 30 seconds. Measured cost is
 the greater of its own terminal Go Elapsed and its slowest descendant's terminal
@@ -989,7 +995,8 @@ Deterministic `work_budgets` bind a test, fixture, phase, and operation counter.
 Missing required counters and excess work fail independently of time. Repeated
 metrics for that exact phase are accumulated; parent and child phases are never
 summed or subtracted as disjoint durations. `parallel_budgets` can explicitly
-bound a new family's observed descendant count and elapsed-work indicator.
+bound a family's observed descendant count and elapsed-work indicator; these
+explicit limits remain enforced after the family enters the baseline.
 
 The initial policy records Test run `38775545530`, attempt 1, tested source
 `412cec705ce4b6c539f18e006f3b5c1a41b69d7a` and its paired successful
@@ -1013,7 +1020,7 @@ no end-to-end speedup claim and does not authorize extra benchmark campaigns.
 
 Proposed exceptions live in `scripts/ci_performance_exceptions.json`. Each entry
 has exactly one `test_id` or package `family`, `maximum_seconds`, nonempty
-`reason` and `owner`, and optional ISO-date `expires`. Large parallel-family
+`reason` and `owner`, and required ISO-date `expires`. Large parallel-family
 exceptions additionally need `maximum_parallel_descendants` and
 `maximum_parallel_elapsed_work_seconds`. Overlapping selectors are rejected.
 An exception cannot override missing evidence, source/coverage checks, correctness
@@ -1062,8 +1069,13 @@ committing that candidate. The command does not promote it or grant approval.
 It records real initial observations without fabricating additional sample size.
 Multiple comparable successful observations are required to establish relative
 budgets; updating existing baselines must preserve their reviewed sample
-provenance. Experimental, failed, partial, or source-mismatched inputs are not
-admitted. No scheduled benchmark campaign is required: use ordinary CI traffic.
+provenance. The admission CLI independently rechecks catalog version, exact
+source/tree, catalog digest, complete assignment, compiled discovery and selected
+raw parent bodies. Ordinary
+whole-package receipts do not contain separate individual compiled listings;
+review the original authenticated ZIP and digest proof as well. Experimental,
+failed, partial, truncated or source-mismatched inputs are not admitted. No
+scheduled benchmark campaign is required: use ordinary CI traffic.
 
 For additional comparable normal runs, repeat
 `--history-sample TOPOLOGY PIPELINE WORKERS`. Each sample undergoes the same

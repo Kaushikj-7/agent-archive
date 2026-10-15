@@ -34,6 +34,7 @@ def verified(rows, topology, pipeline):
     return tests, measured, {'source': topology['source'], 'tree': topology['tree'],
         'run_id': run['id'], 'run_attempt': run['run_attempt'], 'workers': topology['workers'],
         'inventory_sha256': normalize_ci_timing.digest(sorted(tests)),
+        'compiled_inventory_sha256': measured[0]['compiled_inventory_sha256'],
         'pipeline_sha256': normalize_ci_timing.digest(pipeline)}
 
 
@@ -45,14 +46,17 @@ def admit(policy, rows, topology, pipeline, history_samples=()):
         observations.extend(old_measured)
         pipelines.append(old_pipeline)
         proofs.append(old_proof)
-    candidate = ci_timing_history.candidate(observations, pipelines)
+    # Each sample already passed exact source, compiled inventory and physical
+    # allocation validation. Inventory additions must not erase comparison of
+    # surviving individual parents in the same execution configuration.
+    candidate = ci_timing_history.candidate(observations, pipelines, bind_inventory=False)
     # Current compiled/executed inventory defines admission. Removed historical
     # parents cannot become an allowance for a future reintroduced test.
     ids = sorted(tests)
     policy['baseline'] = {'inventory': ids, 'provenance': proof, 'samples': proofs,
         'metric': 'maximum-parent-or-descendant-terminal-elapsed',
         'groups': [{'key': group['key'],
-                    'identity': {key: group[key] for key in ('configuration_sha256', 'compiled_inventory_sha256', 'cohort')},
+                    'identity': {key: group[key] for key in ('configuration_sha256', 'cohort')},
                     'tests': {ident: value for ident, value in group['tests'].items() if ident in tests}}
                    for group in candidate['groups']]}
     return gate.policy_check(policy)
@@ -72,14 +76,14 @@ def main():
     try:
         topology = gate.read(args.topology)
         paths = sorted(args.workers.glob('*/manifest.json'))
-        rows = gate.normalize_workers(paths, topology)
+        rows = gate.normalize_workers(paths, topology, verify_coverage=True)
         if len(args.history_sample) > 30:
             raise ValueError('history exceeds bounded ordinary sample count')
         history = []
         for topology_path, pipeline_path, workers_path in args.history_sample:
             old_topology = gate.read(Path(topology_path))
             old_paths = sorted(Path(workers_path).glob('*/manifest.json'))
-            history.append((gate.normalize_workers(old_paths, old_topology), old_topology, gate.read(Path(pipeline_path))))
+            history.append((gate.normalize_workers(old_paths, old_topology, verify_coverage=True), old_topology, gate.read(Path(pipeline_path))))
         result = admit(gate.read(args.policy), rows, topology, gate.read(args.pipeline), history)
         args.output.write_text(json.dumps(result, indent=2) + '\n')
         print('Review candidate only: commit after validating source evidence and maintainer review; never automatically promote.')
