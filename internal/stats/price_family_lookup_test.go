@@ -83,3 +83,28 @@ func TestFamilyLookupPreservesHandBuiltTableRules(t *testing.T) {
 		t.Fatal("empty snapshot listed a model", family, listed)
 	}
 }
+
+func BenchmarkFamilyLookup(b *testing.B) {
+	table := DefaultPriceTable()
+	queries := []string{
+		"claude-opus-5", "  CLAUDE-OPUS-5-20250101 ", "claude-opus-5[1m]",
+		"us.anthropic.claude-opus-5-20250101-v1:0", "gpt-5", "vendor/gpt-5",
+		"opus", "ft:gpt-4o:acme::abc", "acme-private-model", "",
+	}
+	for _, implementation := range []struct {
+		name   string
+		lookup func(string) (string, bool)
+	}{
+		{"current-table", table.Family},
+		{"snapshot", table.FamilyLookup()},
+	} {
+		b.Run(implementation.name, func(b *testing.B) {
+			b.ReportAllocs()
+			i := 0
+			for b.Loop() {
+				implementation.lookup(queries[i%len(queries)])
+				i++
+			}
+		})
+	}
+}
