@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -192,6 +193,11 @@ func TestDiscoveryChargesItsLookupCallsOnce(t *testing.T) {
 	if lookup.remaining < before-elapsed {
 		t.Fatalf("discovery charged %v of the allowance in %v", before-lookup.remaining, elapsed)
 	}
+	// Nor does it charge less than its lookup calls took: discovery cannot
+	// spend more of the allowance than it is charged.
+	if spent := time.Duration(slow.calls) * slow.delay; before-lookup.remaining < spent {
+		t.Fatalf("discovery charged %v of the allowance, less than its lookup calls' %v", before-lookup.remaining, spent)
+	}
 }
 
 // The collector's allowance includes its own header probes: discovery using
@@ -246,5 +252,72 @@ func TestIndexReadCutOffByADeadlineIsNotKeptAsUnavailable(t *testing.T) {
 	}
 	if set.Current == nil || set.Current.Path != path {
 		t.Fatalf("current=%+v, want %s from the native index", set.Current, path)
+	}
+}
+
+// An operation's end turns its error into the allowance-spent refusal only
+// when the allowance ran out inside it: its own deadline passed while its
+// caller's context had not ended. A failure after the caller's context ended
+// (the pass's deadline, or a cancellation), or while allowance was left,
+// keeps its own error, so a genuine failure is not put off as a spent
+// allowance.
+func TestOperationEndConvertsOnlyAnAllowanceRunningOut(t *testing.T) {
+	t.Parallel()
+	genuine := agentapi.Wrap(agentapi.Unsafe, errors.New("genuine failure"))
+	tests := []struct {
+		name      string
+		allowance time.Duration
+		callerFor time.Duration // the caller's deadline; zero for none
+		cancel    bool          // the caller cancels before the operation ends
+		err       error
+		converted bool
+	}{
+		{name: "allowance ran out", allowance: time.Millisecond, err: genuine, converted: true},
+		{name: "allowance ran out, context error", allowance: time.Millisecond, err: context.DeadlineExceeded, converted: true},
+		{name: "allowance ran out, no error", allowance: time.Millisecond},
+		{name: "allowance left", allowance: time.Hour, err: genuine},
+		{name: "caller cancelled", allowance: time.Millisecond, cancel: true, err: genuine},
+		{name: "caller cancelled, context error", allowance: time.Millisecond, cancel: true, err: context.Canceled},
+		{name: "caller deadline first", allowance: time.Hour, callerFor: time.Millisecond, err: context.DeadlineExceeded},
+		{name: "caller deadline just after the allowance", allowance: time.Millisecond, callerFor: 2 * time.Millisecond, err: genuine},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			parent := t.Context()
+			if tt.callerFor > 0 {
+				var cancelDeadline context.CancelFunc
+				parent, cancelDeadline = context.WithTimeout(parent, tt.callerFor)
+				defer cancelDeadline()
+			}
+			caller, cancel := context.WithCancel(parent)
+			defer cancel()
+			lookup := &CodexRolloutLookup{remaining: tt.allowance}
+			operation, done, err := lookup.beginOperation(caller)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tt.allowance < time.Hour || tt.callerFor > 0 {
+				<-operation.Done()
+				// Let a caller deadline just after the allowance pass too.
+				time.Sleep(10 * time.Millisecond)
+			}
+			if tt.cancel {
+				cancel()
+			}
+			err = tt.err
+			done(&err)
+			converted := false
+			var source *agentapi.SourceError
+			if errors.As(err, &source) {
+				converted = source.Kind == agentapi.Limit && source.Cause == agentapi.CauseLookupAllowanceSpent
+			}
+			if converted != tt.converted {
+				t.Fatalf("err=%v converted=%v, want converted=%v", err, converted, tt.converted)
+			}
+			if !tt.converted && !errors.Is(err, tt.err) {
+				t.Fatalf("err=%v, want %v kept", err, tt.err)
+			}
+		})
 	}
 }
