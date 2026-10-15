@@ -207,7 +207,8 @@ func runContentSearchPass(ctx context.Context, home string, expected config.Conf
 	if err == nil && opts.session == "" && progress.Failed > 0 {
 		err = searchFailure("refresh_failed")
 	}
-	result.Discovery, result.Progress, result.Observation, result.Complete = discovery, progress, observation, complete
+	// Historical coverage can remain complete when this refresh attempt fails.
+	result.Discovery, result.Progress, result.Observation, result.Complete = discovery, progress, observation, complete && err == nil
 	return result, err
 }
 
