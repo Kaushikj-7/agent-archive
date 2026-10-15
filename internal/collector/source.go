@@ -21,7 +21,7 @@ import (
 
 // sourceState carries a provider observation and legacy equality facts.
 type sourceState struct {
-	binding *archive.CodexSourceBinding
+	binding *agentapi.SourceBinding
 	// relocated is where an unbound Codex registration's rollout was read
 	// from when Codex had renamed it (see agentapi.SourceRelocation).
 	relocated   string
@@ -77,6 +77,9 @@ func observe(kind archive.SourceKind, o agentapi.SourceObservation) sourceState 
 }
 
 func sourceRef(reg archive.SessionRegistration) agentapi.SourceRef {
+	if reg.NativeBinding != nil {
+		return agentapi.SourceRef{Kind: archive.SourceKindFile, Path: reg.NativeBinding.Path, Key: reg.NativeSessionID}
+	}
 	if reg.CodexBinding != nil {
 		return agentapi.SourceRef{Kind: archive.SourceKindFile, Path: reg.CodexBinding.Path, Key: reg.NativeSessionID}
 	}
@@ -97,12 +100,26 @@ func newSourceReader(reg archive.SessionRegistration, opts Options) (sourceReade
 	if reg.ReadsTranscriptFile() && reg.TranscriptPath == "" {
 		return nil, false
 	}
+	var nativeRoot *archive.NativeRoot
+	for _, root := range opts.NativeRoots {
+		if root.Agent == reg.Harness.Name {
+			copyRoot := root
+			nativeRoot = &copyRoot
+			break
+		}
+	}
+	if reg.NativeBinding != nil && (nativeRoot == nil || nativeRoot.Validate() != nil || reg.NativeBinding.RootRevision != nativeRoot.Revision) {
+		return nil, false
+	}
+	if nativeRoot != nil && reg.NativeBinding == nil && reg.TranscriptPath != "" {
+		return nil, false
+	}
 	var allowed func(string) bool
 	if reg.HistoricalProject != nil {
 		allowed = opts.HistoricalSourceAllowed
 	}
 	return providerReader{historicalSourceAllowed: allowed,
-		ref: sourceRef(reg), harness: reg.Harness.Name, startedAt: reg.SessionStartedAt,
+		nativeRoot: nativeRoot, nativeLocators: opts.NativeLocators, ref: sourceRef(reg), harness: reg.Harness.Name, startedAt: reg.SessionStartedAt,
 		subagentMetadata: reg.ParentSessionID != "", sources: opts.Sources,
 		passes: opts.sourcePasses, resourceOwner: opts.retainedOwner, database: opts.CursorDatabase, rollouts: opts.CodexRollouts, pendingRollouts: opts.PendingCodexRollouts,
 		admission: sourceAdmission(reg),
@@ -113,6 +130,8 @@ func newSourceReader(reg archive.SessionRegistration, opts Options) (sourceReade
 // providerReader keeps only read dependencies; boxing whole registrations and
 // collector options would allocate their unrelated policy fields per source.
 type providerReader struct {
+	nativeRoot              *archive.NativeRoot
+	nativeLocators          agentapi.NativeLocatorLookup
 	historicalSourceAllowed func(string) bool
 	pendingRollouts         func() agentapi.CodexRolloutLookup
 	resourceOwner           *sessionScan
@@ -208,8 +227,16 @@ func (r providerReader) binding() (agentapi.SourceProvider, agentapi.TranscriptF
 }
 
 func (r providerReader) pass(ctx context.Context, p agentapi.SourceProvider, key string) (agentapi.SourcePass, func() error, error) {
+	if r.nativeRoot != nil {
+		if err := r.nativeRoot.Validate(); err != nil {
+			return nil, nil, err
+		}
+		if r.nativeRoot.Agent != r.harness {
+			return nil, nil, agentapi.ErrInvalidSourceBinding
+		}
+	}
 	if r.passes != nil && r.historicalSourceAllowed == nil {
-		pass, err := r.passes.get(ctx, sourcePassKey{name: key, root: r.discoveryRoot(), discovery: r.discovery != nil, legacy: r.harness == archive.HarnessCodex && r.admission.Binding == nil && (r.discovery == nil || r.discovery.Origin != archive.SessionOriginDiscovery)}, p)
+		pass, err := r.passes.get(ctx, sourcePassKey{name: key, root: r.discoveryRoot(), discovery: r.discovery != nil, nativeRoot: rootValue(r.nativeRoot), legacy: r.harness == archive.HarnessCodex && r.admission.Binding == nil && (r.discovery == nil || r.discovery.Origin != archive.SessionOriginDiscovery)}, p)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -217,6 +244,12 @@ func (r providerReader) pass(ctx context.Context, p agentapi.SourceProvider, key
 		return pass, func() error { r.passes.active--; return nil }, nil
 	}
 	env := sourceEnvironment(r.discovery, r.database)
+	if r.nativeRoot != nil {
+		env.NativeRoot = r.nativeRoot
+		env.Files = sourcefacts.RootOpener{Root: r.nativeRoot.Canonical}
+		env.Policy = transcriptio.OpenPolicy{Root: r.nativeRoot.Canonical, RejectSymlinks: true}
+	}
+	env.NativeLocators = r.nativeLocators
 	env.HistorySourceAllowed = r.historicalSourceAllowed
 	env.CodexRollouts = r.rollouts
 	if r.resourceOwner != nil {
@@ -269,12 +302,12 @@ func (r providerReader) Signature(ctx context.Context) (out sourceState, err err
 	defer func() { err = errors.Join(err, closePass()) }()
 	if validator, ok := p.(agentapi.SourceAdmissionSignature); ok && r.admission.NativeID != "" {
 		if err := validator.ValidateSourceAdmission(ctx, r.ref, r.admission); err != nil {
-			legacy := r.discovery == nil && r.admission.Binding == nil && r.rollouts == nil && (agentapi.Failure(err) == agentapi.FormatMismatch || agentapi.Failure(err) == agentapi.Unavailable)
+			legacy := r.nativeRoot == nil && r.discovery == nil && r.admission.Binding == nil && r.rollouts == nil && (agentapi.Failure(err) == agentapi.FormatMismatch || agentapi.Failure(err) == agentapi.Unavailable)
 			if !legacy {
 				return out, r.observePendingHistory(ctx, err)
 			}
 		}
-	} else if r.discovery != nil {
+	} else if r.discovery != nil || r.nativeRoot != nil {
 		return out, errors.New("confined source admission validator required")
 	}
 
@@ -475,10 +508,11 @@ func (o Options) cursorDatabase() string { return o.CursorDatabase }
 // not: a copy of every Cursor chat left in the temporary directory is worth
 // a failed pass (the next sweep removes it once it is stale).
 type sourcePassKey struct {
-	name      string
-	root      string
-	discovery bool
-	legacy    bool
+	name       string
+	nativeRoot archive.NativeRoot
+	root       string
+	discovery  bool
+	legacy     bool
 }
 
 type sourcePassSet struct {
@@ -560,6 +594,12 @@ func (s *sourcePassSet) get(ctx context.Context, key sourcePassKey, p agentapi.S
 		e.Files = sourcefacts.RootOpener{Root: key.root}
 		e.Policy = transcriptio.OpenPolicy{Root: key.root, RejectSymlinks: true}
 	}
+	if key.nativeRoot.Agent != "" {
+		root := key.nativeRoot
+		e.NativeRoot = &root
+		e.Files = sourcefacts.RootOpener{Root: root.Canonical}
+		e.Policy = transcriptio.OpenPolicy{Root: root.Canonical, RejectSymlinks: true}
+	}
 	pass, err := p.OpenPass(ctx, e)
 	if err == nil {
 		s.passes[key] = pass
@@ -572,7 +612,7 @@ func openCursorPass(_ []archive.SessionRegistration, opts *Options) func() error
 	if shared, ok := opts.CodexRollouts.(agentapi.CodexRolloutResourceBudget); ok && shared.NativeReadBudget() != nil {
 		budget = shared.NativeReadBudget()
 	}
-	opts.sourcePasses = &sourcePassSet{env: agentapi.SourceEnvironment{ReadBudget: budget, RequireConfinedHistory: true, Database: opts.cursorDatabase(), CodexRollouts: opts.CodexRollouts}, passes: map[sourcePassKey]agentapi.SourcePass{}}
+	opts.sourcePasses = &sourcePassSet{env: agentapi.SourceEnvironment{ReadBudget: budget, RequireConfinedHistory: true, Database: opts.cursorDatabase(), CodexRollouts: opts.CodexRollouts, NativeLocators: opts.NativeLocators}, passes: map[sourcePassKey]agentapi.SourcePass{}}
 	return func() error {
 		var err error
 		for _, p := range opts.sourcePasses.passes {
@@ -700,6 +740,9 @@ func sourceSemantics(sources agentapi.SourcesLookup, reg archive.SessionRegistra
 
 func sourceAdmission(reg archive.SessionRegistration) agentapi.SourceAdmission {
 	if reg.Harness.Name != "codex" {
+		if reg.NativeBinding != nil {
+			return agentapi.SourceAdmission{NativeID: reg.NativeSessionID, Binding: &agentapi.SourceBinding{Native: reg.NativeBinding}}
+		}
 		return agentapi.SourceAdmission{}
 	}
 	cwd := ""
@@ -720,38 +763,30 @@ func sourceAdmission(reg archive.SessionRegistration) agentapi.SourceAdmission {
 		producerOriginator = reg.DiscoveryProducerOriginator
 		producerSource = reg.DiscoveryProducerSource
 	}
-	return agentapi.SourceAdmission{NativeID: reg.NativeSessionID, Cwd: cwd, Binding: reg.CodexBinding, NativeCreatedAt: createdAt, InitialProducerVersion: producerVersion, InitialProducerOriginator: producerOriginator, InitialProducerSource: producerSource}
+	return agentapi.SourceAdmission{NativeID: reg.NativeSessionID, Cwd: cwd, Binding: agentapi.BindCodex(reg.CodexBinding), NativeCreatedAt: createdAt, InitialProducerVersion: producerVersion, InitialProducerOriginator: producerOriginator, InitialProducerSource: producerSource}
 }
 
-func (r providerReader) snapshotBinding(ctx context.Context, snap agentapi.SourceSnapshot) (*archive.CodexSourceBinding, error) {
-	var binding *archive.CodexSourceBinding
+func (r providerReader) snapshotBinding(ctx context.Context, snap agentapi.SourceSnapshot) (*agentapi.SourceBinding, error) {
+	var binding *agentapi.SourceBinding
 	if evidenceReader, ok := snap.(agentapi.SourceAdmissionEvidence); ok && r.admission.NativeID != "" {
-		evidence, evidenceErr := evidenceReader.AdmissionEvidence(ctx, r.admission)
-		if evidenceErr != nil {
-			return nil, evidenceErr
-		}
-		if evidence.Binding.RequiresOwnTask() && !evidence.Task.ValidNativeCreation(evidence.Binding.NativeCreatedAt) {
-			return nil, agentapi.Wrap(agentapi.Unavailable, errors.New("first own task does not establish native execution"))
-		}
-		if r.admission.Binding != nil && !r.admission.Binding.FirstNativeTaskAt.IsZero() {
-			if evidence.Binding.RequiresOwnTask() && (!evidence.Task.ValidNativeCreation(evidence.Binding.NativeCreatedAt) ||
-				!evidence.Task.StartedAt.Equal(r.admission.Binding.FirstNativeTaskAt) ||
-				evidence.Task.TurnID != r.admission.Binding.FirstNativeTaskID) {
-				return nil, agentapi.Wrap(agentapi.Unavailable, errors.New("first own task admission evidence changed"))
-			}
-			evidence.Binding.FirstNativeTaskAt = r.admission.Binding.FirstNativeTaskAt
-			evidence.Binding.FirstNativeTaskID = r.admission.Binding.FirstNativeTaskID
-		} else if evidence.Task.Native && evidence.Task.LocalExecution {
-			evidence.Binding.FirstNativeTaskAt = evidence.Task.StartedAt
-			evidence.Binding.FirstNativeTaskID = evidence.Task.TurnID
+		evidence, err := evidenceReader.AdmissionEvidence(ctx, r.admission)
+		if err != nil {
+			return nil, err
 		}
 		binding = &evidence.Binding
+		if err := binding.ValidateFor(r.harness); err != nil {
+			return nil, err
+		}
+		if err := applyOwnTaskEvidence(binding.Codex, r.admission.Binding.CodexBinding(), evidence.Task); err != nil {
+			return nil, err
+		}
+
 	} else {
 		if validator, ok := snap.(agentapi.SourceAdmissionValidator); ok && r.admission.NativeID != "" {
 			if err := validator.ValidateAdmission(ctx, r.admission); err != nil {
 				return nil, err
 			}
-		} else if r.discovery != nil {
+		} else if r.discovery != nil || r.nativeRoot != nil {
 			return nil, errors.New("confined source admission validator required")
 		}
 		if facts, ok := snap.(agentapi.SourceAdmissionFacts); ok && r.admission.NativeID != "" {
@@ -762,10 +797,21 @@ func (r providerReader) snapshotBinding(ctx context.Context, snap agentapi.Sourc
 			binding = &factsBinding
 		}
 	}
-	if binding != nil && r.discovery != nil && r.discovery.Origin == archive.SessionOriginDiscovery && !binding.NativeCreatedAt.Equal(r.discovery.SessionStartedAt) {
-		return nil, errors.New("native original creation evidence changed")
+	if err := binding.ValidateFor(r.harness); err != nil {
+		return nil, err
+	}
+	if r.nativeRoot != nil && (binding == nil || binding.Native == nil) {
+		return nil, agentapi.ErrInvalidSourceBinding
+	}
+	if binding != nil && binding.Native != nil {
+		if err := r.validateNativeBinding(binding.Native); err != nil {
+			return nil, err
+		}
 	}
 
+	if codex := binding.CodexBinding(); codex != nil && r.discovery != nil && r.discovery.Origin == archive.SessionOriginDiscovery && !codex.NativeCreatedAt.Equal(r.discovery.SessionStartedAt) {
+		return nil, errors.New("native original creation evidence changed")
+	}
 	return binding, nil
 }
 
@@ -778,4 +824,40 @@ func (r providerReader) filterOwned(ctx context.Context, filter agentapi.Transcr
 		return out, err
 	}
 	return filter.Filter(ctx, in, c)
+}
+
+func rootValue(root *archive.NativeRoot) archive.NativeRoot {
+	if root == nil {
+		return archive.NativeRoot{}
+	}
+	return *root
+}
+
+func applyOwnTaskEvidence(codex, known *archive.CodexSourceBinding, task agentapi.OwnTaskFacts) error {
+	if codex == nil {
+		return nil
+	}
+
+	if codex.RequiresOwnTask() && !task.ValidNativeCreation(codex.NativeCreatedAt) {
+		return agentapi.Wrap(agentapi.Unavailable, errors.New("first own task does not establish native execution"))
+	}
+
+	if known != nil && !known.FirstNativeTaskAt.IsZero() {
+		if codex.RequiresOwnTask() && (!task.ValidNativeCreation(codex.NativeCreatedAt) || !task.StartedAt.Equal(known.FirstNativeTaskAt) || task.TurnID != known.FirstNativeTaskID) {
+			return agentapi.Wrap(agentapi.Unavailable, errors.New("first own task admission evidence changed"))
+		}
+		codex.FirstNativeTaskAt, codex.FirstNativeTaskID = known.FirstNativeTaskAt, known.FirstNativeTaskID
+	} else if task.Native && task.LocalExecution {
+		codex.FirstNativeTaskAt, codex.FirstNativeTaskID = task.StartedAt, task.TurnID
+	}
+	return nil
+}
+func (r providerReader) validateNativeBinding(native *archive.NativeSourceBinding) error {
+	if r.nativeRoot == nil || native.Agent != r.nativeRoot.Agent || native.RootRevision != r.nativeRoot.Revision || native.NativeID != r.admission.NativeID || !local.PathWithin(native.Path, r.nativeRoot.Canonical) || native.Path != r.ref.Path {
+		return agentapi.ErrInvalidSourceBinding
+	}
+	if r.admission.Binding != nil && !native.PreservesFacts(r.admission.Binding.Native) {
+		return agentapi.ErrInvalidSourceBinding
+	}
+	return nil
 }

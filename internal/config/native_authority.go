@@ -1,0 +1,208 @@
+package config
+
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"io"
+	"strings"
+)
+
+// nativeAuthorityWriter wraps an exact base fence instead of replacing its
+// permission floors or mutually exclusive storage-mode requirements. SchemaVersion
+// in memory still describes that base; 16 is exclusively the outer wire version.
+const nativeAuthorityWriter configWriter = "native-authority-v16"
+
+type nativeAuthorityVersion struct {
+	Version int             `json:"version"`
+	Writer  configWriter    `json:"writer"`
+	Base    json.RawMessage `json:"base"`
+}
+
+func (c Config) validateNativeRoots() error {
+	if len(c.NativeRoots) > 16 {
+		return errors.New("too many native source roots")
+	}
+	seen := map[string]bool{}
+	for _, root := range c.NativeRoots {
+		if err := root.Validate(); err != nil {
+			return err
+		}
+		if root.Agent == "codex" || seen[root.Agent] {
+			return errors.New("native roots require one non-Codex root per agent")
+		}
+		seen[root.Agent] = true
+	}
+	return nil
+}
+
+// MarshalJSON preserves every preexisting writer constraint beneath the sticky
+// native-authority fence, including configs with no roots after removal.
+func (c Config) MarshalJSON() ([]byte, error) {
+	if len(c.NativeRoots) > 0 {
+		c.NativeAuthorityProtection = true
+	}
+	if err := c.validateNativeRoots(); err != nil {
+		return nil, err
+	}
+	raw, err := c.marshalBaseJSON()
+	if err != nil || !c.NativeAuthorityProtection {
+		return raw, err
+	}
+	var doc map[string]json.RawMessage
+	if err = json.Unmarshal(raw, &doc); err != nil {
+		return nil, err
+	}
+	base := doc["schema_version"]
+	if bytes.Equal(base, []byte("0")) {
+		base = json.RawMessage("1")
+	}
+	version, err := json.Marshal(nativeAuthorityVersion{Version: 16, Writer: nativeAuthorityWriter, Base: base})
+	if err != nil {
+		return nil, err
+	}
+	doc["schema_version"] = version
+	return json.Marshal(doc)
+}
+
+func unwrapNativeConfig(raw []byte) ([]byte, bool, error) {
+	if err := checkNativeConfigSelectors(raw); err != nil {
+		return nil, false, err
+	}
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return nil, false, err
+	}
+	versionRaw := bytes.TrimSpace(doc["schema_version"])
+	if len(versionRaw) == 0 || versionRaw[0] != '{' {
+		if doc["native_roots"] != nil || doc["native_authority_protection"] != nil {
+			return nil, false, errors.New("native authority requires its permanent writer fence")
+		}
+		return raw, false, nil
+	}
+	var peek struct {
+		Version int          `json:"version"`
+		Writer  configWriter `json:"writer"`
+	}
+	if err := json.Unmarshal(versionRaw, &peek); err != nil {
+		return nil, false, err
+	}
+	if peek.Version != 16 && peek.Writer != nativeAuthorityWriter {
+		return raw, false, nil
+	}
+	if err := exactAuthorityObject(versionRaw, []string{"version", "writer", "base"}); err != nil {
+		return nil, false, err
+	}
+	var version nativeAuthorityVersion
+	decoder := json.NewDecoder(bytes.NewReader(versionRaw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&version); err != nil {
+		return nil, false, err
+	}
+	if err := decoder.Decode(new(any)); err != io.EOF {
+		return nil, false, errors.New("invalid native authority fence")
+	}
+	if version.Version != 16 || version.Writer != nativeAuthorityWriter || !bytes.Equal(bytes.TrimSpace(doc["native_authority_protection"]), []byte("true")) {
+		return nil, false, errors.New("native authority requires its exact permanent writer fence")
+	}
+	base := bytes.TrimSpace(version.Base)
+	if !bytes.Equal(base, []byte("1")) {
+		if err := exactAuthorityObject(base, []string{"version", "writer"}); err != nil {
+			return nil, false, err
+		}
+		var lower writerVersion
+		dec := json.NewDecoder(bytes.NewReader(base))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&lower); err != nil || !supportedWriterVersion(lower) {
+			return nil, false, errors.New("native authority requires a supported exact base fence")
+		}
+	}
+	doc["schema_version"] = base
+	unwrapped, err := json.Marshal(doc)
+	return unwrapped, true, err
+}
+
+func exactAuthorityObject(raw []byte, names []string) error {
+	d := json.NewDecoder(bytes.NewReader(raw))
+	token, err := d.Token()
+	if err != nil || token != json.Delim('{') {
+		return errors.New("invalid authority object")
+	}
+	seen := map[string]bool{}
+	for d.More() {
+		token, err = d.Token()
+		if err != nil {
+			return err
+		}
+		key, ok := token.(string)
+		if !ok {
+			return errors.New("invalid authority key")
+		}
+		known := false
+		for _, name := range names {
+			known = known || key == name
+		}
+		if !known || seen[key] {
+			return errors.New("ambiguous authority object")
+		}
+		seen[key] = true
+		var value json.RawMessage
+		if err = d.Decode(&value); err != nil || bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+			return errors.New("invalid authority value")
+		}
+	}
+	if len(seen) != len(names) {
+		return errors.New("incomplete authority object")
+	}
+	return nil
+}
+
+func checkNativeConfigSelectors(raw []byte) error {
+	d := json.NewDecoder(bytes.NewReader(raw))
+	token, err := d.Token()
+	if err != nil || token != json.Delim('{') {
+		return errors.New("invalid configuration object")
+	}
+	seen := map[string]int{}
+	exact := true
+	native := false
+	for d.More() {
+		token, err = d.Token()
+		if err != nil {
+			return err
+		}
+		key, ok := token.(string)
+		if !ok {
+			return errors.New("invalid configuration key")
+		}
+		var value json.RawMessage
+		if err = d.Decode(&value); err != nil {
+			return err
+		}
+		for _, name := range []string{"schema_version", "native_authority_protection", "native_roots", "staged_selection_protection", "settled_cursor_selection_protection", "scoped_picker_protection"} {
+			if strings.EqualFold(key, name) {
+				seen[name]++
+				exact = exact && key == name && seen[name] == 1
+				if name == "native_authority_protection" || name == "native_roots" {
+					native = true
+					exact = exact && !bytes.Equal(bytes.TrimSpace(value), []byte("null"))
+				}
+			}
+		}
+	}
+	if native && (!exact || seen["schema_version"] != 1) {
+		return errors.New("ambiguous native configuration authority")
+	}
+	return nil
+}
+
+func validateNativeRootTransition(next, previous Config) error {
+	for _, root := range next.NativeRoots {
+		for _, old := range previous.NativeRoots {
+			if root.Agent == old.Agent && root.Revision == old.Revision && (root.Canonical != old.Canonical || root.Configured != old.Configured) {
+				return errors.New("native root changes require a new reconciliation revision")
+			}
+		}
+	}
+	return nil
+}

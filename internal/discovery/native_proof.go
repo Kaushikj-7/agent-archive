@@ -74,7 +74,13 @@ func (p *nativeProofPasses) Prove(ctx context.Context, c Candidate) (out Candida
 	if err != nil {
 		return c, err
 	}
-	facts, task := evidence.Binding, evidence.Task
+	if err := evidence.Binding.ValidateFor("codex"); err != nil {
+		return c, err
+	}
+	if evidence.Binding.Codex == nil {
+		return c, agentapi.ErrInvalidSourceBinding
+	}
+	facts, task := *evidence.Binding.Codex, evidence.Task
 
 	if !task.ValidNativeCreation(facts.NativeCreatedAt) {
 		if task.Seen {
