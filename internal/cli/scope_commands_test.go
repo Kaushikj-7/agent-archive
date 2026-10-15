@@ -394,7 +394,7 @@ func TestScopeIsNamedAfterItsProjectInEveryView(t *testing.T) {
 	}
 	var headings []string
 	for _, screen := range a.browserRun(t, []string{"a", "a", "q"}, "list", "--all-projects") {
-		if strings.Contains(screen, "type a number") {
+		if strings.Contains(screen, "number + Enter jump") {
 			headings = append(headings, headingOf(screen))
 		}
 	}
@@ -448,7 +448,7 @@ func TestKeyBrowserTogglesTheScopeWithA(t *testing.T) {
 		screens := a.browserRun(t, []string{"a", "a", "q"}, args...)
 		var headings []string
 		for _, screen := range screens {
-			if strings.Contains(screen, "sessions") && strings.Contains(screen, "type a number") {
+			if strings.Contains(screen, "sessions") && strings.Contains(screen, "number + Enter jump") {
 				headings = append(headings, headingOf(screen))
 			}
 		}
@@ -506,7 +506,7 @@ func TestKeyBrowserFallsBackWhenTheScopeIsEmpty(t *testing.T) {
 	screens := a.browserRun(t, []string{"a", "q"}, "list")
 	var headings []string
 	for _, screen := range screens {
-		if strings.Contains(screen, "type a number") {
+		if strings.Contains(screen, "number + Enter jump") {
 			headings = append(headings, headingOf(screen))
 		}
 	}
@@ -551,7 +551,7 @@ func TestKeyBrowserToggleToAnEmptyScopeFallsBack(t *testing.T) {
 	a.env.WorkingDir = func() (string, error) { return empty, nil }
 	var headings []string
 	for _, screen := range a.browserRun(t, []string{"a", "q"}, "list", "--all-projects") {
-		if strings.Contains(screen, "type a number") {
+		if strings.Contains(screen, "number + Enter jump") {
 			headings = append(headings, headingOf(screen))
 		}
 	}
