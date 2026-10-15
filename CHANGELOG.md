@@ -6,6 +6,58 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- The session browser (`list`, bare `show`, `show <words>`, `handoff` on a
+  terminal that reads keys) has a cursor: `▸` marks a row, ↑ ↓ and the mouse
+  wheel move it, PgUp/PgDn (space, `n`, `p`), Home and End move it a screen
+  or to the ends, and the list scrolls to keep it in view, also across a
+  resize. Enter with nothing typed opens the highlighted row (it used to
+  quit; `q` and Ctrl-D still do), and a typed number or short ID with Enter
+  still opens that row. A strip under the list spells out the highlighted
+  session: its full title, then its agent, project, PR, subagents, when it
+  was last active and its short ID; a very short window leaves it out. The
+  three lines under the list become one footer line, the keys
+  (`/ search`) and which rows are on screen (`1–14 of 86`); the
+  hidden-subagent count moves to the heading (`· 403 subagents hidden`),
+  `o older` joins the footer, and the prompt reads `Number or ID to show:`.
+  Esc out of the `/` filter keeps the highlighted session when the plain
+  list shows it. Piped output and the line-mode
+  picker keep their count line and flag advice.
+- A Codex thread whose abandoned branches fit while being read, but left too
+  little of the per-session read memory to publish the thread, is captured
+  without those branches instead of being recorded as too large to capture.
+  Whenever a branch is left out from a session that is otherwise captured,
+  `status` now says so ("Codex left out part of a session"), with only the
+  app, the project and the time; `status --json` carries it as the capture
+  diagnostic `revision_left_out`.
+- Stop failing every Codex session in a pass that found many new Codex
+  files. Finding where a Codex thread's rollouts are has a time allowance
+  per pass, and discovery could use all of it, so each Codex session the
+  collector then read failed ("filter transcript: source limit") while
+  Claude Code sessions published. The collector now has its own allowance.
+  When that runs out too, the Codex session being read is put off until the
+  next pass instead of failing (`sync` and `status` say "left for the next
+  pass after this pass's time for finding Codex rollouts ran out";
+  `deferred_sessions` code `lookup_allowance`), and the pass's remaining
+  Codex sessions are left for the next pass without being opened, so they
+  no longer slow the rest of the pass. A Codex session whose lookup is cut
+  off part way when the allowance runs out is put off the same way rather
+  than failing with "context deadline exceeded"; a native index read cut
+  off by a deadline is read again later in the pass instead of being
+  treated as unavailable; and discovery's lookups are charged to the
+  allowance once, not twice.
+- Stop a new session from waiting for hours behind a long upload queue.
+  Each collection pass now starts with the most recently started session
+  that was not imported (a session before its own subagents), and gives
+  such sessions one slot in every four; the rest still
+  go oldest first, so imports keep uploading their oldest sessions first.
+  Codex subagent sessions whose parent session is not registered yet go
+  after every other queued session. A session a pass runs out of time
+  before reaching is now listed by `status` as "queued for the next pass,
+  N ahead" instead of "waiting for its first upload", `sync` adds "N left
+  for the next pass" to its summary, and `status --json` reports them in
+  `collector.unreached_sessions` and as the `queued` uploading state.
+- Add inert native source authority contracts and permanent writer protection, preserving existing agent capture behavior. No Muse capture operations are enabled.
+
 - The session list fits your terminal: every session is one line that never
   wraps, as `#`, the agent (a colored dot and "Claude", "Codex" or "Cursor"),
   a readable title cut at a word, the project, the PR and a short time ("2m",
@@ -109,6 +161,22 @@ and the cleanup repair do not turn either failed tagged gate into a pass.
   earlier revisions when the scan has seen them and they can be read; one that
   cannot be read, or does not fit beside the thread's own history, is left out
   rather than failing the thread's capture.
+- Stop losing Claude Code subagents (and holding back new sessions) while
+  Codex discovery works through a backlog. Each newly discovered Codex session
+  used to withdraw the whole local identity census until the next collector
+  pass, so every hook that needed a new identity in the meantime was refused:
+  `status` showed "local session identity bookkeeping needs collector
+  recovery" and `identity_recovery` pending with phase `unknown`, and a Claude
+  Code subagent finishing in that window was never captured. Discovery now
+  asks for proof about its own session only; the census stays in force for
+  everything else, and the next pass certifies the discovered session without
+  a full rebuild. A subagent that finishes while recovery is genuinely pending,
+  or while the capture lock is busy, is now queued and replayed by the next
+  collector pass instead of being dropped. Sessions and subagents refused while
+  a full recovery runs no longer restart it, so it can finish on a busy
+  machine. Downgrading to an earlier version while such a subagent is queued
+  makes that version's collector report an admission-intent error for it each
+  pass until it expires after 24 hours; nothing else is held back.
 
 - Preserve the primary validation failure alongside cleanup diagnostics, and
   continue bounded cleanup of other owned processes after signal, poll or wait

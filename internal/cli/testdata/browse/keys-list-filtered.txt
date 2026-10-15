@@ -2,6 +2,9 @@ agent-archive · "208" matches 1 · claude · Esc clear
 TODAY
   3  Add a status line for paused collection +1                #212  38m
 ▸      ↳ Review and fix PR #208 (5b-1b)                        #208   3h
-All · ↑↓ move · Enter show · Esc clear
-
+────────────────────────────────────────────────────────────────────────────────────────────────────
+Review and fix PR #208 (5b-1b)
+Claude · agent-archive · PR #208 · subagent of 76941c69 · last active 3 hours ago · id a1b2c3d4
+────────────────────────────────────────────────────────────────────────────────────────────────────
+↑↓ move   Enter show   Esc clear                                                            1–2 of 2
 /208

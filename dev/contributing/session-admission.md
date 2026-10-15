@@ -113,6 +113,37 @@ retained application offsets cannot turn an owned key into certified absence
 or strand a request for a damaged index. The candidate snapshot is loaded once
 per slice reaching the final phase, rather than reread for each requested key.
 
+Discovery's request for a census-certified absence is not damage. Under a
+complete version-1 marker, `RequestSessionIndexAbsence` writes a fresh opaque
+token to `session-index-absence.json` and then the key's retained request
+entry, under hooks.lock, without changing the marker: other keys' misses stay
+allowed. The next slice reads the token under hooks.lock, so every entry
+carrying it already exists, then enumerates the complete registration
+and candidate inventory, and applies requested misses with the ordinary
+owner/candidate repair. Each absence write is fenced under hooks.lock on the
+same complete marker generation and an unchanged token, so every applied
+request preceded the census and its key's earlier owners are in it; the
+retained entry refuses later registrations of that key. The slice then records
+the token certified. A changed token or marker leaves work for the next slice.
+A repeated request for a retained key keeps it scheduled; when its token was
+lost or already certified (the entry was stranded), the repeated request,
+from a hook or discovery's failed lookup, writes a fresh token instead of
+withdrawing the census. Damaged, owned or
+uncertified evidence, packed markers, and unusable tokens take the full
+recovery request.
+
+A hook refused only because a census is pending must not change its
+generation either: a new generation fails that census's completion, so a busy
+machine's stream of refused starts and subagents could keep recovery pending
+indefinitely. While the marker is incomplete no miss is allowed, so no
+registration of an unowned key is admitted after the census enumerates. A
+request for a key whose entry names a valid owner (a SubagentStop's parent)
+writes nothing. A request for a key with no entry, or a certified absence,
+under a version-1 marker is retained with a fresh absence token instead of a
+new generation: the census certifies the entry when its listing includes it,
+and otherwise the slice after completion does. Other requests keep the full
+path.
+
 Registration membership changes stage a small durable revision outside locks.
 The request lock precedes the short membership lock, which commits the revision
 before the registration rename. Completion takes hooks then membership and
