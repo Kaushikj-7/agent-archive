@@ -20,8 +20,8 @@ import (
 // execution, and exercise the nonnil acceptance slice separately from the census.
 func TestLookupWaiterLaneWithAcceptedExecutionAndStop(t *testing.T) {
 	type acceptanceCase struct {
-		name string
-		filtered bool
+		name           string
+		filtered       bool
 		searchIndexing bool
 	}
 	for _, tc := range []acceptanceCase{{"nil predicate", false, false}, {"accepted queue", true, false}, {"schema16 accepted queue", true, true}} {
