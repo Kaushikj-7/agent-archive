@@ -39,6 +39,8 @@ type SourceEnvironment struct {
 	LegacyUnboundRegistration bool
 	ReadBudget                *NativeReadBudget
 	CodexRollouts             CodexRolloutLookup
+	NativeLocators            NativeLocatorLookup
+	NativeRoot                *archive.NativeRoot
 	Files                     transcriptio.Opener
 	Policy                    transcriptio.OpenPolicy
 	Database                  string

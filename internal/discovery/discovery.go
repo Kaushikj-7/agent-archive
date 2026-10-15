@@ -179,7 +179,10 @@ func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config,
 	}
 	started := time.Now()
 	if o.Rollouts != nil {
-		defer func() { o.Rollouts.remaining -= time.Since(started) }()
+		// Discovery's time includes the lookup calls it makes, which charge
+		// themselves as they end; charge the whole once, not those twice.
+		before := o.Rollouts.remaining
+		defer func() { o.Rollouts.remaining = before - time.Since(started) }()
 	}
 	// Observation may exhaust its slice while the durable queue/proofs still
 	// need saving. Keep the reserved checkpoint second inside the same pass

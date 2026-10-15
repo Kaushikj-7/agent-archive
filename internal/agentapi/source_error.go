@@ -39,6 +39,12 @@ const (
 	CauseRolloutTipAmbiguous SourceCause = "rollout_tip_ambiguous"
 )
 
+// CauseLookupAllowanceSpent identifies a source left unread because the
+// pass's allowance for finding Codex rollouts (its lookup time or header
+// probes) ran out. It says nothing about the source itself; the next pass, with a
+// fresh allowance, reads it.
+const CauseLookupAllowanceSpent SourceCause = "lookup_allowance_spent"
+
 // Native source refusal causes are fixed codes with no paths or content.
 const (
 	// CauseAggregateHistoryByteLimit identifies the aggregate history byte limit refusal.
@@ -99,6 +105,7 @@ const (
 var causeText = map[SourceCause]string{
 	CauseHistoryBaseUnavailable: "a Codex rollout this thread continues from was not found",
 	CauseRolloutTipAmbiguous:    "Codex thread has no single current rollout",
+	CauseLookupAllowanceSpent:   "this pass's allowance for finding Codex rollouts (its time or header reads) ran out; the next pass reads it",
 }
 
 // SourceError retains a local cause and a bounded public classification.
