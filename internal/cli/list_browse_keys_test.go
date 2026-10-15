@@ -581,9 +581,8 @@ func TestKeyPickerResizeKeepsTheHighlightUnderTheStrip(t *testing.T) {
 			adjustable := &adjustableTerminal{size: fixedTerminal{120, 60}}
 			fake := newFakeKeys(strings.Repeat("\x1b[B", downs), string(fakeResize), "q")
 			fake.onResize = func() { adjustable.resize(fixedTerminal{120, height}) }
-			picker := &sessionPicker{env: adjustable, keys: startKeys(fake)}
 			var out bytes.Buffer
-			picker.clear = func() { out.WriteString(screenBreak) }
+			picker := &sessionPicker{env: adjustable, keys: startKeys(fake), clear: func() { out.WriteString(screenBreak) }}
 			_, _, err := picker.pick(newPrompter(strings.NewReader(""), &out), &out, sessions, listFormatOptions{Now: pickerNow, GroupByDay: true}, "show")
 			picker.keys.close()
 			if err != nil {
