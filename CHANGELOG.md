@@ -6,11 +6,6 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-- Reserve publication space before new ordinary Codex backfill staging fills the durable quota,
-  including validated legacy imports with live rollout lookup and no modern binding,
-  allowing foreground imports to publish verified sessions and continue admission.
-  Already saturated retained evidence still requires separate recovery.
-
 - The session browser (`list`, bare `show`, `show <words>`, `handoff` on a
   terminal that reads keys) has a cursor: `▸` marks a row, ↑ ↓ and the mouse
   wheel move it, PgUp/PgDn (space, `n`, `p`), Home and End move it a screen
@@ -62,6 +57,11 @@ follow [Semantic Versioning](https://semver.org/).
   for the next pass" to its summary, and `status --json` reports them in
   `collector.unreached_sessions` and as the `queued` uploading state.
 - Add inert native source authority contracts and permanent writer protection, preserving existing agent capture behavior. No Muse capture operations are enabled.
+
+- Reserve publication space before new ordinary Codex backfill staging fills the durable quota,
+  including validated legacy imports with live rollout lookup and no modern binding,
+  allowing foreground imports to publish verified sessions and continue admission.
+  Already saturated retained evidence still requires separate recovery.
 
 - The session list fits your terminal: every session is one line that never
   wraps, as `#`, the agent (a colored dot and "Claude", "Codex" or "Cursor"),
