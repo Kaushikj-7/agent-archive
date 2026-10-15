@@ -3,6 +3,9 @@ on:
   pull_request:
   push:
     branches: ['release-candidate/**']
+# Ignore persistent per-user Go configuration; all compiler flags are explicit.
+env:
+  GOENV: 'off'
 permissions:
   contents: read
 concurrency:
@@ -52,6 +55,12 @@ jobs:
         with:
           go-version: '1.27.2'
           cache: false
+      - name: Set controlled compilation/module paths
+        shell: bash
+        run: |
+          printf 'GOCACHE=%s/pr-go-build\nGOMODCACHE=%s/pr-go-modules\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Restore verified trusted-main compilation seed
+        uses: ./.github/actions/verified-go-cache
       - name: Require exact Go version
         run: go version | grep -q ' go1\.27\.2 '
       - name: Actual plain whole-source audit body
@@ -114,15 +123,26 @@ jobs:
           restore-keys: ${{ steps.go-cache-key.outputs.restore_prefix }}
           path: |
             ${{ runner.temp }}/pr-go-build
-            ${{ runner.temp }}/pr-go-modules
+          enableCrossOsArchive: false
+          fail-on-cache-miss: false
+      - name: Restore trusted-main seed when PR snapshot is unavailable
+        id: go-cache-seed
+        if: steps.go-cache-restore.outcome != 'success' || steps.go-cache-restore.outputs.cache-matched-key == ''
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          key: ${{ steps.go-cache-key.outputs.seed }}
+          path: |
+            ${{ runner.temp }}/pr-go-build
+            ${{ runner.temp }}/pr-go-modules/cache
           enableCrossOsArchive: false
           fail-on-cache-miss: false
       - name: Verify restored modules or compile with empty caches
         id: go-cache-verify
         env:
-          RESTORE_OUTCOME: ${{ steps.go-cache-restore.outcome }}
-          MATCHED_KEY: ${{ steps.go-cache-restore.outputs.cache-matched-key }}
-          EXACT_HIT: ${{ steps.go-cache-restore.outputs.cache-hit }}
+          RESTORE_OUTCOME: ${{ steps.go-cache-restore.outcome == 'success' && steps.go-cache-restore.outputs.cache-matched-key != '' && steps.go-cache-restore.outcome || steps.go-cache-seed.outcome }}
+          MATCHED_KEY: ${{ steps.go-cache-restore.outcome == 'success' && steps.go-cache-restore.outputs.cache-matched-key || steps.go-cache-seed.outputs.cache-matched-key }}
+          EXACT_HIT: ${{ steps.go-cache-restore.outcome == 'success' && steps.go-cache-restore.outputs.cache-matched-key != '' && steps.go-cache-restore.outputs.cache-hit || 'false' }}
         run: python3 -B scripts/go_cache_steps.py verify
       - name: Discovered race-short shard
         env:
@@ -132,20 +152,19 @@ jobs:
       - name: Require unchanged source and current PR worker success before cache save
         id: go-cache-complete
         run: python3 -B scripts/go_cache_steps.py complete
-      # Fork runs retain verification/compilation/execution, but never save.
-      - name: Save successful same-repository PR worker compilation
+      # One publisher prevents eight full cache copies per source. Forks are read-only.
+      - name: Save one successful same-repository PR compilation snapshot
         id: go-cache-save
-        if: success() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && steps.go-cache-complete.outputs.save_ready == 'true' && steps.go-cache-verify.outputs.restore_state != 'exact'
+        if: success() && matrix.shard == 0 && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && steps.go-cache-complete.outputs.save_ready == 'true' && steps.go-cache-verify.outputs.restore_state != 'exact'
         continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           key: ${{ steps.go-cache-key.outputs.primary }}
           path: |
             ${{ runner.temp }}/pr-go-build
-            ${{ runner.temp }}/pr-go-modules
           enableCrossOsArchive: false
       - name: Report accelerator service failures
-        if: always() && (steps.go-cache-restore.outcome == 'failure' || steps.go-cache-save.outcome == 'failure')
+        if: always() && (steps.go-cache-restore.outcome == 'failure' || steps.go-cache-seed.outcome == 'failure' || steps.go-cache-save.outcome == 'failure')
         run: echo '::warning::Go cache service failed; current module/source/test verdicts remain authoritative'
       - name: Preserve catalog and execution evidence
         if: always()
@@ -232,9 +251,12 @@ jobs:
       - run: python3 -B scripts/test_generate_go_shard_hints.py
       - run: python3 -B scripts/test_report_ci_timing.py
       - run: python3 scripts/test_ci_tiers.py
+      - run: python3 -B scripts/test_macos_smoke.py
+      - run: python3 -B scripts/test_native_smoke_reference.py
       - run: python3 -B scripts/test_native_full.py
       - run: python3 -B scripts/test_go_cache_context.py
       - run: python3 -B scripts/test_go_cache_steps.py
+      - run: python3 -B scripts/test_ci_cache.py
 
       - run: python3 -B scripts/test_ci_lane_verdict.py
       - run: python3 -B scripts/test_purge_ci.py
@@ -384,6 +406,11 @@ jobs:
   git-identity-compatibility:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    env:
+      GOTOOLCHAIN: local
+      GOWORK: 'off'
+      GOFLAGS: '-mod=readonly'
+      PYTHONDONTWRITEBYTECODE: '1'
     strategy:
       fail-fast: false
       matrix:
@@ -411,35 +438,22 @@ jobs:
         with:
           go-version: '1.27.2'
           cache: false
-      - name: Check out pinned upstream Git
-        if: matrix.ref != ''
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: git/git
-          ref: ${{ matrix.ref }}
-          path: git-fixture
-          persist-credentials: false
-      - name: Build pinned upstream Git (local-only commands)
-        if: matrix.ref != ''
-        working-directory: git-fixture
-        env:
-          PINNED_GIT_TAG: ${{ matrix.tag }}
-          PINNED_GIT_COMMIT: ${{ matrix.ref }}
+      - name: Set controlled compilation/module paths
+        shell: bash
         run: |
-          # Fetch only the release annotation for Git's version generator;
-          # the code remains at the immutable commit checked out above.
-          git fetch --depth=1 origin "refs/tags/$PINNED_GIT_TAG:refs/tags/$PINNED_GIT_TAG"
-          test "$(git rev-parse HEAD)" = "$PINNED_GIT_COMMIT"
-          make -j2 prefix="$RUNNER_TEMP/git-fixture" NO_TCLTK=YesPlease NO_GETTEXT=YesPlease NO_CURL=YesPlease NO_EXPAT=YesPlease all
-          make prefix="$RUNNER_TEMP/git-fixture" NO_TCLTK=YesPlease NO_GETTEXT=YesPlease NO_CURL=YesPlease NO_EXPAT=YesPlease install
-          echo "$RUNNER_TEMP/git-fixture/bin" >> "$GITHUB_PATH"
+          printf 'GOCACHE=%s/pr-go-build\nGOMODCACHE=%s/pr-go-modules\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Restore verified trusted-main compilation seed
+        uses: ./.github/actions/verified-go-cache
+      - name: Restore verified pinned upstream Git or build cold
+        if: matrix.ref != ''
+        env:
+          PINNED_GIT: ${{ matrix.git }}
+        run: python3 -B scripts/pinned_git.py "$PINNED_GIT"
       - name: Isolated identity regressions and exact executable version
         env:
           EXPECTED_GIT_VERSION: ${{ matrix.expected }}
           HOME: ${{ runner.temp }}/git-identity-home
           XDG_CONFIG_HOME: ${{ runner.temp }}/git-identity-xdg
-          GOCACHE: ${{ runner.temp }}/git-identity-go-cache
-          GOMODCACHE: ${{ runner.temp }}/git-identity-go-modules
           GOMAXPROCS: '2'
         run: |
           mkdir -p "$HOME" "$XDG_CONFIG_HOME"
@@ -458,6 +472,11 @@ jobs:
     # runs on candidates and weekly in extended.yml.
     runs-on: macos-14
     timeout-minutes: 45
+    env:
+      GOTOOLCHAIN: local
+      GOWORK: 'off'
+      GOFLAGS: '-mod=readonly'
+      PYTHONDONTWRITEBYTECODE: '1'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -466,6 +485,17 @@ jobs:
         with:
           go-version: '1.27.2'
           cache: false
+      - name: Set controlled compilation/module paths
+        shell: bash
+        run: |
+          printf 'GOCACHE=%s/pr-go-build\nGOMODCACHE=%s/pr-go-modules\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Restore verified trusted-main compilation seed
+        id: native_cache
+        uses: ./.github/actions/verified-go-cache
+      - name: Record final verified native cache state
+        env:
+          NATIVE_CACHE_STATE: ${{ steps.native_cache.outputs.restore-state }}
+        run: python3 -B scripts/native_smoke_reference.py observe --output native-tier-results/cache-observation.json
       - name: Require Go 1.27.2 (go.mod's toolchain line)
         run: |
           go version
@@ -481,7 +511,7 @@ jobs:
           if [ "$EVENT" = pull_request ]; then
             python3 -B scripts/run_ci_tier.py --tier pr --suite macos --extra-plan "$RUNNER_TEMP/tier-plan/extra-plan.json" --output native-tier-results
           else
-            ./scripts/test_macos_smoke.sh
+            ./scripts/test_macos_smoke.sh --output native-tier-results
           fi
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always() && github.event_name == 'pull_request'
@@ -493,6 +523,11 @@ jobs:
   cross-linux-arm64:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      GOTOOLCHAIN: local
+      GOWORK: 'off'
+      GOFLAGS: '-mod=readonly'
+      PYTHONDONTWRITEBYTECODE: '1'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -501,6 +536,12 @@ jobs:
         with:
           go-version: '1.27.2'
           cache: false
+      - name: Set controlled compilation/module paths
+        shell: bash
+        run: |
+          printf 'GOCACHE=%s/pr-go-build\nGOMODCACHE=%s/pr-go-modules\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Restore verified trusted-main compilation seed
+        uses: ./.github/actions/verified-go-cache
       - name: Require Go 1.27.2 (go.mod's toolchain line)
         run: |
           go version
@@ -517,6 +558,11 @@ jobs:
   cross-darwin-nocgo:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      GOTOOLCHAIN: local
+      GOWORK: 'off'
+      GOFLAGS: '-mod=readonly'
+      PYTHONDONTWRITEBYTECODE: '1'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -525,6 +571,12 @@ jobs:
         with:
           go-version: '1.27.2'
           cache: false
+      - name: Set controlled compilation/module paths
+        shell: bash
+        run: |
+          printf 'GOCACHE=%s/pr-go-build\nGOMODCACHE=%s/pr-go-modules\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Restore verified trusted-main compilation seed
+        uses: ./.github/actions/verified-go-cache
       - name: Require Go 1.27.2 (go.mod's toolchain line)
         run: |
           go version
@@ -539,6 +591,11 @@ jobs:
   cross-linux-release:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      GOTOOLCHAIN: local
+      GOWORK: 'off'
+      GOFLAGS: '-mod=readonly'
+      PYTHONDONTWRITEBYTECODE: '1'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -547,6 +604,12 @@ jobs:
         with:
           go-version: '1.27.2'
           cache: false
+      - name: Set controlled compilation/module paths
+        shell: bash
+        run: |
+          printf 'GOCACHE=%s/pr-go-build\nGOMODCACHE=%s/pr-go-modules\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Restore verified trusted-main compilation seed
+        uses: ./.github/actions/verified-go-cache
       - name: Require Go 1.27.2 (go.mod's toolchain line)
         run: |
           go version
@@ -578,6 +641,11 @@ jobs:
     # linted too.
     runs-on: macos-14
     timeout-minutes: 15
+    env:
+      GOTOOLCHAIN: local
+      GOWORK: 'off'
+      GOFLAGS: '-mod=readonly'
+      PYTHONDONTWRITEBYTECODE: '1'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -588,15 +656,21 @@ jobs:
         with:
           go-version: '1.27.2'
           cache: false
+      - name: Set controlled compilation/module paths
+        shell: bash
+        run: |
+          printf 'GOCACHE=%s/pr-go-build\nGOMODCACHE=%s/pr-go-modules\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Restore verified trusted-main compilation seed
+        uses: ./.github/actions/verified-go-cache
       # Built with this job's Go (install-mode: goinstall) rather than
       # downloaded prebuilt, so it always understands go.mod's Go version.
       # Keep the version in step with the comment in .golangci.yml.
+      - name: Verified pinned lint and deadcode binaries
+        run: |
+          python3 -B scripts/verified_tools.py golangci-lint
+          python3 -B scripts/verified_tools.py deadcode
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
-        with:
-          version: v2.14.0
-          install-mode: goinstall
-          args: --disable=revive
+        run: '"$GOCACHE/aa-pinned-tools/golangci-lint" run --disable=revive'
       # Production code only tests reach belongs in a _test.go file (or a
       # test-only package); deadcode finds it. It analyses one build at a
       # time, so it runs twice: for macOS, and for Linux (GOOS=linux with cgo
@@ -619,22 +693,18 @@ jobs:
       # the terminal UI layer in internal/cli/ui.go, whose parts the
       # onboarding screens adopt one PR at a time (they are listed by name:
       # remove each as it gains a caller, and the exception once none is left),
-      # and internal/cli/list_title.go, the list's readable titles, which the
-      # width-aware rows of dev/specs/session-list-ui.md will call (remove the
-      # exception in that PR),
-      # and the session-line pieces in internal/cli/session_line.go that the
-      # one-line session list adopts a PR at a time: its rows (PR 3) call
-      # agentLabel, knownAgent and textStyle.agent, and its day groups (PR 4) call
-      # dayBucket and its label; remove each name as it gains a caller.
+      # and the day groups in internal/cli/session_line.go, which the
+      # one-line session list's day grouping (PR 4 of
+      # dev/specs/session-list-ui.md) calls: remove dayBucket and its label
+      # then.
       - name: No unreachable production code
         run: |
-          GOBIN="$RUNNER_TEMP/bin" go install golang.org/x/tools/cmd/deadcode@v0.50.0
-          shared='^internal/(state/statetest|storage/storagetest|cloudflare/cloudflaretest|testutil)/|^internal/credentials/keychain_darwin\.go:[0-9]+:[0-9]+: unreachable func: lookupForbidsUI$|^internal/state/published\.go:[0-9]+:[0-9]+: unreachable func: PublishedStateLoads$|^internal/cli/ui\.go:[0-9]+:[0-9]+: unreachable func: (textStyle\.(spin|spinEvery)|spinner\.stop)$|^internal/cloudflare/r2\.go:[0-9]+:[0-9]+: unreachable func: S3Credentials\.(String|GoString)$|^internal/cli/list_title\.go:[0-9]+:[0-9]+: unreachable func: |^internal/cli/session_line\.go:[0-9]+:[0-9]+: unreachable func: (agentLabel|knownAgent|textStyle\.agent|dayBucket|dayBucketKind\.label)$'
+          shared='^internal/(state/statetest|storage/storagetest|cloudflare/cloudflaretest|testutil)/|^internal/credentials/keychain_darwin\.go:[0-9]+:[0-9]+: unreachable func: lookupForbidsUI$|^internal/state/published\.go:[0-9]+:[0-9]+: unreachable func: PublishedStateLoads$|^internal/cli/ui\.go:[0-9]+:[0-9]+: unreachable func: (textStyle\.(spin|spinEvery)|spinner\.stop)$|^internal/cloudflare/r2\.go:[0-9]+:[0-9]+: unreachable func: S3Credentials\.(String|GoString)$|^internal/cli/session_line\.go:[0-9]+:[0-9]+: unreachable func: (dayBucket|dayBucketKind\.label)$'
           linux_only='|^internal/credentials/keychain_errors\.go:[0-9]+:[0-9]+: unreachable func: errorForOSStatus$'
           # check LABEL EXCEPTIONS: deadcode's output for the current
           # GOOS/CGO_ENABLED, minus the exceptions, must be empty.
           check() {
-            "$RUNNER_TEMP/bin/deadcode" ./... > "$RUNNER_TEMP/deadcode-$1.txt"
+            "$GOCACHE/aa-pinned-tools/deadcode" ./... > "$RUNNER_TEMP/deadcode-$1.txt"
             # grep exits 1 when every line is an exception; 2 is a real failure.
             status=0
             grep -v -E "$2" "$RUNNER_TEMP/deadcode-$1.txt" > "$RUNNER_TEMP/unexpected-$1.txt" || status=$?
@@ -654,8 +724,6 @@ jobs:
       # or touches; existing gaps do not fail the build.
       - name: Doc comments on new exported identifiers
         if: github.event_name == 'pull_request'
-        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
-        with:
-          version: v2.14.0
-          install-mode: goinstall
-          args: --enable-only=revive --new-from-merge-base=origin/${{ github.base_ref }}
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: '"$GOCACHE/aa-pinned-tools/golangci-lint" run --enable-only=revive --new-from-merge-base="origin/$BASE_REF"'

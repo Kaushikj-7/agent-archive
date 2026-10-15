@@ -1,20 +1,20 @@
 alpha (continued)
-#   TITLE              WHEN          HARNESS  PROJECT  ID
-9   Session number 9   8 hours ago   codex    alpha    1a2bf778
-10  Session number 10  9 hours ago   codex    alpha    1a2c1667
-11  Session number 11  10 hours ago  codex    alpha    1a2c3556
-12  Session number 12  11 hours ago  codex    alpha    1a2c5445
-13  Session number 13  12 hours ago  codex    alpha    1a2c7334
-14  Session number 14  13 hours ago  codex    alpha    1a2c9223
-15  Session number 15  14 hours ago  codex    alpha    1a2cb112
-16  Session number 16  15 hours ago  codex    alpha    1a2cd001
-17  Session number 17  16 hours ago  codex    alpha    1a2ceef0
-18  Session number 18  17 hours ago  codex    alpha    1a2d0ddf
+ 9  ● Codex  Session number 9                                         alpha   8h
+10  ● Codex  Session number 10                                        alpha   9h
+11  ● Codex  Session number 11                                        alpha  10h
+12  ● Codex  Session number 12                                        alpha  11h
+13  ● Codex  Session number 13                                        alpha  12h
+14  ● Codex  Session number 14                                        alpha  Mon
+15  ● Codex  Session number 15                                        alpha  Mon
+16  ● Codex  Session number 16                                        alpha  Mon
+17  ● Codex  Session number 17                                        alpha  Mon
+18  ● Codex  Session number 18                                        alpha  Mon
 
 beta (12)
-#   TITLE              WHEN          HARNESS  PROJECT  ID
-19  Session number 19  18 hours ago  codex    beta     1a2d2cce
+19  ● Codex  Session number 19                                        beta   Mon
+20  ● Codex  Session number 20                                        beta   Mon
+21  ● Codex  Session number 21                                        beta   Mon
 30 session(s).
-63% · ↑↓ scroll · PgUp/PgDn page · / filter · type a number and Enter · q quit
+70% · ↑↓ scroll · PgUp/PgDn page · / filter · type a number and Enter · q quit
 
 Enter number (or unique short SESSION_ID) to show, or q to quit: 12
