@@ -137,9 +137,9 @@ func formatSessionRows(sessions []archive.Metadata, opts listFormatOptions) []li
 				model += fmt.Sprintf(" +%d", len(models)-1)
 			}
 		}
-		title, real := shorts[i], false
+		title, displayed := shorts[i], false
 		if display := archive.DisplayTitle(m); strings.TrimSpace(display) != "" {
-			title, real = archive.DisplayLine(display), true
+			title, displayed = archive.DisplayLine(display), true
 		}
 		parent := ""
 		if m.NativeChild && m.ParentSessionID == "" {
@@ -152,7 +152,7 @@ func formatSessionRows(sessions []archive.Metadata, opts listFormatOptions) []li
 			title = replayTitlePrefix + title
 		}
 		cleaned := ""
-		if real {
+		if displayed {
 			cleaned = listTitle(title)
 		}
 		rows[i] = listRow{

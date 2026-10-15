@@ -15,9 +15,12 @@ import (
 // year. The content is invented.
 func layoutSessions() []archive.Metadata {
 	type session struct {
-		id, harness, project, title string
-		pr                          int
-		ago                         time.Duration
+		id      string
+		harness string
+		project string
+		title   string
+		pr      int
+		ago     time.Duration
 	}
 	list := []session{
 		{"d7a77938", "claude", "agent-archive", "Review historical project command", 505, 2 * time.Minute},
@@ -60,9 +63,11 @@ func TestSessionRowsFitTheTerminalWidth(t *testing.T) {
 	t.Parallel()
 	rows, laid := layoutRows(t)
 	cases := []struct {
-		width                  int
-		project, pr, agentName bool
-		title                  int
+		width     int
+		project   bool
+		pr        bool
+		agentName bool
+		title     int
 	}{
 		{width: 220, project: true, pr: true, agentName: true, title: maxTitleWidth},
 		{width: 140, project: true, pr: true, agentName: true, title: maxTitleWidth},
@@ -84,7 +89,8 @@ func TestSessionRowsFitTheTerminalWidth(t *testing.T) {
 		}
 		for _, variant := range []struct {
 			name           string
-			cursor, color  bool
+			cursor         bool
+			color          bool
 			groupByProject bool
 		}{{name: "plain"}, {name: "cursor", cursor: true}, {name: "color", color: true}, {name: "grouped", groupByProject: true, color: true}} {
 			format := laid
@@ -127,7 +133,10 @@ func TestSessionRowsKeepTheProjectWhenThereIsRoom(t *testing.T) {
 	t.Parallel()
 	rows, laid := layoutRows(t)
 	rows = rows[:3] // agent-archive and built-in-browser, PRs, recent times
-	for _, c := range []struct{ width, title int }{{80, 37}, {100, maxTitleWidth}, {120, maxTitleWidth}} {
+	for _, c := range []struct {
+		width int
+		title int
+	}{{80, 37}, {100, maxTitleWidth}, {120, maxTitleWidth}} {
 		layout := newSessionLayout(rows, listFormatOptions{Width: c.width, Numbered: true, ShowPR: laid.ShowPR})
 		if !layout.project || !layout.pr || !layout.agentName || layout.title != c.title {
 			t.Errorf("width %d: project=%v pr=%v agent name=%v title=%d, want all columns and title %d",
