@@ -12,7 +12,7 @@ import copy
 import json
 import pathlib
 
-from muse_qualification import PINNED_SHA256, PROMPT, REPLY, digest, logical_rows, write_json
+from muse_qualification import PINNED_SHA256, PROMPT, REPLY, digest, logical_rows, read_limited, write_json
 
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -93,7 +93,7 @@ def main():
     manifest_path = args.output.with_suffix(".manifest.json")
     if args.output.exists() or manifest_path.exists():
         parser.error("output or manifest already exists")
-    native = args.native_session.read_bytes()
+    native = read_limited(args.native_session)
     sanitized, omissions = sanitize(native, args.source_root)
     expected = summarize(sanitized)
     starts, messages = expected["own_run_starts"], expected["visible_messages"]

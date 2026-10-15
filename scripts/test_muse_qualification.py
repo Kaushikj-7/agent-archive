@@ -53,6 +53,82 @@ class QualificationTests(unittest.TestCase):
             self.assertNotEqual(result["exit"], 0)
             self.assertEqual(result["argv"][0], sys.executable)
 
+    def test_command_stream_flood_fails_before_capturing_unbounded_output(self):
+        for descriptor in (1, 2):
+            with self.subTest(descriptor=descriptor), tempfile.TemporaryDirectory() as directory:
+                root = pathlib.Path(directory)
+                source = ("import os,time; os.write(" + str(descriptor) +
+                          ",b'x'*65536); time.sleep(30)")
+                with mock.patch.object(probe, "OUTPUT_LIMIT", 32768):
+                    with self.assertRaisesRegex(RuntimeError, "stream byte limit"):
+                        probe.run_process([sys.executable, "-c", source], env=probe.isolated_env(root),
+                                          cwd=root, timeout=3)
+
+    def test_msp_stream_and_pending_message_limits_fail_and_reap(self):
+        sources = {
+            "line": "import os,time; os.write(1,b'x'*65536); time.sleep(30)",
+            "stderr": "import os,time; os.write(2,b'x'*65536); time.sleep(30)",
+            "queue": "import os,time; os.write(1,b'{}\\n'*10); time.sleep(30)",
+        }
+        for label, source in sources.items():
+            with self.subTest(limit=label), tempfile.TemporaryDirectory() as directory:
+                root = pathlib.Path(directory)
+                case = mock.Mock(root=root, env=probe.isolated_env(root), workspace=root)
+                case.argv.return_value = [sys.executable, "-c", source]
+                with mock.patch.object(probe, "OUTPUT_LIMIT", 32768), mock.patch.object(probe, "MSP_LINE_LIMIT", 4096), mock.patch.object(probe, "MSP_QUEUE_LIMIT", 2):
+                    msp = probe.MSP(case)
+                    try:
+                        deadline = time.monotonic() + 3
+                        while msp.reader_error is None and time.monotonic() < deadline:
+                            time.sleep(.01)
+                        self.assertIsNotNone(msp.reader_error)
+                        with self.assertRaisesRegex(RuntimeError, "limit"):
+                            msp.receive(lambda _message: True)
+                    finally:
+                        with self.assertRaisesRegex(RuntimeError, "limit"):
+                            msp.close()
+                    self.assertIsNotNone(msp.process.poll())
+                    self.assertFalse(msp.reader.is_alive())
+                    self.assertFalse(msp.stderr_reader.is_alive())
+                    self.assertLessEqual((root / "serve-stderr.txt").stat().st_size, 32768)
+
+    def test_oversized_evidence_is_refused_before_decoding_or_corpus_output(self):
+        path = mock.MagicMock()
+        source = path.open.return_value.__enter__.return_value
+        source.read.return_value = b"x" * 33
+        with self.assertRaisesRegex(RuntimeError, "file byte limit"):
+            probe.read_limited(path, 32)
+        source.read.assert_called_once_with(33)
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            native, output = root / "native.jsonl", root / "safe.jsonl"
+            with native.open("wb") as stream:
+                stream.seek(1024)
+                stream.write(b"x")
+            argv = ["muse_corpus.py", "--native-session", str(native), "--source-root", str(root), "--output", str(output)]
+            with mock.patch.object(probe, "FILE_LIMIT", 1024), mock.patch.object(sys, "argv", argv):
+                with self.assertRaisesRegex(RuntimeError, "file byte limit"):
+                    corpus.main()
+                with self.assertRaisesRegex(RuntimeError, "file byte limit"):
+                    probe.inspect_session(native)
+                with self.assertRaisesRegex(RuntimeError, "file byte limit"):
+                    probe.retained_turn_assertions(native, 1)
+            self.assertFalse(output.exists())
+            self.assertFalse(output.with_suffix(".manifest.json").exists())
+
+    def test_oversized_hook_evidence_is_recorded_as_failed_case(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            case = mock.Mock(root=root)
+            case.logs.return_value = []
+            (root / "hooks.jsonl").write_bytes(b"x" * 33)
+            with mock.patch.object(probe, "file_digest", return_value=probe.PINNED_SHA256), mock.patch.object(probe, "Case", return_value=case), mock.patch.object(probe, "probe_exec", return_value={"assertions": {"synthetic": True}}), mock.patch.object(probe, "HOOK_LIMIT", 32):
+                report = probe.native_run(root / "binary", root / "output", ["exec-utc"])
+            self.assertEqual(report["cases"]["exec-utc"]["failed"], "RuntimeError")
+            self.assertIn("file byte limit", report["cases"]["exec-utc"]["detail"])
+            self.assertEqual(json.loads((root / "output/report.json").read_text()), report)
+            case.close.assert_called_once()
+
     def test_export_exit_zero_does_not_hide_rejected_line(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
@@ -145,7 +221,8 @@ class QualificationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
             pidfile = root / "child.pid"
-            source = "import os,pathlib,time; pathlib.Path(" + repr(str(pidfile)) + ").write_text(str(os.getpid())); time.sleep(30)"
+            source = ("import os,pathlib,time; p=pathlib.Path(" + repr(str(pidfile)) + "); "
+                      "q=p.with_suffix('.ready'); q.write_text(str(os.getpid())); os.replace(q,p); time.sleep(30)")
             program = ("import pathlib,sys; sys.path.insert(0," + repr(str(pathlib.Path(probe.__file__).parent)) + "); import muse_qualification as p\n"
                        "with p.termination_cleanup():\n"
                        " p.run_process([sys.executable,'-c'," + repr(source) + "],env={},cwd=pathlib.Path(" + repr(directory) + "),timeout=30)\n")

@@ -12,7 +12,7 @@
   "stable_schema_fingerprint": "sha256:4e3200c3c9dc0cd7919d11022630d43f9bc1c5cdda375381e90b0183b5665069",
   "provider": "only synthetic loopback Responses; incoming context discarded; no real provider or remote storage",
   "isolation": "constructed HOME/XDG/config/data/cache/state/tmp; TBH_CREDENTIAL_BACKEND=file; dummy key; no inherited credentials/proxies",
-  "runner_sha256": "ebfcae96fce5288f604f1611873b7c327cca8e6a6adbac45ae3e26b24e1ab8d7",
+  "runner_sha256": "035555383c9a34f3e2cab0c883993c39a9ade3f4e2ad913b26089162b8502240",
   "campaigns": {
     "muse-q0-reviewed-20261015": {
       "raw_report_sha256": "2afe0bc5c00dde1e6384c8337f369ec16cfb8dd633c881ac9de4b363da4c393e",
@@ -1487,6 +1487,246 @@
           ]
         }
       }
+    },
+    "muse-q0-review-b-frozen-20261015": {
+      "raw_report_sha256": "517cd361f6129b01dc95559e2d13426f2311f02cbf3a6f32007c0d61db27e862",
+      "runner_sha256": "035555383c9a34f3e2cab0c883993c39a9ade3f4e2ad913b26089162b8502240",
+      "cases": {
+        "exec-utc": {
+          "assertions": {
+            "fresh_exact_own_starts": true,
+            "fresh_own_stream_identity": true,
+            "fresh_exact_own_replies": true,
+            "fresh_exact_own_usage": true,
+            "fresh_no_unowned_run_events": true,
+            "fresh_exact_own_tools": true,
+            "resumed_exact_own_starts": true,
+            "resumed_own_stream_identity": true,
+            "resumed_exact_own_replies": true,
+            "resumed_exact_own_usage": true,
+            "resumed_no_unowned_run_events": true,
+            "resumed_exact_own_tools": true,
+            "resume_has_true_open": true,
+            "fresh_has_one_false_resume_open": true,
+            "resume_success": true,
+            "resume_preserves_prefix": true,
+            "native_valid_export_clean": true,
+            "native_exact_permission_clean": true,
+            "native_bad_checksum_diagnostic": true,
+            "copy_bytes_identical": true,
+            "copy_native_export_clean": true,
+            "mutation_diagnostics_match": true
+          },
+          "failed": null,
+          "timezone": "UTC",
+          "observed_utc": "2026-10-15T05:18:38.225620+00:00",
+          "provider_requests": 2,
+          "sessions": [
+            {
+              "sha256": "3410a9f3f13faa333dc2e014f3c511d7888d83714e8965d1b1c424eb8899d0c2",
+              "bytes": 239759,
+              "lines": 98,
+              "logical_records": 99,
+              "session_id": "01a13dff-4703-72d0-8604-116de0bdb008",
+              "folder_date": "2026-10-15",
+              "id_utc_date": "2026-10-15"
+            }
+          ]
+        },
+        "exec-minus12": {
+          "assertions": {
+            "fresh_exact_own_starts": true,
+            "fresh_own_stream_identity": true,
+            "fresh_exact_own_replies": true,
+            "fresh_exact_own_usage": true,
+            "fresh_no_unowned_run_events": true,
+            "fresh_exact_own_tools": true,
+            "resumed_exact_own_starts": true,
+            "resumed_own_stream_identity": true,
+            "resumed_exact_own_replies": true,
+            "resumed_exact_own_usage": true,
+            "resumed_no_unowned_run_events": true,
+            "resumed_exact_own_tools": true,
+            "resume_has_true_open": true,
+            "fresh_has_one_false_resume_open": true,
+            "resume_success": true,
+            "resume_preserves_prefix": true,
+            "native_valid_export_clean": true,
+            "native_exact_permission_clean": true,
+            "native_bad_checksum_diagnostic": true,
+            "copy_bytes_identical": true,
+            "copy_native_export_clean": true,
+            "mutation_diagnostics_match": true
+          },
+          "failed": null,
+          "timezone": "Etc/GMT+12",
+          "observed_utc": "2026-10-15T05:19:03.520055+00:00",
+          "provider_requests": 2,
+          "sessions": [
+            {
+              "sha256": "f0e0609c34b1b2bc28af0547239d1ac88a74c981fd88e3380e57e34ca31546fa",
+              "bytes": 239859,
+              "lines": 98,
+              "logical_records": 99,
+              "session_id": "01a13dff-84e0-7673-ba69-dbe78968a618",
+              "folder_date": "2026-10-14",
+              "id_utc_date": "2026-10-15"
+            }
+          ]
+        },
+        "exec-plus14": {
+          "assertions": {
+            "fresh_exact_own_starts": true,
+            "fresh_own_stream_identity": true,
+            "fresh_exact_own_replies": true,
+            "fresh_exact_own_usage": true,
+            "fresh_no_unowned_run_events": true,
+            "fresh_exact_own_tools": true,
+            "resumed_exact_own_starts": true,
+            "resumed_own_stream_identity": true,
+            "resumed_exact_own_replies": true,
+            "resumed_exact_own_usage": true,
+            "resumed_no_unowned_run_events": true,
+            "resumed_exact_own_tools": true,
+            "resume_has_true_open": true,
+            "fresh_has_one_false_resume_open": true,
+            "resume_success": true,
+            "resume_preserves_prefix": true,
+            "native_valid_export_clean": true,
+            "native_exact_permission_clean": true,
+            "native_bad_checksum_diagnostic": true,
+            "copy_bytes_identical": true,
+            "copy_native_export_clean": true,
+            "mutation_diagnostics_match": true
+          },
+          "failed": null,
+          "timezone": "Pacific/Kiritimati",
+          "observed_utc": "2026-10-15T05:19:22.869310+00:00",
+          "provider_requests": 2,
+          "sessions": [
+            {
+              "sha256": "0683b98821f948142b8daa5c2ccaa9462588a2da7d07c2537c460b8b78068d9d",
+              "bytes": 239853,
+              "lines": 98,
+              "logical_records": 99,
+              "session_id": "01a13dff-e93a-7443-9d12-22fbc8c75097",
+              "folder_date": "2026-10-15",
+              "id_utc_date": "2026-10-15"
+            }
+          ]
+        },
+        "exec-tool": {
+          "assertions": {
+            "fresh_exact_own_starts": true,
+            "fresh_own_stream_identity": true,
+            "fresh_exact_own_replies": true,
+            "fresh_exact_own_usage": true,
+            "fresh_no_unowned_run_events": true,
+            "fresh_exact_own_tools": true,
+            "resumed_exact_own_starts": true,
+            "resumed_own_stream_identity": true,
+            "resumed_exact_own_replies": true,
+            "resumed_exact_own_usage": true,
+            "resumed_no_unowned_run_events": true,
+            "resumed_exact_own_tools": true,
+            "resume_has_true_open": true,
+            "fresh_has_one_false_resume_open": true,
+            "resume_success": true,
+            "resume_preserves_prefix": true,
+            "native_valid_export_clean": true,
+            "native_exact_permission_clean": true,
+            "native_bad_checksum_diagnostic": true,
+            "copy_bytes_identical": true,
+            "copy_native_export_clean": true,
+            "mutation_diagnostics_match": true
+          },
+          "failed": null,
+          "timezone": "UTC",
+          "observed_utc": "2026-10-15T05:19:46.389990+00:00",
+          "provider_requests": 3,
+          "sessions": [
+            {
+              "sha256": "457e59ae7b8660f4bc76e9ecf2540bf2d8aa35179d8508998e9e2a43b8ce00e5",
+              "bytes": 265450,
+              "lines": 125,
+              "logical_records": 126,
+              "session_id": "01a13e00-33d9-7b33-84e3-fbc909510c8d",
+              "folder_date": "2026-10-15",
+              "id_utc_date": "2026-10-15"
+            }
+          ]
+        },
+        "msp": {
+          "assertions": {
+            "root_log_present": true,
+            "fork_log_present": true,
+            "root_exact_own_starts": true,
+            "root_own_stream_identity": true,
+            "root_exact_own_replies": true,
+            "root_exact_own_usage": true,
+            "root_no_unowned_run_events": true,
+            "root_exact_own_tools": true,
+            "fork_exact_own_starts": true,
+            "fork_own_stream_identity": true,
+            "fork_exact_own_replies": true,
+            "fork_exact_own_usage": true,
+            "fork_no_unowned_run_events": true,
+            "fork_exact_own_tools": true
+          },
+          "failed": null,
+          "timezone": "UTC",
+          "observed_utc": "2026-10-15T05:20:14.961982+00:00",
+          "provider_requests": 26,
+          "sessions": [
+            {
+              "sha256": "8f621770d06b855d3c9b062cd049ccb437a981e7fd4ab7dbc34ee445e7068e07",
+              "bytes": 157376,
+              "lines": 74,
+              "logical_records": 75,
+              "session_id": "01a13e00-98e1-7911-ad8b-8fa3f3f6d5a2",
+              "folder_date": "2026-10-15",
+              "id_utc_date": "2026-10-15"
+            },
+            {
+              "sha256": "dfa86dd94104887b55b87d257e2922d17399811b6761b566b05c36bf5bbdff9d",
+              "bytes": 136417,
+              "lines": 75,
+              "logical_records": 76,
+              "session_id": "01a13e00-cf2b-79e1-a8f6-ffd76a18d578",
+              "folder_date": "2026-10-15",
+              "id_utc_date": "2026-10-15"
+            }
+          ]
+        },
+        "pty": {
+          "assertions": {
+            "startup_visible": true,
+            "synthetic_reply_retained": true,
+            "one_root_log": true,
+            "exact_own_starts": true,
+            "own_stream_identity": true,
+            "exact_own_replies": true,
+            "exact_own_usage": true,
+            "no_unowned_run_events": true,
+            "exact_own_tools": true
+          },
+          "failed": null,
+          "timezone": "UTC",
+          "observed_utc": "2026-10-15T05:20:35.176386+00:00",
+          "provider_requests": 2,
+          "sessions": [
+            {
+              "sha256": "a83e577da6129f9a59cd5ddf6c641a4431c566a284c554c99b221471b817d9c9",
+              "bytes": 152529,
+              "lines": 67,
+              "logical_records": 68,
+              "session_id": "01a13e00-ff90-7903-9614-01aa4d7a9b22",
+              "folder_date": "2026-10-15",
+              "id_utc_date": "2026-10-15"
+            }
+          ]
+        }
+      }
     }
   },
   "failed_attempts": [
@@ -1850,5 +2090,43 @@
       "real_accounting": "OPEN: synthetic counters do not establish billing/cache overlap; MSP made background requests beyond two own retained model completions",
       "release_capture": "UNAVAILABLE: no product integration implemented; integrity/creation block enablement"
     }
+  },
+  "review_b_repairs": {
+    "scope": "Harness resource acquisition and CI ownership controls; all prior native evidence and authority gates preserved. No production capture operation.",
+    "findings": {
+      "Q0-B-001": "Bound exec/export and MSP streams, individual MSP lines and pending messages. Acquire native logs/exports/corpus input with a strict 32 MiB per-file read cap and hook evidence with 1 MiB cap. Refuse oversized evidence and explicitly record finalization acquisition failure. These are harness bounds, not native-format limits or scratch disk quotas.",
+      "Q0-B-002": "Add the Muse offline suite to the exact script-static invocation ownership inventory; existing duplicate and single-owner gates remain.",
+      "Q0-B-003": "Publish the SIGTERM test child PID atomically so readiness cannot observe an empty file."
+    },
+    "validation": [
+      "python3 -B scripts/test_muse_qualification.py: PASS 16 tests",
+      "python3 -B scripts/test_ci_workflow.py: PASS 22 tests",
+      "python3 -B scripts/test_ci_lane_verdict.py: original failure reproduced, then PASS 5 tests",
+      "All spec section 7 Go extension-point commands independently rerun: PASS, including TestFourth race",
+      "go test -short -count=1 ./internal/doclinks: PASS after README changes",
+      "git diff --check: PASS",
+      "Final frozen-source all-six isolated native campaign: PASS exit 0, no failed case or false assertion; startup and post-run runner hashes match"
+    ],
+    "intermediate_campaigns": [
+      {
+        "campaign": "muse-q0-review-b-20261015",
+        "raw_report_sha256": "5e4bf5eb39f0db1c696ea47daf89245173db4d84018e0bc6645582abe47c9449",
+        "loaded_runner_sha256": "a9fac75ce8a68fb81d3f36374f19d52b9703e089ac5d8b1244a969313d9371e6",
+        "outcome": "PASS all six; intermediate source, not final-source evidence"
+      },
+      {
+        "campaign": "muse-q0-review-b-final-20261015",
+        "raw_report_sha256": "6af5c59d9f0352a4887b9a20c3ca9ec4d85e54564dc54e5c1eaf72d5963075b9",
+        "loaded_runner_sha256": "36bb7f21a0c0375a5880eae50e4dc41a5745a1c88599dfcc486bc3dedb8121a4",
+        "outcome": "PASS all six; intermediate source, not final-source evidence"
+      },
+      {
+        "campaign": "muse-q0-review-b-bounded-files-20261015",
+        "raw_report_sha256": "acc67166921af01bd671a4c35f54dc9f94332ae5ea0c31a2b780aef413474283",
+        "loaded_runner_sha256": "51a9cb5acfd4d23fe03e9d0de70569d8e8c66c6511b0789cb2a46af35e9d7baa",
+        "outcome": "PASS all six; intermediate source, not final-source evidence"
+      }
+    ],
+    "unchanged_gates": "All existing gates remain OPEN/unavailable as recorded in gates; native export is not independent integrity authority."
   }
 }

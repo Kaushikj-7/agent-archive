@@ -39,7 +39,15 @@ arbitrary environment. No permission-bypass flags are used.
 Native processes have independent sessions, command/turn deadlines and
 TERM/KILL process-group cleanup, including after success, exceptions, Ctrl-C and SIGTERM. The CLI converts
 SIGTERM into an unsuccessful exit that unwinds cleanup; interrupted cases are
-recorded as failures. MSP drains/reaps its reader; the HTTP server shuts down and joins.
+recorded as failures. MSP drains/reaps its readers; the HTTP server shuts down and joins.
+Captured exec/export and MSP streams are capped at 8 MiB each; MSP lines at
+1 MiB and pending messages at 1024. A breached cap fails the case and kills
+the owned group. PTY capture retains its 1 MiB cap. These are harness stream
+limits, not future archive-format limits. Local native logs, exports and corpus
+inputs are read with a strict 32 MiB per-file cap; hook evidence is capped at
+1 MiB. Oversized evidence fails before decoding and is never silently truncated.
+These acquisition caps do not limit how much native scratch data a producer can
+write before its process deadline.
 Output roots intentionally remain for local inspection. The PTY supports a
 fixed window size and cursor-position response; its full-turn attempt uses
 synthetic bracketed paste. Cleanup is not proof of graceful SessionEnd.
@@ -122,7 +130,7 @@ and actual old-entrypoint tests, not an optimistic return-to-pending claim.
 Offline tests run in ordinary CI without native Muse or a listener and verify
 isolation, timeout/group cleanup, export diagnostic handling, complete corpus
 hashes/assertions, rejection of missing/mismatched own turns, SIGTERM cleanup,
-empty-corpus/manifest preservation and removal of context sentinels. The spec's §7 extension-point
+empty-corpus/manifest preservation, stream/queue flood and oversized-file refusal and removal of context sentinels. The spec's §7 extension-point
 commands were rerun on the current base; see results for actual commands/outcomes.
 They do not validate any unimplemented Muse adapter. Native campaigns are opt-in
 local qualification, not automatically run against developer machines in CI.

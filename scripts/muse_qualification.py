@@ -35,6 +35,11 @@ PINNED_SHA256 = "94ea8fd1c73664c22e5c6157d8706945b667b11bd1c7c51691811e79f17dfcf
 MODEL = "archive-synthetic-model"
 PROMPT = "Synthetic qualification prompt: hello λ.\nSecond synthetic line."
 REPLY = "Synthetic qualification answer λ.\nSecond synthetic line."
+OUTPUT_LIMIT = 8 * 1024 * 1024  # Per captured stream; exceeding it fails the case.
+MSP_LINE_LIMIT = 1024 * 1024
+MSP_QUEUE_LIMIT = 1024
+FILE_LIMIT = 32 * 1024 * 1024  # Harness input/export cap, not a native format limit.
+HOOK_LIMIT = 1024 * 1024
 USAGE = {"input_tokens": 101, "output_tokens": 23, "total_tokens": 124,
          "input_tokens_details": {"cached_tokens": 17},
          "output_tokens_details": {"reasoning_tokens": 5}}
@@ -50,6 +55,16 @@ def file_digest(path):
         for chunk in iter(lambda: source.read(1024 * 1024), b""):
             value.update(chunk)
     return value.hexdigest()
+
+
+def read_limited(path, limit=None):
+    """Refuse oversized local evidence before allocating or decoding its body."""
+    limit = FILE_LIMIT if limit is None else limit
+    with path.open("rb") as source:
+        data = source.read(limit + 1)
+    if len(data) > limit:
+        raise RuntimeError("qualification evidence exceeded file byte limit")
+    return data
 
 
 def command_id():
@@ -113,17 +128,37 @@ def run_process(argv, *, env, cwd, timeout=40):
     process = subprocess.Popen(argv, env=env, cwd=cwd, stdin=subprocess.DEVNULL,
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                start_new_session=True)
+    captured = {process.stdout: bytearray(), process.stderr: bytearray()}
+    pending = list(captured)
+    deadline = time.monotonic() + timeout
+    timed_out = False
     try:
-        stdout, stderr = process.communicate(timeout=timeout)
-        return {"argv": argv, "exit": process.returncode, "stdout": stdout.decode(errors="replace"),
-                "stderr": stderr.decode(errors="replace"), "timeout": False}
-    except subprocess.TimeoutExpired:
-        stop_process(process)
-        stdout, stderr = process.communicate(timeout=5)
-        return {"argv": argv, "exit": process.returncode, "stdout": stdout.decode(errors="replace"),
-                "stderr": stderr.decode(errors="replace"), "timeout": True}
+        while pending:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                timed_out = True
+                break
+            ready, _, _ = select.select(pending, [], [], min(.2, remaining))
+            for stream in ready:
+                chunk = os.read(stream.fileno(), 65536)
+                if not chunk:
+                    pending.remove(stream)
+                    continue
+                if len(captured[stream]) + len(chunk) > OUTPUT_LIMIT:
+                    raise RuntimeError("native command exceeded captured stream byte limit")
+                captured[stream].extend(chunk)
+        if not timed_out:
+            try:
+                process.wait(timeout=max(.001, deadline - time.monotonic()))
+            except subprocess.TimeoutExpired:
+                timed_out = True
     finally:
         stop_process(process)
+        process.stdout.close()
+        process.stderr.close()
+    return {"argv": argv, "exit": process.returncode,
+            "stdout": captured[process.stdout].decode(errors="replace"),
+            "stderr": captured[process.stderr].decode(errors="replace"), "timeout": timed_out}
 
 
 class Endpoint(http.server.BaseHTTPRequestHandler):
@@ -249,7 +284,7 @@ def logical_rows(data):
 
 
 def inspect_session(path):
-    data = path.read_bytes()
+    data = read_limited(path)
     rows = logical_rows(data)
     opened = [{"line": line, "recorded_at": row.get("recorded_at"),
                "record": row["payload"]["record"]}
@@ -270,7 +305,7 @@ def inspect_session(path):
 
 def retained_turn_assertions(path, expected_runs, artifact=None):
     """Check own retained turns, not command acknowledgements or copied context."""
-    rows = [row for _, _, row in logical_rows(path.read_bytes())]
+    rows = [row for _, _, row in logical_rows(read_limited(path))]
     runs = [row for row in rows if row.get("payload_type") == "runtime.session" and
             row.get("payload", {}).get("kind") == "run"]
     starts = [row["payload"] for row in runs if row["payload"].get("event", {}).get("kind") == "started"]
@@ -319,7 +354,7 @@ def export_diagnostics(case, source, name):
     diagnostics = re.findall(r"[^\n]*unparseable[^\n]*", result["stderr"], re.IGNORECASE)
     result["unparseable_diagnostics"] = diagnostics
     result["export_written"] = target.is_file()
-    result["diagnostics"] = json.loads(target.read_text()).get("diagnostics", {}) if target.is_file() else {}
+    result["diagnostics"] = json.loads(read_limited(target).decode()).get("diagnostics", {}) if target.is_file() else {}
     result["unparseable_lines"] = result["diagnostics"].get("unparseable_lines")
     return result
 
@@ -357,7 +392,7 @@ def probe_exec(case):
     if fresh["exit"] != 0 or fresh["timeout"] or len(case.logs()) != 1:
         raise RuntimeError("fresh exec did not produce exactly one completed log")
     path = case.logs()[0]
-    first = path.read_bytes()
+    first = read_limited(path)
     before = inspect_session(path)
     artifact = case.workspace / "artifact.txt" if case.server.tool else None
     fresh_turn = retained_turn_assertions(path, 1, artifact)
@@ -376,7 +411,7 @@ def probe_exec(case):
     ordinary = next(line for line in first.splitlines() if json.loads(line).get("payload_type") == "session.opened.observed")
     mutations = probe_mutations(case, frame, ordinary)
     copied = case.root / "copied-session.jsonl"
-    copied.write_bytes(path.read_bytes())
+    copied.write_bytes(read_limited(path))
     copy_export = export_diagnostics(case, copied, "copy")
     assertions = {
         **{"fresh_" + key: value for key, value in fresh_turn.items()},
@@ -385,11 +420,11 @@ def probe_exec(case):
         "fresh_has_one_false_resume_open": len(before["opened"]) == 1 and
             before["opened"][0]["record"].get("resume") is False,
         "resume_success": resumed["exit"] == 0 and not resumed["timeout"],
-        "resume_preserves_prefix": path.read_bytes().startswith(first),
+        "resume_preserves_prefix": read_limited(path).startswith(first),
         "native_valid_export_clean": export["export_written"] and export["unparseable_lines"] == 0,
         "native_exact_permission_clean": exact["export_written"] and exact["unparseable_lines"] == 0,
         "native_bad_checksum_diagnostic": invalid["unparseable_lines"] == 1,
-        "copy_bytes_identical": copied.read_bytes() == path.read_bytes(),
+        "copy_bytes_identical": read_limited(copied) == read_limited(path),
         "copy_native_export_clean": copy_export["export_written"] and copy_export["unparseable_lines"] == 0,
         "mutation_diagnostics_match": all(value["matched"] for value in mutations.values()),
     }
@@ -401,29 +436,68 @@ def probe_exec(case):
 
 class MSP:
     def __init__(self, case):
-        self.case, self.messages, self.index = case, queue.Queue(), 0
+        self.case, self.messages, self.index = case, queue.Queue(maxsize=MSP_QUEUE_LIMIT), 0
+        self.reader_error = None
         self.completed = set()
         self.stderr = (case.root / "serve-stderr.txt").open("w")
         self.process = subprocess.Popen(case.argv("serve"), env=case.env, cwd=case.workspace,
                                         stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                        stderr=self.stderr, text=True, start_new_session=True)
+                                        stderr=subprocess.PIPE, start_new_session=True)
+        def fail(detail):
+            self.reader_error = detail
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(self.process.pid, signal.SIGKILL)
+
         def read():
-            for line in self.process.stdout:
+            total = 0
+            while True:
+                line = self.process.stdout.readline(MSP_LINE_LIMIT + 1)
+                if not line:
+                    return
+                total += len(line)
+                if len(line) > MSP_LINE_LIMIT or total > OUTPUT_LIMIT:
+                    fail("MSP stdout exceeded line or stream byte limit")
+                    return
                 try:
-                    self.messages.put(json.loads(line))
+                    message = json.loads(line)
                 except ValueError:
-                    self.messages.put({"invalid_json": True})
+                    message = {"invalid_json": True}
+                try:
+                    self.messages.put_nowait(message)
+                except queue.Full:
+                    fail("MSP pending message limit exceeded")
+                    return
+
+        def read_stderr():
+            total = 0
+            while True:
+                chunk = self.process.stderr.read(65536)
+                if not chunk:
+                    return
+                total += len(chunk)
+                if total > OUTPUT_LIMIT:
+                    fail("MSP stderr exceeded stream byte limit")
+                    return
+                self.stderr.write(chunk.decode(errors="replace"))
+
         self.reader = threading.Thread(target=read, daemon=True)
+        self.stderr_reader = threading.Thread(target=read_stderr, daemon=True)
         self.reader.start()
+        self.stderr_reader.start()
 
     def send(self, value):
-        self.process.stdin.write(json.dumps(value) + "\n")
+        self.process.stdin.write((json.dumps(value) + "\n").encode())
         self.process.stdin.flush()
 
     def receive(self, predicate, timeout=25):
         end = time.monotonic() + timeout
         while time.monotonic() < end:
-            message = self.messages.get(timeout=max(.001, end - time.monotonic()))
+            if getattr(self, "reader_error", None):
+                raise RuntimeError(self.reader_error)
+            try:
+                message = self.messages.get(timeout=min(.2, max(.001, end - time.monotonic())))
+            except queue.Empty:
+                continue
             if message.get("method") == "turn/completed":
                 self.completed.add(message.get("params", {}).get("sessionId"))
             if predicate(message):
@@ -449,7 +523,8 @@ class MSP:
                          message.get("params", {}).get("sessionId") == session_id)
 
     def close(self):
-        self.process.stdin.close()
+        with contextlib.suppress(BrokenPipeError):
+            self.process.stdin.close()
         try:
             self.process.wait(timeout=5)
         except subprocess.TimeoutExpired:
@@ -457,8 +532,12 @@ class MSP:
         finally:
             stop_process(self.process)
             self.reader.join(timeout=3)
+            self.stderr_reader.join(timeout=3)
             self.process.stdout.close()
+            self.process.stderr.close()
             self.stderr.close()
+        if self.reader_error:
+            raise RuntimeError(self.reader_error)
 
 
 def probe_msp(case):
@@ -519,7 +598,7 @@ def probe_pty(case):
             if submitted:
                 for path in case.logs():
                     try:
-                        rows = logical_rows(path.read_bytes())
+                        rows = logical_rows(read_limited(path))
                     except (ValueError, KeyError):
                         continue
                     runs = [row.get("payload", {}) for _, _, row in rows if row.get("payload_type") == "runtime.session" and row.get("payload", {}).get("kind") == "run"]
@@ -574,14 +653,17 @@ def native_run(binary, output, selected=None):
                 report["cases"][name] = {"failed": type(error).__name__, "detail": str(error)}
                 command = case.root / "fresh-command.json"
                 if command.exists():
-                    report["cases"][name]["fresh"] = json.loads(command.read_text())
+                    report["cases"][name]["fresh"] = json.loads(read_limited(command).decode())
             finally:
                 case.close()
                 report["cases"][name]["timezone"] = timezone
                 report["cases"][name]["observed_utc"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
-                report["cases"][name]["sessions"] = [inspect_session(path) for path in case.logs()]
-                hooks = case.root / "hooks.jsonl"
-                report["cases"][name]["hooks"] = [json.loads(line) for line in hooks.read_text().splitlines()] if hooks.exists() else []
+                try:
+                    report["cases"][name]["sessions"] = [inspect_session(path) for path in case.logs()]
+                    hooks = case.root / "hooks.jsonl"
+                    report["cases"][name]["hooks"] = [json.loads(line) for line in read_limited(hooks, HOOK_LIMIT).decode().splitlines()] if hooks.exists() else []
+                except Exception as error:
+                    report["cases"][name].update(failed=type(error).__name__, detail=str(error))
                 write_json(output / "report.json", report)
     finally:
         write_json(output / "report.json", report)
