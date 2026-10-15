@@ -1033,6 +1033,7 @@ and unlisted-user reviews do not authorize it. Pushes invalidate that approval.
 Approve the revision, then rerun CI; a rerun or label alone grants nothing. There
 is no self-referential head SHA in the exception file. The bounded decision
 artifact records the exact source, trusted policy digest, exception and review.
+Review submission time determines the latest review, with review ID breaking equal-time ties.
 Expired exceptions fail even when unused, so remove them promptly.
 
 The enforcer protects the budget decision **when the required workflow runs**.
@@ -1082,4 +1083,6 @@ For additional comparable normal runs, repeat
 full-pipeline validation. Physical run/attempt/shard duplicates cannot increase
 its observation count, and removed historical parents are excluded from the
 current inventory. The candidate retains sample identities and pipeline hashes
-so a reviewer can inspect the original evidence.
+so a reviewer can inspect the original evidence. Policy validation rejects absent or
+duplicate sample provenance, unknown/empty measurement cohorts, and per-parent
+observation counts exceeding the retained physical sample inventory.

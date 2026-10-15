@@ -53,12 +53,18 @@ def admit(policy, rows, topology, pipeline, history_samples=()):
     # Current compiled/executed inventory defines admission. Removed historical
     # parents cannot become an allowance for a future reintroduced test.
     ids = sorted(tests)
-    policy['baseline'] = {'inventory': ids, 'provenance': proof, 'samples': proofs,
+    unique_proofs = {}
+    for sample in proofs:
+        identity = (sample['run_id'], sample['run_attempt'])
+        if identity in unique_proofs and unique_proofs[identity] != sample:
+            raise ValueError('conflicting baseline sample provenance')
+        unique_proofs[identity] = sample
+    policy['baseline'] = {'inventory': ids, 'provenance': proof, 'samples': list(unique_proofs.values()),
         'metric': 'maximum-parent-or-descendant-terminal-elapsed',
         'groups': [{'key': group['key'],
                     'identity': {key: group[key] for key in ('configuration_sha256', 'cohort')},
                     'tests': {ident: value for ident, value in group['tests'].items() if ident in tests}}
-                   for group in candidate['groups']]}
+                   for group in candidate['groups'] if any(ident in tests for ident in group['tests'])]}
     return gate.policy_check(policy)
 
 

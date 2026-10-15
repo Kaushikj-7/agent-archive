@@ -56,14 +56,27 @@ def policy_check(policy):
             or any(not IDENT.fullmatch(v) for v in ids)):
         raise ValueError('reviewed individual-parent baseline inventory missing or invalid')
     proof = baseline['provenance']
-    if (not SHA.fullmatch(proof['source']) or not SHA.fullmatch(proof['tree'])
-            or type(proof['run_id']) is not int or proof['run_id'] <= 0
-            or type(proof['run_attempt']) is not int or not 1 <= proof['run_attempt'] <= 10
-            or proof['workers'] not in (4, 8)
-            or proof['inventory_sha256'] != normalize_ci_timing.digest(ids)
-            or not re.fullmatch('[0-9a-f]{64}', proof['pipeline_sha256'])):
-        raise ValueError('baseline provenance invalid')
-    group_keys = set()
+    samples = baseline.get('samples')
+    if not isinstance(samples, list) or not samples or proof not in samples:
+        raise ValueError('baseline sample provenance missing')
+    physical = set()
+    for sample in samples:
+        if (not SHA.fullmatch(sample['source']) or not SHA.fullmatch(sample['tree'])
+                or type(sample['run_id']) is not int or sample['run_id'] <= 0
+                or type(sample['run_attempt']) is not int or not 1 <= sample['run_attempt'] <= 10
+                or sample['workers'] not in (4, 8)
+                or any(not re.fullmatch('[0-9a-f]{64}', sample[key]) for key in
+                       ('inventory_sha256', 'compiled_inventory_sha256', 'pipeline_sha256'))):
+            raise ValueError('baseline provenance invalid')
+        identity = (sample['run_id'], sample['run_attempt'])
+        if identity in physical:
+            raise ValueError('duplicate baseline physical sample')
+        physical.add(identity)
+    if proof['inventory_sha256'] != normalize_ci_timing.digest(ids):
+        raise ValueError('baseline inventory provenance invalid')
+    if not isinstance(baseline['groups'], list) or not baseline['groups']:
+        raise ValueError('baseline measured cohorts missing')
+    group_keys, parent_counts = set(), {}
     for group in baseline['groups']:
         if group['key'] in group_keys:
             raise ValueError('duplicate baseline cohort')
@@ -71,10 +84,25 @@ def policy_check(policy):
         if (set(group['identity']) != {'configuration_sha256', 'cohort'}
                 or group['key'] != normalize_ci_timing.digest(group['identity'])):
             raise ValueError('baseline cohort identity invalid')
+        identity = group['identity']
+        cohort = identity['cohort']
+        if (not re.fullmatch('[0-9a-f]{64}', identity['configuration_sha256'])
+                or set(cohort) != {'cache_state', 'runner_image', 'compiler'}
+                or cohort['cache_state'] not in ('exact', 'prefix', 'trusted', 'miss', 'error', 'corrupt-rebuilt')
+                or not isinstance(cohort['runner_image'], str) or not cohort['runner_image'].strip()
+                or cohort['runner_image'] == 'unknown'
+                or not isinstance(cohort['compiler'], dict) or not cohort['compiler']
+                or any(not isinstance(k, str) or not isinstance(v, str) for k, v in cohort['compiler'].items())
+                or not isinstance(group['tests'], dict) or not group['tests']):
+            raise ValueError('baseline measured cohort invalid')
         for ident, row in group['tests'].items():
-            if ident not in ids or type(row['observations']) is not int or row['observations'] < 1:
+            if (ident not in ids or type(row['observations']) is not int
+                    or not 1 <= row['observations'] <= len(physical)):
                 raise ValueError('baseline timing outside inventory')
             number(row['own_elapsed_median_seconds'])
+            parent_counts[ident] = parent_counts.get(ident, 0) + row['observations']
+            if parent_counts[ident] > len(physical):
+                raise ValueError('baseline parent exceeds physical sample inventory')
     for ident, budget in policy['parallel_budgets'].items():
         if (not IDENT.fullmatch(ident) or type(budget['maximum_descendants']) is not int
                 or budget['maximum_descendants'] < 0):
@@ -272,13 +300,17 @@ def approval(api, topology, maintainers):
             if login in allowed:
                 if type(row.get('id')) is not int or not isinstance(row.get('submitted_at'), str):
                     raise ValueError('invalid submitted review identity')
-                if row['id'] > latest.get(login, {}).get('id', 0):
-                    latest[login] = row
+                submitted = datetime.fromisoformat(row['submitted_at'].replace('Z', '+00:00'))
+                if submitted.tzinfo is None:
+                    raise ValueError('submitted review timestamp lacks timezone')
+                order = (submitted, row['id'])
+                if login not in latest or order > latest[login][0]:
+                    latest[login] = (order, row)
         if len(rows) < 100:
             break
     else:
         raise ValueError('review inventory exceeds bounded page limit')
-    for login, row in sorted(latest.items()):
+    for login, (_, row) in sorted(latest.items()):
         if (row.get('state') == 'APPROVED' and row.get('commit_id') == topology['head']
                 and row.get('user', {}).get('type') == 'User'):
             return {'review_id': row['id'], 'reviewer': login, 'head': topology['head']}

@@ -34,7 +34,12 @@ def policy():
     result['baseline'] = {'inventory': ids, 'groups': [],
         'metric': 'maximum-parent-or-descendant-terminal-elapsed', 'provenance': {
         'source': 'f'*40, 'tree': 'b'*40, 'run_id': 11, 'run_attempt': 1, 'workers': 8,
-        'inventory_sha256': norm.digest(ids), 'pipeline_sha256': 'c'*64}}
+        'inventory_sha256': norm.digest(ids), 'compiled_inventory_sha256': 'd'*64,
+        'pipeline_sha256': 'c'*64}}
+    result['baseline']['samples'] = [dict(result['baseline']['provenance'], run_id=i) for i in (11, 10, 9)]
+    identity = {'configuration_sha256': 'e'*64, 'cohort': worker(7)['cohort']}
+    result['baseline']['groups'] = [{'key': norm.digest(identity), 'identity': identity,
+        'tests': {ids[7]: {'observations': 1, 'own_elapsed_median_seconds': 1}}}]
     return result
 
 
@@ -150,6 +155,49 @@ class GateTests(unittest.TestCase):
         self.exceptions['exceptions'][0]['expires'] = '2026-10-14'
         with self.assertRaisesRegex(ValueError, 'expired'):
             self.run_gate(API([approved()]))
+
+    def test_latest_submitted_review_overrides_creation_id_order(self):
+        self.new_test(own_elapsed_seconds=84)
+        self.exception()
+        older_created_later_submitted = approved(id=1, state='CHANGES_REQUESTED',
+                                                 submitted_at='2026-10-15T01:00:00Z')
+        newer_created_first_submitted = approved(id=2)
+        for reviews in ([older_created_later_submitted, newer_created_first_submitted],
+                        [newer_created_first_submitted, older_created_later_submitted]):
+            with self.subTest(reviews=reviews), self.assertRaises(ValueError):
+                self.run_gate(API(reviews))
+        older_created_later_submitted['state'] = 'APPROVED'
+        newer_created_first_submitted['state'] = 'CHANGES_REQUESTED'
+        self.assertTrue(self.run_gate(API([newer_created_first_submitted,
+                                          older_created_later_submitted]))['passed'])
+
+    def test_malformed_baseline_cannot_enable_fabricated_history(self):
+        original = copy.deepcopy(self.policy)
+        changes = [lambda b: b.update(groups=[]), lambda b: b.pop('samples'),
+                   lambda b: b['samples'].append(copy.deepcopy(b['samples'][0])),
+                   lambda b: b['samples'][0].pop('compiled_inventory_sha256'),
+                   lambda b: next(iter(b['groups'][0]['tests'].values())).update(observations=4)]
+        for change in changes:
+            self.policy = copy.deepcopy(original)
+            change(self.policy['baseline'])
+            with self.subTest(change=change), self.assertRaises((ValueError, KeyError)):
+                self.run_gate()
+        self.policy = copy.deepcopy(original)
+        extra = copy.deepcopy(self.policy['baseline']['groups'][0])
+        extra['identity']['cohort']['runner_image'] = 'other'
+        extra['key'] = norm.digest(extra['identity'])
+        for group in (extra, self.policy['baseline']['groups'][0]):
+            next(iter(group['tests'].values()))['observations'] = 2
+        self.policy['baseline']['groups'].append(extra)
+        with self.assertRaisesRegex(ValueError, 'physical sample inventory'):
+            self.run_gate()
+        for change in ({'cache_state': 'unknown'}, {'runner_image': 'unknown'}, {'compiler': {}}):
+            self.policy = copy.deepcopy(original)
+            group = self.policy['baseline']['groups'][0]
+            group['identity']['cohort'].update(change)
+            group['key'] = norm.digest(group['identity'])
+            with self.subTest(change=change), self.assertRaisesRegex(ValueError, 'cohort invalid'):
+                self.run_gate()
 
     def test_comparable_regression_requires_three_verified_baseline_observations(self):
         test = self.rows[0]['tests'][0]
@@ -282,6 +330,7 @@ class GateTests(unittest.TestCase):
         test = next(iter(result['baseline']['groups'][0]['tests'].values()))
         self.assertEqual(test['observations'], 1)
         self.assertEqual(test['own_elapsed_median_seconds'], 1)
+        self.assertEqual(len(result['baseline']['samples']), 1)
         for mutate in (lambda p: p.update(snapshot_status='partial'),
                        lambda p: p['input']['samples'][0]['workflows'][1]['run'].update(conclusion='failure'),
                        lambda p: p['input']['samples'][0]['tested_checkout'].update(source='e'*40)):
