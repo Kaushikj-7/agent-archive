@@ -636,3 +636,28 @@ func TestNativeLocalMatchesUseTheSessionListWords(t *testing.T) {
 		t.Fatalf("short times: %q\n%s", lines, out)
 	}
 }
+
+// A local session with no name or prompt yet is titled by its native ID in
+// the picker, not left blank.
+func TestNativeLocalPickerTitlesAnUnnamedSessionByItsID(t *testing.T) {
+	t.Parallel()
+	f := newNativeFixture(t)
+	named := "11111111-1111-1111-1111-111111111111"
+	unnamed := "33333333-3333-3333-3333-333333333333"
+	f.add(t, "claude", named, "fix the OAuth callback", time.Hour)
+	f.add(t, "codex", unnamed, "", 2*time.Hour)
+	f.env.TerminalSize = fixedTerminal{100, 40}.terminalSize
+	out, errOut, code := runPicker(t, f.env, "q\n")
+	if code != 0 {
+		t.Fatalf("picker code=%d stderr=%s\n%s", code, errOut, out)
+	}
+	var row string
+	for line := range strings.SplitSeq(out, "\n") {
+		if strings.HasPrefix(line, "2  ") {
+			row = line
+		}
+	}
+	if !strings.HasPrefix(row, "2  ● Codex   "+unnamed+" ") {
+		t.Fatalf("unnamed row %q, want it titled by its native ID:\n%s", row, out)
+	}
+}
