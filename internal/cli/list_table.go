@@ -307,9 +307,11 @@ func cursorCell(r listRow, opts listFormatOptions) string {
 }
 
 // tableCells is one row of the plain table, in tableHeader's columns. Its
-// title is uncut, with the subagent note and the hint spelled out after it.
+// title is the full display title (Title, not the readable ListTitle the
+// width-aware cell shows), so grep or a pager finds the session's own words,
+// uncut, with the subagent note and the hint spelled out after it.
 func tableCells(r listRow, opts listFormatOptions) []string {
-	title := titlePrefix(r) + cellTitle(r) + subagentNote(r)
+	title := indentedTitle(r) + subagentNote(r)
 	if opts.Numbered {
 		// A picker whose terminal's size is unknown: its mark still shows.
 		title = cursorCell(r, opts) + title
@@ -335,7 +337,8 @@ func tableCells(r listRow, opts listFormatOptions) []string {
 }
 
 // orDash is text, or "-" when it is empty, so a plain table's cell is never
-// blank and its columns split on spaces.
+// blank. The columns still do not split on whitespace: WHEN can hold a
+// space ("Sep 20") and TITLE often does; scripts read list --json.
 func orDash(text string) string {
 	if text == "" {
 		return "-"

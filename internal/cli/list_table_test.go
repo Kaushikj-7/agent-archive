@@ -279,7 +279,7 @@ func TestPipedListColumns(t *testing.T) {
 		"2m claude agent-archive #505 d7a77938 Review historical project command",
 		"Mon claude built-in-browser #514 36a7d5ee Cloud session archive/retrieval options and the many trade-offs between them that we discussed",
 		"Sun codex agent-archive - 76941c69 Better loading indicator when running a long search over a very large archive",
-		"Sep 20 cursor a-project-with-an-unusually-long-directory-name #1234 5b0c1e22 Pasted files: list_table.go",
+		"Sep 20 cursor a-project-with-an-unusually-long-directory-name #1234 5b0c1e22 # Files pasted by the user: list_table.go, list_format.go",
 		"2025-08-25 claude agent-archive - 9f3a64d0 修复上传队列中的重试预算并更新相关文档和测试",
 		"3h claude agent-archive - 0c1d2e3f 0c1d2e3f",
 	}
@@ -287,6 +287,42 @@ func TestPipedListColumns(t *testing.T) {
 		if got := strings.Join(strings.Fields(lines[i+1]), " "); got != strings.Join(strings.Fields(line), " ") {
 			t.Errorf("row %d:\n got %q\nwant %q", i+1, got, strings.Join(strings.Fields(line), " "))
 		}
+	}
+	// Columns sit where the header names them: WHEN keeps its space
+	// ("Sep 20"; scripts read --json), and TITLE is the rest of the line,
+	// the session's own words rather than the readable list title.
+	whenAt, titleAt := strings.Index(lines[0], "WHEN"), strings.Index(lines[0], "TITLE")
+	row := lines[4]
+	if got := strings.TrimSpace(row[whenAt:strings.Index(lines[0], "AGENT")]); got != "Sep 20" {
+		t.Errorf("WHEN cell %q, want %q", got, "Sep 20")
+	}
+	if got := row[titleAt:]; got != "# Files pasted by the user: list_table.go, list_format.go" {
+		t.Errorf("TITLE cell %q", got)
+	}
+}
+
+// Piped, TITLE spells out the subagent note and the handoff hint after the
+// full title; the width-aware cell shows the readable title and short forms.
+func TestPipedTitleKeepsTheFullTitleAndNotes(t *testing.T) {
+	t.Parallel()
+	rows, laid := layoutRows(t)
+	rows[3].Hint, rows[3].ShortHint = notUploadedHint, notUploadedShortHint
+	var out bytes.Buffer
+	if err := printSessionTable(&out, rows, laid); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"Review historical project command · 4 subagents",
+		"# Files pasted by the user: list_table.go, list_format.go · not yet uploaded",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("plain table lacks %q:\n%s", want, out.String())
+		}
+	}
+	laid.Width = 120
+	got := newSessionLayout(rows, laid).renderRow(rows[3], textStyle{})
+	if !strings.Contains(got, "Pasted files: list_table.go") || !strings.Contains(got, "· not uploaded") || strings.Contains(got, "# Files") {
+		t.Errorf("width-aware row: %q", got)
 	}
 }
 

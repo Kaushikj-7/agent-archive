@@ -23,9 +23,11 @@ follow [Semantic Versioning](https://semver.org/).
 - **Changed for scripts:** piped `list` output (not a terminal) is now one
   plain line per session, newest first with no project headings, in the
   columns `WHEN AGENT PROJECT PR ID TITLE`, with WHEN the short time, an
-  empty PR or unknown project as `-`, and TITLE last: the readable title,
-  never cut to a width, with its subagent note spelled out. Anything parsing
-  the old `TITLE PR WHEN HARNESS PROJECT ID` text should switch to
+  empty PR or unknown project as `-`, and TITLE last: the session's full
+  title as recorded (not the shortened title the terminal list shows), never
+  cut, with its subagent note spelled out. The columns are aligned for
+  reading, not for splitting on spaces (WHEN can read "Sep 20"). Anything
+  parsing the old `TITLE PR WHEN HARNESS PROJECT ID` text should switch to
   `list --json`, which is unchanged and is the stable format. `list
   --verbose` is unchanged.
 - `show` gives when a session was last active as a weekday ("Mon") or date
