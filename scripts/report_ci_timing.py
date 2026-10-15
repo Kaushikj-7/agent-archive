@@ -44,6 +44,30 @@ def category(name):
     return 'other'
 
 
+def runner_usage(job, seconds):
+    """Separate API timestamp intervals from evidence of runner allocation."""
+    runner_id = job.get('runner_id')
+    executed = any(step.get('started_at') and step.get('conclusion') != 'skipped'
+                   for step in job.get('steps', []))
+    if (type(runner_id) is int and runner_id > 0) or job.get('runner_name') or executed:
+        return 'allocated', seconds
+    explicit_no_runner = (type(runner_id) is int and runner_id == 0
+                          and job.get('runner_name') == '')
+    # GitHub emits null allocation fields for a job skipped by its condition.
+    skipped_no_runner = (job.get('conclusion') == 'skipped' and 'runner_id' in job
+                         and runner_id is None and 'runner_name' in job
+                         and job['runner_name'] is None)
+    if (job.get('status') == 'completed' and job.get('conclusion') in ('cancelled', 'skipped')
+            and (explicit_no_runner or skipped_no_runner) and job.get('steps') == []):
+        return 'unallocated', 0
+    # Older saved successful snapshots omitted allocation fields. Preserve that
+    # format explicitly; an unsuccessful unknown job cannot use this fallback.
+    if ('runner_id' not in job and 'runner_name' not in job
+            and job.get('conclusion') == 'success'):
+        return 'legacy-success-timestamps', seconds
+    return 'unknown', None
+
+
 def sample_report(sample):
     issues, jobs, workflows, identities = [], [], [], []
     required = sample['required_jobs']
@@ -82,7 +106,10 @@ def sample_report(sample):
                 seconds = elapsed(job['started_at'], job['completed_at'])
             elif selected:
                 issues.append(name + ': missing job timestamps ' + job['name'])
-            if seconds is None and job.get('conclusion') != 'skipped':
+            allocation, runner_seconds = runner_usage(job, seconds)
+            if allocation == 'unknown':
+                issues.append(name + ': runner allocation unknown ' + job['name'])
+            elif runner_seconds is None:
                 issues.append(name + ': incomplete runner usage timestamps ' + job['name'])
             steps = []
             for step in job.get('steps', []):
@@ -92,6 +119,7 @@ def sample_report(sample):
                               'seconds': duration, 'conclusion': step.get('conclusion')})
             jobs.append({'workflow': name, 'name': job['name'], 'required': selected,
                          'conclusion': job.get('conclusion'), 'seconds': seconds,
+                         'runner_allocation': allocation, 'runner_seconds': runner_seconds,
                          'run_created_to_job_start_seconds': elapsed(run['created_at'], job['started_at']) if job.get('started_at') else None,
                          'runner_name': job.get('runner_name'), 'labels': job.get('labels', []),
                          'steps': steps})
@@ -118,19 +146,24 @@ def sample_report(sample):
             if job['name'] in required[s['run']['name']] and job.get('completed_at')]
     start = event or min((w['created_at'] for w in workflows), default=None)
     wall = elapsed(start, max(ends, key=stamp)) if start and ends else None
+    usage_complete = all(j['runner_seconds'] is not None for j in jobs)
+    known_minutes = sum(j['runner_seconds'] or 0 for j in jobs) / 60
     return {'id': sample['id'], 'cohort': cohort, 'cache_state': cache,
             'comparable_group': sample.get('comparable_group'), 'source': sample['source'],
             'qualifying': not issues, 'issues': issues, 'event_to_required_completion_seconds': wall if event else None,
             'run_created_lower_bound_seconds': wall if not event else None,
-            'actual_runner_minutes': sum(j['seconds'] or 0 for j in jobs) / 60,
-            'runner_minutes_complete': all(j['seconds'] is not None or j['conclusion'] == 'skipped' for j in jobs),
+            'actual_runner_minutes': known_minutes if usage_complete else None,
+            'known_runner_minutes': known_minutes,
+            'runner_minutes_complete': usage_complete,
             'workflows': workflows, 'jobs': jobs,
             'cache_inventory': sample.get('cache_inventory'),
             'artifact_inventory': sample.get('artifact_inventory'),
             'worker_evidence': sample.get('worker_evidence', []),
             'notes': ['Job start delay includes queueing, dependencies and orchestration; not pure queue time.',
                       'Step categories are labels; inspect raw steps. Parallel command durations must not be summed.',
-                      'Runner minutes are actual elapsed usage, not rounded billable minutes.']}
+                      'Job seconds retain API timestamp intervals, including unallocated cancellation placeholders.',
+                      'Runner minutes use allocated elapsed usage, not rounded billable minutes; unknown usage makes the total null.',
+                      'Legacy successful snapshots without allocation metadata use explicitly labeled timestamp estimates.']}
 
 
 def report(document):

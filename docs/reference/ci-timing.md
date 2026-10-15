@@ -469,3 +469,15 @@ from PR Test+Levenshtein usage. Disclose amortization assumptions, including mai
 pushes per PR and new-context cold versus trusted-hit seed runs. Do not hide
 postmerge seed overhead inside claimed PR savings or infer billed bytes from raw
 payload size. Existing standard-runner and10 GB cache policies remain unchanged.
+
+Runner-minute reports distinguish a job's API timestamp interval from runner
+allocation. An explicitly unallocated cancelled/skipped job (`runner_id: 0`,
+empty runner name and no steps, or explicit null allocation on a skipped job)
+contributes zero runner seconds even when the API supplies cancellation placeholder
+timestamps; those intervals stay visible
+as job `seconds`. Allocated cancelled/failed jobs retain their elapsed usage.
+Unknown allocation or missing allocated-job timestamps makes the total null and
+`runner_minutes_complete` false; `known_runner_minutes` is only the observed
+subtotal. Older successful snapshots without allocation metadata retain an
+explicit `legacy-success-timestamps` estimate. Required unsuccessful jobs still
+exclude the observation from latency qualification.
