@@ -16,14 +16,13 @@ import (
 )
 
 type searchCommandDependencies interface {
-	readOnlyStoreDependencies
-	scopeDependencies
-	readSignalSource
+	handoffCommandDependencies
 	now() time.Time
 	newCommandFlags(string, io.Writer) *commandFlags
 }
 
 type contentSearchOptions struct {
+	stdin       io.Reader
 	query       search.Query
 	refresh     bool
 	session     string
@@ -42,7 +41,7 @@ type contentSearchOptions struct {
 	reference   search.Reference
 }
 
-func runSearchCommand(args []string, stdout, stderr io.Writer, env searchCommandDependencies) int {
+func runSearchCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, env searchCommandDependencies) int {
 	fs := env.newCommandFlags("search", stderr)
 	harness := fs.String("harness", "", "session harness")
 	project := fs.String("project", "", "directory or configured project name")
@@ -91,6 +90,7 @@ func runSearchCommand(args []string, stdout, stderr io.Writer, env searchCommand
 	if code := contentSearchFilters(fs, &opts, *replay, *children, *since, *until, env.now()); code != 0 {
 		return code
 	}
+	opts.stdin = stdin
 	return executeContentSearch(opts, stdout, stderr, env)
 }
 

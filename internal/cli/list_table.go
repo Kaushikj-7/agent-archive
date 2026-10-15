@@ -261,6 +261,18 @@ func printSessionRow(tw io.Writer, r listRow, opts listFormatOptions) {
 		return
 	}
 	terminal.Println(tw, strings.Join(tableCells(r, opts), "\t"))
+	if r.searchSnippet != "" {
+		cells := tableCells(r, opts)
+		for i := range cells {
+			cells[i] = ""
+		}
+		at := 0
+		if opts.Numbered {
+			at = 1
+		}
+		cells[at] = r.searchSnippet
+		terminal.Println(tw, strings.Join(cells, "\t"))
+	}
 }
 
 // columnGap is the room between the columns of a table.

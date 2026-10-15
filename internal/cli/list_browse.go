@@ -16,6 +16,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/catalog"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/reader"
+	"github.com/wangjohn/agent-archive/internal/search"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
@@ -47,6 +48,7 @@ const (
 // screen (altScreen), each cut to fit the window. Transcript content is
 // shown only when t is pressed.
 type sessionBrowser struct {
+	search  *contentSearchBrowser
 	env     sessionBrowserDependencies
 	prompt  *prompter
 	stdout  io.Writer
@@ -71,6 +73,13 @@ func (b *sessionBrowser) run(ctx context.Context, choices *scopeChoices) error {
 		row, ok, err := b.list.pickScopedContext(ctx, b.prompt, b.stdout, choices, "show")
 		if err != nil || !ok {
 			return err
+		}
+		if b.search != nil {
+			action, err := b.searchDetails(ctx, row)
+			if err != nil || action == browseQuit {
+				return err
+			}
+			continue
 		}
 		stop := startActivity(b.stdout, "Loading session…")
 		viewCtx := pickerSelectionContext(ctx, row)
@@ -414,6 +423,7 @@ const minPickerPageRows = 3
 // Row numbers stay those of the whole table, so any listed number or short
 // ID can be typed from any page.
 type sessionPicker struct {
+	contentSearch *contentSearchBrowser
 	ctx           context.Context
 	searchContext func(context.Context) ([]listRow, error)
 	operation     *browserOperation
@@ -628,7 +638,7 @@ func (l *sessionPicker) pickRowsContext(ctx context.Context, p *prompter, stdout
 	if l.keys != nil {
 		return l.pickKeysContext(ctx, p, stdout, rows, totalMatched, truncated, format, action)
 	}
-	question := p.promptText("Enter number (or unique short SESSION_ID) to "+action+", words to filter, or q to quit", true, nil, -1, ": ")
+	question := p.promptText(l.listQuestion(action), true, nil, -1, ": ")
 	notice := ""
 	for {
 		l.prepareSearchContext(ctx, rows)
@@ -686,6 +696,11 @@ func (l *sessionPicker) pickRowsContext(ctx context.Context, p *prompter, stdout
 			}
 			l.prepareSearchContext(ctx, rows)
 			answer = strings.TrimSpace(answer)
+			if l.contentSearch != nil && strings.EqualFold(answer, "r") {
+				l.contentSearch.rerun = true
+				l.loadedOlder = true
+				return listRow{}, false, nil
+			}
 			if l.olderLine(answer) {
 				l.loadedOlder = true
 				return listRow{}, false, nil
@@ -709,6 +724,13 @@ func (l *sessionPicker) pickRowsContext(ctx context.Context, p *prompter, stdout
 				message = l.turnPage(pages, page, answer)
 				again = message == "" || redraw
 			default:
+				if l.contentSearch != nil {
+					if row, ok := matchBrowseRow(answer, rows); ok {
+						return row, true, nil
+					}
+					notice = "Enter a listed number or ID; r reruns the fixed content query."
+					break
+				}
 				onPage := v.order
 				if paged {
 					onPage = v.order[pages[page].start:pages[page].end]
@@ -1140,3 +1162,109 @@ func numericBrowserAnswer(answer string) bool {
 }
 
 func (l *sessionPicker) searchUnavailable() bool { return l.searchFailure != nil }
+
+// searchDetails is the finite search branch of the existing browser. It retains
+// one match page and one bounded context; scrolling never performs IO.
+func (b *sessionBrowser) searchDetails(ctx context.Context, row listRow) (browseAction, error) {
+	s := b.search
+	hit, ok := s.byKey[row.selectionKey]
+	if !ok {
+		return browseBack, nil
+	}
+	ref := hit.Reference
+	var out search.Surrounding
+	notice := ""
+	read := func(offset int) {
+		out = search.Surrounding{}
+		if ref == nil {
+			return
+		}
+		var err error
+		out, err = b.readSearchSelection(ctx, *ref, offset)
+		if err != nil {
+			notice = err.Error()
+		}
+	}
+	if ref != nil {
+		read(ref.Start)
+	}
+	navigation := searchMatchNavigation{position: -1}
+	top := 0
+	for {
+		if b.list.operationQuit {
+			return browseQuit, nil
+		}
+		b.screen.clear()
+		lines := searchContextLines(hit, ref, out, notice)
+		screen := b.drawSearchDetails(lines, top)
+		answer := s.pendingAction
+		s.pendingAction = ""
+		// Pending actions apply only after readSearchSelection joined its read.
+		if answer == "" && b.keys == nil {
+			var err error
+			answer, err = b.prompt.line(": ")
+			if err != nil {
+				return endOfInput(err)
+			}
+			answer = strings.ToLower(strings.TrimSpace(answer))
+		} else if answer == "" {
+			k, err := b.keys.next()
+			if err != nil {
+				return endOfInput(err)
+			}
+			if move, ok := scrollKeys[k.kind]; ok {
+				screen.scroll(move)
+				top = screen.top
+				continue
+			}
+			switch k.kind {
+			case keyEnter, keyBackspace:
+				answer = "b"
+			case keyEndOfInput:
+				answer = "q"
+			case keyRune:
+				answer = strings.ToLower(string(k.r))
+			case keyEscape, keyResize, keyUp, keyDown, keyPageUp, keyPageDown, keyHome, keyEnd, keyLeft, keyRight:
+				continue
+			}
+		}
+		switch answer {
+		case "b", "":
+			return browseBack, nil
+		case "q":
+			return browseQuit, nil
+		case "h":
+			s.handoff = &row
+			return browseQuit, nil
+		case "r":
+			s.rerun = true
+			_, err := s.load(ctx)
+			b.list.memo, b.list.cache, b.list.bottom = nil, nil, nil
+			b.list.start = 0
+			return browseBack, err
+		case "m":
+			if ref != nil && out.Selected.Next != 0 {
+				read(out.Selected.Next)
+				top = 0
+			} else {
+				notice = "No more raw context in this message."
+			}
+		case "n", "p":
+			direction := 1
+			if answer == "p" {
+				direction = -1
+			}
+			selected, err := s.moveMatch(ctx, hit, ref, direction, &navigation)
+			if err != nil {
+				notice = err.Error()
+				continue
+			}
+			ref = selected
+			notice = ""
+			read(ref.Start)
+			top = 0
+		default:
+			notice = searchDetailsQuestion
+		}
+	}
+}

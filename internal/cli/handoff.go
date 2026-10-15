@@ -68,6 +68,12 @@ var errHandoffNotSetUp = errors.New("handoff not set up")
 // rendered byte comes from a filtered bundle, whether that bundle was
 // downloaded or built in memory from a local transcript.
 func runHandoffCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, env handoffCommandDependencies) int {
+	return runHandoffWithInput(args, stdin, stdout, stderr, env, nil)
+}
+
+// runHandoffWithInput shares the ordinary handoff pipeline while preserving
+// buffered answers from a preceding browser and the original terminal identity.
+func runHandoffWithInput(args []string, stdin io.Reader, stdout, stderr io.Writer, env handoffCommandDependencies, input *typedInput) int {
 	// Every question below (the picker, "Continue in:", running a launched
 	// agent here) depends on this, which is false inside an agent's shell
 	// even when that shell is a pseudo-terminal.
@@ -84,7 +90,9 @@ func runHandoffCommand(args []string, stdin io.Reader, stdout, stderr io.Writer,
 	// Every prompt reads through one buffer, so an answer typed (or
 	// scripted) ahead for a later prompt is not lost to an earlier one's.
 	// A launched agent gets stdin itself: it must see the terminal.
-	input := newTypedInput(stdin)
+	if input == nil {
+		input = newTypedInput(stdin)
+	}
 	answers := input.answers
 	// Only an argument the person typed is a query; an ID the picker or the
 	// calling agent chose below is already a session's.

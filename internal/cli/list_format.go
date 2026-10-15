@@ -21,6 +21,7 @@ const minShortSessionID = 8
 
 // listRow is one session as the human list table renders it.
 type listRow struct {
+	searchSnippet   string
 	pickerSelection *handoffPickerSelection
 	selectionKey    string
 	Index           int

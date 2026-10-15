@@ -17,6 +17,7 @@ const (
 	browseSessions browserMode = iota
 	// pickSession returns the row to the caller.
 	pickSession
+	browseSearch
 )
 
 // browserSpec is what differs between the places a person chooses a session:
@@ -33,6 +34,7 @@ type browserLoadAction struct {
 }
 
 type browserSpec struct {
+	Search    *contentSearchBrowser
 	LoadOlder *browserLoadAction
 	Notice    string
 	Mode      browserMode
@@ -101,11 +103,18 @@ func runBrowser(ctx context.Context, env sessionBrowserDependencies, p *prompter
 		spec.LoadOlder = spec.Choices.loadOlder
 	}
 	list := &sessionPicker{ctx: ctx, older: spec.LoadOlder, boundedNotice: spec.Notice, env: env, clear: redraw, keys: keys, verb: spec.Verb, filter: spec.Query, filtering: spec.Query != "" && keys != nil}
+	list.contentSearch = spec.Search
 	defer list.stopOperations()
 	var err error
-	if spec.Mode == browseSessions {
-		b := &sessionBrowser{env: env, prompt: p, stdout: stdout, stderr: stderr, store: spec.Store, format: spec.Choices.format, noPager: spec.NoPager, screen: screen, keys: keys, list: list}
+	if spec.Mode == browseSessions || spec.Mode == browseSearch {
+		b := &sessionBrowser{env: env, prompt: p, stdout: stdout, stderr: stderr, store: spec.Store, format: spec.Choices.format, noPager: spec.NoPager, screen: screen, keys: keys, list: list, search: spec.Search}
 		err = b.run(ctx, spec.Choices)
+		if spec.Search != nil && spec.Search.handoff != nil {
+			row, picked = *spec.Search.handoff, true
+			if keys != nil && p.handBack != nil {
+				keys.handBack(p.handBack)
+			}
+		}
 		b.screen.leave()
 		if err == nil && b.last != nil {
 			renderSessionSummary(stdout, *b.last, b.summaryOptions(true))

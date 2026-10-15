@@ -593,6 +593,13 @@ Example: agent-archive list --skill review-pr --skill-sha256 HASH --since 7d
 
 Guide: [Search conversation text](../guides/search.md).
 
+On an interactive terminal, query results use the shared browser: select a
+snippet, read its exact bounded context, navigate matching passages with n/p,
+and use h (**Hand off current session**) through the existing handoff gates.
+The original query and scope stay fixed; r explicitly reruns after an index
+change. `/` metadata filtering is disabled here. JSON and piped output remain
+ordinary bounded documents. See the guide for result/match retention caps.
+
 ```text
 Usage: agent-archive search "QUERY" [options]
        agent-archive search --refresh [--session SESSION_ID --harness NAME]

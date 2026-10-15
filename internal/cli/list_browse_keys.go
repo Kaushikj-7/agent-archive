@@ -121,6 +121,9 @@ func (l *sessionPicker) pickKeysContext(ctx context.Context, p *prompter, stdout
 		}
 		frame.WriteString(v.footer)
 		status := screen.status()
+		if l.contentSearch != nil {
+			status = strings.ReplaceAll(status, "/ filter · ", "r rerun · ")
+		}
 		if l.filtering {
 			status = filterStatus(screen, action)
 		}
@@ -240,7 +243,9 @@ func (l *sessionPicker) listRune(r rune, screen listScreen, typed string) (strin
 		return "", listQuit
 	case typed == "" && l.toggles && (r == 'a' || r == 'A'):
 		return "", listToggle
-	case typed == "" && r == '/':
+	case typed == "" && r == '/' && l.contentSearch != nil:
+		return "", listStay
+	case typed == "" && r == '/' && l.contentSearch == nil:
 		l.filtering, l.cursor, l.moved = true, 0, false
 	case typed == "" && (r == 'n' || r == 'N'):
 		l.scroll(scrollPageDown, screen)
@@ -552,7 +557,11 @@ func (b *sessionBrowser) measureDetails(lines []string, top int, pager bool, hin
 	if !ok {
 		return detailsScreen{lines: lines, shown: len(lines)}, notice
 	}
-	below := displayLines(hint, width) + displayLines(b.prompt.promptText(detailsKeysQuestion(true, pager), false, nil, -1, ": "), width)
+	question := detailsKeysQuestion(true, pager)
+	if b.search != nil {
+		question = searchDetailsQuestion
+	}
+	below := displayLines(hint, width) + displayLines(b.prompt.promptText(question, false, nil, -1, ": "), width)
 	chrome := max(displayLines(notice.text, width), 1) + below
 	summaryRows := 0
 	for _, line := range lines {
@@ -633,6 +642,10 @@ func (l *sessionPicker) emptyWithoutAction(rows []listRow) bool {
 }
 
 func (l *sessionPicker) activatesOlder(k key, typed string) bool {
+	if l.contentSearch != nil && typed == "" && k.kind == keyRune && unicode.ToLower(k.r) == 'r' {
+		l.contentSearch.rerun = true
+		return true
+	}
 	return l.older != nil && !l.filtering && typed == "" && k.kind == keyRune && unicode.ToLower(k.r) == 'o'
 }
 

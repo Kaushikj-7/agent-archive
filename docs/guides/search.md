@@ -141,3 +141,39 @@ again on each invocation and otherwise change the query identity. After a failed
 refresh whose observation could not be read, coverage is null; successful queries
 against a missing index instead report known local zero counts and index_present
 false. Unknown matching totals always remain null.
+
+## Browse matches on a terminal
+
+When stdin and stdout are terminals, a content query opens the shared session
+browser. JSON and piped output stay bounded ordinary output. The original FTS
+query remains fixed, including phrase spacing. Metadata `/` filtering is disabled
+in this mode. Results preserve engine relevance and the requested scope; no
+project regrouping or automatic scope widening occurs.
+
+Each row shows the best snippet and any known other indexed title/body matches.
+These are indexed passages, including overlap, rather than text occurrences.
+Enter a listed number or unique short ID to open its exact source-bound context.
+The number resolves the full harness/session identity even when short IDs collide.
+A title match has no body reference and explains that instead of opening an
+unrelated transcript. In details, `n`/`p` navigate matching **body** passages,
+`m` follows the displayed raw-byte continuation in the current message, arrows
+and page keys scroll the current bounded text, `b` returns, and `q` exits.
+The line fallback accepts the same letter actions.
+
+The list's `n`/`p` or page keys page already loaded results. `o` requests the next
+local indexed result page; `r` explicitly reruns the original query. At most
+three result pages (each bounded by --limit, up to 100) are retained. Match
+navigation retains one page of at most 20 references and uses forward/reverse
+keyset cursors. Context retains only the current bounded selected/neighbor text.
+Painting, scrolling and resizing never fetch metadata/sources or refresh the
+index. An index write invalidates local paging: results remain usable, and an
+explicit rerun resets navigation rather than appending a different ranking.
+Changed, deleted or unavailable exact sources leave an explanatory notice and
+the usable result list.
+
+`h` is labelled **Hand off current session**. It closes browser reads and restores
+the terminal before invoking the ordinary handoff command with the selected
+full harness/session ID and archive source. Existing repository, destination and
+launch gates apply. It hands off the authorized current session, which may differ
+from a historical search match. Searching does not authorize indexing, setup,
+refresh or rebuild.

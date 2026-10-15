@@ -93,6 +93,17 @@ func executeContentSearch(opts contentSearchOptions, stdout, stderr io.Writer, e
 			setSearchError(&doc, e)
 		} else {
 			page, e := index.Search(queryCtx, opts.query)
+			if e == nil && !opts.json && opts.stdin != nil && browseInteractive(env, opts.stdin, stdout) {
+				row, picked, input, code := runContentSearchBrowser(ctx, env, cfg, namespace, index, page, opts, stdout, stderr)
+				_ = index.Close()
+				if code != 0 || !picked {
+					return code
+				}
+				// The search store and all browser reads are closed before handing
+				// signal and prompt ownership to the ordinary handoff pipeline.
+				stop()
+				return runHandoffWithInput([]string{row.SessionID, "--harness", row.HarnessKey, "--source", "archive"}, opts.stdin, stdout, stderr, env, input)
+			}
 			_ = index.Close()
 			if e != nil {
 				setSearchError(&doc, e)
