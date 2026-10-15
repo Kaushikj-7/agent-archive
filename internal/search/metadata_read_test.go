@@ -123,7 +123,7 @@ func TestSearchLegacyMetadataFailureNeverDecodesPartialBodyOrLoadsSource(t *test
 	}
 	ref := p.Passages[0].Reference
 	out, err := ReadContext(t.Context(), failed, builtin.NewBuiltins(), ref, ref.Start, 4096, 0, 0, reader.Limits{})
-	if !errors.Is(err, ErrUnavailable) || out.Selected.Text != "" || failed.sources != 0 {
+	if !errors.Is(err, ErrUnavailable) || out.Selected.Text != "" || failed.sources != 0 || failed.unbounded != 0 {
 		t.Fatalf("partial metadata interpreted %+v sources=%d %v", out, failed.sources, err)
 	}
 }
