@@ -88,3 +88,17 @@ func (c candidateList) print(w io.Writer) {
 	}
 	terminal.Print(w, b.String())
 }
+
+// distinctProjects is how many projects rows come from, told apart by
+// project ID where they have one, else by name.
+func distinctProjects(rows []listRow) int {
+	seen := map[string]bool{}
+	for _, r := range rows {
+		key := "name:" + r.Project
+		if r.ProjectID != "" {
+			key = "id:" + r.ProjectID
+		}
+		seen[key] = true
+	}
+	return len(seen)
+}

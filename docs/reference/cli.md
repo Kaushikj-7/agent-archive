@@ -494,8 +494,9 @@ Run inside a project, it lists that repository's sessions (every checkout and
 worktree of it, and its sessions from other machines), with a heading naming the
 repository; when there are none, it lists all projects and says so. --project
 lists another project's, and --all-projects every project's. Outside any
-project it lists every session, grouped by project. On a terminal, the a key,
-typed alone, switches between the repository and all projects.
+project it lists every session. On a terminal, sessions are grouped by day
+(TODAY, YESTERDAY, ...), and the a key, typed alone, switches between the
+repository and all projects.
 Default text columns: TITLE (the Claude Code or Cursor session name when
 available, else a preview of its first filtered prompt, else a short
 SESSION_ID prefix; Codex uses the prompt preview), PR (the
