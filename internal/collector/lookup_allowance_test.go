@@ -1195,9 +1195,11 @@ func TestAPassEndingBeforeItsAttemptCompletesKeepsTheAttemptDue(t *testing.T) {
 		pass func(t *testing.T, run retryRun, sources *spendingSources, at time.Time) (Result, state.Status)
 	}{
 		{"stopped before reaching it", func(t *testing.T, run retryRun, _ *spendingSources, at time.Time) (Result, state.Status) {
+			t.Helper()
 			return run(t.Context(), at, func() bool { return true })
 		}},
 		{"deadline with the attempt in flight", func(t *testing.T, run retryRun, sources *spendingSources, at time.Time) (Result, state.Status) {
+			t.Helper()
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			sources.interrupt = func(string) error {

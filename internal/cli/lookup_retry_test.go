@@ -86,10 +86,10 @@ func TestStatusShowsASessionHeldForARetryAsFailingWithItsNextRetry(t *testing.T)
 	var fields struct {
 		Applications []struct {
 			Uploading []struct {
-				ArchiveSessionID string    `json:"archive_session_id"`
-				State            string    `json:"state"`
-				Issue            string    `json:"issue"`
-				NextRetryAt      time.Time `json:"next_retry_at"`
+				ArchiveSessionID string         `json:"archive_session_id"`
+				State            uploadingState `json:"state"`
+				Issue            string         `json:"issue"`
+				NextRetryAt      time.Time      `json:"next_retry_at"`
 			} `json:"uploading"`
 		} `json:"applications"`
 		Collector struct {
@@ -107,7 +107,7 @@ func TestStatusShowsASessionHeldForARetryAsFailingWithItsNextRetry(t *testing.T)
 		for _, session := range app.Uploading {
 			if session.ArchiveSessionID == "held" {
 				found = true
-				if session.State != string(uploadingFailing) || session.Issue != issueCaptureFailed || !session.NextRetryAt.Equal(next) {
+				if session.State != uploadingFailing || session.Issue != issueCaptureFailed || !session.NextRetryAt.Equal(next) {
 					t.Fatalf("status --json uploading entry = %+v", session)
 				}
 			}

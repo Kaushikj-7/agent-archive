@@ -327,7 +327,7 @@ func nextLookupRetry(since, after time.Time) time.Time {
 	}
 	for !at.After(after) {
 		// No overflow: the whole gaps in after.Sub(at) fit in a Duration.
-		at = at.Add(after.Sub(at) / gap * gap)
+		at = at.Add(gap * time.Duration(int64(after.Sub(at)/gap)))
 		if !at.After(after) {
 			at = at.Add(gap)
 		}
