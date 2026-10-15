@@ -21,19 +21,39 @@ def candidate(observations, pipelines=()):
         summary = report_ci_timing.report(document)
         for sample, row in zip(document['samples'], summary['samples']):
             topology = sample.get('tested_checkout') or {}
+            # The collector's outer provenance and each embedded sample must
+            # describe the same tested merge. Job completeness alone validates
+            # PR head allocations, not an independently relabeled merge SHA.
+            if (topology != pipeline.get('topology')
+                    or sample.get('source') != topology.get('head')
+                    or topology.get('source') != topology.get('workflow_source')
+                    or topology.get('parents') != [topology.get('tested_base'), topology.get('head')]):
+                raise ValueError('pipeline tested source provenance differs')
             if (sample.get('scope', 'production-pipeline') != 'production-pipeline'
                     or sample.get('observation_kind') != 'normal' or not row['required_completed_at']
                     or sample.get('required_jobs') != collect_ci_timing.inventory(topology.get('workers'))
                     or any(snap['run'].get('conclusion') != 'success' for snap in sample['workflows'])):
                 continue
-            for snap in sample['workflows']:
-                if snap['run']['name'] == 'Test':
-                    eligible.add((str(snap['run']['id']), str(snap['run']['run_attempt']), topology['source']))
+            # Targeted reruns carry successful physical jobs from older
+            # attempts. Bind each shard to its actual allocation attempt,
+            # rather than relabeling it with the enclosing workflow attempt.
+            for job in row['jobs']:
+                if job['snapshot_workflow'] != 'Test':
+                    continue
+                for shard in range(topology['workers']):
+                    if job['name'] == f'linux-short ({shard})':
+                        eligible.add((str(job['run_id']), str(job['job_attempt']),
+                                      shard, topology['source']))
     identities, groups = {}, {}
     for observation in observations:
         if observation.get('schema') != 1 or observation.get('kind') != 'worker-timing':
             raise ValueError('unsupported timing observation')
-        identity = tuple(observation[key] for key in ('run_id', 'run_attempt', 'shard'))
+        run_id, attempt, shard = (observation[key] for key in ('run_id', 'run_attempt', 'shard'))
+        if (not str(run_id).isdecimal() or int(run_id) <= 0
+                or not str(attempt).isdecimal() or not 1 <= int(attempt) <= 10
+                or type(shard) is not int or shard < 0):
+            raise ValueError('invalid physical worker identity')
+        identity = (str(int(run_id)), str(int(attempt)), shard)
         signature = digest(observation)
         if identity in identities:
             if identities[identity] != signature:
@@ -41,12 +61,15 @@ def candidate(observations, pipelines=()):
             continue
         identities[identity] = signature
         if (not observation.get('success') or observation.get('observation_kind') != 'normal'
-                or (str(identity[0]), str(identity[1]), observation['source']) not in eligible):
+                or (*identity, observation['source']) not in eligible):
             continue
         cohort = observation['cohort']
-        if cohort.get('cache_state') == 'unknown' or cohort.get('runner_image') == 'unknown':
+        if (cohort.get('cache_state') not in ('exact', 'prefix', 'trusted', 'miss', 'error', 'corrupt-rebuilt')
+                or not isinstance(cohort.get('runner_image'), str)
+                or not cohort['runner_image'].strip() or cohort['runner_image'] == 'unknown'):
             continue
-        group = {'configuration_sha256': observation['configuration_sha256'], 'cohort': cohort}
+        group = {'configuration_sha256': observation['configuration_sha256'],
+                 'compiled_inventory_sha256': observation['compiled_inventory_sha256'], 'cohort': cohort}
         key = digest(group)
         bucket = groups.setdefault(key, {'identity': group, 'sources': set(), 'tests': {}})
         bucket['sources'].add(observation['source'])

@@ -313,6 +313,9 @@ func planBackfill(env Env, stdout, stderr io.Writer, home, userHome string, cfg 
 		terminal.Printf(stderr, "agent-archive: backfill: %v\n", err)
 		return backfill.Plan{}, false
 	}
+	if env.observeBackfillPlan != nil {
+		env.observeBackfillPlan(plan)
+	}
 	return plan, true
 }
 

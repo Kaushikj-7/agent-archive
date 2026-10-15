@@ -28,7 +28,7 @@ Updated 2026-10-01. What shipped, and where it differs from the plan below.
 
 - **Lifecycle rules were dropped** for both providers: a per-object age rule contradicts the collector's retention (it can delete sessions the user meant to keep, or leave metadata pointing at expired sources). See 2a step 7 and 2b step 5.
 - **Local-only mode and the folder backend were not built**, as decided in Part 2's scope.
-- **Repository-only handoff matches are untrusted.** The plan matched by recency alone. Review found that a cloned repository controls its own `origin`, so path matches always rank first and a repository-only match is confirmed (see `dev/specs/handoff.md` and `docs/security/privacy.md`).
+- **Repository-only handoff matches are untrusted.** The plan matched by recency alone. Review found that a cloned repository controls its own `origin`, so path matches always rank first and a repository-only match is confirmed (see `dev/proposals/implemented/handoff.md` and `docs/security/privacy.md`).
 - **S4 (acceptance record) was not done as a package.** Docs shipped with each PR; `dev/maintainers/open-source-acceptance.md` does not yet cover guided creation or repository matching.
 - **The `AGENT_ARCHIVE_*` printout** from 2c is not done: it waits for cloud capture (see the 2c status).
 
@@ -43,7 +43,7 @@ Updated 2026-10-01. What shipped, and where it differs from the plan below.
 
 | # | Decision | Recommendation |
 | --- | --- | --- |
-| D1 | Store a `repo_key` hash only, or also a readable normalized remote in metadata? | Hash only. Matches `dev/specs/handoff.md` phase 2 and keeps `privacy.md`'s "hash, not the path" property. |
+| D1 | Store a `repo_key` hash only, or also a readable normalized remote in metadata? | Hash only. Matches `dev/proposals/implemented/handoff.md` phase 2 and keeps `privacy.md`'s "hash, not the path" property. |
 | D2 | On Linux, store R2 secrets in a 0600 file? | Yes, with a permission check, and recommend an S3 profile in docs. This changes the "R2 secrets live in Keychain" statement in the privacy docs. |
 | D3 | Storage backends beyond S3 and R2 (folder, iCloud, Dropbox, NAS) and a local-only mode? | Decided: no. Keep S3 and R2 only; no local-only mode. |
 | D4 | Linux scheduler: systemd `--user` timer first, with what fallback? | systemd first. Fallback for hosts without a user bus (WSL without systemd, containers): defer, but fail with an actionable message. |
@@ -93,7 +93,7 @@ Limit: refresh can only add `repo_key` on the machine that owns the registration
 
 **Workspace difference reporting.** Extend `HandoffWorkspace` (`internal/archive/handoff.go:110`, `handoff_render.go:90-97`) to include the source branch and, when known, tell the receiving agent that the recorded directory differs from its own checkout ("checked out elsewhere; check paths against the current tree"). Uncommitted changes still do not travel; that is `--worktree`/carry-changes work in handoff v2 and is out of scope here.
 
-**`--to` with archived sessions.** `--to` currently forces `--source local` and rejects `--source archive` (`handoff_options.go:83-85`, `:118`). Cross-machine launch needs this relaxed; handoff v2 already plans to drop both restrictions (`dev/specs/handoff.md:~575`). Do that in the same change as matching, or first.
+**`--to` with archived sessions.** `--to` currently forces `--source local` and rejects `--source archive` (`handoff_options.go:83-85`, `:118`). Cross-machine launch needs this relaxed; handoff v2 already plans to drop both restrictions (`dev/proposals/implemented/handoff.md:~575`). Do that in the same change as matching, or first.
 
 **`noMatch` text.** Replace the "depends on the checkout path" explanation with one that says what was tried (repo key, then path), and keep listing the five most recent sessions.
 
@@ -113,7 +113,7 @@ Limit: refresh can only add `repo_key` on the machine that owns the registration
 
 ### Docs
 
-`dev/specs/handoff.md` (selection, "Known limit", "Decisions: No git in v1"), `docs/guides/handoff.md`, `docs/guides/multiple-macs.md`, `docs/reference/cli.md`, `handoff_options.go` help text, `bucket-layout.md`, `schemas.md`, `dev/maintainers/versions.md`, `CHANGELOG.md`.
+`dev/proposals/implemented/handoff.md` (selection, "Known limit", "Decisions: No git in v1"), `docs/guides/handoff.md`, `docs/guides/multiple-macs.md`, `docs/reference/cli.md`, `handoff_options.go` help text, `bucket-layout.md`, `schemas.md`, `dev/maintainers/versions.md`, `CHANGELOG.md`.
 
 ### Work: one PR, about 400 lines plus tests and docs
 

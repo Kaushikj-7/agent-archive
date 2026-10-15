@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/codexmeta"
+	"github.com/wangjohn/agent-archive/internal/trace"
 	"github.com/wangjohn/agent-archive/internal/transcriptio"
 )
 
@@ -79,6 +80,7 @@ func ReadHeader(ctx context.Context, root, path string) Header {
 	defer func() { _ = snapshot.Close() }()
 	reader := &measuredHeaderReader{reader: snapshot.Reader(ctx)}
 	h := ReadCodexHeader(reader, path)
+	trace.Add(trace.HeaderBytes, reader.bytes)
 	h.NativeReadBytes, h.NativeReadOperations = reader.bytes, reader.operations
 	if snapshot.Check() != nil || ctx.Err() != nil {
 		return Header{Outcome: "source_changed", Bytes: h.Bytes, NativeReadBytes: h.NativeReadBytes, NativeReadOperations: h.NativeReadOperations}

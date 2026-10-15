@@ -932,7 +932,7 @@ sum is not wall time. Raw checker stderr, scanner output, staged source and
 caches are not copied into the artifact. The command's failure remains a
 failure; malformed/missing timing output fails rather than claiming zero.
 
-The bounded history helper groups comparable configuration/cache/image cohorts,
+The bounded history helper groups comparable compiled-inventory/configuration/cache/image cohorts,
 deduplicates physical workers, rejects conflicting duplicate observations and
 requires matching terminal full-pipeline collector evidence and excludes failed, experimental, unknown-classification or unknown-cohort samples
 from baseline candidates. It preserves measured medians and sample counts, not
@@ -940,6 +940,9 @@ inferred percentiles. Its output is explicitly a **review candidate**, never
 an automatically promoted allowance. A single worker receipt cannot certify
 whole-pipeline success; the candidate builder recomputes the paired snapshot report
 and requires the complete fixed production inventory and successful workflows.
+Each shard must match a successful physical job's actual attempt, including
+successful jobs carried forward into a later workflow attempt. Blank or missing
+cache/image cohorts cannot supply a candidate.
 The required aggregate must also reconcile coverage before any policy uses it. The future required performance
 gate owns approval and trusted-main promotion. Queue eligibility remains unknown
 without independent telemetry, and runner allocation remains accounted by the
