@@ -7,6 +7,7 @@ follow [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 - Reserve publication space before new ordinary Codex backfill staging fills the durable quota,
+  including validated legacy imports with live rollout lookup and no modern binding,
   allowing foreground imports to publish verified sessions and continue admission.
   Already saturated retained evidence still requires separate recovery.
 

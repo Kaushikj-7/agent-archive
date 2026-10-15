@@ -472,11 +472,23 @@ func (p ImportStage) publicationHeadroom() int64 {
 		return 0
 	}
 	binding := reg.CodexBinding
-	if binding == nil || binding.Child || binding.ParentID != "" || binding.OwnStart != nil || binding.ProducerSource != "cli" ||
+	if binding == nil {
+		return p.legacyPublicationHeadroom()
+	}
+	if binding.Child || binding.ParentID != "" || binding.OwnStart != nil || binding.ProducerSource != "cli" ||
 		binding.NativeThreadID != reg.NativeSessionID || binding.PhysicalRolloutID != reg.NativeSessionID || binding.RootID != reg.NativeSessionID {
 		return 0
 	}
 	return importPublicationHeadroom
+}
+
+// legacyPublicationHeadroom applies only after the common ordinary exclusions.
+// It reserves storage without adding modern binding or release authority.
+func (p ImportStage) legacyPublicationHeadroom() int64 {
+	if p.Version == 1 && !p.TypedSelection && p.Bundle.SchemaVersion == archive.SourceSchemaVersion {
+		return importPublicationHeadroom
+	}
+	return 0
 }
 
 // Admission must not select a journal that the scheduled reader cannot load

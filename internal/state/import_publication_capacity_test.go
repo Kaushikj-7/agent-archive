@@ -123,3 +123,42 @@ func TestImportHeadroomLeavesNativeRelationshipFactsAtFullQuota(t *testing.T) {
 		}
 	}
 }
+
+// Missing modern binding grants no authority. Only the validated legacy
+// untyped ordinary envelope receives the conservative quota admission ceiling.
+func TestLegacyImportHeadroomExcludesUnsupportedEnvelopes(t *testing.T) {
+	t.Parallel()
+	base := ImportStage{Version: 1, Registration: archive.SessionRegistration{Harness: archive.Harness{Name: archive.HarnessCodex}, Origin: archive.SessionOriginImport}, Bundle: archive.SourceBundle{SchemaVersion: archive.SourceSchemaVersion}}
+	if base.publicationHeadroom() != importPublicationHeadroom {
+		t.Fatal("legacy ordinary selection did not reserve publication space")
+	}
+	for _, tc := range []struct {
+		name   string
+		change func(*ImportStage)
+	}{
+		{"typed", func(p *ImportStage) { p.TypedSelection = true }},
+		{"typed version", func(p *ImportStage) { p.Version = 2 }},
+		{"unknown schema", func(p *ImportStage) { p.Bundle.SchemaVersion = 999 }},
+		{"history schema", func(p *ImportStage) { p.Bundle.SchemaVersion = archive.HistorySourceSchemaVersion }},
+		{"history", func(p *ImportStage) { p.Bundle.History = &archive.SourceHistory{} }},
+		{"linked", func(p *ImportStage) { p.Bundle.LinkedSessions = []archive.LinkedSessionReference{{}} }},
+		{"preserved", func(p *ImportStage) { p.Preserved = []archive.SourceBundle{{}} }},
+		{"children", func(p *ImportStage) { p.Children = []SubagentCandidate{{}} }},
+		{"child", func(p *ImportStage) { p.Registration.NativeChild = true }},
+		{"parent", func(p *ImportStage) { p.Registration.ParentNativeSessionID = "parent" }},
+		{"root", func(p *ImportStage) { p.Registration.NativeRootSessionID = "ancestor" }},
+		{"subagent", func(p *ImportStage) { p.Registration.SubagentID = "child" }},
+		{"frozen", func(p *ImportStage) { p.Registration.CaptureFrozen = true }},
+		{"previous", func(p *ImportStage) { p.Bundle.PreviousGenerationID = "old" }},
+		{"unknown binding", func(p *ImportStage) { p.Registration.CodexBinding = &archive.CodexSourceBinding{} }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			p := base
+			tc.change(&p)
+			if p.publicationHeadroom() != 0 {
+				t.Fatal("unsupported envelope acquired ordinary admission policy")
+			}
+		})
+	}
+}
