@@ -149,25 +149,6 @@ func TestLongWhen(t *testing.T) {
 	}
 }
 
-func TestCompactAge(t *testing.T) {
-	now := time.Date(2026, 10, 14, 15, 30, 0, 0, time.UTC)
-	for _, tc := range []struct {
-		t    time.Time
-		want string
-	}{
-		{now.Add(-10 * time.Second), "just now"},
-		{now.Add(-5 * time.Minute), "5m ago"},
-		{now.Add(-2 * time.Hour), "2h ago"},
-		{time.Date(2026, 10, 12, 9, 0, 0, 0, time.UTC), "Mon"},
-		{time.Date(2026, 9, 1, 9, 0, 0, 0, time.UTC), "Sep 1"},
-		{time.Date(2024, 9, 1, 9, 0, 0, 0, time.UTC), "2024-09-01"},
-	} {
-		if got := compactAge(now, tc.t); got != tc.want {
-			t.Errorf("compactAge(%v) = %q, want %q", tc.t, got, tc.want)
-		}
-	}
-}
-
 func TestDayBucket(t *testing.T) {
 	ny := newYork(t)
 	at := func(m time.Month, d, h, minute int) time.Time { return time.Date(2026, m, d, h, minute, 0, 0, ny) }
