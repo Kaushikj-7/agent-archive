@@ -321,20 +321,10 @@ func (t PriceTable) index() priceIndex {
 	return index
 }
 
-// Family returns the family label the table groups a model id under in cost by
-// model ("opus", "gpt-5"), and whether the table lists the model at all. The id
-// is read as the archive records it (any case, with or without a date or
-// context suffix). A caller that must show only model names a table lists,
-// such as a page that is meant to be shared, asks this of the built-in table:
-// a fine-tune id or a custom deployment name is not listed, so it is not shown.
-func (t PriceTable) Family(model string) (string, bool) {
-	return t.index().family(model)
-}
-
 // FamilyLookup returns a read-only snapshot of the table's family lookup.
 // Subsequent changes to the table do not affect it. The returned function may
 // be called concurrently and does not retain the model ids passed to it.
-// It uses the same normalization and valid-price rules as Family.
+// It uses the table's canonical model normalization and valid-price rules.
 func (t PriceTable) FamilyLookup() func(string) (string, bool) {
 	index := t.index()
 	return index.family
