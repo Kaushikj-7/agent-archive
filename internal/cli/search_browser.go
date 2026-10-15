@@ -63,7 +63,11 @@ func (s *contentSearchBrowser) installRows() {
 		if len(h.Gaps) > 0 {
 			snippet += " · source coverage gaps"
 		}
-		rows = append(rows, listRow{selectionKey: key, Index: i + 1, SessionID: h.SessionID, ShortID: shorts[i], HarnessKey: h.Harness, Harness: archive.DisplayLine(h.Harness), Title: archive.DisplayLine(h.Title), ListTitle: listTitle(h.Title), When: h.CapturedAt.Format("2006-01-02"), WhenShort: h.CapturedAt.Format("2006-01-02"), Project: "-", searchSnippet: snippet, searchMatches: h.MatchCount})
+		title := archive.DisplayLine(h.Title)
+		if strings.TrimSpace(title) == "" {
+			title = shorts[i]
+		}
+		rows = append(rows, listRow{selectionKey: key, Index: i + 1, SessionID: h.SessionID, ShortID: shorts[i], HarnessKey: h.Harness, Harness: archive.DisplayLine(h.Harness), Title: title, ListTitle: listTitle(h.Title), When: h.CapturedAt.Format("2006-01-02"), WhenShort: h.CapturedAt.Format("2006-01-02"), Project: "-", searchSnippet: snippet, searchMatches: h.MatchCount})
 	}
 	scope := archive.DisplayLine(s.opts.query.Scope.ProjectName)
 	if s.opts.all {
