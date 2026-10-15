@@ -13,6 +13,43 @@ import (
 )
 
 var commandHelp = map[string]string{
+	"search": `Usage: agent-archive search "QUERY" [options]
+       agent-archive search --refresh [--session SESSION_ID --harness NAME]
+       agent-archive search --read REF [--offset N] [--max-bytes N]
+
+Search visible conversation messages and titles in the private local index.
+Queries never read storage. Choose --project or --all-projects outside a known
+project; an empty scoped result never broadens. Coverage describes a past local
+observation, not current remote contents. Refresh is namespace-wide unless a
+session is named. It does not install or enable automatic indexing.
+Words are ANDed, quotes match phrases, and a trailing * enables prefix matching.
+Punctuation splits words; this is keyword search, not substring/semantic search.
+References bind exact source revisions. Reads print escaped, quoted text.
+On an interactive terminal, browse ranked snippets and exact bounded context.
+Use n/p for matching body passages, r to rerun the fixed query, and h to
+hand off the current session through existing gates. Metadata / filtering is
+disabled. JSON and piped output remain bounded documents.
+  --json              Print one versioned bounded JSON document
+  --refresh           Run a bounded verified archive refresh
+  --session SESSION_ID  Exact refresh target; requires --harness
+  --harness NAME      Session harness: codex, claude or cursor
+  --wait DURATION     Wait 1s–10m with --refresh (default one pass, no wait)
+  --rebuild           With namespace --refresh, clear derived local content
+  --read REF          Read an exact source-bound passage reference
+  --offset N          Absolute UTF-8 byte offset (default passage start, -1)
+  --max-bytes N       Raw text bytes per context slice, 4–8192 (default 4096)
+  --before N          Preceding visible messages with --read, 0–2 (default 0)
+  --after N           Following visible messages with --read, 0–2 (default 0)
+  --max-output-bytes N  Escaped stdout bytes, 4096–1048576 (default 262144)
+  --project DIR|NAME  Restrict to a project (default current repository)
+  --all-projects      Search every project's indexed sessions
+  --since DATE|AGE    Inclusive capture start, date/RFC3339 time/age
+  --until DATE|AGE    Inclusive capture end, date/RFC3339 time/age
+  --replays MODE      hide (default), include or only replay sessions
+  --children MODE     hide (default), include or only child sessions
+  --limit N           Maximum returned sessions, 1–100 (default 20)
+  --cursor CURSOR     Continue a page; index writes require restarting
+`,
 	"migrate": `Usage: agent-archive migrate --format catalog-v4 [options]
 
 Copies an isolated destination in durable bounded batches, verifies all metadata
@@ -201,7 +238,7 @@ report next to the plan. A plan expires five minutes after creation.
 	"setup": `Usage: agent-archive setup [--abandon-recovery] [--verbose]
                [--no-skills | --skills] [--allow-network-home]
        agent-archive setup --yes [--provider r2|s3 ...] [--project DIR ...]
-               [--codex-discovery on|off]
+               [--codex-discovery on|off] [--search-indexing on|off]
                [--codex-capture-scope included-projects|all-projects]
                [--prefix PREFIX] [--retention-days DAYS | --keep-forever]
                [--require-skill-use | --no-require-skill-use]
@@ -288,6 +325,8 @@ An interrupted setup is recovered on the next run.
   --codex-discovery MODE on or off; fresh scripted Codex setup must choose.
                         Reconfiguration keeps an omitted choice. Discovery
                         finds supported sources; recent native copies may count
+  --search-indexing MODE on or off; automatic local content indexing.
+                        Omitted preserves the local choice; fresh setup is off.
   --codex-capture-scope MODE included-projects or all-projects (Codex only).
                         Fresh scripts must choose; default: included projects.
                         Omitted reconfiguration never expands recorded scope.
@@ -395,10 +434,11 @@ project every row shares is left out of the table and named in the heading.
 On a terminal with an interactive stdin, list a numbered table and pick a
 session to show its summary, then t for its transcript, Enter or b to go
 back, or q to quit. Keys act as pressed; the wheel, arrows, and PgUp/PgDn
-scroll. Press / to filter the rows as you type, with the words WORDS takes:
-the first match is highlighted, the arrows move the highlight, Enter shows it,
-and Esc clears the filter. A subagent that matches is shown under its parent,
-which is shown too. Rows keep their numbers while filtered. WORDS open the
+move the highlight, which Enter opens. Press / to filter the rows as you
+type, with the words WORDS takes: the first match is highlighted, the arrows
+move the highlight, Enter shows it, and Esc clears the filter, keeping the
+highlighted row. A subagent that matches is shown under its parent, which is
+shown too. Rows keep their numbers while filtered. WORDS open the
 browser with the filter already filled in, to edit. Where keys cannot be read,
 the browser reads lines, and an answer that is not a row number, a
 SESSION_ID, or q is words to filter by (an empty answer clears them). Piped

@@ -1111,8 +1111,10 @@ type Status struct {
 	// DeferredSince gives, for each session whose scan the last pass
 	// deferred (one of the DeferredSessions, or of the SessionIssues once
 	// deferred for collector.MaxDeferral) or did not reach, when the run of
-	// passes that each deferred its scan began. A session deferred for
-	// collector.MaxDeferral fails instead, on every pass that defers it.
+	// passes that each deferred its scan, or left it unopened once the pass's
+	// Codex lookup allowance ran out, began. A session deferred for
+	// collector.MaxDeferral fails instead, on every pass that defers it or
+	// leaves it unopened.
 	DeferredSince map[string]time.Time `json:"deferred_since,omitempty"`
 	// UnreachedSessions gives, per archive session ID, each session with a
 	// pending request that the last pass ran out of time before reaching,
@@ -1120,7 +1122,8 @@ type Status struct {
 	// (collector.Result.Unreached). Such a session is pending and queued for
 	// the next pass; not being reached is neither a failure nor a deferral,
 	// though the pass may also have recorded a failure for it in
-	// SessionIssues (one found before or after its run of sessions).
+	// SessionIssues (one found before or after its run of sessions, or one
+	// whose DeferredSince is collector.MaxDeferral old).
 	UnreachedSessions map[string]int `json:"unreached_sessions,omitempty"`
 	LastScanAt        time.Time      `json:"last_scan_at,omitzero"`
 	LastPublishedAt   time.Time      `json:"last_published_at,omitzero"`

@@ -212,32 +212,34 @@ func (s *Snapshot) readNode(ctx context.Context, ref ObjectRef) (node, error) {
 	s.cache.mu.Lock()
 	raw := append([]byte(nil), s.cache.bytes[ref]...)
 	s.cache.mu.Unlock()
+	var readErr error
+	reducedLimit := false
 	if len(raw) == 0 {
-		var err error
 		limit := int64(maxNodeBytes)
 		if work, ok := ctx.Value(pickerWorkKey{}).(*pickerWork); ok {
-			limit = min(limit, work.budget.Bytes-work.cost.Bytes)
+			limit = min(limit, work.budget.Bytes-work.cost.Bytes-1)
 			if limit <= 0 {
 				return node{}, ErrPickerBudget
 			}
 		}
-		raw, err = s.writer.readRef(ctx, ref, limit)
-		if errors.Is(err, storage.ErrObjectTooLarge) && limit < maxNodeBytes {
-			return node{}, ErrPickerBudget
-		}
-		if err != nil {
-			return node{}, err
-		}
+		reducedLimit = limit < maxNodeBytes
+		raw, readErr = s.writer.readRef(ctx, ref, limit)
 	} else if !storage.VerifySHA256(raw, ref.SHA256) {
-		return node{}, storage.ErrChecksumMismatch
-	}
-	if err := s.check(ctx); err != nil {
-		return node{}, err
+		readErr = storage.ErrChecksumMismatch
 	}
 	if work, ok := ctx.Value(pickerWorkKey{}).(*pickerWork); ok {
 		if err := work.bytes(len(raw)); err != nil {
 			return node{}, err
 		}
+	}
+	if errors.Is(readErr, storage.ErrObjectTooLarge) && reducedLimit {
+		return node{}, ErrPickerBudget
+	}
+	if readErr != nil {
+		return node{}, readErr
+	}
+	if err := s.check(ctx); err != nil {
+		return node{}, err
 	}
 	n, err := decodeNode(raw)
 	if err != nil {
@@ -371,7 +373,22 @@ func (s *Snapshot) ReadMetadata(ctx context.Context, entry CatalogEntry) ([]byte
 	if err := validateEntryReference(entry); err != nil {
 		return nil, err
 	}
-	raw, err := s.writer.readRef(ctx, entry.Metadata, 32<<20)
+	limit := int64(32 << 20)
+	if work, ok := ctx.Value(pickerWorkKey{}).(*pickerWork); ok {
+		limit = min(limit, work.budget.Bytes-work.cost.Bytes-1)
+		if limit <= 0 {
+			return nil, ErrPickerBudget
+		}
+	}
+	raw, err := s.writer.readRef(ctx, entry.Metadata, limit)
+	if work, ok := ctx.Value(pickerWorkKey{}).(*pickerWork); ok {
+		if e := work.bytes(len(raw)); e != nil {
+			return nil, e
+		}
+	}
+	if errors.Is(err, storage.ErrObjectTooLarge) && limit < 32<<20 {
+		return nil, ErrPickerBudget
+	}
 	if err != nil {
 		return nil, err
 	}

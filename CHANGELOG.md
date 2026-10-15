@@ -6,6 +6,52 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Terminal content search now browses ranked snippets and exact bounded source
+  context in the shared browser, with next/previous matching passages, explicit
+  rerun after index changes, and current-session handoff through existing gates.
+  The owned archive skill explains snippets-first retrieval and coverage limits.
+
+- Preserve both native source authority and search indexing lifecycle protection
+  when their configuration and setup recovery records are combined.
+
+- Add explicit machine-local `setup --yes --search-indexing on|off` consent,
+  an independent bounded search indexing job, and best-effort content-free
+  publication hints after collection releases its lock. Pause and teardown
+  fence running indexing; legacy collector-only lifecycle records stay compatible.
+
+- Search adds bounded JSON, explicit wait/rebuild, source context neighbors and
+  existing-only cached readers; queries require explicit project broadening.
+  Named refresh removes cached text when fresh authority confirms deletion,
+  while unavailable metadata preserves the existing index.
+
+- Search conversation text with a private local index. Explicitly index one
+  archived session with `search --refresh --session ID --harness NAME`, query
+  cached titles/messages with `search "WORDS"`, and read exact matching passages.
+  `search --refresh` now resumes bounded namespace-wide archive catch-up, including
+  other-machine metadata/privacy changes and confirmed removals. Coverage reports
+  local observation and stable-snapshot discovery separately from indexing gaps.
+  Automatic refresh remains off until explicitly enabled for this machine.
+  Refresh now resumes bounded work after interruption, reuses unchanged sources,
+  and records retry/backoff state without delaying archive publication.
+  Verified unsupported source formats report coverage gaps instead of retrying
+  the same immutable bytes indefinitely.
+
+- The session browser (`list`, bare `show`, `show <words>`, `handoff` on a
+  terminal that reads keys) has a cursor: `▸` marks a row, ↑ ↓ and the mouse
+  wheel move it, PgUp/PgDn (space, `n`, `p`), Home and End move it a screen
+  or to the ends, and the list scrolls to keep it in view, also across a
+  resize. Enter with nothing typed opens the highlighted row (it used to
+  quit; `q` and Ctrl-D still do), and a typed number or short ID with Enter
+  still opens that row. A strip under the list spells out the highlighted
+  session: its full title, then its agent, project, PR, subagents, when it
+  was last active and its short ID; a very short window leaves it out. The
+  three lines under the list become one footer line, the keys
+  (`/ search`) and which rows are on screen (`1–14 of 86`); the
+  hidden-subagent count moves to the heading (`· 403 subagents hidden`),
+  `o older` joins the footer, and the prompt reads `Number or ID to show:`.
+  Esc out of the `/` filter keeps the highlighted session when the plain
+  list shows it. Piped output and the line-mode
+  picker keep their count line and flag advice.
 - A Codex thread whose abandoned branches fit while being read, but left too
   little of the per-session read memory to publish the thread, is captured
   without those branches instead of being recorded as too large to capture.
@@ -16,6 +62,11 @@ follow [Semantic Versioning](https://semver.org/).
 - Such a thread is also captured without those branches when an earlier,
   not yet uploaded version of the session was waiting to be replaced, instead
   of being deferred on every pass until it failed.
+- `status` no longer says Codex left out part of a session when the only
+  branch not read again was already kept from an earlier capture of the
+  session and has not changed since: that branch is still in the archive.
+  A branch that grew since that capture is still reported, since what it
+  added is left out.
 - Stop failing every Codex session in a pass that found many new Codex
   files. Finding where a Codex thread's rollouts are has a time allowance
   per pass, and discovery could use all of it, so each Codex session the
@@ -32,6 +83,19 @@ follow [Semantic Versioning](https://semver.org/).
   off by a deadline is read again later in the pass instead of being
   treated as unavailable; and discovery's lookups are charged to the
   allowance once, not twice.
+- Stop one Codex session that needs more than a pass's whole time for
+  finding Codex rollouts from holding back every Codex session after it.
+  Such a session was first in line on every pass, spent the allowance, and
+  left the rest for the next pass, every pass. A Codex session put off for
+  that reason (`lookup_allowance`) is now read after the other Codex
+  sessions on the following passes, including once it has been put off for
+  24 hours and is reported as failed. The Codex sessions waiting on the
+  allowance, including those left unopened, form a queue, and each pass
+  reads the one at its front before any other Codex session, so neither
+  such a session nor a stream of new Codex sessions keeps the waiting ones
+  from their turn. A waiting session still not read after 24 hours is now
+  reported as failed even when the pass leaves it unopened, rather than
+  staying queued with no error.
 - Stop a new session from waiting for hours behind a long upload queue.
   Each collection pass now starts with the most recently started session
   that was not imported (a session before its own subagents), and gives

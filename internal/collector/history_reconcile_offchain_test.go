@@ -3,6 +3,7 @@ package collector
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -403,5 +404,144 @@ func TestRevisionLeftOutIsNotRecordedForASessionLeftAsAGap(t *testing.T) {
 				t.Fatalf("recorded %v, want %v", got, c.want)
 			}
 		})
+	}
+}
+
+// A scan run again without its off-chain revisions reports as left out
+// only what the publication lacks of what the scan that read them kept.
+// B, preserved by reference from an earlier publication of the thread and
+// unchanged since, is still published whole, so a run again after C grows
+// does not report it. A B that grew since that publication is published
+// only as it was then, so its growth is left out and reported. So is a B
+// that an earlier publication carried as the thread's current revision and
+// that grew before C became current: the run again stages that
+// publication's B under the same ID, without its growth. So is a B never
+// published before, and a B the scan that read off-chain revisions
+// could not read. The first scan's reconciliation is the real one, and run
+// forgets the rest of it as it does when that scan meets the ceiling.
+func TestRevisionLeftOutReportsOnlyRevisionsAbsentFromThePublication(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name       string
+		preserved  bool
+		grown      bool
+		unreadable bool
+		wasCurrent bool
+		want       bool
+	}{
+		{"preserved by an earlier publication", true, false, false, false, false},
+		{"grown since an earlier publication", true, true, false, false, true},
+		{"grown since published as the current revision", true, true, false, true, true},
+		{"absent from the publication", false, false, false, false, true},
+		{"unread by the scan that read off-chain revisions", false, false, true, false, true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			scan, lookup := reconciliationFixture(t)
+			bPath := lookup.refs[revisionB][0].Path
+			if c.preserved {
+				current := lookup.set.Current
+				if c.wasCurrent {
+					lookup.set.Current = &lookup.refs[revisionB][0]
+				}
+				publishFixture(t, scan)
+				lookup.set.Current = current
+				if c.grown {
+					growRevision(t, bPath, 4, "B-later")
+				}
+				growRevision(t, lookup.refs[revisionC][0].Path, 4, "C-later")
+				published, err := scan.local.LoadPublishedState(scan.id())
+				if err != nil {
+					t.Fatal(err)
+				}
+				scan = newSessionScan(t.Context(), scan.local, scan.remote, scan.reg, state.Request{}, published, scan.now, scan.opts)
+			}
+			if c.unreadable {
+				if err := os.WriteFile(bPath, []byte("B-only is not a rollout\n"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			read, ok, err := scan.read()
+			if err != nil || !ok {
+				t.Fatal("native read", err)
+			}
+			active, _, err := scan.build(read)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if scan.revisions, err = scan.reconcileRevisions(read, active); err != nil {
+				t.Fatal(err)
+			}
+			if kept := scan.offChainKept > 0; kept == c.unreadable {
+				t.Fatalf("the first scan kept B %v; the fixture no longer exercises the case", kept)
+			}
+			stagedB := slices.IndexFunc(scan.offChainPlanned, func(ref archive.RevisionReference) bool { return ref.RevisionID == revisionB })
+			if staged := stagedB >= 0; staged != (!c.preserved && !c.unreadable || c.grown) {
+				t.Fatalf("the first scan staged B %v: %v", staged, scan.offChainPlanned)
+			}
+			scan.forgetForRunWithoutOffChain()
+			captured, ids := capturedChain(t, scan, scanErr(t, scan))
+			if !captured {
+				t.Fatal("the chain was not captured")
+			}
+			pending, _, err := scan.local.LoadPending(scan.id())
+			if err != nil {
+				t.Fatal(err)
+			}
+			var metadata archive.Metadata
+			if err := json.Unmarshal(pending.MetadataBytes, &metadata); err != nil {
+				t.Fatal(err)
+			}
+			publishedB := slices.IndexFunc(metadata.History.Preserved, func(ref archive.RevisionReference) bool { return ref.RevisionID == revisionB })
+			if published := slices.Contains(ids, revisionB) || publishedB >= 0; published != c.preserved {
+				t.Fatalf("B published %v, want %v: inputs %v", published, c.preserved, ids)
+			}
+			if c.grown && metadata.History.Preserved[publishedB].Source == scan.offChainPlanned[stagedB].Source {
+				t.Fatal("B was published as the first scan staged it; the fixture no longer exercises the case")
+			}
+			if got := hasRevisionLeftOut(t, scan); got != c.want {
+				t.Fatalf("recorded %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+// publishFixture runs collector passes until the fixture's session is
+// published, B preserved beside A and C.
+func publishFixture(t *testing.T, scan *sessionScan) {
+	t.Helper()
+	if err := scan.local.SaveRequest(scan.id(), "stop", scan.now); err != nil {
+		t.Fatal(err)
+	}
+	opts := scan.opts
+	opts.RepoKey = func(string) string { return "" }
+	for range 3 {
+		result, err := Run(t.Context(), scan.local, scan.remote, opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(result.Published) == 1 {
+			return
+		}
+	}
+	t.Fatal("the fixture was not published")
+}
+
+// growRevision appends a user message at ordinal to a fixture rollout.
+func growRevision(t *testing.T, path string, ordinal uint64, text string) {
+	t.Helper()
+	line, err := json.Marshal(map[string]any{"type": "response_item", "ordinal": ordinal, "payload": map[string]any{"type": "message", "role": "user", "content": []any{map[string]any{"type": "input_text", "text": text}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Write(append(line, '\n')); err != nil {
+		t.Fatal(errors.Join(err, f.Close()))
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
 	}
 }

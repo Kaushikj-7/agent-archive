@@ -29,13 +29,14 @@ type sessionTableGroup struct {
 // sessionTableGroups arranges rows as printSessionTable prints them. Their
 // rows, taken in order, are the table's rows from top to bottom.
 //
-// With GroupByDay (and not Verbose), the rows go under the heading of their
+// Search rows always keep their flat relevance order.
+// With GroupByDay (and not Verbose or Search), the rows go under the heading of their
 // day (dayBucket of Active at Now), the days newest first and the rows in
 // the order given within a day. A subagent shown under its parent (Depth)
 // stays under it, in the parent's day. One day still gets its heading: it
 // is the landmark the reader learns.
 func sessionTableGroups(rows []listRow, opts listFormatOptions) []sessionTableGroup {
-	if !opts.GroupByDay || opts.Verbose || len(rows) == 0 {
+	if opts.Search || !opts.GroupByDay || opts.Verbose || len(rows) == 0 {
 		return []sessionTableGroup{{rows: rows}}
 	}
 	byDay := map[dayBucketKind][]listRow{}
@@ -67,6 +68,9 @@ func sessionTableGroups(rows []listRow, opts listFormatOptions) []sessionTableGr
 // group's heading when it has one. The verbose table keeps its own columns
 // under one header: sessionTableGroups never groups it.
 func printSessionGroups(w io.Writer, groups []sessionTableGroup, opts listFormatOptions) error {
+	if opts.Search {
+		return printContentSearchRows(w, groups, opts.Width)
+	}
 	if opts.Width > 0 && !opts.Verbose {
 		return printSessionLines(w, groups, opts)
 	}

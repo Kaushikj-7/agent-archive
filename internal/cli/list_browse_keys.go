@@ -6,10 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
@@ -54,8 +56,8 @@ type pickerBottom struct {
 }
 
 // listScreen is the list as one screen draws it, reading keys: rows
-// [start, end) of the table fill the lines left above the footer, the
-// status line, the message line, and the prompt.
+// [start, end) of the table fill the lines left above the detail strip,
+// the footer's notes, the footer line, and the prompt.
 type listScreen struct {
 	groups []sessionTableGroup
 	format listFormatOptions
@@ -69,28 +71,23 @@ type listScreen struct {
 	bottom int
 	// cursor is the highlighted row the screen was measured for.
 	cursor int
+	// strip is set when the detail strip of the highlighted row fits under
+	// the table; a very short terminal gives its lines to the rows.
+	strip bool
 }
 
-// pickKeys is pick reading a key at a time. The table scrolls: ↑ and ↓ (and
-// the mouse wheel, which the terminal sends as arrows on the alternate
-// screen) by a row, PgUp and PgDn (and space, n and p) by a screen, Home
-// and End to the top and bottom. A group scrolled into keeps its heading,
-// marked continued, and its column header. Typed characters collect at the
-// prompt until Enter chooses the row they name.
+// pickKeys is pick reading a key at a time. A highlight marks the row
+// Enter opens: ↑ and ↓ (and the mouse wheel, which the terminal sends as
+// arrows on the alternate screen) move it a row, PgUp and PgDn (and space,
+// n and p) a screen, Home and End to the top and bottom, and the table
+// scrolls to keep it in view. Under the table, the detail strip spells out
+// the highlighted row. A group scrolled into keeps its heading, marked
+// continued. Typed characters collect at the prompt until Enter chooses
+// the row they name; Enter with nothing typed opens the highlighted row.
 func (l *sessionPicker) pickKeysContext(ctx context.Context, p *prompter, stdout io.Writer, rows []listRow, totalMatched int, truncated bool, format listFormatOptions, action string) (listRow, bool, error) {
-	question := p.promptText("Enter number (or unique short SESSION_ID) to "+action+", or q to quit", true, nil, -1, ": ")
+	question := p.promptText("Number or ID to "+action, true, nil, -1, ": ")
 	if l.emptyWithoutAction(rows) {
-		l.prepareSearchContext(ctx, rows)
-		if l.invalidView != nil {
-			return listRow{}, false, l.invalidView
-		}
-		v := l.view(rows, totalMatched, truncated, format)
-		width, _, _ := l.env.terminalSize(stdout)
-		if err := printSessionGroups(stdout, v.groups, v.formatFor(width)); err != nil {
-			return listRow{}, false, err
-		}
-		terminal.Print(stdout, v.footer)
-		return listRow{}, false, nil
+		return listRow{}, false, l.printEmptyKeys(ctx, stdout, rows, totalMatched, truncated, format)
 	}
 	typed, notice := "", ""
 	prompt := func() string {
@@ -113,20 +110,21 @@ func (l *sessionPicker) pickKeysContext(ctx context.Context, p *prompter, stdout
 		if v.heading != "" {
 			frame.WriteString(oneRow(v.heading, screen.width) + "\n")
 		}
-		groups := v.groups
-		if l.filtering {
-			groups = highlightGroups(groups, l.cursor)
-		}
+		groups := highlightGroups(v.groups, l.cursor)
 		if err := printSessionGroups(&frame, pageSessionGroups(groups, pickerPage{screen.start, screen.end}), v.formatFor(screen.width)); err != nil {
 			return listRow{}, false, err
 		}
-		frame.WriteString(v.footer)
-		status := screen.status()
-		if l.filtering {
-			status = filterStatus(screen, action)
+		if screen.strip {
+			for _, line := range detailStrip(v.order[screen.cursor], screen.width, format.Style) {
+				frame.WriteString(line + "\n")
+			}
 		}
-		frame.WriteString(oneRow(status, screen.width) + "\n")
-		frame.WriteString(oneRow(notice, screen.width) + "\n")
+		frame.WriteString(l.displayFooter(v.footer, screen.width))
+		bottom := l.footerLine(screen, action)
+		if notice != "" {
+			bottom = oneRow(notice, screen.width)
+		}
+		frame.WriteString(bottom + "\n")
 		frame.WriteString(prompt())
 		terminal.Print(stdout, frame.String())
 		notice = ""
@@ -148,7 +146,7 @@ func (l *sessionPicker) pickKeysContext(ctx context.Context, p *prompter, stdout
 			}
 			var result listKeyResult
 			if l.filtering {
-				result = l.filterKey(k, screen, v)
+				result = l.filterKey(k, screen)
 			} else {
 				typed, result = l.listKey(k, screen, typed)
 			}
@@ -176,7 +174,10 @@ func (l *sessionPicker) pickKeysContext(ctx context.Context, p *prompter, stdout
 				if l.cursor < len(v.order) {
 					return v.order[l.cursor], true, nil
 				}
-				notice = "Nothing matches the filter; Esc clears it."
+				notice = "No session to open; q quits."
+				if l.filtering {
+					notice = "Nothing matches the filter; Esc clears it."
+				}
 			case listStay:
 			}
 			if !l.keys.buffered() {
@@ -186,7 +187,27 @@ func (l *sessionPicker) pickKeysContext(ctx context.Context, p *prompter, stdout
 	}
 }
 
-// listKeyResult is what a key at the list asks for besides scrolling or
+// printEmptyKeys prints a table with no row to choose and nothing to load:
+// no keys act on it, so it ends with the count a table read by lines ends
+// with.
+func (l *sessionPicker) printEmptyKeys(ctx context.Context, stdout io.Writer, rows []listRow, totalMatched int, truncated bool, format listFormatOptions) error {
+	l.prepareSearchContext(ctx, rows)
+	if l.invalidView != nil {
+		return l.invalidView
+	}
+	v := l.view(rows, totalMatched, truncated, format)
+	width, _, _ := l.env.terminalSize(stdout)
+	if err := printSessionGroups(stdout, v.groups, v.formatFor(width)); err != nil {
+		return err
+	}
+	printListFooter(stdout, len(rows), totalMatched, truncated, format)
+	if l.boundedNotice != "" {
+		terminal.Println(stdout, l.boundedNotice)
+	}
+	return nil
+}
+
+// listKeyResult is what a key at the list asks for besides moving or
 // typing.
 type listKeyResult int
 
@@ -197,22 +218,24 @@ const (
 	listSubmit
 	// listToggle asks for the other scope.
 	listToggle
-	// listPick asks for the row the filter highlights.
+	// listPick asks for the highlighted row.
 	listPick
 )
 
-// listKey applies one key to the list drawn as screen: it scrolls (moving
-// l.start) or edits what is typed. a (when the scope can change), n, p, q,
-// and / (which opens the filter) act only when nothing is typed.
+// listKey applies one key to the list drawn as screen: it moves the
+// highlight (and the list with it) or edits what is typed. Enter opens
+// the row typed, or the highlighted one when nothing is. a (when the scope
+// can change), n, p, q, and / (which opens the filter) act only when
+// nothing is typed.
 func (l *sessionPicker) listKey(k key, screen listScreen, typed string) (string, listKeyResult) {
 	if move, ok := scrollKeys[k.kind]; ok {
-		l.scroll(move, screen)
+		l.move(move, screen)
 		return typed, listStay
 	}
 	switch k.kind {
 	case keyEnter:
 		if typed == "" {
-			return "", listQuit
+			return "", listPick
 		}
 		return typed, listSubmit
 	case keyEndOfInput:
@@ -227,7 +250,7 @@ func (l *sessionPicker) listKey(k key, screen listScreen, typed string) (string,
 	case keyRune:
 		return l.listRune(k.r, screen, typed)
 	case keyUp, keyDown, keyPageUp, keyPageDown, keyHome, keyEnd, keyLeft, keyRight, keyResize:
-		// Scrolled above, or nothing to do but draw the list again.
+		// Moved above, or nothing to do but draw the list again.
 	}
 	return typed, listStay
 }
@@ -236,21 +259,57 @@ func (l *sessionPicker) listKey(k key, screen listScreen, typed string) (string,
 func (l *sessionPicker) listRune(r rune, screen listScreen, typed string) (string, listKeyResult) {
 	switch {
 	case r == ' ':
-		l.scroll(scrollPageDown, screen)
+		l.move(scrollPageDown, screen)
 	case typed == "" && (r == 'q' || r == 'Q'):
 		return "", listQuit
 	case typed == "" && l.toggles && (r == 'a' || r == 'A'):
 		return "", listToggle
+	case typed == "" && r == '/' && l.contentSearch != nil:
+		return "", listStay
 	case typed == "" && r == '/':
-		l.filtering, l.cursor, l.moved = true, 0, false
+		// The highlight stays where it is until words are typed, so Esc
+		// with none typed comes back to the same row.
+		l.filtering, l.moved = true, true
 	case typed == "" && (r == 'n' || r == 'N'):
-		l.scroll(scrollPageDown, screen)
+		l.move(scrollPageDown, screen)
 	case typed == "" && (r == 'p' || r == 'P'):
-		l.scroll(scrollPageUp, screen)
+		l.move(scrollPageUp, screen)
 	case unicode.IsPrint(r) && len(typed) < maxTypedAnswer:
 		typed += string(r)
 	}
 	return typed, listStay
+}
+
+// move moves the highlight, and the list with it: a row up or down; a
+// screen, where the list scrolls a screen and the highlight keeps its
+// place on it, or goes to the first or last row when the list cannot
+// scroll further; or to the top or the bottom. The screen drawn next
+// scrolls to keep the highlight in view.
+func (l *sessionPicker) move(move scrollMove, screen listScreen) {
+	last := max(screen.n-1, 0)
+	l.moved = true
+	switch move {
+	case scrollLineUp:
+		l.cursor = max(l.cursor-1, 0)
+	case scrollLineDown:
+		l.cursor = min(l.cursor+1, last)
+	case scrollPageUp, scrollPageDown:
+		l.scroll(move, screen)
+		switch shift := l.start - screen.start; {
+		case shift != 0:
+			l.cursor = min(max(l.cursor+shift, 0), last)
+		case move == scrollPageDown:
+			l.cursor = last
+		default:
+			l.cursor = 0
+		}
+	case scrollTop:
+		l.scroll(move, screen)
+		l.cursor = 0
+	case scrollBottom:
+		l.scroll(move, screen)
+		l.cursor = last
+	}
 }
 
 // scroll moves the list's first row. The screen drawn next clamps it to
@@ -272,21 +331,58 @@ func (l *sessionPicker) scroll(move scrollMove, screen listScreen) {
 	}
 }
 
+// detailStripLines is how many lines the detail strip takes: a rule, the
+// title, the details, and a rule.
+const detailStripLines = 4
+
+// minStripListLines is the fewest lines the table keeps with the detail
+// strip under it; a terminal shorter than that gives the strip's lines to
+// the table.
+const minStripListLines = 5
+
 // screen measures the list for the terminal's size now: the lines left for
 // the table, the rows that fill them from l.start, and the last screen's
 // first row.
+//
+// The detail strip is left out first: on a terminal too short for it and
+// minStripListLines of the table, and when fewer than minPickerPageRows
+// rows (with their day headings) would fit above it. Only then does a
+// screen show fewer rows, down to one, so it never takes more lines than
+// the terminal has while a row fits.
 func (l *sessionPicker) screen(stdout io.Writer, groups []sessionTableGroup, format listFormatOptions, n int, footer, prompt string) listScreen {
-	s := listScreen{groups: groups, format: format, n: n, end: n}
+	s := l.measureScreen(stdout, groups, format, n, footer, prompt, n > 0)
+	if s.strip && s.width > 0 && s.end-s.start < min(minPickerPageRows, s.n-s.start) {
+		s = l.measureScreen(stdout, groups, format, n, footer, prompt, false)
+	}
+	return s
+}
+
+// minKeyScreenRows is the fewest rows a screen of the key browser shows,
+// however short the terminal: unlike a page read by lines, which keeps
+// minPickerPageRows, a screen that took more lines than the terminal has
+// would scroll its heading away.
+const minKeyScreenRows = 1
+
+// measureScreen is screen with the detail strip under the table when strip
+// is set and the terminal has lines for it.
+func (l *sessionPicker) measureScreen(stdout io.Writer, groups []sessionTableGroup, format listFormatOptions, n int, footer, prompt string, strip bool) listScreen {
+	s := listScreen{groups: groups, format: format, n: n, end: n, strip: strip}
 	width, height, ok := l.env.terminalSize(stdout)
 	if !ok {
 		l.start = 0
 		return s
 	}
 	s.width = width
-	// Below the table: the footer, the status line, the message line (or a
-	// blank one), and the prompt with what is typed.
-	chrome := l.headRows() + displayLines(footer, width) + 1 + 1 + displayLines(prompt, width)
-	s.budget = max(height-chrome, minPickerPageRows)
+	// Below the table: the detail strip, the footer's notes, the footer
+	// line (or a message in its place), and the prompt with what is typed.
+	chrome := l.headRows() + displayLines(l.displayFooter(footer, width), width) + 1 + displayLines(prompt, width)
+	if s.strip && height-chrome-detailStripLines < minStripListLines {
+		s.strip = false
+	}
+	if s.strip {
+		chrome += detailStripLines
+	}
+	s.budget = max(height-chrome, minKeyScreenRows)
 	s.bottom = l.lastScreen(s)
 	s.start = min(l.start, s.bottom)
 	l.start = s.start
@@ -295,9 +391,9 @@ func (l *sessionPicker) screen(stdout io.Writer, groups []sessionTableGroup, for
 }
 
 // fit is how many rows, from start, fill the screen's lines: as many as
-// fit, but at least a few.
+// fit, but at least one.
 func (l *sessionPicker) fit(s listScreen, start int) int {
-	lo, hi := 1, min(s.n-start, max(s.budget, minPickerPageRows))
+	lo, hi := 1, min(s.n-start, max(s.budget, minKeyScreenRows))
 	for lo < hi {
 		mid := (lo + hi + 1) / 2
 		if l.tableLines(s.groups, s.format, pickerPage{start, start + mid}, s.width) <= s.budget {
@@ -306,13 +402,13 @@ func (l *sessionPicker) fit(s listScreen, start int) int {
 			hi = mid - 1
 		}
 	}
-	return max(lo, min(minPickerPageRows, s.n-start))
+	return lo
 }
 
 // reachesEnd reports whether the screen starting at start shows the last
 // row.
 func (l *sessionPicker) reachesEnd(s listScreen, start int) bool {
-	return s.n-start <= minPickerPageRows || s.n-start <= s.budget && l.tableLines(s.groups, s.format, pickerPage{start, s.n}, s.width) <= s.budget
+	return s.n-start <= minKeyScreenRows || s.n-start <= s.budget && l.tableLines(s.groups, s.format, pickerPage{start, s.n}, s.width) <= s.budget
 }
 
 // lastScreen is the first row of the screen that shows the last row, the
@@ -323,7 +419,7 @@ func (l *sessionPicker) lastScreen(s listScreen) int {
 	}
 	// Only a screen with fewer rows than lines can reach the end, and one
 	// reaching it still does from a later row.
-	lo, hi := max(s.n-max(s.budget, minPickerPageRows), 0), s.n-1
+	lo, hi := max(s.n-max(s.budget, minKeyScreenRows), 0), s.n-1
 	for lo < hi {
 		mid := (lo + hi) / 2
 		if l.reachesEnd(s, mid) {
@@ -342,7 +438,7 @@ func (l *sessionPicker) previousScreen(s listScreen) int {
 	if s.budget == 0 {
 		return 0
 	}
-	lo, hi := max(s.start-max(s.budget, minPickerPageRows), 0), s.start
+	lo, hi := max(s.start-max(s.budget, minKeyScreenRows), 0), s.start
 	for lo < hi {
 		mid := (lo + hi) / 2
 		if mid+l.fit(s, mid) >= s.start {
@@ -352,30 +448,6 @@ func (l *sessionPicker) previousScreen(s listScreen) int {
 		}
 	}
 	return lo
-}
-
-// position is where the screen is in the list: Top, a percentage, Bottom, or
-// All when every row fits.
-func (s listScreen) position() string {
-	switch {
-	case s.bottom == 0:
-		return "All"
-	case s.start == 0:
-		return "Top"
-	case s.start >= s.bottom:
-		return "Bottom"
-	}
-	return fmt.Sprintf("%d%%", s.end*100/s.n)
-}
-
-// status is the line below the list's footer: where the screen is in the
-// list and the keys.
-func (s listScreen) status() string {
-	const choose = "/ filter · type a number and Enter · q quit"
-	if s.bottom == 0 {
-		return "All · " + choose
-	}
-	return s.position() + " · ↑↓ scroll · PgUp/PgDn page · " + choose
 }
 
 // detailsScreen is a session's summary as one screen draws it, reading
@@ -553,7 +625,11 @@ func (b *sessionBrowser) measureDetails(lines []string, top int, pager bool, hin
 	if !ok {
 		return detailsScreen{lines: lines, shown: len(lines)}, notice
 	}
-	below := displayLines(hint, width) + displayLines(b.prompt.promptText(detailsKeysQuestion(true, pager), false, nil, -1, ": "), width)
+	question := detailsKeysQuestion(true, pager)
+	if b.search != nil {
+		question = searchDetailsQuestion
+	}
+	below := displayLines(hint, width) + displayLines(b.prompt.promptText(question, false, nil, -1, ": "), width)
 	chrome := max(displayLines(notice.text, width), 1) + below
 	summaryRows := 0
 	for _, line := range lines {
@@ -634,9 +710,132 @@ func (l *sessionPicker) emptyWithoutAction(rows []listRow) bool {
 }
 
 func (l *sessionPicker) activatesOlder(k key, typed string) bool {
+	if l.contentSearch != nil && typed == "" && k.kind == keyRune && unicode.ToLower(k.r) == 'r' {
+		l.contentSearch.rerun = true
+		return true
+	}
 	return l.older != nil && !l.filtering && typed == "" && k.kind == keyRune && unicode.ToLower(k.r) == 'o'
 }
 
 func (l *sessionPicker) viewChanged(next, prior *pickerView, screen listScreen) bool {
-	return next != prior || l.start != screen.start || l.filtering && l.cursor != screen.cursor
+	return next != prior || l.start != screen.start || l.cursor != screen.cursor
+}
+
+// detailStrip is the strip under the key browser's table that spells out
+// the highlighted row: a rule, its full display title, then dim the agent,
+// the project, the PR, its subagents, its note, when it was last active,
+// and its short ID, each line cut to the terminal's width (0 when unknown,
+// which cuts nothing), and a rule.
+func detailStrip(r listRow, width int, style textStyle) []string {
+	_, agent := agentLabel(rowHarness(r))
+	details := []string{agent}
+	if r.Project != "" && r.Project != "-" {
+		details = append(details, r.Project)
+	}
+	if r.PR != "" {
+		details = append(details, "PR "+r.PR)
+	}
+	switch {
+	case r.Parent != "":
+		// Said even under its parent, where the table only indents it.
+		details = append(details, "subagent of "+r.Parent)
+	case r.Children > 0:
+		details = append(details, plural(r.Children, "subagent"))
+	}
+	if r.Hint != "" {
+		details = append(details, r.Hint)
+	}
+	if r.When != "" {
+		details = append(details, "last active "+r.When)
+	}
+	if id := archive.DisplayLine(r.ShortID); id != "" {
+		details = append(details, "id "+id)
+	}
+	ruleWidth := width
+	if ruleWidth <= 0 {
+		ruleWidth = unknownRuleWidth
+	}
+	rule := style.dim(strings.Repeat("─", ruleWidth))
+	return []string{
+		rule,
+		stripLine(r.Title, width),
+		style.dim(stripLine(strings.Join(details, " · "), width)),
+		rule,
+	}
+}
+
+// stripLine is a line of the detail strip, cut at a word with "…" to a
+// terminal width columns wide; 0 (unknown) cuts nothing.
+func stripLine(text string, width int) string {
+	if width <= 0 {
+		return text
+	}
+	return cutAtWord(text, width)
+}
+
+// unknownRuleWidth is how wide the detail strip's rules are on a terminal
+// whose width is unknown.
+const unknownRuleWidth = 40
+
+// footerKey is a key the footer line names, with how much it matters:
+// keys that do not fit go, least first.
+type footerKey struct {
+	text string
+	rank int
+}
+
+// footerLine is the line under the key browser's table: the keys, and on
+// the right which rows are on screen ("1–14 of 86"). Keys that do not fit
+// the width go, least needed first; the position stays.
+func (l *sessionPicker) footerLine(s listScreen, action string) string {
+	var keys []footerKey
+	if l.filtering {
+		keys = []footerKey{{"↑↓ move", 2}, {"Enter " + action, 0}, {"Esc clear", 3}}
+	} else {
+		keys = []footerKey{{"↑↓ move", 2}, {"Enter " + action, 0}}
+		if l.contentSearch == nil {
+			keys = append(keys, footerKey{"/ search", 4}, footerKey{"number + Enter jump", 5})
+		} else {
+			keys = append(keys, footerKey{"r rerun", 4}, footerKey{"number + Enter jump", 5})
+		}
+		// Older rows to load are said only here (the position counts the
+		// rows loaded), so the key stays as long as Enter does.
+		if l.older != nil {
+			label := "o older"
+			if l.contentSearch != nil {
+				label = "o next results"
+			}
+			keys = append(keys, footerKey{label, 1})
+		}
+		keys = append(keys, footerKey{"q quit", 3})
+	}
+	position := ""
+	if s.n > 0 {
+		position = fmt.Sprintf("%d–%d of %d", s.start+1, s.end, s.n)
+	}
+	const gap = "   "
+	for {
+		texts := make([]string, len(keys))
+		for i, k := range keys {
+			texts[i] = k.text
+		}
+		left := strings.Join(texts, gap)
+		switch {
+		case s.width <= 0:
+			return strings.TrimSpace(left + gap + position)
+		case position == "" && visibleWidth(left) <= s.width:
+			return left
+		case visibleWidth(left)+len(gap)+visibleWidth(position) <= s.width:
+			return left + strings.Repeat(" ", s.width-visibleWidth(left)-visibleWidth(position)) + position
+		case len(keys) == 0:
+			return oneRow(position, s.width)
+		}
+		least := 0
+		for i, k := range keys {
+			if k.rank > keys[least].rank {
+				least = i
+			}
+		}
+		keys = slices.Delete(keys, least, least+1)
+	}
 }

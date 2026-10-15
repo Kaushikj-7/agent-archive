@@ -194,6 +194,8 @@ jobs:
         run: |
           go vet ./...
           python3 -B scripts/run_ci_tier.py --plan --tier full --output release-tier-results/plan.json
+          # Soft Go-managed memory target; race/native allocations also need headroom.
+          export GOMEMLIMIT=3GiB
           python3 -B scripts/run_ci_tier.py --tier full --suite linux --seconds 2400 --output release-tier-results
           python3 -B scripts/run_ci_tier.py --verify --tier full --suite linux --extra-plan release-tier-results/plan.json --output release-tier-results
           python3 scripts/test_release_signing.py
@@ -354,9 +356,9 @@ jobs:
       # Records, signed by GitHub, that these exact bytes came from this
       # workflow run at this commit. Check one with:
       #   gh attestation verify agent-archive-darwin-arm64 --repo wangjohn/agent-archive
-      # Subjects are the four binaries and identity/notary manifest. The
-      # retained artifact and candidate upload also include SHA256SUMS;
-      # scripts/test_release_assets.py checks those inventories.
+      # Subjects are the four binaries, SHA256SUMS, and the identity/notary
+      # manifest; the retained artifact and candidate upload carry the same
+      # inventory. scripts/test_release_assets.py checks those inventories.
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: |
@@ -364,6 +366,7 @@ jobs:
             dist/agent-archive-darwin-arm64
             dist/agent-archive-linux-amd64
             dist/agent-archive-linux-arm64
+            dist/SHA256SUMS
             dist/release-candidate.json
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

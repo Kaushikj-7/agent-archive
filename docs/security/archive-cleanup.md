@@ -506,3 +506,11 @@ on the capturing machine and changes again, that machine publishes it anew. On a
 bucket with versioning turned on, a delete only hides the object: remove
 the noncurrent versions too, or add a lifecycle rule that expires them.
 
+
+The private local conversation-search index and SQLite WAL contain searchable
+conversation text. `search --refresh --rebuild` invalidates derived rows and
+starts bounded catch-up; it does not securely erase old database/WAL blocks or
+delete archived sources. To discard the local search copy, stop search commands
+before removing `AGENT_ARCHIVE_HOME/search/`. Cached search never refreshes remote
+privacy changes by itself; its coverage reports the last local observation.
+See [bounded search](../guides/search.md).

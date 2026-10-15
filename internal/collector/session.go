@@ -102,10 +102,17 @@ type sessionScan struct {
 	// reconciliation kept: what they retained counts against the session's
 	// read ceiling until the scan ends. withoutOffChain is set when the scan
 	// runs again without them (see run). offChainLeftOut reports that it
-	// left at least one out (see noteRevisionLeftOut).
+	// left at least one out of what is published (see noteRevisionLeftOut).
+	// offChainPlanned and offChainUnread are what the last reconciliation
+	// that read them staged to publish beside the current revision (each
+	// revision with the source staged) and whether it left any unread; they
+	// outlive the run again, which reports only what it no longer publishes
+	// as staged (see reconcileRevisions).
 	offChainKept    int
 	offChainLeftOut bool
 	withoutOffChain bool
+	offChainPlanned []archive.RevisionReference
+	offChainUnread  bool
 	// replacingOwed is set when resume went past a publication owed
 	// before this scan, to be replaced by the scan's own (see run).
 	replacingOwed bool
@@ -165,6 +172,14 @@ func (s *sessionScan) run(ctx context.Context) (outcome sessionOutcome, err erro
 	} else if owed.Upload && !s.replacingOwed {
 		return outcome, err
 	}
+	s.forgetForRunWithoutOffChain()
+	return s.scanOnce(ctx)
+}
+
+// forgetForRunWithoutOffChain releases and forgets what a scan did, keeping
+// only what its reconciliation planned for off-chain revisions, so the scan
+// can run again without them (see run).
+func (s *sessionScan) forgetForRunWithoutOffChain() {
 	s.releaseRetained()
 	s.readBudget().ForgetScopeExceeded()
 	s.filtered, s.lastRead, s.revisions, s.rewritten = nil, nil, nil, nil
@@ -172,7 +187,6 @@ func (s *sessionScan) run(ctx context.Context) (outcome sessionOutcome, err erro
 	// offChainLeftOut stands until the second scan reconciles: one that
 	// resumes the first scan's replacement leaves out what the first did.
 	s.offChainKept, s.withoutOffChain = 0, true
-	return s.scanOnce(ctx)
 }
 
 // scanOnce is one scan of the session, the steps above.
