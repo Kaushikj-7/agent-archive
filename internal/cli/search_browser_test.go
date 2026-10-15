@@ -532,19 +532,19 @@ func TestSearchHighlightedNavigationAndCompactFooter(t *testing.T) {
 	keys := startKeys(newFakeKeys("/", "\x1b[B", "\r"))
 	defer keys.close()
 	var out bytes.Buffer
-	l := &sessionPicker{env: fixedTerminal{160, 40}, keys: keys, contentSearch: &contentSearchBrowser{}, older: &browserLoadAction{Label: "next indexed results"}, clear: func() { out.WriteString(screenBreak) }}
+	l := &sessionPicker{env: fixedTerminal{160, 40}, keys: keys, contentSearch: &contentSearchBrowser{page: search.Page{Next: "more"}, pages: 1}, older: &browserLoadAction{Label: "next indexed results"}, clear: func() { out.WriteString(screenBreak) }}
 	row, ok, err := l.pickRowsContext(t.Context(), newPrompter(strings.NewReader(""), &out), &out, rows, len(rows), false, listFormatOptions{Search: true, Numbered: true, Note: "Coverage incomplete.\nLast observed: unknown.\n"}, "read")
 	if err != nil || !ok || rowIdentity(row) != rowIdentity(rows[1]) || l.filtering {
 		t.Fatalf("highlight selection lost full identity: row%+v ok%v err%v", row, ok, err)
 	}
 	screens := strings.Split(out.String(), screenBreak)
 	checkKeyScreensFit(t, screens, 160, 40)
-	for _, forbidden := range []string{"/ search", "/ filter", "o older"} {
+	for _, forbidden := range []string{"/ search", "/ filter", "o older", "o next results"} {
 		if strings.Contains(out.String(), forbidden) {
 			t.Fatalf("search advertised %q: %s", forbidden, &out)
 		}
 	}
-	for _, want := range []string{cursorMark + " 1.", "first ranked hit", "r rerun", "o next results", "Coverage incomplete."} {
+	for _, want := range []string{cursorMark + " 1.", "first ranked hit", "r rerun", "PgUp/PgDn page", "1–2 of 2+", "Coverage incomplete."} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("missing %q: %s", want, &out)
 		}

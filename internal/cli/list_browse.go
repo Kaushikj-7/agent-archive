@@ -438,8 +438,11 @@ type sessionPicker struct {
 	operationQuit     bool
 	older             *browserLoadAction
 	loadedOlder       bool
-	boundedNotice     string
-	env               terminalSizeDependencies
+	// pendingOlder is the move down that loaded older rows, which the list
+	// goes on with once it has them (continueOlder).
+	pendingOlder  *olderMove
+	boundedNotice string
+	env           terminalSizeDependencies
 	// keys, when set, reads the list a key at a time: it scrolls instead
 	// of turning pages (see pickKeys).
 	keys *keyInput
@@ -506,6 +509,7 @@ type sessionPicker struct {
 // chosen, under its heading, and shows the other when `a` is typed alone.
 // It returns when a row is picked or the user quits.
 func (l *sessionPicker) pickScopedContext(ctx context.Context, p *prompter, stdout io.Writer, choices *scopeChoices, action string) (listRow, bool, error) {
+	defer func() { l.pendingOlder = nil }()
 	for {
 		c := choices.shown()
 		if loader := choices.loadOlder; loader != nil && loader.Available != nil {
@@ -555,10 +559,14 @@ func (l *sessionPicker) pickScopedContext(ctx context.Context, p *prompter, stdo
 				}
 				l.toggled = false
 				// The other table starts at its top.
-				l.start, l.cursor = 0, 0
+				l.start, l.cursor, l.pendingOlder = 0, 0, nil
 			}
 			if !more {
 				l.older = nil
+			}
+			if l.operationCanceled {
+				// Esc stopped the load: the highlight stays where it was.
+				l.pendingOlder = nil
 			}
 			l.memo, l.cache, l.bottom = nil, nil, nil
 			l.searched, l.searchRead = nil, false

@@ -6,6 +6,14 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- The session browser (`list`, bare `show`, `handoff`, and content `search` on
+  a terminal) loads older sessions as you scroll: moving down past the last row
+  (↓ or the wheel on it, PgDn with it on screen, or End on it) loads the next
+  batch and moves on into it, with no `o` to press first (`o` still works).
+  The footer's count ends in `+` while more can load (`1–14 of 50+`), says
+  `No older sessions.` when a load finds none, and names `PgUp/PgDn page`.
+  Reading lines is unchanged.
+
 - Commands run inside Muse detect its session environment to avoid interactive
   prompts and pagers. Handoff into supported agents removes inherited Muse
   session variables. This adds presence detection only; Muse capture, current

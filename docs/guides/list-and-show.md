@@ -243,7 +243,8 @@ sessions; local eligibility beyond that work remains explicitly unknown.
 ## Browsing on a terminal
 
 The list and bare-show browsers offer **Older sessions** when the initial table
-is limited. Press `o` to extend it by another batch. Search checks older
+is limited. Scrolling past the last row extends it by another batch (reading
+lines, answer `o`). Search checks older
 sessions and subagents as well as the rows on screen; `a` changes the project
 scope. Repeated searches reuse private local summaries, while each command
 checks the archive for changed and deleted sessions. `--no-cache` bypasses
@@ -257,7 +258,12 @@ session's summary replace each other instead of piling up:
   Enter after a command.
 - `▸` marks the highlighted row: ↑ ↓ (and the mouse wheel) move it a row,
   PgUp and PgDn (or space, `n`, and `p`) a screen, Home and End to the top
-  and bottom, and the list scrolls to keep it in view. Enter shows its
+  and bottom, and the list scrolls to keep it in view. When older sessions
+  can be loaded, moving down past the last row (↓ or the wheel on it, PgDn
+  with it on screen, or End on it) loads the next batch and goes on into it:
+  ↓ to the first session loaded, PgDn a screen further, End to the new last
+  row. Esc stops a load that is taking a while. If no older session turns
+  up, the footer says `No older sessions.` Enter shows its
   summary. Under the list, a strip spells out the highlighted session: its
   full title, then its agent, project, PR, subagents, when it was last
   active, and its short ID. A very short window leaves the strip out.
@@ -268,13 +274,14 @@ session's summary replace each other instead of piling up:
   works wherever the list is scrolled (in the list grouped by day, the
   numbers on screen need not be consecutive).
 - The footer line names the keys and which rows are on screen, for example
-  `↑↓ move   Enter show   / search   number + Enter jump   q quit   1–14 of 86`.
-  When older sessions can be loaded, `o older` is there too, and a narrow
-  window keeps it as long as it keeps `Enter`.
+  `↑↓ move   PgUp/PgDn page   Enter show   / search   number + Enter jump   q quit   1–14 of 86`.
+  When older sessions can be loaded, the count ends in `+` (`1–14 of 50+`).
+  A narrow window drops `number + Enter jump` first, then `PgUp/PgDn page`,
+  then `/ search`; `Enter` stays longest.
   The heading says how many subagent sessions are hidden. A day scrolled
   into keeps its heading at the top, marked `(continued)`, as in
-  `TODAY (continued)`. `a`, `n`, `p`, `q`, `o`, and `/` act only when
-  nothing is typed.
+  `TODAY (continued)`. `a`, `n`, `p`, `q`, and `/` act only when
+  nothing is typed, as does `o`, which also loads older sessions.
 - Press `/` to filter the rows as you type, as in `less`: a line at the
   bottom takes the words, and the rows narrow with each character. The words
   are the ones `list "<words>"` takes: every word must appear in a session's

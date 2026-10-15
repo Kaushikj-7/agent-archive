@@ -26,8 +26,9 @@ Words are ANDed, quotes match phrases, and a trailing * enables prefix matching.
 Punctuation splits words; this is keyword search, not substring/semantic search.
 References bind exact source revisions. Reads print escaped, quoted text.
 On an interactive terminal, browse ranked snippets and exact bounded context.
-Use n/p for matching body passages, r to rerun the fixed query, and h to
-hand off the current session through existing gates. Metadata / filtering is
+Scrolling past the last result loads the next results. Use n/p for matching
+body passages, r to rerun the fixed query, and h to hand off the current
+session through existing gates. Metadata / filtering is
 disabled. JSON and piped output remain bounded documents.
   --json              Print one versioned bounded JSON document
   --refresh           Run a bounded verified archive refresh
@@ -434,7 +435,8 @@ project every row shares is left out of the table and named in the heading.
 On a terminal with an interactive stdin, list a numbered table and pick a
 session to show its summary, then t for its transcript, Enter or b to go
 back, or q to quit. Keys act as pressed; the wheel, arrows, and PgUp/PgDn
-move the highlight, which Enter opens. Press / to filter the rows as you
+move the highlight, which Enter opens, and moving past the last row loads
+older sessions when there are more. Press / to filter the rows as you
 type, with the words WORDS takes: the first match is highlighted, the arrows
 move the highlight, Enter shows it, and Esc clears the filter, keeping the
 highlighted row. A subagent that matches is shown under its parent, which is
@@ -622,8 +624,9 @@ Example: agent-archive stats --html --output stats.html
 
 Before setup, browse Claude Code and Codex native sessions in this checkout
 and its descendants. Local IDs (qualified with --harness) or unique prefixes
-select beyond the first 50 filtered previews. o loads another 50 explicitly;
-/ filters loaded rows only. Word queries report their bounded preview window.
+select beyond the first 50 filtered previews. Scrolling past the last row
+loads another 50; / filters loaded rows only. Word queries report their
+bounded preview window.
 --project requires a directory; --all-projects explicitly broadens the scope.
 Local --latest ranks file modification time and requires complete identity
 coverage. Direct --to uses an exact current identity or asks for selection;
@@ -633,8 +636,9 @@ temporary launch files survive launch; later local handoffs clean owned files
 older than seven days, best effort. Cursor discovery is not automatic.
 
 
-After setup, the picker lists the newest 50 rows initially. Press o to add
-up to 50 older rows in the current scope; a switches to all projects or back.
+After setup, the picker lists the newest 50 rows initially. Scroll past the
+last row to add up to 50 older rows in the current scope; a switches to all
+projects or back.
 Archived search remains complete before older rows are loaded.
 
 After setup, continue a session in another coding agent. On a terminal, pick

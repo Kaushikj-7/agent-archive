@@ -127,11 +127,17 @@ func (s *contentSearchBrowser) installRows() {
 	s.choices.built = [2]*scopeChoice{}
 }
 
+// hasNextPage reports whether load would add the next indexed page rather
+// than only say there is none.
+func (s *contentSearchBrowser) hasNextPage() bool {
+	return !s.stale && s.pages < 3 && s.page.Next != ""
+}
+
 func (s *contentSearchBrowser) load(ctx context.Context) (bool, error) {
 	q := s.opts.query
 	reset := s.rerun
 	s.rerun = false
-	if !reset && (s.stale || s.pages >= 3 || s.page.Next == "") {
+	if !reset && !s.hasNextPage() {
 		s.notice = "No next page in this retained ranking; r explicitly reruns the query."
 		s.installRows()
 		return true, nil
