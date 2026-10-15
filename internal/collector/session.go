@@ -113,6 +113,9 @@ type sessionScan struct {
 	withoutOffChain bool
 	offChainPlanned []archive.RevisionReference
 	offChainUnread  bool
+	// replacingOwed is set when resume went past a publication owed
+	// before this scan, to be replaced by the scan's own (see run).
+	replacingOwed bool
 }
 
 // filteredSource is a source read and filtered once in a scan.
@@ -152,8 +155,12 @@ func (s *sessionScan) id() string { return s.reg.ArchiveSessionID }
 // ceiling only on its own. A scan that saved a publication before the
 // refusal is not run again: the publication is owed as it is
 // (overCeiling defers it), and its later passes resume it without the
-// reconciliation's retained work. Whether an off-chain revision was left
-// out is recorded once, as the scan ends (noteRevisionLeftOut).
+// reconciliation's retained work. A publication already owed when the scan
+// began does not keep it from running again: the scan went on past it, so
+// it may be replaced (one never attempted, which a stop request replaces
+// with a richer one), and a replacement the first scan saved is resumed as
+// it is by the second. Whether an off-chain revision was left out is
+// recorded once, as the scan ends (noteRevisionLeftOut).
 func (s *sessionScan) run(ctx context.Context) (outcome sessionOutcome, err error) {
 	defer func() { s.noteRevisionLeftOut(err) }()
 	outcome, err = s.scanOnce(ctx)
@@ -162,7 +169,7 @@ func (s *sessionScan) run(ctx context.Context) (outcome sessionOutcome, err erro
 	}
 	if owed, owedErr := s.local.Outstanding(s.reg, false); owedErr != nil {
 		return outcome, errors.Join(err, owedErr)
-	} else if owed.Upload {
+	} else if owed.Upload && !s.replacingOwed {
 		return outcome, err
 	}
 	s.forgetForRunWithoutOffChain()
@@ -177,7 +184,9 @@ func (s *sessionScan) forgetForRunWithoutOffChain() {
 	s.readBudget().ForgetScopeExceeded()
 	s.filtered, s.lastRead, s.revisions, s.rewritten = nil, nil, nil, nil
 	s.gap, s.sizeLimit, s.readyAt, s.subagentRunning = "", nil, time.Time{}, false
-	s.offChainKept, s.offChainLeftOut, s.withoutOffChain = 0, false, true
+	// offChainLeftOut stands until the second scan reconciles: one that
+	// resumes the first scan's replacement leaves out what the first did.
+	s.offChainKept, s.withoutOffChain = 0, true
 }
 
 // scanOnce is one scan of the session, the steps above.
@@ -307,6 +316,7 @@ func (s *sessionScan) resume(ctx context.Context) (outcome sessionOutcome, handl
 		// never-attempted candidate can be safely replaced by a richer one;
 		// deferred lifecycle evidence enriches it without changing when it
 		// becomes ready.
+		s.replacingOwed = true
 		return outcomeSkipped, false, nil
 	}
 	// No publication ever waits longer than one interval from now. A later
