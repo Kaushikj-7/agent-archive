@@ -10,7 +10,7 @@ from test_ci_workflow import jobs
 from test_release_assets import steps
 
 from go_cache_context import CachePlan, InvalidContext
-from go_cache_steps import restore_result, verify_restored, worker_success, emit, main, execute_modules
+from go_cache_steps import restore_result, verify_restored, worker_success, emit, main, execute_modules, pr_publisher
 PIN = "55cc8345863c7cc4c66a329aec7e433d2d1c52a9"
 
 
@@ -150,6 +150,18 @@ class PhaseTests(unittest.TestCase):
             self.assertEqual(result, expected)
             self.assertEqual(events, ['guard', ['go', 'mod', 'download'], ['go', 'mod', 'verify'], 'guard'])
 
+    def test_only_same_repository_worker_zero_can_publish_and_malformed_is_readonly(self):
+        env = {'GITHUB_EVENT_NAME':'pull_request','GITHUB_REPOSITORY':'wangjohn/agent-archive'}
+        event = {'pull_request':{'head':{'repo':{'full_name':'wangjohn/agent-archive'}}}}
+        self.assertTrue(pr_publisher(env,event,0))
+        self.assertFalse(pr_publisher(env,event,1))
+        self.assertFalse(pr_publisher(env,event,False))
+        self.assertFalse(pr_publisher({}, {}, 0))
+        self.assertFalse(pr_publisher(env,{},0))
+        self.assertFalse(pr_publisher(env,{'pull_request':{'head':{'repo':None}}},0))
+        event['pull_request']['head']['repo']['full_name']='fork/agent-archive'
+        self.assertFalse(pr_publisher(env,event,0))
+
     def test_cli_fails_closed_before_source_or_go_on_non_pr(self):
         with contextlib.redirect_stderr(io.StringIO()), \
                 mock.patch.dict(os.environ, {'GITHUB_EVENT_NAME': 'workflow_dispatch'}, clear=True), \
@@ -190,15 +202,18 @@ class WorkflowTests(unittest.TestCase):
         save = next(s for s in found if 'id: go-cache-save' in s)
         for step in (restore, save):
             self.assertIn('${{ runner.temp }}/pr-go-build', step)
-            self.assertIn('${{ runner.temp }}/pr-go-modules', step)
+            self.assertNotIn('${{ runner.temp }}/pr-go-modules', step)
             self.assertNotIn('shard-results', step)
         self.assertIn('success() &&', save)
         self.assertIn("steps.go-cache-complete.outputs.save_ready == 'true'", save)
         self.assertIn("steps.go-cache-verify.outputs.restore_state != 'exact'", save)
         self.assertIn('github.event.pull_request.head.repo.full_name == github.repository', save)
+        seed = next(s for s in found if 'id: go-cache-seed' in s)
+        self.assertIn('${{ runner.temp }}/pr-go-modules/cache', seed)
+        self.assertIn('steps.go-cache-key.outputs.seed', seed)
         self.assertNotIn('always()', save)
-        self.assertTrue(any('scripts/test_go_cache_context.py' in s for s in steps(self.workflows['test']['script-tests'])))
-        self.assertTrue(any('scripts/test_go_cache_steps.py' in s for s in steps(self.workflows['test']['script-tests'])))
+        self.assertTrue(any('scripts/test_go_cache_context.py' in s for s in steps(self.workflows['test']['script-static'])))
+        self.assertTrue(any('scripts/test_go_cache_steps.py' in s for s in steps(self.workflows['test']['script-static'])))
 
 
 if __name__ == '__main__':
