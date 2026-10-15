@@ -31,6 +31,14 @@ follow [Semantic Versioning](https://semver.org/).
   In `handoff`, a session not yet uploaded always says so (a dim "· not
   uploaded"), with its title cut to make room. This applies to `list`, `show`
   and `handoff`.
+- Session lists in a terminal are grouped by day instead of by project,
+  under the headings TODAY, YESTERDAY, EARLIER THIS WEEK (weeks start on
+  Monday), LAST WEEK, EARLIER THIS MONTH and OLDER, newest first. The
+  project is a column, or named in the heading line when every session
+  shares one. A page or screen that starts partway through a day repeats
+  its heading as "TODAY (continued)". The `/` filter's matches are grouped
+  the same way, in the order they matched within each day. Piped output
+  stays one flat table, and `list --verbose` is now one flat table too.
 - **Changed for scripts:** piped `list` output (not a terminal) is now one
   plain line per session, newest first with no project headings, in the
   columns `WHEN AGENT PROJECT PR ID TITLE`, with WHEN the short time, an
@@ -41,6 +49,24 @@ follow [Semantic Versioning](https://semver.org/).
   parsing the old `TITLE PR WHEN HARNESS PROJECT ID` text should switch to
   `list --json`, which is unchanged and is the stable format. `list
   --verbose` is unchanged.
+- **Changed for scripts:** when `show` or `handoff` words match several
+  sessions and nothing can ask which (piped, or run by an agent), the
+  matches on stderr use the same columns as piped `list`, under a header:
+  `WHEN AGENT PROJECT PR ID TITLE`, with the full title last and its
+  subagent and "not yet uploaded" notes after it (PROJECT only when the
+  matches span several projects, PR only when one has a PR). Before setup,
+  `handoff`'s local matches are printed the same way, with the whole native
+  ID, in place of `local <ID> (<app>): <title>` lines. The `Next:` line is
+  unchanged; read `list "<words>" --json` rather than parsing the table.
+- The `show` summary's second line names the agent as the lists do
+  ("Claude", in its color on a color terminal) and says when the session was
+  last active as "last active 2 minutes ago", replacing "claude · … · 2h
+  ago" and the weekday or date form.
+- The local `handoff` picker before setup groups sessions by day and shows
+  readable titles, like the other session lists. When `handoff --latest`
+  finds no session, its list of recent archived sessions reads WHEN, AGENT,
+  MACHINE and COMMAND, under a header, with the short time and the agent's
+  name.
 
 ## [0.2.2]
 
@@ -91,6 +117,22 @@ and the cleanup repair do not turn either failed tagged gate into a pass.
   earlier revisions when the scan has seen them and they can be read; one that
   cannot be read, or does not fit beside the thread's own history, is left out
   rather than failing the thread's capture.
+- Stop losing Claude Code subagents (and holding back new sessions) while
+  Codex discovery works through a backlog. Each newly discovered Codex session
+  used to withdraw the whole local identity census until the next collector
+  pass, so every hook that needed a new identity in the meantime was refused:
+  `status` showed "local session identity bookkeeping needs collector
+  recovery" and `identity_recovery` pending with phase `unknown`, and a Claude
+  Code subagent finishing in that window was never captured. Discovery now
+  asks for proof about its own session only; the census stays in force for
+  everything else, and the next pass certifies the discovered session without
+  a full rebuild. A subagent that finishes while recovery is genuinely pending,
+  or while the capture lock is busy, is now queued and replayed by the next
+  collector pass instead of being dropped. Sessions and subagents refused while
+  a full recovery runs no longer restart it, so it can finish on a busy
+  machine. Downgrading to an earlier version while such a subagent is queued
+  makes that version's collector report an admission-intent error for it each
+  pass until it expires after 24 hours; nothing else is held back.
 
 - Preserve the primary validation failure alongside cleanup diagnostics, and
   continue bounded cleanup of other owned processes after signal, poll or wait

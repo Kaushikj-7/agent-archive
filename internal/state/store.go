@@ -125,7 +125,7 @@ var lazyStoreDirs = []string{generationHeadsDir, generationNodesDir, generationR
 // its list against this one, so a new directory cannot be left behind.
 func OwnedEntries() []string {
 	entries := append(append([]string{}, storeDirs...), lazyStoreDirs...)
-	return append(entries, "status.json", storageClockFile, sessionIndexMarkerFile, sessionMembershipFile, sessionMembershipLock, sessionRecoveryCursorFile, "temporary-quota")
+	return append(entries, "status.json", storageClockFile, sessionIndexMarkerFile, sessionMembershipFile, sessionMembershipLock, sessionRecoveryCursorFile, sessionIndexAbsenceFile, "temporary-quota")
 }
 
 func safeFileComponent(value string) bool {

@@ -377,7 +377,7 @@ def execute_plain_vet(out, deadline):
             'performance_enabled': False, 'real_systemd_enabled': False}
 
 
-def verify_plain_vet(directory, report, expected, expected_context_sha256, historical=False, *, strict_full_context=False):
+def verify_plain_vet(directory, report, expected, expected_context_sha256, historical=False, *, strict_full_context=False, historical_vet_contract=None):
     """Require canonical successful execution receipt separately from audit bodies."""
     import run_go_shard
     receipt = report.get('plain_vet')
@@ -386,7 +386,13 @@ def verify_plain_vet(directory, report, expected, expected_context_sha256, histo
     context = receipt.get('context', {})
     import go_cache_context
     try:
-        go_cache_context.validate_context(context)
+        if historical_vet_contract is None:
+            go_cache_context.validate_context(context)
+        else:
+            if not historical:
+                raise go_cache_context.InvalidContext('historical vet authority forbidden for live verification')
+            import historical_vet_contract as old_vet
+            old_vet.validate_context(context, expected, historical_vet_contract, ROOT)
     except go_cache_context.InvalidContext as error:
         raise Failure('plain vet recorded context malformed') from error
     identity_schema = receipt.get('identity_schema')
@@ -430,7 +436,7 @@ def verify_plain_vet(directory, report, expected, expected_context_sha256, histo
         raise Failure('plain vet raw log mismatch')
 
 
-def verify_source_audit(directory, source, *, expected_source_proof=None, require_plain_vet=False, expected_vet_context_sha256=None, strict_full_context=False):
+def verify_source_audit(directory, source, *, expected_source_proof=None, require_plain_vet=False, expected_vet_context_sha256=None, strict_full_context=False, historical_vet_contract=None):
     """Require exact-source plain named body and package PASS, never compilation."""
     directory = Path(directory)
     report = json.loads((directory / 'tier.json').read_text())
@@ -460,7 +466,8 @@ def verify_source_audit(directory, source, *, expected_source_proof=None, requir
         raise Failure('plain source audit raw body evidence mismatch')
     if require_plain_vet:
         verify_plain_vet(directory, report, expected, expected_vet_context_sha256,
-                         historical=expected_source_proof is not None, strict_full_context=strict_full_context)
+                         historical=expected_source_proof is not None, strict_full_context=strict_full_context,
+                         historical_vet_contract=historical_vet_contract)
     return report
 
 
