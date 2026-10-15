@@ -312,6 +312,10 @@ func readSearchContext(ctx context.Context, env searchCommandDependencies, cfg c
 		c.After = append(c.After, slice(v.Reference, v.Role, v.Context))
 	}
 	doc.Context = c
+	doc.Truncated = !c.Selected.Complete
+	for _, v := range append(c.Before, c.After...) {
+		doc.Truncated = doc.Truncated || !v.Complete
+	}
 	// Shrink only raw UTF-8 text; encoded identity and offsets remain untouched.
 	for {
 		data, e := jsonDocument(doc)

@@ -74,7 +74,7 @@ func TestContentSearchJSONRefreshQueryAndExactContext(t *testing.T) {
 	}
 	token := *doc.Results[0].Reference
 	code, doc, diagnostics = searchJSONRun(t, env, "--read", token, "--max-bytes", "4", "--before", "1", "--after", "1")
-	if code != 0 || doc.Context == nil || len(doc.Context.Selected.Text) > 4 || doc.Context.Selected.Next == nil {
+	if code != 0 || doc.Context == nil || len(doc.Context.Selected.Text) > 4 || doc.Context.Selected.Next == nil || !doc.Truncated {
 		t.Fatalf("context %d %+v %s", code, doc, diagnostics)
 	}
 	next := *doc.Context.Selected.Next
