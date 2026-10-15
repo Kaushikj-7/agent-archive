@@ -555,16 +555,59 @@ def worker_evidence(directory):
             'note': 'Parent seconds measure cont-to-terminal (run-to-terminal when unpaused), including descendant waits; unknown lifecycle timing is null. own_elapsed_seconds is Go terminal Elapsed and can omit parallel descendant waits. Never sum parents. Coverage reconciliation remains authoritative.'}
 
 
+
+def listing_repetition(directories):
+    """Describe one complete normal eight-worker listing cohort, never savings."""
+    phase = 'compiled_listing_race_build_testmain_seconds'
+    rows, identities, cohort = [], set(), None
+    for directory in directories:
+        manifest = json.loads((directory / 'manifest.json').read_text())
+        catalog, observation = manifest['catalog'], manifest['timing_observation']
+        shard = manifest['shard']
+        if (manifest.get('success') is not True or catalog.get('schema') != 4
+                or catalog.get('workers') != 8 or type(shard) is not int
+                or not 0 <= shard < 8 or shard in identities):
+            raise ValueError('listing repetition requires eight distinct successful schema-4 workers')
+        identity = {'source': catalog['source'], 'configuration': catalog['configuration'],
+                    'packages': catalog['packages'],
+                    'run_id': observation['run_id'], 'run_attempt': observation['run_attempt'],
+                    'cache_restore_state': observation['cache_restore_state'],
+                    'runner_image': observation['runner_image'],
+                    'runner_image_version': observation['runner_image_version']}
+        if any(value in (None, '', 'unknown') for value in identity.values()):
+            raise ValueError('listing repetition requires known cohort identity')
+        if cohort is not None and cohort != identity:
+            raise ValueError('listing repetition mixes source/compiler/package/run/cache/image cohorts')
+        cohort = identity
+        seconds = manifest['phases'][phase]
+        if type(seconds) not in (int, float) or not math.isfinite(seconds) or seconds <= 0:
+            raise ValueError('listing phase must be positive finite wall seconds')
+        identities.add(shard)
+        rows.append({'shard': shard, 'seconds': seconds})
+    if identities != set(range(8)):
+        raise ValueError('listing repetition requires all eight workers')
+    values = [row['seconds'] for row in rows]
+    return {'cohort': cohort, 'phase': phase, 'workers': sorted(rows, key=lambda row: row['shard']),
+            'sum_invocation_wall_seconds': sum(values), 'minimum_seconds': min(values),
+            'maximum_seconds': max(values), 'median_seconds': median(values),
+            'production_sharing': 'not-established',
+            'hosted_transfer_seconds': None, 'producer_dependency_wait_seconds': None,
+            'note': 'Sum is repeated invocation wall work across workers, not CPU, allocation, critical path or removable savings. Includes graph loading, default vet, compilation/linking, race startup and TestMain. No production sharing decision without a source-bound hosted end-to-end comparison.'}
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('input', type=Path)
     parser.add_argument('--output', type=Path)
+    parser.add_argument('--listing-repetition', action='store_true',
+                        help='summarize one complete eight-worker --evidence cohort; diagnostic only')
     parser.add_argument('--evidence', type=Path, action='append', default=[],
                         help='existing worker evidence directory, summarized separately without changing qualification')
     args = parser.parse_args()
     try:
         value = report(json.loads(args.input.read_text()))
         value['local_worker_evidence'] = [worker_evidence(path) for path in args.evidence]
+        if args.listing_repetition:
+            value['listing_repetition'] = listing_repetition(args.evidence)
         result = json.dumps(value, indent=2, sort_keys=True) + '\n'
     except (KeyError, TypeError, ValueError, OSError) as error:
         parser.error(str(error))

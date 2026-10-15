@@ -630,5 +630,52 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(result['jobs'][0]['timestamp_issues'], ['job interval: timestamps run backwards'])
 
 
+class ListingRepetitionTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.directories = []
+        for shard in range(8):
+            path = Path(self.temp.name) / str(shard)
+            path.mkdir()
+            manifest = {'success': True, 'shard': shard,
+                        'catalog': {'schema': 4, 'workers': 8, 'source': 'a' * 40,
+                                    'configuration': {'GOVERSION': 'go1.27.2'}, 'packages': ['pkg']},
+                        'timing_observation': {'run_id': '1', 'run_attempt': '1',
+                                               'cache_restore_state': 'prefix',
+                                               'runner_image': 'ubuntu24', 'runner_image_version': 'one'},
+                        'phases': {'compiled_listing_race_build_testmain_seconds': shard + 1}}
+            (path / 'manifest.json').write_text(json.dumps(manifest))
+            self.directories.append(path)
+
+    def test_complete_cohort_reports_repeated_wall_without_sharing_claim(self):
+        result = timing.listing_repetition(self.directories)
+        self.assertEqual(result['sum_invocation_wall_seconds'], 36)
+        self.assertEqual(result['median_seconds'], 4.5)
+        self.assertIsNone(result['hosted_transfer_seconds'])
+        self.assertEqual(result['production_sharing'], 'not-established')
+
+    def test_incomplete_duplicate_failed_and_mixed_cohorts_reject(self):
+        for directories in (self.directories[:-1], self.directories[:-1] + self.directories[:1]):
+            with self.assertRaises(ValueError):
+                timing.listing_repetition(directories)
+        path = self.directories[-1] / 'manifest.json'
+        original = json.loads(path.read_text())
+        for keys, value in [(('success',), False), (('catalog', 'source'), 'b' * 40),
+                            (('catalog', 'configuration'), {'GOVERSION': 'go1.26.0'}),
+                            (('timing_observation', 'cache_restore_state'), 'unknown'),
+                            (('timing_observation', 'run_attempt'), '2'),
+                            (('timing_observation', 'runner_image_version'), 'two'),
+                            (('phases', 'compiled_listing_race_build_testmain_seconds'), float('nan'))]:
+            manifest = copy.deepcopy(original)
+            target = manifest
+            for key in keys[:-1]:
+                target = target[key]
+            target[keys[-1]] = value
+            path.write_text(json.dumps(manifest))
+            with self.assertRaises(ValueError):
+                timing.listing_repetition(self.directories)
+
+
 if __name__ == '__main__':
     unittest.main()
