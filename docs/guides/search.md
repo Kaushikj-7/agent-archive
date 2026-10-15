@@ -85,3 +85,9 @@ advance previously observed pending sessions. There is no automatic archive
 discovery or scheduled worker in this release. Cached search results report known
 pending/failed state, which does not establish coverage of sessions never observed
 on this machine.
+
+Checksum-verified sources in unsupported immutable formats (including legacy
+source schema 1) become explicit `unsupported_source_schema` coverage gaps.
+They are not downloaded repeatedly; a changed source or extraction contract
+rechecks them. Corrupt, unverified and transiently unreadable sources remain
+retryable failures. Unsupported content is never indexed.

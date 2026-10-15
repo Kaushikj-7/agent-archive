@@ -12,6 +12,8 @@ follow [Semantic Versioning](https://semver.org/).
   Coverage is partial and refresh is manual; no background work is installed.
   Refresh now resumes bounded work after interruption, reuses unchanged sources,
   and records retry/backoff state without delaying archive publication.
+  Verified unsupported source formats report coverage gaps instead of retrying
+  the same immutable bytes indefinitely.
 
 - The session list fits your terminal: every session is one line that never
   wraps, as `#`, the agent (a colored dot and "Claude", "Codex" or "Cursor"),
