@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -165,6 +166,53 @@ func TestOffChainCeilingAfterTheSavedPublicationIsNotRetried(t *testing.T) {
 	scan.noteRevisionLeftOut(err)
 	if !hasRevisionLeftOut(t, scan) {
 		t.Fatal("no diagnostic for a revision left out of a session whose upload is owed")
+	}
+}
+
+// A publication owed before the scan began, which the scan may replace (one
+// never attempted, waiting out its upload interval, that a stop request
+// replaces with a richer one), does not keep the scan from running again
+// without its off-chain revisions: only a publication the scan itself saved
+// is owed as it is. Run again, the scan captures the chain, A then C, under
+// a ceiling that leaves the chain alone 1 MiB of room. Kept from the retry,
+// the session would be deferred on every pass until it failed.
+func TestOffChainCeilingRetriesPastAnEarlierReplaceablePublication(t *testing.T) {
+	t.Parallel()
+	scan, err := runUnderCeiling(t, 64<<20, false)
+	if !errors.Is(err, archive.ErrHistoryMutationPending) {
+		t.Fatal("the chain alone does not capture: ", err)
+	}
+	_, peak := scan.readBudget().Charged()
+	scan, lookup := largeOffChainFixture(t)
+	filtered, adapter, err := FilterSource(scan.ctx, "codex", lookup.refs[revisionThread][0], scan.now, testSources)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle, err := archive.NewSourceBundle(scan.reg, adapter, filtered, scan.now, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rendered, err := renderPublication(scan.ctx, scan.resolveParser(), scan.parserVersion(), bundle, scan.reg, scan.now, scan.opts, scan.priorRepoKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	earlier := state.PendingPublication{
+		SkillEvidence: string(scan.opts.skillEvidence()), Bundle: bundle, SourceKey: rendered.source.Key, MetadataKey: rendered.metadataKey,
+		SourceSHA256: rendered.source.SHA256, SourceBytes: rendered.sourceBytes, MetadataBytes: rendered.metadata,
+		RequestToken: "earlier-request", ReadyAt: scan.now.Add(time.Minute),
+	}
+	if err := scan.local.SavePending(scan.id(), earlier); err != nil {
+		t.Fatal(err)
+	}
+	scan.req.Token = "stop-request"
+	t.Cleanup(scan.readBudget().BeginScope(peak + 1<<20))
+	_, err = scan.run(scan.ctx)
+	if !scan.withoutOffChain {
+		t.Fatal("the scan did not run again without B, so the earlier publication defers it on every pass: ", err)
+	}
+	captured, ids := capturedChain(t, scan, err)
+	if !captured || slices.Contains(ids, revisionB) || !slices.Contains(ids, revisionC) {
+		t.Fatalf("captured %v, revisions %v, err %v", captured, ids, err)
 	}
 }
 

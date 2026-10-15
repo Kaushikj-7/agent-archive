@@ -27,6 +27,9 @@ follow [Semantic Versioning](https://semver.org/).
   `status` now says so ("Codex left out part of a session"), with only the
   app, the project and the time; `status --json` carries it as the capture
   diagnostic `revision_left_out`.
+- Such a thread is also captured without those branches when an earlier,
+  not yet uploaded version of the session was waiting to be replaced, instead
+  of being deferred on every pass until it failed.
 
 ## [0.2.1]
 

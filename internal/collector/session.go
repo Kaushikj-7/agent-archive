@@ -145,17 +145,22 @@ func (s *sessionScan) id() string { return s.reg.ArchiveSessionID }
 // ceiling only on its own. A scan that saved a publication before the
 // refusal is not run again: the publication is owed as it is
 // (overCeiling defers it), and its later passes resume it without the
-// reconciliation's retained work. Whether an off-chain revision was left
-// out is recorded once, as the scan ends (noteRevisionLeftOut).
+// reconciliation's retained work. A publication already owed when the scan
+// began does not keep it from running again: the scan went on past it, so
+// it may be replaced (one never attempted, which a stop request replaces
+// with a richer one), and a replacement the first scan saved is resumed as
+// it is by the second. Whether an off-chain revision was left out is
+// recorded once, as the scan ends (noteRevisionLeftOut).
 func (s *sessionScan) run(ctx context.Context) (outcome sessionOutcome, err error) {
 	defer func() { s.noteRevisionLeftOut(err) }()
+	owedBefore, owedBeforeErr := s.local.HasPending(s.id())
 	outcome, err = s.scanOnce(ctx)
 	if err == nil || s.offChainKept == 0 || s.withoutOffChain || !s.overSessionCeiling(err) {
 		return outcome, err
 	}
-	if owed, owedErr := s.local.Outstanding(s.reg, false); owedErr != nil {
-		return outcome, errors.Join(err, owedErr)
-	} else if owed.Upload {
+	if owed, owedErr := s.local.Outstanding(s.reg, false); owedErr != nil || owedBeforeErr != nil {
+		return outcome, errors.Join(err, owedErr, owedBeforeErr)
+	} else if owed.Upload && !owedBefore {
 		return outcome, err
 	}
 	s.releaseRetained()
