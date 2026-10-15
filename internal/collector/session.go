@@ -106,6 +106,9 @@ type sessionScan struct {
 	offChainKept    int
 	offChainLeftOut bool
 	withoutOffChain bool
+	// replacingOwed is set when resume went past a publication owed
+	// before this scan, to be replaced by the scan's own (see run).
+	replacingOwed bool
 }
 
 // filteredSource is a source read and filtered once in a scan.
@@ -153,14 +156,13 @@ func (s *sessionScan) id() string { return s.reg.ArchiveSessionID }
 // recorded once, as the scan ends (noteRevisionLeftOut).
 func (s *sessionScan) run(ctx context.Context) (outcome sessionOutcome, err error) {
 	defer func() { s.noteRevisionLeftOut(err) }()
-	owedBefore, owedBeforeErr := s.local.HasPending(s.id())
 	outcome, err = s.scanOnce(ctx)
 	if err == nil || s.offChainKept == 0 || s.withoutOffChain || !s.overSessionCeiling(err) {
 		return outcome, err
 	}
-	if owed, owedErr := s.local.Outstanding(s.reg, false); owedErr != nil || owedBeforeErr != nil {
-		return outcome, errors.Join(err, owedErr, owedBeforeErr)
-	} else if owed.Upload && !owedBefore {
+	if owed, owedErr := s.local.Outstanding(s.reg, false); owedErr != nil {
+		return outcome, errors.Join(err, owedErr)
+	} else if owed.Upload && !s.replacingOwed {
 		return outcome, err
 	}
 	s.releaseRetained()
@@ -298,6 +300,7 @@ func (s *sessionScan) resume(ctx context.Context) (outcome sessionOutcome, handl
 		// never-attempted candidate can be safely replaced by a richer one;
 		// deferred lifecycle evidence enriches it without changing when it
 		// becomes ready.
+		s.replacingOwed = true
 		return outcomeSkipped, false, nil
 	}
 	// No publication ever waits longer than one interval from now. A later
