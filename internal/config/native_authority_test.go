@@ -155,3 +155,28 @@ func TestNativeAuthorityCannotBeIntroducedBesideOlderSetupJournal(t *testing.T) 
 		t.Fatal("failed introduction changed existing configuration", err)
 	}
 }
+
+func TestNativeAuthorityRefusesUnsupportedBaseBeforeSave(t *testing.T) {
+	home := t.TempDir()
+	cfg := publishedWriterFiniteControl()
+	if err := Save(home, cfg); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(filepath.Join(home, "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, version := range []int{-1, 2, 16, 99} {
+		invalid := Config{SchemaVersion: version, RetentionDays: 90, NativeRoots: []archive.NativeRoot{{Agent: "synthetic", Configured: "/native", Canonical: "/native", Revision: "one"}}}
+		if _, err := json.Marshal(invalid); err == nil {
+			t.Errorf("serialized unsupported native base %d", version)
+		}
+		if err := Save(home, invalid); err == nil {
+			t.Errorf("saved unsupported native base %d", version)
+		}
+		after, err := os.ReadFile(filepath.Join(home, "config.json"))
+		if err != nil || !bytes.Equal(before, after) {
+			t.Fatalf("invalid base %d changed settings: %v", version, err)
+		}
+	}
+}

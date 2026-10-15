@@ -1,19 +1,19 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://agent-archive.dev/schemas/native-source-authority.schema.json",
+  "$id": "https://raw.githubusercontent.com/wangjohn/agent-archive/main/schemas/native-source-authority.schema.json",
   "title": "Private native source authority (not uploaded)",
   "$defs": {
     "token": {
       "type": "string",
       "minLength": 1,
       "maxLength": 4096,
-      "pattern": "^[^\\u0000\\r\\n]+$"
+      "pattern": "^[^\u0000\r\n]+$"
     },
     "path": {
       "type": "string",
       "minLength": 1,
       "maxLength": 4096,
-      "pattern": "^/[^\\u0000\\r\\n]*$"
+      "pattern": "^/[^\u0000\r\n]*$"
     },
     "root": {
       "type": "object",

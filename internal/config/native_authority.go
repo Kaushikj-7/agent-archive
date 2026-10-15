@@ -57,6 +57,9 @@ func (c Config) MarshalJSON() ([]byte, error) {
 	if bytes.Equal(base, []byte("0")) {
 		base = json.RawMessage("1")
 	}
+	if err := validateNativeBase(base); err != nil {
+		return nil, err
+	}
 	version, err := json.Marshal(nativeAuthorityVersion{Version: 16, Writer: nativeAuthorityWriter, Base: base})
 	if err != nil {
 		return nil, err
@@ -106,20 +109,31 @@ func unwrapNativeConfig(raw []byte) ([]byte, bool, error) {
 		return nil, false, errors.New("native authority requires its exact permanent writer fence")
 	}
 	base := bytes.TrimSpace(version.Base)
-	if !bytes.Equal(base, []byte("1")) {
-		if err := exactAuthorityObject(base, []string{"version", "writer"}); err != nil {
-			return nil, false, err
-		}
-		var lower writerVersion
-		dec := json.NewDecoder(bytes.NewReader(base))
-		dec.DisallowUnknownFields()
-		if err := dec.Decode(&lower); err != nil || !supportedWriterVersion(lower) {
-			return nil, false, errors.New("native authority requires a supported exact base fence")
-		}
+	if err := validateNativeBase(base); err != nil {
+		return nil, false, err
 	}
 	doc["schema_version"] = base
 	unwrapped, err := json.Marshal(doc)
 	return unwrapped, true, err
+}
+
+// validateNativeBase is shared by encoding and decoding so a writer cannot
+// replace readable settings with a native fence its own reader would reject.
+func validateNativeBase(base []byte) error {
+	base = bytes.TrimSpace(base)
+	if bytes.Equal(base, []byte("1")) {
+		return nil
+	}
+	if err := exactAuthorityObject(base, []string{"version", "writer"}); err != nil {
+		return err
+	}
+	var lower writerVersion
+	dec := json.NewDecoder(bytes.NewReader(base))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&lower); err != nil || !supportedWriterVersion(lower) {
+		return errors.New("native authority requires a supported exact base fence")
+	}
+	return nil
 }
 
 func exactAuthorityObject(raw []byte, names []string) error {
