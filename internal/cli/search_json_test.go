@@ -457,28 +457,29 @@ func TestContentSearchPassRejectsChangedContextBeforeWritableOpen(t *testing.T) 
 // A previous complete observation cannot make a failed refresh attempt complete.
 func TestContentSearchFailedRefreshPreservesCoverageWithoutClaimingCompletion(t *testing.T) {
 	t.Parallel()
-	env, objects, _ := publishedFixture(t)
-	remote := privateCatalogFromLegacy(t, objects)
-	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return remote, nil }
-	complete := false
-	for range 16 {
-		code, seeded, diag := searchJSONRun(t, env, "--refresh")
-		if code != 0 {
-			t.Fatalf("seed complete observation: code=%d document=%+v diagnostics=%s", code, seeded, diag)
-		}
-		if seeded.Refresh.Completed && seeded.Coverage.Complete {
-			complete = true
-			break
-		}
-	}
-	if !complete {
-		t.Fatal("bounded fixture did not reach complete coverage")
-	}
-	// Simulate an unavailable current authority while the durable local
-	// observation remains complete. No pending source work can supply fresh proof.
-	must(t, remote.ObjectStore.Put(t.Context(), catalog.HeadKey, []byte("broken")))
 	for _, mode := range []string{"single", "wait"} {
 		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
+			env, objects, _ := publishedFixture(t)
+			remote := privateCatalogFromLegacy(t, objects)
+			env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return remote, nil }
+			complete := false
+			for range 16 {
+				code, seeded, diag := searchJSONRun(t, env, "--refresh")
+				if code != 0 {
+					t.Fatalf("seed complete observation: code=%d document=%+v diagnostics=%s", code, seeded, diag)
+				}
+				if seeded.Refresh.Completed && seeded.Coverage.Complete {
+					complete = true
+					break
+				}
+			}
+			if !complete {
+				t.Fatal("bounded fixture did not reach complete coverage")
+			}
+			// Simulate an unavailable current authority while the durable local
+			// observation remains complete. No pending source work can supply fresh proof.
+			must(t, remote.ObjectStore.Put(t.Context(), catalog.HeadKey, []byte("broken")))
 			args := []string{"visible", "--all-projects", "--refresh"}
 			if mode == "wait" {
 				args = append(args, "--wait", "1s")

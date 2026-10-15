@@ -12,16 +12,26 @@ import (
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
+type searchMetadataFailure string
+
+const (
+	searchMetadataDeleted      searchMetadataFailure = "deleted"
+	searchMetadataOtherHarness searchMetadataFailure = "other_harness"
+	searchMetadataInvalid      searchMetadataFailure = "invalid_metadata"
+	searchMetadataTransient    searchMetadataFailure = "transient"
+	searchMetadataBodyMissing  searchMetadataFailure = "missing_metadata_body"
+)
+
 func TestContentSearchNamedRefreshRemovesOnlyConfirmedAbsentIdentity(t *testing.T) {
 	for _, mode := range []string{"legacy", "catalog"} {
-		cases := []string{"deleted", "other_harness", "invalid_metadata"}
+		cases := []searchMetadataFailure{searchMetadataDeleted, searchMetadataOtherHarness, searchMetadataInvalid}
 		if mode == "legacy" {
-			cases = append(cases, "transient")
+			cases = append(cases, searchMetadataTransient)
 		} else {
-			cases = append(cases, "missing_metadata_body")
+			cases = append(cases, searchMetadataBodyMissing)
 		}
 		for _, failure := range cases {
-			t.Run(mode+"/"+failure, func(t *testing.T) {
+			t.Run(mode+"/"+string(failure), func(t *testing.T) {
 				env, objects, id := publishedFixture(t)
 				var remote storage.ObjectStore = objects
 				if mode == "catalog" {
@@ -35,7 +45,7 @@ func TestContentSearchNamedRefreshRemovesOnlyConfirmedAbsentIdentity(t *testing.
 				key, err := archive.MetadataObjectKey("codex", id)
 				must(t, err)
 				harness := "codex"
-				if failure == "other_harness" {
+				if failure == searchMetadataOtherHarness {
 					// The same session ID is still indexed under its real harness.
 					harness = "claude"
 				} else if authority, ok := remote.(*catalog.Store); ok {
@@ -45,22 +55,22 @@ func TestContentSearchNamedRefreshRemovesOnlyConfirmedAbsentIdentity(t *testing.
 						t.Fatal("fixture lacks authoritative live identity")
 					}
 					switch failure {
-					case "deleted":
+					case searchMetadataDeleted:
 						_, err = authority.Writer.Commit(t.Context(), catalog.CatalogMutation{ID: "synthetic-search-delete", SessionKey: key, ExpectedRevision: revision, Next: nil})
-					case "missing_metadata_body":
+					case searchMetadataBodyMissing:
 						// A missing immutable body is not proof that the live identity is gone.
 						err = authority.ObjectStore.Delete(t.Context(), entry.Metadata.Key)
-					case "invalid_metadata":
+					case searchMetadataInvalid:
 						err = authority.ObjectStore.Put(t.Context(), entry.Metadata.Key, []byte("broken"))
 					}
 					must(t, err)
 				} else {
 					switch failure {
-					case "deleted":
+					case searchMetadataDeleted:
 						err = objects.Delete(t.Context(), key)
-					case "invalid_metadata":
+					case searchMetadataInvalid:
 						err = objects.Put(t.Context(), key, []byte("broken"))
-					case "transient":
+					case searchMetadataTransient:
 						remote = &searchMetadataReadFailure{MemoryStore: objects, key: key}
 					}
 					must(t, err)
@@ -69,16 +79,16 @@ func TestContentSearchNamedRefreshRemovesOnlyConfirmedAbsentIdentity(t *testing.
 				if code != 1 || refreshed.Error == nil || refreshed.Refresh.Completed {
 					t.Fatalf("refresh: code=%d document=%+v diagnostics=%s", code, refreshed, diag)
 				}
-				absent := failure == "deleted" || failure == "other_harness"
+				absent := failure == searchMetadataDeleted || failure == searchMetadataOtherHarness
 				if (refreshed.Error.Code == "source_deleted") != absent {
 					t.Fatalf("absence classification: %+v", refreshed.Error)
 				}
 				wantHits := 1
-				if failure == "deleted" {
+				if failure == searchMetadataDeleted {
 					wantHits = 0
 				}
 				combinedHits := wantHits
-				if failure == "other_harness" {
+				if failure == searchMetadataOtherHarness {
 					// The same flag scopes the combined query to the absent harness.
 					combinedHits = 0
 				}
@@ -89,14 +99,14 @@ func TestContentSearchNamedRefreshRemovesOnlyConfirmedAbsentIdentity(t *testing.
 				if code != 0 || len(cached.Results) != wantHits {
 					t.Fatalf("cached query: code=%d results=%d want=%d diagnostics=%s", code, len(cached.Results), wantHits, diag)
 				}
-				if failure == "deleted" {
+				if failure == searchMetadataDeleted {
 					if cached.Generation <= seeded.Generation || cached.Coverage.Known != 0 || cached.Coverage.Indexed != 0 {
 						t.Fatalf("deletion left work or cursor authority: %+v", cached)
 					}
 				} else if len(cached.Results) == 1 && (cached.Results[0].Harness != "codex" || cached.Results[0].Session != id) {
 					t.Fatalf("qualified identity changed: %+v", cached.Results[0])
 				}
-				if failure != "deleted" && cached.Generation != seeded.Generation {
+				if failure != searchMetadataDeleted && cached.Generation != seeded.Generation {
 					t.Fatalf("unchanged indexed identity invalidated cursors: before=%d after=%d", seeded.Generation, cached.Generation)
 				}
 			})
