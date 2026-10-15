@@ -78,7 +78,11 @@ func TestNoArgsPreSetupLeadsWithHandoff(t *testing.T) {
 // they print the plain setup guidance, and handoff's own refusal agrees.
 func TestPreSetupGuidanceWithPendingSetupDoesNotRecommendHandoff(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct{ name, file, refusal string }{
+	for _, tc := range []struct {
+		name    string
+		file    string
+		refusal string
+	}{
 		{"draft", "setup-draft.json", "saved setup is pending or inaccessible"},
 		{"journal", "setup-transaction.json", "setup recovery is pending"},
 	} {
