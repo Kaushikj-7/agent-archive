@@ -310,7 +310,7 @@ func readImportSourceSet(ctx context.Context, reg archive.SessionRegistration, a
 	preserved := []archive.SourceBundle{}
 	remaining := state.MaxImportStageBytes - int64(bundle.Capture.Boundary.RetainedBytes)
 	seen := map[string]bool{revisionID(bundle): true}
-	err = provider.revisions(ctx, adapter, observed, state.MaxImportStageBytes, bundle.History != nil, func(part archive.FilteredTranscript, binding *archive.CodexSourceBinding) error {
+	_, err = provider.revisions(ctx, adapter, observed, state.MaxImportStageBytes, bundle.History != nil, true, func(part archive.FilteredTranscript, binding *archive.CodexSourceBinding) error {
 		owner := reg
 		owner.CodexBinding = binding
 		prior, err := archive.NewSourceBundle(owner, adapter, part, at, nil)
