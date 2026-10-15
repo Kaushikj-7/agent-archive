@@ -111,8 +111,11 @@ follow [Semantic Versioning](https://semver.org/).
   from their turn. A waiting session still not read after 24 hours is now
   reported as failed even when the pass leaves it unopened, rather than
   staying queued with no error. From then on it is retried with backoff
-  instead of on every pass: 1 hour after it failed, then 2, then 4, the
-  wait doubling up to a week, and never given up. A pass with a retry due
+  instead of on every pass. Retry times are anchored to when the session
+  first started waiting: after the 24-hour allowance expires, attempts
+  fall 1, 3, then 7 hours later, with gaps doubling up to a week. A late
+  failure uses the next scheduled time; it does not start a fresh one-hour
+  wait. Retries are never given up. A pass with a retry due
   reads it first and, if it still cannot be read, reports it failed again;
   a pass with none leaves it unopened, so it no longer uses the allowance
   on every pass, and does not report it again (`sync` counts it as "held

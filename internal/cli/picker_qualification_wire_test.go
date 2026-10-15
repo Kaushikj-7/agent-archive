@@ -75,13 +75,14 @@ func TestQualificationTreeWireMatchesCanonicalEncoder(t *testing.T) {
 	if got, want := qualificationLeafSize(t, empty), len(qualificationJSON(t, empty)); got != want {
 		t.Fatalf("nil size %d, want %d", got, want)
 	}
+	leaves = append(leaves, empty)
 	oldStore, newStore := storagetest.NewMemoryStore(), storagetest.NewMemoryStore()
 	started := time.Now()
 	oldRoot, oldHeight := qualificationReferenceTree(t, oldStore, slices.Clone(leaves))
 	t.Logf("reference wire encoder: %s", time.Since(started))
 	started = time.Now()
 	newRoot, newHeight := qualificationTree(t, newStore, slices.Clone(leaves))
-	t.Logf("reused canonical value budget: %s", time.Since(started))
+	t.Logf("reused canonical value framing: %s", time.Since(started))
 	if oldRoot != newRoot || oldHeight != newHeight {
 		t.Fatal("wire optimization changed root reference or tree height")
 	}

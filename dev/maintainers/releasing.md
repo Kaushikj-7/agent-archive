@@ -30,7 +30,7 @@ draft or mismatched release fails closed before signing.
    computes `SHA256SUMS` over all four binaries
    (`scripts/write-checksums.sh`), records a
    [build provenance attestation](https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations)
-   for all four and the candidate manifest, then stages a **prerelease with
+   for all four, `SHA256SUMS`, and the candidate manifest, then stages a **prerelease with
    latest=false**. It retains the signed workflow artifact for 30 days before
    creating the release. The current public latest release stays unchanged.
 
@@ -163,7 +163,7 @@ evidence.
    attestations/actions, with no signing secrets or OIDC signing permission.
 
 Promotion downloads all six assets again. It verifies the remote tag,
-checksums, manifest/API digests, all five provenance subjects constrained to
+checksums, manifest/API digests, all six provenance subjects constrained to
 `.github/workflows/release.yml`, source SHA and tag ref, strict pinned-team
 Darwin signatures and a separate online `codesign --verify --strict
 -R=notarized --check-notarization` ticket check. Apple recommends this for
