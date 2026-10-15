@@ -6,6 +6,11 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Search conversation text with a private local index. Explicitly index one
+  archived session with `search --refresh --session ID --harness NAME`, query
+  cached titles/messages with `search "WORDS"`, and read exact matching passages.
+  Coverage is partial and refresh is manual; no background work is installed.
+
 - The session browser (`list`, bare `show`, `show <words>`, `handoff` on a
   terminal that reads keys) has a cursor: `▸` marks a row, ↑ ↓ and the mouse
   wheel move it, PgUp/PgDn (space, `n`, `p`), Home and End move it a screen

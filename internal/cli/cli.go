@@ -561,6 +561,7 @@ Manage capture
 
 Inspect history
   agent-archive list        Find archived sessions
+  agent-archive search      Search indexed conversation text
   agent-archive show        Read a session's summary or transcript
   agent-archive stats       See your usage: tokens, cost, agents, projects
   agent-archive feedback    Add explicit feedback from a local file
@@ -640,6 +641,8 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 		return runUninstallCommand(args[1:], stdin, stdout, stderr, env)
 	case "list":
 		return runListCommand(args[1:], stdin, stdout, stderr, env)
+	case "search":
+		return runSearchCommand(args[1:], stdout, stderr, env)
 	case "show":
 		return runShowCommand(args[1:], stdin, stdout, stderr, env)
 	case "stats":
