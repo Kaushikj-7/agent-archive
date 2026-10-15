@@ -221,3 +221,19 @@ func TestShowPrefixIncludesTextCandidates(t *testing.T) {
 		t.Fatal("handoff prefix precedence changed")
 	}
 }
+
+// The agent's own session ID (a Codex thread ID, say) finds a session as the
+// archive's ID does: whole or as its first eight characters it wins outright
+// over a title that mentions it, and a longer prefix matches as a word.
+func TestNativeSessionIDFindsTheSession(t *testing.T) {
+	t.Parallel()
+	thread := archive.Metadata{SessionID: "87b47b5659a4cbaf452ec76ac2950b7e", NativeSessionID: "01A10E11-4bd0-7041-b71c-58103545883a", Title: "Review the generator"}
+	other := archive.Metadata{SessionID: "0e38152c4f099d5cd56fb0f845cf0449", NativeSessionID: "01a114f1-20eb-7e31-9455-0cca5eccbb93", Title: "Notes on 01a10e11"}
+	rows := []archive.Metadata{other, thread}
+	fields := func(m archive.Metadata) sessionFields { return fieldsOf(m, "") }
+	for _, query := range []string{"01a10e11", "01a10e11-4bd0-7041-b71c-58103545883a", "01a10e11-4bd0"} {
+		if got := matchPool(rows, parseSessionQuery(query), fields); len(got) != 1 || got[0].SessionID != thread.SessionID {
+			t.Fatalf("%q matched %d sessions", query, len(got))
+		}
+	}
+}

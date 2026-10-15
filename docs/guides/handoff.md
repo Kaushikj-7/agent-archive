@@ -354,6 +354,9 @@ finds the session named for Linux that opened PR 212. Two more ways to match:
   word would match a session by chance. A whole session ID, or the 8-character
   short one a table shows, names that session outright, even when another
   title mentions it, and even when it has no prompt, which words never offer.
+  The agent's own ID for the session counts too: a Codex thread ID, or a
+  Claude Code or Cursor session ID, so `handoff 01a10e11 --harness codex`
+  finds the thread whose Codex ID starts `01a10e11`.
 
 Only metadata is matched, never the rest of the conversation. For a session
 on this machine the name, title, branch, and linked pull requests are read

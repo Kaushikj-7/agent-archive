@@ -66,6 +66,9 @@ type sessionFields struct {
 	Project   string
 	Harness   string
 	SessionID string
+	// NativeSessionID is the agent's own ID for the session (a Codex thread
+	// ID, a Claude Code or Cursor session ID), which matches like SessionID.
+	NativeSessionID string
 	// PRs are the numbers of every pull request the session was linked to
 	// or created.
 	PRs []int
@@ -91,7 +94,7 @@ func fieldsOf(m archive.Metadata, project string) sessionFields {
 		}
 	}
 	return sessionFields{Name: m.Name, Title: m.Title, Branch: m.Branch, Project: project,
-		Harness: m.Harness.Name, SessionID: m.SessionID, PRs: prs}
+		Harness: m.Harness.Name, SessionID: m.SessionID, NativeSessionID: m.NativeSessionID, PRs: prs}
 }
 
 // sessionProjectName is the project a session is shown under: the name it
@@ -105,8 +108,8 @@ func sessionProjectName(m archive.Metadata, labels map[string]string) string {
 
 // matches reports whether every word appears in some field of the row,
 // ignoring case: in the name, title, branch, project name or harness, or
-// starting the session ID (a word of minIDPrefixWord characters or more that
-// is not a pull request number). Words may match different fields. A word that
+// starting the session ID or the agent's own session ID (a word of
+// minIDPrefixWord characters or more that is not a pull request number). Words may match different fields. A word that
 // is a pull request number also matches a PR of the row exactly; `#N` as text
 // matches only the whole reference, so `#21` does not find `#213`.
 func (q sessionQuery) matches(r sessionFields) bool {
@@ -115,25 +118,35 @@ func (q sessionQuery) matches(r sessionFields) bool {
 	}
 	texts := [...]string{strings.ToLower(r.Name), strings.ToLower(r.Title), strings.ToLower(r.Branch),
 		strings.ToLower(r.Project), strings.ToLower(r.Harness)}
-	id := strings.ToLower(r.SessionID)
+	ids := r.ids()
 	for i, word := range q.words {
-		if !q.wordMatches(i, word, texts[:], id, r.PRs) {
+		if !q.wordMatches(i, word, texts[:], ids, r.PRs) {
 			return false
 		}
 	}
 	return true
 }
 
+// ids are the row's session IDs, lower-cased: the archive's, then the
+// agent's own when it has one.
+func (r sessionFields) ids() []string {
+	ids := []string{strings.ToLower(r.SessionID)}
+	if r.NativeSessionID != "" && !strings.EqualFold(r.NativeSessionID, r.SessionID) {
+		ids = append(ids, strings.ToLower(r.NativeSessionID))
+	}
+	return ids
+}
+
 // wordMatches reports whether word i of the query matches the row: a PR of it,
-// the start of its ID, or one of its texts. A word that is a pull request
+// the start of one of its IDs, or one of its texts. A word that is a pull request
 // number never matches the start of an ID (`212` is PR 212, not every session
 // whose random ID starts with 212), and any other word does only from
 // minIDPrefixWord characters; an exact or short ID is exactIDWins'.
-func (q sessionQuery) wordMatches(i int, word string, texts []string, id string, prs []int) bool {
+func (q sessionQuery) wordMatches(i int, word string, texts []string, ids []string, prs []int) bool {
 	if n := q.prs[i]; n > 0 && slices.Contains(prs, n) {
 		return true
 	}
-	if q.prs[i] == 0 && len(word) >= minIDPrefixWord && strings.HasPrefix(id, word) {
+	if q.prs[i] == 0 && len(word) >= minIDPrefixWord && slices.ContainsFunc(ids, func(id string) bool { return strings.HasPrefix(id, word) }) {
 		return true
 	}
 	if strings.HasPrefix(word, "#") && q.prs[i] > 0 {
@@ -158,8 +171,9 @@ func containsReference(text, ref string) bool {
 	}
 }
 
-// exactIDWins returns the items whose session ID is the query's one word,
-// whole or as the short ID the table shows, and nil when there are none: an
+// exactIDWins returns the items whose session ID, or the agent's own session
+// ID, is the query's one word, whole or as its first minShortSessionID
+// characters (the short ID the table shows), and nil when there are none: an
 // exact ID wins outright, over any title that happens to contain it.
 func exactIDWins[T any](items []T, q sessionQuery, fields func(T) sessionFields) []T {
 	if len(q.words) != 1 {
@@ -168,8 +182,9 @@ func exactIDWins[T any](items []T, q sessionQuery, fields func(T) sessionFields)
 	word := q.words[0]
 	var exact []T
 	for _, item := range items {
-		id := strings.ToLower(fields(item).SessionID)
-		if id == word || len(word) == minShortSessionID && strings.HasPrefix(id, word) {
+		if slices.ContainsFunc(fields(item).ids(), func(id string) bool {
+			return id == word || len(word) == minShortSessionID && strings.HasPrefix(id, word)
+		}) {
 			exact = append(exact, item)
 		}
 	}

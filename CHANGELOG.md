@@ -6,13 +6,16 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- `list`, `show` and `handoff` find a session by the agent's own session ID
+  as well as the archive's: `handoff 01a10e11 --harness codex` finds the
+  Codex thread whose ID starts `01a10e11`.
+
 - Read complete supported Muse exec/MSP roots with `handoff --file PATH
   --harness muse`, including safe own prompts and committed assistant text,
   JSON/Markdown output and handoff into an existing supported agent. Creation
   time uses the validated reserved start. Accounting, tools, model switches,
   children, automatic browse, backfill, capture and Muse destination launch
   remain unavailable. Handoff also now respects Codex's recorded native start.
-
 
 - Commands run inside Muse detect its session environment to avoid interactive
   prompts and pagers. Handoff into supported agents removes inherited Muse
