@@ -36,6 +36,26 @@ type pickerView struct {
 	format  listFormatOptions
 	heading string
 	footer  string
+	// layout is the rows' layout for the width it was made for, kept until
+	// the width changes.
+	layout *sessionLayout
+}
+
+// formatFor is the view's format for a terminal width columns wide (0 when
+// its size is unknown), with every row's layout for that width, so the rows
+// of each page or screen line up with the rest.
+func (v *pickerView) formatFor(width int) listFormatOptions {
+	f := v.format
+	f.Width = width
+	if width <= 0 || f.Verbose || f.Search {
+		return f
+	}
+	if v.layout == nil || v.layout.width != width {
+		laid := newSessionLayout(v.rows, f)
+		v.layout = &laid
+	}
+	f.layout = v.layout
+	return f
 }
 
 // words is the filter's words, single-spaced; empty when the table is not
@@ -256,7 +276,6 @@ func filteredFormat(format listFormatOptions, rows []listRow) listFormatOptions 
 		f.HideHarness = format.HideHarness && same(func(r listRow) string { return r.Harness })
 		f.HideProject = format.HideProject && same(func(r listRow) string { return r.Project })
 	}
-	f.LiveMarks = slices.ContainsFunc(rows, func(r listRow) bool { return r.Live })
 	if !format.Verbose {
 		f.ShowPR = slices.ContainsFunc(rows, func(r listRow) bool { return r.PR != "" })
 	}

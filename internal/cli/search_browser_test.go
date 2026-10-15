@@ -287,7 +287,7 @@ func TestSearchSnippetRowsFitNarrowSharedBrowserMeasurements(t *testing.T) {
 		t.Fatalf("%d rendered lines exceed budget%d", used, screen.budget)
 	}
 	var rendered bytes.Buffer
-	if err := printSessionGroups(&rendered, pageSessionGroups(groups, pickerPage{screen.start, screen.end}), searchWidthFormat(format, 36)); err != nil {
+	if err := printSessionGroups(&rendered, pageSessionGroups(groups, pickerPage{screen.start, screen.end}), (&pickerView{format: format}).formatFor(36)); err != nil {
 		t.Fatal(err)
 	}
 	for _, line := range strings.Split(rendered.String(), "\n") {
@@ -297,5 +297,46 @@ func TestSearchSnippetRowsFitNarrowSharedBrowserMeasurements(t *testing.T) {
 	}
 	if !strings.Contains(rendered.String(), "7 other indexed title/body matches") {
 		t.Fatalf("known count missing: %s", &rendered)
+	}
+}
+
+func TestSearchAndMetadataRowsKeepDistinctWidthMeasurements(t *testing.T) {
+	rows, format := layoutRows(t)
+	metadata := &pickerView{rows: rows, format: format}
+	wide := metadata.formatFor(100)
+	if wide.layout == nil || metadata.formatFor(100).layout != wide.layout {
+		t.Fatal("metadata width layout was not reused across pages")
+	}
+	narrow := metadata.formatFor(36)
+	if narrow.layout == wide.layout {
+		t.Fatal("metadata resize kept the old width layout")
+	}
+	for i := range rows {
+		rows[i].searchSnippet = strings.Repeat("matched context ", 32)
+		rows[i].searchMatches = 3
+	}
+	searchView := &pickerView{rows: rows, format: listFormatOptions{Search: true, Numbered: true}}
+	picker := &sessionPicker{contentSearch: &contentSearchBrowser{}}
+	for _, width := range []int{36, 100, 36} {
+		searchFormat := searchView.formatFor(width)
+		if searchFormat.Width != width || searchFormat.layout != nil {
+			t.Fatalf("search inherited one-line metadata layout at width%d", width)
+		}
+		groups := sessionTableGroups(rows, searchFormat)
+		var actual bytes.Buffer
+		if err := printSessionGroups(&actual, groups, searchFormat); err != nil {
+			t.Fatal(err)
+		}
+		measured := picker.tableLines(groups, searchFormat, pickerPage{0, len(rows)}, width)
+		if measured != displayLines(actual.String(), width) || measured <= len(rows) {
+			t.Fatalf("search multiline measure%d differs from actual or became one line per hit", measured)
+		}
+	}
+	var ordinary bytes.Buffer
+	if err := printSessionGroups(&ordinary, sessionTableGroups(rows, narrow), narrow); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(ordinary.String(), "matched context") || displayLines(ordinary.String(), 36) != len(rows) {
+		t.Fatalf("search snippet changed ordinary one-line rows: %s", &ordinary)
 	}
 }

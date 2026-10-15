@@ -22,6 +22,7 @@ const minShortSessionID = 8
 // listRow is one session as the human list table renders it.
 type listRow struct {
 	searchSnippet   string
+	searchMatches   int
 	pickerSelection *handoffPickerSelection
 	selectionKey    string
 	Index           int
@@ -30,16 +31,28 @@ type listRow struct {
 	HarnessKey      string // raw harness name for show / locateMetadataKey
 	ProjectID       string // raw identity; display names can collide
 	Title           string // display title (archive.DisplayTitle, else short ID)
-	When            string
-	CapturedAt      string
-	Harness         string
-	Project         string
-	Model           string
-	ModelAll        string
-	SkillHint       string
-	Skills          string
-	Origin          string
-	Parser          string
+	// ListTitle is the readable title the table's title cell shows: listTitle
+	// of a real display title. It is empty when Title is a stand-in (a short
+	// ID, a native ID), which the cell then shows as it is.
+	ListTitle string
+	When      string
+	// WhenShort is when the session was last active as a list's short time
+	// (shortWhen): "2m", "Mon", "Oct 9".
+	WhenShort  string
+	CapturedAt string
+	Harness    string
+	Project    string
+	Model      string
+	ModelAll   string
+	// Hint is a note about the row that matters to choosing it ("not yet
+	// uploaded"), spelled out after the plain table's title; empty for none.
+	// A width-aware row always shows it, dim, as ShortHint when that is set,
+	// cutting the title to make room.
+	Hint      string
+	ShortHint string
+	Skills    string
+	Origin    string
+	Parser    string
 	// PR is the pull request the session created last, as "#213"; empty when
 	// it created none.
 	PR string
@@ -68,7 +81,6 @@ type listRow struct {
 // listFormatOptions controls how session rows are built and printed.
 type listFormatOptions struct {
 	Search         bool
-	SearchWidth    int
 	Now            time.Time
 	Verbose        bool
 	Numbered       bool
@@ -90,9 +102,16 @@ type listFormatOptions struct {
 	ShowPR      bool // a PR column, for rows where some session has one
 	HideHarness bool // every row has the same harness, which the heading names
 	HideProject bool // every row has the same project, which the heading names
-	LiveMarks   bool // some row is live: each title leaves room for the dot
 	Cursor      bool // the filter highlights a row: each title leaves room for the mark
-	DimID       bool // the ID is for copying, not for choosing: draw it dim
+
+	// Width is the terminal's width in columns: rows are then laid out to one
+	// line each (sessionLayout). 0 means it is unknown, as when output is
+	// piped, and gives the plain table a script reads.
+	Width int
+	// layout, when set, is the layout of the whole table for Width, so the
+	// rows of one page or screen line up with the rest. printSessionGroups
+	// works one out from the rows it prints when it is nil.
+	layout *sessionLayout
 }
 
 // formatSessionRows builds display rows for sessions. Short IDs are unique
@@ -121,16 +140,9 @@ func formatSessionRows(sessions []archive.Metadata, opts listFormatOptions) []li
 				model += fmt.Sprintf(" +%d", len(models)-1)
 			}
 		}
-		skillHint := ""
-		if len(skills) > 0 {
-			skillHint = " · " + archive.DisplayLine(skills[0])
-			if len(skills) > 1 {
-				skillHint += fmt.Sprintf(" +%d", len(skills)-1)
-			}
-		}
-		title := shorts[i]
+		title, displayed := shorts[i], false
 		if display := archive.DisplayTitle(m); strings.TrimSpace(display) != "" {
-			title = archive.DisplayLine(display)
+			title, displayed = archive.DisplayLine(display), true
 		}
 		parent := ""
 		if m.NativeChild && m.ParentSessionID == "" {
@@ -140,7 +152,11 @@ func formatSessionRows(sessions []archive.Metadata, opts listFormatOptions) []li
 			parent = archive.DisplayLine(shortSessionID(m.ParentSessionID))
 		}
 		if m.IsReplay() {
-			title = "[replay] " + title
+			title = replayTitlePrefix + title
+		}
+		cleaned := ""
+		if displayed {
+			cleaned = listTitle(title)
 		}
 		rows[i] = listRow{
 			PR:         prLabel(m),
@@ -154,13 +170,14 @@ func formatSessionRows(sessions []archive.Metadata, opts listFormatOptions) []li
 			HarnessKey: m.Harness.Name,
 			ProjectID:  m.ProjectID,
 			Title:      title,
+			ListTitle:  cleaned,
 			When:       relativeAge(opts.Now, lastActivity(m)),
+			WhenShort:  shortWhen(opts.Now, lastActivity(m)),
 			CapturedAt: formatTimeOrNever(m.CapturedAt),
 			Harness:    archive.DisplayLine(m.Harness.Name),
 			Project:    archive.DisplayLine(project),
 			Model:      model,
 			ModelAll:   modelAll,
-			SkillHint:  skillHint,
 			Skills:     listOrDash(skills),
 			Origin:     sessionOrigin(m),
 			Parser:     archive.DisplayLine(string(m.Parser.Status)),
@@ -294,12 +311,20 @@ func printListFooter(w io.Writer, shown, totalMatched int, truncated bool, opts 
 }
 
 // printListTable writes the human list table: the heading that names what it
-// shows, the table, and the trailing count line.
-func printListTable(w io.Writer, c *scopeChoice) error {
+// shows, the table, and the trailing count line. width is the terminal's
+// (Width), 0 for the plain table.
+func printListTable(w io.Writer, c *scopeChoice, width int) error {
 	if c.heading != "" {
-		terminal.Println(w, c.heading)
+		terminal.Println(w, oneRow(c.heading, width))
 	}
-	if err := printSessionTable(w, c.rows, c.format); err != nil {
+	format := c.format
+	format.Width = width
+	if width <= 0 && !format.Verbose {
+		// The plain table has a PROJECT column and is read by scripts: one
+		// row per line, newest first, with no headings between them.
+		format.GroupByProject = false
+	}
+	if err := printSessionTable(w, c.rows, format); err != nil {
 		return err
 	}
 	printListFooter(w, len(c.rows), c.total, c.truncated, c.format)
@@ -322,7 +347,6 @@ func prLabel(m archive.Metadata) string {
 // column.
 func (opts listFormatOptions) withColumns(rows []listRow) (laid listFormatOptions, constants []string) {
 	laid = opts
-	laid.LiveMarks = slices.ContainsFunc(rows, func(r listRow) bool { return r.Live })
 	if opts.Verbose {
 		return laid, nil
 	}

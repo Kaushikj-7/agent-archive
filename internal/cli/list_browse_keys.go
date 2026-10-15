@@ -85,7 +85,8 @@ func (l *sessionPicker) pickKeysContext(ctx context.Context, p *prompter, stdout
 			return listRow{}, false, l.invalidView
 		}
 		v := l.view(rows, totalMatched, truncated, format)
-		if err := printSessionGroups(stdout, v.groups, v.format); err != nil {
+		width, _, _ := l.env.terminalSize(stdout)
+		if err := printSessionGroups(stdout, v.groups, v.formatFor(width)); err != nil {
 			return listRow{}, false, err
 		}
 		terminal.Print(stdout, v.footer)
@@ -116,7 +117,7 @@ func (l *sessionPicker) pickKeysContext(ctx context.Context, p *prompter, stdout
 		if l.filtering {
 			groups = highlightGroups(groups, l.cursor)
 		}
-		if err := printSessionGroups(&frame, pageSessionGroups(groups, pickerPage{screen.start, screen.end}), searchWidthFormat(v.format, screen.width)); err != nil {
+		if err := printSessionGroups(&frame, pageSessionGroups(groups, pickerPage{screen.start, screen.end}), v.formatFor(screen.width)); err != nil {
 			return listRow{}, false, err
 		}
 		frame.WriteString(l.displayFooter(v.footer, screen.width))

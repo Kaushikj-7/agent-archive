@@ -1,8 +1,8 @@
 agent-archive · 5 sessions · claude · --all-projects lists every project
-TITLE                                         PR    WHEN            ID
-Fix the retry budget in the upload queue      #213  just now        d7a77938
-Stop rereading the config on every hook call        4 minutes ago   36a7d5ee
-Add a status line for paused collection       #212  38 minutes ago  76941c69
-Investigate slow listings on a large archive        5 hours ago     5b0c1e22
-Rename the export flag and update the docs    #204  2 days ago      9f3a64d0
+WHEN  PR    ID        TITLE
+now   #213  d7a77938  Fix the retry budget in the upload queue
+4m    -     36a7d5ee  Stop rereading the config on every hook call
+38m   #212  76941c69  Add a status line for paused collection
+5h    -     5b0c1e22  Investigate slow listings on a large archive
+Sun   #204  9f3a64d0  Rename the export flag and update the docs
 5 session(s).

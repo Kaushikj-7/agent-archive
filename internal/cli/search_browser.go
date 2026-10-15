@@ -63,7 +63,7 @@ func (s *contentSearchBrowser) installRows() {
 		if len(h.Gaps) > 0 {
 			snippet += " · source coverage gaps"
 		}
-		rows = append(rows, listRow{selectionKey: key, Index: i + 1, SessionID: h.SessionID, ShortID: shorts[i], HarnessKey: h.Harness, Harness: archive.DisplayLine(h.Harness), Title: archive.DisplayLine(h.Title), When: h.CapturedAt.Format("2006-01-02"), Project: "-", searchSnippet: snippet, searchMatches: h.MatchCount})
+		rows = append(rows, listRow{selectionKey: key, Index: i + 1, SessionID: h.SessionID, ShortID: shorts[i], HarnessKey: h.Harness, Harness: archive.DisplayLine(h.Harness), Title: archive.DisplayLine(h.Title), ListTitle: listTitle(h.Title), When: h.CapturedAt.Format("2006-01-02"), WhenShort: h.CapturedAt.Format("2006-01-02"), Project: "-", searchSnippet: snippet, searchMatches: h.MatchCount})
 	}
 	scope := archive.DisplayLine(s.opts.query.Scope.ProjectName)
 	if s.opts.all {
@@ -428,13 +428,6 @@ func printContentSearchRows(out io.Writer, groups []sessionTableGroup, width int
 		}
 	}
 	return writeOutput(out, []byte(frame.String()))
-}
-
-func searchWidthFormat(format listFormatOptions, width int) listFormatOptions {
-	if format.Search {
-		format.SearchWidth = width
-	}
-	return format
 }
 
 func (l *sessionPicker) minimumRows() int {
