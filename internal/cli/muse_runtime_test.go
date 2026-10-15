@@ -9,15 +9,19 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/nativesessions"
 )
 
+const unsupportedMuseDestination handoffDestination = handoffDestination(agentmeta.Muse)
+
 func TestMusePresenceCannotSelectCurrentOrLatestSession(t *testing.T) {
 	t.Parallel()
 	for _, key := range []string{"MUSE_THREAD_ID", "MUSE_SESSION_ID"} {
 		t.Run(key, func(t *testing.T) {
+			t.Parallel()
 			env := testEnv(t, t.TempDir(), time.Now())
 			env.LookupEnv = agentEnv(map[string]string{key: "opaque-not-a-uuid"})
 			env.IsTerminal = func(any) bool { return true }
@@ -86,7 +90,7 @@ func TestMuseRuntimeCannotConfigureCaptureOrLaunch(t *testing.T) {
 	if err != nil || len(lock) != 0 {
 		t.Fatalf("ordinary lock contents changed: %q %v", lock, err)
 	}
-	if _, err := buildLaunchSpec("muse", "prompt", "/context.md", home, nil, env); err == nil {
+	if _, err := buildLaunchSpec(unsupportedMuseDestination, "prompt", "/context.md", home, nil, env); err == nil {
 		t.Fatal("runtime-only integration launched")
 	}
 	opts := handoffOptions{to: "muse"}
@@ -106,7 +110,7 @@ func TestSupportedLaunchRemovesOnlyMuseSessionEnvironment(t *testing.T) {
 	env.Environ = func() []string {
 		return append([]string{"MUSE_THREAD_ID=child", "MUSE_SESSION_ID=root"}, kept...)
 	}
-	spec, err := buildLaunchSpec("codex", "prompt", "/context.md", "/project", nil, env)
+	spec, err := buildLaunchSpec(handoffDestinationCodex, "prompt", "/context.md", "/project", nil, env)
 	if err != nil || !slices.Equal(spec.Env, kept) {
 		t.Fatalf("launch environment %v %v", spec.Env, err)
 	}
@@ -115,6 +119,7 @@ func TestSupportedLaunchRemovesOnlyMuseSessionEnvironment(t *testing.T) {
 func TestMusePresenceCommandDoesNotPrompt(t *testing.T) {
 	t.Parallel()
 	t.Run("configured archive with another agent available", func(t *testing.T) {
+		t.Parallel()
 		env, _, _ := publishedFixture(t)
 		project := t.TempDir()
 		env.WorkingDir = func() (string, error) { return project, nil }
@@ -132,6 +137,7 @@ func TestMusePresenceCommandDoesNotPrompt(t *testing.T) {
 		}
 	})
 	t.Run("before setup", func(t *testing.T) {
+		t.Parallel()
 		env := testEnv(t, t.TempDir(), time.Now())
 		project := t.TempDir()
 		env.WorkingDir = func() (string, error) { return project, nil }

@@ -263,13 +263,35 @@ class CandidateTest(unittest.TestCase):
         self.assertEqual(self.mutations(), [])
 
     def test_acceptance_requires_every_supported_app_and_no_unsupported_app(self):
-        # The product catalog and published acceptance sheet support three
-        # apps. An unsupported fourth row made honest acceptance impossible.
+        # Acceptance rows prove capture/publication, not identity recognition.
+        # A runtime-only binding must not require unsupported capture evidence.
         root = Path(__file__).resolve().parent.parent
         catalog = (root / 'internal/agentmeta/catalog.go').read_text()
-        identities = set(re.findall(r'(?m)^\s*\w+\s+ID\s*=\s*"([a-z-]+)"$', catalog))
-        self.assertEqual(identities, {'claude', 'codex', 'cursor'})
-        app_rows = {'claude-code' if name == 'claude' else name for name in identities}
+        identities = dict(re.findall(r'(?m)^\s*(\w+)\s+ID\s*=\s*"([a-z-]+)"$', catalog))
+        registry = (root / 'internal/agents/builtin/registry.go').read_text()
+        composition = re.search(r'New\(agentmeta.Builtins\(\), \[\]Integration\{\n(.*?)\n\t\}\)',
+                                registry, re.S)
+        self.assertIsNotNone(composition)
+        bindings = {}
+        for line in composition.group(1).splitlines():
+            binding = re.fullmatch(
+                r'\s*\{Descriptor: agentmeta.Descriptor\{ID: agentmeta\.(\w+)\}, (.+)\},', line)
+            self.assertIsNotNone(binding, f'unrecognized builtin binding: {line}')
+            name, ports = binding.groups()
+            self.assertNotIn(name, bindings, f'duplicate builtin binding: {name}')
+            bindings[name] = ports
+        self.assertEqual(set(bindings), set(identities))
+        capture_ports = ('Sources:', 'Filter:', 'Parser:', 'Decoder:', 'Hooks:')
+        for name, ports in bindings.items():
+            implemented = [port in ports for port in capture_ports]
+            self.assertTrue(not any(implemented) or all(implemented),
+                            f'partial capture binding needs explicit acceptance policy: {name}')
+        capture_apps = {identities[name] for name, ports in bindings.items()
+                        if all(port in ports for port in capture_ports)}
+        self.assertEqual(capture_apps, {'claude', 'codex', 'cursor'})
+        self.assertEqual(bindings['Muse'], 'Runtime: muse.RuntimeDetector{}')
+        app_rows = {'claude-code' if name == 'claude' else name for name in capture_apps}
+        self.assertTrue((set(identities.values()) - capture_apps).isdisjoint(rc.ROWS))
         template = json.loads((root / 'dev/maintainers/release-evidence/example.json').read_text())
         self.assertEqual(set(template['checks']), set(rc.ROWS))
         self.assertTrue(app_rows <= set(rc.ROWS))

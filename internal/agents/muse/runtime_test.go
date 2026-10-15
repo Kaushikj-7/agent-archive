@@ -26,6 +26,7 @@ func TestRuntimePresenceDoesNotInterpretIdentity(t *testing.T) {
 		{"configuration only", map[string]string{"MUSE_NO_AUTO_UPDATE": "1", "MUSE_CONFIG_DIR": "/config"}, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			got := (RuntimeDetector{}).Detect(agentapi.RuntimeEnvironment{LookupEnv: func(key string) (string, bool) {
 				value, ok := tc.vars[key]
 				return value, ok
