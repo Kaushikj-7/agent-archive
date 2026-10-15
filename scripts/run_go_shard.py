@@ -448,13 +448,11 @@ def verify_worker_vet(directory, manifest, expected):
     if not isinstance(receipt, dict):
         raise Failure('worker vet receipt malformed')
     context = settings.get('plain_vet_context')
-    if (not isinstance(context, dict) or set(context) != {'go', 'version', 'runner_os',
-            'runner_arch', 'image', 'os_release', 'cc', 'cxx', 'toolchain', 'race', 'tags', 'schema'}
-            or not isinstance(context.get('image'), dict)
-            or set(context['image']) != {'ImageOS', 'ImageVersion'}
-            or any(type(v) is not str or not re.fullmatch(r'[A-Za-z0-9_.-]+', v)
-                   for v in context['image'].values())):
-        raise Failure('worker vet full image/context identity malformed')
+    import go_cache_context
+    try:
+        go_cache_context.validate_context(context)
+    except go_cache_context.InvalidContext as error:
+        raise Failure('worker vet full image/context identity malformed') from error
     if (receipt.get('identity_schema') != 'full-v1'
             or type(receipt.get('schema')) is not int or receipt['schema'] != 1
             or not isinstance(context, dict) or digest(context) != settings.get('plain_vet_context_sha256')
