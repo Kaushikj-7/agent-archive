@@ -94,12 +94,29 @@ class ReportTests(unittest.TestCase):
         self.assertAlmostEqual(result['actual_runner_minutes'], 220/60)
         self.assertEqual(result['carried_forward_allocation_aliases'], [[2, 102], [4, 104]])
         for field, value in [('runner_id', 43), ('created_at', '2026-10-14T00:00:01Z'),
-                             ('steps', [])]:
+                             ('steps', []), ('id', None),
+                             ('steps', [{'name': 'body', 'status': 'completed',
+                                         'conclusion': 'success'}])]:
             changed = copy.deepcopy(retry)
             changed['workflows'][0]['jobs']['jobs'][0][field] = value
             result = timing.report({'schema': 1, 'samples': [first, changed]})['resources_across_snapshots']
             with self.subTest(field=field):
                 self.assertAlmostEqual(result['actual_runner_minutes'], 330/60)
+
+    def test_untimed_step_placeholders_do_not_prove_allocation_aliases(self):
+        first = self.allocated(sample())
+        for workflow in first['workflows']:
+            workflow['jobs']['jobs'][0].update(steps=[{'name': 'body'}])
+        retry = copy.deepcopy(first)
+        retry['id'] = 'untimed-retry'
+        for workflow in retry['workflows']:
+            workflow['run']['run_attempt'] = 2
+            job = workflow['jobs']['jobs'][0]
+            job.update(id=job['id']+100, run_attempt=2,
+                       created_at='2026-10-14T00:03:00Z')
+        result = timing.report({'schema': 1, 'samples': [first, retry]})
+        self.assertAlmostEqual(result['resources_across_snapshots']['actual_runner_minutes'], 440/60)
+        self.assertEqual(result['resources_across_snapshots']['carried_forward_allocation_aliases'], [])
 
     def test_readiness_is_unknown_without_independent_telemetry(self):
         value = self.allocated(sample())
@@ -163,6 +180,19 @@ class ReportTests(unittest.TestCase):
         self.assertIsNone(batch['first_event_to_last_required_completion_seconds'])
         self.assertIsNone(batch['linux_runner_minutes'])
         self.assertFalse(batch['all_samples_qualifying'])
+
+    def test_omitted_workflow_inventory_cannot_claim_batch_completion(self):
+        value = self.allocated(sample())
+        value['required_jobs'].pop('Levenshtein')
+        value['workflows'].pop()
+        result = timing.report({'schema': 1, 'samples': [value],
+                                'batches': [{'id': 'omitted', 'sample_ids': ['one']}]})
+        self.assertIsNone(result['samples'][0]['required_completed_at'])
+        for resource in (result['samples'][0], result['resources_across_snapshots'],
+                         result['batches'][0]):
+            self.assertFalse(resource['inventory_complete'])
+            self.assertIsNone(resource['linux_runner_minutes'])
+        self.assertIsNone(result['batches'][0]['first_event_to_last_required_completion_seconds'])
 
     def test_incomplete_inventory_and_legacy_peak_are_not_complete(self):
         value = self.allocated(sample())

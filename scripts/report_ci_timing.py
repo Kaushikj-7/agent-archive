@@ -119,7 +119,13 @@ def physical_jobs(jobs):
         evidenced = (job['runner_allocation'] == 'allocated' and job['conclusion'] == 'success'
                      and type(job.get('runner_id')) is int and job['runner_id'] > 0
                      and job.get('runner_name') and job.get('runner_seconds') is not None
-                     and job.get('allocation_steps') and job.get('source'))
+                     and job.get('id') is not None and job.get('source')
+                     and any(step.get('status') == 'completed'
+                             and step.get('conclusion') == 'success'
+                             and step.get('started_at') and step.get('completed_at')
+                             and stamp(job['started_at']) <= stamp(step['started_at'])
+                             <= stamp(step['completed_at']) <= stamp(job['completed_at'])
+                             for step in job.get('allocation_steps', [])))
         previous = allocations.get(fingerprint) if evidenced else None
         if (previous is not None and job.get('created_at') and job.get('completed_at')
                 and job['job_attempt'] > previous['job_attempt']
@@ -215,6 +221,7 @@ def sample_report(sample):
         issues.append('auxiliary campaign cannot qualify production PR latency')
     if not expected_workflows <= set(required):
         issues.append('qualification requires Test and Levenshtein inventories')
+        inventory_complete = False
     seen = set()
     for snapshot in sample['workflows']:
         run = snapshot['run']

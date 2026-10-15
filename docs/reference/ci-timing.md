@@ -503,7 +503,8 @@ physical allocations across observations; individual sample totals still describ
 that observation. A targeted rerun can give a carried-forward successful job a
 new API ID. Deduplication of those aliases requires the same run, source, job
 name, positive runner identity, exact interval, labels and step evidence, plus a
-later attempt created after the allocation completed. Alias IDs remain visible.
+later attempt created after the allocation completed. Both records need API job
+IDs and a timed successful executed step within the allocation interval. Alias IDs remain visible.
 A runner ID alone never establishes an alias. Conflicting snapshots for the same
 API job identity fail reporting. Collect **all attempt views**, including failed
 and canceled attempts, to account for total campaign usage; the latest view alone
@@ -543,8 +544,9 @@ Batch output reports first initiating event to last required completion, total
 physical usage and Linux peak across the selected full pipelines. When an event
 timestamp is unavailable it instead publishes a workflow-created batch lower
 bound. Arrival spacing is included in the span. Reusing a workflow run in two
-batch PR observations is rejected. Preserve per-PR turnaround alongside batch
-span; neither alone demonstrates causal savings from a topology change.
+batch PR observations is rejected. Missing expected workflow inventories leave
+batch completion unknown, even if all supplied jobs succeeded. Preserve per-PR
+turnaround alongside batch span; neither alone demonstrates causal savings from a topology change.
 
 ## Bounded manual four/eight-worker qualification
 
