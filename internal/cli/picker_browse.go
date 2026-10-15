@@ -107,7 +107,7 @@ func boundedArchiveChoices(ctx context.Context, env metadataCacheDependencies, s
 		rows := formatSessionRows(sessions, format)
 		for i, item := range st.rows {
 			item := item
-			rows[i].When = relativeAge(format.Now, item.Row.Activity)
+			rows[i].When, rows[i].WhenShort = relativeAge(format.Now, item.Row.Activity), shortWhen(format.Now, item.Row.Activity)
 			rows[i].Children = int(item.Row.OrdinaryChildren)
 			rows[i].pickerSelection = &handoffPickerSelection{item: &item, snapshot: snapshot, store: store}
 		}

@@ -123,7 +123,7 @@ func TestFullHeaderBudgetKeepsVerifiedIDsWithoutPreviewReads(t *testing.T) {
 		t.Fatalf("lost bounded identities or read beyond budget: coverage=%+v rows=%d before=%d after=%d err=%v", r.Coverage, len(n.rows), before, after, err)
 	}
 	for i, row := range n.rows {
-		if row.Index != i+1 || nativeRowIndex(row, r.Candidates) != i || row.Title != r.Candidates[i].NativeID || row.SkillHint != " · label not inspected" {
+		if row.Index != i+1 || nativeRowIndex(row, r.Candidates) != i || row.Title != r.Candidates[i].NativeID || row.Hint != "label not inspected" {
 			t.Fatalf("unselectable or misleading row: %+v", row)
 		}
 	}
