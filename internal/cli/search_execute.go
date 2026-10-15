@@ -227,6 +227,9 @@ func refreshContentSearch(ctx context.Context, home string, cfg config.Config, e
 		r.Committed += p.Committed
 		r.Metadata += d.Metadata
 		r.Nodes += d.Nodes
+		r.VerificationChecks += p.MetadataChecks
+		r.VerificationNodes += p.CatalogNodes
+		r.VerificationBytes += p.MetadataBytes
 		r.Completed = complete
 		r.Elapsed = time.Since(started).Milliseconds()
 		coverage = nil

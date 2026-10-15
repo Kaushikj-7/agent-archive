@@ -433,6 +433,18 @@
         "discovery_nodes": {
           "type": "integer",
           "minimum": 0
+        },
+        "verification_metadata_checks": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "verification_catalog_nodes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "verification_metadata_bytes": {
+          "type": "integer",
+          "minimum": 0
         }
       },
       "required": [
@@ -447,7 +459,10 @@
         "compressed_bytes",
         "committed",
         "discovery_metadata_reads",
-        "discovery_nodes"
+        "discovery_nodes",
+        "verification_metadata_checks",
+        "verification_catalog_nodes",
+        "verification_metadata_bytes"
       ],
       "additionalProperties": false
     },

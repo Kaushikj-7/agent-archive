@@ -100,20 +100,23 @@ type contentSearchCoverage struct {
 }
 
 type contentSearchRefresh struct {
-	Session   string `json:"session_id,omitempty"`
-	Harness   string `json:"harness,omitempty"`
-	Scope     string `json:"scope"`
-	Rebuild   bool   `json:"rebuild"`
-	Passes    int    `json:"passes"`
-	Elapsed   int64  `json:"elapsed_ms"`
-	Completed bool   `json:"completed"`
-	Stopped   string `json:"stopped_reason"`
-	Loaded    int    `json:"loaded_sources"`
-	Reused    int    `json:"reused_sources"`
-	Bytes     int    `json:"compressed_bytes"`
-	Committed int    `json:"committed"`
-	Metadata  int    `json:"discovery_metadata_reads"`
-	Nodes     int    `json:"discovery_nodes"`
+	VerificationChecks int    `json:"verification_metadata_checks"`
+	VerificationNodes  int    `json:"verification_catalog_nodes"`
+	VerificationBytes  int64  `json:"verification_metadata_bytes"`
+	Session            string `json:"session_id,omitempty"`
+	Harness            string `json:"harness,omitempty"`
+	Scope              string `json:"scope"`
+	Rebuild            bool   `json:"rebuild"`
+	Passes             int    `json:"passes"`
+	Elapsed            int64  `json:"elapsed_ms"`
+	Completed          bool   `json:"completed"`
+	Stopped            string `json:"stopped_reason"`
+	Loaded             int    `json:"loaded_sources"`
+	Reused             int    `json:"reused_sources"`
+	Bytes              int    `json:"compressed_bytes"`
+	Committed          int    `json:"committed"`
+	Metadata           int    `json:"discovery_metadata_reads"`
+	Nodes              int    `json:"discovery_nodes"`
 }
 
 type contentSearchSlice struct {

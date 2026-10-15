@@ -240,7 +240,7 @@ func TestContentSearchWaitMakesBoundedLegacyProgressThenReportsIncomplete(t *tes
 	if code != 1 || doc.Error == nil || doc.Error.Code != "coverage_incomplete" || doc.Coverage.Indexed != 40 || doc.Coverage.Pending != 0 || doc.Refresh.Completed || counted.sources != 40 {
 		t.Fatalf("legacy progress code=%d sourceGET=%d %+v %s", code, counted.sources, doc, diag)
 	}
-	t.Logf("40 sessions: passes=%d loaded=%d reused=%d source_GET=%d metadata_GET=%d elapsed=%s", doc.Refresh.Passes, doc.Refresh.Loaded, doc.Refresh.Reused, counted.sources, counted.metadata, time.Since(started))
+	t.Logf("40 sessions: passes=%d loaded=%d reused=%d source_GET=%d metadata_GET=%d verification_checks=%d elapsed=%s", doc.Refresh.Passes, doc.Refresh.Loaded, doc.Refresh.Reused, counted.sources, counted.metadata, doc.Refresh.VerificationChecks, time.Since(started))
 }
 
 func TestContentSearchWaitBusyIsFiniteWithoutArchiveReads(t *testing.T) {
@@ -331,4 +331,14 @@ func TestContentSearchQueryAfterWaitFailureReturnsOneDocumentAndCachedPage(t *te
 	if code != 1 || doc.Error == nil || doc.Error.Code != "wait_timeout" || doc.Refresh == nil || len(doc.Results) != 1 || doc.Coverage == nil || !doc.Coverage.Present {
 		t.Fatalf("combined document %d %+v %s", code, doc, diag)
 	}
+}
+
+func (s *contentSearchCountingStore) GetLimitedVersioned(ctx context.Context, key string, limit int64) ([]byte, string, error) {
+	if strings.Contains(key, "/source.") {
+		s.sources++
+	}
+	if strings.HasSuffix(key, "/metadata.json") {
+		s.metadata++
+	}
+	return s.MemoryStore.GetLimitedVersioned(ctx, key, limit)
 }
