@@ -2,7 +2,9 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -369,5 +371,75 @@ func TestKeyPickerDownPastTheEndFollowsTheRowWhenRowsReorder(t *testing.T) {
 	checkOlderScreens(t, positions, rows, []string{"1–5 of 5+", "1–5 of 5+", "1–7 of 7"}, []int{1, 5, 7}, screens)
 	if !strings.Contains(screens[2], cursorMark+" 7  Session number 7") {
 		t.Fatalf("highlight not on the row after the one left:\n%s", screens[2])
+	}
+}
+
+// A wheel burst held past the end leaves keys typed ahead when the load
+// starts. Esc still stops the load, and the rest of the burst is dropped
+// rather than scrolling past the end, and loading, again at once.
+func TestKeyPickerEscStopsALoadStartedByAWheelBurst(t *testing.T) {
+	t.Parallel()
+	table := newOlderTable(30)
+	loads := 0
+	table.choices.loadOlder.Load = nil
+	table.choices.loadOlder.LoadContext = func(ctx context.Context) (bool, error) {
+		loads++
+		select {
+		case <-ctx.Done():
+			return false, ctx.Err()
+		case <-time.After(10 * time.Second):
+			return false, errors.New("esc did not stop the load")
+		}
+	}
+	positions, rows, screens := olderScreens(t, &sessionPicker{}, table.choices,
+		"\x1b[F", "\x1b[B\x1b[B\x1b[B", later(50*time.Millisecond, "\x1b"), later(time.Second, "q"))
+	checkOlderScreens(t, positions, rows, []string{"1–12 of 20+", "9–20 of 20+", "", "9–20 of 20+"}, []int{1, 20, 20, 20}, screens)
+	if loads != 1 {
+		t.Fatalf("%d loads", loads)
+	}
+}
+
+// Keys typed ahead of a load are still handled after it, and so are keys
+// pressed while it runs, after them.
+func TestKeyPickerKeysTypedAheadOfALoadAreHandledAfterIt(t *testing.T) {
+	t.Parallel()
+	table := newOlderTable(100)
+	load := table.choices.loadOlder.Load
+	table.choices.loadOlder.Load = nil
+	table.choices.loadOlder.LoadContext = func(context.Context) (bool, error) {
+		time.Sleep(200 * time.Millisecond)
+		return load()
+	}
+	positions, rows, screens := olderScreens(t, &sessionPicker{}, table.choices,
+		"\x1b[F", "\x1b[B\x1b[B", later(50*time.Millisecond, "\x1b[B"), later(time.Second, "q"))
+	checkOlderScreens(t, positions, rows,
+		[]string{"1–12 of 20+", "9–20 of 20+", "", "10–21 of 40+", "12–23 of 40+"},
+		[]int{1, 20, 20, 21, 23}, screens)
+}
+
+// a, pressed while older rows load, stops that load and changes the scope,
+// whose load says so in the footer line's place too.
+func TestKeyPickerScopeLoadDuringAnOlderLoadSaysSoInTheFooterLine(t *testing.T) {
+	t.Parallel()
+	format := listFormatOptions{Now: pickerNow, Numbered: true}
+	rowsFor := func(sessionScope) scopeView {
+		rows := formatSessionRows(pickerSessions(5, oneProject), format)
+		return scopeView{rows: rows, total: len(rows)}
+	}
+	choices := newScopeChoices(sessionScope{Label: "app", ProjectIDs: []string{"id-app"}}, format, false, rowsFor)
+	choices.rowsForContext = func(_ context.Context, s sessionScope) scopeView { return rowsFor(s) }
+	choices.loadOlder = &browserLoadAction{Label: "Older sessions", LoadContext: func(ctx context.Context) (bool, error) {
+		<-ctx.Done()
+		return false, ctx.Err()
+	}}
+	_, _, screens := olderScreens(t, &sessionPicker{}, choices, "\x1b[F", "\x1b[B", later(50*time.Millisecond, "a"), later(time.Second, "q"))
+	const want = "\nLoading scope sessions… Esc cancels\nNumber or ID to show: "
+	if !slices.ContainsFunc(screens, func(s string) bool { return strings.HasSuffix(s, want) }) {
+		t.Fatalf("scope load not in the footer line's place:\n%s", strings.Join(screens, "\n----\n"))
+	}
+	for _, screen := range screens {
+		if strings.Contains(screen, "Esc cancels\nNumber or ID to show: Loading") {
+			t.Fatalf("a loading message under the prompt:\n%s", screen)
+		}
 	}
 }
