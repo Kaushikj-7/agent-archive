@@ -168,6 +168,13 @@ func runContentSearchPass(ctx context.Context, home string, expected config.Conf
 		}
 		metadata, e := search.ReadCurrentMetadata(ctx, objects, key)
 		if e != nil {
+			if errors.Is(e, search.ErrDeleted) {
+				if err = index.ForgetSession(ctx, opts.query.Harness, opts.session); err != nil {
+					return result, err
+				}
+				result.Observation, err = index.Observation(ctx)
+				result.Observed = err == nil
+			}
 			return result, e
 		}
 		if metadata.SessionID != opts.session || metadata.Harness.Name != opts.query.Harness {
