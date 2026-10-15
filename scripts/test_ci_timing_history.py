@@ -210,13 +210,32 @@ class TimingContracts(unittest.TestCase):
     def test_candidate_dedup_conflicts_experiments_and_cohorts(self):
         observation = {'schema': 1, 'kind': 'worker-timing', 'run_id': '1', 'run_attempt': '1', 'shard': 0,
                        'source': 'a'*40, 'observation_kind': 'normal', 'success': True,
-                       'configuration_sha256': 'x', 'cohort': {'cache_state': 'prefix', 'runner_image': 'image'},
+                       'configuration_sha256': 'x', 'compiled_inventory_sha256': 'inventory',
+                       'cohort': {'cache_state': 'prefix', 'runner_image': 'image'},
                        'tests': [{'test_id': 'p::TestA', 'own_elapsed_seconds': 31, 'status': 'pass', 'timing_issues': []}]}
         pipeline = collect_ci_timing.collect(FakeAPI(), receipt(), 1, 2)
         result = ci_timing_history.candidate([observation, observation], [pipeline])
         self.assertEqual(result['physical_worker_observations'], 1)
         self.assertEqual(result['groups'][0]['tests']['p::TestA']['observations'], 1)
         self.assertFalse(result['automatic_promotion'])
+        # The retained allocation, including its actual attempt, authorizes
+        # individual shards; sharing a successful workflow ID is insufficient.
+        self.assertEqual(ci_timing_history.candidate([dict(observation, shard=999)], [pipeline])['groups'], [])
+        for cohort in ({}, {'cache_state': 'prefix', 'runner_image': ''},
+                       {'cache_state': '', 'runner_image': 'image'},
+                       {'cache_state': 'made-up', 'runner_image': 'image'}):
+            with self.subTest(cohort=cohort):
+                self.assertEqual(ci_timing_history.candidate([dict(observation, cohort=cohort)], [pipeline])['groups'], [])
+        with self.assertRaisesRegex(ValueError, 'conflicting'):
+            ci_timing_history.candidate([observation, dict(observation, run_id=1)], [pipeline])
+        changed_inventory = dict(observation, shard=1, compiled_inventory_sha256='different-inventory')
+        self.assertEqual(len(ci_timing_history.candidate([observation, changed_inventory], [pipeline])['groups']), 2)
+        rerun_api = FakeAPI()
+        rerun_api.runs[1]['run_attempt'] = 2
+        # All original successful jobs were carried into the final attempt.
+        rerun = collect_ci_timing.collect(rerun_api, receipt(), 1, 2)
+        self.assertEqual(len(ci_timing_history.candidate([observation], [rerun])['groups']), 1)
+        self.assertEqual(ci_timing_history.candidate([dict(observation, run_attempt='2')], [rerun])['groups'], [])
         self.assertEqual(ci_timing_history.candidate([observation])['groups'], [])
         failed_api = FakeAPI()
         failed_api.runs[2]['conclusion'] = 'failure'
