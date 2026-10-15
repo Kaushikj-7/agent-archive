@@ -453,25 +453,39 @@ var errBudget = agentapi.ReadBudgetLimit(errors.New("muse decoding or retained o
 // record. One entry per shared code bounds it independently of transcript size.
 type privacyGaps map[string]int
 
+type privacyGapCode string
+
+const (
+	privacyBinaryOmitted            privacyGapCode = "binary_content_omitted"
+	privacyContentTruncated         privacyGapCode = "content_truncated"
+	privacyHiddenInstructionOmitted privacyGapCode = "hidden_instruction_omitted"
+	privacyNestedContentOmitted     privacyGapCode = "hidden_or_unknown_nested_content_omitted"
+	privacyRecordOmitted            privacyGapCode = "record_without_allowed_fields_omitted"
+	privacySensitiveRedacted        privacyGapCode = "sensitive_content_redacted"
+	privacySensitiveFieldOmitted    privacyGapCode = "sensitive_or_hidden_field_omitted"
+	privacyUnknownFieldOmitted      privacyGapCode = "unknown_field_omitted"
+	privacyUnsupportedValueOmitted  privacyGapCode = "unsupported_value_omitted"
+)
+
 func privacyGapDetail(code string) string {
-	switch code {
-	case "binary_content_omitted":
+	switch privacyGapCode(code) {
+	case privacyBinaryOmitted:
 		return "binary content omitted"
-	case "content_truncated":
+	case privacyContentTruncated:
 		return "content truncated"
-	case "hidden_instruction_omitted":
+	case privacyHiddenInstructionOmitted:
 		return "injected instruction block omitted"
-	case "hidden_or_unknown_nested_content_omitted":
+	case privacyNestedContentOmitted:
 		return "nested content omitted"
-	case "record_without_allowed_fields_omitted":
+	case privacyRecordOmitted:
 		return "record omitted"
-	case "sensitive_content_redacted":
+	case privacySensitiveRedacted:
 		return "content redacted"
-	case "sensitive_or_hidden_field_omitted":
+	case privacySensitiveFieldOmitted:
 		return "sensitive or hidden field omitted"
-	case "unknown_field_omitted":
+	case privacyUnknownFieldOmitted:
 		return "unknown field omitted"
-	case "unsupported_value_omitted":
+	case privacyUnsupportedValueOmitted:
 		return "value omitted"
 	}
 	return ""
