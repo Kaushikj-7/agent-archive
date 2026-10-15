@@ -12,7 +12,7 @@
   "stable_schema_fingerprint": "sha256:4e3200c3c9dc0cd7919d11022630d43f9bc1c5cdda375381e90b0183b5665069",
   "provider": "only synthetic loopback Responses; incoming context discarded; no real provider or remote storage",
   "isolation": "constructed HOME/XDG/config/data/cache/state/tmp; TBH_CREDENTIAL_BACKEND=file; dummy key; no inherited credentials/proxies",
-  "runner_sha256": "035555383c9a34f3e2cab0c883993c39a9ade3f4e2ad913b26089162b8502240",
+  "runner_sha256": "b1a5713ad1750ea4807d1322e205d3e8a8159c8a3216379bea950a78f050d2e1",
   "campaigns": {
     "muse-q0-reviewed-20261015": {
       "raw_report_sha256": "2afe0bc5c00dde1e6384c8337f369ec16cfb8dd633c881ac9de4b363da4c393e",
@@ -1727,6 +1727,41 @@
           ]
         }
       }
+    },
+    "muse-q0-review-c-20261015": {
+      "raw_report_sha256": "d3f8006f6a43c473f21c39437248a377a019b01a61ec605510155c7926ac5930",
+      "runner_sha256": "b1a5713ad1750ea4807d1322e205d3e8a8159c8a3216379bea950a78f050d2e1",
+      "cases": {
+        "exec-utc": {
+          "assertions": {
+            "fresh_exact_own_starts": true,
+            "fresh_own_stream_identity": true,
+            "fresh_exact_own_replies": true,
+            "fresh_exact_own_usage": true,
+            "fresh_no_unowned_run_events": true,
+            "fresh_exact_own_tools": true,
+            "resumed_exact_own_starts": true,
+            "resumed_own_stream_identity": true,
+            "resumed_exact_own_replies": true,
+            "resumed_exact_own_usage": true,
+            "resumed_no_unowned_run_events": true,
+            "resumed_exact_own_tools": true,
+            "resume_has_true_open": true,
+            "fresh_has_one_false_resume_open": true,
+            "resume_success": true,
+            "resume_preserves_prefix": true,
+            "native_valid_export_clean": true,
+            "native_exact_permission_clean": true,
+            "native_bad_checksum_diagnostic": true,
+            "copy_bytes_identical": true,
+            "copy_native_export_clean": true,
+            "mutation_diagnostics_match": true
+          },
+          "timezone": "UTC",
+          "observed_utc": "2026-10-15T05:27:26.655159+00:00",
+          "provider_requests": 2
+        }
+      }
     }
   },
   "failed_attempts": [
@@ -2128,5 +2163,19 @@
       }
     ],
     "unchanged_gates": "All existing gates remain OPEN/unavailable as recorded in gates; native export is not independent integrity authority."
+  },
+  "review_c_repairs": {
+    "scope": "Export outcome assertions only; invocation behavior, synthetic corpus and authority gates unchanged. Earlier all-six campaign keeps its original runner hash; updated runner has focused exec-utc native evidence.",
+    "findings": {
+      "Q0-C-001": "Full-session, exact-permission, invalid-permission and copied-session export checks now require zero exit, no timeout and a written document before matching diagnostics. Previously clean documents could conceal failed or timed-out exporters."
+    },
+    "validation": [
+      "New regression has eight expected failing subcases against original 91a927b7 runner; all pass after repair.",
+      "python3 -B scripts/test_muse_qualification.py: PASS 17 tests",
+      "python3 -B scripts/test_ci_workflow.py: PASS 22 tests",
+      "python3 -B scripts/test_ci_lane_verdict.py: PASS 5 tests",
+      "Focused pinned native exec-utc: PASS 22 assertions; all four export commands exit 0 with timeout false."
+    ],
+    "unchanged_gates": "All existing integrity, creation, children, checkpoint, platform, provider/accounting and storage/capture authority gates remain OPEN/unavailable."
   }
 }

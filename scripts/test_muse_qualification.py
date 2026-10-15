@@ -189,7 +189,7 @@ class QualificationTests(unittest.TestCase):
             case = mock.Mock(root=root, workspace=root, server=mock.Mock(tool=False))
             case.execute.return_value = {"exit": 0, "timeout": False}
             case.logs.return_value = [path]
-            exported = {"export_written": True, "unparseable_lines": 0}
+            exported = {"exit": 0, "timeout": False, "export_written": True, "unparseable_lines": 0}
             def export(_case, source, _name):
                 return dict(exported, unparseable_lines=int(source.name == "permission-invalid.jsonl"))
             with mock.patch.object(probe, "export_diagnostics", side_effect=export), mock.patch.object(probe, "probe_mutations", return_value={}):
@@ -197,6 +197,39 @@ class QualificationTests(unittest.TestCase):
             self.assertTrue(result["assertions"]["resume_success"])
             self.assertFalse(result["assertions"]["resume_has_true_open"])
             self.assertFalse(result["assertions"]["resumed_exact_own_starts"])
+
+    def test_export_failure_after_writing_document_cannot_pass_native_case(self):
+        rows = [json.loads(line)["record"] for line in (FIXTURES / "root-resume.jsonl").read_text().splitlines()]
+        session_id = next(row["stream"]["id"] for row in rows if "stream" in row)
+        second_open = next(index for index, row in enumerate(rows)
+                           if row.get("payload_type") == "session.opened.observed" and
+                           row["payload"]["record"].get("resume"))
+        assertions = {"valid": "native_valid_export_clean", "permission-exact": "native_exact_permission_clean",
+                      "permission-invalid": "native_bad_checksum_diagnostic", "copy": "copy_native_export_clean"}
+        for failed_export, assertion in assertions.items():
+            for exit_code, timed_out in ((9, False), (0, True)):
+                with self.subTest(export=failed_export, exit=exit_code, timeout=timed_out), tempfile.TemporaryDirectory() as directory:
+                    root = pathlib.Path(directory)
+                    folder = root / session_id
+                    folder.mkdir()
+                    path = folder / "session.jsonl"
+                    path.write_text("".join(json.dumps(row) + "\n" for row in rows[:second_open]))
+                    case = mock.Mock(root=root, workspace=root, server=mock.Mock(tool=False))
+                    case.logs.return_value = [path]
+                    def execute(*args):
+                        if args:
+                            path.write_text("".join(json.dumps(row) + "\n" for row in rows))
+                        return {"exit": 0, "timeout": False}
+                    case.execute.side_effect = execute
+                    def export(_case, _source, name):
+                        return {"exit": exit_code if name == failed_export else 0,
+                                "timeout": timed_out if name == failed_export else False,
+                                "export_written": True,
+                                "unparseable_lines": int(name == "permission-invalid")}
+                    with mock.patch.object(probe, "export_diagnostics", side_effect=export), mock.patch.object(probe, "probe_mutations", return_value={"control": {"matched": True}}):
+                        result = probe.probe_exec(case)
+                    self.assertFalse(result["assertions"][assertion])
+                    self.assertTrue(all(ok for name, ok in result["assertions"].items() if name != assertion))
 
     def test_corpus_requires_own_synthetic_conversation_and_preserves_existing_manifest(self):
         with tempfile.TemporaryDirectory() as directory:

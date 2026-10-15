@@ -64,8 +64,9 @@ exact input provenance and gate dispositions. IDs, timestamps, automatic names,
 ports, hashes and durations naturally change on another fresh run; assertions
 and provenance rules must reproduce. Do not compare only the command exit code.
 Native `export` exits **0 with empty stderr for rejected lines**. The runner
-checks `diagnostics.unparseable_lines` in the export, separately from process
-exit and from the event array (a rejected line is itself an export event).
+requires zero process exit without timeout, a written document, and matching
+`diagnostics.unparseable_lines` in the export, separately from the event array
+(a rejected line is itself an export event).
 
 The [fixture directory](../../../internal/agents/muse/testdata) contains complete
 root/resume, own tool/resume, MSP-root, fork and TUI synthetic sessions through

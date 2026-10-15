@@ -421,11 +421,15 @@ def probe_exec(case):
             before["opened"][0]["record"].get("resume") is False,
         "resume_success": resumed["exit"] == 0 and not resumed["timeout"],
         "resume_preserves_prefix": read_limited(path).startswith(first),
-        "native_valid_export_clean": export["export_written"] and export["unparseable_lines"] == 0,
-        "native_exact_permission_clean": exact["export_written"] and exact["unparseable_lines"] == 0,
-        "native_bad_checksum_diagnostic": invalid["unparseable_lines"] == 1,
+        "native_valid_export_clean": export["exit"] == 0 and not export["timeout"] and
+            export["export_written"] and export["unparseable_lines"] == 0,
+        "native_exact_permission_clean": exact["exit"] == 0 and not exact["timeout"] and
+            exact["export_written"] and exact["unparseable_lines"] == 0,
+        "native_bad_checksum_diagnostic": invalid["exit"] == 0 and not invalid["timeout"] and
+            invalid["export_written"] and invalid["unparseable_lines"] == 1,
         "copy_bytes_identical": read_limited(copied) == read_limited(path),
-        "copy_native_export_clean": copy_export["export_written"] and copy_export["unparseable_lines"] == 0,
+        "copy_native_export_clean": copy_export["exit"] == 0 and not copy_export["timeout"] and
+            copy_export["export_written"] and copy_export["unparseable_lines"] == 0,
         "mutation_diagnostics_match": all(value["matched"] for value in mutations.values()),
     }
     return {"assertions": assertions, "fresh": fresh, "resumed": resumed,
