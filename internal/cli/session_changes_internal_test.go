@@ -18,7 +18,7 @@ func (f changeSinkFunc) Hint(ctx context.Context, batch SessionChangeBatch) erro
 func TestSessionChangeFanoutCapsDeduplicatesAndIsolatesConsumerSlices(t *testing.T) {
 	t.Parallel()
 	candidates := []collector.PublicationCandidate{{Harness: "codex", ArchiveSessionID: "one"}, {Harness: "codex", ArchiveSessionID: "one"}, {}}
-	for i := 0; i < 300; i++ {
+	for i := range 300 {
 		candidates = append(candidates, collector.PublicationCandidate{Harness: "claude", ArchiveSessionID: fmt.Sprintf("session-%d", i)})
 	}
 	diagnosed := 0
@@ -39,7 +39,7 @@ func TestSessionChangeFanoutCapsDeduplicatesAndIsolatesConsumerSlices(t *testing
 		batch.Sessions[0].ArchiveSessionID = "second"
 		return nil
 	})
-	dispatchSessionChanges(t.Context(), "original", candidates, []sessionChangeConsumer{{sink: first, diagnostic: func(error) { diagnosed++ }}, {sink: second}})
+	dispatchSessionChanges(t.Context(), "original", candidates, []sessionChangeConsumer{{sink: first, diagnostic: func(context.Context, error) { diagnosed++ }}, {sink: second}})
 	if called != 2 || diagnosed != 1 || candidates[0].ArchiveSessionID != "one" {
 		t.Fatal(called, diagnosed, candidates[0])
 	}

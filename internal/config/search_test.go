@@ -7,6 +7,17 @@ import (
 	"github.com/wangjohn/agent-archive/internal/destination"
 )
 
+type searchLayer string
+
+const (
+	searchLayerLegacy      searchLayer = "legacy"
+	searchLayerPublication searchLayer = "publication"
+	searchLayerStaged      searchLayer = "staged"
+	searchLayerSettled     searchLayer = "settled"
+	searchLayerCatalog     searchLayer = "catalog"
+	searchLayerScoped      searchLayer = "scoped"
+)
+
 func TestSearchConsentDefaultsOffAndRetainsLifecycleFence(t *testing.T) {
 	t.Parallel()
 	cfg := Config{RetentionDays: 90}
@@ -46,24 +57,17 @@ func TestSearchConsentDefaultsOffAndRetainsLifecycleFence(t *testing.T) {
 
 func TestSearchFenceComposesWithEverySelectionLayer(t *testing.T) {
 	t.Parallel()
-	for _, kind := range []string{"legacy", "publication", "staged", "settled", "catalog", "scoped"} {
-		t.Run(kind, func(t *testing.T) {
-			cfg := Config{RetentionDays: 90, DurableStorageProtection: true, ImportStagingProtection: true, HistoricalProjectProtection: true}
-			if kind != "legacy" {
-				cfg.PublicationCompositionProtection = true
+	for _, kind := range []searchLayer{searchLayerLegacy, searchLayerPublication, searchLayerStaged, searchLayerSettled, searchLayerCatalog, searchLayerScoped} {
+		t.Run(string(kind), func(t *testing.T) {
+			t.Parallel()
+			format := destination.FormatLegacy
+			if kind == searchLayerCatalog || kind == searchLayerScoped {
+				format = destination.FormatCatalogV4
 			}
-			if kind == "staged" || kind == "settled" || kind == "scoped" {
-				cfg.StagedSelectionProtection = true
-			}
-			if kind == "settled" || kind == "scoped" {
-				cfg.SettledCursorSelectionProtection = true
-			}
-			if kind == "catalog" || kind == "scoped" {
-				cfg.Storage.ArchiveFormat = destination.FormatCatalogV4
-			}
-			if kind == "scoped" {
-				cfg.ScopedPickerProtection = true
-			}
+			cfg := Config{RetentionDays: 90, DurableStorageProtection: true, ImportStagingProtection: true, HistoricalProjectProtection: true,
+				PublicationCompositionProtection: kind != searchLayerLegacy, StagedSelectionProtection: kind == searchLayerStaged || kind == searchLayerSettled || kind == searchLayerScoped,
+				SettledCursorSelectionProtection: kind == searchLayerSettled || kind == searchLayerScoped, ScopedPickerProtection: kind == searchLayerScoped, Storage: destination.Config{ArchiveFormat: format}}
+
 			before, err := json.Marshal(cfg)
 			if err != nil {
 				t.Fatal(err)
@@ -108,5 +112,35 @@ func TestSearchFenceRefusesMalformedOrUnprotectedConsent(t *testing.T) {
 		if err := json.Unmarshal([]byte(raw), &cfg); err == nil || cfg.MachineID != "unchanged" {
 			t.Fatal("accepted malformed consent or mutated receiver", raw)
 		}
+	}
+}
+
+func TestSearchFenceRetainsPermissionFloorValidation(t *testing.T) {
+	t.Parallel()
+	cfg, _ := discoveryConfig(t)
+	if err := SetSearchIndexing(&cfg, true); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var valid Config
+	if err = json.Unmarshal(raw, &valid); err != nil {
+		t.Fatal(err)
+	}
+	var wire map[string]any
+	if err = json.Unmarshal(raw, &wire); err != nil {
+		t.Fatal(err)
+	}
+	auth := wire["discovery"].(map[string]any)["authorizations"].([]any)[0].(map[string]any)
+	delete(auth, "native_start_floor")
+	broken, err := json.Marshal(wire)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded := Config{MachineID: "unchanged"}
+	if err = json.Unmarshal(broken, &loaded); err == nil || loaded.MachineID != "unchanged" {
+		t.Fatal("outer search fence bypassed permission floors or mutated receiver")
 	}
 }

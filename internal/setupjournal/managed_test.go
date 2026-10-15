@@ -29,10 +29,22 @@ type frozenLegacyJournal struct {
 	FilesOnly     bool               `json:"files_only,omitempty"`
 }
 
+type managedCrashPoint string
+
+const (
+	managedCrashPointJournal          managedCrashPoint = "journal"
+	managedCrashPointCollectorStopped managedCrashPoint = "collector_stopped"
+	managedCrashPointBothStopped      managedCrashPoint = "both_stopped"
+	managedCrashPointPartialFiles     managedCrashPoint = "partial_files"
+	managedCrashPointAllFiles         managedCrashPoint = "all_files"
+	managedCrashPointCollectorLoaded  managedCrashPoint = "collector_loaded"
+	managedCrashPointBothLoaded       managedCrashPoint = "both_loaded"
+)
+
 func TestManagedJournalFencesFrozenOldRecoveryBeforeAnyAction(t *testing.T) {
 	t.Parallel()
 	for _, intent := range []Intent{Keep, EnsureRunning, RestartIfLoaded, EnsureStopped} {
-		j := Journal{Jobs: []ManagedJob{{Role: "search", Backend: "launchd", Ref: "com.agent-archive.search", Definition: "/synthetic/Library/LaunchAgents/com.agent-archive.search.plist", Intent: intent}}}
+		j := Journal{Jobs: []ManagedJob{{Role: SearchRole, Backend: "launchd", Ref: "com.agent-archive.search", Definition: "/synthetic/Library/LaunchAgents/com.agent-archive.search.plist", Intent: intent}}}
 		raw, err := json.Marshal(j)
 		if err != nil {
 			t.Fatal(err)
@@ -95,8 +107,8 @@ func twoRoleFixture(t *testing.T) (*txFixture, string) {
 	f.sim.loaded[simLabel(search)] = search
 	f.journal.Changes = append(f.journal.Changes, fileapply.Change{Path: search, Before: []byte("old search plist"), After: []byte("new search plist"), Existed: true, Mode: 0o600})
 	f.journal.Jobs = []ManagedJob{
-		{Role: "collector", Backend: "launchd", Ref: simLabel(f.own), Definition: f.own, WasLoaded: true, Intent: EnsureRunning},
-		{Role: "search", Backend: "launchd", Ref: simLabel(search), Definition: search, WasLoaded: true, Intent: EnsureRunning},
+		{Role: CollectorRole, Backend: "launchd", Ref: simLabel(f.own), Definition: f.own, WasLoaded: true, Intent: EnsureRunning},
+		{Role: SearchRole, Backend: "launchd", Ref: simLabel(search), Definition: search, WasLoaded: true, Intent: EnsureRunning},
 	}
 	return f, search
 }
@@ -178,34 +190,36 @@ type managedPlistScheduler struct{ plistScheduler }
 func (managedPlistScheduler) Ref(inst scheduler.Installation) scheduler.Ref {
 	return (launchd.Scheduler{}).Ref(inst)
 }
+
 func managedBackends(sim *launchdSim) Backends {
 	return func(string) (scheduler.Scheduler, error) { return managedPlistScheduler{plistScheduler{sim}}, nil }
 }
 
 func TestManagedRecoveryRestoresBothRolesAtEveryCrashBoundary(t *testing.T) {
 	t.Parallel()
-	for _, point := range []string{"journal", "collector_stopped", "both_stopped", "partial_files", "all_files", "collector_loaded", "both_loaded"} {
-		t.Run(point, func(t *testing.T) {
+	for _, point := range []managedCrashPoint{managedCrashPointJournal, managedCrashPointCollectorStopped, managedCrashPointBothStopped, managedCrashPointPartialFiles, managedCrashPointAllFiles, managedCrashPointCollectorLoaded, managedCrashPointBothLoaded} {
+		t.Run(string(point), func(t *testing.T) {
 			t.Parallel()
 			f, search := twoRoleFixture(t)
 			f.loaded[simLabel(search)] = search
 			must(t, local.Write(JournalPath(f.home), f.journal))
-			if point != "journal" {
+			if point != managedCrashPointJournal {
 				must(t, f.sim.Unload(f.own))
 			}
-			if point != "journal" && point != "collector_stopped" {
+			if point != managedCrashPointJournal && point != managedCrashPointCollectorStopped {
 				must(t, f.sim.Unload(search))
 			}
 			switch point {
-			case "partial_files":
+			case managedCrashPointJournal, managedCrashPointCollectorStopped, managedCrashPointBothStopped:
+			case managedCrashPointPartialFiles:
 				must(t, fileapply.Apply(f.journal.Changes[:1]))
-			case "all_files", "collector_loaded", "both_loaded":
+			case managedCrashPointAllFiles, managedCrashPointCollectorLoaded, managedCrashPointBothLoaded:
 				must(t, fileapply.Apply(f.journal.Changes))
 			}
-			if point == "collector_loaded" || point == "both_loaded" {
+			if point == managedCrashPointCollectorLoaded || point == managedCrashPointBothLoaded {
 				must(t, f.sim.Load(f.own))
 			}
-			if point == "both_loaded" {
+			if point == managedCrashPointBothLoaded {
 				must(t, f.sim.Load(search))
 			}
 			must(t, Recover(f.home, managedBackends(f.sim), noLock))

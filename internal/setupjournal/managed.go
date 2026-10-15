@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/wangjohn/agent-archive/internal/fileapply"
+	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/scheduler"
 )
 
@@ -24,14 +25,24 @@ const (
 	EnsureStopped Intent = "ensure_stopped"
 )
 
+// ManagedRole names one of the two finite lifecycle records.
+type ManagedRole string
+
+const (
+	// CollectorRole is the original publication job.
+	CollectorRole ManagedRole = "collector"
+	// SearchRole is the optional local content indexing job.
+	SearchRole ManagedRole = "search"
+)
+
 // ManagedJob records one of the installation's two owned jobs.
 type ManagedJob struct {
-	Role       string `json:"role"`
-	Backend    string `json:"backend"`
-	Ref        string `json:"ref"`
-	Definition string `json:"definition"`
-	WasLoaded  bool   `json:"was_loaded"`
-	Intent     Intent `json:"intent"`
+	Role       ManagedRole `json:"role"`
+	Backend    string      `json:"backend"`
+	Ref        string      `json:"ref"`
+	Definition string      `json:"definition"`
+	WasLoaded  bool        `json:"was_loaded"`
+	Intent     Intent      `json:"intent"`
 }
 
 type journalJSON Journal
@@ -110,14 +121,14 @@ func validateJobs(jobs []ManagedJob) error {
 	if len(jobs) == 0 || len(jobs) > 2 {
 		return errors.New("setup journal requires one or two managed roles")
 	}
-	seen := map[string]bool{}
+	seen := map[ManagedRole]bool{}
 	search := false
 	for _, job := range jobs {
-		if (job.Role != "collector" && job.Role != "search") || seen[job.Role] {
+		if (job.Role != CollectorRole && job.Role != SearchRole) || seen[job.Role] {
 			return errors.New("invalid or duplicate managed role")
 		}
 		seen[job.Role] = true
-		search = search || job.Role == "search"
+		search = search || job.Role == SearchRole
 		if job.Backend == "" || job.Ref == "" || job.Definition == "" {
 			return errors.New("managed role requires backend, ref and definition")
 		}
@@ -142,6 +153,7 @@ type managedTarget struct {
 func (j managedTarget) mutates() bool {
 	return j.Intent != Keep && (j.Intent != RestartIfLoaded || j.WasLoaded)
 }
+
 func (j managedTarget) starts() bool {
 	return j.Intent == EnsureRunning || j.Intent == RestartIfLoaded && j.WasLoaded
 }
@@ -153,7 +165,7 @@ func (b Backends) managed(home string, j Journal, recovering bool) ([]managedTar
 		if j.FilesOnly {
 			intent = Keep
 		}
-		records = []ManagedJob{{Role: "collector", Backend: j.Backend, Ref: j.JobRef, Definition: j.Plist, WasLoaded: j.WasLoaded, Intent: intent}}
+		records = []ManagedJob{{Role: CollectorRole, Backend: j.Backend, Ref: j.JobRef, Definition: j.Plist, WasLoaded: j.WasLoaded, Intent: intent}}
 	} else if err := validateJobs(records); err != nil {
 		return nil, err
 	}
@@ -179,21 +191,12 @@ func (b Backends) managed(home string, j Journal, recovering bool) ([]managedTar
 			jobs = append(jobs, job)
 			continue
 		}
-		job.target = b.target(record.Backend, record.Ref, record.Definition)
-		if job.target.err != nil {
-			return nil, job.target.err
+		resolved, err := b.resolveManaged(home, record, len(j.Jobs) > 0)
+		if err != nil {
+			return nil, err
 		}
-		if len(j.Jobs) > 0 {
-			role := scheduler.Collector
-			if record.Role == "search" {
-				role = scheduler.Search
-			}
-			own := job.target.sched.Ref(scheduler.Installation{DataHome: home, Role: role})
-			defaultRef := job.target.sched.Ref(scheduler.Installation{DataHome: home, Default: true, Role: role})
-			if job.target.ref != own && job.target.ref != defaultRef {
-				return nil, fmt.Errorf("%s ref does not belong to this installation", record.Role)
-			}
-		}
+		job.target = resolved
+
 		jobs = append(jobs, job)
 	}
 	// Every role and retired target has resolved before the first state query.
@@ -222,6 +225,25 @@ func (b Backends) managed(home string, j Journal, recovering bool) ([]managedTar
 		}
 	}
 	return jobs, nil
+}
+
+func (b Backends) resolveManaged(home string, record ManagedJob, guarded bool) (target, error) {
+	resolved := b.target(record.Backend, record.Ref, record.Definition)
+	if resolved.err != nil {
+		return target{}, resolved.err
+	}
+	if guarded {
+		role := scheduler.Collector
+		if record.Role == SearchRole {
+			role = scheduler.Search
+		}
+		own := resolved.sched.Ref(scheduler.Installation{DataHome: local.CanonicalPath(home), Role: role})
+		defaultRef := resolved.sched.Ref(scheduler.Installation{DataHome: local.CanonicalPath(home), Default: true, Role: role})
+		if resolved.ref != own && resolved.ref != defaultRef {
+			return target{}, fmt.Errorf("%s ref does not belong to this installation", record.Role)
+		}
+	}
+	return resolved, nil
 }
 
 // checkJournalKeys rejects ambiguous authority fields before decoding v2 values.

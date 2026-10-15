@@ -128,12 +128,10 @@ func uninstall(purge, yes, skipScheduler bool, stdin io.Reader, out io.Writer, e
 	if err != nil {
 		return err
 	}
-	if purge {
-		pending, _ := unpublishedSessions(home, cfg, found)
-		if pending > previewPending {
-			return fmt.Errorf("new pending evidence appeared while confirming; rerun uninstall to review it")
-		}
+	if err := checkPurgePendingGrowth(home, cfg, found, purge, previewPending); err != nil {
+		return err
 	}
+
 	in := env.installation(home, userHome)
 	hookFiles := env.installedHookFiles(userHome, cfg)
 	changes, skipped, err := planUninstallFiles(userHome, hookFiles, in, installedApps(cfg, found, in.owner().Ports), env.agentRegistry())
@@ -151,12 +149,10 @@ func uninstall(purge, yes, skipScheduler bool, stdin io.Reader, out io.Writer, e
 		return err
 	}
 	// Disable capture before removing hooks. A partial uninstall remains safely disabled.
-	if found {
-		cfg.Archive.Enabled = false
-		if err = config.Save(home, cfg); err != nil {
-			return err
-		}
+	if err = disableCaptureForUninstall(home, &cfg, found); err != nil {
+		return err
 	}
+
 	if err = hooks.Apply(changes); err != nil {
 		if errors.Is(err, hooks.ErrChanged) {
 			return fmt.Errorf("%w; capture is already disabled, so rerun agent-archive uninstall to finish", err)
@@ -763,7 +759,7 @@ var localStateEntries = []string{
 	machineRegistrationFile, "config.json", "setup-draft.json", "setup-transaction.json", "imports",
 	"storage-health.json", "capture-diagnostics.json", "diagnostics.lock", "application-versions.json",
 	"admission-intents", "admission-intents.lock", "admission-replay-cursor.json",
-	"search-worker.lock", "search.log", "search-error.log",
+	"search", "search-worker.lock", "search.log", "search-error.log",
 	"collector.lock", collectorLockRecordName, "collector.log", "collector-error.log",
 	"cache", handoffDir, "purge-plans", "issued", "issued.lock", "revocations", "revocations.lock", ownKeyFile,
 	// The credential files kept where there is no Keychain (Linux).
@@ -808,4 +804,21 @@ func removeLocalState(home string) (leftover []string, err error) {
 	// Lock files are skipped here because they are still held; uninstall
 	// removes them after releasing them (see removeLockFiles).
 	return nil, nil
+}
+
+func checkPurgePendingGrowth(home string, cfg config.Config, found, purge bool, preview int) error {
+	if purge {
+		if pending, _ := unpublishedSessions(home, cfg, found); pending > preview {
+			return errors.New("new pending evidence appeared while confirming; rerun uninstall to review it")
+		}
+	}
+	return nil
+}
+
+func disableCaptureForUninstall(home string, cfg *config.Config, found bool) error {
+	if !found {
+		return nil
+	}
+	cfg.Archive.Enabled = false
+	return config.Save(home, *cfg)
 }

@@ -193,14 +193,12 @@ func decodeConfig(data []byte, c *Config) (bool, error) {
 }
 
 func validateCompositionConfig(plain configJSON, fenced bool) error {
-	if plain.SearchLifecycleProtection {
-		if !fenced || plain.SchemaVersion != 16 {
-			return errors.New("search lifecycle requires its permanent writer fence")
-		}
-		plain = configJSON(searchUnderlyingConfig(Config(plain)))
-	} else if plain.SearchIndexing || plain.SchemaVersion == 16 {
-		return errors.New("search indexing requires lifecycle protection")
+	var err error
+	plain, err = searchCompositionConfig(plain, fenced)
+	if err != nil {
+		return err
 	}
+
 	scoped := plain.SchemaVersion == 14 && plain.ScopedPickerProtection && plain.Storage.EffectiveArchiveFormat() == destination.FormatCatalogV4
 	staged := (plain.SchemaVersion == 13 || plain.SchemaVersion == 15 && plain.SettledCursorSelectionProtection) && plain.Storage.EffectiveArchiveFormat() == destination.FormatLegacy
 	if plain.ScopedPickerProtection && (!fenced || !scoped) {
@@ -219,6 +217,18 @@ func validateCompositionConfig(plain configJSON, fenced bool) error {
 		return errors.New("catalog format requires its supported forward writer fence")
 	}
 	return nil
+}
+
+func searchCompositionConfig(plain configJSON, fenced bool) (configJSON, error) {
+	if plain.SearchLifecycleProtection {
+		if !fenced || plain.SchemaVersion != 16 {
+			return plain, errors.New("search lifecycle requires its permanent writer fence")
+		}
+		plain = configJSON(searchUnderlyingConfig(Config(plain)))
+	} else if plain.SearchIndexing || plain.SchemaVersion == 16 {
+		return plain, errors.New("search indexing requires lifecycle protection")
+	}
+	return plain, nil
 }
 
 func validateRememberedSettledComposition(c configJSON, fenced, scoped bool) error {
@@ -268,11 +278,18 @@ func validateWriterVersion(c Config, version writerVersion) error {
 			return errors.New("unsupported search lifecycle writer")
 		}
 		lower := searchUnderlyingConfig(c)
-		return validateDiscoveryConfig(lower)
+		if err := validateDiscoveryConfig(lower); err != nil {
+			return err
+		}
+		return validateWriterFloors(c, version)
 	}
 	if c.SearchLifecycleProtection || c.SearchIndexing {
 		return errors.New("search lifecycle requires its permanent writer fence")
 	}
+	return validateLowerWriterVersion(c, version)
+}
+
+func validateLowerWriterVersion(c Config, version writerVersion) error {
 	if err := validateScopedWriterMarker(c, version); err != nil {
 		return err
 	}
@@ -379,7 +396,7 @@ func validateWriterFloors(c Config, version writerVersion) error {
 
 func writerHasPermissionFloors(writer configWriter) bool {
 	switch writer {
-	case generationWriter, codexHistoryWriter, durableStorageWriter, retentionWriter, importStagingWriter, historicalProjectWriter, catalogWriter, publicationCompositionWriter, stagedSelectionWriter, settledCursorSelectionWriter, scopedPickerWriter:
+	case searchLifecycleWriter, generationWriter, codexHistoryWriter, durableStorageWriter, retentionWriter, importStagingWriter, historicalProjectWriter, catalogWriter, publicationCompositionWriter, stagedSelectionWriter, settledCursorSelectionWriter, scopedPickerWriter:
 		return true
 	case legacyDiscoveryWriter, discoveryWriter, legacyCodexWriter, codexWriter:
 		return false

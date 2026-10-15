@@ -232,6 +232,10 @@
           "items": {
             "type": "string"
           }
+        },
+        "pending_rechecks": {
+          "type": "integer",
+          "minimum": 0
         }
       },
       "required": [
@@ -247,7 +251,8 @@
         "pending_sessions",
         "failed_sessions",
         "unsupported_sessions",
-        "limitations"
+        "limitations",
+        "pending_rechecks"
       ],
       "additionalProperties": false
     },

@@ -20,7 +20,7 @@ follow [Semantic Versioning](https://semver.org/).
   `search --refresh` now resumes bounded namespace-wide archive catch-up, including
   other-machine metadata/privacy changes and confirmed removals. Coverage reports
   local observation and stable-snapshot discovery separately from indexing gaps.
-  Refresh is manual; no background work is installed.
+  Automatic refresh remains off until explicitly enabled for this machine.
   Refresh now resumes bounded work after interruption, reuses unchanged sources,
   and records retry/backoff state without delaying archive publication.
 

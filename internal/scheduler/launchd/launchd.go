@@ -100,7 +100,12 @@ func (s Scheduler) Plan(site scheduler.Site, inst scheduler.Installation, spec s
 		return scheduler.Plan{}, errors.New("a LaunchAgent runs the collector: _collect every minute, at load")
 	}
 	ref := s.Ref(inst)
-	plist, err := launchAgent(spec.Executable, spec.DataHome, string(ref), spec.Env, inst.Role)
+	var plist []byte
+	if inst.Role == scheduler.Collector {
+		plist, err = LaunchAgent(spec.Executable, spec.DataHome, string(ref), spec.Env)
+	} else {
+		plist, err = launchAgent(spec.Executable, spec.DataHome, string(ref), spec.Env, inst.Role)
+	}
 	if err != nil {
 		return scheduler.Plan{}, err
 	}

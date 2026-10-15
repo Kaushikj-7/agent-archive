@@ -7,7 +7,6 @@ import (
 	"github.com/wangjohn/agent-archive/internal/local"
 	"io"
 	"os"
-	"time"
 
 	"github.com/wangjohn/agent-archive/internal/catalog"
 	"github.com/wangjohn/agent-archive/internal/config"
@@ -55,15 +54,11 @@ func runPickerUpgrade(stdout, stderr io.Writer, env Env, rollback bool) int {
 		return fail(err)
 	}
 	defer unlock()
-	releaseSearch, err := local.NamedLockWait(home, "search-worker.lock", 2*time.Second)
+	releaseSearch, err := lockSearchDestination(home, cfg)
 	if err != nil {
-		return fail(fmt.Errorf("search indexing is finishing; retry migration: %w", err))
+		return fail(err)
 	}
 	defer releaseSearch()
-	current, found, err := config.Load(home)
-	if err != nil || !found || current.DestinationID() != cfg.DestinationID() || setupjournal.TransactionPending(home) {
-		return fail(fmt.Errorf("destination changed or setup pending; retry migration"))
-	}
 
 	if err = ensurePickerPendingDrained(home); err != nil {
 		return fail(err)

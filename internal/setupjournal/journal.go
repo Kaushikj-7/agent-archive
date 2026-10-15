@@ -183,7 +183,7 @@ func Restore(home string, journal Journal, backends Backends) error {
 		}
 		if job.state.Active() {
 			if err := job.target.unload(); err != nil {
-				return job.target.blocked(home, "stop the background "+job.Role, err)
+				return job.target.blocked(home, "stop the background "+string(job.Role), err)
 			}
 		}
 	}
@@ -199,7 +199,7 @@ func Restore(home string, journal Journal, backends Backends) error {
 		}
 		if job.WasLoaded && job.state != scheduler.AnotherInstallation {
 			if err := job.target.load(); err != nil {
-				return job.target.blocked(home, "restart the background "+job.Role, err)
+				return job.target.blocked(home, "restart the background "+string(job.Role), err)
 			}
 		}
 	}

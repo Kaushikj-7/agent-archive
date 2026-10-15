@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -125,10 +126,7 @@ func TestPurgePreservesHeldSearchFenceUntilFinalLockRemoval(t *testing.T) {
 	if _, err = os.Stat(filepath.Join(home, "search-error.log")); !os.IsNotExist(err) {
 		t.Fatal("purge left search log", err)
 	}
-	for _, name := range uninstallLockFiles {
-		if name == "search-worker.lock" {
-			return
-		}
+	if !slices.Contains(uninstallLockFiles, "search-worker.lock") {
+		t.Fatal("final lock unlink list omitted search fence")
 	}
-	t.Fatal("final lock unlink list omitted search fence")
 }

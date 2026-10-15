@@ -8,6 +8,7 @@ import (
 )
 
 const sessionChangeLimit = 256
+
 const sessionChangeSlice = 20 * time.Millisecond
 
 // SessionChangeBatch carries captured destination and bounded publication identities.
@@ -26,12 +27,13 @@ type SessionChangeSink interface {
 
 type sessionChangeConsumer struct {
 	sink       SessionChangeSink
-	diagnostic func(error)
+	diagnostic func(context.Context, error)
 }
 
 type passChanges struct {
 	home        string
 	destination string
+	namespace   string
 	enabled     bool
 }
 
@@ -57,17 +59,20 @@ func dispatchSessionChanges(ctx context.Context, destination string, candidates 
 		return
 	}
 	consumers = consumers[:min(len(consumers), 2)]
-	aggregate, cancel := context.WithTimeout(ctx, time.Duration(len(consumers))*sessionChangeSlice)
-	defer cancel()
+	// Reserve an aggregate budget as disjoint per-consumer slices. Each child
+	// gets its own reservation: one consumer cannot spend another's deadline.
+	remaining := time.Duration(len(consumers)) * sessionChangeSlice
 	for _, consumer := range consumers {
-		if aggregate.Err() != nil {
+		if ctx.Err() != nil {
 			return
 		}
-		slice, done := context.WithTimeout(aggregate, sessionChangeSlice)
+		allowance := min(sessionChangeSlice, remaining)
+		remaining -= allowance
+		slice, done := context.WithTimeout(ctx, allowance)
 		err := consumer.sink.Hint(slice, SessionChangeBatch{DestinationID: destination, Sessions: append([]collector.PublicationCandidate(nil), bounded...)})
-		done()
-		if err != nil && consumer.diagnostic != nil {
-			consumer.diagnostic(err)
+		if err != nil && consumer.diagnostic != nil && slice.Err() == nil {
+			consumer.diagnostic(slice, err)
 		}
+		done()
 	}
 }

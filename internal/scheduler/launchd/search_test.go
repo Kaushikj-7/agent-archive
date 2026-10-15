@@ -34,7 +34,8 @@ func TestSearchRoleHasIndependentDefinitionAndNoCollectorAliases(t *testing.T) {
 	if _, err = s.Plan(site, inst, spec); err == nil {
 		t.Fatal("search role accepted collector command")
 	}
-	inst.Role = "arbitrary"
+	const unknownRole scheduler.Role = "arbitrary"
+	inst.Role = unknownRole
 	if _, err = s.Plan(site, inst, spec); err == nil {
 		t.Fatal("unknown role accepted")
 	}

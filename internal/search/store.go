@@ -315,6 +315,7 @@ type Observation struct {
 	Indexed                int
 	Unsupported            int
 	Pending                int      `json:"Pending"`
+	Rechecks               int      `json:"Rechecks"`
 	Failed                 int      `json:"Failed"`
 	Complete               bool     `json:"Complete"`
 	Limitations            []string `json:"Limitations"`

@@ -33,12 +33,19 @@ const (
 	discoveryOff discoverySetting = "off"
 )
 
+type searchIndexingSetting string
+
+const (
+	searchIndexingOn  searchIndexingSetting = "on"
+	searchIndexingOff searchIndexingSetting = "off"
+)
+
 // setupOptions are setup's answers given as flags, for setup --yes.
 type setupOptions struct {
 	// pairingInput preserves answers buffered by first-run onboarding. The original
 	// stdin remains the terminal identity used for private code entry.
 	pairingInput             io.Reader
-	searchIndexing           string
+	searchIndexing           searchIndexingSetting
 	codexDiscovery           string
 	codexCaptureScope        string
 	pair                     bool
@@ -134,10 +141,11 @@ func (l *projectList) Set(value string) error {
 func setupFlags(fs *commandFlags, args []string) (setupOptions, bool) {
 	var opts setupOptions
 	fs.Func("search-indexing", "on or off; automatic local content indexing (default off)", func(value string) error {
-		if value != "on" && value != "off" {
+		setting := searchIndexingSetting(value)
+		if setting != searchIndexingOn && setting != searchIndexingOff {
 			return errors.New("search-indexing must be on or off")
 		}
-		opts.searchIndexing = value
+		opts.searchIndexing = setting
 		return nil
 	})
 	fs.BoolVar(&opts.pair, "pair", false, "import an encrypted pairing bundle")
@@ -404,7 +412,7 @@ func (opts setupOptions) applyRetentionAnswer(cfg *config.Config) error {
 func setupAnswers(existing config.Config, opts setupOptions, home, userHome string, installed bool, env Env) (config.Config, credentials.R2Credentials, error) {
 	cfg := existing
 	if opts.searchIndexing != "" {
-		if err := config.SetSearchIndexing(&cfg, opts.searchIndexing == "on"); err != nil {
+		if err := config.SetSearchIndexing(&cfg, opts.searchIndexing == searchIndexingOn); err != nil {
 			return cfg, credentials.R2Credentials{}, err
 		}
 	}

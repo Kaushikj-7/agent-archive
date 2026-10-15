@@ -24,6 +24,7 @@ type searchCommandDependencies interface {
 }
 
 type contentSearchOptions struct {
+	automatic   bool
 	query       search.Query
 	refresh     bool
 	session     string

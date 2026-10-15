@@ -228,13 +228,22 @@ func (s Scheduler) Plan(site scheduler.Site, inst scheduler.Installation, spec s
 		return scheduler.Plan{}, errors.New("a systemd user timer runs the collector: _collect every minute, at load")
 	}
 	ref := s.Ref(inst)
-	service, err := renderRoleService(spec.Executable, spec.DataHome, spec.Env, inst.Role)
+	var service []byte
+	if inst.Role == scheduler.Collector {
+		service, err = renderService(spec.Executable, spec.DataHome, spec.Env)
+	} else {
+		service, err = renderRoleService(spec.Executable, spec.DataHome, spec.Env, inst.Role)
+	}
 	if err != nil {
 		return scheduler.Plan{}, err
 	}
+	timer := renderTimer(string(ref))
+	if inst.Role == scheduler.Search {
+		timer = renderRoleTimer(string(ref), inst.Role)
+	}
 	return scheduler.Plan{Ref: ref, Artifacts: []scheduler.Artifact{
 		scheduler.FileArtifact(s.servicePath(site, ref), service, 0o600),
-		scheduler.FileArtifact(s.timerPath(site, ref), renderRoleTimer(string(ref), inst.Role), 0o600),
+		scheduler.FileArtifact(s.timerPath(site, ref), timer, 0o600),
 	}}, nil
 }
 

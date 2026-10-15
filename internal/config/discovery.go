@@ -639,6 +639,10 @@ func unsupportedPreparedWriter(c Config) bool {
 		}
 		c = searchUnderlyingConfig(c)
 	}
+	return unsupportedLowerPreparedWriter(c)
+}
+
+func unsupportedLowerPreparedWriter(c Config) bool {
 	return (c.SchemaVersion > 5 && c.SchemaVersion != 7 && c.SchemaVersion != 8 && c.SchemaVersion != 9 && c.SchemaVersion != 10 && c.SchemaVersion != 11 && c.SchemaVersion != 12 && c.SchemaVersion != 13 && c.SchemaVersion != 14 && c.SchemaVersion != 15) || unsupportedScopedPreparedWriter(c) || (c.SchemaVersion == 12 && (!c.PublicationCompositionProtection || !c.DurableStorageProtection)) || (c.SchemaVersion == 11 && c.Storage.EffectiveArchiveFormat() != destination.FormatCatalogV4) || (c.SchemaVersion == 10 && !c.HistoricalProjectProtection) || (c.SchemaVersion == 9 && !c.ImportStagingProtection) || (c.SchemaVersion == 8 && !c.RetentionProtection) || (c.SchemaVersion == 7 && !c.DurableStorageProtection) || (c.SchemaVersion == 5 && !c.CodexHistoryProtection) || (c.SchemaVersion == 4 && !c.GenerationProtection) || (c.SchemaVersion == 3 && c.CodexCapture == nil)
 }
 

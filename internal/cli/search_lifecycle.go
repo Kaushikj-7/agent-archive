@@ -3,6 +3,9 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"time"
+
+	"github.com/wangjohn/agent-archive/internal/local"
 
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/hooks"
@@ -10,7 +13,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
 )
 
-func managedRole(role string, in installation, definition string, loaded bool, intent setupjournal.Intent) setupjournal.ManagedJob {
+func managedRole(role setupjournal.ManagedRole, in installation, definition string, loaded bool, intent setupjournal.Intent) setupjournal.ManagedJob {
 	return setupjournal.ManagedJob{Role: role, Backend: in.sched().Name(), Ref: string(in.ref()), Definition: definition, WasLoaded: loaded, Intent: intent}
 }
 
@@ -48,8 +51,8 @@ func planSearchSetup(home, userHome, executable string, old, next config.Config,
 	definition, _ := plan.Artifacts[0].Path()
 	j.Changes = append(j.Changes, changes...)
 	j.Jobs = []setupjournal.ManagedJob{
-		managedRole("collector", env.installation(home, userHome), j.Plist, j.WasLoaded, setupjournal.EnsureRunning),
-		managedRole("search", in, definition, status.State.Active(), intent),
+		managedRole(setupjournal.CollectorRole, env.installation(home, userHome), j.Plist, j.WasLoaded, setupjournal.EnsureRunning),
+		managedRole(setupjournal.SearchRole, in, definition, status.State.Active(), intent),
 	}
 	return nil
 }
@@ -76,7 +79,7 @@ func planSearchRefresh(home, userHome, exe string, cfg config.Config, env Env, p
 	if !plan.journal.FilesOnly {
 		collectorIntent = setupjournal.RestartIfLoaded
 	}
-	collector := managedRole("collector", env.installation(home, userHome), plan.journal.Plist, plan.journal.WasLoaded, collectorIntent)
+	collector := managedRole(setupjournal.CollectorRole, env.installation(home, userHome), plan.journal.Plist, plan.journal.WasLoaded, collectorIntent)
 	in := env.installation(home, userHome).searchRole()
 	definition := env.jobDefinition(userHome, in.ref())
 	changes, err := refreshJob(in, userHome, home, exe, definition)
@@ -106,6 +109,20 @@ func planSearchRefresh(home, userHome, exe string, cfg config.Config, env Env, p
 		path, _ = desired.Artifacts[0].Path()
 	}
 	plan.journal.Changes = append(plan.journal.Changes, changes...)
-	plan.journal.Jobs = []setupjournal.ManagedJob{collector, managedRole("search", in, path, loaded, intent)}
+	plan.journal.Jobs = []setupjournal.ManagedJob{collector, managedRole(setupjournal.SearchRole, in, path, loaded, intent)}
 	return nil
+}
+
+// lockSearchDestination fences destination/credential authority through cutover.
+func lockSearchDestination(home string, expected config.Config) (func(), error) {
+	release, err := local.NamedLockWait(home, "search-worker.lock", 2*time.Second)
+	if err != nil {
+		return nil, fmt.Errorf("search indexing is finishing; retry migration: %w", err)
+	}
+	current, found, err := config.Load(home)
+	if err != nil || !found || current.DestinationID() != expected.DestinationID() || setupjournal.TransactionPending(home) {
+		release()
+		return nil, errors.New("destination changed or setup pending; retry migration")
+	}
+	return release, nil
 }

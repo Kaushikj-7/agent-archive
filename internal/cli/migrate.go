@@ -4,12 +4,10 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"time"
 
 	"github.com/wangjohn/agent-archive/internal/catalog"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/destination"
-	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/terminal"
@@ -47,14 +45,8 @@ func runMigrateCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	if !found {
 		return fail(errNotSetUp)
 	}
-	targetConfig := cfg
-	targetConfig.Storage.ArchiveFormat = destination.FormatCatalogV4
-	if *prefix != "" {
-		targetConfig.Storage.Prefix = *prefix
-	}
-	if *bucket != "" {
-		targetConfig.Storage.Bucket = *bucket
-	}
+	targetConfig := migrationDestinationConfig(cfg, *prefix, *bucket)
+
 	ctx := context.Background()
 	// Provider qualification and cutover authority are checked before acquiring
 	// local locks, creating migration objects or changing any configuration.
@@ -79,15 +71,11 @@ func runMigrateCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		return fail(err)
 	}
 	defer unlock()
-	releaseSearch, err := local.NamedLockWait(home, "search-worker.lock", 2*time.Second)
+	releaseSearch, err := lockSearchDestination(home, cfg)
 	if err != nil {
-		return fail(fmt.Errorf("search indexing is finishing; retry migration: %w", err))
+		return fail(err)
 	}
 	defer releaseSearch()
-	current, found, err := config.Load(home)
-	if err != nil || !found || current.DestinationID() != cfg.DestinationID() || setupjournal.TransactionPending(home) {
-		return fail(fmt.Errorf("destination changed or setup pending; retry migration"))
-	}
 
 	migration, err := openMigrationForCLI(ctx, home, *scoped, source, target, sourceConfig.Storage, targetConfig.Storage, authority)
 	if err != nil {
@@ -176,4 +164,15 @@ func openMigrationForCLI(ctx context.Context, home string, scoped bool, source, 
 		return nil, err
 	}
 	return migrationOpener(scoped)(ctx, source, target, sourceConfig, targetConfig, authority)
+}
+
+func migrationDestinationConfig(cfg config.Config, prefix, bucket string) config.Config {
+	cfg.Storage.ArchiveFormat = destination.FormatCatalogV4
+	if prefix != "" {
+		cfg.Storage.Prefix = prefix
+	}
+	if bucket != "" {
+		cfg.Storage.Bucket = bucket
+	}
+	return cfg
 }
