@@ -164,6 +164,44 @@ def pr_extras(event, tested):
         return dict(full, reason='representative fallback: source proof unavailable')
 
 
+def read_unique_json(path):
+    def unique(pairs):
+        value = dict(pairs)
+        if len(value) != len(pairs):
+            raise Failure('duplicate JSON field in plan evidence')
+        return value
+    return json.loads(Path(path).read_text(), object_pairs_hook=unique)
+
+
+def verify_plan(path, expected):
+    source = git('rev-parse', 'HEAD')
+    if (not isinstance(expected, dict) or expected.get('source') != source or source != os.environ.get('GITHUB_SHA', source)
+            or read_unique_json(path) != expected):
+        raise Failure('canonical and independently recomputed tier plans differ')
+
+
+def verify_native_plan(directory, expected):
+    """Bind native selection; Darwin still owns its raw/context verification."""
+    report = read_unique_json(Path(directory)/'tier.json')
+    proof = full_race.source_proof(ROOT)
+    if not isinstance(expected, dict) or not isinstance(report, dict):
+        raise Failure('malformed native plan evidence')
+    native = report.get('native_smoke', {})
+    if not isinstance(native, dict):
+        raise Failure('malformed native selection evidence')
+    if (expected.get('tier') != 'pr' or proof.get('source') != expected.get('source')
+            or expected.get('source') != os.environ['GITHUB_SHA']
+            or report.get('source') != expected['source'] or report.get('source_proof') != proof
+            or report.get('schema') != 1 or report.get('success') is not True
+            or report.get('tier') != 'pr' or report.get('suite') != 'macos'
+            or report.get('event') != os.environ.get('GITHUB_EVENT_NAME')
+            or report.get('ref') != os.environ.get('GITHUB_REF', '')
+            or report.get('extras') != expected
+            or native.get('sensitive') is not bool(expected.get('native'))
+            or native.get('source_proof') != proof or native.get('post_source_proof') != proof):
+        raise Failure('native coverage selection differs from independent current tier plan')
+
+
 def terminals(text):
     """An observed skip is retained as skip, including nested children."""
     items, runs, reasons = {}, set(), {}
@@ -1021,6 +1059,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--plan', action='store_true')
     parser.add_argument('--verify', action='store_true')
+    parser.add_argument('--verify-plan', action='store_true')
+    parser.add_argument('--verify-native-plan', action='store_true')
+    parser.add_argument('--require-pr-proof', action='store_true', help='local fan-out planning refuses history/source fallback')
     parser.add_argument('--verify-audit', action='store_true')
     parser.add_argument('--own-plain-vet', action='store_true')
     parser.add_argument('--native-local', action='store_true', help='local native diagnostics only; cannot qualify hosted CI')
@@ -1030,7 +1071,11 @@ def main():
     parser.add_argument('--extra-plan', type=Path)
     parser.add_argument('--seconds', type=int, default=2400)
     args = parser.parse_args()
-    if args.native_local and (args.plan or args.verify or args.verify_audit or args.own_plain_vet):
+    if (args.verify_plan or args.verify_native_plan) and args.extra_plan is None:
+        parser.error('plan verification requires --extra-plan')
+    if args.require_pr_proof and not args.plan:
+        parser.error('--require-pr-proof requires --plan')
+    if args.native_local and (args.plan or args.verify or args.verify_audit or args.verify_plan or args.verify_native_plan or args.own_plain_vet):
         parser.error('--native-local only supports local native test execution')
     if args.seconds <= 0:
         parser.error('--seconds must be positive')
@@ -1050,6 +1095,12 @@ def main():
             tier = 'full'  # exact candidates and manual suites cannot be downgraded
         if event == 'schedule' and args.tier and args.tier != resolved:
             raise Failure('explicit tier conflicts with scheduled cadence')
+        if args.verify_plan:
+            verify_plan(args.output, read_unique_json(args.extra_plan))
+            return 0
+        if args.verify_native_plan:
+            verify_native_plan(args.output, read_unique_json(args.extra_plan))
+            return 0
         if args.verify_audit:
             import run_go_shard
             context_hash = run_go_shard.digest(plain_vet_identity(plain_vet_context())) if args.own_plain_vet else None
@@ -1066,6 +1117,9 @@ def main():
             if source != os.environ.get('GITHUB_SHA',source):
                 raise Failure('plan source mismatch')
             extra = pr_extras(json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text()),source) if tier == 'pr' else {'packages':[],'native':False,'systemd':False,'fuzz':False,'purge':False}
+            if (args.require_pr_proof and tier == 'pr'
+                    and extra.get('reason') != 'verified base/head/tested merge'):
+                raise Failure('local fan-out planning requires verified PR source and complete history')
             plan = dict(extra, source=source, tier=tier)
             args.output.parent.mkdir(parents=True,exist_ok=True)
             args.output.write_text(json.dumps(plan,indent=2)+'\n')

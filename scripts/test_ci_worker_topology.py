@@ -151,7 +151,7 @@ class TopologyTests(unittest.TestCase):
         self.assertIn('name: linux-short (${{ matrix.shard }})', worker)
         self.assertIn('--workers "$WORKERS" --plain-audit-owned --plain-vet-owned --shard "$SHARD"', worker)
         self.assertIn('--workers "$WORKERS" --audit-evidence', found['linux-race'])
-        for name in ('tier-plan', 'source-audit', 'linux-short', 'linux-race'):
+        for name in ('source-audit', 'linux-short', 'linux-race'):
             guard = next(v for v in steps(found[name]) if 'ci_worker_topology.py' in v)
             self.assertEqual(step_key(guard, 'if'), "github.event_name == 'pull_request'")
             self.assertNotIn('continue-on-error:', guard)

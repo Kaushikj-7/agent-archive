@@ -40,7 +40,7 @@ interface so processing untrusted PR artifacts cannot populate trusted caches.
     "comparable_group": "eight-workers-lane-aware-parent-v3",
     "event_at": "2026-10-14T00:00:00Z",
     "required_jobs": {
-      "Test": ["tier-plan", "source-audit", "linux-short (0)", "linux-short (1)", "linux-short (2)", "linux-short (3)", "linux-short (4)", "linux-short (5)", "linux-short (6)", "linux-short (7)", "linux-full", "script-static", "script-install", "script-purge (0)", "script-purge (1)", "script-tests", "lint", "cross-linux-arm64", "cross-darwin-nocgo", "cross-linux-release", "cross-build", "macos-smoke", "linux-race", "Git identity (all versions)"],
+      "Test": ["source-audit", "linux-short (0)", "linux-short (1)", "linux-short (2)", "linux-short (3)", "linux-short (4)", "linux-short (5)", "linux-short (6)", "linux-short (7)", "linux-full", "script-static", "script-install", "script-purge (0)", "script-purge (1)", "script-tests", "lint", "cross-linux-arm64", "cross-darwin-nocgo", "cross-linux-release", "cross-build", "macos-smoke", "linux-race", "Git identity (all versions)"],
       "Levenshtein": ["verify", "native-release-vulnerabilities"]
     },
     "workflows": [{"run": {}, "jobs": {"total_count": 0, "jobs": []}}]
@@ -495,7 +495,8 @@ processes, PATH/install/configuration/temp directories. A version failure does
 not suppress the other versions. The `git-identity-versions` artifact retains
 all three receipts and raw logs for seven days; a single green job without
 complete version evidence is insufficient qualification. The normal production
-inventory now has 26 jobs rather than 28, with version coverage unchanged.
+inventory has 25 jobs rather than the prior 28 (Git consolidation removes two;
+local planning removes one), with version coverage unchanged.
 
 In normal run 38682572380, the earlier three jobs allocated 112 seconds in
 aggregate, including 39 seconds in their test steps. Sharing setup should reduce
@@ -664,7 +665,9 @@ branch fails closed. A fork branch cannot select an override. Labels are descrip
 only; no `labeled`/`unlabeled` triggers or mutable API metadata controls workers.
 
 The fixed matrix, worker cache count/argv and aggregate count are guarded against
-the same captured event policy. Guard receipts record real PR/head/base/ordered
+the same captured event policy. After local-plan integration the full expected
+Test plus Levenshtein inventory is 25 jobs with eight workers and 21 with four;
+Git compatibility remains all three version receipts inside one job. Guard receipts record real PR/head/base/ordered
 merge parents/tree/workflow identities. Different merge commits remain different
 SHAs even if independent Git evidence establishes identical trees. Every topology
 must reconcile every worker plus current source audit; `linux-race` stays the
@@ -763,3 +766,38 @@ This work makes no hosted elapsed-time claim from the separate model-family look
 optimization: it reduced isolated lookup CPU work, while both local elapsed pairs
 were slower. Four workers, 150 seconds and steady-state savings remain measurement
 decisions, not assumptions embedded in this control.
+
+
+Consumers resolve their own deterministic plan using the existing planner,
+full Git history and exact event/source proof immediately after checkout. PR
+planning refuses missing-history/dirty-source fallback before tests execute.
+The standalone `tier-plan` job is removed: Mac, full extras and both purge
+workers can become eligible without waiting for a separate Linux planner.
+`linux-full` still publishes `ci-tier-plan`; final verification independently
+recomputes and compares it, checks Linux extras and binds native extras to the
+same plan. Purge receipts must match the independently selected tier and
+complete method/case union.
+
+This makes six local planner invocations/full-history checkouts instead of one
+standalone planner, adding repeated Git/selection work. Earlier full/purge
+eligibility can also increase the initial ready burst by two Linux roles net
+of the removed planner (one full plus two purge workers, minus one planner);
+For the current eight-shard PR topology, initially eligible Test Linux roles
+increase from 16 to 18; including the two shared-verifier Linux roles gives
+18 to 20. These are static eligibility counts, not observed simultaneous
+allocations. Mac eligibility moves earlier in its separate pool. Measure full-pipeline peak,
+batch turnaround and allocated minutes before claiming a queue or cost benefit.
+No shard waits on a planner, and no capacity or test cadence increases.
+
+
+### Qualification caveat after local plan integration
+
+Removing the standalone tier planner reduces total full-pipeline jobs from 26 to
+25 at eight workers, but statically initially eligible Linux Test jobs increase
+from 16 to 18, or 18 to 20 including Levenshtein. The six actual consumer plan
+invocations and full-history fetches replace one planner allocation; purge has
+two physical consumers. Current event/source guards and aggregate canonical,
+focused, native and purge proof checks remain. Lower total job count is not
+proof of a lower initial burst, fewer runner-minutes, or less queueing. Record
+these costs and actual overlap in the full-pipeline comparison before adopting
+four or claiming throughput improvement.

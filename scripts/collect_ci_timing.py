@@ -87,7 +87,7 @@ class API:
 def inventory(workers):
     if workers not in (4, 8):
         raise ValueError('unsupported worker count')
-    return {'Test': ['tier-plan', 'source-audit', *[f'linux-short ({i})' for i in range(workers)],
+    return {'Test': ['source-audit', *[f'linux-short ({i})' for i in range(workers)],
                      'linux-full', 'script-static', 'script-install', 'script-purge (0)',
                      'script-purge (1)', 'script-tests', 'lint', 'cross-linux-arm64',
                      'cross-darwin-nocgo', 'cross-linux-release', 'cross-build', 'macos-smoke',

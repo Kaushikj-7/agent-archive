@@ -42,7 +42,7 @@ class LaneVerdictTest(unittest.TestCase):
         import run_go_shard
         found = jobs((ROOT/'.github/workflows/test.yml').read_text())
         expected = dict(LANES)
-        expected['linux-race'] = {'linux-short', 'linux-full', 'script-tests', 'macos-smoke', 'tier-plan', 'source-audit'}
+        expected['linux-race'] = {'linux-short', 'linux-full', 'script-tests', 'macos-smoke', 'source-audit'}
         for group, names in expected.items():
             predicate = job_key(found[group], 'if')
             for state in ('success', 'failure', 'skipped', 'cancelled'):
@@ -65,10 +65,10 @@ class LaneVerdictTest(unittest.TestCase):
                             else:
                                 verdict(group, bad)
 
-    def test_only_purge_needs_the_tier_plan(self):
+    def test_consumers_plan_without_an_extra_eligibility_dependency(self):
         found = jobs((ROOT/'.github/workflows/test.yml').read_text())
-        self.assertEqual(job_key(found['script-purge'], 'needs'), '[tier-plan]')
-        for name in ('script-install', 'script-static', *LANES['cross-build']):
+        self.assertNotIn('tier-plan', found)
+        for name in ('script-purge', 'macos-smoke', 'linux-full', 'script-install', 'script-static', *LANES['cross-build']):
             self.assertIsNone(job_key(found[name], 'needs'))
 
     def test_script_invocation_inventory_has_one_owner(self):
@@ -80,8 +80,9 @@ class LaneVerdictTest(unittest.TestCase):
                 'test_ci_workflow.py', 'test_stage_native_verify.py', 'test_git_identity_versions.py', 'test_scope_native_verify.py',
                 'test_stage_release_vulnerability_scan.py', 'test_measure_hook.py',
                 'test_linux_acceptance.py', 'test_go_shards.py', 'test_generate_go_shard_hints.py',
-                'test_ci_tiers.py', 'test_historical_vet_contract.py', 'test_macos_smoke.py', 'test_native_smoke_reference.py', 'test_native_full.py', 'test_go_cache_context.py',
+                'test_ci_tiers.py', 'test_local_ci_plan.py', 'test_historical_vet_contract.py', 'test_macos_smoke.py', 'test_native_smoke_reference.py', 'test_native_full.py', 'test_go_cache_context.py',
                 'test_go_cache_steps.py', 'test_ci_cache.py', 'test_ci_lane_verdict.py', 'test_report_ci_timing.py', 'test_purge_ci.py',
+                'test_ci_worker_topology.py', 'test_collect_ci_timing.py',
                 'test_go_parent_shards.py', 'test_pr_reference.py',
                 'test_benchmark_shared_verify.py'},
         }

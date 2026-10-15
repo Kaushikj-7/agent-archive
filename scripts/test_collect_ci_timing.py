@@ -2,12 +2,14 @@
 import copy
 import io
 import json
+from pathlib import Path
 import unittest
 from unittest import mock
 import urllib.error
 
 import collect_ci_timing as collector
 from test_ci_worker_topology import receipt
+from test_ci_workflow import jobs as workflow_jobs, job_key
 
 
 def run(name, number=12, ident=None):
@@ -61,6 +63,21 @@ class Response(io.BytesIO):
 
 
 class CollectionTests(unittest.TestCase):
+    def test_full_inventory_matches_surviving_workflow_roles_and_static_names(self):
+        workflow = (Path(__file__).resolve().parent.parent/'.github/workflows/test.yml').read_text()
+        found = workflow_jobs(workflow)
+        self.assertNotIn('tier-plan', found)
+        for workers in (4, 8):
+            expected = set()
+            for ident, body in found.items():
+                if ident == 'linux-short':
+                    expected.update(f'linux-short ({index})' for index in range(workers))
+                elif ident == 'script-purge':
+                    expected.update(('script-purge (0)', 'script-purge (1)'))
+                else:
+                    expected.add(job_key(body, 'name') or ident)
+            self.assertEqual(set(collector.inventory(workers)['Test']), expected)
+
     def test_all_prior_attempts_retained_and_carried_forward_allocations_dedup(self):
         api = FakeAPI()
         api.runs[1]['run_attempt'] = 2
@@ -68,18 +85,18 @@ class CollectionTests(unittest.TestCase):
         self.assertEqual(len(result['input']['samples']), 2)
         self.assertEqual(result['input']['samples'][1]['scope'], 'auxiliary-campaign')
         resources = result['report']['resources_across_snapshots']
-        self.assertEqual(resources['physical_job_rows'], 26)
-        self.assertEqual(resources['linux_runner_minutes'], 26)
+        self.assertEqual(resources['physical_job_rows'], 25)
+        self.assertEqual(resources['linux_runner_minutes'], 25)
 
     def test_full_fixed_inventory_and_complete_report(self):
-        self.assertEqual(sum(map(len, collector.inventory(8).values())), 26)
-        self.assertEqual(sum(map(len, collector.inventory(4).values())), 22)
+        self.assertEqual(sum(map(len, collector.inventory(8).values())), 25)
+        self.assertEqual(sum(map(len, collector.inventory(4).values())), 21)
         value = collector.collect(FakeAPI(), receipt(), 1, 2, cohort='source-only', cache_state='mixed',
                                   event_at='2026-10-15T00:00:00Z')
         self.assertEqual(value['snapshot_status'], 'terminal')
         sample = value['report']['samples'][0]
         self.assertTrue(sample['qualifying'])
-        self.assertEqual(sample['linux_runner_minutes'], 26)
+        self.assertEqual(sample['linux_runner_minutes'], 25)
         self.assertEqual(sample['tested_checkout']['source'], 'a'*40)
 
     def test_wrong_pr_same_head_branch_path_source_or_base_rejected(self):

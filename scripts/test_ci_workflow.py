@@ -182,7 +182,7 @@ class CandidateCampaignTest(unittest.TestCase):
     def test_candidate_test_keeps_all_pr_gates(self):
         workflow = (ROOT / '.github/workflows/test.yml').read_text()
         self.assertIn('  pull_request:', workflow)
-        self.assertEqual(set(jobs(workflow)), {'linux-race', 'linux-short', 'linux-full', 'script-tests', 'git-identity-compatibility', 'macos-smoke', 'cross-build', 'lint', 'tier-plan', 'source-audit', 'script-static', 'script-install', 'script-purge', 'cross-linux-arm64', 'cross-darwin-nocgo', 'cross-linux-release'})
+        self.assertEqual(set(jobs(workflow)), {'linux-race', 'linux-short', 'linux-full', 'script-tests', 'git-identity-compatibility', 'macos-smoke', 'cross-build', 'lint', 'source-audit', 'script-static', 'script-install', 'script-purge', 'cross-linux-arm64', 'cross-darwin-nocgo', 'cross-linux-release'})
         for name, text in jobs(workflow).items():
             if name not in ('linux-race', 'linux-short', 'linux-full', 'source-audit', 'script-tests', 'cross-build'):
                 self.assertIsNone(job_key(text, 'if'), name)
@@ -264,11 +264,23 @@ class CadenceTest(unittest.TestCase):
         self.assertIn('fail-fast: false', found['linux-short'])
         self.assertIn('python3 -B scripts/run_go_shard.py --workers "$WORKERS" --plain-audit-owned --plain-vet-owned --shard',found['linux-short'])
         self.assertEqual(job_key(found['linux-race'],'if'),'${{ !cancelled() }}')
-        self.assertEqual(job_key(found['linux-race'],'needs'),'[linux-short, linux-full, script-tests, macos-smoke, tier-plan, source-audit]')
+        self.assertEqual(job_key(found['linux-race'],'needs'),'[linux-short, linux-full, script-tests, macos-smoke, source-audit]')
         self.assertIn('--verdict', found['linux-race'])
         self.assertIn('--reconcile', found['linux-race'])
         self.assertIn('--tier "$tier" --evidence', found['script-purge'])
-        self.assertIn('fetch-depth: 0', found['tier-plan'])
+        self.assertNotIn('tier-plan', found)
+        for consumer in ('linux-full', 'macos-smoke', 'script-purge', 'script-tests', 'linux-race'):
+            text = found[consumer]
+            self.assertIn('fetch-depth: 0', text)
+            self.assertIn('--plan --require-pr-proof', text)
+            self.assertNotIn('needs.tier-plan', text)
+            consumer_steps = list(steps(text))
+            self.assertIn('uses: actions/checkout@', consumer_steps[0])
+            self.assertIn('--plan --require-pr-proof', consumer_steps[1])
+            self.assertIn('--output \"$RUNNER_TEMP/tier-plan/extra-plan.json\"', consumer_steps[1])
+        self.assertIn('name: ci-tier-plan', found['linux-full'])
+        self.assertIn('--verify-plan', found['linux-race'])
+        self.assertIn('--verify-native-plan', found['linux-race'])
         for script in ('test_release_candidate.py','test_ci_workflow.py','test_stage_native_verify.py','test_scope_native_verify.py','test_go_shards.py','test_ci_tiers.py'):
             step=next(step for step in steps(found['script-static']) if script in step)
             self.assertIsNone(step_key(step,'if'))

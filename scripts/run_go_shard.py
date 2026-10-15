@@ -599,7 +599,7 @@ def reconcile(directory, workers=2, audit_evidence=None, *, expected_source_proo
 
 def verdict(event, ref, needs):
     expected = {'linux-short': 'success', 'linux-full': 'success', 'script-tests': 'success',
-                'macos-smoke': 'success', 'tier-plan': 'success', 'source-audit': 'success'}
+                'macos-smoke': 'success', 'source-audit': 'success'}
     if event == 'push' and ref.startswith('refs/heads/release-candidate/') and ref != 'refs/heads/release-candidate/':
         expected['linux-short'], expected['linux-full'], expected['source-audit'] = 'skipped', 'success', 'skipped'
     elif event != 'pull_request':
