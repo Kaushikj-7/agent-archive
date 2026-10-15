@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Contracts for accelerators, not a second set of coverage/verdict receipts."""
-from dataclasses import replace
+from dataclasses import asdict, replace
 import io
+import contextlib
+import sys
 import json
 import os
 from pathlib import Path
@@ -53,6 +55,118 @@ class CompilationTests(unittest.TestCase):
         self.assertFalse((Path(self.plan.paths[0])/'object').exists())
         self.assertEqual(self.call(matched=''), 'miss')
         self.assertEqual(self.call(outcome='failure'), 'miss')
+
+    def test_restore_observation_uses_one_validated_inventory_and_preserves_string_api(self):
+        size = cache.publish_manifest(self.plan,self.context)
+        observation = {'state':'stale','raw_payload_bytes':999999}
+        with mock.patch.object(cache,'file_inventory',wraps=cache.file_inventory) as inventory:
+            state = cache.restore_compilation(self.plan,self.context,'success',self.plan.seed,
+                                              lambda source:None,lambda argv:None,observation=observation)
+        self.assertEqual(state,'trusted')
+        self.assertIsInstance(state,str)
+        self.assertEqual(observation,{'state':'trusted','raw_payload_bytes':size})
+        self.assertEqual(inventory.call_count,1)
+        for outcome,matched in [('failure',''),('success','wrong-key')]:
+            self.assertEqual(cache.restore_compilation(self.plan,self.context,outcome,matched,
+                                                      lambda source:None,lambda argv:None,
+                                                      observation=observation),'miss')
+            self.assertEqual(observation,{'state':'miss','raw_payload_bytes':None})
+        cache.publish_manifest(self.plan,self.context)
+        (Path(self.plan.paths[0])/'changed').write_bytes(b'corrupt')
+        cache.restore_compilation(self.plan,self.context,'success',self.plan.seed,
+                                  lambda source:None,lambda argv:None,observation=observation)
+        self.assertEqual(observation,{'state':'miss','raw_payload_bytes':None})
+        cache.publish_manifest(self.plan,self.context)
+        calls=[]
+        def command(argv):
+            calls.append(argv)
+            if len(calls)==2:raise subprocess.CalledProcessError(1,argv)
+        cache.restore_compilation(self.plan,self.context,'success',self.plan.seed,
+                                  lambda source:None,command,observation=observation)
+        self.assertEqual(observation,{'state':'corrupt-rebuilt','raw_payload_bytes':None})
+        self.assertEqual(len(calls),4)
+
+    def main_observation(self, phase='verify', shared=False, module_results=None, bad_guard=False, oversized=False, late_guard=False):
+        source=self.root/'product';source.mkdir(exist_ok=True)
+        shared_root=self.root/'shared';shared_root.mkdir(exist_ok=True)
+        shared_proof={'tested':keys.TOOL_PINS['shared']}
+        actual_context=({'runtime':self.context,'profile':'shared','shared':shared_proof}
+                        if shared else self.context)
+        plan=cache.general_plan(actual_context,self.source,self.root)
+        event={'ref':'refs/heads/main','after':self.source['tested'],
+               'repository':{'full_name':'owner/repo'},'deleted':False}
+        event_path=self.root/'event.json';event_path.write_text(json.dumps(event))
+        (self.root/'compilation-cache-plan.json').write_text(json.dumps(
+            {'plan':asdict(plan),'context':actual_context}))
+        size=cache.publish_manifest(plan,actual_context)
+        env={'GITHUB_EVENT_PATH':str(event_path),'GITHUB_SHA':self.source['tested'],
+             'GITHUB_EVENT_NAME':'push','GITHUB_REF':'refs/heads/main','GITHUB_REPOSITORY':'owner/repo',
+             'RUNNER_TEMP':str(self.root),'GITHUB_OUTPUT':str(self.root/'output'),
+             'GOCACHE':plan.paths[0],'GOMODCACHE':plan.paths[1],
+             'RESTORE_OUTCOME':'success','MATCHED_KEY':plan.seed,'SECRET_SETTING':'do-not-log-this'}
+        argv=['ci_cache.py',phase,'--source',str(source)]
+        if shared:argv+=['--profile','shared','--shared-source',str(shared_root)]
+        output,errors=io.StringIO(),io.StringIO()
+        real_restore=cache.restore_compilation
+        def restored(*args,**kwargs):
+            return real_restore(*args,command=lambda command:None,**kwargs)
+        source_calls=([self.source,self.source,dict(self.source,tree='d'*40)] if late_guard else
+                      [self.source,dict(self.source,tree='d'*40)] if bad_guard else None)
+        with (mock.patch.dict(os.environ,env,clear=True),mock.patch.object(sys,'argv',argv),
+              mock.patch.object(cache,'current_source',side_effect=source_calls,return_value=self.source),
+              mock.patch.object(cache,'runtime_context',return_value=self.context),
+              mock.patch.object(cache,'validate_context',return_value=self.context),
+              mock.patch.object(warm_shared_tools,'shared_identity',return_value=shared_proof),
+              mock.patch.object(warm_shared_tools,'verify_modules',side_effect=module_results) as modules,
+              mock.patch.object(cache,'restore_compilation',side_effect=restored),
+              mock.patch.object(cache,'execute_modules'),
+              mock.patch.object(cache,'file_inventory',wraps=cache.file_inventory) as inventory,
+              contextlib.redirect_stdout(output),contextlib.redirect_stderr(errors)):
+            with mock.patch.object(cache,'MAX_BYTES',0 if oversized else cache.MAX_BYTES):
+                code=cache.main()
+        lines=[json.loads(line.split(': ',1)[1]) for line in output.getvalue().splitlines()
+               if line.startswith('compilation-cache-observation: ')]
+        self.assertNotIn('do-not-log-this',output.getvalue()+errors.getvalue())
+        return code,lines,size,modules.call_count,inventory.call_count
+
+    def test_final_restore_observation_waits_for_shared_retry_and_guards(self):
+        code,lines,size,modules,walks=self.main_observation()
+        self.assertEqual(code,0)
+        self.assertEqual(lines,[{'schema':1,'phase':'restore','profile':'product',
+                                 'state':'trusted','raw_payload_bytes':size}])
+        self.assertEqual(walks,1)
+        code,lines,size,modules,walks=self.main_observation(shared=True)
+        self.assertEqual(code,0)
+        self.assertEqual(modules,1)
+        self.assertEqual(lines,[{'schema':1,'phase':'restore','profile':'shared',
+                                 'state':'trusted','raw_payload_bytes':size}])
+        failure=subprocess.CalledProcessError(1,['go','mod','verify'])
+        code,lines,size,modules,walks=self.main_observation(shared=True,module_results=[failure,None])
+        self.assertEqual(code,0)
+        self.assertEqual(modules,2)
+        self.assertEqual(walks,1)
+        self.assertEqual(lines,[{'schema':1,'phase':'restore','profile':'shared',
+                                 'state':'miss','raw_payload_bytes':None}])
+        code,lines,_,_,_=self.main_observation(shared=True,module_results=[failure,failure])
+        self.assertEqual(code,1)
+        self.assertEqual(lines,[])
+        code,lines,_,_,_=self.main_observation(bad_guard=True)
+        self.assertEqual(code,1)
+        self.assertEqual(lines,[])
+
+    def test_capture_observation_is_raw_ready_size_not_saved_archive_size(self):
+        code,lines,size,_,walks=self.main_observation(phase='complete')
+        self.assertEqual(code,0)
+        self.assertEqual(walks,1)
+        self.assertEqual(lines,[{'schema':1,'phase':'capture','profile':'product',
+                                 'state':'ready-for-save','raw_payload_bytes':size}])
+        code,lines,_,_,_=self.main_observation(phase='complete',oversized=True)
+        self.assertEqual(code,0)
+        self.assertEqual(lines,[{'schema':1,'phase':'capture','profile':'product',
+                                 'state':'not-captured','raw_payload_bytes':None}])
+        code,lines,_,_,_=self.main_observation(phase='complete',late_guard=True)
+        self.assertEqual(code,1)
+        self.assertEqual(lines,[])
 
     def test_manifest_symlink_is_rejected_without_reading_or_writing_target(self):
         target = self.root/'unrelated'
@@ -400,7 +514,7 @@ class WorkflowTests(unittest.TestCase):
                     self.assertIn('GOCACHE=%s/pr-go-build', previous)
                     self.assertIn('GOMODCACHE=%s/pr-go-modules', previous)
                     self.assertIn('"$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"', previous)
-        self.assertEqual(consumers, 10)
+        self.assertEqual(consumers, 11)
 
     def test_every_hit_still_executes_current_checks_and_forks_never_save(self):
         workflow = jobs((ROOT/'.github/workflows/test.yml').read_text())
