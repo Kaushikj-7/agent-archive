@@ -65,7 +65,7 @@ commit). Existing worker manifests and source proofs retain the tested checkout
 identity. Keep those artifacts with the observation; this report does not replace
 source verification or coverage reconciliation.
 
-Allowed cohorts: `source-only`, `cli-catalog`, `native-platform`,
+Allowed cohorts: `unknown` (unclassified and never qualifying), `source-only`, `cli-catalog`, `native-platform`,
 `dependency-toolchain`, `fork-cold-cache`. Assign conservatively from changed
 paths and the existing tier plan; don't silently mix sensitive platform changes
 into the small-source cohort. Use a new `comparable_group` when worker counts,
@@ -646,3 +646,120 @@ four halves usage or eight halves latency. Review recurring seed cost separately
 and preserve unknown event/cache states. Validate a chosen production policy
 against at least twenty comparable normal observations rather than creating
 those observations artificially.
+
+
+## Full PR topology and contention qualification
+
+Ordinary PRs retain **eight** Linux test workers. Four workers are an experiment,
+not an adopted cost saving. Both configurations execute the same complete-parent
+race/count/CPU/deadline policy, owned plain vet, independent source audit and
+exhaustive raw-evidence reconciliation. Ancillary Test and Levenshtein lanes remain.
+
+For same-repository PRs only, a captured head branch of
+`ci-qualification/workers-4/<campaign>/<replicate>` selects four; the equivalent
+`workers-8` branch explicitly selects eight. Campaign/replicate components contain
+1–40 ASCII letters/digits/hyphens, beginning with a letter/digit. Matching is case
+insensitive, agreeing with GitHub expressions. A malformed reserved same-repository
+branch fails closed. A fork branch cannot select an override. Labels are descriptive
+only; no `labeled`/`unlabeled` triggers or mutable API metadata controls workers.
+
+The fixed matrix, worker cache count/argv and aggregate count are guarded against
+the same captured event policy. Guard receipts record real PR/head/base/ordered
+merge parents/tree/workflow identities. Different merge commits remain different
+SHAs even if independent Git evidence establishes identical trees. Every topology
+must reconcile every worker plus current source audit; `linux-race` stays the
+required stable verdict. No extra planning runner or global PR serialization is
+introduced. Supersession cancellation is still scoped to each PR, so four
+qualification PRs sharing a head commit do not cancel one another.
+
+After component integration, fresh independent review and meaningful local checks,
+the initial bounded experiment is the substantive implementation PR as one
+8-worker member, one 8-worker qualification sibling, and two 4-worker siblings.
+Confirm the remote actually supports these distinct head branches/PR identities.
+A root-owned fixed qualification base branch may point to the implementation
+PR first observed base B0 for the three siblings. Never advance or merge that
+base branch; actual implementation PR still targets main. Preserve the different
+base ref names as real metadata. Keep head commit, base and full tested tree equal where Git permits; retain actual
+workflow/source SHAs, compiler/image/cache cohorts and all raw coverage evidence.
+Begin each same-configuration pair close together, wait for both full pipelines
+before the next configuration, and report actual arrival spacing/background
+traffic. A completed nonoverlapping run is not a simultaneous batch member.
+The implementation PR's own exact candidate/checks alone establish its readiness.
+The existing revive lint command keeps its policy and now records its actual
+resolved `origin/$BASE_REF` SHA and merge-base endpoints before execution. Require
+identical selected diff endpoints, tested trees and policy across the comparison;
+a moving main ref can differ from the fixed sibling base. If that invalidates
+the implementation PR as an 8-worker member, mark the comparison inconclusive,
+retain validated eight and stop; do not automatically purchase more full runs.
+Root may later authorize a justified bounded follow-up with actual evidence/cost.
+Cache branch visibility/hits are separate cohorts, unknown until observed.
+Close every qualification-only sibling **after terminal evidence collection and
+before merging the implementation PR**, so a shared head does not cause GitHub to
+mark those experiment PRs merged automatically. Never merge an experiment sibling.
+
+The initial budget is four complete full pipelines total, three incremental ones.
+The earlier 41.88 Linux runner-minute observation implies approximately 125.64
+incremental Linux runner-minutes plus Mac, solely as a planning envelope before
+these optimizations. Record actual all-attempt allocation and Mac/manual/seed costs
+separately. Do not run a redundant shard-only campaign when full audited runs supply
+that evidence. A failed guard/code check stops the experiment until repaired and
+reviewed. Reverse-order repeats require a new recorded budget justified by initial
+results, not automatic retries. Two batches cannot establish p95 or a causal queue
+saving. Keep production eight when full-pipeline resource/turnaround comparisons
+are inconclusive; a default change requires new review and current CI.
+
+## Partial live summaries and complete offline collection
+
+The existing final Linux aggregate emits a bounded **partial** advisory summary
+using `collect_ci_timing.py`. Only that job gets `actions: read` in addition to
+contents read. It makes GET requests solely to `api.github.com` for this repository,
+rejects redirects, caps pages/requests/response size and uses short network
+timeouts. The diagnostic step has its own one-minute upper bound and runs only
+after successful authoritative checks; its failure cannot override their verdict.
+There is no extra reporting runner, privileged `workflow_run`, artifact execution,
+new scheduler, secret or write permission. Restricted fork tokens may make this
+snapshot unavailable without weakening any test.
+
+The current collector job has no final allocation end while it is executing, and
+the paired workflow may be pending. Summary values are known allocation subtotals
+and observed peaks, not final totals. Whole-pipeline completion, own final usage,
+source/cache cohort and event timestamp remain unknown unless actually evidenced.
+The live snapshot never qualifies p95. Its JSON includes collection time, raw API
+snapshots and topology provenance; the step summary exposes the known subtotals.
+`unknown` source cohort and unknown cache state are explicitly nonqualifying.
+
+Finalize actual completed normal runs with explicit paired run IDs and a retained
+source-verified topology receipt from the guard logs:
+
+```sh
+GH_TOKEN="$READ_ONLY_ACTIONS_TOKEN" python3 -B scripts/collect_ci_timing.py \
+  --topology /path/to/worker-topology.json \
+  --test-run 123 --levenshtein-run 124 \
+  --cohort source-only --cache-state mixed \
+  --output /path/to/pr-observation.json
+```
+
+The token is read from the environment, never an argument or diagnostic value.
+This command provisions no runners. The adapter reuses `report_ci_timing.py`,
+retains every earlier attempt as auxiliary usage, paginates completely and preserves
+strict physical-allocation deduplication. Pairing checks repository, workflow path,
+event, PR number, head repository/branch/SHA and base SHA: sharing a head SHA is not
+sufficient. Missing PR association or ambiguous live peers remain unavailable;
+explicit offline run IDs still must satisfy the exact context. Missing expected
+jobs cannot disappear by deriving inventory from the measured run.
+
+Use `--experiment` on the implementation PR when it participates in the deliberate
+batch; reserved-prefix receipts already identify experiment siblings. Intentional
+experiments are excluded from normal-traffic percentile qualification. `--event-at`
+is permitted only with retained initiating-event telemetry. For a captured genuine
+opened event, use PR creation only after proving it is that exact initiating event;
+never substitute it for synchronization/reopen events. Otherwise omit the argument:
+the terminal report retains only run-created lower-bound latency. Do not fabricate
+normal traffic to fill twenty observations. At least twenty unique comparable
+actual normal observations with adequate event/cache/source evidence are needed
+before the existing reporter can publish a provisional p95.
+
+This work makes no hosted elapsed-time claim from the separate model-family lookup
+optimization: it reduced isolated lookup CPU work, while both local elapsed pairs
+were slower. Four workers, 150 seconds and steady-state savings remain measurement
+decisions, not assumptions embedded in this control.
