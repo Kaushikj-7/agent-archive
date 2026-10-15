@@ -796,3 +796,195 @@ func TestMetadataPassBudgetExhaustionDoesNotBlockSourceWork(t *testing.T) {
 		t.Fatalf("budget exhaustion permanently blocked fitting work %+v %v", p, err)
 	}
 }
+
+func TestReconciledWorkerRechecksAbsenceAfterIdentityRead(t *testing.T) {
+	t.Parallel()
+	a := newSearchArchive(t)
+	m := a.session(t, "session")
+	s := openTest(t)
+	parsers := builtin.NewBuiltins()
+	if err := s.Observe(t.Context(), m, parsers, m.CapturedAt, 0); err != nil {
+		t.Fatal(err)
+	}
+	key, _ := archive.MetadataObjectKey(m.Harness.Name, m.SessionID)
+	entry, _, err := a.remote.Writer.Find(t.Context(), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.mutate(t, key, nil)
+	restored := false
+	a.raw.beforeRead = func(readKey string) {
+		if !strings.Contains(readKey, "/nodes/") {
+			return
+		}
+		a.raw.beforeRead = nil
+		restored = true
+		_, revision, e := a.remote.Writer.Find(t.Context(), key)
+		if e != nil {
+			t.Fatal(e)
+		}
+		if _, e = a.remote.Writer.Commit(t.Context(), catalog.CatalogMutation{ID: "restored", SessionKey: key, ExpectedRevision: revision, Next: entry}); e != nil {
+			t.Fatal(e)
+		}
+	}
+	p, err := s.Run(t.Context(), a.remote, parsers, m.CapturedAt, Budget{VerifyCurrent: true, Sessions: 1})
+	if err != nil || !restored || p.Committed != 0 || p.Pending != 1 {
+		t.Fatalf("stale absence %+v restored=%v %v", p, restored, err)
+	}
+}
+
+func TestReconcileUnreadableRecentMetadataDoesNotStarveCatchup(t *testing.T) {
+	t.Parallel()
+	a := newSearchArchive(t)
+	newest := a.session(t, "session-0")
+	// Equal capture times use the catalog's stable identity tie order.
+	for i := 1; i < 6; i++ {
+		_ = a.session(t, fmt.Sprintf("session-%d", i))
+	}
+	key, _ := archive.MetadataObjectKey(newest.Harness.Name, newest.SessionID)
+	snapshot, err := catalog.OpenSnapshot(t.Context(), a.remote, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, err := snapshot.Find(t.Context(), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := a.raw.Get(t.Context(), entry.Metadata.Key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = a.raw.Delete(t.Context(), entry.Metadata.Key); err != nil {
+		t.Fatal(err)
+	}
+	s := openTest(t)
+	parsers := builtin.NewBuiltins()
+	for range 12 {
+		if _, err = s.Reconcile(t.Context(), a.remote, parsers, newest.CapturedAt, ReconcileBudget{Entries: 1, Checks: 1}); err == nil {
+			t.Fatal("unreadable recent metadata was not reported")
+		}
+	}
+	var count int
+	if err = s.db.QueryRowContext(t.Context(), "SELECT count(*) FROM search_work").Scan(&count); err != nil || count != 5 {
+		t.Fatalf("unreadable recent metadata froze catchup: %d %v", count, err)
+	}
+	page, err := s.Search(t.Context(), Query{Text: "checksum"})
+	if err != nil || page.Observation.DiscoveryComplete {
+		t.Fatalf("unreadable sweep claimed complete: %+v %v", page.Observation, err)
+	}
+	if err = a.raw.Put(t.Context(), entry.Metadata.Key, body); err != nil {
+		t.Fatal(err)
+	}
+	for range 12 {
+		if _, err = s.Reconcile(t.Context(), a.remote, parsers, newest.CapturedAt, ReconcileBudget{Entries: 1, Checks: 1}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err = s.Run(t.Context(), a.remote, parsers, newest.CapturedAt, Budget{Sources: 8, VerifyCurrent: true}); err != nil {
+		t.Fatal(err)
+	}
+	page, err = s.Search(t.Context(), Query{Text: "checksum"})
+	if err != nil || len(page.Hits) != 6 || !page.Observation.Complete {
+		t.Fatalf("repaired metadata did not recover: %+v %v", page, err)
+	}
+}
+
+func TestReconcileUnreadableKnownMetadataDoesNotStarveOtherIdentities(t *testing.T) {
+	t.Parallel()
+	a := newSearchArchive(t)
+	bad := a.session(t, "a-known")
+	s := openTest(t)
+	parsers := builtin.NewBuiltins()
+	if err := s.Observe(t.Context(), bad, parsers, bad.CapturedAt, 0); err != nil {
+		t.Fatal(err)
+	}
+	bad.Name = "changed remote metadata"
+	a.publish(t, bad)
+	key, _ := archive.MetadataObjectKey(bad.Harness.Name, bad.SessionID)
+	entry, _, err := a.remote.Writer.Find(t.Context(), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = a.raw.Delete(t.Context(), entry.Metadata.Key); err != nil {
+		t.Fatal(err)
+	}
+	for i := range 6 {
+		_ = a.session(t, fmt.Sprintf("new-%d", i))
+	}
+	for range 12 {
+		_, _ = s.Reconcile(t.Context(), a.remote, parsers, bad.CapturedAt, ReconcileBudget{Entries: 1, Checks: 1})
+	}
+	var count int
+	if err = s.db.QueryRowContext(t.Context(), "SELECT count(*) FROM search_work WHERE id!=?", bad.Harness.Name+"/"+bad.SessionID).Scan(&count); err != nil || count != 6 {
+		t.Fatalf("unreadable known metadata froze other identities: %d %v", count, err)
+	}
+	page, err := s.Search(t.Context(), Query{Text: "checksum"})
+	if err != nil || page.Observation.Complete || page.Observation.IdentityChecksComplete {
+		t.Fatalf("failed known validation claimed complete: %+v %v", page.Observation, err)
+	}
+}
+
+func TestReconcileCorruptLegacyMetadataDoesNotStarveOtherObjects(t *testing.T) {
+	t.Parallel()
+	m, _, raw := verifiedFixture(t, "claude", workerTranscript)
+	if err := raw.Put(t.Context(), "sessions/000/metadata.json", []byte("broken metadata")); err != nil {
+		t.Fatal(err)
+	}
+	s := openTest(t)
+	parsers := builtin.NewBuiltins()
+	for range 12 {
+		_, _ = s.Reconcile(t.Context(), raw, parsers, m.CapturedAt, ReconcileBudget{Entries: 1, Checks: 1})
+	}
+	var count int
+	if err := s.db.QueryRowContext(t.Context(), "SELECT count(*) FROM search_work").Scan(&count); err != nil || count != 1 {
+		t.Fatalf("corrupt legacy metadata froze other objects: %d %v", count, err)
+	}
+}
+
+func TestReconcileWarmViewRechecksHeadAfterKnownIdentityRead(t *testing.T) {
+	t.Parallel()
+	a := newSearchArchive(t)
+	m := a.session(t, "session")
+	s := openTest(t)
+	parsers := builtin.NewBuiltins()
+	if _, err := s.Reconcile(t.Context(), a.remote, parsers, m.CapturedAt, ReconcileBudget{}); err != nil {
+		t.Fatal(err)
+	}
+	changed := false
+	a.raw.beforeRead = func(key string) {
+		if !strings.Contains(key, "/nodes/") {
+			return
+		}
+		a.raw.beforeRead = nil
+		changed = true
+		m.Name = "new remote title"
+		a.publish(t, m)
+	}
+	d, err := s.Reconcile(t.Context(), a.remote, parsers, m.CapturedAt, ReconcileBudget{})
+	if !changed || !errors.Is(err, catalog.ErrStaleCursor) || d.Unchanged || d.CompletedWalk {
+		t.Fatalf("moving warm view accepted: %+v changed=%v %v", d, changed, err)
+	}
+}
+
+type failingMetadataBody struct{ *storagetest.MemoryStore }
+
+func (s failingMetadataBody) GetLimitedVersioned(ctx context.Context, key string, limit int64) ([]byte, string, error) {
+	if limit < 100 {
+		return nil, "", storage.ErrObjectTooLarge
+	}
+	return []byte(strings.Repeat("x", 100)), "", errors.New("synthetic partial metadata read")
+}
+
+func TestReconcileChargesFailedLegacyMetadataReadBytes(t *testing.T) {
+	t.Parallel()
+	m, _, raw := verifiedFixture(t, "claude", workerTranscript)
+	s := openTest(t)
+	parsers := builtin.NewBuiltins()
+	if err := s.Observe(t.Context(), m, parsers, m.CapturedAt, 0); err != nil {
+		t.Fatal(err)
+	}
+	d, err := s.Reconcile(t.Context(), failingMetadataBody{raw}, parsers, m.CapturedAt, ReconcileBudget{Entries: 1, Checks: 1, Bytes: 150})
+	if !errors.Is(err, errMetadataBudget) || d.Bytes != 100 || d.Metadata != 2 {
+		t.Fatalf("failed read escaped aggregate metadata budget: %+v %v", d, err)
+	}
+}

@@ -143,15 +143,22 @@ func (s *Store) reconcileCatalog(ctx context.Context, objects storage.ObjectStor
 	} else if state.checkRoot != root {
 		state.checkRoot = ""
 	}
+	var itemErrors error
 	if err = s.checkKnown(ctx, objects, snapshot, parsers, at, budget.Checks, &state, &result, budget.Bytes); err != nil {
-		return result, err
+		if discoveryMustStop(err) {
+			return result, err
+		}
+		itemErrors = err
 	}
 	if state.validated == "" && state.checkRoot == root && state.seeded == 3 {
 		state.checkedRoot = root
 	}
 	if state.complete == root {
+		if err = snapshot.ValidateContinuation(ctx); err != nil {
+			return result, err
+		}
 		result.Unchanged = true
-		return result, s.saveDiscovery(ctx, state)
+		return result, errors.Join(itemErrors, s.saveDiscovery(ctx, state))
 	}
 	if state.after == "" {
 		state.root = root
@@ -168,7 +175,11 @@ func (s *Store) reconcileCatalog(ctx context.Context, objects storage.ObjectStor
 	}
 	for _, row := range recent.Rows {
 		if err = s.observeCatalog(ctx, snapshot, row, parsers, at, &result); err != nil {
-			return result, err
+			if discoveryMustStop(err) {
+				return result, err
+			}
+			itemErrors = errors.Join(itemErrors, err)
+			state.stable = false
 		}
 	}
 	rows, done, e := snapshot.ScanIdentities(ctx, state.after, budget.Entries)
@@ -180,7 +191,11 @@ func (s *Store) reconcileCatalog(ctx context.Context, objects storage.ObjectStor
 		result.Objects++
 		if row.Entry != nil {
 			if err = s.observeCatalog(ctx, snapshot, catalog.Row{Key: row.Key, Entry: *row.Entry}, parsers, at, &result); err != nil {
-				return result, err
+				if discoveryMustStop(err) {
+					return result, err
+				}
+				itemErrors = errors.Join(itemErrors, err)
+				state.stable = false
 			}
 		}
 		state.after = row.Key
@@ -200,7 +215,13 @@ func (s *Store) reconcileCatalog(ctx context.Context, objects storage.ObjectStor
 		}
 		state.root = ""
 	}
-	return result, s.saveDiscovery(ctx, state)
+	return result, errors.Join(itemErrors, s.saveDiscovery(ctx, state))
+}
+
+// A failed immutable body is retried on the next sweep. Authority and pass
+// failures cannot establish a safe checkpoint past the current item.
+func discoveryMustStop(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, catalog.ErrStaleCursor) || errors.Is(err, catalog.ErrPickerBudget) || errors.Is(err, errMetadataBudget) || errors.Is(err, storage.ErrObjectTooLarge)
 }
 
 func (s *Store) reconcileLegacy(ctx context.Context, objects storage.ObjectStore, parsers agentapi.ParsersLookup, at time.Time, budget ReconcileBudget, state discoveryState) (result Discovery, err error) {
@@ -208,8 +229,12 @@ func (s *Store) reconcileLegacy(ctx context.Context, objects storage.ObjectStore
 	if !ok {
 		return result, errors.New("bounded search discovery requires paged object listing")
 	}
+	var itemErrors error
 	if err = s.checkKnown(ctx, objects, nil, parsers, at, budget.Checks, &state, &result, budget.Bytes); err != nil {
-		return result, err
+		if discoveryMustStop(err) {
+			return result, err
+		}
+		itemErrors = err
 	}
 	pageLimit := budget.Entries
 	if pageLimit < 1 || pageLimit > 1000 {
@@ -246,7 +271,10 @@ func (s *Store) reconcileLegacy(ctx context.Context, objects storage.ObjectStore
 			result.Metadata++
 			result.Bytes += int64(len(m.raw))
 			if e != nil && !errors.Is(e, storage.ErrNotFound) {
-				return result, e
+				if discoveryMustStop(e) {
+					return result, e
+				}
+				itemErrors = errors.Join(itemErrors, e)
 			}
 			if e == nil {
 				if err = s.recordObservation(ctx, object.Key, m.revision, m.metadata, parsers, at); err != nil {
@@ -260,7 +288,7 @@ func (s *Store) reconcileLegacy(ctx context.Context, objects storage.ObjectStore
 		result.CompletedWalk = true
 		state.observed = at.UnixNano()
 	}
-	return result, s.saveDiscovery(ctx, state)
+	return result, errors.Join(itemErrors, s.saveDiscovery(ctx, state))
 }
 
 func extractionContract(parsers agentapi.ParsersLookup) string {
@@ -340,7 +368,7 @@ func readBoundedMetadata(ctx context.Context, objects storage.ObjectStore, key s
 		return boundedMetadata{}, errMetadataBudget
 	}
 	if err != nil {
-		return boundedMetadata{}, err
+		return boundedMetadata{raw: raw}, err
 	}
 	m, err := reader.ReadMetadata(ctx, metadataBody{ObjectStore: objects, key: key, raw: raw}, key)
 	return boundedMetadata{metadata: m, raw: raw, revision: revision}, err
@@ -362,7 +390,17 @@ func (b metadataBody) Get(ctx context.Context, key string) ([]byte, error) {
 	return b.raw, nil
 }
 
-func (s *Store) checkKnown(ctx context.Context, objects storage.ObjectStore, snapshot *catalog.Snapshot, parsers agentapi.ParsersLookup, at time.Time, limit int, state *discoveryState, result *Discovery, bytes int64) error {
+func (s *Store) checkKnown(ctx context.Context, objects storage.ObjectStore, snapshot *catalog.Snapshot, parsers agentapi.ParsersLookup, at time.Time, limit int, state *discoveryState, result *Discovery, bytes int64) (checkErr error) {
+	var active string
+	defer func() {
+		if checkErr == nil || discoveryMustStop(checkErr) || active == "" {
+			return
+		}
+		state.validated = active
+		state.checkRoot = ""
+		state.checkedRoot = ""
+		checkErr = errors.Join(checkErr, s.saveDiscovery(ctx, *state))
+	}()
 	rows, err := s.db.QueryContext(ctx, "SELECT key,session FROM search_observed WHERE key>? ORDER BY key LIMIT ?", state.validated, limit)
 	if err != nil {
 		return err
@@ -387,6 +425,7 @@ func (s *Store) checkKnown(ctx context.Context, objects storage.ObjectStore, sna
 		return err
 	}
 	for _, k := range keys {
+		active = k.key
 		result.Checks++
 		var m archive.Metadata
 		var revision string
@@ -422,13 +461,13 @@ func (s *Store) checkKnown(ctx context.Context, objects storage.ObjectStore, sna
 		} else {
 			body, e := readBoundedMetadata(ctx, objects, k.key, bytes-result.Bytes)
 			result.Metadata++
+			result.Bytes += int64(len(body.raw))
 			absent = errors.Is(e, storage.ErrNotFound)
 			if e != nil && !absent {
 				return e
 			}
 			m = body.metadata
 			revision = body.revision
-			result.Bytes += int64(len(body.raw))
 		}
 		if snapshot != nil {
 			if err = snapshot.ValidateContinuation(ctx); err != nil {
@@ -491,6 +530,13 @@ func (s *Store) observeCached(ctx context.Context, key string, parsers agentapi.
 }
 
 func (s *Store) seedKnown(ctx context.Context, state *discoveryState, limit int) error {
+	// Bare session ids and canonical metadata keys have different prefix ordering.
+	// Until seeding finishes, new identities may land behind the check cursor.
+	if state.seeded != 3 {
+		state.validated = ""
+		state.checkRoot = ""
+		state.checkedRoot = ""
+	}
 	if state.seeded&1 == 0 {
 		after, done, err := s.seedRows(ctx, "SELECT id,json_extract(metadata,'$.harness.name'),json_extract(metadata,'$.session_id') FROM search_work WHERE id>? ORDER BY id LIMIT ?", state.seedWork, limit)
 		if err != nil {

@@ -490,6 +490,9 @@ func (s *Store) verifyCurrent(ctx context.Context, objects storage.ObjectStore, 
 			return e
 		}
 		if entry == nil {
+			if e = snapshot.ValidateContinuation(ctx); e != nil {
+				return e
+			}
 			if e = s.forget(ctx, key, item.id); e != nil {
 				return e
 			}

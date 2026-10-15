@@ -233,14 +233,23 @@ claim. Exact fresh identity checks establish removals independently. Stable-root
 walk coverage, old local identity validation, pending/failed indexing and
 retained-source gaps are separate facts. Older schema1/schema2 identities seed
 through bounded local keyset pages, including after restart; opening an upgraded
-index never eagerly scans remote storage. Source provenance may be recovered
+index never eagerly scans remote storage or hydrates local identities. The
+ordinary one-time SQLite coverage-index migration does scan existing session
+rows locally; its cost is proportional to row count. Normal query open and
+execution share a five-second deadline, and refresh open plus work shares thirty
+seconds. Initialization cancellation rolls back schema changes for safe retry.
+Source provenance may be recovered
 from verified preserved bytes when old sidecars omit it, never from active
 revision metadata.
 
 Legacy discovery counts all physical listed objects, including source-only
 pages. It requires `PageLister`, restarts failed opaque continuations safely,
 and never represents mutable listing pages as an immutable snapshot. Corruption,
-timeout, stale snapshots and partial listing do not establish absence. Network
+timeout, stale snapshots and partial listing do not establish absence. Unreadable
+metadata bodies do not pin logical discovery or validation checkpoints: failures
+remain visible and suppress completion while later identities progress, and the
+next sweep retries them. Cancellation, stale authority and exhausted budgets
+stop the pass without skipping the current identity. Network
 changes after the last local observation remain unknown until another refresh.
 
 Reproduce discovery costs separately from source work:
@@ -261,14 +270,16 @@ Measured on Go1.27.2, a shared Intel i7-8559U Mac and a synthetic in-memory
 
 - Defaults discovered the archive in two passes and indexed it in ten. Discovery
   used four pages, forty identity entries/metadata GETs, sixty-four exact known
-  checks,111head reads,10coordinator reads,137node visits and2,436,259accounted
+  checks,119head reads,10coordinator reads,137node visits and2,450,451accounted
   record bytes. Source work used40GETs/parses and12,772compressed bytes;
   fresh pre-install checks separately used40checks,80nodes and1,514,248bytes.
-  Advisory elapsed catch-up was614ms, excluding archive construction.
-- Three-iteration cold discovery with an explicit50-entry budget used40metadata
+  The prior advisory non-race elapsed catch-up was614ms, excluding archive
+  construction; the post-review race fixture measured4.25s and includes the
+  final warm-view head checks. These timing modes are not comparable.
+- The earlier three-iteration cold discovery with an explicit50-entry budget used40metadata
   GETs,5nodes and212,634bytes per operation, roughly107ms and2.50MB allocated.
-  Warm default discovery used0metadata GETs,16node visits and252,120accounted
-  bytes, roughly15.9ms and1.12MB allocated. Repeated cached node decoding counts
+  Post-review three-iteration warm default discovery used0metadata GETs,16node
+  visits and253,894accounted bytes, roughly8.46ms and1.14MB allocated. Repeated cached node decoding counts
   toward work bytes, so these figures are not HTTP payload measurements.
 
 These tiny fixtures establish operation counts and resumability, not archive-size
@@ -276,3 +287,13 @@ or latency guarantees. Forty sessions at four sources per pass already need ten
 passes; a one-minute schedule would add roughly ten minutes before remote
 latency, large sources, backoff or coalescing. Larger manual catch-up budgets
 remain a composition decision, with the one-source-at-a-time constraint intact.
+
+Local upgrade/startup measurements used lightweight session rows with no source
+payloads, three iterations per case, on the same Go1.27.2 Mac. Schema2-to3 open
+with20,000rows took6.20ms versus2.42ms for an already-migrated warm open;
+100,000rows took26.64ms versus2.35ms warm. These are advisory local SQLite
+measurements, not bounds on real transcript databases. A20,000-row race fixture
+also canceled initialization with a one-millisecond caller deadline, verified
+schema2 remained uncommitted and retried successfully with all rows retained;
+identity seeding remained pending. Reproduce with
+`go test ./internal/search -run '^$' -bench BenchmarkSearchSchemaMigrationAndWarmOpen -benchmem -benchtime=3x`.

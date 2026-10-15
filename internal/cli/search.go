@@ -116,6 +116,13 @@ func executeContentSearch(opts contentSearchOptions, stdout, stderr io.Writer, e
 	if opts.read != "" {
 		return readSearchReference(ctx, env, cfg, namespace, opts, stdout, stderr)
 	}
+	// Include initialization and local schema migration in the command budget.
+	passLimit := 5 * time.Second
+	if opts.refresh {
+		passLimit = 30 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(ctx, passLimit)
+	defer cancel()
 	scope, err := scopeFor(env, opts.project, opts.all)
 	if err != nil {
 		return searchCommandError(stderr, err)

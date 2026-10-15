@@ -98,7 +98,9 @@ checkpoint are found in a later sweep. Partial or moving-root discovery never
 proves deletion or complete coverage. Exact fresh authority checks remove known
 sessions confirmed absent. Legacy paged archives report partial coverage even
 when a listing walk finishes, since those pages do not form an immutable snapshot.
-Stores without bounded listing report an explicit discovery error.
+Stores without bounded listing report an explicit discovery error. Unreadable
+metadata reports an error and keeps coverage partial while other identities
+continue to advance; the failed identity is retried in a later sweep.
 
 Coverage distinguishes discovery of a stable observed catalog snapshot from
 pending, failed, and unsupported retained-source work. Last observation is local
@@ -107,3 +109,10 @@ refresh. Observing stricter privacy, changed interpretation, or removed retained
 membership invalidates prior text before replacement. Indexing rechecks fresh
 authority after source loading and before install. These checks do not establish
 perpetual freshness after their observation. Normal queries remain network-free.
+
+Opening an older local search database builds a local coverage index once; this
+work scales with indexed session rows and reads no archive sources. Normal query
+initialization and execution share a five-second deadline. Explicit refresh
+initialization, discovery and indexing share a thirty-second deadline. An
+interrupted schema migration rolls back and can be retried on the next open;
+identity validation still advances separately through bounded refresh passes.

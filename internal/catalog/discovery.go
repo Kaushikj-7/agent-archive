@@ -119,8 +119,8 @@ func readDiscoveryVersion(ctx context.Context, getter storage.CatalogVersionedGe
 	if errors.Is(err, storage.ErrObjectTooLarge) && limit < fullLimit {
 		return nil, version, ErrPickerBudget
 	}
-	if err == nil {
-		err = work.bytes(len(raw))
+	if e := work.bytes(len(raw)); e != nil {
+		return nil, version, e
 	}
 	return raw, version, err
 }
