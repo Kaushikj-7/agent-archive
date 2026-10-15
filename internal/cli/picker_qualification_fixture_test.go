@@ -16,6 +16,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/listingindex"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
+	"github.com/wangjohn/agent-archive/internal/testutil/fixturecost"
 )
 
 // This wire builder is test-only. It writes a complete immutable universe once,
@@ -214,6 +215,9 @@ func qualificationOrderKeys(key string, m archive.Metadata) [3][]string {
 
 func buildQualificationFixture(tb testing.TB, metadata []archive.Metadata) qualificationFixture {
 	tb.Helper()
+	phase := fixturecost.Start(tb, "qualification", "build", map[string]int64{"entry_encodes": int64(len(metadata)), "constructors": 1})
+	phase.Add("entry_encodes", 0)
+	phase.Add("constructors", 1)
 	raw := &qualifiedCLIStore{storagetest.NewMemoryStore()}
 	head := qualificationSeed(tb, raw)
 	entries := make([]catalog.CatalogEntry, len(metadata))
@@ -244,6 +248,7 @@ func buildQualificationFixture(tb testing.TB, metadata []archive.Metadata) quali
 		n := children[m.Harness.Name+"/"+m.SessionID]
 		entry := catalog.CatalogEntry{Revision: fmt.Sprintf("fixture-%08d", i), Metadata: ref, Summary: m, OrdinaryChildren: n[0], ReplayChildren: n[1]}
 		entries[i] = qualificationEntry(tb, entry)
+		phase.Add("entry_encodes", 1)
 		entryWire[i] = qualificationJSON(tb, entries[i])
 		key, err := archive.MetadataObjectKey(m.Harness.Name, m.SessionID)
 		if err != nil {
@@ -293,6 +298,8 @@ func buildQualificationFixture(tb testing.TB, metadata []archive.Metadata) quali
 	if err := json.Unmarshal(manifest, &privateMetadata); err != nil {
 		tb.Fatal(err)
 	}
+	phase.Add("rows", int64(len(metadata)))
+	phase.Finish()
 	return qualificationFixture{head: head, raw: raw, store: wrapped, metadata: privateMetadata, manifest: storage.SHA256Hex(manifest), height: height}
 }
 
@@ -322,6 +329,8 @@ func freezeQualificationFixture(tb testing.TB, fixture qualificationFixture) qua
 
 func (seed qualificationFrozenFixture) clone(tb testing.TB) qualificationFixture {
 	tb.Helper()
+	phase := fixturecost.Start(tb, "qualification", "clone", map[string]int64{"store_clones": 1})
+	phase.Add("store_clones", 1)
 	memory, err := seed.objects.Clone(tb.Context())
 	if err != nil {
 		tb.Fatal(err)
@@ -337,6 +346,8 @@ func (seed qualificationFrozenFixture) clone(tb testing.TB) qualificationFixture
 	if err != nil {
 		tb.Fatal(err)
 	}
+	phase.Add("rows", int64(len(fixture.metadata)))
+	phase.Finish()
 	return fixture
 }
 
@@ -368,6 +379,8 @@ func cloneQualificationFixture(tb testing.TB, fixture qualificationFixture) qual
 	tb.Helper()
 	// Each command owns its map, provider and metadata. MemoryStore's internal
 	// immutable bodies can be reused without another multi-gigabyte wire copy.
+	phase := fixturecost.Start(tb, "qualification", "clone", map[string]int64{"store_clones": 1})
+	phase.Add("store_clones", 1)
 	memory, err := storagetest.CloneMemoryStore(tb.Context(), fixture.raw.MemoryStore)
 	if err != nil {
 		tb.Fatal(err)
@@ -383,5 +396,7 @@ func cloneQualificationFixture(tb testing.TB, fixture qualificationFixture) qual
 	if err != nil {
 		tb.Fatal(err)
 	}
+	phase.Add("rows", int64(len(cloned.metadata)))
+	phase.Finish()
 	return cloned
 }
