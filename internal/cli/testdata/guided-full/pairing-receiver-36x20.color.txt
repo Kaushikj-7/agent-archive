@@ -37,10 +37,10 @@ endpoint .
   Storage
     s3://synthetic/agent-archive/
   Keep for
-    90 days · Sessions older than 90
-    days are deleted from your
-    bucket; change with Edit a
-    setting, or keep forever
+    90 days · Sessions with no new
+    activity for 90 days are deleted
+    from your bucket; change with
+    Edit a setting, or keep forever
   ! Storage not checked yet ·
     Connection will be checked after
     you confirm these settings
@@ -56,7 +56,7 @@ endpoint .
 
   1) Save the displayed destination
      and capture settings
-  2) Edit settings
+  2) Edit a setting
 
   [d] Full settings and privacy
   [Enter] Cancel

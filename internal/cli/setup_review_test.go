@@ -417,9 +417,9 @@ func TestSetupReviewRetentionRowExplainsExpiry(t *testing.T) {
 		wantValue  string
 		wantDetail string
 	}{
-		{"finite", config.Config{RetentionDays: 30}, "30 days", "Sessions older than 30 days are deleted from your bucket; change with Edit a setting, or keep forever"},
-		{"one day", config.Config{RetentionDays: 1}, "1 day", "Sessions older than 1 day are deleted from your bucket; change with Edit a setting, or keep forever"},
-		{"forever", config.Config{RetentionDays: 0, RetentionProtection: true}, "Keep forever", "Sessions are never deleted automatically"},
+		{"finite", config.Config{RetentionDays: 30}, "30 days", "Sessions with no new activity for 30 days are deleted from your bucket; change with Edit a setting, or keep forever"},
+		{"one day", config.Config{RetentionDays: 1}, "1 day", "Sessions with no new activity for 1 day are deleted from your bucket; change with Edit a setting, or keep forever"},
+		{"forever", config.Config{RetentionDays: 0, RetentionProtection: true}, "Keep forever", "agent-archive never deletes sessions automatically"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

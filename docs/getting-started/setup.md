@@ -228,14 +228,13 @@ visible, with old/new values for a reconfiguration. Storage is shown once.
 
 ```text
 Step 3 of 3 · Review and start
-
-  Apps       Codex, Claude Code, Cursor
-  Projects   3 included projects (paths in Details)
-  Codex      Included projects only
-  Skills     Metadata, including user folders
-  Storage    s3://team-archive/agent-archive/
-  Keep for   90 days · Sessions older than 90 days are deleted from your bucket; change with Edit a setting, or keep forever
-
+  Apps      Codex, Claude Code, Cursor
+  Projects  3 included projects (paths in Details)
+  Codex     Included projects only
+  Skills    Metadata, including user folders
+  Storage   s3://team-archive/agent-archive/
+  Keep for  90 days · Sessions with no new activity for 90 days are deleted from
+            your bucket; change with Edit a setting, or keep forever
   ✓ Storage connected
   ✓ Bucket is private
   ! Setup imports the last 7 days of included projects; older history is separate.
@@ -248,9 +247,10 @@ ownership, storage checks and privacy documentation. Longer details use the
 pager and return to the same draft and decision. **Name this machine** (`m`) and
 **Cancel; keep draft** (`q`) are separate shortcuts. Narrow displays wrap values
 and warnings without dropping them. The default retention is 90 days, and
-the Keep for row says what that means: sessions older than 90 days are
-deleted from your bucket automatically; change it with Edit a setting, or
-keep forever, in which case sessions are never deleted automatically.
+the Keep for row says what that means: sessions with no new activity for 90
+days are deleted from your bucket automatically; change it with Edit a
+setting, or keep forever, in which case agent-archive never deletes sessions
+automatically.
 
 The Skills row controls filesystem skill evidence. Fresh setup uses
 `metadata` (names and filtered hashes, no body). Choose Edit a setting to

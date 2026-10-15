@@ -408,7 +408,7 @@ func reviewPairingSettings(p *prompter, payload pairing.Payload, cfg, existing c
 			}
 			if choice == "save" {
 				if setupNeedsProject(cfg) {
-					p.warn("Include a project with Edit settings → Projects before saving these capture settings.")
+					p.warn("Include a project with Edit a setting → Projects before saving these capture settings.")
 					continue
 				}
 				break
@@ -439,7 +439,7 @@ func reviewPairingSettings(p *prompter, payload pairing.Payload, cfg, existing c
 
 func pairingReviewAction(p *prompter) (string, error) {
 	return p.guidedChoice(promptModel{Question: "Review pairing settings", Default: "cancel",
-		Primary:   []option{{"save", "Save the displayed destination and capture settings"}, {"edit", "Edit settings"}},
+		Primary:   []option{{"save", "Save the displayed destination and capture settings"}, {"edit", "Edit a setting"}},
 		Secondary: []actionOption{{"details", "d", "Full settings and privacy"}, {"cancel", "q", "Cancel"}}})
 }
 
