@@ -17,6 +17,30 @@ follow [Semantic Versioning](https://semver.org/).
   N ahead" instead of "waiting for its first upload", `sync` adds "N left
   for the next pass" to its summary, and `status --json` reports them in
   `collector.unreached_sessions` and as the `queued` uploading state.
+- The session list fits your terminal: every session is one line that never
+  wraps, as `#`, the agent (a colored dot and "Claude", "Codex" or "Cursor"),
+  a readable title cut at a word, the project, the PR and a short time ("2m",
+  "Mon", "Oct 9"), with the project, PR and time kept next to the title. On a
+  narrower terminal the title shrinks first; once keeping the project would
+  leave the title under 36 columns the project column goes, then the PR, then
+  the agent's name. A session active right now reads "live" (green) where its
+  time would be, in place of the dot before its title. The ID leaves the
+  interactive list (you can still type a number or a unique short ID, and
+  `show` has the ID), and the skill and subagent notes leave the title; a
+  session's subagents show as a dim "+4" where the whole title leaves room.
+  In `handoff`, a session not yet uploaded always says so (a dim "· not
+  uploaded"), with its title cut to make room. This applies to `list`, `show`
+  and `handoff`.
+- **Changed for scripts:** piped `list` output (not a terminal) is now one
+  plain line per session, newest first with no project headings, in the
+  columns `WHEN AGENT PROJECT PR ID TITLE`, with WHEN the short time, an
+  empty PR or unknown project as `-`, and TITLE last: the session's full
+  title as recorded (not the shortened title the terminal list shows), never
+  cut, with its subagent note spelled out. The columns are aligned for
+  reading, not for splitting on spaces (WHEN can read "Sep 20"). Anything
+  parsing the old `TITLE PR WHEN HARNESS PROJECT ID` text should switch to
+  `list --json`, which is unchanged and is the stable format. `list
+  --verbose` is unchanged.
 
 ## [0.2.2]
 

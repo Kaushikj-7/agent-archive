@@ -189,7 +189,7 @@ func TestNativePreviewBudgetIsCumulativeAcrossExplicitBatches(t *testing.T) {
 		t.Fatalf("exhausted batch reads: %v %v %d %d %+v", more, err, before, after, n)
 	}
 	for i, row := range n.rows {
-		if nativeRowIndex(row, r.Candidates) != i || row.Index != i+1 || row.Title != r.Candidates[i].NativeID || row.SkillHint != " · label not inspected" || row.fields.Title != "" || row.fields.Name != "" {
+		if nativeRowIndex(row, r.Candidates) != i || row.Index != i+1 || row.Title != r.Candidates[i].NativeID || row.Hint != "label not inspected" || row.fields.Title != "" || row.fields.Name != "" {
 			t.Fatalf("untruthful fallback row %d: %+v", i, row)
 		}
 	}

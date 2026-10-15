@@ -54,10 +54,10 @@ func TestListingsDateAndSortSessionsByLastActivity(t *testing.T) {
 		if older < 0 || newer < 0 || newer > older {
 			t.Fatalf("%s: not newest activity first:\n%s", name, out)
 		}
-		if line := pickerLine(t, out, imported); !strings.Contains(line, "7 days ago") {
+		if line := pickerLine(t, out, imported); !strings.Contains(line, shortWhen(statsNow, statsNow.Add(-7*24*time.Hour))+"  ") {
 			t.Errorf("%s: the import is not dated by its last activity: %q", name, line)
 		}
-		if line := pickerLine(t, out, hooked); !strings.Contains(line, "3 days ago") {
+		if line := pickerLine(t, out, hooked); !strings.Contains(line, shortWhen(statsNow, statsNow.Add(-3*24*time.Hour))+"  ") {
 			t.Errorf("%s: the hook capture is not dated by its capture: %q", name, line)
 		}
 	}
