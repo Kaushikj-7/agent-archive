@@ -229,3 +229,21 @@ Confirmed by the owner 2026-10-14:
   whose sessions all fall on one day still shows that day's heading.
 - PR 4: the verbose table is one flat table. It was grouped by project
   before; day groups add nothing to a debugging view with full timestamps.
+- PR 6: the non-interactive candidate table (`show` / `handoff` words with
+  several matches, on stderr) shows the full display title, not
+  `listTitle`, following decision 3's piped table: it is what an agent or a
+  log reads. It uses the piped table's helpers (`tableHeader`,
+  `tableCells`), so it gains a column header and AGENT is the lower-case
+  harness name `--harness` takes. Titles are capped at 160 columns, above
+  any captured title (129 runes), against a hostile sidecar.
+- PR 6: before setup, `handoff`'s non-interactive local matches print the
+  same candidate table, with the whole native ID in the ID column, in place
+  of the `local <ID> (<app>): <title>` lines. The local picker groups by day
+  and shows `listTitle` for a real title; a native ID that stands in for a
+  missing title is shown as it is.
+- PR 6: the `--latest` "no session" fallback keeps its own columns, now
+  `WHEN AGENT MACHINE COMMAND` under a header, with `shortWhen` and the
+  `agentLabel` name.
+- PR 6: the `show` summary's context line is the `agentLabel` name (no
+  dot; colored with `textStyle.agent`), the project, and
+  "last active <longWhen>". `compactAge` is removed.

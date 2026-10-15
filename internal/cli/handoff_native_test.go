@@ -594,3 +594,45 @@ func TestNativeProjectAcceptsSymlinkToCheckout(t *testing.T) {
 }
 
 func (nativeOnlyDependencies) runtimeLookup() agentapi.RuntimeLookup { return productionAgents }
+
+// Words that match several local sessions where nothing can ask print them
+// in the piped list's columns, with the whole native ID to name. The picker
+// shows the readable title and groups the sessions by day.
+func TestNativeLocalMatchesUseTheSessionListWords(t *testing.T) {
+	t.Parallel()
+	f := newNativeFixture(t)
+	recent := "11111111-1111-1111-1111-111111111111"
+	older := "22222222-2222-2222-2222-222222222222"
+	f.add(t, "claude", recent, "# fix the OAuth callback", time.Hour)
+	f.add(t, "codex", older, "Retry the OAuth refresh", 30*time.Hour)
+	_, errOut, code := runHandoff(t, f.env, "OAuth")
+	table := "  WHEN  AGENT   ID                                    TITLE\n" +
+		"  1h    claude  " + recent + "  # fix the OAuth callback\n" +
+		"  Wed   codex   " + older + "  Retry the OAuth refresh\n"
+	if code != 1 || !strings.Contains(errOut, table) || !strings.Contains(errOut, "2 matches in 2 loaded local previews") {
+		t.Fatalf("code=%d stderr:\n%s", code, errOut)
+	}
+	f.env.TerminalSize = fixedTerminal{80, 40}.terminalSize
+	out, errOut, code := runPicker(t, f.env, "q\n")
+	if code != 0 {
+		t.Fatalf("picker code=%d stderr=%s\n%s", code, errOut, out)
+	}
+	var lines []string
+	for line := range strings.SplitSeq(out, "\n") {
+		if line = strings.TrimRight(line, " "); strings.HasSuffix(line, "DAY") || strings.Contains(line, "OAuth") {
+			lines = append(lines, line)
+		}
+	}
+	want := []string{"TODAY", "1  ● Claude  Fix the OAuth callback", "YESTERDAY", "2  ● Codex   Retry the OAuth refresh"}
+	if len(lines) != len(want) {
+		t.Fatalf("picker lines %q, want %q:\n%s", lines, want, out)
+	}
+	for i, line := range lines {
+		if !strings.HasPrefix(line, want[i]) {
+			t.Fatalf("picker line %q, want it to start %q:\n%s", line, want[i], out)
+		}
+	}
+	if !strings.HasSuffix(lines[1], " 1h") || !strings.HasSuffix(lines[3], " Wed") {
+		t.Fatalf("short times: %q\n%s", lines, out)
+	}
+}
