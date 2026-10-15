@@ -87,6 +87,28 @@ Refresh-only and exact-reference reads can run outside a project. Explicit
 refresh remains allowed while automatic collection is paused. Index presence
 never implies consent to future automatic indexing.
 
+Discovery rotates first access to the unchanged pass budget among known-session
+checks, recent publications and historical catch-up. Each class gets first access
+within three passes. The four recent entries also rotate their starting entry,
+so one oversized or timed-out body cannot hide its neighbors; each gets a first
+recent-body opportunity within twelve passes while that recent set remains stable.
+A fitting large metadata body can use the whole remaining pass budget on its
+turn. Metadata reads reserve500ms of the existing discovery deadline for recording
+failed-item progress (a fresh20-second pass therefore allows at most roughly19.5
+seconds for one metadata read, less earlier work). Parent cancellation or stale
+catalog authority still stops immediately. These are finite work limits, not
+remote latency guarantees.
+
+Catch-up checkpoints survive interruption and process restart. New catalog roots
+resume by physical identity key, including tombstones; new records behind that
+checkpoint are found in a later sweep. Partial or moving-root discovery never
+proves deletion or complete coverage. Exact fresh authority checks remove known
+sessions confirmed absent. Legacy paged archives report partial coverage even
+when a listing walk finishes, since those pages do not form an immutable snapshot.
+Stores without bounded listing report an explicit discovery error. Unreadable
+metadata reports an error and keeps coverage partial while other identities
+continue to advance; the failed identity is retried in a later sweep.
+
 Use `search --read REF --before 1 --after 1 --json` for neighboring visible
 messages from that exact verified source. `--max-bytes` limits each raw UTF-8
 text slice; `--max-output-bytes` limits the complete escaped stdout document,
@@ -103,3 +125,12 @@ Changed/deleted/unsupported/unavailable source states are distinct. A changed
 cursor requires restarting the same query; no transaction survives user think
 time. Unknown matching totals are null, not zero. Coverage counters describe
 locally known namespace sessions, independently of the query's project filters.
+
+Explicit refresh upgrades older local search databases under its bounded pass
+budget, including a one-time local coverage-index build proportional to installed
+session rows. Cached queries require the current schema and request explicit
+refresh instead of running migration. Schema3 upgrades to schema4 by adding a
+finite discovery-turn value while preserving existing identity/root checkpoints.
+An interrupted migration rolls back; bounded identity validation resumes during
+explicit refresh. Legacy metadata retry resumes by logical key within a physical
+page without treating that mutable page as snapshot authority.

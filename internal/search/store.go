@@ -19,6 +19,8 @@ import (
 	_ "modernc.org/sqlite" // Register the same pure-Go driver used by the metadata catalog.
 )
 
+const schemaVersion = 4
+
 // Store is a private, destination-bound, disposable content index. The caller
 // owns scheduling and supplies a directory outside the metadata-only catalog.
 type Store struct {
@@ -83,7 +85,7 @@ func (s *Store) initialize(ctx context.Context) error {
 	if err := s.db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version != 0 && version != 1 && version != 2 && version != 3 {
+	if version < 0 || version > schemaVersion {
 		return errors.New("unsupported search schema; rebuild index")
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -91,6 +93,12 @@ func (s *Store) initialize(ctx context.Context) error {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if version == 3 {
+		if _, err = tx.ExecContext(ctx, "ALTER TABLE search_discovery ADD COLUMN turn INTEGER NOT NULL DEFAULT 0"); err != nil {
+			return err
+		}
+	}
+
 	_, err = tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS search_state (id INTEGER PRIMARY KEY CHECK(id=1),destination TEXT NOT NULL,generation INTEGER NOT NULL);
  CREATE TABLE IF NOT EXISTS search_sessions (id TEXT PRIMARY KEY,project TEXT NOT NULL,harness TEXT NOT NULL,captured INTEGER NOT NULL,replay INTEGER NOT NULL,child INTEGER NOT NULL,title TEXT NOT NULL,projection_hash TEXT NOT NULL,gaps BLOB NOT NULL,repo TEXT NOT NULL,project_name TEXT NOT NULL,session_id TEXT NOT NULL);
  CREATE INDEX IF NOT EXISTS search_scope ON search_sessions(project,harness,captured);
@@ -102,12 +110,12 @@ func (s *Store) initialize(ctx context.Context) error {
  CREATE INDEX IF NOT EXISTS search_work_clock ON search_work(touched);
  CREATE INDEX IF NOT EXISTS search_work_pending ON search_work(touched,priority,id) WHERE desired!=indexed;
  CREATE TABLE IF NOT EXISTS search_sources (session TEXT NOT NULL, identity TEXT NOT NULL, projection BLOB NOT NULL, PRIMARY KEY(session,identity));
- CREATE TABLE IF NOT EXISTS search_discovery (id INTEGER PRIMARY KEY CHECK(id=1), mode TEXT NOT NULL DEFAULT '', after_key TEXT NOT NULL DEFAULT '', token TEXT NOT NULL DEFAULT '', root TEXT NOT NULL DEFAULT '', stable INTEGER NOT NULL DEFAULT 1, complete_root TEXT NOT NULL DEFAULT '', observed INTEGER NOT NULL DEFAULT 0, validated TEXT NOT NULL DEFAULT '', contract TEXT NOT NULL DEFAULT '', seed_work TEXT NOT NULL DEFAULT '',seed_sessions TEXT NOT NULL DEFAULT '',seeded INTEGER NOT NULL DEFAULT 0,check_root TEXT NOT NULL DEFAULT '',checked_root TEXT NOT NULL DEFAULT '');
+ CREATE TABLE IF NOT EXISTS search_discovery (id INTEGER PRIMARY KEY CHECK(id=1), mode TEXT NOT NULL DEFAULT '', after_key TEXT NOT NULL DEFAULT '', token TEXT NOT NULL DEFAULT '', root TEXT NOT NULL DEFAULT '', stable INTEGER NOT NULL DEFAULT 1, complete_root TEXT NOT NULL DEFAULT '', observed INTEGER NOT NULL DEFAULT 0, validated TEXT NOT NULL DEFAULT '', contract TEXT NOT NULL DEFAULT '', seed_work TEXT NOT NULL DEFAULT '',seed_sessions TEXT NOT NULL DEFAULT '',seeded INTEGER NOT NULL DEFAULT 0,check_root TEXT NOT NULL DEFAULT '',checked_root TEXT NOT NULL DEFAULT '',turn INTEGER NOT NULL DEFAULT 0);
  INSERT OR IGNORE INTO search_discovery(id) VALUES(1);
  CREATE TABLE IF NOT EXISTS search_observed (key TEXT PRIMARY KEY, session TEXT NOT NULL, revision TEXT NOT NULL, observed INTEGER NOT NULL);
  CREATE INDEX IF NOT EXISTS search_observed_time ON search_observed(observed);
  CREATE INDEX IF NOT EXISTS search_coverage_gaps ON search_sessions(id) WHERE coalesce(json_array_length(gaps),0)>0;
- PRAGMA user_version=3;`)
+ PRAGMA user_version=4;`)
 	if err != nil {
 		return err
 	}

@@ -20,14 +20,25 @@ import (
 
 type discoveryArchive struct {
 	*storagetest.MemoryStore
-	sourceGets int
-	lists      int
-	beforeRead func(string)
+	sourceGets      int
+	lists           int
+	beforeRead      func(string)
+	streamOversized string
+	readError       func(context.Context, string) error
 }
 
 func (*discoveryArchive) CatalogAtomicQualification() error { return nil }
 
 func (a *discoveryArchive) GetLimited(ctx context.Context, key string, limit int64) ([]byte, error) {
+	if a.readError != nil {
+		if err := a.readError(ctx, key); err != nil {
+			return nil, err
+		}
+	}
+	if key == a.streamOversized {
+		return make([]byte, limit+1), storage.ErrObjectTooLarge
+	}
+
 	if a.beforeRead != nil {
 		a.beforeRead(key)
 	}
@@ -986,5 +997,203 @@ func TestReconcileChargesFailedLegacyMetadataReadBytes(t *testing.T) {
 	d, err := s.Reconcile(t.Context(), failingMetadataBody{raw}, parsers, m.CapturedAt, ReconcileBudget{Entries: 1, Checks: 1, Bytes: 150})
 	if !errors.Is(err, errMetadataBudget) || d.Bytes != 100 || d.Metadata != 2 {
 		t.Fatalf("failed read escaped aggregate metadata budget: %+v %v", d, err)
+	}
+}
+
+func TestReconcileOversizedMetadataDoesNotStarveOtherDiscovery(t *testing.T) {
+	t.Parallel()
+	for _, known := range []bool{false, true} {
+		t.Run(fmt.Sprintf("known-%v", known), func(t *testing.T) {
+			t.Parallel()
+			a := newSearchArchive(t)
+			bad := a.session(t, "a-bad")
+			s := openTest(t)
+			parsers := builtin.NewBuiltins()
+			if known {
+				if err := s.Observe(t.Context(), bad, parsers, bad.CapturedAt, 0); err != nil {
+					t.Fatal(err)
+				}
+			}
+			key, _ := archive.MetadataObjectKey(bad.Harness.Name, bad.SessionID)
+			entry, _, err := a.remote.Writer.Find(t.Context(), key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			a.raw.streamOversized = entry.Metadata.Key
+			for i := range 6 {
+				_ = a.session(t, fmt.Sprintf("good-%d", i))
+			}
+			for pass := range 32 {
+				if pass%3 == 0 {
+					_ = a.session(t, fmt.Sprintf("z-growing-%d", pass))
+				}
+				d, _ := s.Reconcile(t.Context(), a.remote, parsers, bad.CapturedAt, ReconcileBudget{Entries: 1, Checks: 1})
+				if d.Bytes > 16<<20 || d.Nodes > 512 {
+					t.Fatalf("aggregate exceeded: %+v", d)
+				}
+			}
+			var count int
+			if err = s.db.QueryRowContext(t.Context(), "SELECT count(*) FROM search_work WHERE id LIKE ?", bad.Harness.Name+"/good-%").Scan(&count); err != nil || count != 6 {
+				t.Fatalf("oversized body froze unrelated discovery: %d %v", count, err)
+			}
+			page, err := s.Search(t.Context(), Query{Text: "checksum"})
+			if err != nil || page.Observation.DiscoveryComplete || page.Observation.IdentityChecksComplete {
+				t.Fatalf("oversized body claimed complete: %+v %v", page.Observation, err)
+			}
+		})
+	}
+}
+
+func TestReconcileBorrowsUnusedCapacityForLargeMetadata(t *testing.T) {
+	t.Parallel()
+	a := newSearchArchive(t)
+	m := a.session(t, "large")
+	key, _ := archive.MetadataObjectKey(m.Harness.Name, m.SessionID)
+	entry, _, err := a.remote.Writer.Find(t.Context(), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := a.raw.Get(t.Context(), entry.Metadata.Key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw = append(raw, []byte(strings.Repeat(" ", 14<<20))...)
+	ref, err := a.remote.Writer.PutImmutable(t.Context(), catalog.KindMetadata, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry.Metadata = ref
+	a.mutate(t, key, entry)
+	s := openTest(t)
+	parsers := builtin.NewBuiltins()
+	for range 4 {
+		d, _ := s.Reconcile(t.Context(), a.remote, parsers, m.CapturedAt, ReconcileBudget{})
+		if d.Bytes > 16<<20 || d.Nodes > 512 {
+			t.Fatalf("aggregate exceeded: %+v", d)
+		}
+	}
+	var count int
+	if err = s.db.QueryRowContext(t.Context(), "SELECT count(*) FROM search_work").Scan(&count); err != nil || count != 1 {
+		t.Fatalf("fitting large metadata never hydrated: %d %v", count, err)
+	}
+}
+
+func TestReconcileLegacyOversizedBodyResumesInsidePage(t *testing.T) {
+	t.Parallel()
+	m, _, raw := verifiedFixture(t, "claude", workerTranscript)
+	if err := raw.Put(t.Context(), "sessions/000/metadata.json", []byte(strings.Repeat("x", 17<<20))); err != nil {
+		t.Fatal(err)
+	}
+	s := openTest(t)
+	parsers := builtin.NewBuiltins()
+	for range 5 {
+		d, _ := s.Reconcile(t.Context(), raw, parsers, m.CapturedAt, ReconcileBudget{})
+		if d.Bytes > 16<<20 || d.Objects > 32 {
+			t.Fatalf("aggregate exceeded: %+v", d)
+		}
+	}
+	var count int
+	if err := s.db.QueryRowContext(t.Context(), "SELECT count(*) FROM search_work").Scan(&count); err != nil || count != 1 {
+		t.Fatalf("legacy oversized body froze later same-page metadata: %d %v", count, err)
+	}
+}
+
+func TestReconcileRecentRotationAdvancesPastOversizedFirstBody(t *testing.T) {
+	t.Parallel()
+	a := newSearchArchive(t)
+	bad := a.session(t, "000-bad")
+	key, _ := archive.MetadataObjectKey(bad.Harness.Name, bad.SessionID)
+	entry, _, err := a.remote.Writer.Find(t.Context(), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.raw.streamOversized = entry.Metadata.Key
+	for i := range 32 {
+		_ = a.session(t, fmt.Sprintf("good-%02d", i))
+	}
+	s := openTest(t)
+	parsers := builtin.NewBuiltins()
+	for range 5 {
+		d, _ := s.Reconcile(t.Context(), a.remote, parsers, bad.CapturedAt, ReconcileBudget{Entries: 1, Checks: 1})
+		if d.Bytes > 16<<20 {
+			t.Fatalf("overflow escaped budget: %+v", d)
+		}
+	}
+	for i := range 3 {
+		var count int
+		id := fmt.Sprintf("claude/good-%02d", i)
+		if err = s.db.QueryRowContext(t.Context(), "SELECT count(*) FROM search_work WHERE id=?", id).Scan(&count); err != nil || count != 1 {
+			t.Fatalf("recent body %s starved behind oversized first body: %d %v", id, count, err)
+		}
+	}
+}
+
+func TestReconcileMetadataTimeoutAdvancesHistoryAndRecentWithLiveParent(t *testing.T) {
+	t.Parallel()
+	a := newSearchArchive(t)
+	bad := a.session(t, "000-bad")
+	key, _ := archive.MetadataObjectKey(bad.Harness.Name, bad.SessionID)
+	entry, _, err := a.remote.Writer.Find(t.Context(), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(time.Minute)
+	parent, cancel := context.WithDeadline(t.Context(), deadline)
+	defer cancel()
+	failed := 0
+	a.raw.readError = func(ctx context.Context, key string) error {
+		if key != entry.Metadata.Key {
+			return nil
+		}
+		childDeadline, ok := ctx.Deadline()
+		// Reconcile caps the minute-long parent at20s, then reserves500ms.
+		if !ok || !childDeadline.Before(deadline) || parent.Err() != nil {
+			t.Fatal("metadata timeout lacks a live, longer parent")
+		}
+		failed++
+		return context.DeadlineExceeded
+	}
+	for i := range 16 {
+		_ = a.session(t, fmt.Sprintf("good-%02d", i))
+	}
+	s := openTest(t)
+	parsers := builtin.NewBuiltins()
+	for pass := range 56 {
+		_, _ = s.Reconcile(parent, a.remote, parsers, bad.CapturedAt, ReconcileBudget{Entries: 1, Checks: 1})
+		if pass == 4 {
+			var count int
+			if err = s.db.QueryRowContext(t.Context(), "SELECT count(*) FROM search_work WHERE id IN ('claude/good-00','claude/good-01','claude/good-02')").Scan(&count); err != nil || count != 3 {
+				t.Fatalf("recent timeout hid other recent rows: %d %v", count, err)
+			}
+		}
+	}
+	var count int
+	if err = s.db.QueryRowContext(t.Context(), "SELECT count(*) FROM search_work").Scan(&count); err != nil || count != 16 || failed == 0 || parent.Err() != nil {
+		t.Fatalf("timeout pinned historical discovery: rows=%d failures=%d parent=%v err=%v", count, failed, parent.Err(), err)
+	}
+	page, err := s.Search(t.Context(), Query{Text: "checksum"})
+	if err != nil || page.Observation.DiscoveryComplete {
+		t.Fatalf("timeout certified complete: %+v %v", page.Observation, err)
+	}
+}
+
+func TestDiscoveryMetadataDeadlineReservesCheckpointTime(t *testing.T) {
+	t.Parallel()
+	deadline := time.Now().Add(10 * time.Second)
+	parent, cancel := context.WithDeadline(t.Context(), deadline)
+	defer cancel()
+	child, finish, err := discoveryMetadataContext(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer finish()
+	got, _ := child.Deadline()
+	if !got.Equal(deadline.Add(-500 * time.Millisecond)) {
+		t.Fatalf("metadata deadline=%v, parent=%v", got, deadline)
+	}
+	short, stop := context.WithDeadline(t.Context(), time.Now().Add(100*time.Millisecond))
+	defer stop()
+	if _, _, err = discoveryMetadataContext(short); !errors.Is(err, errMetadataBudget) {
+		t.Fatalf("started metadata without checkpoint reserve: %v", err)
 	}
 }

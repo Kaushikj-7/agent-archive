@@ -35,7 +35,7 @@ func OpenRead(ctx context.Context, dir, destination string) (*Store, error) {
 	s := &Store{db: db, destination: destination}
 	var version int
 	err = db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version)
-	if err == nil && version != 3 { // S3 repaired parent supplies shared schemaVersion before final validation.
+	if err == nil && version != schemaVersion {
 		err = ErrUpgradeRequired
 	}
 	var actual string

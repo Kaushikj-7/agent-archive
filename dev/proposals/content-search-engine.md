@@ -248,8 +248,9 @@ and never represents mutable listing pages as an immutable snapshot. Corruption,
 timeout, stale snapshots and partial listing do not establish absence. Unreadable
 metadata bodies do not pin logical discovery or validation checkpoints: failures
 remain visible and suppress completion while later identities progress, and the
-next sweep retries them. Cancellation, stale authority and exhausted budgets
-stop the pass without skipping the current identity. Network
+next sweep retries them. Parent cancellation, stale authority and structural/pass budget failures
+stop without skipping an uncertain identity. A failed bounded metadata unit can
+checkpoint its known logical key for retry in the next sweep. Network
 changes after the last local observation remain unknown until another refresh.
 
 Reproduce discovery costs separately from source work:
@@ -264,6 +265,40 @@ Even small archives can need many bounded passes; a future one-minute worker tic
 would translate each additional pass into scheduling lag. S4/S5 composition must
 choose manual catch-up and scheduled budgets using measured costs. This change
 adds neither concurrency nor a scheduler.
+
+Fairness also covers bodies that exhaust a complete pass: schema4 stores one
+finite discovery turn in the existing discovery row. Known checks, recent reads
+and historical reads rotate first access to the unchanged512-node/16MiB/20-second
+aggregate budget (at most three passes per class). The recent starting row rotates
+across its four selected entries (at most twelve passes for a stable recent set).
+Later work borrows the actual remainder. There is no smaller permanent per-body
+size cap: a14MiB verified metadata fixture still hydrates with the default16MiB
+pass. Oversized bodies, including streaming bodies with absent or false declared
+length, remain reported failures and partial coverage while unrelated identities
+advance. Legacy budget failures checkpoint within the current physical page using
+the existing logical key; the next sweep retries skipped bodies.
+
+Metadata-only reads reserve500ms inside the existing discovery deadline for
+persisting a failed immutable key. A fresh pass therefore permits roughly19.5s
+for a single metadata read, reduced by preceding work. Only child metadata timeout
+while the parent remains live is an item failure; parent cancellation, stale
+snapshots and structural errors still stop without skipping an uncertain key.
+This is a work budget, not a service-time guarantee. Schema3-to4 adds the finite
+turn without resetting durable progress; schema1/2 logical seeding stays bounded.
+
+S3 bounded reads reject a known oversized response length before allocating its
+body. Missing or misleading lengths still use the bounded actual read and retain
+partial/error bytes solely for accounting; reader integrity/identity checks reject
+errors before decoding/installing anything. Discovery reserves the getter's
+one-byte overflow probe inside its total byte ceiling and charges returned error
+bytes before classifying exhaustion. No HTTP length acts as content authority.
+
+Post-repair three-iteration cold/warm discovery retained the operation counts
+above: cold40metadata GETs/5nodes/212,634accounted bytes, warm0metadata GETs/
+16nodes/253,894bytes. Advisory plain timings were54.88ms/8.41ms with2,491,981/
+1,143,282allocated bytes per operation. The40-session default catch-up again
+needed2discovery passes and10indexing passes with identical published operation
+counts (plain advisory220.69ms). These fixtures do not model real remote latency.
 
 Measured on Go1.27.2, a shared Intel i7-8559U Mac and a synthetic in-memory
 40-session archive with zero simulated remote latency:
