@@ -1,0 +1,628 @@
+{
+  "schema": 1,
+  "hosted": {
+    "cohort": {
+      "source": "39c550ebd40bf68e62e8a2cf4e58fd69b3c954dc",
+      "configuration": {
+        "CGO_ENABLED": "1",
+        "GOAMD64": "v1",
+        "GOARCH": "amd64",
+        "GOEXPERIMENT": "",
+        "GOFLAGS": "-mod=readonly",
+        "GOHOSTARCH": "amd64",
+        "GOHOSTOS": "linux",
+        "GOOS": "linux",
+        "GOTOOLCHAIN": "local",
+        "GOVERSION": "go1.27.2",
+        "GOWORK": "off"
+      },
+      "packages": {
+        "github.com/wangjohn/agent-archive/cmd/agent-archive": false,
+        "github.com/wangjohn/agent-archive/internal/agentapi": true,
+        "github.com/wangjohn/agent-archive/internal/agentmeta": true,
+        "github.com/wangjohn/agent-archive/internal/agents/builtin": true,
+        "github.com/wangjohn/agent-archive/internal/agents/capturecodec": false,
+        "github.com/wangjohn/agent-archive/internal/agents/claude": true,
+        "github.com/wangjohn/agent-archive/internal/agents/codex": true,
+        "github.com/wangjohn/agent-archive/internal/agents/cursor": true,
+        "github.com/wangjohn/agent-archive/internal/agents/hookconfig": true,
+        "github.com/wangjohn/agent-archive/internal/agents/importconfig": false,
+        "github.com/wangjohn/agent-archive/internal/agents/muse": true,
+        "github.com/wangjohn/agent-archive/internal/agents/nativecapture": false,
+        "github.com/wangjohn/agent-archive/internal/agents/nativecapture/internal/sealed": false,
+        "github.com/wangjohn/agent-archive/internal/agents/nativecapture/producer": false,
+        "github.com/wangjohn/agent-archive/internal/agents/nativecodec": true,
+        "github.com/wangjohn/agent-archive/internal/agents/skillconfig": false,
+        "github.com/wangjohn/agent-archive/internal/agentskills": true,
+        "github.com/wangjohn/agent-archive/internal/archive": true,
+        "github.com/wangjohn/agent-archive/internal/backfill": true,
+        "github.com/wangjohn/agent-archive/internal/capture": true,
+        "github.com/wangjohn/agent-archive/internal/catalog": true,
+        "github.com/wangjohn/agent-archive/internal/cli": true,
+        "github.com/wangjohn/agent-archive/internal/cloudflare": true,
+        "github.com/wangjohn/agent-archive/internal/cloudflare/cloudflaretest": false,
+        "github.com/wangjohn/agent-archive/internal/codexmeta": true,
+        "github.com/wangjohn/agent-archive/internal/collector": true,
+        "github.com/wangjohn/agent-archive/internal/config": true,
+        "github.com/wangjohn/agent-archive/internal/credentials": true,
+        "github.com/wangjohn/agent-archive/internal/cursorformat": false,
+        "github.com/wangjohn/agent-archive/internal/cursorstore": true,
+        "github.com/wangjohn/agent-archive/internal/destination": false,
+        "github.com/wangjohn/agent-archive/internal/discovery": true,
+        "github.com/wangjohn/agent-archive/internal/discoveryio": true,
+        "github.com/wangjohn/agent-archive/internal/doclinks": true,
+        "github.com/wangjohn/agent-archive/internal/evidence": true,
+        "github.com/wangjohn/agent-archive/internal/fileapply": true,
+        "github.com/wangjohn/agent-archive/internal/filechange": true,
+        "github.com/wangjohn/agent-archive/internal/gitremote": true,
+        "github.com/wangjohn/agent-archive/internal/hooks": true,
+        "github.com/wangjohn/agent-archive/internal/inspectioncache": true,
+        "github.com/wangjohn/agent-archive/internal/issuance": true,
+        "github.com/wangjohn/agent-archive/internal/jsonedit": true,
+        "github.com/wangjohn/agent-archive/internal/listingindex": true,
+        "github.com/wangjohn/agent-archive/internal/local": true,
+        "github.com/wangjohn/agent-archive/internal/machines": true,
+        "github.com/wangjohn/agent-archive/internal/nativefacts": true,
+        "github.com/wangjohn/agent-archive/internal/nativesessions": true,
+        "github.com/wangjohn/agent-archive/internal/pairing": true,
+        "github.com/wangjohn/agent-archive/internal/platform": true,
+        "github.com/wangjohn/agent-archive/internal/purge": true,
+        "github.com/wangjohn/agent-archive/internal/reader": true,
+        "github.com/wangjohn/agent-archive/internal/retention": true,
+        "github.com/wangjohn/agent-archive/internal/revocation": true,
+        "github.com/wangjohn/agent-archive/internal/scheduler": true,
+        "github.com/wangjohn/agent-archive/internal/scheduler/host": true,
+        "github.com/wangjohn/agent-archive/internal/scheduler/launchd": true,
+        "github.com/wangjohn/agent-archive/internal/scheduler/systemd": true,
+        "github.com/wangjohn/agent-archive/internal/search": true,
+        "github.com/wangjohn/agent-archive/internal/setupjournal": true,
+        "github.com/wangjohn/agent-archive/internal/setupresources": true,
+        "github.com/wangjohn/agent-archive/internal/skillownership": false,
+        "github.com/wangjohn/agent-archive/internal/sourcefacts": true,
+        "github.com/wangjohn/agent-archive/internal/sourceidentity": false,
+        "github.com/wangjohn/agent-archive/internal/sourceio": true,
+        "github.com/wangjohn/agent-archive/internal/state": true,
+        "github.com/wangjohn/agent-archive/internal/state/statetest": false,
+        "github.com/wangjohn/agent-archive/internal/stateerrors": false,
+        "github.com/wangjohn/agent-archive/internal/stats": true,
+        "github.com/wangjohn/agent-archive/internal/statsfmt": true,
+        "github.com/wangjohn/agent-archive/internal/statshtml": true,
+        "github.com/wangjohn/agent-archive/internal/storage": true,
+        "github.com/wangjohn/agent-archive/internal/storage/storagetest": true,
+        "github.com/wangjohn/agent-archive/internal/terminal": true,
+        "github.com/wangjohn/agent-archive/internal/termlaunch": true,
+        "github.com/wangjohn/agent-archive/internal/testutil/agenttest": false,
+        "github.com/wangjohn/agent-archive/internal/testutil/fixturecost": true,
+        "github.com/wangjohn/agent-archive/internal/testutil/golden": true,
+        "github.com/wangjohn/agent-archive/internal/testutil/importgraph": false,
+        "github.com/wangjohn/agent-archive/internal/testutil/isolation": true,
+        "github.com/wangjohn/agent-archive/internal/testutil/orbifold": false,
+        "github.com/wangjohn/agent-archive/internal/testutil/recoverytest": false,
+        "github.com/wangjohn/agent-archive/internal/testutil/schedulertest": true,
+        "github.com/wangjohn/agent-archive/internal/trace": true,
+        "github.com/wangjohn/agent-archive/internal/transcriptio": true,
+        "github.com/wangjohn/agent-archive/internal/versioninfo": false,
+        "github.com/wangjohn/agent-archive/internal/versionprobe": false,
+        "github.com/wangjohn/agent-archive/internal/wirepolicy": false,
+        "github.com/wangjohn/agent-archive/scripts/acceptance/cloudflare": true
+      },
+      "compiler_context": {
+        "cc": {
+          "binary": "1b99826121ae6682a634e5efe09bd3e3df58ce58e0b28f849114ab5b89139c26",
+          "version": "ae487f55927d605284a32711e4ecf6bc3be2bcd5a9de414ace0936264b741f85"
+        },
+        "compilation_modes": {
+          "cross": [
+            "linux/arm64/cgo0",
+            "linux/amd64/cgo0",
+            "darwin/arm64/cgo0"
+          ],
+          "race": [
+            false,
+            true
+          ],
+          "release": [
+            "-trimpath",
+            "-s -w -X github.com/wangjohn/agent-archive/internal/cli.Version=<current>"
+          ],
+          "shared-tools": [
+            "-trimpath",
+            "-mod=readonly -buildvcs=false"
+          ],
+          "tags": []
+        },
+        "cxx": {
+          "binary": "1353e9bdd29a7295c7226bf6c63abccce056d8cac31f112e5cdbecc3f28c2769",
+          "version": "39553616934606f58b27c04bed0cdbbe5b00c92c831a9aaadebd7ceda61d1334"
+        },
+        "go": {
+          "CC": "gcc",
+          "CGO_CFLAGS": "-O2 -g",
+          "CGO_CPPFLAGS": "",
+          "CGO_CXXFLAGS": "-O2 -g",
+          "CGO_ENABLED": "1",
+          "CGO_LDFLAGS": "-O2 -g",
+          "CXX": "g++",
+          "GO386": "",
+          "GOAMD64": "v1",
+          "GOARCH": "amd64",
+          "GOARM": "",
+          "GOARM64": "",
+          "GOCACHEPROG": "",
+          "GODEBUG": "",
+          "GOENV": "",
+          "GOEXPERIMENT": "",
+          "GOFIPS140": "off",
+          "GOFLAGS": "-mod=readonly",
+          "GOHOSTARCH": "amd64",
+          "GOHOSTOS": "linux",
+          "GOMIPS": "",
+          "GOMIPS64": "",
+          "GOOS": "linux",
+          "GOPPC64": "",
+          "GORISCV64": "",
+          "GOROOT": "/opt/hostedtoolcache/go/1.27.2/x64",
+          "GOTOOLCHAIN": "local",
+          "GOTOOLDIR": "/opt/hostedtoolcache/go/1.27.2/x64/pkg/tool/linux_amd64",
+          "GOVERSION": "go1.27.2",
+          "GOWASM": "",
+          "GOWORK": "off"
+        },
+        "image": {
+          "ImageOS": "ubuntu24",
+          "ImageVersion": "20261012.334.1"
+        },
+        "native_environment": "3ad19504a25f1aa9ec3a3d0f3e5850bf612e6fccb7476b789bc295780e539562",
+        "os_release": "87458b3b1f1ca0e5c693ade771de7007c3783bdc692fa6b39eb6414bf2af2763",
+        "pinned_tools": {
+          "deadcode": [
+            "golang.org/x/tools",
+            "v0.50.0"
+          ],
+          "git-2.30.2": "94f6e3e283f2adfc518b39cfc39291f1c2832ad0",
+          "git-2.39.2": "cbf04937d5b9fcf0a76c28f69e6294e9e3ecd7e6",
+          "golangci-lint": [
+            "github.com/golangci/golangci-lint/v2",
+            "v2.14.0"
+          ],
+          "shared": "6f799f72befb925d10f2ef01a7c9a46725fa714d"
+        },
+        "race": false,
+        "runner_arch": "X64",
+        "runner_os": "Linux",
+        "schema": "aa-pr-go-v2",
+        "tags": [],
+        "toolchain": {
+          "asm": "0e7bf93f6ce3164328c5f60e51101c8f93d430f91f02cf9000f4f6d64d8850d4",
+          "cgo": "8a470e65b4d4799820f463be4d1373b775bf1087fa94512e5ea3b1d0f79e689b",
+          "compile": "8d4484dbaa31c4c6cec965aadd42efaa1e8d59e4a30ca3b466b502c377c29121",
+          "go": "548d3c32f83fa81152f543eb1526be7884cfe0526eb5e9ce29d3eca14786e7e0",
+          "link": "b7567a824e05fa24240edbf883e77e536914f22444c6946f1cd4a904b315f9c2",
+          "vet": "f73e3188eb0953bf2938bb6eea06ee07dc0b4001468c17d3f199124e487d119b"
+        },
+        "version": "go version go1.27.2 linux/amd64"
+      },
+      "cpus": 4,
+      "run_id": "38816393618",
+      "run_attempt": "1",
+      "cache_restore_state": "prefix",
+      "runner_image": "ubuntu24",
+      "runner_image_version": "20261012.334.1"
+    },
+    "phase": "compiled_listing_race_build_testmain_seconds",
+    "workers": [
+      {
+        "shard": 0,
+        "seconds": 32.324623638
+      },
+      {
+        "shard": 1,
+        "seconds": 32.779429687000004
+      },
+      {
+        "shard": 2,
+        "seconds": 37.890105158
+      },
+      {
+        "shard": 3,
+        "seconds": 27.705112384999993
+      },
+      {
+        "shard": 4,
+        "seconds": 38.916994900000006
+      },
+      {
+        "shard": 5,
+        "seconds": 37.599070094
+      },
+      {
+        "shard": 6,
+        "seconds": 38.11606874199998
+      },
+      {
+        "shard": 7,
+        "seconds": 35.040471751000005
+      }
+    ],
+    "sum_invocation_wall_seconds": 280.371876355,
+    "minimum_seconds": 27.705112384999993,
+    "maximum_seconds": 38.916994900000006,
+    "median_seconds": 36.3197709225,
+    "production_sharing": "not-established",
+    "hosted_transfer_seconds": null,
+    "producer_dependency_wait_seconds": null,
+    "note": "Sum is repeated invocation wall work across workers, not CPU, allocation, critical path or removable savings. Includes graph loading, default vet, compilation/linking, race startup and TestMain. No production sharing decision without a source-bound hosted end-to-end comparison.",
+    "evidence": {
+      "test_run": "38816393618",
+      "levenshtein_run": "38816394218",
+      "artifact_archives": [
+        {
+          "id": 12011560449,
+          "name": "go-shard-1",
+          "sha256": "5534bfa12b8047ecbf2f5d11d027a005d199b5169b9db8b129989326e3c0e49c",
+          "bytes": 642316
+        },
+        {
+          "id": 12011555501,
+          "name": "ci-run-identity-Test-1",
+          "sha256": "2e0e3d99e5dbffc2942e964ae6f4876c0076b1c2d0d12d26bad8fd670b8f7f34",
+          "bytes": 586
+        },
+        {
+          "id": 12011495323,
+          "name": "go-shard-6",
+          "sha256": "c923cd73e3d9c9f5742b5a01d5dc7812e05ca44ee12be60ff4221825a916c6f8",
+          "bytes": 605623
+        },
+        {
+          "id": 12011210775,
+          "name": "go-shard-2",
+          "sha256": "f0e64803760aec0c5f2a2baced5de5506954da98257386fbf04ed091ef0915ef",
+          "bytes": 616669
+        },
+        {
+          "id": 12011092297,
+          "name": "go-shard-4",
+          "sha256": "a7ee3f146c2d3b6c08115baac8df1cca68aa75b1370d021d4a737a0d574e8a69",
+          "bytes": 495715
+        },
+        {
+          "id": 12011092172,
+          "name": "go-shard-5",
+          "sha256": "81745fb38274f8a40eda7f61675cba1865bebfd3b82e965162afcc484c90fdce",
+          "bytes": 476030
+        },
+        {
+          "id": 12010938045,
+          "name": "go-shard-3",
+          "sha256": "89fa4eb8f7c38002d87f7d4e9407275c8f7db176f1e52ab81f59251be2686a07",
+          "bytes": 528258
+        },
+        {
+          "id": 12010738098,
+          "name": "go-source-audit",
+          "sha256": "4687e8538db4369fa7f2b0837f2010982130ebbbc102d6a1d588b95a496052a7",
+          "bytes": 2853
+        },
+        {
+          "id": 12010539038,
+          "name": "go-shard-0",
+          "sha256": "2c36cfa3df9321e26213700536aadcaaa85ea9bddc838f90bbb93d52caa563c5",
+          "bytes": 540105
+        },
+        {
+          "id": 12010039990,
+          "name": "go-shard-7",
+          "sha256": "3c169788c9668065e1abe3936f40802b029eaf3e6c5590c8cd27b87d0f02eef0",
+          "bytes": 619032
+        },
+        {
+          "id": 12010278877,
+          "name": "ci-run-identity-Levenshtein-1",
+          "sha256": "537f30c1c2939b453e1d446b82765e93792167286f9bf1dcad34614afe8203eb",
+          "bytes": 592
+        }
+      ],
+      "manifests": [
+        {
+          "shard": 0,
+          "sha256": "83a24a5550bff41b006f9228dbce85cf5d1f5398937b9576cea7ec0384b4b3f6"
+        },
+        {
+          "shard": 1,
+          "sha256": "7d24b39f5c55651dba3da4399d5594262d4a1e6f478ba754910e008a83a657f8"
+        },
+        {
+          "shard": 2,
+          "sha256": "6ad01b2b25014abb0a7993947689b94d917e34e6197bc39a273f04a5b6c93482"
+        },
+        {
+          "shard": 3,
+          "sha256": "23d366032c3f327f0c6d409d4252a7ca79383d017da47884017b07584df5b76e"
+        },
+        {
+          "shard": 4,
+          "sha256": "7bac8ea13c4417a56bfe1d1053474846871531238e4d79e01f6b04050ea821ed"
+        },
+        {
+          "shard": 5,
+          "sha256": "9d5d17b855a6ee224758d00b859a7dd17ee0b07a1bb0412d41926a060bb53c70"
+        },
+        {
+          "shard": 6,
+          "sha256": "e0441079db8f7e639559cc75dc6436d772ac88aa2425d628d1203fe6681363e1"
+        },
+        {
+          "shard": 7,
+          "sha256": "49b4dd702db3859944480d5a8963e4577d14fd5255e1a577052be5fd538fefed"
+        }
+      ]
+    }
+  },
+  "decision": "no-production-sharing: hosted transfer/producer/dependency/full-pipeline comparison unavailable",
+  "local": {
+    "schema": 1,
+    "kind": "local-listing-diagnostic",
+    "source": "c40701be363359561db7b33d4c7c02cb3b0c6e03",
+    "tree": "7da7d9d89045fd3c91efba08a3102088d8e4bb4e",
+    "configuration": {
+      "CGO_ENABLED": "1",
+      "GOAMD64": "v1",
+      "GOARCH": "amd64",
+      "GOEXPERIMENT": "",
+      "GOFLAGS": "",
+      "GOHOSTARCH": "amd64",
+      "GOHOSTOS": "darwin",
+      "GOOS": "darwin",
+      "GOTOOLCHAIN": "auto",
+      "GOVERSION": "go1.27.2",
+      "GOWORK": ""
+    },
+    "packages": [
+      "github.com/wangjohn/agent-archive/internal/cli",
+      "github.com/wangjohn/agent-archive/internal/catalog",
+      "github.com/wangjohn/agent-archive/internal/collector",
+      "github.com/wangjohn/agent-archive/internal/state",
+      "github.com/wangjohn/agent-archive/internal/statshtml"
+    ],
+    "measurements": [
+      {
+        "phase": "combined-empty-cache",
+        "command": [
+          "/Users/wangjohn/golang/pkg/mod/golang.org/toolchain@v0.0.1-go1.27.2.darwin-amd64/bin/go",
+          "test",
+          "-race",
+          "-short",
+          "-count=1",
+          "-json",
+          "-p",
+          "1",
+          "-list",
+          "^(Test|Fuzz|Example)",
+          "github.com/wangjohn/agent-archive/internal/cli",
+          "github.com/wangjohn/agent-archive/internal/catalog",
+          "github.com/wangjohn/agent-archive/internal/collector",
+          "github.com/wangjohn/agent-archive/internal/state",
+          "github.com/wangjohn/agent-archive/internal/statshtml"
+        ],
+        "seconds": 306.49997356299997
+      },
+      {
+        "phase": "combined-same-cache",
+        "command": [
+          "/Users/wangjohn/golang/pkg/mod/golang.org/toolchain@v0.0.1-go1.27.2.darwin-amd64/bin/go",
+          "test",
+          "-race",
+          "-short",
+          "-count=1",
+          "-json",
+          "-p",
+          "1",
+          "-list",
+          "^(Test|Fuzz|Example)",
+          "github.com/wangjohn/agent-archive/internal/cli",
+          "github.com/wangjohn/agent-archive/internal/catalog",
+          "github.com/wangjohn/agent-archive/internal/collector",
+          "github.com/wangjohn/agent-archive/internal/state",
+          "github.com/wangjohn/agent-archive/internal/statshtml"
+        ],
+        "seconds": 45.280036419
+      },
+      {
+        "phase": "compile-0",
+        "command": [
+          "/Users/wangjohn/golang/pkg/mod/golang.org/toolchain@v0.0.1-go1.27.2.darwin-amd64/bin/go",
+          "test",
+          "-race",
+          "-short",
+          "-count=1",
+          "-p",
+          "1",
+          "-c",
+          "-o",
+          "/var/folders/9w/9qypk7xj66ggh0lnm6tg98s80000gn/T/listing-diagnostic-wu3g2z55/package-0.test",
+          "github.com/wangjohn/agent-archive/internal/cli"
+        ],
+        "seconds": 20.59241072399999
+      },
+      {
+        "phase": "binary-list-0",
+        "command": [
+          "/var/folders/9w/9qypk7xj66ggh0lnm6tg98s80000gn/T/listing-diagnostic-wu3g2z55/package-0.test",
+          "-test.short",
+          "-test.count=1",
+          "-test.list",
+          "^(Test|Fuzz|Example)"
+        ],
+        "seconds": 3.9830542759999616
+      },
+      {
+        "phase": "compile-1",
+        "command": [
+          "/Users/wangjohn/golang/pkg/mod/golang.org/toolchain@v0.0.1-go1.27.2.darwin-amd64/bin/go",
+          "test",
+          "-race",
+          "-short",
+          "-count=1",
+          "-p",
+          "1",
+          "-c",
+          "-o",
+          "/var/folders/9w/9qypk7xj66ggh0lnm6tg98s80000gn/T/listing-diagnostic-wu3g2z55/package-1.test",
+          "github.com/wangjohn/agent-archive/internal/catalog"
+        ],
+        "seconds": 15.475438731999986
+      },
+      {
+        "phase": "binary-list-1",
+        "command": [
+          "/var/folders/9w/9qypk7xj66ggh0lnm6tg98s80000gn/T/listing-diagnostic-wu3g2z55/package-1.test",
+          "-test.short",
+          "-test.count=1",
+          "-test.list",
+          "^(Test|Fuzz|Example)"
+        ],
+        "seconds": 1.9844077519999814
+      },
+      {
+        "phase": "compile-2",
+        "command": [
+          "/Users/wangjohn/golang/pkg/mod/golang.org/toolchain@v0.0.1-go1.27.2.darwin-amd64/bin/go",
+          "test",
+          "-race",
+          "-short",
+          "-count=1",
+          "-p",
+          "1",
+          "-c",
+          "-o",
+          "/var/folders/9w/9qypk7xj66ggh0lnm6tg98s80000gn/T/listing-diagnostic-wu3g2z55/package-2.test",
+          "github.com/wangjohn/agent-archive/internal/collector"
+        ],
+        "seconds": 17.371286963999978
+      },
+      {
+        "phase": "binary-list-2",
+        "command": [
+          "/var/folders/9w/9qypk7xj66ggh0lnm6tg98s80000gn/T/listing-diagnostic-wu3g2z55/package-2.test",
+          "-test.short",
+          "-test.count=1",
+          "-test.list",
+          "^(Test|Fuzz|Example)"
+        ],
+        "seconds": 2.6260594220000257
+      },
+      {
+        "phase": "compile-3",
+        "command": [
+          "/Users/wangjohn/golang/pkg/mod/golang.org/toolchain@v0.0.1-go1.27.2.darwin-amd64/bin/go",
+          "test",
+          "-race",
+          "-short",
+          "-count=1",
+          "-p",
+          "1",
+          "-c",
+          "-o",
+          "/var/folders/9w/9qypk7xj66ggh0lnm6tg98s80000gn/T/listing-diagnostic-wu3g2z55/package-3.test",
+          "github.com/wangjohn/agent-archive/internal/state"
+        ],
+        "seconds": 15.717098146000012
+      },
+      {
+        "phase": "binary-list-3",
+        "command": [
+          "/var/folders/9w/9qypk7xj66ggh0lnm6tg98s80000gn/T/listing-diagnostic-wu3g2z55/package-3.test",
+          "-test.short",
+          "-test.count=1",
+          "-test.list",
+          "^(Test|Fuzz|Example)"
+        ],
+        "seconds": 3.005227155
+      },
+      {
+        "phase": "compile-4",
+        "command": [
+          "/Users/wangjohn/golang/pkg/mod/golang.org/toolchain@v0.0.1-go1.27.2.darwin-amd64/bin/go",
+          "test",
+          "-race",
+          "-short",
+          "-count=1",
+          "-p",
+          "1",
+          "-c",
+          "-o",
+          "/var/folders/9w/9qypk7xj66ggh0lnm6tg98s80000gn/T/listing-diagnostic-wu3g2z55/package-4.test",
+          "github.com/wangjohn/agent-archive/internal/statshtml"
+        ],
+        "seconds": 5.66369271100001
+      },
+      {
+        "phase": "binary-list-4",
+        "command": [
+          "/var/folders/9w/9qypk7xj66ggh0lnm6tg98s80000gn/T/listing-diagnostic-wu3g2z55/package-4.test",
+          "-test.short",
+          "-test.count=1",
+          "-test.list",
+          "^(Test|Fuzz|Example)"
+        ],
+        "seconds": 1.6736106810000138
+      }
+    ],
+    "binaries": [
+      {
+        "package": "github.com/wangjohn/agent-archive/internal/cli",
+        "bytes": 99015680,
+        "sha256": "db7f6337ccec7ce59b77a519f6c249ea7ddad7c9537193387e468afbfe60f92b"
+      },
+      {
+        "package": "github.com/wangjohn/agent-archive/internal/catalog",
+        "bytes": 18417536,
+        "sha256": "0a120b35e0b90dfa7ef68d7cb8c3bbc67811bff3ceb22eff91b846770fbead70"
+      },
+      {
+        "package": "github.com/wangjohn/agent-archive/internal/collector",
+        "bytes": 41717856,
+        "sha256": "6ba6f386af17f704777ebdd6646743bbcfe0b8925add93abb31f2fb142fdae39"
+      },
+      {
+        "package": "github.com/wangjohn/agent-archive/internal/state",
+        "bytes": 31772496,
+        "sha256": "07adfb5cf014f44abfadf0884618c53c49bdbdd56a4dd322fe60c9b4ed5dff5a"
+      },
+      {
+        "package": "github.com/wangjohn/agent-archive/internal/statshtml",
+        "bytes": 12839184,
+        "sha256": "22285834dfdb890631e1b697142168ace054856dfd7b22b81ce714f38b7723c8"
+      }
+    ],
+    "gzip_bytes": 93873715,
+    "compression_seconds": 79.36602882899996,
+    "hosted_transfer_seconds": null,
+    "producer_dependency_wait_seconds": null,
+    "production_sharing": "not-established",
+    "limitations": "Local serial diagnostic only. Empty private build cache; existing module cache, network disabled. Combined phase includes vet/compile/link/race startup/TestMain; binary listing includes race startup/TestMain. No bodies or hosted producer, transfer, scheduling, allocation or p95 comparison. Binary listing is not production coverage evidence.",
+    "receipt_sha256": "574ec72d587b6cd29ca94a6ef48ebe070a5ab3489056497eae6f18352b0fb13b",
+    "raw_logs_sha256": {
+      "combined-empty-cache.log": "d2261c99f6a387ea86e10ab94c67ced226ad48982637be192ee800fea3dac5fb",
+      "compile-2.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "binary-list-4.log": "5850a4e9a79d9569c740a60dc22ccce8af3baabda2348cff3464acf17c73c89c",
+      "compile-3.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "compile-1.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "compile-0.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "combined-same-cache.log": "5cd4aa7248d42e4ba7bf49dd9a2bc0d54a65ba206bdc678f8f8613cf4b8f93d8",
+      "compile-4.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "binary-list-3.log": "3a5d22a6e860d83cff66d7d63912167fb947311bd0d1bdb848ee1a2a466fc211",
+      "binary-list-2.log": "b964f1f46e4b33a60874c7c69abac69f7dc74f9c93dd11f66b8f149938cfae16",
+      "binary-list-0.log": "1837aa6068b6d901d85bc2d3aedf8675972a30f7e9f4349d3492bdb215b6dd73",
+      "binary-list-1.log": "7d6c0878941c3c54126cae572c4fc8a7a4b49669e3113f5726a9c467c98cce5b"
+    },
+    "listing_parent_counts": {
+      "github.com/wangjohn/agent-archive/internal/cli": 2329,
+      "github.com/wangjohn/agent-archive/internal/catalog": 130,
+      "github.com/wangjohn/agent-archive/internal/collector": 451,
+      "github.com/wangjohn/agent-archive/internal/state": 295,
+      "github.com/wangjohn/agent-archive/internal/statshtml": 54
+    }
+  }
+}
