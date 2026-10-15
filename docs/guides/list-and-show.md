@@ -218,14 +218,14 @@ session's summary replace each other instead of piling up:
   session's summary. What you type shows at the prompt; Backspace edits it
   and Esc clears it. Row numbers are those of the whole list, so any listed
   number or short ID works wherever the list is scrolled (in the list
-  grouped by project, the numbers on screen need not be consecutive).
+  grouped by day, the numbers on screen need not be consecutive).
 - A list taller than the window scrolls: the mouse wheel and ↑ ↓ by a
   row, PgUp and PgDn (or space, `n`, and `p`) by a screen, Home and End to
   the top and bottom. A status line below it says where you are (`Top`, a
   percentage, `Bottom`, or `All` when the whole list fits), for example
   `Top · ↑↓ scroll · PgUp/PgDn page · / filter · type a number and Enter · q quit`. A
-  project scrolled into keeps its heading at the top, marked
-  `(continued)`. `a`, `n`, `p`, `q`, and `/` act only when nothing is typed.
+  day scrolled into keeps its heading at the top, marked
+  `(continued)`, as in `TODAY (continued)`. `a`, `n`, `p`, `q`, and `/` act only when nothing is typed.
 - Press `/` to filter the rows as you type, as in `less`: a line at the
   bottom takes the words, and the rows narrow with each character. The words
   are the ones `list "<words>"` takes: every word must appear in a session's
@@ -263,7 +263,7 @@ session's summary replace each other instead of piling up:
 - When the terminal's input cannot be read a key at a time, the browser reads
   lines. A list taller than the window is shown a page at a time, with a line
   such as `Page 2 of 3 · 50 sessions · [n] next  [p] previous`: `n` and `p`
-  move between pages, and a project whose sessions started on the previous
+  move between pages, and a day whose sessions started on the previous
   page is headed again, marked `(continued)`. Type a row number or short
   SESSION_ID to choose; any other answer is words to filter by, the table is
   drawn again with the sessions that match (`3 sessions match "flaky" · a

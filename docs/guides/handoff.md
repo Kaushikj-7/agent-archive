@@ -534,7 +534,8 @@ and says why archived ones are missing.
 *Which sessions: the scope.* In a git repository with an `origin` remote, or
 inside a project you configured, the picker starts on that repository's
 sessions, across all its checkouts and worktrees and from your other Macs, and
-the heading says so. Elsewhere it lists every session, grouped by project. If the
+the heading says so. Elsewhere it lists every session. Either way the sessions are
+grouped by day (TODAY, YESTERDAY, EARLIER THIS WEEK, ...). If the
 repository has none yet, it opens on all projects with `Nothing in agent-archive ·
 showing all projects` in the heading.
 

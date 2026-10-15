@@ -209,7 +209,8 @@ func (n *nativePreviewCatalog) load() (bool, error) {
 // identityRow uses only verified discovery facts; it never reads a transcript.
 func (n *nativePreviewCatalog) identityRow(index int) listRow {
 	c := n.candidates[index]
-	row := listRow{Index: len(n.rows) + 1, selectionKey: fmt.Sprintf("native-%d", index), SessionID: c.NativeID, ShortID: shortSessionID(c.NativeID), HarnessKey: c.Ref.Harness, Harness: c.Ref.Harness, Title: c.NativeID, Project: archive.DisplayLine(filepath.Base(c.Directory)), When: relativeAge(n.now, c.ModifiedAt), WhenShort: shortWhen(n.now, c.ModifiedAt), ProjectID: c.Directory}
+	row := listRow{Index: len(n.rows) + 1, selectionKey: fmt.Sprintf("native-%d", index), SessionID: c.NativeID, ShortID: shortSessionID(c.NativeID), HarnessKey: c.Ref.Harness, Harness: c.Ref.Harness, Title: c.NativeID, Project: archive.DisplayLine(filepath.Base(c.Directory)), ProjectID: c.Directory}
+	row.setActive(n.now, c.ModifiedAt)
 	row.fields = sessionFields{Project: row.Project, Harness: c.Ref.Harness, SessionID: c.NativeID}
 	return row
 }
