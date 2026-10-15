@@ -187,7 +187,7 @@ func TestListHidesSubagentsAndJSONKeepsThem(t *testing.T) {
 	if !strings.Contains(out, "3 sessions (4 subagent sessions hidden; search to find one).") {
 		t.Fatalf("footer:\n%s", out)
 	}
-	if !strings.Contains(out, "Orchestrate the release · 3 subagents") || !strings.Contains(out, "A separate task · 1 subagent ") {
+	if !strings.Contains(out, "Orchestrate the release · 3 subagents") || !strings.Contains(out, "A separate task · 1 subagent\n") {
 		t.Fatalf("the parents carry no hint:\n%s", out)
 	}
 	if strings.Contains(out, "Child task") {

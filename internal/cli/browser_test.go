@@ -129,6 +129,13 @@ func TestEachChooserOpensTheKeyBrowserAndTheLineFallback(t *testing.T) {
 func highlighted(screen string) string {
 	for line := range strings.SplitSeq(screen, "\n") {
 		if _, after, ok := strings.Cut(line, cursorMark+" "); ok {
+			// Past the number and the agent's dot and name.
+			after = strings.TrimLeft(after, " 0123456789")
+			for _, name := range []string{"Claude", "Codex", "Cursor"} {
+				if rest, ok := strings.CutPrefix(after, agentDot+" "+name+" "); ok {
+					after = strings.TrimLeft(rest, " ")
+				}
+			}
 			title, _, _ := strings.Cut(strings.TrimLeft(after, " "), "  ")
 			return title
 		}
@@ -458,7 +465,7 @@ func TestKeyFilterEnterActsOnTheHighlightInBrowseAndPickModes(t *testing.T) {
 		t.Fatalf("handoff: code=%d stderr=%s\n%s", code, errOut, out)
 	}
 	screens = strings.Split(out, clearScreenSequence)
-	if got := highlighted(screens[len(screens)-1]); got != "Flaky local cleanup · not yet uploaded" {
+	if got := highlighted(screens[len(screens)-1]); got != "Flaky local cleanup · "+notUploadedShortHint {
 		t.Fatalf("highlight after ↓ on %q:\n%s", got, out)
 	}
 	after := out[strings.LastIndex(out, leaveAltScreenSequence):]
@@ -471,14 +478,15 @@ func TestKeyFilterEnterActsOnTheHighlightInBrowseAndPickModes(t *testing.T) {
 // its column header, whose title holds prefix.
 func rowNumbers2(screen, prefix string) []int {
 	var numbers []int
-	inTable := false
+	// The plain table starts after its header; the width-aware one has none.
+	inTable := !strings.HasPrefix(screen, "#") && !strings.Contains(screen, "\n#")
 	for line := range strings.SplitSeq(screen, "\n") {
 		if strings.HasPrefix(line, "#") {
 			inTable = true
 			continue
 		}
-		field, rest, _ := strings.Cut(strings.TrimSpace(line), " ")
-		if n := atoi(field); inTable && n > 0 && !strings.HasPrefix(rest, "session") && strings.Contains(strings.TrimLeft(rest, " ▸"), prefix) {
+		field, rest, _ := strings.Cut(strings.TrimPrefix(strings.TrimSpace(line), cursorMark+" "), " ")
+		if n := atoi(field); inTable && n > 0 && strings.HasPrefix(rest, " ") && !strings.HasPrefix(rest, "session") && strings.Contains(strings.TrimLeft(rest, " ▸"), prefix) {
 			numbers = append(numbers, n)
 		}
 	}
@@ -534,7 +542,7 @@ func TestASubagentMatchShowsItsParent(t *testing.T) {
 	if fields := strings.Fields(lines[1]); fields[0] != "↳" && fields[0] != cursorMark {
 		t.Fatalf("a subagent row starts with %q, want no number:\n%s", fields[0], lines[1])
 	}
-	if !strings.Contains(lines[0], "· 2 subagents") || highlighted(opening) != "↳ Review and fix PR #208 (5b-1b)" {
+	if !strings.Contains(lines[0], "Orchestrate the release +2") || highlighted(opening) != "↳ Review and fix PR #208 (5b-1b)" {
 		t.Fatalf("parent row %q, highlighted %q", lines[0], highlighted(opening))
 	}
 	if !strings.Contains(screens[2], "ID child001") {
@@ -543,7 +551,7 @@ func TestASubagentMatchShowsItsParent(t *testing.T) {
 	// ↑ moves the highlight onto the parent, which Enter then opens.
 	out, _, code = runOnTerminal(t, a.env, newFakeKeys("\x1b[A", "\r", "q"), "", "list", "208")
 	screens = strings.Split(out, clearScreenSequence)
-	if code != 0 || len(screens) < 4 || highlighted(screens[2]) != "Orchestrate the release · 2 subagents" || !strings.Contains(screens[3], "ID parent01") {
+	if code != 0 || len(screens) < 4 || highlighted(screens[2]) != "Orchestrate the release +2" || !strings.Contains(screens[3], "ID parent01") {
 		t.Fatalf("code=%d after ↑ and Enter:\n%s", code, out)
 	}
 
@@ -742,7 +750,7 @@ func TestKeysHandoffFilteredGolden(t *testing.T) {
 	t.Parallel()
 	sessions := goldenSessions()
 	scope := sessionScope{Label: "agent-archive", RepoKey: scopeKey, Dir: "/w/agent-archive", ProjectIDs: []string{"project-agent-archive"}}
-	format := listFormatOptions{Now: pickerNow, GroupByProject: true, Numbered: true, DimID: true}
+	format := listFormatOptions{Now: pickerNow, GroupByProject: true, Numbered: true}
 	rows := make([]handoffPickerRow, len(sessions))
 	for i, m := range sessions {
 		// The first two are registered here, active just now; the last is on

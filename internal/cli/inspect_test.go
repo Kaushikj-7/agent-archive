@@ -75,7 +75,7 @@ func TestListShowsPublishedSessionMetadataOnly(t *testing.T) {
 	if len(short) > 8 {
 		short = short[:8]
 	}
-	for _, want := range []string{short, "codex", "just now", "1 session(s).", "WHEN", "PROJECT", "TITLE", "ID"} {
+	for _, want := range []string{short, "codex", "now", "1 session(s).", "WHEN", "PROJECT", "TITLE", "ID"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("list output missing %q:\n%s", want, out.String())
 		}
