@@ -307,7 +307,7 @@ func TestHandoffLatestWithoutMatchListsRecentSessions(t *testing.T) {
 	if code != 1 || out != "" {
 		t.Fatalf("code=%d out=%q", code, out)
 	}
-	for _, want := range []string{"no session for", "Recent archived sessions:", "codex", "this machine", "agent-archive handoff " + f.id} {
+	for _, want := range []string{"no session for", "Recent archived sessions:", "\n  WHEN  AGENT  MACHINE ", "  Codex  this machine", "agent-archive handoff " + f.id} {
 		if !strings.Contains(errOut, want) {
 			t.Fatalf("stderr missing %q:\n%s", want, errOut)
 		}

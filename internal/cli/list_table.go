@@ -9,20 +9,18 @@ import (
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
-// printSessionTable writes the human list table for rows. When GroupByProject
-// is set and more than one project appears, rows are printed under project
-// headings (indices stay global for the interactive picker).
+// printSessionTable writes the human list table for rows. When GroupByDay
+// is set the rows are printed under day headings (indices stay global for
+// the interactive picker).
 func printSessionTable(w io.Writer, rows []listRow, opts listFormatOptions) error {
 	return printSessionGroups(w, sessionTableGroups(rows, opts), opts)
 }
 
-// sessionTableGroup is the rows under one project heading of the human list
+// sessionTableGroup is the rows under one day heading of the human list
 // table. The flat table is a single group without a heading.
 type sessionTableGroup struct {
-	// label is the project's heading, styled; empty for the flat table.
+	// label is the day's heading, styled; empty for the flat table.
 	label string
-	// count is how many rows the whole group has.
-	count int
 	rows  []listRow
 	// continued marks a group whose earlier rows are on a previous page.
 	continued bool
@@ -30,49 +28,35 @@ type sessionTableGroup struct {
 
 // sessionTableGroups arranges rows as printSessionTable prints them. Their
 // rows, taken in order, are the table's rows from top to bottom.
+//
+// Search rows always keep their flat relevance order.
+// With GroupByDay (and not Verbose or Search), the rows go under the heading of their
+// day (dayBucket of Active at Now), the days newest first and the rows in
+// the order given within a day. A subagent shown under its parent (Depth)
+// stays under it, in the parent's day. One day still gets its heading: it
+// is the landmark the reader learns.
 func sessionTableGroups(rows []listRow, opts listFormatOptions) []sessionTableGroup {
-	if !opts.GroupByProject || distinctProjects(rows) <= 1 {
-		return []sessionTableGroup{{count: len(rows), rows: rows}}
+	if opts.Search || !opts.GroupByDay || opts.Verbose || len(rows) == 0 {
+		return []sessionTableGroup{{rows: rows}}
 	}
-	order := make([]listRow, 0)
-	seen := map[string]bool{}
-	labelGroups := map[string]int{}
+	byDay := map[dayBucketKind][]listRow{}
+	day := bucketToday
 	for _, r := range rows {
-		key := projectGroupKey(r)
-		if !seen[key] {
-			seen[key] = true
-			order = append(order, r)
-			labelGroups[r.Project]++
+		if r.Depth == 0 {
+			day = dayBucket(opts.Now, r.Active)
 		}
+		byDay[day] = append(byDay[day], r)
 	}
-	projectIDs := make([]string, len(order))
-	for i, group := range order {
-		projectIDs[i] = group.ProjectID
-	}
-	shortIDs := uniqueShortIDs(projectIDs)
-	groups := make([]sessionTableGroup, 0, len(order))
-	for i, group := range order {
-		label := group.Project
-		if label == "-" {
-			label = "unknown project"
+	var groups []sessionTableGroup
+	for d := bucketToday; d <= bucketOlder; d++ {
+		if len(byDay[d]) == 0 {
+			continue
 		}
-		if labelGroups[group.Project] > 1 {
-			if group.ProjectID != "" {
-				label += " [" + archive.DisplayLine(shortIDs[i]) + "]"
-			} else {
-				label += " [unidentified]"
-			}
-		}
+		label := d.label()
 		if opts.Style.color {
 			label = opts.Style.bold(label)
 		}
-		var members []listRow
-		for _, r := range rows {
-			if projectGroupKey(r) == projectGroupKey(group) {
-				members = append(members, r)
-			}
-		}
-		groups = append(groups, sessionTableGroup{label: label, count: len(members), rows: members})
+		groups = append(groups, sessionTableGroup{label: label, rows: byDay[d]})
 	}
 	return groups
 }
@@ -82,7 +66,7 @@ func sessionTableGroups(rows []listRow, opts listFormatOptions) []sessionTableGr
 // row take exactly one line (renderRow), with no column header. Otherwise it
 // is the plain table: the column header, then a row a line, under each
 // group's heading when it has one. The verbose table keeps its own columns
-// and a header under each heading.
+// under one header: sessionTableGroups never groups it.
 func printSessionGroups(w io.Writer, groups []sessionTableGroup, opts listFormatOptions) error {
 	if opts.Search {
 		return printContentSearchRows(w, groups, opts.Width)
@@ -109,13 +93,13 @@ func printSessionGroups(w io.Writer, groups []sessionTableGroup, opts listFormat
 	return nil
 }
 
-// groupHeading is a group's heading line: its label, then how many rows it
-// has, or that it goes on from a previous page.
+// groupHeading is a group's heading line: its label, and that it goes on
+// from a previous page when it does.
 func groupHeading(group sessionTableGroup) string {
 	if group.continued {
 		return group.label + " (continued)"
 	}
-	return group.label + " (" + strconv.Itoa(group.count) + ")"
+	return group.label
 }
 
 // printSessionLines writes groups one terminal line a row, laid out by
@@ -163,21 +147,6 @@ func sessionLines(groups []sessionTableGroup) int {
 		n += len(group.rows)
 	}
 	return n
-}
-
-func distinctProjects(rows []listRow) int {
-	seen := map[string]bool{}
-	for _, r := range rows {
-		seen[projectGroupKey(r)] = true
-	}
-	return len(seen)
-}
-
-func projectGroupKey(row listRow) string {
-	if row.ProjectID != "" {
-		return "id:" + row.ProjectID
-	}
-	return "name:" + row.Project
 }
 
 func printSessionHeader(tw io.Writer, opts listFormatOptions) {

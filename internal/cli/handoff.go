@@ -854,13 +854,17 @@ func (r handoffResolver) noMatch(dir string, sessions []archive.Metadata, now ti
 		b.WriteString("\nSessions captured before repository keys (parser 0.16.0) carry none until they are\nrefreshed on the Mac that captured them.")
 	}
 	b.WriteString(" Recent archived sessions:\n")
+	// The session lists' words: WHEN first, in their short time, and the
+	// agent by name.
 	tw := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
+	// The table is built in memory, where writes cannot fail.
+	terminal.Println(tw, "  WHEN\tAGENT\tMACHINE\tCOMMAND")
 	for i, m := range sessions {
 		if i == handoffFallbackRows {
 			break
 		}
-		// The table is built in memory, where writes cannot fail.
-		_, _ = fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\n", cappedLine(m.Harness.Name, 20), relativeAge(now, lastActivity(m)), r.machineLabel(m.MachineID), handoffCommandFor(m.SessionID))
+		_, agent := agentLabel(m.Harness.Name)
+		terminal.Printf(tw, "  %s\t%s\t%s\t%s\n", shortWhen(now, lastActivity(m)), cappedLine(agent, 20), r.machineLabel(m.MachineID), handoffCommandFor(m.SessionID))
 	}
 	_ = tw.Flush()
 	return errors.New(strings.TrimRight(b.String(), "\n"))

@@ -343,3 +343,37 @@ func TestSearchAndMetadataRowsKeepDistinctWidthMeasurements(t *testing.T) {
 		t.Fatalf("search snippet changed ordinary one-line rows: %s", &ordinary)
 	}
 }
+
+func TestSearchResultsKeepRelevanceAcrossOrdinaryActivityDays(t *testing.T) {
+	rows := dayRows(time.Time{}, dayGroupsNow, dayGroupsNow.Add(-24*time.Hour))
+	for i := range rows {
+		rows[i].SessionID = rows[i].ShortID
+		rows[i].HarnessKey = "codex"
+		rows[i].selectionKey = childKey("codex", rows[i].SessionID)
+		rows[i].searchSnippet = "matching indexed text"
+	}
+	format := listFormatOptions{Now: dayGroupsNow, GroupByDay: true, Numbered: true, Search: true}
+	picker := &sessionPicker{contentSearch: &contentSearchBrowser{}}
+	view := picker.view(rows, len(rows), false, format)
+	if len(view.groups) != 1 || view.groups[0].label != "" || len(view.order) != len(rows) {
+		t.Fatalf("search was day-grouped: %s", groupSummary(view.groups))
+	}
+	for i, row := range view.order {
+		if row.selectionKey != rows[i].selectionKey || row.Index != i+1 {
+			t.Fatalf("search relevance moved at%d: %+v", i, view.order)
+		}
+	}
+	var rendered bytes.Buffer
+	if err := printSessionGroups(&rendered, view.groups, view.formatFor(36)); err != nil {
+		t.Fatal(err)
+	}
+	for _, heading := range []string{"TODAY", "YESTERDAY", "OLDER"} {
+		if strings.Contains(rendered.String(), heading) {
+			t.Fatalf("day heading in ranked search: %s", &rendered)
+		}
+	}
+	format.Search = false
+	if got := groupSummary(sessionTableGroups(rows, format)); got != "TODAY: 2 | YESTERDAY: 3 | OLDER: 1" {
+		t.Fatalf("ordinary activity groups changed: %s", got)
+	}
+}

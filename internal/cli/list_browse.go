@@ -1059,7 +1059,7 @@ func findBrowseSessions(ctx context.Context, env sessionSelectionDependencies, s
 		terminal.Printf(stderr, "agent-archive: %s: %v\n", command, err)
 		return nil, false, 1
 	}
-	format := listFormatOptions{Now: env.now(), Projects: projectLabels(cfg), Style: styleFor(stdout), GroupByProject: true, Numbered: true}
+	format := listFormatOptions{Now: env.now(), Projects: projectLabels(cfg), Style: styleFor(stdout), GroupByDay: true, Numbered: true}
 	bounded, used, boundedErr := boundedArchiveChoices(ctx, env, store, listOptions{filter: reader.Filter{Harness: harness, Replays: reader.ReplaysHidden}}, scope, format, stderr, command)
 	if used {
 		if boundedErr != nil {

@@ -67,6 +67,8 @@ func (s *contentSearchBrowser) installRows() {
 		if strings.TrimSpace(title) == "" {
 			title = shorts[i]
 		}
+		// Indexed hits carry capture time, not current session activity. Do not
+		// invent Active or let ordinary activity-day grouping change relevance.
 		rows = append(rows, listRow{selectionKey: key, Index: i + 1, SessionID: h.SessionID, ShortID: shorts[i], HarnessKey: h.Harness, Harness: archive.DisplayLine(h.Harness), Title: title, ListTitle: listTitle(h.Title), When: h.CapturedAt.Format("2006-01-02"), WhenShort: h.CapturedAt.Format("2006-01-02"), Project: "-", searchSnippet: snippet, searchMatches: h.MatchCount})
 	}
 	scope := archive.DisplayLine(s.opts.query.Scope.ProjectName)
