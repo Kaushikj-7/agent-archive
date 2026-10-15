@@ -22,7 +22,7 @@ func TestSearchMetadataAndContextUseFreshCatalogAuthority(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = a.raw.MemoryStore.Get(t.Context(), key); !errors.Is(err, storage.ErrNotFound) {
+	if _, err = a.raw.Get(t.Context(), key); !errors.Is(err, storage.ErrNotFound) {
 		t.Fatalf("fixture unexpectedly has a canonical legacy sidecar: %v", err)
 	}
 	pinned := catalog.NewReadView(t.Context())
