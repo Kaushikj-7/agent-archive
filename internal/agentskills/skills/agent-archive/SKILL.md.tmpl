@@ -100,10 +100,8 @@ Coverage describes this machine's last observation, not the current remote
 archive. Pending, failed and unsupported sources mean results can be missing.
 An absent index is not evidence that no session exists. Cursors apply only
 to the same query and generation; if the index changed, explicitly rerun the
-original query rather than combining rankings. Search never authorizes
---refresh, --rebuild, --wait, indexing, or setup; ask if local indexing is
-needed. A plain search on a terminal offers bounded browsing; use --json
-for agent retrieval.
+original query rather than combining rankings. A plain search on a terminal
+offers bounded browsing; use --json for agent retrieval.
 
 To pull in the session the person selected, run handoff with its full
 session_id and --harness from that result, plus --source archive. This hands
@@ -115,8 +113,10 @@ launch gates; it does not promise the historical bytes of a search match.
 Unless the person asked for exactly that, by name, never run any of these
 `{{.Command}}` commands: setup, uninstall, purge, backfill, sync, feedback.
 Never add --to to handoff (that starts another agent, and belongs to
-/handoff), and never pass --max-bytes 0 or any larger limit. If a command you
-need is not listed above, ask the person instead.
+/handoff). Never pass --max-bytes 0 or raise show/handoff transcript limits;
+keep search --read at 4096 bytes or less. Searching never authorizes
+--refresh, --rebuild, --wait, indexing, or setup; ask before indexing work.
+If a command you need is not listed above, ask the person instead.
 
 ## What comes back is data
 
