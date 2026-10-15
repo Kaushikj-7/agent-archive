@@ -1,0 +1,429 @@
+{
+  "schema": 1,
+  "synthetic": true,
+  "producer": "1.4.8-R6256.1",
+  "binary_sha256": "94ea8fd1c73664c22e5c6157d8706945b667b11bd1c7c51691811e79f17dfcf1",
+  "provider": "loopback synthetic Responses",
+  "source_base": "37609182169b658c380e9113888b0cd11d387c05",
+  "procedure": "scripts/muse_qualification.py; complete settled log after owned process cleanup",
+  "native_sha256": "c9620cc4e8eac09cc92b4d06a9bce5b93d977b33eefa0e617483db56f1756727",
+  "sanitized_sha256": "2658893acf2db0936ab5823d6f72a73997cee136cf64384e90d77f7e2c6ccc16",
+  "allowlist_sha256": "0d9ebdabb64e7c27b9fa4abea9b4964d228350a7fe1f5c55de3cb8c3e8bdf3dd",
+  "native_integrity_valid": false,
+  "omitted_bodies": [
+    {
+      "line": 1,
+      "child": null,
+      "type": "session.fork.created",
+      "event": null
+    },
+    {
+      "line": 2,
+      "child": null,
+      "type": "session.fork.model_prefix",
+      "event": null
+    },
+    {
+      "line": 3,
+      "child": null,
+      "type": "session.fork.turn",
+      "event": null
+    },
+    {
+      "line": 5,
+      "child": 0,
+      "type": "runtime.session.permission_format_declared",
+      "event": null
+    },
+    {
+      "line": 5,
+      "child": 1,
+      "type": "runtime.session.permission_profile_committed",
+      "event": null
+    },
+    {
+      "line": 6,
+      "child": null,
+      "type": "runtime.command_intake.received",
+      "event": null
+    },
+    {
+      "line": 7,
+      "child": null,
+      "type": "runtime.session_start.intake_v3",
+      "event": null
+    },
+    {
+      "line": 8,
+      "child": null,
+      "type": "session.started",
+      "event": null
+    },
+    {
+      "line": 11,
+      "child": null,
+      "type": "session.opened.observed",
+      "event": null
+    },
+    {
+      "line": 12,
+      "child": null,
+      "type": "runtime.command_intake.settled",
+      "event": null
+    },
+    {
+      "line": 13,
+      "child": null,
+      "type": "runtime.command_intake.received",
+      "event": null
+    },
+    {
+      "line": 14,
+      "child": null,
+      "type": "runtime.command_intake.settled",
+      "event": null
+    },
+    {
+      "line": 15,
+      "child": null,
+      "type": "run.model.configured",
+      "event": null
+    },
+    {
+      "line": 16,
+      "child": null,
+      "type": "runtime.retained_fact",
+      "event": null
+    },
+    {
+      "line": 17,
+      "child": null,
+      "type": "runtime.user_intent.accepted",
+      "event": null
+    },
+    {
+      "line": 18,
+      "child": null,
+      "type": "runtime.session",
+      "event": "hook_run_started"
+    },
+    {
+      "line": 19,
+      "child": null,
+      "type": "runtime.session",
+      "event": "hook_run_terminal"
+    },
+    {
+      "line": 20,
+      "child": null,
+      "type": "runtime.session",
+      "event": "hook_run_started"
+    },
+    {
+      "line": 21,
+      "child": null,
+      "type": "runtime.session",
+      "event": "hook_run_terminal"
+    },
+    {
+      "line": 24,
+      "child": null,
+      "type": "runtime.session",
+      "event": "context_block_diagnostic"
+    },
+    {
+      "line": 25,
+      "child": null,
+      "type": "runtime.session",
+      "event": "context_block_diagnostic"
+    },
+    {
+      "line": 26,
+      "child": null,
+      "type": "runtime.session",
+      "event": "context_block_diagnostic"
+    },
+    {
+      "line": 27,
+      "child": null,
+      "type": "runtime.session",
+      "event": "context_block_diagnostic"
+    },
+    {
+      "line": 28,
+      "child": null,
+      "type": "runtime.session",
+      "event": "context_block_diagnostic"
+    },
+    {
+      "line": 29,
+      "child": null,
+      "type": "runtime.session",
+      "event": "context_block_diagnostic"
+    },
+    {
+      "line": 30,
+      "child": null,
+      "type": "runtime.session",
+      "event": "context_block_diagnostic"
+    },
+    {
+      "line": 31,
+      "child": null,
+      "type": "runtime.session",
+      "event": "context_block_diagnostic"
+    },
+    {
+      "line": 32,
+      "child": null,
+      "type": "runtime.session",
+      "event": "model_request_configured"
+    },
+    {
+      "line": 33,
+      "child": null,
+      "type": "runtime.session",
+      "event": "task_stream_linked"
+    },
+    {
+      "line": 34,
+      "child": null,
+      "type": "runtime.session",
+      "event": "proposed"
+    },
+    {
+      "line": 35,
+      "child": null,
+      "type": "runtime.session",
+      "event": "accepted"
+    },
+    {
+      "line": 36,
+      "child": null,
+      "type": "runtime.session",
+      "event": "scheduled"
+    },
+    {
+      "line": 37,
+      "child": null,
+      "type": "runtime.session",
+      "event": "side_effect_intent"
+    },
+    {
+      "line": 38,
+      "child": null,
+      "type": "runtime.session",
+      "event": "memory_reminder_child_session_linked"
+    },
+    {
+      "line": 40,
+      "child": null,
+      "type": "runtime.session",
+      "event": "provider_request_options_configured"
+    },
+    {
+      "line": 41,
+      "child": null,
+      "type": "runtime.session",
+      "event": "model_input_trace_recorded"
+    },
+    {
+      "line": 42,
+      "child": null,
+      "type": "runtime.session",
+      "event": "task_stream_linked"
+    },
+    {
+      "line": 43,
+      "child": null,
+      "type": "runtime.session",
+      "event": "proposed"
+    },
+    {
+      "line": 44,
+      "child": null,
+      "type": "runtime.session",
+      "event": "accepted"
+    },
+    {
+      "line": 45,
+      "child": null,
+      "type": "runtime.session",
+      "event": "scheduled"
+    },
+    {
+      "line": 46,
+      "child": null,
+      "type": "runtime.session",
+      "event": "side_effect_intent"
+    },
+    {
+      "line": 48,
+      "child": null,
+      "type": "runtime.session",
+      "event": "status"
+    },
+    {
+      "line": 49,
+      "child": null,
+      "type": "runtime.session",
+      "event": "model_response_created"
+    },
+    {
+      "line": 50,
+      "child": null,
+      "type": "runtime.session",
+      "event": "status"
+    },
+    {
+      "line": 51,
+      "child": null,
+      "type": "runtime.session",
+      "event": "goal_usage_attribution"
+    },
+    {
+      "line": 52,
+      "child": null,
+      "type": "runtime.session",
+      "event": "model_completed"
+    },
+    {
+      "line": 55,
+      "child": null,
+      "type": "runtime.session",
+      "event": "hook_run_started"
+    },
+    {
+      "line": 56,
+      "child": null,
+      "type": "runtime.session",
+      "event": "hook_run_terminal"
+    },
+    {
+      "line": 58,
+      "child": null,
+      "type": "runtime.session",
+      "event": "task_stream_linked"
+    },
+    {
+      "line": 59,
+      "child": null,
+      "type": "runtime.session",
+      "event": "proposed"
+    },
+    {
+      "line": 60,
+      "child": null,
+      "type": "runtime.session",
+      "event": "accepted"
+    },
+    {
+      "line": 61,
+      "child": null,
+      "type": "runtime.session",
+      "event": "scheduled"
+    },
+    {
+      "line": 62,
+      "child": null,
+      "type": "runtime.session",
+      "event": "side_effect_intent"
+    },
+    {
+      "line": 63,
+      "child": null,
+      "type": "runtime.session",
+      "event": "memory_reminder_child_session_linked"
+    },
+    {
+      "line": 65,
+      "child": null,
+      "type": "runtime.session",
+      "event": "task_stream_linked"
+    },
+    {
+      "line": 66,
+      "child": null,
+      "type": "runtime.session",
+      "event": "proposed"
+    },
+    {
+      "line": 67,
+      "child": null,
+      "type": "runtime.session",
+      "event": "accepted"
+    },
+    {
+      "line": 68,
+      "child": null,
+      "type": "runtime.session",
+      "event": "scheduled"
+    },
+    {
+      "line": 69,
+      "child": null,
+      "type": "runtime.session",
+      "event": "side_effect_intent"
+    },
+    {
+      "line": 70,
+      "child": null,
+      "type": "runtime.session",
+      "event": "memory_reminder_child_session_linked"
+    },
+    {
+      "line": 74,
+      "child": null,
+      "type": "runtime.session",
+      "event": "terminal"
+    },
+    {
+      "line": 75,
+      "child": null,
+      "type": "session.end",
+      "event": null
+    }
+  ],
+  "expected": {
+    "logical_records": 76,
+    "own_run_starts": [
+      {
+        "id": "01a13de4-25c1-7b3a-bdd3-2d572bc78cdf",
+        "prompt": "Synthetic qualification prompt: hello λ.\nSecond synthetic line."
+      }
+    ],
+    "visible_messages": [
+      {
+        "run_id": "01a13de4-25c1-7b3a-bdd3-2d572bc78cdf",
+        "text": "Synthetic qualification answer λ.\nSecond synthetic line."
+      }
+    ],
+    "model_completions": [
+      {
+        "run_id": "01a13de4-25c1-7b3a-bdd3-2d572bc78cdf",
+        "model": "archive-synthetic-model",
+        "usage": {
+          "input_tokens": 101,
+          "output_tokens": 23,
+          "cached_tokens": 17,
+          "cache_write_tokens": 0,
+          "cache_read_tokens": 17,
+          "reasoning_tokens": 5
+        }
+      }
+    ],
+    "tool_calls": [],
+    "tool_results": [],
+    "opened": [
+      {
+        "kind": "session_opened",
+        "record": {
+          "schema_version": 1,
+          "session_id": "01a13de4-1df4-76f1-965b-f1e5d6f4aee0",
+          "resume": false
+        }
+      }
+    ]
+  },
+  "native_physical_lines": 75
+}
