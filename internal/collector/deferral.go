@@ -53,14 +53,16 @@ const MaxDeferral = 24 * time.Hour
 var DeferralExpiredProblem = fmt.Sprintf("still not read after %d hours of retries", int(MaxDeferral/time.Hour))
 
 // loadDeferredSince reads when each session's run of deferred scans began
-// (state.Status.DeferredSince), and why the previous pass deferred each
-// (state.Status.DeferredSessions), from the previous pass's status. A status
+// (state.Status.DeferredSince), why the previous pass deferred each
+// (state.Status.DeferredSessions), and where it left each it did not reach
+// (state.Status.UnreachedSessions), from the previous pass's status. A status
 // that cannot be read starts every clock again, delaying a failure by at
 // most MaxDeferral.
 func (p *pass) loadDeferredSince() {
 	if previous, err := p.local.LoadStatus(); err == nil {
 		p.priorDeferredSince = previous.DeferredSince
 		p.priorDeferred = previous.DeferredSessions
+		p.priorUnreached = previous.UnreachedSessions
 	}
 }
 

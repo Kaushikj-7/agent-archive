@@ -1,6 +1,8 @@
 package collector
 
 import (
+	"sort"
+
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 )
@@ -31,10 +33,19 @@ func (p *pass) codexLookupSpent(reg archive.SessionRegistration) bool {
 // orderLookupAllowanceDeferralsLast moves the Codex sessions still in a run
 // of deferrals that the Codex lookup allowance may be keeping going
 // (lookupAllowanceTurn) behind every other Codex session with a pending
-// request, keeping each group's order. It only exchanges sessions between
-// the slots requested Codex sessions already hold, so every other session,
-// including the Codex sessions with nothing requested, whose quiet checks
-// also use the allowance, keeps its place in the pass's order.
+// request. It only exchanges sessions between the slots requested Codex
+// sessions already hold, so every other session, including the Codex
+// sessions with nothing requested, whose quiet checks also use the
+// allowance, keeps its place in the pass's order. Native children waiting
+// for their parent stay behind every other requested session, as
+// orderRequests put them: the groups are formed among those children and
+// among the rest separately.
+//
+// The sessions not waiting keep orderRequests' order. Those waiting are
+// read in the order the previous pass left them unopened in
+// (state.Status.UnreachedSessions), then the ones it read: so the session
+// it read first and ran out on goes to the back, and every session waiting
+// on the allowance has the first turn among them in rotation.
 //
 // Without it, one session whose lookups alone need more than the whole
 // allowance would be first of the Codex sessions on every pass: it would
@@ -43,22 +54,45 @@ func (p *pass) codexLookupSpent(reg archive.SessionRegistration) bool {
 // Moved last, it still has its turn once the others have had theirs.
 func (p *pass) orderLookupAllowanceDeferralsLast() {
 	var slots []int
-	var turns [lookupAllowanceTurns][]archive.SessionRegistration
+	var groups [2][lookupAllowanceTurns][]archive.SessionRegistration
 	for i, reg := range p.registrations {
 		if reg.Harness.Name != archive.HarnessCodex || p.requests[reg.ArchiveSessionID].Token == "" {
 			continue
 		}
 		slots = append(slots, i)
+		waits := 0
+		if waitsForParent(reg) {
+			waits = 1
+		}
 		turn := p.lookupAllowanceTurn(reg.ArchiveSessionID)
-		turns[turn] = append(turns[turn], reg)
+		groups[waits][turn] = append(groups[waits][turn], reg)
 	}
 	k := 0
-	for _, group := range turns {
-		for _, reg := range group {
-			p.registrations[slots[k]] = reg
-			k++
+	for _, turns := range groups {
+		for turn, group := range turns {
+			if turn != turnFirst {
+				p.rotateWaiting(group)
+			}
+			for _, reg := range group {
+				p.registrations[slots[k]] = reg
+				k++
+			}
 		}
 	}
+}
+
+// rotateWaiting orders sessions waiting on the allowance as the previous
+// pass left them unopened (priorUnreached), and those it did not leave
+// unopened after them in their current order.
+func (p *pass) rotateWaiting(group []archive.SessionRegistration) {
+	sort.SliceStable(group, func(i, j int) bool {
+		a, aLeft := p.priorUnreached[group[i].ArchiveSessionID]
+		b, bLeft := p.priorUnreached[group[j].ArchiveSessionID]
+		if aLeft != bLeft {
+			return aLeft
+		}
+		return aLeft && a < b
+	})
 }
 
 // The groups orderLookupAllowanceDeferralsLast puts requested Codex sessions

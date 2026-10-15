@@ -481,6 +481,9 @@ type pass struct {
 	// priorDeferred is the previous pass's state.Status.DeferredSessions
 	// (see orderLookupAllowanceDeferralsLast).
 	priorDeferred map[string]string
+	// priorUnreached is the previous pass's state.Status.UnreachedSessions
+	// (see orderLookupAllowanceDeferralsLast).
+	priorUnreached map[string]int
 	// priorDeferredSince is the previous pass's state.Status.DeferredSince,
 	// and deferredAt this pass's (see deferredSince, keepDeferredSince).
 	priorDeferredSince map[string]time.Time
