@@ -1,18 +1,18 @@
 alpha (continued)
-#   TITLE              WHEN          HARNESS  PROJECT  ID
-14  Session number 14  13 hours ago  codex    alpha    1a2c9223
-15  Session number 15  14 hours ago  codex    alpha    1a2cb112
-16  Session number 16  15 hours ago  codex    alpha    1a2cd001
-17  Session number 17  16 hours ago  codex    alpha    1a2ceef0
-18  Session number 18  17 hours ago  codex    alpha    1a2d0ddf
+15  ● Codex  Session number 15                                        alpha  Mon
+16  ● Codex  Session number 16                                        alpha  Mon
+17  ● Codex  Session number 17                                        alpha  Mon
+18  ● Codex  Session number 18                                        alpha  Mon
 
 beta (12)
-#   TITLE              WHEN          HARNESS  PROJECT  ID
-19  Session number 19  18 hours ago  codex    beta     1a2d2cce
-20  Session number 20  19 hours ago  codex    beta     1a2d4bbd
-21  Session number 21  20 hours ago  codex    beta     1a2d6aac
-22  Session number 22  21 hours ago  codex    beta     1a2d899b
-23  Session number 23  22 hours ago  codex    beta     1a2da88a
+19  ● Codex  Session number 19                                        beta   Mon
+20  ● Codex  Session number 20                                        beta   Mon
+21  ● Codex  Session number 21                                        beta   Mon
+22  ● Codex  Session number 22                                        beta   Mon
+23  ● Codex  Session number 23                                        beta   Mon
+24  ● Codex  Session number 24                                        beta   Mon
+25  ● Codex  Session number 25                                        beta   Mon
+26  ● Codex  Session number 26                                        beta   Mon
 30 session(s).
 Page 2 of 3 · 30 sessions · [n] next  [p] previous
 

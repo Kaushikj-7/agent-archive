@@ -184,10 +184,10 @@ func (n *nativePreviewCatalog) load() (bool, error) {
 		row.Title = archive.DisplayLine(title)
 		row.fields = sessionFields{Name: a.p.Name, Title: a.p.Title, Branch: a.p.Branch, Project: row.Project, Harness: c.Ref.Harness, SessionID: c.NativeID}
 		if a.err != nil {
-			row.SkillHint = " · preview unavailable"
+			row.Hint = "preview unavailable"
 			unavailable++
 		} else if !a.p.NameComplete {
-			row.SkillHint = " · preview partial"
+			row.Hint = "preview partial"
 			partial++
 		}
 		n.rows = append(n.rows, row)
@@ -198,7 +198,7 @@ func (n *nativePreviewCatalog) load() (bool, error) {
 	if n.exhausted {
 		for i := n.next; i < len(n.candidates); i++ {
 			row := n.identityRow(i)
-			row.SkillHint = " · label not inspected"
+			row.Hint = "label not inspected"
 			n.rows = append(n.rows, row)
 		}
 	}
@@ -209,7 +209,7 @@ func (n *nativePreviewCatalog) load() (bool, error) {
 // identityRow uses only verified discovery facts; it never reads a transcript.
 func (n *nativePreviewCatalog) identityRow(index int) listRow {
 	c := n.candidates[index]
-	row := listRow{Index: len(n.rows) + 1, selectionKey: fmt.Sprintf("native-%d", index), SessionID: c.NativeID, ShortID: shortSessionID(c.NativeID), HarnessKey: c.Ref.Harness, Harness: c.Ref.Harness, Title: c.NativeID, Project: archive.DisplayLine(filepath.Base(c.Directory)), When: relativeAge(n.now, c.ModifiedAt), ProjectID: c.Directory}
+	row := listRow{Index: len(n.rows) + 1, selectionKey: fmt.Sprintf("native-%d", index), SessionID: c.NativeID, ShortID: shortSessionID(c.NativeID), HarnessKey: c.Ref.Harness, Harness: c.Ref.Harness, Title: c.NativeID, Project: archive.DisplayLine(filepath.Base(c.Directory)), When: relativeAge(n.now, c.ModifiedAt), WhenShort: shortWhen(n.now, c.ModifiedAt), ProjectID: c.Directory}
 	row.fields = sessionFields{Project: row.Project, Harness: c.Ref.Harness, SessionID: c.NativeID}
 	return row
 }

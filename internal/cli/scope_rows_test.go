@@ -68,13 +68,13 @@ func TestTableLeavesOutHiddenColumns(t *testing.T) {
 	sessions := pickerSessions(2, oneProject)
 	sessions[0].GitActivity = []archive.GitEvent{{Kind: archive.GitEventPRCreated, PRNumber: 213}}
 	rows := formattedRows(sessions, listFormatOptions{})
-	format, _ := listFormatOptions{Numbered: true, DimID: true}.withColumns(rows)
+	format, _ := listFormatOptions{Numbered: true}.withColumns(rows)
 	var out bytes.Buffer
 	if err := printSessionTable(&out, rows, format); err != nil {
 		t.Fatal(err)
 	}
 	header, _, _ := strings.Cut(out.String(), "\n")
-	if fields := strings.Fields(header); strings.Join(fields, " ") != "# TITLE PR WHEN ID" {
+	if fields := strings.Fields(header); strings.Join(fields, " ") != "# WHEN PR ID TITLE" {
 		t.Fatalf("header %q\n%s", header, out.String())
 	}
 	if !strings.Contains(out.String(), "#213") {
@@ -214,7 +214,7 @@ func TestScopedListGolden(t *testing.T) {
 	format := listFormatOptions{Now: pickerNow, GroupByProject: true}
 	choices := newScopeChoices(scope, format, true, archiveRows(sessions, defaultListLimit, format))
 	var out bytes.Buffer
-	if err := printListTable(&out, choices.shown()); err != nil {
+	if err := printListTable(&out, choices.shown(), 0); err != nil {
 		t.Fatal(err)
 	}
 	golden.Check(t, filepath.Join("testdata", "browse", "list-scoped.txt"), out.Bytes())
@@ -226,7 +226,7 @@ func TestScopedHandoffGolden(t *testing.T) {
 	t.Parallel()
 	sessions := goldenSessions()
 	scope := sessionScope{Label: "agent-archive", RepoKey: scopeKey, Dir: "/w/agent-archive", ProjectIDs: []string{"project-agent-archive"}}
-	format := listFormatOptions{Now: pickerNow, GroupByProject: true, Numbered: true, DimID: true, NarrowHint: "Narrow with --harness, or name a session: agent-archive handoff SESSION_ID."}
+	format := listFormatOptions{Now: pickerNow, GroupByProject: true, Numbered: true, NarrowHint: "Narrow with --harness, or name a session: agent-archive handoff SESSION_ID."}
 	rows := make([]handoffPickerRow, len(sessions))
 	for i, m := range sessions {
 		// The first two are registered here, the first active just now; the
