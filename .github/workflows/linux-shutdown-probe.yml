@@ -43,13 +43,30 @@ jobs:
           go version
           go version | grep -q ' go1\.27\.2 '
           python3 - <<'PY'
-          import json, os, pathlib, subprocess
+          import json, os, pathlib, re, subprocess
           identity = {key: os.environ[key] for key in (
               'PROBE_WORKFLOW_SHA', 'PROBE_WORKFLOW_REF', 'PROBE_EVENT', 'PROBE_REF',
               'GITHUB_SHA', 'TESTED_SOURCE_SHA', 'GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT')}
           identity['source_tree'] = subprocess.check_output(['git', 'rev-parse', 'HEAD^{tree}'], text=True).strip()
           identity['purpose'] = 'diagnostic only; not candidate acceptance'
           identity['tier_execution_event'] = 'local (GITHUB_EVENT_NAME unset for diagnostic)'
+          # Only bounded Go tuning values; paths/arbitrary environment text stay private.
+          patterns = {
+              'GOGC': r'(?:off|[0-9]{1,7})',
+              'GOMEMLIMIT': r'(?:off|[0-9]{1,20}(?:B|KiB|MiB|GiB|TiB)?)',
+              'GORACE': r'(?:(?:halt_on_error|history_size|exitcode|atexit_sleep_ms)=[0-9]{1,7})(?: (?:halt_on_error|history_size|exitcode|atexit_sleep_ms)=[0-9]{1,7})*',
+          }
+          inherited = {}
+          for key, pattern in patterns.items():
+              value = os.environ.get(key)
+              inherited[key] = ({'state': 'unset'} if value is None else
+                  {'state': 'whitelisted', 'value': value} if len(value) <= 240 and re.fullmatch(pattern, value) else
+                  {'state': 'present_nonwhitelisted'})
+          identity['inherited_go_tuning'] = inherited
+          identity['tier_policy'] = {
+              'GOMEMLIMIT': '3GiB', 'GOGC': inherited['GOGC'], 'GORACE': inherited['GORACE'],
+              'meaning': 'experimental Go soft memory budget; not an RSS/race memory cap or acceptance',
+          }
           text = json.dumps(identity, sort_keys=True)
           (pathlib.Path(os.environ['PROBE_DIR']) / 'identity.json').write_text(text + '\n')
           print(text, flush=True)
@@ -119,6 +136,29 @@ jobs:
               with (root / 'health.jsonl').open('a') as stream:
                   stream.write(text + '\n')
               print(text, flush=True)
+              # Add a compact console line; preserve full raw console/file evidence above.
+              def number(value):
+                  return value if isinstance(value, str) and re.fullmatch(r'[0-9]{1,20}|max', value) else None
+              groups = []
+              for values in list(row.get('cgroup', {}).values())[:2]:
+                  counters = dict(re.findall(r'^([a-z_]+) ([0-9]{1,20})$', values.get('memory.events', ''), re.M))
+                  groups.append({'current': number(values.get('memory.current')),
+                      'peak': number(values.get('memory.peak')), 'oom_kill': counters.get('oom_kill')})
+              processes = row.get('processes', [])
+              largest = processes[0].split(maxsplit=4) if processes else []
+              latest = row.get('race_2_lifecycle_tail', [])
+              latest = latest[-1] if latest else {}
+              summary = {'utc': row['utc'], 'final': final,
+                  'memavail_kib': row.get('memory_kib', {}).get('MemAvailable'),
+                  'swapfree_kib': row.get('memory_kib', {}).get('SwapFree'), 'cgroup': groups,
+                  'largest': {'rss_kib': number(largest[2]) if len(largest) == 5 else None,
+                      'comm': largest[4][:24] if len(largest) == 5 else None},
+                  'phase': {'action': latest.get('Action'), 'test': latest.get('Test', '')[-160:]}}
+              if 'sampler_error_type' in row:
+                  summary['error'] = row['sampler_error_type'][:40]
+              compact = json.dumps(summary, separators=(',', ':'))
+              assert len(compact) <= 900
+              print(compact, flush=True)
           # At most 122 periodic samples plus one final sample (job limit: 60 minutes).
           for _ in range(122):
               sample()
@@ -142,7 +182,7 @@ jobs:
           trap 'exit 143' TERM
           # A diagnostic branch is not a canonical push event. Use the explicit
           # local full-tier entry point, retaining the actual push identity above.
-          env -u GITHUB_EVENT_NAME GITHUB_SHA="$TESTED_SOURCE_SHA" /usr/bin/time -v -o "$probe_dir/time.txt" \
+          env -u GITHUB_EVENT_NAME GITHUB_SHA="$TESTED_SOURCE_SHA" GOMEMLIMIT=3GiB /usr/bin/time -v -o "$probe_dir/time.txt" \
             python3 scripts/run_ci_tier.py --tier full --suite linux --output tier-results
       - name: Preserve diagnostic evidence
         if: always()
