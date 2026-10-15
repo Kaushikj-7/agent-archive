@@ -49,6 +49,20 @@ class PhaseTests(unittest.TestCase):
         source.assert_not_called()
         context.assert_not_called()
 
+    def test_eighth_worker_owned_paths_guard_accepts_only_matching_topology(self):
+        build,modules=map(Path,self.plan.paths)
+        env={'GITHUB_EVENT_NAME':'pull_request','PR_NUMBER':'42','WORKERS':'8','SHARD':'7',
+             'GITHUB_WORKSPACE':str(self.root),'RUNNER_TEMP':str(self.root),
+             'GOCACHE':str(build),'GOMODCACHE':str(modules)}
+        with mock.patch.dict(os.environ,env,clear=True),mock.patch('sys.argv',['go_cache_steps.py','paths']):
+            self.assertEqual(main(),0)
+        env['WORKERS']='4'
+        with contextlib.redirect_stderr(io.StringIO()),mock.patch.dict(os.environ,env,clear=True),mock.patch('sys.argv',['go_cache_steps.py','paths']):
+            self.assertEqual(main(),1)
+        manifest={'success':True,'tier':'pr','shard':7,'settings':{'workers':8},'catalog':{'source':'b'*40,'workers':8}}
+        self.assertTrue(worker_success(self.plan,manifest,lambda source:None,7,8))
+        with self.assertRaises(InvalidContext):worker_success(self.plan,manifest,lambda source:None,7,4)
+
     def test_paths_phase_rejects_symlink_owned_directory_before_tool_use(self):
         build, modules = map(Path, self.plan.paths)
         outside = self.root/'outside'
@@ -164,7 +178,7 @@ class WorkflowTests(unittest.TestCase):
                         self.assertIn('cache: false', step)
         short = self.workflows['test']['linux-short']
         self.assertIn("if: github.event_name == 'pull_request'", short)
-        self.assertIn('shard: [0, 1, 2, 3]', short)
+        self.assertIn('shard: [0, 1, 2, 3, 4, 5, 6, 7]', short)
         self.assertIn('fetch-depth: 0', short)
         self.assertLess(short.index('scripts/go_cache_steps.py paths'), short.index('actions/setup-go@'))
 
@@ -183,8 +197,8 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("steps.go-cache-verify.outputs.restore_state != 'exact'", save)
         self.assertIn('github.event.pull_request.head.repo.full_name == github.repository', save)
         self.assertNotIn('always()', save)
-        self.assertTrue(any('scripts/test_go_cache_context.py' in s for s in steps(self.workflows['test']['script-tests'])))
-        self.assertTrue(any('scripts/test_go_cache_steps.py' in s for s in steps(self.workflows['test']['script-tests'])))
+        self.assertTrue(any('scripts/test_go_cache_context.py' in s for s in steps(self.workflows['test']['script-static'])))
+        self.assertTrue(any('scripts/test_go_cache_steps.py' in s for s in steps(self.workflows['test']['script-static'])))
 
 
 if __name__ == '__main__':

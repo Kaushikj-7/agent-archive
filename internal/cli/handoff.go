@@ -858,22 +858,10 @@ func (r handoffResolver) noMatch(dir string, sessions []archive.Metadata, now ti
 	return errors.New(strings.TrimRight(b.String(), "\n"))
 }
 
-// relativeAge renders how long ago t was, coarsely.
+// relativeAge renders how long ago t was, coarsely. It is longWhen, which
+// the session lists will call directly.
 func relativeAge(now, t time.Time) string {
-	if t.IsZero() {
-		return "at an unknown time"
-	}
-	d := now.Sub(t)
-	switch {
-	case d < time.Minute:
-		return "just now"
-	case d < time.Hour:
-		return plural(int(d/time.Minute), "minute") + " ago"
-	case d < 48*time.Hour:
-		return plural(int(d/time.Hour), "hour") + " ago"
-	default:
-		return plural(int(d/(24*time.Hour)), "day") + " ago"
-	}
+	return longWhen(now, t)
 }
 
 func plural(n int, unit string) string {
