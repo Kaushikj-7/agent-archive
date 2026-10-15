@@ -48,7 +48,8 @@ jobs:
     name: Extended Linux race
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'linux'))
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Full Linux has a 40-minute tier deadline plus setup and post-tier checks.
+    timeout-minutes: ${{ (github.event_name == 'workflow_dispatch' || github.event.schedule == '17 8 * * 0') && 60 || 30 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
