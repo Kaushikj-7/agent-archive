@@ -16,6 +16,8 @@ follow [Semantic Versioning](https://semver.org/).
 
 - Search adds bounded JSON, explicit wait/rebuild, source context neighbors and
   existing-only cached readers; queries require explicit project broadening.
+  Named refresh removes cached text when fresh authority confirms deletion,
+  while unavailable metadata preserves the existing index.
 
 - Search conversation text with a private local index. Explicitly index one
   archived session with `search --refresh --session ID --harness NAME`, query
@@ -26,6 +28,8 @@ follow [Semantic Versioning](https://semver.org/).
   Automatic refresh remains off until explicitly enabled for this machine.
   Refresh now resumes bounded work after interruption, reuses unchanged sources,
   and records retry/backoff state without delaying archive publication.
+  Verified unsupported source formats report coverage gaps instead of retrying
+  the same immutable bytes indefinitely.
 
 - The session browser (`list`, bare `show`, `show <words>`, `handoff` on a
   terminal that reads keys) has a cursor: `▸` marks a row, ↑ ↓ and the mouse

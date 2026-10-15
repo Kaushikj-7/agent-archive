@@ -188,6 +188,9 @@ func LoadProjection(ctx context.Context, objects storage.ObjectStore, parsers ag
 		bundle, err = reader.LoadSource(ctx, objects, metadata, limits)
 	}
 	if err != nil {
+		if reader.IsUnsupportedSource(err) {
+			return Projection{Source: source, Gap: &Gap{revisionID, "unsupported_source_schema"}}, nil
+		}
 		return Projection{}, err
 	}
 	source.FilterVersion = bundle.Capture.FilterVersion
@@ -325,7 +328,7 @@ func verifiedReferenceProjection(ctx context.Context, objects storage.ObjectStor
 		return Projection{}, ErrChanged
 	}
 	m, err := ReadCurrentMetadata(ctx, objects, ref.Source.Reference.Key[:slash]+"/metadata.json")
-	if errors.Is(err, storage.ErrNotFound) {
+	if errors.Is(err, ErrDeleted) {
 		return Projection{}, ErrDeleted
 	}
 	if err != nil {

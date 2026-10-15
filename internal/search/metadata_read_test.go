@@ -47,8 +47,37 @@ func TestSearchMetadataAndContextUseFreshCatalogAuthority(t *testing.T) {
 		t.Fatalf("catalog exact read %+v source_GET=%d lists=%d %v", out, a.raw.sourceGets-before, a.raw.lists, err)
 	}
 	a.mutate(t, key, nil)
-	if _, err = ReadCurrentMetadata(pinned, a.remote, key); !errors.Is(err, storage.ErrNotFound) {
+	if _, err = ReadCurrentMetadata(pinned, a.remote, key); !errors.Is(err, storage.ErrNotFound) || !errors.Is(err, ErrDeleted) {
 		t.Fatalf("fresh deletion: %v", err)
+	}
+}
+
+func TestSearchMissingCatalogMetadataBodyIsUnavailableNotDeleted(t *testing.T) {
+	a := newSearchArchive(t)
+	m := a.session(t, "session")
+	parsers := builtin.NewBuiltins()
+	p, err := LoadProjection(t.Context(), a.remote, parsers, "test/context", m, "", reader.Limits{})
+	if err != nil || len(p.Passages) == 0 {
+		t.Fatalf("projection: %+v %v", p, err)
+	}
+	key, err := archive.MetadataObjectKey(m.Harness.Name, m.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, _, err := a.remote.Writer.Find(t.Context(), key)
+	if err != nil || entry == nil {
+		t.Fatalf("live identity: %+v %v", entry, err)
+	}
+	if err = a.raw.Delete(t.Context(), entry.Metadata.Key); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = ReadCurrentMetadata(t.Context(), a.remote, key); !errors.Is(err, storage.ErrNotFound) || errors.Is(err, ErrDeleted) {
+		t.Fatalf("missing body became authoritative absence: %v", err)
+	}
+	ref := p.Passages[0].Reference
+	out, err := ReadContext(t.Context(), a.remote, parsers, ref, ref.Start, 4096, 0, 0, reader.Limits{})
+	if !errors.Is(err, ErrUnavailable) || errors.Is(err, ErrDeleted) || out.Selected.Text != "" {
+		t.Fatalf("unavailable body context: %+v %v", out, err)
 	}
 }
 
