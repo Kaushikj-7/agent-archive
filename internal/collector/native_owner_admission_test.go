@@ -85,8 +85,9 @@ func TestNativeOwnerAdmissionRejectsChangedFirstTask(t *testing.T) {
 							t.Error(err)
 						}
 					}()
-					r := providerReader{admission: agentapi.SourceAdmission{NativeID: thread, Binding: binding}}
-					return r.snapshotBinding(t.Context(), snap)
+					r := providerReader{harness: "codex", admission: agentapi.SourceAdmission{NativeID: thread, Binding: agentapi.BindCodex(binding)}}
+					carrier, err := r.snapshotBinding(t.Context(), snap)
+					return carrier.CodexBinding(), err
 				}
 				write(at, thread, false)
 				admitted, err := read(nil)

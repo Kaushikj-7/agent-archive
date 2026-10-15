@@ -1,0 +1,750 @@
+{
+  "schema": 1,
+  "synthetic": true,
+  "producer": "1.4.8-R6256.1",
+  "binary_sha256": "94ea8fd1c73664c22e5c6157d8706945b667b11bd1c7c51691811e79f17dfcf1",
+  "provider": "loopback synthetic Responses",
+  "source_base": "37609182169b658c380e9113888b0cd11d387c05",
+  "procedure": "scripts/muse_qualification.py; complete settled log after owned process cleanup",
+  "native_sha256": "37a42dda67f933cc334f201c882baec51081da5f147359a4ef405f9ce091d9d4",
+  "sanitized_sha256": "94d83a9fe48d3b9d786b7ded3122ff0fa0e2a4bfa929419beb9a44aa5469736f",
+  "allowlist_sha256": "0d9ebdabb64e7c27b9fa4abea9b4964d228350a7fe1f5c55de3cb8c3e8bdf3dd",
+  "native_integrity_valid": false,
+  "omitted_bodies": [
+    {
+      "line": 1,
+      "child": 0,
+      "type": "runtime.session.permission_format_declared",
+      "event": null
+    },
+    {
+      "line": 1,
+      "child": 1,
+      "type": "runtime.session.permission_profile_committed",
+      "event": null
+    },
+    {
+      "line": 2,
+      "child": null,
+      "type": "runtime.session.metadata",
+      "event": null
+    },
+    {
+      "line": 3,
+      "child": null,
+      "type": "session.opened.observed",
+      "event": null
+    },
+    {
+      "line": 4,
+      "child": null,
+      "type": "runtime.session",
+      "event": null
+    },
+    {
+      "line": 5,
+      "child": null,
+      "type": "runtime.session.capture_selection",
+      "event": null
+    },
+    {
+      "line": 6,
+      "child": null,
+      "type": "runtime.command_intake.session_name.received",
+      "event": null
+    },
+    {
+      "line": 9,
+      "child": null,
+      "type": "runtime.session.task",
+      "event": "scheduled"
+    },
+    {
+      "line": 10,
+      "child": null,
+      "type": "runtime.session.task",
+      "event": "side_effect_intent"
+    },
+    {
+      "line": 12,
+      "child": null,
+      "type": "run.model.configured",
+      "event": null
+    },
+    {
+      "line": 13,
+      "child": null,
+      "type": "runtime.retained_fact",
+      "event": null
+    },
+    {
+      "line": 14,
+      "child": null,
+      "type": "runtime.user_intent.accepted",
+      "event": null
+    },
+    {
+      "line": 15,
+      "child": null,
+      "type": "session.name.changed",
+      "event": null
+    },
+    {
+      "line": 16,
+      "child": null,
+      "type": "runtime.session",
+      "event": "hook_run_started"
+    },
+    {
+      "line": 18,
+      "child": null,
+      "type": "runtime.command_intake.settled",
+      "event": null
+    },
+    {
+      "line": 19,
+      "child": null,
+      "type": "runtime.session",
+      "event": "hook_run_terminal"
+    },
+    {
+      "line": 20,
+      "child": null,
+      "type": "runtime.session",
+      "event": "hook_run_started"
+    },
+    {
+      "line": 21,
+      "child": null,
+      "type": "runtime.session",
+      "event": "hook_run_terminal"
+    },
+    {
+      "line": 24,
+      "child": null,
+      "type": "runtime.session",
+      "event": "context_block_diagnostic"
+    },
+    {
+      "line": 25,
+      "child": null,
+      "type": "runtime.session",
+      "event": "context_block_diagnostic"
+    },
+    {
+      "line": 26,
+      "child": null,
+      "type": "runtime.session",
+      "event": "context_block_diagnostic"
+    },
+    {
+      "line": 27,
+      "child": null,
+      "type": "runtime.session",
+      "event": "context_block_diagnostic"
+    },
+    {
+      "line": 28,
+      "child": null,
+      "type": "runtime.session",
+      "event": "context_block_diagnostic"
+    },
+    {
+      "line": 29,
+      "child": null,
+      "type": "runtime.session",
+      "event": "context_block_diagnostic"
+    },
+    {
+      "line": 30,
+      "child": null,
+      "type": "runtime.session",
+      "event": "context_block_diagnostic"
+    },
+    {
+      "line": 31,
+      "child": null,
+      "type": "runtime.session",
+      "event": "context_block_diagnostic"
+    },
+    {
+      "line": 32,
+      "child": null,
+      "type": "runtime.session",
+      "event": "context_block_diagnostic"
+    },
+    {
+      "line": 33,
+      "child": null,
+      "type": "runtime.session",
+      "event": "context_block_diagnostic"
+    },
+    {
+      "line": 34,
+      "child": null,
+      "type": "runtime.session",
+      "event": "context_block_diagnostic"
+    },
+    {
+      "line": 35,
+      "child": null,
+      "type": "runtime.session",
+      "event": "model_request_configured"
+    },
+    {
+      "line": 36,
+      "child": null,
+      "type": "runtime.session",
+      "event": "context_block_updated"
+    },
+    {
+      "line": 37,
+      "child": null,
+      "type": "runtime.session",
+      "event": "provider_request_options_configured"
+    },
+    {
+      "line": 38,
+      "child": null,
+      "type": "runtime.session",
+      "event": "model_input_trace_recorded"
+    },
+    {
+      "line": 39,
+      "child": null,
+      "type": "runtime.session",
+      "event": "task_stream_linked"
+    },
+    {
+      "line": 40,
+      "child": null,
+      "type": "runtime.session",
+      "event": "proposed"
+    },
+    {
+      "line": 41,
+      "child": null,
+      "type": "runtime.session",
+      "event": "accepted"
+    },
+    {
+      "line": 42,
+      "child": null,
+      "type": "runtime.session",
+      "event": "scheduled"
+    },
+    {
+      "line": 43,
+      "child": null,
+      "type": "runtime.session",
+      "event": "side_effect_intent"
+    },
+    {
+      "line": 45,
+      "child": null,
+      "type": "runtime.session",
+      "event": "status"
+    },
+    {
+      "line": 46,
+      "child": null,
+      "type": "runtime.session",
+      "event": "model_response_created"
+    },
+    {
+      "line": 47,
+      "child": null,
+      "type": "runtime.session",
+      "event": "status"
+    },
+    {
+      "line": 48,
+      "child": null,
+      "type": "runtime.session",
+      "event": "goal_usage_attribution"
+    },
+    {
+      "line": 49,
+      "child": null,
+      "type": "runtime.session",
+      "event": "model_completed"
+    },
+    {
+      "line": 52,
+      "child": null,
+      "type": "runtime.session",
+      "event": "task_stream_linked"
+    },
+    {
+      "line": 53,
+      "child": null,
+      "type": "runtime.session",
+      "event": "proposed"
+    },
+    {
+      "line": 54,
+      "child": null,
+      "type": "runtime.session",
+      "event": "accepted"
+    },
+    {
+      "line": 55,
+      "child": null,
+      "type": "runtime.session",
+      "event": "scheduled"
+    },
+    {
+      "line": 56,
+      "child": null,
+      "type": "runtime.session",
+      "event": "side_effect_intent"
+    },
+    {
+      "line": 57,
+      "child": null,
+      "type": "runtime.session",
+      "event": "started"
+    },
+    {
+      "line": 58,
+      "child": null,
+      "type": "tool_batch.effect.started",
+      "event": null
+    },
+    {
+      "line": 59,
+      "child": null,
+      "type": "tool_batch.effect.terminal",
+      "event": null
+    },
+    {
+      "line": 60,
+      "child": null,
+      "type": "runtime.session",
+      "event": "output"
+    },
+    {
+      "line": 62,
+      "child": null,
+      "type": "runtime.session",
+      "event": "goal_usage_attribution"
+    },
+    {
+      "line": 64,
+      "child": null,
+      "type": "runtime.session",
+      "event": "provider_request_options_configured"
+    },
+    {
+      "line": 65,
+      "child": null,
+      "type": "runtime.session",
+      "event": "model_input_trace_recorded"
+    },
+    {
+      "line": 66,
+      "child": null,
+      "type": "runtime.session",
+      "event": "task_stream_linked"
+    },
+    {
+      "line": 67,
+      "child": null,
+      "type": "runtime.session",
+      "event": "proposed"
+    },
+    {
+      "line": 68,
+      "child": null,
+      "type": "runtime.session",
+      "event": "accepted"
+    },
+    {
+      "line": 69,
+      "child": null,
+      "type": "runtime.session",
+      "event": "scheduled"
+    },
+    {
+      "line": 70,
+      "child": null,
+      "type": "runtime.session",
+      "event": "side_effect_intent"
+    },
+    {
+      "line": 72,
+      "child": null,
+      "type": "runtime.session",
+      "event": "status"
+    },
+    {
+      "line": 73,
+      "child": null,
+      "type": "runtime.session",
+      "event": "model_response_created"
+    },
+    {
+      "line": 74,
+      "child": null,
+      "type": "runtime.session",
+      "event": "status"
+    },
+    {
+      "line": 75,
+      "child": null,
+      "type": "runtime.session",
+      "event": "goal_usage_attribution"
+    },
+    {
+      "line": 76,
+      "child": null,
+      "type": "runtime.session",
+      "event": "model_completed"
+    },
+    {
+      "line": 79,
+      "child": null,
+      "type": "runtime.session",
+      "event": "hook_run_started"
+    },
+    {
+      "line": 80,
+      "child": null,
+      "type": "runtime.session",
+      "event": "hook_run_terminal"
+    },
+    {
+      "line": 81,
+      "child": null,
+      "type": "runtime.session",
+      "event": "resource_usage_sampled"
+    },
+    {
+      "line": 82,
+      "child": null,
+      "type": "runtime.session",
+      "event": "terminal"
+    },
+    {
+      "line": 83,
+      "child": null,
+      "type": "session.end",
+      "event": null
+    },
+    {
+      "line": 84,
+      "child": null,
+      "type": "runtime.session.route_facts",
+      "event": null
+    },
+    {
+      "line": 85,
+      "child": null,
+      "type": "session.opened.observed",
+      "event": null
+    },
+    {
+      "line": 87,
+      "child": null,
+      "type": "run.model.configured",
+      "event": null
+    },
+    {
+      "line": 88,
+      "child": null,
+      "type": "runtime.retained_fact",
+      "event": null
+    },
+    {
+      "line": 89,
+      "child": null,
+      "type": "runtime.user_intent.accepted",
+      "event": null
+    },
+    {
+      "line": 90,
+      "child": null,
+      "type": "runtime.session",
+      "event": "hook_run_started"
+    },
+    {
+      "line": 91,
+      "child": null,
+      "type": "runtime.session",
+      "event": "hook_run_terminal"
+    },
+    {
+      "line": 94,
+      "child": null,
+      "type": "runtime.session",
+      "event": "context_block_diagnostic"
+    },
+    {
+      "line": 95,
+      "child": null,
+      "type": "runtime.session",
+      "event": "context_block_diagnostic"
+    },
+    {
+      "line": 96,
+      "child": null,
+      "type": "runtime.session",
+      "event": "context_block_diagnostic"
+    },
+    {
+      "line": 97,
+      "child": null,
+      "type": "runtime.session",
+      "event": "context_block_diagnostic"
+    },
+    {
+      "line": 98,
+      "child": null,
+      "type": "runtime.session",
+      "event": "context_block_diagnostic"
+    },
+    {
+      "line": 99,
+      "child": null,
+      "type": "runtime.session",
+      "event": "context_block_diagnostic"
+    },
+    {
+      "line": 100,
+      "child": null,
+      "type": "runtime.session",
+      "event": "context_block_diagnostic"
+    },
+    {
+      "line": 101,
+      "child": null,
+      "type": "runtime.session",
+      "event": "context_block_diagnostic"
+    },
+    {
+      "line": 102,
+      "child": null,
+      "type": "runtime.session",
+      "event": "context_block_diagnostic"
+    },
+    {
+      "line": 103,
+      "child": null,
+      "type": "runtime.session",
+      "event": "context_block_diagnostic"
+    },
+    {
+      "line": 104,
+      "child": null,
+      "type": "runtime.session",
+      "event": "context_block_diagnostic"
+    },
+    {
+      "line": 105,
+      "child": null,
+      "type": "runtime.session",
+      "event": "model_request_configured"
+    },
+    {
+      "line": 106,
+      "child": null,
+      "type": "runtime.session",
+      "event": "provider_request_options_configured"
+    },
+    {
+      "line": 107,
+      "child": null,
+      "type": "runtime.session",
+      "event": "model_input_trace_recorded"
+    },
+    {
+      "line": 108,
+      "child": null,
+      "type": "runtime.session",
+      "event": "task_stream_linked"
+    },
+    {
+      "line": 109,
+      "child": null,
+      "type": "runtime.session",
+      "event": "proposed"
+    },
+    {
+      "line": 110,
+      "child": null,
+      "type": "runtime.session",
+      "event": "accepted"
+    },
+    {
+      "line": 111,
+      "child": null,
+      "type": "runtime.session",
+      "event": "scheduled"
+    },
+    {
+      "line": 112,
+      "child": null,
+      "type": "runtime.session",
+      "event": "side_effect_intent"
+    },
+    {
+      "line": 114,
+      "child": null,
+      "type": "runtime.session",
+      "event": "status"
+    },
+    {
+      "line": 115,
+      "child": null,
+      "type": "runtime.session",
+      "event": "model_response_created"
+    },
+    {
+      "line": 116,
+      "child": null,
+      "type": "runtime.session",
+      "event": "status"
+    },
+    {
+      "line": 117,
+      "child": null,
+      "type": "runtime.session",
+      "event": "goal_usage_attribution"
+    },
+    {
+      "line": 118,
+      "child": null,
+      "type": "runtime.session",
+      "event": "model_completed"
+    },
+    {
+      "line": 121,
+      "child": null,
+      "type": "runtime.session",
+      "event": "hook_run_started"
+    },
+    {
+      "line": 122,
+      "child": null,
+      "type": "runtime.session",
+      "event": "hook_run_terminal"
+    },
+    {
+      "line": 123,
+      "child": null,
+      "type": "runtime.session",
+      "event": "resource_usage_sampled"
+    },
+    {
+      "line": 124,
+      "child": null,
+      "type": "runtime.session",
+      "event": "terminal"
+    },
+    {
+      "line": 125,
+      "child": null,
+      "type": "session.end",
+      "event": null
+    }
+  ],
+  "expected": {
+    "logical_records": 126,
+    "own_run_starts": [
+      {
+        "id": "01a13de2-ebcc-7583-9702-cb0f62b55e28",
+        "prompt": "Synthetic qualification prompt: hello λ.\nSecond synthetic line."
+      },
+      {
+        "id": "01a13de3-1f01-74f3-b1ee-e2aa2043cebb",
+        "prompt": "Synthetic qualification prompt: hello λ.\nSecond synthetic line."
+      }
+    ],
+    "visible_messages": [
+      {
+        "run_id": "01a13de2-ebcc-7583-9702-cb0f62b55e28",
+        "text": "Synthetic qualification answer λ.\nSecond synthetic line."
+      },
+      {
+        "run_id": "01a13de3-1f01-74f3-b1ee-e2aa2043cebb",
+        "text": "Synthetic qualification answer λ.\nSecond synthetic line."
+      }
+    ],
+    "model_completions": [
+      {
+        "run_id": "01a13de2-ebcc-7583-9702-cb0f62b55e28",
+        "model": "archive-synthetic-model",
+        "usage": {
+          "input_tokens": 101,
+          "output_tokens": 23,
+          "cached_tokens": 17,
+          "cache_write_tokens": 0,
+          "cache_read_tokens": 17,
+          "reasoning_tokens": 5
+        }
+      },
+      {
+        "run_id": "01a13de2-ebcc-7583-9702-cb0f62b55e28",
+        "model": "archive-synthetic-model",
+        "usage": {
+          "input_tokens": 101,
+          "output_tokens": 23,
+          "cached_tokens": 17,
+          "cache_write_tokens": 0,
+          "cache_read_tokens": 17,
+          "reasoning_tokens": 5
+        }
+      },
+      {
+        "run_id": "01a13de3-1f01-74f3-b1ee-e2aa2043cebb",
+        "model": "archive-synthetic-model",
+        "usage": {
+          "input_tokens": 101,
+          "output_tokens": 23,
+          "cached_tokens": 17,
+          "cache_write_tokens": 0,
+          "cache_read_tokens": 17,
+          "reasoning_tokens": 5
+        }
+      }
+    ],
+    "tool_calls": [
+      {
+        "run_id": "01a13de2-ebcc-7583-9702-cb0f62b55e28",
+        "id": "fc_synthetic",
+        "call_id": "call_synthetic",
+        "name": "read_file",
+        "args": "{\"path\": \"/synthetic/muse-q0/exec-tool/workspace/artifact.txt\", \"offset\": 1, \"limit\": 10}"
+      }
+    ],
+    "tool_results": [
+      {
+        "run_id": "01a13de2-ebcc-7583-9702-cb0f62b55e28",
+        "tool_call_index": 0,
+        "tool_call_id": "call_synthetic",
+        "text": "Read text file `/synthetic/muse-q0/exec-tool/workspace/artifact.txt`.\n1|SYNTHETIC_TOOL_RESULT λ"
+      }
+    ],
+    "opened": [
+      {
+        "kind": "session_opened",
+        "record": {
+          "schema_version": 1,
+          "session_id": "01a13de2-bea1-7ec2-a267-f13b76a045f3",
+          "resume": false,
+          "credential_backend": "file"
+        }
+      },
+      {
+        "kind": "session_opened",
+        "record": {
+          "schema_version": 1,
+          "session_id": "01a13de2-bea1-7ec2-a267-f13b76a045f3",
+          "resume": true,
+          "credential_backend": "file"
+        }
+      }
+    ]
+  },
+  "native_physical_lines": 125
+}
