@@ -139,7 +139,7 @@ func TestNoArgsSaysWhenNotSetUp(t *testing.T) {
 	home := t.TempDir()
 	env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
 	var out bytes.Buffer
-	if code := Run(nil, nil, &out, nil, env); code != 0 || !strings.HasPrefix(out.String(), "Not set up yet. For sessions already on this machine, try `agent-archive handoff`; to start archiving, run `agent-archive setup`.\n\nAgent Archive") {
+	if code := Run(nil, nil, &out, nil, env); code != 0 || !strings.HasPrefix(out.String(), notSetUpHandoffMessage+"\n\nAgent Archive") {
 		t.Fatalf("exit %d\n%s", code, &out)
 	}
 	if _, err := os.Stat(filepath.Join(home, "config.json")); !os.IsNotExist(err) {

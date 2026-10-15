@@ -192,8 +192,14 @@ class InstallScriptTest(InstallScriptBase):
         self.assertIn('export PATH="' + str(target.parent) + ':$PATH"', result.stdout)
         self.assertIn(f'✓ installed agent-archive v9.9.9-arm64 to {target}\n', result.stdout)
         self.assertIn('\nTo get started, run:\n\nagent-archive setup\n', result.stdout)
-        # The handoff that works before setup is named first.
-        self.assertLess(result.stdout.index('agent-archive handoff'),
+        # The handoff that works before setup is named first, for a
+        # project that already has sessions, by the installed path like
+        # the backfill next step, since the install directory is not on
+        # PATH yet.
+        handoff = ("\nproject that already has Claude Code or Codex sessions:\n\n"
+                   f"  '{target}' handoff\n")
+        self.assertIn(handoff, result.stdout)
+        self.assertLess(result.stdout.index(handoff),
                         result.stdout.index('agent-archive setup'))
         self.assertEqual([p.name for p in target.parent.iterdir()], ['agent-archive'])
 
@@ -999,7 +1005,7 @@ class InstallRefreshTest(InstallScriptBase):
         self.assertIn('agent-archive setup --refresh', result.stdout)
         self.assertNotIn('To get started', result.stdout)
         # The fresh-install handoff next step is not for a set-up machine.
-        self.assertNotIn('agent-archive handoff', result.stdout)
+        self.assertNotIn('handoff', result.stdout)
         self.assertEqual(result.stderr, '')
 
     def test_honors_agent_archive_home(self):

@@ -534,16 +534,28 @@ var openCredentialStore = func() (credentials.CredentialStore, error) {
 	})
 }
 
-// notSetUp reports whether this machine is not archiving: it has no saved
-// configuration, or uninstall left one with archiving disabled. It reads
+// notSetUpLead reports whether this machine is not archiving: it has no
+// saved configuration, or uninstall left one with archiving disabled. When
+// it is not, lead is the line a bare invocation starts with: with no
+// configuration, preSetupGuidance (handoff works, unless setup is under
+// way); after uninstall, plain setup guidance, since handoff then uses the
+// configured archive rather than this machine's own sessions. It reads
 // only, and says nothing when the data directory cannot be read.
-func notSetUp(env Env) bool {
+func notSetUpLead(env Env) (lead string, notSetUp bool) {
 	home, err := env.readHome()
 	if err != nil {
-		return false
+		return "", false
 	}
 	cfg, found, err := config.Load(home)
-	return err == nil && (!found || !cfg.Archive.Enabled)
+	switch {
+	case err != nil:
+		return "", false
+	case !found:
+		return preSetupGuidance(home), true
+	case !cfg.Archive.Enabled:
+		return "Not set up yet — run agent-archive setup.", true
+	}
+	return "", false
 }
 
 const usage = `Agent Archive — archive coding-agent sessions to your private storage.
@@ -684,13 +696,14 @@ func runEmptyInvocation(args []string, stdin io.Reader, stdout, stderr io.Writer
 	if !nonInteractiveSettingUsable(args, stderr, env) {
 		return 2
 	}
-	if browseInteractive(env, stdin, stdout) && !notSetUp(env) {
+	lead, notSetUp := notSetUpLead(env)
+	if browseInteractive(env, stdin, stdout) && !notSetUp {
 		startTrace("list", stderr, env)
 		defer finishTraceNow()
 		return runListCommand(nil, stdin, stdout, stderr, env)
 	}
-	if notSetUp(env) {
-		terminal.Println(stdout, notSetUpHandoffMessage)
+	if notSetUp {
+		terminal.Println(stdout, lead)
 		terminal.Println(stdout)
 	}
 	terminal.Print(stdout, usage)
