@@ -270,7 +270,7 @@ func TestLookupAllowanceDeferralsMoveBehindOnlyOtherCodexSessions(t *testing.T) 
 	for _, id := range []string{"heavy", "claude", "unopened", "changed", "cursor", "expired", "plain"} {
 		p.requests[id] = state.Request{Token: "t-" + id}
 	}
-	p.orderLookupAllowanceDeferralsLast()
+	p.orderLookupAllowanceDeferralsLast(p.registrations)
 	var got []string
 	for _, r := range p.registrations {
 		got = append(got, r.ArchiveSessionID)
@@ -427,7 +427,7 @@ func TestLookupAllowanceWaitersRotateAndChildrenWaitingForAParentStayLast(t *tes
 	for _, r := range p.registrations {
 		p.requests[r.ArchiveSessionID] = state.Request{Token: "t-" + r.ArchiveSessionID}
 	}
-	p.orderLookupAllowanceDeferralsLast()
+	p.orderLookupAllowanceDeferralsLast(p.registrations)
 	var got []string
 	for _, r := range p.registrations {
 		got = append(got, r.ArchiveSessionID)
@@ -460,7 +460,7 @@ func TestWaiterLaneTakesOnlyASessionLeftUnopened(t *testing.T) {
 	for _, r := range p.registrations {
 		p.requests[r.ArchiveSessionID] = state.Request{Token: "t-" + r.ArchiveSessionID}
 	}
-	p.orderLookupAllowanceDeferralsLast()
+	p.orderLookupAllowanceDeferralsLast(p.registrations)
 	var got []string
 	for _, r := range p.registrations {
 		got = append(got, r.ArchiveSessionID)
@@ -844,7 +844,7 @@ func TestDueRetryTakesTheLaneAheadOfTheWaiterLane(t *testing.T) {
 	for _, r := range p.registrations {
 		p.requests[r.ArchiveSessionID] = state.Request{Token: "t-" + r.ArchiveSessionID}
 	}
-	p.orderLookupAllowanceDeferralsLast()
+	p.orderLookupAllowanceDeferralsLast(p.registrations)
 	var got []string
 	for _, r := range p.registrations {
 		got = append(got, r.ArchiveSessionID)
@@ -952,7 +952,7 @@ func TestSessionLeftUnopenedPastMaxDeferralGoesOnTheSchedule(t *testing.T) {
 		priorUnreached:     map[string]int{"waiter": 0},
 		result:             Result{Errors: map[string]error{}},
 	}
-	p.orderLookupAllowanceDeferralsLast()
+	p.orderLookupAllowanceDeferralsLast(p.registrations)
 	p.leaveForNextPass(p.registrations)
 	for _, id := range []string{"waiter", "changed"} {
 		if err := p.result.Errors[id]; err == nil || !errors.Is(err, errLeftUnopened) {

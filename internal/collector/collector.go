@@ -224,6 +224,13 @@ func (o Options) minUploadInterval() time.Duration {
 	return 3 * time.Minute
 }
 
+// PublicationCandidate is content-free evidence that a publication completed.
+// Retention or a later error can follow it; consumers must recheck authority.
+type PublicationCandidate struct {
+	Harness          string
+	ArchiveSessionID string
+}
+
 // Result summarizes one Run call. It never includes transcript content.
 // CloseStagedResults ends copied staged diagnostic ownership after all result
 // aliases and diagnostic consumers finish; it is a no-op for legacy results.
@@ -232,6 +239,8 @@ type Result struct {
 
 	Scanned   int
 	Published []string
+	// PublicationCandidates bounds best-effort follow-up identities independently of Published.
+	PublicationCandidates []PublicationCandidate
 	// Skipped lists sessions with nothing new to publish.
 	Skipped []string
 	// Waiting lists sessions whose new evidence is saved and held for the
@@ -390,26 +399,27 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	p.reconcileNativeLinks()
 	p.observeLabels(ctx)
 	p.repairListingIndex()
-	orderRequests(p.registrations, p.requests)
-	p.orderLookupAllowanceDeferralsLast()
-	for i, reg := range p.registrations {
+	registrations := p.executionRegistrations()
+	orderRequests(registrations, p.requests)
+	p.orderLookupAllowanceDeferralsLast(registrations)
+	for i, reg := range registrations {
 		// A pass past its deadline ends like a stopped one: nothing more can
 		// reach storage, so the rest keep their work rather than each
 		// failing on the expired context.
 		if (p.opts.Stop != nil && p.opts.Stop()) || ctx.Err() != nil {
-			p.leaveForNextPass(p.registrations[i:])
+			p.leaveForNextPass(registrations[i:])
 			break
 		}
 		if p.opts.AcceptSession != nil && !p.opts.AcceptSession(reg) {
 			continue
 		}
 		if _, held := p.lookupRetryHeld[reg.ArchiveSessionID]; held {
-			p.leaveForNextPass(p.registrations[i : i+1])
+			p.leaveForNextPass(registrations[i : i+1])
 			continue
 		}
 		if p.codexLookupSpent(reg) {
 			p.startLookupAllowanceWait(reg)
-			p.leaveForNextPass(p.registrations[i : i+1])
+			p.leaveForNextPass(registrations[i : i+1])
 			continue
 		}
 		p.scan(ctx, reg)
@@ -418,6 +428,21 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 		return p.result, err
 	}
 	return p.result, p.saveStatus()
+}
+
+// executionRegistrations reserves scheduling slots only for eligible sessions.
+// The full registration census remains available for diagnostics and maintenance.
+func (p *pass) executionRegistrations() []archive.SessionRegistration {
+	registrations := p.registrations
+	if p.opts.AcceptSession != nil {
+		registrations = make([]archive.SessionRegistration, 0, len(p.registrations))
+		for _, reg := range p.registrations {
+			if p.opts.AcceptSession(reg) {
+				registrations = append(registrations, reg)
+			}
+		}
+	}
+	return registrations
 }
 
 // resumeStagedReleasesIfActive skips fresh work after ordinary recovery ends.
@@ -783,6 +808,9 @@ func (p *pass) scan(ctx context.Context, reg archive.SessionRegistration) {
 	switch outcome {
 	case outcomePublished:
 		p.result.Published = append(p.result.Published, id)
+		if len(p.result.PublicationCandidates) < 256 {
+			p.result.PublicationCandidates = append(p.result.PublicationCandidates, PublicationCandidate{Harness: reg.Harness.Name, ArchiveSessionID: reg.ArchiveSessionID})
+		}
 		if err := announceSubagent(p.local, reg, published); err != nil {
 			addError(p.result.Errors, id, err)
 			p.pending++

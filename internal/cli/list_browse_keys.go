@@ -119,7 +119,7 @@ func (l *sessionPicker) pickKeysContext(ctx context.Context, p *prompter, stdout
 				frame.WriteString(line + "\n")
 			}
 		}
-		frame.WriteString(v.footer)
+		frame.WriteString(l.displayFooter(v.footer, screen.width))
 		bottom := l.footerLine(screen, action)
 		if notice != "" {
 			bottom = oneRow(notice, screen.width)
@@ -264,6 +264,8 @@ func (l *sessionPicker) listRune(r rune, screen listScreen, typed string) (strin
 		return "", listQuit
 	case typed == "" && l.toggles && (r == 'a' || r == 'A'):
 		return "", listToggle
+	case typed == "" && r == '/' && l.contentSearch != nil:
+		return "", listStay
 	case typed == "" && r == '/':
 		// The highlight stays where it is until words are typed, so Esc
 		// with none typed comes back to the same row.
@@ -373,7 +375,7 @@ func (l *sessionPicker) measureScreen(stdout io.Writer, groups []sessionTableGro
 	s.width = width
 	// Below the table: the detail strip, the footer's notes, the footer
 	// line (or a message in its place), and the prompt with what is typed.
-	chrome := l.headRows() + displayLines(footer, width) + 1 + displayLines(prompt, width)
+	chrome := l.headRows() + displayLines(l.displayFooter(footer, width), width) + 1 + displayLines(prompt, width)
 	if s.strip && height-chrome-detailStripLines < minStripListLines {
 		s.strip = false
 	}
@@ -623,7 +625,11 @@ func (b *sessionBrowser) measureDetails(lines []string, top int, pager bool, hin
 	if !ok {
 		return detailsScreen{lines: lines, shown: len(lines)}, notice
 	}
-	below := displayLines(hint, width) + displayLines(b.prompt.promptText(detailsKeysQuestion(true, pager), false, nil, -1, ": "), width)
+	question := detailsKeysQuestion(true, pager)
+	if b.search != nil {
+		question = searchDetailsQuestion
+	}
+	below := displayLines(hint, width) + displayLines(b.prompt.promptText(question, false, nil, -1, ": "), width)
 	chrome := max(displayLines(notice.text, width), 1) + below
 	summaryRows := 0
 	for _, line := range lines {
@@ -704,6 +710,10 @@ func (l *sessionPicker) emptyWithoutAction(rows []listRow) bool {
 }
 
 func (l *sessionPicker) activatesOlder(k key, typed string) bool {
+	if l.contentSearch != nil && typed == "" && k.kind == keyRune && unicode.ToLower(k.r) == 'r' {
+		l.contentSearch.rerun = true
+		return true
+	}
 	return l.older != nil && !l.filtering && typed == "" && k.kind == keyRune && unicode.ToLower(k.r) == 'o'
 }
 
@@ -782,11 +792,20 @@ func (l *sessionPicker) footerLine(s listScreen, action string) string {
 	if l.filtering {
 		keys = []footerKey{{"↑↓ move", 2}, {"Enter " + action, 0}, {"Esc clear", 3}}
 	} else {
-		keys = []footerKey{{"↑↓ move", 2}, {"Enter " + action, 0}, {"/ search", 4}, {"number + Enter jump", 5}}
+		keys = []footerKey{{"↑↓ move", 2}, {"Enter " + action, 0}}
+		if l.contentSearch == nil {
+			keys = append(keys, footerKey{"/ search", 4}, footerKey{"number + Enter jump", 5})
+		} else {
+			keys = append(keys, footerKey{"r rerun", 4}, footerKey{"number + Enter jump", 5})
+		}
 		// Older rows to load are said only here (the position counts the
 		// rows loaded), so the key stays as long as Enter does.
 		if l.older != nil {
-			keys = append(keys, footerKey{"o older", 1})
+			label := "o older"
+			if l.contentSearch != nil {
+				label = "o next results"
+			}
+			keys = append(keys, footerKey{label, 1})
 		}
 		keys = append(keys, footerKey{"q quit", 3})
 	}

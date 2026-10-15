@@ -166,6 +166,10 @@
             {
               "version": 15,
               "writer": "settled-cursor-selection-v15"
+            },
+            {
+              "version": 16,
+              "writer": "search-lifecycle-v16"
             }
           ]
         }

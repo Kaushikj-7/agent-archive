@@ -205,13 +205,13 @@ func (w *Writer) readRef(ctx context.Context, ref ObjectRef, limit int64) ([]byt
 	}
 	raw, err := w.bounded.GetLimited(ctx, ref.Key, limit)
 	if err != nil {
-		return nil, err
+		return raw, err
 	}
 	if len(raw) > int(limit) {
 		return nil, storage.ErrObjectTooLarge
 	}
 	if !storage.VerifySHA256(raw, ref.SHA256) {
-		return nil, storage.ErrChecksumMismatch
+		return raw, storage.ErrChecksumMismatch
 	}
 	return raw, nil
 }

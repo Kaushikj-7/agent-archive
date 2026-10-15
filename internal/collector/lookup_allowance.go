@@ -102,10 +102,10 @@ func (p *pass) markLookupWaiter(id string) {
 // session (turnRetryLater) is held for its next attempt
 // (holdForLookupRetry), unopened. Native children waiting for their parent
 // have no lane: the oldest due among them is read first among them.
-func (p *pass) orderLookupAllowanceDeferralsLast() {
+func (p *pass) orderLookupAllowanceDeferralsLast(registrations []archive.SessionRegistration) {
 	var slots []int
 	var groups [2][lookupAllowanceTurns][]archive.SessionRegistration
-	for i, reg := range p.registrations {
+	for i, reg := range registrations {
 		if reg.Harness.Name != archive.HarnessCodex || p.requests[reg.ArchiveSessionID].Token == "" {
 			continue
 		}
@@ -152,7 +152,7 @@ func (p *pass) orderLookupAllowanceDeferralsLast() {
 		}
 	}
 	for k, reg := range ordered {
-		p.registrations[slots[k]] = reg
+		registrations[slots[k]] = reg
 	}
 }
 

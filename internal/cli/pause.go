@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/config"
@@ -47,6 +48,11 @@ func runPauseCommand(stdout, stderr io.Writer, env Env, paused bool) int {
 		return fail("a hook is finishing. No settings changed; retry")
 	}
 	defer releaseHooks()
+	releaseSearch, err := local.NamedLockWait(home, "search-worker.lock", 2*time.Second)
+	if err != nil {
+		return fail("search indexing is finishing. No settings changed; retry")
+	}
+	defer releaseSearch()
 	// Again under the locks: setup or uninstall may have finished meanwhile.
 	if setupjournal.TransactionPending(home) {
 		return fail("no settings changed: %s", recoveryPending(home))

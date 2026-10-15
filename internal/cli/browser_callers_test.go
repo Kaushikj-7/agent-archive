@@ -18,14 +18,15 @@ var chooserCallers = []struct {
 	name  string
 	chain []string
 }{
+	{"search", []string{"runSearchCommand", "executeContentSearch", "runContentSearchBrowser"}},
 	{"list", []string{"runListCommand"}},
 	{"list (bounded catalog)", []string{"runListCommand", "runBoundedListBrowser"}},
 	{"show (no ID)", []string{"runShowCommand", "runBareShow"}},
 	{"show --json (no ID)", []string{"runShowCommand", "runBareShow", "selectArchivedSession"}},
 	{`show "<words>", several matches`, []string{"runShowCommand", "resolveShowQuery"}},
-	{"handoff before setup", []string{"runHandoffCommand", "resolveNativeHandoff", "chooseNativePreviews"}},
-	{"handoff (no selector)", []string{"runHandoffCommand", "chooseHandoffSession", "selectHandoffSession"}},
-	{`handoff "<words>", several matches`, []string{"runHandoffCommand", "resolveHandoffQuery", "handoffQueryResolver.resolve", "handoffQueryResolver.choose"}},
+	{"handoff before setup", []string{"runHandoffCommand", "runHandoffWithInput", "resolveNativeHandoff", "chooseNativePreviews"}},
+	{"handoff (no selector)", []string{"runHandoffCommand", "runHandoffWithInput", "chooseHandoffSession", "selectHandoffSession"}},
+	{`handoff "<words>", several matches`, []string{"runHandoffCommand", "runHandoffWithInput", "resolveHandoffQuery", "handoffQueryResolver.resolve", "handoffQueryResolver.choose"}},
 }
 
 // browserRunners are the files that may run the picker's loop: the browser
