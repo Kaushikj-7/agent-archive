@@ -6,6 +6,139 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Terminal content search now browses ranked snippets and exact bounded source
+  context in the shared browser, with next/previous matching passages, explicit
+  rerun after index changes, and current-session handoff through existing gates.
+  The owned archive skill explains snippets-first retrieval and coverage limits.
+
+- Preserve both native source authority and search indexing lifecycle protection
+  when their configuration and setup recovery records are combined.
+
+- Add explicit machine-local `setup --yes --search-indexing on|off` consent,
+  an independent bounded search indexing job, and best-effort content-free
+  publication hints after collection releases its lock. Pause and teardown
+  fence running indexing; legacy collector-only lifecycle records stay compatible.
+
+- Search adds bounded JSON, explicit wait/rebuild, source context neighbors and
+  existing-only cached readers; queries require explicit project broadening.
+  Named refresh removes cached text when fresh authority confirms deletion,
+  while unavailable metadata preserves the existing index.
+
+- Search conversation text with a private local index. Explicitly index one
+  archived session with `search --refresh --session ID --harness NAME`, query
+  cached titles/messages with `search "WORDS"`, and read exact matching passages.
+  `search --refresh` now resumes bounded namespace-wide archive catch-up, including
+  other-machine metadata/privacy changes and confirmed removals. Coverage reports
+  local observation and stable-snapshot discovery separately from indexing gaps.
+  Automatic refresh remains off until explicitly enabled for this machine.
+  Refresh now resumes bounded work after interruption, reuses unchanged sources,
+  and records retry/backoff state without delaying archive publication.
+  Verified unsupported source formats report coverage gaps instead of retrying
+  the same immutable bytes indefinitely.
+
+- The session browser (`list`, bare `show`, `show <words>`, `handoff` on a
+  terminal that reads keys) has a cursor: `▸` marks a row, ↑ ↓ and the mouse
+  wheel move it, PgUp/PgDn (space, `n`, `p`), Home and End move it a screen
+  or to the ends, and the list scrolls to keep it in view, also across a
+  resize. Enter with nothing typed opens the highlighted row (it used to
+  quit; `q` and Ctrl-D still do), and a typed number or short ID with Enter
+  still opens that row. A strip under the list spells out the highlighted
+  session: its full title, then its agent, project, PR, subagents, when it
+  was last active and its short ID; a very short window leaves it out. The
+  three lines under the list become one footer line, the keys
+  (`/ search`) and which rows are on screen (`1–14 of 86`); the
+  hidden-subagent count moves to the heading (`· 403 subagents hidden`),
+  `o older` joins the footer, and the prompt reads `Number or ID to show:`.
+  Esc out of the `/` filter keeps the highlighted session when the plain
+  list shows it. Piped output and the line-mode
+  picker keep their count line and flag advice.
+- A Codex thread whose abandoned branches fit while being read, but left too
+  little of the per-session read memory to publish the thread, is captured
+  without those branches instead of being recorded as too large to capture.
+  Whenever a branch is left out from a session that is otherwise captured,
+  `status` now says so ("Codex left out part of a session"), with only the
+  app, the project and the time; `status --json` carries it as the capture
+  diagnostic `revision_left_out`.
+- Stop failing every Codex session in a pass that found many new Codex
+  files. Finding where a Codex thread's rollouts are has a time allowance
+  per pass, and discovery could use all of it, so each Codex session the
+  collector then read failed ("filter transcript: source limit") while
+  Claude Code sessions published. The collector now has its own allowance.
+  When that runs out too, the Codex session being read is put off until the
+  next pass instead of failing (`sync` and `status` say "left for the next
+  pass after this pass's time for finding Codex rollouts ran out";
+  `deferred_sessions` code `lookup_allowance`), and the pass's remaining
+  Codex sessions are left for the next pass without being opened, so they
+  no longer slow the rest of the pass. A Codex session whose lookup is cut
+  off part way when the allowance runs out is put off the same way rather
+  than failing with "context deadline exceeded"; a native index read cut
+  off by a deadline is read again later in the pass instead of being
+  treated as unavailable; and discovery's lookups are charged to the
+  allowance once, not twice.
+- Stop a new session from waiting for hours behind a long upload queue.
+  Each collection pass now starts with the most recently started session
+  that was not imported (a session before its own subagents), and gives
+  such sessions one slot in every four; the rest still
+  go oldest first, so imports keep uploading their oldest sessions first.
+  Codex subagent sessions whose parent session is not registered yet go
+  after every other queued session. A session a pass runs out of time
+  before reaching is now listed by `status` as "queued for the next pass,
+  N ahead" instead of "waiting for its first upload", `sync` adds "N left
+  for the next pass" to its summary, and `status --json` reports them in
+  `collector.unreached_sessions` and as the `queued` uploading state.
+- Add inert native source authority contracts and permanent writer protection, preserving existing agent capture behavior. No Muse capture operations are enabled.
+
+- The session list fits your terminal: every session is one line that never
+  wraps, as `#`, the agent (a colored dot and "Claude", "Codex" or "Cursor"),
+  a readable title cut at a word, the project, the PR and a short time ("2m",
+  "Mon", "Oct 9"), with the project, PR and time kept next to the title. On a
+  narrower terminal the title shrinks first; once keeping the project would
+  leave the title under 36 columns the project column goes, then the PR, then
+  the agent's name. A session active right now reads "live" (green) where its
+  time would be, in place of the dot before its title. The ID leaves the
+  interactive list (you can still type a number or a unique short ID, and
+  `show` has the ID), and the skill and subagent notes leave the title; a
+  session's subagents show as a dim "+4" where the whole title leaves room.
+  In `handoff`, a session not yet uploaded always says so (a dim "· not
+  uploaded"), with its title cut to make room. This applies to `list`, `show`
+  and `handoff`.
+- Session lists in a terminal are grouped by day instead of by project,
+  under the headings TODAY, YESTERDAY, EARLIER THIS WEEK (weeks start on
+  Monday), LAST WEEK, EARLIER THIS MONTH and OLDER, newest first. The
+  project is a column, or named in the heading line when every session
+  shares one. A page or screen that starts partway through a day repeats
+  its heading as "TODAY (continued)". The `/` filter's matches are grouped
+  the same way, in the order they matched within each day. Piped output
+  stays one flat table, and `list --verbose` is now one flat table too.
+- **Changed for scripts:** piped `list` output (not a terminal) is now one
+  plain line per session, newest first with no project headings, in the
+  columns `WHEN AGENT PROJECT PR ID TITLE`, with WHEN the short time, an
+  empty PR or unknown project as `-`, and TITLE last: the session's full
+  title as recorded (not the shortened title the terminal list shows), never
+  cut, with its subagent note spelled out. The columns are aligned for
+  reading, not for splitting on spaces (WHEN can read "Sep 20"). Anything
+  parsing the old `TITLE PR WHEN HARNESS PROJECT ID` text should switch to
+  `list --json`, which is unchanged and is the stable format. `list
+  --verbose` is unchanged.
+- **Changed for scripts:** when `show` or `handoff` words match several
+  sessions and nothing can ask which (piped, or run by an agent), the
+  matches on stderr use the same columns as piped `list`, under a header:
+  `WHEN AGENT PROJECT PR ID TITLE`, with the full title last and its
+  subagent and "not yet uploaded" notes after it (PROJECT only when the
+  matches span several projects, PR only when one has a PR). Before setup,
+  `handoff`'s local matches are printed the same way, with the whole native
+  ID, in place of `local <ID> (<app>): <title>` lines. The `Next:` line is
+  unchanged; read `list "<words>" --json` rather than parsing the table.
+- The `show` summary's second line names the agent as the lists do
+  ("Claude", in its color on a color terminal) and says when the session was
+  last active as "last active 2 minutes ago", replacing "claude · … · 2h
+  ago" and the weekday or date form.
+- The local `handoff` picker before setup groups sessions by day and shows
+  readable titles, like the other session lists. When `handoff --latest`
+  finds no session, its list of recent archived sessions reads WHEN, AGENT,
+  MACHINE and COMMAND, under a header, with the short time and the agent's
+  name.
+
 ## [0.2.2]
 
 Candidate scope prepared on 2026-10-14 for the intended `v0.2.2` tag, which
@@ -55,6 +188,22 @@ and the cleanup repair do not turn either failed tagged gate into a pass.
   earlier revisions when the scan has seen them and they can be read; one that
   cannot be read, or does not fit beside the thread's own history, is left out
   rather than failing the thread's capture.
+- Stop losing Claude Code subagents (and holding back new sessions) while
+  Codex discovery works through a backlog. Each newly discovered Codex session
+  used to withdraw the whole local identity census until the next collector
+  pass, so every hook that needed a new identity in the meantime was refused:
+  `status` showed "local session identity bookkeeping needs collector
+  recovery" and `identity_recovery` pending with phase `unknown`, and a Claude
+  Code subagent finishing in that window was never captured. Discovery now
+  asks for proof about its own session only; the census stays in force for
+  everything else, and the next pass certifies the discovered session without
+  a full rebuild. A subagent that finishes while recovery is genuinely pending,
+  or while the capture lock is busy, is now queued and replayed by the next
+  collector pass instead of being dropped. Sessions and subagents refused while
+  a full recovery runs no longer restart it, so it can finish on a busy
+  machine. Downgrading to an earlier version while such a subagent is queued
+  makes that version's collector report an admission-intent error for it each
+  pass until it expires after 24 hours; nothing else is held back.
 
 - Preserve the primary validation failure alongside cleanup diagnostics, and
   continue bounded cleanup of other owned processes after signal, poll or wait

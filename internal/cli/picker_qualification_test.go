@@ -392,11 +392,19 @@ func qualificationRunScoped(tb testing.TB, fixture qualificationFixture, home, c
 	return result
 }
 
+var qualificationStripPattern = regexp.MustCompile("\n(?:\x1b\\[[0-9;]*m)?─")
+
 var qualificationTitlePattern = regexp.MustCompile(`[QG][0-9]{6}`)
 
-var qualificationNumberPattern = regexp.MustCompile(`^\s*([0-9]+)\s+`)
+// The key browser leads its highlighted row with cursorMark.
+var qualificationNumberPattern = regexp.MustCompile(`^\s*(?:▸\s+)?([0-9]+)\s+`)
 
 func qualificationFrameError(frame string, want []archive.Metadata, start int) error {
+	// The key browser's detail strip, under the table, repeats the
+	// highlighted row's title.
+	if at := qualificationStripPattern.FindStringIndex(frame); at != nil {
+		frame = frame[:at[0]]
+	}
 	got := qualificationTitlePattern.FindAllString(frame, -1)
 	if len(got) != len(want) {
 		return fmt.Errorf("complete frame has%d rows, want%d", len(got), len(want))

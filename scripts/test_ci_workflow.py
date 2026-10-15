@@ -52,14 +52,19 @@ def job_key(text, key):
     return value
 
 
-def condition_matches(expression, event, ref='', suite='', schedule='17 8 * * 0'):
+def condition_matches(expression, event, ref='', suite='', schedule='17 8 * * 0', cancelled=False):
     """Evaluate only the small boolean condition grammar used by these jobs."""
+    expression = expression.removeprefix('${{').removesuffix('}}').strip().replace('!cancelled()', 'not cancelled()')
     values = {'github.event_name': event, 'github.ref': ref, 'inputs.suite': suite, 'github.event.schedule': schedule}
     for key, value in values.items():
         expression = expression.replace(key, repr(value))
     tree = ast.parse(expression.replace('&&', ' and ').replace('||', ' or '), mode='eval')
 
     def value(node):
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
+            return not value(node.operand)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == 'cancelled' and not node.args:
+            return cancelled
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
             return node.value
         if isinstance(node, ast.BoolOp):
@@ -268,7 +273,7 @@ class CandidateCampaignTest(unittest.TestCase):
     def test_candidate_validation_never_restores_shared_go_build_state(self):
         # Candidate evidence must come from fresh source/module verification,
         # not executable build state restored from another workflow's cache.
-        expected = {'test': 10, 'levenshtein': 2, 'extended': 9}
+        expected = {'test': 9, 'levenshtein': 3, 'extended': 9}
         for name, count in expected.items():
             workflow = (ROOT / '.github/workflows' / f'{name}.yml').read_text()
             setup = [step for job in jobs(workflow).values() for step in steps(job)
@@ -293,9 +298,9 @@ class CandidateCampaignTest(unittest.TestCase):
     def test_candidate_test_keeps_all_pr_gates(self):
         workflow = (ROOT / '.github/workflows/test.yml').read_text()
         self.assertIn('  pull_request:', workflow)
-        self.assertEqual(set(jobs(workflow)), {'linux-race', 'linux-short', 'linux-full', 'script-tests', 'git-identity-compatibility', 'macos-smoke', 'cross-build', 'lint', 'tier-plan', 'source-audit', 'script-static', 'script-install', 'script-purge', 'cross-linux-arm64', 'cross-darwin-nocgo', 'cross-linux-release'})
+        self.assertEqual(set(jobs(workflow)), {'linux-race', 'linux-short', 'linux-full', 'git-identity-compatibility', 'macos-smoke', 'cross-build', 'lint', 'source-audit', 'script-static', 'script-install', 'script-purge', 'cross-linux-arm64', 'cross-darwin-nocgo', 'cross-linux-release'})
         for name, text in jobs(workflow).items():
-            if name not in ('linux-race', 'linux-short', 'linux-full', 'source-audit', 'script-tests', 'cross-build'):
+            if name not in ('linux-race', 'linux-short', 'linux-full', 'source-audit', 'cross-build'):
                 self.assertIsNone(job_key(text, 'if'), name)
         self.assertIn('--tier full --suite linux', workflow)
         self.assertIn('github.event.pull_request.number || github.ref', workflow)
@@ -348,15 +353,14 @@ class CadenceTest(unittest.TestCase):
         checkout = next(step for step in steps(verify) if 'path: app' in step)
         self.assertIn("fetch-depth: ${{ github.event_name != 'pull_request' && 1 || 0 }}", checkout)
         staging = next(step for step in steps(verify) if 'id: stage' in step)
-        self.assertEqual(step_key(staging, 'if'), "github.event_name == 'pull_request'")
+        self.assertIsNone(step_key(staging, 'if'))
         self.assertIn("PYTHONDONTWRITEBYTECODE: '1'", staging)
         self.assertIn('python3 -B ', staging)
-        self.assertIn('--run pre-merge --pr-scope', staging)
+        self.assertIn('--ci-event \"$EVENT\"', staging)
         execute = next(step for step in steps(verify) if 'name: Verify\n' in step)
         self.assertIsNone(step_key(execute, 'if'))
-        self.assertIn('run=pre-merge', execute)
-        self.assertRegex(execute, r'if \[\[ "\$EVENT" == pull_request \]\]; then[\s\S]*?run="\$PR_RUN"\n          fi')
-        self.assertIn('./levenshtein/verify "$run" --source "$source" --jobs 4', execute)
+        self.assertIn('CHECK_RUN: ${{ steps.stage.outputs.run }}', execute)
+        self.assertIn('./levenshtein/verify "$CHECK_RUN" --source "$RUNNER_TEMP/native-source" --jobs 4', execute)
         self.assertNotIn('|| true', execute)
 
     def test_scoping_helper_suite_is_a_mandatory_pr_gate(self):
@@ -370,15 +374,29 @@ class CadenceTest(unittest.TestCase):
         self.assertIsNone(job_key(found['linux-full'],'if'))
         self.assertIn('--suite extra --extra-plan', found['linux-full'])
         self.assertIn('--tier full --suite linux', found['linux-full'])
-        self.assertIn('shard: [0, 1, 2, 3, 4, 5, 6, 7]', found['linux-short'])
+        self.assertIn('fromJSON(', found['linux-short'])
+        self.assertIn("'{\"workers\":[4],\"shard\":[0,1,2,3]}'", found['linux-short'])
+        self.assertIn("'{\"workers\":[8],\"shard\":[0,1,2,3,4,5,6,7]}'", found['linux-short'])
         self.assertIn('fail-fast: false', found['linux-short'])
-        self.assertIn('python3 -B scripts/run_go_shard.py --workers 8 --plain-audit-owned --plain-vet-owned --shard',found['linux-short'])
-        self.assertEqual(job_key(found['linux-race'],'if'),'always()')
-        self.assertEqual(job_key(found['linux-race'],'needs'),'[linux-short, linux-full, script-tests, macos-smoke, tier-plan, source-audit]')
+        self.assertIn('python3 -B scripts/run_go_shard.py --workers "$WORKERS" --plain-audit-owned --plain-vet-owned --shard',found['linux-short'])
+        self.assertEqual(job_key(found['linux-race'],'if'),'${{ !cancelled() }}')
+        self.assertEqual(job_key(found['linux-race'],'needs'),'[linux-short, linux-full, script-static, script-install, script-purge, macos-smoke, source-audit]')
         self.assertIn('--verdict', found['linux-race'])
         self.assertIn('--reconcile', found['linux-race'])
         self.assertIn('--tier "$tier" --evidence', found['script-purge'])
-        self.assertIn('fetch-depth: 0', found['tier-plan'])
+        self.assertNotIn('tier-plan', found)
+        for consumer in ('linux-full', 'macos-smoke', 'script-purge', 'linux-race'):
+            text = found[consumer]
+            self.assertIn('fetch-depth: 0', text)
+            self.assertIn('--plan --require-pr-proof', text)
+            self.assertNotIn('needs.tier-plan', text)
+            consumer_steps = list(steps(text))
+            self.assertIn('uses: actions/checkout@', consumer_steps[0])
+            self.assertIn('--plan --require-pr-proof', consumer_steps[1])
+            self.assertIn('--output \"$RUNNER_TEMP/tier-plan/extra-plan.json\"', consumer_steps[1])
+        self.assertIn('name: ci-tier-plan', found['linux-full'])
+        self.assertIn('--verify-plan', found['linux-race'])
+        self.assertIn('--verify-native-plan', found['linux-race'])
         for script in ('test_release_candidate.py','test_ci_workflow.py','test_stage_native_verify.py','test_scope_native_verify.py','test_go_shards.py','test_ci_tiers.py'):
             step=next(step for step in steps(found['script-static']) if script in step)
             self.assertIsNone(step_key(step,'if'))
@@ -392,18 +410,19 @@ class CadenceTest(unittest.TestCase):
         self.assertIn('--plain-audit-owned',found['linux-short'])
         self.assertIn('--plain-vet-owned',found['linux-short'])
         self.assertIn('--plain-vet-owned --reconcile',found['linux-race'])
-        # Live receipt validation independently hashes the installed Go/compiler
-        # context; its verifier must use the same exact runtime policy as audit.
+        # Aggregate receipts validate the actual workers' full compiler context,
+        # never the unrelated aggregate host. Both evidence validators are Go-free.
         verifier=found['linux-race']
         for setting in ("GOTOOLCHAIN: local", "GOWORK: 'off'", "GOFLAGS: '-mod=readonly'"):
             self.assertIn(setting,verifier)
         verifier_steps=list(steps(verifier))
         setup=[step for step in verifier_steps if 'uses: actions/setup-go@' in step]
-        self.assertEqual(len(setup),1)
-        self.assertEqual(step_key(setup[0],'if'),"github.event_name == 'pull_request'")
-        self.assertIn("go-version: '1.27.2'",setup[0])
-        self.assertIn('cache: false',setup[0])
-        self.assertLess(verifier.index('uses: actions/setup-go@'),verifier.index('--plain-vet-owned --reconcile'))
+        self.assertEqual(setup, [])
+        self.assertIn('--plain-vet-owned --reconcile', verifier)
+        self.assertIn('scripts/run_ci_tier.py --verify --tier full', verifier)
+        for step in verifier_steps:
+            if 'collect_ci_timing.py' not in step:
+                self.assertNotIn('continue-on-error:', step)
         self.assertIn('--audit-evidence "$RUNNER_TEMP/source-audit-evidence"',found['linux-race'])
         self.assertIn('source-audit',job_key(found['linux-race'],'needs'))
         boundary=(ROOT/'internal/agents/builtin/nativecapture_boundary_test.go').read_text()
@@ -486,7 +505,9 @@ class CadenceTest(unittest.TestCase):
     def test_daily_vulnerability_audit_remains_fresh(self):
         workflow = (ROOT / '.github/workflows/levenshtein.yml').read_text()
         self.assertIn('  schedule:', workflow)
-        self.assertRegex(workflow, r'if \[\[ "\$EVENT" == schedule \]\]; then\n            run=main')
+        self.assertIn('--ci-event \"$EVENT\"', workflow)
+        import stage_native_verify
+        self.assertEqual(stage_native_verify.ci_run('schedule'), 'main')
         config = (ROOT / 'levenshtein.json').read_text()
         self.assertIn('"rerun_checks": true', config)
         self.assertIn('"vulnerabilities"', config)
@@ -497,21 +518,22 @@ class GitIdentityCompatibilityTest(unittest.TestCase):
         workflow = (ROOT / '.github/workflows/test.yml').read_text()
         text = jobs(workflow)['git-identity-compatibility']
         self.assertEqual(job_key(text, 'runs-on'), 'ubuntu-24.04')
-        for version, commit in {
-            '2.30.2': '94f6e3e283f2adfc518b39cfc39291f1c2832ad0',
-            '2.39.2': 'cbf04937d5b9fcf0a76c28f69e6294e9e3ecd7e6',
-        }.items():
-            self.assertRegex(text, rf'git: upstream-{version}\n            tag: v{version}\n            ref: {commit}\n            expected: git version {version}')
-        self.assertIn('git: runner-current', text)
-        self.assertIn('scripts/pinned_git.py', text)
+        self.assertIsNone(job_key(text, 'strategy'))
+        self.assertEqual(job_key(text, 'name'), 'Git identity (all versions)')
+        self.assertIn('scripts/run_git_identity_versions.py', text)
+        self.assertNotIn('GITHUB_PATH', text)
+        self.assertNotIn('scripts/pinned_git.py', text)
+        self.assertIn('retention-days: 7', text)
+        self.assertIn('if-no-files-found: error', text)
+        static = jobs(workflow)['script-static']
+        self.assertIn('python3 -B scripts/test_git_identity_versions.py', static)
         helper = (ROOT/'scripts/pinned_git.py').read_text()
         self.assertIn('https://github.com/git/git.git', helper)
         self.assertIn("tag+'^{commit}'", helper)
-        self.assertIn('test "$(git --version)" = "$EXPECTED_GIT_VERSION"', text)
-        self.assertIn('HOME: ${{ runner.temp }}/git-identity-home', text)
-        self.assertIn('XDG_CONFIG_HOME: ${{ runner.temp }}/git-identity-xdg', text)
-        self.assertIn('./internal/gitremote ./internal/sourcefacts', text)
-        self.assertIn("-run 'RecoveredImport|DeletedWorktree' ./internal/backfill", text)
+        import pinned_git
+        self.assertEqual({name: value[1] for name, value in pinned_git.PINS.items()}, {
+            'upstream-2.30.2': '94f6e3e283f2adfc518b39cfc39291f1c2832ad0',
+            'upstream-2.39.2': 'cbf04937d5b9fcf0a76c28f69e6294e9e3ecd7e6'})
         self.assertIn('Older distribution package acceptance is recorded separately.', TESTING_MD.read_text())
 
 
@@ -537,12 +559,10 @@ class LevenshteinSharedChecksTest(unittest.TestCase):
                            if 'repository: wangjohn/levenshtein' in step]
         self.assertEqual(len(shared_checkout), 1)
         self.assertRegex(shared_checkout[0], r'(?m)^          ref: [0-9a-f]{40}$')
-        self.assertIn('./levenshtein/verify "$run" --source "$source" --jobs 4', workflow)
-        # PR verification uses the declared-input staging path; non-PR runs
-        # retain the complete source and configured container execution.
-        self.assertIn('source=./app', workflow)
-        self.assertIn('source="$RUNNER_TEMP/native-source"', workflow)
-        self.assertIn('--run pre-merge --pr-scope', workflow)
+        self.assertIn('./levenshtein/verify "$CHECK_RUN" --source "$RUNNER_TEMP/native-source" --jobs 4', workflow)
+        self.assertIn('--ci-event "$EVENT"', workflow)
+        self.assertNotIn('source=./app', workflow)
+
 
 
 class JobsParserTest(unittest.TestCase):
@@ -563,6 +583,75 @@ class JobsParserTest(unittest.TestCase):
         self.assertEqual(list(found), ['a', 'real-systemd'])
         self.assertEqual(job_key(found['real-systemd'], 'runs-on'), 'ubuntu-24.04')
         self.assertIsNone(job_key(found['real-systemd'], 'name'))
+
+
+class WorkerQualificationTests(unittest.TestCase):
+    def environment(self):
+        return {'EXPECTED_SOURCE': 'a'*40, 'GITHUB_SHA': 'a'*40,
+                'GITHUB_WORKFLOW_SHA': 'a'*40, 'GITHUB_EVENT_NAME': 'workflow_dispatch',
+                'GITHUB_REPOSITORY': 'wangjohn/agent-archive', 'QUALIFICATION_WORKERS': '4',
+                'GITHUB_WORKFLOW_REF': 'wangjohn/agent-archive/.github/workflows/linux-worker-qualification.yml@refs/heads/trial'}
+
+    def test_guard_rejects_source_workflow_event_repository_and_worker_mismatch(self):
+        import ci_worker_qualification as qualification
+        environment = self.environment()
+        result = qualification.validate(environment, 'a'*40)
+        self.assertEqual(result['matrix'], {'shard': [0, 1, 2, 3]})
+        self.assertFalse(result['production_verdict'])
+        self.assertFalse(result['cache_writes'])
+        for key, value in [('EXPECTED_SOURCE', 'main'), ('GITHUB_SHA', 'b'*40),
+                           ('GITHUB_WORKFLOW_SHA', 'b'*40), ('GITHUB_EVENT_NAME', 'pull_request'),
+                           ('GITHUB_REPOSITORY', 'fork/agent-archive'),
+                           ('GITHUB_WORKFLOW_REF', 'wangjohn/agent-archive/.github/workflows/other.yml@refs/heads/trial'),
+                           ('QUALIFICATION_WORKERS', '4; echo unsafe'), ('QUALIFICATION_WORKERS', '16')]:
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                qualification.validate(dict(environment, **{key: value}), 'a'*40)
+        with self.assertRaises(ValueError):
+            qualification.validate(environment, 'b'*40)
+        environment['QUALIFICATION_WORKERS'] = '8'
+        self.assertEqual(qualification.validate(environment, 'a'*40)['matrix']['shard'], list(range(8)))
+
+    def test_manual_qualification_preserves_production_and_full_audit_contracts(self):
+        workflow = (ROOT / '.github/workflows/linux-worker-qualification.yml').read_text()
+        found = jobs(workflow)
+        self.assertEqual(set(found), {'plan', 'workers', 'audit', 'reconcile'})
+        self.assertNotIn('pull_request:', workflow)
+        self.assertNotIn('push:', workflow)
+        self.assertNotIn('schedule:', workflow)
+        self.assertIn('group: linux-worker-qualification-${{ github.run_id }}', workflow)
+        self.assertIn('cancel-in-progress: false', workflow)
+        self.assertIn('contents: read', workflow)
+        self.assertNotIn('cache/save@', workflow)
+        self.assertNotIn('secrets.', workflow)
+        for name, body in found.items():
+            self.assertEqual(job_key(body, 'runs-on'), 'ubuntu-latest')
+            self.assertIn('persist-credentials: false', body)
+            self.assertIn('scripts/ci_worker_qualification.py', body)
+        self.assertIn('--workers "$WORKERS" --shard "$SHARD" --plain-audit-owned --plain-vet-owned', found['workers'])
+        self.assertIn('scripts/ci_worker_qualification.py --audit', found['audit'])
+        self.assertIn('--plain-vet-owned --audit-evidence source-audit-evidence --reconcile shard-evidence', found['reconcile'])
+        self.assertIn('needs: [plan, workers, audit]', found['reconcile'])
+        self.assertIn('all(v["result"]=="success"', found['reconcile'])
+        production = (ROOT / '.github/workflows/test.yml').read_text()
+        self.assertIn("'{\"workers\":[8],\"shard\":[0,1,2,3,4,5,6,7]}'", production)
+        self.assertIn('github.event.pull_request.number || github.ref', production)
+        self.assertIn('cancel-in-progress: true', production)
+
+    def test_guarded_manual_audit_executes_existing_owned_body_without_event_spoofing(self):
+        from unittest import mock
+        import contextlib
+        import io
+        import ci_worker_qualification as qualification
+        import run_ci_tier
+        environment = self.environment()
+        with mock.patch.dict(qualification.os.environ, environment, clear=True), \
+                mock.patch.object(qualification.subprocess, 'check_output', side_effect=['a'*40, '']), \
+                mock.patch.object(qualification.os, 'environ', environment), \
+                mock.patch('sys.argv', ['ci_worker_qualification.py', '--audit']), \
+                mock.patch.object(run_ci_tier, 'run_suite') as run, contextlib.redirect_stdout(io.StringIO()):
+            qualification.main()
+        run.assert_called_once_with('pr', 'audit', Path('source-audit-results'), seconds=780, own_plain_vet=True)
+        self.assertEqual(environment['GITHUB_EVENT_NAME'], 'workflow_dispatch')
 
 
 if __name__ == '__main__':

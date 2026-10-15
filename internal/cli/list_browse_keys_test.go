@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -276,14 +278,42 @@ func runKeyPicker(t *testing.T, picker *sessionPicker, sessions []archive.Metada
 	return row, ok, strings.Split(out.String(), screenBreak)
 }
 
-// statusLine is the status line of a screen of the list read by keys.
+// statusLine is the footer line of a screen of the list read by keys: the
+// keys, and which rows are on screen.
 func statusLine(screen string) string {
 	for line := range strings.SplitSeq(screen, "\n") {
-		if strings.Contains(line, "q quit") {
+		if strings.HasPrefix(line, "↑↓ move") {
 			return line
 		}
 	}
 	return ""
+}
+
+// positionOf is which rows a screen of the list read by keys shows, as its
+// footer line says: "1–13 of 50".
+func positionOf(screen string) string {
+	line := strings.TrimSpace(statusLine(screen))
+	if at := strings.LastIndex(line, "   "); at >= 0 {
+		return strings.TrimSpace(line[at:])
+	}
+	return line
+}
+
+// highlightedRow is the number of the row a screen of the list read by keys
+// highlights, or 0 when none is.
+func highlightedRow(screen string) int {
+	for line := range strings.SplitSeq(screen, "\n") {
+		if !strings.Contains(line, cursorMark+" ") {
+			continue
+		}
+		// The mark leads a row laid out for the width, and its title in the
+		// plain table of a terminal whose size is unknown.
+		if fields := strings.Fields(strings.TrimPrefix(line, cursorMark)); len(fields) > 0 {
+			n, _ := strconv.Atoi(fields[0])
+			return n
+		}
+	}
+	return 0
 }
 
 // checkKeyScreensFit fails when a screen of the list read by keys is
@@ -297,58 +327,74 @@ func checkKeyScreensFit(t *testing.T, screens []string, width, height int) {
 	}
 }
 
-// The mouse wheel sends arrows, several at once: they scroll the list by
-// a row each, and a burst is drawn once.
-func TestKeyPickerScrollsByRowsOnTheWheel(t *testing.T) {
+// keyListPrompt is the prompt under the list read by keys, where a number
+// or ID is typed.
+const keyListPrompt = "Number or ID to show: "
+
+// The mouse wheel sends arrows, several at once: they move the highlight a
+// row each, and a burst is drawn once. The list scrolls only to keep the
+// highlight in view.
+func TestKeyPickerMovesTheHighlightOnTheWheel(t *testing.T) {
 	t.Parallel()
 	sessions := pickerSessions(50, oneProject)
-	_, ok, screens := runKeyPicker(t, &sessionPicker{env: fixedTerminal{120, 20}}, sessions, listFormatOptions{}, "\x1b[B\x1b[B\x1b[B", "\x1bOA", "q")
-	if ok || len(screens) != 3 {
+	_, ok, screens := runKeyPicker(t, &sessionPicker{env: fixedTerminal{120, 19}}, sessions, listFormatOptions{},
+		"\x1b[B\x1b[B\x1b[B", "\x1bOA", strings.Repeat("\x1b[B", 12), "\x1b[B", strings.Repeat("\x1b[A", 14), "q")
+	if ok || len(screens) != 6 {
 		t.Fatalf("ok=%v, %d screens:\n%s", ok, len(screens), strings.Join(screens, "\n----\n"))
 	}
-	checkKeyScreensFit(t, screens, 120, 20)
-	// The footer, the status line, the message line, and the prompt leave
-	// 16 rows: the column header and 15 sessions.
-	spans := []string{"1-15", "4-18", "3-17"}
-	statuses := []string{
-		"Top · ↑↓ scroll · PgUp/PgDn page · / filter · type a number and Enter · q quit",
-		"36% · ↑↓ scroll · PgUp/PgDn page · / filter · type a number and Enter · q quit",
-		"34% · ↑↓ scroll · PgUp/PgDn page · / filter · type a number and Enter · q quit",
-	}
-	for i, screen := range screens {
-		if rowSpan(screen) != spans[i] || statusLine(screen) != statuses[i] || !strings.HasPrefix(screen, "#") {
-			t.Fatalf("screen %d, want rows %s and %q:\n%s", i, spans[i], statuses[i], screen)
+	checkKeyScreensFit(t, screens, 120, 19)
+	// The detail strip, the footer line, and the prompt leave 13 rows, one
+	// line a session.
+	for i, want := range []struct {
+		span     string
+		position string
+		row      int
+	}{
+		{"1-13", "1–13 of 50", 1},
+		{"1-13", "1–13 of 50", 4},
+		{"1-13", "1–13 of 50", 3},
+		{"3-15", "3–15 of 50", 15},
+		{"4-16", "4–16 of 50", 16},
+		{"2-14", "2–14 of 50", 2},
+	} {
+		if rowSpan(screens[i]) != want.span || positionOf(screens[i]) != want.position || highlightedRow(screens[i]) != want.row {
+			t.Fatalf("screen %d, want rows %s, %q, row %d highlighted:\n%s", i, want.span, want.position, want.row, screens[i])
 		}
 	}
-	if !strings.HasSuffix(screens[1], "50 session(s).\n"+statusLine(screens[1])+"\n\nEnter number (or unique short SESSION_ID) to show, or q to quit: ") {
-		t.Fatalf("chrome below the table:\n%q", screens[1])
+	if !strings.HasSuffix(screens[1], "Session number 4\nCodex · app · last active 3 hours ago · id "+formatSessionRows(sessions, listFormatOptions{})[3].ShortID+"\n"+
+		strings.Repeat("─", 120)+"\n"+statusLine(screens[1])+"\n"+keyListPrompt) {
+		t.Fatalf("below the table:\n%q", screens[1])
 	}
 }
 
+// PgUp and PgDn (and space, n, and p) scroll a screen and take the
+// highlight with them; at the end of the list they go to its first or last
+// row. Home and End go to the top and bottom.
 func TestKeyPickerPagesAndJumps(t *testing.T) {
 	t.Parallel()
 	sessions := pickerSessions(50, oneProject)
-	_, _, screens := runKeyPicker(t, &sessionPicker{env: fixedTerminal{120, 20}}, sessions, listFormatOptions{},
-		"\x1b[6~", " ", "n", "\x1b[5~", "p", "\x1b[F", "\x1b[B", "\x1b[H", "\x1b[A", "q")
-	checkKeyScreensFit(t, screens, 120, 20)
+	_, _, screens := runKeyPicker(t, &sessionPicker{env: fixedTerminal{120, 19}}, sessions, listFormatOptions{},
+		"\x1b[6~", " ", "n", "\x1b[5~", "p", "\x1b[F", "\x1b[B", "\x1b[H", "\x1b[A", "\x1b[B\x1b[B\x1b[5~", "n\x1b[6~", "\x1b[6~", "q")
+	checkKeyScreensFit(t, screens, 120, 19)
 	var spans, positions []string
+	var rows []int
 	for _, screen := range screens {
 		spans = append(spans, rowSpan(screen))
-		position, _, _ := strings.Cut(statusLine(screen), " ")
-		positions = append(positions, position)
+		positions = append(positions, positionOf(screen))
+		rows = append(rows, highlightedRow(screen))
 	}
-	// PgDn, space, and n each go a screen on; PgUp and p a screen back; End
-	// and Home to the bottom and top, where ↓ and ↑ stop.
-	wantSpans := []string{"1-15", "16-30", "31-45", "36-50", "21-35", "6-20", "36-50", "36-50", "1-15", "1-15"}
-	wantPositions := []string{"Top", "60%", "90%", "Bottom", "70%", "40%", "Bottom", "Bottom", "Top", "Top"}
-	if !reflect.DeepEqual(spans, wantSpans) || !reflect.DeepEqual(positions, wantPositions) {
-		t.Fatalf("rows %v, want %v\npositions %v, want %v", spans, wantSpans, positions, wantPositions)
+	wantSpans := []string{"1-13", "14-26", "27-39", "38-50", "25-37", "12-24", "38-50", "38-50", "1-13", "1-13", "1-13", "27-39", "38-50"}
+	wantPositions := []string{"1–13 of 50", "14–26 of 50", "27–39 of 50", "38–50 of 50", "25–37 of 50", "12–24 of 50", "38–50 of 50", "38–50 of 50", "1–13 of 50", "1–13 of 50", "1–13 of 50", "27–39 of 50", "38–50 of 50"}
+	wantRows := []int{1, 14, 27, 38, 25, 12, 50, 50, 1, 1, 1, 27, 38}
+	if !reflect.DeepEqual(spans, wantSpans) || !reflect.DeepEqual(positions, wantPositions) || !reflect.DeepEqual(rows, wantRows) {
+		t.Fatalf("rows %v, want %v\npositions %v, want %v\nhighlighted %v, want %v", spans, wantSpans, positions, wantPositions, rows, wantRows)
 	}
 }
 
 // Whatever the list is scrolled to, a typed number or short ID and Enter
-// open that row; Backspace and Esc edit what is typed, and what is typed
-// is echoed at the prompt.
+// open that row, and Enter with nothing typed opens the highlighted one;
+// Backspace and Esc edit what is typed, and what is typed is echoed at the
+// prompt.
 func TestKeyPickerTypesANumberFromAnyScrollPosition(t *testing.T) {
 	t.Parallel()
 	sessions := pickerSessions(50, oneProject)
@@ -362,6 +408,11 @@ func TestKeyPickerTypesANumberFromAnyScrollPosition(t *testing.T) {
 		{[]string{"46", "\x1b", "2\r"}, 2},
 		{[]string{"\x1b[B" + rows[45].ShortID + "\n"}, 46},
 		{[]string{"\x1b[1;5A\x1b[200~5\x1b[Z\r"}, 5},
+		{[]string{"\r"}, 1},
+		{[]string{"\x1b[B\x1b[B", "\r"}, 3},
+		{[]string{"\x1b[6~", "\x1b[B\r"}, 16},
+		{[]string{"\x1b[F", "\n"}, 50},
+		{[]string{"4", "\x7f", "\r"}, 1},
 	} {
 		row, ok, screens := runKeyPicker(t, &sessionPicker{env: fixedTerminal{120, 20}}, sessions, listFormatOptions{}, c.chunks...)
 		if !ok || row.Index != c.want {
@@ -374,36 +425,36 @@ func TestKeyPickerTypesANumberFromAnyScrollPosition(t *testing.T) {
 		t.Fatalf("%d screens:\n%s", len(screens), strings.Join(screens, "\n----\n"))
 	}
 	for i, want := range []string{"", "", "3", "37", "3", ""} {
-		if !strings.HasSuffix(screens[i], " to quit: "+want) {
+		if !strings.HasSuffix(screens[i], keyListPrompt+want) {
 			t.Errorf("screen %d, want %q typed:\n%q", i, want, screens[i])
 		}
 	}
 }
 
-// n, p, and q act only when nothing is typed; otherwise they are typed.
+// n, p, and q act only when nothing is typed; otherwise they are typed. A
+// message takes the footer line's place until the next key.
 func TestKeyPickerLettersActOnlyWithNothingTyped(t *testing.T) {
 	t.Parallel()
 	sessions := pickerSessions(50, oneProject)
-	row, ok, screens := runKeyPicker(t, &sessionPicker{env: fixedTerminal{120, 20}}, sessions, listFormatOptions{}, "1", "n", "p", "q", "\r", "n", "q")
+	row, ok, screens := runKeyPicker(t, &sessionPicker{env: fixedTerminal{120, 19}}, sessions, listFormatOptions{}, "1", "n", "p", "q", "\r", "n", "q")
 	if ok {
 		t.Fatalf("picked %+v", row)
 	}
-	if len(screens) != 7 || !strings.HasSuffix(screens[4], " to quit: 1npq") || rowSpan(screens[4]) != "1-15" {
+	if len(screens) != 7 || !strings.HasSuffix(screens[4], keyListPrompt+"1npq") || rowSpan(screens[4]) != "1-13" {
 		t.Fatalf("%d screens:\n%s", len(screens), strings.Join(screens, "\n----\n"))
 	}
-	if !strings.HasSuffix(screens[5], "Enter a listed number or unique short SESSION_ID, or q to quit.\nEnter number (or unique short SESSION_ID) to show, or q to quit: ") {
+	if !strings.HasSuffix(screens[5], strings.Repeat("─", 120)+"\nEnter a listed number or unique short SESSION_ID, or q to quit.\n"+keyListPrompt) || statusLine(screens[5]) != "" {
 		t.Fatalf("invalid answer:\n%s", screens[5])
 	}
-	if rowSpan(screens[6]) != "16-30" {
+	if rowSpan(screens[6]) != "14-26" || statusLine(screens[6]) == "" {
 		t.Fatalf("n with nothing typed did not page:\n%s", screens[6])
 	}
 }
 
-// Enter on nothing typed, q, and Ctrl-D quit the list; so does the end of
-// input.
+// q and Ctrl-D quit the list; so does the end of input.
 func TestKeyPickerQuits(t *testing.T) {
 	t.Parallel()
-	for _, input := range []string{"\r", "q", "Q", "\x04", ""} {
+	for _, input := range []string{"q", "Q", "\x04", ""} {
 		sessions := pickerSessions(5, oneProject)
 		if row, ok, _ := runKeyPicker(t, &sessionPicker{env: fixedTerminal{120, 20}}, sessions, listFormatOptions{}, input); ok {
 			t.Errorf("%q picked %+v", input, row)
@@ -411,69 +462,441 @@ func TestKeyPickerQuits(t *testing.T) {
 	}
 }
 
-// A list that fits says All and offers no scrolling, which does nothing.
+// A list that fits does not scroll, and says every row is on screen: the
+// keys move the highlight only.
 func TestKeyPickerFitsWithoutScrolling(t *testing.T) {
 	t.Parallel()
 	for _, size := range []fixedTerminal{{120, 40}, {}} {
-		_, _, screens := runKeyPicker(t, &sessionPicker{env: size}, pickerSessions(12, oneProject), listFormatOptions{}, "\x1b[B\x1b[6~ \x1b[F", "q")
-		if len(screens) != 2 || screens[0] != screens[1] || rowSpan(screens[0]) != "1-12" || statusLine(screens[0]) != "All · / filter · type a number and Enter · q quit" {
+		_, _, screens := runKeyPicker(t, &sessionPicker{env: size}, pickerSessions(12, oneProject), listFormatOptions{}, "\x1b[B\x1b[6~ \x1b[F", "\x1b[5~", "q")
+		if len(screens) != 3 || highlightedRow(screens[1]) != 12 || highlightedRow(screens[2]) != 1 {
 			t.Fatalf("%v:\n%s", size, strings.Join(screens, "\n----\n"))
+		}
+		for _, screen := range screens {
+			if rowSpan(screen) != "1-12" || positionOf(screen) != "1–12 of 12" {
+				t.Fatalf("%v:\n%s", size, screen)
+			}
 		}
 	}
 }
 
-// A project scrolled into keeps its heading, marked continued, and its
-// column header at the top of the screen.
-func TestKeyPickerKeepsTheProjectHeading(t *testing.T) {
+// A day scrolled into keeps its heading, marked continued, at the top of
+// the screen.
+func TestKeyPickerKeepsTheDayHeading(t *testing.T) {
 	t.Parallel()
-	sessions := pickerSessions(30, func(i int) string {
-		if i < 18 {
-			return "alpha"
-		}
-		return "beta"
-	})
-	_, _, screens := runKeyPicker(t, &sessionPicker{env: fixedTerminal{120, 20}}, sessions, listFormatOptions{GroupByProject: true}, "\x1b[B\x1b[B", "\x1b[F", "q")
-	if !strings.HasPrefix(screens[0], "alpha (18)\n#") || !strings.HasPrefix(screens[1], "alpha (continued)\n#   TITLE") || rowNumbers(screens[1])[0] != 3 {
+	sessions := pickerSessions(30, oneProject)
+	_, _, screens := runKeyPicker(t, &sessionPicker{env: fixedTerminal{120, 20}}, sessions, listFormatOptions{GroupByDay: true}, strings.Repeat("\x1b[B", 13), "\x1b[F", "q")
+	checkKeyScreensFit(t, screens, 120, 20)
+	if !strings.HasPrefix(screens[0], "TODAY\n▸  1  ") || !strings.HasPrefix(screens[1], "TODAY (continued)\n   4  ") || highlightedRow(screens[1]) != 14 {
 		t.Fatalf("screens:\n%s", strings.Join(screens, "\n----\n"))
 	}
-	if numbers := rowNumbers(screens[2]); numbers[len(numbers)-1] != 30 || !strings.HasPrefix(statusLine(screens[2]), "Bottom") {
+	if numbers := rowNumbers(screens[2]); numbers[len(numbers)-1] != 30 || positionOf(screens[2]) != "18–30 of 30" || !strings.HasPrefix(screens[2], "YESTERDAY (continued)\n") {
 		t.Fatalf("bottom:\n%s", screens[2])
 	}
 }
 
 // Every screen fits the terminal, however narrow or short, wherever the
-// list is scrolled.
+// list is scrolled or filtered: its day headings (continued or not), the
+// detail strip, the footer line, a notice, and the prompt. Where three rows
+// and their headings do not fit, the strip goes first and then rows, down
+// to one.
 func TestKeyPickerScreensFitTheTerminal(t *testing.T) {
 	t.Parallel()
-	sessions := pickerSessions(40, func(i int) string { return []string{"alpha", "beta", "gamma"}[i%7%3] })
-	for i := range sessions {
-		sessions[i].SkillsUsed = []archive.SkillUse{{Name: "code-review"}}
+	hourly := pickerSessions(40, func(i int) string { return []string{"alpha", "beta", "gamma"}[i%7%3] })
+	for i := range hourly {
+		hourly[i].SkillsUsed = []archive.SkillUse{{Name: "code-review"}}
 	}
-	for _, width := range []int{40, 80, 120} {
-		for _, height := range []int{8, 12, 24} {
-			for _, format := range []listFormatOptions{{}, {GroupByProject: true, Style: textStyle{color: true}}} {
-				_, _, screens := runKeyPicker(t, &sessionPicker{env: fixedTerminal{width, height}}, sessions, format,
-					"\x1b[B", "\x1b[B\x1b[B\x1b[B", "\x1b[6~", "123456789", "\r", "\x1b[F", "\x1b[5~", "\x1b[A", "q")
-				if len(screens) != 9 {
-					t.Fatalf("%dx%d: %d screens", width, height, len(screens))
-				}
-				// A tiny terminal still shows a few rows, as the pages do,
-				// though they take more rows than it has.
-				if height >= 24 || width >= 80 && height >= 12 {
+	// A day group of a row or two each, TODAY to OLDER.
+	daily := pickerSessions(40, oneProject)
+	for i := range daily {
+		daily[i].CapturedAt = pickerNow.Add(-time.Duration(i*i*7) * time.Hour)
+	}
+	for _, sessions := range [][]archive.Metadata{hourly, daily} {
+		for _, width := range []int{40, 60, 80, 120, 200} {
+			for height := 8; height <= 40; height++ {
+				for _, format := range []listFormatOptions{{}, {GroupByDay: true, Style: textStyle{color: true}}} {
+					_, _, screens := runKeyPicker(t, &sessionPicker{env: fixedTerminal{width, height}}, sessions, format,
+						"\x1b[B", "\x1b[B\x1b[B\x1b[B", "\x1b[6~", "123456789", "\r", "\x1b[F", "\x1b[5~", "\x1b[A",
+						"/", "1", "\x1b[B", "\x1b", "q")
+					if len(screens) != 13 {
+						t.Fatalf("%dx%d: %d screens", width, height, len(screens))
+					}
 					checkKeyScreensFit(t, screens, width, height)
+					for i, screen := range screens {
+						if highlightedRow(screen) == 0 {
+							t.Fatalf("%dx%d screen %d has no highlight:\n%s", width, height, i, screen)
+						}
+					}
 				}
 			}
 		}
 	}
 }
 
-// The window's size is read on every redraw, and a resize redraws at once.
+// The window's size is read on every redraw, and a resize redraws at once,
+// with the same row highlighted and in view.
 func TestKeyPickerRedrawsOnResize(t *testing.T) {
 	t.Parallel()
-	size := &resizingTerminal{sizes: []fixedTerminal{{120, 30}, {120, 12}}}
+	size := &resizingTerminal{sizes: []fixedTerminal{{120, 29}, {120, 11}}}
 	_, _, screens := runKeyPicker(t, &sessionPicker{env: size}, pickerSessions(50, oneProject), listFormatOptions{}, string(fakeResize), "q")
-	if len(screens) != 2 || rowSpan(screens[0]) != "1-25" || rowSpan(screens[1]) != "1-7" {
+	if len(screens) != 2 || rowSpan(screens[0]) != "1-23" || rowSpan(screens[1]) != "1-5" {
 		t.Fatalf("screens:\n%s", strings.Join(screens, "\n----\n"))
+	}
+
+	adjustable := &adjustableTerminal{size: fixedTerminal{120, 29}}
+	fake := newFakeKeys(strings.Repeat("\x1b[B", 19), string(fakeResize), string(fakeResize), "\r")
+	resizes := []fixedTerminal{{120, 11}, {80, 40}}
+	fake.onResize = func() {
+		adjustable.resize(resizes[0])
+		resizes = resizes[1:]
+	}
+	picker := &sessionPicker{env: adjustable, keys: startKeys(fake)}
+	defer picker.keys.close()
+	var out bytes.Buffer
+	picker.clear = func() { out.WriteString(screenBreak) }
+	row, ok, err := picker.pick(newPrompter(strings.NewReader(""), &out), &out, pickerSessions(50, oneProject), listFormatOptions{Now: pickerNow}, "show")
+	if err != nil || !ok || row.Index != 20 {
+		t.Fatalf("picked %+v ok=%v err=%v", row, ok, err)
+	}
+	screens = strings.Split(out.String(), screenBreak)
+	if len(screens) != 4 || highlightedRow(screens[1]) != 20 || highlightedRow(screens[2]) != 20 || highlightedRow(screens[3]) != 20 || rowSpan(screens[2]) != "16-20" {
+		t.Fatalf("screens:\n%s", strings.Join(screens, "\n----\n"))
+	}
+	checkKeyScreensFit(t, screens[2:3], 120, 11)
+	checkKeyScreensFit(t, screens[3:], 80, 40)
+}
+
+// A window made shorter keeps the highlighted row on screen when the rows
+// scrolled to have room for the detail strip that the rows scrolled from
+// had not: days of a row each, then a long one.
+func TestKeyPickerResizeKeepsTheHighlightUnderTheStrip(t *testing.T) {
+	t.Parallel()
+	sessions := pickerSessions(30, oneProject)
+	for i := range sessions {
+		hours := 60*24 + i
+		if i < 4 {
+			hours = []int{0, 26, 6 * 24, 15 * 24}[i]
+		}
+		sessions[i].CapturedAt = pickerNow.Add(-time.Duration(hours) * time.Hour)
+	}
+	for downs := 1; downs <= 15; downs++ {
+		for height := 9; height <= 16; height++ {
+			adjustable := &adjustableTerminal{size: fixedTerminal{120, 60}}
+			fake := newFakeKeys(strings.Repeat("\x1b[B", downs), string(fakeResize), "q")
+			fake.onResize = func() { adjustable.resize(fixedTerminal{120, height}) }
+			var out bytes.Buffer
+			picker := &sessionPicker{env: adjustable, keys: startKeys(fake), clear: func() { out.WriteString(screenBreak) }}
+			_, _, err := picker.pick(newPrompter(strings.NewReader(""), &out), &out, sessions, listFormatOptions{Now: pickerNow, GroupByDay: true}, "show")
+			picker.keys.close()
+			if err != nil {
+				t.Fatal(err)
+			}
+			screens := strings.Split(out.String(), screenBreak)
+			resized := screens[len(screens)-1]
+			checkKeyScreensFit(t, []string{resized}, 120, height)
+			if highlightedRow(resized) != downs+1 {
+				t.Fatalf("%d ↓ then %d lines: row %d is not on screen:\n%s", downs, height, downs+1, resized)
+			}
+		}
+	}
+}
+
+// sweepKeys are the keys TestKeyPickerSweepKeepsEveryScreenSound presses
+// at random; "R" resizes the window to a random size.
+var sweepKeys = []string{
+	"\x1b[A", "\x1b[B", "\x1b[5~", "\x1b[6~", "\x1b[H", "\x1b[F", " ", "n", "p",
+	"\x1b", "\x7f", "/", "1", "2", "x", "a", "o", "\x1b[B\x1b[B\x1b[B", "R", "R", "R",
+}
+
+// sweepTitle finds a session's title in a row or the detail strip.
+var sweepTitle = regexp.MustCompile(`Session number \d+\b`)
+
+// Random keys and resizes, from a fixed seed, over terminals 40–200
+// columns wide and 6–60 lines tall, several day layouts and formats:
+// every screen fits (unless even one row does not), exactly one row is
+// highlighted when rows are shown, the strip describes it, and the
+// footer's position counts the rows on screen.
+func TestKeyPickerSweepKeepsEveryScreenSound(t *testing.T) {
+	t.Parallel()
+	spread := func(hours func(i int) int) func(n int) []archive.Metadata {
+		return func(n int) []archive.Metadata {
+			sessions := pickerSessions(n, oneProject)
+			for i := range sessions {
+				sessions[i].CapturedAt = pickerNow.Add(-time.Duration(hours(i)) * time.Hour)
+			}
+			return sessions
+		}
+	}
+	layouts := []func(n int) []archive.Metadata{
+		spread(func(i int) int { return i }),
+		spread(func(i int) int { return i * i * 7 }),
+		spread(func(i int) int {
+			if i < 4 {
+				return []int{0, 26, 6 * 24, 15 * 24}[i]
+			}
+			return 60*24 + i
+		}),
+	}
+	formats := []listFormatOptions{
+		{},
+		{GroupByDay: true},
+		{GroupByDay: true, Style: textStyle{color: true}},
+		{Verbose: true},
+	}
+	rng := rand.New(rand.NewSource(562))
+	for li, layout := range layouts {
+		for _, n := range []int{1, 2, 5, 13, 40} {
+			for fi, format := range formats {
+				for run := range 6 {
+					name := fmt.Sprintf("layout %d, %d rows, format %d, run %d", li, n, fi, run)
+					sweepKeyPicker(t, name, rng, layout(n), format)
+				}
+			}
+		}
+	}
+}
+
+// sweepKeyPicker runs the picker on sessions with 60 random keys and
+// checks every screen it draws.
+func sweepKeyPicker(t *testing.T, name string, rng *rand.Rand, sessions []archive.Metadata, format listFormatOptions) {
+	t.Helper()
+	randomSize := func() fixedTerminal { return fixedTerminal{40 + rng.Intn(161), 6 + rng.Intn(55)} }
+	first := randomSize()
+	var chunks []string
+	var resizes []fixedTerminal
+	for range 60 {
+		k := sweepKeys[rng.Intn(len(sweepKeys))]
+		if k == "R" {
+			resizes = append(resizes, randomSize())
+			k = string(fakeResize)
+		}
+		chunks = append(chunks, k)
+	}
+	chunks = append(chunks, "\x1b", "\x1b", "q")
+	adjustable := &adjustableTerminal{size: first}
+	fake := newFakeKeys(chunks...)
+	fake.onResize = func() {
+		adjustable.resize(resizes[0])
+		resizes = resizes[1:]
+	}
+	var out bytes.Buffer
+	// Each screen is drawn at the size the window has as it is cleared.
+	sizes := []fixedTerminal{first}
+	picker := &sessionPicker{
+		env:     adjustable,
+		keys:    startKeys(fake),
+		heading: "All projects · sessions",
+		clear: func() {
+			out.WriteString(screenBreak)
+			adjustable.mu.Lock()
+			defer adjustable.mu.Unlock()
+			sizes = append(sizes, adjustable.size)
+		},
+	}
+	format.Now = pickerNow
+	_, _, err := picker.pick(newPrompter(strings.NewReader(""), &out), &out, sessions, format, "show")
+	picker.keys.close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, screen := range strings.Split(out.String(), screenBreak) {
+		size := sizes[i]
+		if problem := sweepScreenProblem(screen, size); problem != "" {
+			t.Fatalf("%s, screen %d at %dx%d: %s\nkeys %q\n%s", name, i, size.width, size.height, problem, chunks, screen)
+		}
+	}
+}
+
+// sweepScreenProblem says what is wrong with a screen of the list read by
+// keys drawn on a terminal of size, or "" when nothing is.
+func sweepScreenProblem(screen string, size fixedTerminal) string {
+	rule := strings.Repeat("─", size.width)
+	rows, marks, highlighted, stripTitle := 0, 0, "", ""
+	lines := strings.Split(stripANSI(screen), "\n")
+	for i, line := range lines {
+		if line == rule && i+1 < len(lines) {
+			stripTitle = lines[i+1]
+			break
+		}
+		if sweepTitle.MatchString(line) {
+			rows++
+		}
+		if strings.Contains(line, cursorMark+" ") {
+			marks, highlighted = marks+1, line
+		}
+	}
+	if got := displayLines(screen, size.width); got > size.height && rows > 1 {
+		return fmt.Sprintf("takes %d lines", got)
+	}
+	if rows > 0 && marks != 1 {
+		return fmt.Sprintf("%d rows highlighted", marks)
+	}
+	if want := sweepTitle.FindString(highlighted); stripTitle != "" && want != "" && !strings.Contains(highlighted, "…") && sweepTitle.FindString(stripTitle) != want {
+		return fmt.Sprintf("the strip is %q, the highlighted row %q", stripTitle, highlighted)
+	}
+	if statusLine(screen) != "" && rows > 0 {
+		var from, to, total int
+		if _, err := fmt.Sscanf(positionOf(screen), "%d–%d of %d", &from, &to, &total); err != nil || to-from+1 != rows {
+			return fmt.Sprintf("the position is %q with %d rows on screen", positionOf(screen), rows)
+		}
+	}
+	return ""
+}
+
+// The detail strip spells out the highlighted row: its full title (not the
+// list's cleaned one), the agent, the project, the PR, its subagents, when
+// it was last active, and its short ID, each line cut to the width. Its
+// rules are as wide as the terminal.
+func TestKeyPickerDetailStrip(t *testing.T) {
+	t.Parallel()
+	rows, _ := layoutRows(t)
+	style := textStyle{}
+	for _, c := range []struct {
+		row   listRow
+		width int
+		want  []string
+	}{
+		{rows[0], 120, []string{
+			"Review historical project command",
+			"Claude · agent-archive · PR #505 · 4 subagents · last active 2 minutes ago · id d7a77938",
+		}},
+		{rows[3], 120, []string{
+			"# Files pasted by the user: list_table.go, list_format.go",
+			"Cursor · a-project-with-an-unusually-long-directory-name · PR #1234 · last active 9 days ago · id 5b0c1e22",
+		}},
+		{rows[1], 60, []string{
+			"Cloud session archive/retrieval options and the many…",
+			"Claude · built-in-browser · PR #514 · last active 13 hours…",
+		}},
+		{rows[5], 40, []string{"0c1d2e3f", "Claude · agent-archive · last active 3…"}},
+	} {
+		strip := detailStrip(c.row, c.width, style)
+		rule := strings.Repeat("─", c.width)
+		if want := append(append([]string{rule}, c.want...), rule); !reflect.DeepEqual(strip, want) {
+			t.Errorf("width %d:\n%s\nwant\n%s", c.width, strings.Join(strip, "\n"), strings.Join(want, "\n"))
+		}
+		for _, line := range strip {
+			if visibleWidth(line) > c.width {
+				t.Errorf("%q is wider than %d", line, c.width)
+			}
+		}
+	}
+
+	// A subagent says whose it is, and a note about the row is spelled out.
+	sub := rows[2]
+	sub.Parent, sub.Hint, sub.Project, sub.PR = "d7a77938", "not yet uploaded", "-", ""
+	if got := detailStrip(sub, 200, style)[2]; got != "Codex · subagent of d7a77938 · not yet uploaded · last active 2 days ago · id 76941c69" {
+		t.Errorf("subagent strip %q", got)
+	}
+	// Colored, the details and the rules are dim.
+	colored := detailStrip(rows[0], 80, textStyle{color: true})
+	if colored[0] != (textStyle{color: true}).dim(strings.Repeat("─", 80)) || !strings.HasPrefix(colored[2], "\x1b[2m") || visibleWidth(colored[2]) > 80 {
+		t.Errorf("colored strip %q", colored)
+	}
+}
+
+// The strip, the footer line and the prompt are budgeted with the table:
+// no screen is taller than the terminal, and a terminal too short for the
+// strip and a few rows gives the strip's lines to the rows.
+func TestKeyPickerStripFitsTheHeight(t *testing.T) {
+	t.Parallel()
+	sessions := pickerSessions(40, oneProject)
+	for height := 8; height <= 30; height++ {
+		picker := &sessionPicker{env: fixedTerminal{80, height}, heading: "All projects · 40 sessions"}
+		_, _, screens := runKeyPicker(t, picker, sessions, listFormatOptions{GroupByDay: true}, "\x1b[6~", "\x1b[B", "q")
+		checkKeyScreensFit(t, screens, 80, height)
+		// The heading, the footer line and the prompt take 3 lines, the
+		// strip 4, and the table keeps at least 5 with the strip.
+		strip := strings.Contains(screens[0], strings.Repeat("─", 80))
+		if want := height >= 3+4+5; strip != want {
+			t.Errorf("height %d: strip %v, want %v:\n%s", height, strip, want, screens[0])
+		}
+		for _, screen := range screens {
+			if displayLines(screen, 80) != height && height > 9 {
+				// The table fills what is left, so every screen is the
+				// terminal's height (rows that end a day may leave a line).
+				if displayLines(screen, 80) < height-2 {
+					t.Errorf("height %d: screen takes %d rows:\n%s", height, displayLines(screen, 80), screen)
+				}
+			}
+		}
+	}
+}
+
+// The fewest rows a screen shows, each under its own day's heading, can
+// take more lines than the strip leaves: the strip goes before the screen
+// outgrows the terminal.
+func TestKeyPickerStripGivesWayToDayHeadings(t *testing.T) {
+	t.Parallel()
+	sessions := pickerSessions(5, oneProject)
+	for i, hours := range []int{0, 26, 6 * 24, 15 * 24, 60 * 24} {
+		sessions[i].CapturedAt = pickerNow.Add(-time.Duration(hours) * time.Hour)
+	}
+	rule := strings.Repeat("─", 80)
+	for height := 11; height <= 20; height++ {
+		picker := &sessionPicker{env: fixedTerminal{80, height}, heading: "All projects · 5 sessions"}
+		_, _, screens := runKeyPicker(t, picker, sessions, listFormatOptions{GroupByDay: true}, "\x1b[B", "\x1b[B", "q")
+		checkKeyScreensFit(t, screens, 80, height)
+		// Three rows under three headings take 8 lines; the heading, the
+		// footer line, the prompt and the strip 7.
+		if strip := strings.Contains(screens[0], rule); strip != (height >= 15) {
+			t.Errorf("height %d: strip %v:\n%s", height, strip, screens[0])
+		}
+	}
+}
+
+// The footer line names the keys and, on the right, which rows are on
+// screen. A narrow terminal drops the keys least needed first; the
+// position stays.
+func TestKeyPickerFooterLine(t *testing.T) {
+	t.Parallel()
+	screen := listScreen{n: 86, start: 0, end: 14, width: 80}
+	l := &sessionPicker{}
+	if got := l.footerLine(screen, "show"); got != "↑↓ move   Enter show   / search   number + Enter jump   q quit        1–14 of 86" {
+		t.Errorf("80 columns: %q", got)
+	}
+	// Older rows to load are named as long as Enter is: the position
+	// counts only the rows loaded.
+	l.older = &browserLoadAction{Label: "Older sessions"}
+	screen.width = 60
+	if got := l.footerLine(screen, "hand off"); got != "↑↓ move   Enter hand off   o older   q quit       1–14 of 86" {
+		t.Errorf("60 columns: %q", got)
+	}
+	screen.width = 40
+	if got := l.footerLine(screen, "show"); got != "Enter show   o older          1–14 of 86" {
+		t.Errorf("40 columns: %q", got)
+	}
+	screen.width = 8
+	if got := l.footerLine(screen, "show"); got != "1–14 of…" {
+		t.Errorf("8 columns: %q", got)
+	}
+	screen.width = 0
+	if got := l.footerLine(screen, "show"); got != "↑↓ move   Enter show   / search   number + Enter jump   o older   q quit   1–14 of 86" {
+		t.Errorf("unknown width: %q", got)
+	}
+	l.filtering, screen.width = true, 80
+	if got := l.footerLine(screen, "show"); !strings.HasPrefix(got, "↑↓ move   Enter show   Esc clear   ") || !strings.HasSuffix(got, " 1–14 of 86") || visibleWidth(got) != 80 {
+		t.Errorf("filtering: %q", got)
+	}
+	if got := l.footerLine(listScreen{width: 80}, "show"); got != "↑↓ move   Enter show   Esc clear" {
+		t.Errorf("no rows: %q", got)
+	}
+}
+
+// Reading keys, the heading names the subagents the table hides, and the
+// footer's count and flag advice are left to the table read by lines.
+func TestKeyPickerHeadingNamesHiddenSubagents(t *testing.T) {
+	t.Parallel()
+	picker := &sessionPicker{env: fixedTerminal{100, 30}, heading: "All projects · 5 sessions"}
+	format := listFormatOptions{HiddenSubagents: 403, Note: "2 more sessions match elsewhere."}
+	_, _, screens := runKeyPicker(t, picker, pickerSessions(5, oneProject), format, "q")
+	if !strings.HasPrefix(screens[0], "All projects · 5 sessions · 403 subagents hidden\n") || strings.Contains(screens[0], "session(s)") ||
+		!strings.Contains(screens[0], "\n2 more sessions match elsewhere.\n↑↓ move") {
+		t.Fatalf("screen:\n%s", screens[0])
+	}
+	format.Note = ""
+	_, _, screens = runSessionPicker(t, &sessionPicker{env: fixedTerminal{100, 30}, heading: "All projects · 5 sessions"}, pickerSessions(5, oneProject), format, "q\n")
+	if !strings.HasPrefix(screens[0], "All projects · 5 sessions\n") || !strings.Contains(screens[0], "5 sessions (403 subagent sessions hidden; search to find one).") {
+		t.Fatalf("line mode:\n%s", screens[0])
 	}
 }
 
@@ -618,12 +1041,12 @@ func TestKeyDetailsBackAndQuit(t *testing.T) {
 	t.Parallel()
 	for _, back := range []string{"b", "B", "\r", "\x7f"} {
 		out, _, _ := browseKeys(t, fixedTerminal{100, 60}, newFakeKeys("1\r", back, "1\r", "\x04"))
-		if n := strings.Count(out, "Enter number"); n != 2 || len(keyDetailsScreens(out)) != 2 || !strings.Contains(out, keyDetailsPrompt) {
+		if n := strings.Count(out, keyListPrompt); n != 2 || len(keyDetailsScreens(out)) != 2 || !strings.Contains(out, keyDetailsPrompt) {
 			t.Fatalf("%q: list shown %d times:\n%s", back, n, out)
 		}
 	}
 	out, _, _ := browseKeys(t, fixedTerminal{100, 60}, newFakeKeys("1\r", "Q"))
-	if strings.Count(out, "Enter number") != 1 || strings.Contains(out, "m more") || strings.Contains(out, "↑↓ scroll") {
+	if strings.Count(out, keyListPrompt) != 1 || strings.Contains(out, "m more") || strings.Contains(out, "↑↓ scroll") {
 		t.Fatalf("q:\n%s", out)
 	}
 }
@@ -782,7 +1205,7 @@ func TestKeyScreensGolden(t *testing.T) {
 		}
 		return "beta"
 	})
-	_, _, screens := runKeyPicker(t, &sessionPicker{env: fixedTerminal{80, 20}}, sessions, listFormatOptions{GroupByProject: true}, "\x1b[B\x1b[B\x1b[B\x1b[B\x1b[B\x1b[B\x1b[B\x1b[B", "1", "2", "q")
+	_, _, screens := runKeyPicker(t, &sessionPicker{env: fixedTerminal{80, 20}}, sessions, listFormatOptions{GroupByDay: true}, "\x1b[F", "\x1b[A\x1b[A", "1", "2", "q")
 	golden.Check(t, filepath.Join("testdata", "browse", "keys-list-scrolled.txt"), []byte(screens[len(screens)-2]))
 
 	env := testEnv(t, t.TempDir(), summaryNow)

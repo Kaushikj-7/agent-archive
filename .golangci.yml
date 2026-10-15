@@ -531,9 +531,3 @@ linters:
       - path: internal/(storage/storagetest/memory|reader/cache)\.go
         text: G501
         linters: [gosec]
-
-      # TODO(W3-B, collector state refactor): existing functions over the
-      # funlen/gocyclo ceilings. Remove each entry as the function is split.
-      - path: internal/cli/handoff\.go
-        text: runHandoffCommand
-        linters: [funlen, gocyclo]

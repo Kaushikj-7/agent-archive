@@ -72,6 +72,7 @@ func referenceCommandOrder(t *testing.T) []string {
 // examples, linked under its reference entry. A command without one fails
 // TestCLIReferenceIsCurrent, so a new command arrives with a guide.
 var commandGuides = map[string]string{
+	"search":            "[Search conversation text](../guides/search.md)",
 	"recover":           "[Recover a blocked transcript](../guides/transcript-recovery.md)",
 	"machines revoke":   "[Multiple machines](../guides/multiple-machines.md)",
 	"machines own-key":  "[Multiple machines](../guides/multiple-machines.md)",

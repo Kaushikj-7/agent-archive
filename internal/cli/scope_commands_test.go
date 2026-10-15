@@ -179,7 +179,7 @@ func TestListInsideAProjectListsThatProjectsSessions(t *testing.T) {
 	}
 }
 
-// Outside any project, every session shows, grouped by project as before.
+// Outside any project, every session shows, each row naming its project.
 func TestListOutsideAnyProjectShowsEverySession(t *testing.T) {
 	t.Parallel()
 	a := newScopedArchive(t)
@@ -199,8 +199,9 @@ func TestListOutsideAnyProjectShowsEverySession(t *testing.T) {
 			t.Fatalf("a scope is named outside any project:\n%s", out)
 		}
 	}
-	if !strings.Contains(out, "billing (2)") || !strings.Contains(out, a.label+" (2)") {
-		t.Fatalf("not grouped by project:\n%s", out)
+	// Piped, each row names its project, with no headings between them.
+	if !strings.Contains(out, "PROJECT") || !strings.Contains(out, "  billing  ") || !strings.Contains(out, "  "+a.label+"  ") || strings.Contains(out, "billing (2)") {
+		t.Fatalf("no project column, or project headings:\n%s", out)
 	}
 }
 
@@ -393,7 +394,7 @@ func TestScopeIsNamedAfterItsProjectInEveryView(t *testing.T) {
 	}
 	var headings []string
 	for _, screen := range a.browserRun(t, []string{"a", "a", "q"}, "list", "--all-projects") {
-		if strings.Contains(screen, "type a number") {
+		if strings.Contains(screen, "number + Enter jump") {
 			headings = append(headings, headingOf(screen))
 		}
 	}
@@ -447,7 +448,7 @@ func TestKeyBrowserTogglesTheScopeWithA(t *testing.T) {
 		screens := a.browserRun(t, []string{"a", "a", "q"}, args...)
 		var headings []string
 		for _, screen := range screens {
-			if strings.Contains(screen, "sessions") && strings.Contains(screen, "type a number") {
+			if strings.Contains(screen, "sessions") && strings.Contains(screen, "number + Enter jump") {
 				headings = append(headings, headingOf(screen))
 			}
 		}
@@ -461,10 +462,10 @@ func TestKeyBrowserTogglesTheScopeWithA(t *testing.T) {
 		}
 		// Everything is offered on the second screen, and only the scope on
 		// the first.
-		if !strings.Contains(screens[1], "bill0001") && !strings.Contains(screens[2], "bill0001") {
+		if !strings.Contains(screens[1], "Invoice export") && !strings.Contains(screens[2], "Invoice export") {
 			t.Fatalf("%v: all projects lack a session of another project:\n%s", args, strings.Join(screens, "\n=====\n"))
 		}
-		if strings.Contains(screens[0], "bill0001") {
+		if strings.Contains(screens[0], "Invoice export") {
 			t.Fatalf("%v: the scope offers a session of another project:\n%s", args, screens[0])
 		}
 	}
@@ -505,7 +506,7 @@ func TestKeyBrowserFallsBackWhenTheScopeIsEmpty(t *testing.T) {
 	screens := a.browserRun(t, []string{"a", "q"}, "list")
 	var headings []string
 	for _, screen := range screens {
-		if strings.Contains(screen, "type a number") {
+		if strings.Contains(screen, "number + Enter jump") {
 			headings = append(headings, headingOf(screen))
 		}
 	}
@@ -550,7 +551,7 @@ func TestKeyBrowserToggleToAnEmptyScopeFallsBack(t *testing.T) {
 	a.env.WorkingDir = func() (string, error) { return empty, nil }
 	var headings []string
 	for _, screen := range a.browserRun(t, []string{"a", "q"}, "list", "--all-projects") {
-		if strings.Contains(screen, "type a number") {
+		if strings.Contains(screen, "number + Enter jump") {
 			headings = append(headings, headingOf(screen))
 		}
 	}

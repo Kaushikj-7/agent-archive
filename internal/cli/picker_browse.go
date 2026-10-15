@@ -107,7 +107,7 @@ func boundedArchiveChoices(ctx context.Context, env metadataCacheDependencies, s
 		rows := formatSessionRows(sessions, format)
 		for i, item := range st.rows {
 			item := item
-			rows[i].When = relativeAge(format.Now, item.Row.Activity)
+			rows[i].setActive(format.Now, item.Row.Activity)
 			rows[i].Children = int(item.Row.OrdinaryChildren)
 			rows[i].pickerSelection = &handoffPickerSelection{item: &item, snapshot: snapshot, store: store}
 		}
@@ -200,7 +200,7 @@ func boundedArchiveOptions(opts listOptions) bool {
 }
 
 func runBoundedListBrowser(ctx context.Context, env listCommandDependencies, store storage.ObjectStore, cfg config.Config, opts listOptions, scope sessionScope, stdin io.Reader, stdout, stderr io.Writer, stopList func()) (bool, int) {
-	format := listFormatOptions{Now: env.now(), Projects: projectLabels(cfg), Style: styleFor(stdout), GroupByProject: true, Numbered: true, Verbose: opts.verbose}
+	format := listFormatOptions{Now: env.now(), Projects: projectLabels(cfg), Style: styleFor(stdout), GroupByDay: true, Numbered: true, Verbose: opts.verbose}
 	choices, used, err := boundedArchiveChoices(ctx, env, store, opts, scope, format, stderr, "list")
 	if !used {
 		return false, 0

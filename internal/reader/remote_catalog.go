@@ -621,3 +621,11 @@ func resolveCatalogRows(ctx context.Context, snapshot *catalog.Snapshot, rows []
 	}
 	return rows, snapshot.ValidateRead(ctx)
 }
+
+// ReadCatalogSelection hydrates the exact selected immutable body through the
+// same checksum, identity, summary and lifetime checks as ordinary catalog reads.
+// It never substitutes compact summary metadata for full source membership.
+func ReadCatalogSelection(ctx context.Context, snapshot *catalog.Snapshot, row catalog.Row) (archive.Metadata, error) {
+	read, _ := readCatalogRow(ctx, snapshot, row, nil)
+	return read.Metadata, read.Err
+}

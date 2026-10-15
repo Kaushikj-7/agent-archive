@@ -45,6 +45,26 @@ find none say so without creating the data directory.
   off after 24 hours of passes is reported as failed, with "still not read
   after 24 hours of retries", on every pass until one reads it.
 
+  A pass stops starting new sessions after about ten minutes, and `sync`
+  counts the queued sessions it did not get to:
+
+  ```text
+  Scanned 80 session(s): 78 published, 1 unchanged, 1 failed; 340 left for the next pass.
+  ```
+
+  They keep their place and the next pass carries on. Each pass takes the
+  most recently started session that was not imported first, and one slot
+  in every four after that, taking sessions before subagents so a live
+  session is not held up by its own; the rest go oldest first, so an
+  import's oldest sessions, which the apps delete first, are uploaded
+  first. Codex
+  subagent sessions whose parent session is not registered yet go after
+  every other queued session. `status` lists a session a pass did not reach
+  as **queued for the next pass, N ahead**, where N counts the queued
+  sessions that pass had in front of it. N is a rough guide, not a place in
+  line: the next pass orders the queue again, with any sessions queued
+  since, so it may reach the session sooner or later than N suggests.
+
   A Codex thread whose history spans several rollout files is read by
   following Codex's own record of its current file back through the file
   each one continues from. If one of those files is missing (Codex was
@@ -56,6 +76,13 @@ find none say so without creating the data directory.
   back. Versions before this one could instead list Codex sessions as
   **waiting for Codex history coverage** for a long time; that wait no
   longer exists.
+
+  Finding a Codex thread's files has a time allowance per pass. A Codex
+  session being read when it runs out is listed as **left for the next pass
+  after this pass's time for finding Codex rollouts ran out**, not as
+  failed, and the Codex sessions after it wait for the next pass, which has
+  a fresh allowance. Claude Code and Cursor sessions in the same pass are
+  not held up.
 
   None of these is a failure, and none changes the exit code. Claude Code
   reports some background agents with a transcript it never writes; such a
@@ -148,7 +175,8 @@ with the project, start time, and any failure. A session without its first
 upload says **waiting for its first upload**; one whose last scan was put off
 until the next pass says why (**rechecking after the source changed while
 being read**, say)
-and is not a failure. Capture gaps and Cursor chats
+and is not a failure; one the last pass ran out of time before reaching
+says **queued for the next pass, N ahead**. Capture gaps and Cursor chats
 without transcripts are reported separately. Under Codex, **N Codex sessions
 from the 7 days before setup were not captured** counts sessions that started
 in the week before discovery was enabled and are not archived, with the
