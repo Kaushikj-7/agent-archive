@@ -1,5 +1,5 @@
 [1mStabilize the OAuth tests[0m
-[2mclaude · agent-archive · 2h ago[0m                                      [32m✓[0m completed
+[38;5;208mClaude[0m[2m · agent-archive · last active 2 hours ago[0m                     [32m✓[0m completed
 
   [2mPrompt   [0m Fix flaky OAuth callback tests
   [2mWhen     [0m Sep 29, 10:14 → 10:58 (44m)
