@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -134,6 +135,16 @@ func TestPurgePreservesHeldSearchFenceUntilFinalLockRemoval(t *testing.T) {
 
 func TestSkippedSchedulerKeepsCollectorAndSearchStopCommandsDistinct(t *testing.T) {
 	t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		manual bool
+	}{{"fallback", false}, {"manual", true}} {
+		t.Run(tc.name, func(t *testing.T) { checkSkippedSchedulerGuidance(t, tc.manual) })
+	}
+}
+
+func checkSkippedSchedulerGuidance(t *testing.T, manual bool) {
+	t.Helper()
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
 	setupYes(t, env, "", 0, "--yes", "--provider", "s3", "--bucket", "synthetic", "--aws-profile", "test", "--region", "us-east-1", "--apps", "claude", "--project", project)
@@ -143,20 +154,43 @@ func TestSkippedSchedulerKeepsCollectorAndSearchStopCommandsDistinct(t *testing.
 	}
 	fakeSched(env).set(in.ref(), "unknown").set(in.searchRole().ref(), "unknown")
 	fakeSched(env).beforeUnload = func(scheduler.Ref) error { return errors.New("synthetic unreachable manager") }
+	if manual {
+		env.Scheduler = manualStopScheduler{fakeSched(env)}
+	}
 	var out, diag bytes.Buffer
 	if code := Run([]string{"uninstall", "--yes", "--skip-scheduler"}, nil, &out, &diag, env); code != 0 {
 		t.Fatal(code, out.String(), diag.String())
 	}
 	collectorCommand, searchCommand := "", ""
 	for line := range strings.SplitSeq(out.String(), "\n") {
-		if strings.HasPrefix(line, "To stop it, run") {
+		if strings.HasPrefix(line, "To stop it,") {
 			collectorCommand = line
 		}
-		if strings.HasPrefix(line, "To stop search indexing, run") {
+		if strings.HasPrefix(line, "To stop search indexing,") {
 			searchCommand = line
 		}
 	}
-	if !strings.Contains(collectorCommand, string(in.ref())) || strings.Contains(collectorCommand, string(in.searchRole().ref())) || !strings.Contains(searchCommand, string(in.searchRole().ref())) || !strings.Contains(out.String(), "may still be running") {
-		t.Fatal("unverified role commands are ambiguous", out.String())
+	if !strings.Contains(out.String(), "may still be running") || !strings.Contains(out.String(), string(in.searchRole().ref())) {
+		t.Fatal("unreachable search ownership was misreported", out.String())
 	}
+	if manual {
+		if !strings.Contains(collectorCommand, "run this") || !strings.Contains(collectorCommand, string(in.ref())) || strings.Contains(collectorCommand, string(in.searchRole().ref())) || !strings.Contains(searchCommand, string(in.searchRole().ref())) {
+			t.Fatal("unverified manual commands are ambiguous", out.String())
+		}
+	} else if !strings.Contains(collectorCommand, "use launchctl") || !strings.Contains(searchCommand, "use launchctl") || strings.Contains(out.String(), "synthetic-stop") {
+		t.Fatal("unverified fallback advice is ambiguous", out.String())
+	}
+
+}
+
+// manualStopScheduler supplies the same actionable Problem contract as systemd,
+// without executing a user manager or a shell command.
+type manualStopScheduler struct{ *fakeScheduler }
+
+func (s manualStopScheduler) Inspect(ctx context.Context, site scheduler.Site, ref scheduler.Ref) scheduler.Status {
+	status := s.fakeScheduler.Inspect(ctx, site, ref)
+	if status.Problem != nil {
+		status.Problem.Manual = "synthetic-stop " + string(ref)
+	}
+	return status
 }

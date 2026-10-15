@@ -159,6 +159,23 @@ func (j managedTarget) starts() bool {
 	return j.Intent == EnsureRunning || j.Intent == RestartIfLoaded && j.WasLoaded
 }
 
+// stateError preserves legacy recovery while guarding both managed roles.
+func (j managedTarget) stateError(home string, guarded bool) error {
+	switch j.state {
+	case scheduler.Unknown:
+		if !guarded {
+			return &RecoveryBlockedError{home: home, cause: "the background collector's state is unknown, so recovery cannot safely continue; restore access to " + j.target.tool() + " and rerun setup"}
+		}
+	case scheduler.AnotherInstallation:
+		if !guarded {
+			return nil
+		}
+	default:
+		return nil
+	}
+	return fmt.Errorf("background %s state is %s; restore access to %s and rerun setup", j.Role, j.state, j.target.tool())
+}
+
 func (b Backends) managed(home string, j Journal, recovering bool) ([]managedTarget, error) {
 	records := j.Jobs
 	if len(records) == 0 {
@@ -207,11 +224,8 @@ func (b Backends) managed(home string, j Journal, recovering bool) ([]managedTar
 			continue
 		}
 		job.state = job.target.state()
-		if job.state == scheduler.Unknown && len(j.Jobs) == 0 {
-			return nil, &RecoveryBlockedError{home: home, cause: "the background collector's state is unknown, so recovery cannot safely continue; restore access to " + job.target.tool() + " and rerun setup"}
-		}
-		if job.state == scheduler.Unknown || len(j.Jobs) > 0 && job.state == scheduler.AnotherInstallation {
-			return nil, fmt.Errorf("background %s state is %s; restore access to %s and rerun setup", job.Role, job.state, job.target.tool())
+		if err := job.stateError(home, len(j.Jobs) > 0); err != nil {
+			return nil, err
 		}
 	}
 	if j.FilesOnly && len(j.Jobs) == 0 {
