@@ -1,0 +1,159 @@
+name: Linux shutdown probe (diagnostic only)
+
+on:
+  push:
+    branches: [diagnostic/linux-shutdown-f9-20261015]
+
+permissions:
+  contents: read
+
+# Each push is a separate diagnostic; no concurrency cancellation group.
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      # Execute the original source, not the commit containing this probe.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: f9cd5597c6e493547d222cdf5db9415df6749dc2
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.2'
+          cache: false
+      - name: Run original Linux full tier with bounded health sampling
+        shell: bash
+        env:
+          GOENV: 'off'
+          TESTED_SOURCE_SHA: f9cd5597c6e493547d222cdf5db9415df6749dc2
+          PROBE_WORKFLOW_SHA: ${{ github.sha }}
+          PROBE_WORKFLOW_REF: ${{ github.workflow_ref }}
+          PROBE_EVENT: ${{ github.event_name }}
+          PROBE_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          probe_dir="$RUNNER_TEMP/linux-shutdown-probe-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          mkdir -p "$probe_dir"
+          export PROBE_DIR="$probe_dir"
+          test "$(git rev-parse HEAD)" = "$TESTED_SOURCE_SHA"
+          test "$(git rev-parse 'HEAD^{tree}')" = 6491ff40debf1de7c0be14b0fdf16db4b8c8b079
+          test -z "$(git status --porcelain)"
+          go version
+          go version | grep -q ' go1\.27\.2 '
+          python3 - <<'PY'
+          import json, os, pathlib, subprocess
+          identity = {key: os.environ[key] for key in (
+              'PROBE_WORKFLOW_SHA', 'PROBE_WORKFLOW_REF', 'PROBE_EVENT', 'PROBE_REF',
+              'GITHUB_SHA', 'TESTED_SOURCE_SHA', 'GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT')}
+          identity['source_tree'] = subprocess.check_output(['git', 'rev-parse', 'HEAD^{tree}'], text=True).strip()
+          identity['purpose'] = 'diagnostic only; not candidate acceptance'
+          identity['tier_execution_event'] = 'local (GITHUB_EVENT_NAME unset for diagnostic)'
+          text = json.dumps(identity, sort_keys=True)
+          (pathlib.Path(os.environ['PROBE_DIR']) / 'identity.json').write_text(text + '\n')
+          print(text, flush=True)
+          PY
+          cat > "$probe_dir/sample.py" <<'PY'
+          import collections, datetime, json, os, pathlib, re, signal, subprocess, threading
+          stop = threading.Event()
+          for sig in (signal.SIGTERM, signal.SIGINT):
+              signal.signal(sig, lambda *_: stop.set())
+          root = pathlib.Path(os.environ['PROBE_DIR'])
+          safe = re.compile(r'^[A-Za-z0-9_./:+@=,()\[\] -]{1,240}$')
+          def sample(final=False):
+              row = {'utc': datetime.datetime.now(datetime.timezone.utc).isoformat(), 'final': final}
+              try:
+                  wanted = {'MemTotal', 'MemAvailable', 'SwapTotal', 'SwapFree'}
+                  row['memory_kib'] = {k: int(v.split()[0]) for k, v in
+                      (line.split(':', 1) for line in pathlib.Path('/proc/meminfo').read_text().splitlines()) if k in wanted}
+                  row['disk_free_bytes'] = {str(p): os.statvfs(p).f_bavail * os.statvfs(p).f_frsize
+                      for p in (pathlib.Path.cwd(), root)}
+                  cgroups = {pathlib.Path('/sys/fs/cgroup')}
+                  for line in pathlib.Path('/proc/self/cgroup').read_text().splitlines():
+                      if line.startswith('0::'):
+                          cgroups.add(pathlib.Path('/sys/fs/cgroup') / line[3:].lstrip('/'))
+                  row['cgroup'] = {}
+                  for path in sorted(cgroups):
+                      values = {}
+                      for name in ('memory.current', 'memory.peak', 'memory.max', 'memory.events'):
+                          try:
+                              value = (path / name).read_text()[:1024].strip()
+                              if re.fullmatch(r'[a-z_0-9\s]+', value):
+                                  values[name] = value
+                          except OSError:
+                              pass
+                      row['cgroup'][str(path)] = values
+                  # PID/PPID retain relationships; comm excludes arguments and environment.
+                  raw = subprocess.run(['ps', '-eo', 'pid,ppid,rss,pcpu,comm', '--sort=-rss'],
+                      capture_output=True, text=True, timeout=3, check=False).stdout
+                  row['processes'] = [line[:300] for line in raw.splitlines()[:21] if safe.fullmatch(line.strip())]
+                  # Only lifecycle fields from a bounded tail; never emit Go Output/transcripts.
+                  log = pathlib.Path('tier-results/race-2.jsonl')
+                  events = []
+                  if log.exists():
+                      with log.open('rb') as stream:
+                          stream.seek(max(0, log.stat().st_size - 65536))
+                          lines = stream.read(65536).splitlines()
+                      for line in lines[-200:]:
+                          try:
+                              event = json.loads(line)
+                          except (ValueError, UnicodeError):
+                              continue
+                          if event.get('Action') not in {'start', 'run', 'pause', 'cont', 'pass', 'fail', 'skip'}:
+                              continue
+                          fields = {key: event[key] for key in ('Action', 'Package', 'Test') if key in event}
+                          if all(isinstance(v, str) and safe.fullmatch(v) for v in fields.values()):
+                              events.append(fields)
+                  row['race_2_lifecycle_tail'] = events[-12:]
+                  if final:
+                      # Read only, bounded and optional. Emit fixed categories/counts, never raw kernel logs.
+                      result = subprocess.run(['journalctl', '-k', '-n', '200', '--no-pager', '-o', 'cat'],
+                          capture_output=True, text=True, timeout=3, check=False)
+                      row['kernel_oom'] = {'journal_status': result.returncode, 'matching_lines': sum(
+                          bool(re.search(r'Out of memory:|Killed process [0-9]+|oom-kill:|Memory cgroup out of memory', line))
+                          for line in result.stdout.splitlines())}
+              except Exception as exc:
+                  row['sampler_error_type'] = type(exc).__name__
+              text = json.dumps(row, sort_keys=True)
+              with (root / 'health.jsonl').open('a') as stream:
+                  stream.write(text + '\n')
+              print(text, flush=True)
+          # At most 122 periodic samples plus one final sample (job limit: 60 minutes).
+          for _ in range(122):
+              sample()
+              if stop.wait(30):
+                  break
+          sample(final=True)
+          PY
+          python3 -u "$probe_dir/sample.py" &
+          sampler_pid=$!
+          cleanup() {
+            status=$?
+            trap - EXIT INT TERM
+            printf 'probe_exit_status=%s utc=%s\n' "$status" "$(date -u +%FT%TZ)" | tee "$probe_dir/exit.txt"
+            # The sole process we terminate is our own still-unreaped sampler child.
+            kill -TERM "$sampler_pid" 2>/dev/null || true
+            wait "$sampler_pid" || true
+            exit "$status"
+          }
+          trap cleanup EXIT
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
+          # A diagnostic branch is not a canonical push event. Use the explicit
+          # local full-tier entry point, retaining the actual push identity above.
+          env -u GITHUB_EVENT_NAME GITHUB_SHA="$TESTED_SOURCE_SHA" /usr/bin/time -v -o "$probe_dir/time.txt" \
+            python3 scripts/run_ci_tier.py --tier full --suite linux --output tier-results
+      - name: Preserve diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: linux-shutdown-f9-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            tier-results
+            ${{ runner.temp }}/linux-shutdown-probe-${{ github.run_id }}-${{ github.run_attempt }}/identity.json
+            ${{ runner.temp }}/linux-shutdown-probe-${{ github.run_id }}-${{ github.run_attempt }}/health.jsonl
+            ${{ runner.temp }}/linux-shutdown-probe-${{ github.run_id }}-${{ github.run_attempt }}/time.txt
+            ${{ runner.temp }}/linux-shutdown-probe-${{ github.run_id }}-${{ github.run_attempt }}/exit.txt
+          if-no-files-found: warn
+          retention-days: 7
