@@ -121,6 +121,53 @@ func TestOffChainRevisionsThatCrowdOutPublishingAreLeftOut(t *testing.T) {
 	}
 }
 
+// A scan that kept an off-chain revision and saved its publication before
+// meeting the session's read ceiling is not run again without it: the
+// publication is owed as saved, B included, and the refusal defers the
+// session (overCeiling) rather than recording it as too large. The ceiling
+// sits just under the scan's peak with B kept, which it reaches only after
+// saving the publication; the fixture checks that it still does.
+func TestOffChainCeilingAfterTheSavedPublicationIsNotRetried(t *testing.T) {
+	t.Parallel()
+	scan, err := runUnderCeiling(t, 64<<20, true)
+	if captured, ids := capturedChain(t, scan, err); !captured || !slices.Contains(ids, revisionB) {
+		t.Fatalf("B was not kept with room for it: captured %v, inputs %v", captured, ids)
+	}
+	_, peak := scan.readBudget().Charged()
+	scan, err = runUnderCeiling(t, peak-2<<10, true)
+	if scan.withoutOffChain {
+		t.Fatal("the scan ran again without B although its publication was owed")
+	}
+	if err == nil || !scan.overSessionCeiling(err) {
+		t.Fatal("the scan did not meet the ceiling; the fixture no longer exercises a refusal after saving: ", err)
+	}
+	pending, found, loadErr := scan.local.LoadPending(scan.id())
+	if loadErr != nil || !found || pending.History == nil {
+		t.Fatal("the scan met the ceiling before saving its publication; the fixture no longer exercises the guard", loadErr)
+	}
+	var ids []string
+	for _, input := range pending.History.Inputs {
+		ids = append(ids, input.RevisionID)
+	}
+	if !slices.Contains(ids, revisionB) || !slices.Contains(ids, revisionC) {
+		t.Fatalf("owed publication inputs %v", ids)
+	}
+	if hasRevisionLeftOut(t, scan) {
+		t.Fatal("recorded a diagnostic with nothing left out")
+	}
+	// The owed upload is deferred, not recorded as a gap; a revision left
+	// out of it would then be reported, since the session is not a gap.
+	outcome, deferred := scan.overCeiling(err)
+	if _, ok := deferralReason(deferred); !ok || outcome != outcomeSkipped || scan.gap != "" {
+		t.Fatalf("overCeiling: outcome %v, err %v, gap %q", outcome, deferred, scan.gap)
+	}
+	scan.offChainLeftOut = true
+	scan.noteRevisionLeftOut(err)
+	if !hasRevisionLeftOut(t, scan) {
+		t.Fatal("no diagnostic for a revision left out of a session whose upload is owed")
+	}
+}
+
 func hasRevisionLeftOut(t *testing.T, scan *sessionScan) bool {
 	t.Helper()
 	diagnostics, err := capture.ReadDiagnostics(scan.local.Home())
