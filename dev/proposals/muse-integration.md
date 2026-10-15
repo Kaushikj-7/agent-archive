@@ -574,6 +574,14 @@ refusal, source encoding and budgets, discovery and read bounds, picker and
 handoff and CI contracts changed; Q0 reconciles them. Historical native evidence
 does not certify a newer implementation base.
 
+The supplemental [1.4.9 Q0 record](../qualification/muse/results-1.4.9.json)
+adds only pinned macOS x86_64 synthetic `exec-utc` fresh/resume/copy and mutation
+observations (22 final-run assertions passed). The prior 1.4.8 matrix and corpus
+retain their original provenance. No framing or opening-shape change was observed
+in this lane; permission checksum encoding and original creation authority remain
+OPEN. No newer MSP, PTY, child, checkpoint, platform, real-accounting or production
+capture qualification follows from this supplement.
+
 ### Observations that determine the design
 
 Most rows come from retained probe results. Some details survived only in the
