@@ -67,6 +67,15 @@ func (s *Store) RequestSessionIndexAbsence(key agentmeta.SessionKey) error {
 	if _, found, err := s.readQualifiedIndex(key); err != nil || found {
 		return s.RequestSessionIndexRecovery(key)
 	}
+	return s.retainAbsenceRequest(key)
+}
+
+// retainAbsenceRequest writes a fresh token and then key's retained request
+// entry. The caller holds hooks.lock and has established that no registration
+// of key can be admitted after the census that certifies it enumerates: that
+// census is complete and the token makes the next slice enumerate again, or
+// misses have been refused since the pending census began.
+func (s *Store) retainAbsenceRequest(key agentmeta.SessionKey) error {
 	// Damaged scheduling evidence is replaced: the fresh token is uncertified,
 	// so the next slice still enumerates every retained request.
 	request, _, err := s.readAbsenceRequest()

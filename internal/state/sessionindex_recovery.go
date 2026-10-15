@@ -152,6 +152,9 @@ func (s *Store) RequestSessionIndexRecovery(key agentmeta.SessionKey) error {
 			}
 		}
 	}
+	if handled, err := s.requestDuringPendingCensus(key); handled || err != nil {
+		return err
+	}
 	if err := s.MarkSessionIndexRecoveryNeeded(); err != nil {
 		return err
 	}
@@ -166,6 +169,35 @@ func (s *Store) RequestSessionIndexRecovery(key agentmeta.SessionKey) error {
 		}
 	}
 	return local.Write(qualifiedSessionIndexPath(s.home, key), qualifiedSessionIndexEntry{Version: 1, Agent: key.Agent, NativeID: key.NativeID, Recovery: true})
+}
+
+// requestDuringPendingCensus keeps a request whose hook was refused only
+// because a census is pending from restarting that census. A new generation
+// fences the census's completion, so on a busy machine refused session
+// starts and subagents, and each SubagentStop's healthy parent, could keep
+// recovery from finishing. While the marker is incomplete no miss is allowed,
+// so no registration of a key without an owner is admitted after the census
+// enumerates: an owned key needs nothing, and a key with no entry or a
+// certified absence is retained with an absence token. The census certifies
+// that entry, or the next slice does when the census listing missed it.
+// Anything else takes the full request. The caller holds hooks.lock.
+func (s *Store) requestDuringPendingCensus(key agentmeta.SessionKey) (bool, error) {
+	var marker sessionIndexMarker
+	if err := readRecoveryJSON(filepath.Join(s.home, sessionIndexMarkerFile), &marker); err != nil || !recoveryMarkerVersion(marker.Version) || marker.Complete || marker.Generation == "" {
+		return false, nil
+	}
+	entry, found, err := s.readQualifiedIndex(key)
+	if err != nil {
+		return false, nil
+	}
+	if found && !entry.Absent {
+		valid, err := s.matchingRegistration(key, entry.ArchiveSessionID)
+		return err == nil && valid, nil
+	}
+	if marker.Version != 1 {
+		return false, nil
+	}
+	return true, s.retainAbsenceRequest(key)
 }
 
 // sessionIndexDirectoriesLost detects total derived-index loss even when Open

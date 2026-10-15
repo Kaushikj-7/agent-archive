@@ -31,7 +31,11 @@ follow [Semantic Versioning](https://semver.org/).
   everything else, and the next pass certifies the discovered session without
   a full rebuild. A subagent that finishes while recovery is genuinely pending,
   or while the capture lock is busy, is now queued and replayed by the next
-  collector pass instead of being dropped.
+  collector pass instead of being dropped. Sessions and subagents refused while
+  a full recovery runs no longer restart it, so it can finish on a busy
+  machine. Downgrading to an earlier version while such a subagent is queued
+  makes that version's collector report an admission-intent error for it each
+  pass until it expires after 24 hours; nothing else is held back.
 
 ## [0.2.1]
 

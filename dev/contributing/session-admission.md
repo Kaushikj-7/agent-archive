@@ -129,6 +129,18 @@ A repeated request for a retained key keeps it scheduled. Damaged, owned or
 uncertified evidence, packed markers, and unusable tokens take the full
 recovery request.
 
+A hook refused only because a census is pending must not change its
+generation either: a new generation fails that census's completion, so a busy
+machine's stream of refused starts and subagents could keep recovery pending
+indefinitely. While the marker is incomplete no miss is allowed, so no
+registration of an unowned key is admitted after the census enumerates. A
+request for a key whose entry names a valid owner (a SubagentStop's parent)
+writes nothing. A request for a key with no entry, or a certified absence,
+under a version-1 marker is retained with a fresh absence token instead of a
+new generation: the census certifies the entry when its listing includes it,
+and otherwise the slice after completion does. Other requests keep the full
+path.
+
 Registration membership changes stage a small durable revision outside locks.
 The request lock precedes the short membership lock, which commits the revision
 before the registration rename. Completion takes hooks then membership and

@@ -254,3 +254,83 @@ func TestAbsenceRequestTokenReadBeforeEntryStaysPending(t *testing.T) {
 		t.Fatalf("absence: %v %v", yes, err)
 	}
 }
+
+// Hooks refused while a census is pending ask for recovery: a SubagentStop
+// for its healthy parent and its new child, a new session for itself. None
+// of them may start a new census generation, which would fail the pending
+// census's completion and, on a busy machine, keep recovery from finishing.
+func TestRefusedHookRequestsDuringPendingCensusLetItComplete(t *testing.T) {
+	t.Parallel()
+	s := completedAbsenceStore(t)
+	if err := s.MarkSessionIndexRecoveryNeeded(); err != nil {
+		t.Fatal(err)
+	}
+	parent := agentmeta.SessionKey{Agent: agentmeta.Codex, NativeID: "native-0000"}
+	child := agentmeta.SessionKey{Agent: agentmeta.Claude, NativeID: "parent:subagent:refused"}
+	if _, _, err := s.EnsureArchiveSessionID(child); !errors.Is(err, ErrSessionIndexRecoveryRequired) {
+		t.Fatalf("miss allowed during a pending census: %v", err)
+	}
+	steps := map[string]int{}
+	requested := false
+	s.onIndexStep = func(step string) error {
+		steps[step]++
+		if step != "recovery-completing" || requested {
+			return nil
+		}
+		requested = true
+		// After the census listed sessions-v1, so its listing misses the child.
+		return errors.Join(s.RequestSessionIndexRecovery(parent), s.RequestSessionIndexRecovery(child))
+	}
+	complete, err := s.RecoverSessionIndexScheduled(context.Background(), SessionIndexRecoverySlice)
+	if err != nil || !complete || !requested {
+		t.Fatalf("census complete=%v err=%v requested=%v", complete, err, requested)
+	}
+	if steps["recovery-request-marked"] != 0 {
+		t.Fatalf("refused hooks restarted the census: %v", steps)
+	}
+	if id, found, err := s.ArchiveSessionID(parent); err != nil || !found || id != "owner-0000" {
+		t.Fatalf("parent: %q %v %v", id, found, err)
+	}
+	// The child's retained request is certified by the next slice without
+	// another full census.
+	clear(steps)
+	if complete, err := s.RecoverSessionIndexScheduled(context.Background(), SessionIndexRecoverySlice); err != nil || !complete {
+		t.Fatalf("certification slice complete=%v err=%v", complete, err)
+	}
+	if steps["recovery-begin"] != 0 || steps["absence-certified"] != 1 {
+		t.Fatalf("certification slice steps: %v", steps)
+	}
+	if _, created, err := s.EnsureArchiveSessionID(child); err != nil || !created {
+		t.Fatalf("child after certification: created=%v err=%v", created, err)
+	}
+}
+
+// A request retained during a pending census, before that census lists
+// sessions-v1, is certified by it; the later token check finds nothing left.
+func TestRequestBeforePendingCensusListingIsCertifiedByIt(t *testing.T) {
+	t.Parallel()
+	s := completedAbsenceStore(t)
+	if err := s.MarkSessionIndexRecoveryNeeded(); err != nil {
+		t.Fatal(err)
+	}
+	generation := readMarkerGeneration(t, s)
+	fresh := agentmeta.SessionKey{Agent: agentmeta.Claude, NativeID: "refused-start"}
+	if err := s.RequestSessionIndexRecovery(fresh); err != nil {
+		t.Fatal(err)
+	}
+	if got := readMarkerGeneration(t, s); got != generation {
+		t.Fatal("refused start restarted the pending census")
+	}
+	if err := recoverytest.Exhaust(context.Background(), s, SessionIndexRecoverySlice, false); err != nil {
+		t.Fatal(err)
+	}
+	if yes, err := s.SessionIndexAbsent(fresh); !yes || err != nil {
+		t.Fatalf("absence: %v %v", yes, err)
+	}
+	if complete, err := s.RecoverSessionIndexScheduled(context.Background(), SessionIndexRecoverySlice); err != nil || !complete {
+		t.Fatalf("slice complete=%v err=%v", complete, err)
+	}
+	if _, pending, err := s.readAbsenceRequest(); err != nil || pending {
+		t.Fatalf("token left pending=%v err=%v", pending, err)
+	}
+}
