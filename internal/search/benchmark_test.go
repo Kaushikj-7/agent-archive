@@ -44,7 +44,7 @@ func BenchmarkVerifiedProjection(b *testing.B) {
 	b.ReportMetric(1, "parse/op")
 }
 
-func benchmarkCorpus(b *testing.B, s *Store, count, messages int) {
+func benchmarkCorpus(b testing.TB, s *Store, count, messages int) {
 	b.Helper()
 	for i := range count {
 		m, p := testProjection(fmt.Sprintf("session-%06d", i), fmt.Sprintf("common upload checksum foo_bar.go rare%d", i))

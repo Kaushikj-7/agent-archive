@@ -60,22 +60,7 @@ func (s *Store) Matches(ctx context.Context, q Query, harness, session string, g
 	if err != nil {
 		return page, err
 	}
-	text := matchingQuery + ` AND s.harness=? AND s.session_id=? AND p.title_hit=0
-) SELECT pid,score,role_rank FROM matching WHERE title_hit=0 AND session=?`
-	args := append(queryArgs(expression, q), harness, session, key)
-	if cursor != "" {
-		comparison := ">"
-		if c.Reverse {
-			comparison = "<"
-		}
-		text += " AND (score,role_rank,pid) " + comparison + " (?,?,?)"
-		args = append(args, c.Score, c.Role, c.Passage)
-	}
-	order := "ASC"
-	if c.Reverse {
-		order = "DESC"
-	}
-	text += " ORDER BY score " + order + ",role_rank " + order + ",pid " + order + " LIMIT 21"
+	text, args := matchPageSQL(q, expression, harness, session, c, cursor != "")
 	rows, err := tx.QueryContext(ctx, text, args...)
 	if err != nil {
 		return page, err
@@ -153,4 +138,26 @@ func decodeMatchCursor(token string, generation int64, identity, key string) (ma
 		return c, ErrCursorChanged
 	}
 	return c, nil
+}
+
+// matchPageSQL is the concrete query used by Matches, shared with its actual
+// EXPLAIN witness so performance evidence cannot drift to a different query.
+func matchPageSQL(q Query, expression, harness, session string, c matchCursor, continued bool) (string, []any) {
+	text := matchingQuery + ` AND s.harness=? AND s.session_id=? AND p.title_hit=0
+) SELECT pid,score,role_rank FROM matching WHERE title_hit=0 AND session=?`
+	args := append(queryArgs(expression, q), harness, session, harness+"/"+session)
+	if continued {
+		comparison := ">"
+		if c.Reverse {
+			comparison = "<"
+		}
+		text += " AND (score,role_rank,pid) " + comparison + " (?,?,?)"
+		args = append(args, c.Score, c.Role, c.Passage)
+	}
+	order := "ASC"
+	if c.Reverse {
+		order = "DESC"
+	}
+	text += " ORDER BY score " + order + ",role_rank " + order + ",pid " + order + " LIMIT 21"
+	return text, args
 }

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -132,5 +133,60 @@ func BenchmarkSessionMatchPages(b *testing.B) {
 			b.ReportMetric(20, "retained_refs/op")
 			b.ReportMetric(0, "source_GET/op")
 		})
+	}
+}
+
+// This records actual join order rather than claiming a selected-session WHERE
+// clause alone makes a broad FTS posting scan cheap. Timing comes from the
+// separate advisory benchmark on the same corpus and production query.
+func TestSessionMatchQueryPlanWithUnrelatedCommonHits(t *testing.T) {
+	s := openTest(t)
+	benchmarkCorpus(t, s, 250, 45)
+	q := Query{Text: "common"}
+	expression, err := MatchExpression(q.Text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	results, err := s.Search(t.Context(), q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := s.Matches(t.Context(), q, "codex", "session-000000", results.Generation, "")
+	if err != nil || len(first.References) != 20 || first.Next == "" {
+		t.Fatalf("first bounded page: %+v %v", first, err)
+	}
+	second, err := s.Matches(t.Context(), q, "codex", "session-000000", results.Generation, first.Next)
+	if err != nil || len(second.References) != 20 || second.Previous == "" {
+		t.Fatalf("forward bounded page: %+v %v", second, err)
+	}
+	for _, token := range []string{"", first.Next, second.Previous} {
+		cursor, err := decodeMatchCursor(token, results.Generation, queryIdentity(q), "codex/session-000000")
+		if err != nil {
+			t.Fatal(err)
+		}
+		sqlText, args := matchPageSQL(q, expression, "codex", "session-000000", cursor, token != "")
+		plan, err := s.db.QueryContext(t.Context(), "EXPLAIN QUERY PLAN "+sqlText, args...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var details []string
+		for plan.Next() {
+			var id, parent, unused int
+			var detail string
+			if err = plan.Scan(&id, &parent, &unused, &detail); err != nil {
+				_ = plan.Close()
+				t.Fatal(err)
+			}
+			details = append(details, fmt.Sprintf("%d/%d %s", id, parent, detail))
+		}
+		err = plan.Err()
+		_ = plan.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("11250 common matching passages; selected session45; retained refs20; continuation=%v reverse=%v\n%s", token != "", cursor.Reverse, strings.Join(details, "\n"))
+		if !strings.Contains(strings.Join(details, " "), "VIRTUAL TABLE INDEX") {
+			t.Fatal("production match query did not use FTS", details)
+		}
 	}
 }

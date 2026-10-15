@@ -1,6 +1,10 @@
 # Conversation search with incremental indexing
 
-Status: proposed; no content-search implementation or performance evidence yet.
+Status: implementation in dependency-ordered delivery branches; final integration,
+combined acceptance and review remain pending. Engine, worker, reconciliation,
+CLI and terminal code now exist, with component checks and advisory measurements
+recorded during delivery. This design record does not claim a merged release or
+complete supported-platform/provider acceptance.
 Updated 2026-10-14 after architecture review: incremental indexing with
 consumer-owned work state and optional batched session-change hints.
 
@@ -270,9 +274,11 @@ and further context retrieval; terminal output applies existing display escaping
 
 ## PR breakdown and delegation contract
 
-Planning only: no implementation run, worker assignments, branches, pushes, PRs,
-or merge authorization are established by this document. All PRs below are
-**planned**. The user will review this plan before invoking implementation.
+The implementation run was authorized separately from this design document.
+The graph below records the intended decomposition, not live PR readiness or
+merge authorization. Component implementations now exist on delivery branches;
+final background integration, combined checks and independent review remain
+required before the whole feature can be called ready.
 
 The decomposition follows the
 `implement-with-subagents` skill.

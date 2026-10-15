@@ -58,9 +58,11 @@ The command never asks anything. Read what it prints on stderr:
     /Users/me/bin/agent-archive show <short ID>
     /Users/me/bin/agent-archive show <short ID> --transcript
 
-list prints a table, newest first: title, PR when a row has one, when, short
-ID, and the agent and project where they differ. It shows top-level sessions
-only, with a hint of how many subagent sessions a session has; the words
+list shows sessions by latest activity. On a terminal, ordinary rows are
+under day headings; piped, the columns are WHEN, AGENT, PROJECT, PR when present,
+short ID, and the full TITLE. Shared agent/project columns can be omitted.
+It shows top-level sessions only, with a hint of how many subagent sessions a
+session has; the words
 search it, as for handoff, and `/Users/me/bin/agent-archive list "<words>" --json` prints the
 matches as data. It reads no conversation. --since is when the session was
 captured: an age such as 2d or 14d, wide enough for what the person said
