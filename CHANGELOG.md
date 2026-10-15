@@ -29,7 +29,9 @@ follow [Semantic Versioning](https://semver.org/).
   diagnostic `revision_left_out`.
 - `status` no longer says Codex left out part of a session when the only
   branch not read again was already kept from an earlier capture of the
-  session: that branch is still in the archive.
+  session and has not changed since: that branch is still in the archive.
+  A branch that grew since that capture is still reported, since what it
+  added is left out.
 
 ## [0.2.1]
 

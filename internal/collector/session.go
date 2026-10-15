@@ -104,9 +104,9 @@ type sessionScan struct {
 	// runs again without them (see run). offChainLeftOut reports that it
 	// left at least one out of what is published (see noteRevisionLeftOut).
 	// offChainPlanned and offChainUnread are what the last reconciliation
-	// that read them planned to publish beside the current revision and
+	// that read them staged to publish beside the current revision and
 	// whether it left any unread; they outlive the run again, which reports
-	// only what they no longer hold (see reconcileRevisions).
+	// only what it no longer stages (see reconcileRevisions).
 	offChainKept    int
 	offChainLeftOut bool
 	withoutOffChain bool
@@ -164,12 +164,19 @@ func (s *sessionScan) run(ctx context.Context) (outcome sessionOutcome, err erro
 	} else if owed.Upload {
 		return outcome, err
 	}
+	s.forgetForRunWithoutOffChain()
+	return s.scanOnce(ctx)
+}
+
+// forgetForRunWithoutOffChain releases and forgets what a scan did, keeping
+// only what its reconciliation planned for off-chain revisions, so the scan
+// can run again without them (see run).
+func (s *sessionScan) forgetForRunWithoutOffChain() {
 	s.releaseRetained()
 	s.readBudget().ForgetScopeExceeded()
 	s.filtered, s.lastRead, s.revisions, s.rewritten = nil, nil, nil, nil
 	s.gap, s.sizeLimit, s.readyAt, s.subagentRunning = "", nil, time.Time{}, false
 	s.offChainKept, s.offChainLeftOut, s.withoutOffChain = 0, false, true
-	return s.scanOnce(ctx)
 }
 
 // scanOnce is one scan of the session, the steps above.

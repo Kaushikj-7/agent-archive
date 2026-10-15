@@ -274,25 +274,37 @@ func TestRevisionLeftOutIsNotRecordedForASessionLeftAsAGap(t *testing.T) {
 }
 
 // A scan run again without its off-chain revisions reports as left out
-// only a revision the publication no longer holds. B, preserved by
-// reference from an earlier publication of the thread, is still published,
-// so a run again after C grows does not report it; a B never published
-// before is left out and still reported.
+// only what the publication lacks of what the scan that read them kept.
+// B, preserved by reference from an earlier publication of the thread and
+// unchanged since, is still published whole, so a run again after C grows
+// does not report it. A B that grew since that publication is published
+// only as it was then, so its growth is left out and reported; so is a B
+// never published before, and a B the scan that read off-chain revisions
+// could not read. The first scan's reconciliation is the real one, and run
+// forgets the rest of it as it does when that scan meets the ceiling.
 func TestRevisionLeftOutReportsOnlyRevisionsAbsentFromThePublication(t *testing.T) {
 	t.Parallel()
 	for _, c := range []struct {
-		name      string
-		preserved bool
-		want      bool
+		name       string
+		preserved  bool
+		grown      bool
+		unreadable bool
+		want       bool
 	}{
-		{"preserved by an earlier publication", true, false},
-		{"absent from the publication", false, true},
+		{"preserved by an earlier publication", true, false, false, false},
+		{"grown since an earlier publication", true, true, false, true},
+		{"absent from the publication", false, false, false, true},
+		{"unread by the scan that read off-chain revisions", false, false, true, true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			scan, lookup := reconciliationFixture(t)
+			bPath := lookup.refs[revisionB][0].Path
 			if c.preserved {
 				publishFixture(t, scan)
+				if c.grown {
+					growRevision(t, bPath, 4, "B-later")
+				}
 				growRevision(t, lookup.refs[revisionC][0].Path, 4, "C-later")
 				published, err := scan.local.LoadPublishedState(scan.id())
 				if err != nil {
@@ -300,8 +312,29 @@ func TestRevisionLeftOutReportsOnlyRevisionsAbsentFromThePublication(t *testing.
 				}
 				scan = newSessionScan(t.Context(), scan.local, scan.remote, scan.reg, state.Request{}, published, scan.now, scan.opts)
 			}
-			// As run leaves it once a scan that kept B met the ceiling.
-			scan.withoutOffChain, scan.offChainPlanned = true, []string{revisionThread, revisionB}
+			if c.unreadable {
+				if err := os.WriteFile(bPath, []byte("B-only is not a rollout\n"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			read, ok, err := scan.read()
+			if err != nil || !ok {
+				t.Fatal("native read", err)
+			}
+			active, _, err := scan.build(read)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if scan.revisions, err = scan.reconcileRevisions(read, active); err != nil {
+				t.Fatal(err)
+			}
+			if kept := scan.offChainKept > 0; kept == c.unreadable {
+				t.Fatalf("the first scan kept B %v; the fixture no longer exercises the case", kept)
+			}
+			if staged := slices.Contains(scan.offChainPlanned, revisionB); staged != (!c.preserved && !c.unreadable || c.grown) {
+				t.Fatalf("the first scan staged B %v: %v", staged, scan.offChainPlanned)
+			}
+			scan.forgetForRunWithoutOffChain()
 			captured, ids := capturedChain(t, scan, scanErr(t, scan))
 			if !captured {
 				t.Fatal("the chain was not captured")

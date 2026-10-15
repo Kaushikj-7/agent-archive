@@ -103,33 +103,29 @@ func (s *sessionScan) reconcileRevisions(read sourceRead, active archive.SourceB
 	s.offChainKept = offChain.offChainKept
 	if !s.withoutOffChain {
 		s.offChainLeftOut = offChain.offChainLeftOut > 0
-		s.offChainUnread, s.offChainPlanned = s.offChainLeftOut, plan.revisionIDs()
+		s.offChainUnread, s.offChainPlanned = s.offChainLeftOut, plan.stagedIDs()
 		return plan, nil
 	}
 	// Run again without its off-chain revisions (see run), the scan leaves
 	// out what the scan that read them left unread and what that scan
-	// planned and this plan no longer holds. A branch preserved by reference
-	// from an earlier publication is still published, so it is not left out.
-	s.offChainLeftOut = s.offChainUnread || slices.ContainsFunc(s.offChainPlanned, func(id string) bool { return !plan.holds(id) })
+	// staged and this plan no longer stages. A branch an earlier publication
+	// preserves by reference, and that the scan that read it found unchanged,
+	// is not staged, so it is not left out; one that changed since is
+	// staged, and the earlier capture this plan preserves instead lacks what
+	// it added, so it is left out.
+	staged := plan.stagedIDs()
+	s.offChainLeftOut = s.offChainUnread || slices.ContainsFunc(s.offChainPlanned, func(id string) bool { return !slices.Contains(staged, id) })
 	return plan, nil
 }
 
-// revisionIDs lists the revisions the plan publishes beside the current
-// one: staged, or preserved by reference from an earlier publication.
-func (p *revisionPlan) revisionIDs() []string {
-	ids := make([]string, 0, len(p.Preserved)+len(p.Sources))
-	for _, ref := range p.Preserved {
-		ids = append(ids, ref.RevisionID)
-	}
+// stagedIDs lists the revisions the plan stages to publish beside the
+// current one, as opposed to preserving them by reference.
+func (p *revisionPlan) stagedIDs() []string {
+	ids := make([]string, 0, len(p.Sources))
 	for _, stage := range p.Sources {
 		ids = append(ids, revisionID(stage.Bundle))
 	}
 	return ids
-}
-
-// holds reports whether the plan publishes revision id.
-func (p *revisionPlan) holds(id string) bool {
-	return id == p.Current || slices.Contains(p.revisionIDs(), id)
 }
 
 // noteRevisionLeftOut records, content-free, that the scan left out an
