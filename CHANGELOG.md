@@ -6,6 +6,11 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Search adds bounded JSON, explicit wait/rebuild, source context neighbors and
+  existing-only cached readers; queries require explicit project broadening.
+  Named refresh removes cached text when fresh authority confirms deletion,
+  while unavailable metadata preserves the existing index.
+
 - Search conversation text with a private local index. Explicitly index one
   archived session with `search --refresh --session ID --harness NAME`, query
   cached titles/messages with `search "WORDS"`, and read exact matching passages.

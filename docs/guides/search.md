@@ -1,96 +1,91 @@
 # Search conversation text
 
-Content search finds words in indexed titles and visible user/assistant messages.
-It keeps a private local copy of that text. This initial version indexes sessions
-only when explicitly requested; it does not install background indexing or
-change capture, uploads, `list`, `show`, or `handoff`.
-
-Run a bounded archive refresh to discover sessions from every project, or find
-a session ID using `agent-archive list` and refresh that exact session. Refresh
-includes supported preserved native revisions:
+Content search finds indexed titles and visible user/assistant messages in
+supported filtered retained sources, including supported preserved revisions.
+It keeps private local searchable text. Ordinary queries read only an existing
+local index; they never discover archives, download sources or index content.
+A missing index returns partial empty results without creating files.
 
 ```sh
 agent-archive search --refresh
-agent-archive search --refresh --session SESSION_ID --harness codex
-agent-archive search "upload checksum"
+agent-archive search "upload checksum" --json
 agent-archive search '"checksum mismatch"' --all-projects
 agent-archive search 'check*' --project my-project --since 7d
+agent-archive search --refresh --session SESSION_ID --harness codex
 ```
 
-Normal queries read the local index and do not open remote storage or refresh
-history. A missing index reports incomplete coverage without creating one.
-Results are grouped by session with a matching excerpt. They search the current
-repository using the same repository/name/project fallback as `list`; use
-`--all-projects` to broaden. Replay and child sessions are hidden by default;
-use `--replays include` or `--children include` to include them.
+Search defaults to the current repository/project using existing worktree-aware
+repository identity and configured project fallback. Broaden with --all-projects;
+empty project results never broaden automatically. Replays and child sessions
+are hidden by default; --replays include and --children include reveal them.
+Scope/date/harness/replay/child filters apply before ranking and limiting.
+Namespace refresh discovery is independent of the query's project filters.
 
-Words are ANDed within one message passage. Quotes match a phrase. Only an
-explicit trailing `*` enables prefix matching. Case is ignored; accents are
-significant. Punctuation splits words, so filenames and error strings match
-word sequences rather than exact byte substrings. This is keyword search;
-terms with similar meaning do not automatically match. Queries have a 512-byte
-limit. Messages are chunked into 8KiB passages with approximately 1KiB overlap;
-very long tokens/phrases across that overlap can be missed.
-
-A body match includes an opaque `ref:` token. Read its exact source text with:
+Words are ANDed within one message passage. Quotes match phrases. Only an
+explicit trailing * enables prefix matching. Case is ignored; accents remain
+significant. Punctuation splits words, including filenames and error strings.
+Queries allow at most 512 UTF-8 bytes and 32 terms. This is keyword matching,
+not substring or semantic search. Messages use 8KiB passages with about 1KiB
+overlap; very long tokens/phrases across that overlap can be missed. Results
+are grouped by session; match_count counts matching passages, including overlap.
+Title-only results have no reference; use show with the exact session ID.
 
 ```sh
-agent-archive search --read REF --max-bytes 4096
-agent-archive search --read REF --offset NEXT_OFFSET --max-bytes 4096
+agent-archive search --read REF --max-bytes 4096 --json
+agent-archive search --read REF --offset NEXT_OFFSET --max-bytes 4096 --json
 ```
 
-Reads verify current source membership and bytes. They print a quoted escaped
-text string, plus byte offsets and a continuation offset on stderr. Offset 0 in
-the continuation means complete. References can expire after updates, deletion,
-privacy/extractor changes or a destination switch; refresh the session and search
-again. Title-only results have no passage reference; use `show SESSION_ID`.
+References bind exact source membership, bytes, interpretation and message
+location, never rendered line numbers. Reads never silently substitute newer
+content. A next_offset of null means that referenced passage is complete.
+Each context slice identifies its own reference and raw UTF-8 offsets.
+The existing plain read prints an escaped quoted string and continuation on
+stderr. --limit defaults to 20 (1–100); --cursor continues the same query/filters
+until an index write invalidates its generation and requires a restart.
 
-`--limit` defaults to 20 and accepts 1–100. A result page may provide a
-`Next cursor`; pass it with the same query/filters using `--cursor`. Index writes
-expire cursors and require restarting pagination. No long database transaction
-is held while you review a page.
+Tools, reasoning, attachments, generated context and copied other-thread history
+are excluded according to parser visibility and ownership rules. Unknown privacy
+versions, versions older than 6 or newer than this binary, unsupported formats and
+unreadable sources remain explicit coverage gaps. No source cache is retained
+merely for search. Changed source snapshots are parsed in full, while unchanged
+sources and display-only changes reuse projections. Temporary failures retain
+backoff; oversized work discards staging and blocks until its desired state changes.
 
-Coverage is explicitly partial: sessions not indexed, sources not readable by the
-parser, and changes on other machines may be absent. Refreshing a session reads
-its latest archive sources; querying does not prove remote freshness. Tools,
-reasoning, attachments, generated harness context and copied other-thread history
-are excluded according to the existing parser's ownership/visibility rules.
-Sources with privacy filters older than version 6, newer than this binary, or
-unknown versions report a coverage gap because their visibility rules cannot be
-interpreted safely.
+The private index is under AGENT_ARCHIVE_HOME/search/, partitioned by archive
+destination, installation, destination activation and privacy version. It is
+separate from the metadata cache. No automatic indexing job is installed by these
+commands. Uninstall retains local archive data. To discard searchable text,
+stop search commands and remove that search directory; archive sources remain.
+See [privacy](../security/privacy.md) and
+[engine contracts](../../dev/proposals/content-search-engine.md).
 
-The index is stored under `AGENT_ARCHIVE_HOME/search/` (or the normal private
-data directory), separate from the metadata cache. It is partitioned by archive
-destination, installation, destination activation and current privacy version.
-Files are private to the owner. Explicit refresh works while capture is paused.
-Uninstall retains this local data, like other archive state. To discard all
-local searchable text, stop search commands and remove that `search` directory;
-this does not delete archived sources. No downloaded source cache is retained.
-See [privacy](../security/privacy.md) for what archive filtering retains and
-[engine contracts](../../dev/proposals/content-search-engine.md) for measured
-performance, tokenization and history limitations.
+## Bounded JSON, catch-up and context
 
-Explicit refresh records desired state in the same search database and executes
-bounded indexing work. Completed sources survive interruption and are reused on
-retry. Unchanged sources, including retained alternatives, need no new download
-or parse; changing only titles or display/filter metadata avoids source reads.
-Body passages are rewritten only when their projection changes. Changed source
-snapshots are still parsed in full; indexing is not an append-only parser.
+`search "words" --json` writes one `schema_version: 1` document, described by
+[the search output schema](../../schemas/search-output.schema.json). Result and
+context text contain conversation content. stdout holds the document; diagnostics
+use stderr. Cached queries return success even with missing or partial coverage.
+Outside a known project, choose `--project NAME` or `--all-projects` explicitly.
+An older local schema requires explicit `search --refresh`; cached readers never
+create an index or acquire SQLite writer admission to upgrade one.
 
-Refresh reports pending and failed work. Temporary failures use persisted
-exponential backoff (one second up to 256 seconds); retry after that delay.
-Oversized work discards staged projections and stays blocked until its desired
-snapshot changes. A pass reads at most 64 sources and 32 MiB compressed data. Its
-30-second deadline covers authoritative metadata reads and indexing, so sessions
-with many retained revisions may require another refresh. Each pass can also
-advance previously observed pending sessions. `search --refresh` discovers an archive slice across all projects; it does not
-broaden the current-project scope of subsequent queries. A pass reserves up to
-20 seconds for discovery and the remainder of its 30-second deadline for pending
-indexing, including when discovery fails. Its defaults process up to 32 physical
-identities/objects, 4 recent catalog entries, 8 exact known-session checks,
-512 catalog nodes, and 16 MiB of discovery bytes, then up to 4 source downloads.
-Catalog metadata and pre-install verification have separate finite budgets.
-Run another explicit refresh to resume catch-up; no scheduler is installed.
+`search --refresh --wait 2m` runs successive bounded passes. Namespace passes
+normally process at most four sources and sixteen sessions, with a 30-second
+outer budget and a 20-second discovery slice. Named refresh retains its maximum
+64-source pass. Wait accepts an explicit duration from 1s through 10m; throughput
+and archive size determine progress, so the duration does not promise catch-up.
+Known failures, source gaps and incomplete authority cannot count as completion.
+An idle legacy listing that cannot prove coverage stops with
+`coverage_incomplete`; use bounded `--refresh` for best-effort progress there.
+Wait expiry returns `wait_timeout`, exit 1, and preserves progress for retry.
+Named waits check their target independently of other pending sessions.
+
+`search --refresh --rebuild` atomically discards derived local state and starts
+bounded catch-up; it preserves archive sources and invalidates old cursors.
+This clears searchable state, rather than securely erasing SQLite/WAL bytes.
+Refresh-only and exact-reference reads can run outside a project. Explicit
+refresh remains allowed while automatic collection is paused. Index presence
+never implies consent to future automatic indexing.
 
 Discovery rotates first access to the unchanged pass budget among known-session
 checks, recent publications and historical catch-up. Each class gets first access
@@ -114,24 +109,38 @@ Stores without bounded listing report an explicit discovery error. Unreadable
 metadata reports an error and keeps coverage partial while other identities
 continue to advance; the failed identity is retried in a later sweep.
 
-Coverage distinguishes discovery of a stable observed catalog snapshot from
-pending, failed, and unsupported retained-source work. Last observation is local
-to this machine: unobserved remote deletions/privacy changes remain unknown until
-refresh. Observing stricter privacy, changed interpretation, or removed retained
-membership invalidates prior text before replacement. Indexing rechecks fresh
-authority after source loading and before install. These checks do not establish
-perpetual freshness after their observation. Normal queries remain network-free.
+Use `search --read REF --before 1 --after 1 --json` for neighboring visible
+messages from that exact verified source. `--max-bytes` limits each raw UTF-8
+text slice; `--max-output-bytes` limits the complete escaped stdout document,
+including metadata and newline (default 256KiB, maximum 1MiB). Context may shrink
+text to fit and supplies exact raw byte continuation offsets. Escaping never
+changes offsets or opaque references. A result page too large for the output
+budget fails before stdout with `output_too_large`; lower `--limit` or increase
+the budget. It never drops hits while moving the cursor beyond them.
 
-Opening an older local search database builds a local coverage index once; this
-work scales with indexed session rows and reads no archive sources. Normal query
-initialization and execution share a five-second deadline. Explicit refresh
-initialization, discovery and indexing share a thirty-second deadline. An
-interrupted schema migration rolls back and can be retried on the next open;
-identity validation still advances separately through bounded refresh passes.
-Schema3 indexes upgrade to schema4 by adding one finite discovery-turn value;
-existing identity/root checkpoints are preserved. A failed legacy metadata read
-can resume within its physical page by logical key without treating that mutable
-page as snapshot authority.
+Exit 2 means invalid command syntax or incompatible options; exit 1 means an
+operational failure, stale cursor/source, unavailable interpretation, or an
+incomplete wait. JSON operational errors have a stable code and bounded message.
+Changed/deleted/unsupported/unavailable source states are distinct. A changed
+cursor requires restarting the same query; no transaction survives user think
+time. Unknown matching totals are null, not zero. Coverage counters describe
+locally known namespace sessions, independently of the query's project filters.
+
+Explicit refresh upgrades older local search databases under its bounded pass
+budget, including a one-time local coverage-index build proportional to installed
+session rows. Cached queries require the current schema and request explicit
+refresh instead of running migration. Schema3 upgrades to schema4 by adding a
+finite discovery-turn value while preserving existing identity/root checkpoints.
+An interrupted migration rolls back; bounded identity validation resumes during
+explicit refresh. Legacy metadata retry resumes by logical key within a physical
+page without treating that mutable page as snapshot authority.
+
+When continuing a cursor with relative date filters such as --since 7d, use the
+absolute since/until timestamps reported in JSON filters. Relative ages resolve
+again on each invocation and otherwise change the query identity. After a failed
+refresh whose observation could not be read, coverage is null; successful queries
+against a missing index instead report known local zero counts and index_present
+false. Unknown matching totals always remain null.
 
 Checksum-verified sources in unsupported immutable formats (including legacy
 source schema 1) become explicit `unsupported_source_schema` coverage gaps.

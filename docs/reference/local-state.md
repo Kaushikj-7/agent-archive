@@ -243,6 +243,15 @@ reports pending recovery while smaller journals and unrelated captures continue.
 Malformed schemas and caller cancellation still stop recovery. Lookup revision
 digests reserve both encoded owners; a refused digest is retried later.
 
+Search content lives in private destination/installation/privacy partitions
+under `search/`, independently of the metadata catalog. Cached queries open only
+existing current-schema databases and never migrate them. Explicit refresh
+performs bounded migrations/catch-up; `search --refresh --rebuild` atomically
+clears derived text/work state and invalidates cursors without deleting archives.
+The stable home `search-worker.lock` serializes explicit indexing and lifecycle
+changes before an index can be created. The index and WAL can retain conversation
+text; rebuilding is not secure erasure. See [search](../guides/search.md).
+
 Native source authority has an inert foundation for future integrations:
 `config.json` can retain at most one `native_roots` entry per non-Codex agent
 (up to 16 total). Each entry records `agent`, the approved absolute `configured`

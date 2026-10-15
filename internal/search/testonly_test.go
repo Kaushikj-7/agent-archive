@@ -74,3 +74,10 @@ func (s *Store) Replace(ctx context.Context, metadata archive.Metadata, projecti
 	}
 	return stats, tx.Commit()
 }
+
+// ReadPassage rechecks authoritative metadata and verified bytes, then resolves
+// the exact extraction version. It never silently substitutes newer content.
+func ReadPassage(ctx context.Context, objects storage.ObjectStore, parsers agentapi.ParsersLookup, ref Reference, offset, maxBytes int, limits reader.Limits) (Context, error) {
+	out, err := ReadContext(ctx, objects, parsers, ref, offset, maxBytes, 0, 0, limits)
+	return out.Selected, err
+}
