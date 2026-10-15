@@ -2,6 +2,7 @@ package muse
 
 import (
 	"context"
+	"reflect"
 	"sort"
 	"time"
 
@@ -25,9 +26,15 @@ func (Parser) Parse(ctx context.Context, b archive.SourceBundle) (archive.Analys
 		if e = ctx.Err(); e != nil {
 			return archive.Analysis{}, e
 		}
-		rows[i], e = privacy(r)
+		rows[i], e = privacyWithGaps(r, i+1, func(string, int, string) {})
 		if e != nil {
 			return archive.Analysis{}, e
+		}
+		// A retained parser has no provenance sink. Require privacy refresh
+		// rather than silently changing untrusted retained conversation. Shared
+		// rules may report already-redacted text, so compare actual retained bytes.
+		if !reflect.DeepEqual(rows[i], r) {
+			return archive.Analysis{}, errFormat
 		}
 	}
 	if e = validateRootRows(rows); e != nil {

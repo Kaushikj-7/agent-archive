@@ -16,6 +16,8 @@ Adapter 0.19.0 accompanies the new Muse parser 0.1.0.
 - `muse-jsonl` v1 preserves bounded envelope/position and typed conversation joins,
   minimal permission/startup authority, safe own text and names. All retained
   strings pass shared privacy policy; changed identity refuses the file.
+  Fixed privacy gaps disclose redaction, hidden-context removal and truncation,
+  and survive retained-only privacy refresh without native strings or details.
 - Known optional events retain content-free provenance. Unknown authority,
   forks, children, checkpoints, rewrites and incomplete startup refuse the whole
   file. Usage, tools, model switches and child coverage remain unavailable.

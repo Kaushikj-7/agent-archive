@@ -122,3 +122,22 @@ func TestMuseExplicitFileHandoffToSupportedDestination(t *testing.T) {
 		t.Fatalf("destination code %d: %s", code, errOut)
 	}
 }
+
+func TestMuseExplicitFileHandoffReportsPrivacyTruncation(t *testing.T) {
+	t.Parallel()
+	path := museLocalFixture(t, "synthetic-exec-conversation")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw = bytes.Replace(raw, []byte("It validates bounded native records and keeps own visible conversation."), []byte(strings.Repeat("x", 70000)+"VISIBLE_TAIL"), 1)
+	must(t, os.WriteFile(path, raw, 0600))
+	env := testEnv(t, filepath.Join(t.TempDir(), "never-set-up"), time.Now())
+	out, errOut, code := runHandoff(t, env, "--file", path, "--harness", "muse", "--format", "json", "--max-bytes", "0")
+	if code != 0 {
+		t.Fatalf("code %d: %s", code, errOut)
+	}
+	if !strings.Contains(out, "content_truncated") || strings.Contains(out, "VISIBLE_TAIL") {
+		t.Fatal("handoff silently lost a visible response suffix")
+	}
+}

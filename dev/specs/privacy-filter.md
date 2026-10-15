@@ -459,3 +459,11 @@ Muse startup metadata may omit the optional model label. The local projection
 retains it only when present as a string, never infers a provider default, and
 reports `model_identity_unavailable` when the initial metadata has no model.
 Original owner, reserved start and workspace validation remain required.
+
+Muse retains the shared privacy gap codes for redaction, hidden-context omission
+and per-string truncation in the existing outer capture provenance. Each fixed
+code records its earliest affected 1-based retained logical record; details are
+fixed text, never native content. Retained refilter preserves only recognized
+privacy codes at valid positions, canonicalizes details and recomputes current
+availability gaps. Direct retained parsing refuses text that still needs a
+privacy transformation; refilter it first so that loss is represented.

@@ -692,3 +692,7 @@ profiles, provider/model context, hidden reasoning and native checksum/child
 strings are never retained. Unsupported authority or incomplete files refuse
 without producing a successful artifact. Usage/cost, tools, model switches and
 children remain unavailable; this local operation grants no capture consent.
+
+Shared redaction, hidden-context omission and text truncation are disclosed with
+fixed capture-gap codes. These codes survive retained-only privacy refresh;
+arbitrary native or archived diagnostic details are not copied into them.

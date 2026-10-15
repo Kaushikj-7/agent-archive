@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"reflect"
+	"sort"
 	"strings"
 	"time"
 
@@ -66,6 +67,7 @@ func (Filter) FilterLeased(ctx context.Context, in agentapi.NativeInput, c agent
 	held += 4096
 	reader := bufio.NewReaderSize(io.NewSectionReader(in.File, 0, in.File.Length()), 4096)
 	rows := []retained{}
+	gaps := privacyGaps{}
 	line := int64(0)
 	encodedTotal := int64(0)
 	for {
@@ -101,7 +103,7 @@ func (Filter) FilterLeased(ctx context.Context, in agentapi.NativeInput, c agent
 		if err == nil {
 			for _, r := range decoded {
 				var safe retained
-				safe, err = privacy(r)
+				safe, err = privacyWithGaps(r, len(rows)+1, gaps.add)
 				if err != nil {
 					break
 				}
@@ -139,11 +141,11 @@ func (Filter) FilterLeased(ctx context.Context, in agentapi.NativeInput, c agent
 	if err = validateRows(rows); err != nil {
 		return out, release, err
 	}
-	out, err = filtered(rows, c.Limits)
+	out, err = filtered(rows, c.Limits, gaps.list())
 	return out, release, err
 }
 
-func privacy(r retained) (retained, error) {
+func privacyWithGaps(r retained, record int, addGap func(string, int, string)) (retained, error) {
 	original := r
 	// Every retained string, including keys and typed identity, passes the shared
 	// policy. Changed authority is refused rather than coalescing redacted owners.
@@ -156,7 +158,10 @@ func privacy(r retained) (retained, error) {
 	strip = func(v any) any {
 		switch x := v.(type) {
 		case string:
-			_, s := archive.StripInjectedContext(x)
+			removed, s := archive.StripInjectedContext(x)
+			if removed {
+				addGap("hidden_instruction_omitted", record, "")
+			}
 			return s
 		case map[string]any:
 			for k, v := range x {
@@ -169,7 +174,7 @@ func privacy(r retained) (retained, error) {
 		}
 		return v
 	}
-	safe, ok := archive.SanitizeValue(strip(value), &archive.PrivacyState{ExtraAllowed: retainedKeys, AddGap: func(string, int, string) {}})
+	safe, ok := archive.SanitizeValue(strip(value), &archive.PrivacyState{ExtraAllowed: retainedKeys, Record: record, AddGap: addGap})
 	if !ok {
 		return r, errFormat
 	}
@@ -204,8 +209,9 @@ func privacy(r retained) (retained, error) {
 	return r, nil
 }
 
-func filtered(rows []retained, limits agentapi.ReadLimits) (archive.FilteredTranscript, error) {
+func filtered(rows []retained, limits agentapi.ReadLimits, gaps []archive.CaptureGap) (archive.FilteredTranscript, error) {
 	out := archive.FilteredTranscript{Format: "muse-jsonl", SessionIDs: []string{rows[0].Stream.ID}, NativeStartAt: time.UnixMicro(rows[0].Timestamp).UTC(), NativeStartComplete: true, LocalIdentity: archive.NativeSessionIdentity{ID: rows[0].Stream.ID}, Gaps: []archive.CaptureGap{{Code: "muse_local_conversation_only", Detail: "Own visible conversation only"}, {Code: "usage_cache_reasoning_cost_unavailable"}, {Code: "tool_facts_unavailable"}, {Code: "model_switches_unavailable"}, {Code: "child_coverage_unavailable"}}}
+	out.Gaps = append(out.Gaps, gaps...)
 	for _, r := range rows {
 		if r.Type == payloadRuntimeSessionMetadata {
 			if _, present := r.Fields["model_id"]; !present {
@@ -304,11 +310,15 @@ func (Filter) RefilterBounded(ctx context.Context, b archive.SourceBundle, _ tim
 	if limits.Records > 0 && len(rows) > limits.Records {
 		return archive.FilteredTranscript{}, archive.ErrRecordTooLarge
 	}
+	gaps, e := retainedPrivacyGaps(ctx, b, len(rows))
+	if e != nil {
+		return archive.FilteredTranscript{}, e
+	}
 	for i, r := range rows {
 		if e = ctx.Err(); e != nil {
 			return archive.FilteredTranscript{}, e
 		}
-		rows[i], e = privacy(r)
+		rows[i], e = privacyWithGaps(r, i+1, gaps.add)
 		if e != nil {
 			return archive.FilteredTranscript{}, e
 		}
@@ -316,7 +326,7 @@ func (Filter) RefilterBounded(ctx context.Context, b archive.SourceBundle, _ tim
 	if e = validateRows(rows); e != nil {
 		return archive.FilteredTranscript{}, e
 	}
-	return filtered(rows, limits)
+	return filtered(rows, limits, gaps.list())
 }
 
 // RefilterLeased reserves retained input expansion and output ownership.
@@ -438,3 +448,62 @@ func pendingResponse(rows []retained) bool {
 }
 
 var errBudget = agentapi.ReadBudgetLimit(errors.New("muse decoding or retained output exceeds shared memory budget"))
+
+// privacyGaps keeps fixed, content-free provenance with the first affected logical
+// record. One entry per shared code bounds it independently of transcript size.
+type privacyGaps map[string]int
+
+func privacyGapDetail(code string) string {
+	switch code {
+	case "binary_content_omitted":
+		return "binary content omitted"
+	case "content_truncated":
+		return "content truncated"
+	case "hidden_instruction_omitted":
+		return "injected instruction block omitted"
+	case "hidden_or_unknown_nested_content_omitted":
+		return "nested content omitted"
+	case "record_without_allowed_fields_omitted":
+		return "record omitted"
+	case "sensitive_content_redacted":
+		return "content redacted"
+	case "sensitive_or_hidden_field_omitted":
+		return "sensitive or hidden field omitted"
+	case "unknown_field_omitted":
+		return "unknown field omitted"
+	case "unsupported_value_omitted":
+		return "value omitted"
+	}
+	return ""
+}
+
+func (g privacyGaps) add(code string, record int, _ string) {
+	if privacyGapDetail(code) == "" || record < 1 {
+		return
+	}
+	if prior, exists := g[code]; !exists || record < prior {
+		g[code] = record
+	}
+}
+
+func (g privacyGaps) list() []archive.CaptureGap {
+	out := make([]archive.CaptureGap, 0, len(g))
+	for code, record := range g {
+		out = append(out, archive.CaptureGap{Code: code, Record: record, Detail: privacyGapDetail(code)})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Code < out[j].Code })
+	return out
+}
+
+func retainedPrivacyGaps(ctx context.Context, b archive.SourceBundle, records int) (privacyGaps, error) {
+	gaps := privacyGaps{}
+	for _, gap := range b.Capture.Gaps {
+		if e := ctx.Err(); e != nil {
+			return nil, e
+		}
+		if gap.Record <= records {
+			gaps.add(gap.Code, gap.Record, "")
+		}
+	}
+	return gaps, nil
+}
