@@ -329,7 +329,10 @@ try:
     wait_for(b'? Continue in')
     os.write(master, b'c\r')
     copied = wait_for(b'CLIPBOARD HAS ')
-    handoff = output[copied:wait_for(b'CLIPBOARD END', copied)]
+    # wait_for first: it replaces output as it reads, and a slice of the
+    # output taken before the call would miss the text it reads.
+    copied_end = wait_for(b'CLIPBOARD END', copied)
+    handoff = output[copied:copied_end]
     finish(0)
     assert b'\x1b[?1049l' in output, 'alternate screen not left'
     assert second in handoff and first not in handoff, ('handed off a row other than the highlighted one', first, second, handoff)
