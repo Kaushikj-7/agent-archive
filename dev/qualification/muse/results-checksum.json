@@ -1,0 +1,699 @@
+{
+  "schema": 1,
+  "date_utc": "2026-10-15",
+  "source_base": "bdf83629e515e3d5c5385d7c74612aa962a59fc2",
+  "scope": "Permission v1 checksum byte recipe only; complete production frame/admission validation is unimplemented. Narrow logical-start semantics are documented separately in root-creation.md.",
+  "recipe": {
+    "domain_hex": "6d7573652e73657373696f6e5f7065726d697373696f6e5f7472616e73616374696f6e2e763100",
+    "domain_bytes": 39,
+    "outer_log_ordinal": "u64 big endian",
+    "transaction_id": "16 raw UUID bytes in network order",
+    "child_count": "u32 big endian",
+    "children_in_array_order": [
+      "child_index u32 big endian",
+      "decoded record_json UTF-8 byte length u64 big endian",
+      "exact decoded record_json UTF-8 bytes"
+    ],
+    "output": "sha256: followed by lowercase SHA-256 hex",
+    "separate_validation": [
+      "outer discriminator and schema",
+      "physical ordinal",
+      "closed canonical frame grammar",
+      "child semantics and indices",
+      "permission profiles",
+      "original creation"
+    ]
+  },
+  "binary_pins": {
+    "1.4.8-R6256.1": "94ea8fd1c73664c22e5c6157d8706945b667b11bd1c7c51691811e79f17dfcf1",
+    "1.4.9-R6297.1": "4c6ed04ccd5a453bd7b38799aeb9eb290b8635b32c95b5a35e6950a2f20446cb"
+  },
+  "static_evidence": {
+    "producer": "1.4.9-R6297.1",
+    "platform": "Darwin x86_64",
+    "preimage_builder_vm": "0x110264870",
+    "digest_helper_vm": "0x11025b550",
+    "scope": "Local bounded static inspection; binary and full disassembly remain outside repository"
+  },
+  "heldout_verification": {
+    "runner_sha256": "70fc31096b61c55b2e86c28bdb1b17835fadb6eb9a8dea7d0f17bc4e7b25c8cc",
+    "raw_results_sha256": "a6d7907fe348fc376e113a7d1136d880503d846ec99e68ca8586f9c2ee3aa574",
+    "distinct_native_frames": 9,
+    "all_match": true,
+    "vectors": [
+      {
+        "label": "native-1",
+        "producer": "1.4.8-R6256.1",
+        "native_line_sha256": "650e3c5b7a4cdd9ea521d566902eacac740f52898c6cba79c8b83a4ab5d72581",
+        "outer_log_ordinal": 1,
+        "child_count": 2,
+        "child_utf8_bytes": [
+          385,
+          2018
+        ],
+        "expected": "sha256:e1f36c1675f004b2f3b2a5dd677e787e774029582718117d62c108ba2a0025c9",
+        "computed": "sha256:e1f36c1675f004b2f3b2a5dd677e787e774029582718117d62c108ba2a0025c9",
+        "matches": true
+      },
+      {
+        "label": "native-2",
+        "producer": "1.4.8-R6256.1",
+        "native_line_sha256": "3b06a7aaf2402ffcd5fa5349188e64dee4293899fb49bf0e24a1900550b1a585",
+        "outer_log_ordinal": 1,
+        "child_count": 2,
+        "child_utf8_bytes": [
+          385,
+          2018
+        ],
+        "expected": "sha256:b6500423a40412037b5427c96c928b221af226ed6cdd4f2e4d065a332b7c28e9",
+        "computed": "sha256:b6500423a40412037b5427c96c928b221af226ed6cdd4f2e4d065a332b7c28e9",
+        "matches": true
+      },
+      {
+        "label": "native-3",
+        "producer": "1.4.8-R6256.1",
+        "native_line_sha256": "fcbcc0e823ef7fe10ff631e85369f443d47f57d0ea0f007e55ffde419d95e41c",
+        "outer_log_ordinal": 1,
+        "child_count": 2,
+        "child_utf8_bytes": [
+          385,
+          2010
+        ],
+        "expected": "sha256:17f29a6057324b1261447ca2e645da45a4b16e7c0a88985fab0d741383cec066",
+        "computed": "sha256:17f29a6057324b1261447ca2e645da45a4b16e7c0a88985fab0d741383cec066",
+        "matches": true
+      },
+      {
+        "label": "native-4",
+        "producer": "1.4.8-R6256.1",
+        "native_line_sha256": "7a5890721b8a70c0db46b87c151d11c431e275fb23c0d331e81e40c9ff28dd1a",
+        "outer_log_ordinal": 1,
+        "child_count": 2,
+        "child_utf8_bytes": [
+          385,
+          2018
+        ],
+        "expected": "sha256:9fe316c27487da6df2d16c4b7e3702d6cbe42bc788fedf93fd760065ae93b15a",
+        "computed": "sha256:9fe316c27487da6df2d16c4b7e3702d6cbe42bc788fedf93fd760065ae93b15a",
+        "matches": true
+      },
+      {
+        "label": "native-5",
+        "producer": "1.4.8-R6256.1",
+        "native_line_sha256": "947bec09b207c4f39a3fcc4d5f725df1b14f854720290d36eb86d812a045db53",
+        "outer_log_ordinal": 1,
+        "child_count": 2,
+        "child_utf8_bytes": [
+          385,
+          2010
+        ],
+        "expected": "sha256:28c8e3a2297d1455d90a55deb649d5be8ec1cdcdc3ed25110da72241bd4cb9ee",
+        "computed": "sha256:28c8e3a2297d1455d90a55deb649d5be8ec1cdcdc3ed25110da72241bd4cb9ee",
+        "matches": true
+      },
+      {
+        "label": "native-6",
+        "producer": "1.4.9-R6297.1",
+        "native_line_sha256": "fd8c7087bd8e87bdc5befc6aec3ffd5978b9ada62ef950407d1926cf7cafda44",
+        "outer_log_ordinal": 1,
+        "child_count": 2,
+        "child_utf8_bytes": [
+          385,
+          2018
+        ],
+        "expected": "sha256:af56a69b6df4de00844fc38c604291655c23dd176aaa7604940c434bc8eca496",
+        "computed": "sha256:af56a69b6df4de00844fc38c604291655c23dd176aaa7604940c434bc8eca496",
+        "matches": true
+      },
+      {
+        "label": "native-7",
+        "producer": "1.4.9-R6297.1",
+        "native_line_sha256": "a8f9520d4e5d53ab40714627c52a4645dfee1f9fc0d2f968c4cad8c0e7e840c1",
+        "outer_log_ordinal": 1,
+        "child_count": 2,
+        "child_utf8_bytes": [
+          385,
+          2018
+        ],
+        "expected": "sha256:b3c663f30b51bf1221f39c5acbe64efb8d218420a976431e5d21af92a77d0c29",
+        "computed": "sha256:b3c663f30b51bf1221f39c5acbe64efb8d218420a976431e5d21af92a77d0c29",
+        "matches": true
+      },
+      {
+        "label": "native-8",
+        "producer": "1.4.9-R6297.1",
+        "native_line_sha256": "119ea5ed7b6601e0c14f816952e812af5a29947e9656f524afd4382aa357c6e3",
+        "outer_log_ordinal": 1,
+        "child_count": 2,
+        "child_utf8_bytes": [
+          385,
+          2018
+        ],
+        "expected": "sha256:8f975e54ea8294c08d9d171a86d01e1a6c17d74104ce9b929183584cb07b4fd8",
+        "computed": "sha256:8f975e54ea8294c08d9d171a86d01e1a6c17d74104ce9b929183584cb07b4fd8",
+        "matches": true
+      },
+      {
+        "label": "native-9",
+        "producer": "1.4.9-R6297.1",
+        "native_line_sha256": "a8666c882769e3e0dd844434e0014c19cd13f5ede8aa3c693e4bab0e92108824",
+        "outer_log_ordinal": 1,
+        "child_count": 2,
+        "child_utf8_bytes": [
+          385,
+          2018
+        ],
+        "expected": "sha256:ab529fcb3ca2e77d48617023f97181173a841dba3d2885b9200aa6b73b01850b",
+        "computed": "sha256:ab529fcb3ca2e77d48617023f97181173a841dba3d2885b9200aa6b73b01850b",
+        "matches": true
+      }
+    ]
+  },
+  "final_source_campaign": {
+    "producer": "1.4.9-R6297.1",
+    "binary_sha256": "4c6ed04ccd5a453bd7b38799aeb9eb290b8635b32c95b5a35e6950a2f20446cb",
+    "runner_sha256": "70fc31096b61c55b2e86c28bdb1b17835fadb6eb9a8dea7d0f17bc4e7b25c8cc",
+    "raw_report_sha256": "5e02d1f6c347485711008ac8f19635427a9fe11a86259e93f8f01b90f115b84e",
+    "case": "exec-utc",
+    "platform": "Darwin x86_64",
+    "provider": "Exactly two requests to the synthetic loopback Responses endpoint; incoming context discarded",
+    "assertions": {
+      "fresh_exact_own_starts": true,
+      "fresh_own_stream_identity": true,
+      "fresh_exact_own_replies": true,
+      "fresh_exact_own_usage": true,
+      "fresh_no_unowned_run_events": true,
+      "fresh_exact_own_tools": true,
+      "resumed_exact_own_starts": true,
+      "resumed_own_stream_identity": true,
+      "resumed_exact_own_replies": true,
+      "resumed_exact_own_usage": true,
+      "resumed_no_unowned_run_events": true,
+      "resumed_exact_own_tools": true,
+      "resume_has_true_open": true,
+      "fresh_has_one_false_resume_open": true,
+      "fresh_permission_checksums_match": true,
+      "resumed_permission_checksums_match": true,
+      "resume_success": true,
+      "resume_preserves_prefix": true,
+      "native_valid_export_clean": true,
+      "native_exact_permission_clean": true,
+      "native_bad_checksum_diagnostic": true,
+      "copy_bytes_identical": true,
+      "copy_native_export_clean": true,
+      "mutation_diagnostics_match": true
+    },
+    "fresh_permission_checksums": [
+      {
+        "line": 1,
+        "outer_log_ordinal": 1,
+        "children": 2,
+        "content_sha256": "sha256:fa38919b06f5452bce66764bf95d2fea97b3e112f9afce3210d8f612cefd504d",
+        "computed_sha256": "sha256:fa38919b06f5452bce66764bf95d2fea97b3e112f9afce3210d8f612cefd504d",
+        "matches": true
+      }
+    ],
+    "resumed_permission_checksums": [
+      {
+        "line": 1,
+        "outer_log_ordinal": 1,
+        "children": 2,
+        "content_sha256": "sha256:fa38919b06f5452bce66764bf95d2fea97b3e112f9afce3210d8f612cefd504d",
+        "computed_sha256": "sha256:fa38919b06f5452bce66764bf95d2fea97b3e112f9afce3210d8f612cefd504d",
+        "matches": true
+      }
+    ],
+    "fresh_native_sha256": "d501c9cc4748a5f2011afb6c8c6f612775a8d0423b09149d0f6e63d25cac1d28",
+    "resumed_native_sha256": "50539fbb2f615288980bb7b849010f3c3d4b863373bc4e0be1cc6d0a28ed061e",
+    "exports": {
+      "valid_export": {
+        "exit": 0,
+        "timeout": false,
+        "export_written": true,
+        "unparseable_lines": 0,
+        "diagnostics": {
+          "unparseable_lines": 0,
+          "unknown_payload_kinds": 0,
+          "gaps": 0,
+          "omitted_live_only": 0,
+          "duplicate_records": 0
+        }
+      },
+      "permission_exact_export": {
+        "exit": 0,
+        "timeout": false,
+        "export_written": true,
+        "unparseable_lines": 0,
+        "diagnostics": {
+          "unparseable_lines": 0,
+          "unknown_payload_kinds": 0,
+          "gaps": 0,
+          "omitted_live_only": 0,
+          "duplicate_records": 0
+        }
+      },
+      "permission_invalid_export": {
+        "exit": 0,
+        "timeout": false,
+        "export_written": true,
+        "unparseable_lines": 1,
+        "diagnostics": {
+          "unparseable_lines": 1,
+          "unknown_payload_kinds": 0,
+          "gaps": 0,
+          "omitted_live_only": 0,
+          "duplicate_records": 0
+        }
+      },
+      "copied_export": {
+        "exit": 0,
+        "timeout": false,
+        "export_written": true,
+        "unparseable_lines": 0,
+        "diagnostics": {
+          "unparseable_lines": 0,
+          "unknown_payload_kinds": 0,
+          "gaps": 0,
+          "omitted_live_only": 0,
+          "duplicate_records": 0
+        }
+      }
+    },
+    "cleanup": "CLI completed successfully; every run_process invocation reaped its owned group, Case.close shut down the server and joined its thread"
+  },
+  "initial_attempts": [
+    {
+      "outcome": "Sandbox denied loopback bind before session creation; pinned isolated version command passed; all owned groups joined",
+      "raw_report_sha256": "94c59cba48d071d5e91e09a2ba845135731d37a43f2a0f1156abf0eca1dfdab4"
+    }
+  ],
+  "earlier_recomputed_mutation_campaign": {
+    "producer": "1.4.9-R6297.1",
+    "scope": "Earlier research on own synthetic copies, separate from the final-source runner campaign",
+    "raw_results_sha256": "c1bcf74d19b09bf75d1eba3c73fdb9fd2f221ecdc369f6aa2f7dc747e9792d10",
+    "cases": 27,
+    "results": [
+      {
+        "name": "exact",
+        "input_sha256": "a8f9520d4e5d53ab40714627c52a4645dfee1f9fc0d2f968c4cad8c0e7e840c1",
+        "exit": 0,
+        "diagnostics": {
+          "unparseable_lines": 0,
+          "unknown_payload_kinds": 0,
+          "gaps": 0,
+          "omitted_live_only": 0,
+          "duplicate_records": 0
+        },
+        "stderr_bytes": 0
+      },
+      {
+        "name": "txn-stale",
+        "input_sha256": "9f5fe050dbbb56bd610dc6e458b4b24efd806b187536b2462f7c9b36976a09d4",
+        "exit": 0,
+        "diagnostics": {
+          "unparseable_lines": 1,
+          "unknown_payload_kinds": 0,
+          "gaps": 0,
+          "omitted_live_only": 0,
+          "duplicate_records": 0
+        },
+        "stderr_bytes": 0
+      },
+      {
+        "name": "txn-recomputed",
+        "input_sha256": "3b13bc51462939ba9d5c3f80f2cb5f1c087979a809fc92357c8309c1a0d51234",
+        "exit": 0,
+        "diagnostics": {
+          "unparseable_lines": 0,
+          "unknown_payload_kinds": 0,
+          "gaps": 0,
+          "omitted_live_only": 0,
+          "duplicate_records": 0
+        },
+        "stderr_bytes": 0
+      },
+      {
+        "name": "ordinal-stale",
+        "input_sha256": "4425071b7c547e7e5167e535a7f0dd77ead8ee5721ecfafcf59509f5318a69f8",
+        "exit": 0,
+        "diagnostics": {
+          "unparseable_lines": 1,
+          "unknown_payload_kinds": 0,
+          "gaps": 0,
+          "omitted_live_only": 0,
+          "duplicate_records": 0
+        },
+        "stderr_bytes": 0
+      },
+      {
+        "name": "ordinal-recomputed",
+        "input_sha256": "9cc6bd322856a45c0353dd3bcef80657358a5eaa1a68d83844245ba1bb39ca78",
+        "exit": 0,
+        "diagnostics": {
+          "unparseable_lines": 1,
+          "unknown_payload_kinds": 0,
+          "gaps": 0,
+          "omitted_live_only": 0,
+          "duplicate_records": 0
+        },
+        "stderr_bytes": 0
+      },
+      {
+        "name": "child-whitespace-stale",
+        "input_sha256": "1f33a0bc379d9393648435e844c7f8cf1f88012b62e1e7bd7e62375d204d4c82",
+        "exit": 0,
+        "diagnostics": {
+          "unparseable_lines": 1,
+          "unknown_payload_kinds": 0,
+          "gaps": 0,
+          "omitted_live_only": 0,
+          "duplicate_records": 0
+        },
+        "stderr_bytes": 0
+      },
+      {
+        "name": "child-whitespace-recomputed",
+        "input_sha256": "9479c34ce3ea759d89bca27af8b447090c405432411d1c0b34607ce51194aa71",
+        "exit": 0,
+        "diagnostics": {
+          "unparseable_lines": 1,
+          "unknown_payload_kinds": 0,
+          "gaps": 0,
+          "omitted_live_only": 0,
+          "duplicate_records": 0
+        },
+        "stderr_bytes": 0
+      },
+      {
+        "name": "child-reversekeys-stale",
+        "input_sha256": "9654713d6491baa6d5ca18299ba4524d9f13232ef7b4052147a411fb66c69696",
+        "exit": 0,
+        "diagnostics": {
+          "unparseable_lines": 1,
+          "unknown_payload_kinds": 0,
+          "gaps": 0,
+          "omitted_live_only": 0,
+          "duplicate_records": 0
+        },
+        "stderr_bytes": 0
+      },
+      {
+        "name": "child-reversekeys-recomputed",
+        "input_sha256": "7638787017304792765898d569ee04513b28a0039aa1dec7234639c912c6a04c",
+        "exit": 0,
+        "diagnostics": {
+          "unparseable_lines": 0,
+          "unknown_payload_kinds": 0,
+          "gaps": 0,
+          "omitted_live_only": 0,
+          "duplicate_records": 0
+        },
+        "stderr_bytes": 0
+      },
+      {
+        "name": "nonascii-stale",
+        "input_sha256": "6298551762e70f82db2eed8b5c22580a03ed41d0b4f0b5c794997c2bb2c7295e",
+        "exit": 0,
+        "diagnostics": {
+          "unparseable_lines": 1,
+          "unknown_payload_kinds": 0,
+          "gaps": 0,
+          "omitted_live_only": 0,
+          "duplicate_records": 0
+        },
+        "stderr_bytes": 0
+      },
+      {
+        "name": "nonascii-recomputed",
+        "input_sha256": "9a150a2f0e2d78d23645d7ff99ee6ca5c72b6a52c440b89e959882efc4775e7d",
+        "exit": 0,
+        "diagnostics": {
+          "unparseable_lines": 1,
+          "unknown_payload_kinds": 0,
+          "gaps": 0,
+          "omitted_live_only": 0,
+          "duplicate_records": 0
+        },
+        "stderr_bytes": 0
+      },
+      {
+        "name": "onechild-stale",
+        "input_sha256": "e9603d4af1513efee310b6e23570caf918054e3e8ded58983a2b13830b00ca43",
+        "exit": 0,
+        "diagnostics": {
+          "unparseable_lines": 1,
+          "unknown_payload_kinds": 0,
+          "gaps": 0,
+          "omitted_live_only": 0,
+          "duplicate_records": 0
+        },
+        "stderr_bytes": 0
+      },
+      {
+        "name": "onechild-recomputed",
+        "input_sha256": "02987952f8ea50ee2e89f7ef9bbc2819624f7f648b3cb7ddd771deca71369110",
+        "exit": 0,
+        "diagnostics": {
+          "unparseable_lines": 1,
+          "unknown_payload_kinds": 0,
+          "gaps": 0,
+          "omitted_live_only": 0,
+          "duplicate_records": 0
+        },
+        "stderr_bytes": 0
+      },
+      {
+        "name": "reversechildren-stale",
+        "input_sha256": "08ac6c082b6f7e2989010cd9936c761bcf77ec1b6af71d8f12a245519c9e08e0",
+        "exit": 0,
+        "diagnostics": {
+          "unparseable_lines": 1,
+          "unknown_payload_kinds": 0,
+          "gaps": 0,
+          "omitted_live_only": 0,
+          "duplicate_records": 0
+        },
+        "stderr_bytes": 0
+      },
+      {
+        "name": "reversechildren-recomputed",
+        "input_sha256": "0b387486680b1e38b5945a75bc252899cba5de9bfbf118ae9ca3c6db1112b193",
+        "exit": 0,
+        "diagnostics": {
+          "unparseable_lines": 1,
+          "unknown_payload_kinds": 0,
+          "gaps": 0,
+          "omitted_live_only": 0,
+          "duplicate_records": 0
+        },
+        "stderr_bytes": 0
+      },
+      {
+        "name": "schema-stale",
+        "input_sha256": "1c6b96e83e146dc069cff6d1b7f0ce5b848f9cbc0b5ad2d311dae99867aebf62",
+        "exit": 0,
+        "diagnostics": {
+          "unparseable_lines": 1,
+          "unknown_payload_kinds": 0,
+          "gaps": 0,
+          "omitted_live_only": 0,
+          "duplicate_records": 0
+        },
+        "stderr_bytes": 0
+      },
+      {
+        "name": "schema-recomputed",
+        "input_sha256": "1c6b96e83e146dc069cff6d1b7f0ce5b848f9cbc0b5ad2d311dae99867aebf62",
+        "exit": 0,
+        "diagnostics": {
+          "unparseable_lines": 1,
+          "unknown_payload_kinds": 0,
+          "gaps": 0,
+          "omitted_live_only": 0,
+          "duplicate_records": 0
+        },
+        "stderr_bytes": 0
+      },
+      {
+        "name": "inner-whitespace-stale",
+        "input_sha256": "6f3a009b02b6542f4c389cca6e30f5ee05e2ce9e4635b02f513069bd3e711a21",
+        "exit": 0,
+        "diagnostics": {
+          "unparseable_lines": 1,
+          "unknown_payload_kinds": 0,
+          "gaps": 0,
+          "omitted_live_only": 0,
+          "duplicate_records": 0
+        },
+        "stderr_bytes": 0
+      },
+      {
+        "name": "inner-whitespace-recomputed",
+        "input_sha256": "2f2c84082a202610aed52a2868efaacabb0ff489c76d7341c4fb0a801824f3df",
+        "exit": 0,
+        "diagnostics": {
+          "unparseable_lines": 1,
+          "unknown_payload_kinds": 0,
+          "gaps": 0,
+          "omitted_live_only": 0,
+          "duplicate_records": 0
+        },
+        "stderr_bytes": 0
+      },
+      {
+        "name": "source-ascii-stale",
+        "input_sha256": "4b5db4476796bcbbd4605677651bdeac7a476828053e95ac9497cf71f991322e",
+        "exit": 0,
+        "diagnostics": {
+          "unparseable_lines": 1,
+          "unknown_payload_kinds": 0,
+          "gaps": 0,
+          "omitted_live_only": 0,
+          "duplicate_records": 0
+        },
+        "stderr_bytes": 0
+      },
+      {
+        "name": "source-ascii-recomputed",
+        "input_sha256": "5c70509213ab82e7d3d538fae52f98fb8096671922b32fb505f461f2ce8b3c39",
+        "exit": 0,
+        "diagnostics": {
+          "unparseable_lines": 1,
+          "unknown_payload_kinds": 0,
+          "gaps": 0,
+          "omitted_live_only": 0,
+          "duplicate_records": 0
+        },
+        "stderr_bytes": 0
+      },
+      {
+        "name": "source-nonascii-escaped-stale",
+        "input_sha256": "f4002754b97e21ca761ef42494e3f1a92ea7ba9d0e47162c269b60c1745d754b",
+        "exit": 0,
+        "diagnostics": {
+          "unparseable_lines": 1,
+          "unknown_payload_kinds": 0,
+          "gaps": 0,
+          "omitted_live_only": 0,
+          "duplicate_records": 0
+        },
+        "stderr_bytes": 0
+      },
+      {
+        "name": "source-nonascii-escaped-recomputed",
+        "input_sha256": "d38ca12f001e51e847ac63e71a89d435f8e5f834c2d8d6f02fb648e458ed6edd",
+        "exit": 0,
+        "diagnostics": {
+          "unparseable_lines": 1,
+          "unknown_payload_kinds": 0,
+          "gaps": 0,
+          "omitted_live_only": 0,
+          "duplicate_records": 0
+        },
+        "stderr_bytes": 0
+      },
+      {
+        "name": "outer-order-stale",
+        "input_sha256": "de7b5d4d7c36acfd854b4b279a8075e1a876dbb5e274962600b24040ff234921",
+        "exit": 0,
+        "diagnostics": {
+          "unparseable_lines": 1,
+          "unknown_payload_kinds": 0,
+          "gaps": 0,
+          "omitted_live_only": 0,
+          "duplicate_records": 0
+        },
+        "stderr_bytes": 0
+      },
+      {
+        "name": "outer-order-recomputed",
+        "input_sha256": "de7b5d4d7c36acfd854b4b279a8075e1a876dbb5e274962600b24040ff234921",
+        "exit": 0,
+        "diagnostics": {
+          "unparseable_lines": 1,
+          "unknown_payload_kinds": 0,
+          "gaps": 0,
+          "omitted_live_only": 0,
+          "duplicate_records": 0
+        },
+        "stderr_bytes": 0
+      },
+      {
+        "name": "child-outer-order-stale",
+        "input_sha256": "b58a14edb971f81fa4e5e307ddefa06e6d31d1d695a37b8d0cec3fd64a843fde",
+        "exit": 0,
+        "diagnostics": {
+          "unparseable_lines": 1,
+          "unknown_payload_kinds": 0,
+          "gaps": 0,
+          "omitted_live_only": 0,
+          "duplicate_records": 0
+        },
+        "stderr_bytes": 0
+      },
+      {
+        "name": "child-outer-order-recomputed",
+        "input_sha256": "b58a14edb971f81fa4e5e307ddefa06e6d31d1d695a37b8d0cec3fd64a843fde",
+        "exit": 0,
+        "diagnostics": {
+          "unparseable_lines": 1,
+          "unknown_payload_kinds": 0,
+          "gaps": 0,
+          "omitted_live_only": 0,
+          "duplicate_records": 0
+        },
+        "stderr_bytes": 0
+      }
+    ]
+  },
+  "limitations": [
+    "All nine held-out native frames and the fresh final-source native frame have schema 1, ordinal 1 and two children.",
+    "Artificial known answers exercise alternate child counts and UTF-8 encoding only; they are not admissible native transactions. A later real ordinal-2 fork frame independently matches the byte recipe but remains outside initial-root authority.",
+    "Non-ASCII display-name and ASCII-control mutations both reject even with recomputed hashes; native multibyte child acceptance remains unqualified.",
+    "Canonical outer grammar, permission profiles, child ordering/semantics and future/checkpoint schemas need independent qualification.",
+    "Copies preserve hashes and identity; root-creation.md separately qualifies narrow reserved logical-start semantics. Complete creation/admission validation remains unimplemented.",
+    "Historical results, exact native vector manifests and derived corpus provenance were not rewritten. No native permission bodies, provider contexts, binary or disassembly were added."
+  ],
+  "later_fork_encoding_holdouts": {
+    "runner_sha256": "70fc31096b61c55b2e86c28bdb1b17835fadb6eb9a8dea7d0f17bc4e7b25c8cc",
+    "scope": "Encoding only; fork is excluded from the initial-root authority lane",
+    "vectors": [
+      {
+        "label": "fork-source",
+        "producer": "1.4.9-R6297.1",
+        "native_file_sha256": "e5f51f779dd696a4985bdd2dfe8019341c44a51e8ca62271d2e712b84505e6c8",
+        "native_line_sha256": "f027477fb6de1fbbbf14f0edd94ac880e2aac0a8dbccaa34b04dabda4113b1bc",
+        "physical_line": 1,
+        "outer_log_ordinal": 1,
+        "children": 2,
+        "child_utf8_bytes": [
+          385,
+          2018
+        ],
+        "cause": "new_session_default",
+        "expected": "sha256:ae2717d88b334cff500b8014c83a87f75c8f73ba9aef8c82719a53a9c190003f",
+        "computed": "sha256:ae2717d88b334cff500b8014c83a87f75c8f73ba9aef8c82719a53a9c190003f",
+        "matches": true
+      },
+      {
+        "label": "fork",
+        "producer": "1.4.9-R6297.1",
+        "native_file_sha256": "915042a3e7465fb74e0fe97ee6841094199a4dbec6bdc9a3da0f1a5c3e69a6c3",
+        "native_line_sha256": "2cf178b904e71f617ad7b6e600ec318f2c764e0eefdbd2488ddf3a6768edfc71",
+        "physical_line": 2,
+        "outer_log_ordinal": 2,
+        "children": 2,
+        "child_utf8_bytes": [
+          385,
+          2003
+        ],
+        "cause": "fork",
+        "expected": "sha256:5071bc403f5c17c2503e295b107ba766585ccf2b6301f9e6d3c265c13557dba6",
+        "computed": "sha256:5071bc403f5c17c2503e295b107ba766585ccf2b6301f9e6d3c265c13557dba6",
+        "matches": true
+      }
+    ],
+    "raw_results_sha256": "b5317ab3f08bfddcc2206752dc032cebf7a2f7252250115a3c217af434bf3c68"
+  },
+  "distinct_native_heldout_frames_total": 11
+}
