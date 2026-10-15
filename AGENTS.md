@@ -29,8 +29,9 @@ Follow [CONTRIBUTING.md](CONTRIBUTING.md) for the contribution workflow.
 
 ## Protect the user's machine and data
 
-- Never develop or test setup, uninstall, sync, or backfill against real home
-  directories, app settings, schedulers, Keychains, Cursor databases, or buckets.
+- Unless explicitly instructed by the user, do not develop or test setup,
+  uninstall, sync, or backfill against real home directories, app settings,
+  schedulers, Keychains, Cursor databases, or buckets.
 - Prefer injected `Env`, temporary directories, in-memory stores, and existing
   fakes. Manual macOS checks need temporary `HOME`, `AGENT_ARCHIVE_HOME`, and
   stubbed `launchctl`; follow the testing guide's complete recipe.
