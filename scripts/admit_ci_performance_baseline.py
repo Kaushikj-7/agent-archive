@@ -78,18 +78,20 @@ def main():
     parser.add_argument('--history-sample', nargs=3, action='append', default=[],
                         metavar=('TOPOLOGY', 'PIPELINE', 'WORKERS'),
                         help='Additional authenticated ordinary sample; repeats do not increase sample size')
+    parser.add_argument('--allow-legacy-compiled-catalog', action='store_true',
+                        help='Offline review only: validate original schema-3 compiled receipts; live CI still requires schema 4')
     args = parser.parse_args()
     try:
         topology = gate.read(args.topology)
         paths = sorted(args.workers.glob('*/manifest.json'))
-        rows = gate.normalize_workers(paths, topology, verify_coverage=True)
+        rows = gate.normalize_workers(paths, topology, verify_coverage=True, allow_legacy=args.allow_legacy_compiled_catalog)
         if len(args.history_sample) > 30:
             raise ValueError('history exceeds bounded ordinary sample count')
         history = []
         for topology_path, pipeline_path, workers_path in args.history_sample:
             old_topology = gate.read(Path(topology_path))
             old_paths = sorted(Path(workers_path).glob('*/manifest.json'))
-            history.append((gate.normalize_workers(old_paths, old_topology, verify_coverage=True), old_topology, gate.read(Path(pipeline_path))))
+            history.append((gate.normalize_workers(old_paths, old_topology, verify_coverage=True, allow_legacy=args.allow_legacy_compiled_catalog), old_topology, gate.read(Path(pipeline_path))))
         result = admit(gate.read(args.policy), rows, topology, gate.read(args.pipeline), history)
         args.output.write_text(json.dumps(result, indent=2) + '\n')
         print('Review candidate only: commit after validating source evidence and maintainer review; never automatically promote.')

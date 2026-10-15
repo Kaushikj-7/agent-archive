@@ -35367,5 +35367,41 @@
     ]
   },
   "parallel_budgets": {},
-  "work_budgets": []
+  "work_budgets": [
+    {
+      "test_id": "github.com/wangjohn/agent-archive/internal/cli::TestRealCLICatalogCommandsEqualPrivateExhaustiveOracle",
+      "fixture": "private_catalog",
+      "phase": "construct",
+      "operation": "constructors",
+      "maximum": 1
+    },
+    {
+      "test_id": "github.com/wangjohn/agent-archive/internal/cli::TestRealCLICatalogCommandsEqualPrivateExhaustiveOracle",
+      "fixture": "private_catalog",
+      "phase": "publication",
+      "operation": "commits",
+      "maximum": 4
+    },
+    {
+      "test_id": "github.com/wangjohn/agent-archive/internal/cli::TestQualificationLargeFixturesDoNotRetainProcessSeeds",
+      "fixture": "qualification",
+      "phase": "build",
+      "operation": "constructors",
+      "maximum": 2
+    },
+    {
+      "test_id": "github.com/wangjohn/agent-archive/internal/cli::TestQualificationLargeFixturesDoNotRetainProcessSeeds",
+      "fixture": "qualification",
+      "phase": "build",
+      "operation": "entry_encodes",
+      "maximum": 2802
+    },
+    {
+      "test_id": "github.com/wangjohn/agent-archive/internal/catalog::TestPickerReaderFixturesOwnAuthorityBodiesAndMetadata",
+      "fixture": "picker_reader",
+      "phase": "clone",
+      "operation": "store_clones",
+      "maximum": 3
+    }
+  ]
 }

@@ -32,6 +32,7 @@ def worker(index):
 
 def policy():
     result = json.loads(Path(gate.__file__).with_name('ci_performance_policy.json').read_text())
+    result['work_budgets'] = []
     ids = [PREFIX + 'Test' + str(i) for i in range(8)]
     result['baseline'] = {'inventory': ids, 'groups': [],
         'metric': 'maximum-parent-or-descendant-terminal-elapsed', 'provenance': {
@@ -64,6 +65,92 @@ def approved(**changes):
 
 
 class GateTests(unittest.TestCase):
+    def test_offline_legacy_admission_is_explicit_and_retains_body_validation(self):
+        import test_go_parent_shards as parent_fixture
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            parent_fixture.evidence(root, parent_fixture.catalog())
+            paths = sorted(root.glob('*/manifest.json'))
+            topology = dict(receipt(), source=parent_fixture.SOURCE['source'], tree=parent_fixture.SOURCE['tree'])
+            for path in paths:
+                manifest = gate.read(path)
+                manifest['catalog']['schema'] = 3
+                manifest['catalog_sha256'] = parent_fixture.r.digest(manifest['catalog'])
+                path.write_text(json.dumps(manifest))
+                (path.parent/'listing-combined.json').unlink()
+            with self.assertRaisesRegex(ValueError, 'raw compiled catalog invalid'):
+                gate.verify_raw_coverage(paths, topology)
+            gate.verify_raw_coverage(paths, topology, allow_legacy=True)
+            # Opt-in accepts the old discovery format, never missing bodies.
+            assignment = gate.read(paths[0])['coverage']
+            package = next(iter(assignment['parents']))
+            log = paths[0].parent/parent_fixture.p.log_name(package)
+            events = parent_fixture.r.json_stream(log.read_text())
+            missing = assignment['parents'][package][0]
+            log.write_text(parent_fixture.rows([event for event in events
+                           if event.get('Test', '').split('/')[0] != missing]))
+            with self.assertRaisesRegex(ValueError, 'raw compiled coverage invalid'):
+                gate.verify_raw_coverage(paths, topology, allow_legacy=True)
+
+    def test_actual_fixture_receipts_activate_every_checked_in_budget(self):
+        checked = gate.read(Path(gate.__file__).with_name('ci_performance_policy.json'))
+        self.assertEqual(len(checked['work_budgets']), 5)
+        self.policy['work_budgets'] = checked['work_budgets']
+        proof = gate.read(Path(__file__).with_name('testdata')/'fixture_work_receipts.json')
+        events = proof['events']
+        metrics = norm.fixtures(events)
+        identities = sorted({budget['test_id'] for budget in checked['work_budgets']})
+        self.assertEqual(set(identities), {row['test_id'] for row in metrics})
+        for index, ident in enumerate(identities):
+            self.rows[index]['tests'][0]['test_id'] = ident
+            self.rows[index]['fixture_metrics'] = [row for row in metrics if row['test_id'] == ident]
+        self.assertTrue(self.run_gate()['passed'])
+        original = copy.deepcopy(self.rows)
+        for budget in checked['work_budgets']:
+            with self.subTest(budget=budget):
+                self.rows = copy.deepcopy(original)
+                owner = next(row for row in self.rows if row['tests'][0]['test_id'] == budget['test_id'])
+                selected = [row for row in owner['fixture_metrics']
+                            if row['fixture'] == budget['fixture'] and row['phase'] == budget['phase']]
+                self.assertEqual(sum(row['operations'][budget['operation']] for row in selected), budget['maximum'])
+                selected[0]['operations'][budget['operation']] += 1
+                self.assertFalse(self.run_gate()['passed'])
+                self.rows = copy.deepcopy(original)
+                owner = next(row for row in self.rows if row['tests'][0]['test_id'] == budget['test_id'])
+                selected = next(row for row in owner['fixture_metrics']
+                                if row['fixture'] == budget['fixture'] and row['phase'] == budget['phase'])
+                del selected['operations'][budget['operation']]
+                with self.assertRaisesRegex(ValueError, 'fixture metric missing'):
+                    self.run_gate()
+                self.rows = copy.deepcopy(original)
+                owner = next(row for row in self.rows if row['tests'][0]['test_id'] == budget['test_id'])
+                owner['fixture_metrics'] = [row for row in owner['fixture_metrics']
+                                           if row['fixture'] != budget['fixture'] or row['phase'] != budget['phase']]
+                with self.assertRaisesRegex(ValueError, 'fixture metric missing'):
+                    self.run_gate()
+                self.rows = copy.deepcopy(original)
+                owner = next(row for row in self.rows if row['tests'][0]['test_id'] == budget['test_id'])
+                owner['tests'] = []
+                owner['fixture_metrics'] = []
+                with self.assertRaisesRegex(ValueError, 'fixture parent missing'):
+                    self.run_gate()
+        self.rows = copy.deepcopy(original)
+        # Both real 1401-row build receipts belong to the same parent. Repeating
+        # either must exceed the aggregate constructor and encoding ceilings.
+        owner = next(row for row in self.rows if 'LargeFixtures' in row['tests'][0]['test_id'])
+        owner['fixture_metrics'].append(copy.deepcopy(owner['fixture_metrics'][0]))
+        self.assertFalse(self.run_gate()['passed'])
+        self.rows = copy.deepcopy(original)
+        # Moving genuine work to another valid enclosing test cannot satisfy its
+        # source owner's required phase, even when the operation count matches.
+        owner = next(row for row in self.rows if 'LargeFixtures' in row['tests'][0]['test_id'])
+        other = self.rows[7]
+        for metric in owner['fixture_metrics']:
+            metric['test_id'] = other['tests'][0]['test_id']
+        other['fixture_metrics'], owner['fixture_metrics'] = owner['fixture_metrics'], []
+        with self.assertRaisesRegex(ValueError, 'fixture metric missing'):
+            self.run_gate()
+
     def test_checked_in_policy_has_admitted_baseline(self):
         checked = gate.policy_check(gate.read(Path(gate.__file__).with_name('ci_performance_policy.json')))
         baseline = checked['baseline']
