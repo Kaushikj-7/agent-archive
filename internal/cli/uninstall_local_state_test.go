@@ -103,7 +103,7 @@ func TestDeleteLocalDataRemovesEveryLocalStoreEntry(t *testing.T) {
 // hand. uninstall --delete-local-data removes exactly these, no more and no
 // fewer; an entry added to either list later is added here too, on purpose.
 var handListedLocalState = []string{
-	"session-membership.json", "session-membership.lock", "session-index-recovery.json",
+	"session-membership.json", "session-membership.lock", "session-index-recovery.json", "session-index-absence.json",
 	"config.json", "setup-draft.json", "setup-transaction.json",
 	"registrations", "requests", "request-locks", "published", "pending", "sessions", "sessions-v1", "sessions-packed-v1", "superseded", "pending-scans", "scan-signatures", "subagent-candidates", "forgotten", "refresh-skips", "listing-repairs", "imports",
 	"generation-heads", "generation-nodes", "generation-recovery",
