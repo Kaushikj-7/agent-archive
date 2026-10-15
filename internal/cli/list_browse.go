@@ -1224,47 +1224,47 @@ func (b *sessionBrowser) searchDetails(ctx context.Context, row listRow) (browse
 		lines := searchContextLines(hit, ref, out, notice)
 		screen := b.drawSearchDetails(lines, top)
 		answer := s.pendingAction
-		s.pendingAction = ""
+		s.pendingAction = searchActionNone
 		// Pending actions apply only after readSearchSelection joined its read.
-		if answer == "" {
+		if answer == searchActionNone {
 			var err error
 			answer, err = b.searchDetailAction(&screen)
 			if err != nil {
 				return endOfInput(err)
 			}
 			top = screen.top
-			if answer == "" {
+			if answer == searchActionNone {
 				continue
 			}
 		}
 		switch answer {
-		case "pgdn", "pgup", "down", "up", "home", "end":
-			move := map[string]scrollMove{"pgdn": scrollPageDown, "pgup": scrollPageUp, "down": scrollLineDown, "up": scrollLineUp, "home": scrollTop, "end": scrollBottom}[answer]
+		case searchActionPageDown, searchActionPageUp, searchActionDown, searchActionUp, searchActionHome, searchActionEnd:
+			move := map[contentSearchAction]scrollMove{searchActionPageDown: scrollPageDown, searchActionPageUp: scrollPageUp, searchActionDown: scrollLineDown, searchActionUp: scrollLineUp, searchActionHome: scrollTop, searchActionEnd: scrollBottom}[answer]
 			screen.scroll(move)
 			top = screen.top
-		case "b", "":
+		case searchActionBack, searchActionNone:
 			return browseBack, nil
-		case "q":
+		case searchActionQuit:
 			return browseQuit, nil
-		case "h":
+		case searchActionHandoff:
 			s.handoff = &row
 			return browseQuit, nil
-		case "r":
+		case searchActionRerun:
 			s.rerun = true
 			_, err := s.load(ctx)
 			b.list.memo, b.list.cache, b.list.bottom = nil, nil, nil
 			b.list.start = 0
 			return browseBack, err
-		case "m":
+		case searchActionMore:
 			if ref != nil && out.Selected.Next != 0 {
 				read(out.Selected.Next)
 				top = 0
 			} else {
 				notice = "No more raw context in this message."
 			}
-		case "n", "p":
+		case searchActionNext, searchActionPrevious:
 			direction := 1
-			if answer == "p" {
+			if answer == searchActionPrevious {
 				direction = -1
 			}
 			selected, err := s.moveMatch(ctx, hit, ref, direction, &navigation)
@@ -1282,34 +1282,34 @@ func (b *sessionBrowser) searchDetails(ctx context.Context, row listRow) (browse
 	}
 }
 
-func (b *sessionBrowser) searchDetailAction(screen *detailsScreen) (string, error) {
+func (b *sessionBrowser) searchDetailAction(screen *detailsScreen) (contentSearchAction, error) {
 	if b.keys == nil {
 		answer, err := b.prompt.line(": ")
 		if err != nil {
-			return "", err
+			return searchActionNone, err
 		}
 		answer = strings.ToLower(strings.TrimSpace(answer))
 		if answer == "" {
-			answer = "b"
+			answer = string(searchActionBack)
 		}
-		return answer, nil
+		return contentSearchAction(answer), nil
 	}
 	k, err := b.keys.next()
 	if err != nil {
-		return "", err
+		return searchActionNone, err
 	}
 	if move, ok := scrollKeys[k.kind]; ok {
 		screen.scroll(move)
-		return "", nil
+		return searchActionNone, nil
 	}
 	switch k.kind {
 	case keyEnter, keyBackspace:
-		return "b", nil
+		return searchActionBack, nil
 	case keyEndOfInput:
-		return "q", nil
+		return searchActionQuit, nil
 	case keyRune:
-		return strings.ToLower(string(k.r)), nil
+		return contentSearchAction(strings.ToLower(string(k.r))), nil
 	case keyEscape, keyResize, keyUp, keyDown, keyPageUp, keyPageDown, keyHome, keyEnd, keyLeft, keyRight:
 	}
-	return "", nil
+	return searchActionNone, nil
 }

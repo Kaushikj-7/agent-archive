@@ -599,13 +599,6 @@ Example: agent-archive list --skill review-pr --skill-sha256 HASH --since 7d
 
 Guide: [Search conversation text](../guides/search.md).
 
-On an interactive terminal, query results use the shared browser: select a
-snippet, read its exact bounded context, navigate matching passages with n/p,
-and use h (**Hand off current session**) through the existing handoff gates.
-The original query and scope stay fixed; r explicitly reruns after an index
-change. `/` metadata filtering is disabled here. JSON and piped output remain
-ordinary bounded documents. See the guide for result/match retention caps.
-
 ```text
 Usage: agent-archive search "QUERY" [options]
        agent-archive search --refresh [--session SESSION_ID --harness NAME]
@@ -619,6 +612,10 @@ session is named. It does not install or enable automatic indexing.
 Words are ANDed, quotes match phrases, and a trailing * enables prefix matching.
 Punctuation splits words; this is keyword search, not substring/semantic search.
 References bind exact source revisions. Reads print escaped, quoted text.
+On an interactive terminal, browse ranked snippets and exact bounded context.
+Use n/p for matching body passages, r to rerun the fixed query, and h to
+hand off the current session through existing gates. Metadata / filtering is
+disabled. JSON and piped output remain bounded documents.
   --json              Print one versioned bounded JSON document
   --refresh           Run a bounded verified archive refresh
   --session SESSION_ID  Exact refresh target; requires --harness

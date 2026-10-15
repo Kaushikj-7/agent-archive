@@ -144,7 +144,10 @@ func BenchmarkSessionMatchPages(b *testing.B) {
 			if err != nil {
 				b.Fatal(err)
 			}
-			for _, tc := range []struct{ name, cursor string }{{"first", ""}, {"forward", first.Next}, {"reverse", second.Previous}} {
+			for _, tc := range []struct {
+				name   string
+				cursor string
+			}{{"first", ""}, {"forward", first.Next}, {"reverse", second.Previous}} {
 				b.Run(tc.name, func(b *testing.B) {
 					b.ReportAllocs()
 					for b.Loop() {
@@ -223,6 +226,7 @@ func TestSessionMatchQueryPlanWithUnrelatedCommonHits(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		defer func() { _ = plan.Close() }()
 		var details []string
 		for plan.Next() {
 			var id, parent, unused int

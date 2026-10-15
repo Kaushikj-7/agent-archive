@@ -33,13 +33,12 @@ type contentSearchBrowser struct {
 	notice        string
 	handoff       *listRow
 	generation    uint64
-	pendingAction string
+	pendingAction contentSearchAction
 }
 
 func runContentSearchBrowser(ctx context.Context, env searchCommandDependencies, cfg config.Config, namespace string, index *search.Store, page search.Page, opts contentSearchOptions, stdout, stderr io.Writer) (listRow, bool, *typedInput, int) {
-	s := &contentSearchBrowser{env: env, cfg: cfg, namespace: namespace, index: index, opts: opts, page: page, hits: page.Hits, pages: 1}
 	format := listFormatOptions{Search: true, Numbered: true, HideProject: true, Now: env.now(), NarrowHint: "o next indexed results, or narrow the content query and rerun."}
-	s.choices = rowChoices(nil, format)
+	s := &contentSearchBrowser{env: env, cfg: cfg, namespace: namespace, index: index, opts: opts, page: page, hits: page.Hits, pages: 1, choices: rowChoices(nil, format)}
 	s.choices.loadOlder = &browserLoadAction{LoadContext: s.load, Available: func() bool { return true }}
 	s.installRows()
 	input := newTypedInput(opts.stdin)
@@ -78,8 +77,25 @@ func (s *contentSearchBrowser) installRows() {
 	if scope == "" {
 		scope = "original project scope"
 	}
-	coverage := "Scope: " + scope + ". " + fmt.Sprintf("%d indexed; %d pending; %d failed. Remote changes after observation are unknown.", s.page.Observation.Indexed, s.page.Observation.Pending, s.page.Observation.Failed)
-	notice := coverage
+	var coverage strings.Builder
+	coverage.WriteString("Scope: " + scope + ".\n")
+	observation := s.page.Observation
+	_, _ = fmt.Fprintf(&coverage, "%d indexed / %d locally known.\n%d pending; %d failed.\n%d unsupported sources.\n", observation.Indexed, observation.Known, observation.Pending, observation.Failed, observation.Unsupported)
+	if observation.Complete {
+		coverage.WriteString("Coverage complete at last observation.\n")
+	} else {
+		coverage.WriteString("Coverage incomplete; matching history may be missing.\n")
+	}
+	if observation.Rechecks > 0 {
+		_, _ = fmt.Fprintf(&coverage, "%d identity rechecks pending.\n", observation.Rechecks)
+	}
+	if observation.LastObserved.IsZero() {
+		coverage.WriteString("Archive freshness unknown; no observation recorded.\n")
+	} else {
+		coverage.WriteString("Last observed: " + observation.LastObserved.UTC().Format(time.RFC3339) + ".\n")
+	}
+	coverage.WriteString("Remote changes after observation are unknown.")
+	notice := coverage.String()
 	if s.notice != "" {
 		notice += " " + s.notice
 	}
@@ -162,6 +178,25 @@ func (l *sessionPicker) listQuestion(action string) string {
 	return "Enter number (or unique short SESSION_ID) to " + action + ", words to filter, or q to quit"
 }
 
+type contentSearchAction string
+
+const (
+	searchActionNone     contentSearchAction = ""
+	searchActionQuit     contentSearchAction = "q"
+	searchActionNext     contentSearchAction = "n"
+	searchActionPrevious contentSearchAction = "p"
+	searchActionMore     contentSearchAction = "m"
+	searchActionBack     contentSearchAction = "b"
+	searchActionHandoff  contentSearchAction = "h"
+	searchActionRerun    contentSearchAction = "r"
+	searchActionPageDown contentSearchAction = "pgdn"
+	searchActionPageUp   contentSearchAction = "pgup"
+	searchActionDown     contentSearchAction = "down"
+	searchActionUp       contentSearchAction = "up"
+	searchActionHome     contentSearchAction = "home"
+	searchActionEnd      contentSearchAction = "end"
+)
+
 type searchContextResult struct {
 	context    search.Surrounding
 	err        error
@@ -207,7 +242,6 @@ func (b *sessionBrowser) readSearchSelection(ctx context.Context, ref search.Ref
 		}
 	}()
 	terminal.Println(b.stdout, "Loading selected passage… Esc cancels")
-	typedAhead := b.keys != nil && b.keys.buffered() || b.keys == nil && b.prompt.in.Buffered() > 0
 	for {
 		select {
 		case r := <-done:
@@ -223,62 +257,57 @@ func (b *sessionBrowser) readSearchSelection(ctx context.Context, ref search.Ref
 			return search.Surrounding{}, ctx.Err()
 		default:
 		}
-		if typedAhead {
-			r := join()
-			if r.generation != s.generation || ctx.Err() != nil {
-				return search.Surrounding{}, context.Canceled
-			}
-			return r.context, r.err
-		}
 		answer, err := b.searchReadAction()
 		if err != nil {
 			return search.Surrounding{}, err
 		}
 		switch answer {
-		case "q":
+		case searchActionQuit:
 			b.list.operationQuit = true
 			return search.Surrounding{}, context.Canceled
-		case "n", "p", "m", "b", "h", "r":
+		case searchActionNext, searchActionPrevious, searchActionMore, searchActionBack, searchActionHandoff, searchActionRerun:
 			s.pendingAction = answer
 			return search.Surrounding{}, context.Canceled
+		case searchActionNone, searchActionPageDown, searchActionPageUp, searchActionDown, searchActionUp, searchActionHome, searchActionEnd:
 		}
 	}
 }
 
 func searchContextLines(h search.Hit, ref *search.Reference, out search.Surrounding, notice string) []string {
-	text := archive.DisplayLine(h.Harness) + " / " + archive.DisplayLine(h.SessionID) + "\n" + archive.DisplayLine(h.Title) + "\n"
+	var text strings.Builder
+	text.WriteString(archive.DisplayLine(h.Harness) + " / " + archive.DisplayLine(h.SessionID) + "\n" + archive.DisplayLine(h.Title) + "\n")
 	for _, gap := range h.Gaps[:min(len(h.Gaps), 3)] {
-		text += "Coverage gap: " + oneRow(archive.DisplayLine(gap.RevisionID+": "+gap.Reason), 160) + "\n"
+		text.WriteString("Coverage gap: " + oneRow(archive.DisplayLine(gap.RevisionID+": "+gap.Reason), 160) + "\n")
 	}
 	if len(h.Gaps) > 3 {
-		text += "Additional source coverage gaps are reported in JSON.\n"
+		text.WriteString("Additional source coverage gaps are reported in JSON.\n")
 	}
 	if ref == nil {
-		text += "Title match: no body passage reference. n loads matching body passages if available.\n"
+		text.WriteString("Title match: no body passage reference. n loads matching body passages if available.\n")
 	} else {
 		revision := "active source"
 		if ref.Source.RevisionID != "" {
 			revision = archive.DisplayLine(ref.Source.RevisionID)
 		}
-		text += "Source revision: " + revision + "\n"
-		text += fmt.Sprintf("Reference: message %d · raw bytes %d–%d · source %s\n", ref.Record, ref.Start, ref.End, archive.DisplayLine(ref.Source.Reference.SHA256))
+		text.WriteString("Source revision: " + revision + "\n")
+		_, _ = fmt.Fprintf(&text, "Reference: message %d · raw bytes %d–%d · source %s\n", ref.Record, ref.Start, ref.End, archive.DisplayLine(ref.Source.Reference.SHA256))
 		for _, v := range out.Before {
-			text += "[before · " + archive.DisplayLine(v.Role) + "]\n" + searchDisplayText(v.Context.Text) + "\n"
+			text.WriteString("[before · " + archive.DisplayLine(v.Role) + "]\n" + searchDisplayText(v.Context.Text) + "\n")
 		}
-		text += "[selected · " + archive.DisplayLine(out.Role) + "]\n" + searchDisplayText(out.Selected.Text) + "\n"
+		text.WriteString("[selected · " + archive.DisplayLine(out.Role) + "]\n" + searchDisplayText(out.Selected.Text) + "\n")
 		for _, v := range out.After {
-			text += "[after · " + archive.DisplayLine(v.Role) + "]\n" + searchDisplayText(v.Context.Text) + "\n"
+			text.WriteString("[after · " + archive.DisplayLine(v.Role) + "]\n" + searchDisplayText(v.Context.Text) + "\n")
 		}
-		text += fmt.Sprintf("Passage bytes %d–%d", out.Selected.Start, out.Selected.End)
+		_, _ = fmt.Fprintf(&text, "Passage bytes %d–%d", out.Selected.Start, out.Selected.End)
 		if out.Selected.Next != 0 {
-			text += fmt.Sprintf("; m more context at raw offset %d", out.Selected.Next)
+			_, _ = fmt.Fprintf(&text, "; m more context at raw offset %d", out.Selected.Next)
 		}
-		text += "\n"
+		text.WriteString("\n")
 	}
 	if notice != "" {
-		text += archive.DisplayLine(notice) + "\n"
+		text.WriteString(archive.DisplayLine(notice) + "\n")
 	}
-	return strings.Split(strings.TrimSuffix(text, "\n"), "\n")
+	return strings.Split(strings.TrimSuffix(text.String(), "\n"), "\n")
 }
 
 func searchDisplayText(text string) string {
@@ -312,33 +341,33 @@ func (b *sessionBrowser) drawSearchDetails(lines []string, top int) detailsScree
 
 // searchReadAction consumes only one currently available input action. The
 // caller joins its read before applying an action that replaces the selection.
-func (b *sessionBrowser) searchReadAction() (string, error) {
+func (b *sessionBrowser) searchReadAction() (contentSearchAction, error) {
 	if b.keys == nil {
 		line, complete, err := b.list.pollBrowserLine(b.prompt)
 		if err != nil || !complete {
-			return "", err
+			return searchActionNone, err
 		}
 		if line == "" {
-			return "b", nil
+			return searchActionBack, nil
 		}
-		return strings.ToLower(line), nil
+		return contentSearchAction(strings.ToLower(line)), nil
 	}
 	k, err := b.keys.nextWait(50 * time.Millisecond)
 	if err != nil {
-		return "", err
+		return searchActionNone, err
 	}
 	switch k.kind {
 	case keyEscape:
-		return "", context.Canceled
+		return searchActionNone, context.Canceled
 	case keyEndOfInput:
-		return "q", nil
+		return searchActionQuit, nil
 	case keyRune:
-		return strings.ToLower(string(k.r)), nil
+		return contentSearchAction(strings.ToLower(string(k.r))), nil
 	case keyEnter, keyBackspace:
-		return "b", nil
+		return searchActionBack, nil
 	case keyUp, keyDown, keyLeft, keyRight, keyPageUp, keyPageDown, keyHome, keyEnd, keyResize:
 	}
-	return "", nil
+	return searchActionNone, nil
 }
 
 type searchMatchNavigation struct {

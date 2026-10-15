@@ -44,8 +44,8 @@ func BenchmarkVerifiedProjection(b *testing.B) {
 	b.ReportMetric(1, "parse/op")
 }
 
-func benchmarkCorpus(b testing.TB, s *Store, count, messages int) {
-	b.Helper()
+func benchmarkCorpus(tb testing.TB, s *Store, count, messages int) {
+	tb.Helper()
 	for i := range count {
 		m, p := testProjection(fmt.Sprintf("session-%06d", i), fmt.Sprintf("common upload checksum foo_bar.go rare%d", i))
 		m.ProjectID = fmt.Sprintf("project-%d", i%100)
@@ -54,8 +54,8 @@ func benchmarkCorpus(b testing.TB, s *Store, count, messages int) {
 			next.Reference.Record = n
 			p.Passages = append(p.Passages, next)
 		}
-		if _, err := s.Replace(b.Context(), m, []Projection{p}); err != nil {
-			b.Fatal(err)
+		if _, err := s.Replace(tb.Context(), m, []Projection{p}); err != nil {
+			tb.Fatal(err)
 		}
 	}
 }
@@ -88,20 +88,27 @@ func BenchmarkColdIndex(b *testing.B) {
 			b.Fatal(err)
 		}
 		benchmarkCorpus(b, s, 250, 20)
-		var bytes int64
-		for _, suffix := range []string{"", "-wal", "-shm"} {
-			info, e := os.Stat(filepath.Join(dir, "content.sqlite") + suffix)
-			if e == nil {
-				bytes += info.Size()
-			} else if !os.IsNotExist(e) {
-				b.Fatal(e)
-			}
-		}
-		b.ReportMetric(float64(bytes), "disk_B")
+		b.ReportMetric(float64(benchmarkDiskBytes(b, dir)), "disk_B")
 		b.ReportMetric(5000, "FTS_insert/op")
 		b.ReportMetric(0, "source_GET/op")
 		if err = s.Close(); err != nil {
 			b.Fatal(err)
 		}
 	}
+}
+
+// benchmarkDiskBytes includes live database, WAL and shared-memory file lengths.
+// Logical deletion need not return these allocated bytes to the filesystem.
+func benchmarkDiskBytes(tb testing.TB, dir string) int64 {
+	tb.Helper()
+	var total int64
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		info, err := os.Stat(filepath.Join(dir, "content.sqlite") + suffix)
+		if err == nil {
+			total += info.Size()
+		} else if !os.IsNotExist(err) {
+			tb.Fatal(err)
+		}
+	}
+	return total
 }

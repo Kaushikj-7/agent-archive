@@ -18,13 +18,13 @@ type MatchPage struct {
 }
 
 type matchCursor struct {
-	Generation int64
-	Query      string
-	Session    string
-	Score      float64
-	Role       int
-	Passage    int64
-	Reverse    bool
+	Generation int64   `json:"Generation"`
+	Query      string  `json:"Query"`
+	Session    string  `json:"Session"`
+	Score      float64 `json:"Score"`
+	Role       int     `json:"Role"`
+	Passage    int64   `json:"Passage"`
+	Reverse    bool    `json:"Reverse"`
 }
 
 // Matches reads one bounded page of matching body passages without reading any
@@ -65,6 +65,7 @@ func (s *Store) Matches(ctx context.Context, q Query, harness, session string, g
 	if err != nil {
 		return page, err
 	}
+	defer func() { _ = rows.Close() }()
 	type selected struct {
 		pid   int64
 		score float64

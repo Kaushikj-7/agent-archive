@@ -5,12 +5,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/search"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
@@ -42,12 +45,16 @@ func TestSearchBrowserKeysAndLinesKeepExactBodyReference(t *testing.T) {
 				t.Fatal(err)
 			}
 			var fake *fakeKeys
-			input := "1\nn\np\nb\nq\n"
 			if keyed {
 				fake = newFakeKeys("1\r", later(100*time.Millisecond, "n"), "p", "b", "q")
-				input = ""
 			}
-			out, errOut, code := runOnTerminal(t, env, fake, input, "search", "visible", "--all-projects")
+			var out, errOut string
+			var code int
+			if keyed {
+				out, errOut, code = runOnTerminal(t, env, fake, "", "search", "visible", "--all-projects")
+			} else {
+				out, errOut, code = runSearchAfterContext(t, env, "n\np\nb\nq\n")
+			}
 			if code != 0 {
 				t.Fatalf("%d %s %s", code, errOut, out)
 			}
@@ -191,7 +198,7 @@ func TestSearchSelectedReadCancelsAndJoinsBeforeReturning(t *testing.T) {
 				if !b.list.operationQuit {
 					t.Fatal("quit lost")
 				}
-			} else if b.search.pendingAction != action {
+			} else if b.search.pendingAction != contentSearchAction(action) {
 				t.Fatalf("replacement action lost: %q", b.search.pendingAction)
 			}
 		})
@@ -293,7 +300,7 @@ func TestSearchSnippetRowsFitNarrowSharedBrowserMeasurements(t *testing.T) {
 	if err := printSessionGroups(&rendered, pageSessionGroups(groups, pickerPage{screen.start, screen.end}), (&pickerView{format: format}).formatFor(36)); err != nil {
 		t.Fatal(err)
 	}
-	for _, line := range strings.Split(rendered.String(), "\n") {
+	for line := range strings.SplitSeq(rendered.String(), "\n") {
 		if visibleWidth(line) > 36 {
 			t.Fatalf("oversized row: %q", line)
 		}
@@ -376,4 +383,141 @@ func TestSearchResultsKeepRelevanceAcrossOrdinaryActivityDays(t *testing.T) {
 	if got := groupSummary(sessionTableGroups(rows, format)); got != "TODAY: 2 | YESTERDAY: 3 | OLDER: 1" {
 		t.Fatalf("ordinary activity groups changed: %s", got)
 	}
+}
+
+func TestSearchBufferedActionsCancelAndJoinSelectedRead(t *testing.T) {
+	for _, keyed := range []bool{false, true} {
+		for _, action := range []string{"q", "b", "h", "n"} {
+			t.Run(fmt.Sprintf("keys%v/%s", keyed, action), func(t *testing.T) {
+				env, objects, _ := prepareSearchBrowser(t)
+				home, _ := env.readHome()
+				cfg, _, _ := config.Load(home)
+				namespace, dir := contentSearchLocation(home, cfg)
+				index, err := search.OpenRead(t.Context(), dir, namespace)
+				must(t, err)
+				page, err := index.Search(t.Context(), search.Query{Text: "visible"})
+				must(t, err)
+				must(t, index.Close())
+				blocked := &cancellationSearchStore{ObjectStore: objects, started: make(chan struct{}), stopped: make(chan struct{})}
+				env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return blocked, nil }
+				prompt := newPrompter(strings.NewReader(action+"\n"), io.Discard)
+				var keys *keyInput
+				if keyed {
+					keys = startKeys(newFakeKeys())
+					defer keys.close()
+					keys.pending = []key{{kind: keyRune, r: rune(action[0])}}
+				} else {
+					_, err = prompt.in.Peek(1)
+					must(t, err)
+				}
+				b := &sessionBrowser{search: &contentSearchBrowser{env: env, cfg: cfg, namespace: namespace}, keys: keys, prompt: prompt, stdout: io.Discard, list: &sessionPicker{keys: keys}}
+				ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+				defer cancel()
+				_, err = b.readSearchSelection(ctx, *page.Hits[0].Reference, page.Hits[0].Reference.Start)
+				if !errors.Is(err, context.Canceled) || action == "q" && !b.list.operationQuit || action != "q" && b.search.pendingAction != contentSearchAction(action) {
+					t.Fatalf("buffered action was not applied before read deadline: err=%v quit=%v pending=%q", err, b.list.operationQuit, b.search.pendingAction)
+				}
+				select {
+				case <-blocked.stopped:
+				default:
+					t.Fatal("selected read was not joined")
+				}
+			})
+		}
+	}
+}
+
+func TestSearchInteractiveRefreshFailureKeepsCachedResultsAndFailure(t *testing.T) {
+	for _, action := range []string{"quit", "handoff", "handoff unavailable"} {
+		t.Run(action, func(t *testing.T) {
+			env, _, _ := prepareSearchBrowser(t)
+			home, _ := env.readHome()
+			release, err := local.NamedLock(home, "search-worker.lock")
+			must(t, err)
+			defer release()
+			keys := newFakeKeys("q")
+			if action != "quit" {
+				keys = newFakeKeys("1\r", "h")
+			}
+			if action == "handoff unavailable" {
+				env.OpenStore = func(config.Config) (storage.ObjectStore, error) {
+					return nil, errors.New("selected archive unavailable")
+				}
+			}
+			out, diagnostics, code := runOnTerminal(t, env, keys, "p\n", "search", "visible", "--all-projects", "--refresh")
+			if code != 1 || !strings.Contains(out, "visible") || !strings.Contains(diagnostics, "another search refresh") {
+				t.Fatalf("refresh failure lost beside cached result: code%d diagnostics=%s output=%s", code, diagnostics, out)
+			}
+			if action == "handoff" && !strings.Contains(out, "source: archive") {
+				t.Fatalf("cached handoff did not complete: %s %s", out, diagnostics)
+			}
+			if action == "handoff unavailable" && (!strings.Contains(diagnostics, "agent-archive: handoff:") || !strings.Contains(diagnostics, "selected archive unavailable")) {
+				t.Fatalf("handoff failure was erased by refresh failure: %s", diagnostics)
+			}
+		})
+	}
+}
+
+func TestSearchBrowserCoverageShowsPartialObservationAndGaps(t *testing.T) {
+	observed := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	s := &contentSearchBrowser{page: search.Page{Observation: search.Observation{LastObserved: observed, Indexed: 4, Known: 7, Unsupported: 3}}, pages: 1, choices: rowChoices(nil, listFormatOptions{})}
+	s.installRows()
+	note := s.choices.shown().note
+	for _, want := range []string{"incomplete", "2026-01-02T03:04:05Z", "3 unsupported"} {
+		if !strings.Contains(note, want) || !strings.Contains((&sessionPicker{contentSearch: s}).displayFooter(note, 36), want) {
+			t.Errorf("coverage omits %q in narrow view: %s", want, note)
+		}
+	}
+	s.page.Observation.LastObserved = time.Time{}
+	s.installRows()
+	if note = s.choices.shown().note; !strings.Contains(note, "freshness unknown") {
+		t.Fatalf("unobserved archive not explained: %s", note)
+	}
+}
+
+// A real pipe lets the line-mode browser poll without blocking. Actions arrive
+// only after selected context is painted, distinguishing retrieval from cancel.
+func runSearchAfterContext(t *testing.T, env Env, actions string) (string, string, int) {
+	t.Helper()
+	input, send, err := os.Pipe()
+	must(t, err)
+	defer func() { _ = input.Close() }()
+	shown := make(chan struct{})
+	out := &searchContextOutput{shown: shown}
+	var diagnostics bytes.Buffer
+	env.TerminalSize = fixedTerminal{100, 40}.terminalSize
+	env.IsTerminal = func(stream any) bool { return stream == any(input) || stream == any(out) }
+	env.openKeys = func(io.Reader) (keyTerminal, bool) { return nil, false }
+	done := make(chan error, 1)
+	go func() {
+		defer func() { _ = send.Close() }()
+		if _, e := io.WriteString(send, "1\n"); e != nil {
+			done <- e
+			return
+		}
+		select {
+		case <-shown:
+			_, e := io.WriteString(send, actions)
+			done <- e
+		case <-time.After(5 * time.Second):
+			done <- errors.New("selected context was not painted")
+		}
+	}()
+	code := Run([]string{"search", "visible", "--all-projects"}, input, out, &diagnostics, env)
+	must(t, <-done)
+	return out.String(), diagnostics.String(), code
+}
+
+type searchContextOutput struct {
+	bytes.Buffer
+	shown chan struct{}
+}
+
+func (o *searchContextOutput) Write(p []byte) (int, error) {
+	n, err := o.Buffer.Write(p)
+	if o.shown != nil && strings.Contains(o.String(), "[selected · assistant]") {
+		close(o.shown)
+		o.shown = nil
+	}
+	return n, err
 }

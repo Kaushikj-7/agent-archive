@@ -102,8 +102,7 @@ func runBrowser(ctx context.Context, env sessionBrowserDependencies, p *prompter
 	if spec.LoadOlder == nil {
 		spec.LoadOlder = spec.Choices.loadOlder
 	}
-	list := &sessionPicker{ctx: ctx, older: spec.LoadOlder, boundedNotice: spec.Notice, env: env, clear: redraw, keys: keys, verb: spec.Verb, filter: spec.Query, filtering: spec.Query != "" && keys != nil}
-	list.contentSearch = spec.Search
+	list := &sessionPicker{ctx: ctx, older: spec.LoadOlder, boundedNotice: spec.Notice, env: env, clear: redraw, keys: keys, verb: spec.Verb, filter: spec.Query, filtering: spec.Query != "" && keys != nil, contentSearch: spec.Search}
 	defer list.stopOperations()
 	var err error
 	if spec.Mode == browseSessions || spec.Mode == browseSearch {
