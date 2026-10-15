@@ -104,13 +104,14 @@ type sessionScan struct {
 	// runs again without them (see run). offChainLeftOut reports that it
 	// left at least one out of what is published (see noteRevisionLeftOut).
 	// offChainPlanned and offChainUnread are what the last reconciliation
-	// that read them staged to publish beside the current revision and
-	// whether it left any unread; they outlive the run again, which reports
-	// only what it no longer stages (see reconcileRevisions).
+	// that read them staged to publish beside the current revision (each
+	// revision with the source staged) and whether it left any unread; they
+	// outlive the run again, which reports only what it no longer publishes
+	// as staged (see reconcileRevisions).
 	offChainKept    int
 	offChainLeftOut bool
 	withoutOffChain bool
-	offChainPlanned []string
+	offChainPlanned []archive.RevisionReference
 	offChainUnread  bool
 }
 

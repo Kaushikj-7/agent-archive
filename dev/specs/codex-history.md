@@ -119,7 +119,8 @@ more from the start with every off-chain branch left out, so the branches
 never make the chain's own capture too large to read; a branch it does not
 read again but an earlier publication preserves by reference, unchanged
 since, is still published, so it is not left out (one that changed since is
-published only as it was, so it is). A branch left out is
+published only as it was, even when it is staged again from the last
+publication that carried it as current, so it is). A branch left out is
 recorded as the local capture diagnostic `revision_left_out` (the app, the
 included project and the time only) once the scan ends without the session
 recorded as a capture gap; an import leaves branches out without one.
