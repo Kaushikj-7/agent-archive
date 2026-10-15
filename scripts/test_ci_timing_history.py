@@ -207,6 +207,19 @@ class TimingContracts(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'missing'):
                 normalize_ci_timing.worker(root)
 
+    def test_candidate_rejects_inconsistent_pipeline_source_provenance(self):
+        pipeline = collect_ci_timing.collect(FakeAPI(), receipt(), 1, 2)
+        for mutate in (
+                lambda value: value['input']['samples'][0].update(
+                    tested_checkout=dict(receipt(), source='f'*40)),
+                lambda value: value['input']['samples'][0].update(source='f'*40),
+                lambda value: value['topology'].update(workflow_source='f'*40),
+                lambda value: value['topology'].update(parents=['f'*40, 'c'*40])):
+            changed = copy.deepcopy(pipeline)
+            mutate(changed)
+            with self.assertRaisesRegex(ValueError, 'source provenance'):
+                ci_timing_history.candidate([], [changed])
+
     def test_candidate_dedup_conflicts_experiments_and_cohorts(self):
         observation = {'schema': 1, 'kind': 'worker-timing', 'run_id': '1', 'run_attempt': '1', 'shard': 0,
                        'source': 'a'*40, 'observation_kind': 'normal', 'success': True,

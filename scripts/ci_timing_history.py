@@ -21,6 +21,14 @@ def candidate(observations, pipelines=()):
         summary = report_ci_timing.report(document)
         for sample, row in zip(document['samples'], summary['samples']):
             topology = sample.get('tested_checkout') or {}
+            # The collector's outer provenance and each embedded sample must
+            # describe the same tested merge. Job completeness alone validates
+            # PR head allocations, not an independently relabeled merge SHA.
+            if (topology != pipeline.get('topology')
+                    or sample.get('source') != topology.get('head')
+                    or topology.get('source') != topology.get('workflow_source')
+                    or topology.get('parents') != [topology.get('tested_base'), topology.get('head')]):
+                raise ValueError('pipeline tested source provenance differs')
             if (sample.get('scope', 'production-pipeline') != 'production-pipeline'
                     or sample.get('observation_kind') != 'normal' or not row['required_completed_at']
                     or sample.get('required_jobs') != collect_ci_timing.inventory(topology.get('workers'))
