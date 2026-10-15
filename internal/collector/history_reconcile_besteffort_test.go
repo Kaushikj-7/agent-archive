@@ -50,7 +50,7 @@ func TestNativeRevisionsLeaveOutOffChainRolloutTheConsumerCannotHold(t *testing.
 				t.Fatal("no provider reader")
 			}
 			var consumed []string
-			err = provider.revisions(scan.ctx, read.adapter, read.observed, scan.opts.maxTranscriptBytes(), active.History != nil, func(_ archive.FilteredTranscript, binding *archive.CodexSourceBinding) error {
+			_, err = provider.revisions(scan.ctx, read.adapter, read.observed, scan.opts.maxTranscriptBytes(), active.History != nil, true, func(_ archive.FilteredTranscript, binding *archive.CodexSourceBinding) error {
 				if binding.PhysicalRolloutID == revisionB {
 					return refusal.err
 				}
@@ -185,10 +185,19 @@ func TestLeaveOutBestEffortOnlyForLastingFailures(t *testing.T) {
 // session's own, so a later pass meets it again, and failing would record the
 // whole session as too large to read although its own chain fits. Leaving it
 // out also releases what it held and forgets the ceiling refusal, so a later
-// refusal in the scan is classified on its own.
+// refusal in the scan is classified on its own. A ceiling refusal the scan
+// met before the candidate is not the candidate's, and is kept.
 func TestBestEffortRevisionPastTheSessionCeilingIsLeftOut(t *testing.T) {
-	for _, where := range []string{"read", "consumer"} {
-		t.Run(where, func(t *testing.T) {
+	for _, c := range []struct {
+		where    string
+		exceeded bool
+	}{{"read", false}, {"consumer", false}, {"read", true}, {"consumer", true}} {
+		where := c.where
+		name := where
+		if c.exceeded {
+			name += " after an earlier ceiling refusal"
+		}
+		t.Run(name, func(t *testing.T) {
 			scan, _ := reconciliationFixture(t)
 			read, ok, err := scan.read()
 			if err != nil || !ok {
@@ -211,9 +220,13 @@ func TestBestEffortRevisionPastTheSessionCeilingIsLeftOut(t *testing.T) {
 			defer end()
 			held, holding := budget.Reservation(), int64(0)
 			defer func() { held.Release(holding) }()
+			if c.exceeded {
+				// Something earlier in the scan was refused at the ceiling.
+				budget.Refuse(1 << 40)
+			}
 			var consumed []string
 			var retained int
-			err = provider.revisions(scan.ctx, read.adapter, read.observed, scan.opts.maxTranscriptBytes(), active.History != nil, func(_ archive.FilteredTranscript, binding *archive.CodexSourceBinding) error {
+			got, err := provider.revisions(scan.ctx, read.adapter, read.observed, scan.opts.maxTranscriptBytes(), active.History != nil, true, func(_ archive.FilteredTranscript, binding *archive.CodexSourceBinding) error {
 				id := binding.PhysicalRolloutID
 				if id == revisionB {
 					if budget.Reservation().Reserve(128 << 20) {
@@ -238,8 +251,11 @@ func TestBestEffortRevisionPastTheSessionCeilingIsLeftOut(t *testing.T) {
 			if !slices.Contains(consumed, revisionThread) || !slices.Contains(consumed, revisionC) || slices.Contains(consumed, revisionB) {
 				t.Fatalf("consumed %v", consumed)
 			}
-			if budget.ScopeExceeded() {
-				t.Fatal("the left-out revision's ceiling refusal outlived it")
+			if budget.ScopeExceeded() != c.exceeded {
+				t.Fatalf("scope exceeded %v after leaving out the revision, want %v (an earlier refusal kept, the revision's own forgotten)", budget.ScopeExceeded(), c.exceeded)
+			}
+			if got.offChainKept != 0 || got.offChainLeftOut != 1 {
+				t.Fatalf("off-chain kept %d, left out %d", got.offChainKept, got.offChainLeftOut)
 			}
 			if len(scan.retainedReleases) != retained {
 				t.Fatalf("the left-out revision kept %d retained leases", len(scan.retainedReleases)-retained)
@@ -270,7 +286,7 @@ func TestRefusedNativeRevisionReleasesWhatItRetained(t *testing.T) {
 	// No stage bytes: every historical revision is refused once compressed.
 	planner := revisionPlanner{budget: scan.readBudget(), plan: &revisionPlan{Current: revisionC}, active: active, adapter: read.adapter, compress: scan.compressSource}
 	refused := 0
-	err = provider.revisions(scan.ctx, read.adapter, read.observed, scan.opts.maxTranscriptBytes(), active.History != nil, func(filtered archive.FilteredTranscript, binding *archive.CodexSourceBinding) error {
+	_, err = provider.revisions(scan.ctx, read.adapter, read.observed, scan.opts.maxTranscriptBytes(), active.History != nil, true, func(filtered archive.FilteredTranscript, binding *archive.CodexSourceBinding) error {
 		mark := len(scan.retainedReleases)
 		used, _ := scan.readBudget().Charged()
 		err := scan.addNativeRevision(&planner, filtered, binding, archive.Metadata{}, archive.SourceBundle{}, archive.SourceBundle{})

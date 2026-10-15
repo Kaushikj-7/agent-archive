@@ -6,6 +6,13 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- A Codex thread whose abandoned branches fit while being read, but left too
+  little of the per-session read memory to publish the thread, is captured
+  without those branches instead of being recorded as too large to capture.
+  Whenever a branch is left out from a session that is otherwise captured,
+  `status` now says so ("Codex left out part of a session"), with only the
+  app, the project and the time; `status --json` carries it as the capture
+  diagnostic `revision_left_out`.
 - Stop failing every Codex session in a pass that found many new Codex
   files. Finding where a Codex thread's rollouts are has a time allowance
   per pass, and discovery could use all of it, so each Codex session the
