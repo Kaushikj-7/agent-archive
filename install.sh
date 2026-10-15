@@ -20,13 +20,14 @@
 # so the Developer ID check does not apply to them. After the checksum
 # passes and before anything is installed or run, the script verifies the
 # downloaded file's GitHub build-provenance attestation when the `gh` CLI is
-# on PATH, and stops if that verification fails or cannot be checked.
-# Without `gh` it prints the not-signed warning and the `gh attestation
-# verify` command before proceeding, unless AGENT_ARCHIVE_REQUIRE_ATTESTATION
-# is set to 1, in which case it stops. On every OS the SHA256SUMS check is
-# mandatory: the install stops before anything is installed if there is no
-# SHA-256 tool, no single well-formed entry, or a mismatch. Releases up to
-# v0.1.1 have no Linux asset.
+# on PATH, pinned to this repository's release workflow, and stops if that
+# verification fails. When `gh` is absent or cannot perform the check (not
+# signed in, too old, a network error) it prints a warning, the not-signed
+# advice and the `gh attestation verify` command before proceeding, unless
+# AGENT_ARCHIVE_REQUIRE_ATTESTATION is set to 1, in which case it stops.
+# On every OS the SHA256SUMS check is mandatory: the install stops before
+# anything is installed if there is no SHA-256 tool, no single well-formed
+# entry, or a mismatch. Releases up to v0.1.1 have no Linux asset.
 #
 # Environment:
 #   AGENT_ARCHIVE_VERSION      release tag to install, e.g. v0.1.0 (default: latest)
@@ -40,10 +41,11 @@
 #                              attestation verification is skipped with a
 #                              printed note
 #   AGENT_ARCHIVE_REQUIRE_ATTESTATION
-#                              Linux only: set to 1 to fail unless the `gh`
+#                              Linux only: 1 to fail unless the `gh`
 #                              CLI verifies the download's GitHub attestation
 #                              before it is installed; cannot be combined
-#                              with AGENT_ARCHIVE_DOWNLOAD_URL
+#                              with AGENT_ARCHIVE_DOWNLOAD_URL. 0 or unset
+#                              is off; any other value is refused
 #
 # The whole script is one function called on the last line, so a download
 # cut off partway through runs nothing.
@@ -67,8 +69,19 @@ main() {
 
   # Linux attestation strict mode is also decided before downloading: a
   # custom download source has no GitHub attestation, and without gh there
-  # is nothing that could verify one.
-  if [ "$os" != darwin ] && [ "${AGENT_ARCHIVE_REQUIRE_ATTESTATION:-}" = "1" ]; then
+  # is nothing that could verify one. Only "1" turns it on and only empty
+  # or "0" leaves it off, so a typo such as "yes" never silently means off.
+  require_attestation=
+  if [ "$os" != darwin ]; then
+    case "${AGENT_ARCHIVE_REQUIRE_ATTESTATION:-}" in
+      "" | 0) ;;
+      1) require_attestation=1 ;;
+      *)
+        fail "AGENT_ARCHIVE_REQUIRE_ATTESTATION must be 1 (require attestation) or 0/unset (off), not: ${AGENT_ARCHIVE_REQUIRE_ATTESTATION}"
+        ;;
+    esac
+  fi
+  if [ -n "$require_attestation" ]; then
     if [ -n "${AGENT_ARCHIVE_DOWNLOAD_URL:-}" ]; then
       fail "AGENT_ARCHIVE_REQUIRE_ATTESTATION=1 cannot be combined with AGENT_ARCHIVE_DOWNLOAD_URL, because a custom download source has no GitHub attestation to verify; unset one of them."
     fi
@@ -347,41 +360,80 @@ verify_signature() {
   fi
 }
 
+# The release workflow whose attestations are accepted, pinned as
+# scripts/release_candidate.py verify_security pins it. --hostname keeps a
+# GH_HOST naming a GitHub Enterprise host from redirecting the check.
+attest_repo="wangjohn/agent-archive"
+attest_workflow="${attest_repo}/.github/workflows/release.yml"
+# Upper bound in seconds on one gh attestation check, applied only where a
+# timeout(1) command exists (it is not POSIX, so it is never required).
+attest_timeout=120
+
+# attest_flags prints the gh attestation verify flags that follow the file
+# name. Every word is shell-safe (main checked the version is made of tag
+# characters), so the printed advice can be pasted as is.
+attest_flags() {
+  printf '%s' "--repo ${attest_repo} --signer-workflow ${attest_workflow} --deny-self-hosted-runners --hostname github.com"
+  if [ -n "$version" ]; then
+    printf '%s' " --source-ref refs/tags/${version}"
+  fi
+}
+
 # verify_attestation checks the downloaded Linux binary's GitHub
 # build-provenance attestation before it is installed or run. This advice
 # holds only for releases whose workflow attests the Linux binaries; it
-# says nothing about older releases. With `gh` on PATH a failed or
-# unavailable check stops the install. Without `gh` it warns and continues,
-# unless strict mode already stopped earlier. A custom download source
-# (AGENT_ARCHIVE_DOWNLOAD_URL, for testing) has no GitHub attestation;
-# strict mode refuses that combination before downloading.
+# says nothing about older releases. A verification failure (gh checked,
+# and the attestation does not match or there is none) always stops the
+# install. When gh is absent or cannot perform the check (not signed in,
+# too old for `gh attestation`, a network error, a timeout) it warns and
+# continues; strict mode stops instead, either here or, for no gh or a
+# custom source, in main before downloading. A custom download source
+# (AGENT_ARCHIVE_DOWNLOAD_URL, for testing) has no GitHub attestation.
 verify_attestation() {
   if [ -n "${AGENT_ARCHIVE_DOWNLOAD_URL:-}" ]; then
     say "Skipping attestation verification: AGENT_ARCHIVE_DOWNLOAD_URL is set, so this download has no GitHub attestation to verify."
     return 0
   fi
+  # Strict mode without gh never gets here: main already stopped.
+  continue_reason="gh is not on PATH"
   if command -v gh >/dev/null 2>&1; then
-    if attest_out="$(gh attestation verify "$1" --repo wangjohn/agent-archive --hostname github.com --signer-workflow github.com/wangjohn/agent-archive/.github/workflows/release.yml 2>&1)"; then
-      say "Attestation verified (GitHub build provenance, wangjohn/agent-archive)"
+    attest_file="$1"
+    set -- attestation verify "$attest_file" --repo "$attest_repo" \
+      --signer-workflow "$attest_workflow" --deny-self-hosted-runners --hostname github.com
+    if [ -n "$version" ]; then
+      set -- "$@" --source-ref "refs/tags/${version}"
+    fi
+    if command -v timeout >/dev/null 2>&1; then
+      set -- timeout "$attest_timeout" gh "$@"
+    else
+      set -- gh "$@"
+    fi
+    attest_status=0
+    attest_out="$("$@" 2>&1)" || attest_status=$?
+    if [ "$attest_status" -eq 0 ]; then
+      say "Attestation verified (GitHub build provenance, ${attest_repo})"
       return 0
     fi
     case "$attest_out" in
       *[Ff]"ailed to verify"* | *"verification failed"* | *"Verification failed"* | *"no attestation"* | *"No attestation"* | *"could not find an attestation"*)
         fail "attestation verification failed for ${asset}, so it was not installed or run: ${attest_out}"
         ;;
-      *)
-        fail "could not verify the attestation for ${asset} with gh, so it was not installed or run: ${attest_out:-gh attestation verify failed with no output}"
-        ;;
     esac
-  fi
-  if [ "${AGENT_ARCHIVE_REQUIRE_ATTESTATION:-}" = "1" ]; then
-    fail "AGENT_ARCHIVE_REQUIRE_ATTESTATION=1 requires the gh CLI to verify the download's attestation, but gh was not found on PATH; not installing it."
+    if [ "$attest_status" -eq 124 ] && [ "$1" = timeout ]; then
+      attest_out="gh attestation verify did not finish within ${attest_timeout} seconds. ${attest_out}"
+    fi
+    attest_out="${attest_out:-gh attestation verify failed with no output}"
+    if [ -n "$require_attestation" ]; then
+      fail "could not verify the attestation for ${asset} with gh, so it was not installed or run: ${attest_out}"
+    fi
+    say "Warning: could not verify the attestation for ${asset} with gh: ${attest_out}"
+    continue_reason="gh could not check it"
   fi
   say "The checksum only guards against a damaged download, and this binary is not signed."
-  say "To confirm it came from the project's release workflow, run (needs the gh CLI):"
-  say "  gh attestation verify $(shell_quote "$target") --repo wangjohn/agent-archive --hostname github.com --signer-workflow github.com/wangjohn/agent-archive/.github/workflows/release.yml"
+  say "To confirm it came from the project's release workflow, run (needs the gh CLI, signed in):"
+  say "  gh attestation verify $(shell_quote "$target") $(attest_flags)"
   say "To verify before anything is installed, use the manual download-verify-install flow in docs/getting-started/install.md ('Install a release build by hand')."
-  say "Continuing without attestation verification because gh is not on PATH; set AGENT_ARCHIVE_REQUIRE_ATTESTATION=1 to refuse instead."
+  say "Continuing without attestation verification because ${continue_reason}; set AGENT_ARCHIVE_REQUIRE_ATTESTATION=1 to refuse instead."
 }
 
 check_team_id() {

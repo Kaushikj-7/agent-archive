@@ -22,6 +22,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/inspectioncache"
 	"github.com/wangjohn/agent-archive/internal/platform"
 	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 )
@@ -290,6 +291,13 @@ const (
 // through collector.FilterTranscriptFile, the collector's own filter, which
 // reads transcripts from the real file system whatever is injected here.
 type Environment struct {
+	// InspectionCache performs lookup only; persistence belongs to the caller.
+	InspectionCache *inspectioncache.Cache
+	// ObserveInspection receives successful facts after all source checks and closes.
+	// It may be called concurrently and must return promptly; callers may enqueue
+	// bounded, best-effort persistence.
+	ObserveInspection func(inspectioncache.Observation)
+
 	// Progress receives serialized planning updates, including from workers.
 	// It must return promptly and must not change planning inputs.
 	Progress func(PlanningProgress)

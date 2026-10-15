@@ -28,7 +28,7 @@ class CompilationTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name).resolve()
-        self.context = {'compiler': 'same', 'flags': '-race'}
+        self.context = {'compiler': 'same', 'flags': '-race', 'go': {'GOOS': 'linux'}}
         self.source = {'tested': 'a'*40, 'tree': 'b'*40, 'dependency': 'c'*64}
         self.plan = cache.general_plan(self.context, self.source, self.root)
         keys.prepare_paths(self.plan)
@@ -86,7 +86,8 @@ class CompilationTests(unittest.TestCase):
         self.assertEqual(observation,{'state':'corrupt-rebuilt','raw_payload_bytes':None})
         self.assertEqual(len(calls),4)
 
-    def main_observation(self, phase='verify', shared=False, module_results=None, bad_guard=False, oversized=False, late_guard=False):
+    def main_observation(self, phase='verify', shared=False, module_results=None, bad_guard=False, oversized=False, late_guard=False, darwin=False, event_name='push', priority=True, budget=None):
+        self.context['go']['GOOS'] = 'darwin' if darwin else 'linux'
         source=self.root/'product';source.mkdir(exist_ok=True)
         shared_root=self.root/'shared';shared_root.mkdir(exist_ok=True)
         shared_proof={'tested':keys.TOOL_PINS['shared']}
@@ -98,9 +99,15 @@ class CompilationTests(unittest.TestCase):
         event_path=self.root/'event.json';event_path.write_text(json.dumps(event))
         (self.root/'compilation-cache-plan.json').write_text(json.dumps(
             {'plan':asdict(plan),'context':actual_context}))
+        if budget is not None:
+            # Leave one payload byte free: the serialized manifest exceeds it.
+            payload = sum(item[2] for item in cache.cache_files(cache.snapshot_paths(plan, 'seed')))
+            (Path(plan.paths[1])/'cache'/'near-cap').write_bytes(b'x'*(budget-payload-1))
         size=cache.publish_manifest(plan,actual_context)
+        if darwin and priority:
+            cache.capture_product_priority(plan,actual_context,self.root)
         env={'GITHUB_EVENT_PATH':str(event_path),'GITHUB_SHA':self.source['tested'],
-             'GITHUB_EVENT_NAME':'push','GITHUB_REF':'refs/heads/main','GITHUB_REPOSITORY':'owner/repo',
+             'GITHUB_EVENT_NAME':event_name,'GITHUB_REF':'refs/heads/main','GITHUB_REPOSITORY':'owner/repo',
              'RUNNER_TEMP':str(self.root),'GITHUB_OUTPUT':str(self.root/'output'),
              'GOCACHE':plan.paths[0],'GOMODCACHE':plan.paths[1],
              'RESTORE_OUTCOME':'success','MATCHED_KEY':plan.seed,'SECRET_SETTING':'do-not-log-this'}
@@ -122,7 +129,7 @@ class CompilationTests(unittest.TestCase):
               mock.patch.object(cache,'execute_modules'),
               mock.patch.object(cache,'file_inventory',wraps=cache.file_inventory) as inventory,
               contextlib.redirect_stdout(output),contextlib.redirect_stderr(errors)):
-            with mock.patch.object(cache,'MAX_BYTES',0 if oversized else cache.MAX_BYTES):
+            with mock.patch.object(cache,'MAX_BYTES',0 if oversized else budget if budget is not None else cache.MAX_BYTES):
                 code=cache.main()
         lines=[json.loads(line.split(': ',1)[1]) for line in output.getvalue().splitlines()
                if line.startswith('compilation-cache-observation: ')]
@@ -243,6 +250,111 @@ class CompilationTests(unittest.TestCase):
         (Path(self.plan.paths[0])/'big').write_bytes(b'12345')
         with mock.patch.object(cache, 'MAX_BYTES', 4), self.assertRaises(keys.InvalidContext):
             cache.publish_manifest(self.plan, self.context)
+
+    def test_macos_publication_counts_actual_retained_manifest_bytes(self):
+        code, lines, size, _, _ = self.main_observation(phase='complete', darwin=True, budget=2000)
+        self.assertEqual(size, 1999)
+        self.assertEqual(code, 0)
+        self.assertEqual(lines, [{'schema': 1, 'phase': 'capture', 'profile': 'product',
+                                 'state': 'not-captured', 'raw_payload_bytes': None}])
+        self.assertIn('save_ready=false', (self.root/'output').read_text())
+        self.assertNotIn('save_ready=true', (self.root/'output').read_text())
+        self.assertTrue((Path(self.plan.paths[1])/'cache'/'near-cap').is_file())
+
+    def test_macos_restore_discards_seed_over_cap_including_manifest(self):
+        self.context['go']['GOOS'] = 'darwin'
+        payload = sum(item[2] for item in cache.cache_files(cache.snapshot_paths(self.plan, 'seed')))
+        (Path(self.plan.paths[1])/'cache'/'near-cap').write_bytes(b'x'*(2000-payload-1))
+        self.assertEqual(cache.publish_manifest(self.plan, self.context), 1999)
+        with mock.patch.object(cache, 'MAX_BYTES', 10000):
+            self.assertEqual(self.call(), 'trusted')
+        with mock.patch.object(cache, 'MAX_BYTES', 2000):
+            self.assertEqual(self.call(), 'miss')
+        self.assertFalse((Path(self.plan.paths[1])/'cache'/'near-cap').exists())
+
+    def test_product_priority_survives_newer_checker_objects_without_raising_budget(self):
+        build = Path(self.plan.paths[0])
+        (build/'ab').mkdir()
+        product = build/'ab'/('a'*64+'-d')
+        checker = build/'ab'/('b'*64+'-a')
+        tools = build/'aa-pinned-tools';tools.mkdir()
+        binary = tools/'deadcode';binary.write_bytes(b'pinned binary')
+        product.write_bytes(b'p'*120)
+        os.utime(product, ns=(1000000000, 1000000000))
+        cache.capture_product_priority(self.plan, self.context, self.root)
+        preferred = cache.read_product_priority(self.plan, self.context, self.root)
+        self.assertEqual(preferred, {'0/ab/'+product.name})
+        checker.write_bytes(b't'*180)
+        os.utime(checker, ns=(2000000000, 2000000000))
+        # The previous mtime-only policy evicts the product first.
+        with mock.patch.object(cache, 'MAX_BYTES', 300):
+            cache.bound_compilation(self.plan)
+        self.assertFalse(product.exists())
+        self.assertTrue(checker.exists())
+        product.write_bytes(b'p'*120)
+        os.utime(product, ns=(1000000000, 1000000000))
+        with mock.patch.object(cache, 'MAX_BYTES', 300):
+            size = cache.publish_manifest(self.plan, self.context, preferred=preferred)
+            self.assertEqual(cache.validate_manifest(self.plan, self.context), size)
+        self.assertLessEqual(size, int(300*.98))
+        self.assertTrue(product.exists())
+        self.assertFalse(checker.exists())
+        self.assertEqual(binary.read_bytes(), b'pinned binary')
+        self.assertEqual((Path(self.plan.paths[1])/'cache/module').read_bytes(), b'verified dependency')
+        manifest = json.loads((build/cache.MANIFEST).read_text())
+        self.assertFalse(any(cache.PRODUCT_PRIORITY in key for key in manifest['files']))
+        product.write_bytes(b'corrupt')
+        with self.assertRaises(keys.InvalidContext):
+            cache.validate_manifest(self.plan, self.context)
+        self.assertEqual(self.call(), 'miss')
+
+    def test_product_priority_is_soft_and_never_evicts_modules_or_pinned_binaries(self):
+        build = Path(self.plan.paths[0]);(build/'ab').mkdir()
+        product = build/'ab'/('a'*64+'-d');product.write_bytes(b'p'*300)
+        tools = build/'aa-pinned-tools';tools.mkdir()
+        binary = tools/'deadcode';binary.write_bytes(b'pinned binary')
+        cache.capture_product_priority(self.plan, self.context, self.root)
+        preferred = cache.read_product_priority(self.plan, self.context, self.root)
+        with mock.patch.object(cache, 'MAX_BYTES', 100):
+            self.assertLess(cache.publish_manifest(self.plan, self.context, preferred=preferred), 100)
+        self.assertFalse(product.exists())
+        self.assertEqual(binary.read_bytes(), b'pinned binary')
+        with mock.patch.object(cache, 'MAX_BYTES', 1), self.assertRaises(keys.InvalidContext):
+            cache.publish_manifest(self.plan, self.context, preferred=preferred)
+        self.assertEqual(binary.read_bytes(), b'pinned binary')
+        self.assertTrue((Path(self.plan.paths[1])/'cache/module').exists())
+
+    def test_priority_metadata_rejects_stale_source_context_paths_duplicates_and_links(self):
+        cache.capture_product_priority(self.plan, self.context, self.root)
+        path = self.root/cache.PRODUCT_PRIORITY
+        original = json.loads(path.read_text())
+        for changes in ({'source': dict(self.source, tree='d'*40)}, {'context': 'd'*64},
+                        {'schema': True}, {'objects': ['0/../unrelated']},
+                        {'objects': ['0/aa/'+'a'*64+'-d']*2}, {'objects': [None]},
+                        {'extra': 'unknown'}):
+            path.write_text(json.dumps(dict(original, **changes)))
+            with self.assertRaises(keys.InvalidContext):
+                cache.read_product_priority(self.plan, self.context, self.root)
+        path.unlink()
+        outside = self.root/'outside';outside.write_text('keep')
+        path.symlink_to(outside)
+        for operation in (cache.capture_product_priority, cache.read_product_priority):
+            with self.assertRaises(keys.InvalidContext):
+                operation(self.plan, self.context, self.root)
+        self.assertEqual(outside.read_text(), 'keep')
+        with self.assertRaises(keys.InvalidContext):
+            cache.bound_compilation(self.plan, preferred=['0/../unrelated'])
+
+    def test_priority_capture_requires_exact_main_macos_product_and_final_guards(self):
+        self.assertEqual(self.main_observation(phase='prioritize-product', darwin=True)[0], 0)
+        self.assertEqual(self.main_observation(phase='complete', darwin=True)[0], 0)
+        for options in ({'darwin': False}, {'darwin': True, 'shared': True},
+                        {'darwin': True, 'event_name': 'pull_request'},
+                        {'darwin': True, 'late_guard': True}):
+            self.assertEqual(self.main_observation(phase='prioritize-product', **options)[0], 1)
+        path = self.root/cache.PRODUCT_PRIORITY
+        path.unlink(missing_ok=True)
+        self.assertEqual(self.main_observation(phase='complete', darwin=True, priority=False)[0], 1)
 
     def test_storage_bound_prunes_only_recoverable_go_objects(self):
         build = Path(self.plan.paths[0])
@@ -462,6 +574,15 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn('profile: shared', text)
         self.assertIn('profile: product', text)
         self.assertIn('scripts/ci_cache.py complete', text)
+        product = text.index('Fresh production compilation and race test compilation')
+        priority = text.index('Prioritize product objects before macOS checker compilation')
+        tools = text.index('Compile pinned checker binaries')
+        self.assertLess(product, priority)
+        self.assertLess(priority, tools)
+        step = text[priority:tools]
+        self.assertIn("runner.os == 'macOS' && matrix.profile == 'product'", step)
+        self.assertIn("steps.restored.outputs.restore-state != 'trusted'", step)
+        self.assertIn('scripts/ci_cache.py prioritize-product', step)
         self.assertIn("steps.complete.outputs.save_ready == 'true'", text)
         self.assertNotIn('retention-days:', text)  # Caches use default repo 10 GB LRU.
 

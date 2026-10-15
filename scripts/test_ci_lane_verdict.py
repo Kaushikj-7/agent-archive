@@ -82,7 +82,7 @@ class LaneVerdictTest(unittest.TestCase):
                 'test_stage_release_vulnerability_scan.py', 'test_measure_hook.py', 'test_muse_qualification.py',
                 'test_linux_acceptance.py', 'test_go_shards.py', 'test_generate_go_shard_hints.py',
                 'test_ci_tiers.py', 'test_local_ci_plan.py', 'test_historical_vet_contract.py', 'test_macos_smoke.py', 'test_native_smoke_reference.py', 'test_native_full.py', 'test_go_cache_context.py',
-                'test_go_cache_steps.py', 'test_ci_cache.py', 'test_ci_lane_verdict.py', 'test_report_ci_timing.py', 'test_purge_ci.py',
+                'test_go_cache_steps.py', 'test_ci_cache.py', 'test_warm_shared_module_graph.py', 'test_ci_lane_verdict.py', 'test_report_ci_timing.py', 'test_purge_ci.py',
                 'test_ci_worker_topology.py', 'test_collect_ci_timing.py', 'test_ci_timing_history.py', 'test_ci_performance_gate.py',
                 'test_go_parent_shards.py', 'test_pr_reference.py',
                 'test_benchmark_shared_verify.py'},

@@ -3,7 +3,11 @@
 Status: proposed. Add Meta's Muse Code as a fourth agent in agent-archive,
 alongside Claude Code, Codex and Cursor. Native investigation established
 feasibility; production capture, privacy, publication and full parity are not
-qualified. Implementation still requires separate authorization.
+qualified. A separate runtime-presence subset detects noninteractive shell
+commands and clears inherited session keys when launching supported agents;
+[its evidence and limits](../qualification/muse/runtime-presence.md) do not enable
+capture, exact current-session selection or any other Muse operation.
+Remaining implementation still requires separate authorization.
 
 This is the single implementation plan. Qualification findings and design
 decisions are incorporated below, and §6 and §7 record the probe results the
@@ -513,7 +517,7 @@ is open is refused safely while other qualified formats keep capturing.
 
 | Gate | Blocks | Owner and evidence needed |
 | --- | --- | --- |
-| Root integrity and original creation | First release | Q0, then P1 and P2: a producer contract or independently verified encoding against exact valid and mutated frames; root creation through copies and resumes. Producer clarification may be necessary. |
+| Root integrity and original creation | First release | Q0 has recovered the [checksum encoding](../qualification/muse/permission-integrity.md) and qualified [strict initial-root logical-start semantics](../qualification/muse/root-creation.md). P1/P2 still need the complete prefix/negative validator, same-descriptor source checks, uniqueness and consent admission. Unsupported lanes remain unavailable. |
 | Child and branch creation | Children (P3) | Q0, then P3: creation through copies, resumes, checkpoints and missing parents; whether close is terminal on every supported build, so closed children can stop being polled; observer link records, relative paths and missing-file semantics. |
 | Checkpoint and compaction formats | Capture of sessions containing the unqualified format | Q0 and P5: qualified default, manual, prune, rewrite, split, fork, rewind and TUI gestures. The current history-preserving checkpoint covers only its recorded case. Until qualified, such sessions stop capture safely at that record. |
 | Real accounting | Cost and cache claims | P5 with locally configured provider access: dated actual model, cache, reasoning, retry, background and compaction attribution and pricing. |
@@ -574,6 +578,18 @@ refusal, source encoding and budgets, discovery and read bounds, picker and
 handoff and CI contracts changed; Q0 reconciles them. Historical native evidence
 does not certify a newer implementation base.
 
+The supplemental [1.4.9 Q0 record](../qualification/muse/results-1.4.9.json)
+adds only pinned macOS x86_64 synthetic `exec-utc` fresh/resume/copy and mutation
+observations (22 final-run assertions passed). The prior 1.4.8 matrix and corpus
+retain their original provenance. No framing or opening-shape change was observed
+in this lane. The later [checksum supplement](../qualification/muse/permission-integrity.md)
+independently recovers the pinned permission v1 hash recipe. Complete native
+grammar and production admission validation remain unimplemented. The
+[initial-root contract](../qualification/muse/root-creation.md) separately
+qualifies reserved logical-start semantics in the observed strict 1.4.9 exec/MSP
+lanes. No broader MSP, PTY, child, checkpoint, platform, real-accounting or
+production capture qualification follows from this supplement.
+
 ### Observations that determine the design
 
 Most rows come from retained probe results. Some details survived only in the
@@ -586,11 +602,11 @@ observer-link notes. Q0 reruns those before any phase relies on them.
 | Retained storage | Roots use `$XDG_DATA_HOME/muse/sessions/YYYY/MM/DD/<session-id>/session.jsonl`, default data home `~/.local/share/muse`. Root session IDs are UUIDv7-shaped and matched their folder dates in the one recorded path, which was far from midnight; some child IDs are not time-ordered. Every observed hook had `transcript_path: null`. Root export lacked actual child content; retained files require independent resolution. |
 | Identity and ancestry | Logical agent IDs differ from child session IDs. `spawn_accepted`, `child_session_bound` (`nested_session_v1`), `parent_session_id` and agent-lineage admission supplied explicit edges. Children and grandchildren were flat under `<root>/subagent/<child-id>/session.jsonl`; both depths could be 1. Forwarded control records repeat across logs. |
 | Hooks and environment | User hooks use `$XDG_CONFIG_HOME/muse/settings.json`; project hooks use `.muse/hooks.json`. `MUSE_SESSION_ID` identifies the root, `MUSE_THREAD_ID` the current thread, and child payload `session_id` the child. User hooks dropped custom XDG and replay variables. Direct managed commands forwarded the allowed marker to root and children on 1.4.8; compound shell instrumentation lost extras on both builds. `PostToolUse` and `PostToolUseFailure` fired for tool calls; `StopFailure` was not exercised. |
-| Root lifecycle | Fresh TUI, exec and serve turns and exec resume were exercised. Resume kept the same ID and raw prefix, sometimes without another `SessionStart`. Root `session.opened.observed` with `resume: false` is candidate creation evidence, not proof for copies, forks or checkpoints. A `--no-session-log` exec run added no retained file (the one log counted in the data home came from the earlier logged run), and ephemeral serve created none; ephemeral `session/read` was unavailable. |
+| Root lifecycle | Fresh TUI, exec and serve turns and exec resume were exercised. Resume kept the same ID and raw prefix, sometimes without another `SessionStart`. Root `session.opened.observed` with `resume: false` is corroborating startup evidence, not the selected birth. The later [initial-root contract](../qualification/muse/root-creation.md) qualifies reserved start in both initial permission children for strict observed 1.4.9 roots; complete admission validation is still unimplemented. A `--no-session-log` exec run added no retained file (the one log counted in the data home came from the earlier logged run), and ephemeral serve created none; ephemeral `session/read` was unavailable. |
 | Child lifecycle | Successful workflow completion required `submit_result` with text and nullable notes on both builds. On 1.4.7, a direct child follow-up settled a new `result_ready`. A close sent while the child was still running was refused with `subagent_state_ineligible`, and so was the reopen that followed it; a close sent after settlement succeeded. After that close, reopen and `followupTask` were both refused with `subagent_state_ineligible`. Hard-kill parent recovery and the 1.4.7-to-1.4.8 upgrade preserved root and child prefixes and settled another follow-up. These are producer tests, not archive recovery tests. |
 | Grandchildren and observers | Explicit grandchild graph passed on 1.4.7; the 1.4.8 compound-instrumented orderly run timed out. Earlier notes report observer links through `memory_reminder_child_session_linked`, sometimes with relative paths, goal and verification files, and a skill link without a retained file. No retained probe result records these, so they are leads for Q0 to rerun, not established results. Absence versus late or disabled logging needs qualification. |
 | Isolated worktrees | Native prepared, lease and cleanup records passed, including on 1.4.8. Child hook cwd still named the source checkout. Archive project and consent mapping is unimplemented. |
-| Framing and integrity | Ordinary envelopes, `session_permission_transaction` with `children[].record_json`, omitted-live-only markers and timestamp-less fork records coexist. Exact schema-1 permission bytes exported cleanly; checksum, whitespace, key-order and other mutations produced an unparseable-line diagnostic while exit stayed 0. Canonical and checksum encoding remains unknown. |
+| Framing and integrity | Ordinary envelopes, `session_permission_transaction` with `children[].record_json`, omitted-live-only markers and timestamp-less fork records coexist. Exact schema-1 permission bytes exported cleanly; checksum, whitespace, key-order and other mutations produced an unparseable-line diagnostic while exit stayed 0. The [pinned v1 checksum recipe](../qualification/muse/permission-integrity.md) is now independently verified; complete canonical grammar and unsupported shapes remain unqualified. |
 | Checkpoints and branches | On 1.4.8, the opt-in 4096-byte periodic setting produced a `context_projection_checkpoint` with schema 3 and history `preserved`. It includes private context and resume state and repeated usage. On 1.4.7 the same setting was accepted but no checkpoint was observed. In a separate run with an unrecorded build, a corrected same-endpoint restart returned in 4.857s, preserved the prefix and completed another turn; the earlier timeout remains unexplained. On 1.4.8, a side conversation copied `session.fork.compaction` and continued independently, and an older fork cut was refused as `forkBoundaryInvalid` with `runtime_checkpoint_tail`. |
 | Compaction and TUI limits | Manual MSP compaction returned `compaction_unavailable` on both builds, including strategy and context-limit probes. TUI startup passed; two later compact-and-quit attempts missed their readiness trigger. Default and manual compaction, prune, rewrite and split behavior and orderly TUI gestures are not qualified. |
 | Tools and MCP | Committed `call_id` and `tool_call_id` pair. Actual local stdio success returned the sentinel; missing-file execution failed and fired `PostToolUseFailure`. Join `tool:<call-id>` side-effect intent to the owning run's task terminal for typed status; result text has no typed error flag. The first bare MCP alias was unknown, not an executed MCP failure. |
@@ -609,9 +625,13 @@ schemas and exporters do not specify the retained-file integrity contract.
 
 Current Q0 reproduction, complete reviewed synthetic corpus, shared contract
 corrections and truthful support/refusal gates are in
-[Muse qualification](../qualification/muse/README.md). Independent permission
-checksum encoding and original-creation authority remain open; this work does
-not enable capture. Native export acceptance is not an independent verifier,
+[Muse qualification](../qualification/muse/README.md). The permission
+checksum recipe is independently recovered in the [checksum supplement](../qualification/muse/permission-integrity.md);
+the [initial-root contract](../qualification/muse/root-creation.md) separately
+qualifies the reserved logical-start field for strict observed 1.4.9 roots.
+Complete native grammar, same-handle/uniqueness and consent admission validation
+remain unimplemented. This work does not enable capture. Native export acceptance
+is not an independent verifier,
 and even rejected lines can exit 0 with empty stderr: inspect the document's
 `diagnostics.unparseable_lines` separately.
 

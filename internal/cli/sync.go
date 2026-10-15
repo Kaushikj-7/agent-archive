@@ -93,8 +93,26 @@ func deferredSummary(deferred map[string]string, failed map[string]error) string
 // out of time for. A deferred or unreached session is not counted as
 // failed, and has no error line of its own.
 func syncSummary(result collector.Result) string {
-	return fmt.Sprintf("Scanned %d session(s): %d published, %s%d unchanged, %d failed%s%s%s.",
-		result.Scanned, len(result.Published), waitingSummary(result.Waiting, result.NextReadyAt), len(result.Skipped), len(result.Errors), deferredSummary(result.Deferred, result.Errors), subagentsSummary(result), unreachedSummary(result.Unreached, result.Errors))
+	return fmt.Sprintf("Scanned %d session(s): %d published, %s%d unchanged, %d failed%s%s%s%s.",
+		result.Scanned, len(result.Published), waitingSummary(result.Waiting, result.NextReadyAt), len(result.Skipped), len(result.Errors), deferredSummary(result.Deferred, result.Errors), subagentsSummary(result), unreachedSummary(result.Unreached, result.Errors), retryLaterSummary(result.RetryLater))
+}
+
+// retryLaterSummary counts the Codex sessions a pass held unopened until
+// their next attempt (collector.Result.RetryLater), with the local time the
+// earliest is due, or is "" when it held none. They still fail, as an
+// earlier pass reported, but this pass made no attempt, so they are not
+// counted as failed and do not change the exit code.
+func retryLaterSummary(held map[string]time.Time) string {
+	if len(held) == 0 {
+		return ""
+	}
+	var next time.Time
+	for _, at := range held {
+		if next.IsZero() || at.Before(next) {
+			next = at
+		}
+	}
+	return fmt.Sprintf("; %d failing Codex session(s) held for a later retry (next at %s)", len(held), next.Local().Format("Jan 2 15:04"))
 }
 
 // unreachedSummary counts the queued sessions a pass ended before reaching

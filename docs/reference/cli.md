@@ -860,8 +860,9 @@ Usage: agent-archive backfill [options]
 
 Import the Claude Code, Codex, and Cursor sessions already on this machine that
 the archive has not captured. First shows each project with its session count
-per app, and why any session is not imported; nothing is written until you
-confirm. Live repositories can be proposed for matching deleted worktrees.
+per app, and why any session is not imported; archive and configuration changes
+require confirmation. Planning may update a disposable local inspection cache.
+Live repositories can be proposed for matching deleted worktrees.
 Projects the import needs are added to capture. Prints project
 folders, counts, and recovery reasons, never conversation content.
 After confirmation, filtered evidence is staged before admission; uploads can
@@ -879,7 +880,7 @@ publication. History reports admitted and remotely verified uploads separately.
   --include-home        Include sessions run from the home folder
   --include-temp        Include sessions run from temporary directories
   --include-removed     Include sessions retention or undo removed
-  --dry-run             Print the plan and exit; nothing is written
+  --dry-run             Print the plan; no archive or configuration changes
   --json                With --dry-run, print the plan as JSON
   --yes                 Skip the confirmation (required without a terminal)
   --background          Stage and register sessions, then exit; the background

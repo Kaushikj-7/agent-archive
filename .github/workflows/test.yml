@@ -262,6 +262,7 @@ jobs:
       - run: python3 -B scripts/test_go_cache_context.py
       - run: python3 -B scripts/test_go_cache_steps.py
       - run: python3 -B scripts/test_ci_cache.py
+      - run: python3 -B scripts/test_warm_shared_module_graph.py
 
       - run: python3 -B scripts/test_ci_lane_verdict.py
       - run: python3 -B scripts/test_purge_ci.py
