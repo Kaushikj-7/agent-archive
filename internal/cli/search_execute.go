@@ -94,6 +94,21 @@ func executeContentSearch(opts contentSearchOptions, stdout, stderr io.Writer, e
 			setSearchError(&doc, e)
 		} else {
 			page, e := index.Search(queryCtx, opts.query)
+			if e == nil && !opts.json && opts.stdin != nil && browseInteractive(env, opts.stdin, stdout) {
+				if doc.Error != nil {
+					searchCommandError(stderr, errors.New(doc.Error.Message))
+				}
+				row, picked, input, code := runContentSearchBrowser(ctx, env, cfg, namespace, index, page, opts, stdout, stderr)
+				_ = index.Close()
+				if code != 0 || !picked {
+					return contentSearchBrowserExit(code, doc.Error)
+				}
+				// The search store and all browser reads are closed before handing
+				// signal and prompt ownership to the ordinary handoff pipeline.
+				stop()
+				code = runHandoffWithInput([]string{row.SessionID, "--harness", row.HarnessKey, "--source", "archive"}, opts.stdin, stdout, stderr, env, input)
+				return contentSearchBrowserExit(code, doc.Error)
+			}
 			_ = index.Close()
 			if e != nil {
 				setSearchError(&doc, e)
@@ -103,6 +118,14 @@ func executeContentSearch(opts contentSearchOptions, stdout, stderr io.Writer, e
 		}
 	}
 	return writeContentSearch(doc, opts, stdout, stderr)
+}
+
+// A cached browser or handoff success cannot erase a requested refresh failure.
+func contentSearchBrowserExit(code int, failure *contentSearchError) int {
+	if code == 0 && failure != nil {
+		return 1
+	}
+	return code
 }
 
 // runContentSearchPass owns the stable home lifecycle lock before opening an

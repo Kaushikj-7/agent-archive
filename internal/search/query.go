@@ -156,7 +156,7 @@ func MatchExpression(text string) (string, error) {
 	return strings.Join(parts, " AND "), nil
 }
 
-const rankedQuery = `WITH matching AS MATERIALIZED (
+const matchingQuery = `WITH matching AS MATERIALIZED (
  SELECT search_fts.rowid AS pid,p.session,p.title_hit,CASE p.role WHEN 'user' THEN 0 ELSE 1 END AS role_rank,
  bm25(search_fts,4.0,1.0) AS score,s.captured
  FROM search_fts JOIN search_passages p ON p.id=search_fts.rowid JOIN search_sessions s ON s.id=p.session
@@ -164,7 +164,9 @@ const rankedQuery = `WITH matching AS MATERIALIZED (
  AND (?=0 OR s.captured>=?) AND (?=0 OR s.captured<=?)
  AND (?='' OR (?='only' AND s.replay=1) OR (?='hide' AND s.replay=0))
  AND (?='' OR (?='only' AND s.child=1) OR (?='hide' AND s.child=0))
- AND (?=0 OR CASE WHEN ?<>'' AND s.repo<>'' THEN s.repo=? WHEN ?=1 THEN (s.project_name=? OR s.project IN (SELECT value FROM json_each(?))) ELSE s.project IN (SELECT value FROM json_each(?)) END)
+ AND (?=0 OR CASE WHEN ?<>'' AND s.repo<>'' THEN s.repo=? WHEN ?=1 THEN (s.project_name=? OR s.project IN (SELECT value FROM json_each(?))) ELSE s.project IN (SELECT value FROM json_each(?)) END)`
+
+const rankedQuery = matchingQuery + `
 ), grouped AS (
  SELECT *,row_number() OVER(PARTITION BY session ORDER BY title_hit DESC,score,role_rank,pid) AS best,
  count(*) OVER(PARTITION BY session ORDER BY title_hit DESC,score,role_rank,pid ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS matches FROM matching

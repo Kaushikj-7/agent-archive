@@ -6,6 +6,11 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Terminal content search now browses ranked snippets and exact bounded source
+  context in the shared browser, with next/previous matching passages, explicit
+  rerun after index changes, and current-session handoff through existing gates.
+  The owned archive skill explains snippets-first retrieval and coverage limits.
+
 - Preserve both native source authority and search indexing lifecycle protection
   when their configuration and setup recovery records are combined.
 

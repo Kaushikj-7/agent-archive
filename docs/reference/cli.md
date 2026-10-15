@@ -613,6 +613,10 @@ session is named. It does not install or enable automatic indexing.
 Words are ANDed, quotes match phrases, and a trailing * enables prefix matching.
 Punctuation splits words; this is keyword search, not substring/semantic search.
 References bind exact source revisions. Reads print escaped, quoted text.
+On an interactive terminal, browse ranked snippets and exact bounded context.
+Use n/p for matching body passages, r to rerun the fixed query, and h to
+hand off the current session through existing gates. Metadata / filtering is
+disabled. JSON and piped output remain bounded documents.
   --json              Print one versioned bounded JSON document
   --refresh           Run a bounded verified archive refresh
   --session SESSION_ID  Exact refresh target; requires --harness

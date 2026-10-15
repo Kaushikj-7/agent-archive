@@ -47,7 +47,7 @@ type pickerView struct {
 func (v *pickerView) formatFor(width int) listFormatOptions {
 	f := v.format
 	f.Width = width
-	if width <= 0 || f.Verbose {
+	if width <= 0 || f.Verbose || f.Search {
 		return f
 	}
 	if v.layout == nil || v.layout.width != width {

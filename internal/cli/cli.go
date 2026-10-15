@@ -646,7 +646,7 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 	case "list":
 		return runListCommand(args[1:], stdin, stdout, stderr, env)
 	case "search":
-		return runSearchCommand(args[1:], stdout, stderr, env)
+		return runSearchCommand(args[1:], stdin, stdout, stderr, env)
 	case "show":
 		return runShowCommand(args[1:], stdin, stdout, stderr, env)
 	case "stats":

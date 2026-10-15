@@ -468,17 +468,34 @@ func BenchmarkWorkerGrowingSession(b *testing.B) {
 			totalGets := 0
 			totalBytes := 0
 			totalWrites := 0
+			resources := map[string]float64{}
 			b.ResetTimer()
 			for range b.N {
 				b.StopTimer()
-				s := openTest(b)
+				dir := b.TempDir()
+				s, err := Open(b.Context(), dir, "test/context")
+				if err != nil {
+					b.Fatal(err)
+				}
+				resources["initial-disk_B"] += float64(benchmarkDiskBytes(b, dir))
 				counted := &countedObjects{ObjectStore: objects}
 				at := snapshots[0].CapturedAt
 				b.StartTimer()
-				for _, metadata := range snapshots {
+				for i, metadata := range snapshots {
 					if err := s.Observe(b.Context(), metadata, parsers, at, 0); err != nil {
 						b.Fatal(err)
 					}
+					// Every new source revision prunes the previous projection before
+					// replacement. These inspection reads are outside the work timer.
+					b.StopTimer()
+					var cacheRows int
+					if err := s.db.QueryRowContext(b.Context(), "SELECT count(*) FROM search_sources").Scan(&cacheRows); err != nil || cacheRows != 0 {
+						b.Fatalf("old source cache retained after revision observation: rows%d err%v", cacheRows, err)
+					}
+					if !coalesce && i > 0 {
+						resources["pruned-revisions/lifetime"]++
+					}
+					b.StartTimer()
 					if !coalesce {
 						progress, err := s.Run(b.Context(), counted, parsers, at, Budget{})
 						if err != nil {
@@ -494,8 +511,38 @@ func BenchmarkWorkerGrowingSession(b *testing.B) {
 					}
 					totalWrites += progress.Writes.Inserted + progress.Writes.Deleted
 				}
+				b.StopTimer()
+				var cached, payload, staged, members, sessions, work, pending int
+				if err := s.db.QueryRowContext(b.Context(), `SELECT
+ (SELECT count(*) FROM search_sources),
+ (SELECT coalesce(sum(length(projection)),0) FROM search_sources),
+ (SELECT count(*) FROM search_sources c JOIN search_work w ON w.id=c.session WHERE w.desired!=w.indexed),
+ (SELECT count(*) FROM search_passages WHERE title_hit=0),
+ (SELECT count(*) FROM search_sessions),
+ (SELECT count(*) FROM search_work),
+ (SELECT count(*) FROM search_work WHERE desired!=indexed)`).Scan(&cached, &payload, &staged, &members, &sessions, &work, &pending); err != nil {
+					b.Fatal(err)
+				}
+				if cached != 1 || staged != 0 || members != 10 || sessions != 1 || work != 1 || pending != 0 {
+					b.Fatalf("settled cache/membership/work differ: cache%d staged%d members%d sessions%d work%d pending%d", cached, staged, members, sessions, work, pending)
+				}
+				resources["final-disk_B"] += float64(benchmarkDiskBytes(b, dir))
+				resources["projection-cache_B"] += float64(payload)
+				resources["projection-cache-rows"] += float64(cached)
+				resources["uninstalled-cache-rows"] += float64(staged)
+				resources["body-memberships"] += float64(members)
+				resources["indexed-sessions"] += float64(sessions)
+				resources["work-rows"] += float64(work)
+				resources["pending-work-rows"] += float64(pending)
+				if err := s.Close(); err != nil {
+					b.Fatal(err)
+				}
 				totalGets += counted.gets
 				totalBytes += counted.bytes
+				b.StartTimer()
+			}
+			for name, total := range resources {
+				b.ReportMetric(total/float64(b.N), name)
 			}
 			b.ReportMetric(float64(totalGets)/float64(b.N), "source-GET/lifetime")
 			b.ReportMetric(float64(totalBytes)/float64(b.N), "compressed-B/lifetime")

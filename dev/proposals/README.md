@@ -18,7 +18,7 @@ Historical-only ownership status reconciled 2026-10-12 after #433 merged as
 
 | Proposal | Implemented | Remaining |
 | --- | --- | --- |
-| [Conversation search](content-search.md) | No content-search implementation. | Six dependency-ordered PRs planned for engine, worker state, reconciliation, CLI, background hints/scheduling and terminal UX; per-PR acceptance and subagent handoff contracts defined. No implementation authorized yet. |
+| [Conversation search](content-search.md) | Delivery branches contain engine, worker state, reconciliation, CLI and terminal implementations; final integration/review pending. | Six dependency-ordered PRs cover those components and opt-in background hints/scheduling. Combined acceptance and supported-platform/provider evidence remain required; this is not a merged-release claim. |
 | [Historical backfill recovery](historical-backfill-recovery.md) | Diagnostics, portable recovery, rollout lookup, history lifecycle and native child capture; recovery hardening; historical-only ownership and bounded bulk mappings (#433). | [Fragment format foundation](../specs/codex-fragments.md) is proposed with schema checks; decoder/filter/consumer, lifecycle, opt-in import, repair journal and the combined acceptance matrix remain gated. |
 | [CLI performance](cli-performance.md) | Synthetic command and historical listing benchmark harnesses with output validation. | Matched repaired-harness measurements and proposed follow-ups. |
 | [Archive listing at scale](listing-at-scale.md) | Parallel listing, tracing, bounded metadata-body reads; 10k benchmark and 10k/20k operation-count coverage. | Full 1k/10k/100k measurement matrix and an index that bounds LIST header cost. |
