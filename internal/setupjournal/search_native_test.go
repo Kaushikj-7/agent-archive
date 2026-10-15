@@ -15,6 +15,9 @@ import (
 	"github.com/wangjohn/agent-archive/internal/scheduler/launchd"
 )
 
+// Value marshaling must retain recovery fences even for an unaddressable journal.
+var _ json.Marshaler = Journal{}
+
 func combinedNativeSearchJournal(t *testing.T) (Journal, []byte, []byte) {
 	t.Helper()
 	j, before, after := nativeJournalFixture(t)
