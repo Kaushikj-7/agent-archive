@@ -12,10 +12,12 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/cursorstore"
+	"github.com/wangjohn/agent-archive/internal/inspectioncache"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 	"github.com/wangjohn/agent-archive/internal/sourceio"
 	"github.com/wangjohn/agent-archive/internal/state"
+	"github.com/wangjohn/agent-archive/internal/trace"
 	"github.com/wangjohn/agent-archive/internal/transcriptio"
 )
 
@@ -130,6 +132,9 @@ func newSourceReader(reg archive.SessionRegistration, opts Options) (sourceReade
 // providerReader keeps only read dependencies; boxing whole registrations and
 // collector options would allocate their unrelated policy fields per source.
 type providerReader struct {
+	countInspection         bool
+	inspectionCache         *inspectioncache.Cache
+	inspectionObservation   **inspectioncache.Observation
 	nativeRoot              *archive.NativeRoot
 	nativeLocators          agentapi.NativeLocatorLookup
 	historicalSourceAllowed func(string) bool
@@ -354,9 +359,6 @@ func (r providerReader) filter(ctx context.Context, adapter archive.Adapter, max
 	if err = r.validateObservation(provider, observed.observation); err != nil {
 		return out, sourceState{}, err
 	}
-	if r.ref.Kind == archive.SourceKindFile {
-		transcriptFilters.Add(1)
-	}
 	in := snap.Input()
 	observed.binding, err = r.snapshotBinding(ctx, snap)
 	if err != nil {
@@ -376,13 +378,19 @@ func (r providerReader) filter(ctx context.Context, adapter archive.Adapter, max
 	c := agentapi.FilterContext{Filename: filepath.Base(r.ref.Path), StartedAt: r.startedAt, Limits: limits}
 	if canInspect {
 		var inspected agentapi.ImportSummary
-		inspected, err = streaming.InspectFilteredImport(ctx, in, c)
+		inspected, err = r.inspectSummary(ctx, snap, f, streaming, in, c, maxBytes)
 		if err == nil {
 			*summary = &inspected
 			out.NativeStartAt = inspected.NativeStartAt
 			out.Boundary = archive.CaptureBoundary{RetainedRecords: inspected.RetainedRecords, RetainedBytes: int(inspected.RetainedBytes)}
 		}
 	} else {
+		if r.countInspection {
+			trace.Add(trace.AdapterInvocations, 1)
+		}
+		if r.ref.Kind == archive.SourceKindFile {
+			transcriptFilters.Add(1)
+		}
 		out, err = r.filterOwned(ctx, f, in, c)
 	}
 	if err != nil {
@@ -450,7 +458,7 @@ func translateSourceError(err error) error {
 	return err
 }
 
-// transcriptFilters counts full changed-file filtering, never previews.
+// transcriptFilters counts actual complete file codec scans, including inspection.
 var transcriptFilters atomic.Int64
 
 // CursorChatSize counts existing native value bytes, excluding framing.
@@ -844,6 +852,45 @@ func (r providerReader) filterOwned(ctx context.Context, filter agentapi.Transcr
 		return out, err
 	}
 	return filter.Filter(ctx, in, c)
+}
+
+func (r providerReader) inspectSummary(ctx context.Context, snapshot agentapi.SourceSnapshot, f agentapi.TranscriptFilter, streaming agentapi.StreamingImportFilter, in agentapi.NativeInput, c agentapi.FilterContext, maxBytes int64) (inspected agentapi.ImportSummary, err error) {
+	var cacheKey inspectioncache.Key
+	var content agentapi.VerifiedContentSnapshot
+	if r.inspectionCache != nil && r.harness == "codex" {
+		content, _ = snapshot.(agentapi.VerifiedContentSnapshot)
+		if content != nil && !content.ContentProofFor(snapshot, in) {
+			content = nil
+		}
+		if content != nil {
+			proof, proofErr := content.ContentProof(ctx)
+			if proofErr != nil {
+				return inspected, proofErr
+			}
+			// Version 2 discards facts persisted before actual-input qualification.
+			cacheKey = inspectioncache.Key{Agent: r.harness, SourceIdentity: string(r.ref.Kind) + "\x00" + r.ref.Path + "\x00" + r.ref.Key, AdapterVersion: f.Version(), FilterVersion: archive.FilterVersion, InspectionVersion: 2, Proof: proof, RawBytes: c.Limits.RawBytes, RecordBytes: c.Limits.RecordBytes, FilteredBytes: maxBytes, Records: c.Limits.Records}
+		}
+	}
+	cached := false
+	if cacheKey.Proof.Version != 0 {
+		inspected, cached = r.inspectionCache.Lookup(ctx, cacheKey)
+	}
+	if !cached {
+		if r.countInspection {
+			trace.Add(trace.AdapterInvocations, 1)
+		}
+		if r.ref.Kind == archive.SourceKindFile {
+			transcriptFilters.Add(1)
+		}
+		inspected, err = streaming.InspectFilteredImport(ctx, in, c)
+	}
+	if err == nil && content != nil && cacheKey.Proof.Version != 0 {
+		err = content.VerifyContent(ctx)
+		if err == nil && !cached && inspected.Conversation && r.inspectionObservation != nil {
+			*r.inspectionObservation = &inspectioncache.Observation{Key: cacheKey, Summary: inspected}
+		}
+	}
+	return inspected, err
 }
 
 func rootValue(root *archive.NativeRoot) archive.NativeRoot {

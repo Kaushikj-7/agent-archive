@@ -3,11 +3,13 @@ package cli
 import (
 	"context"
 	"errors"
+	"path/filepath"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/backfill"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/discovery"
+	"github.com/wangjohn/agent-archive/internal/inspectioncache"
 	"github.com/wangjohn/agent-archive/internal/state"
 )
 
@@ -24,6 +26,10 @@ func buildBackfillPlanWithLookup(ctx context.Context, env Env, home, userHome st
 	}
 	defer func() { err = errors.Join(err, lookup.CloseReadOnly()) }()
 	native := env.backfillEnvironment(userHome, cfg)
+	cache := inspectioncache.New(filepath.Join(home, "backfill-inspection-cache"))
+	writer := inspectioncache.NewWriter(ctx, cache)
+	defer writer.Close()
+	native.InspectionCache, native.ObserveInspection = cache, writer.Observe
 	native.Progress = progress
 	native.CodexRollouts = lookup
 	native.PrepareCodexProof = func(ctx context.Context, ids []string) error {

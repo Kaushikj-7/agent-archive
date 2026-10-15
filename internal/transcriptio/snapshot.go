@@ -85,10 +85,10 @@ func (OS) OpenRegularFile(p string) (*os.File, error) {
 func unchanged(before, after fs.FileInfo) bool { return SameObservation(before, after) }
 
 // SameObservation binds interpreted facts to the regular file that produced them.
-// Identity, size and modification time are practical observations, not a lock
+// Identity, mode, size and modification time are practical observations, not a lock
 // against external writers or a detector of deliberately restored timestamps.
 func SameObservation(before, after fs.FileInfo) bool {
-	return before != nil && after != nil && before.Mode().IsRegular() && after.Mode().IsRegular() && os.SameFile(before, after) && before.Size() == after.Size() && before.ModTime().Equal(after.ModTime())
+	return before != nil && after != nil && before.Mode().IsRegular() && after.Mode().IsRegular() && os.SameFile(before, after) && before.Mode() == after.Mode() && before.Size() == after.Size() && before.ModTime().Equal(after.ModTime())
 }
 
 // Stamp retains real file identity privately, alongside ordering facts.
@@ -295,7 +295,7 @@ func (s *Snapshot) CheckPrefix(ctx context.Context, length int64, digest [32]byt
 		if err != nil {
 			return err
 		}
-		if !s.stamp.SameFile(Stamp{identity: info}) || !s.stamp.SameFile(Stamp{identity: named}) || info.Size() < length || named.Size() < length {
+		if !s.stamp.SameFile(Stamp{identity: info}) || !s.stamp.SameFile(Stamp{identity: named}) || info.Mode() != s.stamp.identity.Mode() || named.Mode() != s.stamp.identity.Mode() || info.Size() < length || named.Size() < length {
 			return ErrChanged
 		}
 		return nil

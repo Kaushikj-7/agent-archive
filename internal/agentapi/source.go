@@ -208,3 +208,23 @@ type CodexRegisteredRolloutLookup interface {
 
 // ErrHistorySourceExcluded refuses complete import when a required source is excluded.
 var ErrHistorySourceExcluded = errors.New("required history source is excluded")
+
+// SourceContentProof identifies exactly the captured bytes owned by a live snapshot.
+// It supplies equality facts and never grants capture or import admission.
+type SourceContentProof struct {
+	Version  uint8    `json:"Version"`
+	Provider string   `json:"Provider"`
+	SHA256   [32]byte `json:"SHA256"`
+	Boundary int64    `json:"Boundary"`
+}
+
+// VerifiedContentSnapshot exposes provider-owned content equality while its
+// snapshot remains live. Unsupported providers retain the full inspection path.
+type VerifiedContentSnapshot interface {
+	// ContentProofFor attests the actual snapshot and every field of its input.
+	// Embedded capabilities must decline decorators unless they explicitly own
+	// the delegated input and its full inspection/error semantics.
+	ContentProofFor(SourceSnapshot, NativeInput) bool
+	ContentProof(context.Context) (SourceContentProof, error)
+	VerifyContent(context.Context) error
+}

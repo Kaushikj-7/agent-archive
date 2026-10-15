@@ -10,6 +10,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/inspectioncache"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/trace"
 )
@@ -214,25 +215,29 @@ func FilterSource(ctx context.Context, harness string, ref agentapi.SourceRef, s
 	return out, adapter, err
 }
 
-// InspectSource uses compact filtering when the actual injected filter supports
-// the observed input. Unsupported codecs and history retain FilterSource behavior.
-// Callers must also require an integration-owned summary interpreter.
-func InspectSource(ctx context.Context, harness string, ref agentapi.SourceRef, startedAt time.Time, sources agentapi.SourcesLookup) (archive.FilteredTranscript, *agentapi.ImportSummary, error) {
+// InspectSourceCached optionally reuses provider-verified intrinsic facts. The
+// returned observation is safe for caller persistence only after caller source
+// checks succeed. Snapshot and pass cleanup have completed before this returns.
+func InspectSourceCached(ctx context.Context, harness string, ref agentapi.SourceRef, startedAt time.Time, sources agentapi.SourcesLookup, cache *inspectioncache.Cache) (archive.FilteredTranscript, *agentapi.ImportSummary, *inspectioncache.Observation, error) {
 	adapter, err := sourceAdapter(sources, harness)
 	if err != nil {
-		return archive.FilteredTranscript{}, nil, err
+		return archive.FilteredTranscript{}, nil, nil, err
 	}
 	reg := archive.SessionRegistration{Harness: archive.Harness{Name: adapter.Name()}, TranscriptPath: ref.Path, SourceKind: ref.Kind, SourceKey: ref.Key, SessionStartedAt: startedAt}
 	source, _ := newSourceReader(reg, Options{Sources: sources})
+	reader := source.(providerReader)
+	reader.countInspection = true
 	var summary *agentapi.ImportSummary
-	out, _, err := source.(providerReader).filter(ctx, adapter, DefaultMaxTranscriptBytes, &summary)
+	var observation *inspectioncache.Observation
+	reader.inspectionCache, reader.inspectionObservation = cache, &observation
+	out, _, err := reader.filter(ctx, adapter, DefaultMaxTranscriptBytes, &summary)
 	if errors.Is(err, errRecordTooLarge) || errors.Is(err, errTranscriptTooLarge) {
-		return archive.FilteredTranscript{}, nil, errors.Join(archive.ErrRecordTooLarge, err)
+		return archive.FilteredTranscript{}, nil, nil, errors.Join(archive.ErrRecordTooLarge, err)
 	}
-	if err != nil {
-		return out, nil, err
+	if err != nil || ctx.Err() != nil {
+		return out, nil, nil, errors.Join(err, ctx.Err())
 	}
-	return out, summary, nil
+	return out, summary, observation, nil
 }
 
 // FilterTranscriptSnapshot filters the verified handle without reopening its path.
