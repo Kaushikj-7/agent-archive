@@ -6,8 +6,8 @@ feasibility; production capture, privacy, publication and full parity are not
 qualified. Implementation still requires separate authorization.
 
 This is the single implementation plan. Qualification findings and design
-decisions are incorporated below; the [probe data](muse-qualification-evidence.json)
-is supporting evidence.
+decisions are incorporated below, and §6 and §7 record the probe results the
+design depends on.
 
 ## 1. Scope and success criteria
 
@@ -198,7 +198,7 @@ instead. Resolve in this order:
    lookup; after commit, revalidate. Continue through existing frozen publication.
 
 Q0 establishes whether folder dates are UTC or local time and how far they can
-drift from the ID timestamp; the evidence has one root path, far from midnight in
+drift from the ID timestamp; the probes recorded one root path, far from midnight in
 either zone, so the adjacent-day window covers both until then.
 Relocation requires proven continuity; conflicting copies remain explicit.
 Workspace or root changes cannot silently move capture to another project,
@@ -564,6 +564,11 @@ does not certify a newer implementation base.
 
 ### Observations that determine the design
 
+Most rows come from retained probe results. Some details survived only in the
+earlier qualification reports: the 4096-byte checkpoint setting and checkpoint
+name, `result_ready` settlement, `submit_result`, compound-shell forwarding and the
+observer-link notes. Q0 reruns those before any phase relies on them.
+
 | Area | Established result and limit |
 | --- | --- |
 | Retained storage | Roots use `$XDG_DATA_HOME/muse/sessions/YYYY/MM/DD/<session-id>/session.jsonl`, default data home `~/.local/share/muse`. Root session IDs are UUIDv7-shaped and matched their folder dates in the one recorded path, which was far from midnight; some child IDs are not time-ordered. Every observed hook had `transcript_path: null`. Root export lacked actual child content; retained files require independent resolution. |
@@ -581,8 +586,8 @@ does not certify a newer implementation base.
 | Skills | On 1.4.8, project catalog evidence depended on workspace trust. Successful `read_skill` produced `skill_read_observed` with `evidence_kind: read_skill_tool` and a hash. Native `user-only`, `disable` and `enable` exited 0 but dropped unrelated MCP type, cwd, required and timeout fields while preserving foreign hooks. Full activation, foreign-root and plugin eligibility remain gates. |
 | Names and handoff | Corrected MSP initialization required `initialized` after `initialize`; rename, read and 1.4.7 fork continuation passed. A synthetic context artifact outside the workspace was readable under normal permissions. Actual cross-agent launching, title refresh and portable native resume are not established. |
 
-Failed attempts, corrected assertions and untouched cases remain distinct in the
-probe data. Command acknowledgement or model-call counts do not establish settled
+Failed attempts, corrected assertions and untouched cases were kept distinct in
+the probe record. Command acknowledgement or model-call counts do not establish settled
 child results. SDK and web-preview wire schemas differed from the tested
 binaries: use each binary's offline export for probe parameters, including the
 required resume `commandId`. Stable and experimental fingerprints are separate;
@@ -590,31 +595,41 @@ schemas and exporters do not specify the retained-file integrity contract.
 
 ## 7. Evidence and reproduction details
 
-The [evidence file](muse-qualification-evidence.json) is a dated record of the
-initial 1.4.7 campaign, later 1.4.7 and 1.4.8 attempts, corrected outcomes, hashes
-and frame-export results. Each campaign names its build and the basis for it, or
-null where the run did not record one. `report_findings` holds results that were
-summarized from runs rather than kept as observations, each with its source;
-anything sourced only from earlier plan text must be rerun in Q0. The
-per-campaign results files it hashes, raw model requests, private context, full
-logs and probe helpers stayed in temporary storage and are not in the repository,
-so the hashes cannot be rechecked here. Authoring a runnable probe and the
-complete reviewed corpus is Q0's first deliverable, and that corpus supersedes
-this file.
+The detailed probe record is not kept in the repository. Its last version is
+`dev/specs/muse-qualification-evidence.json` at commit `7981d3ee`: per-campaign
+observations with their builds, frame-mutation results and the source of each
+finding that survived only in earlier reports. The per-campaign results files it
+hashed, raw model requests, private context, full logs and probe helpers stayed
+in temporary storage. Authoring a runnable probe and the complete reviewed corpus
+is Q0's first deliverable; that corpus, not the old record, is the evidence later
+phases cite.
 
-`saved_fixture_checks` records two schema-1 permission-frame excerpts from
-`1.4.8-R6256.1`: an exact native frame and a copy with its `content_sha256` zeroed.
-Native export reported 0 unparseable lines for the original and 1 for the copy,
-with exit 0 for both. The excerpts are not kept in the repository; Q0 regenerates
-exact frames from the pinned binary in its reviewed corpus, and P1's decoder tests
-consume them from `internal/agents/muse/testdata`. Native acceptance of the
+Pinned producer inputs for Q0:
+
+| Item | Value |
+| --- | --- |
+| `1.4.7-R6101.1` | Native build SHA `d8c53d25bd`; stable schema fingerprint `sha256:6de32db08bbbe0deb478d2bfcaba001e9fb490986bc80db3aceb4d996abf7df9` |
+| `1.4.8-R6256.1` | Binary SHA-256 `94ea8fd1c73664c22e5c6157d8706945b667b11bd1c7c51691811e79f17dfcf1`; stable schema fingerprint `sha256:4e3200c3c9dc0cd7919d11022630d43f9bc1c5cdda375381e90b0183b5665069` |
+
+On `1.4.8-R6256.1`, `muse export` accepted an exact schema-1 permission-frame
+excerpt with 0 unparseable lines. Copies with a zeroed `content_sha256`, changed
+outer key order or other mutations each reported 1 unparseable line; every case
+exited 0. Q0 regenerates exact frames from the pinned binary, and P1's decoder
+tests consume them from `internal/agents/muse/testdata`. Native acceptance of the
 original and rejection of mutations do not establish independent checksum
 encoding.
 
-Reusable registry and fourth-agent (including race), source and snapshot, bounded
-traversal and retry, and native-link, late-parent and Codex-legacy checks passed
-at the recorded review HEAD; commands are preserved in the evidence file. They
-validate extension points, not unimplemented Muse behavior.
+These existing checks passed at `7d8aee13` and again at `4f94edb9`. They cover
+the extension points the plan reuses, not unimplemented Muse behavior. Rerun them
+at Q0 on the current base:
+
+```sh
+go test -short -count=1 ./internal/agents/builtin ./internal/agentapi
+go test -race -short -count=1 -run '^TestFourth' ./internal/cli
+go test -short -count=1 ./internal/sourceio ./internal/transcriptio ./internal/discoveryio
+go test -short -count=1 -run '^Test(Native(Link|LateParent|ParentRepair|FrozenParent)|LegacyNativeChild)' ./internal/collector
+go test -short -count=1 -run '^Test(OnlyCodexIsRegisteredAndEnumerationIsBoundedAndCancelled|ConflictingSourceDoesNotStarveLaterDirectoryBatches|UnavailableDirectoryRetriesNextPassWithoutStarvingBacklog|BoundedScanContinuesFairlyAcrossActiveAndArchivedSources)$' ./internal/discovery
+```
 
 Primary references: [extending/hooks](https://dev.meta.ai/docs/muse-code/extending),
 [audit/resume](https://dev.meta.ai/docs/cookbook/audit-agent-sessions),
