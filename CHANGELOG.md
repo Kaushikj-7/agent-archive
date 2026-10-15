@@ -6,6 +6,16 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- A long Codex thread whose history spans more than one rollout needs far less
+  read memory to capture, so it is captured at sizes that were recorded as too
+  large to read (`transcript_too_large`, per-session read memory, from about
+  60 MB of rollouts). Reconciling its history no longer reads and filters the
+  current rollout a second time, the read's encoded records are released once
+  the candidate is built, and saving a pending publication no longer reserves
+  twice the existing pending file to check its catalog commit. Capturing such
+  a thread's growth needs about 7 times its filtered size in read memory
+  instead of about 12.
+
 - Read complete supported Muse exec/MSP roots with `handoff --file PATH
   --harness muse`, including safe own prompts and committed assistant text,
   JSON/Markdown output and handoff into an existing supported agent. Creation

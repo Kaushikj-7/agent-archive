@@ -1390,6 +1390,10 @@ func (s *historySnapshot) RevisionCandidates(ctx context.Context) (agentapi.Revi
 		seen[span.file.ref.Path] = true
 		out.Chain = append(out.Chain, span.file.ref)
 	}
+	// The tip is what this snapshot read as the thread's current revision.
+	if seen[s.selection.leaf.ref.Path] {
+		out.Active = s.selection.leaf.ref
+	}
 	// Observed same-thread rollouts off it (an abandoned branch, say) follow
 	// as best-effort historical revisions; one whose file is gone since is
 	// passed over, and past the limit further ones are left out rather than
@@ -1413,7 +1417,7 @@ func (s *ordinarySnapshot) RevisionCandidates(ctx context.Context) (agentapi.Rev
 	}
 	// An ordinary rollout is the whole chain; observed same-thread rollouts
 	// off it follow as best-effort historical revisions.
-	out := agentapi.RevisionCandidateSet{Chain: []agentapi.SourceRef{s.source.ref}}
+	out := agentapi.RevisionCandidateSet{Chain: []agentapi.SourceRef{s.source.ref}, Active: s.source.ref}
 	for _, ref := range presentCandidates(s.selection.set.Candidates) {
 		if ref.Path == s.source.ref.Path {
 			continue

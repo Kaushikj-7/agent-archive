@@ -220,7 +220,7 @@ func (s *sessionScan) scanOnce(ctx context.Context) (sessionOutcome, error) {
 	if emptied, err := s.emptied(read); emptied || err != nil {
 		return outcomeSkipped, err
 	}
-	candidate, supplemental, err := s.build(read)
+	candidate, supplemental, err := s.buildCandidate(&read)
 	if err != nil {
 		return outcomeSkipped, err
 	}
@@ -519,6 +519,18 @@ func (s *sessionScan) emptied(read sourceRead) (bool, error) {
 	}
 	_, err := s.block(state.BlockedReasonTranscriptRewritten, nil, &read.observed)
 	return true, err
+}
+
+// buildCandidate builds the scan's candidate (build). A history candidate is
+// reconciled and published without the read's encoded rows, so they are
+// released (finishHistoryFilter) before reconciliation reads more.
+func (s *sessionScan) buildCandidate(read *sourceRead) (archive.SourceBundle, []archive.SupplementalEvidence, error) {
+	candidate, supplemental, err := s.build(*read)
+	if err != nil || candidate.History == nil || !s.canReconcileRevisions(*read, candidate) {
+		return candidate, supplemental, err
+	}
+	candidate, err = s.finishHistoryFilter(read, candidate)
+	return candidate, supplemental, err
 }
 
 // build assembles the candidate bundle, and returns the supplemental

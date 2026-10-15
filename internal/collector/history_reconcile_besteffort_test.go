@@ -235,7 +235,7 @@ func TestBestEffortRevisionPastTheSessionCeilingIsLeftOut(t *testing.T) {
 					return errRetainedBudget
 				}
 				consumed = append(consumed, id)
-				if id == revisionC && where == "read" {
+				if id == revisionThread && where == "read" {
 					// The chain's own retained work fills the session's share.
 					holding = held.Available()
 					if !held.Reserve(holding) {
@@ -248,7 +248,9 @@ func TestBestEffortRevisionPastTheSessionCeilingIsLeftOut(t *testing.T) {
 			if err != nil {
 				t.Fatal("an off-chain rollout past the session ceiling blocked the chain: ", err)
 			}
-			if !slices.Contains(consumed, revisionThread) || !slices.Contains(consumed, revisionC) || slices.Contains(consumed, revisionB) {
+			// C, the chain's tip, is the current revision the scan's own read
+			// holds, so it is not read again.
+			if !slices.Contains(consumed, revisionThread) || slices.Contains(consumed, revisionC) || slices.Contains(consumed, revisionB) {
 				t.Fatalf("consumed %v", consumed)
 			}
 			if budget.ScopeExceeded() != c.exceeded {

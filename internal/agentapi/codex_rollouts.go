@@ -108,10 +108,14 @@ type SourceRevisions interface {
 // reading one fails the reconciliation. BestEffort lists observed same-thread
 // rollouts off that chain (an abandoned branch, say), kept as historical
 // revisions when they can be read: a failure reading one only leaves it out,
-// so it never blocks the chain's own capture.
+// so it never blocks the chain's own capture. Active is the chain's tip, the
+// rollout the snapshot that listed the set read as the thread's current
+// revision: it is in Chain, and a reader holding that snapshot's records
+// already has it, so it need not read it again.
 type RevisionCandidateSet struct {
 	Chain      []SourceRef
 	BestEffort []SourceRef
+	Active     SourceRef
 }
 
 // SourceRevisionCandidates exposes bounded same-thread candidates from validated
