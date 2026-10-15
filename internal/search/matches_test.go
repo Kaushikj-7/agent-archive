@@ -204,20 +204,22 @@ func TestSessionMatchQueryPlanWithUnrelatedCommonHits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	results, err := s.Search(t.Context(), q)
-	if err != nil {
+	// This witness exercises selected-session match paging, not the separate
+	// exhaustive global ranking query and its finite production deadline.
+	var generation int64
+	if err = s.db.QueryRowContext(t.Context(), "SELECT generation FROM search_state WHERE id=1").Scan(&generation); err != nil {
 		t.Fatal(err)
 	}
-	first, err := s.Matches(t.Context(), q, "codex", "session-000000", results.Generation, "")
+	first, err := s.Matches(t.Context(), q, "codex", "session-000000", generation, "")
 	if err != nil || len(first.References) != 20 || first.Next == "" {
 		t.Fatalf("first bounded page: %+v %v", first, err)
 	}
-	second, err := s.Matches(t.Context(), q, "codex", "session-000000", results.Generation, first.Next)
+	second, err := s.Matches(t.Context(), q, "codex", "session-000000", generation, first.Next)
 	if err != nil || len(second.References) != 20 || second.Previous == "" {
 		t.Fatalf("forward bounded page: %+v %v", second, err)
 	}
 	for _, token := range []string{"", first.Next, second.Previous} {
-		cursor, err := decodeMatchCursor(token, results.Generation, queryIdentity(q), "codex/session-000000")
+		cursor, err := decodeMatchCursor(token, generation, queryIdentity(q), "codex/session-000000")
 		if err != nil {
 			t.Fatal(err)
 		}
