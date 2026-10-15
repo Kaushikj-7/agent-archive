@@ -42,7 +42,7 @@ class LaneVerdictTest(unittest.TestCase):
         import run_go_shard
         found = jobs((ROOT/'.github/workflows/test.yml').read_text())
         expected = dict(LANES)
-        expected['linux-race'] = {'linux-short', 'linux-full', 'script-tests', 'macos-smoke', 'source-audit'}
+        expected['linux-race'] = {'linux-short', 'linux-full', 'script-static', 'script-install', 'script-purge', 'macos-smoke', 'source-audit'}
         for group, names in expected.items():
             predicate = job_key(found[group], 'if')
             for state in ('success', 'failure', 'skipped', 'cancelled'):
@@ -68,6 +68,7 @@ class LaneVerdictTest(unittest.TestCase):
     def test_consumers_plan_without_an_extra_eligibility_dependency(self):
         found = jobs((ROOT/'.github/workflows/test.yml').read_text())
         self.assertNotIn('tier-plan', found)
+        self.assertNotIn('script-tests', found)
         for name in ('script-purge', 'macos-smoke', 'linux-full', 'script-install', 'script-static', *LANES['cross-build']):
             self.assertIsNone(job_key(found[name], 'needs'))
 

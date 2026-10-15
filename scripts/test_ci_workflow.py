@@ -182,9 +182,9 @@ class CandidateCampaignTest(unittest.TestCase):
     def test_candidate_test_keeps_all_pr_gates(self):
         workflow = (ROOT / '.github/workflows/test.yml').read_text()
         self.assertIn('  pull_request:', workflow)
-        self.assertEqual(set(jobs(workflow)), {'linux-race', 'linux-short', 'linux-full', 'script-tests', 'git-identity-compatibility', 'macos-smoke', 'cross-build', 'lint', 'source-audit', 'script-static', 'script-install', 'script-purge', 'cross-linux-arm64', 'cross-darwin-nocgo', 'cross-linux-release'})
+        self.assertEqual(set(jobs(workflow)), {'linux-race', 'linux-short', 'linux-full', 'git-identity-compatibility', 'macos-smoke', 'cross-build', 'lint', 'source-audit', 'script-static', 'script-install', 'script-purge', 'cross-linux-arm64', 'cross-darwin-nocgo', 'cross-linux-release'})
         for name, text in jobs(workflow).items():
-            if name not in ('linux-race', 'linux-short', 'linux-full', 'source-audit', 'script-tests', 'cross-build'):
+            if name not in ('linux-race', 'linux-short', 'linux-full', 'source-audit', 'cross-build'):
                 self.assertIsNone(job_key(text, 'if'), name)
         self.assertIn('--tier full --suite linux', workflow)
         self.assertIn('github.event.pull_request.number || github.ref', workflow)
@@ -264,12 +264,12 @@ class CadenceTest(unittest.TestCase):
         self.assertIn('fail-fast: false', found['linux-short'])
         self.assertIn('python3 -B scripts/run_go_shard.py --workers "$WORKERS" --plain-audit-owned --plain-vet-owned --shard',found['linux-short'])
         self.assertEqual(job_key(found['linux-race'],'if'),'${{ !cancelled() }}')
-        self.assertEqual(job_key(found['linux-race'],'needs'),'[linux-short, linux-full, script-tests, macos-smoke, source-audit]')
+        self.assertEqual(job_key(found['linux-race'],'needs'),'[linux-short, linux-full, script-static, script-install, script-purge, macos-smoke, source-audit]')
         self.assertIn('--verdict', found['linux-race'])
         self.assertIn('--reconcile', found['linux-race'])
         self.assertIn('--tier "$tier" --evidence', found['script-purge'])
         self.assertNotIn('tier-plan', found)
-        for consumer in ('linux-full', 'macos-smoke', 'script-purge', 'script-tests', 'linux-race'):
+        for consumer in ('linux-full', 'macos-smoke', 'script-purge', 'linux-race'):
             text = found[consumer]
             self.assertIn('fetch-depth: 0', text)
             self.assertIn('--plan --require-pr-proof', text)

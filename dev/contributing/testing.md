@@ -42,19 +42,20 @@ retain actual vet evidence bound to their source and compiler context. Each work
 records its source, catalog, assignment and terminal coverage; the stable required
 `linux-race` verdict reconciles all eight artifacts and fails on any missing, failed or cancelled worker. All Linux
 Python gates run in independent `script-static`, `script-install` and
-`script-purge` jobs. Only purge waits for the tier plan; static and installer
-fixtures start immediately. Each lane uses isolated HOME/XDG/temp directories.
+`script-purge` jobs. Purge resolves the existing exact-source plan locally;
+static and installer fixtures start immediately. Each lane uses isolated HOME/XDG/temp directories.
 Purge discovers every complete unittest method and assigns sorted methods to two
 standard Linux workers. Each parent retains all runtime-generated cases; only
 its existing tier selection changes repeated resume boundaries. The aggregate
 checks both current-source catalogs, assignments, passing parent terminals and
 bound child streams, including the exact existing resume/cadence case union.
 Missing, duplicate or unexpected workers, parents or cases fail closed.
-The stable required `script-tests` verdict rejects missing, failed, skipped or
-cancelled lanes and remains a dependency of `linux-race`. The independent
+The required `linux-race` verdict directly rejects missing, failed, skipped or
+cancelled script lanes and validates the complete current-source purge union.
+It also verifies the Linux/Go evidence, without a separate script aggregate job. The independent
 Linux/arm64 build+vet, Darwin/arm64 no-cgo vet and Linux release build+verification
 also run in separate standard Linux jobs behind the stable `cross-build` verdict.
-A separate exact-source plan
+The existing deterministic planner runs locally in its consumers and
 selects focused representative regressions for sensitive PR changes. Its proof
 compares event base, actual head and tested merge, checks tracked bytes/types/modes,
 and includes both paths of renames and deletions. CLI, catalog, recovery, archive,

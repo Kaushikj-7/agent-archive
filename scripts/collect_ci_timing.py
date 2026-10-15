@@ -89,7 +89,7 @@ def inventory(workers):
         raise ValueError('unsupported worker count')
     return {'Test': ['source-audit', *[f'linux-short ({i})' for i in range(workers)],
                      'linux-full', 'script-static', 'script-install', 'script-purge (0)',
-                     'script-purge (1)', 'script-tests', 'lint', 'cross-linux-arm64',
+                     'script-purge (1)', 'lint', 'cross-linux-arm64',
                      'cross-darwin-nocgo', 'cross-linux-release', 'cross-build', 'macos-smoke',
                      'linux-race', 'Git identity (all versions)'],
             'Levenshtein': ['verify', 'native-release-vulnerabilities']}

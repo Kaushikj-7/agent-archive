@@ -40,7 +40,7 @@ interface so processing untrusted PR artifacts cannot populate trusted caches.
     "comparable_group": "eight-workers-lane-aware-parent-v3",
     "event_at": "2026-10-14T00:00:00Z",
     "required_jobs": {
-      "Test": ["source-audit", "linux-short (0)", "linux-short (1)", "linux-short (2)", "linux-short (3)", "linux-short (4)", "linux-short (5)", "linux-short (6)", "linux-short (7)", "linux-full", "script-static", "script-install", "script-purge (0)", "script-purge (1)", "script-tests", "lint", "cross-linux-arm64", "cross-darwin-nocgo", "cross-linux-release", "cross-build", "macos-smoke", "linux-race", "Git identity (all versions)"],
+      "Test": ["source-audit", "linux-short (0)", "linux-short (1)", "linux-short (2)", "linux-short (3)", "linux-short (4)", "linux-short (5)", "linux-short (6)", "linux-short (7)", "linux-full", "script-static", "script-install", "script-purge (0)", "script-purge (1)", "lint", "cross-linux-arm64", "cross-darwin-nocgo", "cross-linux-release", "cross-build", "macos-smoke", "linux-race", "Git identity (all versions)"],
       "Levenshtein": ["verify", "native-release-vulnerabilities"]
     },
     "workflows": [{"run": {}, "jobs": {"total_count": 0, "jobs": []}}]
@@ -495,8 +495,8 @@ processes, PATH/install/configuration/temp directories. A version failure does
 not suppress the other versions. The `git-identity-versions` artifact retains
 all three receipts and raw logs for seven days; a single green job without
 complete version evidence is insufficient qualification. The normal production
-inventory has 25 jobs rather than the prior 28 (Git consolidation removes two;
-local planning removes one), with version coverage unchanged.
+inventory has 24 jobs rather than the prior 28 (Git consolidation removes two;
+local planning and final script aggregation each remove one), with version coverage unchanged.
 
 In normal run 38682572380, the earlier three jobs allocated 112 seconds in
 aggregate, including 39 seconds in their test steps. Sharing setup should reduce
@@ -521,7 +521,7 @@ changing them. The three cross-build lanes retain all targets and release
 binary validation: their observed body steps alone totaled 166 seconds, so
 serializing all three would not support the 150-second objective.
 
-The `script-tests`, `linux-race` and `cross-build` job gates use
+The `linux-race` and `cross-build` job gates use
 `${{ !cancelled() }}`: prerequisite failures/skips still reach their fail-closed
 verdicts, but superseded workflows can release runners and their per-PR
 concurrency group. Step-level evidence uploads and cleanup retain `always()`.
@@ -673,7 +673,8 @@ only; no `labeled`/`unlabeled` triggers or mutable API metadata controls workers
 
 The fixed matrix, worker cache count/argv and aggregate count are guarded against
 the same captured event policy. After local-plan integration the full expected
-Test plus Levenshtein inventory is 25 jobs with eight workers and 21 with four;
+Test plus Levenshtein inventory is 24 jobs with eight workers and 20 with four
+(including two Mac jobs, so Linux inventory is 22/18);
 Git compatibility remains all three version receipts inside one job. Guard receipts record real PR/head/base/ordered
 merge parents/tree/workflow identities. Different merge commits remain different
 SHAs even if independent Git evidence establishes identical trees. Every topology
@@ -785,7 +786,7 @@ recomputes and compares it, checks Linux extras and binds native extras to the
 same plan. Purge receipts must match the independently selected tier and
 complete method/case union.
 
-This makes six local planner invocations/full-history checkouts instead of one
+This makes five local planner invocations/full-history checkouts instead of one
 standalone planner, adding repeated Git/selection work. Earlier full/purge
 eligibility can also increase the initial ready burst by two Linux roles net
 of the removed planner (one full plus two purge workers, minus one planner);
@@ -799,10 +800,10 @@ No shard waits on a planner, and no capacity or test cadence increases.
 
 ### Qualification caveat after local plan integration
 
-Removing the standalone tier planner reduces total full-pipeline jobs from 26 to
-25 at eight workers, but statically initially eligible Linux Test jobs increase
-from 16 to 18, or 18 to 20 including Levenshtein. The six actual consumer plan
-invocations and full-history fetches replace one planner allocation; purge has
+Before final script-verdict consolidation, removing the standalone tier planner
+reduced total full-pipeline jobs from 26 to 25 at eight workers, but statically initially eligible Linux Test jobs increase
+from 16 to 18, or 18 to 20 including Levenshtein. That intermediate revision used six actual consumer plan
+invocations and full-history fetches to replace one planner allocation; purge has
 two physical consumers. Current event/source guards and aggregate canonical,
 focused, native and purge proof checks remain. Lower total job count is not
 proof of a lower initial burst, fewer runner-minutes, or less queueing. Record
@@ -838,3 +839,29 @@ Path selection still conservatively compares the recorded event base to both
 the PR head and tested source, including base advances. Candidate builders and
 throughput qualification must use actual merge parents and keep recorded event
 identity separate; forged, reversed or unrelated parent identities fail closed.
+
+
+The required `linux-race` job directly requires static scripts, installer scripts
+and both purge workers, alongside its existing Go/native/audit prerequisites.
+It runs the unchanged purge artifact download and current-source method/case
+union verifier before its Go evidence checks. The standalone `script-tests`
+job is removed, eliminating a second aggregate admission and duplicate local
+plan/history checkout while keeping every script body and purge receipt check.
+Initial ready-role counts stay unchanged by this consolidation; it removes a
+later dependent job, not a producer. Measure current CI before attributing a
+specific latency saving to this scheduling change.
+
+
+### Current final-gate inventory
+
+The standalone unrequired `script-tests` verdict runner is removed; final
+`linux-race` directly requires static/install/purge roles and retains the complete,
+unconditional current-source purge method/case union before Go evidence checks.
+The five existing local planner consumers (including two physical purge jobs)
+retain canonical/native/extra source proof. Required check names and all bodies
+remain intact. Full inventories are 24 jobs at eight workers / 20 at four, with
+two Mac jobs included (22/18 Linux). This removes one allocation/history fetch
+and sequential verdict boundary; initially eligible Linux jobs remain 20/16
+including Levenshtein, so no reduced initial burst or measured queue benefit is
+claimed. Actual source-bound runtime, cache cohorts and full-pipeline comparison
+remain necessary; prior 28-job source evidence cannot certify this new tree.

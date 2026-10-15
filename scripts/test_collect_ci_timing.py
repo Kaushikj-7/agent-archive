@@ -111,6 +111,7 @@ class CollectionTests(unittest.TestCase):
         workflow = (Path(__file__).resolve().parent.parent/'.github/workflows/test.yml').read_text()
         found = workflow_jobs(workflow)
         self.assertNotIn('tier-plan', found)
+        self.assertNotIn('script-tests', found)
         for workers in (4, 8):
             expected = set()
             for ident, body in found.items():
@@ -129,18 +130,18 @@ class CollectionTests(unittest.TestCase):
         self.assertEqual(len(result['input']['samples']), 2)
         self.assertEqual(result['input']['samples'][1]['scope'], 'auxiliary-campaign')
         resources = result['report']['resources_across_snapshots']
-        self.assertEqual(resources['physical_job_rows'], 25)
-        self.assertEqual(resources['linux_runner_minutes'], 25)
+        self.assertEqual(resources['physical_job_rows'], 24)
+        self.assertEqual(resources['linux_runner_minutes'], 24)
 
     def test_full_fixed_inventory_and_complete_report(self):
-        self.assertEqual(sum(map(len, collector.inventory(8).values())), 25)
-        self.assertEqual(sum(map(len, collector.inventory(4).values())), 21)
+        self.assertEqual(sum(map(len, collector.inventory(8).values())), 24)
+        self.assertEqual(sum(map(len, collector.inventory(4).values())), 20)
         value = collector.collect(FakeAPI(), receipt(), 1, 2, cohort='source-only', cache_state='mixed',
                                   event_at='2026-10-15T00:00:00Z')
         self.assertEqual(value['snapshot_status'], 'terminal')
         sample = value['report']['samples'][0]
         self.assertTrue(sample['qualifying'])
-        self.assertEqual(sample['linux_runner_minutes'], 25)
+        self.assertEqual(sample['linux_runner_minutes'], 24)
         self.assertEqual(sample['tested_checkout']['source'], 'a'*40)
 
     def test_wrong_pr_same_head_branch_path_source_or_base_rejected(self):

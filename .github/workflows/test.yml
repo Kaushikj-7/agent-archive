@@ -330,45 +330,11 @@ jobs:
         if: always()
         run: rm -rf -- "$RUNNER_TEMP/script-purge-home" "$RUNNER_TEMP/script-purge-xdg" "$RUNNER_TEMP/script-purge-tmp"
 
-  script-tests:
-    # Fail closed on failed prerequisites while allowing superseded runs to cancel.
-    if: ${{ !cancelled() }}
-    needs: [script-static, script-install, script-purge]
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          fetch-depth: 0
-      - name: Resolve exact-source local tier before consumer work
-        id: plan
-        env:
-          PYTHONDONTWRITEBYTECODE: '1'
-        run: python3 -B scripts/run_ci_tier.py --plan --require-pr-proof --output "$RUNNER_TEMP/tier-plan/extra-plan.json"
-      - name: Require every independent lane to succeed
-        env:
-          NEEDS: ${{ toJSON(needs) }}
-        run: python3 -B scripts/ci_lane_verdict.py script-tests
-      - name: Download complete purge worker evidence
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          pattern: purge-tier-*
-          path: ${{ runner.temp }}/purge-evidence
-      - name: Reconcile current-source complete purge method and case union
-        env:
-          EVENT: ${{ github.event_name }}
-          FULL_PURGE: ${{ steps.plan.outputs.purge }}
-        run: |
-          tier=pr
-          if [ "$EVENT" != pull_request ] || [ "$FULL_PURGE" = true ]; then tier=full; fi
-          python3 -B scripts/purge_ci.py --tier "$tier" --evidence "$RUNNER_TEMP/purge-evidence"
-
   # Keep this required check stable and fail closed when a worker fails/skips.
   linux-race:
     # Fail closed on failed prerequisites while allowing superseded runs to cancel.
     if: ${{ !cancelled() }}
-    needs: [linux-short, linux-full, script-tests, macos-smoke, source-audit]
+    needs: [linux-short, linux-full, script-static, script-install, script-purge, macos-smoke, source-audit]
     permissions:
       contents: read
       actions: read
@@ -396,6 +362,19 @@ jobs:
         env:
           NEEDS: ${{ toJSON(needs) }}
         run: python3 scripts/run_go_shard.py --verdict
+      - name: Download complete purge worker evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: purge-tier-*
+          path: ${{ runner.temp }}/purge-evidence
+      - name: Reconcile current-source complete purge method and case union
+        env:
+          EVENT: ${{ github.event_name }}
+          FULL_PURGE: ${{ steps.plan.outputs.purge }}
+        run: |
+          tier=pr
+          if [ "$EVENT" != pull_request ] || [ "$FULL_PURGE" = true ]; then tier=full; fi
+          python3 -B scripts/purge_ci.py --tier "$tier" --evidence "$RUNNER_TEMP/purge-evidence"
       - name: Download all successful shard catalogs
         if: github.event_name == 'pull_request'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
