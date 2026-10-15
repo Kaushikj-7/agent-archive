@@ -63,8 +63,10 @@ find none say so without creating the data directory.
   failed, and the Codex sessions after it wait for the next pass, which has
   a fresh allowance. On the following passes that session is read after
   the other Codex sessions, so one session that needs the whole allowance
-  does not hold the rest back; if it is still not read after 24 hours it
-  is reported as failed, and it stays behind the others. Claude Code and
+  does not hold the rest back. Several sessions waiting this way take
+  turns going first among themselves, so one that needs the whole
+  allowance cannot hold another back for good; one still not read after 24
+  hours is reported as failed and waits behind them all. Claude Code and
   Cursor sessions in the same pass are not held up.
 
   None of these is a failure, and none changes the exit code. Claude Code

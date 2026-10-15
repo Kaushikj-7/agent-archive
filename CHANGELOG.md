@@ -42,7 +42,10 @@ follow [Semantic Versioning](https://semver.org/).
   left the rest for the next pass, every pass. A Codex session put off for
   that reason (`lookup_allowance`) is now read after the other Codex
   sessions on the following passes, including once it has been put off for
-  24 hours and is reported as failed.
+  24 hours and is reported as failed. Sessions put off this way take turns
+  going first among themselves, so such a session cannot hold back a
+  session that only ran out because the sessions read before it had used
+  part of the allowance.
 
 ## [0.2.1]
 
