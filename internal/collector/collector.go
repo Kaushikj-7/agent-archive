@@ -382,17 +382,7 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	p.reconcileNativeLinks()
 	p.observeLabels(ctx)
 	p.repairListingIndex()
-	// Reserve scheduling slots only for sessions eligible for this pass.
-	// Keep the full registration census for diagnostics and maintenance.
-	registrations := p.registrations
-	if p.opts.AcceptSession != nil {
-		registrations = make([]archive.SessionRegistration, 0, len(p.registrations))
-		for _, reg := range p.registrations {
-			if p.opts.AcceptSession(reg) {
-				registrations = append(registrations, reg)
-			}
-		}
-	}
+	registrations := p.executionRegistrations()
 	orderRequests(registrations, p.requests)
 	for i, reg := range registrations {
 		// A pass past its deadline ends like a stopped one: nothing more can
@@ -415,6 +405,21 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 		return p.result, err
 	}
 	return p.result, p.saveStatus()
+}
+
+// executionRegistrations reserves scheduling slots only for eligible sessions.
+// The full registration census remains available for diagnostics and maintenance.
+func (p *pass) executionRegistrations() []archive.SessionRegistration {
+	registrations := p.registrations
+	if p.opts.AcceptSession != nil {
+		registrations = make([]archive.SessionRegistration, 0, len(p.registrations))
+		for _, reg := range p.registrations {
+			if p.opts.AcceptSession(reg) {
+				registrations = append(registrations, reg)
+			}
+		}
+	}
+	return registrations
 }
 
 // resumeStagedReleasesIfActive skips fresh work after ordinary recovery ends.
