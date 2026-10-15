@@ -151,6 +151,9 @@ follow [Semantic Versioning](https://semver.org/).
   finds no session, its list of recent archived sessions reads WHEN, AGENT,
   MACHINE and COMMAND, under a header, with the short time and the agent's
   name.
+- `status --verbose` no longer prints "Capture skipped in  (Codex)" for a
+  Codex all-projects capture problem that has no project; the line reads
+  "Capture skipped (Codex)".
 
 ## [0.2.2]
 

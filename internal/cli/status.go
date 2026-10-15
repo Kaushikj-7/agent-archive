@@ -2717,7 +2717,12 @@ func printStatusDetails(out io.Writer, view statusView) {
 		if capture.DiagnosticPartial(diagnostic.Code) {
 			what = "left out part of a session"
 		}
-		terminal.Printf(out, "  Capture %s in %s (%s): %s at %s.\n", what, diagnostic.ProjectRoot, appName(diagnostic.Harness), capture.DiagnosticMessage(diagnostic.Code), formatTimeOrNever(diagnostic.ObservedAt))
+		// A Codex all-projects diagnostic has no project, so it names none.
+		where := ""
+		if diagnostic.ProjectRoot != "" {
+			where = " in " + diagnostic.ProjectRoot
+		}
+		terminal.Printf(out, "  Capture %s%s (%s): %s at %s.\n", what, where, appName(diagnostic.Harness), capture.DiagnosticMessage(diagnostic.Code), formatTimeOrNever(diagnostic.ObservedAt))
 	}
 	// Each problem as the collector recorded it, one per line; a status
 	// file from before LastErrors has only the joined text, shown as is.
