@@ -97,6 +97,32 @@ func TestManagedJournalRefusesInvalidShapesWithoutRecoveryActions(t *testing.T) 
 	}
 }
 
+func TestManagedJournalRejectsCaseFoldedDuplicateAuthority(t *testing.T) {
+	t.Parallel()
+	valid := `{"schema_version":2,"changes":{"files":[]},"jobs":[{"role":"search","backend":"launchd","ref":"com.agent-archive.search","definition":"/synthetic/Library/LaunchAgents/com.agent-archive.search.plist","was_loaded":false,"intent":"keep"}]}`
+	for _, field := range []string{"role", "intent", "ref", "backend", "definition", "was_loaded"} {
+		t.Run(field, func(t *testing.T) {
+			alias := strings.ToUpper(field)
+			if field == "was_loaded" {
+				alias = "waſ_loaded"
+			}
+			raw := strings.Replace(valid, `"`+field+`":`, `"`+alias+`":null,"`+field+`":`, 1)
+			home := t.TempDir()
+			must(t, os.WriteFile(JournalPath(home), []byte(raw), 0o600))
+			err := Recover(home, func(string) (scheduler.Scheduler, error) {
+				t.Fatal("ambiguous authority reached manager")
+				return nil, nil
+			}, func() (func(), error) {
+				t.Fatal("ambiguous authority acquired recovery locks")
+				return func() {}, nil
+			})
+			if err == nil || !TransactionPending(home) {
+				t.Fatal("ambiguous journal accepted or discarded", err)
+			}
+		})
+	}
+}
+
 func twoRoleFixture(t *testing.T) (*txFixture, string) {
 	t.Helper()
 	f := newTxFixture(t)

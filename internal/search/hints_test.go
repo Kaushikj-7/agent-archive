@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agents/builtin"
+	"github.com/wangjohn/agent-archive/internal/archive"
 )
 
 func TestHintsNeverCreateOrUpgradeContentStorage(t *testing.T) {
@@ -183,6 +184,13 @@ func TestPendingRecheckCoverageUsesExistingObservedTimeIndex(t *testing.T) {
 	index, err := Open(t.Context(), dir, "synthetic")
 	hintMust(t, err)
 	defer func() { _ = index.Close() }()
+	tx, err := index.db.BeginTx(t.Context(), nil)
+	hintMust(t, err)
+	for i := range 5000 {
+		_, err = tx.ExecContext(t.Context(), "INSERT INTO search_observed VALUES(?,?,?,?)", fmt.Sprintf("key-%05d", i), fmt.Sprintf("codex/%d", i), "real-revision", i+1)
+		hintMust(t, err)
+	}
+	hintMust(t, tx.Commit())
 	const query = "SELECT coalesce(max(observed),0),(SELECT count(*) FROM search_observed WHERE observed=0) FROM search_observed"
 	rows, err := index.db.QueryContext(t.Context(), "EXPLAIN QUERY PLAN "+query)
 	hintMust(t, err)
@@ -205,13 +213,6 @@ func TestPendingRecheckCoverageUsesExistingObservedTimeIndex(t *testing.T) {
 		t.Fatal("MAX and pending range did not both use existing covering index", indexed)
 	}
 	hintMust(t, rows.Close())
-	tx, err := index.db.BeginTx(t.Context(), nil)
-	hintMust(t, err)
-	for i := range 5000 {
-		_, err = tx.ExecContext(t.Context(), "INSERT INTO search_observed VALUES(?,?,?,?)", fmt.Sprintf("key-%05d", i), fmt.Sprintf("codex/%d", i), "real-revision", i+1)
-		hintMust(t, err)
-	}
-	hintMust(t, tx.Commit())
 	started := time.Now()
 	for range 100 {
 		var maximum int64
@@ -222,4 +223,30 @@ func TestPendingRecheckCoverageUsesExistingObservedTimeIndex(t *testing.T) {
 		}
 	}
 	t.Logf("actual5000-identity MAX plus indexed zero-pending count: %s/op", time.Since(started)/100)
+}
+
+func TestHintsRetainDiscoveryTimeAndConservativelyInvalidateObservation(t *testing.T) {
+	t.Parallel()
+	index, err := Open(t.Context(), t.TempDir(), "synthetic")
+	hintMust(t, err)
+	defer func() { _ = index.Close() }()
+	_, err = index.db.ExecContext(t.Context(), "UPDATE search_discovery SET observed=100,mode='catalog',complete_root='root',checked_root='root',seeded=3")
+	hintMust(t, err)
+	key, err := archive.MetadataObjectKey("codex", "known")
+	hintMust(t, err)
+	_, err = index.db.ExecContext(t.Context(), "INSERT INTO search_observed VALUES(?,'codex/known','real-revision',200)", key)
+	hintMust(t, err)
+	before, err := index.Observation(t.Context())
+	hintMust(t, err)
+	hintMust(t, insertSessionHints(t.Context(), index.db, []SessionIdentity{{Harness: "codex", SessionID: "known"}}))
+	after, err := index.Observation(t.Context())
+	hintMust(t, err)
+	if !after.LastReconciled.Equal(before.LastReconciled) || !after.LastObserved.Equal(after.LastReconciled) || !after.LastObserved.Before(before.LastObserved) || after.Rechecks != 1 || after.IdentityChecksComplete || after.Complete {
+		t.Fatal("hint misreported settled observations or pending coverage", before, after)
+	}
+	var revision string
+	hintMust(t, index.db.QueryRowContext(t.Context(), "SELECT revision FROM search_observed WHERE key=?", key).Scan(&revision))
+	if revision != "real-revision" {
+		t.Fatal("hint fabricated a metadata revision", revision)
+	}
 }

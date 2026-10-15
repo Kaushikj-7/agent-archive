@@ -165,13 +165,15 @@ namespace no longer matches. Periodic reconciliation recovers missed hints.
 
 Coverage reports `pending_rechecks` separately from pending extraction work.
 Hints preserve the real last metadata revision and do not invent a new desired
-version. Historical discovery and observation timestamps remain unchanged by a
-hint, while identity-check completion stays false until those identities have
+version. Historical discovery time (`last_reconciled`) remains unchanged by a
+hint. `last_observed` is the maximum retained settled identity observation or
+discovery time, so it can conservatively decrease while identities await recheck.
+Identity-check completion stays false until those identities have
 been authoritatively rechecked. A normal known-identity sweep either observes
 current metadata (including an unchanged revision) or forgets a confirmed absence.
 It keeps its fair cursor; an identity inserted behind it waits for the next cycle.
-The last observed timestamp is the most recent successful observation, not proof
-that every identity has already been checked at that time.
+The last observed timestamp is not a historical high-water mark or proof that
+every identity has already been checked at that time.
 
 Disabling retains the cache for offline queries. `uninstall --delete-local-data`
 removes it and its search logs. The permanent lifecycle writer fence remains

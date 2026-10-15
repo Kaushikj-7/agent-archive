@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -128,5 +129,34 @@ func TestPurgePreservesHeldSearchFenceUntilFinalLockRemoval(t *testing.T) {
 	}
 	if !slices.Contains(uninstallLockFiles, "search-worker.lock") {
 		t.Fatal("final lock unlink list omitted search fence")
+	}
+}
+
+func TestSkippedSchedulerKeepsCollectorAndSearchStopCommandsDistinct(t *testing.T) {
+	t.Parallel()
+	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
+	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
+	setupYes(t, env, "", 0, "--yes", "--provider", "s3", "--bucket", "synthetic", "--aws-profile", "test", "--region", "us-east-1", "--apps", "claude", "--project", project)
+	in := env.installation(home, userHome)
+	if env.jobDefinition(userHome, in.searchRole().ref()).Defined {
+		t.Fatal("fixture unexpectedly installed search")
+	}
+	fakeSched(env).set(in.ref(), "unknown").set(in.searchRole().ref(), "unknown")
+	fakeSched(env).beforeUnload = func(scheduler.Ref) error { return errors.New("synthetic unreachable manager") }
+	var out, diag bytes.Buffer
+	if code := Run([]string{"uninstall", "--yes", "--skip-scheduler"}, nil, &out, &diag, env); code != 0 {
+		t.Fatal(code, out.String(), diag.String())
+	}
+	collectorCommand, searchCommand := "", ""
+	for line := range strings.SplitSeq(out.String(), "\n") {
+		if strings.HasPrefix(line, "To stop it, run") {
+			collectorCommand = line
+		}
+		if strings.HasPrefix(line, "To stop search indexing, run") {
+			searchCommand = line
+		}
+	}
+	if !strings.Contains(collectorCommand, string(in.ref())) || strings.Contains(collectorCommand, string(in.searchRole().ref())) || !strings.Contains(searchCommand, string(in.searchRole().ref())) || !strings.Contains(out.String(), "may still be running") {
+		t.Fatal("unverified role commands are ambiguous", out.String())
 	}
 }

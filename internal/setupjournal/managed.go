@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/wangjohn/agent-archive/internal/fileapply"
 	"github.com/wangjohn/agent-archive/internal/local"
@@ -206,6 +207,9 @@ func (b Backends) managed(home string, j Journal, recovering bool) ([]managedTar
 			continue
 		}
 		job.state = job.target.state()
+		if job.state == scheduler.Unknown && len(j.Jobs) == 0 {
+			return nil, &RecoveryBlockedError{home: home, cause: "the background collector's state is unknown, so recovery cannot safely continue; restore access to " + job.target.tool() + " and rerun setup"}
+		}
 		if job.state == scheduler.Unknown || len(j.Jobs) > 0 && job.state == scheduler.AnotherInstallation {
 			return nil, fmt.Errorf("background %s state is %s; restore access to %s and rerun setup", job.Role, job.state, job.target.tool())
 		}
@@ -268,10 +272,12 @@ func checkJournalKeys(d *json.Decoder, depth int) error {
 				return err
 			}
 			name, ok := key.(string)
-			if !ok || seen[name] {
+			// JSON field matching also folds Unicode aliases of ASCII letters.
+			folded := strings.ToLower(strings.ToUpper(name))
+			if !ok || seen[folded] {
 				return errors.New("duplicate setup journal field")
 			}
-			seen[name] = true
+			seen[folded] = true
 			if err = checkJournalKeys(d, depth+1); err != nil {
 				return err
 			}

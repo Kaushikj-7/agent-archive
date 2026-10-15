@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -124,11 +125,8 @@ func uninstall(purge, yes, skipScheduler bool, stdin io.Reader, out io.Writer, e
 	releaseSearch = releaseOnce(releaseSearch)
 	defer releaseSearch()
 	// Reload after acquiring the lock; pause/resume may have completed meanwhile.
-	cfg, found, err := config.Load(home)
+	cfg, found, err := loadUninstallConfig(home, purge, previewPending)
 	if err != nil {
-		return err
-	}
-	if err := checkPurgePendingGrowth(home, cfg, found, purge, previewPending); err != nil {
 		return err
 	}
 
@@ -144,7 +142,7 @@ func uninstall(purge, yes, skipScheduler bool, stdin io.Reader, out io.Writer, e
 	}
 	// The collector for this data directory, and any an earlier release
 	// installed for it under another label. Never another directory's.
-	remove, unverified, err := stopCollectors(collectorRefs(in, userHome), out, userHome, env, skipScheduler)
+	remove, unverified, err := stopInstallationJobs(in, out, env, skipScheduler)
 	if err != nil {
 		return err
 	}
@@ -209,7 +207,11 @@ func printUninstallSummary(out io.Writer, unverified []unverifiedJob) {
 	terminal.Println(out, "Bucket machine records and remote credentials remain. Remove access using your storage provider; uninstall does not revoke it.")
 	if len(unverified) > 0 {
 		printUnverifiedJobs(out, unverified)
-		terminal.Println(out, "Uninstall complete, except that the background collector was not verified stopped (see above). Remote archives and the CLI executable were kept.")
+		subject := "the background collector was"
+		if slices.ContainsFunc(unverified, func(job unverifiedJob) bool { return job.role == scheduler.Search }) {
+			subject = "one or more background jobs were"
+		}
+		terminal.Printf(out, "Uninstall complete, except that %s not verified stopped (see above). Remote archives and the CLI executable were kept.\n", subject)
 		return
 	}
 	terminal.Println(out, "Uninstall complete. Remote archives and the CLI executable were kept.")
@@ -275,7 +277,8 @@ func collectorRefs(in installation, userHome string) []scheduler.Ref {
 // unverifiedJob is a background job uninstall went on without verifying it
 // stopped, because the scheduler could not be reached (--skip-scheduler).
 type unverifiedJob struct {
-	ref scheduler.Ref
+	ref  scheduler.Ref
+	role scheduler.Role
 	// words are the nouns of the scheduler that could not be reached, kept here
 	// because the summary is printed after a purge has deleted the
 	// configuration that names the scheduler.
@@ -399,10 +402,14 @@ func printUnverifiedJobs(out io.Writer, jobs []unverifiedJob) {
 	for _, job := range jobs {
 		words := job.words
 		terminal.Printf(out, "Not verified stopped: %s's %s job may still be running, because %s.\n", words.Manager, job.ref, job.why)
+		subject := "it"
+		if job.role == scheduler.Search {
+			subject = "search indexing"
+		}
 		if job.manual != "" {
-			terminal.Printf(out, "To stop it, run this from a session that can reach %s: %s\n", words.Manager, job.manual)
+			terminal.Printf(out, "To stop %s, run this from a session that can reach %s: %s\n", subject, words.Manager, job.manual)
 		} else {
-			terminal.Printf(out, "To stop it, use %s from a session that can reach %s.\n", words.Tool, words.Manager)
+			terminal.Printf(out, "To stop %s, use %s from a session that can reach %s.\n", subject, words.Tool, words.Manager)
 		}
 	}
 }
@@ -806,13 +813,28 @@ func removeLocalState(home string) (leftover []string, err error) {
 	return nil, nil
 }
 
-func checkPurgePendingGrowth(home string, cfg config.Config, found, purge bool, preview int) error {
+func loadUninstallConfig(home string, purge bool, preview int) (config.Config, bool, error) {
+	cfg, found, err := config.Load(home)
+	if err != nil {
+		return cfg, found, err
+	}
 	if purge {
 		if pending, _ := unpublishedSessions(home, cfg, found); pending > preview {
-			return errors.New("new pending evidence appeared while confirming; rerun uninstall to review it")
+			return cfg, found, errors.New("new pending evidence appeared while confirming; rerun uninstall to review it")
 		}
 	}
-	return nil
+	return cfg, found, nil
+}
+
+// stopInstallationJobs retains each unverified role for actionable output.
+func stopInstallationJobs(in installation, out io.Writer, env Env, skip bool) ([]string, []unverifiedJob, error) {
+	remove, unverified, err := stopCollectors(collectorRefs(in, in.userHome), out, in.userHome, env, skip)
+	for i := range unverified {
+		if unverified[i].ref == in.searchRole().ref() {
+			unverified[i].role = scheduler.Search
+		}
+	}
+	return remove, unverified, err
 }
 
 func disableCaptureForUninstall(home string, cfg *config.Config, found bool) error {

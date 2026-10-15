@@ -175,6 +175,10 @@ func Restore(home string, journal Journal, backends Backends) error {
 	// backend writes) is never asked about, stopped or started.
 	jobs, err := backends.managed(home, journal, true)
 	if err != nil {
+		var blocked *RecoveryBlockedError
+		if errors.As(err, &blocked) {
+			return blocked
+		}
 		return &RecoveryBlockedError{home: home, cause: fmt.Sprintf("%v, so recovery changed nothing", err)}
 	}
 	for _, job := range jobs {
