@@ -9,7 +9,10 @@ follow [Semantic Versioning](https://semver.org/).
 - Search conversation text with a private local index. Explicitly index one
   archived session with `search --refresh --session ID --harness NAME`, query
   cached titles/messages with `search "WORDS"`, and read exact matching passages.
-  Coverage is partial and refresh is manual; no background work is installed.
+  `search --refresh` now resumes bounded namespace-wide archive catch-up, including
+  other-machine metadata/privacy changes and confirmed removals. Coverage reports
+  local observation and stable-snapshot discovery separately from indexing gaps.
+  Refresh is manual; no background work is installed.
   Refresh now resumes bounded work after interruption, reuses unchanged sources,
   and records retry/backoff state without delaying archive publication.
   Verified unsupported source formats report coverage gaps instead of retrying

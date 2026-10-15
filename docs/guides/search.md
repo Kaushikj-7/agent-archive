@@ -5,10 +5,12 @@ It keeps a private local copy of that text. This initial version indexes session
 only when explicitly requested; it does not install background indexing or
 change capture, uploads, `list`, `show`, or `handoff`.
 
-Find a session ID using `agent-archive list`, then index its verified archive
-sources, including supported preserved native revisions:
+Run a bounded archive refresh to discover sessions from every project, or find
+a session ID using `agent-archive list` and refresh that exact session. Refresh
+includes supported preserved native revisions:
 
 ```sh
+agent-archive search --refresh
 agent-archive search --refresh --session SESSION_ID --harness codex
 agent-archive search "upload checksum"
 agent-archive search '"checksum mismatch"' --all-projects
@@ -81,10 +83,55 @@ Oversized work discards staged projections and stays blocked until its desired
 snapshot changes. A pass reads at most 64 sources and 32 MiB compressed data. Its
 30-second deadline covers authoritative metadata reads and indexing, so sessions
 with many retained revisions may require another refresh. Each pass can also
-advance previously observed pending sessions. There is no automatic archive
-discovery or scheduled worker in this release. Cached search results report known
-pending/failed state, which does not establish coverage of sessions never observed
-on this machine.
+advance previously observed pending sessions. `search --refresh` discovers an archive slice across all projects; it does not
+broaden the current-project scope of subsequent queries. A pass reserves up to
+20 seconds for discovery and the remainder of its 30-second deadline for pending
+indexing, including when discovery fails. Its defaults process up to 32 physical
+identities/objects, 4 recent catalog entries, 8 exact known-session checks,
+512 catalog nodes, and 16 MiB of discovery bytes, then up to 4 source downloads.
+Catalog metadata and pre-install verification have separate finite budgets.
+Run another explicit refresh to resume catch-up; no scheduler is installed.
+
+Discovery rotates first access to the unchanged pass budget among known-session
+checks, recent publications and historical catch-up. Each class gets first access
+within three passes. The four recent entries also rotate their starting entry,
+so one oversized or timed-out body cannot hide its neighbors; each gets a first
+recent-body opportunity within twelve passes while that recent set remains stable.
+A fitting large metadata body can use the whole remaining pass budget on its
+turn. Metadata reads reserve500ms of the existing discovery deadline for recording
+failed-item progress (a fresh20-second pass therefore allows at most roughly19.5
+seconds for one metadata read, less earlier work). Parent cancellation or stale
+catalog authority still stops immediately. These are finite work limits, not
+remote latency guarantees.
+
+Catch-up checkpoints survive interruption and process restart. New catalog roots
+resume by physical identity key, including tombstones; new records behind that
+checkpoint are found in a later sweep. Partial or moving-root discovery never
+proves deletion or complete coverage. Exact fresh authority checks remove known
+sessions confirmed absent. Legacy paged archives report partial coverage even
+when a listing walk finishes, since those pages do not form an immutable snapshot.
+Stores without bounded listing report an explicit discovery error. Unreadable
+metadata reports an error and keeps coverage partial while other identities
+continue to advance; the failed identity is retried in a later sweep.
+
+Coverage distinguishes discovery of a stable observed catalog snapshot from
+pending, failed, and unsupported retained-source work. Last observation is local
+to this machine: unobserved remote deletions/privacy changes remain unknown until
+refresh. Observing stricter privacy, changed interpretation, or removed retained
+membership invalidates prior text before replacement. Indexing rechecks fresh
+authority after source loading and before install. These checks do not establish
+perpetual freshness after their observation. Normal queries remain network-free.
+
+Opening an older local search database builds a local coverage index once; this
+work scales with indexed session rows and reads no archive sources. Normal query
+initialization and execution share a five-second deadline. Explicit refresh
+initialization, discovery and indexing share a thirty-second deadline. An
+interrupted schema migration rolls back and can be retried on the next open;
+identity validation still advances separately through bounded refresh passes.
+Schema3 indexes upgrade to schema4 by adding one finite discovery-turn value;
+existing identity/root checkpoints are preserved. A failed legacy metadata read
+can resume within its physical page by logical key without treating that mutable
+page as snapshot authority.
 
 Checksum-verified sources in unsupported immutable formats (including legacy
 source schema 1) become explicit `unsupported_source_schema` coverage gaps.

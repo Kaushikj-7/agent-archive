@@ -203,7 +203,7 @@ func (s *Store) Search(ctx context.Context, q Query) (Page, error) {
 		return page, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if err = tx.QueryRowContext(ctx, "SELECT count(*),coalesce(sum(failures>0),0) FROM search_work WHERE desired!=indexed").Scan(&page.Observation.Pending, &page.Observation.Failed); err != nil {
+	if err = s.readObservation(ctx, tx, &page.Observation); err != nil {
 		return page, err
 	}
 	if err = tx.QueryRowContext(ctx, "SELECT generation FROM search_state WHERE id=1").Scan(&page.Generation); err != nil {
@@ -319,4 +319,46 @@ func foldProjectName(s string) string {
 		}
 		return smallest
 	}, s)
+}
+
+func (s *Store) readObservation(ctx context.Context, tx *sql.Tx, observation *Observation) error {
+	var err error
+	if err = tx.QueryRowContext(ctx, "SELECT count(*),coalesce(sum(failures>0),0) FROM search_work WHERE desired!=indexed").Scan(&observation.Pending, &observation.Failed); err != nil {
+		return err
+	}
+	var reconciled, observed int64
+	var mode, complete, checked string
+	var seeded int
+	if err = tx.QueryRowContext(ctx, "SELECT observed,mode,complete_root,seeded,checked_root FROM search_discovery WHERE id=1").Scan(&reconciled, &mode, &complete, &seeded, &checked); err != nil {
+		return err
+	}
+	if err = tx.QueryRowContext(ctx, "SELECT coalesce(max(observed),0) FROM search_observed").Scan(&observed); err != nil {
+		return err
+	}
+	if reconciled > 0 {
+		observation.LastReconciled = time.Unix(0, reconciled).UTC()
+	}
+	if observed = max(observed, reconciled); observed > 0 {
+		observation.LastObserved = time.Unix(0, observed).UTC()
+	}
+	observation.DiscoveryComplete = mode == "catalog" && complete != ""
+	var gaps int
+	if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM search_sessions WHERE coalesce(json_array_length(gaps),0)>0").Scan(&gaps); err != nil {
+		return err
+	}
+	observation.IdentityChecksComplete = seeded == 3 && (mode != "catalog" || (checked != "" && checked == complete))
+	observation.Complete = observation.DiscoveryComplete && observation.IdentityChecksComplete && observation.Pending == 0 && gaps == 0
+	if reconciled > 0 || observed > 0 {
+		observation.Limitations = []string{"remote changes after last observation are unknown"}
+		if !observation.DiscoveryComplete {
+			observation.Limitations = append(observation.Limitations, "discovery is partial; a mutable legacy listing cannot prove snapshot completeness")
+		}
+		if !observation.IdentityChecksComplete {
+			observation.Limitations = append(observation.Limitations, "local identities still require bounded authoritative validation")
+		}
+		if gaps > 0 {
+			observation.Limitations = append(observation.Limitations, "retained sources have extraction coverage gaps")
+		}
+	}
+	return nil
 }

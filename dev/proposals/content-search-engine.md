@@ -203,3 +203,132 @@ identity fact and require the verified reader to reject mismatches rather than
 accepting a cached projection. Initial work timestamps preserve FIFO fairness
 against a continuing arrival of completed sessions; completion priority breaks
 ties without indefinitely starving older active work.
+
+## Bounded archive reconciliation
+
+`search --refresh` runs one explicit namespace-wide discovery/indexing pass;
+ordinary queries keep their current-project scope and perform no discovery or
+remote reads. Named session refresh still works. Production composition holds
+`Store.LockWork` across metadata reads, `Observe` and `Run`, and enables
+`Budget.VerifyCurrent`. That option opens fresh authority after source loading,
+including when the caller supplied an older catalog read view, before a
+projection can install. Source parsing and projection preparation stay outside
+SQLite write transactions.
+
+Discovery has a 20-second child deadline within the command's 30-second pass.
+Discovery errors are reported while already-known source work receives the
+remaining time. Defaults process 32 physical identities/objects, up to four
+recent catalog entries, eight exact known-identity checks, 512 nodes and 16 MiB
+of discovery record bytes. Catalog bytes include head/coordinator reads and
+cached node visits. Source indexing separately allows four sources, sixteen
+session attempts and 32 MiB of referenced compressed bytes, with 512 catalog
+nodes/16 MiB for fresh pre-install authority. Only one source is in flight.
+Pass exhaustion remains retryable; it is distinct from an individually
+oversized source. Source decompression limits are unchanged.
+
+Catalog catch-up persists physical identity keys, including tombstones, with
+root/mode/interpretation identity. It never persists snapshot-authenticated
+cursors. A walk across changing roots is discovery without a complete-snapshot
+claim. Exact fresh identity checks establish removals independently. Stable-root
+walk coverage, old local identity validation, pending/failed indexing and
+retained-source gaps are separate facts. Older schema1/schema2 identities seed
+through bounded local keyset pages, including after restart; opening an upgraded
+index never eagerly scans remote storage or hydrates local identities. The
+ordinary one-time SQLite coverage-index migration does scan existing session
+rows locally; its cost is proportional to row count. Normal query open and
+execution share a five-second deadline, and refresh open plus work shares thirty
+seconds. Initialization cancellation rolls back schema changes for safe retry.
+Source provenance may be recovered
+from verified preserved bytes when old sidecars omit it, never from active
+revision metadata.
+
+Legacy discovery counts all physical listed objects, including source-only
+pages. It requires `PageLister`, restarts failed opaque continuations safely,
+and never represents mutable listing pages as an immutable snapshot. Corruption,
+timeout, stale snapshots and partial listing do not establish absence. Unreadable
+metadata bodies do not pin logical discovery or validation checkpoints: failures
+remain visible and suppress completion while later identities progress, and the
+next sweep retries them. Parent cancellation, stale authority and structural/pass budget failures
+stop without skipping an uncertain identity. A failed bounded metadata unit can
+checkpoint its known logical key for retry in the next sweep. Network
+changes after the last local observation remain unknown until another refresh.
+
+Reproduce discovery costs separately from source work:
+
+```sh
+go test -v ./internal/search -run TestReconcileDefaultPassCatchupOperations
+go test ./internal/search -run '^$' -bench BenchmarkReconcileColdAndWarm -benchmem -benchtime=3x
+```
+
+Default source count is deliberately conservative rather than a scheduling SLA.
+Even small archives can need many bounded passes; a future one-minute worker tick
+would translate each additional pass into scheduling lag. S4/S5 composition must
+choose manual catch-up and scheduled budgets using measured costs. This change
+adds neither concurrency nor a scheduler.
+
+Fairness also covers bodies that exhaust a complete pass: schema4 stores one
+finite discovery turn in the existing discovery row. Known checks, recent reads
+and historical reads rotate first access to the unchanged512-node/16MiB/20-second
+aggregate budget (at most three passes per class). The recent starting row rotates
+across its four selected entries (at most twelve passes for a stable recent set).
+Later work borrows the actual remainder. There is no smaller permanent per-body
+size cap: a14MiB verified metadata fixture still hydrates with the default16MiB
+pass. Oversized bodies, including streaming bodies with absent or false declared
+length, remain reported failures and partial coverage while unrelated identities
+advance. Legacy budget failures checkpoint within the current physical page using
+the existing logical key; the next sweep retries skipped bodies.
+
+Metadata-only reads reserve500ms inside the existing discovery deadline for
+persisting a failed immutable key. A fresh pass therefore permits roughly19.5s
+for a single metadata read, reduced by preceding work. Only child metadata timeout
+while the parent remains live is an item failure; parent cancellation, stale
+snapshots and structural errors still stop without skipping an uncertain key.
+This is a work budget, not a service-time guarantee. Schema3-to4 adds the finite
+turn without resetting durable progress; schema1/2 logical seeding stays bounded.
+
+S3 bounded reads reject a known oversized response length before allocating its
+body. Missing or misleading lengths still use the bounded actual read and retain
+partial/error bytes solely for accounting; reader integrity/identity checks reject
+errors before decoding/installing anything. Discovery reserves the getter's
+one-byte overflow probe inside its total byte ceiling and charges returned error
+bytes before classifying exhaustion. No HTTP length acts as content authority.
+
+Post-repair three-iteration cold/warm discovery retained the operation counts
+above: cold40metadata GETs/5nodes/212,634accounted bytes, warm0metadata GETs/
+16nodes/253,894bytes. Advisory plain timings were54.88ms/8.41ms with2,491,981/
+1,143,282allocated bytes per operation. The40-session default catch-up again
+needed2discovery passes and10indexing passes with identical published operation
+counts (plain advisory220.69ms). These fixtures do not model real remote latency.
+
+Measured on Go1.27.2, a shared Intel i7-8559U Mac and a synthetic in-memory
+40-session archive with zero simulated remote latency:
+
+- Defaults discovered the archive in two passes and indexed it in ten. Discovery
+  used four pages, forty identity entries/metadata GETs, sixty-four exact known
+  checks,119head reads,10coordinator reads,137node visits and2,450,451accounted
+  record bytes. Source work used40GETs/parses and12,772compressed bytes;
+  fresh pre-install checks separately used40checks,80nodes and1,514,248bytes.
+  The prior advisory non-race elapsed catch-up was614ms, excluding archive
+  construction; the post-review race fixture measured4.25s and includes the
+  final warm-view head checks. These timing modes are not comparable.
+- The earlier three-iteration cold discovery with an explicit50-entry budget used40metadata
+  GETs,5nodes and212,634bytes per operation, roughly107ms and2.50MB allocated.
+  Post-review three-iteration warm default discovery used0metadata GETs,16node
+  visits and253,894accounted bytes, roughly8.46ms and1.14MB allocated. Repeated cached node decoding counts
+  toward work bytes, so these figures are not HTTP payload measurements.
+
+These tiny fixtures establish operation counts and resumability, not archive-size
+or latency guarantees. Forty sessions at four sources per pass already need ten
+passes; a one-minute schedule would add roughly ten minutes before remote
+latency, large sources, backoff or coalescing. Larger manual catch-up budgets
+remain a composition decision, with the one-source-at-a-time constraint intact.
+
+Local upgrade/startup measurements used lightweight session rows with no source
+payloads, three iterations per case, on the same Go1.27.2 Mac. Schema2-to3 open
+with20,000rows took6.20ms versus2.42ms for an already-migrated warm open;
+100,000rows took26.64ms versus2.35ms warm. These are advisory local SQLite
+measurements, not bounds on real transcript databases. A20,000-row race fixture
+also canceled initialization with a one-millisecond caller deadline, verified
+schema2 remained uncommitted and retried successfully with all rows retained;
+identity seeding remained pending. Reproduce with
+`go test ./internal/search -run '^$' -bench BenchmarkSearchSchemaMigrationAndWarmOpen -benchmem -benchtime=3x`.
