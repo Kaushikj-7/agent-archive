@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -596,6 +598,148 @@ func TestKeyPickerResizeKeepsTheHighlightUnderTheStrip(t *testing.T) {
 			}
 		}
 	}
+}
+
+// sweepKeys are the keys TestKeyPickerSweepKeepsEveryScreenSound presses
+// at random; "R" resizes the window to a random size.
+var sweepKeys = []string{
+	"\x1b[A", "\x1b[B", "\x1b[5~", "\x1b[6~", "\x1b[H", "\x1b[F", " ", "n", "p",
+	"\x1b", "\x7f", "/", "1", "2", "x", "a", "o", "\x1b[B\x1b[B\x1b[B", "R", "R", "R",
+}
+
+// sweepTitle finds a session's title in a row or the detail strip.
+var sweepTitle = regexp.MustCompile(`Session number \d+\b`)
+
+// Random keys and resizes, from a fixed seed, over terminals 40–200
+// columns wide and 6–60 lines tall, several day layouts and formats:
+// every screen fits (unless even one row does not), exactly one row is
+// highlighted when rows are shown, the strip describes it, and the
+// footer's position counts the rows on screen.
+func TestKeyPickerSweepKeepsEveryScreenSound(t *testing.T) {
+	t.Parallel()
+	spread := func(hours func(i int) int) func(n int) []archive.Metadata {
+		return func(n int) []archive.Metadata {
+			sessions := pickerSessions(n, oneProject)
+			for i := range sessions {
+				sessions[i].CapturedAt = pickerNow.Add(-time.Duration(hours(i)) * time.Hour)
+			}
+			return sessions
+		}
+	}
+	layouts := []func(n int) []archive.Metadata{
+		spread(func(i int) int { return i }),
+		spread(func(i int) int { return i * i * 7 }),
+		spread(func(i int) int {
+			if i < 4 {
+				return []int{0, 26, 6 * 24, 15 * 24}[i]
+			}
+			return 60*24 + i
+		}),
+	}
+	formats := []listFormatOptions{
+		{},
+		{GroupByDay: true},
+		{GroupByDay: true, Style: textStyle{color: true}},
+		{Verbose: true},
+	}
+	rng := rand.New(rand.NewSource(562))
+	for li, layout := range layouts {
+		for _, n := range []int{1, 2, 5, 13, 40} {
+			for fi, format := range formats {
+				for run := range 6 {
+					name := fmt.Sprintf("layout %d, %d rows, format %d, run %d", li, n, fi, run)
+					sweepKeyPicker(t, name, rng, layout(n), format)
+				}
+			}
+		}
+	}
+}
+
+// sweepKeyPicker runs the picker on sessions with 60 random keys and
+// checks every screen it draws.
+func sweepKeyPicker(t *testing.T, name string, rng *rand.Rand, sessions []archive.Metadata, format listFormatOptions) {
+	t.Helper()
+	randomSize := func() fixedTerminal { return fixedTerminal{40 + rng.Intn(161), 6 + rng.Intn(55)} }
+	first := randomSize()
+	var chunks []string
+	var resizes []fixedTerminal
+	for range 60 {
+		k := sweepKeys[rng.Intn(len(sweepKeys))]
+		if k == "R" {
+			resizes = append(resizes, randomSize())
+			k = string(fakeResize)
+		}
+		chunks = append(chunks, k)
+	}
+	chunks = append(chunks, "\x1b", "\x1b", "q")
+	adjustable := &adjustableTerminal{size: first}
+	fake := newFakeKeys(chunks...)
+	fake.onResize = func() {
+		adjustable.resize(resizes[0])
+		resizes = resizes[1:]
+	}
+	var out bytes.Buffer
+	// Each screen is drawn at the size the window has as it is cleared.
+	sizes := []fixedTerminal{first}
+	picker := &sessionPicker{
+		env:     adjustable,
+		keys:    startKeys(fake),
+		heading: "All projects · sessions",
+		clear: func() {
+			out.WriteString(screenBreak)
+			adjustable.mu.Lock()
+			defer adjustable.mu.Unlock()
+			sizes = append(sizes, adjustable.size)
+		},
+	}
+	format.Now = pickerNow
+	_, _, err := picker.pick(newPrompter(strings.NewReader(""), &out), &out, sessions, format, "show")
+	picker.keys.close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, screen := range strings.Split(out.String(), screenBreak) {
+		size := sizes[i]
+		if problem := sweepScreenProblem(screen, size); problem != "" {
+			t.Fatalf("%s, screen %d at %dx%d: %s\nkeys %q\n%s", name, i, size.width, size.height, problem, chunks, screen)
+		}
+	}
+}
+
+// sweepScreenProblem says what is wrong with a screen of the list read by
+// keys drawn on a terminal of size, or "" when nothing is.
+func sweepScreenProblem(screen string, size fixedTerminal) string {
+	rule := strings.Repeat("─", size.width)
+	rows, marks, highlighted, stripTitle := 0, 0, "", ""
+	lines := strings.Split(stripANSI(screen), "\n")
+	for i, line := range lines {
+		if line == rule && i+1 < len(lines) {
+			stripTitle = lines[i+1]
+			break
+		}
+		if sweepTitle.MatchString(line) {
+			rows++
+		}
+		if strings.Contains(line, cursorMark+" ") {
+			marks, highlighted = marks+1, line
+		}
+	}
+	if got := displayLines(screen, size.width); got > size.height && rows > 1 {
+		return fmt.Sprintf("takes %d lines", got)
+	}
+	if rows > 0 && marks != 1 {
+		return fmt.Sprintf("%d rows highlighted", marks)
+	}
+	if want := sweepTitle.FindString(highlighted); stripTitle != "" && want != "" && !strings.Contains(highlighted, "…") && sweepTitle.FindString(stripTitle) != want {
+		return fmt.Sprintf("the strip is %q, the highlighted row %q", stripTitle, highlighted)
+	}
+	if statusLine(screen) != "" && rows > 0 {
+		var from, to, total int
+		if _, err := fmt.Sscanf(positionOf(screen), "%d–%d of %d", &from, &to, &total); err != nil || to-from+1 != rows {
+			return fmt.Sprintf("the position is %q with %d rows on screen", positionOf(screen), rows)
+		}
+	}
+	return ""
 }
 
 // The detail strip spells out the highlighted row: its full title (not the
