@@ -28,7 +28,7 @@ func TestKeysReadASplitEscapeSequenceAsItsKey(t *testing.T) {
 		{[]string{"\x1b", later(300*time.Millisecond, "[B"), "q"}, 3},
 		{[]string{"\x1b[", later(300*time.Millisecond, "B"), "q"}, 2},
 	} {
-		_, ok, screens := runKeyPicker(t, &sessionPicker{env: fixedTerminal{120, 20}}, sessions, listFormatOptions{}, c.chunks...)
+		_, ok, screens := runKeyPicker(t, &sessionPicker{env: fixedTerminal{120, 19}}, sessions, listFormatOptions{}, c.chunks...)
 		last := screens[len(screens)-1]
 		if ok || len(screens) != c.screens || rowSpan(last) != "2-16" || !strings.HasSuffix(last, " to quit: ") {
 			t.Errorf("%q: %d screens, want %d:\n%s", c.chunks, len(screens), c.screens, strings.Join(screens, "\n----\n"))
@@ -42,7 +42,7 @@ func TestKeysReadASplitEscapeSequenceAsItsKey(t *testing.T) {
 		{"\x1b[", string(fakeResize), "Ox"},
 		{"\x1b[", string(fakeSuspend), "Ox"},
 	} {
-		_, _, screens := runKeyPicker(t, &sessionPicker{env: fixedTerminal{120, 20}}, sessions, listFormatOptions{}, append(chunks, "\x1b")...)
+		_, _, screens := runKeyPicker(t, &sessionPicker{env: fixedTerminal{120, 19}}, sessions, listFormatOptions{}, append(chunks, "\x1b")...)
 		typed := screens[len(screens)-2]
 		if !strings.HasSuffix(typed, " to quit: Ox") || rowSpan(typed) != "1-15" {
 			t.Errorf("%q:\n%s", chunks, strings.Join(screens, "\n----\n"))
@@ -74,7 +74,7 @@ func TestKeyPickerBurstsMoveOnFromEachKey(t *testing.T) {
 		"  \x1b[B":                   "32-46",
 		"\x1b[6~\x1b[B\x1b[B\x1b[6~": "33-47",
 	} {
-		_, _, screens := runKeyPicker(t, &sessionPicker{env: fixedTerminal{120, 20}}, sessions, listFormatOptions{}, chunk, "q")
+		_, _, screens := runKeyPicker(t, &sessionPicker{env: fixedTerminal{120, 19}}, sessions, listFormatOptions{}, chunk, "q")
 		if len(screens) != 2 || rowSpan(screens[1]) != want {
 			t.Errorf("%q: rows %s, want %s", chunk, rowSpan(screens[len(screens)-1]), want)
 		}
@@ -112,9 +112,9 @@ func (a *adjustableTerminal) resize(size fixedTerminal) {
 // summary's top line are clamped to the new last screen.
 func TestKeyScreensClampAfterAResize(t *testing.T) {
 	t.Parallel()
-	size := &adjustableTerminal{size: fixedTerminal{120, 12}}
+	size := &adjustableTerminal{size: fixedTerminal{120, 11}}
 	fake := newFakeKeys("\x1b[F", string(fakeResize), "q")
-	fake.onResize = func() { size.resize(fixedTerminal{120, 30}) }
+	fake.onResize = func() { size.resize(fixedTerminal{120, 29}) }
 	keys := startKeys(fake)
 	var out bytes.Buffer
 	picker := &sessionPicker{env: size, keys: keys, clear: func() { out.WriteString(screenBreak) }}
@@ -126,7 +126,7 @@ func TestKeyScreensClampAfterAResize(t *testing.T) {
 	if len(screens) != 3 || rowSpan(screens[1]) != "44-50" || rowSpan(screens[2]) != "26-50" || !strings.HasPrefix(statusLine(screens[2]), "Bottom") {
 		t.Fatalf("screens:\n%s", strings.Join(screens, "\n----\n"))
 	}
-	checkKeyScreensFit(t, screens[2:], 120, 30)
+	checkKeyScreensFit(t, screens[2:], 120, 29)
 
 	env, _, _ := publishedFixture(t)
 	details := &adjustableTerminal{size: fixedTerminal{100, 9}}
