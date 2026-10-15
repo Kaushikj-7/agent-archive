@@ -1113,9 +1113,24 @@ type Status struct {
 	// deferred for collector.MaxDeferral) or did not reach, when the run of
 	// passes that each deferred its scan, or left it unopened once the pass's
 	// Codex lookup allowance ran out, began. A session deferred for
-	// collector.MaxDeferral fails instead, on every pass that defers it or
-	// leaves it unopened.
+	// collector.MaxDeferral fails instead. One deferred for another reason
+	// fails on every pass that defers it or leaves it unopened. A Codex
+	// session waiting on the lookup allowance fails on the pass its clock
+	// reaches collector.MaxDeferral, and is then retried on a backoff
+	// schedule computed from this clock (see NextRetryAt): the clock keeps
+	// running through every pass that holds it, and stops only when a pass
+	// reads it or fails it for another reason.
 	DeferredSince map[string]time.Time `json:"deferred_since,omitempty"`
+	// NextRetryAt gives, for each Codex session that failed waiting on the
+	// Codex lookup allowance past collector.MaxDeferral, when its next
+	// attempt is due: 1 hour after its DeferredSince reached
+	// collector.MaxDeferral, then 2, 4, and so on, the gap doubling after
+	// each attempt up to collector.LookupRetryMaxGap (7 days), for as long
+	// as it is pending. A pass with no attempt due leaves it unopened and
+	// records no new failure for it, but keeps its issue in SessionIssues. A
+	// time no later than LastScanAt means an attempt is due, for the next
+	// pass to make.
+	NextRetryAt map[string]time.Time `json:"next_retry_at,omitempty"`
 	// UnreachedSessions gives, per archive session ID, each session with a
 	// pending request that the last pass ran out of time before reaching,
 	// and how many such sessions the pass had ordered ahead of it

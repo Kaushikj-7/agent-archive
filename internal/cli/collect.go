@@ -285,9 +285,10 @@ func verifyAndRecordPass(ctx context.Context, home string, cfg config.Config, en
 			return "", verifyErr, err
 		}
 	}
-	if len(result.Errors) > 0 {
+	if len(result.Errors) > 0 || len(result.RetryLater) > 0 {
 		// In place of collector.Run's own count of the same sessions; the
-		// pass's other problems stay.
+		// pass's other problems stay. A session the pass held on its
+		// backoff schedule keeps its issue (see recordSessionIssues).
 		summary, err = recordSessionIssues(localStore, result.Errors, subagentLookup(localStore), collector.FailedSessionsProblem(len(result.Errors)))
 		if err != nil {
 			return "", verifyErr, err
