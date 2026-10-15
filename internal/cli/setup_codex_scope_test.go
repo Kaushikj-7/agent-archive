@@ -318,6 +318,18 @@ func TestAllCodexDiagnosticStatusDoesNotInventProjectLocation(t *testing.T) {
 	}
 }
 
+func TestVerboseAllCodexDiagnosticOmitsProjectPhrase(t *testing.T) {
+	t.Parallel()
+	at := time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)
+	view := busyStatusView()
+	view.CaptureDiagnostics = []capture.Diagnostic{{Harness: "codex", Code: capture.DiagnosticProjectUnavailable, ObservedAt: at}}
+	text := renderVerboseStatus(view)
+	want := "  Capture skipped (Codex): " + capture.DiagnosticMessage(capture.DiagnosticProjectUnavailable) + " at 2026-10-03T12:00:00Z.\n"
+	if !strings.Contains(text, want) {
+		t.Fatalf("status --verbose is missing %q:\n%s", want, text)
+	}
+}
+
 func TestCodexStatusSeparatesActualRecoveryEvidence(t *testing.T) {
 	t.Parallel()
 	at := time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)

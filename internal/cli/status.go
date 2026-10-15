@@ -2675,7 +2675,12 @@ func printStatusDetails(out io.Writer, view statusView) {
 		terminal.Printf(out, "  %-14s %s\n", skillLabel(path)+":", line)
 	}
 	for _, diagnostic := range view.CaptureDiagnostics {
-		terminal.Printf(out, "  Capture skipped in %s (%s): %s at %s.\n", diagnostic.ProjectRoot, appName(diagnostic.Harness), capture.DiagnosticMessage(diagnostic.Code), formatTimeOrNever(diagnostic.ObservedAt))
+		// A Codex all-projects diagnostic has no project, so it names none.
+		where := ""
+		if diagnostic.ProjectRoot != "" {
+			where = " in " + diagnostic.ProjectRoot
+		}
+		terminal.Printf(out, "  Capture skipped%s (%s): %s at %s.\n", where, appName(diagnostic.Harness), capture.DiagnosticMessage(diagnostic.Code), formatTimeOrNever(diagnostic.ObservedAt))
 	}
 	// Each problem as the collector recorded it, one per line; a status
 	// file from before LastErrors has only the joined text, shown as is.
