@@ -757,7 +757,7 @@ This command provisions no runners. The adapter reuses `report_ci_timing.py`,
 retains every earlier attempt as auxiliary usage, paginates completely and preserves
 strict physical-allocation deduplication. Pairing checks repository, workflow path,
 event, PR number, head repository/branch/SHA and base SHA: sharing a head SHA is not
-sufficient. Missing PR association or ambiguous live peers remain unavailable;
+sufficient. Missing PR association without authenticated retained identity, or ambiguous live peers, remains unavailable;
 explicit offline run IDs still must satisfy the exact context. Missing expected
 jobs cannot disappear by deriving inventory from the measured run.
 
@@ -867,3 +867,87 @@ and sequential verdict boundary; initially eligible Linux jobs remain 20/16
 including Levenshtein, so no reduced initial burst or measured queue benefit is
 claimed. Actual source-bound runtime, cache cohorts and full-pipeline comparison
 remain necessary; prior 28-job source evidence cannot certify this new tree.
+
+## Durable per-run identity and performance history
+
+The existing final linux-race aggregate and shared verify jobs now retain a small
+`ci-run-identity-{Test|Levenshtein}-{attempt}` artifact. Its sole `identity.json`
+member binds the real event, repository, PR, head/base refs, captured base, tested
+merge source/tree/ordered parents, workflow source/path, run ID and attempt.
+The shared workflow validates its own workflow path, not Test's path. Production
+worker count, schedules, test selection and token permissions are unchanged.
+Artifacts keep the existing seven-day retention. To preserve observations longer,
+collect their small receipts during that window; this change adds no scheduler.
+
+GitHub can remove `pull_requests` associations from completed runs after merge.
+Explicit run IDs alone still cannot authorize pairing an empty-association run.
+Supply its original downloaded identity ZIP using:
+
+```sh
+python3 -B scripts/collect_ci_timing.py \
+  --topology worker-topology.json --test-run 123 --levenshtein-run 124 \
+  --identity-archive 456:/path/to/test-identity.zip \
+  --identity-archive 457:/path/to/shared-identity.zip \
+  --output observation.json
+```
+
+Use the same environment token described above. The collector fetches metadata
+for each artifact ID from the fixed repository API, checks its owning run,
+expected name/attempt, expiry and SHA-256 digest against the exact ZIP bytes,
+then compares the complete retained identity. It independently resolves the
+actual merge commit/tree/parents through the Git API, and proves ancestry when
+the tested base advanced beyond the captured base. Missing, expired, mismatched,
+wrong-attempt or modified receipts fail closed. Existing nonempty contradictory
+PR associations cannot be overridden by a receipt. Preserve earlier-attempt ZIPs
+as well when those API associations are absent. There is no fallback for older
+runs that did not retain authenticated identity. Identical trees do not imply
+identical tested source SHAs.
+
+Normalize existing producer evidence without running tests:
+
+```sh
+python3 -B scripts/normalize_ci_timing.py --worker go-shard-0 \
+  --topology worker-topology.json --output worker-timing.json
+python3 -B scripts/normalize_ci_timing.py --native native-full-tier \
+  --output native-timing.json
+python3 -B scripts/ci_timing_history.py --observation worker-timing.json \
+  --pipeline-observation observation.json --output baseline-candidate.json
+```
+
+`worker-timing` schema 1 has exact `source`, `run_id`, `run_attempt`, `shard`,
+`compiled_inventory_sha256`, `configuration_sha256`, `cohort`, `success`,
+`observation_kind`, `phases`, `tests` and `fixture_metrics`. Test rows identify
+`package::TopLevelTest`, family/package, lifecycle `parent_wall_seconds`, Go
+`own_elapsed_seconds`, terminal status and timing issues. Setup remains
+`unattributed`: the normalizer never subtracts overlapping fixture measurements
+or calls Go Elapsed CPU time. Fixture output uses `CI_FIXTURE_METRIC_V1` JSON:
+version 1, fixture, phase, elapsed_ns and a dictionary of nonnegative operation
+counts. Each emitted sample retains its exact child test and top-level owner.
+These metrics may overlap across tests and are not additive.
+
+Shared verification retains `shared-verification-timing` schema 1 from its same
+fresh invocation, including total elapsed and per-check measured duration,
+execution duration when reported, status and cache state. Checks overlap; their
+sum is not wall time. Raw checker stderr, scanner output, staged source and
+caches are not copied into the artifact. The command's failure remains a
+failure; malformed/missing timing output fails rather than claiming zero.
+
+The bounded history helper groups comparable compiled-inventory/configuration/cache/image cohorts,
+deduplicates physical workers, rejects conflicting duplicate observations and
+requires matching terminal full-pipeline collector evidence and excludes failed, experimental, unknown-classification or unknown-cohort samples
+from baseline candidates. It preserves measured medians and sample counts, not
+inferred percentiles. Its output is explicitly a **review candidate**, never
+an automatically promoted allowance. A single worker receipt cannot certify
+whole-pipeline success; the candidate builder recomputes the paired snapshot report
+and requires the complete fixed production inventory and successful workflows.
+Candidate eligibility revalidates the paired workflow association and canonical
+run/job identities. Every required job needs a positive API job/runner ID, a
+nonblank runner name and successful executed-step evidence within its allocation.
+Legacy or unknown allocations remain diagnostic. Each shard must match a
+successful physical job's actual attempt, including
+successful jobs carried forward into a later workflow attempt. Blank or missing
+cache/image cohorts cannot supply a candidate.
+The required aggregate must also reconcile coverage before any policy uses it. The future required performance
+gate owns approval and trusted-main promotion. Queue eligibility remains unknown
+without independent telemetry, and runner allocation remains accounted by the
+existing full-pipeline reporter rather than by summing test durations.

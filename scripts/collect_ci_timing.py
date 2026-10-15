@@ -3,6 +3,9 @@
 import argparse
 from datetime import datetime, timezone
 import json
+import hashlib
+import io
+import zipfile
 import os
 from pathlib import Path
 import re
@@ -95,39 +98,107 @@ def inventory(workers):
             'Levenshtein': ['verify', 'native-release-vulnerabilities']}
 
 
-def validate_run(run, name, topology):
+def retained_identity(api, run, name, topology, archives):
+    """Authenticate retained bytes against GitHub's digest, never a caller's claim."""
+    if not archives:
+        raise ValueError('missing authenticated retained run identity')
+    for artifact_id, path in archives:
+        metadata = api.get(f'/repos/{REPOSITORY}/actions/artifacts/{artifact_id}')
+        if (metadata.get('id') != artifact_id or metadata.get('expired') is not False
+                or metadata.get('name') != f'ci-run-identity-{name}-{run["run_attempt"]}'
+                or metadata.get('workflow_run', {}).get('id') != run['id']
+                or metadata.get('workflow_run', {}).get('head_sha') != run['head_sha']
+                or metadata.get('workflow_run', {}).get('head_branch') != run['head_branch']):
+            continue
+        size = path.stat().st_size
+        if size > 65536 or path.is_symlink() or not path.is_file():
+            raise ValueError('identity archive exceeds bound or is not a regular file')
+        raw = path.read_bytes()
+        if metadata.get('digest') != 'sha256:' + hashlib.sha256(raw).hexdigest():
+            raise ValueError('retained identity archive digest mismatch')
+        with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+            members = archive.infolist()
+            if (len(members) != 1 or members[0].filename != 'identity.json'
+                    or members[0].file_size > 32768 or members[0].is_dir()
+                    or (members[0].external_attr >> 16) & 0o170000 == 0o120000):
+                raise ValueError('unexpected retained identity archive members')
+            proof = json.loads(archive.read(members[0]))
+        retained = proof.get('topology', {})
+        expected = dict(topology, workflow_ref=REPOSITORY + '/' + PATHS[name]
+                        + '@refs/pull/' + str(topology['pr_number']) + '/merge')
+        # An entire guard identity is compared, not just the head SHA shared by
+        # qualification siblings. Optional lint diagnostics are not identity.
+        fields = ('schema', 'repository', 'pr_number', 'workers', 'observation_kind',
+                  'source', 'tree', 'parents', 'event_base', 'tested_base', 'head',
+                  'head_ref', 'head_repository', 'base_ref', 'workflow_source', 'workflow_ref')
+        if (proof.get('schema') != 1 or proof.get('run_id') != run['id']
+                or proof.get('run_attempt') != run['run_attempt']
+                or proof.get('workflow') != name or proof.get('workflow_path') != PATHS[name]
+                or proof.get('event') != 'pull_request'
+                or any(retained.get(key) != expected.get(key) for key in fields)
+                or any(not isinstance(retained.get(key), str) or not ci_worker_topology.SHA.fullmatch(retained[key])
+                       for key in ('source', 'tree', 'head', 'event_base', 'tested_base'))
+                or retained.get('parents') != [retained['tested_base'], retained['head']]
+                or retained['workflow_source'] != retained['source']):
+            raise ValueError('retained run identity differs from exact context')
+        commit = api.get(f'/repos/{REPOSITORY}/git/commits/{retained["source"]}')
+        if (commit.get('sha') != retained['source'] or commit.get('tree', {}).get('sha') != retained['tree']
+                or [row.get('sha') for row in commit.get('parents', [])] != retained['parents']):
+            raise ValueError('independent tested merge identity differs')
+        if retained['event_base'] != retained['tested_base']:
+            compare = api.get(f'/repos/{REPOSITORY}/compare/{retained["event_base"]}...{retained["tested_base"]}')
+            if (compare.get('status') != 'ahead'
+                    or compare.get('merge_base_commit', {}).get('sha') != retained['event_base']):
+                raise ValueError('independent captured-base ancestry unavailable')
+        return {'artifact_id': artifact_id, 'digest': metadata['digest'],
+                'run_id': run['id'], 'run_attempt': run['run_attempt']}
+    raise ValueError('no retained identity belongs to exact run and attempt')
+
+
+def validate_run(run, name, topology, *, api=None, archives=()):
     associations = run.get('pull_requests')
     if (run.get('name') != name or run.get('path') != PATHS[name]
             or run.get('event') != 'pull_request'
             or run.get('repository', {}).get('full_name', '').casefold() != REPOSITORY.casefold()
             or run.get('head_repository', {}).get('full_name', '').casefold() != topology['head_repository'].casefold()
             or run.get('head_sha') != topology['head'] or run.get('head_branch') != topology['head_ref']
-            or not isinstance(associations, list) or len(associations) != 1
-            or associations[0].get('number') != topology['pr_number']
-            or associations[0].get('head', {}).get('sha') != topology['head']
-            or associations[0].get('base', {}).get('sha') != topology['event_base']
+            or not isinstance(associations, list)
             or type(run.get('id')) is not int or run['id'] <= 0
             or type(run.get('run_attempt')) is not int or not 1 <= run['run_attempt'] <= 10):
         raise ValueError('run does not belong to exact PR/workflow/revision context')
+    if associations == [] and api is not None:
+        return retained_identity(api, run, name, topology, archives)
+    if (len(associations) != 1 or associations[0].get('number') != topology['pr_number']
+            or associations[0].get('head', {}).get('sha') != topology['head']
+            or associations[0].get('base', {}).get('sha') != topology['event_base']):
+        raise ValueError('run does not belong to exact PR/workflow/revision context')
+    return None
 
 
 def snapshot(api, run, attempt=None):
     prefix = f'/repos/{REPOSITORY}/actions/runs/{run["id"]}'
     number = attempt or run['run_attempt']
     if number != run['run_attempt']:
+        previous_id = run['id']
         run = api.get(prefix + f'/attempts/{number}')
+        if run.get('id') != previous_id or run.get('run_attempt') != number:
+            raise ValueError('attempt API response differs from requested identity')
     jobs = api.pages(prefix + f'/attempts/{number}/jobs', 'jobs')
     return {'run': run, 'jobs': jobs}
 
 
 def collect(api, topology, test_run_id, leven_run_id=None, *, live=False,
-            cohort='unknown', cache_state='unknown', event_at=None, experiment=False):
+            cohort='unknown', cache_state='unknown', event_at=None, experiment=False, identity_archives=()):
     required = inventory(topology['workers'])
     runs = [api.get(f'/repos/{REPOSITORY}/actions/runs/{test_run_id}')]
-    validate_run(runs[0], 'Test', topology)
+    if runs[0].get('id') != test_run_id:
+        raise ValueError('Test API response differs from requested run ID')
+    identity_proofs = [validate_run(runs[0], 'Test', topology, api=api, archives=identity_archives)]
     if leven_run_id:
         peer = api.get(f'/repos/{REPOSITORY}/actions/runs/{leven_run_id}')
-        validate_run(peer, 'Levenshtein', topology)
+        if peer.get('id') != leven_run_id:
+            raise ValueError('Levenshtein API response differs from requested run ID')
+        identity_proofs.append(validate_run(peer, 'Levenshtein', topology, api=api, archives=identity_archives))
         runs.append(peer)
     elif live:
         peers = api.pages(f'/repos/{REPOSITORY}/actions/workflows/levenshtein.yml/runs?event=pull_request&head_sha={topology["head"]}', 'workflow_runs')['workflow_runs']
@@ -157,7 +228,7 @@ def collect(api, topology, test_run_id, leven_run_id=None, *, live=False,
         for run in runs:
             for attempt in range(1, run['run_attempt']):
                 old = snapshot(api, run, attempt)
-                validate_run(old['run'], run['name'], topology)
+                validate_run(old['run'], run['name'], topology, api=api, archives=identity_archives)
                 samples.append(dict(sample, id=f'usage-{run["id"]}-attempt-{attempt}',
                                     scope='auxiliary-campaign', required_jobs={run['name']: required[run['name']]},
                                     workflows=[old], event_at=None))
@@ -177,6 +248,7 @@ def collect(api, topology, test_run_id, leven_run_id=None, *, live=False,
                            target_150s_met=None, directional_sample_ready=False)
     return {'schema': 1, 'collected_at': datetime.now(timezone.utc).isoformat(), 'snapshot_status': 'partial' if partial else 'terminal',
             'collection_mode': 'live' if live else 'offline', 'topology': topology,
+            'authenticated_retained_identities': [proof for proof in identity_proofs if proof],
             'input': document, 'report': result,
             'notes': [('Current collector allocation cannot be finalized while it is running.' if live
                        else 'Offline collector is outside measured workflows; record its cost separately if hosted.'),
@@ -188,6 +260,8 @@ def main():
     parser.add_argument('--topology', type=Path, required=True)
     parser.add_argument('--test-run', type=int)
     parser.add_argument('--levenshtein-run', type=int)
+    parser.add_argument('--identity-archive', action='append', default=[], metavar='ARTIFACT_ID:ZIP',
+                        help='Retained identity ZIP; authenticated against API artifact digest and owning run')
     parser.add_argument('--live', action='store_true')
     parser.add_argument('--experiment', action='store_true', help='Exclude intentional qualification traffic from normal p95')
     parser.add_argument('--cohort', choices=report_ci_timing.COHORTS, default='unknown')
@@ -225,8 +299,16 @@ def main():
         token = os.environ.get('GH_TOKEN', '')
         if not token:
             raise ValueError('read-only Actions token unavailable')
+        archives = []
+        for argument in args.identity_archive:
+            artifact_id, path = argument.split(':', 1)
+            if not artifact_id.isdecimal() or int(artifact_id) <= 0:
+                raise ValueError('invalid identity artifact ID')
+            archives.append((int(artifact_id), Path(path)))
+        if len(archives) > 20:
+            raise ValueError('at most twenty retained identity archives allowed')
         result = collect(API(token), topology, test_id, args.levenshtein_run, live=args.live,
-                         cohort=args.cohort, cache_state=args.cache_state, event_at=args.event_at, experiment=args.experiment)
+                         cohort=args.cohort, cache_state=args.cache_state, event_at=args.event_at, experiment=args.experiment, identity_archives=archives)
         args.output.write_text(json.dumps(result, indent=2) + '\n')
         if args.live and os.environ.get('GITHUB_STEP_SUMMARY'):
             with Path(os.environ['GITHUB_STEP_SUMMARY']).open('a') as handle:
@@ -238,7 +320,7 @@ def main():
                              + 'Final collector allocation and possibly the paired workflow remain unknown. '
                              'This diagnostic does not certify latency, p95, cache warmth or queue time. '
                              'Finalize completed run IDs with collect_ci_timing.py.\n')
-    except (ValueError, KeyError, TypeError, AttributeError, OSError) as error:
+    except (ValueError, KeyError, TypeError, AttributeError, OSError, zipfile.BadZipFile) as error:
         # Exception messages from parser/network paths above never contain tokens.
         parser.exit(1, 'Timing collection unavailable: ' + str(error) + '\n')
 

@@ -100,6 +100,18 @@ jobs:
           # Put the truthy depth first: a PR's zero must not fall back to one.
           fetch-depth: ${{ github.event_name != 'pull_request' && 1 || 0 }}
           persist-credentials: false
+      - name: Retain exact PR run identity
+        if: github.event_name == 'pull_request'
+        working-directory: app
+        run: python3 -B scripts/ci_run_identity.py --output "$RUNNER_TEMP/shared-run-identity/identity.json"
+      - name: Preserve bounded PR run identity
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ci-run-identity-Levenshtein-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/shared-run-identity/identity.json
+          if-no-files-found: error
+          retention-days: 7
       # Pinned to a reviewed Levenshtein commit. Adopt new shared checks by
       # updating this SHA, never a moving branch.
       - name: Check out Levenshtein
@@ -143,8 +155,18 @@ jobs:
           # Stage selection permits scoped PR checks only on pull_request.
           # Push/manual retain all six; schedule retains main/rerun_checks.
           export XDG_CACHE_HOME="$RUNNER_TEMP/native-xdg"
-          ./levenshtein/verify "$CHECK_RUN" --source "$RUNNER_TEMP/native-source" --jobs 4 \
+          python3 -B app/scripts/run_shared_verify.py --source app \
+            --output "$RUNNER_TEMP/shared-verification-timing.json" -- \
+            ./levenshtein/verify "$CHECK_RUN" --source "$RUNNER_TEMP/native-source" --jobs 4 \
             --cache-dir "$RUNNER_TEMP/verification"
+      - name: Preserve bounded shared timing
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: shared-verification-timing
+          path: ${{ runner.temp }}/shared-verification-timing.json
+          if-no-files-found: error
+          retention-days: 7
 
   checker-benchmark:
     if: github.event_name == 'workflow_dispatch' && inputs.benchmark-checker-jobs
