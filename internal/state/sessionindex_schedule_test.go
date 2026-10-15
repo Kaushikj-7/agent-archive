@@ -27,6 +27,20 @@ func seedRecoveryInventory(t *testing.T, s *Store, count int) {
 	}
 }
 
+// requestDamagedKey requests recovery for key after damaging its index entry.
+// A request for an unowned key during a pending census keeps its generation;
+// damage still starts a new one, which these resume tests rely on.
+func requestDamagedKey(s *Store, key agentmeta.SessionKey) error {
+	path := qualifiedSessionIndexPath(s.home, key)
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return err
+	}
+	if err := os.WriteFile(path, []byte("{"), 0600); err != nil {
+		return err
+	}
+	return s.RequestSessionIndexRecovery(key)
+}
+
 func TestScheduledRecoveryApplicationAllowanceFollowsValidatedCensus(t *testing.T) {
 	s := newTestStore(t)
 	seedRecoveryInventory(t, s, 2)
@@ -284,7 +298,7 @@ func TestRepeatedPendingRequestKeepsRecoveryCursorGeneration(t *testing.T) {
 		t.Fatal("same scanner request invalidated continuation")
 	}
 	other := agentmeta.SessionKey{Agent: agentmeta.Codex, NativeID: "new-pending-key"}
-	if err := s.RequestSessionIndexRecovery(other); err != nil {
+	if err := requestDamagedKey(s, other); err != nil {
 		t.Fatal(err)
 	}
 	if err := local.Read(filepath.Join(s.home, sessionIndexMarkerFile), &after); err != nil {
@@ -863,7 +877,7 @@ func TestNewRecoveryRequestRetainsValidatedOwnerProgress(t *testing.T) {
 					t.Fatalf("owner checkpoint: %#v %v", before, err)
 				}
 				second := agentmeta.SessionKey{Agent: agentmeta.Codex, NativeID: "second-request"}
-				if err := s.RequestSessionIndexRecovery(second); err != nil {
+				if err := requestDamagedKey(s, second); err != nil {
 					t.Fatal(err)
 				}
 				var marker sessionIndexMarker
@@ -1049,7 +1063,7 @@ func TestNewRecoveryRequestRetainsOnlyMatchingCandidateProgress(t *testing.T) {
 				t.Fatalf("candidate checkpoint: %#v %v", before, err)
 			}
 			request := agentmeta.SessionKey{Agent: agentmeta.Codex, NativeID: "new-request"}
-			if err := s.RequestSessionIndexRecovery(request); err != nil {
+			if err := requestDamagedKey(s, request); err != nil {
 				t.Fatal(err)
 			}
 			if mutate {
@@ -1133,7 +1147,7 @@ func TestNewRecoveryGenerationRestartsRequestedMissCoverage(t *testing.T) {
 		if err := readRecoveryJSON(filepath.Join(s.home, sessionRecoveryCursorFile), &before); err != nil || before.Phase != 2 || before.Offset != 1 {
 			t.Fatalf("requested-miss cursor: %#v %v", before, err)
 		}
-		if err := s.RequestSessionIndexRecovery(second); err != nil {
+		if err := requestDamagedKey(s, second); err != nil {
 			t.Fatal(err)
 		}
 		resumed, complete, err := s.prepareRecoveryCursor(t.Context())
