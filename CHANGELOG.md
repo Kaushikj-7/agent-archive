@@ -239,6 +239,9 @@ and the cleanup repair do not turn either failed tagged gate into a pass.
   machine. Downgrading to an earlier version while such a subagent is queued
   makes that version's collector report an admission-intent error for it each
   pass until it expires after 24 hours; nothing else is held back.
+- A resumed Claude Code subagent that finishes again before the next collector
+  pass has proved its identity no longer withdraws the identity census for
+  every session: only that subagent waits for the next pass.
 
 - Preserve the primary validation failure alongside cleanup diagnostics, and
   continue bounded cleanup of other owned processes after signal, poll or wait
