@@ -159,7 +159,9 @@ references retained for navigation.
 
 Each row shows the best snippet and any known other indexed title/body matches.
 These are indexed passages, including overlap, rather than text occurrences.
-Enter a listed number or unique short ID to open its exact source-bound context.
+The shared highlight and detail strip follow the arrow, page, Home and End keys;
+Enter opens the highlighted hit. A listed number or unique short ID also opens
+its exact source-bound context.
 The number resolves the full harness/session identity even when short IDs collide.
 A title match has no body reference and explains that instead of opening an
 unrelated transcript. In details, `n`/`p` navigate matching **body** passages,
@@ -177,6 +179,8 @@ keyset cursors. Context retains only the current bounded selected/neighbor text.
 Painting, scrolling and resizing never fetch metadata/sources or refresh the
 index. An index write invalidates local paging: results remain usable, and an
 explicit rerun resets navigation rather than appending a different ranking.
+It keeps the highlighted full harness/session identity when still present, or
+selects the first hit when that identity is absent.
 Changed, deleted or unavailable exact sources leave an explanatory notice and
 the usable result list.
 
@@ -186,6 +190,13 @@ full harness/session ID and archive source. Existing repository, destination and
 launch gates apply. It hands off the authorized current session, which may differ
 from a historical search match. Searching does not authorize indexing, setup,
 refresh or rebuild.
+
+Checksum-verified sources in unsupported immutable formats (including legacy
+source schema 1) become explicit `unsupported_source_schema` coverage gaps.
+They are not downloaded repeatedly; a changed source or extraction contract
+rechecks them. Corrupt, unverified and transiently unreadable sources remain
+retryable failures. Unsupported content is never indexed.
+
 ## Automatic indexing and publication hints
 
 Enable automatic indexing on this machine with

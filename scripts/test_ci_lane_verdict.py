@@ -2,7 +2,7 @@
 import unittest
 
 from ci_lane_verdict import LANES, verdict
-from test_ci_workflow import ROOT, jobs, job_key, steps, step_key
+from test_ci_workflow import ROOT, jobs, job_key, steps, step_key, condition_matches
 
 
 class LaneVerdictTest(unittest.TestCase):
@@ -25,7 +25,7 @@ class LaneVerdictTest(unittest.TestCase):
         found = jobs((ROOT/'.github/workflows/test.yml').read_text())
         for group, names in LANES.items():
             aggregate = found[group]
-            self.assertEqual(job_key(aggregate, 'if'), 'always()')
+            self.assertEqual(job_key(aggregate, 'if'), '${{ !cancelled() }}')
             self.assertIsNone(job_key(aggregate, 'name'))
             self.assertEqual(set(job_key(aggregate, 'needs').strip('[]').split(', ')), names)
             self.assertIn(f'scripts/ci_lane_verdict.py {group}', aggregate)
@@ -38,10 +38,38 @@ class LaneVerdictTest(unittest.TestCase):
                     if 'run:' in step and 'Remove isolated' not in step:
                         self.assertIsNone(step_key(step, 'if'))
 
-    def test_only_purge_needs_the_tier_plan(self):
+    def test_cancelable_gates_run_on_failures_and_reject_unsuccessful_needs(self):
+        import run_go_shard
         found = jobs((ROOT/'.github/workflows/test.yml').read_text())
-        self.assertEqual(job_key(found['script-purge'], 'needs'), '[tier-plan]')
-        for name in ('script-install', 'script-static', *LANES['cross-build']):
+        expected = dict(LANES)
+        expected['linux-race'] = {'linux-short', 'linux-full', 'script-static', 'script-install', 'script-purge', 'macos-smoke', 'source-audit'}
+        for group, names in expected.items():
+            predicate = job_key(found[group], 'if')
+            for state in ('success', 'failure', 'skipped', 'cancelled'):
+                # A canceled prerequisite is not equivalent to the workflow
+                # itself being superseded. Failures still reach the verdict.
+                self.assertTrue(condition_matches(predicate, 'pull_request', cancelled=False))
+                self.assertFalse(condition_matches(predicate, 'pull_request', cancelled=True))
+                needs = {name: {'result': 'success'} for name in names}
+                for name in names:
+                    bad = dict(needs, **{name: {'result': state}})
+                    if state == 'success':
+                        if group == 'linux-race':
+                            run_go_shard.verdict('pull_request', 'refs/pull/1/merge', bad)
+                        else:
+                            verdict(group, bad)
+                    else:
+                        with self.subTest(group=group, state=state, lane=name), self.assertRaises((ValueError, run_go_shard.Failure)):
+                            if group == 'linux-race':
+                                run_go_shard.verdict('pull_request', 'refs/pull/1/merge', bad)
+                            else:
+                                verdict(group, bad)
+
+    def test_consumers_plan_without_an_extra_eligibility_dependency(self):
+        found = jobs((ROOT/'.github/workflows/test.yml').read_text())
+        self.assertNotIn('tier-plan', found)
+        self.assertNotIn('script-tests', found)
+        for name in ('script-purge', 'macos-smoke', 'linux-full', 'script-install', 'script-static', *LANES['cross-build']):
             self.assertIsNone(job_key(found[name], 'needs'))
 
     def test_script_invocation_inventory_has_one_owner(self):
@@ -50,12 +78,14 @@ class LaneVerdictTest(unittest.TestCase):
             'script-purge': {'test_purge_recipe.py'},
             'script-static': {
                 'test_release_signing.py', 'test_release_assets.py', 'test_release_candidate.py',
-                'test_ci_workflow.py', 'test_stage_native_verify.py', 'test_scope_native_verify.py',
-                'test_stage_release_vulnerability_scan.py', 'test_measure_hook.py',
+                'test_ci_workflow.py', 'test_stage_native_verify.py', 'test_git_identity_versions.py', 'test_scope_native_verify.py',
+                'test_stage_release_vulnerability_scan.py', 'test_measure_hook.py', 'test_muse_qualification.py',
                 'test_linux_acceptance.py', 'test_go_shards.py', 'test_generate_go_shard_hints.py',
-                'test_ci_tiers.py', 'test_historical_vet_contract.py', 'test_macos_smoke.py', 'test_native_smoke_reference.py', 'test_native_full.py', 'test_go_cache_context.py',
+                'test_ci_tiers.py', 'test_local_ci_plan.py', 'test_historical_vet_contract.py', 'test_macos_smoke.py', 'test_native_smoke_reference.py', 'test_native_full.py', 'test_go_cache_context.py',
                 'test_go_cache_steps.py', 'test_ci_cache.py', 'test_ci_lane_verdict.py', 'test_report_ci_timing.py', 'test_purge_ci.py',
-                'test_go_parent_shards.py', 'test_pr_reference.py'},
+                'test_ci_worker_topology.py', 'test_collect_ci_timing.py',
+                'test_go_parent_shards.py', 'test_pr_reference.py',
+                'test_benchmark_shared_verify.py'},
         }
         import re
         found = jobs((ROOT/'.github/workflows/test.yml').read_text())

@@ -41,7 +41,7 @@ const (
 type SourceAdmission struct {
 	NativeID                  string
 	Cwd                       string
-	Binding                   *archive.CodexSourceBinding
+	Binding                   *SourceBinding
 	NativeCreatedAt           time.Time
 	InitialProducerVersion    string
 	InitialProducerOriginator string
@@ -60,6 +60,18 @@ type CodexValidationLimits struct {
 	Duration time.Duration
 }
 
+// CodexRolloutAllowance is optionally implemented by a lookup whose pass
+// allowance can run out. BeginCollection starts a fresh allowance for a
+// collector pass, so what earlier users of the same lookup (discovery,
+// import registration) spent does not leave the collector none. Once
+// AllowanceSpent reports true, every further lookup call fails with
+// CauseLookupAllowanceSpent, so a caller can leave the remaining Codex
+// sources for the next pass without opening them.
+type CodexRolloutAllowance interface {
+	BeginCollection()
+	AllowanceSpent() bool
+}
+
 // CodexRolloutSliceProvider optionally shares validation within a caller-owned
 // operation slice. The caller closes all snapshots before renewing a slice.
 type CodexRolloutSliceProvider interface {
@@ -76,7 +88,7 @@ type CodexRolloutSlice interface {
 
 // SourceAdmissionFacts exposes bounded facts from the actual opened snapshot.
 type SourceAdmissionFacts interface {
-	AdmissionFacts(context.Context) (archive.CodexSourceBinding, error)
+	AdmissionFacts(context.Context) (SourceBinding, error)
 }
 
 // SourceAdmissionSignature validates opened native facts without decoding a
@@ -135,7 +147,7 @@ type SourceOwnTaskFacts interface {
 
 // AdmissionEvidence combines facts from one opened snapshot before admission.
 type AdmissionEvidence struct {
-	Binding archive.CodexSourceBinding
+	Binding SourceBinding
 	Task    OwnTaskFacts
 }
 

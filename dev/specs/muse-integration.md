@@ -197,9 +197,11 @@ instead. Resolve in this order:
    IDs, origin, original admission and destination. A crash before commit repeats
    lookup; after commit, revalidate. Continue through existing frozen publication.
 
-Q0 establishes whether folder dates are UTC or local time and how far they can
-drift from the ID timestamp; the probes recorded one root path, far from midnight in
-either zone, so the adjacent-day window covers both until then.
+Q0's [fresh-root campaign](../qualification/muse/README.md) observed process-local
+folder dates: at a UTC/local boundary, `TZ=Etc/GMT+12` stored the previous UTC
+calendar day while the UUIDv7 encoded the current UTC day. This qualifies that
+case, not arbitrary clock skew or every timezone. Keep the adjacent-day and
+bounded fallback rules; neither date establishes creation or uniqueness.
 Relocation requires proven continuity; conflicting copies remain explicit.
 Workspace or root changes cannot silently move capture to another project,
 destination or consent window. Parser checks after filtering are insufficient.
@@ -254,7 +256,9 @@ logical record with positional provenance:
 
 `pos.child` is null for an ordinary envelope and the index within
 `children[]` for a transaction child. `fields` holds only allowlisted, redacted
-values for that `type`. Q0 fixes the per-type allowlist. Do not keep nested
+values for that `type`. Q0 records the maximum reviewed
+[per-type field set](../qualification/muse/retained-allowlist.json); unobserved
+fields need new qualification and privacy review. Do not keep nested
 `record_json` strings or certify redacted bytes with native checksums. Native
 integrity stays local; the existing source-bundle SHA verifies the archived
 artifact. `Refilter` and `EvidenceExtends` use safe retained evidence;
@@ -329,11 +333,19 @@ Muse child facts map to existing `SessionRegistration` fields:
 
 `native_binding` is the only new registration field; `codex_binding` keeps its
 current shape and Codex keeps writing it. Today `validateNativeChild` rejects
-`NativeChild` on any agent but Codex, so it stops being Codex-only. That makes
-the downgrade behavior explicit: an older binary fails validation on a Muse child
-registration and leaves it alone, and an older writer that rewrites a Muse root
-drops `native_binding`, which returns the root to a pending locator and full
-revalidation rather than losing authority. Compatibility tests in §4 cover both.
+`NativeChild` on any agent but Codex; relaxing it belongs with qualified child
+admission. Validation alone does not protect every old mutation or maintenance
+entrypoint: registration loads do not validate. An older JSON writer can drop
+`native_binding` while preserving `TranscriptPath`, so the owner does not return
+to a null locator. Current non-Codex source admission also supplies no replacement
+authority. Such field loss is unsafe, not supported downgrade behavior.
+
+Before persisting native roots or bindings, ship writer/schema protection that
+supported older mutating entrypoints refuse or preserve, including imports,
+pending work and setup recovery. A locator-bearing Muse owner with missing
+binding must fail closed until its original authority is recovered from protected
+durable state; current files cannot recreate lost continuity. Compatibility tests
+in §4 exercise actual old readers and writers, not just the newest validator.
 
 Children get independent registrations from validated spawn, binding and
 observer facts in root scans and hooks. Verify the opened child stream, immediate
@@ -595,7 +607,15 @@ schemas and exporters do not specify the retained-file integrity contract.
 
 ## 7. Evidence and reproduction details
 
-The detailed probe record is not kept in the repository. Its last version is
+Current Q0 reproduction, complete reviewed synthetic corpus, shared contract
+corrections and truthful support/refusal gates are in
+[Muse qualification](../qualification/muse/README.md). Independent permission
+checksum encoding and original-creation authority remain open; this work does
+not enable capture. Native export acceptance is not an independent verifier,
+and even rejected lines can exit 0 with empty stderr: inspect the document's
+`diagnostics.unparseable_lines` separately.
+
+The historical detailed probe record is not kept in the repository. Its last version is
 `dev/specs/muse-qualification-evidence.json` at commit `7981d3ee`: per-campaign
 observations with their builds, frame-mutation results and the source of each
 finding that survived only in earlier reports. The per-campaign results files it

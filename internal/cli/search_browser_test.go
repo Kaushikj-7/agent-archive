@@ -521,3 +521,85 @@ func (o *searchContextOutput) Write(p []byte) (int, error) {
 	}
 	return n, err
 }
+
+// Search uses the same persistent highlight and detail strip as ordinary lists,
+// but its query is fixed and its multiline rows and footer are measured as drawn.
+func TestSearchHighlightedNavigationAndCompactFooter(t *testing.T) {
+	rows := []listRow{
+		{Index: 1, selectionKey: childKey("codex", "same"), HarnessKey: "codex", Harness: "Codex", SessionID: "same", ShortID: "same", Title: "first ranked hit", searchSnippet: "first snippet"},
+		{Index: 2, selectionKey: childKey("claude", "same"), HarnessKey: "claude", Harness: "Claude", SessionID: "same", ShortID: "same", Title: "second ranked hit", searchSnippet: "second snippet"},
+	}
+	keys := startKeys(newFakeKeys("/", "\x1b[B", "\r"))
+	defer keys.close()
+	l := &sessionPicker{env: fixedTerminal{160, 40}, keys: keys, contentSearch: &contentSearchBrowser{}, older: &browserLoadAction{Label: "next indexed results"}}
+	var out bytes.Buffer
+	l.clear = func() { out.WriteString(screenBreak) }
+	row, ok, err := l.pickRowsContext(t.Context(), newPrompter(strings.NewReader(""), &out), &out, rows, len(rows), false, listFormatOptions{Search: true, Numbered: true, Note: "Coverage incomplete.\nLast observed: unknown.\n"}, "read")
+	if err != nil || !ok || rowIdentity(row) != rowIdentity(rows[1]) || l.filtering {
+		t.Fatalf("highlight selection lost full identity: row%+v ok%v err%v", row, ok, err)
+	}
+	screens := strings.Split(out.String(), screenBreak)
+	checkKeyScreensFit(t, screens, 160, 40)
+	for _, forbidden := range []string{"/ search", "/ filter", "o older"} {
+		if strings.Contains(out.String(), forbidden) {
+			t.Fatalf("search advertised %q: %s", forbidden, &out)
+		}
+	}
+	for _, want := range []string{cursorMark + " 1.", "first ranked hit", "r rerun", "o next results", "Coverage incomplete."} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("missing %q: %s", want, &out)
+		}
+	}
+	if !strings.Contains(screens[len(screens)-1], cursorMark+" 2.") || !strings.Contains(screens[len(screens)-1], strings.Repeat("─", 160)) {
+		t.Fatalf("highlight or shared detail strip missing: %s", screens[len(screens)-1])
+	}
+}
+
+func TestSearchRerunHighlightRebindsFullIdentityOrFirstHit(t *testing.T) {
+	rows := []listRow{
+		{selectionKey: childKey("codex", "same"), Index: 1, Title: "codex"},
+		{selectionKey: childKey("claude", "same"), Index: 2, Title: "claude"},
+	}
+	for _, tc := range []struct {
+		key  string
+		want int
+	}{{rowIdentity(rows[1]), 1}, {childKey("cursor", "same"), 0}} {
+		l := &sessionPicker{env: fixedTerminal{80, 30}, contentSearch: &contentSearchBrowser{}, cursor: 1, start: 1}
+		l.keepSearchSelection(tc.key)
+		v := l.view(rows, len(rows), false, listFormatOptions{Search: true})
+		screen := l.filterScreen(io.Discard, v, "Read: ")
+		if l.cursor != tc.want || screen.cursor != tc.want || l.keep != "" {
+			t.Fatalf("rerun key%q selected ordinal%d, want%d", tc.key, l.cursor, tc.want)
+		}
+	}
+}
+
+func TestSearchHighlightedScreenMeasuresStripFooterAndResize(t *testing.T) {
+	rows := []listRow{{Index: 1, Title: "first", searchSnippet: strings.Repeat("界", 50), searchMatches: 3}, {Index: 2, Title: "second", searchSnippet: "second match"}}
+	format := listFormatOptions{Search: true, Numbered: true, Cursor: true}
+	footer := "Coverage incomplete; matching history may be missing.\nLast observed: unknown.\n"
+	for _, size := range []fixedTerminal{{120, 40}, {36, 20}, {120, 40}} {
+		l := &sessionPicker{env: size, contentSearch: &contentSearchBrowser{}}
+		groups := highlightGroups(sessionTableGroups(rows, format), 0)
+		screen := l.screen(io.Discard, groups, format, len(rows), footer, "Read: ")
+		var frame bytes.Buffer
+		f := format
+		f.Width = screen.width
+		if err := printSessionGroups(&frame, pageSessionGroups(groups, pickerPage{screen.start, screen.end}), f); err != nil {
+			t.Fatal(err)
+		}
+		if screen.strip {
+			for _, line := range detailStrip(rows[0], screen.width, format.Style) {
+				frame.WriteString(line + "\n")
+			}
+		}
+		frame.WriteString(l.displayFooter(footer, screen.width))
+		frame.WriteString(l.footerLine(screen, "read") + "\nRead: ")
+		if used := displayLines(frame.String(), screen.width); used > size.height {
+			t.Fatalf("frame uses%d rows, height%d: %s", used, size.height, &frame)
+		}
+		if screen.end-screen.start < minKeyScreenRows {
+			t.Fatal("no minimum key row")
+		}
+	}
+}

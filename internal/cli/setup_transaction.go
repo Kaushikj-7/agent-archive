@@ -505,7 +505,7 @@ func planSetupTransaction(home, userHome, executable string, old config.Config, 
 	if len(relabeled) > 0 {
 		firstRelabeled, moreRelabeled = relabeled[0], relabeled[1:]
 	}
-	journal := setupjournal.Journal{Legacy: legacy, Relabeled: firstRelabeled, MoreRelabeled: moreRelabeled, Changes: changes, Plist: jobChanges[0].Path, WasLoaded: jobActive(job.State), Backend: in.sched().Name(), JobRef: string(plan.Ref)}
+	journal := setupjournal.Journal{NativeAuthorityProtection: next.NativeAuthorityProtection || len(next.NativeRoots) > 0, Legacy: legacy, Relabeled: firstRelabeled, MoreRelabeled: moreRelabeled, Changes: changes, Plist: jobChanges[0].Path, WasLoaded: jobActive(job.State), Backend: in.sched().Name(), JobRef: string(plan.Ref)}
 	if err := planSearchSetup(home, userHome, executable, old, *next, env, &journal); err != nil {
 		return setupjournal.Journal{}, err
 	}
@@ -698,7 +698,7 @@ func protectSetupWriter(home string, current config.Config, proposed ...config.C
 	if setupjournal.TransactionPending(home) {
 		return errors.New("setup pending before writer protection")
 	}
-	if len(proposed) > 0 && ((proposed[0].SearchLifecycleProtection && !current.SearchLifecycleProtection) || (proposed[0].CodexCapture != nil && current.CodexCapture == nil) || (proposed[0].CodexHistoryProtection && !current.CodexHistoryProtection) || (proposed[0].GenerationProtection && !current.GenerationProtection) || (proposed[0].DurableStorageProtection && !current.DurableStorageProtection) || (proposed[0].RetentionProtection && !current.RetentionProtection) || (proposed[0].ImportStagingProtection && !current.ImportStagingProtection)) {
+	if len(proposed) > 0 && (((proposed[0].NativeAuthorityProtection || len(proposed[0].NativeRoots) > 0) && !current.NativeAuthorityProtection) || (proposed[0].SearchLifecycleProtection && !current.SearchLifecycleProtection) || (proposed[0].CodexCapture != nil && current.CodexCapture == nil) || (proposed[0].CodexHistoryProtection && !current.CodexHistoryProtection) || (proposed[0].GenerationProtection && !current.GenerationProtection) || (proposed[0].DurableStorageProtection && !current.DurableStorageProtection) || (proposed[0].RetentionProtection && !current.RetentionProtection) || (proposed[0].ImportStagingProtection && !current.ImportStagingProtection)) {
 		if _, found, err := config.Load(home); err != nil {
 			return err
 		} else if found {

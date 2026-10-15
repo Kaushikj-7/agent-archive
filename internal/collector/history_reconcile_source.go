@@ -9,60 +9,72 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 )
 
+// revisionsRead counts what one revisions call did with the thread's
+// best-effort (off-chain) candidates: kept were read and consumed, so they
+// still hold what the consumer retained; leftOut were not.
+type revisionsRead struct {
+	offChainKept    int
+	offChainLeftOut int
+}
+
 // revisions owns a serial read lease. The consumer must release its native
 // values before returning; only bounded filtered/staged evidence may survive.
 // A consumer that returns an error must leave its own state as it was before
 // the call: a best-effort revision it refuses for a limit is left out.
-func (r providerReader) revisions(ctx context.Context, adapter agentapi.TranscriptFilter, expected sourceState, maxBytes int64, related bool, consume func(archive.FilteredTranscript, *archive.CodexSourceBinding) error) (err error) {
+// offChain false leaves out every best-effort candidate without reading it.
+func (r providerReader) revisions(ctx context.Context, adapter agentapi.TranscriptFilter, expected sourceState, maxBytes int64, related, offChain bool, consume func(archive.FilteredTranscript, *archive.CodexSourceBinding) error) (read revisionsRead, err error) {
 	provider, _, err := r.binding()
 	if err != nil {
-		return err
+		return read, err
 	}
 	pass, closePass, err := r.pass(ctx, provider, adapter.Name())
 	if err != nil {
-		return err
+		return read, err
 	}
 	defer func() { err = errors.Join(err, closePass()) }()
 	historical, ok := pass.(agentapi.SourceRevisions)
 	if !ok {
-		return agentapi.Wrap(agentapi.Unavailable, errors.New("historical revision reader unavailable"))
+		return read, agentapi.Wrap(agentapi.Unavailable, errors.New("historical revision reader unavailable"))
 	}
 	limits := agentapi.ReadLimits{RawBytes: maxRawBytes(r.harness, maxBytes), RecordBytes: recordLimit, SubagentMetadata: r.subagentMetadata}
 	snap, err := pass.Read(ctx, r.ref, limits)
 	if err != nil {
-		return err
+		return read, err
 	}
 	candidates, ok := snap.(agentapi.SourceRevisionCandidates)
 	if !ok {
-		return errors.Join(agentapi.Wrap(agentapi.Unavailable, errors.New("historical candidate coverage unavailable")), snap.Close())
+		return read, errors.Join(agentapi.Wrap(agentapi.Unavailable, errors.New("historical candidate coverage unavailable")), snap.Close())
 	}
 	if snap.Observation().Signature != expected.observation.Signature {
-		return errors.Join(agentapi.Wrap(agentapi.Changed, errors.New("active revision changed during reconciliation")), snap.Close())
+		return read, errors.Join(agentapi.Wrap(agentapi.Changed, errors.New("active revision changed during reconciliation")), snap.Close())
 	}
 	_, admissionErr := r.snapshotBinding(ctx, snap)
 	if admissionErr != nil {
-		return errors.Join(admissionErr, snap.Close())
+		return read, errors.Join(admissionErr, snap.Close())
 	}
 	set, candidateErr := candidates.RevisionCandidates(ctx)
 	if err := errors.Join(candidateErr, snap.Close()); err != nil {
-		return err
+		return read, err
 	}
 	if r.discoveryRoot() == "" {
 		if related || len(set.Chain) > 1 {
-			return agentapi.Wrap(agentapi.Unavailable, errors.New("historical reconciliation requires an admitted source home"))
+			return read, agentapi.Wrap(agentapi.Unavailable, errors.New("historical reconciliation requires an admitted source home"))
 		}
 		// Off-chain rollouts are only ever best effort; without an admitted
 		// source home they are not read at all.
 		set.BestEffort = nil
 	}
+	if !offChain {
+		read.offChainLeftOut, set.BestEffort = len(set.BestEffort), nil
+	}
 	if len(set.Chain)+len(set.BestEffort) > archive.MaxHistorySpans {
-		return agentapi.Wrap(agentapi.Limit, errors.New("historical candidate count exceeded"))
+		return read, agentapi.Wrap(agentapi.Limit, errors.New("historical candidate count exceeded"))
 	}
 	// Raw, retained records, and filtered bytes have independent aggregate bounds.
 	budget := revisionBudget{raw: maxRawBytes(r.harness, maxBytes), filtered: 128 << 20, records: archive.MaxHistoryRecords}
 	for _, ref := range set.Chain {
 		if err := r.readRevision(ctx, historical, adapter, ref, limits, maxBytes, &budget, consume); err != nil {
-			return err
+			return read, err
 		}
 	}
 	// A best-effort candidate that cannot be read, or no longer fits the
@@ -81,7 +93,7 @@ func (r providerReader) revisions(ctx context.Context, adapter agentapi.Transcri
 	readBudget := r.retainedBudget()
 	for _, ref := range set.BestEffort {
 		if err := ctx.Err(); err != nil {
-			return err
+			return read, err
 		}
 		before, mark, exceeded := budget, r.retainedMark(), readBudget.ScopeExceeded()
 		var consumeErr error
@@ -90,25 +102,27 @@ func (r providerReader) revisions(ctx context.Context, adapter agentapi.Transcri
 			return consumeErr
 		})
 		if err == nil {
+			read.offChainKept++
 			continue
 		}
 		if ctx.Err() != nil || !leaveOutBestEffort(err, consumeErr != nil, readBudget.ScopeExceeded()) {
-			return errors.Join(err, ctx.Err())
+			return read, errors.Join(err, ctx.Err())
 		}
 		budget = before
 		r.releaseRetainedAfter(mark)
 		if !exceeded {
 			readBudget.ForgetScopeExceeded()
 		}
+		read.offChainLeftOut++
 	}
 	final, err := pass.Signature(ctx, r.ref)
 	if err != nil {
-		return err
+		return read, err
 	}
 	if final.Signature != expected.observation.Signature {
-		return agentapi.Wrap(agentapi.Changed, errors.New("active revision changed after reconciliation"))
+		return read, agentapi.Wrap(agentapi.Changed, errors.New("active revision changed after reconciliation"))
 	}
-	return nil
+	return read, nil
 }
 
 // errRevisionDoesNotFit marks a revisions consumer's refusal of one revision
@@ -206,7 +220,8 @@ func (r providerReader) readRevision(ctx context.Context, historical agentapi.So
 
 func (r providerReader) filterRevision(ctx context.Context, snapshot agentapi.SourceSnapshot, adapter agentapi.TranscriptFilter, ref agentapi.SourceRef, limits agentapi.ReadLimits, maxBytes int64, recordsLeft *int) (filtered archive.FilteredTranscript, binding *archive.CodexSourceBinding, err error) {
 	defer func() { err = errors.Join(err, snapshot.Close()) }()
-	binding, err = r.snapshotBinding(ctx, snapshot)
+	carrier, admissionErr := r.snapshotBinding(ctx, snapshot)
+	binding, err = carrier.CodexBinding(), admissionErr
 	if err != nil || binding == nil {
 		return filtered, binding, errors.Join(err, missingRevisionBinding(binding))
 	}

@@ -448,7 +448,11 @@ func printContentSearchRows(out io.Writer, groups []sessionTableGroup, width int
 	frame.WriteString(oneRow("Ranked content matches", width) + "\n")
 	for _, group := range groups {
 		for _, row := range group.rows {
-			frame.WriteString(oneRow(fmt.Sprintf("%d. %s", row.Index, row.Title), width) + "\n")
+			title := fmt.Sprintf("%d. %s", row.Index, row.Title)
+			if row.Highlight {
+				title = cursorMark + " " + title
+			}
+			frame.WriteString(oneRow(title, width) + "\n")
 			frame.WriteString(oneRow(row.Harness+" · "+row.ShortID+" · "+row.When, width) + "\n")
 			snippets := splitColumns(row.searchSnippet, max(width-2, 1))
 			for i, line := range snippets[:min(len(snippets), 2)] {
@@ -481,4 +485,12 @@ func (l *sessionPicker) displayFooter(footer string, width int) string {
 		lines[i] = oneRow(lines[i], width)
 	}
 	return strings.Join(lines, "\n")
+}
+
+// keepSearchSelection rebinds rerun selection by full identity; a missing hit
+// starts at the first result rather than reusing an ordinal from old ranking.
+func (l *sessionPicker) keepSearchSelection(identity string) {
+	l.keep = identity
+	l.start, l.cursor = 0, 0
+	l.memo, l.cache, l.bottom = nil, nil, nil
 }

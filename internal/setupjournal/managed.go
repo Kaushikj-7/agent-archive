@@ -46,11 +46,11 @@ type ManagedJob struct {
 	Intent     Intent      `json:"intent"`
 }
 
-type journalJSON Journal
-
 type journalV2 struct {
-	Version int `json:"schema_version"`
-	Changes *struct {
+	NativeAuthorityProtection bool `json:"native_authority_protection,omitempty"`
+	FilesOnly                 bool `json:"files_only,omitempty"`
+	Version                   int  `json:"schema_version"`
+	Changes                   *struct {
 		Files []fileapply.Change `json:"files"`
 	} `json:"changes"`
 	Jobs          []ManagedJob `json:"jobs"`
@@ -59,8 +59,8 @@ type journalV2 struct {
 	MoreRelabeled []*LegacyJob `json:"more_relabeled,omitempty"`
 }
 
-// MarshalJSON preserves the legacy wire and fences old readers before actions.
-func (j Journal) MarshalJSON() ([]byte, error) {
+// marshalBaseJSON preserves the legacy or managed wire beneath the native fence.
+func (j Journal) marshalBaseJSON() ([]byte, error) {
 	if len(j.Jobs) == 0 {
 		return json.Marshal(journalJSON(j))
 	}
@@ -70,13 +70,13 @@ func (j Journal) MarshalJSON() ([]byte, error) {
 	if j.Changes == nil {
 		j.Changes = []fileapply.Change{}
 	}
-	return json.Marshal(journalV2{Version: 2, Changes: &struct {
+	return json.Marshal(journalV2{NativeAuthorityProtection: j.NativeAuthorityProtection, FilesOnly: j.FilesOnly && j.NativeAuthorityProtection, Version: 2, Changes: &struct {
 		Files []fileapply.Change `json:"files"`
 	}{Files: j.Changes}, Jobs: j.Jobs, Legacy: j.Legacy, Relabeled: j.Relabeled, MoreRelabeled: j.MoreRelabeled})
 }
 
-// UnmarshalJSON refuses future or malformed lifecycle records before recovery.
-func (j *Journal) UnmarshalJSON(data []byte) error {
+// unmarshalBaseJSON validates lifecycle records after the native fence is checked.
+func (j *Journal) unmarshalBaseJSON(data []byte) error {
 	var shape map[string]json.RawMessage
 	if err := json.Unmarshal(data, &shape); err != nil {
 		return err
@@ -114,7 +114,7 @@ func (j *Journal) UnmarshalJSON(data []byte) error {
 	if err := validateJobs(wire.Jobs); err != nil {
 		return err
 	}
-	*j = Journal{Changes: wire.Changes.Files, Jobs: wire.Jobs, Legacy: wire.Legacy, Relabeled: wire.Relabeled, MoreRelabeled: wire.MoreRelabeled}
+	*j = Journal{NativeAuthorityProtection: wire.NativeAuthorityProtection, FilesOnly: wire.FilesOnly, Changes: wire.Changes.Files, Jobs: wire.Jobs, Legacy: wire.Legacy, Relabeled: wire.Relabeled, MoreRelabeled: wire.MoreRelabeled}
 	return nil
 }
 

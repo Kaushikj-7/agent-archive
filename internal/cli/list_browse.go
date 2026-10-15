@@ -471,8 +471,9 @@ type sessionPicker struct {
 	verb string
 	// filter is the words the table is narrowed to; blank shows every row.
 	// filtering is set while the key browser's filter line is open: typed
-	// characters then go to the filter, and cursor, the position of a row
-	// from the top of the table, is the row Enter acts on.
+	// characters then go to the filter. cursor, the position of a row from
+	// the top of the table, is the key browser's highlight, the row Enter
+	// acts on with nothing typed.
 	filter    string
 	filtering bool
 	cursor    int
@@ -496,6 +497,9 @@ type sessionPicker struct {
 	shown string
 	// memo is the table drawn last, kept until the filter changes.
 	memo *pickerView
+	// keep is the identity (rowIdentity) of the row the highlight goes
+	// back to once the filter line closes; empty for none.
+	keep string
 }
 
 // pickScoped is pickRows over the scope's choices: it shows the one now
@@ -512,7 +516,13 @@ func (l *sessionPicker) pickScopedContext(ctx context.Context, p *prompter, stdo
 		}
 		l.heading, l.toggles, l.toggled = c.heading, choices.canToggle(), false
 		l.headingFor = func(words string, matches int) string {
-			return choices.headingWith(choices.current, c.scopeView, c.constants, headingOptions{Verb: l.verb, Words: words, Matches: matches, Filtering: l.filtering && l.keys != nil})
+			// Reading keys, the heading names the hidden subagents a table
+			// read by lines counts in its footer.
+			hidden := 0
+			if l.keys != nil && !l.filtering {
+				hidden = c.format.HiddenSubagents
+			}
+			return choices.headingWith(choices.current, c.scopeView, c.constants, headingOptions{Verb: l.verb, Words: words, Matches: matches, Filtering: l.filtering && l.keys != nil, Hidden: hidden})
 		}
 		l.stopOperations()
 		l.search, l.searchContext, l.searched, l.searchRead = c.search, c.searchContext, nil, false
@@ -522,6 +532,13 @@ func (l *sessionPicker) pickScopedContext(ctx context.Context, p *prompter, stdo
 		row, ok, err := l.pickRowsContext(ctx, p, stdout, c.rows, c.total, c.truncated, c.format, action)
 		if l.loadedOlder && err == nil {
 			l.loadedOlder = false
+			if l.contentSearch != nil && l.contentSearch.rerun {
+				identity := ""
+				if v := l.memo; v != nil && l.cursor >= 0 && l.cursor < len(v.order) {
+					identity = rowIdentity(v.order[l.cursor])
+				}
+				l.keepSearchSelection(identity)
+			}
 			more, e := l.loadOlderContext(ctx, p, stdout)
 			if l.operationQuit {
 				return listRow{}, false, nil
@@ -537,6 +554,8 @@ func (l *sessionPicker) pickScopedContext(ctx context.Context, p *prompter, stdo
 					return listRow{}, false, nil
 				}
 				l.toggled = false
+				// The other table starts at its top.
+				l.start, l.cursor = 0, 0
 			}
 			if !more {
 				l.older = nil
@@ -557,8 +576,9 @@ func (l *sessionPicker) pickScopedContext(ctx context.Context, p *prompter, stdo
 		if l.operationQuit {
 			return listRow{}, false, nil
 		}
-		// The other table starts at its top, on a cleared screen.
-		l.start, l.cache, l.bottom = 0, nil, nil
+		// The other table starts at its top, highlighting its first row, on
+		// a cleared screen.
+		l.start, l.cursor, l.cache, l.bottom = 0, 0, nil, nil
 		if l.clear != nil {
 			l.clear()
 		}
@@ -1252,8 +1272,7 @@ func (b *sessionBrowser) searchDetails(ctx context.Context, row listRow) (browse
 		case searchActionRerun:
 			s.rerun = true
 			_, err := s.load(ctx)
-			b.list.memo, b.list.cache, b.list.bottom = nil, nil, nil
-			b.list.start = 0
+			b.list.keepSearchSelection(rowIdentity(row))
 			return browseBack, err
 		case searchActionMore:
 			if ref != nil && out.Selected.Next != 0 {

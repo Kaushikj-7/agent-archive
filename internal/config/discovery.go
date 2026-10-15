@@ -77,6 +77,12 @@ func prepareDiscoveryConfig(c *Config) error {
 	if c.SearchIndexing {
 		c.SearchLifecycleProtection = true
 	}
+	if len(c.NativeRoots) > 0 {
+		c.NativeAuthorityProtection = true
+	}
+	if err := c.validateNativeRoots(); err != nil {
+		return err
+	}
 	if err := ValidateRetentionDays(c.RetentionDays); err != nil {
 		return err
 	}
