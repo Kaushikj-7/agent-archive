@@ -177,11 +177,13 @@ func (n *nativePreviewCatalog) load() (bool, error) {
 		if title == "" {
 			title = a.p.Title
 		}
-		if title == "" {
-			title = c.NativeID
-		}
 		row := n.identityRow(j.index)
-		row.Title = archive.DisplayLine(title)
+		row.Title = archive.DisplayLine(c.NativeID)
+		if title = archive.DisplayLine(title); strings.TrimSpace(title) != "" {
+			// A real title reads as the other lists' titles do; the native
+			// ID that stands in for a missing one is shown as it is.
+			row.Title, row.ListTitle = title, listTitle(title)
+		}
 		row.fields = sessionFields{Name: a.p.Name, Title: a.p.Title, Branch: a.p.Branch, Project: row.Project, Harness: c.Ref.Harness, SessionID: c.NativeID}
 		if a.err != nil {
 			row.Hint = "preview unavailable"
@@ -486,12 +488,14 @@ func chooseNativePreviews(ctx context.Context, opts handoffOptions, result nativ
 			index := nativeRowIndex(matches[0], candidates)
 			selected = &candidates[index]
 		} else if !interactive {
-			for i, row := range matches {
-				if i >= handoffCandidateLimit {
-					break
-				}
-				terminal.Printf(stderr, "  local %s (%s): %s\n", row.SessionID, row.HarnessKey, row.Title)
+			shown := matches[:min(len(matches), handoffCandidateLimit)]
+			for i := range shown {
+				// A native ID is named whole: it is what --source local reads.
+				shown[i].ShortID = shown[i].SessionID
 			}
+			var b strings.Builder
+			printCandidateRows(&b, shown)
+			terminal.Print(stderr, b.String())
 			return nil, false, 1, fmt.Errorf("%d matches in %d loaded local previews; search is bounded, not exhaustive; name a native ID or use the terminal picker to load older sessions", len(matches), n.next)
 		}
 	}
@@ -499,7 +503,7 @@ func chooseNativePreviews(ctx context.Context, opts handoffOptions, result nativ
 		if !interactive {
 			return nil, false, 1, errors.New(noSelectorMessage)
 		}
-		format := listFormatOptions{Now: env.now(), Numbered: true, Style: styleFor(stdout), NarrowHint: "Native local IDs: agent-archive handoff NATIVE_ID --harness NAME --source local."}
+		format := listFormatOptions{Now: env.now(), Numbered: true, GroupByDay: true, Style: styleFor(stdout), NarrowHint: "Native local IDs: agent-archive handoff NATIVE_ID --harness NAME --source local."}
 		choices := rowChoices(n.rows, format)
 		var older *browserLoadAction
 		if more {
