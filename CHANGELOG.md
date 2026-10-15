@@ -111,6 +111,22 @@ and the cleanup repair do not turn either failed tagged gate into a pass.
   earlier revisions when the scan has seen them and they can be read; one that
   cannot be read, or does not fit beside the thread's own history, is left out
   rather than failing the thread's capture.
+- Stop losing Claude Code subagents (and holding back new sessions) while
+  Codex discovery works through a backlog. Each newly discovered Codex session
+  used to withdraw the whole local identity census until the next collector
+  pass, so every hook that needed a new identity in the meantime was refused:
+  `status` showed "local session identity bookkeeping needs collector
+  recovery" and `identity_recovery` pending with phase `unknown`, and a Claude
+  Code subagent finishing in that window was never captured. Discovery now
+  asks for proof about its own session only; the census stays in force for
+  everything else, and the next pass certifies the discovered session without
+  a full rebuild. A subagent that finishes while recovery is genuinely pending,
+  or while the capture lock is busy, is now queued and replayed by the next
+  collector pass instead of being dropped. Sessions and subagents refused while
+  a full recovery runs no longer restart it, so it can finish on a busy
+  machine. Downgrading to an earlier version while such a subagent is queued
+  makes that version's collector report an admission-intent error for it each
+  pass until it expires after 24 hours; nothing else is held back.
 
 - Preserve the primary validation failure alongside cleanup diagnostics, and
   continue bounded cleanup of other owned processes after signal, poll or wait
