@@ -6,6 +6,8 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Add inert native source authority contracts and permanent writer protection, preserving existing agent capture behavior. No Muse capture operations are enabled.
+
 - The session list fits your terminal: every session is one line that never
   wraps, as `#`, the agent (a colored dot and "Claude", "Codex" or "Cursor"),
   a readable title cut at a word, the project, the PR and a short time ("2m",

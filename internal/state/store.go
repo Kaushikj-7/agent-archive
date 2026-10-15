@@ -418,6 +418,9 @@ func (s *Store) mergeAdmissionRegistration(key agentmeta.SessionKey, reg archive
 		if existing.NativeSessionID != key.NativeID || agentmeta.Canonical(agentmeta.Builtins(), existing.Harness.Name) != string(key.Agent) || existing.ProjectRoot != reg.ProjectRoot || existing.ProjectID != reg.ProjectID || (existing.HistoricalProject == nil) != (reg.HistoricalProject == nil) || existing.DestinationID != "" && existing.DestinationID != reg.DestinationID {
 			return reg, ErrSessionIdentityConflict
 		}
+		if reg.NativeBinding != nil && existing.NativeBinding != nil && !reg.NativeBinding.PreservesFacts(existing.NativeBinding) {
+			return reg, errors.New("admission cannot contradict native source binding")
+		}
 		if existing.TranscriptPath == "" && existing.ReadsTranscriptFile() && reg.ReadsTranscriptFile() {
 			existing.TranscriptPath = reg.TranscriptPath
 		}
