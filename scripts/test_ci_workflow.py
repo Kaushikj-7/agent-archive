@@ -465,5 +465,74 @@ class JobsParserTest(unittest.TestCase):
         self.assertIsNone(job_key(found['real-systemd'], 'name'))
 
 
+class WorkerQualificationTests(unittest.TestCase):
+    def environment(self):
+        return {'EXPECTED_SOURCE': 'a'*40, 'GITHUB_SHA': 'a'*40,
+                'GITHUB_WORKFLOW_SHA': 'a'*40, 'GITHUB_EVENT_NAME': 'workflow_dispatch',
+                'GITHUB_REPOSITORY': 'wangjohn/agent-archive', 'QUALIFICATION_WORKERS': '4',
+                'GITHUB_WORKFLOW_REF': 'wangjohn/agent-archive/.github/workflows/linux-worker-qualification.yml@refs/heads/trial'}
+
+    def test_guard_rejects_source_workflow_event_repository_and_worker_mismatch(self):
+        import ci_worker_qualification as qualification
+        environment = self.environment()
+        result = qualification.validate(environment, 'a'*40)
+        self.assertEqual(result['matrix'], {'shard': [0, 1, 2, 3]})
+        self.assertFalse(result['production_verdict'])
+        self.assertFalse(result['cache_writes'])
+        for key, value in [('EXPECTED_SOURCE', 'main'), ('GITHUB_SHA', 'b'*40),
+                           ('GITHUB_WORKFLOW_SHA', 'b'*40), ('GITHUB_EVENT_NAME', 'pull_request'),
+                           ('GITHUB_REPOSITORY', 'fork/agent-archive'),
+                           ('GITHUB_WORKFLOW_REF', 'wangjohn/agent-archive/.github/workflows/other.yml@refs/heads/trial'),
+                           ('QUALIFICATION_WORKERS', '4; echo unsafe'), ('QUALIFICATION_WORKERS', '16')]:
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                qualification.validate(dict(environment, **{key: value}), 'a'*40)
+        with self.assertRaises(ValueError):
+            qualification.validate(environment, 'b'*40)
+        environment['QUALIFICATION_WORKERS'] = '8'
+        self.assertEqual(qualification.validate(environment, 'a'*40)['matrix']['shard'], list(range(8)))
+
+    def test_manual_qualification_preserves_production_and_full_audit_contracts(self):
+        workflow = (ROOT / '.github/workflows/linux-worker-qualification.yml').read_text()
+        found = jobs(workflow)
+        self.assertEqual(set(found), {'plan', 'workers', 'audit', 'reconcile'})
+        self.assertNotIn('pull_request:', workflow)
+        self.assertNotIn('push:', workflow)
+        self.assertNotIn('schedule:', workflow)
+        self.assertIn('group: linux-worker-qualification-${{ github.run_id }}', workflow)
+        self.assertIn('cancel-in-progress: false', workflow)
+        self.assertIn('contents: read', workflow)
+        self.assertNotIn('cache/save@', workflow)
+        self.assertNotIn('secrets.', workflow)
+        for name, body in found.items():
+            self.assertEqual(job_key(body, 'runs-on'), 'ubuntu-latest')
+            self.assertIn('persist-credentials: false', body)
+            self.assertIn('scripts/ci_worker_qualification.py', body)
+        self.assertIn('--workers "$WORKERS" --shard "$SHARD" --plain-audit-owned --plain-vet-owned', found['workers'])
+        self.assertIn('scripts/ci_worker_qualification.py --audit', found['audit'])
+        self.assertIn('--plain-vet-owned --audit-evidence source-audit-evidence --reconcile shard-evidence', found['reconcile'])
+        self.assertIn('needs: [plan, workers, audit]', found['reconcile'])
+        self.assertIn('all(v["result"]=="success"', found['reconcile'])
+        production = (ROOT / '.github/workflows/test.yml').read_text()
+        self.assertIn('shard: [0, 1, 2, 3, 4, 5, 6, 7]', production)
+        self.assertIn('github.event.pull_request.number || github.ref', production)
+        self.assertIn('cancel-in-progress: true', production)
+
+    def test_guarded_manual_audit_executes_existing_owned_body_without_event_spoofing(self):
+        from unittest import mock
+        import contextlib
+        import io
+        import ci_worker_qualification as qualification
+        import run_ci_tier
+        environment = self.environment()
+        with mock.patch.dict(qualification.os.environ, environment, clear=True), \
+                mock.patch.object(qualification.subprocess, 'check_output', side_effect=['a'*40, '']), \
+                mock.patch.object(qualification.os, 'environ', environment), \
+                mock.patch('sys.argv', ['ci_worker_qualification.py', '--audit']), \
+                mock.patch.object(run_ci_tier, 'run_suite') as run, contextlib.redirect_stdout(io.StringIO()):
+            qualification.main()
+        run.assert_called_once_with('pr', 'audit', Path('source-audit-results'), seconds=780, own_plain_vet=True)
+        self.assertEqual(environment['GITHUB_EVENT_NAME'], 'workflow_dispatch')
+
+
 if __name__ == '__main__':
     unittest.main()

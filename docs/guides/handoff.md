@@ -498,16 +498,19 @@ prompt yet (an unnamed one is titled by its native ID; no PR column, `live`,
 ```text
 Hand off · agent-archive · 5 sessions · claude · a all projects
 TODAY
-1  Fix the retry budget in the upload queue                  #213  live
-2  Stop rereading the config on every hook call                      4m
-3  Add a status line for paused collection +1                #212   38m
-4  Investigate slow listings on a large archive                      5h
+▸ 1  Fix the retry budget in the upload queue                  #213  live
+  2  Stop rereading the config on every hook call                      4m
+  3  Add a status line for paused collection +1                #212   38m
+  4  Investigate slow listings on a large archive                      5h
 
 LAST WEEK
-5  Rename the export flag and update the… · not uploaded     #204   Sun
-5 session(s).
-
-Enter number (or unique short SESSION_ID) to hand off, words to filter, or q to quit:
+  5  Rename the export flag and update the… · not uploaded     #204   Sun
+────────────────────────────────────────────────────────────────────────────────
+Fix the retry budget in the upload queue
+Claude · agent-archive · PR #213 · last active just now · id d7a77938
+────────────────────────────────────────────────────────────────────────────────
+↑↓ move   Enter hand off   / search   number + Enter jump   q quit      1–5 of 5
+Number or ID to hand off:
 ```
 
 *What it lists.* Top-level sessions, newest activity first: this machine's,
@@ -516,7 +519,7 @@ both appears once. Subagent sessions and sessions with no prompt yet, on this
 machine or in the archive, are left out (one uploaded before its first prompt
 is listed once its transcript here has one), and `--harness` narrows the list
 (`--source local` or `--source archive` limits where it looks). The newest 50 rows
-are listed initially. Press **o · Older sessions** to add up to 50 more
+are listed initially. Press **o** (`o older` in the footer) to add up to 50 more
 rows in the current scope. The action disappears when that scope is complete
 and returns if `a` switches to a scope with more rows. The filter below
 searches the complete archived scope before older rows are loaded. When the
@@ -569,10 +572,12 @@ showing all projects` in the heading.
   does not apply to `--latest`, which names the current directory's project
   (`--project DIR` moves it).
 
-*Keys.* Type a row number or a short ID and press Enter to hand that session off.
-The list scrolls with the mouse wheel, arrows, PgUp and PgDn (or space, `n`,
-and `p`), Home and End. `q`, Ctrl-D, or Enter with nothing typed quits without
-producing a handoff; Ctrl-C quits at once.
+*Keys.* `▸` marks the highlighted row; Enter hands it off. The mouse wheel,
+arrows, PgUp and PgDn (or space, `n`, and `p`), Home and End move it, and the
+list scrolls to keep it in view; a strip under the list spells out the
+highlighted session. A row number or short ID typed and Enter hands that session
+off instead. `q` or Ctrl-D quits without producing a handoff; Ctrl-C quits at
+once.
 
 - **`/` filters as you type**, as in `less`. A line at the bottom takes the words,
   and the rows narrow with each character. They are the words `handoff
@@ -588,15 +593,19 @@ producing a handoff; Ctrl-C quits at once.
   a subagent can be picked like any row. The mark starts on the subagent.
 - **Rows keep the numbers they have unfiltered**, and Esc clears the words and
   closes the filter line (Backspace on an empty filter does too), after which the
-  list's own numbers choose again.
+  list's own numbers choose again. The mark stays on the session it was on
+  when the plain list shows it, and goes to the first row when it does not.
 
 ```text
 Hand off · agent-archive · "208" matches 1 · claude · Esc clear
 TODAY
   3  Add a status line for paused collection +1                #212  38m
 ▸      ↳ Review and fix PR #208 (5b-1b)                        #208   3h
-All · ↑↓ move · Enter hand off · Esc clear
-
+────────────────────────────────────────────────────────────────────────────────
+Review and fix PR #208 (5b-1b)
+Claude · agent-archive · PR #208 · subagent of 76941c69 · last active 3 hours…
+────────────────────────────────────────────────────────────────────────────────
+↑↓ move   Enter hand off   Esc clear                                    1–2 of 2
 /208
 ```
 
