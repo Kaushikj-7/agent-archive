@@ -64,32 +64,21 @@ func (w *Writer) Observe(observed Observation) {
 
 func (w *Writer) run() {
 	defer close(w.done)
-	for {
-		observed, open := <-w.queue
-		if !open {
-			return
-		}
-		batch := []Observation{observed}
-		// Coalesce only immediately available observations; no delay or unbounded batch.
-		for len(batch) < 32 {
-			select {
-			case next, open := <-w.queue:
-				if !open {
-					w.persist(batch)
-					return
-				}
-				batch = append(batch, next)
-			default:
-				w.persist(batch)
-				batch = nil
-			}
-			if batch == nil {
-				break
-			}
-		}
-		if batch != nil {
+	// Each persistence operation verifies the bounded directory inventory under
+	// its process-shared lock. Waiting for a bounded batch avoids rescanning it
+	// once per source when serial inspections arrive farther apart than writes.
+	// Close flushes the final partial batch before the command returns.
+	batch := make([]Observation, 0, 32)
+	for observed := range w.queue {
+		batch = append(batch, observed)
+		if len(batch) == cap(batch) {
 			w.persist(batch)
+			clear(batch)
+			batch = batch[:0]
 		}
+	}
+	if len(batch) > 0 {
+		w.persist(batch)
 	}
 }
 

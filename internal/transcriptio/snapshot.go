@@ -267,6 +267,17 @@ func (s *Snapshot) Length() int64 { return s.stamp.Size }
 // CheckPrefix proves a captured prefix remained unchanged while allowing later appends.
 // Both the descriptor and locator must still identify the original regular file.
 func (s *Snapshot) CheckPrefix(ctx context.Context, length int64, digest [32]byte) error {
+	return s.CheckPrefixBuffer(ctx, length, digest, nil)
+}
+
+// CheckPrefixBuffer retains CheckPrefix's independent content and live-file
+// verification while borrowing caller-owned hashing scratch for this call.
+// A nonempty buffer must remain exclusively owned until the call returns; nil
+// preserves the default copy buffer. No verification evidence is memoized.
+func (s *Snapshot) CheckPrefixBuffer(ctx context.Context, length int64, digest [32]byte, buffer []byte) error {
+	if len(buffer) == 0 {
+		buffer = nil
+	}
 	if s.closed || length < 0 || length > s.stamp.Size {
 		return ErrChanged
 	}
@@ -304,7 +315,7 @@ func (s *Snapshot) CheckPrefix(ctx context.Context, length int64, digest [32]byt
 		return err
 	}
 	h := sha256.New()
-	n, err := io.Copy(h, &contextReader{ctx, io.NewSectionReader(s, 0, length)})
+	n, err := io.CopyBuffer(h, &contextReader{ctx, io.NewSectionReader(s, 0, length)}, buffer)
 	trace.Add(trace.VerificationBytes, n)
 	if err != nil {
 		return err

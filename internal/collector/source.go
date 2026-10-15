@@ -857,13 +857,24 @@ func (r providerReader) filterOwned(ctx context.Context, filter agentapi.Transcr
 func (r providerReader) inspectSummary(ctx context.Context, snapshot agentapi.SourceSnapshot, f agentapi.TranscriptFilter, streaming agentapi.StreamingImportFilter, in agentapi.NativeInput, c agentapi.FilterContext, maxBytes int64) (inspected agentapi.ImportSummary, err error) {
 	var cacheKey inspectioncache.Key
 	var content agentapi.VerifiedContentSnapshot
+	var owned agentapi.VerifiedImportSnapshot
 	if r.inspectionCache != nil && r.harness == "codex" {
 		content, _ = snapshot.(agentapi.VerifiedContentSnapshot)
 		if content != nil && !content.ContentProofFor(snapshot, in) {
 			content = nil
 		}
 		if content != nil {
-			proof, proofErr := content.ContentProof(ctx)
+			operation, supports := snapshot.(agentapi.VerifiedImportSnapshot)
+			if supports && operation.VerifiedInspectionFor(snapshot, f) {
+				owned = operation
+			}
+			var proof agentapi.SourceContentProof
+			var proofErr error
+			if owned != nil {
+				proof, proofErr = owned.CapturedContentHint(ctx)
+			} else {
+				proof, proofErr = content.ContentProof(ctx)
+			}
 			if proofErr != nil {
 				return inspected, proofErr
 			}
@@ -882,10 +893,23 @@ func (r providerReader) inspectSummary(ctx context.Context, snapshot agentapi.So
 		if r.ref.Kind == archive.SourceKindFile {
 			transcriptFilters.Add(1)
 		}
-		inspected, err = streaming.InspectFilteredImport(ctx, in, c)
+		if owned != nil {
+			var verified agentapi.SourceContentProof
+			inspected, verified, err = owned.InspectVerifiedImport(ctx, f, c)
+			if err == nil && verified != cacheKey.Proof {
+				err = agentapi.Wrap(agentapi.Changed, errors.New("inspection content proof changed"))
+			}
+		} else {
+			inspected, err = streaming.InspectFilteredImport(ctx, in, c)
+		}
 	}
 	if err == nil && content != nil && cacheKey.Proof.Version != 0 {
-		err = content.VerifyContent(ctx)
+		// The owned miss operation already independently verified its complete
+		// concrete inspection. Hits and unsupported operations retain a fresh
+		// live verification after lookup/use; a captured hint never grants reuse.
+		if cached || owned == nil {
+			err = content.VerifyContent(ctx)
+		}
 		if err == nil && !cached && inspected.Conversation && r.inspectionObservation != nil {
 			*r.inspectionObservation = &inspectioncache.Observation{Key: cacheKey, Summary: inspected}
 		}

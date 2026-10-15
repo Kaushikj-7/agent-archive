@@ -871,6 +871,7 @@ type ordinarySnapshot struct {
 	ctx                context.Context
 	length             int64
 	digest             [32]byte
+	hashScratch        []byte
 	closed             bool
 	observed           agentapi.SourceObservation
 	headers            []*rolloutFile
@@ -901,7 +902,10 @@ func (p *relatedSourcePass) ordinary(ctx context.Context, limits agentapi.ReadLi
 		}
 	}()
 	h := sha256.New()
-	n, err := io.Copy(h, io.LimitReader(f.file.Reader(ctx), f.boundary))
+	// One snapshot owns this scratch until Close. All ordinary hash operations
+	// use it serially, within the existing ordinaryScratch reservation.
+	buffer := make([]byte, max(1, min(ordinaryScratch, f.boundary)))
+	n, err := io.CopyBuffer(h, io.LimitReader(f.file.Reader(ctx), f.boundary), buffer)
 	trace.Add(trace.HashBytes, n)
 	if err != nil {
 		return nil, err
@@ -909,6 +913,7 @@ func (p *relatedSourcePass) ordinary(ctx context.Context, limits agentapi.ReadLi
 	stamp := f.file.Stamp()
 	out := &ordinarySnapshot{scratchCharge: ordinaryScratch, scratchReservation: reservation, owner: p, source: f, selection: selection, headers: selection.headerFiles(nil), ctx: ctx, length: f.boundary, observed: agentapi.SourceObservation{Signature: sourceio.FileSignature(stamp.Size, stamp.ModifiedAt.UnixNano()), Present: true, Empty: f.boundary == 0, Activity: stamp.ModifiedAt, Size: stamp.Size}}
 	copy(out.digest[:], h.Sum(nil))
+	out.hashScratch = buffer
 	if p.env.CodexRollouts != nil {
 		var err error
 		out.observed, err = p.observation(ctx, selection, []physicalSpan{{file: f, end: f.boundary}})
@@ -916,7 +921,7 @@ func (p *relatedSourcePass) ordinary(ctx context.Context, limits agentapi.ReadLi
 			return nil, err
 		}
 	}
-	if err := checkHeaders(ctx, out.headers); err != nil {
+	if err := out.checkHeaders(ctx); err != nil {
 		return nil, err
 	}
 	for _, header := range out.headers {
@@ -939,6 +944,7 @@ func (s *ordinarySnapshot) Close() error {
 		delete(s.owner.ordinaryLive, s)
 		s.owner.release(s.scratchReservation, s.scratchCharge)
 		s.scratchCharge = 0
+		s.hashScratch = nil
 		for _, header := range s.headers {
 			header.refs--
 		}
@@ -1057,7 +1063,7 @@ func (s *ordinarySnapshot) ValidateAdmission(ctx context.Context, a agentapi.Sou
 }
 
 func (s *ordinarySnapshot) check(ctx context.Context) error {
-	if err := s.source.file.CheckPrefix(ctx, s.length, s.digest); err != nil {
+	if err := s.source.file.CheckPrefixBuffer(ctx, s.length, s.digest, s.hashScratch); err != nil {
 		return sourceio.Classify(err)
 	}
 	if s.owner.env.CodexRollouts != nil {
@@ -1065,7 +1071,16 @@ func (s *ordinarySnapshot) check(ctx context.Context) error {
 			return sourceio.Classify(err)
 		}
 	}
-	return checkHeaders(ctx, s.headers)
+	return s.checkHeaders(ctx)
+}
+
+func (s *ordinarySnapshot) checkHeaders(ctx context.Context) error {
+	for _, header := range s.headers {
+		if err := header.file.CheckPrefixBuffer(ctx, int64(len(header.header)), header.headerDigest, s.hashScratch); err != nil {
+			return sourceio.Classify(err)
+		}
+	}
+	return nil
 }
 
 func bindingFacts(f *rolloutFile, home string, own *uint64) (archive.CodexSourceBinding, error) {
@@ -1825,7 +1840,54 @@ func (s *ordinarySnapshot) ContentProof(ctx context.Context) (agentapi.SourceCon
 	if err := s.VerifyContent(ctx); err != nil {
 		return agentapi.SourceContentProof{}, err
 	}
-	return agentapi.SourceContentProof{Version: 1, Provider: "codex-ordinary", SHA256: s.digest, Boundary: s.length}, nil
+	return s.capturedProof(), nil
+}
+
+func (s *ordinarySnapshot) capturedProof() agentapi.SourceContentProof {
+	return agentapi.SourceContentProof{Version: 1, Provider: "codex-ordinary", SHA256: s.digest, Boundary: s.length}
+}
+
+// VerifiedInspectionFor rejects snapshot and filter decorators, including ones
+// that promote this method while overriding Input, Check or inspection behavior.
+func (s *ordinarySnapshot) VerifiedInspectionFor(snapshot agentapi.SourceSnapshot, filter agentapi.TranscriptFilter) bool {
+	actual, ok := snapshot.(*ordinarySnapshot)
+	_, native := filter.(Filter)
+	return ok && actual == s && native
+}
+
+// CapturedContentHint identifies captured bytes without asserting current source
+// equality. It authorizes only a lookup; a hit still requires VerifyContent.
+func (s *ordinarySnapshot) CapturedContentHint(ctx context.Context) (agentapi.SourceContentProof, error) {
+	if s.closed || s.owner.closed {
+		return agentapi.SourceContentProof{}, agentapi.ErrClosed
+	}
+	if err := ctx.Err(); err != nil {
+		return agentapi.SourceContentProof{}, err
+	}
+	return s.capturedProof(), nil
+}
+
+// InspectVerifiedImport owns the actual codec call and its complete input.
+// The concrete codec always ends its read with ordinaryFile.Check, independently
+// hashing the captured prefix and checking current selection, locator and header.
+// After that check this operation only copies intrinsic summary/proof values;
+// no arbitrary inspector return, external callback or read can intervene.
+func (s *ordinarySnapshot) InspectVerifiedImport(ctx context.Context, filter agentapi.TranscriptFilter, c agentapi.FilterContext) (agentapi.ImportSummary, agentapi.SourceContentProof, error) {
+	f, native := filter.(Filter)
+	if !native {
+		return agentapi.ImportSummary{}, agentapi.SourceContentProof{}, sourceFailure(agentapi.Unavailable, "verified inspection requires native Codex filter")
+	}
+	if _, err := s.CapturedContentHint(ctx); err != nil {
+		return agentapi.ImportSummary{}, agentapi.SourceContentProof{}, err
+	}
+	summary, err := f.InspectFilteredImport(ctx, s.Input(), c)
+	if err != nil {
+		return agentapi.ImportSummary{}, agentapi.SourceContentProof{}, err
+	}
+	if err := ctx.Err(); err != nil {
+		return agentapi.ImportSummary{}, agentapi.SourceContentProof{}, err
+	}
+	return summary, s.capturedProof(), nil
 }
 
 // VerifyContent retains current descriptor, locator, selection and header checks.
