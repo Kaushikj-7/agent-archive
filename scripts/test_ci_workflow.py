@@ -378,7 +378,10 @@ class GitIdentityCompatibilityTest(unittest.TestCase):
         }.items():
             self.assertRegex(text, rf'git: upstream-{version}\n            tag: v{version}\n            ref: {commit}\n            expected: git version {version}')
         self.assertIn('git: runner-current', text)
-        self.assertIn('repository: git/git', text)
+        self.assertIn('scripts/pinned_git.py', text)
+        helper = (ROOT/'scripts/pinned_git.py').read_text()
+        self.assertIn('https://github.com/git/git.git', helper)
+        self.assertIn("tag+'^{commit}'", helper)
         self.assertIn('test "$(git --version)" = "$EXPECTED_GIT_VERSION"', text)
         self.assertIn('HOME: ${{ runner.temp }}/git-identity-home', text)
         self.assertIn('XDG_CONFIG_HOME: ${{ runner.temp }}/git-identity-xdg', text)
