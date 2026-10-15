@@ -200,6 +200,8 @@ jobs:
           if [ "$EVENT" = pull_request ]; then
             python3 scripts/run_ci_tier.py --tier pr --suite extra --extra-plan "$RUNNER_TEMP/tier-plan/extra-plan.json" --output tier-results --seconds 3300
           else
+            # Soft Go-managed memory target; race/native allocations also need headroom.
+            export GOMEMLIMIT=3GiB
             python3 scripts/run_ci_tier.py --tier full --suite linux --output tier-results
             go vet ./...
           fi
