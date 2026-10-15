@@ -60,6 +60,18 @@ type CodexValidationLimits struct {
 	Duration time.Duration
 }
 
+// CodexRolloutAllowance is optionally implemented by a lookup whose pass
+// allowance can run out. BeginCollection starts a fresh allowance for a
+// collector pass, so what earlier users of the same lookup (discovery,
+// import registration) spent does not leave the collector none. Once
+// AllowanceSpent reports true, every further lookup call fails with
+// CauseLookupAllowanceSpent, so a caller can leave the remaining Codex
+// sources for the next pass without opening them.
+type CodexRolloutAllowance interface {
+	BeginCollection()
+	AllowanceSpent() bool
+}
+
 // CodexRolloutSliceProvider optionally shares validation within a caller-owned
 // operation slice. The caller closes all snapshots before renewing a slice.
 type CodexRolloutSliceProvider interface {

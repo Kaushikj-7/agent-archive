@@ -287,6 +287,7 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	if opts.MachineID == "" {
 		return Result{}, errors.New("machine ID is required")
 	}
+	beginCodexLookupAllowance(opts)
 	if err := recoverCatalogRemovals(ctx, local, store, opts); err != nil {
 		return Result{}, err
 	}
@@ -391,6 +392,10 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 			break
 		}
 		if p.opts.AcceptSession != nil && !p.opts.AcceptSession(reg) {
+			continue
+		}
+		if p.codexLookupSpent(reg) {
+			p.leaveForNextPass(p.registrations[i : i+1])
 			continue
 		}
 		p.scan(ctx, reg)
