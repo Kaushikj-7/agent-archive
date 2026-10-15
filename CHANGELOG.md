@@ -20,6 +20,14 @@ follow [Semantic Versioning](https://semver.org/).
   In `handoff`, a session not yet uploaded always says so (a dim "· not
   uploaded"), with its title cut to make room. This applies to `list`, `show`
   and `handoff`.
+- Session lists in a terminal are grouped by day instead of by project,
+  under the headings TODAY, YESTERDAY, EARLIER THIS WEEK (weeks start on
+  Monday), LAST WEEK, EARLIER THIS MONTH and OLDER, newest first. The
+  project is a column, or named in the heading line when every session
+  shares one. A page or screen that starts partway through a day repeats
+  its heading as "TODAY (continued)". The `/` filter's matches are grouped
+  the same way, in the order they matched within each day. Piped output
+  stays one flat table, and `list --verbose` is now one flat table too.
 - **Changed for scripts:** piped `list` output (not a terminal) is now one
   plain line per session, newest first with no project headings, in the
   columns `WHEN AGENT PROJECT PR ID TITLE`, with WHEN the short time, an

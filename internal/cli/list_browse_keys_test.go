@@ -422,21 +422,17 @@ func TestKeyPickerFitsWithoutScrolling(t *testing.T) {
 	}
 }
 
-// A project scrolled into keeps its heading, marked continued, at the top
-// of the screen.
-func TestKeyPickerKeepsTheProjectHeading(t *testing.T) {
+// A day scrolled into keeps its heading, marked continued, at the top of
+// the screen.
+func TestKeyPickerKeepsTheDayHeading(t *testing.T) {
 	t.Parallel()
-	sessions := pickerSessions(30, func(i int) string {
-		if i < 18 {
-			return "alpha"
-		}
-		return "beta"
-	})
-	_, _, screens := runKeyPicker(t, &sessionPicker{env: fixedTerminal{120, 20}}, sessions, listFormatOptions{GroupByProject: true}, "\x1b[B\x1b[B", "\x1b[F", "q")
-	if !strings.HasPrefix(screens[0], "alpha (18)\n 1  ") || !strings.HasPrefix(screens[1], "alpha (continued)\n 3  ") || rowNumbers(screens[1])[0] != 3 {
+	sessions := pickerSessions(30, oneProject)
+	_, _, screens := runKeyPicker(t, &sessionPicker{env: fixedTerminal{120, 20}}, sessions, listFormatOptions{GroupByDay: true}, "\x1b[B\x1b[B", "\x1b[F", "q")
+	checkKeyScreensFit(t, screens, 120, 20)
+	if !strings.HasPrefix(screens[0], "TODAY\n 1  ") || !strings.HasPrefix(screens[1], "TODAY (continued)\n 3  ") || rowNumbers(screens[1])[0] != 3 {
 		t.Fatalf("screens:\n%s", strings.Join(screens, "\n----\n"))
 	}
-	if numbers := rowNumbers(screens[2]); numbers[len(numbers)-1] != 30 || !strings.HasPrefix(statusLine(screens[2]), "Bottom") {
+	if numbers := rowNumbers(screens[2]); numbers[len(numbers)-1] != 30 || !strings.HasPrefix(statusLine(screens[2]), "Bottom") || !strings.HasPrefix(screens[2], "YESTERDAY (continued)\n") {
 		t.Fatalf("bottom:\n%s", screens[2])
 	}
 }
@@ -451,7 +447,7 @@ func TestKeyPickerScreensFitTheTerminal(t *testing.T) {
 	}
 	for _, width := range []int{40, 80, 120} {
 		for _, height := range []int{8, 12, 24} {
-			for _, format := range []listFormatOptions{{}, {GroupByProject: true, Style: textStyle{color: true}}} {
+			for _, format := range []listFormatOptions{{}, {GroupByDay: true, Style: textStyle{color: true}}} {
 				_, _, screens := runKeyPicker(t, &sessionPicker{env: fixedTerminal{width, height}}, sessions, format,
 					"\x1b[B", "\x1b[B\x1b[B\x1b[B", "\x1b[6~", "123456789", "\r", "\x1b[F", "\x1b[5~", "\x1b[A", "q")
 				if len(screens) != 9 {
@@ -782,7 +778,7 @@ func TestKeyScreensGolden(t *testing.T) {
 		}
 		return "beta"
 	})
-	_, _, screens := runKeyPicker(t, &sessionPicker{env: fixedTerminal{80, 20}}, sessions, listFormatOptions{GroupByProject: true}, "\x1b[B\x1b[B\x1b[B\x1b[B\x1b[B\x1b[B\x1b[B\x1b[B", "1", "2", "q")
+	_, _, screens := runKeyPicker(t, &sessionPicker{env: fixedTerminal{80, 20}}, sessions, listFormatOptions{GroupByDay: true}, "\x1b[B\x1b[B\x1b[B\x1b[B\x1b[B\x1b[B\x1b[B\x1b[B", "1", "2", "q")
 	golden.Check(t, filepath.Join("testdata", "browse", "keys-list-scrolled.txt"), []byte(screens[len(screens)-2]))
 
 	env := testEnv(t, t.TempDir(), summaryNow)
