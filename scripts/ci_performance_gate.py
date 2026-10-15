@@ -208,7 +208,7 @@ def current_worker_attempts(api, topology, run_id, attempt):
     return worker_attempts(jobs, topology, run_id, attempt)
 
 
-def verify_raw_coverage(paths, topology):
+def verify_raw_coverage(paths, topology, *, allow_legacy=False):
     """Recheck complete compiled assignments before preparing an admission."""
     import go_parent_shards
     import run_go_shard
@@ -222,7 +222,7 @@ def verify_raw_coverage(paths, topology):
         catalog = manifest['catalog']
         shard = manifest['shard']
         try:
-            go_parent_shards.validate(catalog, topology['workers'])
+            go_parent_shards.validate(catalog, topology['workers'], allow_legacy=allow_legacy)
         except run_go_shard.Failure as error:
             raise ValueError('raw compiled catalog invalid: ' + str(error)) from error
         if (type(shard) is not int or shard not in range(topology['workers']) or shard in shards
@@ -236,16 +236,16 @@ def verify_raw_coverage(paths, topology):
         first = catalog
         shards.add(shard)
         try:
-            go_parent_shards.verify_logs(path.parent, catalog, catalog['assignments'][shard])
+            go_parent_shards.verify_logs(path.parent, catalog, catalog['assignments'][shard], allow_legacy=allow_legacy)
         except run_go_shard.Failure as error:
             raise ValueError('raw compiled coverage invalid: ' + str(error)) from error
     if shards != set(range(topology['workers'])):
         raise ValueError('raw compiled worker coverage incomplete')
 
 
-def normalize_workers(paths, topology, *, verify_coverage=False):
+def normalize_workers(paths, topology, *, verify_coverage=False, allow_legacy=False):
     if verify_coverage:
-        verify_raw_coverage(paths, topology)
+        verify_raw_coverage(paths, topology, allow_legacy=allow_legacy)
     rows = []
     for path in paths:
         if path.is_symlink() or path.stat().st_size > MAX_BYTES:

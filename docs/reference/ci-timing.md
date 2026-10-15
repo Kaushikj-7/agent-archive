@@ -1007,11 +1007,29 @@ physical observation. The pipeline hash and inventory hash are retained in the
 policy. Missing event-time telemetry prevents a queue-eligibility claim; it does
 not erase the independently proven successful physical worker observations.
 
-The first fixture-counter producer change must retain its constructor ceilings
-and emit its exact test/fixture/phase/operation identities before a reviewed
-policy adds corresponding `work_budgets`. That integration must use actual
-receipts and preserve missing-counter failure; an empty initial work-budget
-list is not evidence that deterministic fixture-growth protection is complete.
+The activated fixture budgets use content-free P4 receipts and source call-site
+ceilings: `TestRealCLICatalogCommandsEqualPrivateExhaustiveOracle` permits one
+`private_catalog/construct` constructor and four `publication` commits;
+`TestQualificationLargeFixturesDoNotRetainProcessSeeds` permits two
+`qualification/build` constructors and 2,802 entry encodings (two uncached
+1,401-row fixtures); `TestPickerReaderFixturesOwnAuthorityBodiesAndMetadata`
+permits three `picker_reader/clone` store clones. These are aggregate counts for
+the named parent, including repeated exact phases, rather than elapsed-time
+allowances. Every listed parent, phase and operation must be present in the
+normal full pipeline; deleting its producer or losing its receipts fails.
+
+The regression input `scripts/testdata/fixture_work_receipts.json` retains exact
+content-free Go output events from successful ordinary P4 Test run
+`38778405365`, attempt 1. The API head is `cab068a3`, while the actual compiled
+PR-merge source is `9a6986fab50b5f1010e5e608a3e09e5025f2f0e0`. Provenance retains
+archive and raw-log SHA-256 digests, original line numbers, and unchanged producer
+file hashes. Three actual enclosing parents passed and all five observed counts
+meet their ceilings. This scoped fixture evidence is not full eight-worker gate
+validation of the current source. Shared process seed creation remains
+attributed to its actual first caller: it cannot reliably supply a required per-test aggregate
+budget. The existing helper still checks each constructor and clone locally.
+The policy therefore binds stable private construction, uncached large-fixture
+construction and reader-clone counts rather than inventing a shared-seed owner.
 Continue reducing repeated setup and checking critical-path and total runner
 allocation with comparable ordinary CI evidence. This initial baseline makes
 no end-to-end speedup claim and does not authorize extra benchmark campaigns.
@@ -1079,6 +1097,13 @@ review the original authenticated ZIP and digest proof as well. Experimental,
 failed, partial, truncated or source-mismatched inputs are not admitted. No
 scheduled benchmark campaign is required: use ordinary CI traffic.
 
+For an original retained schema-3 compiled catalog, the offline admission
+command additionally requires `--allow-legacy-compiled-catalog`. This enables
+only the old separate listing format; exact source, compiled partition, actual
+selected bodies, physical allocation and full-pipeline checks still apply.
+The live performance gate exposes no legacy option and requires schema 4.
+Do not rewrite original manifests or synthesize a combined-list receipt.
+
 For additional comparable normal runs, repeat
 `--history-sample TOPOLOGY PIPELINE WORKERS`. Each sample undergoes the same
 full-pipeline validation. Physical run/attempt/shard duplicates cannot increase
@@ -1087,6 +1112,14 @@ current inventory. The candidate retains sample identities and pipeline hashes
 so a reviewer can inspect the original evidence. Policy validation rejects absent or
 duplicate sample provenance, unknown/empty measurement cohorts, and per-parent
 observation counts exceeding the retained physical sample inventory.
+
+### Fixture budget qualification limits
+
+The initial baseline pair supplies one physical observation per measured parent.
+It cannot establish p95 or activate the three-observation relative rule. These
+fixture counts do not qualify elapsed time, total runner minutes or scheduling
+weights for the current source. Continue collecting comparable ordinary CI
+traffic; no extra campaign, worker or schedule is required.
 
 ## Linux compiled discovery and scheduling advice
 
