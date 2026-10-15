@@ -36,7 +36,10 @@ type listRow struct {
 	When      string
 	// WhenShort is when the session was last active as a list's short time
 	// (shortWhen): "2m", "Mon", "Oct 9".
-	WhenShort  string
+	WhenShort string
+	// Active is when the session was last active, which puts the row under
+	// its day's heading (dayBucket); the zero time is Older.
+	Active     time.Time
 	CapturedAt string
 	Harness    string
 	Project    string
@@ -78,13 +81,15 @@ type listRow struct {
 
 // listFormatOptions controls how session rows are built and printed.
 type listFormatOptions struct {
-	Now            time.Time
-	Verbose        bool
-	Numbered       bool
-	GroupByProject bool
-	Projects       map[string]string // project_id → display label (basename)
-	Style          textStyle
-	NarrowHint     string // the truncation footer's advice; "" for list's flags
+	Now      time.Time
+	Verbose  bool
+	Numbered bool
+	// GroupByDay puts the rows under day headings (dayBucket of Active at
+	// Now): TODAY, YESTERDAY, and so on. The verbose table is never grouped.
+	GroupByDay bool
+	Projects   map[string]string // project_id → display label (basename)
+	Style      textStyle
+	NarrowHint string // the truncation footer's advice; "" for list's flags
 	// Children is how many subagent sessions each parent has among the
 	// sessions loaded, keyed by childKey; the table hints at them.
 	Children map[string]int
@@ -168,8 +173,6 @@ func formatSessionRows(sessions []archive.Metadata, opts listFormatOptions) []li
 			ProjectID:  m.ProjectID,
 			Title:      title,
 			ListTitle:  cleaned,
-			When:       relativeAge(opts.Now, lastActivity(m)),
-			WhenShort:  shortWhen(opts.Now, lastActivity(m)),
 			CapturedAt: formatTimeOrNever(m.CapturedAt),
 			Harness:    archive.DisplayLine(m.Harness.Name),
 			Project:    archive.DisplayLine(project),
@@ -179,8 +182,15 @@ func formatSessionRows(sessions []archive.Metadata, opts listFormatOptions) []li
 			Origin:     sessionOrigin(m),
 			Parser:     archive.DisplayLine(string(m.Parser.Status)),
 		}
+		rows[i].setActive(opts.Now, lastActivity(m))
 	}
 	return rows
+}
+
+// setActive sets when the row's session was last active, t as seen at now:
+// Active, and the When and WhenShort that say it.
+func (r *listRow) setActive(now, t time.Time) {
+	r.Active, r.When, r.WhenShort = t, relativeAge(now, t), shortWhen(now, t)
 }
 
 // lastActivity is when a session was last active, which WHEN shows and the
@@ -316,10 +326,10 @@ func printListTable(w io.Writer, c *scopeChoice, width int) error {
 	}
 	format := c.format
 	format.Width = width
-	if width <= 0 && !format.Verbose {
-		// The plain table has a PROJECT column and is read by scripts: one
-		// row per line, newest first, with no headings between them.
-		format.GroupByProject = false
+	if width <= 0 {
+		// The plain table is read by scripts: one row per line, newest
+		// first, with no headings between them.
+		format.GroupByDay = false
 	}
 	if err := printSessionTable(w, c.rows, format); err != nil {
 		return err
@@ -358,7 +368,7 @@ func (opts listFormatOptions) withColumns(rows []listRow) (laid listFormatOption
 	}
 	if project, ok := same(func(r listRow) string { return r.Project }); ok {
 		// One name is one heading, even across a repository's checkouts.
-		laid.HideProject, laid.GroupByProject = true, false
+		laid.HideProject = true
 		if project != "-" {
 			constants = append(constants, project)
 		}

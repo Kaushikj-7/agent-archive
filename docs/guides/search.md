@@ -132,3 +132,9 @@ Schema3 indexes upgrade to schema4 by adding one finite discovery-turn value;
 existing identity/root checkpoints are preserved. A failed legacy metadata read
 can resume within its physical page by logical key without treating that mutable
 page as snapshot authority.
+
+Checksum-verified sources in unsupported immutable formats (including legacy
+source schema 1) become explicit `unsupported_source_schema` coverage gaps.
+They are not downloaded repeatedly; a changed source or extraction contract
+rechecks them. Corrupt, unverified and transiently unreadable sources remain
+retryable failures. Unsupported content is never indexed.

@@ -1,0 +1,2181 @@
+{
+  "schema": 1,
+  "source_base": "37609182169b658c380e9113888b0cd11d387c05",
+  "date_utc": "2026-10-15",
+  "native_platform": {
+    "system": "Darwin",
+    "machine": "x86_64"
+  },
+  "producer": "1.4.8-R6256.1",
+  "native_semver_sha": "1.4.8 d1d1e4cfeb",
+  "binary_sha256": "94ea8fd1c73664c22e5c6157d8706945b667b11bd1c7c51691811e79f17dfcf1",
+  "stable_schema_fingerprint": "sha256:4e3200c3c9dc0cd7919d11022630d43f9bc1c5cdda375381e90b0183b5665069",
+  "provider": "only synthetic loopback Responses; incoming context discarded; no real provider or remote storage",
+  "isolation": "constructed HOME/XDG/config/data/cache/state/tmp; TBH_CREDENTIAL_BACKEND=file; dummy key; no inherited credentials/proxies",
+  "runner_sha256": "b1a5713ad1750ea4807d1322e205d3e8a8159c8a3216379bea950a78f050d2e1",
+  "campaigns": {
+    "muse-q0-reviewed-20261015": {
+      "raw_report_sha256": "2afe0bc5c00dde1e6384c8337f369ec16cfb8dd633c881ac9de4b363da4c393e",
+      "runner_sha256": null,
+      "cases": {
+        "exec-utc": {
+          "assertions": {
+            "fresh_has_one_false_resume_open": true,
+            "resume_success": true,
+            "resume_preserves_prefix": true,
+            "native_valid_export_clean": true,
+            "native_exact_permission_clean": true,
+            "native_bad_checksum_diagnostic": true,
+            "copy_bytes_identical": true,
+            "copy_native_export_clean": true
+          },
+          "timezone": "UTC",
+          "observed_utc": "2026-10-15T04:50:59.391973+00:00",
+          "provider_requests": 2,
+          "sessions": [
+            {
+              "sha256": "b4120d7636500ad8ab3e4f47d09b6fe00110788e692b73ad5dca46802d5c178e",
+              "bytes": 239573,
+              "lines": 98,
+              "logical_records": 99,
+              "session_id": "01a13de5-f9ae-78e3-8478-1fcd9b227f7f",
+              "folder_date": "2026-10-15",
+              "id_utc_date": "2026-10-15",
+              "payload_types": {
+                "run.model.configured": 2,
+                "runtime.command_intake.session_name.received": 1,
+                "runtime.command_intake.settled": 1,
+                "runtime.retained_fact": 2,
+                "runtime.session": 72,
+                "runtime.session.capture_selection": 1,
+                "runtime.session.metadata": 1,
+                "runtime.session.permission_format_declared": 1,
+                "runtime.session.permission_profile_committed": 1,
+                "runtime.session.route_facts": 1,
+                "runtime.session.task": 6,
+                "runtime.user_intent.accepted": 2,
+                "runtime.user_intent.materialized": 2,
+                "session.end": 2,
+                "session.name.changed": 1,
+                "session.opened.observed": 2,
+                "session.resumed": 1
+              },
+              "event_kinds": {
+                "": 22,
+                "accepted": 3,
+                "assistant_message_committed": 2,
+                "completed": 3,
+                "context_block_diagnostic": 22,
+                "context_block_updated": 1,
+                "goal_usage_attribution": 2,
+                "hook_run_started": 5,
+                "hook_run_terminal": 5,
+                "model_completed": 2,
+                "model_input_trace_recorded": 2,
+                "model_request_configured": 2,
+                "model_response_created": 2,
+                "proposed": 3,
+                "provider_request_options_configured": 2,
+                "resource_usage_sampled": 2,
+                "scheduled": 3,
+                "side_effect_intent": 3,
+                "started": 5,
+                "status": 4,
+                "task_stream_linked": 2,
+                "terminal": 2
+              },
+              "opened": [
+                {
+                  "line": 3,
+                  "recorded_at": 1792039848635119,
+                  "session_id": "01a13de5-f9ae-78e3-8478-1fcd9b227f7f",
+                  "resume": false,
+                  "credential_backend": "file"
+                },
+                {
+                  "line": 58,
+                  "recorded_at": 1792039856380572,
+                  "session_id": "01a13de5-f9ae-78e3-8478-1fcd9b227f7f",
+                  "resume": true,
+                  "credential_backend": "file"
+                }
+              ]
+            }
+          ],
+          "hook_events": [
+            {
+              "event": "SessionStart",
+              "session_id": "01a13de5-f9ae-78e3-8478-1fcd9b227f7f",
+              "root_id": "01a13de5-f9ae-78e3-8478-1fcd9b227f7f",
+              "thread_id": "01a13de5-f9ae-78e3-8478-1fcd9b227f7f",
+              "source": "startup",
+              "transcript_path": null
+            },
+            {
+              "event": "UserPromptSubmit",
+              "session_id": "01a13de5-f9ae-78e3-8478-1fcd9b227f7f",
+              "root_id": "01a13de5-f9ae-78e3-8478-1fcd9b227f7f",
+              "thread_id": "01a13de5-f9ae-78e3-8478-1fcd9b227f7f",
+              "source": null,
+              "transcript_path": null
+            },
+            {
+              "event": "Stop",
+              "session_id": "01a13de5-f9ae-78e3-8478-1fcd9b227f7f",
+              "root_id": "01a13de5-f9ae-78e3-8478-1fcd9b227f7f",
+              "thread_id": "01a13de5-f9ae-78e3-8478-1fcd9b227f7f",
+              "source": null,
+              "transcript_path": null
+            },
+            {
+              "event": "SessionEnd",
+              "session_id": "01a13de5-f9ae-78e3-8478-1fcd9b227f7f",
+              "root_id": "01a13de5-f9ae-78e3-8478-1fcd9b227f7f",
+              "thread_id": "01a13de5-f9ae-78e3-8478-1fcd9b227f7f",
+              "source": null,
+              "transcript_path": null
+            },
+            {
+              "event": "UserPromptSubmit",
+              "session_id": "01a13de5-f9ae-78e3-8478-1fcd9b227f7f",
+              "root_id": "01a13de5-f9ae-78e3-8478-1fcd9b227f7f",
+              "thread_id": "01a13de5-f9ae-78e3-8478-1fcd9b227f7f",
+              "source": null,
+              "transcript_path": null
+            },
+            {
+              "event": "Stop",
+              "session_id": "01a13de5-f9ae-78e3-8478-1fcd9b227f7f",
+              "root_id": "01a13de5-f9ae-78e3-8478-1fcd9b227f7f",
+              "thread_id": "01a13de5-f9ae-78e3-8478-1fcd9b227f7f",
+              "source": null,
+              "transcript_path": null
+            },
+            {
+              "event": "SessionEnd",
+              "session_id": "01a13de5-f9ae-78e3-8478-1fcd9b227f7f",
+              "root_id": "01a13de5-f9ae-78e3-8478-1fcd9b227f7f",
+              "thread_id": "01a13de5-f9ae-78e3-8478-1fcd9b227f7f",
+              "source": null,
+              "transcript_path": null
+            }
+          ]
+        },
+        "exec-minus12": {
+          "assertions": {
+            "fresh_has_one_false_resume_open": true,
+            "resume_success": true,
+            "resume_preserves_prefix": true,
+            "native_valid_export_clean": true,
+            "native_exact_permission_clean": true,
+            "native_bad_checksum_diagnostic": true,
+            "copy_bytes_identical": true,
+            "copy_native_export_clean": true
+          },
+          "timezone": "Etc/GMT+12",
+          "observed_utc": "2026-10-15T04:51:19.726507+00:00",
+          "provider_requests": 2,
+          "sessions": [
+            {
+              "sha256": "7dec883e0ea163b2aaf0417c8236e7c659ed69369fd6fa9a30888cf7984a8a4f",
+              "bytes": 239686,
+              "lines": 98,
+              "logical_records": 99,
+              "session_id": "01a13de6-3523-7422-aa49-36b6a373321a",
+              "folder_date": "2026-10-14",
+              "id_utc_date": "2026-10-15",
+              "payload_types": {
+                "run.model.configured": 2,
+                "runtime.command_intake.session_name.received": 1,
+                "runtime.command_intake.settled": 1,
+                "runtime.retained_fact": 2,
+                "runtime.session": 72,
+                "runtime.session.capture_selection": 1,
+                "runtime.session.metadata": 1,
+                "runtime.session.permission_format_declared": 1,
+                "runtime.session.permission_profile_committed": 1,
+                "runtime.session.route_facts": 1,
+                "runtime.session.task": 6,
+                "runtime.user_intent.accepted": 2,
+                "runtime.user_intent.materialized": 2,
+                "session.end": 2,
+                "session.name.changed": 1,
+                "session.opened.observed": 2,
+                "session.resumed": 1
+              },
+              "event_kinds": {
+                "": 22,
+                "accepted": 3,
+                "assistant_message_committed": 2,
+                "completed": 3,
+                "context_block_diagnostic": 22,
+                "context_block_updated": 1,
+                "goal_usage_attribution": 2,
+                "hook_run_started": 5,
+                "hook_run_terminal": 5,
+                "model_completed": 2,
+                "model_input_trace_recorded": 2,
+                "model_request_configured": 2,
+                "model_response_created": 2,
+                "proposed": 3,
+                "provider_request_options_configured": 2,
+                "resource_usage_sampled": 2,
+                "scheduled": 3,
+                "side_effect_intent": 3,
+                "started": 5,
+                "status": 4,
+                "task_stream_linked": 2,
+                "terminal": 2
+              },
+              "opened": [
+                {
+                  "line": 3,
+                  "recorded_at": 1792039864767430,
+                  "session_id": "01a13de6-3523-7422-aa49-36b6a373321a",
+                  "resume": false,
+                  "credential_backend": "file"
+                },
+                {
+                  "line": 58,
+                  "recorded_at": 1792039875323789,
+                  "session_id": "01a13de6-3523-7422-aa49-36b6a373321a",
+                  "resume": true,
+                  "credential_backend": "file"
+                }
+              ]
+            }
+          ],
+          "hook_events": [
+            {
+              "event": "SessionStart",
+              "session_id": "01a13de6-3523-7422-aa49-36b6a373321a",
+              "root_id": "01a13de6-3523-7422-aa49-36b6a373321a",
+              "thread_id": "01a13de6-3523-7422-aa49-36b6a373321a",
+              "source": "startup",
+              "transcript_path": null
+            },
+            {
+              "event": "UserPromptSubmit",
+              "session_id": "01a13de6-3523-7422-aa49-36b6a373321a",
+              "root_id": "01a13de6-3523-7422-aa49-36b6a373321a",
+              "thread_id": "01a13de6-3523-7422-aa49-36b6a373321a",
+              "source": null,
+              "transcript_path": null
+            },
+            {
+              "event": "Stop",
+              "session_id": "01a13de6-3523-7422-aa49-36b6a373321a",
+              "root_id": "01a13de6-3523-7422-aa49-36b6a373321a",
+              "thread_id": "01a13de6-3523-7422-aa49-36b6a373321a",
+              "source": null,
+              "transcript_path": null
+            },
+            {
+              "event": "SessionEnd",
+              "session_id": "01a13de6-3523-7422-aa49-36b6a373321a",
+              "root_id": "01a13de6-3523-7422-aa49-36b6a373321a",
+              "thread_id": "01a13de6-3523-7422-aa49-36b6a373321a",
+              "source": null,
+              "transcript_path": null
+            },
+            {
+              "event": "UserPromptSubmit",
+              "session_id": "01a13de6-3523-7422-aa49-36b6a373321a",
+              "root_id": "01a13de6-3523-7422-aa49-36b6a373321a",
+              "thread_id": "01a13de6-3523-7422-aa49-36b6a373321a",
+              "source": null,
+              "transcript_path": null
+            },
+            {
+              "event": "Stop",
+              "session_id": "01a13de6-3523-7422-aa49-36b6a373321a",
+              "root_id": "01a13de6-3523-7422-aa49-36b6a373321a",
+              "thread_id": "01a13de6-3523-7422-aa49-36b6a373321a",
+              "source": null,
+              "transcript_path": null
+            },
+            {
+              "event": "SessionEnd",
+              "session_id": "01a13de6-3523-7422-aa49-36b6a373321a",
+              "root_id": "01a13de6-3523-7422-aa49-36b6a373321a",
+              "thread_id": "01a13de6-3523-7422-aa49-36b6a373321a",
+              "source": null,
+              "transcript_path": null
+            }
+          ]
+        },
+        "exec-plus14": {
+          "assertions": {
+            "fresh_has_one_false_resume_open": true,
+            "resume_success": true,
+            "resume_preserves_prefix": true,
+            "native_valid_export_clean": true,
+            "native_exact_permission_clean": true,
+            "native_bad_checksum_diagnostic": true,
+            "copy_bytes_identical": true,
+            "copy_native_export_clean": true
+          },
+          "timezone": "Pacific/Kiritimati",
+          "observed_utc": "2026-10-15T04:51:39.731756+00:00",
+          "provider_requests": 2,
+          "sessions": [
+            {
+              "sha256": "405152f5de44d1d212f673a0b949dc7032d1535828be7dfac945e98a828f320b",
+              "bytes": 239652,
+              "lines": 98,
+              "logical_records": 99,
+              "session_id": "01a13de6-847f-7cb0-aff7-49543f475860",
+              "folder_date": "2026-10-15",
+              "id_utc_date": "2026-10-15",
+              "payload_types": {
+                "run.model.configured": 2,
+                "runtime.command_intake.session_name.received": 1,
+                "runtime.command_intake.settled": 1,
+                "runtime.retained_fact": 2,
+                "runtime.session": 72,
+                "runtime.session.capture_selection": 1,
+                "runtime.session.metadata": 1,
+                "runtime.session.permission_format_declared": 1,
+                "runtime.session.permission_profile_committed": 1,
+                "runtime.session.route_facts": 1,
+                "runtime.session.task": 6,
+                "runtime.user_intent.accepted": 2,
+                "runtime.user_intent.materialized": 2,
+                "session.end": 2,
+                "session.name.changed": 1,
+                "session.opened.observed": 2,
+                "session.resumed": 1
+              },
+              "event_kinds": {
+                "": 22,
+                "accepted": 3,
+                "assistant_message_committed": 2,
+                "completed": 3,
+                "context_block_diagnostic": 22,
+                "context_block_updated": 1,
+                "goal_usage_attribution": 2,
+                "hook_run_started": 5,
+                "hook_run_terminal": 5,
+                "model_completed": 2,
+                "model_input_trace_recorded": 2,
+                "model_request_configured": 2,
+                "model_response_created": 2,
+                "proposed": 3,
+                "provider_request_options_configured": 2,
+                "resource_usage_sampled": 2,
+                "scheduled": 3,
+                "side_effect_intent": 3,
+                "started": 5,
+                "status": 4,
+                "task_stream_linked": 2,
+                "terminal": 2
+              },
+              "opened": [
+                {
+                  "line": 3,
+                  "recorded_at": 1792039887883815,
+                  "session_id": "01a13de6-847f-7cb0-aff7-49543f475860",
+                  "resume": false,
+                  "credential_backend": "file"
+                },
+                {
+                  "line": 58,
+                  "recorded_at": 1792039896358114,
+                  "session_id": "01a13de6-847f-7cb0-aff7-49543f475860",
+                  "resume": true,
+                  "credential_backend": "file"
+                }
+              ]
+            }
+          ],
+          "hook_events": [
+            {
+              "event": "SessionStart",
+              "session_id": "01a13de6-847f-7cb0-aff7-49543f475860",
+              "root_id": "01a13de6-847f-7cb0-aff7-49543f475860",
+              "thread_id": "01a13de6-847f-7cb0-aff7-49543f475860",
+              "source": "startup",
+              "transcript_path": null
+            },
+            {
+              "event": "UserPromptSubmit",
+              "session_id": "01a13de6-847f-7cb0-aff7-49543f475860",
+              "root_id": "01a13de6-847f-7cb0-aff7-49543f475860",
+              "thread_id": "01a13de6-847f-7cb0-aff7-49543f475860",
+              "source": null,
+              "transcript_path": null
+            },
+            {
+              "event": "Stop",
+              "session_id": "01a13de6-847f-7cb0-aff7-49543f475860",
+              "root_id": "01a13de6-847f-7cb0-aff7-49543f475860",
+              "thread_id": "01a13de6-847f-7cb0-aff7-49543f475860",
+              "source": null,
+              "transcript_path": null
+            },
+            {
+              "event": "SessionEnd",
+              "session_id": "01a13de6-847f-7cb0-aff7-49543f475860",
+              "root_id": "01a13de6-847f-7cb0-aff7-49543f475860",
+              "thread_id": "01a13de6-847f-7cb0-aff7-49543f475860",
+              "source": null,
+              "transcript_path": null
+            },
+            {
+              "event": "UserPromptSubmit",
+              "session_id": "01a13de6-847f-7cb0-aff7-49543f475860",
+              "root_id": "01a13de6-847f-7cb0-aff7-49543f475860",
+              "thread_id": "01a13de6-847f-7cb0-aff7-49543f475860",
+              "source": null,
+              "transcript_path": null
+            },
+            {
+              "event": "Stop",
+              "session_id": "01a13de6-847f-7cb0-aff7-49543f475860",
+              "root_id": "01a13de6-847f-7cb0-aff7-49543f475860",
+              "thread_id": "01a13de6-847f-7cb0-aff7-49543f475860",
+              "source": null,
+              "transcript_path": null
+            },
+            {
+              "event": "SessionEnd",
+              "session_id": "01a13de6-847f-7cb0-aff7-49543f475860",
+              "root_id": "01a13de6-847f-7cb0-aff7-49543f475860",
+              "thread_id": "01a13de6-847f-7cb0-aff7-49543f475860",
+              "source": null,
+              "transcript_path": null
+            }
+          ]
+        },
+        "exec-tool": {
+          "assertions": {
+            "fresh_has_one_false_resume_open": true,
+            "resume_success": true,
+            "resume_preserves_prefix": true,
+            "native_valid_export_clean": true,
+            "native_exact_permission_clean": true,
+            "native_bad_checksum_diagnostic": true,
+            "copy_bytes_identical": true,
+            "copy_native_export_clean": true
+          },
+          "timezone": "UTC",
+          "observed_utc": "2026-10-15T04:51:58.427795+00:00",
+          "provider_requests": 3,
+          "sessions": [
+            {
+              "sha256": "a8d506fb08af645164b27e7e888a56d53f7c9f6a79e3e9afb6b291c09fec892a",
+              "bytes": 265242,
+              "lines": 125,
+              "logical_records": 126,
+              "session_id": "01a13de6-d2b9-71d3-9af3-867e18ef548d",
+              "folder_date": "2026-10-15",
+              "id_utc_date": "2026-10-15",
+              "payload_types": {
+                "run.model.configured": 2,
+                "runtime.command_intake.session_name.received": 1,
+                "runtime.command_intake.settled": 1,
+                "runtime.retained_fact": 2,
+                "runtime.session": 97,
+                "runtime.session.capture_selection": 1,
+                "runtime.session.metadata": 1,
+                "runtime.session.permission_format_declared": 1,
+                "runtime.session.permission_profile_committed": 1,
+                "runtime.session.route_facts": 1,
+                "runtime.session.task": 6,
+                "runtime.user_intent.accepted": 2,
+                "runtime.user_intent.materialized": 2,
+                "session.end": 2,
+                "session.name.changed": 1,
+                "session.opened.observed": 2,
+                "session.resumed": 1,
+                "tool_batch.effect.started": 1,
+                "tool_batch.effect.terminal": 1
+              },
+              "event_kinds": {
+                "": 24,
+                "accepted": 5,
+                "assistant_message_committed": 2,
+                "assistant_tool_calls_committed": 1,
+                "completed": 5,
+                "context_block_diagnostic": 22,
+                "context_block_updated": 1,
+                "goal_usage_attribution": 4,
+                "hook_run_started": 5,
+                "hook_run_terminal": 5,
+                "model_completed": 3,
+                "model_input_trace_recorded": 3,
+                "model_request_configured": 2,
+                "model_response_created": 3,
+                "output": 1,
+                "proposed": 5,
+                "provider_request_options_configured": 3,
+                "resource_usage_sampled": 2,
+                "scheduled": 5,
+                "side_effect_intent": 5,
+                "started": 7,
+                "status": 6,
+                "task_stream_linked": 4,
+                "terminal": 2,
+                "tool_result_batch_committed": 1
+              },
+              "opened": [
+                {
+                  "line": 3,
+                  "recorded_at": 1792039904550453,
+                  "session_id": "01a13de6-d2b9-71d3-9af3-867e18ef548d",
+                  "resume": false,
+                  "credential_backend": "file"
+                },
+                {
+                  "line": 85,
+                  "recorded_at": 1792039915193680,
+                  "session_id": "01a13de6-d2b9-71d3-9af3-867e18ef548d",
+                  "resume": true,
+                  "credential_backend": "file"
+                }
+              ]
+            }
+          ],
+          "hook_events": [
+            {
+              "event": "SessionStart",
+              "session_id": "01a13de6-d2b9-71d3-9af3-867e18ef548d",
+              "root_id": "01a13de6-d2b9-71d3-9af3-867e18ef548d",
+              "thread_id": "01a13de6-d2b9-71d3-9af3-867e18ef548d",
+              "source": "startup",
+              "transcript_path": null
+            },
+            {
+              "event": "UserPromptSubmit",
+              "session_id": "01a13de6-d2b9-71d3-9af3-867e18ef548d",
+              "root_id": "01a13de6-d2b9-71d3-9af3-867e18ef548d",
+              "thread_id": "01a13de6-d2b9-71d3-9af3-867e18ef548d",
+              "source": null,
+              "transcript_path": null
+            },
+            {
+              "event": "Stop",
+              "session_id": "01a13de6-d2b9-71d3-9af3-867e18ef548d",
+              "root_id": "01a13de6-d2b9-71d3-9af3-867e18ef548d",
+              "thread_id": "01a13de6-d2b9-71d3-9af3-867e18ef548d",
+              "source": null,
+              "transcript_path": null
+            },
+            {
+              "event": "SessionEnd",
+              "session_id": "01a13de6-d2b9-71d3-9af3-867e18ef548d",
+              "root_id": "01a13de6-d2b9-71d3-9af3-867e18ef548d",
+              "thread_id": "01a13de6-d2b9-71d3-9af3-867e18ef548d",
+              "source": null,
+              "transcript_path": null
+            },
+            {
+              "event": "UserPromptSubmit",
+              "session_id": "01a13de6-d2b9-71d3-9af3-867e18ef548d",
+              "root_id": "01a13de6-d2b9-71d3-9af3-867e18ef548d",
+              "thread_id": "01a13de6-d2b9-71d3-9af3-867e18ef548d",
+              "source": null,
+              "transcript_path": null
+            },
+            {
+              "event": "Stop",
+              "session_id": "01a13de6-d2b9-71d3-9af3-867e18ef548d",
+              "root_id": "01a13de6-d2b9-71d3-9af3-867e18ef548d",
+              "thread_id": "01a13de6-d2b9-71d3-9af3-867e18ef548d",
+              "source": null,
+              "transcript_path": null
+            },
+            {
+              "event": "SessionEnd",
+              "session_id": "01a13de6-d2b9-71d3-9af3-867e18ef548d",
+              "root_id": "01a13de6-d2b9-71d3-9af3-867e18ef548d",
+              "thread_id": "01a13de6-d2b9-71d3-9af3-867e18ef548d",
+              "source": null,
+              "transcript_path": null
+            }
+          ]
+        },
+        "msp": {
+          "assertions": {
+            "root_settled": true,
+            "fork_settled": true
+          },
+          "timezone": "UTC",
+          "observed_utc": "2026-10-15T04:52:16.728847+00:00",
+          "provider_requests": 26,
+          "root_id": "01a13de7-22e0-7052-a061-dc5d747d4fce",
+          "fork_id": "01a13de7-4032-73b3-a265-1de20f3e459c",
+          "fork_error": null,
+          "sessions": [
+            {
+              "sha256": "7bfd016b0dbcd18835b59e02a2e64f27c3d7ece5e3a570a0af5c24091445cff9",
+              "bytes": 157257,
+              "lines": 74,
+              "logical_records": 75,
+              "session_id": "01a13de7-22e0-7052-a061-dc5d747d4fce",
+              "folder_date": "2026-10-15",
+              "id_utc_date": "2026-10-15",
+              "payload_types": {
+                "run.model.configured": 1,
+                "runtime.command_intake.received": 2,
+                "runtime.command_intake.settled": 2,
+                "runtime.retained_fact": 1,
+                "runtime.session": 59,
+                "runtime.session.capture_selection": 1,
+                "runtime.session.metadata": 1,
+                "runtime.session.permission_format_declared": 1,
+                "runtime.session.permission_profile_committed": 1,
+                "runtime.session_start.intake_v3": 1,
+                "runtime.user_intent.accepted": 1,
+                "runtime.user_intent.materialized": 1,
+                "session.end": 1,
+                "session.opened.observed": 1,
+                "session.started": 1
+              },
+              "event_kinds": {
+                "": 16,
+                "accepted": 4,
+                "assistant_message_committed": 1,
+                "completed": 4,
+                "context_block_diagnostic": 11,
+                "goal_usage_attribution": 1,
+                "hook_run_started": 3,
+                "hook_run_terminal": 3,
+                "memory_reminder_child_session_linked": 3,
+                "model_completed": 1,
+                "model_input_trace_recorded": 1,
+                "model_request_configured": 1,
+                "model_response_created": 1,
+                "proposed": 4,
+                "provider_request_options_configured": 1,
+                "scheduled": 4,
+                "side_effect_intent": 4,
+                "started": 5,
+                "status": 2,
+                "task_stream_linked": 4,
+                "terminal": 1
+              },
+              "opened": [
+                {
+                  "line": 7,
+                  "recorded_at": 1792039920512850,
+                  "session_id": "01a13de7-22e0-7052-a061-dc5d747d4fce",
+                  "resume": false,
+                  "credential_backend": "file"
+                }
+              ]
+            },
+            {
+              "sha256": "555f7c46f15b602d691154b235e688b5e056a41b0865cd1196617b7c5261f649",
+              "bytes": 136300,
+              "lines": 75,
+              "logical_records": 76,
+              "session_id": "01a13de7-4032-73b3-a265-1de20f3e459c",
+              "folder_date": "2026-10-15",
+              "id_utc_date": "2026-10-15",
+              "payload_types": {
+                "omitted_live_only": 1,
+                "run.model.configured": 1,
+                "runtime.command_intake.received": 2,
+                "runtime.command_intake.settled": 2,
+                "runtime.retained_fact": 1,
+                "runtime.session": 56,
+                "runtime.session.metadata": 2,
+                "runtime.session.permission_format_declared": 1,
+                "runtime.session.permission_profile_committed": 1,
+                "runtime.session_start.intake_v3": 1,
+                "runtime.user_intent.accepted": 1,
+                "runtime.user_intent.materialized": 1,
+                "session.end": 1,
+                "session.fork.created": 1,
+                "session.fork.model_prefix": 1,
+                "session.fork.turn": 1,
+                "session.opened.observed": 1,
+                "session.started": 1
+              },
+              "event_kinds": {
+                "": 20,
+                "accepted": 4,
+                "assistant_message_committed": 1,
+                "completed": 4,
+                "context_block_diagnostic": 8,
+                "goal_usage_attribution": 1,
+                "hook_run_started": 3,
+                "hook_run_terminal": 3,
+                "memory_reminder_child_session_linked": 3,
+                "model_completed": 1,
+                "model_input_trace_recorded": 1,
+                "model_request_configured": 1,
+                "model_response_created": 1,
+                "proposed": 4,
+                "provider_request_options_configured": 1,
+                "scheduled": 4,
+                "side_effect_intent": 4,
+                "started": 5,
+                "status": 2,
+                "task_stream_linked": 4,
+                "terminal": 1
+              },
+              "opened": [
+                {
+                  "line": 11,
+                  "recorded_at": 1792039928583495,
+                  "session_id": "01a13de7-4032-73b3-a265-1de20f3e459c",
+                  "resume": false,
+                  "credential_backend": null
+                }
+              ]
+            }
+          ],
+          "hook_events": [
+            {
+              "event": "SessionStart",
+              "session_id": "01a13de7-22e0-7052-a061-dc5d747d4fce",
+              "root_id": "01a13de7-22e0-7052-a061-dc5d747d4fce",
+              "thread_id": "01a13de7-22e0-7052-a061-dc5d747d4fce",
+              "source": "startup",
+              "transcript_path": null
+            },
+            {
+              "event": "UserPromptSubmit",
+              "session_id": "01a13de7-22e0-7052-a061-dc5d747d4fce",
+              "root_id": "01a13de7-22e0-7052-a061-dc5d747d4fce",
+              "thread_id": "01a13de7-22e0-7052-a061-dc5d747d4fce",
+              "source": null,
+              "transcript_path": null
+            },
+            {
+              "event": "Stop",
+              "session_id": "01a13de7-22e0-7052-a061-dc5d747d4fce",
+              "root_id": "01a13de7-22e0-7052-a061-dc5d747d4fce",
+              "thread_id": "01a13de7-22e0-7052-a061-dc5d747d4fce",
+              "source": null,
+              "transcript_path": null
+            },
+            {
+              "event": "SessionStart",
+              "session_id": "01a13de7-4032-73b3-a265-1de20f3e459c",
+              "root_id": "01a13de7-4032-73b3-a265-1de20f3e459c",
+              "thread_id": "01a13de7-4032-73b3-a265-1de20f3e459c",
+              "source": "fork",
+              "transcript_path": null
+            },
+            {
+              "event": "UserPromptSubmit",
+              "session_id": "01a13de7-4032-73b3-a265-1de20f3e459c",
+              "root_id": "01a13de7-4032-73b3-a265-1de20f3e459c",
+              "thread_id": "01a13de7-4032-73b3-a265-1de20f3e459c",
+              "source": null,
+              "transcript_path": null
+            },
+            {
+              "event": "Stop",
+              "session_id": "01a13de7-4032-73b3-a265-1de20f3e459c",
+              "root_id": "01a13de7-4032-73b3-a265-1de20f3e459c",
+              "thread_id": "01a13de7-4032-73b3-a265-1de20f3e459c",
+              "source": null,
+              "transcript_path": null
+            },
+            {
+              "event": "SessionEnd",
+              "session_id": "01a13de7-22e0-7052-a061-dc5d747d4fce",
+              "root_id": "01a13de7-22e0-7052-a061-dc5d747d4fce",
+              "thread_id": "01a13de7-22e0-7052-a061-dc5d747d4fce",
+              "source": null,
+              "transcript_path": null
+            },
+            {
+              "event": "SessionEnd",
+              "session_id": "01a13de7-4032-73b3-a265-1de20f3e459c",
+              "root_id": "01a13de7-4032-73b3-a265-1de20f3e459c",
+              "thread_id": "01a13de7-4032-73b3-a265-1de20f3e459c",
+              "source": null,
+              "transcript_path": null
+            }
+          ]
+        },
+        "pty": {
+          "assertions": {
+            "startup_visible": true
+          },
+          "timezone": "UTC",
+          "observed_utc": "2026-10-15T04:52:27.312924+00:00",
+          "provider_requests": 0,
+          "started": true,
+          "scope": "startup and interrupt only; no TUI turn qualification",
+          "sessions": [
+            {
+              "sha256": "2b7559668c70be5b59345ad22d2610ba42c60b2585bbe5346c3625a7706f2602",
+              "bytes": 7375,
+              "lines": 8,
+              "logical_records": 9,
+              "session_id": "01a13de7-63a9-7e92-bfeb-2504bd680142",
+              "folder_date": "2026-10-15",
+              "id_utc_date": "2026-10-15",
+              "payload_types": {
+                "runtime.session": 1,
+                "runtime.session.capture_selection": 1,
+                "runtime.session.metadata": 1,
+                "runtime.session.permission_format_declared": 1,
+                "runtime.session.permission_profile_committed": 1,
+                "runtime.session.route_facts": 1,
+                "session.end": 1,
+                "session.opened.observed": 1,
+                "session.startup_phases.observed": 1
+              },
+              "event_kinds": {
+                "": 9
+              },
+              "opened": [
+                {
+                  "line": 4,
+                  "recorded_at": 1792039941878664,
+                  "session_id": "01a13de7-63a9-7e92-bfeb-2504bd680142",
+                  "resume": false,
+                  "credential_backend": "file"
+                }
+              ]
+            }
+          ],
+          "hook_events": [
+            {
+              "event": "SessionEnd",
+              "session_id": "01a13de7-63a9-7e92-bfeb-2504bd680142",
+              "root_id": "01a13de7-63a9-7e92-bfeb-2504bd680142",
+              "thread_id": "01a13de7-63a9-7e92-bfeb-2504bd680142",
+              "source": null,
+              "transcript_path": null
+            }
+          ]
+        }
+      }
+    },
+    "muse-q0-final-vectors-20261015": {
+      "raw_report_sha256": "db7998b0607e1b59d32ba32322e1471c0563948730d3c8fbec8e6b2109c4e6fe",
+      "runner_sha256": "95c182ede884416953de7bff85801d21aba94f5ddb1cd5bbcbde30cebda7d3c5",
+      "cases": {
+        "exec-utc": {
+          "assertions": {
+            "fresh_has_one_false_resume_open": true,
+            "resume_success": true,
+            "resume_preserves_prefix": true,
+            "native_valid_export_clean": true,
+            "native_exact_permission_clean": true,
+            "native_bad_checksum_diagnostic": true,
+            "copy_bytes_identical": true,
+            "copy_native_export_clean": true,
+            "mutation_diagnostics_match": true
+          },
+          "timezone": "UTC",
+          "observed_utc": "2026-10-15T04:53:03.051072+00:00",
+          "provider_requests": 2,
+          "mutations": {
+            "permission-exact": {
+              "input_sha256": "16ddf28cd32b9f697d78387b67b0a388f2ea73d4f2b71feb2a1e9b30464e039f",
+              "exit": 0,
+              "timeout": false,
+              "diagnostics": {
+                "unparseable_lines": 0,
+                "unknown_payload_kinds": 0,
+                "gaps": 0,
+                "omitted_live_only": 0,
+                "duplicate_records": 0
+              },
+              "expected_unparseable_lines": 0,
+              "matched": true
+            },
+            "permission-checksum-zero": {
+              "input_sha256": "414c8e9a1fb8462fc604c276b5c0bff4e7a9091737db0c17c3ab3addacff936a",
+              "exit": 0,
+              "timeout": false,
+              "diagnostics": {
+                "unparseable_lines": 1,
+                "unknown_payload_kinds": 0,
+                "gaps": 0,
+                "omitted_live_only": 0,
+                "duplicate_records": 0
+              },
+              "expected_unparseable_lines": 1,
+              "matched": true
+            },
+            "permission-reordered": {
+              "input_sha256": "84f36b9bbd51edbc9a16d63d795260a9d9e78f7754738f64389c2b21c4005fcd",
+              "exit": 0,
+              "timeout": false,
+              "diagnostics": {
+                "unparseable_lines": 1,
+                "unknown_payload_kinds": 0,
+                "gaps": 0,
+                "omitted_live_only": 0,
+                "duplicate_records": 0
+              },
+              "expected_unparseable_lines": 1,
+              "matched": true
+            },
+            "permission-leading-space": {
+              "input_sha256": "32c5afb2fdc1b165a7b527ffca3caeef9a012bb0bf98222bbfef710e7c2690f0",
+              "exit": 0,
+              "timeout": false,
+              "diagnostics": {
+                "unparseable_lines": 1,
+                "unknown_payload_kinds": 0,
+                "gaps": 0,
+                "omitted_live_only": 0,
+                "duplicate_records": 0
+              },
+              "expected_unparseable_lines": 1,
+              "matched": true
+            },
+            "permission-future-version": {
+              "input_sha256": "3f1ad44d4f259935b17cefb37a8eb820bb6e7349b42d74cc6d772470763fb776",
+              "exit": 0,
+              "timeout": false,
+              "diagnostics": {
+                "unparseable_lines": 1,
+                "unknown_payload_kinds": 0,
+                "gaps": 0,
+                "omitted_live_only": 0,
+                "duplicate_records": 0
+              },
+              "expected_unparseable_lines": 1,
+              "matched": true
+            },
+            "ordinary-exact": {
+              "input_sha256": "ca3540636887249bbfc2fe2725b4bbd5f3949f45f8bde8cfc25cdfca250bf8b6",
+              "exit": 0,
+              "timeout": false,
+              "diagnostics": {
+                "unparseable_lines": 0,
+                "unknown_payload_kinds": 0,
+                "gaps": 0,
+                "omitted_live_only": 0,
+                "duplicate_records": 0
+              },
+              "expected_unparseable_lines": 0,
+              "matched": true
+            },
+            "ordinary-future-version": {
+              "input_sha256": "07b919648ef69abeec89d3480f26946f50ed9932d9245a425fdf206e490f24c9",
+              "exit": 0,
+              "timeout": false,
+              "diagnostics": {
+                "unparseable_lines": 0,
+                "unknown_payload_kinds": 0,
+                "gaps": 0,
+                "omitted_live_only": 0,
+                "duplicate_records": 0
+              },
+              "expected_unparseable_lines": 0,
+              "matched": true
+            },
+            "ordinary-missing-version": {
+              "input_sha256": "bee9ab21586686ec7bd671d1f4afbe187240c2df171e6472d6ac60cb7536f614",
+              "exit": 0,
+              "timeout": false,
+              "diagnostics": {
+                "unparseable_lines": 1,
+                "unknown_payload_kinds": 0,
+                "gaps": 0,
+                "omitted_live_only": 0,
+                "duplicate_records": 0
+              },
+              "expected_unparseable_lines": 1,
+              "matched": true
+            },
+            "ordinary-changed-timestamp": {
+              "input_sha256": "d75b3e53277a8ea6a8f52d289e2462c57270945467bf796cd603883b1938f1ae",
+              "exit": 0,
+              "timeout": false,
+              "diagnostics": {
+                "unparseable_lines": 0,
+                "unknown_payload_kinds": 0,
+                "gaps": 0,
+                "omitted_live_only": 0,
+                "duplicate_records": 0
+              },
+              "expected_unparseable_lines": 0,
+              "matched": true
+            }
+          },
+          "sessions": [
+            {
+              "sha256": "e3ef4601e5f1738e0674b66160558fa3c688b5bc2fbba3d5c32d35a9fcb9cfab",
+              "bytes": 239705,
+              "lines": 98,
+              "logical_records": 99,
+              "session_id": "01a13de7-e148-7ec2-b76e-14747e41bbd7",
+              "folder_date": "2026-10-15",
+              "id_utc_date": "2026-10-15",
+              "payload_types": {
+                "run.model.configured": 2,
+                "runtime.command_intake.session_name.received": 1,
+                "runtime.command_intake.settled": 1,
+                "runtime.retained_fact": 2,
+                "runtime.session": 72,
+                "runtime.session.capture_selection": 1,
+                "runtime.session.metadata": 1,
+                "runtime.session.permission_format_declared": 1,
+                "runtime.session.permission_profile_committed": 1,
+                "runtime.session.route_facts": 1,
+                "runtime.session.task": 6,
+                "runtime.user_intent.accepted": 2,
+                "runtime.user_intent.materialized": 2,
+                "session.end": 2,
+                "session.name.changed": 1,
+                "session.opened.observed": 2,
+                "session.resumed": 1
+              },
+              "event_kinds": {
+                "": 22,
+                "accepted": 3,
+                "assistant_message_committed": 2,
+                "completed": 3,
+                "context_block_diagnostic": 22,
+                "context_block_updated": 1,
+                "goal_usage_attribution": 2,
+                "hook_run_started": 5,
+                "hook_run_terminal": 5,
+                "model_completed": 2,
+                "model_input_trace_recorded": 2,
+                "model_request_configured": 2,
+                "model_response_created": 2,
+                "proposed": 3,
+                "provider_request_options_configured": 2,
+                "resource_usage_sampled": 2,
+                "scheduled": 3,
+                "side_effect_intent": 3,
+                "started": 5,
+                "status": 4,
+                "task_stream_linked": 2,
+                "terminal": 2
+              },
+              "opened": [
+                {
+                  "line": 3,
+                  "recorded_at": 1792039972823617,
+                  "session_id": "01a13de7-e148-7ec2-b76e-14747e41bbd7",
+                  "resume": false,
+                  "credential_backend": "file"
+                },
+                {
+                  "line": 58,
+                  "recorded_at": 1792039979547883,
+                  "session_id": "01a13de7-e148-7ec2-b76e-14747e41bbd7",
+                  "resume": true,
+                  "credential_backend": "file"
+                }
+              ]
+            }
+          ],
+          "hook_events": [
+            {
+              "event": "SessionStart",
+              "session_id": "01a13de7-e148-7ec2-b76e-14747e41bbd7",
+              "root_id": "01a13de7-e148-7ec2-b76e-14747e41bbd7",
+              "thread_id": "01a13de7-e148-7ec2-b76e-14747e41bbd7",
+              "source": "startup",
+              "transcript_path": null
+            },
+            {
+              "event": "UserPromptSubmit",
+              "session_id": "01a13de7-e148-7ec2-b76e-14747e41bbd7",
+              "root_id": "01a13de7-e148-7ec2-b76e-14747e41bbd7",
+              "thread_id": "01a13de7-e148-7ec2-b76e-14747e41bbd7",
+              "source": null,
+              "transcript_path": null
+            },
+            {
+              "event": "Stop",
+              "session_id": "01a13de7-e148-7ec2-b76e-14747e41bbd7",
+              "root_id": "01a13de7-e148-7ec2-b76e-14747e41bbd7",
+              "thread_id": "01a13de7-e148-7ec2-b76e-14747e41bbd7",
+              "source": null,
+              "transcript_path": null
+            },
+            {
+              "event": "SessionEnd",
+              "session_id": "01a13de7-e148-7ec2-b76e-14747e41bbd7",
+              "root_id": "01a13de7-e148-7ec2-b76e-14747e41bbd7",
+              "thread_id": "01a13de7-e148-7ec2-b76e-14747e41bbd7",
+              "source": null,
+              "transcript_path": null
+            },
+            {
+              "event": "UserPromptSubmit",
+              "session_id": "01a13de7-e148-7ec2-b76e-14747e41bbd7",
+              "root_id": "01a13de7-e148-7ec2-b76e-14747e41bbd7",
+              "thread_id": "01a13de7-e148-7ec2-b76e-14747e41bbd7",
+              "source": null,
+              "transcript_path": null
+            },
+            {
+              "event": "Stop",
+              "session_id": "01a13de7-e148-7ec2-b76e-14747e41bbd7",
+              "root_id": "01a13de7-e148-7ec2-b76e-14747e41bbd7",
+              "thread_id": "01a13de7-e148-7ec2-b76e-14747e41bbd7",
+              "source": null,
+              "transcript_path": null
+            },
+            {
+              "event": "SessionEnd",
+              "session_id": "01a13de7-e148-7ec2-b76e-14747e41bbd7",
+              "root_id": "01a13de7-e148-7ec2-b76e-14747e41bbd7",
+              "thread_id": "01a13de7-e148-7ec2-b76e-14747e41bbd7",
+              "source": null,
+              "transcript_path": null
+            }
+          ]
+        }
+      }
+    },
+    "muse-q0-final-tui-20261015": {
+      "raw_report_sha256": "d40b3d724c56910ea97cecdfbc013d34dc45676a3d8853a4d875cfc0a12a5d49",
+      "runner_sha256": "95c182ede884416953de7bff85801d21aba94f5ddb1cd5bbcbde30cebda7d3c5",
+      "cases": {
+        "pty": {
+          "assertions": {
+            "startup_visible": true,
+            "synthetic_reply_retained": true
+          },
+          "timezone": "UTC",
+          "observed_utc": "2026-10-15T04:53:39.100287+00:00",
+          "provider_requests": 2,
+          "started": true,
+          "turn_submitted": true,
+          "reply_retained": true,
+          "scope": "one synthetic bracketed-paste turn and interrupt; not compaction/orderly-exit qualification",
+          "sessions": [
+            {
+              "sha256": "ad1185543bfee4fda22c8ed564d4ff1b2743941e5ec9c0603c2183f1e3785603",
+              "bytes": 152427,
+              "lines": 67,
+              "logical_records": 68,
+              "session_id": "01a13de8-6ddf-7283-9000-47eb8a833db1",
+              "folder_date": "2026-10-15",
+              "id_utc_date": "2026-10-15",
+              "payload_types": {
+                "reminder.cleanup_effect.started": 1,
+                "reminder.cleanup_effect.terminal": 1,
+                "run.model.configured": 1,
+                "runtime.command_intake.session_name.received": 1,
+                "runtime.command_intake.settled": 1,
+                "runtime.retained_fact": 1,
+                "runtime.session": 46,
+                "runtime.session.capture_selection": 1,
+                "runtime.session.metadata": 1,
+                "runtime.session.permission_format_declared": 1,
+                "runtime.session.permission_profile_committed": 1,
+                "runtime.session.route_facts": 1,
+                "runtime.session.task": 6,
+                "runtime.user_intent.accepted": 1,
+                "runtime.user_intent.materialized": 1,
+                "session.name.changed": 1,
+                "session.opened.observed": 1,
+                "session.startup_phases.observed": 1
+              },
+              "event_kinds": {
+                "": 17,
+                "accepted": 3,
+                "assistant_message_committed": 1,
+                "cancelled": 1,
+                "completed": 2,
+                "context_block_diagnostic": 11,
+                "context_block_updated": 1,
+                "goal_usage_attribution": 1,
+                "hook_run_started": 3,
+                "hook_run_terminal": 3,
+                "memory_reminder_child_session_linked": 1,
+                "model_completed": 1,
+                "model_input_trace_recorded": 1,
+                "model_request_configured": 1,
+                "model_response_created": 1,
+                "proposed": 3,
+                "provider_request_options_configured": 1,
+                "resource_usage_sampled": 1,
+                "scheduled": 3,
+                "side_effect_intent": 3,
+                "started": 4,
+                "status": 2,
+                "task_stream_linked": 2,
+                "terminal": 1
+              },
+              "opened": [
+                {
+                  "line": 4,
+                  "recorded_at": 1792040010519408,
+                  "session_id": "01a13de8-6ddf-7283-9000-47eb8a833db1",
+                  "resume": false,
+                  "credential_backend": "file"
+                }
+              ]
+            }
+          ],
+          "hook_events": [
+            {
+              "event": "SessionStart",
+              "session_id": "01a13de8-6ddf-7283-9000-47eb8a833db1",
+              "root_id": "01a13de8-6ddf-7283-9000-47eb8a833db1",
+              "thread_id": "01a13de8-6ddf-7283-9000-47eb8a833db1",
+              "source": "startup",
+              "transcript_path": null
+            },
+            {
+              "event": "UserPromptSubmit",
+              "session_id": "01a13de8-6ddf-7283-9000-47eb8a833db1",
+              "root_id": "01a13de8-6ddf-7283-9000-47eb8a833db1",
+              "thread_id": "01a13de8-6ddf-7283-9000-47eb8a833db1",
+              "source": null,
+              "transcript_path": null
+            }
+          ]
+        }
+      }
+    },
+    "muse-q0-final-msp-20261015": {
+      "raw_report_sha256": "5dad85f53366ef49cb83f3c5a68c940c4c7f81a0a7ae9553e2af9f0bf897e289",
+      "runner_sha256": "e9ccf72fa8f8122d14b1c0bb73086426742f41a12caf211c6995d372a08efb9f",
+      "cases": {
+        "msp": {
+          "assertions": {
+            "root_settled": true,
+            "fork_settled": true
+          },
+          "root_id": "01a13deb-3563-7cc1-8b13-d7e19231928d",
+          "fork_id": "01a13deb-6981-7841-a5f7-00e37bb20dde",
+          "provider_requests": 26,
+          "timezone": "UTC",
+          "observed_utc": "2026-10-15T04:56:51.422275+00:00"
+        }
+      }
+    },
+    "muse-q0-review-a-20261015": {
+      "raw_report_sha256": "b649ab9b4da7e84b01b3259915039444fd73132c4e527b206e677f2fce4274c0",
+      "runner_sha256": "ebfcae96fce5288f604f1611873b7c327cca8e6a6adbac45ae3e26b24e1ab8d7",
+      "cases": {
+        "exec-utc": {
+          "assertions": {
+            "fresh_exact_own_starts": true,
+            "fresh_own_stream_identity": true,
+            "fresh_exact_own_replies": true,
+            "fresh_exact_own_usage": true,
+            "fresh_no_unowned_run_events": true,
+            "fresh_exact_own_tools": true,
+            "resumed_exact_own_starts": true,
+            "resumed_own_stream_identity": true,
+            "resumed_exact_own_replies": true,
+            "resumed_exact_own_usage": true,
+            "resumed_no_unowned_run_events": true,
+            "resumed_exact_own_tools": true,
+            "resume_has_true_open": true,
+            "fresh_has_one_false_resume_open": true,
+            "resume_success": true,
+            "resume_preserves_prefix": true,
+            "native_valid_export_clean": true,
+            "native_exact_permission_clean": true,
+            "native_bad_checksum_diagnostic": true,
+            "copy_bytes_identical": true,
+            "copy_native_export_clean": true,
+            "mutation_diagnostics_match": true
+          },
+          "failed": null,
+          "timezone": "UTC",
+          "observed_utc": "2026-10-15T05:02:31.678900+00:00",
+          "provider_requests": 2,
+          "sessions": [
+            {
+              "sha256": "4f58a494ea0a0c59441c86e49b55aee4f701f61b0d043731997272c50168ccb7",
+              "bytes": 239564,
+              "lines": 98,
+              "logical_records": 99,
+              "session_id": "01a13df0-8d81-7c50-943b-a4c565339234",
+              "folder_date": "2026-10-15",
+              "id_utc_date": "2026-10-15"
+            }
+          ]
+        },
+        "exec-minus12": {
+          "assertions": {
+            "fresh_exact_own_starts": true,
+            "fresh_own_stream_identity": true,
+            "fresh_exact_own_replies": true,
+            "fresh_exact_own_usage": true,
+            "fresh_no_unowned_run_events": true,
+            "fresh_exact_own_tools": true,
+            "resumed_exact_own_starts": true,
+            "resumed_own_stream_identity": true,
+            "resumed_exact_own_replies": true,
+            "resumed_exact_own_usage": true,
+            "resumed_no_unowned_run_events": true,
+            "resumed_exact_own_tools": true,
+            "resume_has_true_open": true,
+            "fresh_has_one_false_resume_open": true,
+            "resume_success": true,
+            "resume_preserves_prefix": true,
+            "native_valid_export_clean": true,
+            "native_exact_permission_clean": true,
+            "native_bad_checksum_diagnostic": true,
+            "copy_bytes_identical": true,
+            "copy_native_export_clean": true,
+            "mutation_diagnostics_match": true
+          },
+          "failed": null,
+          "timezone": "Etc/GMT+12",
+          "observed_utc": "2026-10-15T05:02:46.918612+00:00",
+          "provider_requests": 2,
+          "sessions": [
+            {
+              "sha256": "22fd782a851142149367983abcf63a3058c132da7b7ce36d4855e4e398444e2e",
+              "bytes": 239674,
+              "lines": 98,
+              "logical_records": 99,
+              "session_id": "01a13df0-c557-7063-a1e7-9dbb063d4e95",
+              "folder_date": "2026-10-14",
+              "id_utc_date": "2026-10-15"
+            }
+          ]
+        },
+        "exec-plus14": {
+          "assertions": {
+            "fresh_exact_own_starts": true,
+            "fresh_own_stream_identity": true,
+            "fresh_exact_own_replies": true,
+            "fresh_exact_own_usage": true,
+            "fresh_no_unowned_run_events": true,
+            "fresh_exact_own_tools": true,
+            "resumed_exact_own_starts": true,
+            "resumed_own_stream_identity": true,
+            "resumed_exact_own_replies": true,
+            "resumed_exact_own_usage": true,
+            "resumed_no_unowned_run_events": true,
+            "resumed_exact_own_tools": true,
+            "resume_has_true_open": true,
+            "fresh_has_one_false_resume_open": true,
+            "resume_success": true,
+            "resume_preserves_prefix": true,
+            "native_valid_export_clean": true,
+            "native_exact_permission_clean": true,
+            "native_bad_checksum_diagnostic": true,
+            "copy_bytes_identical": true,
+            "copy_native_export_clean": true,
+            "mutation_diagnostics_match": true
+          },
+          "failed": null,
+          "timezone": "Pacific/Kiritimati",
+          "observed_utc": "2026-10-15T05:03:04.445529+00:00",
+          "provider_requests": 2,
+          "sessions": [
+            {
+              "sha256": "e970f00a01fca418259b9c1b41e767316464764baf45eab7fbae616edeaab8b5",
+              "bytes": 239653,
+              "lines": 98,
+              "logical_records": 99,
+              "session_id": "01a13df1-00e9-7d91-94ef-33341ec770b0",
+              "folder_date": "2026-10-15",
+              "id_utc_date": "2026-10-15"
+            }
+          ]
+        },
+        "exec-tool": {
+          "assertions": {
+            "fresh_exact_own_starts": true,
+            "fresh_own_stream_identity": true,
+            "fresh_exact_own_replies": true,
+            "fresh_exact_own_usage": true,
+            "fresh_no_unowned_run_events": true,
+            "fresh_exact_own_tools": true,
+            "resumed_exact_own_starts": true,
+            "resumed_own_stream_identity": true,
+            "resumed_exact_own_replies": true,
+            "resumed_exact_own_usage": true,
+            "resumed_no_unowned_run_events": true,
+            "resumed_exact_own_tools": true,
+            "resume_has_true_open": true,
+            "fresh_has_one_false_resume_open": true,
+            "resume_success": true,
+            "resume_preserves_prefix": true,
+            "native_valid_export_clean": true,
+            "native_exact_permission_clean": true,
+            "native_bad_checksum_diagnostic": true,
+            "copy_bytes_identical": true,
+            "copy_native_export_clean": true,
+            "mutation_diagnostics_match": true
+          },
+          "failed": null,
+          "timezone": "UTC",
+          "observed_utc": "2026-10-15T05:03:34.974303+00:00",
+          "provider_requests": 3,
+          "sessions": [
+            {
+              "sha256": "65a1e66f0055668b96b81f72746c6620aeceb4effaad3ed1bab35f5a42393db9",
+              "bytes": 265225,
+              "lines": 125,
+              "logical_records": 126,
+              "session_id": "01a13df1-456b-78d3-ad04-bf83dd60ab36",
+              "folder_date": "2026-10-15",
+              "id_utc_date": "2026-10-15"
+            }
+          ]
+        },
+        "msp": {
+          "assertions": {
+            "root_log_present": true,
+            "fork_log_present": true,
+            "root_exact_own_starts": true,
+            "root_own_stream_identity": true,
+            "root_exact_own_replies": true,
+            "root_exact_own_usage": true,
+            "root_no_unowned_run_events": true,
+            "root_exact_own_tools": true,
+            "fork_exact_own_starts": true,
+            "fork_own_stream_identity": true,
+            "fork_exact_own_replies": true,
+            "fork_exact_own_usage": true,
+            "fork_no_unowned_run_events": true,
+            "fork_exact_own_tools": true
+          },
+          "failed": null,
+          "timezone": "UTC",
+          "observed_utc": "2026-10-15T05:03:54.643806+00:00",
+          "provider_requests": 26,
+          "sessions": [
+            {
+              "sha256": "b05a6f001ba9dd1c8d3bf04581e366f8aa672dda02c5dd85e48005acae9e5205",
+              "bytes": 157256,
+              "lines": 74,
+              "logical_records": 75,
+              "session_id": "01a13df1-ca87-7af1-a63f-0b4cae9b0dd1",
+              "folder_date": "2026-10-15",
+              "id_utc_date": "2026-10-15"
+            },
+            {
+              "sha256": "e4a7f1be191ecbb668d4d94ed5a562d7e974f5a245e0ed56ac809079c5e32b6a",
+              "bytes": 136302,
+              "lines": 75,
+              "logical_records": 76,
+              "session_id": "01a13df1-e6e4-7bb3-a683-8b837b3d5a61",
+              "folder_date": "2026-10-15",
+              "id_utc_date": "2026-10-15"
+            }
+          ]
+        },
+        "pty": {
+          "assertions": {
+            "startup_visible": true,
+            "synthetic_reply_retained": true,
+            "one_root_log": true,
+            "exact_own_starts": true,
+            "own_stream_identity": true,
+            "exact_own_replies": true,
+            "exact_own_usage": true,
+            "no_unowned_run_events": true,
+            "exact_own_tools": true
+          },
+          "failed": null,
+          "timezone": "UTC",
+          "observed_utc": "2026-10-15T05:04:06.832302+00:00",
+          "provider_requests": 4,
+          "sessions": [
+            {
+              "sha256": "fb64806bb09a2ad1e4931cee1909166bc079d468f174ef8f3d9984cf39cae782",
+              "bytes": 152403,
+              "lines": 67,
+              "logical_records": 68,
+              "session_id": "01a13df2-09c5-74b3-878f-c782d8132552",
+              "folder_date": "2026-10-15",
+              "id_utc_date": "2026-10-15"
+            }
+          ]
+        }
+      }
+    },
+    "muse-q0-review-b-frozen-20261015": {
+      "raw_report_sha256": "517cd361f6129b01dc95559e2d13426f2311f02cbf3a6f32007c0d61db27e862",
+      "runner_sha256": "035555383c9a34f3e2cab0c883993c39a9ade3f4e2ad913b26089162b8502240",
+      "cases": {
+        "exec-utc": {
+          "assertions": {
+            "fresh_exact_own_starts": true,
+            "fresh_own_stream_identity": true,
+            "fresh_exact_own_replies": true,
+            "fresh_exact_own_usage": true,
+            "fresh_no_unowned_run_events": true,
+            "fresh_exact_own_tools": true,
+            "resumed_exact_own_starts": true,
+            "resumed_own_stream_identity": true,
+            "resumed_exact_own_replies": true,
+            "resumed_exact_own_usage": true,
+            "resumed_no_unowned_run_events": true,
+            "resumed_exact_own_tools": true,
+            "resume_has_true_open": true,
+            "fresh_has_one_false_resume_open": true,
+            "resume_success": true,
+            "resume_preserves_prefix": true,
+            "native_valid_export_clean": true,
+            "native_exact_permission_clean": true,
+            "native_bad_checksum_diagnostic": true,
+            "copy_bytes_identical": true,
+            "copy_native_export_clean": true,
+            "mutation_diagnostics_match": true
+          },
+          "failed": null,
+          "timezone": "UTC",
+          "observed_utc": "2026-10-15T05:18:38.225620+00:00",
+          "provider_requests": 2,
+          "sessions": [
+            {
+              "sha256": "3410a9f3f13faa333dc2e014f3c511d7888d83714e8965d1b1c424eb8899d0c2",
+              "bytes": 239759,
+              "lines": 98,
+              "logical_records": 99,
+              "session_id": "01a13dff-4703-72d0-8604-116de0bdb008",
+              "folder_date": "2026-10-15",
+              "id_utc_date": "2026-10-15"
+            }
+          ]
+        },
+        "exec-minus12": {
+          "assertions": {
+            "fresh_exact_own_starts": true,
+            "fresh_own_stream_identity": true,
+            "fresh_exact_own_replies": true,
+            "fresh_exact_own_usage": true,
+            "fresh_no_unowned_run_events": true,
+            "fresh_exact_own_tools": true,
+            "resumed_exact_own_starts": true,
+            "resumed_own_stream_identity": true,
+            "resumed_exact_own_replies": true,
+            "resumed_exact_own_usage": true,
+            "resumed_no_unowned_run_events": true,
+            "resumed_exact_own_tools": true,
+            "resume_has_true_open": true,
+            "fresh_has_one_false_resume_open": true,
+            "resume_success": true,
+            "resume_preserves_prefix": true,
+            "native_valid_export_clean": true,
+            "native_exact_permission_clean": true,
+            "native_bad_checksum_diagnostic": true,
+            "copy_bytes_identical": true,
+            "copy_native_export_clean": true,
+            "mutation_diagnostics_match": true
+          },
+          "failed": null,
+          "timezone": "Etc/GMT+12",
+          "observed_utc": "2026-10-15T05:19:03.520055+00:00",
+          "provider_requests": 2,
+          "sessions": [
+            {
+              "sha256": "f0e0609c34b1b2bc28af0547239d1ac88a74c981fd88e3380e57e34ca31546fa",
+              "bytes": 239859,
+              "lines": 98,
+              "logical_records": 99,
+              "session_id": "01a13dff-84e0-7673-ba69-dbe78968a618",
+              "folder_date": "2026-10-14",
+              "id_utc_date": "2026-10-15"
+            }
+          ]
+        },
+        "exec-plus14": {
+          "assertions": {
+            "fresh_exact_own_starts": true,
+            "fresh_own_stream_identity": true,
+            "fresh_exact_own_replies": true,
+            "fresh_exact_own_usage": true,
+            "fresh_no_unowned_run_events": true,
+            "fresh_exact_own_tools": true,
+            "resumed_exact_own_starts": true,
+            "resumed_own_stream_identity": true,
+            "resumed_exact_own_replies": true,
+            "resumed_exact_own_usage": true,
+            "resumed_no_unowned_run_events": true,
+            "resumed_exact_own_tools": true,
+            "resume_has_true_open": true,
+            "fresh_has_one_false_resume_open": true,
+            "resume_success": true,
+            "resume_preserves_prefix": true,
+            "native_valid_export_clean": true,
+            "native_exact_permission_clean": true,
+            "native_bad_checksum_diagnostic": true,
+            "copy_bytes_identical": true,
+            "copy_native_export_clean": true,
+            "mutation_diagnostics_match": true
+          },
+          "failed": null,
+          "timezone": "Pacific/Kiritimati",
+          "observed_utc": "2026-10-15T05:19:22.869310+00:00",
+          "provider_requests": 2,
+          "sessions": [
+            {
+              "sha256": "0683b98821f948142b8daa5c2ccaa9462588a2da7d07c2537c460b8b78068d9d",
+              "bytes": 239853,
+              "lines": 98,
+              "logical_records": 99,
+              "session_id": "01a13dff-e93a-7443-9d12-22fbc8c75097",
+              "folder_date": "2026-10-15",
+              "id_utc_date": "2026-10-15"
+            }
+          ]
+        },
+        "exec-tool": {
+          "assertions": {
+            "fresh_exact_own_starts": true,
+            "fresh_own_stream_identity": true,
+            "fresh_exact_own_replies": true,
+            "fresh_exact_own_usage": true,
+            "fresh_no_unowned_run_events": true,
+            "fresh_exact_own_tools": true,
+            "resumed_exact_own_starts": true,
+            "resumed_own_stream_identity": true,
+            "resumed_exact_own_replies": true,
+            "resumed_exact_own_usage": true,
+            "resumed_no_unowned_run_events": true,
+            "resumed_exact_own_tools": true,
+            "resume_has_true_open": true,
+            "fresh_has_one_false_resume_open": true,
+            "resume_success": true,
+            "resume_preserves_prefix": true,
+            "native_valid_export_clean": true,
+            "native_exact_permission_clean": true,
+            "native_bad_checksum_diagnostic": true,
+            "copy_bytes_identical": true,
+            "copy_native_export_clean": true,
+            "mutation_diagnostics_match": true
+          },
+          "failed": null,
+          "timezone": "UTC",
+          "observed_utc": "2026-10-15T05:19:46.389990+00:00",
+          "provider_requests": 3,
+          "sessions": [
+            {
+              "sha256": "457e59ae7b8660f4bc76e9ecf2540bf2d8aa35179d8508998e9e2a43b8ce00e5",
+              "bytes": 265450,
+              "lines": 125,
+              "logical_records": 126,
+              "session_id": "01a13e00-33d9-7b33-84e3-fbc909510c8d",
+              "folder_date": "2026-10-15",
+              "id_utc_date": "2026-10-15"
+            }
+          ]
+        },
+        "msp": {
+          "assertions": {
+            "root_log_present": true,
+            "fork_log_present": true,
+            "root_exact_own_starts": true,
+            "root_own_stream_identity": true,
+            "root_exact_own_replies": true,
+            "root_exact_own_usage": true,
+            "root_no_unowned_run_events": true,
+            "root_exact_own_tools": true,
+            "fork_exact_own_starts": true,
+            "fork_own_stream_identity": true,
+            "fork_exact_own_replies": true,
+            "fork_exact_own_usage": true,
+            "fork_no_unowned_run_events": true,
+            "fork_exact_own_tools": true
+          },
+          "failed": null,
+          "timezone": "UTC",
+          "observed_utc": "2026-10-15T05:20:14.961982+00:00",
+          "provider_requests": 26,
+          "sessions": [
+            {
+              "sha256": "8f621770d06b855d3c9b062cd049ccb437a981e7fd4ab7dbc34ee445e7068e07",
+              "bytes": 157376,
+              "lines": 74,
+              "logical_records": 75,
+              "session_id": "01a13e00-98e1-7911-ad8b-8fa3f3f6d5a2",
+              "folder_date": "2026-10-15",
+              "id_utc_date": "2026-10-15"
+            },
+            {
+              "sha256": "dfa86dd94104887b55b87d257e2922d17399811b6761b566b05c36bf5bbdff9d",
+              "bytes": 136417,
+              "lines": 75,
+              "logical_records": 76,
+              "session_id": "01a13e00-cf2b-79e1-a8f6-ffd76a18d578",
+              "folder_date": "2026-10-15",
+              "id_utc_date": "2026-10-15"
+            }
+          ]
+        },
+        "pty": {
+          "assertions": {
+            "startup_visible": true,
+            "synthetic_reply_retained": true,
+            "one_root_log": true,
+            "exact_own_starts": true,
+            "own_stream_identity": true,
+            "exact_own_replies": true,
+            "exact_own_usage": true,
+            "no_unowned_run_events": true,
+            "exact_own_tools": true
+          },
+          "failed": null,
+          "timezone": "UTC",
+          "observed_utc": "2026-10-15T05:20:35.176386+00:00",
+          "provider_requests": 2,
+          "sessions": [
+            {
+              "sha256": "a83e577da6129f9a59cd5ddf6c641a4431c566a284c554c99b221471b817d9c9",
+              "bytes": 152529,
+              "lines": 67,
+              "logical_records": 68,
+              "session_id": "01a13e00-ff90-7903-9614-01aa4d7a9b22",
+              "folder_date": "2026-10-15",
+              "id_utc_date": "2026-10-15"
+            }
+          ]
+        }
+      }
+    },
+    "muse-q0-review-c-20261015": {
+      "raw_report_sha256": "d3f8006f6a43c473f21c39437248a377a019b01a61ec605510155c7926ac5930",
+      "runner_sha256": "b1a5713ad1750ea4807d1322e205d3e8a8159c8a3216379bea950a78f050d2e1",
+      "cases": {
+        "exec-utc": {
+          "assertions": {
+            "fresh_exact_own_starts": true,
+            "fresh_own_stream_identity": true,
+            "fresh_exact_own_replies": true,
+            "fresh_exact_own_usage": true,
+            "fresh_no_unowned_run_events": true,
+            "fresh_exact_own_tools": true,
+            "resumed_exact_own_starts": true,
+            "resumed_own_stream_identity": true,
+            "resumed_exact_own_replies": true,
+            "resumed_exact_own_usage": true,
+            "resumed_no_unowned_run_events": true,
+            "resumed_exact_own_tools": true,
+            "resume_has_true_open": true,
+            "fresh_has_one_false_resume_open": true,
+            "resume_success": true,
+            "resume_preserves_prefix": true,
+            "native_valid_export_clean": true,
+            "native_exact_permission_clean": true,
+            "native_bad_checksum_diagnostic": true,
+            "copy_bytes_identical": true,
+            "copy_native_export_clean": true,
+            "mutation_diagnostics_match": true
+          },
+          "timezone": "UTC",
+          "observed_utc": "2026-10-15T05:27:26.655159+00:00",
+          "provider_requests": 2
+        }
+      }
+    }
+  },
+  "failed_attempts": [
+    {
+      "attempt": "sandboxed run1",
+      "stage": "loopback server bind",
+      "result": "PermissionError errno1; no native process/provider request; rerun with approved loopback host permission"
+    },
+    {
+      "attempt": "run2 interrupted",
+      "stage": "first exec initialization with pre-final environment lacking explicit file backend",
+      "result": "no retained native log before stop; default keychain selection risk identified; not qualified or included as passing isolation evidence",
+      "exact_terminal_capture": "not retained by pre-final runner; do not infer backend nonaccess"
+    },
+    {
+      "attempt": "run3 exec-utc",
+      "stage": "fresh exec",
+      "exit": -15,
+      "timeout": true,
+      "stdout": "",
+      "stderr": "",
+      "result": "pre-log deadline; corrected file backend already set; later fresh UTC repeats succeeded; timeout cause unestablished"
+    },
+    {
+      "attempt": "run3/run4 MSP",
+      "stage": "launch",
+      "exit": "not recorded by pre-final mode wrapper",
+      "stderr": "muse serve: unexpected argument --disable-reminders found",
+      "result": "harness passed exec-only flags; corrected mode-specific argv"
+    },
+    {
+      "attempt": "hooks MSP",
+      "stage": "session/start",
+      "protocol_error": {
+        "code": -32602,
+        "message": "invalid session/start commandId: expected UUIDv7",
+        "data": {
+          "kind": "invalidParams"
+        }
+      },
+      "result": "harness UUIDv4 rejected; corrected to required UUIDv7"
+    },
+    {
+      "attempt": "earlier PTY modes",
+      "stage": "startup/interrupt",
+      "result": "OSError errno5 or no output before startup deadline; no successful TUI claim; corrected terminal size and cursor-position response"
+    }
+  ],
+  "gates": {
+    "independent_permission_integrity": "OPEN: exact checksum preimage/encoding contract missing",
+    "original_root_creation": "OPEN: fresh opening observed, copying preserves same observation; original creation authority not independently established",
+    "child_branch_creation": "OPEN: fork own turn observed, no child/delegation or creation authority qualified",
+    "checkpoint_frontiers": "OPEN: not exercised; unsupported records must refuse",
+    "native_tui_exec_serve": "observations only: synthetic root turns; no archive publication, read-back, comprehensive failure/signals/compaction acceptance",
+    "platforms": "only native macOS x86_64 observed; Linux/arm64 OPEN",
+    "real_accounting": "OPEN: synthetic counters do not establish billing/cache overlap; MSP made background requests beyond two own retained model completions",
+    "release_capture": "UNAVAILABLE: no product integration implemented; integrity/creation block enablement"
+  },
+  "validation": [
+    {
+      "command": "go test -short -count=1 ./internal/agents/builtin ./internal/agentapi ./internal/sourceio ./internal/transcriptio ./internal/discoveryio",
+      "result": "PASS"
+    },
+    {
+      "command": "go test -race -short -count=1 -run ^TestFourth ./internal/cli",
+      "result": "PASS"
+    },
+    {
+      "command": "go test -short -count=1 -run ^Test(Native(Link|LateParent|ParentRepair|FrozenParent)|LegacyNativeChild) ./internal/collector",
+      "result": "PASS"
+    },
+    {
+      "command": "go test -short -count=1 -run ^Test(OnlyCodexIsRegisteredAndEnumerationIsBoundedAndCancelled|ConflictingSourceDoesNotStarveLaterDirectoryBatches|UnavailableDirectoryRetriesNextPassWithoutStarvingBacklog|BoundedScanContinuesFairlyAcrossActiveAndArchivedSources)$ ./internal/discovery",
+      "result": "PASS"
+    },
+    {
+      "command": "python3 -B scripts/test_muse_qualification.py",
+      "result": "PASS: 8 offline tests"
+    },
+    {
+      "command": "python3 -B scripts/test_ci_workflow.py",
+      "result": "PASS: 22 tests"
+    },
+    {
+      "command": "go test -short -count=1 ./internal/doclinks",
+      "result": "PASS after adding results.json; earlier missing-link failure retained in implementation report"
+    },
+    {
+      "command": "git diff --check",
+      "result": "PASS"
+    }
+  ],
+  "independent_offline_mutations": {
+    "raw_report_sha256": "13f6f6f6184fb64efcac2fd4d911a70eb20c7c1af0e428e93cec3071610547c1",
+    "observations": [
+      {
+        "name": "ordinary_exact",
+        "input_sha256": "c3df5e89fdc755a785e9903da9381b6f823ecf6d82d10b11ccd3b5165fb1aea0",
+        "exit": 0,
+        "diagnostics": {
+          "unparseable_lines": 0,
+          "unknown_payload_kinds": 0,
+          "gaps": 0,
+          "omitted_live_only": 0,
+          "duplicate_records": 0
+        },
+        "event_count": 1,
+        "stderr": ""
+      },
+      {
+        "name": "ordinary_whitespace",
+        "input_sha256": "c92f7c27aa4fc572297914ca35faeb89afd12377c98dd15898886668a757c927",
+        "exit": 0,
+        "diagnostics": {
+          "unparseable_lines": 0,
+          "unknown_payload_kinds": 0,
+          "gaps": 0,
+          "omitted_live_only": 0,
+          "duplicate_records": 0
+        },
+        "event_count": 1,
+        "stderr": ""
+      },
+      {
+        "name": "ordinary_reverse_keys",
+        "input_sha256": "0497b2a8e5562b504a11c504110a49c47041c0070e9b0129cf4f3e7446af09e4",
+        "exit": 0,
+        "diagnostics": {
+          "unparseable_lines": 0,
+          "unknown_payload_kinds": 0,
+          "gaps": 0,
+          "omitted_live_only": 0,
+          "duplicate_records": 0
+        },
+        "event_count": 1,
+        "stderr": ""
+      },
+      {
+        "name": "ordinary_timestamp_change",
+        "input_sha256": "abd470be44cee6ce481acf9c66e5e2610b1394ed0c6ec82ec80381fa0d327dff",
+        "exit": 0,
+        "diagnostics": {
+          "unparseable_lines": 0,
+          "unknown_payload_kinds": 0,
+          "gaps": 0,
+          "omitted_live_only": 0,
+          "duplicate_records": 0
+        },
+        "event_count": 1,
+        "stderr": ""
+      },
+      {
+        "name": "ordinary_payload_change",
+        "input_sha256": "ba755ebca885754714590c344fc4765562e6dd1bcbd13c990687cf34addf8f15",
+        "exit": 0,
+        "diagnostics": {
+          "unparseable_lines": 0,
+          "unknown_payload_kinds": 0,
+          "gaps": 0,
+          "omitted_live_only": 0,
+          "duplicate_records": 0
+        },
+        "event_count": 1,
+        "stderr": ""
+      },
+      {
+        "name": "ordinary_missing_schema",
+        "input_sha256": "908ace717c4cd8cbb6ed026d56052e40ee4efdbbee1012aa0b625083633aa9d0",
+        "exit": 0,
+        "diagnostics": {
+          "unparseable_lines": 1,
+          "unknown_payload_kinds": 0,
+          "gaps": 0,
+          "omitted_live_only": 0,
+          "duplicate_records": 0
+        },
+        "event_count": 1,
+        "stderr": ""
+      },
+      {
+        "name": "ordinary_invalid_schema",
+        "input_sha256": "8949c51f314cd119b0bfc890f0faeab6e88af2fba799610767d80c8003989074",
+        "exit": 0,
+        "diagnostics": {
+          "unparseable_lines": 0,
+          "unknown_payload_kinds": 0,
+          "gaps": 0,
+          "omitted_live_only": 0,
+          "duplicate_records": 0
+        },
+        "event_count": 1,
+        "stderr": ""
+      },
+      {
+        "name": "ordinary_unknown_payload",
+        "input_sha256": "32dda7d13306766ccd31e2d6da645ab9ac44f9fdb04a9dced96a16b09765c8f3",
+        "exit": 0,
+        "diagnostics": {
+          "unparseable_lines": 0,
+          "unknown_payload_kinds": 1,
+          "gaps": 0,
+          "omitted_live_only": 0,
+          "duplicate_records": 0
+        },
+        "event_count": 1,
+        "stderr": ""
+      },
+      {
+        "name": "ordinary_added_checksum",
+        "input_sha256": "9103d48653131b4005dd171bd8fbfdb3d3ef9fe9090a2425b081f425a3321ee8",
+        "exit": 0,
+        "diagnostics": {
+          "unparseable_lines": 0,
+          "unknown_payload_kinds": 0,
+          "gaps": 0,
+          "omitted_live_only": 0,
+          "duplicate_records": 0
+        },
+        "event_count": 1,
+        "stderr": ""
+      },
+      {
+        "name": "permission_exact",
+        "input_sha256": "e74bb4df18a569804814836d786839fc0679ee6f848a8b25f4c5a3253d94c726",
+        "exit": 0,
+        "diagnostics": {
+          "unparseable_lines": 0,
+          "unknown_payload_kinds": 0,
+          "gaps": 0,
+          "omitted_live_only": 0,
+          "duplicate_records": 0
+        },
+        "event_count": 1,
+        "stderr": ""
+      },
+      {
+        "name": "permission_leading_space",
+        "input_sha256": "c69185282a4d17d9f661fe0b977a048e4cd3f27b695e88969602a7ab551f676c",
+        "exit": 0,
+        "diagnostics": {
+          "unparseable_lines": 1,
+          "unknown_payload_kinds": 0,
+          "gaps": 0,
+          "omitted_live_only": 0,
+          "duplicate_records": 0
+        },
+        "event_count": 1,
+        "stderr": ""
+      },
+      {
+        "name": "permission_trailing_space",
+        "input_sha256": "0d8e626d71e651d8d10f3c6c3434a642514a5e299253189772a08a402c37fa36",
+        "exit": 0,
+        "diagnostics": {
+          "unparseable_lines": 1,
+          "unknown_payload_kinds": 0,
+          "gaps": 0,
+          "omitted_live_only": 0,
+          "duplicate_records": 0
+        },
+        "event_count": 1,
+        "stderr": ""
+      },
+      {
+        "name": "permission_frame_string_escape",
+        "input_sha256": "6ecf77d1113012dcc8eb2b29cbce8aa1385c6484256cd853cb899223ec537eb3",
+        "exit": 0,
+        "diagnostics": {
+          "unparseable_lines": 1,
+          "unknown_payload_kinds": 0,
+          "gaps": 0,
+          "omitted_live_only": 0,
+          "duplicate_records": 0
+        },
+        "event_count": 1,
+        "stderr": ""
+      },
+      {
+        "name": "permission_outer_reorder",
+        "input_sha256": "4a938e3e7f2fe085368046189fab753c5912fc4b347c8514b1b1f5c6146e6211",
+        "exit": 0,
+        "diagnostics": {
+          "unparseable_lines": 1,
+          "unknown_payload_kinds": 0,
+          "gaps": 0,
+          "omitted_live_only": 0,
+          "duplicate_records": 0
+        },
+        "event_count": 1,
+        "stderr": ""
+      },
+      {
+        "name": "permission_children_key_reorder",
+        "input_sha256": "8c224e2fa85ca0b20b92889c29b6af5527b8926198e071cd89406202986fe7d2",
+        "exit": 0,
+        "diagnostics": {
+          "unparseable_lines": 1,
+          "unknown_payload_kinds": 0,
+          "gaps": 0,
+          "omitted_live_only": 0,
+          "duplicate_records": 0
+        },
+        "event_count": 1,
+        "stderr": ""
+      }
+    ],
+    "claim": "native behavior only; no independently recomputed transaction integrity"
+  },
+  "validation_context": "Go1.27.2; GOCACHE=/private/tmp/aa-muse-q0-gocache; no product Go changes. Doclinks/whitespace rechecked after record creation.",
+  "corpus_review": {
+    "method": "Every retained value reviewed through explicit path projection; long-string audit found no long arbitrary retained strings; native permission vector inspected separately. Context/provider requests never copied.",
+    "files": {
+      "msp-root.manifest.json": {
+        "sanitized_sha256": "fe627ae08a86a1c92e7df0d35a5f78644f79f06450df4f914bc670f0f899cff3",
+        "logical_records": 75,
+        "native_physical_lines": 74
+      },
+      "root-tool-resume.manifest.json": {
+        "sanitized_sha256": "94d83a9fe48d3b9d786b7ded3122ff0fa0e2a4bfa929419beb9a44aa5469736f",
+        "logical_records": 126,
+        "native_physical_lines": 125
+      },
+      "root-resume.manifest.json": {
+        "sanitized_sha256": "28269a1615ead8a0171f6801d4d62ee4a8a0a6824dc1540a865a3c44c5dae91b",
+        "logical_records": 99,
+        "native_physical_lines": 98
+      },
+      "msp-fork.manifest.json": {
+        "sanitized_sha256": "2658893acf2db0936ab5823d6f72a73997cee136cf64384e90d77f7e2c6ccc16",
+        "logical_records": 76,
+        "native_physical_lines": 75
+      },
+      "tui-root.manifest.json": {
+        "sanitized_sha256": "ae0cd0359474e57a17b20f627a94eb3579e6a775e2a04216ae63447c147c0456",
+        "logical_records": 78,
+        "native_physical_lines": 77
+      }
+    }
+  },
+  "review_repairs": {
+    "scope": "Runner and corpus-helper controls only; historical campaigns retain their actual old assertions and hashes. Capture authority remains unavailable.",
+    "findings": {
+      "Q0-A-001": "SIGTERM now unwinds owned-process cleanup and records interrupted case failure. Original runner left an isolated sleep child alive after SIGTERM; reproduction child manually cleaned.",
+      "Q0-A-002": "Each exec fresh/resume, MSP root/fork and PTY checks retained own identity, starts, replies, exact model usage and tools. A successful resume with unchanged log passed all original assertions; now fails.",
+      "Q0-A-003": "Corpus projection now requires nonempty uniquely paired own synthetic prompts/replies and refuses existing output or manifest."
+    },
+    "validation": [
+      "python3 -B scripts/test_muse_qualification.py: PASS 12 offline tests",
+      "All five spec section 7 Go commands independently rerun: PASS",
+      "go test -short -count=1 ./internal/doclinks: PASS",
+      "python3 -B scripts/test_ci_workflow.py: PASS 22 tests",
+      "All six fresh isolated native cases: PASS; report and runner hashes pinned in review campaign"
+    ],
+    "unchanged_gates": {
+      "independent_permission_integrity": "OPEN: exact checksum preimage/encoding contract missing",
+      "original_root_creation": "OPEN: fresh opening observed, copying preserves same observation; original creation authority not independently established",
+      "child_branch_creation": "OPEN: fork own turn observed, no child/delegation or creation authority qualified",
+      "checkpoint_frontiers": "OPEN: not exercised; unsupported records must refuse",
+      "native_tui_exec_serve": "observations only: synthetic root turns; no archive publication, read-back, comprehensive failure/signals/compaction acceptance",
+      "platforms": "only native macOS x86_64 observed; Linux/arm64 OPEN",
+      "real_accounting": "OPEN: synthetic counters do not establish billing/cache overlap; MSP made background requests beyond two own retained model completions",
+      "release_capture": "UNAVAILABLE: no product integration implemented; integrity/creation block enablement"
+    }
+  },
+  "review_b_repairs": {
+    "scope": "Harness resource acquisition and CI ownership controls; all prior native evidence and authority gates preserved. No production capture operation.",
+    "findings": {
+      "Q0-B-001": "Bound exec/export and MSP streams, individual MSP lines and pending messages. Acquire native logs/exports/corpus input with a strict 32 MiB per-file read cap and hook evidence with 1 MiB cap. Refuse oversized evidence and explicitly record finalization acquisition failure. These are harness bounds, not native-format limits or scratch disk quotas.",
+      "Q0-B-002": "Add the Muse offline suite to the exact script-static invocation ownership inventory; existing duplicate and single-owner gates remain.",
+      "Q0-B-003": "Publish the SIGTERM test child PID atomically so readiness cannot observe an empty file."
+    },
+    "validation": [
+      "python3 -B scripts/test_muse_qualification.py: PASS 16 tests",
+      "python3 -B scripts/test_ci_workflow.py: PASS 22 tests",
+      "python3 -B scripts/test_ci_lane_verdict.py: original failure reproduced, then PASS 5 tests",
+      "All spec section 7 Go extension-point commands independently rerun: PASS, including TestFourth race",
+      "go test -short -count=1 ./internal/doclinks: PASS after README changes",
+      "git diff --check: PASS",
+      "Final frozen-source all-six isolated native campaign: PASS exit 0, no failed case or false assertion; startup and post-run runner hashes match"
+    ],
+    "intermediate_campaigns": [
+      {
+        "campaign": "muse-q0-review-b-20261015",
+        "raw_report_sha256": "5e4bf5eb39f0db1c696ea47daf89245173db4d84018e0bc6645582abe47c9449",
+        "loaded_runner_sha256": "a9fac75ce8a68fb81d3f36374f19d52b9703e089ac5d8b1244a969313d9371e6",
+        "outcome": "PASS all six; intermediate source, not final-source evidence"
+      },
+      {
+        "campaign": "muse-q0-review-b-final-20261015",
+        "raw_report_sha256": "6af5c59d9f0352a4887b9a20c3ca9ec4d85e54564dc54e5c1eaf72d5963075b9",
+        "loaded_runner_sha256": "36bb7f21a0c0375a5880eae50e4dc41a5745a1c88599dfcc486bc3dedb8121a4",
+        "outcome": "PASS all six; intermediate source, not final-source evidence"
+      },
+      {
+        "campaign": "muse-q0-review-b-bounded-files-20261015",
+        "raw_report_sha256": "acc67166921af01bd671a4c35f54dc9f94332ae5ea0c31a2b780aef413474283",
+        "loaded_runner_sha256": "51a9cb5acfd4d23fe03e9d0de70569d8e8c66c6511b0789cb2a46af35e9d7baa",
+        "outcome": "PASS all six; intermediate source, not final-source evidence"
+      }
+    ],
+    "unchanged_gates": "All existing gates remain OPEN/unavailable as recorded in gates; native export is not independent integrity authority."
+  },
+  "review_c_repairs": {
+    "scope": "Export outcome assertions only; invocation behavior, synthetic corpus and authority gates unchanged. Earlier all-six campaign keeps its original runner hash; updated runner has focused exec-utc native evidence.",
+    "findings": {
+      "Q0-C-001": "Full-session, exact-permission, invalid-permission and copied-session export checks now require zero exit, no timeout and a written document before matching diagnostics. Previously clean documents could conceal failed or timed-out exporters."
+    },
+    "validation": [
+      "New regression has eight expected failing subcases against original 91a927b7 runner; all pass after repair.",
+      "python3 -B scripts/test_muse_qualification.py: PASS 17 tests",
+      "python3 -B scripts/test_ci_workflow.py: PASS 22 tests",
+      "python3 -B scripts/test_ci_lane_verdict.py: PASS 5 tests",
+      "Focused pinned native exec-utc: PASS 22 assertions; all four export commands exit 0 with timeout false."
+    ],
+    "unchanged_gates": "All existing integrity, creation, children, checkpoint, platform, provider/accounting and storage/capture authority gates remain OPEN/unavailable."
+  }
+}

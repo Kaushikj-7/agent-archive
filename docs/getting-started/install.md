@@ -123,13 +123,34 @@ character, such as a home directory named `/home/o'brien`); install the
 binary elsewhere with `AGENT_ARCHIVE_INSTALL_DIR`.
 
 **On Linux** the binary is not signed, so the checksum only guards against a
-damaged download. The installer says so and prints the command that confirms
-the binary came from this repository's release workflow, which needs the
-[GitHub CLI](https://cli.github.com/):
+damaged download. After the checksum passes and before anything is installed
+or run, the current-checkout installer checks the downloaded file's GitHub
+build-provenance attestation with the [GitHub CLI](https://cli.github.com/),
+and there are three outcomes:
 
-```sh
-gh attestation verify "$(command -v agent-archive)" --repo wangjohn/agent-archive
-```
+- **`gh` is on your `PATH`:** the installer runs
+  `gh attestation verify <downloaded file> --repo wangjohn/agent-archive --hostname github.com --signer-workflow github.com/wangjohn/agent-archive/.github/workflows/release.yml`.
+  This pins lookup to github.com and the signer to this repository’s release workflow,
+  independently of an ambient `GH_HOST`. If the attestation verifies, it prints
+  `Attestation verified (GitHub build provenance, wangjohn/agent-archive)`
+  and installs. If verification fails, or `gh` cannot check it (for example,
+  a network error), the install stops and nothing is installed or run.
+- **`gh` is not on your `PATH`:** the installer prints the not-signed warning
+  and the `gh attestation verify` command before proceeding, then installs
+  exactly as before, without an attestation check.
+- **Strict mode, `AGENT_ARCHIVE_REQUIRE_ATTESTATION=1`:** the install is
+  refused unless the attestation can be and is verified: it fails when `gh`
+  is absent, when verification fails or cannot be checked, and — before
+  downloading anything — when combined with `AGENT_ARCHIVE_DOWNLOAD_URL`,
+  because a custom download source has no GitHub attestation to verify. Run
+  it as
+  `AGENT_ARCHIVE_REQUIRE_ATTESTATION=1 sh install.sh` (or in the environment
+  of the `curl | sh` command).
+
+To verify a Linux binary yourself before anything is installed, download it
+(and `SHA256SUMS`) from the release, verify it, and only then install it:
+that is the [install a release build by hand](#install-a-release-build-by-hand)
+flow below, whose step 3 is this same `gh attestation verify` check.
 
 The current installer supports Linux asset selection, but no published release
 has Linux binaries yet. v0.1.1 and earlier are macOS only. An architecture
@@ -284,8 +305,14 @@ build such as `go run`'s.
    Compare the reported `TeamIdentifier` with `team_id` in
    [`install.sh`](../../install.sh). On either system, if you have the GitHub
    CLI, also run
-   `gh attestation verify "$asset" --repo wangjohn/agent-archive` to check
+   `gh attestation verify "$asset" --repo wangjohn/agent-archive --hostname github.com --signer-workflow github.com/wangjohn/agent-archive/.github/workflows/release.yml` to check
    that this release asset was built by the repository's release workflow.
+   On Linux this attestation check is the authenticity check: run it on the
+   downloaded file, before `chmod`/`mv` in the next step and before ever
+   running it, and do not install the file if it fails. The release's
+   `SHA256SUMS` is attested too, so
+   `gh attestation verify SHA256SUMS --repo wangjohn/agent-archive --hostname github.com --signer-workflow github.com/wangjohn/agent-archive/.github/workflows/release.yml` also
+   confirms the checksums themselves came from that workflow run.
 
 4. Make the selected binary executable and install it in a directory you own:
 
