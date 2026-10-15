@@ -265,7 +265,9 @@ func (l *sessionPicker) listRune(r rune, screen listScreen, typed string) (strin
 	case typed == "" && l.toggles && (r == 'a' || r == 'A'):
 		return "", listToggle
 	case typed == "" && r == '/':
-		l.filtering, l.cursor, l.moved = true, 0, false
+		// The highlight stays where it is until words are typed, so Esc
+		// with none typed comes back to the same row.
+		l.filtering, l.moved = true, true
 	case typed == "" && (r == 'n' || r == 'N'):
 		l.move(scrollPageDown, screen)
 	case typed == "" && (r == 'p' || r == 'P'):
@@ -339,8 +341,22 @@ const minStripListLines = 5
 // screen measures the list for the terminal's size now: the lines left for
 // the table, the rows that fill them from l.start, and the last screen's
 // first row.
+//
+// The detail strip is left out first: on a terminal too short for it and
+// minStripListLines of the table, and when the fewest rows a screen shows
+// (minPickerPageRows, with their day headings) would not fit above it.
 func (l *sessionPicker) screen(stdout io.Writer, groups []sessionTableGroup, format listFormatOptions, n int, footer, prompt string) listScreen {
-	s := listScreen{groups: groups, format: format, n: n, end: n, strip: n > 0}
+	s := l.measureScreen(stdout, groups, format, n, footer, prompt, n > 0)
+	if s.strip && s.width > 0 && l.tableLines(s.groups, s.format, pickerPage{s.start, s.end}, s.width) > s.budget {
+		s = l.measureScreen(stdout, groups, format, n, footer, prompt, false)
+	}
+	return s
+}
+
+// measureScreen is screen with the detail strip under the table when strip
+// is set and the terminal has lines for it.
+func (l *sessionPicker) measureScreen(stdout io.Writer, groups []sessionTableGroup, format listFormatOptions, n int, footer, prompt string, strip bool) listScreen {
+	s := listScreen{groups: groups, format: format, n: n, end: n, strip: strip}
 	width, height, ok := l.env.terminalSize(stdout)
 	if !ok {
 		l.start = 0
@@ -756,13 +772,15 @@ type footerKey struct {
 func (l *sessionPicker) footerLine(s listScreen, action string) string {
 	var keys []footerKey
 	if l.filtering {
-		keys = []footerKey{{"↑↓ move", 1}, {"Enter " + action, 0}, {"Esc clear", 2}}
+		keys = []footerKey{{"↑↓ move", 2}, {"Enter " + action, 0}, {"Esc clear", 3}}
 	} else {
-		keys = []footerKey{{"↑↓ move", 1}, {"Enter " + action, 0}, {"/ filter", 3}, {"number + Enter jump", 5}}
+		keys = []footerKey{{"↑↓ move", 2}, {"Enter " + action, 0}, {"/ search", 4}, {"number + Enter jump", 5}}
+		// Older rows to load are said only here (the position counts the
+		// rows loaded), so the key stays as long as Enter does.
 		if l.older != nil {
-			keys = append(keys, footerKey{"o older", 4})
+			keys = append(keys, footerKey{"o older", 1})
 		}
-		keys = append(keys, footerKey{"q quit", 2})
+		keys = append(keys, footerKey{"q quit", 3})
 	}
 	position := ""
 	if s.n > 0 {

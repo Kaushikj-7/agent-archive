@@ -79,6 +79,27 @@ func (l *sessionPicker) closeFilter() {
 	l.setFilter("")
 }
 
+// closeFilterKeeping closes the filter line with the highlight on the row
+// it was on, when the table without the filter has it (filterScreen), and
+// on the first row otherwise.
+func (l *sessionPicker) closeFilterKeeping() {
+	keep := ""
+	if v := l.memo; v != nil && l.cursor >= 0 && l.cursor < len(v.order) {
+		keep = rowIdentity(v.order[l.cursor])
+	}
+	l.closeFilter()
+	l.keep = keep
+}
+
+// rowIdentity names the session a row is, the same in every table it is
+// in.
+func rowIdentity(r listRow) string {
+	if r.selectionKey != "" {
+		return r.selectionKey
+	}
+	return childKey(r.HarnessKey, r.SessionID)
+}
+
 // view is the table to draw: the rows given (a table of the scope, cut to
 // a limit) when the filter has no words, and otherwise the sessions of the
 // scope that match them, their subagents under them. It is kept until the
@@ -334,10 +355,10 @@ func (l *sessionPicker) filterKey(k key, screen listScreen) listKeyResult {
 	case keyEnter:
 		return listPick
 	case keyEscape:
-		l.closeFilter()
+		l.closeFilterKeeping()
 	case keyBackspace:
 		if l.filter == "" {
-			l.closeFilter()
+			l.closeFilterKeeping()
 			break
 		}
 		_, size := utf8.DecodeLastRuneInString(l.filter)
@@ -372,6 +393,12 @@ func (l *sessionPicker) filterScreen(stdout io.Writer, v *pickerView, prompt str
 	}
 	if l.filtering && !l.moved {
 		l.cursor = v.first
+	}
+	if l.keep != "" {
+		if at := slices.IndexFunc(v.order, func(r listRow) bool { return rowIdentity(r) == l.keep }); at >= 0 {
+			l.cursor = at
+		}
+		l.keep = ""
 	}
 	l.cursor = min(max(l.cursor, 0), len(v.order)-1)
 	s.cursor = l.cursor

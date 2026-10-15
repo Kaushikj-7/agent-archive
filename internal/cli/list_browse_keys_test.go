@@ -636,6 +636,28 @@ func TestKeyPickerStripFitsTheHeight(t *testing.T) {
 	}
 }
 
+// The fewest rows a screen shows, each under its own day's heading, can
+// take more lines than the strip leaves: the strip goes before the screen
+// outgrows the terminal.
+func TestKeyPickerStripGivesWayToDayHeadings(t *testing.T) {
+	t.Parallel()
+	sessions := pickerSessions(5, oneProject)
+	for i, hours := range []int{0, 26, 6 * 24, 15 * 24, 60 * 24} {
+		sessions[i].CapturedAt = pickerNow.Add(-time.Duration(hours) * time.Hour)
+	}
+	rule := strings.Repeat("─", 80)
+	for height := 11; height <= 20; height++ {
+		picker := &sessionPicker{env: fixedTerminal{80, height}, heading: "All projects · 5 sessions"}
+		_, _, screens := runKeyPicker(t, picker, sessions, listFormatOptions{GroupByDay: true}, "\x1b[B", "\x1b[B", "q")
+		checkKeyScreensFit(t, screens, 80, height)
+		// Three rows under three headings take 8 lines; the heading, the
+		// footer line, the prompt and the strip 7.
+		if strip := strings.Contains(screens[0], rule); strip != (height >= 15) {
+			t.Errorf("height %d: strip %v:\n%s", height, strip, screens[0])
+		}
+	}
+}
+
 // The footer line names the keys and, on the right, which rows are on
 // screen. A narrow terminal drops the keys least needed first; the
 // position stays.
@@ -643,16 +665,18 @@ func TestKeyPickerFooterLine(t *testing.T) {
 	t.Parallel()
 	screen := listScreen{n: 86, start: 0, end: 14, width: 80}
 	l := &sessionPicker{}
-	if got := l.footerLine(screen, "show"); got != "↑↓ move   Enter show   / filter   number + Enter jump   q quit        1–14 of 86" {
+	if got := l.footerLine(screen, "show"); got != "↑↓ move   Enter show   / search   number + Enter jump   q quit        1–14 of 86" {
 		t.Errorf("80 columns: %q", got)
 	}
+	// Older rows to load are named as long as Enter is: the position
+	// counts only the rows loaded.
 	l.older = &browserLoadAction{Label: "Older sessions"}
 	screen.width = 60
-	if got := l.footerLine(screen, "hand off"); got != "↑↓ move   Enter hand off   / filter   q quit      1–14 of 86" {
+	if got := l.footerLine(screen, "hand off"); got != "↑↓ move   Enter hand off   o older   q quit       1–14 of 86" {
 		t.Errorf("60 columns: %q", got)
 	}
 	screen.width = 40
-	if got := l.footerLine(screen, "show"); got != "↑↓ move   Enter show          1–14 of 86" {
+	if got := l.footerLine(screen, "show"); got != "Enter show   o older          1–14 of 86" {
 		t.Errorf("40 columns: %q", got)
 	}
 	screen.width = 8
@@ -660,7 +684,7 @@ func TestKeyPickerFooterLine(t *testing.T) {
 		t.Errorf("8 columns: %q", got)
 	}
 	screen.width = 0
-	if got := l.footerLine(screen, "show"); got != "↑↓ move   Enter show   / filter   number + Enter jump   o older   q quit   1–14 of 86" {
+	if got := l.footerLine(screen, "show"); got != "↑↓ move   Enter show   / search   number + Enter jump   o older   q quit   1–14 of 86" {
 		t.Errorf("unknown width: %q", got)
 	}
 	l.filtering, screen.width = true, 80

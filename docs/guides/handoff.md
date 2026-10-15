@@ -569,7 +569,8 @@ once.
   a subagent can be picked like any row. The mark starts on the subagent.
 - **Rows keep the numbers they have unfiltered**, and Esc clears the words and
   closes the filter line (Backspace on an empty filter does too), after which the
-  list's own numbers choose again.
+  list's own numbers choose again. The mark stays on the session it was on
+  when the plain list shows it, and goes to the first row when it does not.
 
 ```text
 Hand off · agent-archive · "208" matches 1 · claude · Esc clear

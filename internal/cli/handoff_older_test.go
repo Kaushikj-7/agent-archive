@@ -111,3 +111,27 @@ func TestHandoffOlderLoadsUnpublishedRowsOnlyOnRequest(t *testing.T) {
 		t.Fatalf("empty candidate did not exhaust: %s", last)
 	}
 }
+
+// Older rows load under the rows already listed, so the highlight stays on
+// its row; the other scope opens at its top, highlighting its first row.
+func TestKeyHighlightAcrossOlderRowsAndScopeToggle(t *testing.T) {
+	t.Parallel()
+	choices := handoffOlderChoices(t)
+	picker := &sessionPicker{env: fixedTerminal{100, 30}, older: choices.loadOlder}
+	screens := keyScreens(t, picker, choices, "hand off", "\x1b[F", "o", "a", "q")
+	var lines []string
+	for _, screen := range screens {
+		if statusLine(screen) != "" {
+			lines = append(lines, fmt.Sprintf("%s|%d|%s", headingOf(screen), highlightedRow(screen), positionOf(screen)))
+		}
+	}
+	want := []string{
+		"here · 60 sessions · codex · 1 subagent hidden · a all projects|1|1–23 of 50",
+		"here · 60 sessions · codex · 1 subagent hidden · a all projects|50|28–50 of 50",
+		"here · 60 sessions · codex · 1 subagent hidden · a all projects|50|28–50 of 60",
+		"All projects · 121 sessions · codex · 1 subagent hidden · a here|1|1–23 of 100",
+	}
+	if strings.Join(lines, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("screens\n%s\nwant\n%s", strings.Join(lines, "\n"), strings.Join(want, "\n"))
+	}
+}

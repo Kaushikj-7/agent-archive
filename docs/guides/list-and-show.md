@@ -230,7 +230,9 @@ session's summary replace each other instead of piling up:
   works wherever the list is scrolled (in the list grouped by day, the
   numbers on screen need not be consecutive).
 - The footer line names the keys and which rows are on screen, for example
-  `↑↓ move   Enter show   / filter   number + Enter jump   q quit   1–14 of 86`.
+  `↑↓ move   Enter show   / search   number + Enter jump   q quit   1–14 of 86`.
+  When older sessions can be loaded, `o older` is there too, and a narrow
+  window keeps it as long as it keeps `Enter`.
   The heading says how many subagent sessions are hidden. A day scrolled
   into keeps its heading at the top, marked `(continued)`, as in
   `TODAY (continued)`. `a`, `n`, `p`, `q`, `o`, and `/` act only when
@@ -242,7 +244,9 @@ session's summary replace each other instead of piling up:
   `212` also matches a pull request number. The first session that matches
   is marked `▸`, ↑ and ↓ move the mark, and Enter shows the marked session
   (and `b` brings back the filtered list). Esc clears the filter and closes the line, and
-  Backspace on an empty one does too. Rows keep the numbers they have
+  Backspace on an empty one does too; the mark stays on the session it was
+  on, or goes to the first row when the plain list does not show that
+  session. `/` itself leaves the mark where it is until you type. Rows keep the numbers they have
   unfiltered; a session the filter finds past the list's limit is numbered
   on from its last row, and is chosen with the mark (after Esc only the
   list's own numbers choose). A subagent session that matches is shown indented under its

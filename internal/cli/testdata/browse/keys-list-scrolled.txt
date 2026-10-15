@@ -16,5 +16,5 @@ YESTERDAY (continued)
 Session number 28
 Codex · beta · last active 27 hours ago · id 1a2e4335
 ────────────────────────────────────────────────────────────────────────────────
-↑↓ move   Enter show   / filter   number + Enter jump   q quit       18–30 of 30
+↑↓ move   Enter show   / search   number + Enter jump   q quit       18–30 of 30
 Number or ID to show: 12

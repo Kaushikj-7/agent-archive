@@ -308,9 +308,12 @@ try:
     first = strip_title(0)
     moved = len(output)
     os.write(master, b'\x1b[B')
-    second = strip_title(wait_for(mark, moved))
+    highlighted = wait_for(mark, moved)
+    second = strip_title(highlighted)
     assert second and second != first, (first, second)
-    resized = len(output)
+    # From the end of that screen (its prompt) on, so the rest of its
+    # 100-column rules, still arriving, are not taken for the redraw's.
+    resized = wait_for(b'to hand off', highlighted)
     # This script is not the terminal's foreground job: SIGTTOU is ignored
     # while it sets the size, as foreground() does to hand the terminal over.
     signal.signal(signal.SIGTTOU, signal.SIG_IGN)
