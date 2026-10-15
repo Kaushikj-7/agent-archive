@@ -69,8 +69,8 @@ def runner_usage(job, seconds):
     return 'unknown', None
 
 
-def unallocated_interval(start, end, label, diagnostics):
-    """Keep invalid API placeholders diagnostic without inventing runtime."""
+def diagnostic_interval(start, end, label, diagnostics):
+    """Keep malformed raw API intervals visible without inventing runtime."""
     if not start or not end:
         diagnostics.append(label + ': missing timestamps')
         return None
@@ -98,7 +98,8 @@ def platform(job):
 def physical_jobs(jobs):
     """Keep API IDs; recognize only fully evidenced carried-forward aliases."""
     found, allocations, result = {}, {}, []
-    for job in sorted(jobs, key=lambda row: row.get('job_attempt', 1)):
+    for job in sorted(jobs, key=lambda row: row['job_attempt']
+                      if type(row.get('job_attempt')) is int else 0):
         identity = (job.get('repository'), job['run_id'], job.get('id'))
         if identity[-1] is not None and identity in found:
             previous = found[identity]
@@ -117,6 +118,8 @@ def physical_jobs(jobs):
                        job.get('started_at'), job.get('completed_at'),
                        tuple(job.get('labels', [])), json.dumps(job.get('allocation_steps'), sort_keys=True))
         evidenced = (job['runner_allocation'] == 'allocated' and job['conclusion'] == 'success'
+                     and not job.get('timestamp_issues')
+                     and type(job.get('job_attempt')) is int and job['job_attempt'] > 0
                      and type(job.get('runner_id')) is int and job['runner_id'] > 0
                      and job.get('runner_name') and job.get('runner_seconds') is not None
                      and job.get('id') is not None and job.get('source')
@@ -186,6 +189,11 @@ def readiness(job, run, telemetry):
     dependency = telemetry.get('dependencies_ready_at')
     eligible = telemetry.get('eligible_at')
     start = job.get('started_at')
+    if start:
+        try:
+            stamp(start)
+        except (ValueError, TypeError, AttributeError):
+            start = None  # The raw job timestamp is retained with row diagnostics.
     created = run['created_at']
     if dependency:
         result['dependency_wait_seconds'] = elapsed(created, dependency)
@@ -243,11 +251,16 @@ def sample_report(sample):
             inventory_complete = False
         if run.get('status') != 'completed' or run.get('conclusion') != 'success':
             issues.append(name + ': workflow not successful/completed')
+        if run.get('status') != 'completed':
+            inventory_complete = False  # More jobs can still appear in a live run.
         raw = snapshot['jobs']
         if isinstance(raw, dict) and raw.get('total_count', len(raw['jobs'])) != len(raw['jobs']):
             issues.append(name + ': incomplete paginated job snapshot')
             inventory_complete = False
         raw = raw['jobs'] if isinstance(raw, dict) else raw
+        if any(j.get('status') != 'completed' for j in raw):
+            issues.append(name + ': unfinished job snapshot')
+            inventory_complete = False
         if any(j.get('run_id', run['id']) != run['id'] for j in raw):
             issues.append(name + ': job belongs to another run')
             inventory_complete = False
@@ -273,19 +286,13 @@ def sample_report(sample):
                 issues.append(name + ': required job not successful ' + job['name'])
             allocation, _ = runner_usage(job, None)
             timestamp_issues = []
-            seconds = None
-            if allocation == 'unallocated':
-                seconds = unallocated_interval(job.get('started_at'), job.get('completed_at'),
-                                               'job interval', timestamp_issues)
-                start_delay = unallocated_interval(run['created_at'], job.get('started_at'),
-                                                   'job start delay', timestamp_issues)
-            else:
-                if job.get('started_at') and job.get('completed_at'):
-                    seconds = elapsed(job['started_at'], job['completed_at'])
-                elif selected:
-                    issues.append(name + ': missing job timestamps ' + job['name'])
-                start_delay = (elapsed(run['created_at'], job['started_at'])
-                               if job.get('started_at') else None)
+            seconds = diagnostic_interval(job.get('started_at'), job.get('completed_at'),
+                                          'job interval', timestamp_issues)
+            start_delay = diagnostic_interval(run['created_at'], job.get('started_at'),
+                                              'job start delay', timestamp_issues)
+            if job.get('created_at'):
+                diagnostic_interval(job['created_at'], job['created_at'],
+                                    'job creation', timestamp_issues)
             allocation, runner_seconds = runner_usage(job, seconds)
             if allocation == 'unknown':
                 issues.append(name + ': runner allocation unknown ' + job['name'])
@@ -293,10 +300,13 @@ def sample_report(sample):
                 issues.append(name + ': incomplete runner usage timestamps ' + job['name'])
             steps = []
             for step in job.get('steps', []):
-                duration = (elapsed(step['started_at'], step['completed_at'])
-                            if step.get('started_at') and step.get('completed_at') else None)
+                duration = (diagnostic_interval(step.get('started_at'), step.get('completed_at'),
+                                               'step ' + step['name'], timestamp_issues)
+                            if step.get('started_at') or step.get('completed_at') else None)
                 steps.append({'name': step['name'], 'category': category(step['name']),
                               'seconds': duration, 'conclusion': step.get('conclusion')})
+            if timestamp_issues and allocation != 'unallocated':
+                issues.append(name + ': invalid/incomplete timing evidence ' + job['name'])
             jobs.append({'workflow': job.get('workflow_name', name), 'snapshot_workflow': name,
                          'name': job['name'], 'required': selected,
                          'id': job.get('id'), 'run_id': job.get('run_id', run['id']),
@@ -309,7 +319,7 @@ def sample_report(sample):
                          'snapshot_source': run['head_sha'], 'created_at': job.get('created_at'),
                          'allocation_steps': [{k: step.get(k) for k in ('name', 'number', 'status', 'conclusion', 'started_at', 'completed_at')} for step in job.get('steps', [])],
                          **readiness(job, run, sample.get('job_readiness', {}).get(str(job.get('id')))),
-                         'conclusion': job.get('conclusion'), 'seconds': seconds,
+                         'status': job.get('status'), 'conclusion': job.get('conclusion'), 'seconds': seconds,
                          'runner_allocation': allocation, 'runner_seconds': runner_seconds,
                          'run_created_to_job_start_seconds': start_delay,
                          'started_at': job.get('started_at'), 'completed_at': job.get('completed_at'),
@@ -342,9 +352,8 @@ def sample_report(sample):
         issues.append('cache state unknown')
     if not sample.get('comparable_group'):
         issues.append('comparable_group missing')
-    ends = [job['completed_at'] for s in sample['workflows']
-            for job in (s['jobs']['jobs'] if isinstance(s['jobs'], dict) else s['jobs'])
-            if job['name'] in required[s['run']['name']] and job.get('completed_at')]
+    ends = [job['completed_at'] for job in jobs
+            if job['required'] and job['seconds'] is not None]
     start = event or min((w['created_at'] for w in workflows), default=None)
     wall = elapsed(start, max(ends, key=stamp)) if start and ends else None
     resources = resource_report(jobs, inventory_complete and expected_workflows <= seen)
@@ -354,7 +363,8 @@ def sample_report(sample):
             'run_created_lower_bound_seconds': wall if not event else None,
             **resources,
             'required_completed_at': (max(ends, key=stamp) if ends and inventory_complete
-                                      and all(j['conclusion'] == 'success' and j['completed_at'] for j in jobs if j['required']) else None),
+                                      and all(j['status'] == 'completed' and j['conclusion'] == 'success' and j['seconds'] is not None
+                                              for j in jobs if j['required']) else None),
             'event_at': event, 'worker_count': sample.get('worker_count'),
             'scope': sample.get('scope', 'production-pipeline'),
             'observation_kind': observation_kind, 'tested_checkout': sample.get('tested_checkout'),
