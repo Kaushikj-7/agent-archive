@@ -29,6 +29,160 @@ def sample():
 
 
 class ReportTests(unittest.TestCase):
+    def allocated(self, value):
+        for workflow in value['workflows']:
+            workflow['run']['repository'] = {'full_name': 'wangjohn/agent-archive'}
+            for job in workflow['jobs']['jobs']:
+                job.update(runner_id=42, runner_name='host', labels=['ubuntu-latest'], run_attempt=1)
+        return value
+
+    def test_linux_all_job_usage_and_peak_include_nonrequired_lanes(self):
+        value = self.allocated(sample())
+        workflow = value['workflows'][0]
+        extra = copy.deepcopy(workflow['jobs']['jobs'][0])
+        extra.update(id=5, name='build scripts audit', started_at='2026-10-14T00:00:20Z',
+                     completed_at='2026-10-14T00:01:00Z')
+        workflow['jobs']['jobs'].append(extra)
+        workflow['jobs']['total_count'] = 2
+        result = timing.sample_report(value)
+        self.assertEqual(result['peak_simultaneous_linux_jobs'], 3)
+        self.assertAlmostEqual(result['linux_runner_minutes'], 260/60)
+        self.assertFalse(result['jobs'][1]['required'])
+        # Unknown operating system remains unknown, rather than silently Linux.
+        extra['labels'] = ['self-hosted']
+        result = timing.sample_report(value)
+        self.assertIsNone(result['linux_runner_minutes'])
+        self.assertIsNone(result['peak_simultaneous_linux_jobs'])
+        self.assertEqual(result['known_peak_simultaneous_linux_jobs'], 2)
+
+    def test_physical_dedup_carried_forward_and_conflict_detection(self):
+        first = self.allocated(sample())
+        second = copy.deepcopy(first)
+        second['id'] = 'retry'
+        for workflow in second['workflows']:
+            workflow['run']['run_attempt'] = 2
+        result = timing.report({'schema': 1, 'samples': [first, second]})
+        self.assertTrue(result['samples'][1]['qualifying'])
+        self.assertAlmostEqual(result['resources_across_snapshots']['linux_runner_minutes'], 220/60)
+        self.assertEqual(result['resources_across_snapshots']['physical_job_rows'], 2)
+        second['workflows'][0]['jobs']['jobs'][0]['runner_id'] = 999
+        with self.assertRaisesRegex(ValueError, 'conflicting snapshots'):
+            timing.report({'schema': 1, 'samples': [first, second]})
+        # New job IDs on the same runner are fresh allocations, not deduped.
+        second = copy.deepcopy(first)
+        second['id'] = 'rerun'
+        for workflow in second['workflows']:
+            workflow['jobs']['jobs'][0]['id'] += 100
+        result = timing.report({'schema': 1, 'samples': [first, second]})
+        self.assertAlmostEqual(result['resources_across_snapshots']['linux_runner_minutes'], 440/60)
+
+    def test_targeted_rerun_new_id_alias_requires_complete_allocation_evidence(self):
+        first = self.allocated(sample())
+        for workflow in first['workflows']:
+            job = workflow['jobs']['jobs'][0]
+            job.update(created_at='2026-10-14T00:00:01Z', steps=[{
+                'name': 'body', 'number': 1, 'status': 'completed', 'conclusion': 'success',
+                'started_at': job['started_at'], 'completed_at': job['completed_at']}])
+        retry = copy.deepcopy(first)
+        retry['id'] = 'targeted-retry'
+        for workflow in retry['workflows']:
+            workflow['run']['run_attempt'] = 2
+            job = workflow['jobs']['jobs'][0]
+            job.update(id=job['id']+100, run_attempt=2, created_at='2026-10-14T00:03:00Z')
+        # Snapshot ordering must not determine whether carried-forward jobs count.
+        result = timing.report({'schema': 1, 'samples': [retry, first]})['resources_across_snapshots']
+        self.assertAlmostEqual(result['actual_runner_minutes'], 220/60)
+        self.assertEqual(result['carried_forward_allocation_aliases'], [[2, 102], [4, 104]])
+        for field, value in [('runner_id', 43), ('created_at', '2026-10-14T00:00:01Z'),
+                             ('steps', [])]:
+            changed = copy.deepcopy(retry)
+            changed['workflows'][0]['jobs']['jobs'][0][field] = value
+            result = timing.report({'schema': 1, 'samples': [first, changed]})['resources_across_snapshots']
+            with self.subTest(field=field):
+                self.assertAlmostEqual(result['actual_runner_minutes'], 330/60)
+
+    def test_readiness_is_unknown_without_independent_telemetry(self):
+        value = self.allocated(sample())
+        row = timing.sample_report(value)['jobs'][0]
+        self.assertIsNone(row['dependency_wait_seconds'])
+        self.assertIsNone(row['eligible_to_start_seconds'])
+        value['job_readiness'] = {'2': {'source': 'retained scheduler event receipt',
+            'dependencies_ready_at': '2026-10-14T00:00:04Z', 'eligible_at': '2026-10-14T00:00:06Z'}}
+        row = timing.sample_report(value)['jobs'][0]
+        self.assertEqual(row['dependency_wait_seconds'], 3)
+        self.assertEqual(row['eligible_to_start_seconds'], 4)
+        value['job_readiness']['2']['eligible_at'] = '2026-10-14T00:00:11Z'
+        with self.assertRaises(ValueError):
+            timing.sample_report(value)
+        value['job_readiness']['2'] = {'eligible_at': '2026-10-14T00:00:06Z'}
+        with self.assertRaises(ValueError):
+            timing.sample_report(value)
+
+    def test_batch_span_full_pipeline_peak_and_reused_run_rejection(self):
+        first = self.allocated(sample())
+        second = copy.deepcopy(first)
+        second['id'] = 'second-pr'
+        for workflow in second['workflows']:
+            workflow['run']['id'] += 100
+            workflow['jobs']['jobs'][0]['id'] += 100
+        document = {'schema': 1, 'samples': [first, second],
+                    'batches': [{'id': 'two-prs', 'sample_ids': ['one', 'second-pr']}]}
+        result = timing.report(document)['batches'][0]
+        self.assertEqual(result['peak_simultaneous_linux_jobs'], 4)
+        self.assertEqual(result['first_event_to_last_required_completion_seconds'], 120)
+        self.assertAlmostEqual(result['linux_runner_minutes'], 440/60)
+        second.pop('event_at')
+        result = timing.report(document)['batches'][0]
+        self.assertIsNone(result['first_event_to_last_required_completion_seconds'])
+        self.assertEqual(result['run_created_batch_lower_bound_seconds'], 119)
+        second['workflows'][0]['run']['id'] = first['workflows'][0]['run']['id']
+        with self.assertRaisesRegex(ValueError, 'must not share workflow runs'):
+            timing.report(document)
+
+    def test_diagnostic_usage_never_qualifies_production_latency(self):
+        value = self.allocated(sample())
+        value.update(scope='linux-shard-topology-only', worker_count=4)
+        workflow = value['workflows'][0]
+        workflow['run']['name'] = 'Linux worker qualification'
+        value['required_jobs'] = {'Linux worker qualification': ['linux-race']}
+        value['workflows'] = [workflow]
+        result = timing.sample_report(value)
+        self.assertFalse(result['qualifying'])
+        self.assertTrue(result['inventory_complete'])
+        self.assertAlmostEqual(result['linux_runner_minutes'], 110/60)
+        value['worker_count'] = 16
+        with self.assertRaises(ValueError):
+            timing.sample_report(value)
+
+    def test_batch_missing_required_job_has_no_completion_claim(self):
+        value = self.allocated(sample())
+        value['required_jobs']['Test'].append('missing')
+        result = timing.report({'schema': 1, 'samples': [value],
+                                'batches': [{'id': 'incomplete', 'sample_ids': ['one']}]})
+        batch = result['batches'][0]
+        self.assertIsNone(batch['first_event_to_last_required_completion_seconds'])
+        self.assertIsNone(batch['linux_runner_minutes'])
+        self.assertFalse(batch['all_samples_qualifying'])
+
+    def test_incomplete_inventory_and_legacy_peak_are_not_complete(self):
+        value = self.allocated(sample())
+        value['workflows'][0]['jobs']['total_count'] = 2
+        result = timing.sample_report(value)
+        self.assertIsNone(result['actual_runner_minutes'])
+        self.assertIsNone(result['linux_runner_minutes'])
+        self.assertIsNone(result['peak_simultaneous_linux_jobs'])
+        self.assertAlmostEqual(result['known_runner_minutes'], 220/60)
+        value = sample()
+        for workflow in value['workflows']:
+            workflow['jobs']['jobs'][0]['labels'] = ['ubuntu-latest']
+        result = timing.sample_report(value)
+        self.assertIsNone(result['peak_simultaneous_linux_jobs'])
+        value = self.allocated(sample())
+        value['workflows'][0]['jobs']['jobs'].append(copy.deepcopy(value['workflows'][0]['jobs']['jobs'][0]))
+        value['workflows'][0]['jobs']['total_count'] = 2
+        with self.assertRaisesRegex(ValueError, 'duplicate job id'):
+            timing.sample_report(value)
+
     def test_elapsed_and_minutes(self):
         result = timing.sample_report(sample())
         self.assertTrue(result['qualifying'])
