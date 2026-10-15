@@ -62,7 +62,12 @@ def execute(argv):
 
 
 def pr_ancestry(source, tested, event, pr_number, git=scope.git):
-    """Require the actual event base/head and tested merge before cache use."""
+    """Require the event base/head to be in the tested source's history.
+
+    The tested merge's first parent is not pinned to the event base: GitHub
+    may build the merge against a newer base branch than the event recorded.
+    The cache key covers the tested tree, so ancestry is all ownership needs.
+    """
     pr = event['pull_request']
     if type(pr.get('number')) is not int or pr['number'] != pr_number:
         raise InvalidContext('PR event ownership differs')
@@ -74,8 +79,6 @@ def pr_ancestry(source, tested, event, pr_number, git=scope.git):
             raise InvalidContext('event commit unavailable')
     if git(source, 'rev-parse', '--is-shallow-repository') != b'false\n':
         raise InvalidContext('PR history unavailable')
-    if git(source, 'show', '-s', '--format=%P', tested).decode().strip().split() != [base, head]:
-        raise InvalidContext('tested source is not event merge')
     if not SHA.fullmatch(git(source, 'merge-base', base, head).decode().strip()):
         raise InvalidContext('PR histories disconnected')
     for sha in (base, head):

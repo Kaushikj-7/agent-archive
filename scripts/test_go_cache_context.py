@@ -147,11 +147,11 @@ class ContextTests(unittest.TestCase):
                 self.assertNotEqual(first[name], keys.toolchain_identity(go, lambda n: str(driver))[name])
                 path.write_bytes(old)
 
-    def test_pr_ancestry_rejects_shallow_foreign_or_unexpected_merge(self):
+    def test_pr_ancestry_rejects_shallow_foreign_or_unrelated_source(self):
         base, head, tested = 'a'*40, 'b'*40, 'c'*40
         event = {'pull_request': {'number': 12, 'base': {'sha': base}, 'head': {'sha': head}}}
         shallow = [False]
-        parents = [base+' '+head]
+        unrelated = [False]
         calls = []
         def git(source, *args):
             calls.append(args)
@@ -159,23 +159,26 @@ class ContextTests(unittest.TestCase):
                 return args[2].split('^')[0].encode()+b'\n'
             if args == ('rev-parse', '--is-shallow-repository'):
                 return b'true\n' if shallow[0] else b'false\n'
-            if args[:3] == ('show', '-s', '--format=%P'):
-                return parents[0].encode()+b'\n'
             if args[:2] == ('merge-base', '--is-ancestor'):
+                if unrelated[0]:
+                    raise subprocess.CalledProcessError(1, args)
                 return b''
             if args[0] == 'merge-base':
                 return b'd'*40+b'\n'
             self.fail(str(args))
         keys.pr_ancestry(self.root, tested, event, 12, git)
+        self.assertIn(('merge-base', '--is-ancestor', base, tested), calls)
         self.assertIn(('merge-base', '--is-ancestor', head, tested), calls)
+        # The merge may sit on a newer base than the event recorded.
+        self.assertFalse(any(call[0] == 'show' for call in calls))
         shallow[0] = True
         with self.assertRaises(keys.InvalidContext):
             keys.pr_ancestry(self.root, tested, event, 12, git)
         shallow[0] = False
-        parents[0] = head+' '+base
-        with self.assertRaises(keys.InvalidContext):
+        unrelated[0] = True
+        with self.assertRaises(subprocess.CalledProcessError):
             keys.pr_ancestry(self.root, tested, event, 12, git)
-        parents[0] = base+' '+head
+        unrelated[0] = False
         with self.assertRaises(keys.InvalidContext):
             keys.pr_ancestry(self.root, tested, event, 13, git)
 
