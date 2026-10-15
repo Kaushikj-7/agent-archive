@@ -40,7 +40,7 @@ interface so processing untrusted PR artifacts cannot populate trusted caches.
     "comparable_group": "eight-workers-lane-aware-parent-v3",
     "event_at": "2026-10-14T00:00:00Z",
     "required_jobs": {
-      "Test": ["tier-plan", "source-audit", "linux-short (0)", "linux-short (1)", "linux-short (2)", "linux-short (3)", "linux-short (4)", "linux-short (5)", "linux-short (6)", "linux-short (7)", "linux-full", "script-static", "script-install", "script-purge (0)", "script-purge (1)", "script-tests", "lint", "cross-linux-arm64", "cross-darwin-nocgo", "cross-linux-release", "cross-build", "macos-smoke", "linux-race", "Git identity (runner-current)", "Git identity (upstream-2.30.2)", "Git identity (upstream-2.39.2)"],
+      "Test": ["tier-plan", "source-audit", "linux-short (0)", "linux-short (1)", "linux-short (2)", "linux-short (3)", "linux-short (4)", "linux-short (5)", "linux-short (6)", "linux-short (7)", "linux-full", "script-static", "script-install", "script-purge (0)", "script-purge (1)", "script-tests", "lint", "cross-linux-arm64", "cross-darwin-nocgo", "cross-linux-release", "cross-build", "macos-smoke", "linux-race", "Git identity (all versions)"],
       "Levenshtein": ["verify", "native-release-vulnerabilities"]
     },
     "workflows": [{"run": {}, "jobs": {"total_count": 0, "jobs": []}}]
@@ -484,3 +484,49 @@ Unknown allocation or missing allocated-job timestamps makes the total null and
 subtotal. Older successful snapshots without allocation metadata retain an
 explicit `legacy-success-timestamps` estimate. Required unsuccessful jobs still
 exclude the observation from latency qualification.
+
+## Ancillary runner demand
+
+The Git compatibility job uses one runner and one verified compilation restore
+for three sequential versions: exact upstream 2.30.2, exact upstream 2.39.2 and
+the runner's original Git. Every version executes both original count-one test
+commands with GOMAXPROCS=2 and Go package parallelism 2, in separate test
+processes, PATH/install/configuration/temp directories. A version failure does
+not suppress the other versions. The `git-identity-versions` artifact retains
+all three receipts and raw logs for seven days; a single green job without
+complete version evidence is insufficient qualification. The normal production
+inventory now has 26 jobs rather than 28, with version coverage unchanged.
+
+In normal run 38682572380, the earlier three jobs allocated 112 seconds in
+aggregate, including 39 seconds in their test steps. Sharing setup should reduce
+runner demand and duplicated work, but a 60–75 second combined warm job remains
+a planning estimate until the new topology is measured. Separate cold pinned
+Git compilation from verified cache restores. Do not compare a historical
+three-job cohort with the new one as if only elapsed test work changed.
+
+The Linux final gate still validates every worker's exact source, full compiler
+context, vet receipt, independent source audit, exhaustive raw body evidence and
+focused/full tier evidence. It does not install Go: those validators do not
+execute Go or compare the aggregate machine's unrelated compiler context.
+Both validators were replayed against actual source-bound f69a1bc artifacts from
+run 38682572380 with Go blocked. They passed, while compiler/receipt/source/
+command/terminal/missing-evidence tampering failed. This establishes removal of
+unused installation; it does not qualify a later source revision or predict the
+entire final gate's speedup.
+
+Mac smoke keeps its current build/discovery/package/CLI/sensitive phase timing,
+serial native resource isolation and all assertions. Profile those phases before
+changing them. The three cross-build lanes retain all targets and release
+binary validation: their observed body steps alone totaled 166 seconds, so
+serializing all three would not support the 150-second objective.
+
+The `script-tests`, `linux-race` and `cross-build` job gates use
+`${{ !cancelled() }}`: prerequisite failures/skips still reach their fail-closed
+verdicts, but superseded workflows can release runners and their per-PR
+concurrency group. Step-level evidence uploads and cleanup retain `always()`.
+A canceled run never satisfies required CI. During this campaign, Test run
+38689881223 explicitly waited for superseded run 38689498661, whose
+`always()` gates continued after cancellation. This is an observed dependency
+on cancellation completion, not a measured runner-queue duration or quantified
+latency saving. See GitHub's
+[status-function guidance](https://docs.github.com/en/actions/reference/workflows-and-actions/expressions#always).

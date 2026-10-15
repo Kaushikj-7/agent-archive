@@ -238,6 +238,7 @@ jobs:
       # Extended's real-systemd backstop keeps its name and validated image.
       - run: python3 scripts/test_ci_workflow.py
       - run: python3 scripts/test_stage_native_verify.py
+      - run: python3 -B scripts/test_git_identity_versions.py
       - run: python3 -B scripts/test_scope_native_verify.py
       - run: python3 -B scripts/test_stage_release_vulnerability_scan.py
       - run: python3 scripts/test_measure_hook.py
@@ -328,7 +329,8 @@ jobs:
         run: rm -rf -- "$RUNNER_TEMP/script-purge-home" "$RUNNER_TEMP/script-purge-xdg" "$RUNNER_TEMP/script-purge-tmp"
 
   script-tests:
-    if: always()
+    # Fail closed on failed prerequisites while allowing superseded runs to cancel.
+    if: ${{ !cancelled() }}
     needs: [script-static, script-install, script-purge, tier-plan]
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -356,7 +358,8 @@ jobs:
 
   # Keep this required check stable and fail closed when a worker fails/skips.
   linux-race:
-    if: always()
+    # Fail closed on failed prerequisites while allowing superseded runs to cancel.
+    if: ${{ !cancelled() }}
     needs: [linux-short, linux-full, script-tests, macos-smoke, tier-plan, source-audit]
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -385,12 +388,8 @@ jobs:
         with:
           name: go-source-audit
           path: ${{ runner.temp }}/source-audit-evidence
-      - name: Install exact Go for independent vet context verification
-        if: github.event_name == 'pull_request'
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: '1.27.2'
-          cache: false
+      # Reconciliation validates the actual workers' complete compiler contexts
+      # and raw receipts. It never executes Go on this aggregate host.
       - name: Reconcile actual source and exhaustive shard coverage
         if: github.event_name == 'pull_request'
         run: python3 scripts/run_go_shard.py --workers 8 --audit-evidence "$RUNNER_TEMP/source-audit-evidence" --plain-vet-owned --reconcile shard-evidence
@@ -407,31 +406,16 @@ jobs:
 
   git-identity-compatibility:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    # Three serial versions retain their individual 20-minute upper bound.
+    timeout-minutes: 60
     env:
       GOTOOLCHAIN: local
       GOWORK: 'off'
       GOFLAGS: '-mod=readonly'
       PYTHONDONTWRITEBYTECODE: '1'
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # Exact upstream releases exercise optional-command absence even
-          # when the runner upgrades. This is not distribution-package proof.
-          - git: upstream-2.30.2
-            tag: v2.30.2
-            ref: 94f6e3e283f2adfc518b39cfc39291f1c2832ad0
-            expected: git version 2.30.2
-          - git: upstream-2.39.2
-            tag: v2.39.2
-            ref: cbf04937d5b9fcf0a76c28f69e6294e9e3ecd7e6
-            expected: git version 2.39.2
-          - git: runner-current
-            tag: ''
-            ref: ''
-            expected: ''
-    name: Git identity (${{ matrix.git }})
+    # One verified compilation restore; all three versions still execute with
+    # separate PATH/install/HOME/XDG/TMP and separate test process lifetimes.
+    name: Git identity (all versions)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -446,26 +430,16 @@ jobs:
           printf 'GOCACHE=%s/pr-go-build\nGOMODCACHE=%s/pr-go-modules\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Restore verified trusted-main compilation seed
         uses: ./.github/actions/verified-go-cache
-      - name: Restore verified pinned upstream Git or build cold
-        if: matrix.ref != ''
-        env:
-          PINNED_GIT: ${{ matrix.git }}
-        run: python3 -B scripts/pinned_git.py "$PINNED_GIT"
-      - name: Isolated identity regressions and exact executable version
-        env:
-          EXPECTED_GIT_VERSION: ${{ matrix.expected }}
-          HOME: ${{ runner.temp }}/git-identity-home
-          XDG_CONFIG_HOME: ${{ runner.temp }}/git-identity-xdg
-          GOMAXPROCS: '2'
-        run: |
-          mkdir -p "$HOME" "$XDG_CONFIG_HOME"
-          git --version | tee "$RUNNER_TEMP/git-identity-version.txt"
-          if [ -n "$EXPECTED_GIT_VERSION" ]; then
-            test "$(git --version)" = "$EXPECTED_GIT_VERSION"
-          fi
-          cat "$RUNNER_TEMP/git-identity-version.txt" >> "$GITHUB_STEP_SUMMARY"
-          go test -p 2 -count=1 -v ./internal/gitremote ./internal/sourcefacts
-          go test -p 2 -count=1 -v -run 'RecoveredImport|DeletedWorktree' ./internal/backfill
+      - name: All Git versions with isolated executable and configuration
+        run: python3 -B scripts/run_git_identity_versions.py --output "$RUNNER_TEMP/git-identity-versions"
+      - name: Preserve every version's receipt and raw test log
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: git-identity-versions
+          path: ${{ runner.temp }}/git-identity-versions
+          retention-days: 7
+          if-no-files-found: error
 
   macos-smoke:
     needs: [tier-plan]
@@ -625,7 +599,8 @@ jobs:
 
 
   cross-build:
-    if: always()
+    # Fail closed on failed prerequisites while allowing superseded runs to cancel.
+    if: ${{ !cancelled() }}
     needs: [cross-linux-arm64, cross-darwin-nocgo, cross-linux-release]
     runs-on: ubuntu-latest
     timeout-minutes: 5
