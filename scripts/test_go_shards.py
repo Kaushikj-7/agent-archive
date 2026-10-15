@@ -374,7 +374,7 @@ class WorkerVetReceiptTest(unittest.TestCase):
 
 class GateTest(unittest.TestCase):
     def test_event_verdict_fail_closed(self):
-        pr = {j: {'result': s} for j, s in [('linux-short', 'success'), ('linux-full', 'success'), ('script-tests', 'success'), ('macos-smoke','success'), ('tier-plan','success'), ('source-audit','success')]}
+        pr = {j: {'result': s} for j, s in [('linux-short', 'success'), ('linux-full', 'success'), ('script-static', 'success'), ('script-install', 'success'), ('script-purge', 'success'), ('macos-smoke','success'), ('source-audit','success')]}
         runner.verdict('pull_request', 'refs/pull/1/merge', pr)
         candidate = copy.deepcopy(pr)
         candidate['linux-short']['result'], candidate['linux-full']['result'], candidate['source-audit']['result'] = 'skipped', 'success', 'skipped'
@@ -385,6 +385,13 @@ class GateTest(unittest.TestCase):
                 runner.verdict(event_name, ref, needs)
         for base, event_name, ref in ((pr, 'pull_request', ''), (candidate, 'push', 'refs/heads/release-candidate/x')):
             for job in base:
+                missing = copy.deepcopy(base); del missing[job]
+                with self.subTest(event=event_name, missing=job), self.assertRaises(runner.Failure):
+                    runner.verdict(event_name, ref, missing)
+                if base[job]['result'] == 'success':
+                    skipped = copy.deepcopy(base); skipped[job]['result'] = 'skipped'
+                    with self.subTest(event=event_name, skipped=job), self.assertRaises(runner.Failure):
+                        runner.verdict(event_name, ref, skipped)
                 for result in ('failure', 'cancelled', None, 'unexpected'):
                     bad = copy.deepcopy(base);bad[job]['result'] = result
                     with self.assertRaises(runner.Failure):

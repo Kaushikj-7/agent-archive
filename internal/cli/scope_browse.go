@@ -181,6 +181,15 @@ type headingOptions struct {
 	// Filtering is set while the key browser's filter line is open, where
 	// `a` is typed text, not the other scope: the heading names Esc instead.
 	Filtering bool
+	// Hidden is how many subagent sessions the table leaves out, which the
+	// key browser names here instead of in a footer; 0 names none.
+	Hidden int
+}
+
+// hiddenSubagents names how many subagent sessions a table leaves out, for
+// the key browser's heading: "403 subagents hidden".
+func hiddenSubagents(n int) string {
+	return plural(n, "subagent") + " hidden"
 }
 
 // heading is the line above the table, naming what is shown and the other
@@ -212,7 +221,7 @@ func (c *scopeChoices) headingWith(i int, view scopeView, constants []string, o 
 	default:
 		parts = append(parts, allProjectsLabel)
 	}
-	if len(parts) == 0 && len(constants) == 0 && o.Words == "" {
+	if len(parts) == 0 && len(constants) == 0 && o.Words == "" && o.Hidden == 0 {
 		return ""
 	}
 	switch {
@@ -228,6 +237,9 @@ func (c *scopeChoices) headingWith(i int, view scopeView, constants []string, o 
 		if !strings.EqualFold(value, label) || i == viewAll {
 			parts = append(parts, value)
 		}
+	}
+	if o.Hidden > 0 && o.Words == "" {
+		parts = append(parts, hiddenSubagents(o.Hidden))
 	}
 	switch {
 	case o.Filtering:
