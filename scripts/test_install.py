@@ -457,7 +457,8 @@ class InstallScriptTest(InstallScriptBase):
         curl, _ = self.fake_release_curl()
         for output, expected in (
                 ('verification failed: no attestation found', 'attestation verification failed'),
-                ('dial tcp: network unreachable', 'could not verify the attestation')):
+                ('dial tcp: network unreachable', 'could not verify the attestation'),
+                ('', 'gh attestation verify failed with no output')):
             with self.subTest(output=output):
                 order.unlink(missing_ok=True)
                 result = self.run_linux_from_github_base(
