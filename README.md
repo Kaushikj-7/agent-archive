@@ -76,6 +76,7 @@ Setup edits each included app's hook settings, adds one background job (a Launch
 | `setup` | Configure apps, projects, and storage. | `agent-archive setup` |
 | `status` | Check capture health and see what to do next; `status claude` shows one app in full. | `agent-archive status` |
 | `sync` | Collect and upload pending sessions now. | `agent-archive sync` |
+| `pause`, `resume` | Pause collection, uploads, and cleanup until you resume ([everyday commands](docs/guides/troubleshooting.md#everyday-commands)). | `agent-archive pause` |
 | `list` | Find archived sessions, by filters or by a few words. | `agent-archive list "retention"` |
 | `show` | View a session's summary, or its transcript with `--transcript`. | `agent-archive show SESSION_ID` |
 | `stats` | See your usage: tokens by day, estimated cost, agents, models, projects, highlights. | `agent-archive stats --days 7` |
@@ -86,7 +87,7 @@ Setup also gives Claude Code, Codex, and Cursor an `agent-archive` skill, so you
 
 Listings return at most 50 matching sessions by default: text shows top-level sessions by last activity; JSON includes subagents and sorts by capture time. For analytics over every match, use `agent-archive list --json --limit 0`; add `--all-projects` to include every project when running inside a repository, and `--replays include` if your analysis should include replay sessions (hidden by default). Unreadable metadata is skipped with a warning on stderr ([list guide](docs/guides/list-and-show.md), [JSON contract](docs/reference/json-output.md)).
 
-Use a session ID from `list` with `show`. More commands (machines, eval, purge, …) are under `agent-archive help advanced`; for every command and option, see the **[full CLI reference](docs/reference/cli.md)** or run `agent-archive help COMMAND`.
+Use a session ID from `list` with `show`. More commands (machines, uninstall, purge, …) are under `agent-archive help advanced`; for every command and option, see the **[full CLI reference](docs/reference/cli.md)** or run `agent-archive help COMMAND`.
 
 [Install](docs/getting-started/install.md) ·
 [Setup](docs/getting-started/setup.md) ·

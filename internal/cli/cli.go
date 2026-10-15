@@ -569,7 +569,7 @@ Switch agents
   agent-archive handoff     Continue a session in another coding agent
 
 Run agent-archive COMMAND --help for options and examples.
-More commands (machines, eval, purge, ...): agent-archive help advanced
+More commands (machines, uninstall, purge, ...): agent-archive help advanced
 Use --version to show the installed version.
 You supply a private Cloudflare R2 or Amazon S3 bucket. No archive account needed.
 Docs: https://github.com/wangjohn/agent-archive/tree/main/docs

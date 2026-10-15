@@ -110,12 +110,15 @@ func dispatchedCommands(t *testing.T) []string {
 		t.Fatal("cli.go: Run dispatch switch not found")
 	}
 	text = text[start:]
-	if end := strings.Index(text, "\tdefault:"); end >= 0 {
+	// The switch's own default sits at one tab; nested switches indent theirs
+	// further, so anchor at a line start.
+	if end := strings.Index(text, "\n\tdefault:"); end >= 0 {
 		text = text[:end]
 	}
+	quoted := regexp.MustCompile(`"([^"]+)"`)
 	var commands []string
 	for _, line := range regexp.MustCompile(`(?m)^\tcase (.+):$`).FindAllStringSubmatch(text, -1) {
-		for _, m := range regexp.MustCompile(`"([^"]+)"`).FindAllStringSubmatch(line[1], -1) {
+		for _, m := range quoted.FindAllStringSubmatch(line[1], -1) {
 			name := m[1]
 			if strings.HasPrefix(name, "-") || strings.HasPrefix(name, "_") || name == "help" || name == "version" {
 				continue
@@ -311,6 +314,35 @@ func TestHelpAdvancedTier(t *testing.T) {
 	}
 	if !strings.Contains(usage, "agent-archive help advanced") {
 		t.Error("standard usage does not point at help advanced")
+	}
+	// The footer's examples must name advanced commands, so it cannot go
+	// stale when a command moves tier or is removed.
+	footer := regexp.MustCompile(`(?m)^More commands \(([^)]*)\): agent-archive help advanced$`).FindStringSubmatch(usage)
+	if footer == nil {
+		t.Fatal(`standard usage has no "More commands (...): agent-archive help advanced" footer`)
+	}
+	advanced := usageTopLevelCommands(advancedUsage)
+	named := 0
+	for _, name := range strings.Split(footer[1], ",") {
+		name = strings.TrimSpace(name)
+		if name == "..." {
+			continue
+		}
+		named++
+		if !slices.Contains(advanced, name) {
+			t.Errorf("usage footer names %q, which advancedUsage does not list (%v)", name, advanced)
+		}
+	}
+	if named == 0 {
+		t.Error("usage footer names no advanced commands")
+	}
+	// "advanced" is a reserved help topic: a command of that name would be
+	// shadowed by `help advanced`.
+	if _, ok := commandHelp["advanced"]; ok {
+		t.Error(`commandHelp has an "advanced" entry, which help advanced would shadow`)
+	}
+	if slices.Contains(dispatchedCommands(t), "advanced") {
+		t.Error(`Run dispatches an "advanced" command, which help advanced would shadow`)
 	}
 	var out strings.Builder
 	if code := Run([]string{"help", "eval"}, nil, &out, io.Discard, Env{}); code != 0 || out.String() != commandHelp["eval"] {

@@ -6,6 +6,11 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- `agent-archive --help` is shorter: it shows the commands for everyday use
+  (setup, status, sync, pause, resume, list, show, stats, backfill, handoff).
+  The rest (machines, recover, feedback, migrate, eval, uninstall, purge) are
+  listed by `agent-archive help advanced`; they work as before, and
+  `agent-archive help COMMAND` still shows any command's help.
 - `show` gives when a session was last active as a weekday ("Mon") or date
   ("Oct 9", "2025-03-01") once it is before today, instead of a count of
   hours or days ago; activity earlier today still reads "2h ago".
