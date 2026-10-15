@@ -125,7 +125,10 @@ same complete marker generation and an unchanged token, so every applied
 request preceded the census and its key's earlier owners are in it; the
 retained entry refuses later registrations of that key. The slice then records
 the token certified. A changed token or marker leaves work for the next slice.
-A repeated request for a retained key keeps it scheduled. Damaged, owned or
+A repeated request for a retained key keeps it scheduled; when its token was
+lost or already certified (the entry was stranded), the repeated request,
+from a hook or discovery's failed lookup, writes a fresh token instead of
+withdrawing the census. Damaged, owned or
 uncertified evidence, packed markers, and unusable tokens take the full
 recovery request.
 

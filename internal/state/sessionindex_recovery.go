@@ -144,12 +144,16 @@ func (s *Store) RequestSessionIndexRecovery(key agentmeta.SessionKey) error {
 		if !marker.Complete && marker.Generation != "" {
 			return nil
 		}
-		// A retained absence request under a complete census is already
-		// scheduled for certification; it is not damage to the census.
+		// A retained absence request under a complete census is not damage to
+		// the census. It is already scheduled while a token is pending; with
+		// the token lost or certified it is scheduled again, since its entry
+		// has refused every later registration of key and the next slice
+		// enumerates after reading the fresh token.
 		if marker.Complete && marker.Version == 1 && prior.Recovery {
 			if _, pending, err := s.readAbsenceRequest(); err == nil && pending {
 				return nil
 			}
+			return s.retainAbsenceRequest(key)
 		}
 	}
 	if handled, err := s.requestDuringPendingCensus(key); handled || err != nil {

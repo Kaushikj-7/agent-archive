@@ -334,3 +334,75 @@ func TestRequestBeforePendingCensusListingIsCertifiedByIt(t *testing.T) {
 		t.Fatalf("token left pending=%v err=%v", pending, err)
 	}
 }
+
+// A retained request whose scheduling token was lost (deleted, or moved aside
+// by hygiene) or already certified must not be stranded under a complete
+// census, nor withdraw that census for every other key: the next request for
+// the key, from discovery's lookup or a hook, schedules it again.
+func TestAbsenceRequestWithoutPendingTokenIsRescheduled(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"deleted", "certified"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			s := completedAbsenceStore(t)
+			generation := readMarkerGeneration(t, s)
+			wanted := agentmeta.SessionKey{Agent: agentmeta.Codex, NativeID: "stranded-" + name}
+			if err := s.RequestSessionIndexAbsence(wanted); err != nil {
+				t.Fatal(err)
+			}
+			strandAbsenceRequest(t, s, name == "deleted")
+			// Nothing is scheduled: a slice alone leaves the entry held.
+			if complete, err := s.RecoverSessionIndexScheduled(context.Background(), SessionIndexRecoverySlice); err != nil || !complete {
+				t.Fatalf("idle slice complete=%v err=%v", complete, err)
+			}
+			// Discovery's lookup fails on the retained entry and asks again.
+			if _, _, err := s.ArchiveSessionID(wanted); !errors.Is(err, ErrSessionIndexRecoveryRequired) {
+				t.Fatalf("retained entry lookup: %v", err)
+			}
+			if err := s.RequestSessionIndexRecovery(wanted); err != nil {
+				t.Fatal(err)
+			}
+			if status, err := s.SessionIndexRecoveryStatus(); err != nil || !status.Complete || status.Pending {
+				t.Fatalf("stranded request withdrew the census: %#v %v", status, err)
+			}
+			if got := readMarkerGeneration(t, s); got != generation {
+				t.Fatal("stranded request started a new census")
+			}
+			other := agentmeta.SessionKey{Agent: agentmeta.Claude, NativeID: "unrelated-" + name}
+			if _, created, err := s.EnsureArchiveSessionID(other); err != nil || !created {
+				t.Fatalf("unrelated miss refused: created=%v err=%v", created, err)
+			}
+			steps := map[string]int{}
+			s.onIndexStep = func(step string) error { steps[step]++; return nil }
+			if complete, err := s.RecoverSessionIndexScheduled(context.Background(), SessionIndexRecoverySlice); err != nil || !complete {
+				t.Fatalf("certification slice complete=%v err=%v", complete, err)
+			}
+			if steps["recovery-begin"] != 0 || steps["absence-certified"] != 1 {
+				t.Fatalf("certification slice steps: %v", steps)
+			}
+			if yes, err := s.SessionIndexAbsent(wanted); !yes || err != nil {
+				t.Fatalf("absence: %v %v", yes, err)
+			}
+		})
+	}
+}
+
+// strandAbsenceRequest leaves the retained entry with no pending token.
+func strandAbsenceRequest(t *testing.T, s *Store, deleted bool) {
+	t.Helper()
+	path := filepath.Join(s.home, sessionIndexAbsenceFile)
+	if deleted {
+		if err := os.Remove(path); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	request, _, err := s.readAbsenceRequest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Certified = request.Requested
+	if err := local.Write(path, request); err != nil {
+		t.Fatal(err)
+	}
+}
