@@ -83,7 +83,7 @@ Add canonical `agentmeta.Muse` (`muse`), alias `muse-code`, display `Muse Code`,
 and one binding in `builtin.NewBuiltins`. Keep native vocabulary in
 `internal/agents/muse`; shared consumers use narrow `agentapi` ports. Follow
 [adding an adapter](../contributing/adding-an-adapter.md) and
-[integration contracts](../proposals/implemented/agent-integration-contracts.md).
+[integration contracts](implemented/agent-integration-contracts.md).
 Register supported operations only.
 
 Use exact session IDs qualified by agent for root and child keys. Agent, workflow,

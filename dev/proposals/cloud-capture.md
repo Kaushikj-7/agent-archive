@@ -127,7 +127,7 @@ The metadata schema has `additionalProperties: false`, so cloud fields require `
 
 - `execution`: `{ "kind": "local" | "cloud" | "ci", "provider": "claude_code_web" | "cursor_cloud" | "codex_cloud" | "github_actions" | …, "remote_session_id": "…" }`. `remote_session_id` comes from vendor variables such as `CLAUDE_CODE_REMOTE_SESSION_ID`, so a session can be linked back to the vendor UI.
 - `machine_id`: in cloud mode, a stable pseudo-machine per provider and environment, for example `cloud-claude_code_web`, never the VM's random identity. This keeps `list` grouping meaningful and makes clear that the machine will not sweep its own sessions.
-- `repo_key`: reuse the implemented normalized-origin identity described in the [handoff specification](../specs/handoff.md). Do not introduce a second hashing or normalization rule. Local and cloud sessions for the same origin can group together despite different checkout paths.
+- `repo_key`: reuse the implemented normalized-origin identity described in the [handoff specification](implemented/handoff.md). Do not introduce a second hashing or normalization rule. Local and cloud sessions for the same origin can group together despite different checkout paths.
 
 `list` and `status` show the execution kind and provider. `show` and `handoff` are unchanged.
 

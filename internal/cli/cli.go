@@ -28,6 +28,7 @@ import (
 
 	"golang.org/x/term"
 
+	"github.com/wangjohn/agent-archive/internal/backfill"
 	"github.com/wangjohn/agent-archive/internal/cloudflare"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
@@ -147,6 +148,9 @@ type Env struct {
 	// removed no session ("undo recorded"). A test returns an error from it
 	// to stop the import or undo there, as a crash would.
 	backfillCheckpoint func(step string) error
+	// observeBackfillPlan, set only by tests, sees the actual completed plan.
+	// The observer must not mutate it or grant admission authority.
+	observeBackfillPlan func(backfill.Plan)
 	// backfillHoldSteps, when positive (only in tests), caps the steps
 	// registration takes per hold of hooks.lock, to force several holds.
 	backfillHoldSteps int

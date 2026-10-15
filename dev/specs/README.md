@@ -1,7 +1,18 @@
 # Engineering specifications
 
-Reviewed 2026-10-11 against `db2ccd3e`. Specs stay together here, including
-implemented contracts; `proposals/implemented/` holds completed proposal designs.
+Specs are for long-term understanding of the system: what a format, a rule
+set or a component's behavior is, written so someone changing that code years
+from now can check their change against it. A spec describes the system as it
+is (or a contract it must meet), stays here after it is built, and is kept up
+to date when the behavior changes.
+
+How a change gets built is a [proposal](../proposals/README.md), not a spec:
+the problem, options, PR breakdown, sequencing, decisions and live checks. A
+change can have both: the proposal is the implementation path, and the spec
+(new or updated) is what remains true once it lands. If a document would stop
+being useful once its PRs merge, it is a proposal.
+
+Reviewed 2026-10-11 against `db2ccd3e`.
 Code and [user documentation](../../docs/README.md) describe current behavior
 where a historical design differs. Fixture coverage does not establish live
 platform, native UI, provider or published-release acceptance.
@@ -17,15 +28,7 @@ Historical-only ownership status reconciled 2026-10-12 after #433 merged as
 | [Backfill](backfill.md) | Implemented original file/database import and historical-only ownership/bounded bulk mappings (#433). Cursor subagent import remains a follow-up; broader [historical recovery](../proposals/historical-backfill-recovery.md) remains partial. |
 | [Codex history](codex-history.md) | Implemented retained-history reader, lookup, lifecycle, native child admission and historical-only ownership (#433). Fragment artifacts (6b) and combined acceptance remain gated. |
 | [Codex fragments](codex-fragments.md) | Proposed step 6B1 format and schema checks only. Decoder, privacy-context-proven filtering, explicit incomplete consumer, lifecycle, opt-in import and exact repair undo are not shipped. |
-| [Handoff](handoff.md) | Implemented; [local pre-setup handoff](../proposals/implemented/local-handoff-before-setup.md) extends the original design. |
-| [Agent skills](agent-skill.md) | Implemented; explicit follow-ups and per-app live verification limits remain. |
-| [Session finding](session-finding.md) | PRs 1–8 merged; owner live-check evidence remains unrecorded in the spec. |
-| [Session list UI](session-list-ui.md) | In progress: one-line rows, day groups, cursor and detail strip; PRs 1–6 planned 2026-10-14. |
-| [Git HEAD](git-head.md) | Implemented session-start commit metadata. |
 | [Eval export](eval-export.md) | Implemented archived/local/bulk export; schema and golden fixtures define the contract. |
-| [Replay sessions](replay-sessions.md) | Implemented replay classification and default-history exclusion. |
-| [Muse Code integration](muse-integration.md) | Single proposed plan covering design, implementation order, native qualification results and acceptance gates; the first release is root capture only. Probes ran against `7d8aee13`; Q0 reconciles them with the current base. Production support remains gated. |
-| [Setup recent import](setup-recent-import.md) | Implemented: §1–§3 merged in #386; §4 status prompt now implemented in `status_pre_setup.go` and `refused_starts.go`. |
 
 For the implementation queue and outstanding acceptance records, use the
 [proposal index](../proposals/README.md).

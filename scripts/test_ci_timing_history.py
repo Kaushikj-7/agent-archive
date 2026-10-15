@@ -207,16 +207,129 @@ class TimingContracts(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'missing'):
                 normalize_ci_timing.worker(root)
 
+    def test_candidate_rejects_inconsistent_pipeline_source_provenance(self):
+        pipeline = collect_ci_timing.collect(FakeAPI(), receipt(), 1, 2)
+        for mutate in (
+                lambda value: value['input']['samples'][0].update(
+                    tested_checkout=dict(receipt(), source='f'*40)),
+                lambda value: value['input']['samples'][0].update(source='f'*40),
+                lambda value: value['topology'].update(workflow_source='f'*40),
+                lambda value: value['topology'].update(parents=['f'*40, 'c'*40])):
+            changed = copy.deepcopy(pipeline)
+            mutate(changed)
+            with self.assertRaisesRegex(ValueError, 'source provenance'):
+                ci_timing_history.candidate([], [changed])
+
+    def test_candidate_requires_identifiable_allocated_required_jobs(self):
+        observation = {'schema': 1, 'kind': 'worker-timing', 'run_id': '1', 'run_attempt': '1', 'shard': 0,
+                       'source': 'a'*40, 'observation_kind': 'normal', 'success': True,
+                       'configuration_sha256': 'x', 'compiled_inventory_sha256': 'inventory',
+                       'cohort': {'cache_state': 'prefix', 'runner_image': 'image'},
+                       'tests': [{'test_id': 'p::TestA', 'own_elapsed_seconds': 31, 'status': 'pass', 'timing_issues': []}]}
+        # These remain useful diagnostic snapshots with terminal successful
+        # timestamps, but cannot prove complete physical worker coverage.
+        for workflow, name in [('Test', 'linux-short (0)'), ('Levenshtein', 'verify')]:
+            for missing in ('id', 'unknown-allocation', 'legacy-allocation'):
+                api = FakeAPI()
+                run_id = 1 if workflow == 'Test' else 2
+                job = next(row for row in api.jobs[run_id] if row['name'] == name)
+                if missing == 'id':
+                    job.pop('id')
+                else:
+                    job['steps'] = []
+                    if missing == 'unknown-allocation':
+                        job.update(runner_id=None, runner_name=None)
+                    else:
+                        job.pop('runner_id')
+                        job.pop('runner_name')
+                pipeline = collect_ci_timing.collect(api, receipt(), 1, 2)
+                self.assertIsNotNone(pipeline['report']['samples'][0]['required_completed_at'])
+                with self.subTest(workflow=workflow, missing=missing):
+                    self.assertEqual(ci_timing_history.candidate([observation], [pipeline])['groups'], [])
+
+    def test_candidate_strict_identity_and_allocation_matrix(self):
+        observation = {'schema': 1, 'kind': 'worker-timing', 'run_id': '1', 'run_attempt': '1', 'shard': 0,
+                       'source': 'a'*40, 'observation_kind': 'normal', 'success': True,
+                       'configuration_sha256': 'x', 'compiled_inventory_sha256': 'inventory',
+                       'cohort': {'cache_state': 'prefix', 'runner_image': 'image'},
+                       'tests': [{'test_id': 'p::TestA', 'own_elapsed_seconds': 31, 'status': 'pass', 'timing_issues': []}]}
+        original = collect_ci_timing.collect(FakeAPI(), receipt(), 1, 2)
+        mutations = {
+            'id': [None, 0, True, '100'], 'run_id': [None, 999, True, '1'],
+            'run_attempt': [None, 0, 2, True, '1'], 'head_sha': [None, 'f'*40],
+            'runner_id': [None, 0, True, '100'], 'runner_name': [None, '', '   '],
+            'steps': [[], [{'name': 'body', 'status': 'completed', 'conclusion': 'success',
+                           'started_at': '2026-10-14T00:00:05Z', 'completed_at': '2026-10-14T00:01:05Z'}]],
+        }
+        for index, name in [(0, 'linux-short (0)'), (1, 'verify')]:
+            for field, values in mutations.items():
+                for value in values:
+                    pipeline = copy.deepcopy(original)
+                    job = next(job for job in pipeline['input']['samples'][0]['workflows'][index]['jobs']['jobs']
+                               if job['name'] == name)
+                    job[field] = value
+                    with self.subTest(workflow=index, field=field, value=value):
+                        self.assertEqual(ci_timing_history.candidate([observation], [pipeline])['groups'], [])
+            for field, value in [('path', 'other.yml'), ('event', 'push'), ('head_branch', 'sibling'),
+                                 ('repository', {'full_name': 'other/repo'}),
+                                 ('head_repository', {'full_name': 'other/fork'}),
+                                 ('pull_requests', []), ('id', True), ('id', '1'),
+                                 ('pull_requests', [{'number': 13, 'head': {'sha': 'c'*40}, 'base': {'sha': 'b'*40}}])]:
+                pipeline = copy.deepcopy(original)
+                pipeline['input']['samples'][0]['workflows'][index]['run'][field] = value
+                with self.subTest(workflow=index, field=field):
+                    self.assertEqual(ci_timing_history.candidate([observation], [pipeline])['groups'], [])
+        for field, value in [('workers', 4), ('observation_kind', 'full-pipeline-experiment'),
+                             ('repository', 'other/repo'), ('tree', 'not-a-sha')]:
+            pipeline = copy.deepcopy(original)
+            pipeline['topology'][field] = value
+            for sample in pipeline['input']['samples']:
+                sample['tested_checkout'][field] = value
+            if field == 'workers':
+                pipeline['input']['samples'][0]['required_jobs'] = collect_ci_timing.inventory(value)
+            with self.subTest(topology=field):
+                self.assertEqual(ci_timing_history.candidate([observation], [pipeline])['groups'], [])
+        # The authenticated postmerge path remains usable offline, while an
+        # unrelated artifact/run/attempt marker cannot supply its association.
+        pipeline = copy.deepcopy(original)
+        for snapshot in pipeline['input']['samples'][0]['workflows']:
+            snapshot['run']['pull_requests'] = []
+        pipeline['authenticated_retained_identities'] = [
+            {'artifact_id': 100 + ident, 'run_id': ident, 'run_attempt': 1, 'digest': 'sha256:' + 'd'*64}
+            for ident in (1, 2)]
+        self.assertEqual(len(ci_timing_history.candidate([observation], [pipeline])['groups']), 1)
+        pipeline['authenticated_retained_identities'][1]['run_attempt'] = 2
+        self.assertEqual(ci_timing_history.candidate([observation], [pipeline])['groups'], [])
+
     def test_candidate_dedup_conflicts_experiments_and_cohorts(self):
         observation = {'schema': 1, 'kind': 'worker-timing', 'run_id': '1', 'run_attempt': '1', 'shard': 0,
                        'source': 'a'*40, 'observation_kind': 'normal', 'success': True,
-                       'configuration_sha256': 'x', 'cohort': {'cache_state': 'prefix', 'runner_image': 'image'},
+                       'configuration_sha256': 'x', 'compiled_inventory_sha256': 'inventory',
+                       'cohort': {'cache_state': 'prefix', 'runner_image': 'image'},
                        'tests': [{'test_id': 'p::TestA', 'own_elapsed_seconds': 31, 'status': 'pass', 'timing_issues': []}]}
         pipeline = collect_ci_timing.collect(FakeAPI(), receipt(), 1, 2)
         result = ci_timing_history.candidate([observation, observation], [pipeline])
         self.assertEqual(result['physical_worker_observations'], 1)
         self.assertEqual(result['groups'][0]['tests']['p::TestA']['observations'], 1)
         self.assertFalse(result['automatic_promotion'])
+        # The retained allocation, including its actual attempt, authorizes
+        # individual shards; sharing a successful workflow ID is insufficient.
+        self.assertEqual(ci_timing_history.candidate([dict(observation, shard=999)], [pipeline])['groups'], [])
+        for cohort in ({}, {'cache_state': 'prefix', 'runner_image': ''},
+                       {'cache_state': '', 'runner_image': 'image'},
+                       {'cache_state': 'made-up', 'runner_image': 'image'}):
+            with self.subTest(cohort=cohort):
+                self.assertEqual(ci_timing_history.candidate([dict(observation, cohort=cohort)], [pipeline])['groups'], [])
+        with self.assertRaisesRegex(ValueError, 'conflicting'):
+            ci_timing_history.candidate([observation, dict(observation, run_id=1)], [pipeline])
+        changed_inventory = dict(observation, shard=1, compiled_inventory_sha256='different-inventory')
+        self.assertEqual(len(ci_timing_history.candidate([observation, changed_inventory], [pipeline])['groups']), 2)
+        rerun_api = FakeAPI()
+        rerun_api.runs[1]['run_attempt'] = 2
+        # All original successful jobs were carried into the final attempt.
+        rerun = collect_ci_timing.collect(rerun_api, receipt(), 1, 2)
+        self.assertEqual(len(ci_timing_history.candidate([observation], [rerun])['groups']), 1)
+        self.assertEqual(ci_timing_history.candidate([dict(observation, run_attempt='2')], [rerun])['groups'], [])
         self.assertEqual(ci_timing_history.candidate([observation])['groups'], [])
         failed_api = FakeAPI()
         failed_api.runs[2]['conclusion'] = 'failure'
