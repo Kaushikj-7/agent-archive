@@ -302,6 +302,10 @@ class GateTests(unittest.TestCase):
                 self.run_gate()
         self.rows[0]['fixture_metrics'] = [valid, copy.deepcopy(valid)]
         self.assertEqual(self.run_gate()['failures'][0]['reason'], 'deterministic-work-budget')
+        self.rows[0]['fixture_metrics'] = []
+        self.rows[0]['tests'] = []
+        with self.assertRaisesRegex(ValueError, 'required deterministic fixture parent missing'):
+            self.run_gate()
 
     def test_invalid_or_missing_evidence_fails_closed(self):
         modifications = [lambda: self.rows.pop(), lambda: self.rows.append(worker(0)),

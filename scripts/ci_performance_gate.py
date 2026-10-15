@@ -412,7 +412,7 @@ def evaluate(policy, rows, topology, run_id, attempt, exceptions, api=None, toda
                              'parallel_descendants': parallel, 'parallel_elapsed_work_seconds': elapsed_work})
     for budget in policy['work_budgets']:
         if budget['test_id'] not in tests:
-            continue
+            raise ValueError('required deterministic fixture parent missing')
         matched = [row for row in metrics if all(row[key] == budget[key] for key in ('test_id', 'fixture', 'phase'))]
         # Metrics may nest: only sum repeated observations of this exact phase,
         # never add a constructor's child phase to its parent phase.

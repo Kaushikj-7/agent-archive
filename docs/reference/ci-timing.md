@@ -992,8 +992,8 @@ not promise statistical confidence from three observations; they are reviewed
 admission policy, with source-bound evidence and an explicit override.
 
 Deterministic `work_budgets` bind a test, fixture, phase, and operation counter.
-Missing required counters and excess work fail independently of time. Repeated
-metrics for that exact phase are accumulated; parent and child phases are never
+Missing configured parents, required phases or counters, and excess work fail
+independently of time. Repeated metrics for that exact phase are accumulated; parent and child phases are never
 summed or subtracted as disjoint durations. `parallel_budgets` can explicitly
 bound a family's observed descendant count and elapsed-work indicator; these
 explicit limits remain enforced after the family enters the baseline.
