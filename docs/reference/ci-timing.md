@@ -1033,7 +1033,8 @@ and unlisted-user reviews do not authorize it. Pushes invalidate that approval.
 Approve the revision, then rerun CI; a rerun or label alone grants nothing. There
 is no self-referential head SHA in the exception file. The bounded decision
 artifact records the exact source, trusted policy digest, exception and review.
-Review submission time determines the latest review, with review ID breaking equal-time ties.
+Unsubmitted pending reviews do not replace a submitted decision. Review submission
+time determines the latest review, with review ID breaking equal-time ties.
 Expired exceptions fail even when unused, so remove them promptly.
 
 The enforcer protects the budget decision **when the required workflow runs**.
@@ -1070,7 +1071,7 @@ committing that candidate. The command does not promote it or grant approval.
 It records real initial observations without fabricating additional sample size.
 Multiple comparable successful observations are required to establish relative
 budgets; updating existing baselines must preserve their reviewed sample
-provenance. The admission CLI independently rechecks catalog version, exact
+provenance. The live gate and admission CLI independently recheck catalog version, exact
 source/tree, catalog digest, complete assignment, compiled discovery and selected
 raw parent bodies. Ordinary
 whole-package receipts do not contain separate individual compiled listings;

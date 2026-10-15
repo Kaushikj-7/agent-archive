@@ -12,7 +12,7 @@ import collect_ci_timing
 import normalize_ci_timing
 
 SHA = re.compile(r'[0-9a-f]{40}')
-IDENT = re.compile(r'github\.com/wangjohn/agent-archive/[^:]+::(?:Test|Fuzz|Example)\w+')
+IDENT = re.compile(r'github\.com/wangjohn/agent-archive/[^:]+::(?:Test|Fuzz|Example)\w*')
 MAX_BYTES = 16 * 1024 * 1024
 POLICY = 'scripts/ci_performance_policy.json'
 EXCEPTIONS = 'scripts/ci_performance_exceptions.json'
@@ -297,7 +297,7 @@ def approval(api, topology, maintainers):
             raise ValueError('invalid review API response')
         for row in rows:
             login = row.get('user', {}).get('login', '').casefold()
-            if login in allowed:
+            if login in allowed and row.get('state') != 'PENDING':
                 if type(row.get('id')) is not int or not isinstance(row.get('submitted_at'), str):
                     raise ValueError('invalid submitted review identity')
                 submitted = datetime.fromisoformat(row['submitted_at'].replace('Z', '+00:00'))
@@ -442,7 +442,7 @@ def main():
         paths = sorted(args.workers.glob('*/manifest.json'))
         if len(paths) != topology['workers']:
             raise ValueError('missing or excess raw worker manifests')
-        rows = normalize_workers(paths, topology)
+        rows = normalize_workers(paths, topology, verify_coverage=True)
         api = collect_ci_timing.API(os.environ.get('GH_TOKEN', ''), seconds=20, request_limit=12)
         run_id, attempt = os.environ['GITHUB_RUN_ID'], os.environ['GITHUB_RUN_ATTEMPT']
         actual = current_worker_attempts(api, topology, run_id, attempt)

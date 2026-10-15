@@ -2,9 +2,11 @@
 import copy
 from datetime import date
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
 import ci_performance_gate as gate
 import admit_ci_performance_baseline as admission
@@ -170,6 +172,44 @@ class GateTests(unittest.TestCase):
         newer_created_first_submitted['state'] = 'CHANGES_REQUESTED'
         self.assertTrue(self.run_gate(API([newer_created_first_submitted,
                                           older_created_later_submitted]))['passed'])
+
+    def test_pending_reviews_do_not_replace_latest_submitted_decision(self):
+        self.new_test(own_elapsed_seconds=84)
+        self.exception()
+        pending = approved(id=3, state='PENDING', submitted_at=None)
+        for submitted_at in (None, 'absent'):
+            pending['submitted_at'] = submitted_at
+            if submitted_at == 'absent':
+                del pending['submitted_at']
+            for reviews in ([pending, approved()], [approved(), pending]):
+                with self.subTest(reviews=reviews):
+                    self.assertTrue(self.run_gate(API(reviews))['passed'])
+            with self.assertRaises(ValueError):
+                self.run_gate(API([pending]))
+            with self.assertRaises(ValueError):
+                self.run_gate(API([approved(), pending, approved(id=2, state='CHANGES_REQUESTED')]))
+        # Only explicit drafts are ignored; malformed submitted reviews fail.
+        with self.assertRaisesRegex(ValueError, 'submitted review identity'):
+            self.run_gate(API([approved(), approved(id=4, submitted_at=None)]))
+
+    def test_bare_compiled_parent_names_receive_budgets_and_can_be_admitted(self):
+        for name in ('Test', 'Fuzz', 'Example'):
+            self.setUp()
+            test = self.rows[0]['tests'][0]
+            test.update(test_id=PREFIX + name, own_elapsed_seconds=31)
+            with self.subTest(name=name):
+                result = self.run_gate()
+                self.assertEqual(result['failures'][0]['reason'], 'new-test-budget')
+                self.exception(test_id=test['test_id'])
+                self.assertTrue(self.run_gate(API([approved()]))['passed'])
+                self.policy['parallel_budgets'][test['test_id']] = {
+                    'maximum_descendants': 2, 'maximum_elapsed_work_seconds': 3}
+                self.policy['baseline']['inventory'] = sorted(
+                    self.policy['baseline']['inventory'] + [test['test_id']])
+                self.policy['baseline']['provenance']['inventory_sha256'] = norm.digest(
+                    self.policy['baseline']['inventory'])
+                self.policy['baseline']['samples'][0] = copy.deepcopy(self.policy['baseline']['provenance'])
+                gate.policy_check(self.policy)
 
     def test_malformed_baseline_cannot_enable_fabricated_history(self):
         original = copy.deepcopy(self.policy)
@@ -422,6 +462,66 @@ class GateTests(unittest.TestCase):
             self.assertTrue(manifest['success'])
             with self.assertRaisesRegex(ValueError, 'raw compiled coverage invalid'):
                 gate.verify_raw_coverage(paths, topology)
+
+    def test_live_cli_rechecks_raw_assignments_before_using_normalized_timings(self):
+        import test_go_parent_shards as parent_fixture
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            artifacts = root/'workers'
+            artifacts.mkdir()
+            catalog = json.loads(json.dumps(parent_fixture.catalog()).replace('"light"',
+                '"github.com/wangjohn/agent-archive/internal/light"').replace('"fileless"',
+                '"github.com/wangjohn/agent-archive/internal/fileless"'))
+            catalog['units'] = sorted(catalog['units'])
+            parent_fixture.evidence(artifacts, catalog)
+            topology = dict(receipt(), source=parent_fixture.SOURCE['source'],
+                            tree=parent_fixture.SOURCE['tree'])
+            inputs = {'policy': self.policy, 'exceptions': self.exceptions, 'topology': topology}
+            argv = ['ci_performance_gate.py', '--workers', str(artifacts), '--output', str(root/'result.json')]
+            for name, document in inputs.items():
+                path = root/(name + '.json')
+                path.write_text(json.dumps(document))
+                argv.extend(['--' + name, str(path)])
+            manifests = sorted(artifacts.glob('*/manifest.json'))
+            for path in manifests:
+                manifest = json.loads(path.read_text())
+                manifest.update(phases={'worker_total_seconds': 1},
+                                timing_observation={'run_id': '12', 'run_attempt': '1'})
+                path.write_text(json.dumps(manifest))
+            original = manifests[0].read_text()
+            assignment = json.loads(original)['coverage']
+            package = next(iter(assignment['parents']))
+            log = manifests[0].parent/parent_fixture.p.log_name(package)
+            original_log = log.read_text()
+            missing = assignment['parents'][package][0]
+            for damage in (None, 'catalog', 'assignment', 'parent-body'):
+                manifests[0].write_text(original)
+                log.write_text(original_log)
+                manifest = json.loads(original)
+                if damage == 'catalog':
+                    manifest['catalog_sha256'] = '0'*64
+                elif damage == 'assignment':
+                    manifest['coverage'] = {}
+                elif damage == 'parent-body':
+                    events = parent_fixture.r.json_stream(original_log)
+                    log.write_text(parent_fixture.rows(
+                        [event for event in events if event.get('Test', '').split('/')[0] != missing]))
+                manifests[0].write_text(json.dumps(manifest))
+                with self.subTest(damage=damage), mock.patch('sys.argv', argv), \
+                        mock.patch.dict(os.environ, {'GITHUB_RUN_ID': '12', 'GITHUB_RUN_ATTEMPT': '1'}), \
+                        mock.patch.object(gate.collect_ci_timing, 'API'), \
+                        mock.patch.object(gate, 'current_worker_attempts', return_value={i: 1 for i in range(8)}), \
+                        mock.patch.object(gate.normalize_ci_timing, 'worker', wraps=gate.normalize_ci_timing.worker) as normalize:
+                    if damage is None:
+                        gate.main()
+                        self.assertTrue(json.loads((root/'result.json').read_text())['passed'])
+                        self.assertEqual(normalize.call_count, 8)
+                    else:
+                        with self.assertRaises(SystemExit) as failure:
+                            gate.main()
+                        self.assertEqual(failure.exception.code, 1)
+                        self.assertFalse(json.loads((root/'result.json').read_text())['passed'])
+                        normalize.assert_not_called()
 
     def test_json_duplicate_keys_nonfinite_and_symlink_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
