@@ -71,7 +71,7 @@ def production_jobs(pipeline, sample, row):
     return required
 
 
-def candidate(observations, pipelines=()):
+def candidate(observations, pipelines=(), *, bind_inventory=True):
     eligible = set()
     for pipeline in pipelines:
         if pipeline.get('snapshot_status') != 'terminal':
@@ -128,8 +128,9 @@ def candidate(observations, pipelines=()):
                 or not isinstance(cohort.get('runner_image'), str)
                 or not cohort['runner_image'].strip() or cohort['runner_image'] == 'unknown'):
             continue
-        group = {'configuration_sha256': observation['configuration_sha256'],
-                 'compiled_inventory_sha256': observation['compiled_inventory_sha256'], 'cohort': cohort}
+        group = {'configuration_sha256': observation['configuration_sha256'], 'cohort': cohort}
+        if bind_inventory:
+            group['compiled_inventory_sha256'] = observation['compiled_inventory_sha256']
         key = digest(group)
         bucket = groups.setdefault(key, {'identity': group, 'sources': set(), 'tests': {}})
         bucket['sources'].add(observation['source'])
