@@ -361,7 +361,7 @@ verify_attestation() {
     return 0
   fi
   if command -v gh >/dev/null 2>&1; then
-    if attest_out="$(gh attestation verify "$1" --repo wangjohn/agent-archive 2>&1)"; then
+    if attest_out="$(gh attestation verify "$1" --repo wangjohn/agent-archive --hostname github.com --signer-workflow github.com/wangjohn/agent-archive/.github/workflows/release.yml 2>&1)"; then
       say "Attestation verified (GitHub build provenance, wangjohn/agent-archive)"
       return 0
     fi
@@ -379,7 +379,7 @@ verify_attestation() {
   fi
   say "The checksum only guards against a damaged download, and this binary is not signed."
   say "To confirm it came from the project's release workflow, run (needs the gh CLI):"
-  say "  gh attestation verify $(shell_quote "$target") --repo wangjohn/agent-archive"
+  say "  gh attestation verify $(shell_quote "$target") --repo wangjohn/agent-archive --hostname github.com --signer-workflow github.com/wangjohn/agent-archive/.github/workflows/release.yml"
   say "To verify before anything is installed, use the manual download-verify-install flow in docs/getting-started/install.md ('Install a release build by hand')."
   say "Continuing without attestation verification because gh is not on PATH; set AGENT_ARCHIVE_REQUIRE_ATTESTATION=1 to refuse instead."
 }

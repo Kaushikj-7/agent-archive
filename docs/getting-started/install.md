@@ -129,8 +129,9 @@ build-provenance attestation with the [GitHub CLI](https://cli.github.com/),
 and there are three outcomes:
 
 - **`gh` is on your `PATH`:** the installer runs
-  `gh attestation verify <downloaded file> --repo wangjohn/agent-archive`.
-  If the attestation verifies, it prints
+  `gh attestation verify <downloaded file> --repo wangjohn/agent-archive --hostname github.com --signer-workflow github.com/wangjohn/agent-archive/.github/workflows/release.yml`.
+  This pins lookup to github.com and the signer to this repository’s release workflow,
+  independently of an ambient `GH_HOST`. If the attestation verifies, it prints
   `Attestation verified (GitHub build provenance, wangjohn/agent-archive)`
   and installs. If verification fails, or `gh` cannot check it (for example,
   a network error), the install stops and nothing is installed or run.
@@ -304,13 +305,13 @@ build such as `go run`'s.
    Compare the reported `TeamIdentifier` with `team_id` in
    [`install.sh`](../../install.sh). On either system, if you have the GitHub
    CLI, also run
-   `gh attestation verify "$asset" --repo wangjohn/agent-archive` to check
+   `gh attestation verify "$asset" --repo wangjohn/agent-archive --hostname github.com --signer-workflow github.com/wangjohn/agent-archive/.github/workflows/release.yml` to check
    that this release asset was built by the repository's release workflow.
    On Linux this attestation check is the authenticity check: run it on the
    downloaded file, before `chmod`/`mv` in the next step and before ever
    running it, and do not install the file if it fails. The release's
    `SHA256SUMS` is attested too, so
-   `gh attestation verify SHA256SUMS --repo wangjohn/agent-archive` also
+   `gh attestation verify SHA256SUMS --repo wangjohn/agent-archive --hostname github.com --signer-workflow github.com/wangjohn/agent-archive/.github/workflows/release.yml` also
    confirms the checksums themselves came from that workflow run.
 
 4. Make the selected binary executable and install it in a directory you own:

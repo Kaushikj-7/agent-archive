@@ -415,6 +415,9 @@ class InstallScriptTest(InstallScriptBase):
             '[ "$1" = attestation ] && [ "$2" = verify ] || exit 9\n'
             '[ -f "$3" ] || exit 8\n'
             '[ "$4" = --repo ] && [ "$5" = wangjohn/agent-archive ] || exit 9\n'
+            '[ "$#" -eq 9 ] || exit 9\n'
+            '[ "$6" = --hostname ] && [ "$7" = github.com ] || exit 9\n'
+            '[ "$8" = --signer-workflow ] && [ "$9" = github.com/wangjohn/agent-archive/.github/workflows/release.yml ] || exit 9\n'
             f'{say}exit {exit_code}'
         )
 
@@ -450,6 +453,33 @@ class InstallScriptTest(InstallScriptBase):
         self.assertIn(verified, result.stdout)
         self.assertLess(result.stdout.index(verified), result.stdout.index('✓ installed'))
         self.assertEqual(self.installed_output(), self.linux_output('amd64'))
+
+    def test_linux_gh_attestation_pins_public_release_policy_despite_enterprise_host(self):
+        for strict in (False, True):
+            with self.subTest(strict=strict):
+                order = self.root / ('enterprise-strict.log' if strict else 'enterprise-default.log')
+                self.order_logging_linux_binary(order)
+                curl, _ = self.fake_release_curl()
+                # Keep the enterprise host present in the verifier environment:
+                # explicit argv, rather than clearing the user's setting, must
+                # select the public host and the exact release workflow.
+                gh = ('[ "${GH_HOST:-}" = github.corporate.example ] || exit 10\n'
+                      + self.fake_gh(order))
+                env = {'GH_HOST': 'github.corporate.example'}
+                if strict:
+                    env['AGENT_ARCHIVE_REQUIRE_ATTESTATION'] = '1'
+                result = self.run_linux_from_github_base({'curl': curl, 'gh': gh}, env)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                lines = order.read_text().splitlines()
+                gh_lines = [line for line in lines if line.startswith('gh ')]
+                self.assertEqual(len(gh_lines), 1, lines)
+                self.assertTrue(gh_lines[0].endswith(
+                    ' --repo wangjohn/agent-archive --hostname github.com'
+                    ' --signer-workflow github.com/wangjohn/agent-archive/.github/workflows/release.yml'),
+                    gh_lines)
+                self.assertLess(lines.index(gh_lines[0]), lines.index('ran'))
+                self.assertIn('Attestation verified', result.stdout)
+                self.assertEqual(self.installed_output(), self.linux_output('amd64'))
 
     def test_linux_gh_attestation_failure_installs_and_runs_nothing(self):
         order = self.root / 'order.log'
