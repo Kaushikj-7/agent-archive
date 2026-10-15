@@ -88,13 +88,13 @@ func TestSessionRowsFitTheTerminalWidth(t *testing.T) {
 				c.width, layout.project, layout.pr, layout.agentName, layout.title, c.project, c.pr, c.agentName, c.title)
 		}
 		for _, variant := range []struct {
-			name           string
-			cursor         bool
-			color          bool
-			groupByProject bool
-		}{{name: "plain"}, {name: "cursor", cursor: true}, {name: "color", color: true}, {name: "grouped", groupByProject: true, color: true}} {
+			name       string
+			cursor     bool
+			color      bool
+			groupByDay bool
+		}{{name: "plain"}, {name: "cursor", cursor: true}, {name: "color", color: true}, {name: "grouped", groupByDay: true, color: true}} {
 			format := laid
-			format.Width, format.Cursor, format.GroupByProject = c.width, variant.cursor, variant.groupByProject
+			format.Width, format.Cursor, format.GroupByDay = c.width, variant.cursor, variant.groupByDay
 			format.Style = textStyle{color: variant.color}
 			shown := rows
 			if variant.cursor {
@@ -262,7 +262,7 @@ func TestCutAtWord(t *testing.T) {
 func TestPipedListColumns(t *testing.T) {
 	t.Parallel()
 	sessions := layoutSessions()
-	format := listFormatOptions{Now: pickerNow, GroupByProject: true}
+	format := listFormatOptions{Now: pickerNow, GroupByDay: true}
 	choices := newScopeChoices(sessionScope{}, format, true, archiveRows(sessions, defaultListLimit, format))
 	var out bytes.Buffer
 	if err := printListTable(&out, choices.shown(), 0); err != nil {
