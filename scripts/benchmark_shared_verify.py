@@ -50,13 +50,16 @@ def tree_digest(root, limit=None):
 def validate_report(report, plan):
     """A faster missing/cached/failed check is not a useful observation."""
     expected = Counter(check['id'] for check in plan['checks'])
-    if (report.get('version') != 1 or report.get('status') != 'passed'
+    if (plan.get('rerun_checks') is not True
+            or report.get('version') != 1 or report.get('status') != 'passed'
             or report.get('plan') != plan
             or Counter(item['id'] for item in report.get('results', [])) != expected):
         raise ValueError('shared report does not prove the complete successful plan')
     for result in report['results']:
         if (result.get('status') != 'passed'
-                or result.get('cache', {}).get('status') not in ('miss', 'disabled')):
+                # The pinned executor calls forced execution "fresh" when
+                # rerun_checks bypasses its verdict cache (CacheFresh).
+                or result.get('cache', {}).get('status') not in ('fresh', 'miss', 'disabled')):
             raise ValueError('every benchmark check must execute freshly and pass')
 
 

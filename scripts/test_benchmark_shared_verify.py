@@ -14,9 +14,11 @@ from test_ci_workflow import ROOT, jobs, job_key
 
 class BenchmarkTest(unittest.TestCase):
     def report(self):
-        plan = {'checks': [{'id': name} for name in sorted(benchmark.CHECKS)]}
+        plan = {'rerun_checks': True,
+                'checks': [{'id': name} for name in sorted(benchmark.CHECKS)]}
         report = {'version': 1, 'status': 'passed', 'plan': copy.deepcopy(plan),
-                  'results': [{'id': name, 'status': 'passed', 'cache': {'status': 'miss'}}
+                  'results': [{'id': name, 'status': 'passed', 'cache': {
+                      'status': 'disabled' if name in ('modules', 'vulnerabilities') else 'fresh'}}
                               for name in sorted(benchmark.CHECKS)]}
         return report, plan
 
@@ -27,6 +29,8 @@ class BenchmarkTest(unittest.TestCase):
                      lambda r: r['results'].append(copy.deepcopy(r['results'][0])),
                      lambda r: r['results'][0].update(status='failed'),
                      lambda r: r['results'][0]['cache'].update(status='hit'),
+                     lambda r: r['results'][0]['cache'].update(status='unavailable'),
+                     lambda r: r['results'][0].pop('cache'),
                      lambda r: r['plan'].update(rerun_checks=False),
                      lambda r: r.update(status='cancelled')]
         for mutate in mutations:
@@ -34,6 +38,26 @@ class BenchmarkTest(unittest.TestCase):
             mutate(value)
             with self.subTest(value=value), self.assertRaises(ValueError):
                 benchmark.validate_report(value, plan)
+
+    def test_pinned_forced_fresh_outcomes_require_an_explicit_rerun_plan(self):
+        # Observed in API-digest-verified artifact 11943760660, run 38669468388:
+        # four CacheFresh executions, and uncached modules/vulnerabilities.
+        report, plan = self.report()
+        self.assertEqual([item['cache']['status'] for item in report['results']].count('fresh'), 4)
+        benchmark.validate_report(report, plan)
+        for value in (False, None, 1):
+            changed = copy.deepcopy(plan)
+            if value is None:
+                changed.pop('rerun_checks')
+            else:
+                changed['rerun_checks'] = value
+            report['plan'] = copy.deepcopy(changed)
+            with self.subTest(rerun=value), self.assertRaises(ValueError):
+                benchmark.validate_report(report, changed)
+        report, plan = self.report()
+        for item in report['results']:
+            item['cache']['status'] = 'miss'
+        benchmark.validate_report(report, plan)
 
     def test_cache_fingerprint_rejects_aliases_and_oversize(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -107,7 +131,9 @@ if 'warmup' in xdg.name:
 else:
     assert (build/'warm-marker').read_text()=='warm compilation'
     (build/('variant-'+xdg.name)).write_text('local action')
-results=[{'id':c['id'],'status':'passed','cache':{'status':'disabled'},
+assert plan['rerun_checks'] is True
+results=[{'id':c['id'],'status':'passed','cache':{'status':
+          'disabled' if c['id'] in ('modules','vulnerabilities') else 'fresh'},
           'duration_ms':1,'execution_ms':1} for c in checks]
 print(json.dumps({'version':1,'status':'passed','plan':plan,'results':results}))
 ''')
