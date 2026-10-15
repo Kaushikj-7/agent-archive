@@ -56,21 +56,9 @@ func (s *Store) Matches(ctx context.Context, q Query, harness, session string, g
 		return page, ErrCursorChanged
 	}
 	key, identity := harness+"/"+session, queryIdentity(q)
-	c := matchCursor{Generation: generation, Query: identity, Session: key}
-	if cursor != "" {
-		if len(cursor) > 5500 {
-			return page, ErrInvalidCursor
-		}
-		b, e := base64.RawURLEncoding.DecodeString(cursor)
-		if e != nil || len(b) > 4096 {
-			return page, ErrInvalidCursor
-		}
-		if e = json.Unmarshal(b, &c); e != nil || c.Query != identity || c.Session != key {
-			return page, ErrInvalidCursor
-		}
-		if c.Generation != generation {
-			return page, ErrCursorChanged
-		}
+	c, err := decodeMatchCursor(cursor, generation, identity, key)
+	if err != nil {
+		return page, err
 	}
 	text := matchingQuery + ` AND s.harness=? AND s.session_id=? AND p.title_hit=0
 ) SELECT pid,score,role_rank FROM matching WHERE title_hit=0 AND session=?`
@@ -144,4 +132,25 @@ func (s *Store) Matches(ctx context.Context, q Query, harness, session string, g
 		}
 	}
 	return page, tx.Commit()
+}
+
+func decodeMatchCursor(token string, generation int64, identity, key string) (matchCursor, error) {
+	c := matchCursor{Generation: generation, Query: identity, Session: key}
+	if token == "" {
+		return c, nil
+	}
+	if len(token) > 5500 {
+		return c, ErrInvalidCursor
+	}
+	data, err := base64.RawURLEncoding.DecodeString(token)
+	if err != nil || len(data) > 4096 {
+		return c, ErrInvalidCursor
+	}
+	if err = json.Unmarshal(data, &c); err != nil || c.Query != identity || c.Session != key {
+		return c, ErrInvalidCursor
+	}
+	if c.Generation != generation {
+		return c, ErrCursorChanged
+	}
+	return c, nil
 }

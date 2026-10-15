@@ -829,10 +829,10 @@ func (l *sessionPicker) pages(stdout io.Writer, groups []sessionTableGroup, form
 	if !ok {
 		return all, 0, false
 	}
+	footer = l.displayFooter(footer, width)
 	if c := l.cache; c != nil && c.width == width && c.height == height && c.rows == n && c.footer == footer && c.question == question {
 		return c.pages, width, true
 	}
-	footer = l.displayFooter(footer, width)
 	pages = l.split(groups, format, n, width, height, footer, question)
 	l.cache = &pickerPages{width: width, height: height, rows: n, footer: footer, question: question, pages: pages}
 	return pages, width, true
@@ -1201,31 +1201,14 @@ func (b *sessionBrowser) searchDetails(ctx context.Context, row listRow) (browse
 		answer := s.pendingAction
 		s.pendingAction = ""
 		// Pending actions apply only after readSearchSelection joined its read.
-		if answer == "" && b.keys == nil {
+		if answer == "" {
 			var err error
-			answer, err = b.prompt.line(": ")
+			answer, err = b.searchDetailAction(&screen)
 			if err != nil {
 				return endOfInput(err)
 			}
-			answer = strings.ToLower(strings.TrimSpace(answer))
-		} else if answer == "" {
-			k, err := b.keys.next()
-			if err != nil {
-				return endOfInput(err)
-			}
-			if move, ok := scrollKeys[k.kind]; ok {
-				screen.scroll(move)
-				top = screen.top
-				continue
-			}
-			switch k.kind {
-			case keyEnter, keyBackspace:
-				answer = "b"
-			case keyEndOfInput:
-				answer = "q"
-			case keyRune:
-				answer = strings.ToLower(string(k.r))
-			case keyEscape, keyResize, keyUp, keyDown, keyPageUp, keyPageDown, keyHome, keyEnd, keyLeft, keyRight:
+			top = screen.top
+			if answer == "" {
 				continue
 			}
 		}
@@ -1272,4 +1255,36 @@ func (b *sessionBrowser) searchDetails(ctx context.Context, row listRow) (browse
 			notice = searchDetailsQuestion
 		}
 	}
+}
+
+func (b *sessionBrowser) searchDetailAction(screen *detailsScreen) (string, error) {
+	if b.keys == nil {
+		answer, err := b.prompt.line(": ")
+		if err != nil {
+			return "", err
+		}
+		answer = strings.ToLower(strings.TrimSpace(answer))
+		if answer == "" {
+			answer = "b"
+		}
+		return answer, nil
+	}
+	k, err := b.keys.next()
+	if err != nil {
+		return "", err
+	}
+	if move, ok := scrollKeys[k.kind]; ok {
+		screen.scroll(move)
+		return "", nil
+	}
+	switch k.kind {
+	case keyEnter, keyBackspace:
+		return "b", nil
+	case keyEndOfInput:
+		return "q", nil
+	case keyRune:
+		return strings.ToLower(string(k.r)), nil
+	case keyEscape, keyResize, keyUp, keyDown, keyPageUp, keyPageDown, keyHome, keyEnd, keyLeft, keyRight:
+	}
+	return "", nil
 }
