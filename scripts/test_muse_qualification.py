@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
 """Offline Q0 controls: no native binary, listener or personal home is required."""
 
+import contextlib
+import io
 import json
+import os
 import pathlib
+import subprocess
+import time
 import signal
 import sys
 import tempfile
@@ -68,6 +73,104 @@ class QualificationTests(unittest.TestCase):
         msp.messages.put({"id": 1, "result": {}})
         msp.turn("synthetic")
         self.assertIn("synthetic", msp.completed)
+
+    def test_retained_turn_checks_reject_missing_reply_usage_and_wrong_identity(self):
+        for name in ("msp-root", "msp-fork", "tui-root", "root-resume", "root-tool-resume"):
+            with self.subTest(corpus=name), tempfile.TemporaryDirectory() as directory:
+                rows = [json.loads(line)["record"] for line in (FIXTURES / (name + ".jsonl")).read_text().splitlines()]
+                run_rows = [row for row in rows if row.get("payload_type") == "runtime.session" and row.get("payload", {}).get("kind") == "run"]
+                session_id = run_rows[0]["stream"]["id"]
+                root = pathlib.Path(directory) / session_id
+                root.mkdir()
+                path = root / "session.jsonl"
+                def write():
+                    path.write_text("".join(json.dumps(row) + "\n" for row in rows))
+                artifact = pathlib.Path("/synthetic/muse-q0/exec-tool/workspace/artifact.txt") if name == "root-tool-resume" else None
+                expected_runs = 2 if "resume" in name else 1
+                write()
+                self.assertTrue(all(probe.retained_turn_assertions(path, expected_runs, artifact).values()))
+                reply = next(row for row in run_rows if row["payload"]["event"].get("kind") == "assistant_message_committed")
+                reply["payload"]["event"]["text"] = "wrong reply"
+                write()
+                self.assertFalse(probe.retained_turn_assertions(path, expected_runs, artifact)["exact_own_replies"])
+                usage = next(row for row in run_rows if row["payload"]["event"].get("kind") == "model_completed")
+                usage["payload"]["event"]["usage"]["input_tokens"] = 0
+                write()
+                self.assertFalse(probe.retained_turn_assertions(path, expected_runs, artifact)["exact_own_usage"])
+                run_rows[0]["stream"] = {"id": "another-session"}
+                write()
+                self.assertFalse(probe.retained_turn_assertions(path, expected_runs, artifact)["own_stream_identity"])
+
+    def test_resume_command_without_new_retained_turn_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            rows = [json.loads(line)["record"] for line in (FIXTURES / "msp-root.jsonl").read_text().splitlines()]
+            session_id = next(row["stream"]["id"] for row in rows if "stream" in row)
+            root = pathlib.Path(directory)
+            session = root / "2026/10/15" / session_id
+            session.mkdir(parents=True)
+            path = session / "session.jsonl"
+            path.write_text("".join(json.dumps(row) + "\n" for row in rows))
+            case = mock.Mock(root=root, workspace=root, server=mock.Mock(tool=False))
+            case.execute.return_value = {"exit": 0, "timeout": False}
+            case.logs.return_value = [path]
+            exported = {"export_written": True, "unparseable_lines": 0}
+            def export(_case, source, _name):
+                return dict(exported, unparseable_lines=int(source.name == "permission-invalid.jsonl"))
+            with mock.patch.object(probe, "export_diagnostics", side_effect=export), mock.patch.object(probe, "probe_mutations", return_value={}):
+                result = probe.probe_exec(case)
+            self.assertTrue(result["assertions"]["resume_success"])
+            self.assertFalse(result["assertions"]["resume_has_true_open"])
+            self.assertFalse(result["assertions"]["resumed_exact_own_starts"])
+
+    def test_corpus_requires_own_synthetic_conversation_and_preserves_existing_manifest(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            native, output = root / "native.jsonl", root / "safe.jsonl"
+            native.write_text(json.dumps({"payload_type": "unknown.authority", "payload": {"private": "omitted"}}) + "\n")
+            argv = ["muse_corpus.py", "--native-session", str(native), "--source-root", str(root), "--output", str(output)]
+            with mock.patch.object(sys, "argv", argv), contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit) as failure:
+                    corpus.main()
+            self.assertEqual(failure.exception.code, 2)
+            self.assertFalse(output.exists())
+            manifest = output.with_suffix(".manifest.json")
+            manifest.write_text("existing evidence")
+            with mock.patch.object(sys, "argv", argv), contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit):
+                    corpus.main()
+            self.assertEqual(manifest.read_text(), "existing evidence")
+            self.assertFalse(output.exists())
+
+    def test_sigterm_unwinds_process_group_cleanup(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            pidfile = root / "child.pid"
+            source = "import os,pathlib,time; pathlib.Path(" + repr(str(pidfile)) + ").write_text(str(os.getpid())); time.sleep(30)"
+            program = ("import pathlib,sys; sys.path.insert(0," + repr(str(pathlib.Path(probe.__file__).parent)) + "); import muse_qualification as p\n"
+                       "with p.termination_cleanup():\n"
+                       " p.run_process([sys.executable,'-c'," + repr(source) + "],env={},cwd=pathlib.Path(" + repr(directory) + "),timeout=30)\n")
+            runner = subprocess.Popen([sys.executable, "-B", "-c", program], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            child = None
+            try:
+                deadline = time.monotonic() + 10
+                while time.monotonic() < deadline and not pidfile.exists() and runner.poll() is None:
+                    time.sleep(.02)
+                self.assertTrue(pidfile.exists(), "child did not start")
+                child = int(pidfile.read_text())
+                runner.terminate()
+                runner.communicate(timeout=10)
+                self.assertEqual(runner.returncode, 128 + signal.SIGTERM)
+                with self.assertRaises(ProcessLookupError):
+                    os.kill(child, 0)
+            finally:
+                if runner.poll() is None:
+                    runner.kill()
+                runner.communicate(timeout=5)
+                if child is not None:
+                    try:
+                        os.killpg(child, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
 
     def test_exact_native_vectors_have_separate_hash_and_integrity_claim(self):
         manifest = json.loads((FIXTURES / "native-vectors.json").read_text())

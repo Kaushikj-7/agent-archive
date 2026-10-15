@@ -37,12 +37,15 @@ bounded lifecycle IDs, cwd/source/reason and root/thread IDs, dropping text and
 arbitrary environment. No permission-bypass flags are used.
 
 Native processes have independent sessions, command/turn deadlines and
-TERM/KILL process-group cleanup, including after success, exceptions and
-interrupts. MSP drains/reaps its reader; the HTTP server shuts down and joins.
+TERM/KILL process-group cleanup, including after success, exceptions, Ctrl-C and SIGTERM. The CLI converts
+SIGTERM into an unsuccessful exit that unwinds cleanup; interrupted cases are
+recorded as failures. MSP drains/reaps its reader; the HTTP server shuts down and joins.
 Output roots intentionally remain for local inspection. The PTY supports a
 fixed window size and cursor-position response; its full-turn attempt uses
 synthetic bracketed paste. Cleanup is not proof of graceful SessionEnd.
-`--cases` selects named independent cases when diagnosing a failure. Any failed
+`--cases` selects named independent cases when diagnosing a failure. Each lane checks retained own identity, exact prompts/replies, model usage and
+tool pairing; exec also checks that resume appended a second opening and turn.
+Command acknowledgement alone cannot establish a retained turn. Any failed
 case or false assertion makes the command exit nonzero. A successful runner
 means its stated observations reproduced, not that authority/release gates pass.
 
@@ -67,8 +70,9 @@ vector. All corpus conversation/tool content is synthetic; native context,
 permission snapshots, environmental diagnostics and provider/hidden reasoning
 bodies are omitted from the derived sessions.
 
-`scripts/muse_corpus.py` makes this allowlisted review projection; it verifies
-the controlled prompts/replies and refuses an existing output file. Use it only
+`scripts/muse_corpus.py` makes this allowlisted review projection; it requires
+nonempty paired own controlled prompts/replies and refuses an existing output
+file or companion manifest. Use it only
 on this harness's synthetic logs, inspect every output value, then add fixtures
 deliberately. It preserves native IDs, sequences, timestamps and positions,
 replaces disposable root spellings with `/synthetic/muse-q0`, and records each
@@ -117,7 +121,8 @@ and actual old-entrypoint tests, not an optimistic return-to-pending claim.
 
 Offline tests run in ordinary CI without native Muse or a listener and verify
 isolation, timeout/group cleanup, export diagnostic handling, complete corpus
-hashes/assertions and removal of context sentinels. The spec's §7 extension-point
+hashes/assertions, rejection of missing/mismatched own turns, SIGTERM cleanup,
+empty-corpus/manifest preservation and removal of context sentinels. The spec's §7 extension-point
 commands were rerun on the current base; see results for actual commands/outcomes.
 They do not validate any unimplemented Muse adapter. Native campaigns are opt-in
 local qualification, not automatically run against developer machines in CI.

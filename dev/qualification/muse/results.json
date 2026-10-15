@@ -12,7 +12,7 @@
   "stable_schema_fingerprint": "sha256:4e3200c3c9dc0cd7919d11022630d43f9bc1c5cdda375381e90b0183b5665069",
   "provider": "only synthetic loopback Responses; incoming context discarded; no real provider or remote storage",
   "isolation": "constructed HOME/XDG/config/data/cache/state/tmp; TBH_CREDENTIAL_BACKEND=file; dummy key; no inherited credentials/proxies",
-  "runner_sha256": "e9ccf72fa8f8122d14b1c0bb73086426742f41a12caf211c6995d372a08efb9f",
+  "runner_sha256": "ebfcae96fce5288f604f1611873b7c327cca8e6a6adbac45ae3e26b24e1ab8d7",
   "campaigns": {
     "muse-q0-reviewed-20261015": {
       "raw_report_sha256": "2afe0bc5c00dde1e6384c8337f369ec16cfb8dd633c881ac9de4b363da4c393e",
@@ -1247,6 +1247,246 @@
           "observed_utc": "2026-10-15T04:56:51.422275+00:00"
         }
       }
+    },
+    "muse-q0-review-a-20261015": {
+      "raw_report_sha256": "b649ab9b4da7e84b01b3259915039444fd73132c4e527b206e677f2fce4274c0",
+      "runner_sha256": "ebfcae96fce5288f604f1611873b7c327cca8e6a6adbac45ae3e26b24e1ab8d7",
+      "cases": {
+        "exec-utc": {
+          "assertions": {
+            "fresh_exact_own_starts": true,
+            "fresh_own_stream_identity": true,
+            "fresh_exact_own_replies": true,
+            "fresh_exact_own_usage": true,
+            "fresh_no_unowned_run_events": true,
+            "fresh_exact_own_tools": true,
+            "resumed_exact_own_starts": true,
+            "resumed_own_stream_identity": true,
+            "resumed_exact_own_replies": true,
+            "resumed_exact_own_usage": true,
+            "resumed_no_unowned_run_events": true,
+            "resumed_exact_own_tools": true,
+            "resume_has_true_open": true,
+            "fresh_has_one_false_resume_open": true,
+            "resume_success": true,
+            "resume_preserves_prefix": true,
+            "native_valid_export_clean": true,
+            "native_exact_permission_clean": true,
+            "native_bad_checksum_diagnostic": true,
+            "copy_bytes_identical": true,
+            "copy_native_export_clean": true,
+            "mutation_diagnostics_match": true
+          },
+          "failed": null,
+          "timezone": "UTC",
+          "observed_utc": "2026-10-15T05:02:31.678900+00:00",
+          "provider_requests": 2,
+          "sessions": [
+            {
+              "sha256": "4f58a494ea0a0c59441c86e49b55aee4f701f61b0d043731997272c50168ccb7",
+              "bytes": 239564,
+              "lines": 98,
+              "logical_records": 99,
+              "session_id": "01a13df0-8d81-7c50-943b-a4c565339234",
+              "folder_date": "2026-10-15",
+              "id_utc_date": "2026-10-15"
+            }
+          ]
+        },
+        "exec-minus12": {
+          "assertions": {
+            "fresh_exact_own_starts": true,
+            "fresh_own_stream_identity": true,
+            "fresh_exact_own_replies": true,
+            "fresh_exact_own_usage": true,
+            "fresh_no_unowned_run_events": true,
+            "fresh_exact_own_tools": true,
+            "resumed_exact_own_starts": true,
+            "resumed_own_stream_identity": true,
+            "resumed_exact_own_replies": true,
+            "resumed_exact_own_usage": true,
+            "resumed_no_unowned_run_events": true,
+            "resumed_exact_own_tools": true,
+            "resume_has_true_open": true,
+            "fresh_has_one_false_resume_open": true,
+            "resume_success": true,
+            "resume_preserves_prefix": true,
+            "native_valid_export_clean": true,
+            "native_exact_permission_clean": true,
+            "native_bad_checksum_diagnostic": true,
+            "copy_bytes_identical": true,
+            "copy_native_export_clean": true,
+            "mutation_diagnostics_match": true
+          },
+          "failed": null,
+          "timezone": "Etc/GMT+12",
+          "observed_utc": "2026-10-15T05:02:46.918612+00:00",
+          "provider_requests": 2,
+          "sessions": [
+            {
+              "sha256": "22fd782a851142149367983abcf63a3058c132da7b7ce36d4855e4e398444e2e",
+              "bytes": 239674,
+              "lines": 98,
+              "logical_records": 99,
+              "session_id": "01a13df0-c557-7063-a1e7-9dbb063d4e95",
+              "folder_date": "2026-10-14",
+              "id_utc_date": "2026-10-15"
+            }
+          ]
+        },
+        "exec-plus14": {
+          "assertions": {
+            "fresh_exact_own_starts": true,
+            "fresh_own_stream_identity": true,
+            "fresh_exact_own_replies": true,
+            "fresh_exact_own_usage": true,
+            "fresh_no_unowned_run_events": true,
+            "fresh_exact_own_tools": true,
+            "resumed_exact_own_starts": true,
+            "resumed_own_stream_identity": true,
+            "resumed_exact_own_replies": true,
+            "resumed_exact_own_usage": true,
+            "resumed_no_unowned_run_events": true,
+            "resumed_exact_own_tools": true,
+            "resume_has_true_open": true,
+            "fresh_has_one_false_resume_open": true,
+            "resume_success": true,
+            "resume_preserves_prefix": true,
+            "native_valid_export_clean": true,
+            "native_exact_permission_clean": true,
+            "native_bad_checksum_diagnostic": true,
+            "copy_bytes_identical": true,
+            "copy_native_export_clean": true,
+            "mutation_diagnostics_match": true
+          },
+          "failed": null,
+          "timezone": "Pacific/Kiritimati",
+          "observed_utc": "2026-10-15T05:03:04.445529+00:00",
+          "provider_requests": 2,
+          "sessions": [
+            {
+              "sha256": "e970f00a01fca418259b9c1b41e767316464764baf45eab7fbae616edeaab8b5",
+              "bytes": 239653,
+              "lines": 98,
+              "logical_records": 99,
+              "session_id": "01a13df1-00e9-7d91-94ef-33341ec770b0",
+              "folder_date": "2026-10-15",
+              "id_utc_date": "2026-10-15"
+            }
+          ]
+        },
+        "exec-tool": {
+          "assertions": {
+            "fresh_exact_own_starts": true,
+            "fresh_own_stream_identity": true,
+            "fresh_exact_own_replies": true,
+            "fresh_exact_own_usage": true,
+            "fresh_no_unowned_run_events": true,
+            "fresh_exact_own_tools": true,
+            "resumed_exact_own_starts": true,
+            "resumed_own_stream_identity": true,
+            "resumed_exact_own_replies": true,
+            "resumed_exact_own_usage": true,
+            "resumed_no_unowned_run_events": true,
+            "resumed_exact_own_tools": true,
+            "resume_has_true_open": true,
+            "fresh_has_one_false_resume_open": true,
+            "resume_success": true,
+            "resume_preserves_prefix": true,
+            "native_valid_export_clean": true,
+            "native_exact_permission_clean": true,
+            "native_bad_checksum_diagnostic": true,
+            "copy_bytes_identical": true,
+            "copy_native_export_clean": true,
+            "mutation_diagnostics_match": true
+          },
+          "failed": null,
+          "timezone": "UTC",
+          "observed_utc": "2026-10-15T05:03:34.974303+00:00",
+          "provider_requests": 3,
+          "sessions": [
+            {
+              "sha256": "65a1e66f0055668b96b81f72746c6620aeceb4effaad3ed1bab35f5a42393db9",
+              "bytes": 265225,
+              "lines": 125,
+              "logical_records": 126,
+              "session_id": "01a13df1-456b-78d3-ad04-bf83dd60ab36",
+              "folder_date": "2026-10-15",
+              "id_utc_date": "2026-10-15"
+            }
+          ]
+        },
+        "msp": {
+          "assertions": {
+            "root_log_present": true,
+            "fork_log_present": true,
+            "root_exact_own_starts": true,
+            "root_own_stream_identity": true,
+            "root_exact_own_replies": true,
+            "root_exact_own_usage": true,
+            "root_no_unowned_run_events": true,
+            "root_exact_own_tools": true,
+            "fork_exact_own_starts": true,
+            "fork_own_stream_identity": true,
+            "fork_exact_own_replies": true,
+            "fork_exact_own_usage": true,
+            "fork_no_unowned_run_events": true,
+            "fork_exact_own_tools": true
+          },
+          "failed": null,
+          "timezone": "UTC",
+          "observed_utc": "2026-10-15T05:03:54.643806+00:00",
+          "provider_requests": 26,
+          "sessions": [
+            {
+              "sha256": "b05a6f001ba9dd1c8d3bf04581e366f8aa672dda02c5dd85e48005acae9e5205",
+              "bytes": 157256,
+              "lines": 74,
+              "logical_records": 75,
+              "session_id": "01a13df1-ca87-7af1-a63f-0b4cae9b0dd1",
+              "folder_date": "2026-10-15",
+              "id_utc_date": "2026-10-15"
+            },
+            {
+              "sha256": "e4a7f1be191ecbb668d4d94ed5a562d7e974f5a245e0ed56ac809079c5e32b6a",
+              "bytes": 136302,
+              "lines": 75,
+              "logical_records": 76,
+              "session_id": "01a13df1-e6e4-7bb3-a683-8b837b3d5a61",
+              "folder_date": "2026-10-15",
+              "id_utc_date": "2026-10-15"
+            }
+          ]
+        },
+        "pty": {
+          "assertions": {
+            "startup_visible": true,
+            "synthetic_reply_retained": true,
+            "one_root_log": true,
+            "exact_own_starts": true,
+            "own_stream_identity": true,
+            "exact_own_replies": true,
+            "exact_own_usage": true,
+            "no_unowned_run_events": true,
+            "exact_own_tools": true
+          },
+          "failed": null,
+          "timezone": "UTC",
+          "observed_utc": "2026-10-15T05:04:06.832302+00:00",
+          "provider_requests": 4,
+          "sessions": [
+            {
+              "sha256": "fb64806bb09a2ad1e4931cee1909166bc079d468f174ef8f3d9984cf39cae782",
+              "bytes": 152403,
+              "lines": 67,
+              "logical_records": 68,
+              "session_id": "01a13df2-09c5-74b3-878f-c782d8132552",
+              "folder_date": "2026-10-15",
+              "id_utc_date": "2026-10-15"
+            }
+          ]
+        }
+      }
     }
   },
   "failed_attempts": [
@@ -1584,6 +1824,31 @@
         "logical_records": 78,
         "native_physical_lines": 77
       }
+    }
+  },
+  "review_repairs": {
+    "scope": "Runner and corpus-helper controls only; historical campaigns retain their actual old assertions and hashes. Capture authority remains unavailable.",
+    "findings": {
+      "Q0-A-001": "SIGTERM now unwinds owned-process cleanup and records interrupted case failure. Original runner left an isolated sleep child alive after SIGTERM; reproduction child manually cleaned.",
+      "Q0-A-002": "Each exec fresh/resume, MSP root/fork and PTY checks retained own identity, starts, replies, exact model usage and tools. A successful resume with unchanged log passed all original assertions; now fails.",
+      "Q0-A-003": "Corpus projection now requires nonempty uniquely paired own synthetic prompts/replies and refuses existing output or manifest."
+    },
+    "validation": [
+      "python3 -B scripts/test_muse_qualification.py: PASS 12 offline tests",
+      "All five spec section 7 Go commands independently rerun: PASS",
+      "go test -short -count=1 ./internal/doclinks: PASS",
+      "python3 -B scripts/test_ci_workflow.py: PASS 22 tests",
+      "All six fresh isolated native cases: PASS; report and runner hashes pinned in review campaign"
+    ],
+    "unchanged_gates": {
+      "independent_permission_integrity": "OPEN: exact checksum preimage/encoding contract missing",
+      "original_root_creation": "OPEN: fresh opening observed, copying preserves same observation; original creation authority not independently established",
+      "child_branch_creation": "OPEN: fork own turn observed, no child/delegation or creation authority qualified",
+      "checkpoint_frontiers": "OPEN: not exercised; unsupported records must refuse",
+      "native_tui_exec_serve": "observations only: synthetic root turns; no archive publication, read-back, comprehensive failure/signals/compaction acceptance",
+      "platforms": "only native macOS x86_64 observed; Linux/arm64 OPEN",
+      "real_accounting": "OPEN: synthetic counters do not establish billing/cache overlap; MSP made background requests beyond two own retained model completions",
+      "release_capture": "UNAVAILABLE: no product integration implemented; integrity/creation block enablement"
     }
   }
 }

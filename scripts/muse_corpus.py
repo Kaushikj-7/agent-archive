@@ -90,15 +90,21 @@ def main():
     parser.add_argument("--output", type=pathlib.Path, required=True,
                         help="new file; inspect every emitted value before adding to git")
     args = parser.parse_args()
-    if args.output.exists():
-        parser.error("output already exists")
+    manifest_path = args.output.with_suffix(".manifest.json")
+    if args.output.exists() or manifest_path.exists():
+        parser.error("output or manifest already exists")
     native = args.native_session.read_bytes()
     sanitized, omissions = sanitize(native, args.source_root)
     expected = summarize(sanitized)
-    if any(run["prompt"] != PROMPT for run in expected["own_run_starts"]) or any(message["text"] != REPLY for message in expected["visible_messages"]):
+    starts, messages = expected["own_run_starts"], expected["visible_messages"]
+    run_ids = [run["id"] for run in starts]
+    message_ids = [message["run_id"] for message in messages]
+    if (not starts or len(set(run_ids)) != len(run_ids) or sorted(run_ids) != sorted(message_ids) or
+            any(run["prompt"] != PROMPT for run in starts) or
+            any(message["text"] != REPLY for message in messages)):
         parser.error("input is not the controlled synthetic qualification conversation")
     args.output.write_bytes(sanitized)
-    write_json(args.output.with_suffix(".manifest.json"), {
+    write_json(manifest_path, {
         "schema": 1, "synthetic": True, "producer": "1.4.8-R6256.1",
         "binary_sha256": PINNED_SHA256, "provider": "loopback synthetic Responses",
         "source_base": "37609182169b658c380e9113888b0cd11d387c05",

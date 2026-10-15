@@ -97,6 +97,18 @@ def stop_process(process):
     process.wait(timeout=5)
 
 
+@contextlib.contextmanager
+def termination_cleanup():
+    """Unwind owned-process cleanup when the CLI receives SIGTERM."""
+    def terminate(signum, _frame):
+        raise SystemExit(128 + signum)
+    previous = signal.signal(signal.SIGTERM, terminate)
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+
+
 def run_process(argv, *, env, cwd, timeout=40):
     process = subprocess.Popen(argv, env=env, cwd=cwd, stdin=subprocess.DEVNULL,
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -256,6 +268,49 @@ def inspect_session(path):
             "event_kinds": dict(sorted(events.items()))}
 
 
+def retained_turn_assertions(path, expected_runs, artifact=None):
+    """Check own retained turns, not command acknowledgements or copied context."""
+    rows = [row for _, _, row in logical_rows(path.read_bytes())]
+    runs = [row for row in rows if row.get("payload_type") == "runtime.session" and
+            row.get("payload", {}).get("kind") == "run"]
+    starts = [row["payload"] for row in runs if row["payload"].get("event", {}).get("kind") == "started"]
+    ids = [row.get("run_id") for row in starts]
+    events = collections.defaultdict(lambda: collections.defaultdict(list))
+    for row in runs:
+        payload = row["payload"]
+        event = payload.get("event", {})
+        events[payload.get("run_id")][event.get("kind")].append(event)
+    expected_usage = {"input_tokens": 101, "output_tokens": 23, "cached_tokens": 17,
+                      "cache_write_tokens": 0, "cache_read_tokens": 17, "reasoning_tokens": 5}
+    checks = {
+        "exact_own_starts": len(starts) == expected_runs and len(set(ids)) == expected_runs and
+            all(ids) and all(row["event"].get("prompt") == PROMPT for row in starts),
+        "own_stream_identity": bool(runs) and all(row.get("stream", {}).get("id") == path.parent.name for row in runs),
+        "exact_own_replies": bool(ids) and all(
+            [event.get("text") for event in events[run_id]["assistant_message_committed"]] == [REPLY]
+            for run_id in ids),
+        "exact_own_usage": bool(ids) and all(
+            len(events[run_id]["model_completed"]) == (2 if artifact is not None and index == 0 else 1) and
+            all(event.get("model") == MODEL and event.get("usage") == expected_usage
+                for event in events[run_id]["model_completed"])
+            for index, run_id in enumerate(ids)),
+        "no_unowned_run_events": set(events) == set(ids),
+    }
+    calls = [(run_id, call) for run_id, kinds in events.items()
+             for event in kinds["assistant_tool_calls_committed"] for call in event.get("tool_calls", [])]
+    results = [(run_id, result) for run_id, kinds in events.items()
+               for event in kinds["tool_result_batch_committed"] for result in event.get("results", [])]
+    checks["exact_own_tools"] = not calls and not results
+    if artifact is not None and ids:
+        checks["exact_own_tools"] = (len(calls) == len(results) == 1 and
+            calls[0][0] == results[0][0] == ids[0] and
+            calls[0][1].get("call_id") == results[0][1].get("tool_call_id") == "call_synthetic" and
+            calls[0][1].get("name") == "read_file" and
+            json.loads(calls[0][1].get("args", "null")) == {"path": str(artifact), "offset": 1, "limit": 10} and
+            results[0][1].get("text") == "Read text file `" + str(artifact) + "`.\n1|SYNTHETIC_TOOL_RESULT λ")
+    return checks
+
+
 def export_diagnostics(case, source, name):
     target = case.root / (name + "-export.json")
     result = run_process([str(case.binary), "export", "--session", str(source),
@@ -304,6 +359,8 @@ def probe_exec(case):
     path = case.logs()[0]
     first = path.read_bytes()
     before = inspect_session(path)
+    artifact = case.workspace / "artifact.txt" if case.server.tool else None
+    fresh_turn = retained_turn_assertions(path, 1, artifact)
     resumed = case.execute(["--session-id", path.parent.name])
     after = inspect_session(path)
     export = export_diagnostics(case, path, "valid")
@@ -322,6 +379,9 @@ def probe_exec(case):
     copied.write_bytes(path.read_bytes())
     copy_export = export_diagnostics(case, copied, "copy")
     assertions = {
+        **{"fresh_" + key: value for key, value in fresh_turn.items()},
+        **{"resumed_" + key: value for key, value in retained_turn_assertions(path, 2, artifact).items()},
+        "resume_has_true_open": len(after["opened"]) == 2 and after["opened"][-1]["record"].get("resume") is True,
         "fresh_has_one_false_resume_open": len(before["opened"]) == 1 and
             before["opened"][0]["record"].get("resume") is False,
         "resume_success": resumed["exit"] == 0 and not resumed["timeout"],
@@ -418,11 +478,15 @@ def probe_msp(case):
         fork_id = forked.get("result", {}).get("session", {}).get("sessionId")
         if fork_id:
             msp.turn(fork_id)
-        return {"assertions": {"root_settled": True, "fork_settled": bool(fork_id)},
-                "root_id": session_id, "fork_id": fork_id, "fork_error": forked.get("error"),
-                "provider_requests": case.server.requests}
     finally:
         msp.close()
+    logs = {path.parent.name: path for path in case.logs()}
+    assertions = {"root_log_present": session_id in logs, "fork_log_present": bool(fork_id) and fork_id in logs}
+    for label, native_id in (("root", session_id), ("fork", fork_id)):
+        if native_id in logs:
+            assertions.update({label + "_" + key: value for key, value in retained_turn_assertions(logs[native_id], 1).items()})
+    return {"assertions": assertions, "root_id": session_id, "fork_id": fork_id,
+            "fork_error": forked.get("error"), "provider_requests": case.server.requests}
 
 
 def probe_pty(case):
@@ -469,7 +533,11 @@ def probe_pty(case):
             with contextlib.suppress(OSError):
                 os.write(master, b"\x03")
         (case.root / "pty-output.bin").write_bytes(received)
-        return {"assertions": {"startup_visible": b"Muse" in received, "synthetic_reply_retained": settled},
+        assertions = {"startup_visible": b"Muse" in received, "synthetic_reply_retained": settled,
+                      "one_root_log": len(case.logs()) == 1}
+        if len(case.logs()) == 1:
+            assertions.update(retained_turn_assertions(case.logs()[0], 1))
+        return {"assertions": assertions,
                 "output_bytes": len(received), "output_sha256": digest(received),
                 "exit_before_interrupt": process.poll(),
                 "started": b"Muse" in received, "provider_requests": case.server.requests,
@@ -499,6 +567,9 @@ def native_run(binary, output, selected=None):
             case = Case(output / name, binary, timezone, tool=name == "exec-tool")
             try:
                 report["cases"][name] = probe(case)
+            except (KeyboardInterrupt, SystemExit) as error:
+                report["cases"][name] = {"failed": type(error).__name__, "detail": str(error)}
+                raise
             except Exception as error:
                 report["cases"][name] = {"failed": type(error).__name__, "detail": str(error)}
                 command = case.root / "fresh-command.json"
@@ -525,7 +596,8 @@ def main():
     parser.add_argument("--cases", nargs="+", choices=["exec-utc", "exec-minus12", "exec-plus14",
                                                       "exec-tool", "msp", "pty"])
     args = parser.parse_args()
-    report = native_run(args.binary.resolve(strict=True), args.output.absolute(), args.cases)
+    with termination_cleanup():
+        report = native_run(args.binary.resolve(strict=True), args.output.absolute(), args.cases)
     print(args.output / "report.json")
     return int(any("failed" in value or any(not ok for ok in value.get("assertions", {}).values())
                    for value in report["cases"].values()))
