@@ -175,5 +175,9 @@ that every identity has already been checked at that time.
 
 Disabling retains the cache for offline queries. `uninstall --delete-local-data`
 removes it and its search logs. The permanent lifecycle writer fence remains
-once enabled; older binaries refuse configuration and interrupted multi-job
-journals safely instead of discarding search ownership.
+once enabled. Older binaries refuse this configuration during ordinary setup,
+refresh and uninstall, and normal recovery rejects the two-job journal before
+changing jobs or configuration. Use a current binary for recovery. An older
+binary's explicit `setup --abandon-recovery` escape hatch can still rename an
+unreadable journal aside, removing the pending-journal gate while leaving
+application files and jobs as they are.

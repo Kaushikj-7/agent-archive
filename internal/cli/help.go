@@ -319,10 +319,10 @@ An interrupted setup is recovered on the next run.
                         each run the background job. Only for a home that one
                         machine ever mounts; recorded while it is needed
   --codex-discovery MODE on or off; fresh scripted Codex setup must choose.
-  --search-indexing MODE on or off; automatic local content indexing.
-                        Omitted preserves the local choice; fresh setup is off.
                         Reconfiguration keeps an omitted choice. Discovery
                         finds supported sources; recent native copies may count
+  --search-indexing MODE on or off; automatic local content indexing.
+                        Omitted preserves the local choice; fresh setup is off.
   --codex-capture-scope MODE included-projects or all-projects (Codex only).
                         Fresh scripts must choose; default: included projects.
                         Omitted reconfiguration never expands recorded scope.
