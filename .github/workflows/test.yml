@@ -693,16 +693,13 @@ jobs:
       # the terminal UI layer in internal/cli/ui.go, whose parts the
       # onboarding screens adopt one PR at a time (they are listed by name:
       # remove each as it gains a caller, and the exception once none is left),
-      # and internal/cli/list_title.go, the list's readable titles, which the
-      # width-aware rows of dev/specs/session-list-ui.md will call (remove the
-      # exception in that PR),
-      # and the session-line pieces in internal/cli/session_line.go that the
-      # one-line session list adopts a PR at a time: its rows (PR 3) call
-      # agentLabel, knownAgent and textStyle.agent, and its day groups (PR 4) call
-      # dayBucket and its label; remove each name as it gains a caller.
+      # and the day groups in internal/cli/session_line.go, which the
+      # one-line session list's day grouping (PR 4 of
+      # dev/specs/session-list-ui.md) calls: remove dayBucket and its label
+      # then.
       - name: No unreachable production code
         run: |
-          shared='^internal/(state/statetest|storage/storagetest|cloudflare/cloudflaretest|testutil)/|^internal/credentials/keychain_darwin\.go:[0-9]+:[0-9]+: unreachable func: lookupForbidsUI$|^internal/state/published\.go:[0-9]+:[0-9]+: unreachable func: PublishedStateLoads$|^internal/cli/ui\.go:[0-9]+:[0-9]+: unreachable func: (textStyle\.(spin|spinEvery)|spinner\.stop)$|^internal/cloudflare/r2\.go:[0-9]+:[0-9]+: unreachable func: S3Credentials\.(String|GoString)$|^internal/cli/list_title\.go:[0-9]+:[0-9]+: unreachable func: |^internal/cli/session_line\.go:[0-9]+:[0-9]+: unreachable func: (agentLabel|knownAgent|textStyle\.agent|dayBucket|dayBucketKind\.label)$'
+          shared='^internal/(state/statetest|storage/storagetest|cloudflare/cloudflaretest|testutil)/|^internal/credentials/keychain_darwin\.go:[0-9]+:[0-9]+: unreachable func: lookupForbidsUI$|^internal/state/published\.go:[0-9]+:[0-9]+: unreachable func: PublishedStateLoads$|^internal/cli/ui\.go:[0-9]+:[0-9]+: unreachable func: (textStyle\.(spin|spinEvery)|spinner\.stop)$|^internal/cloudflare/r2\.go:[0-9]+:[0-9]+: unreachable func: S3Credentials\.(String|GoString)$|^internal/cli/session_line\.go:[0-9]+:[0-9]+: unreachable func: (dayBucket|dayBucketKind\.label)$'
           linux_only='|^internal/credentials/keychain_errors\.go:[0-9]+:[0-9]+: unreachable func: errorForOSStatus$'
           # check LABEL EXCEPTIONS: deadcode's output for the current
           # GOOS/CGO_ENABLED, minus the exceptions, must be empty.
