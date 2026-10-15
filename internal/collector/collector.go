@@ -284,9 +284,10 @@ type Result struct {
 	// backoff schedule to when its next attempt is due: its wait on the
 	// Codex lookup allowance outlasted MaxDeferral, a pass failed it for
 	// that, and no attempt was due on this pass (or another session took
-	// the one attempt). It is pending and still failing (status carries its
-	// issue), but this pass records no new failure for it, so it is not in
-	// Errors.
+	// the one attempt, or the pass ended before its attempt was done, when
+	// the time is no later than now: the attempt is still due). It is
+	// pending and still failing (status carries its issue), but this pass
+	// records no new failure for it, so it is not in Errors.
 	RetryLater map[string]time.Time
 }
 
@@ -407,18 +408,14 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 		// reach storage, so the rest keep their work rather than each
 		// failing on the expired context.
 		if (p.opts.Stop != nil && p.opts.Stop()) || ctx.Err() != nil {
+			p.holdDueLookupRetries(registrations[i:])
 			p.leaveForNextPass(registrations[i:])
 			break
 		}
 		if p.opts.AcceptSession != nil && !p.opts.AcceptSession(reg) {
 			continue
 		}
-		if _, held := p.lookupRetryHeld[reg.ArchiveSessionID]; held {
-			p.leaveForNextPass(registrations[i : i+1])
-			continue
-		}
-		if p.codexLookupSpent(reg) {
-			p.startLookupAllowanceWait(reg)
+		if p.leaveUnopenedForLookupAllowance(reg) {
 			p.leaveForNextPass(registrations[i : i+1])
 			continue
 		}
@@ -788,8 +785,9 @@ func (p *pass) scan(ctx context.Context, reg archive.SessionRegistration) {
 		// is intact and the next pass carries on with it. A session on the
 		// backoff schedule keeps an attempt due for the next pass.
 		p.carryDeferredSince(id)
+		// It is listed as held, so its carried issue is still counted.
 		if _, retrying := p.priorRetryAt[id]; retrying {
-			p.keepRetryAt(id, p.now)
+			p.retryLater(id, p.now)
 		}
 		p.pending++
 		p.opts.progress(id, false)

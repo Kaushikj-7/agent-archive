@@ -9,6 +9,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/state"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
 // A Codex session the collector held on the lookup allowance's backoff
@@ -119,5 +120,32 @@ func TestStatusShowsASessionHeldForARetryAsFailingWithItsNextRetry(t *testing.T)
 	summary := syncSummary(collector.Result{Scanned: 1, RetryLater: map[string]time.Time{"held": next}})
 	if !strings.Contains(summary, "0 failed; 1 failing Codex session(s) held for a later retry (next at "+next.Local().Format("Jan 2 15:04")+")") {
 		t.Fatalf("sync summary = %q", summary)
+	}
+}
+
+// A pass whose only news for a failing Codex session on the backoff
+// schedule is that it held it (no failure of its own) still records the
+// session's issue in issue_counts and the last error's summary, so status
+// leads with the same failure as on the pass that last attempted it.
+func TestPassThatOnlyHeldARetryRecordsItsIssue(t *testing.T) {
+	t.Parallel()
+	f := newDeferredFixture(t)
+	held := map[string]time.Time{"held": f.now.Add(3 * time.Hour)}
+	// What collector.Run saves for such a pass: the carried issue, no
+	// counts and no problem of its own.
+	if err := f.store.SaveStatus(state.Status{LastScanAt: f.now, NextRetryAt: held, SessionIssues: map[string]string{"held": issueCaptureFailed}}); err != nil {
+		t.Fatal(err)
+	}
+	env := pairStatusEnv(t, f.home, f.userHome, f.now, "codex")
+	summary, verifyErr, err := verifyAndRecordPass(t.Context(), f.home, f.cfg, env, f.store, storagetest.NewMemoryStore(), false, collector.Result{RetryLater: held})
+	if err != nil || verifyErr != nil {
+		t.Fatalf("verifyAndRecordPass err=%v verify=%v", err, verifyErr)
+	}
+	got, err := f.store.LoadStatus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary == "" || got.IssueCounts[issueCaptureFailed] != 1 || len(got.LastErrors) != 1 || got.LastErrors[0] != summary || got.SessionIssues["held"] != issueCaptureFailed {
+		t.Fatalf("status=%+v summary=%q, want the held session's issue counted and summarized", got, summary)
 	}
 }

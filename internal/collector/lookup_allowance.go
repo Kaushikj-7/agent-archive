@@ -18,6 +18,22 @@ func beginCodexLookupAllowance(opts Options) {
 	}
 }
 
+// leaveUnopenedForLookupAllowance reports whether the pass leaves reg for
+// the next pass without opening it, for the Codex lookup allowance: it is
+// held for a later attempt on its backoff schedule (holdLookupRetry), or
+// the allowance is spent (codexLookupSpent), and then its wait on the
+// allowance begins if none runs (startLookupAllowanceWait).
+func (p *pass) leaveUnopenedForLookupAllowance(reg archive.SessionRegistration) bool {
+	if _, held := p.lookupRetryHeld[reg.ArchiveSessionID]; held {
+		return true
+	}
+	if !p.codexLookupSpent(reg) {
+		return false
+	}
+	p.startLookupAllowanceWait(reg)
+	return true
+}
+
 // codexLookupSpent reports whether reg is a Codex session that this pass can
 // no longer read because the pass's Codex lookup allowance is used up: every
 // lookup its scan needs would be refused. Such a session is left for the next
@@ -299,7 +315,9 @@ const (
 // whose clock started at since that falls strictly after after: since +
 // MaxDeferral + 1h, + 3h, + 7h, and so on, the gap doubling up to
 // LookupRetryMaxGap and staying there. The loop doubles at most eight
-// times; the capped part is computed.
+// times; the capped part is computed, in one step unless after is more
+// than time.Duration's range (about 292 years) past since, as with a clock
+// read as zero: after.Sub then saturates, and each step covers that range.
 func nextLookupRetry(since, after time.Time) time.Time {
 	gap := lookupRetryFirstGap
 	at := since.Add(MaxDeferral + gap)
@@ -307,8 +325,12 @@ func nextLookupRetry(since, after time.Time) time.Time {
 		gap = min(2*gap, LookupRetryMaxGap)
 		at = at.Add(gap)
 	}
-	if !at.After(after) {
-		at = at.Add((after.Sub(at)/gap + 1) * gap)
+	for !at.After(after) {
+		// No overflow: the whole gaps in after.Sub(at) fit in a Duration.
+		at = at.Add(after.Sub(at) / gap * gap)
+		if !at.After(after) {
+			at = at.Add(gap)
+		}
 	}
 	return at
 }
@@ -368,13 +390,37 @@ func (p *pass) holdForLookupRetry(id string) bool {
 		return false
 	}
 	p.carryDeferredSince(id)
+	p.retryLater(id, at)
+	if !p.durableCounted[id] {
+		p.pending++
+	}
+	return true
+}
+
+// retryLater records at as the next attempt of a session on the backoff
+// schedule that this pass made no attempt for, and lists it in
+// Result.RetryLater, so internal/cli still counts its carried issue.
+func (p *pass) retryLater(id string, at time.Time) {
 	p.keepRetryAt(id, at)
 	if p.result.RetryLater == nil {
 		p.result.RetryLater = map[string]time.Time{}
 	}
 	p.result.RetryLater[id] = at.UTC()
-	if !p.durableCounted[id] {
-		p.pending++
+}
+
+// holdDueLookupRetries holds each session in rest with an attempt due that
+// a pass ending early (Stop or its deadline) never reached, as one held
+// for a later retry would be, with the attempt it was due for. The pass
+// made no attempt, so it neither fails the session nor moves its next
+// attempt on to a later time on the schedule: the next pass makes it.
+func (p *pass) holdDueLookupRetries(rest []archive.SessionRegistration) {
+	for _, reg := range rest {
+		id := reg.ArchiveSessionID
+		if _, held := p.lookupRetryHeld[id]; held || reg.Harness.Name != archive.HarnessCodex || p.requests[id].Token == "" {
+			continue
+		}
+		if p.lookupAllowanceTurn(id) == turnRetryDue {
+			p.holdLookupRetry(id)
+		}
 	}
-	return true
 }

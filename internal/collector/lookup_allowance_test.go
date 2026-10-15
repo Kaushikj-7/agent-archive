@@ -514,6 +514,9 @@ type spendingSources struct {
 	lookup   *allowanceLookup
 	// opened, when set, counts the reads of each transcript in refused.
 	opened *sync.Map
+	// interrupt, when set, is called first on every read; an error it
+	// returns is the read's.
+	interrupt func(path string) error
 }
 
 func (s spendingSources) LookupSources(name string) (agentapi.SourceProvider, agentapi.TranscriptFilter, bool) {
@@ -543,6 +546,11 @@ type spendingPass struct {
 }
 
 func (p spendingPass) Read(ctx context.Context, ref agentapi.SourceRef, limits agentapi.ReadLimits) (agentapi.SourceSnapshot, error) {
+	if p.sources.interrupt != nil {
+		if err := p.sources.interrupt(ref.Path); err != nil {
+			return nil, err
+		}
+	}
 	if _, heavy := p.sources.heavy.Load(ref.Path); heavy {
 		snapshot, err := p.SourcePass.Read(ctx, ref, limits)
 		p.sources.lookup.spent.Store(true)
@@ -964,5 +972,124 @@ func TestSessionLeftUnopenedPastMaxDeferralGoesOnTheSchedule(t *testing.T) {
 	}
 	if _, ok := p.retryAt["changed"]; ok {
 		t.Fatal("a session not waiting on the allowance went on its backoff schedule")
+	}
+}
+
+// retryRun runs one collector pass at now, with the pass's context and Stop
+// as given, and returns its result and the status it saved.
+type retryRun func(ctx context.Context, now time.Time, stop func() bool) (Result, state.Status)
+
+// expiredRetrySession runs passes until a Codex session whose lookups need
+// more than the whole allowance has failed at MaxDeferral and is on the
+// backoff schedule, and returns a runner, its ID and its first attempt.
+// The runner reads through *sources, which the caller may change.
+func expiredRetrySession(t *testing.T, sources *spendingSources) (retryRun, string, time.Time) {
+	t.Helper()
+	lookup := &allowanceLookup{}
+	r := newSessionRunner{t: t, local: newTestStore(t), dir: t.TempDir(), start: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), heavy: &sync.Map{}, lookup: lookup}
+	heavy := r.save(1, false)
+	refused := &sync.Map{}
+	refused.Store(heavy.TranscriptPath, true)
+	*sources = spendingSources{heavy: &sync.Map{}, refused: refused, lookup: lookup}
+	store := storagetest.NewMemoryStore()
+	run := func(ctx context.Context, now time.Time, stop func() bool) (Result, state.Status) {
+		t.Helper()
+		result, err := Run(ctx, r.local, store, Options{Sources: *sources, Parsers: testParsers, MachineID: "m", CodexRollouts: lookup, Now: func() time.Time { return now }, Stop: stop})
+		if err != nil {
+			t.Fatal(err)
+		}
+		status, err := r.local.LoadStatus()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return result, status
+	}
+	clock := r.start.Add(time.Hour)
+	id := heavy.ArchiveSessionID
+	if result, _ := run(t.Context(), clock, nil); result.Deferred[id] != DeferredLookupAllowance {
+		t.Fatalf("first pass result=%+v, want it deferred", result)
+	}
+	firstAttempt := clock.Add(MaxDeferral + time.Hour)
+	result, status := run(t.Context(), clock.Add(MaxDeferral), nil)
+	if result.Errors[id] == nil || !status.NextRetryAt[id].Equal(firstAttempt) {
+		t.Fatalf("expiry pass errors=%v next=%v, want it failed and its first attempt an hour on", result.Errors, status.NextRetryAt)
+	}
+	// What internal/cli records over the collector's status for the failure.
+	status.SessionIssues = map[string]string{id: "capture_failed"}
+	if err := r.local.SaveStatus(status); err != nil {
+		t.Fatal(err)
+	}
+	return run, id, firstAttempt
+}
+
+// A pass that ends (Stop or its deadline) with a due attempt in flight, or
+// before it reaches the session at all, makes no attempt: it records no
+// failure for the session, keeps its issue and lists it as held, and the
+// attempt stays due, so the next pass makes it rather than waiting for the
+// next time on the schedule.
+func TestAPassEndingBeforeItsAttemptCompletesKeepsTheAttemptDue(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		// pass runs the pass at the attempt that ends early.
+		pass func(t *testing.T, run retryRun, sources *spendingSources, at time.Time) (Result, state.Status)
+	}{
+		{"stopped before reaching it", func(t *testing.T, run retryRun, _ *spendingSources, at time.Time) (Result, state.Status) {
+			return run(t.Context(), at, func() bool { return true })
+		}},
+		{"deadline with the attempt in flight", func(t *testing.T, run retryRun, sources *spendingSources, at time.Time) (Result, state.Status) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			sources.interrupt = func(string) error {
+				cancel()
+				return ctx.Err()
+			}
+			defer func() { sources.interrupt = nil }()
+			return run(ctx, at, nil)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var sources spendingSources
+			run, id, attempt := expiredRetrySession(t, &sources)
+			result, status := tc.pass(t, run, &sources, attempt)
+			if len(result.Errors) != 0 {
+				t.Fatalf("ended pass errors=%v, want no failure for an attempt it did not make", result.Errors)
+			}
+			if at, held := result.RetryLater[id]; !held || at.After(attempt) {
+				t.Fatalf("ended pass retry later=%v, want the session held and still due", result.RetryLater)
+			}
+			if status.SessionIssues[id] != "capture_failed" || status.NextRetryAt[id].After(status.LastScanAt) {
+				t.Fatalf("ended pass status issues=%v next=%v last scan=%v, want its issue kept and its attempt due", status.SessionIssues, status.NextRetryAt, status.LastScanAt)
+			}
+			// The next pass, ten minutes on, makes the attempt.
+			result, _ = run(t.Context(), attempt.Add(10*time.Minute), nil)
+			if result.Errors[id] == nil {
+				t.Fatalf("next pass result=%+v, want the attempt made and failed", result)
+			}
+		})
+	}
+}
+
+// The next attempt is after its argument and on the schedule however far
+// apart the clock and the argument are: a clock read as zero, or one
+// centuries back, still gives an attempt within a capped gap after it.
+func TestNextLookupRetryHandlesClocksFarApart(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	for _, since := range []time.Time{{}, now.AddDate(-300, 0, 0), now.AddDate(-200, 0, 0), now.Add(-30 * 24 * time.Hour)} {
+		got := nextLookupRetry(since, now)
+		if !got.After(now) || got.Sub(now) > LookupRetryMaxGap {
+			t.Fatalf("since %v: next attempt %v, want one within %v after %v", since, got, LookupRetryMaxGap, now)
+		}
+		// On the capped part of the schedule: a whole number of gaps after
+		// the eighth doubling's attempt (since + MaxDeferral + 255h + 168h).
+		if steps := got.Sub(since.Add(MaxDeferral+255*time.Hour)) % LookupRetryMaxGap; since.Year() > 1800 && steps != 0 {
+			t.Fatalf("since %v: next attempt %v off the schedule by %v", since, got, steps)
+		}
+	}
+	// A clock ahead of after (stepped back) gives its first attempt.
+	if ahead := now.AddDate(5, 0, 0); !nextLookupRetry(ahead, now).Equal(ahead.Add(MaxDeferral + time.Hour)) {
+		t.Fatalf("clock ahead: next = %v", nextLookupRetry(ahead, now))
 	}
 }
