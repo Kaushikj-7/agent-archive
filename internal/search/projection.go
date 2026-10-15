@@ -228,66 +228,133 @@ type Context struct {
 	Next  int    `json:"Next"`
 }
 
-// ReadPassage rechecks authoritative metadata and verified bytes, then resolves
-// the exact extraction version. It never silently substitutes newer content.
-func ReadPassage(ctx context.Context, objects storage.ObjectStore, parsers agentapi.ParsersLookup, ref Reference, offset, maxBytes int, limits reader.Limits) (Context, error) {
-	if maxBytes < 4 || maxBytes > passageBytes || offset < ref.Start || offset > ref.End {
-		return Context{}, errors.New("invalid search passage bounds")
+// ContextSlice retains exact addressing for a neighboring visible message.
+type ContextSlice struct {
+	Reference Reference
+	Role      string
+	Context   Context
+}
+
+// Surrounding contains the selected passage and bounded same-source neighbors.
+type Surrounding struct {
+	Role          string
+	Selected      Context
+	Before, After []ContextSlice
+}
+
+// ReadContext verifies and interprets one source once for all requested slices.
+func ReadContext(ctx context.Context, objects storage.ObjectStore, parsers agentapi.ParsersLookup, ref Reference, offset, maxBytes, before, after int, limits reader.Limits) (Surrounding, error) {
+	out := Surrounding{Before: []ContextSlice{}, After: []ContextSlice{}}
+	if maxBytes < 4 || maxBytes > passageBytes || offset < ref.Start || offset > ref.End || before < 0 || before > 2 || after < 0 || after > 2 {
+		return out, errors.New("invalid search context bounds")
 	}
+	p, err := verifiedReferenceProjection(ctx, objects, parsers, ref, limits)
+	if err != nil {
+		return out, err
+	}
+	selected := -1
+	for i, passage := range p.Passages {
+		if passage.Reference == ref {
+			selected = i
+			break
+		}
+	}
+	if selected < 0 {
+		return out, ErrChanged
+	}
+	out.Role = p.Passages[selected].Role
+	out.Selected, err = sliceContext(p.Passages[selected], offset, maxBytes)
+	if err != nil {
+		return out, err
+	}
+	seen := map[int]bool{ref.Record: true}
+	for i := selected - 1; i >= 0 && len(out.Before) < before; i-- {
+		v := p.Passages[i]
+		if seen[v.Reference.Record] {
+			continue
+		}
+		seen[v.Reference.Record] = true
+		// Return the first chunk of the neighboring message, preserving continuation.
+		for i > 0 && p.Passages[i-1].Reference.Record == v.Reference.Record {
+			i--
+			v = p.Passages[i]
+		}
+		c, e := sliceContext(v, v.Reference.Start, maxBytes)
+		if e != nil {
+			return out, e
+		}
+		out.Before = append([]ContextSlice{{v.Reference, v.Role, c}}, out.Before...)
+	}
+	for i := selected + 1; i < len(p.Passages) && len(out.After) < after; i++ {
+		v := p.Passages[i]
+		if seen[v.Reference.Record] {
+			continue
+		}
+		seen[v.Reference.Record] = true
+		c, e := sliceContext(v, v.Reference.Start, maxBytes)
+		if e != nil {
+			return out, e
+		}
+		out.After = append(out.After, ContextSlice{v.Reference, v.Role, c})
+	}
+	return out, nil
+}
+
+func sliceContext(passage Passage, offset, maxBytes int) (Context, error) {
+	local := offset - passage.Reference.Start
+	if local < 0 || local > len(passage.Text) || (local < len(passage.Text) && !utf8.RuneStart(passage.Text[local])) {
+		return Context{}, errors.New("search offset splits UTF-8 or is outside passage")
+	}
+	end := min(local+maxBytes, len(passage.Text))
+	for end < len(passage.Text) && !utf8.RuneStart(passage.Text[end]) {
+		end--
+	}
+	out := Context{Text: passage.Text[local:end], Start: offset, End: passage.Reference.Start + end}
+	if out.End < passage.Reference.End {
+		out.Next = out.End
+	}
+	return out, nil
+}
+
+func verifiedReferenceProjection(ctx context.Context, objects storage.ObjectStore, parsers agentapi.ParsersLookup, ref Reference, limits reader.Limits) (Projection, error) {
 	// Harness is not encoded in opaque session IDs; source keys carry the canonical
 	// metadata sibling and are validated again by reader and projection identity.
 	slash := strings.LastIndex(ref.Source.Reference.Key, "/")
 	if slash < 0 {
-		return Context{}, ErrChanged
+		return Projection{}, ErrChanged
 	}
 	m, err := reader.ReadMetadata(ctx, objects, ref.Source.Reference.Key[:slash]+"/metadata.json")
 	if errors.Is(err, storage.ErrNotFound) {
-		return Context{}, ErrDeleted
+		return Projection{}, ErrDeleted
 	}
 	if err != nil {
-		return Context{}, fmt.Errorf("%w: %w", ErrUnavailable, err)
+		return Projection{}, fmt.Errorf("%w: %w", ErrUnavailable, err)
 	}
 	if m.SessionID != ref.Source.SessionID {
-		return Context{}, ErrChanged
+		return Projection{}, ErrChanged
 	}
 	refs, e := m.SourceReferences()
 	if e != nil {
-		return Context{}, fmt.Errorf("%w: %w", ErrUnavailable, e)
+		return Projection{}, fmt.Errorf("%w: %w", ErrUnavailable, e)
 	}
 	if !slices.Contains(refs, ref.Source.Reference) {
-		return Context{}, ErrChanged
+		return Projection{}, ErrChanged
 	}
 	p, err := LoadProjection(ctx, objects, parsers, ref.Source.Destination, m, ref.Source.RevisionID, limits)
 	if errors.Is(err, ErrChanged) {
-		return Context{}, err
+		return Projection{}, err
 	}
 	if err != nil {
-		return Context{}, fmt.Errorf("%w: %w", ErrUnavailable, err)
+		return Projection{}, fmt.Errorf("%w: %w", ErrUnavailable, err)
 	}
 	if p.Gap != nil {
-		return Context{}, ErrUnsupported
+		return Projection{}, ErrUnsupported
 	}
 	if p.Source != ref.Source {
-		return Context{}, ErrChanged
+		return Projection{}, ErrChanged
 	}
-	for _, passage := range p.Passages {
-		if passage.Reference == ref {
-			local := offset - ref.Start
-			if local < len(passage.Text) && !utf8.RuneStart(passage.Text[local]) {
-				return Context{}, errors.New("search offset splits UTF-8")
-			}
-			end := min(local+maxBytes, len(passage.Text))
-			for end < len(passage.Text) && !utf8.RuneStart(passage.Text[end]) {
-				end--
-			}
-			result := Context{Text: passage.Text[local:end], Start: offset, End: ref.Start + end}
-			if result.End < ref.End {
-				result.Next = result.End
-			}
-			return result, nil
-		}
-	}
-	return Context{}, ErrChanged
+
+	return p, nil
 }
 
 func historicalVisibilityUnavailable(version string) bool {

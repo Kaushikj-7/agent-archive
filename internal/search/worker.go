@@ -101,7 +101,7 @@ func newUnknownPrivacy(req sourceRequest, previous []sourceRequest) bool {
 	return historicalVisibilityUnavailable(req.Filter) && !slices.Contains(previous, req)
 }
 
-// Observe records an authoritative snapshot. Composition holds LockWork across
+// Observe records an authoritative snapshot. Composition holds the shared work/lifecycle lock across
 // authoritative reads and Observe/Run; arrival order cannot establish causality.
 // Repeated observations do not reset eligibility; updates coalesce until due.
 // Unknown/changed privacy provenance immediately removes old searchable text.
@@ -201,7 +201,7 @@ func (s *Store) nextWork(ctx context.Context, at time.Time) (workItem, error) {
 }
 
 // Run performs bounded resumable work over observed snapshots. Downloads and
-// parsing happen without a database transaction. Composition holds LockWork.
+// parsing happen without a database transaction. Composition holds the shared work/lifecycle lock.
 // Source staging and final
 // membership replacement both reject superseded generations atomically.
 func (s *Store) Run(ctx context.Context, objects storage.ObjectStore, parsers agentapi.ParsersLookup, at time.Time, budget Budget) (progress Progress, runErr error) {

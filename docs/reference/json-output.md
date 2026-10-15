@@ -557,3 +557,16 @@ Discovery status reads the atomically written, versioned health summary (at most
 summary evidence is unknown and requires a new scan; it never implies capture,
 upload or read-back success. Format outcome counts remain visible in mixed
 results. The scope applies only to Codex, including when discovery is off.
+
+## Search
+
+`search --json`, `search --refresh --json`, and `search --read REF --json`
+return version 1 documents with kinds `search`, `search_refresh`, and
+`search_context`. They include conversation snippets or selected context text.
+See [the schema](../../schemas/search-output.schema.json) and
+[bounded retrieval guide](../guides/search.md#bounded-json-catch-up-and-context).
+Opaque references and generation-bound cursors retain their encoded identities.
+Missing timestamps and unknown matching totals are null; results and gaps are
+arrays. Coverage is namespace-wide and describes observed local state, never
+immediate remote freshness. stdout has one bounded document; stderr carries
+diagnostics. Usage failures can return exit 2 without a JSON document.

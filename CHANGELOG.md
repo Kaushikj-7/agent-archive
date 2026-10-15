@@ -6,6 +6,9 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Search adds bounded JSON, explicit wait/rebuild, source context neighbors and
+  existing-only cached readers; queries require explicit project broadening.
+
 - Search conversation text with a private local index. Explicitly index one
   archived session with `search --refresh --session ID --harness NAME`, query
   cached titles/messages with `search "WORDS"`, and read exact matching passages.

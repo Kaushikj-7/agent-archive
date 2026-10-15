@@ -77,6 +77,9 @@ type Page struct {
 // ErrCursorChanged requires restarting pagination after indexing changes.
 var ErrCursorChanged = errors.New("search index changed during pagination; restart search")
 
+// ErrInvalidCursor rejects malformed cursors or a different query identity.
+var ErrInvalidCursor = errors.New("invalid search cursor or query mismatch; restart search")
+
 type pageCursor struct {
 	Generation int64   `json:"Generation"`
 	Query      string  `json:"Query"`
@@ -215,10 +218,10 @@ func (s *Store) Search(ctx context.Context, q Query) (Page, error) {
 		var c pageCursor
 		b, e := base64.RawURLEncoding.DecodeString(q.Cursor)
 		if e != nil || len(b) > 4096 {
-			return page, errors.New("invalid search cursor")
+			return page, ErrInvalidCursor
 		}
 		if e = json.Unmarshal(b, &c); e != nil || c.Query != identity {
-			return page, errors.New("search cursor does not match query")
+			return page, ErrInvalidCursor
 		}
 		if c.Generation != page.Generation {
 			return page, ErrCursorChanged
@@ -326,6 +329,13 @@ func (s *Store) readObservation(ctx context.Context, tx *sql.Tx, observation *Ob
 	if err = tx.QueryRowContext(ctx, "SELECT count(*),coalesce(sum(failures>0),0) FROM search_work WHERE desired!=indexed").Scan(&observation.Pending, &observation.Failed); err != nil {
 		return err
 	}
+	if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM search_work").Scan(&observation.Known); err != nil {
+		return err
+	}
+	if err = tx.QueryRowContext(ctx, "SELECT count(*),coalesce(sum(coalesce(json_array_length(gaps),0)>0),0) FROM search_sessions").Scan(&observation.Indexed, &observation.Unsupported); err != nil {
+		return err
+	}
+
 	var reconciled, observed int64
 	var mode, complete, checked string
 	var seeded int
@@ -359,6 +369,22 @@ func (s *Store) readObservation(ctx context.Context, tx *sql.Tx, observation *Ob
 		if gaps > 0 {
 			observation.Limitations = append(observation.Limitations, "retained sources have extraction coverage gaps")
 		}
+	}
+	return nil
+}
+
+// ValidateCursor bounds and validates the opaque cursor before command IO.
+func ValidateCursor(token string) error {
+	if len(token) > 5500 {
+		return ErrInvalidCursor
+	}
+	b, err := base64.RawURLEncoding.DecodeString(token)
+	if err != nil || len(b) > 4096 {
+		return ErrInvalidCursor
+	}
+	var value pageCursor
+	if err = json.Unmarshal(b, &value); err != nil || value.Query == "" {
+		return ErrInvalidCursor
 	}
 	return nil
 }

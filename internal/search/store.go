@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	_ "modernc.org/sqlite" // Register the same pure-Go driver used by the metadata catalog.
 )
@@ -25,7 +24,6 @@ import (
 type Store struct {
 	db          *sql.DB
 	destination string
-	dir         string
 }
 
 // Open creates or opens a private content database with short bounded writes.
@@ -72,7 +70,7 @@ func Open(ctx context.Context, dir, destination string) (*Store, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	s := &Store{db: db, destination: destination, dir: dir}
+	s := &Store{db: db, destination: destination}
 	if err = s.initialize(ctx); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -128,31 +126,6 @@ func (s *Store) initialize(ctx context.Context) error {
 
 // Close releases the database. No worker or goroutine is started by Open.
 func (s *Store) Close() error { return s.db.Close() }
-
-// ErrWorkBusy means another refresh or indexing pass owns this physical index.
-var ErrWorkBusy = errors.New("another search refresh is running")
-
-// LockWork acquires the dedicated, nonblocking index work lock. Composition must
-// hold it from authoritative metadata discovery through Observe and Run, then
-// defer release on every path. Queries and content-free hints do not take it.
-// Never acquire it while holding the collector lock; Run does not nest this lock.
-func (s *Store) LockWork(ctx context.Context) (func(), error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	release, err := local.NamedLock(s.dir, "search-worker.lock")
-	if errors.Is(err, local.ErrBusy) {
-		return nil, ErrWorkBusy
-	}
-	if err != nil {
-		return nil, err
-	}
-	if err = ctx.Err(); err != nil {
-		release()
-		return nil, err
-	}
-	return release, nil
-}
 
 // WriteStats separates metadata-only updates from passage/FTS mutations.
 type WriteStats struct {
@@ -330,10 +303,13 @@ type Observation struct {
 	LastObserved           time.Time `json:"LastObserved"`
 	DiscoveryComplete      bool      `json:"DiscoveryComplete"`
 	IdentityChecksComplete bool      `json:"IdentityChecksComplete"`
-	Pending                int       `json:"Pending"`
-	Failed                 int       `json:"Failed"`
-	Complete               bool      `json:"Complete"`
-	Limitations            []string  `json:"Limitations"`
+	Known                  int
+	Indexed                int
+	Unsupported            int
+	Pending                int      `json:"Pending"`
+	Failed                 int      `json:"Failed"`
+	Complete               bool     `json:"Complete"`
+	Limitations            []string `json:"Limitations"`
 }
 
 // replaceBodyTx preserves FTS rows when text is unchanged even if a source's
