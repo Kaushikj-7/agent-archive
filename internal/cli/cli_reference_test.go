@@ -43,16 +43,76 @@ func commandFlagSets(t *testing.T) map[string]*flag.FlagSet {
 	return sets
 }
 
-// referenceCommandOrder is the order commands appear in the top-level help,
-// each followed by its subcommands, then version.
+// usageTopLevelCommands is the top-level commands one help tier lists, in
+// the order it lists them.
+func usageTopLevelCommands(text string) []string {
+	var commands []string
+	for _, m := range regexp.MustCompile(`(?m)^  agent-archive (\S+)`).FindAllStringSubmatch(text, -1) {
+		commands = append(commands, m[1])
+	}
+	return commands
+}
+
+// helpTierCommands returns the top-level commands of both help tiers in
+// display order (standard tier first, then advanced), failing the test
+// unless every public command in commandHelp (the dispatched user-facing
+// commands, plus the version pseudo-command, which the standard tier names
+// only in its footer) appears in exactly one tier.
+func helpTierCommands(t *testing.T) []string {
+	t.Helper()
+	standard := usageTopLevelCommands(usage)
+	advanced := usageTopLevelCommands(advancedUsage)
+	seen := map[string]int{}
+	for _, command := range append(append([]string{}, standard...), advanced...) {
+		seen[command]++
+		if seen[command] > 1 {
+			t.Errorf("%s appears more than once across the help tiers (standard %v, advanced %v)", command, standard, advanced)
+		}
+		if _, ok := commandHelp[command]; !ok {
+			t.Errorf("%s is listed in a help tier but has no per-command help", command)
+		}
+	}
+	for command := range commandHelp {
+		top := strings.SplitN(command, " ", 2)[0]
+		if top == "version" {
+			continue
+		}
+		if seen[top] != 1 {
+			t.Errorf("%s (top level of %s) appears in %d help tiers, want exactly 1 (standard %v, advanced %v)", top, command, seen[top], standard, advanced)
+		}
+	}
+	return append(standard, advanced...)
+}
+
+// referenceTopLevelOrder is the order the per-command sections appear in
+// the reference. It is the order the single top-level help listed the
+// commands before it split into two tiers, kept so the split moves no
+// section; a new command is added here as it lands in a tier.
+var referenceTopLevelOrder = []string{
+	"setup", "machines", "status", "sync", "pause", "resume", "recover",
+	"list", "show", "stats", "feedback", "backfill", "migrate", "handoff",
+	"eval", "uninstall", "purge",
+}
+
+// referenceCommandOrder is referenceTopLevelOrder, each command followed
+// by its subcommands, then version.
 func referenceCommandOrder(t *testing.T) []string {
 	t.Helper()
+	tiers := helpTierCommands(t)
+	for _, name := range referenceTopLevelOrder {
+		if !slices.Contains(tiers, name) {
+			t.Errorf("%s is in referenceTopLevelOrder but in no help tier", name)
+		}
+	}
+	if len(tiers) != len(referenceTopLevelOrder) {
+		t.Errorf("help tiers list %v; referenceTopLevelOrder must name the same commands", tiers)
+	}
 	var order []string
-	for _, m := range regexp.MustCompile(`(?m)^  agent-archive (\S+)`).FindAllStringSubmatch(usage, -1) {
-		order = append(order, m[1])
+	for _, name := range referenceTopLevelOrder {
+		order = append(order, name)
 		var subs []string
 		for command := range commandHelp {
-			if strings.HasPrefix(command, m[1]+" ") {
+			if strings.HasPrefix(command, name+" ") {
 				subs = append(subs, command)
 			}
 		}
@@ -133,7 +193,12 @@ is stale. After changing a command's help or flags, regenerate it with
 
 ## Commands
 
-` + "```text\n" + usage + "```\n")
+The standard tier (` + "`agent-archive --help`" + `):
+
+` + "```text\n" + usage + "```\n" + `
+The advanced tier (` + "`agent-archive help advanced`" + `):
+
+` + "```text\n" + advancedUsage + "```\n")
 	b.WriteString(`
 ## Exit codes
 
@@ -185,4 +250,32 @@ is stale. After changing a command's help or flags, regenerate it with
 func TestCLIReferenceIsCurrent(t *testing.T) {
 	t.Parallel()
 	golden.Check(t, cliReferencePath, renderCLIReference(t))
+}
+
+// The two help tiers are display only: `help advanced` (and the --help/-h
+// spellings) prints the advanced tier without touching the environment,
+// the standard tier points at it, per-command help for an advanced command
+// still answers, and an unknown command prints only the standard tier.
+func TestHelpAdvancedTier(t *testing.T) {
+	t.Parallel()
+	for _, args := range [][]string{{"help", "advanced"}, {"--help", "advanced"}, {"-h", "advanced"}} {
+		var out strings.Builder
+		if code := Run(args, nil, &out, io.Discard, Env{}); code != 0 || out.String() != advancedUsage {
+			t.Errorf("%v: exit %d, output is not exactly advancedUsage:\n%s", args, code, out.String())
+		}
+	}
+	if !strings.Contains(usage, "agent-archive help advanced") {
+		t.Error("standard usage does not point at help advanced")
+	}
+	var out strings.Builder
+	if code := Run([]string{"help", "eval"}, nil, &out, io.Discard, Env{}); code != 0 || out.String() != commandHelp["eval"] {
+		t.Errorf("help eval: exit %d\n%s", code, out.String())
+	}
+	var errOut strings.Builder
+	if code := Run([]string{"bogus"}, nil, io.Discard, &errOut, Env{}); code != 2 {
+		t.Fatalf("bogus: exit %d", code)
+	}
+	if !strings.Contains(errOut.String(), usage) || strings.Contains(errOut.String(), "advanced commands") {
+		t.Errorf("unknown command must print the standard usage only:\n%s", errOut.String())
+	}
 }
