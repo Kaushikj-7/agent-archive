@@ -38,6 +38,10 @@ and the cleanup repair do not turn either failed tagged gate into a pass.
 
 ### Latest development changes
 
+- `show` gives when a session was last active as a weekday ("Mon") or date
+  ("Oct 9", "2025-03-01") once it is before today, instead of a count of
+  hours or days ago; activity earlier today still reads "2h ago".
+
 - Capture Codex sessions again while Codex is running. A thread's history is
   now read by following Codex's own record of its current rollout back through
   the rollout each one continues from, instead of waiting for a full inventory
