@@ -55,6 +55,8 @@ func TestContentSearchNamedRefreshRemovesOnlyConfirmedAbsentIdentity(t *testing.
 						t.Fatal("fixture lacks authoritative live identity")
 					}
 					switch failure {
+					case searchMetadataOtherHarness, searchMetadataTransient:
+						t.Fatalf("invalid catalog mutation fixture: %s", failure)
 					case searchMetadataDeleted:
 						_, err = authority.Writer.Commit(t.Context(), catalog.CatalogMutation{ID: "synthetic-search-delete", SessionKey: key, ExpectedRevision: revision, Next: nil})
 					case searchMetadataBodyMissing:
@@ -66,6 +68,8 @@ func TestContentSearchNamedRefreshRemovesOnlyConfirmedAbsentIdentity(t *testing.
 					must(t, err)
 				} else {
 					switch failure {
+					case searchMetadataOtherHarness, searchMetadataBodyMissing:
+						t.Fatalf("invalid legacy mutation fixture: %s", failure)
 					case searchMetadataDeleted:
 						err = objects.Delete(t.Context(), key)
 					case searchMetadataInvalid:
