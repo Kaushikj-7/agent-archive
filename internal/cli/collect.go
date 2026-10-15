@@ -218,6 +218,7 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (result collector.Resu
 		CodexRollouts:            rollouts,
 		PendingCodexRollouts:     pendingCodexRollouts(rollouts),
 		ConfiguredCodexHomes:     readHomes,
+		NativeRoots:              cfg.NativeRoots,
 		ResolveCodexReadHomes:    func(current config.Config) ([]string, error) { return trustedCodexReadHomes(current, env) },
 		Parsers:                  parsersFor(env),
 		Sources:                  registryFor(env),

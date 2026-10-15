@@ -43,7 +43,7 @@ func (s *sessionScan) reconcileRevisions(read sourceRead, active archive.SourceB
 	}
 	current := revisionID(active)
 	if current == "" {
-		current = read.observed.binding.PhysicalRolloutID
+		current = read.observed.binding.CodexBinding().PhysicalRolloutID
 	}
 	plan := &revisionPlan{Current: current, ObservedAt: s.now}
 	// A transition must have complete supported authority. Force the ordinary

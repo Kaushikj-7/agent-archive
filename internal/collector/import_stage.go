@@ -84,7 +84,7 @@ func (s *sessionScan) readImportStage() (read sourceRead, ok bool, err error) {
 	read.adapter, read.filtered = adapter, filtered
 	read.stagedRevisions = stage.Preserved
 	read.observed = observe(s.reg.SourceKind, agentapi.SourceObservation{Present: true, Size: 1, Activity: stage.Bundle.Capture.CapturedAt, Signature: agentapi.SourceSignature{Version: 1, Provider: "import-stage", Token: stage.SHA256}})
-	read.observed.binding = s.reg.CodexBinding
+	read.observed.binding = agentapi.BindCodex(s.reg.CodexBinding)
 	return read, true, nil
 }
 
