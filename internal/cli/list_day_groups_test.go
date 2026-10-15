@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -20,7 +21,7 @@ func groupSummary(groups []sessionTableGroup) string {
 	for i, group := range groups {
 		indices := make([]string, len(group.rows))
 		for j, r := range group.rows {
-			indices[j] = fmt.Sprint(r.Index)
+			indices[j] = strconv.Itoa(r.Index)
 		}
 		parts[i] = groupHeading(group) + ": " + strings.Join(indices, " ")
 	}
