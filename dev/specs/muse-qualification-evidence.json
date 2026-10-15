@@ -1,5 +1,5 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "date": "2026-10-14",
   "reviewed_head": "7d8aee13c7146ceb38d15df7188d7daa31f464eb",
   "scope": {
@@ -29,6 +29,8 @@
     {
       "results_file": "descendant-results.json",
       "sha256": "b891f9283116bacbeed21f7305e09296f9c32be9a5f27a07632c8952ffa143fb",
+      "build": "1.4.7-R6101.1",
+      "build_basis": "msp_build_and_schema observation reports serverInfo version 1.4.7",
       "observations": [
         {
           "name": "msp_build_and_schema",
@@ -159,6 +161,8 @@
     {
       "results_file": "recovery-fixed-results.json",
       "sha256": "7f11e320b3dac04058130aa20825051c82e5311c490c0ce1df001b9f6ee4facf",
+      "build": "1.4.7-R6101.1",
+      "build_basis": "dev/specs/muse-qualification-readiness.md at 9daafa85: closed-child reopen row, 1.4.7",
       "observations": [
         {
           "name": "initial_child_result_settled",
@@ -228,6 +232,8 @@
     {
       "results_file": "crash-upgrade-results.json",
       "sha256": "fa91490667f99358397f993a6c1337a8573bc3b4df16c40f62d63d4c548b7772",
+      "build": "1.4.7-R6101.1 to 1.4.8-R6256.1",
+      "build_basis": "upgrade_1.4.7_to_1.4.8 observation",
       "observations": [
         {
           "name": "initial_child_result_settled",
@@ -300,6 +306,8 @@
     {
       "results_file": "compaction-results.json",
       "sha256": "5391cfbafe52aed543663aa4112af0a2ca458d234ab1fab005342d9d165b77c4",
+      "build": null,
+      "build_basis": "not recorded; dev/specs/muse-qualification-readiness.md at 9daafa85 says manual compaction was unavailable on both builds",
       "observations": [
         {
           "name": "resolved_model_profile",
@@ -350,6 +358,8 @@
     {
       "results_file": "compaction-context-results.json",
       "sha256": "f848cfa47d7ef5be9e7e04f0e4c299a94fa92d9c508fc752fb413e1635c40c94",
+      "build": null,
+      "build_basis": "not recorded; dev/specs/muse-qualification-readiness.md at 9daafa85 says manual compaction was unavailable on both builds",
       "observations": [
         {
           "name": "native_catalog_context",
@@ -391,6 +401,8 @@
     {
       "results_file": "branch-results.json",
       "sha256": "7b55881f83858a2a8f746fb1751d0c3237625223130079d0b471474a927f603c",
+      "build": "1.4.8-R6256.1",
+      "build_basis": "parent_turns schema fingerprint matches the 1.4.8 stable fingerprint",
       "observations": [
         {
           "name": "parent_turns",
@@ -469,6 +481,8 @@
     {
       "results_file": "checkpoint-resume-results.json",
       "sha256": "c3b5ac3acdb2706f130e154767b8404784809ed677666c60f2ff93d8283fde27",
+      "build": "1.4.8-R6256.1",
+      "build_basis": "dev/specs/muse-qualification-readiness.md at 9daafa85: periodic checkpoint row, produced on 1.4.8; the results file did not record a build",
       "observations": [
         {
           "name": "periodic_checkpoint_produced",
@@ -514,6 +528,8 @@
     {
       "results_file": "checkpoint-live-results.json",
       "sha256": "e037bf2107cccf933acf555556f0a92ca31ff196aa4a13885b24e849297be94e",
+      "build": null,
+      "build_basis": "not recorded; rerun on a pinned build in Q0",
       "observations": [
         {
           "name": "checkpoint_live_produced",
@@ -546,6 +562,8 @@
     {
       "results_file": "skill-results.json",
       "sha256": "679ac9b2142044874956a9e5bc10744a19971142dd4ec0b273af5e3c99d59278",
+      "build": "1.4.8-R6256.1",
+      "build_basis": "dev/specs/muse-qualification-readiness.md at 9daafa85: project skill trust and skill invocation rows, 1.4.8",
       "observations": [
         {
           "name": "project_skill_catalog_False",
@@ -641,6 +659,8 @@
     {
       "results_file": "mcp-results.json",
       "sha256": "df95c6caaf8406ab84e1342b8dea5001946bed8c7fac3eac81b65ebb15912a53",
+      "build": null,
+      "build_basis": "not recorded",
       "observations": [
         {
           "name": "mcp_success",
@@ -703,6 +723,8 @@
     {
       "results_file": "mcp-canonical-results.json",
       "sha256": "b039c86d1425cb7d2be6975d1a13a5e42baaa4aa56fb12bd4491dec40f7d67bc",
+      "build": null,
+      "build_basis": "not recorded",
       "observations": [
         {
           "name": "mcp_success",
@@ -769,6 +791,8 @@
     {
       "results_file": "native-1.4.8-results.json",
       "sha256": "256a872892a05543170d7cbe3e4ea43a91734b2ff930c4e651c41cc55ad3e4aa",
+      "build": "1.4.8-R6256.1",
+      "build_basis": "results file name and isolated_1.4.8 observation",
       "observations": [
         {
           "name": "workflow_exception",
@@ -823,6 +847,8 @@
     {
       "results_file": "managed-direct-results.json",
       "sha256": "799183670fa1471def64d82b9b6ccd3ab11a1cf10e34da7ff8ddebe60e9fd9f5",
+      "build": "1.4.8-R6256.1",
+      "build_basis": "managed_direct_recorder_1.4.8 observation",
       "observations": [
         {
           "name": "managed_direct_recorder_1.4.8",
@@ -849,6 +875,8 @@
     {
       "results_file": "tui-compaction-results.json",
       "sha256": "95a56a3570bc25e2d276cf1cb8553bc2cc2b23f5e0ef62844c601188f7c983aa",
+      "build": null,
+      "build_basis": "not recorded",
       "observations": [
         {
           "name": "probe_exception",
@@ -863,6 +891,8 @@
     {
       "results_file": "tui-compaction-ui-results.json",
       "sha256": "95a56a3570bc25e2d276cf1cb8553bc2cc2b23f5e0ef62844c601188f7c983aa",
+      "build": null,
+      "build_basis": "not recorded",
       "observations": [
         {
           "name": "probe_exception",
@@ -872,6 +902,103 @@
             "message": ""
           }
         }
+      ]
+    }
+  ],
+  "report_findings": [
+    {
+      "area": "periodic checkpoint",
+      "build": "1.4.8-R6256.1",
+      "finding": "With the opt-in 4096-byte periodic setting, a context_projection_checkpoint with schema 3 and history preserved was produced. It contains private model, instruction and context snapshots and repeated usage, not new conversation or another model call.",
+      "source": "dev/specs/muse-qualification-readiness.md at 9daafa85",
+      "campaigns": [
+        "checkpoint-resume-results.json"
+      ]
+    },
+    {
+      "area": "periodic checkpoint",
+      "build": "1.4.7-R6101.1",
+      "finding": "The 4096-byte setting was accepted and two turns resumed, but no checkpoint frame was observed.",
+      "source": "dev/specs/muse-plan-validation.md at 9daafa85",
+      "campaigns": [
+        "initial_campaign.periodic_checkpoint"
+      ]
+    },
+    {
+      "area": "child follow-up",
+      "build": "1.4.7-R6101.1",
+      "finding": "A direct child follow-up settled a new native result_ready event for the same child with its byte prefix preserved. Command acknowledgement and model-call counts alone did not establish settlement.",
+      "source": "dev/specs/muse-qualification-readiness.md at 9daafa85",
+      "campaigns": [
+        "descendant-results.json",
+        "recovery-fixed-results.json"
+      ]
+    },
+    {
+      "area": "child close",
+      "build": "1.4.7-R6101.1",
+      "finding": "Close succeeded after the child's result settled and the owner state became closed. In descendant-results.json, close was sent while the child was still running and was refused, which the report attributes to probe timing; the reopen sent after that refused close was also refused.",
+      "source": "dev/specs/muse-qualification-readiness.md at 9daafa85",
+      "campaigns": [
+        "descendant-results.json",
+        "recovery-fixed-results.json"
+      ]
+    },
+    {
+      "area": "workflow result",
+      "build": "1.4.7-R6101.1 and 1.4.8-R6256.1",
+      "finding": "A workflow child completed only after calling submit_result with text and nullable notes; this replaced the first campaign's child_result_missing outcome.",
+      "source": "dev/specs/muse-plan-validation.md at 9daafa85; dev/specs/muse-qualification-readiness.md at 9daafa85",
+      "campaigns": [
+        "initial_campaign.workflow_child",
+        "native-1.4.8-results.json"
+      ]
+    },
+    {
+      "area": "replay marker forwarding",
+      "build": "1.4.7-R6101.1 and 1.4.8-R6256.1",
+      "finding": "Direct managed hook commands forwarded the launch marker to root and child hooks on 1.4.8. Compound shell instrumentation did not preserve the extra variables on either build, and the 1.4.8 compound-instrumented grandchild run exceeded its deadline.",
+      "source": "dev/specs/muse-qualification-readiness.md at 9daafa85",
+      "campaigns": [
+        "managed-direct-results.json",
+        "native-1.4.8-results.json"
+      ]
+    },
+    {
+      "area": "observer links",
+      "build": "1.4.7-R6101.1",
+      "finding": "Observer links used memory_reminder_child_session_linked, sometimes with a relative log path. Goal and verification files appeared; a skill link did not establish a retained file.",
+      "source": "Earlier plan text at 9daafa85 (dev/specs/muse-integration.md); no retained probe result records it, so Q0 must rerun it",
+      "campaigns": [
+        "initial_campaign"
+      ]
+    },
+    {
+      "area": "logging disabled",
+      "build": "1.4.7-R6101.1",
+      "finding": "A --no-session-log exec run created no new retained session file. The retained_logs value of 1 in initial_campaign.exec_no_session_log counts the earlier logged run's file in the same data home.",
+      "source": "dev/specs/muse-plan-validation.md at 9daafa85",
+      "campaigns": [
+        "initial_campaign.exec_no_session_log"
+      ]
+    },
+    {
+      "area": "hook events",
+      "build": null,
+      "finding": "StopFailure is a documented hook event that no probe exercised. PostToolUse and PostToolUseFailure were observed for successful and failed tool calls.",
+      "source": "Muse hook events reference; mcp-canonical-results.json; both initial_campaign.tool_call_pairing checks (the failing run and the corrected run)",
+      "campaigns": [
+        "mcp-canonical-results.json",
+        "initial_campaign.tool_call_pairing"
+      ]
+    },
+    {
+      "area": "session ID shape",
+      "build": "1.4.7-R6101.1",
+      "finding": "Root session IDs decode as UUIDv7 timestamps that matched their dated folders; only one recorded root path exists, near 21:01 UTC, which is the same date in UTC and US Pacific time. Some workflow and isolated child session IDs, such as aca13724-da24-73c9-8000-e3cf796076d1, decode to implausible years and share suffixes with turn IDs, so child IDs are not reliably time-ordered.",
+      "source": "Derived from session IDs and paths in this file",
+      "campaigns": [
+        "initial_campaign"
       ]
     }
   ],
