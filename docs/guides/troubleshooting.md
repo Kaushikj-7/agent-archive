@@ -89,10 +89,11 @@ find none say so without creating the data directory.
   pass do not keep the waiting ones from their turn. A session still
   waiting after 24 hours (more Codex work than the allowance can cover for
   that long) is reported as failed, whether the pass reads it or leaves it
-  for the next pass, and from then on waits behind all the others. Claude Code and Cursor sessions in the same pass are not
-  held up.
+  for the next pass, and from then on waits behind all the others. Claude
+  Code and Cursor sessions in the same pass are not held up.
 
-  None of these is a failure, and none changes the exit code. Claude Code
+  Apart from that 24-hour failure, none of these is a failure, and none
+  changes the exit code. Claude Code
   reports some background agents with a transcript it never writes; such a
   subagent waits up to 30 minutes, then is not captured and its parent
   session records the link as unavailable, with a
