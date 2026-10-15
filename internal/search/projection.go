@@ -237,9 +237,10 @@ type ContextSlice struct {
 
 // Surrounding contains the selected passage and bounded same-source neighbors.
 type Surrounding struct {
-	Role          string
-	Selected      Context
-	Before, After []ContextSlice
+	Role     string
+	Selected Context
+	Before   []ContextSlice
+	After    []ContextSlice
 }
 
 // ReadContext verifies and interprets one source once for all requested slices.

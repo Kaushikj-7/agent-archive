@@ -25,8 +25,9 @@ func BenchmarkContentSearchMissingCLI(b *testing.B) {
 	}
 	b.ReportMetric(0, "source_GET/op")
 }
+
 func BenchmarkContentSearchEscapedDocument(b *testing.B) {
-	doc := contentSearchDocument{SchemaVersion: 1, Kind: "search", OK: true, Results: []contentSearchHit{}}
+	doc := contentSearchDocument{SchemaVersion: 1, Kind: contentSearchResults, OK: true, Results: []contentSearchHit{}}
 	for range 100 {
 		doc.Results = append(doc.Results, contentSearchHit{Session: "synthetic", Title: strings.Repeat("title", 40), Snippet: strings.Repeat("\u0085", 128), Gaps: []contentSearchGap{}})
 	}
@@ -89,6 +90,7 @@ func contentSearchCorpus(tb testing.TB, count int) (Env, *storagetest.MemoryStor
 	}
 	return env, objects
 }
+
 func warmContentSearch(tb testing.TB, env Env, count int) int {
 	tb.Helper()
 	for pass := 1; pass <= 64; pass++ {
@@ -107,6 +109,7 @@ func warmContentSearch(tb testing.TB, env Env, count int) int {
 	tb.Fatal("bounded corpus did not catch up")
 	return 0
 }
+
 func BenchmarkContentSearchWarmCLI(b *testing.B) {
 	env, _ := contentSearchCorpus(b, 40)
 	passes := warmContentSearch(b, env, 40)

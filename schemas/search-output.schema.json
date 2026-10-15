@@ -71,7 +71,14 @@
       "type": "null"
     },
     "coverage": {
-      "$ref": "#/$defs/coverage"
+      "anyOf": [
+        {
+          "$ref": "#/$defs/coverage"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "refresh": {
       "$ref": "#/$defs/refresh"
@@ -94,7 +101,8 @@
     "next_cursor",
     "truncated",
     "total_matched_known",
-    "total_matched"
+    "total_matched",
+    "coverage"
   ],
   "additionalProperties": false,
   "$defs": {
@@ -541,6 +549,51 @@
           "limit",
           "coverage"
         ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "ok": {
+            "const": true
+          },
+          "kind": {
+            "enum": [
+              "search",
+              "search_refresh"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "coverage": {
+            "$ref": "#/$defs/coverage"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "ok": {
+            "const": true
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "error": {
+            "type": "null"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "error": {
+            "$ref": "#/$defs/error"
+          }
+        }
       }
     }
   ]

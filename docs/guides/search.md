@@ -134,3 +134,10 @@ finite discovery-turn value while preserving existing identity/root checkpoints.
 An interrupted migration rolls back; bounded identity validation resumes during
 explicit refresh. Legacy metadata retry resumes by logical key within a physical
 page without treating that mutable page as snapshot authority.
+
+When continuing a cursor with relative date filters such as --since 7d, use the
+absolute since/until timestamps reported in JSON filters. Relative ages resolve
+again on each invocation and otherwise change the query identity. After a failed
+refresh whose observation could not be read, coverage is null; successful queries
+against a missing index instead report known local zero counts and index_present
+false. Unknown matching totals always remain null.

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -20,12 +21,14 @@ import (
 )
 
 func executeContentSearch(opts contentSearchOptions, stdout, stderr io.Writer, env searchCommandDependencies) int {
-	doc := contentSearchDocument{SchemaVersion: 1, Kind: "search", OK: true, Results: []contentSearchHit{}, Query: opts.query.Text, Limit: opts.query.Limit}
+	kind := contentSearchResults
 	if opts.read != "" {
-		doc.Kind = "search_context"
+		kind = contentSearchContextRead
 	} else if !opts.hasQuery {
-		doc.Kind = "search_refresh"
+		kind = contentSearchRefreshOnly
 	}
+	doc := contentSearchDocument{SchemaVersion: 1, Kind: kind, OK: true, Results: []contentSearchHit{}, Query: opts.query.Text, Limit: opts.query.Limit}
+
 	home, err := env.readHome()
 	if err != nil {
 		setSearchError(&doc, err)
@@ -104,10 +107,11 @@ func executeContentSearch(opts contentSearchOptions, stdout, stderr io.Writer, e
 // runContentSearchPass owns the stable home lifecycle lock before opening an
 // index or rechecking configuration. S5 shares this lock with lifecycle changes.
 type contentSearchPass struct {
-	Discovery         search.Discovery
-	Progress          search.Progress
-	Observation       search.Observation
-	Complete, Present bool
+	Discovery   search.Discovery
+	Progress    search.Progress
+	Observation search.Observation
+	Complete    bool
+	Observed    bool
 }
 
 func runContentSearchPass(ctx context.Context, home string, expected config.Config, env searchCommandDependencies, opts contentSearchOptions) (contentSearchPass, error) {
@@ -144,7 +148,6 @@ func runContentSearchPass(ctx context.Context, home string, expected config.Conf
 		return result, err
 	}
 	defer func() { _ = index.Close() }()
-	result.Present = true
 	if opts.rebuild {
 		if err = index.Rebuild(ctx); err != nil {
 			return result, err
@@ -154,7 +157,7 @@ func runContentSearchPass(ctx context.Context, home string, expected config.Conf
 	if err != nil {
 		return result, err
 	}
-	budget := search.Budget{VerifyCurrent: true}
+	sources, sessions := 0, 0
 	if opts.session != "" {
 		key, e := archive.MetadataObjectKey(opts.query.Harness, opts.session)
 		if e != nil {
@@ -170,17 +173,17 @@ func runContentSearchPass(ctx context.Context, home string, expected config.Conf
 		if e = index.Observe(ctx, metadata, parsersFor(env), env.now(), 0); e != nil {
 			return result, e
 		}
-		budget.Sources = 64
-		budget.Sessions = 64
+		sources, sessions = 64, 64
 	} else {
 		discovery, err = index.Reconcile(ctx, objects, parsersFor(env), env.now(), search.ReconcileBudget{})
 	}
 	var runErr error
-	progress, runErr = index.Run(ctx, objects, parsersFor(env), env.now(), budget)
+	progress, runErr = index.Run(ctx, objects, parsersFor(env), env.now(), search.Budget{Sources: sources, Sessions: sessions, VerifyCurrent: true})
 	if runErr != nil {
 		err = runErr
 	}
 	observation, readErr := index.Observation(ctx)
+	result.Observed = readErr == nil
 	if readErr != nil && err == nil {
 		err = readErr
 	}
@@ -200,10 +203,12 @@ func runContentSearchPass(ctx context.Context, home string, expected config.Conf
 
 func refreshContentSearch(ctx context.Context, home string, cfg config.Config, env searchCommandDependencies, opts contentSearchOptions) (*contentSearchRefresh, *contentSearchCoverage, error) {
 	started := time.Now()
-	r := &contentSearchRefresh{Session: opts.session, Harness: opts.query.Harness, Scope: "namespace", Rebuild: opts.rebuild, Stopped: "pass_complete"}
+	scope := "namespace"
 	if opts.session != "" {
-		r.Scope = "session"
+		scope = "session"
 	}
+	r := &contentSearchRefresh{Session: opts.session, Harness: opts.query.Harness, Scope: scope, Rebuild: opts.rebuild, Stopped: "pass_complete"}
+
 	duration := 30 * time.Second
 	if opts.wait > 0 {
 		duration = opts.wait
@@ -224,7 +229,10 @@ func refreshContentSearch(ctx context.Context, home string, cfg config.Config, e
 		r.Nodes += d.Nodes
 		r.Completed = complete
 		r.Elapsed = time.Since(started).Milliseconds()
-		coverage = contentSearchCoverageOf(o, result.Present)
+		coverage = nil
+		if result.Observed {
+			coverage = contentSearchCoverageOf(o, true)
+		}
 		if opts.wait == 0 {
 			return r, coverage, err
 		}
@@ -287,11 +295,11 @@ func readSearchContext(ctx context.Context, env searchCommandDependencies, cfg c
 		return writeContentSearch(doc, opts, stdout, stderr)
 	}
 	slice := func(ref search.Reference, role string, c search.Context) contentSearchSlice {
-		v := contentSearchSlice{Reference: encodeSearchReference(ref), Role: role, Text: c.Text, Start: c.Start, End: c.End, Complete: c.Next == 0}
+		var next *int
 		if c.Next != 0 {
-			v.Next = &c.Next
+			next = &c.Next
 		}
-		return v
+		return contentSearchSlice{Reference: encodeSearchReference(ref), Role: role, Text: c.Text, Start: c.Start, End: c.End, Next: next, Complete: c.Next == 0}
 	}
 	c := &contentSearchContext{Selected: slice(ref, out.Role, out.Selected), Before: []contentSearchSlice{}, After: []contentSearchSlice{}}
 	for _, v := range out.Before {
@@ -341,6 +349,7 @@ func readSearchContext(ctx context.Context, env searchCommandDependencies, cfg c
 	}
 	return writeContentSearch(doc, opts, stdout, stderr)
 }
+
 func slicePointers(values []contentSearchSlice) []*contentSearchSlice {
 	out := make([]*contentSearchSlice, 0, len(values))
 	for i := range values {
@@ -348,12 +357,18 @@ func slicePointers(values []contentSearchSlice) []*contentSearchSlice {
 	}
 	return out
 }
-func terminalSearchSummary(out io.Writer, r *contentSearchRefresh, c *contentSearchCoverage) {
+
+func terminalSearchSummary(out *bytes.Buffer, r *contentSearchRefresh, c *contentSearchCoverage) {
 	label := "Observed archive slice"
 	if r.Session != "" {
 		label = "Observed " + archive.DisplayLine(r.Session)
 	}
+	if c == nil {
+		fmt.Fprintf(out, "%s; coverage unavailable; %d indexed in this attempt.\n", label, r.Committed)
+		return
+	}
 	fmt.Fprintf(out, "%s; %d indexed, %d pending, %d failed. Coverage is local to this machine.\n", label, r.Committed, c.Pending, c.Failed)
+	printContentSearchCoverage(out, c)
 }
 
 func runSearchIndexCommand(args []string, stdout, stderr io.Writer, env searchCommandDependencies) int {

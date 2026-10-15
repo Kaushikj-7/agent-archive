@@ -45,6 +45,7 @@ func searchJSONRun(t *testing.T, env Env, args ...string) (int, contentSearchDoc
 	}
 	return code, doc, diagnostics.String()
 }
+
 func TestContentSearchMissingJSONAndExplicitScope(t *testing.T) {
 	env, _, _ := publishedFixture(t)
 	env.OpenStore = func(config.Config) (storage.ObjectStore, error) {
@@ -63,6 +64,7 @@ func TestContentSearchMissingJSONAndExplicitScope(t *testing.T) {
 		t.Fatalf("created index: %v", err)
 	}
 }
+
 func TestContentSearchJSONRefreshQueryAndExactContext(t *testing.T) {
 	env, objects, id := publishedFixture(t)
 	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return objects, nil }
@@ -82,6 +84,7 @@ func TestContentSearchJSONRefreshQueryAndExactContext(t *testing.T) {
 		t.Fatal("escaped offsets replaced raw bytes")
 	}
 }
+
 func TestContentSearchConflictsBeforeIO(t *testing.T) {
 	for _, args := range [][]string{{"--wait", "1s", "words"}, {"--refresh", "--cursor", "bad"}, {"--read", "bad"}, {"--refresh", "--project", "x"}, {"words", "--max-output-bytes", "2"}, {"words", "--before", "1"}, {"words", "--max-bytes", "4096"}, {"words", "--offset", "-1"}, {"--read", "bad", "--limit", "20"}, {"--refresh", "--wait", "0s"}} {
 		var out bytes.Buffer
@@ -90,10 +93,11 @@ func TestContentSearchConflictsBeforeIO(t *testing.T) {
 		}
 	}
 }
+
 func TestContentSearchOutputBudgetNeverSkipsPageHits(t *testing.T) {
-	doc := contentSearchDocument{SchemaVersion: 1, Kind: "search", OK: true, Results: []contentSearchHit{{Session: "one", Title: strings.Repeat("\u0085", 8192)}}, Returned: 1}
 	cursor := "next"
-	doc.NextCursor = &cursor
+	doc := contentSearchDocument{SchemaVersion: 1, Kind: contentSearchResults, OK: true, Results: []contentSearchHit{{Session: "one", Title: strings.Repeat("\u0085", 8192)}}, Returned: 1, NextCursor: &cursor}
+
 	var out, diagnostics bytes.Buffer
 	code := writeContentSearch(doc, contentSearchOptions{json: true, outputBytes: 4096}, &out, &diagnostics)
 	var result contentSearchDocument
@@ -102,6 +106,7 @@ func TestContentSearchOutputBudgetNeverSkipsPageHits(t *testing.T) {
 		t.Fatalf("oversized page %d %+v", code, result)
 	}
 }
+
 func TestContentSearchRebuildAndHiddenPass(t *testing.T) {
 	env, objects, _ := publishedFixture(t)
 	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return objects, nil }
@@ -141,6 +146,7 @@ func TestContentSearchOutsideProjectRequiresExplicitQueryScope(t *testing.T) {
 		t.Fatalf("hidden help %d %s", code, out.String())
 	}
 }
+
 func TestContentSearchNamedWaitCompletesItsOwnTarget(t *testing.T) {
 	env, objects, id := publishedFixture(t)
 	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return objects, nil }
@@ -149,6 +155,7 @@ func TestContentSearchNamedWaitCompletesItsOwnTarget(t *testing.T) {
 		t.Fatalf("named wait %d %+v %s", code, doc, diag)
 	}
 }
+
 func TestContentSearchContextUsesOneVerifiedSourceRead(t *testing.T) {
 	env, objects, id := publishedFixture(t)
 	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return objects, nil }
@@ -187,6 +194,7 @@ func TestContentSearchSchemaRejectsInvalidSuccessAndNullArrays(t *testing.T) {
 type shortSearchWriter struct{ calls int }
 
 func (w *shortSearchWriter) Write(data []byte) (int, error) { w.calls++; return len(data) / 2, nil }
+
 func TestContentSearchDoesNotRetryShortJSONWrite(t *testing.T) {
 	env, _, _ := publishedFixture(t)
 	out := &shortSearchWriter{}
@@ -199,7 +207,8 @@ func TestContentSearchDoesNotRetryShortJSONWrite(t *testing.T) {
 
 type contentSearchCountingStore struct {
 	*storagetest.MemoryStore
-	sources, metadata int
+	sources  int
+	metadata int
 }
 
 func (s *contentSearchCountingStore) Get(ctx context.Context, key string) ([]byte, error) {
@@ -211,6 +220,7 @@ func (s *contentSearchCountingStore) Get(ctx context.Context, key string) ([]byt
 	}
 	return s.MemoryStore.Get(ctx, key)
 }
+
 func (s *contentSearchCountingStore) GetLimited(ctx context.Context, key string, limit int64) ([]byte, error) {
 	if strings.Contains(key, "/source.") {
 		s.sources++
@@ -220,6 +230,7 @@ func (s *contentSearchCountingStore) GetLimited(ctx context.Context, key string,
 	}
 	return s.MemoryStore.GetLimited(ctx, key, limit)
 }
+
 func TestContentSearchWaitMakesBoundedLegacyProgressThenReportsIncomplete(t *testing.T) {
 	env, objects := contentSearchCorpus(t, 40)
 	counted := &contentSearchCountingStore{MemoryStore: objects}
@@ -244,13 +255,14 @@ func TestContentSearchWaitBusyIsFiniteWithoutArchiveReads(t *testing.T) {
 	}
 	started := time.Now()
 	code, doc, diag := searchJSONRun(t, env, "--refresh", "--wait", "1s")
-	if code != 1 || doc.Error == nil || doc.Error.Code != "wait_timeout" || time.Since(started) > 5*time.Second {
+	if code != 1 || doc.Error == nil || doc.Error.Code != "wait_timeout" || doc.Coverage != nil || time.Since(started) > 5*time.Second {
 		t.Fatalf("wait bound %d %+v %s", code, doc, diag)
 	}
 	if doc.Refresh.Passes > 3 {
 		t.Fatalf("busy wait spun: %d passes", doc.Refresh.Passes)
 	}
 }
+
 func TestContentSearchNamedWaitIgnoresOtherFailedSession(t *testing.T) {
 	env, objects, id := publishedFixture(t)
 	key, err := archive.MetadataObjectKey("codex", id)
@@ -286,4 +298,16 @@ func (s *contentSearchCountingStore) GetVersioned(ctx context.Context, key strin
 		s.metadata++
 	}
 	return s.MemoryStore.GetVersioned(ctx, key)
+}
+
+func TestContentSearchCancelledRefreshJSONKeepsObservationUnknown(t *testing.T) {
+	env, objects, id := publishedFixture(t)
+	signals := make(chan os.Signal, 1)
+	env.Interrupts = func() (<-chan os.Signal, func()) { return signals, func() {} }
+	wrapped := &searchRefreshStore{ObjectStore: objects, interrupt: signals}
+	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return wrapped, nil }
+	code, doc, diag := searchJSONRun(t, env, "--refresh", "--session", id, "--harness", "codex")
+	if code != 1 || doc.Error == nil || doc.Error.Code != "interrupted" || doc.Coverage != nil {
+		t.Fatalf("unknown cancelled observation %d %+v %s", code, doc, diag)
+	}
 }

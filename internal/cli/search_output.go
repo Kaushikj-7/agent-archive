@@ -21,9 +21,18 @@ type contentSearchError struct {
 	Message string `json:"message"`
 	Restart bool   `json:"restart_required"`
 }
+
+type contentSearchKind string
+
+const (
+	contentSearchResults     contentSearchKind = "search"
+	contentSearchContextRead contentSearchKind = "search_context"
+	contentSearchRefreshOnly contentSearchKind = "search_refresh"
+)
+
 type contentSearchDocument struct {
 	SchemaVersion     int                           `json:"schema_version"`
-	Kind              string                        `json:"kind"`
+	Kind              contentSearchKind             `json:"kind"`
 	OK                bool                          `json:"ok"`
 	Error             *contentSearchError           `json:"error"`
 	Filters           *contentSearchFiltersDocument `json:"filters,omitempty"`
@@ -37,10 +46,11 @@ type contentSearchDocument struct {
 	Truncated         bool                          `json:"truncated"`
 	TotalMatchedKnown bool                          `json:"total_matched_known"`
 	TotalMatched      *int                          `json:"total_matched"`
-	Coverage          *contentSearchCoverage        `json:"coverage,omitempty"`
+	Coverage          *contentSearchCoverage        `json:"coverage"`
 	Refresh           *contentSearchRefresh         `json:"refresh,omitempty"`
 	Context           *contentSearchContext         `json:"context,omitempty"`
 }
+
 type contentSearchFiltersDocument struct {
 	Harness  string     `json:"harness"`
 	Since    *time.Time `json:"since"`
@@ -55,6 +65,7 @@ type contentSearchScope struct {
 	Projects []string `json:"project_ids"`
 	Repo     string   `json:"repo_key"`
 }
+
 type contentSearchHit struct {
 	Session   string             `json:"session_id"`
 	Harness   string             `json:"harness"`
@@ -66,10 +77,12 @@ type contentSearchHit struct {
 	Reference *string            `json:"reference"`
 	Gaps      []contentSearchGap `json:"gaps"`
 }
+
 type contentSearchGap struct {
 	Revision string `json:"revision_id"`
 	Reason   string `json:"reason"`
 }
+
 type contentSearchCoverage struct {
 	Scope       string     `json:"scope"`
 	Present     bool       `json:"index_present"`
@@ -85,6 +98,7 @@ type contentSearchCoverage struct {
 	Unsupported int        `json:"unsupported_sessions"`
 	Limitations []string   `json:"limitations"`
 }
+
 type contentSearchRefresh struct {
 	Session   string `json:"session_id,omitempty"`
 	Harness   string `json:"harness,omitempty"`
@@ -101,6 +115,7 @@ type contentSearchRefresh struct {
 	Metadata  int    `json:"discovery_metadata_reads"`
 	Nodes     int    `json:"discovery_nodes"`
 }
+
 type contentSearchSlice struct {
 	Reference string `json:"reference"`
 	Role      string `json:"role"`
@@ -110,6 +125,7 @@ type contentSearchSlice struct {
 	Next      *int   `json:"next_offset"`
 	Complete  bool   `json:"complete"`
 }
+
 type contentSearchContext struct {
 	Selected contentSearchSlice   `json:"selected"`
 	Before   []contentSearchSlice `json:"before"`
@@ -117,22 +133,27 @@ type contentSearchContext struct {
 }
 
 func contentSearchCoverageOf(o search.Observation, present bool) *contentSearchCoverage {
-	c := &contentSearchCoverage{Scope: "namespace", Present: present, Discovery: o.DiscoveryComplete, Checks: o.IdentityChecksComplete, Complete: o.Complete, Known: o.Known, Indexed: o.Indexed, Pending: o.Pending, Failed: o.Failed, Unsupported: o.Unsupported, Limitations: append([]string{}, o.Limitations...)}
+	var reconciled, observed *time.Time
 	if !o.LastReconciled.IsZero() {
-		c.Reconciled = &o.LastReconciled
+		reconciled = &o.LastReconciled
 	}
 	if !o.LastObserved.IsZero() {
-		c.Observed = &o.LastObserved
+		observed = &o.LastObserved
 	}
+	limitations := append([]string{}, o.Limitations...)
 	if !present {
-		c.Limitations = append(c.Limitations, "index_missing")
+		limitations = append(limitations, "index_missing")
 	}
+	c := &contentSearchCoverage{Scope: "namespace", Present: present, Reconciled: reconciled, Observed: observed, Discovery: o.DiscoveryComplete, Checks: o.IdentityChecksComplete, Complete: o.Complete, Known: o.Known, Indexed: o.Indexed, Pending: o.Pending, Failed: o.Failed, Unsupported: o.Unsupported, Limitations: limitations}
+
 	return c
 }
+
 func encodeSearchReference(ref search.Reference) string {
 	b, _ := json.Marshal(ref)
 	return base64.RawURLEncoding.EncodeToString(b)
 }
+
 func decodeSearchReference(token string) (search.Reference, error) {
 	var ref search.Reference
 	if len(token) > 16384 {
@@ -157,19 +178,22 @@ func decodeSearchReference(token string) (search.Reference, error) {
 	}
 	return ref, nil
 }
+
 func setSearchPage(doc *contentSearchDocument, page search.Page) {
 	doc.Generation = page.Generation
 	doc.Coverage = contentSearchCoverageOf(page.Observation, true)
 	doc.Results = []contentSearchHit{}
 	for _, hit := range page.Hits {
-		v := contentSearchHit{Session: hit.SessionID, Harness: hit.Harness, Title: hit.Title, Snippet: hit.Snippet, Role: hit.Role, Captured: hit.CapturedAt, Matches: hit.MatchCount, Gaps: []contentSearchGap{}}
+		var reference *string
 		if hit.Reference != nil {
 			token := encodeSearchReference(*hit.Reference)
-			v.Reference = &token
+			reference = &token
 		}
+		gaps := []contentSearchGap{}
 		for _, g := range hit.Gaps {
-			v.Gaps = append(v.Gaps, contentSearchGap{g.RevisionID, g.Reason})
+			gaps = append(gaps, contentSearchGap{g.RevisionID, g.Reason})
 		}
+		v := contentSearchHit{Session: hit.SessionID, Harness: hit.Harness, Title: hit.Title, Snippet: hit.Snippet, Role: hit.Role, Captured: hit.CapturedAt, Matches: hit.MatchCount, Reference: reference, Gaps: gaps}
 		doc.Results = append(doc.Results, v)
 	}
 	doc.Returned = len(doc.Results)
@@ -178,11 +202,13 @@ func setSearchPage(doc *contentSearchDocument, page search.Page) {
 		doc.Truncated = true
 	}
 }
+
 func searchFailure(code string) error { return &searchCLIError{code} }
 
 type searchCLIError struct{ code string }
 
 func (e *searchCLIError) Error() string { return e.code }
+
 func setSearchError(doc *contentSearchDocument, err error) {
 	if err == nil {
 		return
@@ -196,9 +222,9 @@ func setSearchError(doc *contentSearchDocument, err error) {
 		code = "interrupted"
 	case errors.Is(err, context.DeadlineExceeded):
 		code = "query_timeout"
-		if doc.Kind == "search_context" {
+		if doc.Kind == contentSearchContextRead {
 			code = "context_timeout"
-		} else if doc.Kind == "search_refresh" || doc.Refresh != nil {
+		} else if doc.Kind == contentSearchRefreshOnly || doc.Refresh != nil {
 			code = "refresh_timeout"
 		}
 	case errors.Is(err, search.ErrInvalidCursor):
@@ -227,6 +253,7 @@ func setSearchError(doc *contentSearchDocument, err error) {
 	doc.OK = false
 	doc.Error = &contentSearchError{code, message, code == "cursor_changed"}
 }
+
 func writeContentSearch(doc contentSearchDocument, opts contentSearchOptions, stdout, stderr io.Writer) int {
 	var data []byte
 	var err error
@@ -244,11 +271,14 @@ func writeContentSearch(doc contentSearchDocument, opts contentSearchOptions, st
 				r := doc.Refresh
 				terminalSearchSummary(&out, r, doc.Coverage)
 			}
-			if doc.Kind == "search" {
+			if doc.Kind == contentSearchResults {
 				for _, h := range doc.Results {
 					fmt.Fprintf(&out, "%s · %s · %s\n  %s\n  %d matching passage(s)\n", archive.DisplayLine(h.Session), archive.DisplayLine(h.Harness), archive.DisplayLine(h.Title), archive.DisplayLine(h.Snippet), h.Matches)
 					if h.Reference != nil {
 						fmt.Fprintf(&out, "  ref: %s\n", *h.Reference)
+					}
+					for _, gap := range h.Gaps {
+						fmt.Fprintf(&out, "  coverage gap %s: %s\n", archive.DisplayLine(gap.Revision), archive.DisplayLine(gap.Reason))
 					}
 				}
 				if doc.Coverage != nil && !doc.Coverage.Present {
@@ -257,6 +287,9 @@ func writeContentSearch(doc contentSearchDocument, opts contentSearchOptions, st
 					fmt.Fprintf(&out, "%d result(s). Coverage complete at last observation; remote changes are unknown.\n", len(doc.Results))
 				} else {
 					fmt.Fprintf(&out, "%d result(s). Search coverage is incomplete at last observation.\n", len(doc.Results))
+				}
+				if doc.Coverage != nil {
+					printContentSearchCoverage(&out, doc.Coverage)
 				}
 				if doc.NextCursor != nil {
 					fmt.Fprintf(&out, "Next cursor: %s\n", *doc.NextCursor)
@@ -299,4 +332,16 @@ func writeContentSearch(doc contentSearchDocument, opts contentSearchOptions, st
 		return 1
 	}
 	return 0
+}
+
+func printContentSearchCoverage(out *bytes.Buffer, c *contentSearchCoverage) {
+	fmt.Fprintf(out, "Index: %d indexed / %d locally known; %d pending, %d failed, %d unsupported.\n", c.Indexed, c.Known, c.Pending, c.Failed, c.Unsupported)
+	if c.Observed != nil {
+		fmt.Fprintf(out, "Last observed: %s. Remote changes after this time are unknown.\n", c.Observed.UTC().Format(time.RFC3339))
+	} else {
+		fmt.Fprintln(out, "Archive freshness unknown; no observation recorded.")
+	}
+	if c.Reconciled != nil {
+		fmt.Fprintf(out, "Last reconciliation: %s.\n", c.Reconciled.UTC().Format(time.RFC3339))
+	}
 }

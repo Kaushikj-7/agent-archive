@@ -24,21 +24,22 @@ type searchCommandDependencies interface {
 }
 
 type contentSearchOptions struct {
-	query         search.Query
-	refresh       bool
-	session       string
-	read          string
-	offset        int
-	maxBytes      int
-	project       string
-	all           bool
-	hasQuery      bool
-	json          bool
-	rebuild       bool
-	wait          time.Duration
-	outputBytes   int
-	before, after int
-	reference     search.Reference
+	query       search.Query
+	refresh     bool
+	session     string
+	read        string
+	offset      int
+	maxBytes    int
+	project     string
+	all         bool
+	hasQuery    bool
+	json        bool
+	rebuild     bool
+	wait        time.Duration
+	outputBytes int
+	before      int
+	after       int
+	reference   search.Reference
 }
 
 func runSearchCommand(args []string, stdout, stderr io.Writer, env searchCommandDependencies) int {
@@ -71,8 +72,8 @@ func runSearchCommand(args []string, stdout, stderr io.Writer, env searchCommand
 	if !ok {
 		return fs.usageError("%s", harnessFlagError(*harness))
 	}
-	opts := contentSearchOptions{query: search.Query{Text: text, Harness: canonical, Limit: *limit, Cursor: *cursor}, refresh: *refresh, session: *session, read: *read, offset: *offset, maxBytes: *maxBytes, project: *project, all: *all, hasQuery: given}
-	opts.json, opts.rebuild, opts.wait, opts.outputBytes, opts.before, opts.after = *jsonMode, *rebuild, *wait, *outputBytes, *before, *after
+	opts := contentSearchOptions{query: search.Query{Text: text, Harness: canonical, Limit: *limit, Cursor: *cursor}, refresh: *refresh, session: *session, read: *read, offset: *offset, maxBytes: *maxBytes, project: *project, all: *all, hasQuery: given, json: *jsonMode, rebuild: *rebuild, wait: *wait, outputBytes: *outputBytes, before: *before, after: *after}
+
 	seen := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { seen[f.Name] = true })
 	if code := validateContentSearchBounds(fs, &opts, seen); code != 0 {

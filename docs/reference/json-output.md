@@ -5,8 +5,8 @@ These commands print JSON for scripts. Each document carries a
 keeps its meaning, and an incompatible change bumps `schema_version`, from
 `v0.1.0` on. Check `schema_version`, and read the
 [changelog](../../CHANGELOG.md) when you upgrade. None of them ever contains
-conversation content, except `show --transcript --json` and a full
-`eval export` record, which you ask for explicitly.
+conversation content, except `show --transcript --json`, search snippets/context,
+and a full `eval export` record, which you ask for explicitly.
 
 JSON output preserves its display-control escaping and returns a failure if
 the output writer rejects bytes or accepts only part of the document. Scripts
