@@ -384,10 +384,13 @@ func TestTwoHeavySessionsDoNotTakeEveryTurnFromAThird(t *testing.T) {
 }
 
 // Among the sessions waiting on the allowance, the ones the previous pass
-// left unopened go in the order it left them, before the ones it read; and
+// left unopened go in the order it left them, before the ones it read (a
+// session that kept its clock without a rank, as after a status from an
+// older pass, still goes before the one that ran out); and
 // native children waiting for their parent stay behind every other
 // requested Codex session, waiting on the allowance or not, as orderRequests
-// put them.
+// put them. The sessions not waiting keep orderRequests' order (its live
+// lane), wherever the previous pass left them.
 func TestLookupAllowanceWaitersRotateAndChildrenWaitingForAParentStayLast(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 1, 2, 12, 0, 0, 0, time.UTC)
@@ -401,13 +404,13 @@ func TestLookupAllowanceWaitersRotateAndChildrenWaitingForAParentStayLast(t *tes
 	waitingOrphan.NativeChild = true
 	p := &pass{
 		now:           now,
-		registrations: []archive.SessionRegistration{reg("ran-out"), reg("left-second"), reg("left-first"), reg("expired-read"), reg("expired-left"), reg("plain"), waitingOrphan, orphan},
+		registrations: []archive.SessionRegistration{reg("ran-out"), reg("left-unranked"), reg("left-second"), reg("left-first"), reg("expired-read"), reg("expired-left"), reg("live"), reg("plain"), waitingOrphan, orphan},
 		requests:      map[string]state.Request{},
 		priorDeferred: map[string]string{"ran-out": DeferredLookupAllowance, "waiting-orphan": DeferredLookupAllowance},
 		priorDeferredSince: map[string]time.Time{
-			"ran-out": recent, "left-second": recent, "left-first": recent, "expired-read": old, "expired-left": old, "waiting-orphan": recent,
+			"ran-out": recent, "left-unranked": recent, "left-second": recent, "left-first": recent, "expired-read": old, "expired-left": old, "waiting-orphan": recent,
 		},
-		priorUnreached: map[string]int{"left-first": 3, "left-second": 5, "expired-left": 4, "orphan": 6},
+		priorUnreached: map[string]int{"left-first": 3, "left-second": 5, "expired-left": 4, "orphan": 6, "plain": 0, "live": 1},
 	}
 	for _, r := range p.registrations {
 		p.requests[r.ArchiveSessionID] = state.Request{Token: "t-" + r.ArchiveSessionID}
@@ -417,7 +420,7 @@ func TestLookupAllowanceWaitersRotateAndChildrenWaitingForAParentStayLast(t *tes
 	for _, r := range p.registrations {
 		got = append(got, r.ArchiveSessionID)
 	}
-	want := []string{"plain", "left-first", "left-second", "ran-out", "expired-left", "expired-read", "orphan", "waiting-orphan"}
+	want := []string{"live", "plain", "left-first", "left-second", "left-unranked", "ran-out", "expired-left", "expired-read", "orphan", "waiting-orphan"}
 	if fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Fatalf("order=%v, want %v", got, want)
 	}
