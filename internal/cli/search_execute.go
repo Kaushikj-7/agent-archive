@@ -236,7 +236,9 @@ func loadSearchPassConfig(home string, expected config.Config, automatic bool) (
 	if automatic && (!found || !cfg.SearchIndexing || !cfg.Archive.Enabled || cfg.Paused) {
 		return config.Config{}, errAutomaticSearchSkipped
 	}
-	if !found || cfg.DestinationID() != expected.DestinationID() || cfg.MachineID != expected.MachineID || !cfg.DestinationSince.Equal(expected.DestinationSince) {
+	namespace, _ := contentSearchLocation(home, cfg)
+	expectedNamespace, _ := contentSearchLocation(home, expected)
+	if !found || namespace != expectedNamespace {
 		if automatic {
 			return config.Config{}, errAutomaticSearchSkipped
 		}
