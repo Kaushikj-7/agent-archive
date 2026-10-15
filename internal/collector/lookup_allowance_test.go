@@ -695,6 +695,166 @@ func TestHeavyWaitersAndNewArrivalsLeaveNoSessionUnreportedPastMaxDeferral(t *te
 	}
 }
 
+// With AcceptSession filtering sessions out of the pass, the waiter
+// rotation and the backoff schedule act on the sessions the pass accepts,
+// at their places in the slice the pass walks, and never touch the rejected
+// ones: a stop after a publication leaves the accepted heavy session with
+// its clock; past MaxDeferral it fails, is then held until its attempt, and
+// a pass that stops after reading an earlier session, before reaching the
+// heavy one with its attempt due, holds it still due, so the next pass
+// makes the attempt.
+func TestAcceptedLookupQueueRotatesWithoutChangingRejectedWork(t *testing.T) {
+	t.Parallel()
+	local := newTestStore(t)
+	dir := t.TempDir()
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	save := func(n int) archive.SessionRegistration {
+		t.Helper()
+		reg := registration(t, writeTranscript(t, dir, fmt.Sprintf("codex-%d.jsonl", n), codexTranscript))
+		reg.ArchiveSessionID, reg.NativeSessionID = fmt.Sprintf("session-%d", n), fmt.Sprintf("native-%d", n)
+		reg.Origin = archive.SessionOriginImport
+		reg.SessionStartedAt, reg.RegisteredAt = start.Add(time.Duration(n)*time.Minute), start.Add(time.Duration(n)*time.Minute+time.Second)
+		if err := local.SaveRegistration(reg); err != nil {
+			t.Fatal(err)
+		}
+		if err := local.SaveRequest(reg.ArchiveSessionID, "stop", reg.RegisteredAt); err != nil {
+			t.Fatal(err)
+		}
+		return reg
+	}
+	heavy := save(1)
+	rejected := save(9)
+	rejected.NativeChild, rejected.ParentNativeSessionID = true, "absent-parent"
+	if err := local.SaveRegistration(rejected); err != nil {
+		t.Fatal(err)
+	}
+	rejectedTop := save(10)
+	originals := map[string][]byte{}
+	for _, reg := range []archive.SessionRegistration{rejected, rejectedTop} {
+		request, found, err := local.LoadRequest(reg.ArchiveSessionID)
+		if err != nil || !found || request.Token == "" {
+			t.Fatalf("rejected request control: %+v %t %v", request, found, err)
+		}
+		for _, kind := range []string{"requests", "registrations"} {
+			path := filepath.Join(local.Home(), kind, reg.ArchiveSessionID+".json")
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			originals[path] = raw
+		}
+	}
+	lookup := &allowanceLookup{}
+	stopAfterPublish := false
+	published := false
+	store := storagetest.NewMemoryStore()
+	run := func(at time.Time) Result {
+		t.Helper()
+		result, err := Run(t.Context(), local, store, Options{Sources: allowanceSpendingSources{path: heavy.TranscriptPath, lookup: lookup}, Parsers: testParsers, MachineID: "m", CodexRollouts: lookup,
+			AcceptSession: func(reg archive.SessionRegistration) bool {
+				return reg.ArchiveSessionID != rejected.ArchiveSessionID && reg.ArchiveSessionID != rejectedTop.ArchiveSessionID
+			},
+			Progress: func(progress Progress) { published = published || progress.Published },
+			Stop:     func() bool { return stopAfterPublish && published }, Now: func() time.Time { return at }})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for path, want := range originals {
+			got, err := os.ReadFile(path)
+			if err != nil || string(got) != string(want) {
+				t.Fatalf("rejected bytes changed at %s: %v", path, err)
+			}
+		}
+		for _, reg := range []archive.SessionRegistration{rejected, rejectedTop} {
+			_, held := result.RetryLater[reg.ArchiveSessionID]
+			if _, found := result.Unreached[reg.ArchiveSessionID]; found || held || result.Errors[reg.ArchiveSessionID] != nil || result.Deferred[reg.ArchiveSessionID] != "" {
+				t.Fatalf("rejected execution work: %+v", result)
+			}
+		}
+		return result
+	}
+	now := start.Add(time.Hour)
+
+	// The sessions are imported, so the pass reads them oldest first with no
+	// slot reserved for a live session: the heavy session, the oldest, is
+	// read first; it spends the allowance and the session after it is left
+	// unopened.
+	later := save(2)
+	result := run(now)
+	if result.Deferred[heavy.ArchiveSessionID] != DeferredLookupAllowance || len(result.Published) != 0 || len(result.Unreached) != 1 || result.Unreached[later.ArchiveSessionID] != 0 {
+		t.Fatalf("first pass result=%+v, want the heavy session deferred for the lookup allowance, the later one left unopened, and nothing published", result)
+	}
+
+	status, err := local.LoadStatus()
+	if err != nil || !status.DeferredSince[heavy.ArchiveSessionID].Equal(now) || !status.DeferredSince[later.ArchiveSessionID].Equal(now) || status.PendingCount != 2 {
+		t.Fatalf("first pass clocks/pending: %+v %v", status, err)
+	}
+	stopAfterPublish, published = true, false
+	// The next pass gives the allowance to the later session first.
+	result = run(now.Add(time.Hour))
+	if len(result.Published) != 1 || result.Published[0] != later.ArchiveSessionID || len(result.Errors) != 0 {
+		t.Fatalf("second pass result=%+v, want the later Codex session published", result)
+	}
+	status, err = local.LoadStatus()
+	if err != nil || len(result.Unreached) != 1 || result.Unreached[heavy.ArchiveSessionID] != 0 || !status.DeferredSince[heavy.ArchiveSessionID].Equal(now) || status.PendingCount != 1 {
+		t.Fatalf("stopped accepted suffix/clocks: %+v %+v %v", result, status, err)
+	}
+	request, found, err := local.LoadRequest(heavy.ArchiveSessionID)
+	if err != nil || !found || request.Token == "" {
+		t.Fatalf("stopped heavy request: %+v %t %v", request, found, err)
+	}
+	stopAfterPublish = false
+
+	// Past MaxDeferral the heavy session fails instead of being deferred,
+	// and still waits behind a newer Codex session on this pass. On the next
+	// it is held for its next attempt on the backoff schedule, with no new
+	// failure.
+	newer := save(3)
+	result = run(now.Add(MaxDeferral + time.Hour))
+	if len(result.Published) != 1 || result.Published[0] != newer.ArchiveSessionID || result.Errors[heavy.ArchiveSessionID] == nil {
+		t.Fatalf("pass past MaxDeferral result=%+v, want the newer session published and the heavy session failed", result)
+	}
+	attempt := now.Add(MaxDeferral + 3*time.Hour)
+	newest := save(4)
+	result = run(now.Add(MaxDeferral + 2*time.Hour))
+	if len(result.Published) != 1 || result.Published[0] != newest.ArchiveSessionID || len(result.Errors) != 0 || !result.RetryLater[heavy.ArchiveSessionID].Equal(attempt) {
+		t.Fatalf("pass after the heavy session failed result=%+v, want the newest session published and the heavy session held until %v", result, attempt)
+	}
+
+	// At its attempt, an older Claude Code session is read ahead of it (the
+	// retry lane is the first of the Codex sessions' slots), and the pass
+	// stops after publishing that one: the heavy session, one place on in
+	// the accepted slice (but not in the full census, where the rejected
+	// session-10 follows it), is held with its attempt still due rather
+	// than failed and moved on along its schedule.
+	first := registration(t, writeTranscript(t, dir, "claude-90.jsonl", claudePromptLine+"\n"))
+	first.ArchiveSessionID, first.NativeSessionID, first.Harness.Name = "session-90", "native-claude", "claude"
+	first.Origin, first.SessionStartedAt, first.RegisteredAt = archive.SessionOriginImport, start, start.Add(time.Second)
+	if err := local.SaveRegistration(first); err != nil {
+		t.Fatal(err)
+	}
+	if err := local.SaveRequest(first.ArchiveSessionID, "stop", first.RegisteredAt); err != nil {
+		t.Fatal(err)
+	}
+	stopAfterPublish, published = true, false
+	result = run(attempt)
+	if len(result.Published) != 1 || result.Published[0] != first.ArchiveSessionID || len(result.Errors) != 0 || len(result.Unreached) != 0 {
+		t.Fatalf("stopped attempt pass result=%+v, want only the older session published and no failure", result)
+	}
+	if at, held := result.RetryLater[heavy.ArchiveSessionID]; !held || at.After(attempt) {
+		t.Fatalf("stopped attempt pass retry later=%v, want the heavy session held and still due", result.RetryLater)
+	}
+	stopAfterPublish = false
+	result = run(attempt.Add(10 * time.Minute))
+	if result.Errors[heavy.ArchiveSessionID] == nil {
+		t.Fatalf("pass after the stop result=%+v, want the attempt made and failed", result)
+	}
+	status, err = local.LoadStatus()
+	if err != nil || !status.NextRetryAt[heavy.ArchiveSessionID].Equal(now.Add(MaxDeferral+7*time.Hour)) {
+		t.Fatalf("after the attempt next=%v %v, want the attempt after %v", status.NextRetryAt, err, attempt)
+	}
+}
+
 // The backoff schedule: since + MaxDeferral + 1h, then gaps of 2h, 4h and so
 // on, doubling up to LookupRetryMaxGap and staying there; each call gives
 // the first attempt strictly after its argument.
