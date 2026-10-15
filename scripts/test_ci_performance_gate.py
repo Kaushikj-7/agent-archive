@@ -57,6 +57,22 @@ def approved(**changes):
 
 
 class GateTests(unittest.TestCase):
+    def test_checked_in_policy_has_admitted_baseline(self):
+        checked = gate.policy_check(gate.read(Path(gate.__file__).with_name('ci_performance_policy.json')))
+        baseline = checked['baseline']
+        self.assertTrue(baseline['groups'], 'checked-in policy must not retain the installation placeholder')
+        self.assertIn(baseline['provenance'], baseline['samples'])
+        identities = [(row['run_id'], row['run_attempt']) for row in baseline['samples']]
+        self.assertEqual(len(identities), len(set(identities)))
+        observed = set()
+        for group in baseline['groups']:
+            self.assertTrue(group['tests'])
+            observed.update(group['tests'])
+            for measurement in group['tests'].values():
+                self.assertLessEqual(measurement['observations'], len(identities))
+        self.assertTrue(observed)
+        self.assertLessEqual(observed, set(baseline['inventory']))
+
     def setUp(self):
         self.policy, self.rows = policy(), [worker(i) for i in range(8)]
         self.exceptions = {'schema': 1, 'exceptions': []}
@@ -146,6 +162,13 @@ class GateTests(unittest.TestCase):
         self.assertFalse(self.run_gate()['passed'])
         self.rows[0]['fixture_metrics'][0]['operations']['commits'] = 2
         self.assertTrue(self.run_gate()['passed'])
+        valid = copy.deepcopy(self.rows[0]['fixture_metrics'][0])
+        for changes in ({'fixture': 'other'}, {'phase': 'other'}, {'operations': {}}):
+            self.rows[0]['fixture_metrics'] = [dict(valid, **changes)]
+            with self.subTest(changes=changes), self.assertRaisesRegex(ValueError, 'missing'):
+                self.run_gate()
+        self.rows[0]['fixture_metrics'] = [valid, copy.deepcopy(valid)]
+        self.assertEqual(self.run_gate()['failures'][0]['reason'], 'deterministic-work-budget')
 
     def test_invalid_or_missing_evidence_fails_closed(self):
         modifications = [lambda: self.rows.pop(), lambda: self.rows.append(worker(0)),

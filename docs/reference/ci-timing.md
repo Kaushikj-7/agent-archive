@@ -991,6 +991,24 @@ metrics for that exact phase are accumulated; parent and child phases are never
 summed or subtracted as disjoint durations. `parallel_budgets` can explicitly
 bound a new family's observed descendant count and elapsed-work indicator.
 
+The initial policy records Test run `38775545530`, attempt 1, tested source
+`412cec705ce4b6c539f18e006f3b5c1a41b69d7a` and its paired successful
+Levenshtein run `38775545598`. It contains 5,927 actual parent identities,
+including 57 legitimate skips without invented durations, and 5,870 measured
+parents split across two configuration cohorts. Each measurement has one
+physical observation. The pipeline hash and inventory hash are retained in the
+policy. Missing event-time telemetry prevents a queue-eligibility claim; it does
+not erase the independently proven successful physical worker observations.
+
+The first fixture-counter producer change must retain its constructor ceilings
+and emit its exact test/fixture/phase/operation identities before a reviewed
+policy adds corresponding `work_budgets`. That integration must use actual
+receipts and preserve missing-counter failure; an empty initial work-budget
+list is not evidence that deterministic fixture-growth protection is complete.
+Continue reducing repeated setup and checking critical-path and total runner
+allocation with comparable ordinary CI evidence. This initial baseline makes
+no end-to-end speedup claim and does not authorize extra benchmark campaigns.
+
 ### Exceptions and hosting protection
 
 Proposed exceptions live in `scripts/ci_performance_exceptions.json`. Each entry
@@ -1012,7 +1030,10 @@ Expired exceptions fail even when unused, so remove them promptly.
 
 The enforcer protects the budget decision **when the required workflow runs**.
 CODEOWNERS text alone does not prevent a PR changing the workflow to omit the
-enforcer. Hosting rules must independently protect the workflow/enforcer/policy
+enforcer. For example, deleting the performance step in
+`.github/workflows/test.yml` can leave the same `linux-race` check name green
+without executing the trusted-base runner. A required status name alone cannot
+detect that change. Hosting rules must independently protect the workflow/enforcer/policy
 and required checks, enforce review by the appropriate maintainers, invalidate
 stale approvals, and ensure the validated merge candidate is the candidate
 merged. A repository with only one maintainer cannot obtain that maintainer's
