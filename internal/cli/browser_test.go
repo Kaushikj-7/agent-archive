@@ -733,7 +733,7 @@ func TestKeysListFilteredGolden(t *testing.T) {
 		PullRequests: []archive.PullRequestLink{{Repository: "wangjohn/agent-archive", Number: 208}},
 	})
 	scope := sessionScope{Label: "agent-archive", RepoKey: scopeKey, Dir: "/w/agent-archive", ProjectIDs: []string{"project-agent-archive"}}
-	format := listFormatOptions{Now: pickerNow, GroupByProject: true, Numbered: true}
+	format := listFormatOptions{Now: pickerNow, GroupByDay: true, Numbered: true}
 	choices := newScopeChoices(scope, format, false, archiveRows(sessions, defaultListLimit, format))
 	// /208 narrows to the PR-208 reviewer under its parent, and highlights it,
 	// the row that matches.
@@ -750,7 +750,7 @@ func TestKeysHandoffFilteredGolden(t *testing.T) {
 	t.Parallel()
 	sessions := goldenSessions()
 	scope := sessionScope{Label: "agent-archive", RepoKey: scopeKey, Dir: "/w/agent-archive", ProjectIDs: []string{"project-agent-archive"}}
-	format := listFormatOptions{Now: pickerNow, GroupByProject: true, Numbered: true}
+	format := listFormatOptions{Now: pickerNow, GroupByDay: true, Numbered: true}
 	rows := make([]handoffPickerRow, len(sessions))
 	for i, m := range sessions {
 		// The first two are registered here, active just now; the last is on
