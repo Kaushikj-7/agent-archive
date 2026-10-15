@@ -951,3 +951,31 @@ The required aggregate must also reconcile coverage before any policy uses it. T
 gate owns approval and trusted-main promotion. Queue eligibility remains unknown
 without independent telemetry, and runner allocation remains accounted by the
 existing full-pipeline reporter rather than by summing test durations.
+
+## Linux compiled discovery and scheduling advice
+
+The schema-4 parent catalog uses one `go test -race -short -count=1 -json -p 1
+-list '^(Test|Fuzz|Example)'` invocation for CLI and discovered heavy packages.
+This removes one Go invocation and repeated dependency-graph loading per worker;
+it does not reuse a test process across packages, disable default vet, change
+TestMain, or cache a test verdict. Package metadata still comes from the separate
+race-aware `go list`. The combined command serializes package builds as well as
+package execution; cold-cache performance needs observation rather than assuming
+that fewer commands always means a faster worker.
+
+`listing-combined.json` is the primary compiled-list receipt. `listing.json` and
+`listing-parents.json` are projections of its Go events, not separate invocations.
+The coverage verifier requires the primary receipt and exact projected event
+streams. The measured phase is `compiled_listing_race_build_testmain_seconds`;
+do not synthesize independent CLI/heavy durations or add them to this phase.
+Current reconciliation rejects older catalog schemas. The offline timing-hint
+importer explicitly accepts schema 3 for existing historical observations.
+
+Each worker manifest includes `hint_diagnostics`: compiled units without a
+weight, stale hints, and the unchanged 1000ms unknown-unit fallback. These are
+advisory diagnostics, not a test allowlist. New tests and fuzz/example parents
+remain in the exhaustive compiled partition. Refresh weights using
+`generate_go_shard_hints.py` and verified comparable successful samples; review
+the generated provenance and changes rather than copying local macOS timings
+into Linux weights. Fixture metrics are non-additive: do not charge a shared
+seed's first-caller cost to every test or add it again to parent wall time.

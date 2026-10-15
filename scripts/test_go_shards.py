@@ -294,7 +294,7 @@ class WorkerCountTest(unittest.TestCase):
                     if command[1]=='list':
                         path.write_text(records(*[{'ImportPath':p,'Dir':'/tmp','TestGoFiles':['test.go']} for p in ['p0','p1',CLI]]))
                     elif '-list' in command:
-                        path.write_text(records(event('output',Output='TestA\n'),event('output',Output='TestB\n'),event('pass')))
+                        path.write_text(records(event('start'),event('output',Output='TestA\n'),event('output',Output='TestB\n'),event('pass')))
                     elif command[1]=='vet':path.write_text('')
                     elif CLI in command:
                         pattern=command[command.index('-run')+1]
@@ -445,6 +445,7 @@ def emit(action,package,**kw):print(json.dumps(dict(Action=action,Package=packag
 if args[0]=='list':
  for name,has_tests in packages.items():print(json.dumps(dict(ImportPath=name,Dir='/fixture',TestGoFiles=['x_test.go'] if has_tests else [])))
 elif '-list' in args:
+ emit('start',cli)
  for name in ['TestA','FuzzB','Example']:emit('output',cli,Output=name+'\n')
  emit('pass',cli)
 elif args[0]=='vet':print('vet complete')
