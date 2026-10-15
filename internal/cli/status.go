@@ -166,7 +166,11 @@ type uploadingSession struct {
 	// uploadingQueued, so the JSON has it for every queued session, 0 for
 	// the one at the front, and for no other.
 	QueuedAhead *int `json:"queued_ahead,omitempty"`
-	Imported    bool `json:"imported,omitempty"`
+	// NextRetryAt is, for a failing Codex session on the lookup allowance's
+	// backoff schedule (state.Status.NextRetryAt), when its next attempt is
+	// due; a time no later than the last pass means the next pass makes it.
+	NextRetryAt time.Time `json:"next_retry_at,omitzero"`
+	Imported    bool      `json:"imported,omitempty"`
 }
 
 type projectCaptureStatus struct {
@@ -601,6 +605,9 @@ type statusSessions struct {
 	// unreached is how many queued sessions were ahead of each session the
 	// last pass ran out of time before reaching (state.Status.UnreachedSessions).
 	unreached map[string]int
+	// nextRetry is when each session on the Codex lookup allowance's
+	// backoff schedule is next attempted (state.Status.NextRetryAt).
+	nextRetry map[string]time.Time
 }
 
 // readSessionStatus reads the collector's status, the pending count, and the
@@ -693,7 +700,7 @@ func readSessionStatus(view *statusView, cfg config.Config, home string, store *
 	if len(batches) > 0 {
 		view.LastImport = batches[len(batches)-1].ID
 	}
-	return statusSessions{store: store, regs: regs, skip: skip, owed: owed, deferred: view.Collector.DeferredSessions, unreached: view.Collector.UnreachedSessions}
+	return statusSessions{store: store, regs: regs, skip: skip, owed: owed, deferred: view.Collector.DeferredSessions, unreached: view.Collector.UnreachedSessions, nextRetry: view.Collector.NextRetryAt}
 }
 
 // appStatus is one configured app's capture evidence: its sessions, per
@@ -840,6 +847,7 @@ func (s statusSessions) addUploading(app *appStatus, project *projectCaptureStat
 	switch issue, deferred := issues[reg.ArchiveSessionID], s.deferred[reg.ArchiveSessionID]; {
 	case issue != "":
 		session.State, session.Issue = uploadingFailing, issue
+		session.NextRetryAt = s.nextRetry[reg.ArchiveSessionID]
 	case deferred != "" && o.Scan:
 		// The last pass put its scan off; the scan journal says it is still
 		// owed, so the reason still applies.
@@ -1978,6 +1986,9 @@ func (sc statusScreen) uploadingNotes(app appStatus, limit int) []statusNote {
 		case uploadingFailing:
 			mark = sc.style.warnMark()
 			text += "   " + issueWhat(session.Issue)
+			if !session.NextRetryAt.IsZero() {
+				text += ", " + sc.nextRetry(session.NextRetryAt)
+			}
 		case uploadingFirst:
 			text += "   waiting for its first upload"
 		case uploadingRechecking:
@@ -2005,6 +2016,21 @@ func issueWhat(code string) string {
 		label = issueLabels[issueCaptureFailed]
 	}
 	return label.what
+}
+
+// nextRetry words when a session on the Codex lookup allowance's backoff
+// schedule is next attempted, in the clock's time zone.
+func (sc statusScreen) nextRetry(at time.Time) string {
+	if !at.After(sc.now) {
+		return "retrying on the next pass"
+	}
+	local := at.In(sc.now.Location())
+	year, month, day := local.Date()
+	nowYear, nowMonth, nowDay := sc.now.Date()
+	if year == nowYear && month == nowMonth && day == nowDay {
+		return "next retry " + local.Format("15:04")
+	}
+	return "next retry " + local.Format("Jan 2 15:04")
 }
 
 // started is when a session started, in the clock's time zone: the time
@@ -2717,7 +2743,12 @@ func printStatusDetails(out io.Writer, view statusView) {
 		if capture.DiagnosticPartial(diagnostic.Code) {
 			what = "left out part of a session"
 		}
-		terminal.Printf(out, "  Capture %s in %s (%s): %s at %s.\n", what, diagnostic.ProjectRoot, appName(diagnostic.Harness), capture.DiagnosticMessage(diagnostic.Code), formatTimeOrNever(diagnostic.ObservedAt))
+		// A Codex all-projects diagnostic has no project, so it names none.
+		where := ""
+		if diagnostic.ProjectRoot != "" {
+			where = " in " + diagnostic.ProjectRoot
+		}
+		terminal.Printf(out, "  Capture %s%s (%s): %s at %s.\n", what, where, appName(diagnostic.Harness), capture.DiagnosticMessage(diagnostic.Code), formatTimeOrNever(diagnostic.ObservedAt))
 	}
 	// Each problem as the collector recorded it, one per line; a status
 	// file from before LastErrors has only the joined text, shown as is.

@@ -61,10 +61,25 @@ func TestCatalogValidationAndCopies(t *testing.T) {
 }
 
 func TestPresentationOrders(t *testing.T) {
-	if got := Names(Builtins()); !reflect.DeepEqual(got, []string{"claude", "codex", "cursor"}) {
+	if got := Names(Builtins()); !reflect.DeepEqual(got, []string{"claude", "codex", "cursor", "muse"}) {
 		t.Fatal(got)
 	}
-	if got := SetupNames(Builtins()); !reflect.DeepEqual(got, []string{"codex", "claude", "cursor"}) {
+	if got := SetupNames(Builtins()); len(got) != 0 {
+		t.Fatalf("identity-only catalog offers capture: %v", got)
+	}
+	descriptors := Builtins().All()
+	for i := range descriptors {
+		if descriptors[i].ID != Muse {
+			descriptors[i].Operations = []Operation{ManagedHooks}
+		} else {
+			descriptors[i].Operations = []Operation{Runtime}
+		}
+	}
+	composed, err := New(descriptors)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := SetupNames(composed); !reflect.DeepEqual(got, []string{"codex", "claude", "cursor"}) {
 		t.Fatal(got)
 	}
 }
@@ -77,7 +92,7 @@ func TestIdentityAndIntegrationImportBoundaries(t *testing.T) {
 			t.Errorf("agentmeta imports non-standard package %s", name)
 		}
 	}
-	for _, pkg := range []string{"archive", "config", "reader", "agentapi", "agents/claude", "agents/codex", "agents/cursor"} {
+	for _, pkg := range []string{"archive", "config", "reader", "agentapi", "agents/claude", "agents/codex", "agents/cursor", "agents/muse"} {
 		_, all := importgraph.Imports(t, prefix+pkg)
 		importgraph.Forbid(t, pkg, all, prefix+"agents/builtin", prefix+"cli", prefix+"capture", prefix+"collector", prefix+"backfill")
 	}
@@ -99,7 +114,28 @@ func TestNativeLaunchRuntimeHaveNoHostDependencies(t *testing.T) {
 		importgraph.Forbid(t, pkg+" launch/runtime", direct, "os")
 		importgraph.Forbid(t, pkg+" launch/runtime", all, "os/exec", "net/http", prefix+"credentials", prefix+"terminal", prefix+"termlaunch")
 	}
-	direct, all := importgraph.Imports(t, prefix+"agentapi")
+	direct, all := importgraph.FileImports(t, "../agents/muse/runtime.go")
+	importgraph.Forbid(t, "muse runtime", direct, "os")
+	importgraph.Forbid(t, "muse runtime", all, "os/exec", "net/http", prefix+"credentials", prefix+"terminal", prefix+"termlaunch")
+	direct, all = importgraph.Imports(t, prefix+"agentapi")
 	importgraph.Forbid(t, "agentapi", direct, "os")
 	importgraph.Forbid(t, "agentapi", all, "os/exec", "net/http", prefix+"credentials", prefix+"terminal", prefix+"termlaunch")
+}
+
+func TestSetupNamesFollowImplementedHookConfiguration(t *testing.T) {
+	t.Parallel()
+	catalog, err := New([]Descriptor{
+		{ID: idTest, DisplayName: "Runtime", Operations: []Operation{Runtime}},
+		{ID: idA, DisplayName: "Hook configuration", Operations: []Operation{ManagedHooks}},
+		{ID: idB, DisplayName: "Sources", Operations: []Operation{Source, Parse, LifecycleHooks}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := SetupNames(catalog); !reflect.DeepEqual(got, []string{"a"}) {
+		t.Fatalf("setup selection differs from hook configuration: %v", got)
+	}
+	if got := Names(catalog); !reflect.DeepEqual(got, []string{"test", "a", "b"}) {
+		t.Fatalf("identity projection lost non-setup agents: %v", got)
+	}
 }

@@ -6,6 +6,11 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Commands run inside Muse detect its session environment to avoid interactive
+  prompts and pagers. Handoff into supported agents removes inherited Muse
+  session variables. This adds presence detection only; Muse capture, current
+  session selection and destination launch remain unavailable.
+
 - Terminal content search now browses ranked snippets and exact bounded source
   context in the shared browser, with next/previous matching passages, explicit
   rerun after index changes, and current-session handoff through existing gates.
@@ -59,6 +64,9 @@ follow [Semantic Versioning](https://semver.org/).
   `status` now says so ("Codex left out part of a session"), with only the
   app, the project and the time; `status --json` carries it as the capture
   diagnostic `revision_left_out`.
+- Such a thread is also captured without those branches when an earlier,
+  not yet uploaded version of the session was waiting to be replaced, instead
+  of being deferred on every pass until it failed.
 - `status` no longer says Codex left out part of a session when the only
   branch not read again was already kept from an earlier capture of the
   session and has not changed since: that branch is still in the archive.
@@ -92,7 +100,14 @@ follow [Semantic Versioning](https://semver.org/).
   such a session nor a stream of new Codex sessions keeps the waiting ones
   from their turn. A waiting session still not read after 24 hours is now
   reported as failed even when the pass leaves it unopened, rather than
-  staying queued with no error.
+  staying queued with no error. From then on it is retried with backoff
+  instead of on every pass: 1 hour after it failed, then 2, then 4, the
+  wait doubling up to a week, and never given up. A pass with a retry due
+  reads it first and, if it still cannot be read, reports it failed again;
+  a pass with none leaves it unopened, so it no longer uses the allowance
+  on every pass, and does not report it again (`sync` counts it as "held
+  for a later retry" and exits 0 for it), while `status` keeps listing it
+  as failed with its next retry time (`status --json`: `next_retry_at`).
 - Stop a new session from waiting for hours behind a long upload queue.
   Each collection pass now starts with the most recently started session
   that was not imported (a session before its own subagents), and gives
@@ -161,6 +176,13 @@ follow [Semantic Versioning](https://semver.org/).
   finds no session, its list of recent archived sessions reads WHEN, AGENT,
   MACHINE and COMMAND, under a header, with the short time and the agent's
   name.
+- `status --verbose` no longer prints "Capture skipped in  (Codex)" for a
+  Codex all-projects capture problem that has no project; the line reads
+  "Capture skipped (Codex)".
+
+- Reuse verified ordinary Codex inspection facts during repeated backfill planning.
+  Planning can update a bounded private disposable cache, including with `--dry-run`;
+  archive and configuration changes still require import confirmation.
 
 ## [0.2.2]
 
@@ -227,6 +249,9 @@ and the cleanup repair do not turn either failed tagged gate into a pass.
   machine. Downgrading to an earlier version while such a subagent is queued
   makes that version's collector report an admission-intent error for it each
   pass until it expires after 24 hours; nothing else is held back.
+- A resumed Claude Code subagent that finishes again before the next collector
+  pass has proved its identity no longer withdraws the identity census for
+  every session: only that subagent waits for the next pass.
 
 - Preserve the primary validation failure alongside cleanup diagnostics, and
   continue bounded cleanup of other owned processes after signal, poll or wait

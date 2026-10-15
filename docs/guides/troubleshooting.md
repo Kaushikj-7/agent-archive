@@ -89,8 +89,17 @@ find none say so without creating the data directory.
   pass do not keep the waiting ones from their turn. A session still
   waiting after 24 hours (more Codex work than the allowance can cover for
   that long) is reported as failed, whether the pass reads it or leaves it
-  for the next pass, and from then on waits behind all the others. Claude
-  Code and Cursor sessions in the same pass are not held up.
+  for the next pass. From then on it is retried with backoff rather than on
+  every pass: 1 hour after it failed, then 2 hours after that, then 4, the
+  wait doubling after each retry up to a week, for as long as it is not
+  captured. A pass with a retry due reads it first, with the whole
+  allowance; if that still is not enough, `sync` reports it as failed again
+  and exits non-zero. A pass with no retry due leaves it unopened, so it
+  uses none of the allowance, and does not report it again (`sync` adds
+  "N failing Codex session(s) held for a later retry (next at …)" and its
+  exit code is unaffected), but `status` still lists it as failed, with its
+  **next retry** time. It is never dropped. Claude Code and Cursor sessions
+  in the same pass are not held up.
 
   Apart from that 24-hour failure, none of these is a failure, and none
   changes the exit code. Claude Code

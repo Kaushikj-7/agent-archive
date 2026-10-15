@@ -3,7 +3,11 @@
 Status: proposed. Add Meta's Muse Code as a fourth agent in agent-archive,
 alongside Claude Code, Codex and Cursor. Native investigation established
 feasibility; production capture, privacy, publication and full parity are not
-qualified. Implementation still requires separate authorization.
+qualified. A separate runtime-presence subset detects noninteractive shell
+commands and clears inherited session keys when launching supported agents;
+[its evidence and limits](../qualification/muse/runtime-presence.md) do not enable
+capture, exact current-session selection or any other Muse operation.
+Remaining implementation still requires separate authorization.
 
 This is the single implementation plan. Qualification findings and design
 decisions are incorporated below, and §6 and §7 record the probe results the
@@ -83,7 +87,7 @@ Add canonical `agentmeta.Muse` (`muse`), alias `muse-code`, display `Muse Code`,
 and one binding in `builtin.NewBuiltins`. Keep native vocabulary in
 `internal/agents/muse`; shared consumers use narrow `agentapi` ports. Follow
 [adding an adapter](../contributing/adding-an-adapter.md) and
-[integration contracts](../proposals/implemented/agent-integration-contracts.md).
+[integration contracts](implemented/agent-integration-contracts.md).
 Register supported operations only.
 
 Use exact session IDs qualified by agent for root and child keys. Agent, workflow,
@@ -573,6 +577,14 @@ Repository design and contract checks used HEAD
 refusal, source encoding and budgets, discovery and read bounds, picker and
 handoff and CI contracts changed; Q0 reconciles them. Historical native evidence
 does not certify a newer implementation base.
+
+The supplemental [1.4.9 Q0 record](../qualification/muse/results-1.4.9.json)
+adds only pinned macOS x86_64 synthetic `exec-utc` fresh/resume/copy and mutation
+observations (22 final-run assertions passed). The prior 1.4.8 matrix and corpus
+retain their original provenance. No framing or opening-shape change was observed
+in this lane; permission checksum encoding and original creation authority remain
+OPEN. No newer MSP, PTY, child, checkpoint, platform, real-accounting or production
+capture qualification follows from this supplement.
 
 ### Observations that determine the design
 

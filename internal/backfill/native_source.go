@@ -10,7 +10,9 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/collector"
+	"github.com/wangjohn/agent-archive/internal/inspectioncache"
 	"github.com/wangjohn/agent-archive/internal/sourcefacts"
+	"github.com/wangjohn/agent-archive/internal/trace"
 	"github.com/wangjohn/agent-archive/internal/transcriptio"
 )
 
@@ -24,8 +26,9 @@ func filterImportSource(ctx context.Context, env Environment, w *work, started t
 	}
 	if string(w.t.harness) != "codex" || !w.c.NativeChild && !w.c.RelatedHistory || env.CodexRollouts == nil {
 		if inspect {
-			out, summary, err = collector.InspectSource(ctx, string(w.t.harness), ref, started, env.Sources)
+			out, summary, w.inspectionObservation, err = collector.InspectSourceCached(ctx, string(w.t.harness), ref, started, env.Sources, ordinaryInspectionCache(env, w))
 		} else {
+			trace.Add(trace.AdapterInvocations, 1)
 			out, _, err = collector.FilterSource(ctx, string(w.t.harness), ref, started, env.Sources)
 		}
 		return out, summary, release, err
@@ -94,6 +97,7 @@ func filterImportSource(ctx context.Context, env Environment, w *work, started t
 		cause := ownTaskRefusalCause(evidence.Task, evidence.Binding.Codex.NativeCreatedAt)
 		return out, summary, release, agentapi.WithCause(agentapi.Wrap(agentapi.Unavailable, errors.New("native own task unavailable")), cause)
 	}
+	trace.Add(trace.AdapterInvocations, 1)
 	if leased, ok := filter.(agentapi.LeasedTranscriptFilter); ok && leased.LeasedFilterFor(filter) {
 		out, release, err = leased.FilterLeased(ctx, snapshot.Input(), agentapi.FilterContext{Filename: ref.Path, StartedAt: started, Limits: limits}, environment.ReadBudget)
 	} else {
@@ -129,4 +133,11 @@ func ownTaskRefusalCause(task agentapi.OwnTaskFacts, createdAt time.Time) agenta
 		}
 	}
 	return cause
+}
+
+func ordinaryInspectionCache(env Environment, w *work) *inspectioncache.Cache {
+	if w.c.NativeChild || w.c.RelatedHistory {
+		return nil
+	}
+	return env.InspectionCache
 }

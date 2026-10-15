@@ -2,10 +2,12 @@ package collector
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -227,7 +229,9 @@ func TestCodexSessionThatExhaustsTheLookupAllowanceDoesNotBlockLaterCodexSession
 	}
 
 	// Past MaxDeferral the heavy session fails instead of being deferred,
-	// and still waits behind a newer Codex session on this pass and the next.
+	// and still waits behind a newer Codex session on this pass. On the next
+	// it is held for its next attempt on the backoff schedule, with no new
+	// failure.
 	newer := save(3)
 	result = run(now.Add(MaxDeferral + time.Hour))
 	if len(result.Published) != 1 || result.Published[0] != newer.ArchiveSessionID || result.Errors[heavy.ArchiveSessionID] == nil {
@@ -235,8 +239,8 @@ func TestCodexSessionThatExhaustsTheLookupAllowanceDoesNotBlockLaterCodexSession
 	}
 	newest := save(4)
 	result = run(now.Add(MaxDeferral + 2*time.Hour))
-	if len(result.Published) != 1 || result.Published[0] != newest.ArchiveSessionID || result.Errors[heavy.ArchiveSessionID] == nil {
-		t.Fatalf("pass after the heavy session failed result=%+v, want the newest session published and the heavy session failed", result)
+	if len(result.Published) != 1 || result.Published[0] != newest.ArchiveSessionID || len(result.Errors) != 0 || !result.RetryLater[heavy.ArchiveSessionID].Equal(now.Add(MaxDeferral+3*time.Hour)) {
+		t.Fatalf("pass after the heavy session failed result=%+v, want the newest session published and the heavy session held until %v", result, now.Add(MaxDeferral+3*time.Hour))
 	}
 }
 
@@ -508,6 +512,11 @@ type spendingSources struct {
 	once     string
 	onceDone *atomic.Bool
 	lookup   *allowanceLookup
+	// opened, when set, counts the reads of each transcript in refused.
+	opened *sync.Map
+	// interrupt, when set, is called first on every read; an error it
+	// returns is the read's.
+	interrupt func(path string) error
 }
 
 func (s spendingSources) LookupSources(name string) (agentapi.SourceProvider, agentapi.TranscriptFilter, bool) {
@@ -537,12 +546,21 @@ type spendingPass struct {
 }
 
 func (p spendingPass) Read(ctx context.Context, ref agentapi.SourceRef, limits agentapi.ReadLimits) (agentapi.SourceSnapshot, error) {
+	if p.sources.interrupt != nil {
+		if err := p.sources.interrupt(ref.Path); err != nil {
+			return nil, err
+		}
+	}
 	if _, heavy := p.sources.heavy.Load(ref.Path); heavy {
 		snapshot, err := p.SourcePass.Read(ctx, ref, limits)
 		p.sources.lookup.spent.Store(true)
 		return snapshot, err
 	}
 	_, refused := p.sources.refused.Load(ref.Path)
+	if refused && p.sources.opened != nil {
+		count, _ := p.sources.opened.LoadOrStore(ref.Path, new(atomic.Int64))
+		count.(*atomic.Int64).Add(1)
+	}
 	if refused || (p.sources.once != "" && ref.Path == p.sources.once && !p.sources.onceDone.Swap(true)) {
 		p.sources.lookup.spent.Store(true)
 		return nil, lookupAllowanceSpent()
@@ -594,7 +612,8 @@ func TestWaiterIsReadWhileNewCodexSessionsUseUpEveryPassAllowance(t *testing.T) 
 // opened in turn and the new sessions are all published, none failing; and
 // no session is left unopened past MaxDeferral without being reported
 // failed, whether the pass opened it (and deferral expiry failed it) or
-// left it unopened (and the skip failed it).
+// left it unopened (and the skip failed it); after that, each pass fails it
+// again on an attempt on its backoff schedule or holds it for the next one.
 func TestHeavyWaitersAndNewArrivalsLeaveNoSessionUnreportedPastMaxDeferral(t *testing.T) {
 	t.Parallel()
 	lookup := &allowanceLookup{}
@@ -610,7 +629,7 @@ func TestHeavyWaitersAndNewArrivalsLeaveNoSessionUnreportedPastMaxDeferral(t *te
 	var arrived []string
 	opened := map[string]int{}
 	now := r.start.Add(time.Hour)
-	for pass := 1; pass <= 40; pass++ {
+	for pass := 1; pass <= 48; pass++ {
 		if pass > 1 {
 			arrived = append(arrived, r.save(100+pass, true).ArchiveSessionID)
 		}
@@ -647,6 +666,9 @@ func TestHeavyWaitersAndNewArrivalsLeaveNoSessionUnreportedPastMaxDeferral(t *te
 			if _, unreached := result.Unreached[id]; unreached && result.Errors[id] == nil {
 				t.Fatalf("pass %d: %s left unopened %v after it began waiting, not reported failed; result=%+v", pass, id, now.Sub(since), result)
 			}
+			if _, held := result.RetryLater[id]; !held && result.Errors[id] == nil && !slices.Contains(result.Published, id) {
+				t.Fatalf("pass %d: %s waiting %v, neither failed nor held for a retry; result=%+v", pass, id, now.Sub(since), result)
+			}
 			if _, deferred := result.Deferred[id]; deferred {
 				t.Fatalf("pass %d: %s deferred %v after it began waiting, want it failed", pass, id, now.Sub(since))
 			}
@@ -663,14 +685,24 @@ func TestHeavyWaitersAndNewArrivalsLeaveNoSessionUnreportedPastMaxDeferral(t *te
 		}
 	}
 	// The queue drains: every session that arrived in the first 30 passes is
-	// published by the 40th.
+	// published by the 48th. Once the heavy sessions fail, each attempt on
+	// their backoff schedule takes a pass's allowance, but the attempts
+	// grow rarer.
 	for _, id := range arrived[:29] {
 		if _, waiting := waitingSince[id]; waiting {
-			t.Fatalf("new session %s still not published after 40 passes", id)
+			t.Fatalf("new session %s still not published after 48 passes", id)
 		}
 	}
 }
 
+// With AcceptSession filtering sessions out of the pass, the waiter
+// rotation and the backoff schedule act on the sessions the pass accepts,
+// at their places in the slice the pass walks, and never touch the rejected
+// ones: a stop after a publication leaves the accepted heavy session with
+// its clock; past MaxDeferral it fails, is then held until its attempt, and
+// a pass that stops after reading an earlier session, before reaching the
+// heavy one with its attempt due, holds it still due, so the next pass
+// makes the attempt.
 func TestAcceptedLookupQueueRotatesWithoutChangingRejectedWork(t *testing.T) {
 	t.Parallel()
 	local := newTestStore(t)
@@ -734,7 +766,8 @@ func TestAcceptedLookupQueueRotatesWithoutChangingRejectedWork(t *testing.T) {
 			}
 		}
 		for _, reg := range []archive.SessionRegistration{rejected, rejectedTop} {
-			if _, found := result.Unreached[reg.ArchiveSessionID]; found || result.Errors[reg.ArchiveSessionID] != nil || result.Deferred[reg.ArchiveSessionID] != "" {
+			_, held := result.RetryLater[reg.ArchiveSessionID]
+			if _, found := result.Unreached[reg.ArchiveSessionID]; found || held || result.Errors[reg.ArchiveSessionID] != nil || result.Deferred[reg.ArchiveSessionID] != "" {
 				t.Fatalf("rejected execution work: %+v", result)
 			}
 		}
@@ -748,8 +781,8 @@ func TestAcceptedLookupQueueRotatesWithoutChangingRejectedWork(t *testing.T) {
 	// unopened.
 	later := save(2)
 	result := run(now)
-	if result.Deferred[heavy.ArchiveSessionID] != DeferredLookupAllowance || len(result.Published) != 0 {
-		t.Fatalf("first pass result=%+v, want the heavy session deferred for the lookup allowance and nothing published", result)
+	if result.Deferred[heavy.ArchiveSessionID] != DeferredLookupAllowance || len(result.Published) != 0 || len(result.Unreached) != 1 || result.Unreached[later.ArchiveSessionID] != 0 {
+		t.Fatalf("first pass result=%+v, want the heavy session deferred for the lookup allowance, the later one left unopened, and nothing published", result)
 	}
 
 	status, err := local.LoadStatus()
@@ -773,15 +806,452 @@ func TestAcceptedLookupQueueRotatesWithoutChangingRejectedWork(t *testing.T) {
 	stopAfterPublish = false
 
 	// Past MaxDeferral the heavy session fails instead of being deferred,
-	// and still waits behind a newer Codex session on this pass and the next.
+	// and still waits behind a newer Codex session on this pass. On the next
+	// it is held for its next attempt on the backoff schedule, with no new
+	// failure.
 	newer := save(3)
 	result = run(now.Add(MaxDeferral + time.Hour))
 	if len(result.Published) != 1 || result.Published[0] != newer.ArchiveSessionID || result.Errors[heavy.ArchiveSessionID] == nil {
 		t.Fatalf("pass past MaxDeferral result=%+v, want the newer session published and the heavy session failed", result)
 	}
+	attempt := now.Add(MaxDeferral + 3*time.Hour)
 	newest := save(4)
 	result = run(now.Add(MaxDeferral + 2*time.Hour))
-	if len(result.Published) != 1 || result.Published[0] != newest.ArchiveSessionID || result.Errors[heavy.ArchiveSessionID] == nil {
-		t.Fatalf("pass after the heavy session failed result=%+v, want the newest session published and the heavy session failed", result)
+	if len(result.Published) != 1 || result.Published[0] != newest.ArchiveSessionID || len(result.Errors) != 0 || !result.RetryLater[heavy.ArchiveSessionID].Equal(attempt) {
+		t.Fatalf("pass after the heavy session failed result=%+v, want the newest session published and the heavy session held until %v", result, attempt)
+	}
+
+	// At its attempt, an older Claude Code session is read ahead of it (the
+	// retry lane is the first of the Codex sessions' slots), and the pass
+	// stops after publishing that one: the heavy session, one place on in
+	// the accepted slice (but not in the full census, where the rejected
+	// session-10 follows it), is held with its attempt still due rather
+	// than failed and moved on along its schedule.
+	first := registration(t, writeTranscript(t, dir, "claude-90.jsonl", claudePromptLine+"\n"))
+	first.ArchiveSessionID, first.NativeSessionID, first.Harness.Name = "session-90", "native-claude", "claude"
+	first.Origin, first.SessionStartedAt, first.RegisteredAt = archive.SessionOriginImport, start, start.Add(time.Second)
+	if err := local.SaveRegistration(first); err != nil {
+		t.Fatal(err)
+	}
+	if err := local.SaveRequest(first.ArchiveSessionID, "stop", first.RegisteredAt); err != nil {
+		t.Fatal(err)
+	}
+	stopAfterPublish, published = true, false
+	result = run(attempt)
+	if len(result.Published) != 1 || result.Published[0] != first.ArchiveSessionID || len(result.Errors) != 0 || len(result.Unreached) != 0 {
+		t.Fatalf("stopped attempt pass result=%+v, want only the older session published and no failure", result)
+	}
+	if at, held := result.RetryLater[heavy.ArchiveSessionID]; !held || at.After(attempt) {
+		t.Fatalf("stopped attempt pass retry later=%v, want the heavy session held and still due", result.RetryLater)
+	}
+	stopAfterPublish = false
+	result = run(attempt.Add(10 * time.Minute))
+	if result.Errors[heavy.ArchiveSessionID] == nil {
+		t.Fatalf("pass after the stop result=%+v, want the attempt made and failed", result)
+	}
+	status, err = local.LoadStatus()
+	if err != nil || !status.NextRetryAt[heavy.ArchiveSessionID].Equal(now.Add(MaxDeferral+7*time.Hour)) {
+		t.Fatalf("after the attempt next=%v %v, want the attempt after %v", status.NextRetryAt, err, attempt)
+	}
+}
+
+// The backoff schedule: since + MaxDeferral + 1h, then gaps of 2h, 4h and so
+// on, doubling up to LookupRetryMaxGap and staying there; each call gives
+// the first attempt strictly after its argument.
+func TestNextLookupRetryDoublesUpToAWeek(t *testing.T) {
+	t.Parallel()
+	since := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	expiry := since.Add(MaxDeferral)
+	var want []time.Time
+	at, gap := expiry.Add(time.Hour), time.Hour
+	for range 14 {
+		want = append(want, at)
+		gap = min(2*gap, LookupRetryMaxGap)
+		at = at.Add(gap)
+	}
+	// Gaps 1h, 2h, ... 128h, then 168h from there on.
+	if got := want[1].Sub(want[0]); got != 2*time.Hour {
+		t.Fatalf("second gap = %v, want 2h", got)
+	}
+	if got := want[8].Sub(want[7]); got != LookupRetryMaxGap {
+		t.Fatalf("ninth gap = %v, want %v", got, LookupRetryMaxGap)
+	}
+	if got := nextLookupRetry(since, since); !got.Equal(want[0]) {
+		t.Fatalf("next after the clock began = %v, want %v", got, want[0])
+	}
+	previous := expiry
+	for i, attempt := range want {
+		for _, after := range []time.Time{previous, attempt.Add(-time.Nanosecond)} {
+			if got := nextLookupRetry(since, after); !got.Equal(attempt) {
+				t.Fatalf("next after %v = %v, want attempt %d at %v", after, got, i, attempt)
+			}
+		}
+		previous = attempt
+	}
+}
+
+// The schedule as the collector runs it: a Codex session whose lookups need
+// more than the whole allowance fails when its wait reaches MaxDeferral, and
+// from then on is opened only on the passes at its backoff attempts (1h,
+// 3h, 7h, ... after that, the gap capped at a week), each of which fails it
+// again, over four weeks of hourly passes. On every other pass it is held
+// unopened, with no new failure, and the pass reads the other Codex
+// sessions as usual.
+func TestHeavySessionIsRetriedOnTheBackoffSchedule(t *testing.T) {
+	t.Parallel()
+	lookup := &allowanceLookup{}
+	r := newSessionRunner{t: t, local: newTestStore(t), dir: t.TempDir(), start: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), heavy: &sync.Map{}, lookup: lookup}
+	heavy := r.save(1, false)
+	id := heavy.ArchiveSessionID
+	refused, opened := &sync.Map{}, &sync.Map{}
+	refused.Store(heavy.TranscriptPath, true)
+	sources := spendingSources{heavy: &sync.Map{}, refused: refused, lookup: lookup, opened: opened}
+	store := storagetest.NewMemoryStore()
+	reads := func() int64 {
+		count, ok := opened.Load(heavy.TranscriptPath)
+		if !ok {
+			return 0
+		}
+		return count.(*atomic.Int64).Load()
+	}
+	clock := r.start.Add(time.Hour) // the first pass defers it, starting its clock
+	end := clock.Add(29 * 24 * time.Hour)
+	// Every attempt up to a week past the end, for the next attempt after
+	// the last pass.
+	attempts, scheduled := map[time.Time]bool{}, 0
+	for at, gap := clock.Add(MaxDeferral+time.Hour), time.Hour; at.Before(end.Add(LookupRetryMaxGap)); {
+		if at.Before(end) {
+			scheduled++
+		}
+		attempts[at] = true
+		gap = min(2*gap, LookupRetryMaxGap)
+		at = at.Add(gap)
+	}
+	var light []string
+	failures := 0
+	for now, pass := clock, 1; now.Before(end); now, pass = now.Add(time.Hour), pass+1 {
+		if pass%6 == 0 {
+			light = append(light, r.save(1000+pass, false).ArchiveSessionID)
+		}
+		before := reads()
+		result, err := Run(t.Context(), r.local, store, Options{Sources: sources, Parsers: testParsers, MachineID: "m", CodexRollouts: lookup, Now: func() time.Time { return now }})
+		if err != nil {
+			t.Fatal(err)
+		}
+		read := reads() > before
+		switch waited := now.Sub(clock); {
+		case waited < MaxDeferral:
+			if !read || result.Deferred[id] != DeferredLookupAllowance {
+				t.Fatalf("pass %d (%v waited): read=%v result=%+v, want it read and deferred", pass, waited, read, result)
+			}
+		case waited == MaxDeferral || attempts[now]:
+			failures++
+			if !read || result.Errors[id] == nil || !strings.Contains(result.Errors[id].Error(), DeferralExpiredProblem) {
+				t.Fatalf("pass %d (%v waited): read=%v result=%+v, want an attempt that fails", pass, waited, read, result)
+			}
+			if _, held := result.RetryLater[id]; held {
+				t.Fatalf("pass %d: attempted and held both", pass)
+			}
+		default:
+			if read || len(result.Errors) != 0 {
+				t.Fatalf("pass %d (%v waited): read=%v errors=%v, want it held unopened with no new failure", pass, waited, read, result.Errors)
+			}
+			if next := nextLookupRetry(clock, now); !attempts[next] || !result.RetryLater[id].Equal(next) {
+				t.Fatalf("pass %d: retry later=%v, want %v", pass, result.RetryLater, next)
+			}
+			// The other Codex sessions are read as usual: none is left.
+			if len(result.Unreached) != 0 {
+				t.Fatalf("pass %d: unreached=%v, want every other Codex session read", pass, result.Unreached)
+			}
+		}
+		status, err := r.local.LoadStatus()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if waited := now.Sub(clock); waited >= MaxDeferral && (!status.DeferredSince[id].Equal(clock) || !status.NextRetryAt[id].Equal(nextLookupRetry(clock, now))) {
+			t.Fatalf("pass %d: since=%v next=%v, want the clock from %v and the next attempt after now", pass, status.DeferredSince, status.NextRetryAt, clock)
+		}
+	}
+	// The expiry, then 10 attempts in the 28 days after it: 1, 3, 7, 15,
+	// 31, 63, 127, 255, 423 and 591 hours after it.
+	if failures != 11 || scheduled != 10 {
+		t.Fatalf("failures=%d attempts=%d, want 11 and 10", failures, scheduled)
+	}
+	for _, lightID := range light {
+		if published, err := r.local.LoadPublishedState(lightID); err != nil || published == nil {
+			t.Fatalf("light session %s not published: %v", lightID, err)
+		}
+	}
+}
+
+// On a pass with an attempt due, the session on the backoff schedule with
+// the oldest clock takes the retry lane, ahead of the waiter lane (the
+// head of the sessions left unopened) and of every other requested Codex
+// session; another due session and one with no attempt due are held, the
+// one due still due on the next pass.
+func TestDueRetryTakesTheLaneAheadOfTheWaiterLane(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 1, 10, 12, 0, 0, 0, time.UTC)
+	priorScan := now.Add(-15 * time.Minute)
+	// Two clocks whose schedules put an attempt in (priorScan, now], and
+	// one whose next attempt is later.
+	dueOld, dueNew := now.Add(-MaxDeferral-time.Hour-5*time.Minute), now.Add(-MaxDeferral-time.Hour-time.Minute)
+	later := now.Add(-MaxDeferral - 2*time.Hour)
+	reg := func(id string) archive.SessionRegistration {
+		return archive.SessionRegistration{ArchiveSessionID: id, Harness: archive.Harness{Name: "codex"}}
+	}
+	p := &pass{
+		now:                now,
+		registrations:      []archive.SessionRegistration{reg("plain"), reg("later"), reg("due-new"), reg("left"), reg("due-old")},
+		requests:           map[string]state.Request{},
+		priorDeferredSince: map[string]time.Time{"left": now.Add(-time.Hour), "due-old": dueOld, "due-new": dueNew, "later": later},
+		priorUnreached:     map[string]int{"left": 0},
+		priorScanAt:        priorScan,
+		priorRetryAt:       map[string]time.Time{"due-old": now.Add(-5 * time.Minute), "due-new": now.Add(-time.Minute), "later": now.Add(time.Hour)},
+	}
+	for _, r := range p.registrations {
+		p.requests[r.ArchiveSessionID] = state.Request{Token: "t-" + r.ArchiveSessionID}
+	}
+	p.orderLookupAllowanceDeferralsLast(p.registrations)
+	var got []string
+	for _, r := range p.registrations {
+		got = append(got, r.ArchiveSessionID)
+	}
+	if got[0] != "due-old" || got[1] != "left" || got[2] != "plain" {
+		t.Fatalf("order=%v, want due-old in the retry lane, then left in the waiter lane, then plain", got)
+	}
+	if _, held := p.lookupRetryHeld["due-old"]; held {
+		t.Fatal("the session in the retry lane is held")
+	}
+	dueAt, dueHeld := p.lookupRetryHeld["due-new"]
+	if !dueHeld || dueAt.After(now) {
+		t.Fatalf("due-new held=%v at %v, want held and still due", dueHeld, dueAt)
+	}
+	if at := p.lookupRetryHeld["later"]; !at.Equal(nextLookupRetry(later, now)) || !at.After(now) {
+		t.Fatalf("later held until %v, want %v", at, nextLookupRetry(later, now))
+	}
+	// The next pass, 15 minutes on, finds due-new due still, though no
+	// attempt of its schedule falls in between.
+	next := &pass{now: now.Add(15 * time.Minute), priorScanAt: now, priorRetryAt: map[string]time.Time{"due-new": dueAt}}
+	if due, _ := next.lookupRetryDue("due-new", dueNew); !due {
+		t.Fatal("due-new not due on the next pass after another session took the lane")
+	}
+	// A previous pass of unknown time makes an attempt due.
+	unknown := &pass{now: now, priorRetryAt: map[string]time.Time{"later": now.Add(time.Hour)}}
+	if due, _ := unknown.lookupRetryDue("later", later); !due {
+		t.Fatal("an attempt is not due after a pass of unknown time")
+	}
+}
+
+// A pass that holds a session on the backoff schedule records no new
+// failure for it, but its issue and its clock stay in status, with its
+// next attempt, and it stays pending; and an attempt that reads it
+// publishes it and clears its clock, its next attempt and its issue.
+func TestHeldRetryKeepsItsIssueAndASuccessfulAttemptClearsIt(t *testing.T) {
+	t.Parallel()
+	lookup := &allowanceLookup{}
+	r := newSessionRunner{t: t, local: newTestStore(t), dir: t.TempDir(), start: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), heavy: &sync.Map{}, lookup: lookup}
+	heavy := r.save(1, false)
+	id := heavy.ArchiveSessionID
+	refused := &sync.Map{}
+	refused.Store(heavy.TranscriptPath, true)
+	sources := spendingSources{heavy: &sync.Map{}, refused: refused, lookup: lookup}
+	store := storagetest.NewMemoryStore()
+	run := func(now time.Time) (Result, state.Status) {
+		t.Helper()
+		result, err := Run(t.Context(), r.local, store, Options{Sources: sources, Parsers: testParsers, MachineID: "m", CodexRollouts: lookup, Now: func() time.Time { return now }})
+		if err != nil {
+			t.Fatal(err)
+		}
+		status, err := r.local.LoadStatus()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return result, status
+	}
+	clock := r.start.Add(time.Hour)
+	if result, _ := run(clock); result.Deferred[id] != DeferredLookupAllowance {
+		t.Fatalf("first pass result=%+v, want it deferred", result)
+	}
+	firstAttempt := clock.Add(MaxDeferral + time.Hour)
+	result, status := run(clock.Add(MaxDeferral))
+	if result.Errors[id] == nil || !status.NextRetryAt[id].Equal(firstAttempt) {
+		t.Fatalf("expiry pass errors=%v next=%v, want it failed and its first attempt an hour on", result.Errors, status.NextRetryAt)
+	}
+	// What internal/cli records over the collector's status for the failure.
+	status.SessionIssues = map[string]string{id: "capture_failed"}
+	if err := r.local.SaveStatus(status); err != nil {
+		t.Fatal(err)
+	}
+	result, status = run(clock.Add(MaxDeferral + 30*time.Minute))
+	if len(result.Errors) != 0 || !result.RetryLater[id].Equal(firstAttempt) {
+		t.Fatalf("held pass result=%+v, want no failure and the session held until its attempt", result)
+	}
+	if status.SessionIssues[id] != "capture_failed" || !status.NextRetryAt[id].Equal(firstAttempt) || !status.DeferredSince[id].Equal(clock) || status.PendingCount != 1 || len(status.LastErrors) != 0 {
+		t.Fatalf("held pass status=%+v, want its issue, next attempt, clock and pending count carried, with no new problem", status)
+	}
+	// The source can be read now; the attempt publishes it.
+	refused.Delete(heavy.TranscriptPath)
+	result, status = run(firstAttempt)
+	if !slices.Contains(result.Published, id) || len(result.Errors) != 0 || len(result.RetryLater) != 0 {
+		t.Fatalf("attempt result=%+v, want it published", result)
+	}
+	if _, running := status.DeferredSince[id]; running || len(status.NextRetryAt) != 0 || len(status.SessionIssues) != 0 || status.PendingCount != 0 {
+		t.Fatalf("attempt status=%+v, want its clock, next attempt and issue cleared", status)
+	}
+}
+
+// A requested Codex session waiting on the allowance that a pass leaves
+// unopened once its wait has lasted MaxDeferral fails and goes on the
+// backoff schedule; a session with a clock from another deferral, left
+// unopened by an early end, fails without it, as on every pass.
+func TestSessionLeftUnopenedPastMaxDeferralGoesOnTheSchedule(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 1, 10, 12, 0, 0, 0, time.UTC)
+	old := now.Add(-MaxDeferral - 10*time.Minute)
+	reg := func(id string) archive.SessionRegistration {
+		return archive.SessionRegistration{ArchiveSessionID: id, Harness: archive.Harness{Name: "codex"}}
+	}
+	p := &pass{
+		now:                now,
+		registrations:      []archive.SessionRegistration{reg("waiter"), reg("changed")},
+		requests:           map[string]state.Request{"waiter": {Token: "t"}, "changed": {Token: "t"}},
+		priorDeferredSince: map[string]time.Time{"waiter": old, "changed": old},
+		priorUnreached:     map[string]int{"waiter": 0},
+		result:             Result{Errors: map[string]error{}},
+	}
+	p.orderLookupAllowanceDeferralsLast(p.registrations)
+	p.leaveForNextPass(p.registrations)
+	for _, id := range []string{"waiter", "changed"} {
+		if err := p.result.Errors[id]; err == nil || !errors.Is(err, errLeftUnopened) {
+			t.Fatalf("%s error=%v, want it failed for being left unopened", id, err)
+		}
+	}
+	if at, ok := p.retryAt["waiter"]; !ok || !at.Equal(nextLookupRetry(old, now)) {
+		t.Fatalf("waiter next attempt=%v, want %v", p.retryAt, nextLookupRetry(old, now))
+	}
+	if _, ok := p.retryAt["changed"]; ok {
+		t.Fatal("a session not waiting on the allowance went on its backoff schedule")
+	}
+}
+
+// retryRun runs one collector pass at now, with the pass's context and Stop
+// as given, and returns its result and the status it saved.
+type retryRun func(ctx context.Context, now time.Time, stop func() bool) (Result, state.Status)
+
+// expiredRetrySession runs passes until a Codex session whose lookups need
+// more than the whole allowance has failed at MaxDeferral and is on the
+// backoff schedule, and returns a runner, its ID and its first attempt.
+// The runner reads through *sources, which the caller may change.
+func expiredRetrySession(t *testing.T, sources *spendingSources) (retryRun, string, time.Time) {
+	t.Helper()
+	lookup := &allowanceLookup{}
+	r := newSessionRunner{t: t, local: newTestStore(t), dir: t.TempDir(), start: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), heavy: &sync.Map{}, lookup: lookup}
+	heavy := r.save(1, false)
+	refused := &sync.Map{}
+	refused.Store(heavy.TranscriptPath, true)
+	*sources = spendingSources{heavy: &sync.Map{}, refused: refused, lookup: lookup}
+	store := storagetest.NewMemoryStore()
+	run := func(ctx context.Context, now time.Time, stop func() bool) (Result, state.Status) {
+		t.Helper()
+		result, err := Run(ctx, r.local, store, Options{Sources: *sources, Parsers: testParsers, MachineID: "m", CodexRollouts: lookup, Now: func() time.Time { return now }, Stop: stop})
+		if err != nil {
+			t.Fatal(err)
+		}
+		status, err := r.local.LoadStatus()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return result, status
+	}
+	clock := r.start.Add(time.Hour)
+	id := heavy.ArchiveSessionID
+	if result, _ := run(t.Context(), clock, nil); result.Deferred[id] != DeferredLookupAllowance {
+		t.Fatalf("first pass result=%+v, want it deferred", result)
+	}
+	firstAttempt := clock.Add(MaxDeferral + time.Hour)
+	result, status := run(t.Context(), clock.Add(MaxDeferral), nil)
+	if result.Errors[id] == nil || !status.NextRetryAt[id].Equal(firstAttempt) {
+		t.Fatalf("expiry pass errors=%v next=%v, want it failed and its first attempt an hour on", result.Errors, status.NextRetryAt)
+	}
+	// What internal/cli records over the collector's status for the failure.
+	status.SessionIssues = map[string]string{id: "capture_failed"}
+	if err := r.local.SaveStatus(status); err != nil {
+		t.Fatal(err)
+	}
+	return run, id, firstAttempt
+}
+
+// A pass that ends (Stop or its deadline) with a due attempt in flight, or
+// before it reaches the session at all, makes no attempt: it records no
+// failure for the session, keeps its issue and lists it as held, and the
+// attempt stays due, so the next pass makes it rather than waiting for the
+// next time on the schedule.
+func TestAPassEndingBeforeItsAttemptCompletesKeepsTheAttemptDue(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		// pass runs the pass at the attempt that ends early.
+		pass func(t *testing.T, run retryRun, sources *spendingSources, at time.Time) (Result, state.Status)
+	}{
+		{"stopped before reaching it", func(t *testing.T, run retryRun, _ *spendingSources, at time.Time) (Result, state.Status) {
+			t.Helper()
+			return run(t.Context(), at, func() bool { return true })
+		}},
+		{"deadline with the attempt in flight", func(t *testing.T, run retryRun, sources *spendingSources, at time.Time) (Result, state.Status) {
+			t.Helper()
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			sources.interrupt = func(string) error {
+				cancel()
+				return ctx.Err()
+			}
+			defer func() { sources.interrupt = nil }()
+			return run(ctx, at, nil)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var sources spendingSources
+			run, id, attempt := expiredRetrySession(t, &sources)
+			result, status := tc.pass(t, run, &sources, attempt)
+			if len(result.Errors) != 0 {
+				t.Fatalf("ended pass errors=%v, want no failure for an attempt it did not make", result.Errors)
+			}
+			if at, held := result.RetryLater[id]; !held || at.After(attempt) {
+				t.Fatalf("ended pass retry later=%v, want the session held and still due", result.RetryLater)
+			}
+			if status.SessionIssues[id] != "capture_failed" || status.NextRetryAt[id].After(status.LastScanAt) {
+				t.Fatalf("ended pass status issues=%v next=%v last scan=%v, want its issue kept and its attempt due", status.SessionIssues, status.NextRetryAt, status.LastScanAt)
+			}
+			// The next pass, ten minutes on, makes the attempt.
+			result, _ = run(t.Context(), attempt.Add(10*time.Minute), nil)
+			if result.Errors[id] == nil {
+				t.Fatalf("next pass result=%+v, want the attempt made and failed", result)
+			}
+		})
+	}
+}
+
+// The next attempt is after its argument and on the schedule however far
+// apart the clock and the argument are: a clock read as zero, or one
+// centuries back, still gives an attempt within a capped gap after it.
+func TestNextLookupRetryHandlesClocksFarApart(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	for _, since := range []time.Time{{}, now.AddDate(-300, 0, 0), now.AddDate(-200, 0, 0), now.Add(-30 * 24 * time.Hour)} {
+		got := nextLookupRetry(since, now)
+		if !got.After(now) || got.Sub(now) > LookupRetryMaxGap {
+			t.Fatalf("since %v: next attempt %v, want one within %v after %v", since, got, LookupRetryMaxGap, now)
+		}
+		// On the capped part of the schedule: a whole number of gaps after
+		// the eighth doubling's attempt (since + MaxDeferral + 255h + 168h).
+		if steps := got.Sub(since.Add(MaxDeferral+255*time.Hour)) % LookupRetryMaxGap; since.Year() > 1800 && steps != 0 {
+			t.Fatalf("since %v: next attempt %v off the schedule by %v", since, got, steps)
+		}
+	}
+	// A clock ahead of after (stepped back) gives its first attempt.
+	if ahead := now.AddDate(5, 0, 0); !nextLookupRetry(ahead, now).Equal(ahead.Add(MaxDeferral + time.Hour)) {
+		t.Fatalf("clock ahead: next = %v", nextLookupRetry(ahead, now))
 	}
 }

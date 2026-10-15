@@ -1,18 +1,24 @@
 # Muse Q0 qualification
 
 Status: **reproducibility delivered; authority gates OPEN; capture unavailable**.
-This campaign supports the [integration spec](../../specs/muse-integration.md)
+This campaign supports the [integration spec](../../proposals/muse-integration.md)
 at source base `37609182169b658c380e9113888b0cd11d387c05`. It does not implement
 an adapter, setup, publication, retained filter or capture permission.
 
 ## Run safely
 
-Use Python 3.9+ on macOS or Linux with a PTY. The currently pinned native input
-is **macOS x86_64 Muse 1.4.8-R6256.1**, binary SHA-256
-`94ea8fd1c73664c22e5c6157d8706945b667b11bd1c7c51691811e79f17dfcf1`.
-The runner rejects any different binary. Supply it yourself; the script does
-not download or install software. Native Linux/arm64 are not qualified by this
-campaign. The stable MSP schema fingerprint is
+Use Python 3.9+ on macOS or Linux with a PTY. The runner accepts only these
+exact **macOS x86_64** binaries, verifies `--version` in a private environment,
+and records the selected producer, binary hash and actual runner hash. Supply
+the direct binary yourself; the script does not download, install or invoke an
+auto-updating launcher. Native Linux/arm64 are not qualified.
+
+| Producer | Binary SHA-256 | Recorded native scope |
+| --- | --- | --- |
+| 1.4.8-R6256.1 | `94ea8fd1c73664c22e5c6157d8706945b667b11bd1c7c51691811e79f17dfcf1` | Historical six-case matrix and corpus in [results.json](results.json); original runner hashes preserved. |
+| 1.4.9-R6297.1 | `4c6ed04ccd5a453bd7b38799aeb9eb290b8635b32c95b5a35e6950a2f20446cb` | Supplemental `exec-utc` only in [results-1.4.9.json](results-1.4.9.json); 22 assertions passed on the final runner. |
+
+The historical 1.4.8 stable MSP schema fingerprint is
 `sha256:4e3200c3c9dc0cd7919d11022630d43f9bc1c5cdda375381e90b0183b5665069`.
 Offline schema/SDK claims are supporting evidence, not a retained-file contract.
 
@@ -21,6 +27,10 @@ python3 -B scripts/test_muse_qualification.py
 python3 -B scripts/muse_qualification.py \
   --binary /path/to/muse-1.4.8-R6256.1 \
   --output /tmp/new-disposable-muse-q0-run
+# Reproduce only the supplemental 1.4.9 lane:
+python3 -B scripts/muse_qualification.py \
+  --binary /path/to/muse-1.4.9-R6297.1 \
+  --output /tmp/new-disposable-muse-149-run --cases exec-utc
 ```
 
 `--output` must not exist. It contains native logs and local export documents;
@@ -94,6 +104,36 @@ maximum reviewed Q0 field set for these native types; [contracts.md](contracts.m
 freezes the shared signatures and admission/compatibility invariants for PR2.
 Unobserved fields/types need new evidence and privacy review before retention.
 
+## Supplemental 1.4.9 observation
+
+The final dual-pin runner passed all 22 `exec-utc` assertions: exact synthetic
+own prompts/replies/usage and stream identity, fresh/resume openings, unchanged
+append prefix, valid copied log, and nine permission/ordinary mutation cases.
+Exactly two requests went to the synthetic loopback endpoint. The metadata-only
+[results supplement](results-1.4.9.json) pins final source and raw report hashes;
+native vectors and exports remain scratch-only. All owned native processes were
+reaped and the endpoint thread joined. The first sandboxed listener attempt was
+refused before creating a session; its report hash and the initial scratch-pin
+retry are recorded separately rather than relabeled as final-run evidence.
+
+No retained framing or opening shape difference was observed against the matched
+1.4.8 exec lane. All 15 exact historical permission/ordinary vectors also retained
+the same export diagnostics under 1.4.9. Exact permission frames decode; tested
+framing/checksum mutations are rejected. Ordinary schema 999 is still accepted
+by export, so the collector must enforce its own supported-version policy.
+These are bounded exporter observations, not independent checksum proof or
+original root-creation authority. Copied bytes preserve the same identity and
+opening observation. No new MSP, PTY, tool-turn, child/fork/checkpoint, date-zone,
+platform, real-accounting, storage or capture qualification is implied.
+
+The official [1.4.9 SDK mirror](https://github.com/meta-models/muse-code-sdk/tree/bb863c9071d42d9f67fcc3561690425646f727c8)
+still [excludes the Rust workspace](https://github.com/meta-models/muse-code-sdk/blob/bb863c9071d42d9f67fcc3561690425646f727c8/scripts/sdk-source-closure.json#L24)
+that would define retained transaction integrity. Its
+[Session declaration](https://github.com/meta-models/muse-code-sdk/blob/bb863c9071d42d9f67fcc3561690425646f727c8/schema/msp/msp.d.ts#L1688)
+also distinguishes a top-level containing home from the immediate spawning
+session; no child-graph authority follows from this root-only campaign.
+Integrity and original creation gates remain OPEN and capture unavailable.
+
 ## Support and refusal matrix
 
 | Lane | Qualified observation | Gate / safe production behavior |
@@ -135,3 +175,10 @@ empty-corpus/manifest preservation, stream/queue flood and oversized-file refusa
 commands were rerun on the current base; see results for actual commands/outcomes.
 They do not validate any unimplemented Muse adapter. Native campaigns are opt-in
 local qualification, not automatically run against developer machines in CI.
+
+## Runtime presence (independent of capture)
+
+[Runtime presence evidence](runtime-presence.md) qualifies a fresh root shell on
+1.4.9 for noninteractive behavior and environment cleanup only. It does not
+qualify that producer for retained decoding or capture, current-session identity,
+resume, children or monitors. The authority gates above remain open.
