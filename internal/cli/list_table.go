@@ -65,7 +65,7 @@ func sessionTableGroups(rows []listRow, opts listFormatOptions) []sessionTableGr
 // row take exactly one line (renderRow), with no column header. Otherwise it
 // is the plain table: the column header, then a row a line, under each
 // group's heading when it has one. The verbose table keeps its own columns
-// and a header under each heading.
+// under one header: sessionTableGroups never groups it.
 func printSessionGroups(w io.Writer, groups []sessionTableGroup, opts listFormatOptions) error {
 	if opts.Width > 0 && !opts.Verbose {
 		return printSessionLines(w, groups, opts)
