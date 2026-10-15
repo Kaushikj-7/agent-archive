@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/wangjohn/agent-archive/internal/archive"
 )
 
 // dayGroupsNow is a Wednesday afternoon: this week began on Monday the 12th.
@@ -173,5 +175,21 @@ func TestFilterResultsAreGroupedByDay(t *testing.T) {
 	}
 	if last := v.order[len(v.order)-1]; last.Depth != 1 || last.SessionID != rows[5].SessionID {
 		t.Fatalf("subagent not under its parent: %+v", v.order)
+	}
+}
+
+// A handoff row is filed under the day of its latest activity, which can be
+// newer than its metadata says: a live local session's metadata may date
+// from its capture.
+func TestHandoffRowsGroupByLatestActivity(t *testing.T) {
+	t.Parallel()
+	captured := dayGroupsNow.AddDate(0, -2, 0)
+	rows := []handoffPickerRow{
+		{metadata: archive.Metadata{SessionID: "live-one", Harness: archive.Harness{Name: "codex"}, CapturedAt: captured}, active: dayGroupsNow.Add(-time.Hour)},
+		{metadata: archive.Metadata{SessionID: "old-two", Harness: archive.Harness{Name: "codex"}, CapturedAt: captured}, active: captured},
+	}
+	format := listFormatOptions{Now: dayGroupsNow, GroupByDay: true, Numbered: true}
+	if got, want := groupSummary(sessionTableGroups(formatHandoffRows(rows, format), format)), "TODAY: 1 | OLDER: 2"; got != want {
+		t.Fatalf("handoff groups %s, want %s", got, want)
 	}
 }

@@ -135,10 +135,13 @@ ignoring case against the project name archived with the session and the labels
 in your configuration. The two flags together are a usage error. When the
 repository has no archived session yet, `list` shows all projects and says so
 (`Nothing in agent-archive · showing all projects`). Outside any repository or
-configured project there is no scope: every session is listed, grouped by
-project (projects with one name stay apart, labeled with their ID prefixes).
-Within one project the table is not grouped, so a repository's checkouts are one
-list.
+configured project there is no scope: every session is listed, with its
+project in a column. On a terminal the sessions are grouped by day, newest
+first, under the headings TODAY, YESTERDAY, EARLIER THIS WEEK (weeks start on
+Monday), LAST WEEK, EARLIER THIS MONTH, and OLDER; piped output and
+`--verbose` are one flat table. When every session shares a project, the
+column is left out and the heading line names the project, so a repository's
+checkouts are one list.
 
 **Top-level sessions only.** A subagent session is left out of the table and the
 browser, before `--limit` counts, so `--limit 50` is 50 sessions you started. The
@@ -306,8 +309,8 @@ either fall back to the short SESSION_ID in that column. `project_name`
 in metadata labels the project when present; otherwise `list` uses this machine's
 configured project basename. The ID column is a short prefix you can pass to
 `show`; if multiple archived IDs share that prefix, use a longer ID from
-`list --verbose` or add `--harness`. Projects with the same basename stay in
-separate groups, labeled with their project ID prefixes.
+`list --verbose` or add `--harness`. Projects with the same basename show the
+same name in the PROJECT column; `--project DIR` lists one of them.
 
 Claude Code names come from typed native `custom-title` and `ai-title`
 transcript records. The latest explicit `/rename` wins over generated titles;
