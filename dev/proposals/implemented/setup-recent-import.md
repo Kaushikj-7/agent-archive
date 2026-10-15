@@ -154,7 +154,7 @@ order works; §4 helps existing installs first.
   evidence and consent checks; importing a parent does not authorize its children.
   Qualified nested children belong to the new import batch, and undo preserves
   a parent owned by an earlier batch. Missing or partial native evidence remains
-  pending. See the [current history contract](codex-history.md).
+  pending. See the [current history contract](../../specs/codex-history.md).
 - **Repositories in temporary folders** (separate from this plan). Plain
   `backfill` treats a Git checkout under `/private/tmp` as a repository
   project (rule 4 runs before rule 6) and proposes adding it, e.g. a
@@ -250,7 +250,7 @@ From the §4 implementation:
 - **Top-level only.** Subagents are not counted. Backfill can import qualified
   Codex children with their parent, but each child must independently pass the
   native evidence and consent checks described in the
-  [current history contract](codex-history.md); importing a parent does not
+  [current history contract](../../specs/codex-history.md); importing a parent does not
   authorize its children.
 - **Only after a scan.** Existing installs show the line once the collector
   of a version with this change has scanned the session. A session that

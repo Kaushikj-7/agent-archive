@@ -82,7 +82,7 @@ nothing.
 ## Replay sessions
 
 A session is marked as a replay when `AGENT_ARCHIVE_REPLAY` is set in the
-environment of the hook that registers it ([the design](../../dev/specs/replay-sessions.md)).
+environment of the hook that registers it ([the design](../../dev/proposals/implemented/replay-sessions.md)).
 The hook reads its own environment, which it inherits from whatever starts it:
 
 | App | Where the hook's environment comes from | Status |
@@ -153,7 +153,7 @@ is still counted as a prompt. Matching its text is deliberately not done.
 
 No app reports the commit it is working on, so agent-archive's hook asks git
 itself, in the directory the payload names (see
-[the design](../../dev/specs/git-head.md)). What each app gives it:
+[the design](../../dev/proposals/implemented/git-head.md)). What each app gives it:
 
 | App | Registering hook | Directory | Stop hooks that read HEAD again |
 | --- | --- | --- | --- |
