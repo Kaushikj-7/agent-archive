@@ -17,11 +17,13 @@ def verified(rows, topology, pipeline):
                if sample.get('tested_checkout') == topology and sample.get('observation_kind') == 'normal']
     if len(matched) != 1:
         raise ValueError('baseline pipeline differs from exact tested topology')
-    runs = [snap['run'] for snap in matched[0]['workflows'] if snap['run']['name'] == 'Test']
+    snapshots = [snap for snap in matched[0]['workflows'] if snap['run']['name'] == 'Test']
+    runs = [snap['run'] for snap in snapshots]
     if len(runs) != 1:
         raise ValueError('baseline Test run unavailable')
     run = runs[0]
-    tests, _ = gate.observations(rows, topology, run['id'], run['run_attempt'])
+    actual = gate.worker_attempts(snapshots[0]['jobs']['jobs'], topology, run['id'], run['run_attempt'])
+    tests, _ = gate.observations(rows, topology, run['id'], run['run_attempt'], actual)
     measured = copy.deepcopy(rows)
     for row in measured:
         for test in row['tests']:
@@ -50,7 +52,7 @@ def admit(policy, rows, topology, pipeline, history_samples=()):
     policy['baseline'] = {'inventory': ids, 'provenance': proof, 'samples': proofs,
         'metric': 'maximum-parent-or-descendant-terminal-elapsed',
         'groups': [{'key': group['key'],
-                    'identity': {key: group[key] for key in ('configuration_sha256', 'cohort')},
+                    'identity': {key: group[key] for key in ('configuration_sha256', 'compiled_inventory_sha256', 'cohort')},
                     'tests': {ident: value for ident, value in group['tests'].items() if ident in tests}}
                    for group in candidate['groups']]}
     return gate.policy_check(policy)

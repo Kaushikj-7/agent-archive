@@ -90,17 +90,22 @@ def policy_check(policy):
     return policy
 
 
-def observations(rows, topology, run_id, attempt):
+def observations(rows, topology, run_id, attempt, actual_attempts=None):
     workers = topology['workers']
     if workers not in (4, 8) or len(rows) != workers:
         raise ValueError('missing or excess worker timing receipts')
+    if actual_attempts is None:
+        actual_attempts = {shard: int(attempt) for shard in range(workers)}
+    if set(actual_attempts) != set(range(workers)):
+        raise ValueError('physical worker attempt inventory incomplete')
     shards, tests, metrics = set(), {}, []
     inventory = None
     for row in rows:
         shard = row.get('shard')
         if (row.get('schema') != 1 or row.get('kind') != 'worker-timing'
                 or row.get('success') is not True or row.get('source') != topology['source']
-                or str(row.get('run_id')) != str(run_id) or str(row.get('run_attempt')) != str(attempt)
+                or str(row.get('run_id')) != str(run_id)
+                or str(row.get('run_attempt')) != str(actual_attempts.get(shard))
                 or row.get('observation_kind') != topology['observation_kind']
                 or type(shard) is not int or shard not in range(workers) or shard in shards):
             raise ValueError('duplicate or mismatched physical worker receipt')
@@ -123,7 +128,8 @@ def observations(rows, topology, run_id, attempt):
                 or not isinstance(cohort.get('compiler'), dict) or not cohort['compiler']
                 or not re.fullmatch('[0-9a-f]{64}', row['configuration_sha256'])):
             raise ValueError('worker cohort evidence invalid')
-        key = normalize_ci_timing.digest({'configuration_sha256': row['configuration_sha256'], 'cohort': cohort})
+        key = normalize_ci_timing.digest({'configuration_sha256': row['configuration_sha256'],
+                                         'compiled_inventory_sha256': inventory, 'cohort': cohort})
         local_tests = set()
         for test in row['tests']:
             ident = test['test_id']
@@ -146,6 +152,32 @@ def observations(rows, topology, run_id, attempt):
     if not tests:
         raise ValueError('missing individual parent timings')
     return tests, metrics
+
+
+def worker_attempts(jobs, topology, run_id, attempt):
+    result = {}
+    for shard in range(topology['workers']):
+        selected = [job for job in jobs if job.get('name') == f'linux-short ({shard})']
+        if len(selected) != 1:
+            raise ValueError('missing or duplicate API worker job')
+        job = selected[0]
+        actual = job.get('run_attempt')
+        if (job.get('run_id') != int(run_id) or job.get('head_sha') != topology['head']
+                or job.get('status') != 'completed' or job.get('conclusion') != 'success'
+                or type(actual) is not int or not 1 <= actual <= int(attempt)):
+            raise ValueError('API worker allocation identity or attempt invalid')
+        result[shard] = actual
+    return result
+
+
+def current_worker_attempts(api, topology, run_id, attempt):
+    path = f'/repos/{collect_ci_timing.REPOSITORY}/actions/runs/{run_id}/attempts/{attempt}'
+    run = api.get(path)
+    if run.get('id') != int(run_id) or run.get('run_attempt') != int(attempt):
+        raise ValueError('API enclosing workflow attempt mismatch')
+    collect_ci_timing.validate_run(run, 'Test', topology)
+    jobs = api.pages(path + '/jobs', 'jobs')['jobs']
+    return worker_attempts(jobs, topology, run_id, attempt)
 
 
 def normalize_workers(paths, topology):
@@ -245,9 +277,9 @@ def exceptions_check(document, today):
     return rows
 
 
-def evaluate(policy, rows, topology, run_id, attempt, exceptions, api=None, today=None):
+def evaluate(policy, rows, topology, run_id, attempt, exceptions, api=None, today=None, actual_attempts=None):
     policy_check(policy)
-    tests, metrics = observations(rows, topology, run_id, attempt)
+    tests, metrics = observations(rows, topology, run_id, attempt, actual_attempts)
     overrides = exceptions_check(exceptions, today or datetime.now(timezone.utc).date())
     known = set(policy['baseline']['inventory'])
     groups = {group['key']: group for group in policy['baseline']['groups']}
@@ -334,9 +366,11 @@ def main():
         if len(paths) != topology['workers']:
             raise ValueError('missing or excess raw worker manifests')
         rows = normalize_workers(paths, topology)
-        result = evaluate(read(args.policy), rows, topology, os.environ['GITHUB_RUN_ID'],
-                          os.environ['GITHUB_RUN_ATTEMPT'], read(args.exceptions),
-                          collect_ci_timing.API(os.environ.get('GH_TOKEN', ''), seconds=20, request_limit=8))
+        api = collect_ci_timing.API(os.environ.get('GH_TOKEN', ''), seconds=20, request_limit=12)
+        run_id, attempt = os.environ['GITHUB_RUN_ID'], os.environ['GITHUB_RUN_ATTEMPT']
+        actual = current_worker_attempts(api, topology, run_id, attempt)
+        result = evaluate(read(args.policy), rows, topology, run_id, attempt, read(args.exceptions),
+                          api, actual_attempts=actual)
         args.output.write_text(json.dumps(result, indent=2) + '\n')
         print(json.dumps({'passed': result['passed'], 'parents_measured': result['parents_measured'],
                           'failures': result['failures'], 'warning_count': len(result['warnings']),

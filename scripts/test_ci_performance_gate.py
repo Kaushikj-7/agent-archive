@@ -121,7 +121,7 @@ class GateTests(unittest.TestCase):
 
     def test_comparable_regression_requires_three_verified_baseline_observations(self):
         test = self.rows[0]['tests'][0]
-        identity = {'configuration_sha256': 'e'*64, 'cohort': self.rows[0]['cohort']}
+        identity = {'configuration_sha256': 'e'*64, 'compiled_inventory_sha256': 'd'*64, 'cohort': self.rows[0]['cohort']}
         group = {'key': norm.digest(identity), 'identity': identity, 'tests': {
             test['test_id']: {'observations': 2, 'own_elapsed_median_seconds': 20}}}
         self.policy['baseline']['groups'] = [group]
@@ -181,6 +181,24 @@ class GateTests(unittest.TestCase):
             mutate(invalid)
             with self.assertRaises(ValueError):
                 admission.admit(policy(), self.rows, receipt(), invalid)
+
+    def test_targeted_rerun_accepts_only_api_proven_physical_worker_attempts(self):
+        api = FakeAPI()
+        jobs = api.jobs[1]
+        actual = gate.worker_attempts(jobs, receipt(), 1, 2)
+        for row in self.rows:
+            row['run_id'] = '1'
+        result = gate.evaluate(self.policy, self.rows, receipt(), '1', '2', self.exceptions,
+                               actual_attempts=actual)
+        self.assertTrue(result['passed'])
+        with self.assertRaisesRegex(ValueError, 'physical worker receipt'):
+            gate.evaluate(self.policy, self.rows, receipt(), '1', '2', self.exceptions)
+        for change in ({'run_attempt': 3}, {'run_attempt': None}, {'head_sha': 'f'*40},
+                       {'run_id': 4}, {'conclusion': 'failure'}):
+            invalid = copy.deepcopy(jobs)
+            next(job for job in invalid if job['name'] == 'linux-short (0)').update(change)
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                gate.worker_attempts(invalid, receipt(), 1, 2)
 
     def test_raw_normalization_counts_descendants_without_parent_wait_false_cost(self):
         with tempfile.TemporaryDirectory() as directory:
