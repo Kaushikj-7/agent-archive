@@ -476,6 +476,10 @@ type pass struct {
 	// and deferredAt this pass's (see deferredSince, keepDeferredSince).
 	priorDeferredSince map[string]time.Time
 	deferredAt         map[string]time.Time
+	// unreachedAhead counts the sessions this pass has left for the next
+	// one so far, so each later call of leaveForNextPass numbers its
+	// sessions after those.
+	unreachedAhead int
 }
 
 // loadWork lists the registered sessions and their pending requests. One
@@ -561,9 +565,9 @@ func (p *pass) loadWork() error {
 
 // leaveForNextPass counts the sessions an early end did not reach whose
 // work (a request) is left for the next pass, and records each of them in
-// Result.Unreached with how many of those were ahead of it.
+// Result.Unreached with how many sessions this pass had already left for the
+// next one ahead of it. It may be called more than once in a pass.
 func (p *pass) leaveForNextPass(rest []archive.SessionRegistration) {
-	ahead := 0
 	for _, reg := range rest {
 		accepted := p.opts.AcceptSession == nil || p.opts.AcceptSession(reg)
 		if accepted {
@@ -575,8 +579,8 @@ func (p *pass) leaveForNextPass(rest []archive.SessionRegistration) {
 		if p.result.Unreached == nil {
 			p.result.Unreached = map[string]int{}
 		}
-		p.result.Unreached[reg.ArchiveSessionID] = ahead
-		ahead++
+		p.result.Unreached[reg.ArchiveSessionID] = p.unreachedAhead
+		p.unreachedAhead++
 		if !p.durableCounted[reg.ArchiveSessionID] {
 			p.pending++
 		}
