@@ -940,7 +940,11 @@ inferred percentiles. Its output is explicitly a **review candidate**, never
 an automatically promoted allowance. A single worker receipt cannot certify
 whole-pipeline success; the candidate builder recomputes the paired snapshot report
 and requires the complete fixed production inventory and successful workflows.
-Each shard must match a successful physical job's actual attempt, including
+Candidate eligibility revalidates the paired workflow association and canonical
+run/job identities. Every required job needs a positive API job/runner ID, a
+nonblank runner name and successful executed-step evidence within its allocation.
+Legacy or unknown allocations remain diagnostic. Each shard must match a
+successful physical job's actual attempt, including
 successful jobs carried forward into a later workflow attempt. Blank or missing
 cache/image cohorts cannot supply a candidate.
 The required aggregate must also reconcile coverage before any policy uses it. The future required performance

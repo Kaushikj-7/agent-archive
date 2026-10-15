@@ -2,6 +2,7 @@
 """Build a compact review candidate from normalized observations; never auto-promote."""
 import argparse
 import json
+import re
 from pathlib import Path
 from statistics import median
 
@@ -10,6 +11,64 @@ import collect_ci_timing
 import report_ci_timing
 
 MAX_OBSERVATIONS = 256
+
+
+def production_jobs(pipeline, sample, row):
+    """Authorize strict production allocations, beyond the advisory reporter."""
+    topology = sample['tested_checkout']
+    if (type(topology.get('workers')) is not int
+            or topology['workers'] != collect_ci_timing.ci_worker_topology.DEFAULT_WORKERS
+            or topology.get('observation_kind') != 'normal'
+            or topology.get('repository') != collect_ci_timing.REPOSITORY
+            or type(topology.get('pr_number')) is not int or topology['pr_number'] <= 0
+            or any(not isinstance(topology.get(key), str)
+                   or not collect_ci_timing.ci_worker_topology.SHA.fullmatch(topology[key])
+                   for key in ('source', 'tree', 'head', 'event_base', 'tested_base'))):
+        return []
+    for snapshot in sample['workflows']:
+        run = snapshot['run']
+        name = run['name']
+        # Empty postmerge associations need the collector's authenticated
+        # artifact receipt. Never replace a contradictory nonempty association.
+        checked = run
+        if run.get('pull_requests') == []:
+            proofs = pipeline.get('authenticated_retained_identities', [])
+            if not any(type(proof.get('artifact_id')) is int and proof['artifact_id'] > 0
+                       and proof.get('run_id') == run.get('id')
+                       and proof.get('run_attempt') == run.get('run_attempt')
+                       and isinstance(proof.get('digest'), str)
+                       and re.fullmatch(r'sha256:[0-9a-f]{64}', proof['digest'])
+                       for proof in proofs):
+                return []
+            checked = dict(run, pull_requests=[{'number': topology['pr_number'],
+                           'head': {'sha': topology['head']}, 'base': {'sha': topology['event_base']}}])
+        try:
+            collect_ci_timing.validate_run(checked, name, topology)
+        except (ValueError, KeyError, TypeError, AttributeError):
+            return []
+        raw = snapshot['jobs']
+        raw = raw['jobs'] if isinstance(raw, dict) else raw
+        for job in raw:
+            if job['name'] not in sample['required_jobs'][name]:
+                continue
+            if (type(job.get('id')) is not int or job['id'] <= 0
+                    or type(job.get('run_id')) is not int or job['run_id'] != run['id']
+                    or type(job.get('run_attempt')) is not int
+                    or not 1 <= job['run_attempt'] <= run['run_attempt']
+                    or job.get('head_sha') != topology['head']
+                    or type(job.get('runner_id')) is not int or job['runner_id'] <= 0
+                    or not isinstance(job.get('runner_name'), str) or not job['runner_name'].strip()):
+                return []
+    required = [job for job in row['jobs'] if job['required']]
+    if any(job['runner_allocation'] != 'allocated' or job['timestamp_issues']
+           or not any(step.get('status') == 'completed' and step.get('conclusion') == 'success'
+                      and step.get('started_at') and step.get('completed_at')
+                      and report_ci_timing.stamp(job['started_at']) <= report_ci_timing.stamp(step['started_at'])
+                      <= report_ci_timing.stamp(step['completed_at']) <= report_ci_timing.stamp(job['completed_at'])
+                      for step in job['allocation_steps'])
+           for job in required):
+        return []
+    return required
 
 
 def candidate(observations, pipelines=()):
@@ -34,10 +93,11 @@ def candidate(observations, pipelines=()):
                     or sample.get('required_jobs') != collect_ci_timing.inventory(topology.get('workers'))
                     or any(snap['run'].get('conclusion') != 'success' for snap in sample['workflows'])):
                 continue
+            jobs = production_jobs(pipeline, sample, row)
             # Targeted reruns carry successful physical jobs from older
             # attempts. Bind each shard to its actual allocation attempt,
             # rather than relabeling it with the enclosing workflow attempt.
-            for job in row['jobs']:
+            for job in jobs:
                 if job['snapshot_workflow'] != 'Test':
                     continue
                 for shard in range(topology['workers']):
@@ -60,7 +120,7 @@ def candidate(observations, pipelines=()):
                 raise ValueError('conflicting observation for physical worker')
             continue
         identities[identity] = signature
-        if (not observation.get('success') or observation.get('observation_kind') != 'normal'
+        if (observation.get('success') is not True or observation.get('observation_kind') != 'normal'
                 or (*identity, observation['source']) not in eligible):
             continue
         cohort = observation['cohort']
