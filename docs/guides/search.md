@@ -92,6 +92,18 @@ identities/objects, 4 recent catalog entries, 8 exact known-session checks,
 Catalog metadata and pre-install verification have separate finite budgets.
 Run another explicit refresh to resume catch-up; no scheduler is installed.
 
+Discovery rotates first access to the unchanged pass budget among known-session
+checks, recent publications and historical catch-up. Each class gets first access
+within three passes. The four recent entries also rotate their starting entry,
+so one oversized or timed-out body cannot hide its neighbors; each gets a first
+recent-body opportunity within twelve passes while that recent set remains stable.
+A fitting large metadata body can use the whole remaining pass budget on its
+turn. Metadata reads reserve500ms of the existing discovery deadline for recording
+failed-item progress (a fresh20-second pass therefore allows at most roughly19.5
+seconds for one metadata read, less earlier work). Parent cancellation or stale
+catalog authority still stops immediately. These are finite work limits, not
+remote latency guarantees.
+
 Catch-up checkpoints survive interruption and process restart. New catalog roots
 resume by physical identity key, including tombstones; new records behind that
 checkpoint are found in a later sweep. Partial or moving-root discovery never
@@ -116,3 +128,7 @@ initialization and execution share a five-second deadline. Explicit refresh
 initialization, discovery and indexing share a thirty-second deadline. An
 interrupted schema migration rolls back and can be retried on the next open;
 identity validation still advances separately through bounded refresh passes.
+Schema3 indexes upgrade to schema4 by adding one finite discovery-turn value;
+existing identity/root checkpoints are preserved. A failed legacy metadata read
+can resume within its physical page by logical key without treating that mutable
+page as snapshot authority.

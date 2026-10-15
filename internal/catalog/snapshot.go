@@ -213,18 +213,17 @@ func (s *Snapshot) readNode(ctx context.Context, ref ObjectRef) (node, error) {
 	raw := append([]byte(nil), s.cache.bytes[ref]...)
 	s.cache.mu.Unlock()
 	var readErr error
+	reducedLimit := false
 	if len(raw) == 0 {
 		limit := int64(maxNodeBytes)
 		if work, ok := ctx.Value(pickerWorkKey{}).(*pickerWork); ok {
-			limit = min(limit, work.budget.Bytes-work.cost.Bytes)
+			limit = min(limit, work.budget.Bytes-work.cost.Bytes-1)
 			if limit <= 0 {
 				return node{}, ErrPickerBudget
 			}
 		}
+		reducedLimit = limit < maxNodeBytes
 		raw, readErr = s.writer.readRef(ctx, ref, limit)
-		if errors.Is(readErr, storage.ErrObjectTooLarge) && limit < maxNodeBytes {
-			return node{}, ErrPickerBudget
-		}
 	} else if !storage.VerifySHA256(raw, ref.SHA256) {
 		readErr = storage.ErrChecksumMismatch
 	}
@@ -232,6 +231,9 @@ func (s *Snapshot) readNode(ctx context.Context, ref ObjectRef) (node, error) {
 		if err := work.bytes(len(raw)); err != nil {
 			return node{}, err
 		}
+	}
+	if errors.Is(readErr, storage.ErrObjectTooLarge) && reducedLimit {
+		return node{}, ErrPickerBudget
 	}
 	if readErr != nil {
 		return node{}, readErr
@@ -373,19 +375,19 @@ func (s *Snapshot) ReadMetadata(ctx context.Context, entry CatalogEntry) ([]byte
 	}
 	limit := int64(32 << 20)
 	if work, ok := ctx.Value(pickerWorkKey{}).(*pickerWork); ok {
-		limit = min(limit, work.budget.Bytes-work.cost.Bytes)
+		limit = min(limit, work.budget.Bytes-work.cost.Bytes-1)
 		if limit <= 0 {
 			return nil, ErrPickerBudget
 		}
 	}
 	raw, err := s.writer.readRef(ctx, entry.Metadata, limit)
-	if errors.Is(err, storage.ErrObjectTooLarge) && limit < 32<<20 {
-		return nil, ErrPickerBudget
-	}
 	if work, ok := ctx.Value(pickerWorkKey{}).(*pickerWork); ok {
 		if e := work.bytes(len(raw)); e != nil {
 			return nil, e
 		}
+	}
+	if errors.Is(err, storage.ErrObjectTooLarge) && limit < 32<<20 {
+		return nil, ErrPickerBudget
 	}
 	if err != nil {
 		return nil, err

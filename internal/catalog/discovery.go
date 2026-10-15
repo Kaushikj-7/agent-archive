@@ -105,7 +105,7 @@ func readDiscoveryVersion(ctx context.Context, getter storage.CatalogVersionedGe
 		return getter.GetCatalogVersion(ctx, key, limit)
 	}
 	fullLimit := limit
-	limit = min(limit, work.budget.Bytes-work.cost.Bytes)
+	limit = min(limit, work.budget.Bytes-work.cost.Bytes-1)
 	if limit <= 0 {
 		return nil, storage.CatalogObjectVersion{}, ErrPickerBudget
 	}
@@ -116,11 +116,11 @@ func readDiscoveryVersion(ctx context.Context, getter storage.CatalogVersionedGe
 		work.cost.CoordinatorReads++
 	}
 	raw, version, err := getter.GetCatalogVersion(ctx, key, limit)
-	if errors.Is(err, storage.ErrObjectTooLarge) && limit < fullLimit {
-		return nil, version, ErrPickerBudget
-	}
 	if e := work.bytes(len(raw)); e != nil {
 		return nil, version, e
+	}
+	if errors.Is(err, storage.ErrObjectTooLarge) && limit < fullLimit {
+		return nil, version, ErrPickerBudget
 	}
 	return raw, version, err
 }

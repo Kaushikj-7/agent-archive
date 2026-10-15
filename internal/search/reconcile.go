@@ -63,6 +63,7 @@ type discoveryState struct {
 	checkRoot    string
 	checkedRoot  string
 	seeded       int
+	turn         int
 }
 
 // Reconcile observes a bounded namespace-wide slice. Composition holds LockWork
@@ -87,7 +88,7 @@ func (s *Store) Reconcile(ctx context.Context, objects storage.ObjectStore, pars
 		budget.Bytes = 16 << 20
 	}
 	var state discoveryState
-	err = s.db.QueryRowContext(ctx, "SELECT mode,after_key,token,root,stable,complete_root,observed,validated,contract,seed_work,seed_sessions,seeded,check_root,checked_root FROM search_discovery WHERE id=1").Scan(&state.mode, &state.after, &state.token, &state.root, &state.stable, &state.complete, &state.observed, &state.validated, &state.contract, &state.seedWork, &state.seedSessions, &state.seeded, &state.checkRoot, &state.checkedRoot)
+	err = s.db.QueryRowContext(ctx, "SELECT mode,after_key,token,root,stable,complete_root,observed,validated,contract,seed_work,seed_sessions,seeded,check_root,checked_root,turn FROM search_discovery WHERE id=1").Scan(&state.mode, &state.after, &state.token, &state.root, &state.stable, &state.complete, &state.observed, &state.validated, &state.contract, &state.seedWork, &state.seedSessions, &state.seeded, &state.checkRoot, &state.checkedRoot, &state.turn)
 	if err != nil {
 		return result, err
 	}
@@ -113,8 +114,7 @@ func (s *Store) Reconcile(ctx context.Context, objects storage.ObjectStore, pars
 
 func (s *Store) reconcileCatalog(ctx context.Context, objects storage.ObjectStore, parsers agentapi.ParsersLookup, at time.Time, budget ReconcileBudget, state discoveryState) (result Discovery, err error) {
 	ctx = catalog.NewReadView(ctx)
-	var cost func() catalog.PickerCost
-	ctx, cost, err = catalog.DiscoveryBudget(ctx, budget.Nodes, budget.Bytes)
+	ctx, cost, err := catalog.DiscoveryBudget(ctx, budget.Nodes, budget.Bytes)
 	if err != nil {
 		return result, err
 	}
@@ -125,97 +125,172 @@ func (s *Store) reconcileCatalog(ctx context.Context, objects storage.ObjectStor
 		result.HeadReads = c.HeadObservations
 		result.CoordinatorReads = c.CoordinatorReads
 	}()
-	snapshot, e := catalog.OpenSnapshot(ctx, objects, nil)
-	if e != nil {
-		return result, e
+	snapshot, err := catalog.OpenSnapshot(ctx, objects, nil)
+	if err != nil {
+		return result, err
 	}
 	root := digest(snapshot.Root())
 	if state.complete != root {
 		state.complete = ""
-		if err = s.saveDiscovery(ctx, state); err != nil {
-			return result, err
-		}
 	}
-	// Reserve bounded independent checks before discovery, so removals and local
-	// parser changes progress even under continuously changing catalog roots.
-	if state.validated == "" {
-		state.checkRoot = root
-	} else if state.checkRoot != root {
-		state.checkRoot = ""
+	// Persist a finite fair turn before reads. A single failed or oversized body
+	// may consume this pass, but cannot take first access from every future pass.
+	turn := state.turn
+	state.turn = (turn + 1) % 12
+	if err = s.saveDiscovery(ctx, state); err != nil {
+		return result, err
 	}
 	var itemErrors error
-	if err = s.checkKnown(ctx, objects, snapshot, parsers, at, budget.Checks, &state, &result, budget.Bytes); err != nil {
-		if discoveryMustStop(err) {
-			return result, err
+	known := func() error {
+		if state.validated == "" {
+			state.checkRoot = root
+		} else if state.checkRoot != root {
+			state.checkRoot = ""
 		}
-		itemErrors = err
-	}
-	if state.validated == "" && state.checkRoot == root && state.seeded == 3 {
-		state.checkedRoot = root
+		e := s.checkKnown(ctx, objects, snapshot, parsers, at, budget.Checks, &state, &result, budget.Bytes)
+		if e == nil && state.validated == "" && state.checkRoot == root && state.seeded == 3 {
+			state.checkedRoot = root
+		}
+		return e
 	}
 	if state.complete == root {
+		e := known()
+		if discoveryMustStop(e) {
+			return result, e
+		}
 		if err = snapshot.ValidateContinuation(ctx); err != nil {
 			return result, err
 		}
 		result.Unchanged = true
-		return result, errors.Join(itemErrors, s.saveDiscovery(ctx, state))
+		return result, errors.Join(e, s.saveDiscovery(ctx, state))
 	}
+	recent := func() error {
+		page, e := snapshot.Query(ctx, catalog.Query{Index: catalog.CaptureIndex, Reverse: true}, "", 4)
+		result.Pages++
+		if e != nil {
+			return e
+		}
+		var failures error
+		for i := range len(page.Rows) {
+			row := page.Rows[(i+turn/3)%len(page.Rows)]
+			if e = s.observeCatalog(ctx, snapshot, row, parsers, at, &result); e != nil {
+				state.stable = false
+				failures = errors.Join(failures, e)
+				if discoveryMustStop(e) {
+					return failures
+				}
+			}
+		}
+		return failures
+	}
+	history := func() error {
+		return s.reconcileHistory(ctx, snapshot, parsers, at, budget, root, &state, &result, itemErrors != nil)
+	}
+	stages := []func() error{known, recent, history}
+	for i := range 3 {
+		e := stages[(turn+i)%3]()
+		if e != nil {
+			state.complete = ""
+			state.stable = false
+			result.CompletedWalk = false
+			itemErrors = errors.Join(itemErrors, e)
+			if discoveryMustStop(e) {
+				return result, errors.Join(itemErrors, s.saveDiscovery(ctx, state))
+			}
+		}
+	}
+	return result, errors.Join(itemErrors, s.saveDiscovery(ctx, state))
+}
+
+func (s *Store) reconcileHistory(ctx context.Context, snapshot *catalog.Snapshot, parsers agentapi.ParsersLookup, at time.Time, budget ReconcileBudget, root string, state *discoveryState, result *Discovery, priorFailure bool) error {
+	var err error
 	if state.after == "" {
 		state.root = root
 		state.stable = true
 	} else if state.root != root {
 		state.stable = false
 	}
-	// A small newest-first slice keeps recent publications responsive, while the
-	// identity slice below advances every pass and cannot be starved by arrivals.
-	recent, e := snapshot.Query(ctx, catalog.Query{Index: catalog.CaptureIndex, Reverse: true}, "", min(4, budget.Entries))
-	result.Pages++
-	if e != nil {
-		return result, e
-	}
-	for _, row := range recent.Rows {
-		if err = s.observeCatalog(ctx, snapshot, row, parsers, at, &result); err != nil {
-			if discoveryMustStop(err) {
-				return result, err
-			}
-			itemErrors = errors.Join(itemErrors, err)
-			state.stable = false
-		}
-	}
 	rows, done, e := snapshot.ScanIdentities(ctx, state.after, budget.Entries)
 	result.Pages++
 	if e != nil {
-		return result, e
+		return e
 	}
+	var failures error
 	for _, row := range rows {
 		result.Objects++
 		if row.Entry != nil {
-			if err = s.observeCatalog(ctx, snapshot, catalog.Row{Key: row.Key, Entry: *row.Entry}, parsers, at, &result); err != nil {
-				if discoveryMustStop(err) {
-					return result, err
+			if e = s.observeCatalog(ctx, snapshot, catalog.Row{Key: row.Key, Entry: *row.Entry}, parsers, at, result); e != nil {
+				if discoveryMustStop(e) && !errors.Is(e, errDiscoveryBody) {
+					return e
 				}
-				itemErrors = errors.Join(itemErrors, err)
 				state.stable = false
+				failures = errors.Join(failures, e)
 			}
 		}
 		state.after = row.Key
-		if err = s.saveDiscovery(ctx, state); err != nil {
-			return result, err
+		if err = s.saveDiscovery(ctx, *state); err != nil {
+			return err
+		}
+		if discoveryMustStop(e) {
+			return failures
 		}
 	}
 	if err = snapshot.ValidateContinuation(ctx); err != nil {
-		return result, err
+		return err
 	}
 	if done {
 		result.CompletedWalk = true
 		state.after = ""
 		state.observed = at.UnixNano()
-		if state.stable {
+		if state.stable && failures == nil && !priorFailure {
 			state.complete = root
 		}
 		state.root = ""
 	}
-	return result, errors.Join(itemErrors, s.saveDiscovery(ctx, state))
+	return failures
+}
+
+var errDiscoveryBody = errors.New("search metadata body exceeds this discovery pass; coverage remains partial")
+
+// Leave a short part of the existing pass deadline for recording a failed
+// immutable key. A caller cancellation still cannot advance past that key.
+func discoveryMetadataContext(ctx context.Context) (context.Context, context.CancelFunc, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	if deadline, ok := ctx.Deadline(); ok {
+		deadline = deadline.Add(-500 * time.Millisecond)
+		if !deadline.After(time.Now()) {
+			return nil, nil, errMetadataBudget
+		}
+		child, cancel := context.WithDeadline(ctx, deadline)
+		return child, cancel, nil
+	}
+	return ctx, func() {}, nil
+}
+
+func discoveryMetadataError(ctx context.Context, err error) error {
+	if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
+		return errors.Join(errDiscoveryBody, err)
+	}
+	return discoveryBodyError(err)
+}
+
+func readDiscoveryMetadata(ctx context.Context, objects storage.ObjectStore, key string, limit int64) (boundedMetadata, error) {
+	child, cancel, err := discoveryMetadataContext(ctx)
+	if err != nil {
+		return boundedMetadata{}, err
+	}
+	defer cancel()
+	body, err := readBoundedMetadata(child, objects, key, limit)
+	return body, discoveryMetadataError(ctx, err)
+}
+
+func discoveryBodyError(err error) error {
+	if errors.Is(err, catalog.ErrPickerBudget) || errors.Is(err, errMetadataBudget) || errors.Is(err, storage.ErrObjectTooLarge) {
+		return errors.Join(errDiscoveryBody, err)
+	}
+	return err
 }
 
 // A failed immutable body is retried on the next sweep. Authority and pass
@@ -229,64 +304,91 @@ func (s *Store) reconcileLegacy(ctx context.Context, objects storage.ObjectStore
 	if !ok {
 		return result, errors.New("bounded search discovery requires paged object listing")
 	}
+	turn := state.turn
+	state.turn = (turn + 1) % 12
+	if err = s.saveDiscovery(ctx, state); err != nil {
+		return result, err
+	}
 	var itemErrors error
-	if err = s.checkKnown(ctx, objects, nil, parsers, at, budget.Checks, &state, &result, budget.Bytes); err != nil {
-		if discoveryMustStop(err) {
-			return result, err
+	known := func() error {
+		if err = s.checkKnown(ctx, objects, nil, parsers, at, budget.Checks, &state, &result, budget.Bytes); err != nil {
+			return err
 		}
-		itemErrors = err
+		return nil
 	}
-	pageLimit := budget.Entries
-	if pageLimit < 1 || pageLimit > 1000 {
-		return result, errors.New("search page limit must be 1..1000")
-	}
-	page, e := pager.ListPage(ctx, "sessions/", state.token, int32(pageLimit))
-	result.Pages++
-	if e != nil {
-		state.token = ""
-		state.after = ""
-		if saveErr := s.saveDiscovery(ctx, state); saveErr != nil {
-			return result, saveErr
+	list := func() error {
+		pageLimit := budget.Entries
+		if pageLimit < 1 || pageLimit > 1000 {
+			return errors.New("search page limit must be 1..1000")
 		}
-		return result, e
-	}
-	if len(page.Objects) > budget.Entries {
-		return result, errors.New("object store exceeded search discovery page limit")
-	}
-	for _, object := range page.Objects {
-		result.Objects++
-		if strings.HasSuffix(object.Key, "/metadata.json") {
-			var prior string
-			lookup := s.db.QueryRowContext(ctx, "SELECT revision FROM search_observed WHERE key=?", object.Key).Scan(&prior)
-			if lookup != nil && !errors.Is(lookup, sql.ErrNoRows) {
-				return result, lookup
+		page, e := pager.ListPage(ctx, "sessions/", state.token, int32(pageLimit))
+		result.Pages++
+		if e != nil {
+			state.token = ""
+			state.after = ""
+			if saveErr := s.saveDiscovery(ctx, state); saveErr != nil {
+				return saveErr
 			}
-			if prior != "" && prior == object.ETag {
-				if err = s.observeCached(ctx, object.Key, parsers, at); err != nil {
-					return result, err
-				}
+			return e
+		}
+		if len(page.Objects) > budget.Entries {
+			return errors.New("object store exceeded search discovery page limit")
+		}
+		for _, object := range page.Objects {
+			result.Objects++
+			// A bounded body failure resumes inside this same physical page. Listing
+			// remains mutable and never supplies a snapshot completeness proof.
+			if object.Key <= state.after {
 				continue
 			}
-			m, e := readBoundedMetadata(ctx, objects, object.Key, budget.Bytes-result.Bytes)
-			result.Metadata++
-			result.Bytes += int64(len(m.raw))
-			if e != nil && !errors.Is(e, storage.ErrNotFound) {
-				if discoveryMustStop(e) {
-					return result, e
+			if strings.HasSuffix(object.Key, "/metadata.json") {
+				var prior string
+				lookup := s.db.QueryRowContext(ctx, "SELECT revision FROM search_observed WHERE key=?", object.Key).Scan(&prior)
+				if lookup != nil && !errors.Is(lookup, sql.ErrNoRows) {
+					return lookup
 				}
-				itemErrors = errors.Join(itemErrors, e)
-			}
-			if e == nil {
-				if err = s.recordObservation(ctx, object.Key, m.revision, m.metadata, parsers, at); err != nil {
-					return result, err
+				if prior != "" && prior == object.ETag {
+					if err = s.observeCached(ctx, object.Key, parsers, at); err != nil {
+						return err
+					}
+					continue
+				}
+				m, e := readDiscoveryMetadata(ctx, objects, object.Key, budget.Bytes-result.Bytes)
+				result.Metadata++
+				result.Bytes += int64(len(m.raw))
+				if e != nil && !errors.Is(e, storage.ErrNotFound) {
+					if discoveryMustStop(e) {
+						if errors.Is(discoveryBodyError(e), errDiscoveryBody) {
+							state.after = object.Key
+							return errors.Join(itemErrors, e, s.saveDiscovery(ctx, state))
+						}
+						return e
+					}
+					itemErrors = errors.Join(itemErrors, e)
+				}
+				if e == nil {
+					if err = s.recordObservation(ctx, object.Key, m.revision, m.metadata, parsers, at); err != nil {
+						return err
+					}
 				}
 			}
 		}
+		state.after = ""
+		state.token = page.Next
+		if page.Next == "" {
+			result.CompletedWalk = true
+			state.observed = at.UnixNano()
+		}
+		return s.saveDiscovery(ctx, state)
 	}
-	state.token = page.Next
-	if page.Next == "" {
-		result.CompletedWalk = true
-		state.observed = at.UnixNano()
+	stages := []func() error{known, list}
+	for i := range 2 {
+		if e := stages[(turn+i)%2](); e != nil {
+			itemErrors = errors.Join(itemErrors, e)
+			if discoveryMustStop(e) {
+				return result, errors.Join(itemErrors, s.saveDiscovery(ctx, state))
+			}
+		}
 	}
 	return result, errors.Join(itemErrors, s.saveDiscovery(ctx, state))
 }
@@ -304,7 +406,7 @@ func extractionContract(parsers agentapi.ParsersLookup) string {
 }
 
 func (s *Store) saveDiscovery(ctx context.Context, state discoveryState) error {
-	_, err := s.db.ExecContext(ctx, "UPDATE search_discovery SET mode=?,after_key=?,token=?,root=?,stable=?,complete_root=?,observed=?,validated=?,contract=?,seed_work=?,seed_sessions=?,seeded=?,check_root=?,checked_root=? WHERE id=1", state.mode, state.after, state.token, state.root, state.stable, state.complete, state.observed, state.validated, state.contract, state.seedWork, state.seedSessions, state.seeded, state.checkRoot, state.checkedRoot)
+	_, err := s.db.ExecContext(ctx, "UPDATE search_discovery SET mode=?,after_key=?,token=?,root=?,stable=?,complete_root=?,observed=?,validated=?,contract=?,seed_work=?,seed_sessions=?,seeded=?,check_root=?,checked_root=?,turn=? WHERE id=1", state.mode, state.after, state.token, state.root, state.stable, state.complete, state.observed, state.validated, state.contract, state.seedWork, state.seedSessions, state.seeded, state.checkRoot, state.checkedRoot, state.turn)
 	return err
 }
 
@@ -317,10 +419,15 @@ func (s *Store) observeCatalog(ctx context.Context, snapshot *catalog.Snapshot, 
 	if prior == row.Entry.Revision {
 		return s.observeCached(ctx, row.Key, parsers, at)
 	}
-	m, err := reader.ReadCatalogSelection(ctx, snapshot, row)
-	result.Metadata++
+	metadataCtx, cancel, err := discoveryMetadataContext(ctx)
 	if err != nil {
 		return err
+	}
+	m, err := reader.ReadCatalogSelection(metadataCtx, snapshot, row)
+	cancel()
+	result.Metadata++
+	if err != nil {
+		return discoveryMetadataError(ctx, err)
 	}
 	if err = snapshot.ValidateContinuation(ctx); err != nil {
 		return err
@@ -353,6 +460,8 @@ func readBoundedMetadata(ctx context.Context, objects storage.ObjectStore, key s
 	if !ok {
 		return boundedMetadata{}, errors.New("search metadata requires bounded reads")
 	}
+	// Reserve the bounded getter's one-byte overflow probe in the pass budget.
+	limit--
 	if limit <= 0 {
 		return boundedMetadata{}, errMetadataBudget
 	}
@@ -365,7 +474,7 @@ func readBoundedMetadata(ctx context.Context, objects storage.ObjectStore, key s
 		raw, err = getter.GetLimited(ctx, key, min(limit, 32<<20))
 	}
 	if errors.Is(err, storage.ErrObjectTooLarge) && limit < 32<<20 {
-		return boundedMetadata{}, errMetadataBudget
+		return boundedMetadata{raw: raw}, errMetadataBudget
 	}
 	if err != nil {
 		return boundedMetadata{raw: raw}, err
@@ -393,7 +502,7 @@ func (b metadataBody) Get(ctx context.Context, key string) ([]byte, error) {
 func (s *Store) checkKnown(ctx context.Context, objects storage.ObjectStore, snapshot *catalog.Snapshot, parsers agentapi.ParsersLookup, at time.Time, limit int, state *discoveryState, result *Discovery, bytes int64) (checkErr error) {
 	var active string
 	defer func() {
-		if checkErr == nil || discoveryMustStop(checkErr) || active == "" {
+		if checkErr == nil || (discoveryMustStop(checkErr) && !errors.Is(checkErr, errDiscoveryBody)) || active == "" {
 			return
 		}
 		state.validated = active
@@ -452,19 +561,24 @@ func (s *Store) checkKnown(ctx context.Context, objects storage.ObjectStore, sna
 					}
 					continue
 				}
-				m, e = reader.ReadCatalogSelection(ctx, snapshot, catalog.Row{Key: k.key, Entry: *entry})
-				result.Metadata++
+				metadataCtx, cancel, e := discoveryMetadataContext(ctx)
 				if e != nil {
 					return e
 				}
+				m, e = reader.ReadCatalogSelection(metadataCtx, snapshot, catalog.Row{Key: k.key, Entry: *entry})
+				cancel()
+				result.Metadata++
+				if e != nil {
+					return discoveryMetadataError(ctx, e)
+				}
 			}
 		} else {
-			body, e := readBoundedMetadata(ctx, objects, k.key, bytes-result.Bytes)
+			body, e := readDiscoveryMetadata(ctx, objects, k.key, bytes-result.Bytes)
 			result.Metadata++
 			result.Bytes += int64(len(body.raw))
 			absent = errors.Is(e, storage.ErrNotFound)
 			if e != nil && !absent {
-				return e
+				return discoveryBodyError(e)
 			}
 			m = body.metadata
 			revision = body.revision

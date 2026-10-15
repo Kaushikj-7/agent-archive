@@ -145,3 +145,33 @@ func TestSearchMigrationValidatesKeysInsertedBehindCheckCursor(t *testing.T) {
 		t.Fatalf("seeded keys behind validation cursor were skipped: count=%d %v", count, err)
 	}
 }
+
+func TestSearchSchemaThreeAddsFairDiscoveryTurnWithoutResettingProgress(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	s, err := Open(t.Context(), dir, "synthetic")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{"ALTER TABLE search_discovery DROP COLUMN turn", "UPDATE search_discovery SET after_key='checkpoint',seeded=3", "PRAGMA user_version=3"} {
+		if _, err = s.db.ExecContext(t.Context(), q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err = Open(t.Context(), dir, "synthetic")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Close() }()
+	var after string
+	var turn, seeded, version int
+	if err = s.db.QueryRowContext(t.Context(), "SELECT after_key,turn,seeded FROM search_discovery").Scan(&after, &turn, &seeded); err != nil || after != "checkpoint" || turn != 0 || seeded != 3 {
+		t.Fatalf("migration reset progress: %s %d %d %v", after, turn, seeded, err)
+	}
+	if err = s.db.QueryRowContext(t.Context(), "PRAGMA user_version").Scan(&version); err != nil || version != 4 {
+		t.Fatalf("schema=%d %v", version, err)
+	}
+}
