@@ -238,7 +238,7 @@ func requestBatchIndexRecovery(home string, store *state.Store, cfg config.Confi
 		return err
 	}
 	var recoveryErr error
-	if !errors.As(cause, new(childIndexRecoveryRequested)) {
+	if !errors.As(cause, new(childIndexRecoveryRequestedError)) {
 		recoveryErr = store.RequestSessionIndexRecovery(key)
 	}
 	_, queueErr := queueEventBatchInGeneration(home, batch, now, cfg.PauseGeneration, lastHead, nil, replay)
