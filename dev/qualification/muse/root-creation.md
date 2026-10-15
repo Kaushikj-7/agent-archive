@@ -113,7 +113,7 @@ whose 24 assertions do not qualify a creation validator.
 | Exact new-home copy and relocation under a 1999 dated folder retain original bytes, identity and read projection. | Same logical start; competing physical sources require separate bounded uniqueness resolution. |
 | Normal fork starts with timestamp-less `session.fork.created`, then permission ordinal 2 with inherited source time and cause `fork`, and has its own opened(false). | False opening and permission time alone cannot qualify an initial ordinary root. |
 | Two historical 1.4.8 native children begin with permission ordinal 1, sequences 1–2 and cause `child_spawn`. | First-frame shape alone cannot qualify a root; child creation remains a separate lane. |
-| Eight contradictory/missing/duplicate-opening full-session export controls all produce zero diagnostics. | Export is not an independent identity or creation validator. |
+| Eight full-session exports (exact baseline plus seven named mutation cases, six distinct mutated byte inputs) all produce zero diagnostics. | Export is not an independent identity or creation validator. |
 
 MSP `createdAt` changed between start, read and list responses: startup intake
 time and permission time appeared on different projection/cache paths. Custom
