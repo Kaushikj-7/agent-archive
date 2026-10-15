@@ -454,13 +454,8 @@ func (r SessionRegistration) Validate() error {
 		return err
 	}
 
-	if r.NativeBinding != nil {
-		if r.CodexBinding != nil || !r.ReadsTranscriptFile() || r.NativeBinding.Agent != r.Harness.Name || r.NativeBinding.NativeID != r.NativeSessionID || r.TranscriptPath != r.NativeBinding.Path || r.ParentNativeSessionID != "" && r.ParentNativeSessionID != r.NativeBinding.ParentID || r.NativeRootSessionID != "" && r.NativeRootSessionID != r.NativeBinding.RootID {
-			return errors.New("native binding requires matching registration and locator")
-		}
-		if err := r.NativeBinding.Validate(); err != nil {
-			return err
-		}
+	if err := r.validateNativeBinding(); err != nil {
+		return err
 	}
 	if r.CodexBinding != nil {
 		if r.Harness.Name != "codex" || r.CodexBinding.NativeThreadID != r.NativeSessionID {

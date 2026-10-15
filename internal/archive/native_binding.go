@@ -72,3 +72,16 @@ func nativeToken(s string) bool {
 func nativePath(s string) bool {
 	return nativeToken(s) && filepath.IsAbs(s) && filepath.Clean(s) == s
 }
+
+// validateNativeBinding checks the private binding against its owning registration.
+func (r SessionRegistration) validateNativeBinding() error {
+	if r.NativeBinding != nil {
+		if r.CodexBinding != nil || !r.ReadsTranscriptFile() || r.NativeBinding.Agent != r.Harness.Name || r.NativeBinding.NativeID != r.NativeSessionID || r.TranscriptPath != r.NativeBinding.Path || r.ParentNativeSessionID != "" && r.ParentNativeSessionID != r.NativeBinding.ParentID || r.NativeRootSessionID != "" && r.NativeRootSessionID != r.NativeBinding.RootID {
+			return errors.New("native binding requires matching registration and locator")
+		}
+		if err := r.NativeBinding.Validate(); err != nil {
+			return err
+		}
+	}
+	return nil
+}

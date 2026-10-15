@@ -38,7 +38,7 @@ func TestNativeAuthorityComposesWithExactBaseFences(t *testing.T) {
 		}
 		var doc map[string]json.RawMessage
 		_ = json.Unmarshal(base, &doc)
-		var lower json.RawMessage = doc["schema_version"]
+		lower := doc["schema_version"]
 		var wrapped map[string]json.RawMessage
 		_ = json.Unmarshal(raw, &wrapped)
 		var outer nativeAuthorityVersion
