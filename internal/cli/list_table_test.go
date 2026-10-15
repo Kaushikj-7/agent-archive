@@ -52,21 +52,24 @@ func layoutRows(t *testing.T) ([]listRow, listFormatOptions) {
 }
 
 // On a terminal of any width every row is exactly one line no wider than
-// the terminal, and the columns that do not fit go in order: the project,
-// then the PR, then the agent's name. The title column stays between 24
-// and 56 columns while there is room.
+// the terminal, and the columns that do not fit go in order: the project
+// (once keeping it would leave the title under projectTitleWidth), then the
+// PR, then the agent's name. The title column stays between 24 and 56
+// columns while there is room.
 func TestSessionRowsFitTheTerminalWidth(t *testing.T) {
 	t.Parallel()
 	rows, laid := layoutRows(t)
 	cases := []struct {
-		width                    int
-		project, pr, agentName   bool
-		title                    int
-		cursor, color, groupedBy bool
+		width                  int
+		project, pr, agentName bool
+		title                  int
 	}{
 		{width: 220, project: true, pr: true, agentName: true, title: maxTitleWidth},
 		{width: 140, project: true, pr: true, agentName: true, title: maxTitleWidth},
+		{width: 120, project: true, pr: true, agentName: true, title: maxTitleWidth},
 		{width: 100, project: true, pr: true, agentName: true, title: 42},
+		{width: 94, project: true, pr: true, agentName: true, title: projectTitleWidth},
+		{width: 93, project: false, pr: true, agentName: true, title: maxTitleWidth},
 		{width: 80, project: false, pr: true, agentName: true, title: 48},
 		{width: 60, project: false, pr: true, agentName: true, title: 28},
 		{width: 50, project: false, pr: false, agentName: true, title: 25},
@@ -74,7 +77,7 @@ func TestSessionRowsFitTheTerminalWidth(t *testing.T) {
 		{width: 20, project: false, pr: false, agentName: false, title: 2},
 	}
 	for _, c := range cases {
-		layout := newSessionLayout(rows, listFormatOptions{Width: c.width, Numbered: true, LiveMarks: laid.LiveMarks, ShowPR: laid.ShowPR})
+		layout := newSessionLayout(rows, listFormatOptions{Width: c.width, Numbered: true, ShowPR: laid.ShowPR})
 		if layout.project != c.project || layout.pr != c.pr || layout.agentName != c.agentName || layout.title != c.title {
 			t.Errorf("width %d: project=%v pr=%v agent name=%v title=%d, want %v %v %v %d",
 				c.width, layout.project, layout.pr, layout.agentName, layout.title, c.project, c.pr, c.agentName, c.title)
@@ -117,8 +120,30 @@ func TestSessionRowsFitTheTerminalWidth(t *testing.T) {
 	}
 }
 
-// A width-aware row keeps the cursor mark, the live dot and a subagent's
-// indent, cuts a long title at a word, and has no ID.
+// With the usual project names, an 80-column terminal keeps the project
+// column and shrinks the title toward projectTitleWidth instead; wider
+// terminals give the title its most.
+func TestSessionRowsKeepTheProjectWhenThereIsRoom(t *testing.T) {
+	t.Parallel()
+	rows, laid := layoutRows(t)
+	rows = rows[:3] // agent-archive and built-in-browser, PRs, recent times
+	for _, c := range []struct{ width, title int }{{80, 37}, {100, maxTitleWidth}, {120, maxTitleWidth}} {
+		layout := newSessionLayout(rows, listFormatOptions{Width: c.width, Numbered: true, ShowPR: laid.ShowPR})
+		if !layout.project || !layout.pr || !layout.agentName || layout.title != c.title {
+			t.Errorf("width %d: project=%v pr=%v agent name=%v title=%d, want all columns and title %d",
+				c.width, layout.project, layout.pr, layout.agentName, layout.title, c.title)
+		}
+		for _, r := range rows {
+			if line := layout.renderRow(r, textStyle{}); visibleWidth(line) > c.width || !strings.Contains(line, r.Project) {
+				t.Errorf("width %d: %q", c.width, line)
+			}
+		}
+	}
+}
+
+// A width-aware row keeps the cursor mark and a subagent's indent, cuts a
+// long title at a word, has no ID, and reads "live" for WHEN while the
+// session is active, in green with color and as the word without.
 func TestSessionRowMarks(t *testing.T) {
 	t.Parallel()
 	rows, laid := layoutRows(t)
@@ -135,13 +160,16 @@ func TestSessionRowMarks(t *testing.T) {
 	if len(lines) != 3 {
 		t.Fatalf("lines:\n%s", out.String())
 	}
-	if !strings.HasPrefix(lines[0], cursorMark+" 1  "+agentDot+" Claude  "+liveMark+" Review historical project command +4") {
+	if !strings.HasPrefix(lines[0], cursorMark+" 1  "+agentDot+" Claude  Review historical project command +4 ") || !strings.HasSuffix(lines[0], "  "+liveWhen) {
 		t.Errorf("highlighted live row with subagents: %q", lines[0])
 	}
-	if !strings.HasPrefix(lines[1], "     "+agentDot+" Codex       "+subagentMark+" Better loading indicator when running a long…") {
+	if strings.Count(lines[0], agentDot) != 1 {
+		t.Errorf("a second dot on the live row: %q", lines[0])
+	}
+	if !strings.HasPrefix(lines[1], "     "+agentDot+" Codex     "+subagentMark+" Better loading indicator when running a long…") {
 		t.Errorf("subagent under its parent: %q", lines[1])
 	}
-	if !strings.HasPrefix(lines[2], "  2  "+agentDot+" Claude    Cloud session archive/retrieval options and the many…") {
+	if !strings.HasPrefix(lines[2], "  2  "+agentDot+" Claude  Cloud session archive/retrieval options and the many…") {
 		t.Errorf("cut title: %q", lines[2])
 	}
 	for _, line := range lines {
@@ -149,25 +177,48 @@ func TestSessionRowMarks(t *testing.T) {
 			t.Errorf("an interactive row shows an ID: %q", line)
 		}
 	}
+	laid.Style = textStyle{color: true}
+	out.Reset()
+	if err := printSessionGroups(&out, sessionTableGroups(shown, laid), laid); err != nil {
+		t.Fatal(err)
+	}
+	colored := strings.Split(out.String(), "\n")
+	if !strings.HasSuffix(colored[0], laid.Style.ok(liveWhen)) || strings.Contains(colored[2], liveWhen) {
+		t.Errorf("live in color: %q", colored[0])
+	}
 }
 
-// The subagent count and a row's hint follow the title only where they fit
-// without cutting it.
-func TestSessionRowHintsOnlyWhereTheyFit(t *testing.T) {
+// The subagent count follows the title only where it fits without cutting
+// it. A row's hint ("not uploaded") always shows: the title is cut to make
+// room for it, and only a terminal too narrow for the hint itself cuts it.
+func TestSessionRowHints(t *testing.T) {
 	t.Parallel()
-	row := listRow{Index: 1, HarnessKey: "claude", Title: "Short title", WhenShort: "2m", Children: 4, Hint: "not yet uploaded"}
+	row := listRow{Index: 1, HarnessKey: "claude", Title: "Short title", WhenShort: "2m", Children: 4, Hint: notUploadedHint, ShortHint: notUploadedShortHint}
 	format := listFormatOptions{Width: 80, Numbered: true, HideProject: true}
 	wide := newSessionLayout([]listRow{row}, format).renderRow(row, textStyle{})
-	if !strings.Contains(wide, "Short title +4 · not yet uploaded") {
-		t.Errorf("room for both hints: %q", wide)
+	if !strings.Contains(wide, "Short title +4 · not uploaded") {
+		t.Errorf("room for both notes: %q", wide)
 	}
 	row.Title = strings.Repeat("word ", 20) + "end"
-	cut := newSessionLayout([]listRow{row}, format).renderRow(row, textStyle{})
-	if strings.Contains(cut, "+4") || strings.Contains(cut, "uploaded") {
-		t.Errorf("hints that do not fit: %q", cut)
+	for _, width := range []int{80, 40, 30} {
+		format.Width = width
+		cut := newSessionLayout([]listRow{row}, format).renderRow(row, textStyle{})
+		if !strings.Contains(cut, "word… · not uploaded") || strings.Contains(cut, "+4") || visibleWidth(cut) > width {
+			t.Errorf("width %d: a long title is cut for the hint, and the count goes: %q", width, cut)
+		}
+		if strings.Contains(cut, "subagent") || strings.Contains(cut, notUploadedHint) {
+			t.Errorf("width %d: a row spells out a note: %q", width, cut)
+		}
 	}
-	if strings.Contains(cut, "subagent") {
-		t.Errorf("a row spells out subagents: %q", cut)
+	format.Width = 18
+	narrow := newSessionLayout([]listRow{row}, format).renderRow(row, textStyle{color: true})
+	if !strings.Contains(narrow, "· not") || visibleWidth(narrow) > 18 {
+		t.Errorf("too narrow for any title: %q", narrow)
+	}
+	row.Hint, row.ShortHint = "preview unavailable", ""
+	format.Width = 60
+	if native := newSessionLayout([]listRow{row}, format).renderRow(row, textStyle{}); !strings.Contains(native, "… · preview unavailable") {
+		t.Errorf("a hint with no short form: %q", native)
 	}
 }
 
@@ -261,5 +312,25 @@ func TestListTitleOnlyForDisplayTitles(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "# files pasted by the user: a.go, b.go") {
 		t.Errorf("verbose table:\n%s", out.String())
+	}
+}
+
+// Laid out for a known width, a table with no column header fits on one
+// page when its rows take exactly the lines left above the footer and
+// prompt; one more row splits it.
+func TestSessionRowsFillTheScreenExactly(t *testing.T) {
+	t.Parallel()
+	rows, laid := layoutRows(t)
+	laid.Width = 100
+	groups := sessionTableGroups(rows, laid)
+	question := "Enter number: "
+	// The footer's line, the blank line and the prompt's line.
+	chrome := 3
+	l := &sessionPicker{}
+	if pages := l.split(groups, laid, len(rows), laid.Width, len(rows)+chrome, "6 session(s).\n", question); len(pages) != 1 {
+		t.Errorf("rows that fill the screen: %d pages, want 1: %v", len(pages), pages)
+	}
+	if pages := l.split(groups, laid, len(rows), laid.Width, len(rows)+chrome-1, "6 session(s).\n", question); len(pages) < 2 {
+		t.Errorf("a row too many: %d pages, want 2 or more", len(pages))
 	}
 }

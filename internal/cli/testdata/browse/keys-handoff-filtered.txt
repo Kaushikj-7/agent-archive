@@ -1,7 +1,7 @@
 Hand off · agent-archive · "the" matches 3 · claude · Esc clear
-  1  ● Fix the retry budget in the upload queue                #213  now
-▸ 2    Stop rereading the config on every hook call                   4m
-  5    Rename the export flag and update the docs              #204  Sun
+  1  Fix the retry budget in the upload queue                  #213  live
+▸ 2  Stop rereading the config on every hook call                      4m
+  5  Rename the export flag and update the… · not uploaded     #204   Sun
 All · ↑↓ move · Enter hand off · Esc clear
 
 /the

@@ -276,7 +276,6 @@ func filteredFormat(format listFormatOptions, rows []listRow) listFormatOptions 
 		f.HideHarness = format.HideHarness && same(func(r listRow) string { return r.Harness })
 		f.HideProject = format.HideProject && same(func(r listRow) string { return r.Project })
 	}
-	f.LiveMarks = slices.ContainsFunc(rows, func(r listRow) bool { return r.Live })
 	if !format.Verbose {
 		f.ShowPR = slices.ContainsFunc(rows, func(r listRow) bool { return r.PR != "" })
 	}

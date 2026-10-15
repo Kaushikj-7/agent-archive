@@ -241,8 +241,18 @@ func subagentNote(r listRow) string {
 	return ""
 }
 
-// liveMark leads the title of a session active right now.
-const liveMark = "●"
+// liveWhen is the WHEN cell of a session active right now, in place of
+// its time. A word, not a mark: the agent column's dot is a mark already.
+const liveWhen = "live"
+
+// whenText is a row's WHEN cell: liveWhen for a session active right now,
+// else its short time.
+func whenText(r listRow) string {
+	if r.Live {
+		return liveWhen
+	}
+	return r.WhenShort
+}
 
 // cursorMark leads the title of the row Enter acts on while the browser
 // filters.
@@ -296,25 +306,13 @@ func cursorCell(r listRow, opts listFormatOptions) string {
 	return "  "
 }
 
-// liveCell leads a title with the dot of a session active now, or room for
-// it, when some row of the table has one, so titles stay aligned.
-func liveCell(r listRow, live bool) string {
-	switch {
-	case !live:
-		return ""
-	case r.Live:
-		return liveMark + " "
-	}
-	return "  "
-}
-
 // tableCells is one row of the plain table, in tableHeader's columns. Its
 // title is uncut, with the subagent note and the hint spelled out after it.
 func tableCells(r listRow, opts listFormatOptions) []string {
 	title := titlePrefix(r) + cellTitle(r) + subagentNote(r)
 	if opts.Numbered {
-		// A picker whose terminal's size is unknown: its marks still show.
-		title = cursorCell(r, opts) + liveCell(r, opts.LiveMarks) + title
+		// A picker whose terminal's size is unknown: its mark still shows.
+		title = cursorCell(r, opts) + title
 	}
 	if r.Hint != "" {
 		title += " · " + r.Hint
@@ -323,7 +321,7 @@ func tableCells(r listRow, opts listFormatOptions) []string {
 	if opts.Numbered {
 		cells = append(cells, rowNumber(r))
 	}
-	cells = append(cells, r.WhenShort)
+	cells = append(cells, whenText(r))
 	if !opts.HideHarness {
 		cells = append(cells, r.Harness)
 	}
@@ -371,11 +369,16 @@ const (
 // gets; a longer name is cut.
 const maxProjectWidth = 24
 
+// projectTitleWidth is the narrowest title column the project column is
+// kept for: the title shrinks from maxTitleWidth to this before the project
+// goes, and below it the project goes first.
+const projectTitleWidth = 36
+
 // sessionLayout is how a table's rows are laid out on a terminal of known
 // width, so each takes exactly one line: which columns are shown and how
 // wide each is. Its columns are the number (led by the filter's cursor
-// mark), the agent (a colored dot and its name), the title (led by the live
-// dot and a subagent's indent), the project, the PR, and the short time.
+// mark), the agent (a colored dot and its name), the title (led by a
+// subagent's indent), the project, the PR, and the short time, or "live".
 type sessionLayout struct {
 	width int
 	// numbered and cursor lead each row with its number, and with the
@@ -388,8 +391,6 @@ type sessionLayout struct {
 	agent     bool
 	agentName bool
 	agentW    int
-	// live leaves room before every title for the live dot.
-	live bool
 	// title is the width of the title column.
 	title int
 	// project and pr show those columns, projectW and prW wide.
@@ -397,19 +398,20 @@ type sessionLayout struct {
 	projectW int
 	pr       bool
 	prW      int
-	// whenW is the widest short time.
+	// whenW is the widest WHEN cell (whenText).
 	whenW int
 }
 
 // newSessionLayout lays rows out for a terminal opts.Width columns wide,
 // with the columns opts leaves in (see withColumns). The title gets the room
-// the others leave, clamped to minTitleWidth and maxTitleWidth; where that
-// is under minTitleWidth, the project column goes first, then the PR, then
-// the agent's name (its dot stays), until it is not.
+// the others leave, at most maxTitleWidth. The project column is kept while
+// that leaves the title projectTitleWidth; then it goes, and while the room
+// is under minTitleWidth the PR goes, then the agent's name (its dot
+// stays).
 func newSessionLayout(rows []listRow, opts listFormatOptions) sessionLayout {
 	l := sessionLayout{
 		width: opts.Width, numbered: opts.Numbered, cursor: opts.Cursor,
-		agent: !opts.HideHarness, agentName: !opts.HideHarness, live: opts.LiveMarks,
+		agent: !opts.HideHarness, agentName: !opts.HideHarness,
 		project: !opts.HideProject, pr: opts.ShowPR,
 	}
 	for _, r := range rows {
@@ -418,14 +420,17 @@ func newSessionLayout(rows []listRow, opts listFormatOptions) sessionLayout {
 		l.agentW = max(l.agentW, visibleWidth(name))
 		l.projectW = max(l.projectW, min(visibleWidth(r.Project), maxProjectWidth))
 		l.prW = max(l.prW, visibleWidth(r.PR))
-		l.whenW = max(l.whenW, visibleWidth(r.WhenShort))
+		l.whenW = max(l.whenW, visibleWidth(whenText(r)))
 	}
 	if l.prW == 0 {
 		l.pr = false
 	}
 	for {
-		room := l.width - l.othersWidth()
-		if room >= minTitleWidth {
+		room, least := l.width-l.othersWidth(), minTitleWidth
+		if l.project {
+			least = projectTitleWidth
+		}
+		if room >= least {
 			l.title = min(room, maxTitleWidth)
 			return l
 		}
@@ -501,8 +506,8 @@ func rowHarness(r listRow) string {
 
 // renderRow is r as exactly one terminal line, at most l.width columns wide:
 // its cells padded to the layout's columns, the title cut at a word with
-// "…" to fit its column, and the subagent count and the row's hint after
-// the title, dim, only where they fit without cutting it.
+// "…" to fit its column (see titleCell), and WHEN "live", green, for a
+// session active right now.
 func (l sessionLayout) renderRow(r listRow, style textStyle) string {
 	var cells []string
 	if lead := l.leadWidth(); lead > 0 {
@@ -534,7 +539,11 @@ func (l sessionLayout) renderRow(r listRow, style textStyle) string {
 	if l.pr {
 		cells = append(cells, padRight(r.PR, l.prW))
 	}
-	cells = append(cells, padLeft(r.WhenShort, l.whenW))
+	when := padLeft(whenText(r), l.whenW)
+	if r.Live {
+		when = style.ok(when)
+	}
+	cells = append(cells, when)
 	line := strings.Join(cells, strings.Repeat(" ", columnGap))
 	if visibleWidth(line) > l.width {
 		// Only a terminal too narrow for the fewest columns gets here.
@@ -543,27 +552,44 @@ func (l sessionLayout) renderRow(r listRow, style textStyle) string {
 	return line
 }
 
-// titleCell is the title column of a row, l.title wide: the live dot or room
-// for it, a subagent's indent, the title cut to what is left, then the
-// hints that fit.
+// titleCell is the title column of a row, l.title wide: a subagent's
+// indent, the title cut to what is left, then dim notes. The row's hint
+// (rowHint) matters to choosing the row, so it always shows: the title is
+// cut to leave room for it. The subagent count shows only where it fits
+// after the whole title.
 func (l sessionLayout) titleCell(r listRow, style textStyle) string {
-	lead := liveCell(r, l.live) + titlePrefix(r)
+	lead := titlePrefix(r)
 	room := max(l.title-visibleWidth(lead), 0)
-	title := cutAtWord(cellTitle(r), room)
-	hints := []string{subagentHint(r)}
-	if r.Hint != "" {
-		hints = append(hints, "· "+r.Hint)
+	hint := ""
+	if h := rowHint(r); h != "" {
+		hint = "· " + h
 	}
-	for _, hint := range hints {
-		if hint == "" {
-			continue
+	titleRoom := room
+	if hint != "" {
+		titleRoom = max(room-1-visibleWidth(hint), 0)
+	}
+	full := cellTitle(r)
+	title := cutAtWord(full, titleRoom)
+	if count := subagentHint(r); count != "" && title == full && visibleWidth(title)+1+visibleWidth(count) <= titleRoom {
+		title += " " + style.dim(count)
+	}
+	if hint != "" {
+		if title != "" {
+			title += " "
 		}
-		if visibleWidth(title)+1+visibleWidth(hint) > room {
-			break
-		}
-		title += " " + style.dim(hint)
+		// Cut only on a terminal too narrow for the hint and any title.
+		title += style.dim(cutAtWord(hint, room-visibleWidth(title)))
 	}
 	return padRight(lead+title, l.title)
+}
+
+// rowHint is the note a width-aware row shows after its title: the hint's
+// short form when it has one, else the hint.
+func rowHint(r listRow) string {
+	if r.ShortHint != "" {
+		return r.ShortHint
+	}
+	return r.Hint
 }
 
 // cutAtWord cuts text to at most limit columns. A cut text ends with "…",

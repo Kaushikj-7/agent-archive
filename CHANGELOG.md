@@ -10,17 +10,24 @@ follow [Semantic Versioning](https://semver.org/).
   wraps, as `#`, the agent (a colored dot and "Claude", "Codex" or "Cursor"),
   a readable title cut at a word, the project, the PR and a short time ("2m",
   "Mon", "Oct 9"), with the project, PR and time kept next to the title. On a
-  narrow terminal the project column goes first, then the PR, then the
-  agent's name. The ID leaves the interactive list (you can still type a
-  number or a unique short ID, and `show` has the ID), and the skill and
-  subagent notes leave the title; a session's subagents show as a dim "+4"
-  where there is room. This applies to `list`, `show` and `handoff`.
+  narrower terminal the title shrinks first; once keeping the project would
+  leave the title under 36 columns the project column goes, then the PR, then
+  the agent's name. A session active right now reads "live" (green) where its
+  time would be, in place of the dot before its title. The ID leaves the
+  interactive list (you can still type a number or a unique short ID, and
+  `show` has the ID), and the skill and subagent notes leave the title; a
+  session's subagents show as a dim "+4" where the whole title leaves room.
+  In `handoff`, a session not yet uploaded always says so (a dim "· not
+  uploaded"), with its title cut to make room. This applies to `list`, `show`
+  and `handoff`.
 - **Changed for scripts:** piped `list` output (not a terminal) is now one
   plain line per session, newest first with no project headings, in the
-  columns `WHEN AGENT PROJECT PR ID TITLE`, with WHEN the short time and
-  TITLE last and uncut. Anything parsing the old `TITLE PR WHEN HARNESS
-  PROJECT ID` text should switch to `list --json`, which is unchanged and is
-  the stable format. `list --verbose` is unchanged.
+  columns `WHEN AGENT PROJECT PR ID TITLE`, with WHEN the short time, an
+  empty PR or unknown project as `-`, and TITLE last: the readable title,
+  never cut to a width, with its subagent note spelled out. Anything parsing
+  the old `TITLE PR WHEN HARNESS PROJECT ID` text should switch to
+  `list --json`, which is unchanged and is the stable format. `list
+  --verbose` is unchanged.
 - `show` gives when a session was last active as a weekday ("Mon") or date
   ("Oct 9", "2025-03-01") once it is before today, instead of a count of
   hours or days ago; activity earlier today still reads "2h ago".

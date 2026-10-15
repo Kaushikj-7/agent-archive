@@ -24,6 +24,10 @@ import (
 // yet. It is drawn as the row's hint: dim, after the title, where it fits.
 const notUploadedHint = "not yet uploaded"
 
+// notUploadedShortHint is notUploadedHint as a width-aware row shows it,
+// short so that a long title keeps more of its room.
+const notUploadedShortHint = "not uploaded"
+
 // handoffSelectDependencies is what the handoff picker reads: the archive,
 // and each local session's source for its activity and first prompt.
 type handoffSelectDependencies interface {
@@ -565,7 +569,7 @@ func formatHandoffRows(rows []handoffPickerRow, format listFormatOptions) []list
 	for i, row := range rows {
 		out[i].When, out[i].WhenShort = relativeAge(format.Now, row.active), shortWhen(format.Now, row.active)
 		if row.notUploaded {
-			out[i].Hint = notUploadedHint
+			out[i].Hint, out[i].ShortHint = notUploadedHint, notUploadedShortHint
 		}
 		out[i].Live = row.registered && activeNow(format.Now, row.active)
 	}

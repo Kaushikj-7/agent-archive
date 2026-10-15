@@ -827,9 +827,10 @@ func (l *sessionPicker) split(groups []sessionTableGroup, format listFormatOptio
 	}
 	// Below the table: the footer, a blank line, and the prompt.
 	chrome := l.headRows() + displayLines(footer, width) + 1 + displayLines(question, width)
-	// Every row, and the column header, takes a line at least, so a table
-	// with more rows than the terminal has lines is not drawn to find out.
-	if n+1+chrome <= height && tableLines(all[0])+chrome <= height {
+	// Every row takes a line at least, so a table with more rows than the
+	// terminal has lines is not measured to find out. (A table laid out for
+	// the width has no column header: its rows may fill every line.)
+	if n+chrome <= height && tableLines(all[0])+chrome <= height {
 		return all
 	}
 	// The widest the page line gets.

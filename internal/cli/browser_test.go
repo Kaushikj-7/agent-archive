@@ -129,14 +129,13 @@ func TestEachChooserOpensTheKeyBrowserAndTheLineFallback(t *testing.T) {
 func highlighted(screen string) string {
 	for line := range strings.SplitSeq(screen, "\n") {
 		if _, after, ok := strings.Cut(line, cursorMark+" "); ok {
-			// Past the number, the agent's dot and name, and the live dot.
+			// Past the number and the agent's dot and name.
 			after = strings.TrimLeft(after, " 0123456789")
 			for _, name := range []string{"Claude", "Codex", "Cursor"} {
 				if rest, ok := strings.CutPrefix(after, agentDot+" "+name+" "); ok {
 					after = strings.TrimLeft(rest, " ")
 				}
 			}
-			after = strings.TrimPrefix(after, liveMark+" ")
 			title, _, _ := strings.Cut(strings.TrimLeft(after, " "), "  ")
 			return title
 		}
@@ -466,7 +465,7 @@ func TestKeyFilterEnterActsOnTheHighlightInBrowseAndPickModes(t *testing.T) {
 		t.Fatalf("handoff: code=%d stderr=%s\n%s", code, errOut, out)
 	}
 	screens = strings.Split(out, clearScreenSequence)
-	if got := highlighted(screens[len(screens)-1]); got != "Flaky local cleanup · not yet uploaded" {
+	if got := highlighted(screens[len(screens)-1]); got != "Flaky local cleanup · "+notUploadedShortHint {
 		t.Fatalf("highlight after ↓ on %q:\n%s", got, out)
 	}
 	after := out[strings.LastIndex(out, leaveAltScreenSequence):]

@@ -42,12 +42,15 @@ type listRow struct {
 	Project    string
 	Model      string
 	ModelAll   string
-	// Hint is a dim note after the title in an interactive row, shown only
-	// where it fits ("not yet uploaded"); empty for none.
-	Hint   string
-	Skills string
-	Origin string
-	Parser string
+	// Hint is a note about the row that matters to choosing it ("not yet
+	// uploaded"), spelled out after the plain table's title; empty for none.
+	// A width-aware row always shows it, dim, as ShortHint when that is set,
+	// cutting the title to make room.
+	Hint      string
+	ShortHint string
+	Skills    string
+	Origin    string
+	Parser    string
 	// PR is the pull request the session created last, as "#213"; empty when
 	// it created none.
 	PR string
@@ -96,7 +99,6 @@ type listFormatOptions struct {
 	ShowPR      bool // a PR column, for rows where some session has one
 	HideHarness bool // every row has the same harness, which the heading names
 	HideProject bool // every row has the same project, which the heading names
-	LiveMarks   bool // some row is live: each title leaves room for the dot
 	Cursor      bool // the filter highlights a row: each title leaves room for the mark
 
 	// Width is the terminal's width in columns: rows are then laid out to one
@@ -342,7 +344,6 @@ func prLabel(m archive.Metadata) string {
 // column.
 func (opts listFormatOptions) withColumns(rows []listRow) (laid listFormatOptions, constants []string) {
 	laid = opts
-	laid.LiveMarks = slices.ContainsFunc(rows, func(r listRow) bool { return r.Live })
 	if opts.Verbose {
 		return laid, nil
 	}
