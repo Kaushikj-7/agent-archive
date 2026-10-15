@@ -77,8 +77,13 @@ func TestContentSearchNamedRefreshRemovesOnlyConfirmedAbsentIdentity(t *testing.
 				if failure == "deleted" {
 					wantHits = 0
 				}
-				if len(refreshed.Results) != wantHits {
-					t.Fatalf("combined refresh returned %d hits, want %d", len(refreshed.Results), wantHits)
+				combinedHits := wantHits
+				if failure == "other_harness" {
+					// The same flag scopes the combined query to the absent harness.
+					combinedHits = 0
+				}
+				if len(refreshed.Results) != combinedHits {
+					t.Fatalf("combined refresh returned %d hits, want %d", len(refreshed.Results), combinedHits)
 				}
 				code, cached, diag := searchJSONRun(t, env, "visible", "--all-projects")
 				if code != 0 || len(cached.Results) != wantHits {
