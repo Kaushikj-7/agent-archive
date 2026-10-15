@@ -147,6 +147,10 @@ const (
 	// uploadingRechecking: the last pass put off its scan without a failure
 	// (Deferred names why) and the next pass retries it.
 	uploadingRechecking uploadingState = "rechecking"
+	// uploadingQueued: the last pass ran out of time before reaching it
+	// (QueuedAhead counts the queued sessions ahead of it); the next pass
+	// carries on with the queue.
+	uploadingQueued uploadingState = "queued"
 )
 
 // uploadingSession is one top-level session with work not yet published.
@@ -157,7 +161,12 @@ type uploadingSession struct {
 	State            uploadingState `json:"state"`
 	Issue            string         `json:"issue,omitempty"`
 	Deferred         string         `json:"deferred,omitempty"`
-	Imported         bool           `json:"imported,omitempty"`
+	// QueuedAhead is, for a queued session, how many queued sessions the
+	// last pass had ordered ahead of it. It is set exactly when State is
+	// uploadingQueued, so the JSON has it for every queued session, 0 for
+	// the one at the front, and for no other.
+	QueuedAhead *int `json:"queued_ahead,omitempty"`
+	Imported    bool `json:"imported,omitempty"`
 }
 
 type projectCaptureStatus struct {
@@ -589,6 +598,9 @@ type statusSessions struct {
 	// deferred is why the last pass put off each deferred session's scan
 	// (state.Status.DeferredSessions).
 	deferred map[string]string
+	// unreached is how many queued sessions were ahead of each session the
+	// last pass ran out of time before reaching (state.Status.UnreachedSessions).
+	unreached map[string]int
 }
 
 // readSessionStatus reads the collector's status, the pending count, and the
@@ -681,7 +693,7 @@ func readSessionStatus(view *statusView, cfg config.Config, home string, store *
 	if len(batches) > 0 {
 		view.LastImport = batches[len(batches)-1].ID
 	}
-	return statusSessions{store: store, regs: regs, skip: skip, owed: owed, deferred: view.Collector.DeferredSessions}
+	return statusSessions{store: store, regs: regs, skip: skip, owed: owed, deferred: view.Collector.DeferredSessions, unreached: view.Collector.UnreachedSessions}
 }
 
 // appStatus is one configured app's capture evidence: its sessions, per
@@ -832,12 +844,31 @@ func (s statusSessions) addUploading(app *appStatus, project *projectCaptureStat
 		// The last pass put its scan off; the scan journal says it is still
 		// owed, so the reason still applies.
 		session.State, session.Deferred = uploadingRechecking, deferred
+	case unreachedThisPass(s.unreached, reg.ArchiveSessionID):
+		// The last pass ended before its turn; it is waiting in the queue,
+		// not for anything to go right.
+		ahead := s.unreached[reg.ArchiveSessionID]
+		session.State, session.QueuedAhead = uploadingQueued, &ahead
 	case !o.Published:
 		session.State = uploadingFirst
 	}
 	app.Uploading = append(app.Uploading, session)
 	app.UploadingSessions++
 	project.uploading++
+}
+
+// unreachedThisPass reports whether the last pass ended before reaching id.
+func unreachedThisPass(unreached map[string]int, id string) bool {
+	_, found := unreached[id]
+	return found
+}
+
+// queuedWhat words a queued session's place in the queue.
+func queuedWhat(ahead *int) string {
+	if ahead == nil || *ahead == 0 {
+		return "queued for the next pass"
+	}
+	return fmt.Sprintf("queued for the next pass, %d ahead", *ahead)
 }
 
 // sortUploading puts failing sessions first, then the most recently
@@ -1948,6 +1979,9 @@ func (sc statusScreen) uploadingNotes(app appStatus, limit int) []statusNote {
 		case uploadingRechecking:
 			// Not a failure: the next pass retries it.
 			text += "   " + deferredReasonWhat(session.Deferred)
+		case uploadingQueued:
+			// Not a failure: the last pass ran out of time before its turn.
+			text += "   " + queuedWhat(session.QueuedAhead)
 		case uploadingPending:
 			// The usual state: nothing to add.
 		}
