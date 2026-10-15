@@ -2,6 +2,7 @@
 """Offline Q0 controls: no native binary, listener or personal home is required."""
 
 import contextlib
+import copy
 import io
 import json
 import os
@@ -21,7 +22,98 @@ import muse_qualification as probe
 FIXTURES = pathlib.Path(__file__).resolve().parent.parent / "internal/agents/muse/testdata"
 
 
+# Artificial encoding-only known answers, independently calculated outside the
+# runner. These deliberately are not admissible native permission transactions.
+CHECKSUM_VECTORS = [
+    {"outer_log_ordinal": 1,
+     "transaction_id": "00000000-0000-7000-8000-000000000001",
+     "children": [{"child_index": 0, "record_json": "{}"}],
+     "content_sha256": "sha256:8ed3fea8e26b6ce51f758a2afd846821a41858b9a56a1bebb90b6383728d7621"},
+    {"outer_log_ordinal": 0x0102030405060708,
+     "transaction_id": "12345678-9abc-7def-8123-456789abcdef",
+     "children": [{"child_index": 0, "record_json": '{"text":"λ\\n雪"}'},
+                  {"child_index": 1, "record_json": '{"x":1}'}],
+     "content_sha256": "sha256:e553c63a5d076e2ff8ebb8747c1f04d8246630869c653ec63e0ac36e708f0ea0"},
+]
+
+
 class QualificationTests(unittest.TestCase):
+
+    def test_permission_checksum_known_answers_pin_endian_uuid_and_utf8_bytes(self):
+        for frame in CHECKSUM_VECTORS:
+            with self.subTest(ordinal=frame["outer_log_ordinal"]):
+                self.assertEqual(probe.permission_content_sha256(frame), frame["content_sha256"])
+
+    def test_permission_checksum_binds_child_bytes_indices_order_count_and_identity(self):
+        original = CHECKSUM_VECTORS[1]
+        mutations = [dict(original, outer_log_ordinal=2),
+                     dict(original, transaction_id=CHECKSUM_VECTORS[0]["transaction_id"]),
+                     dict(original, children=list(reversed(original["children"]))),
+                     dict(original, children=original["children"][:1])]
+        for child_key, value in (("child_index", 7), ("record_json", '{"text":"λ雪"}')):
+            frame = copy.deepcopy(original)
+            frame["children"][0][child_key] = value
+            mutations.append(frame)
+        for frame in mutations:
+            self.assertNotEqual(probe.permission_content_sha256(frame), original["content_sha256"])
+        # Reformatting the child object changes its bytes even if JSON values match.
+        frame = copy.deepcopy(original)
+        frame["children"][1]["record_json"] = '{ "x": 1 }'
+        self.assertNotEqual(probe.permission_content_sha256(frame), original["content_sha256"])
+
+    def test_permission_checksum_matches_are_distinct_from_native_grammar(self):
+        frame = dict(CHECKSUM_VECTORS[0], retained_frame="session_permission_transaction",
+                     frame_schema_version=999, content_sha256="sha256:" + "0" * 64)
+        # Hash fields do not bind the outer schema or discriminator; the helper
+        # must not present a checksum match as complete native-frame acceptance.
+        expected = CHECKSUM_VECTORS[0]["content_sha256"]
+        self.assertEqual(probe.permission_content_sha256(frame), expected)
+        result = probe.permission_checksums(json.dumps(frame).encode())
+        self.assertEqual(result[0]["computed_sha256"], expected)
+        self.assertFalse(result[0]["matches"])
+        frame["content_sha256"] = expected
+        self.assertTrue(probe.permission_checksums(json.dumps(frame).encode())[0]["matches"])
+        self.assertEqual(probe.permission_checksums(b'{"payload_type":"ordinary"}'), [])
+
+    def test_permission_checksum_rejects_bad_hash_input_types_ranges_and_utf8(self):
+        mutations = [None, [], {key: value for key, value in CHECKSUM_VECTORS[0].items()
+                               if key != "outer_log_ordinal"}]
+        for key, values in {
+                "outer_log_ordinal": (True, -1, 1 << 64, 1.5, "1"),
+                "transaction_id": (None, 3, "not-a-uuid", "00000000000070008000000000000001"),
+                "children": (None, {}, [None]),
+                "content_sha256": (None, 0, "sha256:" + "A" * 64, "0" * 64),
+        }.items():
+            mutations.extend(dict(CHECKSUM_VECTORS[0], **{key: value}) for value in values)
+        for key, values in {"child_index": (True, -1, 1 << 32, 0.5, "0"),
+                            "record_json": (None, {}, b"{}", "\ud800")}.items():
+            for value in values:
+                frame = copy.deepcopy(CHECKSUM_VECTORS[0])
+                frame["children"][0][key] = value
+                mutations.append(frame)
+        for index, frame in enumerate(mutations):
+            with self.subTest(invalid=index), self.assertRaises(ValueError):
+                probe.permission_content_sha256(frame)
+
+    def test_permission_checksum_limits_count_and_aggregate_utf8_before_hashing(self):
+        frame = copy.deepcopy(CHECKSUM_VECTORS[0])
+        frame["children"] = frame["children"] * 4097
+        with self.assertRaisesRegex(ValueError, "4096"):
+            probe.permission_content_sha256(frame)
+        # Three Unicode characters require six bytes; character counts are not
+        # a substitute for the checked byte budget, including across children.
+        frame["children"] = [{"child_index": 0, "record_json": "λλλ"}]
+        with mock.patch.object(probe, "FILE_LIMIT", 5):
+            with self.assertRaisesRegex(ValueError, "child-byte limit"):
+                probe.permission_content_sha256(frame)
+        frame["children"] = [{"child_index": 0, "record_json": "abc"},
+                             {"child_index": 1, "record_json": "def"}]
+        with mock.patch.object(probe, "FILE_LIMIT", 5):
+            with self.assertRaisesRegex(ValueError, "child-byte limit"):
+                probe.permission_content_sha256(frame)
+            with self.assertRaisesRegex(ValueError, "file byte limit"):
+                probe.permission_checksums(b" " * 6)
+
     def test_unknown_binary_refused_before_output_or_process_creation(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
@@ -255,12 +347,14 @@ class QualificationTests(unittest.TestCase):
                     folder = root / session_id
                     folder.mkdir()
                     path = folder / "session.jsonl"
-                    path.write_text("".join(json.dumps(row) + "\n" for row in rows[:second_open]))
+                    path.write_text((FIXTURES / "permission-exact.jsonl").read_text() +
+                                    "".join(json.dumps(row) + "\n" for row in rows[:second_open]))
                     case = mock.Mock(root=root, workspace=root, server=mock.Mock(tool=False))
                     case.logs.return_value = [path]
                     def execute(*args):
                         if args:
-                            path.write_text("".join(json.dumps(row) + "\n" for row in rows))
+                            path.write_text((FIXTURES / "permission-exact.jsonl").read_text() +
+                                            "".join(json.dumps(row) + "\n" for row in rows))
                         return {"exit": 0, "timeout": False}
                     case.execute.side_effect = execute
                     def export(_case, _source, name):
@@ -272,6 +366,27 @@ class QualificationTests(unittest.TestCase):
                         result = probe.probe_exec(case)
                     self.assertFalse(result["assertions"][assertion])
                     self.assertTrue(all(ok for name, ok in result["assertions"].items() if name != assertion))
+
+    def test_exec_checksum_assertions_reject_stale_hash_despite_clean_native_export(self):
+        rows = [json.loads(line)["record"] for line in (FIXTURES / "msp-root.jsonl").read_text().splitlines()]
+        session_id = next(row["stream"]["id"] for row in rows if "stream" in row)
+        frame = json.loads((FIXTURES / "permission-exact.jsonl").read_text())
+        frame["children"][0]["record_json"] += " "
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            folder = root / session_id
+            folder.mkdir()
+            path = folder / "session.jsonl"
+            path.write_text(json.dumps(frame) + "\n" + "".join(json.dumps(row) + "\n" for row in rows))
+            case = mock.Mock(root=root, workspace=root, server=mock.Mock(tool=False))
+            case.logs.return_value = [path]
+            case.execute.return_value = {"exit": 0, "timeout": False}
+            exported = {"exit": 0, "timeout": False, "export_written": True, "unparseable_lines": 0}
+            with mock.patch.object(probe, "export_diagnostics", return_value=exported), mock.patch.object(probe, "probe_mutations", return_value={}):
+                result = probe.probe_exec(case)
+            self.assertTrue(result["assertions"]["native_valid_export_clean"])
+            self.assertFalse(result["assertions"]["fresh_permission_checksums_match"])
+            self.assertFalse(result["assertions"]["resumed_permission_checksums_match"])
 
     def test_corpus_requires_own_synthetic_conversation_and_preserves_existing_manifest(self):
         with tempfile.TemporaryDirectory() as directory:
