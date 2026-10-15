@@ -36,6 +36,110 @@ class ReportTests(unittest.TestCase):
         self.assertAlmostEqual(result['actual_runner_minutes'], 220/60)
         self.assertEqual(result['jobs'][0]['run_created_to_job_start_seconds'], 9)
 
+    def test_cancelled_queue_placeholders_are_not_runner_usage(self):
+        value = sample()
+        # Actual API shape: run 38672959471, jobs 116221661785/116221661846.
+        # Both have a 93-second cancellation interval without runner allocation.
+        for name, job_id in (('script-purge (0)', 116221661785), ('linux-full', 116221661846)):
+            value['required_jobs']['Test'].append(name)
+            value['workflows'][0]['jobs']['jobs'].append({
+                'id': job_id, 'name': name, 'status': 'completed', 'conclusion': 'cancelled',
+                'created_at': '2026-10-15T02:54:34Z', 'started_at': '2026-10-15T02:54:34Z',
+                'completed_at': '2026-10-15T02:56:07Z',
+                'runner_id': 0, 'runner_name': '', 'steps': []})
+        value['workflows'][0]['jobs']['total_count'] = 3
+        result = timing.sample_report(value)
+        self.assertFalse(result['qualifying'])
+        self.assertTrue(result['runner_minutes_complete'])
+        self.assertAlmostEqual(result['actual_runner_minutes'], 220/60)
+        placeholders = result['jobs'][1:3]
+        self.assertEqual([j['seconds'] for j in placeholders], [93, 93])
+        self.assertEqual([j['runner_seconds'] for j in placeholders], [0, 0])
+        self.assertEqual([j['runner_allocation'] for j in placeholders], ['unallocated'] * 2)
+
+    def test_allocated_cancelled_usage_and_unknown_allocation_are_distinct(self):
+        for conclusion in ('cancelled', 'failure', 'skipped'):
+            for metadata, state, seconds in (
+                    ({'runner_id': 42, 'runner_name': 'GitHub Actions 42'}, 'allocated', 110),
+                    ({'steps': [{'name': 'Set up job', 'started_at': '2026-10-14T00:00:11Z',
+                                 'conclusion': 'cancelled'}]}, 'allocated', 110),
+                    ({}, 'unknown', None)):
+                value = sample()
+                value['workflows'][0]['jobs']['jobs'][0].update(conclusion=conclusion, **metadata)
+                result = timing.sample_report(value)
+                with self.subTest(conclusion=conclusion, metadata=metadata):
+                    self.assertFalse(result['qualifying'])
+                    self.assertEqual(result['jobs'][0]['runner_allocation'], state)
+                    self.assertEqual(result['jobs'][0]['runner_seconds'], seconds)
+                    self.assertEqual(result['runner_minutes_complete'], seconds is not None)
+                    if seconds is None:
+                        self.assertIsNone(result['actual_runner_minutes'])
+                        self.assertAlmostEqual(result['known_runner_minutes'], 110/60)
+                        self.assertTrue(any('allocation unknown' in issue for issue in result['issues']))
+                    else:
+                        self.assertAlmostEqual(result['actual_runner_minutes'], 220/60)
+        value = sample()
+        value['workflows'][0]['jobs']['jobs'][0].update(
+            conclusion='skipped', runner_id=None, runner_name=None)
+        skipped = timing.sample_report(value)
+        self.assertFalse(skipped['qualifying'])
+        self.assertEqual(skipped['jobs'][0]['runner_seconds'], 0)
+        self.assertTrue(skipped['runner_minutes_complete'])
+        value = sample()
+        job = value['workflows'][0]['jobs']['jobs'][0]
+        job.update(runner_id=42, runner_name='GitHub Actions 42', completed_at=None)
+        missing_time = timing.sample_report(value)
+        self.assertFalse(missing_time['qualifying'])
+        self.assertFalse(missing_time['runner_minutes_complete'])
+        self.assertIsNone(missing_time['actual_runner_minutes'])
+        self.assertIsNone(missing_time['jobs'][0]['runner_seconds'])
+        legacy = timing.sample_report(sample())
+        self.assertEqual(legacy['jobs'][0]['runner_allocation'], 'legacy-success-timestamps')
+        value = sample()
+        value['workflows'][0]['jobs']['jobs'][0].update(runner_id=0, runner_name='')
+        self.assertFalse(timing.sample_report(value)['qualifying'])
+
+    def test_unallocated_skipped_backwards_api_timestamps_are_diagnostic(self):
+        # Exact untouched API row from run38674259669; completion precedes start.
+        job = {'id': 116224141593, 'name': 'checker-benchmark', 'status': 'completed',
+               'conclusion': 'skipped', 'runner_id': None, 'runner_name': None, 'steps': [],
+               'created_at': '2026-10-15T03:03:32Z', 'started_at': '2026-10-15T03:03:32Z',
+               'completed_at': '2026-10-15T03:03:31Z'}
+        value = sample()
+        value['workflows'][1]['jobs']['jobs'].append(job)
+        value['workflows'][1]['jobs']['total_count'] = 2
+        result = timing.sample_report(value)
+        self.assertTrue(result['qualifying'])
+        self.assertTrue(result['runner_minutes_complete'])
+        self.assertAlmostEqual(result['actual_runner_minutes'], 220/60)
+        row = result['jobs'][-1]
+        self.assertEqual(row['runner_seconds'], 0)
+        self.assertIsNone(row['seconds'])
+        self.assertEqual(row['started_at'], job['started_at'])
+        self.assertEqual(row['completed_at'], job['completed_at'])
+        self.assertEqual(row['timestamp_issues'], ['job interval: timestamps run backwards'])
+        for field, invalid in (('started_at', None), ('completed_at', None),
+                               ('started_at', 'invalid'), ('completed_at', 'invalid')):
+            changed = copy.deepcopy(value)
+            changed['workflows'][1]['jobs']['jobs'][-1][field] = invalid
+            result = timing.sample_report(changed)
+            with self.subTest(field=field, invalid=invalid):
+                self.assertTrue(result['qualifying'])
+                self.assertEqual(result['jobs'][-1]['runner_seconds'], 0)
+                self.assertIsNone(result['jobs'][-1]['seconds'])
+                self.assertTrue(result['jobs'][-1]['timestamp_issues'])
+        value['required_jobs']['Levenshtein'].append('checker-benchmark')
+        self.assertFalse(timing.sample_report(value)['qualifying'])
+
+    def test_allocated_and_unknown_backwards_timestamps_still_fail_closed(self):
+        for metadata in ({'runner_id': 42, 'runner_name': 'runner'}, {}):
+            for start in ('2026-10-14T00:03:00Z', 'invalid'):
+                value = sample()
+                value['workflows'][0]['jobs']['jobs'][0].update(
+                    metadata, conclusion='cancelled', started_at=start)
+                with self.subTest(metadata=metadata, start=start), self.assertRaises(ValueError):
+                    timing.sample_report(value)
+
     def test_missing_cancelled_failed_skipped_and_cold(self):
         for state in ('failure', 'cancelled', 'skipped', None):
             value = sample()

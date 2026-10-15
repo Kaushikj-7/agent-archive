@@ -458,12 +458,14 @@ func admitSession(store *state.Store, candidate Candidate, project, generation s
 	}
 	// A silent loss of both derived indexes is indistinguishable from a new
 	// identity. Only the existing registration census can authorize that miss.
+	// Asking for this key's proof leaves a complete census in force for every
+	// other key, so live hooks keep admitting while discovery waits a pass.
 	absent, err := store.SessionIndexAbsent(sessionKey(candidate.Agent, candidate.NativeSessionID))
 	if err != nil {
 		return false, err
 	}
 	if !absent {
-		err := store.RequestSessionIndexRecovery(sessionKey(candidate.Agent, candidate.NativeSessionID))
+		err := store.RequestSessionIndexAbsence(sessionKey(candidate.Agent, candidate.NativeSessionID))
 		return false, errors.Join(state.ErrSessionIndexRecoveryRequired, err)
 	}
 	if err := validateAdmissionGeneration(cfg, candidate, project, generation, now, facts, factsOK); err != nil {

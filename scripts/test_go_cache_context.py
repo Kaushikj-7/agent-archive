@@ -59,7 +59,7 @@ class ContextTests(unittest.TestCase):
             with self.subTest(label=label):
                 self.assertNotEqual(first.prefix, self.plan(dict(context, **changed)).prefix)
         self.assertNotEqual(first.prefix, self.plan(pr=13).prefix)
-        self.assertNotEqual(first.prefix, self.plan(worker=1).prefix)
+        self.assertEqual(first.prefix, self.plan(worker=1).prefix)
         changed = dict(first.source, dependency='d'*64)
         self.assertNotEqual(first.prefix, self.plan(source=changed).prefix)
 
@@ -69,9 +69,9 @@ class ContextTests(unittest.TestCase):
         four = keys.cache_plan(12, 0, self.context(), source, self.root, 4)
         eight = keys.cache_plan(12, 7, self.context(), source, self.root, 8)
         self.assertNotEqual(four.prefix,eight.prefix)
-        self.assertIn('-n8-w7-',eight.prefix)
+        self.assertIn('-n8-w0-',eight.prefix)
         self.assertNotEqual(two.prefix, four.prefix)
-        self.assertNotEqual(four.prefix, keys.cache_plan(12, 3, self.context(), source, self.root, 4).prefix)
+        self.assertEqual(four.prefix, keys.cache_plan(12, 3, self.context(), source, self.root, 4).prefix)
         for workers, worker in ((3, 0), (4, 4), (8, 8), (2, 2), (True, 0), ('4', 0)):
             with self.assertRaises(keys.InvalidContext):
                 keys.cache_plan(12, worker, self.context(), source, self.root, workers)
@@ -79,7 +79,7 @@ class ContextTests(unittest.TestCase):
     def test_actual_go_metadata_fails_closed(self):
         for key, value in [('GOVERSION', 'go1.27.3'), ('CGO_ENABLED', '0'),
                            ('GOHOSTARCH', 'arm64'), ('GOFLAGS', '-mod=mod'),
-                           ('GOTOOLCHAIN', 'auto'), ('GOWORK', '/tmp/other')]:
+                           ('GOTOOLCHAIN', 'auto'), ('GOWORK', '/tmp/other'), ('GOCACHEPROG', '/tmp/external-cache')]:
             with self.subTest(key=key):
                 original = self.go[key]
                 self.go[key] = value
@@ -148,10 +148,11 @@ class ContextTests(unittest.TestCase):
                 path.write_bytes(old)
 
     def test_pr_ancestry_rejects_shallow_foreign_or_unexpected_merge(self):
-        base, head, tested = 'a'*40, 'b'*40, 'c'*40
+        base, head, tested, newer = 'a'*40, 'b'*40, 'c'*40, 'e'*40
         event = {'pull_request': {'number': 12, 'base': {'sha': base}, 'head': {'sha': head}}}
         shallow = [False]
         parents = [base+' '+head]
+        unrelated = [False]
         calls = []
         def git(source, *args):
             calls.append(args)
@@ -162,19 +163,30 @@ class ContextTests(unittest.TestCase):
             if args[:3] == ('show', '-s', '--format=%P'):
                 return parents[0].encode()+b'\n'
             if args[:2] == ('merge-base', '--is-ancestor'):
+                if unrelated[0] and args[3] == newer:
+                    raise subprocess.CalledProcessError(1, args)
                 return b''
             if args[0] == 'merge-base':
                 return b'd'*40+b'\n'
             self.fail(str(args))
         keys.pr_ancestry(self.root, tested, event, 12, git)
         self.assertIn(('merge-base', '--is-ancestor', head, tested), calls)
+        # Main moved after the event: the merge sits on a newer base.
+        parents[0] = newer+' '+head
+        keys.pr_ancestry(self.root, tested, event, 12, git)
+        self.assertIn(('merge-base', '--is-ancestor', base, newer), calls)
+        unrelated[0] = True
+        with self.assertRaises(subprocess.CalledProcessError):
+            keys.pr_ancestry(self.root, tested, event, 12, git)
+        unrelated[0] = False
         shallow[0] = True
         with self.assertRaises(keys.InvalidContext):
             keys.pr_ancestry(self.root, tested, event, 12, git)
         shallow[0] = False
-        parents[0] = head+' '+base
-        with self.assertRaises(keys.InvalidContext):
-            keys.pr_ancestry(self.root, tested, event, 12, git)
+        for unexpected in (head+' '+base, base, base+' '+newer, base+' '+head+' '+newer):
+            parents[0] = unexpected
+            with self.assertRaises(keys.InvalidContext):
+                keys.pr_ancestry(self.root, tested, event, 12, git)
         parents[0] = base+' '+head
         with self.assertRaises(keys.InvalidContext):
             keys.pr_ancestry(self.root, tested, event, 13, git)
