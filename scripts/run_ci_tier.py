@@ -382,8 +382,11 @@ def verify_plain_vet(directory, report, expected, expected_context_sha256, histo
     if not isinstance(receipt, dict):
         raise Failure('owned plain vet receipt missing')
     context = receipt.get('context', {})
-    if not isinstance(context, dict) or not isinstance(context.get('go'), dict):
-        raise Failure('plain vet recorded context malformed')
+    import go_cache_context
+    try:
+        go_cache_context.validate_context(context)
+    except go_cache_context.InvalidContext as error:
+        raise Failure('plain vet recorded context malformed') from error
     identity_schema = receipt.get('identity_schema')
     if strict_full_context:
         if identity_schema != 'full-v1' and not (historical and identity_schema is None):
@@ -398,21 +401,6 @@ def verify_plain_vet(directory, report, expected, expected_context_sha256, histo
     else:
         raise Failure('plain vet compatibility identity schema missing or unsupported')
     go = context['go']
-    import go_cache_context
-    hashes = [context.get('os_release')]
-    for compiler in ('cc', 'cxx'):
-        identity = context.get(compiler, {})
-        if not isinstance(identity, dict) or set(identity) != {'binary', 'version'}:
-            raise Failure('plain vet compiler identity missing')
-        hashes.extend(identity.values())
-    tools = context.get('toolchain', {})
-    if not isinstance(tools, dict) or set(tools) != {'go','compile','asm','link','cgo','vet'}:
-        raise Failure('plain vet toolchain identity missing')
-    hashes.extend(tools.values())
-    if (context.get('schema') != go_cache_context.SCHEMA or set(go) != set(go_cache_context.GO_FIELDS)
-            or any(not isinstance(v,str) for v in go.values())
-            or any(not isinstance(v,str) or not re.fullmatch('[0-9a-f]{64}',v) for v in hashes)):
-        raise Failure('plain vet compiler/environment identity malformed')
     if (context.get('race') is not False or context.get('tags') != []
             or context.get('version') != 'go version go1.27.2 linux/amd64'
             or context.get('runner_os') != 'Linux' or context.get('runner_arch') != 'X64'
