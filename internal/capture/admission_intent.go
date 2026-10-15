@@ -27,9 +27,12 @@ import (
 type admissionIntent = agentapi.AdmissionIntent
 
 const (
-	maxAdmissionIntents   = 128
-	maxAdmissionIntentAge = 24 * time.Hour
-	admissionQueueWait    = 200 * time.Millisecond
+	maxAdmissionIntents = 128
+	// maxChildAdmissionIntents bounds the queue a subagent observation may
+	// join, leaving the rest for proven first starts.
+	maxChildAdmissionIntents = maxAdmissionIntents / 2
+	maxAdmissionIntentAge    = 24 * time.Hour
+	admissionQueueWait       = 200 * time.Millisecond
 	// pruneAdmissionIntentsWait is setup's wait for the queue lock. Hooks sync
 	// outside it, but a rename under it can still stall for over a second on
 	// a busy machine. Setup runs on no hook's budget; this bound only keeps a
@@ -316,7 +319,13 @@ func eventIntentStillQueueable(home string, intent admissionIntent) (bool, error
 			queued++
 		}
 	}
-	if queued >= maxAdmissionIntents {
+	// Child observations can arrive in bursts; they stop at half the queue
+	// so proven first starts always keep room.
+	limit := maxAdmissionIntents
+	if childOnlyIntent(intent) {
+		limit = maxChildAdmissionIntents
+	}
+	if queued >= limit {
 		return false, errors.New("admission intent queue is full")
 	}
 	return true, nil
@@ -518,6 +527,15 @@ func replayAdmissionFile(home string, store *state.Store, cfg config.Config, pat
 // conversation content. Codex children follow their own policy path.
 func queueableChild(event agentapi.LifecycleEvent) bool {
 	return event.Kind == agentapi.EventSubagent && event.Child != nil && event.Session.Agent != agentmeta.Codex
+}
+
+func childOnlyIntent(intent admissionIntent) bool {
+	for _, effect := range intent.Effects {
+		if !queueableChild(effect.Event) {
+			return false
+		}
+	}
+	return len(intent.Effects) > 0
 }
 
 func replayIntentEligible(cfg config.Config, intent admissionIntent, now time.Time) bool {

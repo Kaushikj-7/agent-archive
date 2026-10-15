@@ -97,30 +97,20 @@ func (s *Store) RequestSessionIndexAbsence(key agentmeta.SessionKey) error {
 // Every absence write is fenced under hooks.lock, which requests also hold:
 // the marker must still be the same complete version-1 census and the token
 // unchanged. The token itself is read under hooks.lock, after its requester
-// wrote both token and entry. A request therefore preceded the token read, its key's earlier
-// registrations (an index lost silently) are in this census, and its retained
-// entry has refused every later registration of that key. Owner and candidate
-// repairs use the existing request-lock validation.
+// wrote both token and entry. A request therefore preceded the token read,
+// its key's earlier registrations (an index lost silently) are in this
+// census, and its retained entry has refused every later registration of that
+// key. Owner and candidate repairs use the existing request-lock validation.
 func (s *Store) certifyRequestedAbsences(ctx context.Context, allowance time.Duration) (bool, error) {
 	if _, pending, err := s.readAbsenceRequest(); err == nil && !pending {
 		return true, nil
 	}
-	// A requester writes its token and then its entry under one hooks.lock
-	// hold. Reading the token and marker under that lock means every entry
-	// carrying this token already exists before the directory listing below.
-	unlock, err := s.namedLockWait("hooks.lock", time.Second)
+	request, requestErr, marker, err := s.readAbsenceSchedule()
 	if err != nil {
 		return false, err
 	}
-	request, _, requestErr := s.readAbsenceRequest()
-	var marker sessionIndexMarker
-	markerErr := readRecoveryJSON(filepath.Join(s.home, sessionIndexMarkerFile), &marker)
-	unlock()
 	if requestErr == nil && !request.pending() {
 		return true, nil
-	}
-	if markerErr != nil {
-		return false, markerErr
 	}
 	if requestErr != nil || marker.Version != 1 || !marker.Complete {
 		// Without a usable token only a full census covers retained requests.
@@ -169,13 +159,19 @@ func (s *Store) certifyRequestedAbsences(ctx context.Context, allowance time.Dur
 			return false, err
 		}
 	}
-	err = s.writeUnderLock(lockedWrite{
+	return s.certifyAbsenceToken(request.Requested, fence)
+}
+
+// certifyAbsenceToken records token certified, fenced like each absence
+// write. A moved token or marker leaves the work for the next slice.
+func (s *Store) certifyAbsenceToken(token string, fence func() error) (bool, error) {
+	err := s.writeUnderLock(lockedWrite{
 		lock:  func() (func(), error) { return local.NamedLockWait(s.home, "hooks.lock", time.Second) },
 		path:  filepath.Join(s.home, sessionIndexAbsenceFile),
 		check: fence,
 		change: func(current fileSnapshot) (any, bool, error) {
 			var latest sessionIndexAbsenceRequest
-			if !current.found || json.Unmarshal(current.data, &latest) != nil || latest.Requested != request.Requested {
+			if !current.found || json.Unmarshal(current.data, &latest) != nil || latest.Requested != token {
 				return nil, false, errAbsenceRequestMoved
 			}
 			latest.Certified = latest.Requested
@@ -189,6 +185,22 @@ func (s *Store) certifyRequestedAbsences(ctx context.Context, allowance time.Dur
 		return false, err
 	}
 	return true, s.indexStep("absence-certified")
+}
+
+// readAbsenceSchedule reads the token and marker under hooks.lock. A
+// requester writes its token and then its entry under one hooks.lock hold,
+// so every entry carrying the token read here already exists before the
+// caller lists sessions-v1. requestErr reports unusable scheduling evidence;
+// err reports a lock or marker failure.
+func (s *Store) readAbsenceSchedule() (request sessionIndexAbsenceRequest, requestErr error, marker sessionIndexMarker, err error) {
+	unlock, err := s.namedLockWait("hooks.lock", time.Second)
+	if err != nil {
+		return request, nil, marker, err
+	}
+	defer unlock()
+	request, _, requestErr = s.readAbsenceRequest()
+	err = readRecoveryJSON(filepath.Join(s.home, sessionIndexMarkerFile), &marker)
+	return request, requestErr, marker, err
 }
 
 // restartForAbsenceRequests begins a full census, which certifies every

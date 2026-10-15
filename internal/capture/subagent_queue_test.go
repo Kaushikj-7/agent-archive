@@ -3,6 +3,7 @@ package capture
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -131,6 +132,34 @@ func TestQueuedSubagentWaitsForQueuedParentStart(t *testing.T) {
 	}
 	if got := len(queueFiles(t, home)); got != 0 {
 		t.Fatalf("intents left: %d", got)
+	}
+}
+
+// A burst of queued subagent completions stops at half the queue, so a
+// proven first start still finds room.
+func TestQueuedSubagentsLeaveRoomForStarts(t *testing.T) {
+	t.Parallel()
+	home, project := t.TempDir(), t.TempDir()
+	at := time.Date(2026, 9, 29, 10, 0, 0, 0, time.UTC)
+	setUpTestConfig(t, home, project, at.Add(-time.Hour))
+	busy := func(string, time.Duration) (func(), error) { return nil, local.ErrBusy }
+	for i := range maxChildAdmissionIntents + 1 {
+		stop := subagentStopPayload(project)
+		stop["agent_id"] = fmt.Sprintf("agent-%03d", i)
+		err := handleEvent(home, "claude", stop, at.Add(time.Duration(i)*time.Second), busy, nil)
+		if i < maxChildAdmissionIntents && err != nil {
+			t.Fatalf("child %d: %v", i, err)
+		}
+		if i == maxChildAdmissionIntents && err == nil {
+			t.Fatal("child queued past its share")
+		}
+	}
+	parentPath := writeTestTranscript(t, "parent.jsonl", "")
+	if err := handleEvent(home, "claude", claudeStart(project, "native-other", "startup", parentPath), at.Add(time.Hour), busy, nil); err != nil {
+		t.Fatalf("start refused: %v", err)
+	}
+	if got := len(queueFiles(t, home)); got != maxChildAdmissionIntents+1 {
+		t.Fatalf("queued %d intents", got)
 	}
 }
 
