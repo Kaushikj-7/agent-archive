@@ -1,7 +1,8 @@
 name: Levenshtein
 # Shared lint and security checks from wangjohn/levenshtein, run in its pinned
-# Linux worker. PRs use native tools over staged declared inputs; other runs
-# keep the pinned container. levenshtein.json selects the checks. Run the
+# Linux worker. CI uses native tools over staged declared inputs with a
+# fail-closed policy guard; the repository config retains local Dagger support.
+# levenshtein.json selects the checks. Run the
 # same thing locally from a sibling checkout of Levenshtein:
 #
 #   ../levenshtein/verify pre-merge --source .
@@ -123,37 +124,26 @@ jobs:
           source: app
           profile: shared
           shared-source: levenshtein
-      - name: Stage PR inputs and select checks
-        if: github.event_name == 'pull_request'
+      - name: Stage declared inputs and preserve event-specific checks
         id: stage
         env:
           PYTHONDONTWRITEBYTECODE: '1'
           NO_COLOR: '1'
+          EVENT: ${{ github.event_name }}
           XDG_CACHE_HOME: ${{ runner.temp }}/native-xdg
         run: |
           python3 -B ./app/scripts/stage_native_verify.py --source ./app \
             --destination "$RUNNER_TEMP/native-source" --shared ./levenshtein \
-            --run pre-merge --pr-scope
+            --ci-event "$EVENT"
       - name: Verify
         env:
-          EVENT: ${{ github.event_name }}
           NO_COLOR: '1'
-          PR_RUN: ${{ steps.stage.outputs.run }}
+          CHECK_RUN: ${{ steps.stage.outputs.run }}
         run: |
-          run=pre-merge
-          if [[ "$EVENT" == schedule ]]; then
-            run=main
-          fi
-          source=./app
-          if [[ "$EVENT" == pull_request ]]; then
-            # Native inputs fingerprint source but do not restrict discovery.
-            # Stage the tracked configured inputs to match the container scope.
-            # Only verified compilation/modules are reused; XDG/results stay fresh.
-            export XDG_CACHE_HOME="$RUNNER_TEMP/native-xdg"
-            source="$RUNNER_TEMP/native-source"
-            run="$PR_RUN"
-          fi
-          ./levenshtein/verify "$run" --source "$source" --jobs 4 \
+          # Stage selection permits scoped PR checks only on pull_request.
+          # Push/manual retain all six; schedule retains main/rerun_checks.
+          export XDG_CACHE_HOME="$RUNNER_TEMP/native-xdg"
+          ./levenshtein/verify "$CHECK_RUN" --source "$RUNNER_TEMP/native-source" --jobs 4 \
             --cache-dir "$RUNNER_TEMP/verification"
 
   checker-benchmark:

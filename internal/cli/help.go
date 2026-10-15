@@ -395,10 +395,11 @@ project every row shares is left out of the table and named in the heading.
 On a terminal with an interactive stdin, list a numbered table and pick a
 session to show its summary, then t for its transcript, Enter or b to go
 back, or q to quit. Keys act as pressed; the wheel, arrows, and PgUp/PgDn
-scroll. Press / to filter the rows as you type, with the words WORDS takes:
-the first match is highlighted, the arrows move the highlight, Enter shows it,
-and Esc clears the filter. A subagent that matches is shown under its parent,
-which is shown too. Rows keep their numbers while filtered. WORDS open the
+move the highlight, which Enter opens. Press / to filter the rows as you
+type, with the words WORDS takes: the first match is highlighted, the arrows
+move the highlight, Enter shows it, and Esc clears the filter, keeping the
+highlighted row. A subagent that matches is shown under its parent, which is
+shown too. Rows keep their numbers while filtered. WORDS open the
 browser with the filter already filled in, to edit. Where keys cannot be read,
 the browser reads lines, and an answer that is not a row number, a
 SESSION_ID, or q is words to filter by (an empty answer clears them). Piped
