@@ -49,7 +49,7 @@ func initialAuthority(rows []retained) bool {
 }
 
 func (s *rootState) envelope(r retained, i int) bool {
-	if r.Version != 1 || r.Schema != 1 || r.RecordType != "event" || r.Durability != "durable" || r.PayloadSchema < 1 || r.Stream.Kind != streamSession || r.Stream.ID != s.owner || r.Sequence != int64(i+1) || r.Timestamp < s.start || r.Timestamp > exactMax || s.ids[r.ID] {
+	if r.Version != 1 || r.Schema != 1 || r.RecordType != "event" || r.Durability != "durable" || r.PayloadSchema < 1 || r.Stream.Kind != streamSession || r.Stream.ID != s.owner || r.Sequence != int64(i+1) || r.Timestamp < 1 || r.Timestamp < s.start || r.Timestamp > exactMax || s.ids[r.ID] {
 		return false
 	}
 	s.ids[r.ID] = true

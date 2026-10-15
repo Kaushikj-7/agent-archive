@@ -460,6 +460,29 @@ func TestRetainedUnknownNullFieldsAndUnsupportedOwnerRefuse(t *testing.T) {
 	}
 }
 
+func TestRetainedLogicalStartRequiresPositiveTimestamp(t *testing.T) {
+	t.Parallel()
+	out, e := filterBytes(t, readSynthetic(t, "synthetic-exec-empty.jsonl"), agentapi.ReadLimits{})
+	if e != nil {
+		t.Fatal(e)
+	}
+	for _, timestamp := range []any{nil, 0, -1} {
+		b := bundleFor(t, out)
+		for i := range 2 {
+			b.NativeRecords[i]["ts_us"] = timestamp
+		}
+		if _, e := (Parser{}).Parse(t.Context(), b); e == nil {
+			t.Errorf("parser accepted invalid logical start %v", timestamp)
+		}
+		if _, e := (Filter{}).Refilter(t.Context(), b, time.Time{}); e == nil {
+			t.Errorf("refilter accepted invalid logical start %v", timestamp)
+		}
+		if (Filter{}).EvidenceExtends(b, b) {
+			t.Errorf("invalid logical start %v certified retained equality", timestamp)
+		}
+	}
+}
+
 type countedContext struct {
 	context.Context
 	calls  int
