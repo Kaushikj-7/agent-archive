@@ -22,7 +22,13 @@ python3 scripts/compare_backfill.py /tmp/backfill-original/samples.jsonl /tmp/ba
 ```
 
 The clock is September 23, 2026 in California. Metadata headers occupy exactly
-1,024 bytes before the newline, including trailing JSON whitespace. Fixture version 6 has:
+1,024 bytes before the newline, including trailing JSON whitespace. Version 7
+also fixes the disposable user-home path width at 192 bytes (project root at
+200 bytes). This makes retained capture-byte evidence deterministic without
+omitting or rewriting any capture boundary fields; temporary path length
+previously changed the encoded retained cwd length. Version 7 preserves the
+version-6 raw file sizes, record counts, corpus scale and production limits,
+with stronger plan/artifact evidence:
 
 - Recent and old corpora: 1,500 files, sizes cycling through 256 KiB, 256 KiB,
   512 KiB, 1 MiB, 1 MiB, 1 MiB, 1 MiB, 2 MiB, 4 MiB, 8 MiB, plus small records.
@@ -54,9 +60,31 @@ compare tracing overhead separately from disabled-trace optimization runs.
 Each subprocess creates fixtures before the `Run` timer. Every confirmed sample
 uses fresh registration/archive state, then reads uploaded metadata and source
 bundles for the expected identities and verifies completed batch records.
-Normalized per-session hashes include records, text, history, history ordinals, start provenance,
-origin and source format. Hashes omit generated archive IDs and normalize the
-disposable project path. Only compact hashes survive verification.
+
+Version-7 per-session hashes include the complete loaded source bundle
+(including history ordinals, capture boundary, adapter/filter versions and
+provenance) and uploaded metadata (including derived fields and import/start
+provenance). Generated archive IDs are replaced with native-identity tokens, and
+disposable project paths and project IDs are normalized. The active metadata
+fields `source_bundle.key`, `source_bundle.sha256` and
+`source_bundle.compressed_bytes` are omitted because their encoded object
+envelope includes generated identities; the loaded source content is compared
+instead. Preserved metadata sources must be loaded/verified before this harness
+can support such a fixture; otherwise it fails explicitly.
+
+A test-only Env observer captures the actual completed command plan before
+rendering. After Run returns, a separate plan hash records every actual
+candidate identity, skip decision, start/provenance, ownership facts, source
+kind and input bytes. Every expected selected identity and date skip is
+asserted. The comparator requires that plan hash for both planning and import
+samples; missing evidence fails rather than becoming a default. Evidence hashing
+and artifact readback remain outside Run's timer.
+
+Version 7 is a new frozen measurement protocol: mirror the observer support in
+cli.go/backfill.go, all six harness/tool files, and this exact normalization
+into both source trees before rebuilding. Keep source/harness/binary hashes with
+raw results. Prior version-6 samples and failures remain historical evidence;
+never relabel them as version 7.
 
 The JSON records command elapsed time, allocation and GC deltas, actual command
 CPU from `getrusage`, RSS observed at command return, and whole-subprocess CPU

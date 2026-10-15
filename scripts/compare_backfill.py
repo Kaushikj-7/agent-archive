@@ -40,7 +40,7 @@ def main():
             raise SystemExit(f"Duplicate sample indices: {key}")
         if indices[0] != indices[1]:
             raise SystemExit(f"Unmatched sample indices: {key}")
-        for field in ["host", "logical_cpus", "gomaxprocs", "fixture_version", "toolchain", "planning_workers", "default_adapter_workers", "byte_budget", "sessions", "selected", "imported", "skipped", "input_bytes", "artifact_sha256"]:
+        for field in ["host", "logical_cpus", "gomaxprocs", "fixture_version", "toolchain", "planning_workers", "default_adapter_workers", "byte_budget", "sessions", "selected", "imported", "skipped", "input_bytes", "artifact_sha256", "plan_sha256"]:
             values = {row[field] for row in original + candidate}
             if len(values) != 1:
                 raise SystemExit(f"Non-equivalent {field}: {key}: {values}")

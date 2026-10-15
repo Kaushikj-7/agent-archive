@@ -13,6 +13,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/collector"
+	"github.com/wangjohn/agent-archive/internal/discovery"
 	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
@@ -25,7 +26,27 @@ func TestImportCapacityPublishesCanonicalEvidenceBeforeContinuingAdmission(t *te
 	if testing.Short() {
 		t.Skip("real fixed-quota canonical publication regression")
 	}
+	verifyCanonicalPublicationCapacity(t, false)
+}
+
+// Live lookup preserves legacy nil binding while real selected evidence drains.
+func TestImportCapacityPublishesLegacyLiveLocatorEvidence(t *testing.T) {
+	if testing.Short() {
+		t.Skip("real fixed-quota live-locator publication regression")
+	}
+	verifyCanonicalPublicationCapacity(t, true)
+}
+
+func verifyCanonicalPublicationCapacity(t *testing.T, live bool) {
+	t.Helper()
 	r, c, cfg := stagingFixture(t)
+	nativeHome := filepath.Join(c.ProjectRoot, ".codex")
+	nativeDir := filepath.Join(nativeHome, "sessions")
+	if live {
+		if err := os.MkdirAll(nativeDir, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
 	const count = 24
 	const retained = 24 << 20
 	candidates := make([]Candidate, count)
@@ -34,6 +55,10 @@ func TestImportCapacityPublishesCanonicalEvidenceBeforeContinuingAdmission(t *te
 		next.Harness = "codex"
 		next.NativeSessionID = fmt.Sprintf("00000000-0000-4000-8000-%012d", i+1)
 		next.TranscriptPath = filepath.Join(c.ProjectRoot, "rollout-"+next.NativeSessionID+".jsonl")
+		if live {
+			next.NativeHome = nativeHome
+			next.TranscriptPath = filepath.Join(nativeDir, "rollout-"+next.NativeSessionID+".jsonl")
+		}
 		file, err := os.Create(next.TranscriptPath)
 		if err != nil {
 			t.Fatal(err)
@@ -51,6 +76,35 @@ func TestImportCapacityPublishesCanonicalEvidenceBeforeContinuingAdmission(t *te
 			t.Fatal(err)
 		}
 		candidates[i] = next
+	}
+	var lookup *discovery.CodexRolloutLookup
+	if live {
+		var err error
+		lookup, err = discovery.NewCodexRolloutLookup(t.Context(), state.OpenReadOnly(r.Home), []string{nativeHome})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() {
+			if err := lookup.Close(); err != nil {
+				t.Error(err)
+			}
+		}()
+		for _, candidate := range candidates {
+			if _, err := lookup.Thread(t.Context(), candidate.NativeSessionID); err != nil && t.Context().Err() != nil {
+				t.Fatal(err)
+			}
+		}
+		for {
+			health, err := lookup.ObserveReadOnly(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !health.Pending {
+				break
+			}
+		}
+		r.CodexRollouts = lookup
+		r.ConfiguredCodexHomes = []string{nativeHome}
 	}
 	var canonicalBytes int64
 	staged := map[string]string{}
@@ -71,6 +125,9 @@ func TestImportCapacityPublishesCanonicalEvidenceBeforeContinuingAdmission(t *te
 			if err != nil || !found {
 				return fmt.Errorf("load complete selected stage: %w", err)
 			}
+			if live && (selected.Registration.CodexBinding != nil || selected.TypedSelection || selected.Bundle.History != nil || len(selected.Children) != 0 || len(selected.Preserved) != 0) {
+				return fmt.Errorf("live selection escaped legacy ordinary envelope")
+			}
 			canonical, err := json.Marshal(selected)
 			if err != nil {
 				return err
@@ -81,12 +138,19 @@ func TestImportCapacityPublishesCanonicalEvidenceBeforeContinuingAdmission(t *te
 			canonicalBytes += int64(len(raw))
 			staged[id] = stage.SHA256
 			// The drain and final pass must publish the retained selection itself.
+			if live {
+				return nil
+			}
 			return os.Remove(stage.Registration.TranscriptPath)
 		}
 		return fmt.Errorf("selected stage missing")
 	}
 	remote := storagetest.NewMemoryStore()
-	opts := collector.Options{Sources: testSources, Parsers: testSources, MachineID: "synthetic", Now: func() time.Time { return fixedNow.Add(time.Minute) }, AcceptSession: cfg.AcceptSession}
+	var homes []string
+	if live {
+		homes = []string{nativeHome}
+	}
+	opts := collector.Options{Sources: testSources, Parsers: testSources, MachineID: "synthetic", Now: func() time.Time { return fixedNow.Add(time.Minute) }, AcceptSession: cfg.AcceptSession, CodexRollouts: r.CodexRollouts, ConfiguredCodexHomes: homes}
 	drains, published := 0, 0
 	collect := func(ctx context.Context) error {
 		reopened, err := state.Open(r.Home)
@@ -133,6 +197,9 @@ func TestImportCapacityPublishesCanonicalEvidenceBeforeContinuingAdmission(t *te
 		t.Fatalf("final registrations %d %v", len(regs), err)
 	}
 	for _, reg := range regs {
+		if live && reg.CodexBinding != nil {
+			t.Fatal("legacy binding was fabricated")
+		}
 		if reg.StagedImportSHA256 != staged[reg.ArchiveSessionID] {
 			t.Fatal("selected digest changed")
 		}
