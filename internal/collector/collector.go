@@ -396,6 +396,7 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 			continue
 		}
 		if p.codexLookupSpent(reg) {
+			p.startLookupAllowanceWait(reg)
 			p.leaveForNextPass(p.registrations[i : i+1])
 			continue
 		}
@@ -487,6 +488,9 @@ type pass struct {
 	// priorUnreached is the previous pass's state.Status.UnreachedSessions
 	// (see orderLookupAllowanceDeferralsLast).
 	priorUnreached map[string]int
+	// priorScanAt is the previous pass's state.Status.LastScanAt (see
+	// joinedLastPass).
+	priorScanAt time.Time
 	// priorDeferredSince is the previous pass's state.Status.DeferredSince,
 	// and deferredAt this pass's (see deferredSince, keepDeferredSince).
 	priorDeferredSince map[string]time.Time
@@ -582,6 +586,12 @@ func (p *pass) loadWork() error {
 // work (a request) is left for the next pass, and records each of them in
 // Result.Unreached with how many sessions this pass had already left for the
 // next one ahead of it. It may be called more than once in a pass.
+//
+// A session left this way whose run of deferred scans has already lasted
+// MaxDeferral fails as deferScan fails it (DeferralExpiredProblem): a
+// session the pass never opens is never deferred, so without this one left
+// unopened on every pass would wait as queued for good, never reported.
+// It stays in Result.Unreached, so the next pass still knows its place.
 func (p *pass) leaveForNextPass(rest []archive.SessionRegistration) {
 	for _, reg := range rest {
 		accepted := p.opts.AcceptSession == nil || p.opts.AcceptSession(reg)
@@ -596,6 +606,9 @@ func (p *pass) leaveForNextPass(rest []archive.SessionRegistration) {
 		}
 		p.result.Unreached[reg.ArchiveSessionID] = p.unreachedAhead
 		p.unreachedAhead++
+		if since, running := p.deferredAt[reg.ArchiveSessionID]; running && p.now.Sub(since) >= MaxDeferral {
+			addError(p.result.Errors, reg.ArchiveSessionID, fmt.Errorf("%s: %w", DeferralExpiredProblem, errLeftUnopened))
+		}
 		if !p.durableCounted[reg.ArchiveSessionID] {
 			p.pending++
 		}

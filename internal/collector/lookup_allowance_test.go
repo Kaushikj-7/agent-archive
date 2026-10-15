@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -242,7 +243,8 @@ func TestCodexSessionThatExhaustsTheLookupAllowanceDoesNotBlockLaterCodexSession
 // keeping going move, and only into slots requested Codex sessions held:
 // every other session keeps its place, a Codex session deferred because its
 // source changed keeps its turn, and among those that move, a session left
-// unopened goes before one that ran out, and one whose deferral has lasted
+// unopened takes the waiter lane, ahead of the sessions not waiting, one
+// that ran out goes after them, and one whose deferral has lasted
 // MaxDeferral goes last.
 func TestLookupAllowanceDeferralsMoveBehindOnlyOtherCodexSessions(t *testing.T) {
 	t.Parallel()
@@ -268,7 +270,7 @@ func TestLookupAllowanceDeferralsMoveBehindOnlyOtherCodexSessions(t *testing.T) 
 	for _, r := range p.registrations {
 		got = append(got, r.ArchiveSessionID)
 	}
-	want := []string{"changed", "claude", "plain", "unopened", "cursor", "heavy", "expired", "quiet"}
+	want := []string{"unopened", "claude", "changed", "plain", "cursor", "heavy", "expired", "quiet"}
 	if fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Fatalf("order=%v, want %v", got, want)
 	}
@@ -361,9 +363,9 @@ func TestTwoHeavySessionsDoNotTakeEveryTurnFromAThird(t *testing.T) {
 	sources := allowanceSpendingSources{path: heavy.TranscriptPath, also: heavier.TranscriptPath, once: light.TranscriptPath, onceDone: &atomic.Bool{}, lookup: lookup}
 	store := storagetest.NewMemoryStore()
 	now := start.Add(time.Hour)
-	// The first three passes each read a different session first (oldest
-	// first, as nothing waits yet), and each runs out. From then on all three
-	// wait on the allowance.
+	// The first three passes each read a different session first (the oldest
+	// on the first pass, then the waiter lane's), and each runs out. From
+	// then on all three wait on the allowance.
 	for pass := 1; pass <= 9; pass++ {
 		now = now.Add(time.Hour)
 		result, err := Run(t.Context(), local, store, Options{Sources: sources, Parsers: testParsers, MachineID: "m", CodexRollouts: lookup, Now: func() time.Time { return now }})
@@ -386,11 +388,13 @@ func TestTwoHeavySessionsDoNotTakeEveryTurnFromAThird(t *testing.T) {
 // Among the sessions waiting on the allowance, the ones the previous pass
 // left unopened go in the order it left them, before the ones it read (a
 // session that kept its clock without a rank, as after a status from an
-// older pass, still goes before the one that ran out); and
-// native children waiting for their parent stay behind every other
-// requested Codex session, waiting on the allowance or not, as orderRequests
-// put them. The sessions not waiting keep orderRequests' order (its live
-// lane), wherever the previous pass left them.
+// older pass, still goes before the one that ran out), the first of them in
+// the waiter lane ahead of the sessions not waiting, and one whose wait the
+// previous pass began after all of them, whatever its rank; and native children
+// waiting for their parent stay behind every other requested Codex session,
+// waiting on the allowance or not, as orderRequests put them, with no lane
+// of their own. The sessions not waiting keep orderRequests' order (its
+// live lane), wherever the previous pass left them.
 func TestLookupAllowanceWaitersRotateAndChildrenWaitingForAParentStayLast(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 1, 2, 12, 0, 0, 0, time.UTC)
@@ -402,15 +406,18 @@ func TestLookupAllowanceWaitersRotateAndChildrenWaitingForAParentStayLast(t *tes
 	orphan.NativeChild = true
 	waitingOrphan := reg("waiting-orphan")
 	waitingOrphan.NativeChild = true
+	leftOrphan := reg("left-orphan")
+	leftOrphan.NativeChild = true
 	p := &pass{
 		now:           now,
-		registrations: []archive.SessionRegistration{reg("ran-out"), reg("left-unranked"), reg("left-second"), reg("left-first"), reg("expired-read"), reg("expired-left"), reg("live"), reg("plain"), waitingOrphan, orphan},
+		registrations: []archive.SessionRegistration{reg("ran-out"), reg("left-unranked"), reg("left-second"), reg("left-first"), reg("expired-read"), reg("expired-left"), reg("live"), reg("left-joined"), reg("plain"), waitingOrphan, leftOrphan, orphan},
 		requests:      map[string]state.Request{},
 		priorDeferred: map[string]string{"ran-out": DeferredLookupAllowance, "waiting-orphan": DeferredLookupAllowance},
 		priorDeferredSince: map[string]time.Time{
-			"ran-out": recent, "left-unranked": recent, "left-second": recent, "left-first": recent, "expired-read": old, "expired-left": old, "waiting-orphan": recent,
+			"ran-out": recent, "left-unranked": recent, "left-second": recent, "left-first": recent, "expired-read": old, "expired-left": old, "waiting-orphan": recent, "left-orphan": recent, "left-joined": now.Add(-time.Minute),
 		},
-		priorUnreached: map[string]int{"left-first": 3, "left-second": 5, "expired-left": 4, "orphan": 6, "plain": 0, "live": 1},
+		priorScanAt:    now.Add(-time.Minute),
+		priorUnreached: map[string]int{"left-first": 3, "left-second": 5, "expired-left": 4, "orphan": 6, "left-orphan": 7, "left-joined": 2, "plain": 0, "live": 1},
 	}
 	for _, r := range p.registrations {
 		p.requests[r.ArchiveSessionID] = state.Request{Token: "t-" + r.ArchiveSessionID}
@@ -420,8 +427,246 @@ func TestLookupAllowanceWaitersRotateAndChildrenWaitingForAParentStayLast(t *tes
 	for _, r := range p.registrations {
 		got = append(got, r.ArchiveSessionID)
 	}
-	want := []string{"live", "plain", "left-first", "left-second", "left-unranked", "ran-out", "expired-left", "expired-read", "orphan", "waiting-orphan"}
+	want := []string{"left-first", "live", "plain", "left-second", "left-unranked", "left-joined", "ran-out", "expired-left", "expired-read", "orphan", "left-orphan", "waiting-orphan"}
 	if fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Fatalf("order=%v, want %v", got, want)
+	}
+}
+
+// The waiter lane goes only to a session the previous pass left unopened: a
+// session that ran out on it, or whose wait has lasted MaxDeferral, never
+// goes ahead of the sessions not waiting, so with neither left unopened the
+// pass starts with orderRequests' order.
+func TestWaiterLaneTakesOnlyASessionLeftUnopened(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 1, 2, 12, 0, 0, 0, time.UTC)
+	recent, old := now.Add(-time.Hour), now.Add(-MaxDeferral-time.Hour)
+	reg := func(id string) archive.SessionRegistration {
+		return archive.SessionRegistration{ArchiveSessionID: id, Harness: archive.Harness{Name: "codex"}}
+	}
+	p := &pass{
+		now:                now,
+		registrations:      []archive.SessionRegistration{reg("expired-left"), reg("ran-out"), reg("new"), reg("live")},
+		requests:           map[string]state.Request{},
+		priorDeferred:      map[string]string{"ran-out": DeferredLookupAllowance},
+		priorDeferredSince: map[string]time.Time{"ran-out": recent, "expired-left": old},
+		priorUnreached:     map[string]int{"expired-left": 0},
+	}
+	for _, r := range p.registrations {
+		p.requests[r.ArchiveSessionID] = state.Request{Token: "t-" + r.ArchiveSessionID}
+	}
+	p.orderLookupAllowanceDeferralsLast()
+	var got []string
+	for _, r := range p.registrations {
+		got = append(got, r.ArchiveSessionID)
+	}
+	want := []string{"new", "live", "ran-out", "expired-left"}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("order=%v, want %v", got, want)
+	}
+}
+
+// newSessionRunner registers imported Codex sessions with requests, each
+// started a minute after the last, and runs collector passes over them.
+type newSessionRunner struct {
+	t      *testing.T
+	local  *state.Store
+	dir    string
+	start  time.Time
+	heavy  *sync.Map
+	lookup *allowanceLookup
+}
+
+func (r newSessionRunner) save(n int, heavy bool) archive.SessionRegistration {
+	r.t.Helper()
+	reg := registration(r.t, writeTranscript(r.t, r.dir, fmt.Sprintf("codex-%d.jsonl", n), codexTranscript))
+	reg.ArchiveSessionID, reg.NativeSessionID = fmt.Sprintf("session-%d", n), fmt.Sprintf("native-%d", n)
+	reg.Origin = archive.SessionOriginImport
+	reg.SessionStartedAt, reg.RegisteredAt = r.start.Add(time.Duration(n)*time.Minute), r.start.Add(time.Duration(n)*time.Minute+time.Second)
+	if heavy {
+		r.heavy.Store(reg.TranscriptPath, true)
+	}
+	if err := r.local.SaveRegistration(reg); err != nil {
+		r.t.Fatal(err)
+	}
+	if err := r.local.SaveRequest(reg.ArchiveSessionID, "stop", reg.RegisteredAt); err != nil {
+		r.t.Fatal(err)
+	}
+	return reg
+}
+
+// spendingSources serves the built-in sources, except that a transcript in
+// heavy is read completely but uses up the rest of the lookup allowance, as
+// a new session whose lookups take what is left does, and one in refused
+// is refused as the real lookup refuses a call past the allowance, after
+// spending it: those sessions' lookups alone need more than all of it. The
+// transcript at once is refused that way the first time only.
+type spendingSources struct {
+	heavy, refused *sync.Map
+	once           string
+	onceDone       *atomic.Bool
+	lookup         *allowanceLookup
+}
+
+func (s spendingSources) LookupSources(name string) (agentapi.SourceProvider, agentapi.TranscriptFilter, bool) {
+	p, f, ok := testSources.LookupSources(name)
+	if !ok {
+		return nil, nil, false
+	}
+	return spendingProvider{SourceProvider: p, sources: s}, f, true
+}
+
+type spendingProvider struct {
+	agentapi.SourceProvider
+	sources spendingSources
+}
+
+func (p spendingProvider) OpenPass(ctx context.Context, env agentapi.SourceEnvironment) (agentapi.SourcePass, error) {
+	pass, err := p.SourceProvider.OpenPass(ctx, env)
+	if err != nil {
+		return nil, err
+	}
+	return spendingPass{SourcePass: pass, sources: p.sources}, nil
+}
+
+type spendingPass struct {
+	agentapi.SourcePass
+	sources spendingSources
+}
+
+func (p spendingPass) Read(ctx context.Context, ref agentapi.SourceRef, limits agentapi.ReadLimits) (agentapi.SourceSnapshot, error) {
+	if _, heavy := p.sources.heavy.Load(ref.Path); heavy {
+		snapshot, err := p.SourcePass.Read(ctx, ref, limits)
+		p.sources.lookup.spent.Store(true)
+		return snapshot, err
+	}
+	_, refused := p.sources.refused.Load(ref.Path)
+	if refused || (p.sources.once != "" && ref.Path == p.sources.once && !p.sources.onceDone.Swap(true)) {
+		p.sources.lookup.spent.Store(true)
+		return nil, lookupAllowanceSpent()
+	}
+	return p.SourcePass.Read(ctx, ref, limits)
+}
+
+// A Codex session waiting on the lookup allowance is still read when new
+// Codex sessions, read before it as sessions not waiting, use up every
+// pass's allowance: the waiter lane gives it the first turn with a fresh
+// allowance. Without it the session was left unopened on every pass, never
+// deferred, so it never failed either, and waited as queued for good.
+func TestWaiterIsReadWhileNewCodexSessionsUseUpEveryPassAllowance(t *testing.T) {
+	t.Parallel()
+	lookup := &allowanceLookup{}
+	r := newSessionRunner{t: t, local: newTestStore(t), dir: t.TempDir(), start: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), heavy: &sync.Map{}, lookup: lookup}
+	waiter := r.save(1, false)
+	sources := spendingSources{heavy: r.heavy, refused: &sync.Map{}, once: waiter.TranscriptPath, onceDone: &atomic.Bool{}, lookup: lookup}
+	store := storagetest.NewMemoryStore()
+	now := r.start.Add(time.Hour)
+	for pass := 1; now.Sub(r.start) <= MaxDeferral; pass++ {
+		if pass > 1 {
+			r.save(100+pass, true)
+		}
+		now = now.Add(2 * time.Hour)
+		result, err := Run(t.Context(), r.local, store, Options{Sources: sources, Parsers: testParsers, MachineID: "m", CodexRollouts: lookup, Now: func() time.Time { return now }})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if pass == 1 && result.Deferred[waiter.ArchiveSessionID] != DeferredLookupAllowance {
+			t.Fatalf("first pass result=%+v, want the session deferred for the lookup allowance", result)
+		}
+		if pass > 1 && len(result.Published) == 0 {
+			t.Fatalf("pass %d result=%+v, want the new session read too", pass, result)
+		}
+		for _, id := range result.Published {
+			if id == waiter.ArchiveSessionID {
+				return
+			}
+		}
+		if result.Errors[waiter.ArchiveSessionID] != nil {
+			return
+		}
+	}
+	t.Fatal("the waiting session was neither published nor reported failed within MaxDeferral")
+}
+
+// Two Codex sessions whose lookups alone each need more than the whole
+// allowance, waiting while new Codex sessions arrive on every pass and each
+// use up what is left of it: the waiters queue, so the heavy sessions are
+// opened in turn and the new sessions are all published, none failing; and
+// no session is left unopened past MaxDeferral without being reported
+// failed, whether the pass opened it (and deferral expiry failed it) or
+// left it unopened (and the skip failed it).
+func TestHeavyWaitersAndNewArrivalsLeaveNoSessionUnreportedPastMaxDeferral(t *testing.T) {
+	t.Parallel()
+	lookup := &allowanceLookup{}
+	r := newSessionRunner{t: t, local: newTestStore(t), dir: t.TempDir(), start: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), heavy: &sync.Map{}, lookup: lookup}
+	refused := &sync.Map{}
+	first, second := r.save(1, false), r.save(2, false)
+	refused.Store(first.TranscriptPath, true)
+	refused.Store(second.TranscriptPath, true)
+	sources := spendingSources{heavy: r.heavy, refused: refused, lookup: lookup}
+	store := storagetest.NewMemoryStore()
+	// waitingSince is when each session was first left pending.
+	waitingSince := map[string]time.Time{}
+	var arrived []string
+	opened := map[string]int{}
+	now := r.start.Add(time.Hour)
+	for pass := 1; pass <= 40; pass++ {
+		if pass > 1 {
+			arrived = append(arrived, r.save(100+pass, true).ArchiveSessionID)
+		}
+		now = now.Add(time.Hour)
+		result, err := Run(t.Context(), r.local, store, Options{Sources: sources, Parsers: testParsers, MachineID: "m", CodexRollouts: lookup, Now: func() time.Time { return now }})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for id := range result.Deferred {
+			opened[id]++
+		}
+		for _, id := range arrived {
+			if result.Errors[id] != nil {
+				t.Fatalf("pass %d: new session %s failed: %v", pass, id, result.Errors[id])
+			}
+		}
+		for _, id := range result.Published {
+			delete(waitingSince, id)
+		}
+		for _, id := range []string{first.ArchiveSessionID, second.ArchiveSessionID} {
+			if _, ok := waitingSince[id]; !ok {
+				waitingSince[id] = now
+			}
+		}
+		for id := range result.Unreached {
+			if _, ok := waitingSince[id]; !ok {
+				waitingSince[id] = now
+			}
+		}
+		for id, since := range waitingSince {
+			if now.Sub(since) <= MaxDeferral+time.Hour {
+				continue
+			}
+			if _, unreached := result.Unreached[id]; unreached && result.Errors[id] == nil {
+				t.Fatalf("pass %d: %s left unopened %v after it began waiting, not reported failed; result=%+v", pass, id, now.Sub(since), result)
+			}
+			if _, deferred := result.Deferred[id]; deferred {
+				t.Fatalf("pass %d: %s deferred %v after it began waiting, want it failed", pass, id, now.Sub(since))
+			}
+		}
+	}
+	for _, id := range []string{first.ArchiveSessionID, second.ArchiveSessionID} {
+		if _, ok := waitingSince[id]; !ok {
+			t.Fatalf("%s published, want it failing: its lookups need more than the allowance", id)
+		}
+		// Each is read on its first pass and then on its turns in the
+		// waiter lane until its wait reaches MaxDeferral.
+		if opened[id] < 4 {
+			t.Fatalf("%s opened on %d passes, want it to take the waiter lane in turn", id, opened[id])
+		}
+	}
+	// The queue drains: every session that arrived in the first 30 passes is
+	// published by the 40th.
+	for _, id := range arrived[:29] {
+		if _, waiting := waitingSince[id]; waiting {
+			t.Fatalf("new session %s still not published after 40 passes", id)
+		}
 	}
 }

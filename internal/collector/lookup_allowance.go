@@ -30,16 +30,33 @@ func (p *pass) codexLookupSpent(reg archive.SessionRegistration) bool {
 	return ok && allowance.AllowanceSpent()
 }
 
-// orderLookupAllowanceDeferralsLast moves the Codex sessions still in a run
-// of deferrals that the Codex lookup allowance may be keeping going
-// (lookupAllowanceTurn) behind every other Codex session with a pending
-// request. It only exchanges sessions between the slots requested Codex
-// sessions already hold, so every other session, including the Codex
-// sessions with nothing requested, whose quiet checks also use the
-// allowance, keeps its place in the pass's order. Native children waiting
-// for their parent stay behind every other requested session, as
-// orderRequests put them: the groups are formed among those children and
-// among the rest separately.
+// startLookupAllowanceWait starts a deferral clock (keepDeferredSince) for a
+// requested Codex session the pass leaves unopened because the lookup
+// allowance is spent (codexLookupSpent), if it has none running: the session
+// is then waiting on the allowance, so the next pass puts it in the
+// rotation among the sessions that wait (turnLeftUnopened) rather than back
+// among the ones that do not, where new Codex work ahead of it could use up
+// every pass's allowance. Its wait counts towards MaxDeferral from now; a
+// running clock is carried as it is (leaveForNextPass).
+func (p *pass) startLookupAllowanceWait(reg archive.SessionRegistration) {
+	id := reg.ArchiveSessionID
+	if p.requests[id].Token == "" {
+		return
+	}
+	if _, running := p.priorDeferredSince[id]; !running {
+		p.keepDeferredSince(id, p.now.UTC())
+	}
+}
+
+// orderLookupAllowanceDeferralsLast orders the Codex sessions with a pending
+// request by whether, and how, the Codex lookup allowance is keeping them
+// waiting (lookupAllowanceTurn). It only exchanges sessions between the
+// slots requested Codex sessions already hold, so every other session,
+// including the Codex sessions with nothing requested, whose quiet checks
+// also use the allowance, keeps its place in the pass's order. Native
+// children waiting for their parent stay behind every other requested
+// session, as orderRequests put them: the groups are formed among those
+// children and among the rest separately, and only the rest have a lane.
 //
 // The sessions not waiting keep orderRequests' order. Those waiting are
 // read in the order the previous pass left them unopened in
@@ -47,10 +64,21 @@ func (p *pass) codexLookupSpent(reg archive.SessionRegistration) bool {
 // it read first and ran out on goes to the back, and every session waiting
 // on the allowance has the first turn among them in rotation.
 //
-// Without it, one session whose lookups alone need more than the whole
-// allowance would be first of the Codex sessions on every pass: it would
-// spend the allowance and be deferred, and every Codex session after it
-// would be left for the next pass (codexLookupSpent) on every pass too.
+// The first of the slots goes to the waiter lane: the session the previous
+// pass left unopened earliest in its queue (the head of turnLeftUnopened),
+// ahead of the sessions not waiting, so it is read with a fresh allowance.
+// Only one waiter takes it a pass, and never one that ran out on the
+// previous pass (turnRanOut) or whose wait has lasted MaxDeferral
+// (turnExpired). Without the lane, new Codex work that used up every pass's
+// allowance would leave every waiting session unopened for good; with it,
+// each waiting session leads in turn, and one that needs more than the
+// whole allowance is opened, deferred, and fails at MaxDeferral like any
+// other deferral.
+//
+// Without the rest, one session whose lookups alone need more than the
+// whole allowance would be first of the Codex sessions on every pass: it
+// would spend the allowance and be deferred, and every Codex session after
+// it would be left for the next pass (codexLookupSpent) on every pass too.
 // Moved last, it still has its turn once the others have had theirs.
 func (p *pass) orderLookupAllowanceDeferralsLast() {
 	var slots []int
@@ -67,25 +95,41 @@ func (p *pass) orderLookupAllowanceDeferralsLast() {
 		turn := p.lookupAllowanceTurn(reg.ArchiveSessionID)
 		groups[waits][turn] = append(groups[waits][turn], reg)
 	}
-	k := 0
-	for _, turns := range groups {
-		for turn, group := range turns {
+	ordered := make([]archive.SessionRegistration, 0, len(slots))
+	for waits := range groups {
+		turns := &groups[waits]
+		for turn := range turns {
 			if turn != turnFirst {
-				p.rotateWaiting(group)
-			}
-			for _, reg := range group {
-				p.registrations[slots[k]] = reg
-				k++
+				p.rotateWaiting(turns[turn])
 			}
 		}
+		if lane := turns[turnLeftUnopened]; waits == 0 && len(lane) > 0 {
+			ordered = append(ordered, lane[0])
+			turns[turnLeftUnopened] = lane[1:]
+		}
+		for _, group := range turns {
+			ordered = append(ordered, group...)
+		}
+	}
+	for k, reg := range ordered {
+		p.registrations[slots[k]] = reg
 	}
 }
 
 // rotateWaiting orders sessions waiting on the allowance as the previous
 // pass left them unopened (priorUnreached), and those it did not leave
-// unopened after them in their current order.
+// unopened after them in their current order. A session whose wait the
+// previous pass began (joinedLastPass) goes after every session already
+// waiting before it: the previous pass reached it, as a session not
+// waiting, ahead of those, so its rank alone would put each newcomer at the
+// front of the queue, and a steady stream of new Codex work would take the
+// waiter lane on every pass. Behind them, the waiters keep a queue: each
+// joins at the back and leaves the front in turn.
 func (p *pass) rotateWaiting(group []archive.SessionRegistration) {
 	sort.SliceStable(group, func(i, j int) bool {
+		if aNew, bNew := p.joinedLastPass(group[i].ArchiveSessionID), p.joinedLastPass(group[j].ArchiveSessionID); aNew != bNew {
+			return bNew
+		}
 		a, aLeft := p.priorUnreached[group[i].ArchiveSessionID]
 		b, bLeft := p.priorUnreached[group[j].ArchiveSessionID]
 		if aLeft != bLeft {
@@ -95,14 +139,24 @@ func (p *pass) rotateWaiting(group []archive.SessionRegistration) {
 	})
 }
 
+// joinedLastPass reports whether the session's run of deferrals began on the
+// previous pass: its clock (priorDeferredSince) is that pass's time
+// (state.Status.LastScanAt), as startLookupAllowanceWait and deferScan
+// start one.
+func (p *pass) joinedLastPass(id string) bool {
+	since, running := p.priorDeferredSince[id]
+	return running && !p.priorScanAt.IsZero() && !since.Before(p.priorScanAt)
+}
+
 // The groups orderLookupAllowanceDeferralsLast puts requested Codex sessions
-// in, first to last.
+// in, first to last, but for the waiter lane (see turnLeftUnopened).
 const (
 	// turnFirst: not waiting on the allowance.
 	turnFirst = iota
 	// turnLeftUnopened: the previous pass kept the session's clock without
 	// deferring it, which it does for a session it left unopened
-	// (codexLookupSpent, or an early end).
+	// (codexLookupSpent, which starts a clock if none runs, or an early
+	// end). The first of them takes the waiter lane, ahead of turnFirst.
 	turnLeftUnopened
 	// turnRanOut: the previous pass read the session and deferred it for
 	// DeferredLookupAllowance. At most one session a pass ends this way;

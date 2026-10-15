@@ -83,11 +83,14 @@ find none say so without creating the data directory.
   failed, and the Codex sessions after it wait for the next pass, which has
   a fresh allowance. On the following passes that session is read after
   the other Codex sessions, so one session that needs the whole allowance
-  does not hold the rest back. Several sessions waiting this way take
-  turns going first among themselves, so one that needs the whole
-  allowance cannot hold another back for good; one still not read after 24
-  hours is reported as failed and waits behind them all. Claude Code and
-  Cursor sessions in the same pass are not held up.
+  does not hold the rest back. The Codex sessions left waiting form a
+  queue: each pass reads the one at its front first, before any other
+  Codex session, so new Codex sessions that use up the allowance on every
+  pass do not keep the waiting ones from their turn. A session still
+  waiting after 24 hours (more Codex work than the allowance can cover for
+  that long) is reported as failed, whether the pass reads it or leaves it
+  for the next pass, and from then on waits behind all the others. Claude Code and Cursor sessions in the same pass are not
+  held up.
 
   None of these is a failure, and none changes the exit code. Claude Code
   reports some background agents with a transcript it never writes; such a
