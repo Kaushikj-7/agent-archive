@@ -51,7 +51,7 @@ func TestSearchBrowserKeysAndLinesKeepExactBodyReference(t *testing.T) {
 			if code != 0 {
 				t.Fatalf("%d %s %s", code, errOut, out)
 			}
-			for _, want := range []string{id, "1. " + shortSessionID(id), jsonPage.Results[0].Harness + " / " + jsonPage.Results[0].Session, "Reference:", "[selected · assistant]", "visible", "Hand off current session", "no further matching body passage."} {
+			for _, want := range []string{id, "1. " + shortSessionID(id), jsonPage.Results[0].Harness + " / " + jsonPage.Results[0].Session, "Reference:", "[selected · assistant]", "visible", "Hand off current session", "no further matching body passage"} {
 				if !strings.Contains(out, want) {
 					t.Errorf("missing %q: %s", want, out)
 				}

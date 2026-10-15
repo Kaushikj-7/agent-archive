@@ -388,7 +388,7 @@ func (s *contentSearchBrowser) moveMatch(ctx context.Context, hit search.Hit, re
 	}
 	if next < 0 || next >= len(nav.page.References) {
 		if cursor == "" {
-			return nil, errors.New("no further matching body passage.")
+			return nil, errors.New("no further matching body passage")
 		}
 		page, err := s.matchPage(ctx, hit, cursor)
 		if err != nil {
@@ -401,7 +401,7 @@ func (s *contentSearchBrowser) moveMatch(ctx context.Context, hit search.Hit, re
 		}
 	}
 	if next < 0 || next >= len(nav.page.References) {
-		return nil, errors.New("no matching body passage.")
+		return nil, errors.New("no matching body passage")
 	}
 	nav.position = next
 	selected := nav.page.References[next]

@@ -76,10 +76,10 @@ const searchBrowserPTYScript = ptyKeysHarness + `try:
             else:
                 start = len(output)
                 os.write(master, b'n')
-                wait_for(b'no further matching body passage.', start)
+                wait_for(b'no further matching body passage', start)
                 start = len(output)
                 os.write(master, b'p')
-                wait_for(b'no further matching body passage.', start)
+                wait_for(b'no further matching body passage', start)
             start = len(output)
             os.write(master, b'b')
             wait_for(b'Content query:', start)

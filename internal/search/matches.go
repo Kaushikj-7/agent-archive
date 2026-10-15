@@ -143,9 +143,13 @@ func decodeMatchCursor(token string, generation int64, identity, key string) (ma
 // matchPageSQL is the concrete query used by Matches, shared with its actual
 // EXPLAIN witness so performance evidence cannot drift to a different query.
 func matchPageSQL(q Query, expression, harness, session string, c matchCursor, continued bool) (string, []any) {
+	// One range-constrained MATCH cursor avoids reopening FTS for each member.
+	// Exact session predicates retain correctness even when body IDs are sparse.
 	text := matchingQuery + ` AND s.harness=? AND s.session_id=? AND p.title_hit=0
+ AND search_fts.rowid >= (SELECT min(id) FROM search_passages WHERE session=? AND title_hit=0)
+ AND search_fts.rowid <= (SELECT max(id) FROM search_passages WHERE session=? AND title_hit=0)
 ) SELECT pid,score,role_rank FROM matching WHERE title_hit=0 AND session=?`
-	args := append(queryArgs(expression, q), harness, session, harness+"/"+session)
+	args := append(queryArgs(expression, q), harness, session, harness+"/"+session, harness+"/"+session, harness+"/"+session)
 	if continued {
 		comparison := ">"
 		if c.Reverse {

@@ -20,7 +20,16 @@ func TestMatchPagesPreserveScopeRoleOrderAndGeneration(t *testing.T) {
 		}
 		p.Passages = append(p.Passages, Passage{Reference: Reference{Source: p.Source, Record: i, Start: 0, End: 6}, Role: role, Text: "needle"})
 	}
-	if _, err := s.Replace(t.Context(), m, []Projection{p}); err != nil {
+	// Body references may belong to both active and retained source revisions.
+	historical := p
+	historical.Source.Reference.Key = "preserved"
+	historical.Source.Reference.SHA256 = strings.Repeat("b", 64)
+	historical.Passages = append([]Passage(nil), p.Passages[25:]...)
+	p.Passages = p.Passages[:25]
+	for i := range historical.Passages {
+		historical.Passages[i].Reference.Source = historical.Source
+	}
+	if _, err := s.Replace(t.Context(), m, []Projection{p, historical}); err != nil {
 		t.Fatal(err)
 	}
 	// A colliding session ID in another harness must not leak into navigation.
@@ -29,6 +38,9 @@ func TestMatchPagesPreserveScopeRoleOrderAndGeneration(t *testing.T) {
 	if _, err := s.Replace(t.Context(), other, []Projection{projection}); err != nil {
 		t.Fatal(err)
 	}
+	// Move one retained member beyond the other session's rows: the range must
+	// remain exact without assuming that a session's row IDs are contiguous.
+	widenSessionMatchFixture(t, s, "codex/same-id")
 	q := Query{Text: "needle", Scope: Scope{Restricted: true, ProjectIDs: []string{"p"}}}
 	results, err := s.Search(t.Context(), q)
 	if err != nil {
@@ -48,6 +60,9 @@ func TestMatchPagesPreserveScopeRoleOrderAndGeneration(t *testing.T) {
 		}
 		pages = append(pages, page.References)
 		for _, ref := range page.References {
+			if ref.Record >= 25 && ref.Source.Reference.Key != "preserved" {
+				t.Fatalf("retained source reference lost: %+v", ref)
+			}
 			if ref.Source.SessionID != "same-id" {
 				t.Fatalf("wrong session: %+v", ref)
 			}
@@ -105,34 +120,73 @@ func TestMatchPagesPreserveScopeRoleOrderAndGeneration(t *testing.T) {
 }
 
 func BenchmarkSessionMatchPages(b *testing.B) {
-	s := openTest(b)
-	benchmarkCorpus(b, s, 250, 45)
-	q := Query{Text: "common"}
-	results, err := s.Search(b.Context(), q)
-	if err != nil {
-		b.Fatal(err)
-	}
-	first, err := s.Matches(b.Context(), q, "codex", "session-000000", results.Generation, "")
-	if err != nil {
-		b.Fatal(err)
-	}
-	second, err := s.Matches(b.Context(), q, "codex", "session-000000", results.Generation, first.Next)
-	if err != nil {
-		b.Fatal(err)
-	}
-	for _, tc := range []struct{ name, cursor string }{{"first", ""}, {"forward", first.Next}, {"reverse", second.Previous}} {
-		b.Run(tc.name, func(b *testing.B) {
-			b.ReportAllocs()
-			for b.Loop() {
-				page, err := s.Matches(b.Context(), q, "codex", "session-000000", results.Generation, tc.cursor)
-				if err != nil || len(page.References) != 20 {
-					b.Fatalf("%+v %v", page, err)
-				}
+	for _, fixture := range []struct {
+		count   int
+		widened bool
+	}{{10, false}, {250, false}, {250, true}} {
+		b.Run(fmt.Sprintf("sessions%d/widened%v", fixture.count, fixture.widened), func(b *testing.B) {
+			count := fixture.count
+			s := openTest(b)
+			benchmarkCorpus(b, s, count, 45)
+			if fixture.widened {
+				widenSessionMatchFixture(b, s, "codex/session-000000")
 			}
-			b.ReportMetric(11250, "corpus_passages")
-			b.ReportMetric(20, "retained_refs/op")
-			b.ReportMetric(0, "source_GET/op")
+			q := Query{Text: "common"}
+			results, err := s.Search(b.Context(), q)
+			if err != nil {
+				b.Fatal(err)
+			}
+			first, err := s.Matches(b.Context(), q, "codex", "session-000000", results.Generation, "")
+			if err != nil {
+				b.Fatal(err)
+			}
+			second, err := s.Matches(b.Context(), q, "codex", "session-000000", results.Generation, first.Next)
+			if err != nil {
+				b.Fatal(err)
+			}
+			for _, tc := range []struct{ name, cursor string }{{"first", ""}, {"forward", first.Next}, {"reverse", second.Previous}} {
+				b.Run(tc.name, func(b *testing.B) {
+					b.ReportAllocs()
+					for b.Loop() {
+						page, err := s.Matches(b.Context(), q, "codex", "session-000000", results.Generation, tc.cursor)
+						if err != nil || len(page.References) != 20 {
+							b.Fatalf("%+v %v", page, err)
+						}
+					}
+					b.ReportMetric(float64(count*45), "corpus_passages")
+					b.ReportMetric(20, "retained_refs/op")
+					b.ReportMetric(0, "source_GET/op")
+				})
+			}
 		})
+	}
+}
+
+// widenSessionMatchFixture preserves all text/reference/membership bytes while
+// moving one internal member ID beyond unrelated rows. This models a sparse
+// membership span without relying on today's atomic replacement allocation.
+func widenSessionMatchFixture(tb testing.TB, s *Store, session string) {
+	tb.Helper()
+	tx, err := s.db.BeginTx(tb.Context(), nil)
+	if err != nil {
+		tb.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	var member, last int64
+	if err = tx.QueryRowContext(tb.Context(), "SELECT max(id) FROM search_passages WHERE session=? AND title_hit=0", session).Scan(&member); err != nil {
+		tb.Fatal(err)
+	}
+	if err = tx.QueryRowContext(tb.Context(), "SELECT max(id) FROM search_passages").Scan(&last); err != nil {
+		tb.Fatal(err)
+	}
+	if _, err = tx.ExecContext(tb.Context(), "UPDATE search_passages SET id=? WHERE id=?", last+1, member); err != nil {
+		tb.Fatal(err)
+	}
+	if _, err = tx.ExecContext(tb.Context(), "UPDATE search_fts SET rowid=? WHERE rowid=?", last+1, member); err != nil {
+		tb.Fatal(err)
+	}
+	if err = tx.Commit(); err != nil {
+		tb.Fatal(err)
 	}
 }
 
@@ -185,8 +239,9 @@ func TestSessionMatchQueryPlanWithUnrelatedCommonHits(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Logf("11250 common matching passages; selected session45; retained refs20; continuation=%v reverse=%v\n%s", token != "", cursor.Reverse, strings.Join(details, "\n"))
-		if !strings.Contains(strings.Join(details, " "), "VIRTUAL TABLE INDEX") {
-			t.Fatal("production match query did not use FTS", details)
+		joined := strings.Join(details, " ")
+		if !strings.Contains(joined, "VIRTUAL TABLE INDEX 0:M2><") || !strings.Contains(joined, "search_membership (session=?)") {
+			t.Fatal("production match query lost membership bounds or its single range-constrained FTS cursor", details)
 		}
 	}
 }

@@ -164,6 +164,14 @@ func runHandoffWithInput(args []string, stdin io.Reader, stdout, stderr io.Write
 			return 1
 		}
 	}
+	return finishHandoff(opts, target, home, interactive, input, stdin, stdout, stderr, env)
+}
+
+// finishHandoff starts only after source resolution; the caller retains its
+// read cleanup until delivery returns and all prompts share the original input.
+func finishHandoff(opts handoffOptions, target handoffTarget, home string, interactive bool, input *typedInput, stdin io.Reader, stdout, stderr io.Writer, env handoffCommandDependencies) int {
+	answers := input.answers
+	var err error
 	// Reading is complete. Release signal ownership before destination
 	// prompts and launched agents take over terminal interaction.
 	if opts.readCtx != nil {

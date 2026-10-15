@@ -151,6 +151,12 @@ query remains fixed, including phrase spacing. Metadata `/` filtering is disable
 in this mode. Results preserve engine relevance and the requested scope; no
 project regrouping or automatic scope widening occurs.
 
+Common-word queries can be expensive even with a small --limit; prefer more
+selective terms and project scope. Match navigation can also cost more when a
+session's indexed membership is spread across older revisions. Small retained
+pages and the finite query timeout do not imply work proportional to the 20
+references retained for navigation.
+
 Each row shows the best snippet and any known other indexed title/body matches.
 These are indexed passages, including overlap, rather than text occurrences.
 Enter a listed number or unique short ID to open its exact source-bound context.

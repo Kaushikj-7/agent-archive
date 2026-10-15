@@ -657,21 +657,8 @@ func (l *sessionPicker) pickRowsContext(ctx context.Context, p *prompter, stdout
 			}
 		}
 		paged := len(pages) > 1
-		l.printHeading(stdout, width)
-		if paged {
-			l.start = pages[page].start
-			if err := printSessionGroups(stdout, pageSessionGroups(v.groups, pages[page]), v.formatFor(width)); err != nil {
-				return listRow{}, false, err
-			}
-		} else {
-			l.start = 0
-			if err := printSessionGroups(stdout, v.groups, v.formatFor(width)); err != nil {
-				return listRow{}, false, err
-			}
-		}
-		terminal.Print(stdout, l.displayFooter(v.footer, width))
-		if paged {
-			terminal.Println(stdout, pageLine(page, len(pages), len(v.rows)))
+		if err := l.printLinePickerPage(stdout, v, pages, page, width); err != nil {
+			return listRow{}, false, err
 		}
 		if l.emptyWithoutAction(rows) {
 			return listRow{}, false, nil
@@ -696,13 +683,7 @@ func (l *sessionPicker) pickRowsContext(ctx context.Context, p *prompter, stdout
 			}
 			l.prepareSearchContext(ctx, rows)
 			answer = strings.TrimSpace(answer)
-			if l.contentSearch != nil && strings.EqualFold(answer, "r") {
-				l.contentSearch.rerun = true
-				l.loadedOlder = true
-				return listRow{}, false, nil
-			}
-			if l.olderLine(answer) {
-				l.loadedOlder = true
+			if l.loadFromLine(answer) {
 				return listRow{}, false, nil
 			}
 			answer, err = l.pendingNumberAnswerContext(ctx, p, rows, answer)
@@ -758,6 +739,42 @@ func (l *sessionPicker) pickRowsContext(ctx context.Context, p *prompter, stdout
 			l.clear()
 		}
 	}
+}
+
+func (l *sessionPicker) loadFromLine(answer string) bool {
+	if l.contentSearch != nil && strings.EqualFold(answer, "r") {
+		l.contentSearch.rerun = true
+		l.loadedOlder = true
+		return true
+	}
+	if l.olderLine(answer) {
+		l.loadedOlder = true
+		return true
+	}
+	return false
+}
+
+// printLinePickerPage keeps ordinary and search line-mode page rendering on
+// the shared layout, including the current page start and bounded footer.
+func (l *sessionPicker) printLinePickerPage(stdout io.Writer, v *pickerView, pages []pickerPage, page, width int) error {
+	paged := len(pages) > 1
+	l.printHeading(stdout, width)
+	if paged {
+		l.start = pages[page].start
+		if err := printSessionGroups(stdout, pageSessionGroups(v.groups, pages[page]), v.formatFor(width)); err != nil {
+			return err
+		}
+	} else {
+		l.start = 0
+		if err := printSessionGroups(stdout, v.groups, v.formatFor(width)); err != nil {
+			return err
+		}
+	}
+	terminal.Print(stdout, l.displayFooter(v.footer, width))
+	if paged {
+		terminal.Println(stdout, pageLine(page, len(pages), len(v.rows)))
+	}
+	return nil
 }
 
 // isPageWord reports whether an answer asks for another page of the table.
