@@ -99,6 +99,47 @@ class ReportTests(unittest.TestCase):
         value['workflows'][0]['jobs']['jobs'][0].update(runner_id=0, runner_name='')
         self.assertFalse(timing.sample_report(value)['qualifying'])
 
+    def test_unallocated_skipped_backwards_api_timestamps_are_diagnostic(self):
+        # Exact untouched API row from run38674259669; completion precedes start.
+        job = {'id': 116224141593, 'name': 'checker-benchmark', 'status': 'completed',
+               'conclusion': 'skipped', 'runner_id': None, 'runner_name': None, 'steps': [],
+               'created_at': '2026-10-15T03:03:32Z', 'started_at': '2026-10-15T03:03:32Z',
+               'completed_at': '2026-10-15T03:03:31Z'}
+        value = sample()
+        value['workflows'][1]['jobs']['jobs'].append(job)
+        value['workflows'][1]['jobs']['total_count'] = 2
+        result = timing.sample_report(value)
+        self.assertTrue(result['qualifying'])
+        self.assertTrue(result['runner_minutes_complete'])
+        self.assertAlmostEqual(result['actual_runner_minutes'], 220/60)
+        row = result['jobs'][-1]
+        self.assertEqual(row['runner_seconds'], 0)
+        self.assertIsNone(row['seconds'])
+        self.assertEqual(row['started_at'], job['started_at'])
+        self.assertEqual(row['completed_at'], job['completed_at'])
+        self.assertEqual(row['timestamp_issues'], ['job interval: timestamps run backwards'])
+        for field, invalid in (('started_at', None), ('completed_at', None),
+                               ('started_at', 'invalid'), ('completed_at', 'invalid')):
+            changed = copy.deepcopy(value)
+            changed['workflows'][1]['jobs']['jobs'][-1][field] = invalid
+            result = timing.sample_report(changed)
+            with self.subTest(field=field, invalid=invalid):
+                self.assertTrue(result['qualifying'])
+                self.assertEqual(result['jobs'][-1]['runner_seconds'], 0)
+                self.assertIsNone(result['jobs'][-1]['seconds'])
+                self.assertTrue(result['jobs'][-1]['timestamp_issues'])
+        value['required_jobs']['Levenshtein'].append('checker-benchmark')
+        self.assertFalse(timing.sample_report(value)['qualifying'])
+
+    def test_allocated_and_unknown_backwards_timestamps_still_fail_closed(self):
+        for metadata in ({'runner_id': 42, 'runner_name': 'runner'}, {}):
+            for start in ('2026-10-14T00:03:00Z', 'invalid'):
+                value = sample()
+                value['workflows'][0]['jobs']['jobs'][0].update(
+                    metadata, conclusion='cancelled', started_at=start)
+                with self.subTest(metadata=metadata, start=start), self.assertRaises(ValueError):
+                    timing.sample_report(value)
+
     def test_missing_cancelled_failed_skipped_and_cold(self):
         for state in ('failure', 'cancelled', 'skipped', None):
             value = sample()

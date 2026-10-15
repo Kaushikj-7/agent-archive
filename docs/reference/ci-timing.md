@@ -474,8 +474,11 @@ Runner-minute reports distinguish a job's API timestamp interval from runner
 allocation. An explicitly unallocated cancelled/skipped job (`runner_id: 0`,
 empty runner name and no steps, or explicit null allocation on a skipped job)
 contributes zero runner seconds even when the API supplies cancellation placeholder
-timestamps; those intervals stay visible
-as job `seconds`. Allocated cancelled/failed jobs retain their elapsed usage.
+timestamps; valid intervals stay visible as job `seconds`. Invalid or missing
+unallocated intervals become null diagnostics with the original `started_at`
+and `completed_at` retained. Optional skipped placeholders do not invalidate an
+otherwise qualifying sample. Allocated or unknown jobs still reject malformed
+or backwards timestamps. Allocated cancelled/failed jobs retain elapsed usage.
 Unknown allocation or missing allocated-job timestamps makes the total null and
 `runner_minutes_complete` false; `known_runner_minutes` is only the observed
 subtotal. Older successful snapshots without allocation metadata retain an

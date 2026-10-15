@@ -68,6 +68,18 @@ def runner_usage(job, seconds):
     return 'unknown', None
 
 
+def unallocated_interval(start, end, label, diagnostics):
+    """Keep invalid API placeholders diagnostic without inventing runtime."""
+    if not start or not end:
+        diagnostics.append(label + ': missing timestamps')
+        return None
+    try:
+        return elapsed(start, end)
+    except (ValueError, TypeError, AttributeError) as error:
+        diagnostics.append(label + ': ' + str(error))
+        return None
+
+
 def sample_report(sample):
     issues, jobs, workflows, identities = [], [], [], []
     required = sample['required_jobs']
@@ -101,11 +113,21 @@ def sample_report(sample):
             selected = job['name'] in required[name]
             if selected and (job.get('status') != 'completed' or job.get('conclusion') != 'success'):
                 issues.append(name + ': required job not successful ' + job['name'])
+            allocation, _ = runner_usage(job, None)
+            timestamp_issues = []
             seconds = None
-            if job.get('started_at') and job.get('completed_at'):
-                seconds = elapsed(job['started_at'], job['completed_at'])
-            elif selected:
-                issues.append(name + ': missing job timestamps ' + job['name'])
+            if allocation == 'unallocated':
+                seconds = unallocated_interval(job.get('started_at'), job.get('completed_at'),
+                                               'job interval', timestamp_issues)
+                start_delay = unallocated_interval(run['created_at'], job.get('started_at'),
+                                                   'job start delay', timestamp_issues)
+            else:
+                if job.get('started_at') and job.get('completed_at'):
+                    seconds = elapsed(job['started_at'], job['completed_at'])
+                elif selected:
+                    issues.append(name + ': missing job timestamps ' + job['name'])
+                start_delay = (elapsed(run['created_at'], job['started_at'])
+                               if job.get('started_at') else None)
             allocation, runner_seconds = runner_usage(job, seconds)
             if allocation == 'unknown':
                 issues.append(name + ': runner allocation unknown ' + job['name'])
@@ -120,7 +142,9 @@ def sample_report(sample):
             jobs.append({'workflow': name, 'name': job['name'], 'required': selected,
                          'conclusion': job.get('conclusion'), 'seconds': seconds,
                          'runner_allocation': allocation, 'runner_seconds': runner_seconds,
-                         'run_created_to_job_start_seconds': elapsed(run['created_at'], job['started_at']) if job.get('started_at') else None,
+                         'run_created_to_job_start_seconds': start_delay,
+                         'started_at': job.get('started_at'), 'completed_at': job.get('completed_at'),
+                         'timestamp_issues': timestamp_issues,
                          'runner_name': job.get('runner_name'), 'labels': job.get('labels', []),
                          'steps': steps})
         workflows.append({'name': name, 'id': run['id'], 'attempt': run.get('run_attempt', 1),
