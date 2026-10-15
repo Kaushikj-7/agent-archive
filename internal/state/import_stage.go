@@ -349,7 +349,7 @@ func (p ImportStage) Validate(ctx context.Context, reg archive.SessionRegistrati
 }
 
 func (p ImportStage) validateOwner(reg archive.SessionRegistration) error {
-	if reg.StagedImportSHA256 != "" && reg.StagedImportSHA256 != p.SHA256 || p.Registration.ArchiveSessionID != reg.ArchiveSessionID || p.Registration.NativeSessionID != reg.NativeSessionID || p.Registration.Harness.Name != reg.Harness.Name || p.Registration.ProjectID != reg.ProjectID || p.Registration.ProjectRoot != reg.ProjectRoot || !sameHistoricalProjectProof(p.Registration, reg) || !sameImportParentProof(p.Registration, reg) || p.Registration.DestinationID != reg.DestinationID || !p.Registration.InBatch(reg.ImportBatch.Recorded()) || p.Bundle.ArchiveSessionID != reg.ArchiveSessionID || p.Bundle.NativeSessionID != reg.NativeSessionID || p.Bundle.ProjectID != reg.ProjectID || p.Bundle.Capture.Harness.Name != reg.Harness.Name {
+	if reg.StagedImportSHA256 != "" && reg.StagedImportSHA256 != p.SHA256 || p.Registration.ArchiveSessionID != reg.ArchiveSessionID || p.Registration.NativeSessionID != reg.NativeSessionID || p.Registration.Harness.Name != reg.Harness.Name || p.Registration.ProjectID != reg.ProjectID || p.Registration.ProjectRoot != reg.ProjectRoot || !sameHistoricalProjectProof(p.Registration, reg) || !sameImportParentProof(p.Registration, reg) || !sameNativeImportBinding(p.Registration.NativeBinding, reg.NativeBinding) || p.Registration.DestinationID != reg.DestinationID || !p.Registration.InBatch(reg.ImportBatch.Recorded()) || p.Bundle.ArchiveSessionID != reg.ArchiveSessionID || p.Bundle.NativeSessionID != reg.NativeSessionID || p.Bundle.ProjectID != reg.ProjectID || p.Bundle.Capture.Harness.Name != reg.Harness.Name {
 		return ErrDurableStorageRecovery
 	}
 	if len(p.Preserved) > archive.MaxHistorySpans {
@@ -409,6 +409,11 @@ func (s *Store) SaveImportSourceSet(ctx context.Context, reg archive.SessionRegi
 }
 
 func (s *Store) savePreparedImportStage(ctx context.Context, reg archive.SessionRegistration, stage ImportStage) (string, error) {
+	if reg.NativeBinding != nil {
+		if err := s.checkNativeRegistrationWrite(s.registrationPath(reg.ArchiveSessionID), reg); err != nil {
+			return "", err
+		}
+	}
 	closeWire, err := s.ownStageValidationWire(ctx, stage)
 	if err != nil {
 		return "", err
@@ -1217,4 +1222,8 @@ func (s *Store) commitFreshSettledStage(ctx context.Context, g config.DurableSto
 
 func unsupportedSettledStageOwner(p ImportStage, reg archive.SessionRegistration) bool {
 	return p.CursorFacts == nil || !settledCursorFactShape(*p.CursorFacts) || (p.Bundle.ArchiveSessionID != "" && (!readySelectionOwnerMatches(reg, p.Bundle) || p.Bundle.Capture.Harness != reg.Harness || p.Bundle.PreviousGenerationID != "" || len(p.Bundle.LinkedSessions) != 0 || len(p.Bundle.SupplementalEvidence) != 0 || p.Bundle.Capture.SourceFormat != "cursor-composer")) || reg.Harness.Name != archive.HarnessCursor || reg.SourceKind != archive.SourceKindCursorSQLite || reg.SourceKey != reg.NativeSessionID || reg.ParentSessionID != "" || reg.NativeChild || reg.ParentNativeSessionID != "" || reg.NativeRootSessionID != "" || reg.NativeSourceHome != "" || reg.PreviousGenerationID != "" || reg.CaptureFrozen || reg.CodexBinding != nil || reg.CodexAdmission != nil || len(p.Children) != 0 || reg.HistoricalProject != nil
+}
+
+func sameNativeImportBinding(a, b *archive.NativeSourceBinding) bool {
+	return a.PreservesFacts(b) && b.PreservesFacts(a)
 }

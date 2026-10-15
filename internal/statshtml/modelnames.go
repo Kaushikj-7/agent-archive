@@ -10,10 +10,12 @@ import (
 	"github.com/wangjohn/agent-archive/internal/stats"
 )
 
-// publicModels is the built-in price table: the only authority on which model
-// names are public. A person's own price file (--prices) can add a model of
-// their own to the run, but that must not make its name shareable.
-var publicModels = sync.OnceValue(stats.DefaultPriceTable)
+// publicModelFamily snapshots the built-in price table, the only authority
+// on which model names are public. A person's own price file (--prices) can add
+// a model of their own to the run, but that must not make its name shareable.
+var publicModelFamily = sync.OnceValue(func() func(string) (string, bool) {
+	return stats.DefaultPriceTable().FamilyLookup()
+})
 
 // modelNamer decides how the model names of one page are shown. A model id can
 // name a client (a fine-tune "ft:gpt-4o:acme::abc", a deployment called
@@ -67,12 +69,12 @@ func publicRow(r stats.ModelRow) bool {
 	if len(r.Models) == 0 {
 		return isPlaceholderModel(r.Label)
 	}
-	table := publicModels()
+	familyFor := publicModelFamily()
 	for _, id := range r.Models {
 		if isPlaceholderModel(id) && id == r.Label {
 			continue
 		}
-		family, ok := table.Family(id)
+		family, ok := familyFor(id)
 		if !ok || family != r.Label {
 			return false
 		}
@@ -151,7 +153,7 @@ func (m *modelNamer) id(id string) string {
 	if m.reveal {
 		return clean(id)
 	}
-	if family, ok := publicModels().Family(id); ok {
+	if family, ok := publicModelFamily()(id); ok {
 		if carriesOwnText(id) {
 			return family
 		}
