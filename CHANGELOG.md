@@ -11,6 +11,17 @@ follow [Semantic Versioning](https://semver.org/).
   allowing foreground imports to publish verified sessions and continue admission.
   Already saturated retained evidence still requires separate recovery.
 
+- Stop a new session from waiting for hours behind a long upload queue.
+  Each collection pass now starts with the most recently started session
+  that was not imported (a session before its own subagents), and gives
+  such sessions one slot in every four; the rest still
+  go oldest first, so imports keep uploading their oldest sessions first.
+  Codex subagent sessions whose parent session is not registered yet go
+  after every other queued session. A session a pass runs out of time
+  before reaching is now listed by `status` as "queued for the next pass,
+  N ahead" instead of "waiting for its first upload", `sync` adds "N left
+  for the next pass" to its summary, and `status --json` reports them in
+  `collector.unreached_sessions` and as the `queued` uploading state.
 - The session list fits your terminal: every session is one line that never
   wraps, as `#`, the agent (a colored dot and "Claude", "Codex" or "Cursor"),
   a readable title cut at a word, the project, the PR and a short time ("2m",
