@@ -719,9 +719,11 @@ func TestAcceptedLookupQueueRotatesWithoutChangingRejectedWork(t *testing.T) {
 	run := func(at time.Time) Result {
 		t.Helper()
 		result, err := Run(t.Context(), local, store, Options{Sources: allowanceSpendingSources{path: heavy.TranscriptPath, lookup: lookup}, Parsers: testParsers, MachineID: "m", CodexRollouts: lookup,
-			AcceptSession: func(reg archive.SessionRegistration) bool { return reg.ArchiveSessionID != rejected.ArchiveSessionID && reg.ArchiveSessionID != rejectedTop.ArchiveSessionID },
+			AcceptSession: func(reg archive.SessionRegistration) bool {
+				return reg.ArchiveSessionID != rejected.ArchiveSessionID && reg.ArchiveSessionID != rejectedTop.ArchiveSessionID
+			},
 			Progress: func(progress Progress) { published = published || progress.Published },
-			Stop: func() bool { return stopAfterPublish && published }, Now: func() time.Time { return at }})
+			Stop:     func() bool { return stopAfterPublish && published }, Now: func() time.Time { return at }})
 		if err != nil {
 			t.Fatal(err)
 		}
