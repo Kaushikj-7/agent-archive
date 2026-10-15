@@ -27,7 +27,7 @@ func TestInitialAdmissionUsesOriginalCwdAfterPhysicalRevision(t *testing.T) {
 	if err != nil {
 		t.Fatalf("original admission refused for revised cwd: %v", err)
 	}
-	if evidence.Binding.Cwd != root || evidence.Binding.SelectedCwd != root+"/different" || evidence.Binding.PhysicalRolloutID != rolloutC {
+	if evidence.Binding.Codex.Cwd != root || evidence.Binding.Codex.SelectedCwd != root+"/different" || evidence.Binding.Codex.PhysicalRolloutID != rolloutC {
 		t.Fatal("original and selected physical facts conflated")
 	}
 	admission.Cwd = root + "/wrong"

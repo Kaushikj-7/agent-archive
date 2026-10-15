@@ -6,6 +6,22 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Stop failing every Codex session in a pass that found many new Codex
+  files. Finding where a Codex thread's rollouts are has a time allowance
+  per pass, and discovery could use all of it, so each Codex session the
+  collector then read failed ("filter transcript: source limit") while
+  Claude Code sessions published. The collector now has its own allowance.
+  When that runs out too, the Codex session being read is put off until the
+  next pass instead of failing (`sync` and `status` say "left for the next
+  pass after this pass's time for finding Codex rollouts ran out";
+  `deferred_sessions` code `lookup_allowance`), and the pass's remaining
+  Codex sessions are left for the next pass without being opened, so they
+  no longer slow the rest of the pass. A Codex session whose lookup is cut
+  off part way when the allowance runs out is put off the same way rather
+  than failing with "context deadline exceeded"; a native index read cut
+  off by a deadline is read again later in the pass instead of being
+  treated as unavailable; and discovery's lookups are charged to the
+  allowance once, not twice.
 - Stop a new session from waiting for hours behind a long upload queue.
   Each collection pass now starts with the most recently started session
   that was not imported (a session before its own subagents), and gives
@@ -17,6 +33,8 @@ follow [Semantic Versioning](https://semver.org/).
   N ahead" instead of "waiting for its first upload", `sync` adds "N left
   for the next pass" to its summary, and `status --json` reports them in
   `collector.unreached_sessions` and as the `queued` uploading state.
+- Add inert native source authority contracts and permanent writer protection, preserving existing agent capture behavior. No Muse capture operations are enabled.
+
 - The session list fits your terminal: every session is one line that never
   wraps, as `#`, the agent (a colored dot and "Claude", "Codex" or "Cursor"),
   a readable title cut at a word, the project, the PR and a short time ("2m",
