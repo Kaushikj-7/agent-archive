@@ -1,6 +1,7 @@
 package collector
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
@@ -45,7 +46,8 @@ func (*readBudgetDeferralError) deferralReason() string { return DeferredReadBud
 // cannot hide as "rechecking"
 // for good. A pass that scans the session without deferring it (it fails
 // otherwise, or succeeds) starts the clock again; a pass that ends before
-// scanning it leaves the clock running.
+// scanning it, or leaves it unopened, leaves the clock running, and fails it
+// once the clock has run for MaxDeferral (leaveForNextPass).
 const MaxDeferral = 24 * time.Hour
 
 // DeferralExpiredProblem prefixes the error of a session whose deferral
@@ -53,12 +55,18 @@ const MaxDeferral = 24 * time.Hour
 var DeferralExpiredProblem = fmt.Sprintf("still not read after %d hours of retries", int(MaxDeferral/time.Hour))
 
 // loadDeferredSince reads when each session's run of deferred scans began
-// (state.Status.DeferredSince) from the previous pass's status. A status
+// (state.Status.DeferredSince), why the previous pass deferred each
+// (state.Status.DeferredSessions), where it left each it did not reach
+// (state.Status.UnreachedSessions), and when it ran (state.Status.LastScanAt),
+// from the previous pass's status. A status
 // that cannot be read starts every clock again, delaying a failure by at
 // most MaxDeferral.
 func (p *pass) loadDeferredSince() {
 	if previous, err := p.local.LoadStatus(); err == nil {
 		p.priorDeferredSince = previous.DeferredSince
+		p.priorDeferred = previous.DeferredSessions
+		p.priorUnreached = previous.UnreachedSessions
+		p.priorScanAt = previous.LastScanAt
 	}
 }
 
@@ -90,6 +98,10 @@ func (p *pass) carryDeferredSince(id string) {
 		p.keepDeferredSince(id, since)
 	}
 }
+
+// errLeftUnopened is the cause leaveForNextPass gives a session it fails for
+// having been left unopened past MaxDeferral.
+var errLeftUnopened = errors.New("left for the next pass without being opened")
 
 // deferralReason reports whether a scan's error only defers the session, and
 // why: every failure it joins is a source refusal the next pass is expected
