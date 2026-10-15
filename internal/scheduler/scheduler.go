@@ -56,11 +56,36 @@ func (s JobState) Active() bool { return s == Loaded || s == Running }
 // Installation is what an adapter derives a job's Ref from: the data
 // directory one installation of the tool archives into.
 type Installation struct {
+	// Role selects one of the two managed jobs. Zero preserves collector identity.
+	Role Role
+
 	// DataHome is the data directory, canonical (local.CanonicalPath).
 	DataHome string
 	// Default is whether this is the account's own installation, which keeps
 	// the job an earlier release gave every installation. cli decides it.
 	Default bool
+}
+
+// Role is one of the installation's finite background responsibilities.
+type Role string
+
+const (
+	// Collector is the original job, retained as the zero value.
+	Collector Role = ""
+	// Search maintains the optional local content index.
+	Search Role = "search"
+)
+
+// Command returns the only command allowed for a managed role.
+func (r Role) Command() (string, error) {
+	switch r {
+	case Collector:
+		return "_collect", nil
+	case Search:
+		return "_search-index", nil
+	default:
+		return "", fmt.Errorf("unknown background role %q", r)
+	}
 }
 
 // JobSpec is the job an adapter defines: what runs, with what environment,

@@ -38,6 +38,7 @@ type setupOptions struct {
 	// pairingInput preserves answers buffered by first-run onboarding. The original
 	// stdin remains the terminal identity used for private code entry.
 	pairingInput             io.Reader
+	searchIndexing           string
 	codexDiscovery           string
 	codexCaptureScope        string
 	pair                     bool
@@ -132,6 +133,13 @@ func (l *projectList) Set(value string) error {
 // setupFlags adds setup's answer flags to fs and parses args.
 func setupFlags(fs *commandFlags, args []string) (setupOptions, bool) {
 	var opts setupOptions
+	fs.Func("search-indexing", "on or off; automatic local content indexing (default off)", func(value string) error {
+		if value != "on" && value != "off" {
+			return errors.New("search-indexing must be on or off")
+		}
+		opts.searchIndexing = value
+		return nil
+	})
 	fs.BoolVar(&opts.pair, "pair", false, "import an encrypted pairing bundle")
 	fs.StringVar(&opts.pairFile, "pair-file", "", "read a pairing bundle from PATH, or - for stdin")
 	var projects, projectRepos projectList
@@ -209,7 +217,7 @@ func setupFlags(fs *commandFlags, args []string) (setupOptions, bool) {
 
 // given reports whether any answer flag was passed.
 func (o setupOptions) given() bool {
-	return o.keepForever || o.codexCaptureScope != "" || o.codexDiscovery != "" || o.prefixSupplied || o.retentionSupplied || o.requireSkillSupplied || o.noRequireSkillSupplied || o.storageFlagsSupplied || o.apps != "" || len(o.projects) > 0 || len(o.projectRepos) > 0 || o.hasProjectScope() || o.skillEvidence != ""
+	return o.searchIndexing != "" || o.keepForever || o.codexCaptureScope != "" || o.codexDiscovery != "" || o.prefixSupplied || o.retentionSupplied || o.requireSkillSupplied || o.noRequireSkillSupplied || o.storageFlagsSupplied || o.apps != "" || len(o.projects) > 0 || len(o.projectRepos) > 0 || o.hasProjectScope() || o.skillEvidence != ""
 }
 
 // setupWithoutQuestions is setup --yes: the answers come from opts, the
@@ -395,6 +403,11 @@ func (opts setupOptions) applyRetentionAnswer(cfg *config.Config) error {
 // check out. Every missing or wrong answer is reported together.
 func setupAnswers(existing config.Config, opts setupOptions, home, userHome string, installed bool, env Env) (config.Config, credentials.R2Credentials, error) {
 	cfg := existing
+	if opts.searchIndexing != "" {
+		if err := config.SetSearchIndexing(&cfg, opts.searchIndexing == "on"); err != nil {
+			return cfg, credentials.R2Credentials{}, err
+		}
+	}
 	if err := validateProjectScopeOptions(opts); err != nil {
 		return cfg, credentials.R2Credentials{}, err
 	}

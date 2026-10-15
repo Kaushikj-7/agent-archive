@@ -74,6 +74,9 @@ func underlyingSkillEvidence(mode SkillEvidence) SkillEvidence {
 }
 
 func prepareDiscoveryConfig(c *Config) error {
+	if c.SearchIndexing {
+		c.SearchLifecycleProtection = true
+	}
 	if err := ValidateRetentionDays(c.RetentionDays); err != nil {
 		return err
 	}
@@ -135,6 +138,9 @@ func prepareDiscoveryConfig(c *Config) error {
 	}
 	if c.ScopedPickerProtection {
 		c.SchemaVersion = 14
+	}
+	if c.SearchLifecycleProtection {
+		c.SchemaVersion = 16
 	}
 	return validateDiscoveryConfig(*c)
 }
@@ -627,6 +633,12 @@ func peelHistoricalProjectProtection(c Config) (Config, error) {
 }
 
 func unsupportedPreparedWriter(c Config) bool {
+	if c.SchemaVersion == 16 {
+		if !c.SearchLifecycleProtection {
+			return true
+		}
+		c = searchUnderlyingConfig(c)
+	}
 	return (c.SchemaVersion > 5 && c.SchemaVersion != 7 && c.SchemaVersion != 8 && c.SchemaVersion != 9 && c.SchemaVersion != 10 && c.SchemaVersion != 11 && c.SchemaVersion != 12 && c.SchemaVersion != 13 && c.SchemaVersion != 14 && c.SchemaVersion != 15) || unsupportedScopedPreparedWriter(c) || (c.SchemaVersion == 12 && (!c.PublicationCompositionProtection || !c.DurableStorageProtection)) || (c.SchemaVersion == 11 && c.Storage.EffectiveArchiveFormat() != destination.FormatCatalogV4) || (c.SchemaVersion == 10 && !c.HistoricalProjectProtection) || (c.SchemaVersion == 9 && !c.ImportStagingProtection) || (c.SchemaVersion == 8 && !c.RetentionProtection) || (c.SchemaVersion == 7 && !c.DurableStorageProtection) || (c.SchemaVersion == 5 && !c.CodexHistoryProtection) || (c.SchemaVersion == 4 && !c.GenerationProtection) || (c.SchemaVersion == 3 && c.CodexCapture == nil)
 }
 
@@ -674,6 +686,10 @@ func peelCatalogProtection(c Config) (Config, error) {
 // peelProtectedWriterLayers validates catalog, historical and import fences in order.
 func peelProtectedWriterLayers(c Config) (Config, error) {
 	var err error
+	c, err = peelSearchProtection(c)
+	if err != nil {
+		return c, err
+	}
 	c, err = peelScopedPickerProtection(c)
 	if err != nil {
 		return c, err
@@ -746,11 +762,23 @@ func peelPublicationProtection(c Config) (Config, error) {
 
 // SupportsOrdinarySelection preserves the ordinary codec under both supported floors.
 func (c Config) SupportsOrdinarySelection() bool {
+	if c.SearchLifecycleProtection {
+		if c.SchemaVersion != 16 {
+			return false
+		}
+		c = searchUnderlyingConfig(c)
+	}
 	return c.PublicationCompositionProtection && c.DurableStorageProtection && (c.SchemaVersion == 12 || (c.SchemaVersion == 13 || c.SchemaVersion == 15 && c.SettledCursorSelectionProtection) && c.StagedSelectionProtection || c.SchemaVersion == 14 && c.ScopedPickerProtection && c.Storage.EffectiveArchiveFormat() == destination.FormatCatalogV4)
 }
 
 // SupportsStagedSelection never enables catalog staging.
 func (c Config) SupportsStagedSelection() bool {
+	if c.SearchLifecycleProtection {
+		if c.SchemaVersion != 16 {
+			return false
+		}
+		c = searchUnderlyingConfig(c)
+	}
 	return (c.SchemaVersion == 13 || c.SchemaVersion == 15 && c.SettledCursorSelectionProtection) && c.StagedSelectionProtection && c.SupportsOrdinarySelection() && c.ImportStagingProtection && c.Storage.EffectiveArchiveFormat() == destination.FormatLegacy
 }
 
@@ -800,6 +828,12 @@ func unsupportedScopedPreparedWriter(c Config) bool {
 
 // SupportsSettledCursorSelection accepts only the distinct closed Cursor floor.
 func (c Config) SupportsSettledCursorSelection() bool {
+	if c.SearchLifecycleProtection {
+		if c.SchemaVersion != 16 {
+			return false
+		}
+		c = searchUnderlyingConfig(c)
+	}
 	return c.SchemaVersion == 15 && c.SettledCursorSelectionProtection && c.SupportsStagedSelection()
 }
 

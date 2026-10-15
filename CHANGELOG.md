@@ -6,6 +6,12 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Add explicit machine-local `setup --yes --search-indexing on|off` consent,
+  an independent bounded search indexing job, and best-effort content-free
+  publication hints after collection releases its lock. Pause and teardown
+  fence running indexing; legacy collector-only lifecycle records stay compatible.
+
+
 - Search conversation text with a private local index. Explicitly index one
   archived session with `search --refresh --session ID --harness NAME`, query
   cached titles/messages with `search "WORDS"`, and read exact matching passages.

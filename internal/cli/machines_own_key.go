@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"time"
 
 	"github.com/wangjohn/agent-archive/internal/cloudflare"
 	"github.com/wangjohn/agent-archive/internal/config"
@@ -313,13 +314,23 @@ func finishOwnKey(home string, checkpoint ownKeyCheckpoint, out, errOut io.Write
 		release()
 		return machineCommandError(errOut, err)
 	}
+	searchRelease, err := local.NamedLockWait(home, "search-worker.lock", 2*time.Second)
+	if err != nil {
+		hooksRelease()
+		release()
+		return machineCommandError(errOut, errors.New("search indexing is finishing; old access retained"))
+	}
+	searchRelease = releaseOnce(searchRelease)
+	defer searchRelease()
 	current, found, err := config.Load(home)
 	if err != nil || !found || current.Storage.R2CredentialRef != "issued-"+checkpoint.SlotID || current.DestinationID() != checkpoint.DestinationID {
+		searchRelease()
 		hooksRelease()
 		release()
 		return machineCommandError(errOut, errors.New("committed own-key destination changed; old access retained"))
 	}
 	if err = promoteCommittedOwnKey(home, current, checkpoint); err != nil {
+		searchRelease()
 		hooksRelease()
 		release()
 		return machineCommandError(errOut, err)
@@ -345,6 +356,7 @@ func finishOwnKey(home string, checkpoint ownKeyCheckpoint, out, errOut io.Write
 			err = os.Remove(filepath.Join(home, ownKeyFile))
 		}
 	}
+	searchRelease()
 	hooksRelease()
 	release()
 	if err != nil {
@@ -451,6 +463,11 @@ func cancelStagedOwnKey(home string, checkpoint ownKeyCheckpoint, issuer *keyIss
 		return machineCommandError(errOut, err)
 	}
 	defer release()
+	searchRelease, err := local.NamedLockWait(home, "search-worker.lock", 2*time.Second)
+	if err != nil {
+		return machineCommandError(errOut, err)
+	}
+	defer searchRelease()
 	slots, err := issuance.List(home)
 	if err != nil {
 		return machineCommandError(errOut, err)
@@ -633,6 +650,11 @@ func (i *keyIssuer) recoverOwnKeyStage(s *issuance.Slot) error {
 		return err
 	}
 	defer release()
+	searchRelease, err := local.NamedLockWait(i.home, "search-worker.lock", 2*time.Second)
+	if err != nil {
+		return err
+	}
+	defer searchRelease()
 	if s.State == issuance.Deleted {
 		return i.retryDeletedOwnKeySecret(s)
 	}

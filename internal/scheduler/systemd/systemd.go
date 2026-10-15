@@ -92,17 +92,27 @@ func (Scheduler) DefaultPATH() string { return DefaultPATH }
 // and the first 12 hex digits of the SHA-256 of the cleaned data directory
 // (the same digest launchd's CollectorLabel takes).
 func (Scheduler) Ref(inst scheduler.Installation) scheduler.Ref {
+	if inst.Role != scheduler.Collector && inst.Role != scheduler.Search {
+		return ""
+	}
+	base := collectorRef
+	if inst.Role == scheduler.Search {
+		base = "agent-archive-search"
+	}
 	if inst.Default {
-		return collectorRef
+		return scheduler.Ref(base)
 	}
 	sum := sha256.Sum256([]byte(filepath.Clean(inst.DataHome)))
-	return collectorRef + "-" + scheduler.Ref(hex.EncodeToString(sum[:])[:12])
+	return scheduler.Ref(base) + "-" + scheduler.Ref(hex.EncodeToString(sum[:])[:12])
 }
 
 // validRef reports whether ref is a name Ref could have made: a ref reaches
 // file paths and systemctl's arguments, so nothing else is accepted.
 func validRef(ref scheduler.Ref) bool {
 	suffix, ok := strings.CutPrefix(string(ref), collectorRef)
+	if !ok {
+		suffix, ok = strings.CutPrefix(string(ref), "agent-archive-search")
+	}
 	if !ok {
 		return false
 	}
@@ -210,17 +220,21 @@ func (Scheduler) Locate(definition string) (scheduler.Site, scheduler.Ref, error
 // a proxy address with its user name and password in it, and the user manager,
 // which runs as the user, reads them either way.
 func (s Scheduler) Plan(site scheduler.Site, inst scheduler.Installation, spec scheduler.JobSpec) (scheduler.Plan, error) {
-	if !slices.Equal(spec.Args, []string{"_collect"}) || spec.Interval != collectorInterval || !spec.RunAtLoad {
+	command, err := inst.Role.Command()
+	if err != nil {
+		return scheduler.Plan{}, err
+	}
+	if !slices.Equal(spec.Args, []string{command}) || spec.Interval != collectorInterval || !spec.RunAtLoad {
 		return scheduler.Plan{}, errors.New("a systemd user timer runs the collector: _collect every minute, at load")
 	}
 	ref := s.Ref(inst)
-	service, err := renderService(spec.Executable, spec.DataHome, spec.Env)
+	service, err := renderRoleService(spec.Executable, spec.DataHome, spec.Env, inst.Role)
 	if err != nil {
 		return scheduler.Plan{}, err
 	}
 	return scheduler.Plan{Ref: ref, Artifacts: []scheduler.Artifact{
 		scheduler.FileArtifact(s.servicePath(site, ref), service, 0o600),
-		scheduler.FileArtifact(s.timerPath(site, ref), renderTimer(string(ref)), 0o600),
+		scheduler.FileArtifact(s.timerPath(site, ref), renderRoleTimer(string(ref), inst.Role), 0o600),
 	}}, nil
 }
 

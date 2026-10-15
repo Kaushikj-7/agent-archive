@@ -227,7 +227,7 @@ report next to the plan. A plan expires five minutes after creation.
 	"setup": `Usage: agent-archive setup [--abandon-recovery] [--verbose]
                [--no-skills | --skills] [--allow-network-home]
        agent-archive setup --yes [--provider r2|s3 ...] [--project DIR ...]
-               [--codex-discovery on|off]
+               [--codex-discovery on|off] [--search-indexing on|off]
                [--codex-capture-scope included-projects|all-projects]
                [--prefix PREFIX] [--retention-days DAYS | --keep-forever]
                [--require-skill-use | --no-require-skill-use]
@@ -312,6 +312,8 @@ An interrupted setup is recovered on the next run.
                         each run the background job. Only for a home that one
                         machine ever mounts; recorded while it is needed
   --codex-discovery MODE on or off; fresh scripted Codex setup must choose.
+  --search-indexing MODE on or off; automatic local content indexing.
+                        Omitted preserves the local choice; fresh setup is off.
                         Reconfiguration keeps an omitted choice. Discovery
                         finds supported sources; recent native copies may count
   --codex-capture-scope MODE included-projects or all-projects (Codex only).

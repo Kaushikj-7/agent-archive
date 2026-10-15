@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
@@ -116,6 +117,12 @@ func uninstall(purge, yes, skipScheduler bool, stdin io.Reader, out io.Writer, e
 	}
 	releaseHooks = releaseOnce(releaseHooks)
 	defer releaseHooks()
+	releaseSearch, err := local.NamedLockWait(home, "search-worker.lock", 2*time.Second)
+	if err != nil {
+		return fmt.Errorf("search indexing is finishing; retry uninstall: %w", err)
+	}
+	releaseSearch = releaseOnce(releaseSearch)
+	defer releaseSearch()
 	// Reload after acquiring the lock; pause/resume may have completed meanwhile.
 	cfg, found, err := config.Load(home)
 	if err != nil {
@@ -175,7 +182,14 @@ func uninstall(purge, yes, skipScheduler bool, stdin io.Reader, out io.Writer, e
 		releaseAdmission = releaseOnce(releaseAdmission)
 		defer releaseAdmission()
 		// The purge releases the locks once their files are gone.
-		if err := purgeLocalData(home, cfg, out, env, func() { releaseAdmission(); releaseHooks(); unlock(); releaseIssued(); release() }); err != nil {
+		if err := purgeLocalData(home, cfg, out, env, func() {
+			releaseAdmission()
+			releaseSearch()
+			releaseHooks()
+			unlock()
+			releaseIssued()
+			release()
+		}); err != nil {
 			return err
 		}
 	}
@@ -259,7 +273,7 @@ func collectorRefs(in installation, userHome string) []scheduler.Ref {
 			refs = append(refs, job.Ref)
 		}
 	}
-	return refs
+	return append(refs, in.searchRole().ref())
 }
 
 // unverifiedJob is a background job uninstall went on without verifying it
@@ -290,8 +304,15 @@ type unverifiedJob struct {
 // say it was not verified stopped.
 func stopCollectors(refs []scheduler.Ref, out io.Writer, userHome string, env Env, skipScheduler bool) (remove []string, unverified []unverifiedJob, err error) {
 	words := env.scheduler().Words()
-	for _, ref := range refs {
-		status := env.jobStatus(userHome, ref)
+	statuses := make([]scheduler.Status, len(refs))
+	for i, ref := range refs {
+		statuses[i] = env.jobStatus(userHome, ref)
+		if statuses[i].State == scheduler.Unknown && !skipScheduler {
+			return nil, nil, errors.New(uninstallUnknownMessage(words, problemOf(statuses[i])))
+		}
+	}
+	for i, ref := range refs {
+		status := statuses[i]
 		if status.State == scheduler.Unknown {
 			problem := problemOf(status)
 			if !skipScheduler {
@@ -662,7 +683,7 @@ func deleteCredentialRefs(env Env, refs map[string]bool) ([]string, error) {
 // local entry is gone and while it still holds them: held, they are what
 // keeps a hook, collector, or setup from acting on a half-deleted directory,
 // and unlinking before release means a later opener gets its own inode.
-var uninstallLockFiles = []string{"admission-intents.lock", "hooks.lock", "collector.lock", "issued.lock", "setup.lock"}
+var uninstallLockFiles = []string{"search-worker.lock", "admission-intents.lock", "hooks.lock", "collector.lock", "issued.lock", "setup.lock"}
 
 // missingDirs is dir and each of its parents that does not exist, deepest
 // first: what os.MkdirAll(dir) would create.
@@ -742,6 +763,7 @@ var localStateEntries = []string{
 	machineRegistrationFile, "config.json", "setup-draft.json", "setup-transaction.json", "imports",
 	"storage-health.json", "capture-diagnostics.json", "diagnostics.lock", "application-versions.json",
 	"admission-intents", "admission-intents.lock", "admission-replay-cursor.json",
+	"search-worker.lock", "search.log", "search-error.log",
 	"collector.lock", collectorLockRecordName, "collector.log", "collector-error.log",
 	"cache", handoffDir, "purge-plans", "issued", "issued.lock", "revocations", "revocations.lock", ownKeyFile,
 	// The credential files kept where there is no Keychain (Linux).
@@ -769,7 +791,7 @@ func removeLocalState(home string) (leftover []string, err error) {
 	for _, entry := range entries {
 		name := entry.Name()
 		//lint:ignore LV1001 file names found in the state directory, an open set; these are the lock files
-		if name == "setup.lock" || name == "hooks.lock" || name == "collector.lock" || name == "admission-intents.lock" || name == "issued.lock" {
+		if name == "search-worker.lock" || name == "setup.lock" || name == "hooks.lock" || name == "collector.lock" || name == "admission-intents.lock" || name == "issued.lock" {
 			continue
 		}
 		if !known[name] && !strings.HasPrefix(name, ".pending-") && !isMovedAside(name, known) {
