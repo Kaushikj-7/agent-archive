@@ -43,6 +43,24 @@ follow [Semantic Versioning](https://semver.org/).
   parsing the old `TITLE PR WHEN HARNESS PROJECT ID` text should switch to
   `list --json`, which is unchanged and is the stable format. `list
   --verbose` is unchanged.
+- **Changed for scripts:** when `show` or `handoff` words match several
+  sessions and nothing can ask which (piped, or run by an agent), the
+  matches on stderr use the same columns as piped `list`, under a header:
+  `WHEN AGENT PROJECT PR ID TITLE`, with the full title last and its
+  subagent and "not yet uploaded" notes after it (PROJECT only when the
+  matches span several projects, PR only when one has a PR). Before setup,
+  `handoff`'s local matches are printed the same way, with the whole native
+  ID, in place of `local <ID> (<app>): <title>` lines. The `Next:` line is
+  unchanged; read `list "<words>" --json` rather than parsing the table.
+- The `show` summary's second line names the agent as the lists do
+  ("Claude", in its color on a color terminal) and says when the session was
+  last active as "last active 2 minutes ago", replacing "claude · … · 2h
+  ago" and the weekday or date form.
+- The local `handoff` picker before setup groups sessions by day and shows
+  readable titles, like the other session lists. When `handoff --latest`
+  finds no session, its list of recent archived sessions reads WHEN, AGENT,
+  MACHINE and COMMAND, under a header, with the short time and the agent's
+  name.
 
 ## [0.2.2]
 
