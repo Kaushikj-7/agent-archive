@@ -203,7 +203,8 @@ func TestCorruptChildIdentityRequestsExactKeyRecovery(t *testing.T) {
 		if err := HandleEvent(home, "claude", payload, at.Add(time.Minute), WithDecoders(testDecoders)); !errors.Is(err, state.ErrSessionIndexRecoveryRequired) {
 			t.Fatalf("lookup: %v", err)
 		}
-		if err := ReplayAdmissionIntents(home, at.Add(time.Minute), testDecoders); err != nil {
+		// The child observation waits in the admission queue meanwhile.
+		if err := ReplayAdmissionIntents(home, at.Add(time.Minute), testDecoders); !errors.Is(err, state.ErrSessionIndexRecoveryRequired) {
 			t.Fatal(err)
 		}
 	}
