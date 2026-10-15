@@ -132,7 +132,7 @@ func resolveShowQuery(ctx context.Context, store storage.ObjectStore, env showQu
 		}.print(stderr)
 		return showLookup{}, 1
 	}
-	format.Style, format.GroupByProject, format.Numbered = styleFor(stdout), true, true
+	format.Style, format.GroupByDay, format.Numbered = styleFor(stdout), true, true
 	choices, words := rowChoices(formatSessionRows(matches, format), format), strings.Join(strings.Fields(query), " ")
 	spec := browserSpec{Mode: pickSession, Verb: "Show", Choices: choices, Query: words, Command: "show"}
 	if !pickOne {

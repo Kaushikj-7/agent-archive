@@ -224,4 +224,8 @@ Confirmed by the owner 2026-10-14:
 
 ## Deviations
 
-None yet.
+- PR 4: day headings carry no row count ("TODAY", or "TODAY (continued)"
+  on a page or screen that starts partway through the day), and a list
+  whose sessions all fall on one day still shows that day's heading.
+- PR 4: the verbose table is one flat table. It was grouped by project
+  before; day groups add nothing to a debugging view with full timestamps.

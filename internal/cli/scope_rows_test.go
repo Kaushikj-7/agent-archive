@@ -22,15 +22,15 @@ func formattedRows(sessions []archive.Metadata, format listFormatOptions) []list
 func TestColumnsAreHiddenWhenConstant(t *testing.T) {
 	t.Parallel()
 	same := pickerSessions(3, oneProject)
-	laid, constants := listFormatOptions{GroupByProject: true, Numbered: true}.withColumns(formattedRows(same, listFormatOptions{}))
-	if !laid.HideHarness || !laid.HideProject || laid.GroupByProject || laid.ShowPR || strings.Join(constants, "|") != "app|codex" {
+	laid, constants := listFormatOptions{GroupByDay: true, Numbered: true}.withColumns(formattedRows(same, listFormatOptions{}))
+	if !laid.HideHarness || !laid.HideProject || !laid.GroupByDay || laid.ShowPR || strings.Join(constants, "|") != "app|codex" {
 		t.Fatalf("one project, one harness: %+v, constants %q", laid, constants)
 	}
 
 	varied := pickerSessions(3, func(i int) string { return []string{"app", "web", "app"}[i] })
 	varied[1].Harness.Name = "claude"
-	laid, constants = listFormatOptions{GroupByProject: true}.withColumns(formattedRows(varied, listFormatOptions{}))
-	if laid.HideHarness || laid.HideProject || !laid.GroupByProject || len(constants) != 0 {
+	laid, constants = listFormatOptions{GroupByDay: true}.withColumns(formattedRows(varied, listFormatOptions{}))
+	if laid.HideHarness || laid.HideProject || !laid.GroupByDay || len(constants) != 0 {
 		t.Fatalf("varied rows: %+v, constants %q", laid, constants)
 	}
 
@@ -211,7 +211,7 @@ func TestScopedListGolden(t *testing.T) {
 	scope := sessionScope{Label: "agent-archive", RepoKey: scopeKey, Dir: "/w/agent-archive", ProjectIDs: []string{"project-agent-archive"}}
 	sessions = append(sessions, archive.Metadata{SessionID: "bill0001" + strings.Repeat("0", 24), Title: "Invoice export", Harness: archive.Harness{Name: "claude"},
 		ProjectName: "billing", ProjectID: "project-billing", CapturedAt: pickerNow.Add(-time.Hour)})
-	format := listFormatOptions{Now: pickerNow, GroupByProject: true}
+	format := listFormatOptions{Now: pickerNow, GroupByDay: true}
 	choices := newScopeChoices(scope, format, true, archiveRows(sessions, defaultListLimit, format))
 	var out bytes.Buffer
 	if err := printListTable(&out, choices.shown(), 0); err != nil {
@@ -226,7 +226,7 @@ func TestScopedHandoffGolden(t *testing.T) {
 	t.Parallel()
 	sessions := goldenSessions()
 	scope := sessionScope{Label: "agent-archive", RepoKey: scopeKey, Dir: "/w/agent-archive", ProjectIDs: []string{"project-agent-archive"}}
-	format := listFormatOptions{Now: pickerNow, GroupByProject: true, Numbered: true, NarrowHint: "Narrow with --harness, or name a session: agent-archive handoff SESSION_ID."}
+	format := listFormatOptions{Now: pickerNow, GroupByDay: true, Numbered: true, NarrowHint: "Narrow with --harness, or name a session: agent-archive handoff SESSION_ID."}
 	rows := make([]handoffPickerRow, len(sessions))
 	for i, m := range sessions {
 		// The first two are registered here, the first active just now; the

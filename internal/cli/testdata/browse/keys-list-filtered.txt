@@ -1,4 +1,5 @@
 agent-archive · "208" matches 1 · claude · Esc clear
+TODAY
   3  Add a status line for paused collection +1                #212  38m
 ▸      ↳ Review and fix PR #208 (5b-1b)                        #208   3h
 All · ↑↓ move · Enter show · Esc clear
