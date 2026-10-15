@@ -996,7 +996,8 @@ again outside this phase. The table does not attribute that unmeasured work.
 
 ### Reproduce a bounded local binary-size diagnostic
 
-From a clean checkout with exact Go 1.27.2 and dependencies already present:
+From a clean checkout with exact Go 1.27.2 and dependencies already present
+in the module cache (set `GOMODCACHE` or `GOPATH` explicitly when needed):
 
 ```sh
 python3 -B scripts/measure_go_listing.py --go /path/to/go1.27.2/bin/go \
@@ -1009,8 +1010,13 @@ same cache), then independently compiles those five race test binaries and lists
 their parents. It retains commands/times, raw listing logs, binary sizes/hashes,
 compressed bundle size and local compression time. Gzip here is a payload diagnostic; hosted artifact
 transport and compression can differ. A single shared ten-minute
-supervisor deadline bounds all Go/binary invocations and owns their process groups.
-Local compression is separately measured. Temporary
+supervisor deadline bounds all Go/binary invocations, including the initial
+configuration probe, and owns their process groups. The probe and later commands
+use the same private HOME, disabled user Go environment/workspace/cache helper,
+local toolchain selection and offline module policy. Cross-target configurations
+are rejected before compilation. Output inside the checkout is rejected before
+creation. Local Python compression and binary hashing are outside that subprocess
+budget; compression is separately measured. Temporary
 HOME, app state, cache and binary files are removed. Existing module content is
 read with network access disabled. It never executes test bodies or produces an
 admissible coverage/verdict/cache artifact. The clean tracked source proof must
@@ -1037,8 +1043,12 @@ The five binaries contain 203,762,752 bytes total (CLI 99,015,680; catalog
 The gzip bundle contains 93,873,715 bytes. Both combined listings and each
 independent binary listing produced the identical 3,259 parent inventory;
 this establishes local listing parity, not execution/body coverage or portable
-binary compatibility. Local gzip cost and payload size are measured; actual
-hosted transfer and producer dependency costs remain unknown. The retained raw logs were independently reconciled for listing parity.
+binary compatibility. This historical receipt predates the hardened initial probe:
+its probe was not supervised and read the original user Go environment before
+the private HOME transition. It records the observed command/configuration and
+sizes, but does not establish the current tool's configuration-isolation or probe
+timeout guarantees. Its bytes and source context are retained unchanged. Local
+gzip cost and payload size are measured; actual hosted transfer and producer dependency costs remain unknown. The retained raw logs were independently reconciled for listing parity.
 
 ### What would justify sharing
 

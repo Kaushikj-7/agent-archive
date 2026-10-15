@@ -3,6 +3,11 @@ import copy
 import contextlib
 import io
 import json
+import os
+import signal
+import sys
+import threading
+import time
 from pathlib import Path
 import tempfile
 from unittest import mock
@@ -682,7 +687,8 @@ class LocalListingDiagnosticTests(unittest.TestCase):
     def run_diagnostic(self, root, *, fail=False, wrong_names=False, source_changed=False):
         import measure_go_listing as diagnostic
         calls = []
-        config = {'GOVERSION': 'go1.27.2', 'GOFLAGS': '', 'GOMODCACHE': '/synthetic/modules'}
+        config = {'GOVERSION': 'go1.27.2', 'GOFLAGS': '', 'GOMODCACHE': '/synthetic/modules',
+                  'GOOS': 'darwin', 'GOHOSTOS': 'darwin', 'GOARCH': 'arm64', 'GOHOSTARCH': 'arm64'}
         proof = {'source': 'a' * 40, 'tree': 'b' * 40}
 
         def supervise(commands, deadline):
@@ -690,7 +696,9 @@ class LocalListingDiagnosticTests(unittest.TestCase):
             calls.append((command, env, deadline))
             if fail:
                 raise diagnostic.run_go_shard.Failure('synthetic command failure')
-            if '-c' in command:
+            if 'env' in command:
+                output.write_text(json.dumps(config))
+            elif '-c' in command:
                 Path(command[command.index('-o') + 1]).write_bytes(b'synthetic binary')
                 output.write_text('')
             elif '-json' in command:
@@ -704,7 +712,6 @@ class LocalListingDiagnosticTests(unittest.TestCase):
 
         with mock.patch.object(diagnostic.full_race, 'source_proof', side_effect=[proof,
                  dict(proof, tree='c' * 40) if source_changed else proof]), \
-             mock.patch.object(diagnostic.subprocess, 'check_output', return_value=json.dumps(config)), \
              mock.patch.object(diagnostic.run_go_shard, 'supervise', side_effect=supervise):
             if fail or wrong_names or source_changed:
                 with self.assertRaises((ValueError, diagnostic.run_go_shard.Failure)):
@@ -719,19 +726,77 @@ class LocalListingDiagnosticTests(unittest.TestCase):
         self.assertFalse(Path(calls[0][1]['GOCACHE']).exists())
         self.assertEqual(len({row[2] for row in calls}), 1)
         self.assertEqual(calls[0][1]['GOPROXY'], 'off')
-        self.assertEqual(calls[0][1]['GOMODCACHE'], '/synthetic/modules')
+        if not fail:
+            self.assertEqual(calls[-1][1].get('GOMODCACHE'), '/synthetic/modules')
+        for field, value in {'GOENV': 'off', 'GOWORK': 'off', 'GOTOOLCHAIN': 'local', 'GOCACHEPROG': ''}.items():
+            self.assertEqual(calls[0][1][field], value)
         return calls
 
     def test_local_diagnostic_keeps_flags_lists_every_binary_and_removes_scratch(self):
-        with tempfile.TemporaryDirectory() as temp:
+        with tempfile.TemporaryDirectory() as temp, mock.patch.dict(os.environ, {
+                'GOENV': '/synthetic/user-go-env', 'GOWORK': '/synthetic/go.work',
+                'GOTOOLCHAIN': 'auto', 'GOCACHEPROG': '/synthetic/cache-helper'}):
             calls = self.run_diagnostic(Path(temp))
-        self.assertEqual(len(calls), 12)
-        self.assertEqual(calls[0][0], calls[1][0])
+        self.assertEqual(len(calls), 13)
+        self.assertEqual(calls[1][0], calls[2][0])
         for flag in ('-race', '-short', '-count=1', '-json', '-list'):
-            self.assertIn(flag, calls[0][0])
-        self.assertNotIn('-vet=off', calls[0][0])
+            self.assertIn(flag, calls[1][0])
+        self.assertNotIn('-vet=off', calls[1][0])
         self.assertEqual(sum('-c' in row[0] for row in calls), 5)
         self.assertEqual(sum('-test.list' in row[0] for row in calls), 5)
+
+    def test_configuration_probe_obeys_deadline_and_cancellation_and_reaps_child(self):
+        import measure_go_listing as diagnostic
+        for cancel in (False, True):
+            with self.subTest(cancel=cancel), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                pidfile = root / 'pid'
+                fake = root / 'go'
+                fake.write_text('#!/bin/sh\necho $$ > "' + str(pidfile) + '"\nexec sleep 60\n')
+                fake.chmod(0o700)
+                output = root / 'output'
+                proof = {'source': 'a' * 40, 'tree': 'b' * 40}
+                timer = None
+                with mock.patch.object(diagnostic.full_race, 'source_proof', return_value=proof), \
+                     mock.patch.object(diagnostic, 'BUDGET_SECONDS', 5 if cancel else 3.0), \
+                     mock.patch.object(diagnostic.run_go_shard, 'supervise', wraps=diagnostic.run_go_shard.supervise) as supervisor, \
+                     mock.patch.object(sys, 'argv', ['measure', '--go', str(fake), '--output', str(output)]), \
+                     contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(io.StringIO()):
+                    if cancel:
+                        def cancel_probe():
+                            end = time.monotonic() + 4
+                            while not pidfile.exists() and time.monotonic() < end:
+                                time.sleep(.01)
+                            if pidfile.exists():
+                                os.kill(os.getpid(), signal.SIGTERM)
+                        timer = threading.Timer(0, cancel_probe)
+                        timer.start()
+                    try:
+                        with self.assertRaises(SystemExit) as raised:
+                            diagnostic.main()
+                        self.assertEqual(raised.exception.code, 1)
+                    finally:
+                        if timer:
+                            timer.cancel()
+                            timer.join()
+                probe_env = supervisor.call_args[0][0][0][2]
+                self.assertFalse(Path(probe_env['HOME']).exists())
+                self.assertFalse(Path(probe_env['GOCACHE']).exists())
+                pid = int(pidfile.read_text())
+                with self.assertRaises(ProcessLookupError):
+                    os.kill(pid, 0)
+                self.assertFalse((output / 'measurement.json').exists())
+
+    def test_checkout_output_is_rejected_before_creation_or_probe(self):
+        import measure_go_listing as diagnostic
+        output = diagnostic.ROOT / 'diagnostic-output-synthetic'
+        with mock.patch.object(diagnostic.full_race, 'source_proof') as source, \
+             mock.patch.object(diagnostic.run_go_shard, 'supervise') as supervise:
+            with self.assertRaisesRegex(ValueError, 'outside the checkout'):
+                diagnostic.measure('/bin/echo', output)
+            source.assert_not_called()
+            supervise.assert_not_called()
+        self.assertFalse(output.exists())
 
     def test_failed_command_and_mismatched_binary_listing_do_not_publish_measurement(self):
         for setting in ('fail', 'wrong_names', 'source_changed'):

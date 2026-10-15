@@ -18,32 +18,44 @@ import go_parent_shards
 import run_go_shard
 
 ROOT = Path(__file__).resolve().parents[1]
+BUDGET_SECONDS = 600
 PATTERN = '^(Test|Fuzz|Example)'
 PACKAGES = [run_go_shard.CLI, *sorted(go_parent_shards.HEAVY)]
 
 
 def measure(go, output):
     """Measure two local listings and five independently compiled test binaries."""
+    output = output.resolve()
+    if output == ROOT or ROOT in output.parents:
+        raise ValueError('place diagnostic output outside the checkout')
     source = full_race.source_proof(ROOT)
     output.mkdir(parents=True, exist_ok=False)
     go = str(Path(shutil.which(go) or go).resolve(strict=True))
     base_env = os.environ.copy()
-    config = json.loads(subprocess.check_output(
-        [go, 'env', '-json', *go_parent_shards.CONFIG_FIELDS, 'GOMODCACHE'],
-        cwd=ROOT, env=base_env, text=True))
-    if config['GOVERSION'] != 'go1.27.2' or config['GOFLAGS']:
-        raise ValueError('use exact Go 1.27.2 with empty GOFLAGS')
     rows = []
     # One overall budget and the production supervisor own every process group.
-    deadline = time.monotonic() + 600
+    deadline = time.monotonic() + BUDGET_SECONDS
     with tempfile.TemporaryDirectory(prefix='listing-diagnostic-') as scratch:
         env = dict(base_env, HOME=scratch, XDG_CONFIG_HOME=scratch,
                    AGENT_ARCHIVE_HOME=str(Path(scratch) / 'archive'),
                    GOCACHE=str(Path(scratch) / 'go-cache'),
-                   GOMODCACHE=config.pop('GOMODCACHE'), GOPROXY='off', GOSUMDB='off')
+                   GOPATH=base_env.get('GOPATH') or str(Path.home() / 'go'),
+                   GOENV='off', GOWORK='off', GOTOOLCHAIN='local',
+                   GOCACHEPROG='', GOPROXY='off', GOSUMDB='off')
         def run(label, command):
             seconds = run_go_shard.supervise([(command, output / (label + '.log'), env)], deadline)[0]
             rows.append({'phase': label, 'command': command, 'seconds': seconds})
+        # Probe under the same offline/private environment and shared deadline as
+        # every later command. User go env files and external workspaces cannot
+        # silently change the inputs after the source proof or HOME transition.
+        run('configuration', [go, 'env', '-json', *go_parent_shards.CONFIG_FIELDS,
+                              'GOMODCACHE'])
+        config = json.loads((output / 'configuration.log').read_text())
+        if config['GOVERSION'] != 'go1.27.2' or config['GOFLAGS']:
+            raise ValueError('use exact Go 1.27.2 with empty GOFLAGS')
+        if config['GOOS'] != config['GOHOSTOS'] or config['GOARCH'] != config['GOHOSTARCH']:
+            raise ValueError('use the native OS and architecture for binary listing')
+        env['GOMODCACHE'] = config.pop('GOMODCACHE')
         combined = [go, 'test', '-race', '-short', '-count=1', '-json', '-p', '1', '-list', PATTERN, *PACKAGES]
         run('combined-empty-cache', combined)
         run('combined-same-cache', combined)
