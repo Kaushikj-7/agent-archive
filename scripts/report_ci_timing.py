@@ -555,7 +555,6 @@ def worker_evidence(directory):
             'note': 'Parent seconds measure cont-to-terminal (run-to-terminal when unpaused), including descendant waits; unknown lifecycle timing is null. own_elapsed_seconds is Go terminal Elapsed and can omit parallel descendant waits. Never sum parents. Coverage reconciliation remains authoritative.'}
 
 
-
 def listing_repetition(directories):
     """Describe one complete normal eight-worker listing cohort, never savings."""
     phase = 'compiled_listing_race_build_testmain_seconds'
@@ -570,6 +569,8 @@ def listing_repetition(directories):
             raise ValueError('listing repetition requires eight distinct successful schema-4 workers')
         identity = {'source': catalog['source'], 'configuration': catalog['configuration'],
                     'packages': catalog['packages'],
+                    'compiler_context': manifest['settings']['plain_vet_context'],
+                    'cpus': manifest['settings']['cpus'],
                     'run_id': observation['run_id'], 'run_attempt': observation['run_attempt'],
                     'cache_restore_state': observation['cache_restore_state'],
                     'runner_image': observation['runner_image'],
@@ -593,6 +594,7 @@ def listing_repetition(directories):
             'production_sharing': 'not-established',
             'hosted_transfer_seconds': None, 'producer_dependency_wait_seconds': None,
             'note': 'Sum is repeated invocation wall work across workers, not CPU, allocation, critical path or removable savings. Includes graph loading, default vet, compilation/linking, race startup and TestMain. No production sharing decision without a source-bound hosted end-to-end comparison.'}
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)

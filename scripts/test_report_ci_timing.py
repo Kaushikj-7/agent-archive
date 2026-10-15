@@ -644,6 +644,7 @@ class ListingRepetitionTests(unittest.TestCase):
                         'timing_observation': {'run_id': '1', 'run_attempt': '1',
                                                'cache_restore_state': 'prefix',
                                                'runner_image': 'ubuntu24', 'runner_image_version': 'one'},
+                        'settings': {'plain_vet_context': {'toolchain': 'compiler-hash'}, 'cpus': 4},
                         'phases': {'compiled_listing_race_build_testmain_seconds': shard + 1}}
             (path / 'manifest.json').write_text(json.dumps(manifest))
             self.directories.append(path)
@@ -666,6 +667,7 @@ class ListingRepetitionTests(unittest.TestCase):
                             (('timing_observation', 'cache_restore_state'), 'unknown'),
                             (('timing_observation', 'run_attempt'), '2'),
                             (('timing_observation', 'runner_image_version'), 'two'),
+                            (('settings', 'plain_vet_context'), {'toolchain': 'other'}),
                             (('phases', 'compiled_listing_race_build_testmain_seconds'), float('nan'))]:
             manifest = copy.deepcopy(original)
             target = manifest
@@ -675,6 +677,68 @@ class ListingRepetitionTests(unittest.TestCase):
             path.write_text(json.dumps(manifest))
             with self.assertRaises(ValueError):
                 timing.listing_repetition(self.directories)
+
+class LocalListingDiagnosticTests(unittest.TestCase):
+    def run_diagnostic(self, root, *, fail=False, wrong_names=False, source_changed=False):
+        import measure_go_listing as diagnostic
+        calls = []
+        config = {'GOVERSION': 'go1.27.2', 'GOFLAGS': '', 'GOMODCACHE': '/synthetic/modules'}
+        proof = {'source': 'a' * 40, 'tree': 'b' * 40}
+
+        def supervise(commands, deadline):
+            command, output, env = commands[0]
+            calls.append((command, env, deadline))
+            if fail:
+                raise diagnostic.run_go_shard.Failure('synthetic command failure')
+            if '-c' in command:
+                Path(command[command.index('-o') + 1]).write_bytes(b'synthetic binary')
+                output.write_text('')
+            elif '-json' in command:
+                output.write_text('\n'.join(json.dumps(event)
+                    for package in diagnostic.PACKAGES for event in (
+                        {'Package': package, 'Action': 'output', 'Output': 'TestOne\n'},
+                        {'Package': package, 'Action': 'pass'})))
+            else:
+                output.write_text('TestDifferent\n' if wrong_names else 'TestOne\n')
+            return [0.25]
+
+        with mock.patch.object(diagnostic.full_race, 'source_proof', side_effect=[proof,
+                 dict(proof, tree='c' * 40) if source_changed else proof]), \
+             mock.patch.object(diagnostic.subprocess, 'check_output', return_value=json.dumps(config)), \
+             mock.patch.object(diagnostic.run_go_shard, 'supervise', side_effect=supervise):
+            if fail or wrong_names or source_changed:
+                with self.assertRaises((ValueError, diagnostic.run_go_shard.Failure)):
+                    diagnostic.measure('/bin/echo', root / 'output')
+            else:
+                result = diagnostic.measure('/bin/echo', root / 'output')
+                self.assertEqual(len(result['binaries']), 5)
+                self.assertGreater(result['gzip_bytes'], 0)
+                self.assertIsNone(result['hosted_transfer_seconds'])
+                self.assertEqual(result['production_sharing'], 'not-established')
+        self.assertFalse(Path(calls[0][1]['HOME']).exists())
+        self.assertFalse(Path(calls[0][1]['GOCACHE']).exists())
+        self.assertEqual(len({row[2] for row in calls}), 1)
+        self.assertEqual(calls[0][1]['GOPROXY'], 'off')
+        self.assertEqual(calls[0][1]['GOMODCACHE'], '/synthetic/modules')
+        return calls
+
+    def test_local_diagnostic_keeps_flags_lists_every_binary_and_removes_scratch(self):
+        with tempfile.TemporaryDirectory() as temp:
+            calls = self.run_diagnostic(Path(temp))
+        self.assertEqual(len(calls), 12)
+        self.assertEqual(calls[0][0], calls[1][0])
+        for flag in ('-race', '-short', '-count=1', '-json', '-list'):
+            self.assertIn(flag, calls[0][0])
+        self.assertNotIn('-vet=off', calls[0][0])
+        self.assertEqual(sum('-c' in row[0] for row in calls), 5)
+        self.assertEqual(sum('-test.list' in row[0] for row in calls), 5)
+
+    def test_failed_command_and_mismatched_binary_listing_do_not_publish_measurement(self):
+        for setting in ('fail', 'wrong_names', 'source_changed'):
+            with tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                self.run_diagnostic(root, **{setting: True})
+                self.assertFalse((root / 'output' / 'measurement.json').exists())
 
 
 if __name__ == '__main__':

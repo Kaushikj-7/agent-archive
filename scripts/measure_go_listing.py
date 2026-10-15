@@ -6,6 +6,8 @@ import json
 import os
 from pathlib import Path
 import shutil
+import signal
+import re
 import subprocess
 import tarfile
 import tempfile
@@ -45,12 +47,19 @@ def measure(go, output):
         combined = [go, 'test', '-race', '-short', '-count=1', '-json', '-p', '1', '-list', PATTERN, *PACKAGES]
         run('combined-empty-cache', combined)
         run('combined-same-cache', combined)
+        expected = go_parent_shards.listing((output / 'combined-same-cache.log').read_text(), PACKAGES)
+        if go_parent_shards.listing((output / 'combined-empty-cache.log').read_text(), PACKAGES) != expected:
+            raise ValueError('compiled listings differ between cache states')
         binaries = []
         for index, package in enumerate(PACKAGES):
             binary = Path(scratch) / ('package-' + str(index) + '.test')
             run('compile-' + str(index), [go, 'test', '-race', '-short', '-count=1', '-p', '1', '-c', '-o', str(binary), package])
             binaries.append(binary)
             run('binary-list-' + str(index), [str(binary), '-test.short', '-test.count=1', '-test.list', PATTERN])
+            names = [line for line in (output / ('binary-list-' + str(index) + '.log')).read_text().splitlines()
+                     if re.fullmatch(r'(Test|Fuzz|Example)\w*', line)]
+            if sorted(names) != expected[package]:
+                raise ValueError('binary listing differs from compiled discovery')
         # This is local compression, not an upload/download or trusted artifact.
         archive = Path(scratch) / 'binaries.tar.gz'
         start = time.monotonic()
@@ -80,10 +89,19 @@ def main():
     parser.add_argument('--go', default='go')
     parser.add_argument('--output', required=True, type=Path)
     args = parser.parse_args()
+    output = args.output.resolve()
+
+    def interrupted(signum, frame):
+        raise run_go_shard.Failure('listing diagnostic cancelled by signal ' + str(signum))
+    handlers = {sig: signal.signal(sig, interrupted) for sig in (signal.SIGTERM, signal.SIGINT)}
+    os.chdir(ROOT)
     try:
-        measure(args.go, args.output.resolve())
-    except (ValueError, OSError, subprocess.SubprocessError, run_go_shard.Failure) as error:
+        measure(args.go, output)
+    except (ValueError, KeyError, TypeError, OSError, subprocess.SubprocessError, run_go_shard.Failure) as error:
         parser.exit(1, 'Cannot measure listing: ' + str(error) + '\n')
+    finally:
+        for sig, handler in handlers.items():
+            signal.signal(sig, handler)
 
 
 if __name__ == '__main__':
