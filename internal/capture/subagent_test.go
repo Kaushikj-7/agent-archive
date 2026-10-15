@@ -3,6 +3,8 @@ package capture
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -172,5 +174,48 @@ func TestResumedSubagentStopKeepsCompleteCensusForOwnedParent(t *testing.T) {
 	}
 	if _, created, err := store.EnsureArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.Claude, NativeID: "unrelated"}); err != nil || !created {
 		t.Fatalf("unrelated miss: created=%v err=%v", created, err)
+	}
+}
+
+// When the child's own request fails, nothing shows the child is scheduled,
+// so the refusal still takes the parent's full request.
+func TestResumedSubagentStopFailedChildRequestRequestsParent(t *testing.T) {
+	t.Parallel()
+	home, project := t.TempDir(), t.TempDir()
+	at := time.Date(2026, 9, 29, 10, 0, 0, 0, time.UTC)
+	setUpTestConfig(t, home, project, at.Add(-time.Hour))
+	parentPath := writeTestTranscript(t, "parent.jsonl", "")
+	if err := HandleEvent(home, "claude", map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-parent", "cwd": project, "transcript_path": parentPath}, at, WithDecoders(testDecoders)); err != nil {
+		t.Fatal(err)
+	}
+	store, err := state.Open(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := recoverytest.Exhaust(context.Background(), store, state.SessionIndexRecoverySlice, false); err != nil {
+		t.Fatal(err)
+	}
+	child := agentmeta.SessionKey{Agent: agentmeta.Claude, NativeID: "native-parent:subagent:agent-1"}
+	if err := store.RequestSessionIndexAbsence(child); err != nil {
+		t.Fatal(err)
+	}
+	// An unwritable absence schedule makes the child's retained request fail.
+	absence := filepath.Join(home, "session-index-absence.json")
+	if err := os.Remove(absence); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(absence, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	stop := map[string]any{"hook_event_name": "SubagentStop", "session_id": "native-parent", "agent_id": "agent-1", "agent_transcript_path": "/never/written.jsonl"}
+	if err := HandleEvent(home, "claude", stop, at.Add(time.Minute), WithDecoders(testDecoders)); !errors.Is(err, state.ErrSessionIndexRecoveryRequired) {
+		t.Fatalf("stop: %v", err)
+	}
+	if err := os.Remove(absence); err != nil {
+		t.Fatal(err)
+	}
+	// A census requested but not yet begun has no cursor to report.
+	if status, err := store.SessionIndexRecoveryStatus(); status.Complete || !status.Pending {
+		t.Fatalf("parent not requested after failed child request: %+v err=%v", status, err)
 	}
 }
