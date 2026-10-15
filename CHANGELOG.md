@@ -11,6 +11,8 @@ follow [Semantic Versioning](https://semver.org/).
   publication hints after collection releases its lock. Pause and teardown
   fence running indexing; legacy collector-only lifecycle records stay compatible.
 
+- Search adds bounded JSON, explicit wait/rebuild, source context neighbors and
+  existing-only cached readers; queries require explicit project broadening.
 
 - Search conversation text with a private local index. Explicitly index one
   archived session with `search --refresh --session ID --harness NAME`, query

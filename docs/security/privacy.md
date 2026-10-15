@@ -641,3 +641,25 @@ paths, raw index/database rows and unrelated session names are not uploaded.
 Name changes publish new source evidence but preserve conversation activity,
 capture time and retention. Collection never starts a native Codex process to
 retrieve a name; live WAL storage is unavailable to the safe file reader.
+
+## Local conversation search
+
+Explicit search refresh stores derived visible conversation text in a private
+local SQLite index under `AGENT_ARCHIVE_HOME/search/`, separate from the metadata
+cache. The index, staging rows and SQLite WAL can contain readable conversation
+content. Search does not send that text to a new service: explicit refresh and
+exact-reference context reads use the configured archive provider and existing
+checksum/ownership verification. Cached queries make no archive requests.
+
+Coverage reports the last local observation. A remote deletion or stricter
+privacy policy cannot be known until observed by explicit refresh; context reads
+verify the exact retained reference and never substitute a newer source. Unknown
+privacy provenance is not searchable. No automatic indexing job is installed by
+search commands, and an existing index is not consent to automatic indexing.
+Explicit refresh is allowed while capture is paused.
+
+`search --refresh --rebuild` atomically discards searchable derived state and
+starts bounded catch-up. It is not secure erasure of SQLite/WAL blocks. To remove
+the local search copy, stop search commands before deleting the search directory;
+this does not delete archived sources. See [search](../guides/search.md) and
+[archive cleanup](archive-cleanup.md).

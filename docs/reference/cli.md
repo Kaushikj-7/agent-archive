@@ -595,22 +595,29 @@ Guide: [Search conversation text](../guides/search.md).
 
 ```text
 Usage: agent-archive search "QUERY" [options]
-       agent-archive search --refresh --session SESSION_ID --harness NAME
+       agent-archive search --refresh [--session SESSION_ID --harness NAME]
        agent-archive search --read REF [--offset N] [--max-bytes N]
 
-Search indexed titles and visible conversation messages. Normal queries use
-only the local index; they never refresh or read storage. Coverage is partial
-until sessions have been explicitly indexed. Refresh reads one session and its
-preserved revisions with checksum verification. No automatic job is installed.
+Search visible conversation messages and titles in the private local index.
+Queries never read storage. Choose --project or --all-projects outside a known
+project; an empty scoped result never broadens. Coverage describes a past local
+observation, not current remote contents. Refresh is namespace-wide unless a
+session is named. It does not install or enable automatic indexing.
 Words are ANDed, quotes match phrases, and a trailing * enables prefix matching.
 Punctuation splits words; this is keyword search, not substring/semantic search.
 References bind exact source revisions. Reads print escaped, quoted text.
-  --refresh           Index exactly --session from verified archive sources
-  --session SESSION_ID  Exact session; needs --refresh and --harness
+  --json              Print one versioned bounded JSON document
+  --refresh           Run a bounded verified archive refresh
+  --session SESSION_ID  Exact refresh target; requires --harness
   --harness NAME      Session harness: codex, claude or cursor
-  --read REF          Read a source-bound reference printed by search
+  --wait DURATION     Wait 1s–10m with --refresh (default one pass, no wait)
+  --rebuild           With namespace --refresh, clear derived local content
+  --read REF          Read an exact source-bound passage reference
   --offset N          Absolute UTF-8 byte offset (default passage start, -1)
-  --max-bytes N       Maximum context text bytes, 4–8192 (default 4096)
+  --max-bytes N       Raw text bytes per context slice, 4–8192 (default 4096)
+  --before N          Preceding visible messages with --read, 0–2 (default 0)
+  --after N           Following visible messages with --read, 0–2 (default 0)
+  --max-output-bytes N  Escaped stdout bytes, 4096–1048576 (default 262144)
   --project DIR|NAME  Restrict to a project (default current repository)
   --all-projects      Search every project's indexed sessions
   --since DATE|AGE    Inclusive capture start, date/RFC3339 time/age
@@ -623,20 +630,26 @@ References bind exact source revisions. Reads print escaped, quoted text.
 
 | Flag | Takes | Default |
 | --- | --- | --- |
+| `--after` | a value | `0` |
 | `--all-projects` | no value | — |
+| `--before` | a value | `0` |
 | `--children` | a value | `hide` |
 | `--cursor` | a value | — |
 | `--harness` | a value | — |
+| `--json` | no value | — |
 | `--limit` | a value | `20` |
 | `--max-bytes` | a value | `4096` |
+| `--max-output-bytes` | a value | `262144` |
 | `--offset` | a value | `-1` |
 | `--project` | a value | — |
 | `--read` | a value | — |
+| `--rebuild` | no value | — |
 | `--refresh` | no value | — |
 | `--replays` | a value | `hide` |
 | `--session` | a value | — |
 | `--since` | a value | — |
 | `--until` | a value | — |
+| `--wait` | a value | `0s` |
 
 ## agent-archive show
 

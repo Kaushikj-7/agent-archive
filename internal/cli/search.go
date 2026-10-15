@@ -1,21 +1,16 @@
 package cli
 
 import (
-	"context"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
-	"errors"
+	"flag"
 	"io"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
-	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/search"
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
@@ -29,15 +24,22 @@ type searchCommandDependencies interface {
 }
 
 type contentSearchOptions struct {
-	query    search.Query
-	refresh  bool
-	session  string
-	read     string
-	offset   int
-	maxBytes int
-	project  string
-	all      bool
-	hasQuery bool
+	query       search.Query
+	refresh     bool
+	session     string
+	read        string
+	offset      int
+	maxBytes    int
+	project     string
+	all         bool
+	hasQuery    bool
+	json        bool
+	rebuild     bool
+	wait        time.Duration
+	outputBytes int
+	before      int
+	after       int
+	reference   search.Reference
 }
 
 func runSearchCommand(args []string, stdout, stderr io.Writer, env searchCommandDependencies) int {
@@ -56,6 +58,12 @@ func runSearchCommand(args []string, stdout, stderr io.Writer, env searchCommand
 	read := fs.String("read", "", "read a source-bound reference from a search result")
 	offset := fs.Int("offset", -1, "with --read, absolute byte offset (default passage start)")
 	maxBytes := fs.Int("max-bytes", 4096, "with --read, maximum text bytes (4–8192)")
+	jsonMode := fs.Bool("json", false, "print one bounded JSON document")
+	rebuild := fs.Bool("rebuild", false, "with --refresh, rebuild derived local content")
+	wait := fs.Duration("wait", 0, "with --refresh, wait 1s–10m for observed coverage")
+	outputBytes := fs.Int("max-output-bytes", 262144, "maximum escaped document bytes, 4096–1048576")
+	before := fs.Int("before", 0, "with --read, preceding visible messages, 0–2")
+	after := fs.Int("after", 0, "with --read, following visible messages, 0–2")
 	text, given, ok := fs.parseWithOptionalArgument(args)
 	if !ok {
 		return 2
@@ -64,32 +72,21 @@ func runSearchCommand(args []string, stdout, stderr io.Writer, env searchCommand
 	if !ok {
 		return fs.usageError("%s", harnessFlagError(*harness))
 	}
-	opts := contentSearchOptions{query: search.Query{Text: text, Harness: canonical, Limit: *limit, Cursor: *cursor}, refresh: *refresh, session: *session, read: *read, offset: *offset, maxBytes: *maxBytes, project: *project, all: *all, hasQuery: given}
-	if *all && *project != "" {
-		return fs.usageError("--project and --all-projects cannot be combined")
+	opts := contentSearchOptions{query: search.Query{Text: text, Harness: canonical, Limit: *limit, Cursor: *cursor}, refresh: *refresh, session: *session, read: *read, offset: *offset, maxBytes: *maxBytes, project: *project, all: *all, hasQuery: given, json: *jsonMode, rebuild: *rebuild, wait: *wait, outputBytes: *outputBytes, before: *before, after: *after}
+
+	seen := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { seen[f.Name] = true })
+	if code := validateContentSearchBounds(fs, &opts, seen); code != 0 {
+		return code
 	}
-	if (*session != "" && !*refresh) || (*session != "" && canonical == "") {
-		return fs.usageError("named indexing requires --refresh --session ID --harness NAME")
+	if code := validateContentSearchRead(fs, &opts, seen); code != 0 {
+		return code
 	}
-	if *read != "" && (given || *refresh || *session != "") {
-		return fs.usageError("--read cannot be combined with a query or refresh")
+	if code := validateContentSearchModes(fs, &opts, seen); code != 0 {
+		return code
 	}
-	if !given && !*refresh && *read == "" {
-		return fs.usageError("provide a query, --refresh, or --read REF")
-	}
-	if given {
-		if _, err := search.MatchExpression(text); err != nil {
-			return fs.usageError("%v", err)
-		}
-	}
-	if *limit < 1 || *limit > 100 {
-		return fs.usageError("--limit must be between 1 and 100")
-	}
-	if *maxBytes < 4 || *maxBytes > 8192 || *offset < -1 {
-		return fs.usageError("--max-bytes must be 4–8192 and --offset at least 0")
-	}
-	if *read == "" && (*offset != -1 || *maxBytes != 4096) {
-		return fs.usageError("--offset and --max-bytes require --read")
+	if code := validateContentSearchIdentities(fs, &opts); code != 0 {
+		return code
 	}
 	if code := contentSearchFilters(fs, &opts, *replay, *children, *since, *until, env.now()); code != 0 {
 		return code
@@ -97,186 +94,10 @@ func runSearchCommand(args []string, stdout, stderr io.Writer, env searchCommand
 	return executeContentSearch(opts, stdout, stderr, env)
 }
 
-func executeContentSearch(opts contentSearchOptions, stdout, stderr io.Writer, env searchCommandDependencies) int {
-	home, err := env.readHome()
-	if err != nil {
-		return searchCommandError(stderr, err)
-	}
-	cfg, found, err := config.Load(home)
-	if err != nil {
-		return searchCommandError(stderr, err)
-	}
-	if !found {
-		terminal.Println(stderr, notSetUpMessage)
-		return 1
-	}
-	namespace, dir := contentSearchLocation(home, cfg)
-	ctx, stop := readCommandContext(env)
-	defer stop()
-	if opts.read != "" {
-		return readSearchReference(ctx, env, cfg, namespace, opts, stdout, stderr)
-	}
-	// Include initialization and local schema migration in the command budget.
-	passLimit := 5 * time.Second
-	if opts.refresh {
-		passLimit = 30 * time.Second
-	}
-	ctx, cancel := context.WithTimeout(ctx, passLimit)
-	defer cancel()
-	scope, err := scopeFor(env, opts.project, opts.all)
-	if err != nil {
-		return searchCommandError(stderr, err)
-	}
-	opts.query.Scope = search.Scope{Restricted: scope.narrowed(), Named: scope.Dir == "", RepoKey: scope.RepoKey, ProjectName: scope.Label, ProjectIDs: scope.ProjectIDs}
-	if !opts.refresh {
-		if _, err = os.Lstat(filepath.Join(dir, "content.sqlite")); os.IsNotExist(err) {
-			terminal.Println(stdout, "Search coverage is incomplete: no local content index. Run search --refresh, or index --session ID --harness NAME.")
-			return 0
-		} else if err != nil {
-			return searchCommandError(stderr, err)
-		}
-	}
-	index, err := search.Open(ctx, dir, namespace)
-	if err != nil {
-		return searchCommandError(stderr, err)
-	}
-	defer func() { _ = index.Close() }()
-	if opts.refresh {
-		if err = refreshSearchSession(ctx, env, cfg, index, opts, stdout, stderr); err != nil {
-			return searchCommandError(stderr, err)
-		}
-	}
-	if !opts.hasQuery {
-		return 0
-	}
-	page, err := index.Search(ctx, opts.query)
-	if err != nil {
-		return searchCommandError(stderr, err)
-	}
-	return printSearchPage(stdout, stderr, page)
-}
-
 func contentSearchLocation(home string, cfg config.Config) (string, string) {
 	namespace := strings.Join([]string{cfg.DestinationID(), cfg.MachineID, cfg.DestinationSince.UTC().Format(time.RFC3339Nano), "filter-" + archive.FilterVersion}, "/")
 	sum := sha256.Sum256([]byte(namespace))
 	return namespace, filepath.Join(home, "search", hex.EncodeToString(sum[:]))
-}
-
-func refreshSearchSession(ctx context.Context, env searchCommandDependencies, cfg config.Config, index *search.Store, opts contentSearchOptions, stdout, stderr io.Writer) error {
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	release, err := index.LockWork(ctx)
-	if err != nil {
-		return err
-	}
-	defer release()
-	objects, err := env.openStore(cfg)
-	if err != nil {
-		return err
-	}
-	if opts.session == "" {
-		discovery, e := index.Reconcile(ctx, objects, parsersFor(env), env.now(), search.ReconcileBudget{})
-		if e != nil {
-			terminal.Printf(stderr, "Search discovery is incomplete: %v\n", e)
-		}
-		progress, runErr := index.Run(ctx, objects, parsersFor(env), env.now(), search.Budget{VerifyCurrent: true})
-		terminal.Printf(stdout, "Observed archive slice: %d objects, %d metadata reads, %d catalog nodes; %d indexed, %d pending, %d failed. Last observed coverage is local to this machine.\n", discovery.Objects, discovery.Metadata, discovery.Nodes, progress.Committed, progress.Pending, progress.Failed)
-		if runErr != nil {
-			return runErr
-		}
-		if e != nil {
-			return e
-		}
-		if progress.Failed > 0 {
-			return errors.New("search refresh has failed work; retry after backoff or inspect coverage")
-		}
-		return nil
-	}
-	key, err := archive.MetadataObjectKey(opts.query.Harness, opts.session)
-	if err != nil {
-		return err
-	}
-	metadata, err := reader.ReadMetadata(ctx, objects, key)
-	if err != nil {
-		return err
-	}
-	if metadata.SessionID != opts.session || metadata.Harness.Name != opts.query.Harness {
-		return errors.New("search metadata disagrees with requested session")
-	}
-	if err = index.Observe(ctx, metadata, parsersFor(env), env.now(), 0); err != nil {
-		return err
-	}
-	progress, err := index.Run(ctx, objects, parsersFor(env), env.now(), search.Budget{Sources: 64, Sessions: 64, Limits: reader.Limits{}, VerifyCurrent: true})
-	if err != nil {
-		return err
-	}
-	terminal.Printf(stdout, "Observed %s; indexed %d work item(s), %d passage/title writes; %d pending, %d failed.\n", metadata.SessionID, progress.Committed, progress.Writes.Inserted, progress.Pending, progress.Failed)
-	for _, gap := range progress.Gaps {
-		terminal.Printf(stderr, "Search coverage gap for revision %s: %s\n", gap.RevisionID, gap.Reason)
-	}
-	if progress.Failed > 0 {
-		return errors.New("search refresh has failed work; retry after backoff or inspect coverage")
-	}
-
-	return nil
-}
-
-func readSearchReference(ctx context.Context, env searchCommandDependencies, cfg config.Config, namespace string, opts contentSearchOptions, stdout, stderr io.Writer) int {
-	var ref search.Reference
-	if len(opts.read) > 16384 {
-		return searchCommandError(stderr, errors.New("search reference is too large"))
-	}
-	b, err := base64.RawURLEncoding.DecodeString(opts.read)
-	if err != nil {
-		return searchCommandError(stderr, errors.New("invalid search reference"))
-	}
-	if err = json.Unmarshal(b, &ref); err != nil {
-		return searchCommandError(stderr, errors.New("invalid search reference"))
-	}
-	if ref.Source.Destination != namespace {
-		return searchCommandError(stderr, errors.New("search reference belongs to another destination/privacy context"))
-	}
-	objects, err := env.openStore(cfg)
-	if err != nil {
-		return searchCommandError(stderr, err)
-	}
-	offset := opts.offset
-	if offset == -1 {
-		offset = ref.Start
-	}
-	result, err := search.ReadPassage(ctx, objects, parsersFor(env), ref, offset, opts.maxBytes, reader.Limits{})
-	if err != nil {
-		return searchCommandError(stderr, err)
-	}
-	// DisplayJSON escapes terminal controls while retaining newlines in the quoted
-	// text, preserving a precise byte slice without raw terminal instructions.
-	text, _ := json.Marshal(result.Text)
-	if err = writeOutput(stdout, append(archive.DisplayJSON(text), '\n')); err != nil {
-		return searchCommandError(stderr, err)
-	}
-	terminal.Printf(stderr, "Passage bytes %d–%d; next offset %d (0 means complete).\n", result.Start, result.End, result.Next)
-	return 0
-}
-
-func printSearchPage(stdout, stderr io.Writer, page search.Page) int {
-	for _, hit := range page.Hits {
-		terminal.Printf(stdout, "%s · %s · %s\n  %s\n  %d matching passage(s)\n", hit.SessionID, hit.Harness, hit.Title, hit.Snippet, hit.MatchCount)
-		if hit.Reference != nil {
-			b, err := json.Marshal(hit.Reference)
-			if err != nil {
-				return searchCommandError(stderr, err)
-			}
-			terminal.Printf(stdout, "  ref: %s\n", base64.RawURLEncoding.EncodeToString(b))
-		}
-		for _, gap := range hit.Gaps {
-			terminal.Printf(stdout, "  coverage gap: %s\n", gap.Reason)
-		}
-	}
-	terminal.Printf(stdout, "%d result(s). Search coverage is incomplete: only explicitly indexed sessions; archive changes have not been reconciled.\n", len(page.Hits))
-	if page.Next != "" {
-		terminal.Printf(stdout, "Next cursor: %s\n", page.Next)
-	}
-	return 0
 }
 
 func searchCommandError(stderr io.Writer, err error) int {
@@ -310,5 +131,110 @@ func contentSearchFilters(fs *commandFlags, opts *contentSearchOptions, replay, 
 	if !opts.query.From.IsZero() && !opts.query.To.IsZero() && opts.query.From.After(opts.query.To) {
 		return fs.usageError("--since must not follow --until")
 	}
+	return 0
+}
+
+func validateContentSearchBounds(fs *commandFlags, opts *contentSearchOptions, seen map[string]bool) int {
+	if opts.outputBytes < 4096 || opts.outputBytes > 1048576 {
+		return fs.usageError("--max-output-bytes must be 4096–1048576")
+	}
+	if seen["wait"] && (!opts.refresh || opts.wait < time.Second || opts.wait > 10*time.Minute) {
+		return fs.usageError("--wait requires --refresh and a duration 1s–10m")
+	}
+	if opts.rebuild && (!opts.refresh || opts.session != "" || opts.query.Cursor != "") {
+		return fs.usageError("--rebuild requires namespace --refresh without --session or --cursor")
+	}
+	if opts.query.Cursor != "" && opts.refresh {
+		return fs.usageError("--cursor cannot be combined with refresh")
+	}
+	if opts.before < 0 || opts.before > 2 || opts.after < 0 || opts.after > 2 {
+		return fs.usageError("--before and --after must be 0–2")
+	}
+	if opts.read == "" && (seen["before"] || seen["after"]) {
+		return fs.usageError("--before and --after require --read")
+	}
+	if opts.query.Limit < 1 || opts.query.Limit > 100 {
+		return fs.usageError("--limit must be between 1 and 100")
+	}
+	if opts.maxBytes < 4 || opts.maxBytes > 8192 || opts.offset < -1 {
+		return fs.usageError("--max-bytes must be 4–8192 and --offset at least 0")
+	}
+	if opts.read == "" && (seen["offset"] || seen["max-bytes"]) {
+		return fs.usageError("--offset and --max-bytes require --read")
+	}
+
+	return 0
+}
+
+func validateContentSearchRead(fs *commandFlags, opts *contentSearchOptions, seen map[string]bool) int {
+	if opts.read != "" {
+		for _, name := range []string{"project", "all-projects", "harness", "since", "until", "replays", "children", "limit", "cursor", "session", "refresh", "wait", "rebuild"} {
+			if seen[name] {
+				return fs.usageError("--%s cannot be combined with --read", name)
+			}
+		}
+		var err error
+		opts.reference, err = decodeSearchReference(opts.read)
+		if err != nil {
+			return fs.usageError("%v", err)
+		}
+	}
+	if opts.read != "" {
+		offset := opts.offset
+		if offset < 0 {
+			offset = opts.reference.Start
+		}
+		if offset < opts.reference.Start || offset > opts.reference.End {
+			return fs.usageError("--offset is outside referenced passage")
+		}
+	}
+
+	return 0
+}
+
+func validateContentSearchModes(fs *commandFlags, opts *contentSearchOptions, seen map[string]bool) int {
+	if !opts.hasQuery && opts.read == "" {
+		for _, name := range []string{"project", "all-projects", "since", "until", "replays", "children", "limit", "cursor"} {
+			if seen[name] {
+				return fs.usageError("--%s requires a query", name)
+			}
+		}
+		if opts.query.Harness != "" && opts.session == "" {
+			return fs.usageError("--harness requires a query or --session")
+		}
+	}
+	if opts.all && opts.project != "" {
+		return fs.usageError("--project and --all-projects cannot be combined")
+	}
+	if (opts.session != "" && !opts.refresh) || (opts.session != "" && opts.query.Harness == "") {
+		return fs.usageError("named indexing requires --refresh --session ID --harness NAME")
+	}
+	if opts.read != "" && (opts.hasQuery || opts.refresh || opts.session != "") {
+		return fs.usageError("--read cannot be combined with a query or refresh")
+	}
+	if !opts.hasQuery && !opts.refresh && opts.read == "" {
+		return fs.usageError("provide a query, --refresh, or --read REF")
+	}
+
+	return 0
+}
+
+func validateContentSearchIdentities(fs *commandFlags, opts *contentSearchOptions) int {
+	if opts.query.Cursor != "" {
+		if err := search.ValidateCursor(opts.query.Cursor); err != nil {
+			return fs.usageError("%v", err)
+		}
+	}
+	if opts.session != "" {
+		if _, err := archive.MetadataObjectKey(opts.query.Harness, opts.session); err != nil {
+			return fs.usageError("invalid session ID: %v", err)
+		}
+	}
+	if opts.hasQuery {
+		if _, err := search.MatchExpression(opts.query.Text); err != nil {
+			return fs.usageError("%v", err)
+		}
+	}
+
 	return 0
 }
