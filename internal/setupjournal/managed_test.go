@@ -102,6 +102,7 @@ func TestManagedJournalRejectsCaseFoldedDuplicateAuthority(t *testing.T) {
 	valid := `{"schema_version":2,"changes":{"files":[]},"jobs":[{"role":"search","backend":"launchd","ref":"com.agent-archive.search","definition":"/synthetic/Library/LaunchAgents/com.agent-archive.search.plist","was_loaded":false,"intent":"keep"}]}`
 	for _, field := range []string{"role", "intent", "ref", "backend", "definition", "was_loaded"} {
 		t.Run(field, func(t *testing.T) {
+			t.Parallel()
 			alias := strings.ToUpper(field)
 			if field == "was_loaded" {
 				alias = "waſ_loaded"

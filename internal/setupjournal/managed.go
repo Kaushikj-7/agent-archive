@@ -170,6 +170,8 @@ func (j managedTarget) stateError(home string, guarded bool) error {
 		if !guarded {
 			return nil
 		}
+	case scheduler.Loaded, scheduler.Running, scheduler.Missing:
+		return nil
 	default:
 		return nil
 	}

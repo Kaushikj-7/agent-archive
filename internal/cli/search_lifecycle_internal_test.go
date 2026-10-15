@@ -139,7 +139,10 @@ func TestSkippedSchedulerKeepsCollectorAndSearchStopCommandsDistinct(t *testing.
 		name   string
 		manual bool
 	}{{"fallback", false}, {"manual", true}} {
-		t.Run(tc.name, func(t *testing.T) { checkSkippedSchedulerGuidance(t, tc.manual) })
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			checkSkippedSchedulerGuidance(t, tc.manual)
+		})
 	}
 }
 
