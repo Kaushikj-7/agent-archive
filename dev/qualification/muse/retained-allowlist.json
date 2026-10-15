@@ -1,0 +1,177 @@
+{
+  "version": 1,
+  "status": "Q0 maximum field set; capture unavailable; not a native decoder",
+  "envelope": [
+    "schema_version",
+    "id",
+    "stream",
+    "sequence",
+    "recorded_at",
+    "record_type",
+    "durability",
+    "causation_id",
+    "payload_type",
+    "payload_schema_version",
+    "retained_marker",
+    "position"
+  ],
+  "common_payload": [
+    "kind",
+    "run_id",
+    "task_id",
+    "source_run_record_id",
+    "source_run_record_sequence",
+    "event.kind"
+  ],
+  "payload_types": {
+    "runtime.session.metadata": [
+      "record.workspace_root",
+      "record.provider_id",
+      "record.model_id",
+      "record.build.sha",
+      "record.build.semver",
+      "record.tool_surface_version"
+    ],
+    "session.opened.observed": [
+      "record.schema_version",
+      "record.session_id",
+      "record.resume",
+      "record.workspace_kind",
+      "record.credential_backend"
+    ],
+    "session.resumed": [
+      "record.schema_version",
+      "record.session_id",
+      "record.prior_turn_count",
+      "record.resumed_from_sequence",
+      "record.resumed_from_record_id"
+    ],
+    "runtime.session.route_facts": [
+      "record.cwd"
+    ],
+    "runtime.user_intent.accepted": [
+      "intent_id",
+      "source_session_id",
+      "surface",
+      "semantic_kind.kind"
+    ],
+    "runtime.user_intent.materialized": [
+      "intent_id",
+      "envelope_record_id",
+      "envelope_sequence",
+      "source_session_id",
+      "outcome.kind",
+      "outcome.run_id",
+      "outcome.run_started_session_record_id",
+      "outcome.run_started_source_record_id",
+      "outcome.cut_before"
+    ],
+    "session.name.changed": [
+      "session_id",
+      "new_name",
+      "previous_name",
+      "source",
+      "operation_id"
+    ],
+    "run.model.configured": [
+      "record.command_id",
+      "record.run_stream",
+      "record.provider_id",
+      "record.model_id",
+      "record.source"
+    ],
+    "session.end": [
+      "record.schema_version",
+      "record.session_id",
+      "record.exit_reason"
+    ],
+    "runtime.session.task": [
+      "event.task_id",
+      "event.task_kind",
+      "event.operation",
+      "event.parent_task_id",
+      "event.error_kind",
+      "event.status"
+    ],
+    "session.fork.created": [
+      "fork_session_id",
+      "source_session_id",
+      "source_cut_cursor",
+      "created_by_command_id",
+      "schema_version"
+    ],
+    "session.fork.model_prefix": [
+      "schema_version",
+      "fork_session_id",
+      "boundary_turns"
+    ],
+    "session.fork.turn": [
+      "schema_version",
+      "fork_session_id",
+      "turn_index"
+    ]
+  },
+  "runtime_events": {
+    "started": [
+      "prompt",
+      "task_id"
+    ],
+    "assistant_message_committed": [
+      "message_id",
+      "response_id",
+      "text"
+    ],
+    "model_completed": [
+      "model",
+      "usage.input_tokens",
+      "usage.output_tokens",
+      "usage.cached_tokens",
+      "usage.cache_write_tokens",
+      "usage.cache_read_tokens",
+      "usage.reasoning_tokens"
+    ],
+    "side_effect_intent": [
+      "task_id",
+      "operation",
+      "parent_task_id"
+    ],
+    "completed": [
+      "task_id",
+      "status",
+      "error_kind"
+    ],
+    "failed": [
+      "task_id",
+      "status",
+      "error_kind"
+    ],
+    "terminal": [
+      "status",
+      "error_kind"
+    ],
+    "assistant_tool_calls_committed": [
+      "message_id",
+      "response_id"
+    ],
+    "tool_result_batch_committed": [
+      "batch_id"
+    ]
+  },
+  "runtime_event_arrays": {
+    "assistant_tool_calls_committed": {
+      "tool_calls": [
+        "id",
+        "call_id",
+        "name",
+        "args"
+      ]
+    },
+    "tool_result_batch_committed": {
+      "results": [
+        "tool_call_index",
+        "tool_call_id",
+        "text"
+      ]
+    }
+  }
+}
