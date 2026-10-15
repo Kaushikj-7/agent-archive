@@ -191,8 +191,10 @@ func privacy(r retained) (retained, error) {
 		return r, errFormat
 	}
 	for k, v := range original.Fields {
-		switch k {
-		case "prompt", "text", "new_name", "previous_name":
+		switch fieldName(k) {
+		case fieldPrompt, fieldText, fieldNewName, fieldPreviousName:
+		case fieldSchemaVersion, fieldPermissionEpoch, fieldEnvelopeSequence, fieldSourceRunRecordSequence, fieldResume:
+			fallthrough
 		default:
 			if !reflect.DeepEqual(v, r.Fields[k]) {
 				return r, errFormat
@@ -201,9 +203,17 @@ func privacy(r retained) (retained, error) {
 	}
 	return r, nil
 }
+
 func filtered(rows []retained, limits agentapi.ReadLimits) (archive.FilteredTranscript, error) {
-	out := archive.FilteredTranscript{Format: "muse-jsonl", SessionIDs: []string{rows[0].Stream.ID}, NativeStartAt: time.UnixMicro(rows[0].Timestamp).UTC(), NativeStartComplete: true, LocalIdentity: archive.NativeSessionIdentity{ID: rows[0].Stream.ID}}
-	out.Gaps = []archive.CaptureGap{{Code: "muse_local_conversation_only", Detail: "Own visible conversation only"}, {Code: "usage_cache_reasoning_cost_unavailable"}, {Code: "tool_facts_unavailable"}, {Code: "model_switches_unavailable"}, {Code: "child_coverage_unavailable"}}
+	out := archive.FilteredTranscript{Format: "muse-jsonl", SessionIDs: []string{rows[0].Stream.ID}, NativeStartAt: time.UnixMicro(rows[0].Timestamp).UTC(), NativeStartComplete: true, LocalIdentity: archive.NativeSessionIdentity{ID: rows[0].Stream.ID}, Gaps: []archive.CaptureGap{{Code: "muse_local_conversation_only", Detail: "Own visible conversation only"}, {Code: "usage_cache_reasoning_cost_unavailable"}, {Code: "tool_facts_unavailable"}, {Code: "model_switches_unavailable"}, {Code: "child_coverage_unavailable"}}}
+	for _, r := range rows {
+		if r.Type == payloadRuntimeSessionMetadata {
+			if _, present := r.Fields["model_id"]; !present {
+				out.Gaps = append(out.Gaps, archive.CaptureGap{Code: "model_identity_unavailable", Detail: "Startup metadata does not identify a model"})
+			}
+			break
+		}
+	}
 	if pendingResponse(rows) {
 		out.Gaps = append(out.Gaps, archive.CaptureGap{Code: "muse_response_pending", Detail: "A qualified own prompt has no committed assistant response yet"})
 	}
@@ -362,8 +372,11 @@ func (Filter) EvidenceExtends(a, b archive.SourceBundle) bool {
 }
 
 var _ agentapi.TranscriptFilter = Filter{}
+
 var _ agentapi.LeasedTranscriptFilter = Filter{}
+
 var _ agentapi.LeasedTranscriptRefilter = Filter{}
+
 var _ agentapi.TranscriptParser = Parser{}
 
 var retainedKeys = func() map[string]bool {
@@ -407,15 +420,18 @@ func physicalLine(ctx context.Context, reader *bufio.Reader, limit int64, reserv
 func pendingResponse(rows []retained) bool {
 	pending := map[string]bool{}
 	for _, r := range rows {
-		if r.Type != "runtime.session" || str(r.Fields["kind"]) != "run" {
+		if r.Type != payloadRuntimeSession || str(r.Fields["kind"]) != "run" {
 			continue
 		}
 		run := str(r.Fields["run_id"])
-		switch str(r.Fields["event_kind"]) {
-		case "started":
+		switch runtimeEvent(str(r.Fields["event_kind"])) {
+		case eventStarted:
 			pending[run] = true
-		case "assistant_message_committed":
+		case eventAssistantMessageCommitted:
 			delete(pending, run)
+
+		case eventAccepted, eventAssistantToolCallsCommitted, eventCancelled, eventCompleted, eventContextBlockDiagnostic, eventContextBlockUpdated, eventFailed, eventGoalUsageAttribution, eventHookRunStarted, eventHookRunTerminal, eventModelCompleted, eventModelInputTraceRecorded, eventModelRequestConfigured, eventModelResponseCreated, eventProposed, eventProviderRequestOptionsConfigured, eventResourceUsageSampled, eventScheduled, eventSideEffectIntent, eventStatus, eventTaskStreamLinked, eventTerminal, eventToolResultBatchCommitted:
+			// These known variants keep the existing non-special-case behavior.
 		}
 	}
 	return len(pending) > 0

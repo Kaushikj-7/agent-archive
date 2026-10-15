@@ -19,58 +19,62 @@ func only(m map[string]any, names ...string) bool {
 // context/diagnostic fields are bounded by the JSON decoder and never retained.
 func authorityShape(r retained, p map[string]any) bool {
 	switch r.Type {
-	case "runtime.session.metadata":
-		return shapeRuntimeSessionMetadata(r, p)
-	case "session.opened.observed":
-		return shapeSessionOpenedObserved(r, p)
-	case "runtime.session.capture_selection":
-		return shapeRuntimeSessionCaptureSelection(r, p)
-	case "runtime.command_intake.received":
+	case payloadRuntimeSessionMetadata:
+		return shapeRuntimeSessionMetadata(p)
+	case payloadSessionOpenedObserved:
+		return shapeSessionOpenedObserved(p)
+	case payloadRuntimeSessionCaptureSelection:
+		return shapeRuntimeSessionCaptureSelection(p)
+	case payloadRuntimeCommandIntakeReceived:
 		return shapeRuntimeCommandIntakeReceived(r, p)
-	case "runtime.session_start.intake_v3":
-		return shapeRuntimeSessionStartIntakeV3(r, p)
-	case "session.started":
-		return shapeSessionStarted(r, p)
-	case "session.resumed":
-		return shapeSessionResumed(r, p)
-	case "runtime.session.route_facts":
-		return shapeRuntimeSessionRouteFacts(r, p)
-	case "runtime.user_intent.accepted":
-		return shapeRuntimeUserIntentAccepted(r, p)
-	case "runtime.user_intent.materialized":
-		return shapeRuntimeUserIntentMaterialized(r, p)
-	case "session.name.changed":
-		return shapeSessionNameChanged(r, p)
-	case "run.model.configured":
-		return shapeRunModelConfigured(r, p)
-	case "session.end":
-		return shapeSessionEnd(r, p)
-	case "runtime.session":
-		return shapeRuntimeSession(r, p)
-	case "runtime.retained_fact":
+	case payloadRuntimeSessionStartIntakeV3:
+		return shapeRuntimeSessionStartIntakeV3(p)
+	case payloadSessionStarted:
+		return shapeSessionStarted(p)
+	case payloadSessionResumed:
+		return shapeSessionResumed(p)
+	case payloadRuntimeSessionRouteFacts:
+		return shapeRuntimeSessionRouteFacts(p)
+	case payloadRuntimeUserIntentAccepted:
+		return shapeRuntimeUserIntentAccepted(p)
+	case payloadRuntimeUserIntentMaterialized:
+		return shapeRuntimeUserIntentMaterialized(p)
+	case payloadSessionNameChanged:
+		return shapeSessionNameChanged(p)
+	case payloadRunModelConfigured:
+		return shapeRunModelConfigured(p)
+	case payloadSessionEnd:
+		return shapeSessionEnd(p)
+	case payloadRuntimeSession:
+		return shapeRuntimeSession(p)
+	case payloadRuntimeRetainedFact:
 		return keys(p, "kind", "run_id", "record") && keys(recObject(p), "payload_type", "payload_schema_version", "payload")
-	case "runtime.session.task":
+	case payloadRuntimeSessionTask:
 		return keys(p, "task_id", "event")
-	case "runtime.command_intake.session_name.received":
+	case payloadRuntimeCommandIntakeSessionNameReceived:
 		return keys(p, "kind", "record") && keys(recObject(p), "kind", "command_id", "session_stream", "command")
-	case "runtime.command_intake.settled":
+	case payloadRuntimeCommandIntakeSettled:
 		return keys(p, "kind", "record") && keys(recObject(p), "kind", "command_id", "outcome")
+
+	case payloadRuntimeSessionPermissionFormatDeclared, payloadRuntimeSessionPermissionProfileCommitted:
+		// These known variants keep the existing non-special-case behavior.
 	}
 	return true
 }
-func shapeRuntimeSessionMetadata(r retained, p map[string]any) bool {
+
+func shapeRuntimeSessionMetadata(p map[string]any) bool {
 	rec := object(p["record"])
 	return keys(p, "kind", "record") && only(rec, "workspace_root", "provider_id", "model_id", "tool_surface_version", "web_search_mode", "build") && (rec["build"] == nil || keys(object(rec["build"]), "sha", "semver") && stringFields(object(rec["build"]), "sha", "semver"))
 
 }
 
-func shapeSessionOpenedObserved(r retained, p map[string]any) bool {
+func shapeSessionOpenedObserved(p map[string]any) bool {
 	rec := object(p["record"])
 	return keys(p, "kind", "record") && only(rec, "schema_version", "session_id", "resume", "security_mode", "workspace_free_bytes", "data_dir_free_bytes", "credential_backend", "keychain_fallback_reason", "client_info_name", "client_info_version")
 
 }
 
-func shapeRuntimeSessionCaptureSelection(r retained, p map[string]any) bool {
+func shapeRuntimeSessionCaptureSelection(p map[string]any) bool {
 	return keys(p, "schema_version", "session_stream", "publication_id", "selection")
 
 }
@@ -87,57 +91,57 @@ func shapeRuntimeCommandIntakeReceived(r retained, p map[string]any) bool {
 
 }
 
-func shapeRuntimeSessionStartIntakeV3(r retained, p map[string]any) bool {
+func shapeRuntimeSessionStartIntakeV3(p map[string]any) bool {
 	b := object(p["payload"])
 	return keys(p, "kind", "command_id", "payload", "command_payload_fingerprint") && keys(b, "schema_version", "session_stream", "background_tasks", "session_metadata", "activation_source") && keys(object(b["session_stream"]), "kind", "id") && only(object(b["session_metadata"]), "workspace_root", "provider_id", "model_id", "tool_surface_version")
 
 }
 
-func shapeSessionStarted(r retained, p map[string]any) bool {
+func shapeSessionStarted(p map[string]any) bool {
 	return keys(p, "kind", "command_id", "previous_session_stream", "background_tasks")
 
 }
 
-func shapeSessionResumed(r retained, p map[string]any) bool {
+func shapeSessionResumed(p map[string]any) bool {
 	rec := object(p["record"])
 	return keys(p, "kind", "record") && only(rec, "schema_version", "session_id", "prior_turn_count", "resumed_from_sequence", "resumed_from_record_id")
 
 }
 
-func shapeRuntimeSessionRouteFacts(r retained, p map[string]any) bool {
+func shapeRuntimeSessionRouteFacts(p map[string]any) bool {
 	rec := object(p["record"])
 	return keys(p, "kind", "record") && only(rec, "cwd", "pid", "terminal_title_identity")
 
 }
 
-func shapeRuntimeUserIntentAccepted(r retained, p map[string]any) bool {
+func shapeRuntimeUserIntentAccepted(p map[string]any) bool {
 	return only(p, "intent_id", "source_session_id", "surface", "semantic_kind", "refill_blocks", "model_messages", "bindings", "delivery_policy", "wake_policy") && keys(object(p["semantic_kind"]), "kind")
 
 }
 
-func shapeRuntimeUserIntentMaterialized(r retained, p map[string]any) bool {
+func shapeRuntimeUserIntentMaterialized(p map[string]any) bool {
 	return keys(p, "intent_id", "envelope_record_id", "envelope_sequence", "source_session_id", "outcome") && keys(object(p["outcome"]), "kind", "run_id", "run_started_session_record_id", "run_started_source_record_id", "cut_before")
 
 }
 
-func shapeSessionNameChanged(r retained, p map[string]any) bool {
+func shapeSessionNameChanged(p map[string]any) bool {
 	return only(p, "session_id", "new_name", "previous_name", "source", "operation_id", "authority_id")
 
 }
 
-func shapeRunModelConfigured(r retained, p map[string]any) bool {
+func shapeRunModelConfigured(p map[string]any) bool {
 	rec := object(p["record"])
 	return keys(p, "kind", "record") && only(rec, "command_id", "run_stream", "provider_id", "model_id", "source", "display_label", "profile_id") && keys(object(rec["run_stream"]), "kind", "id")
 
 }
 
-func shapeSessionEnd(r retained, p map[string]any) bool {
+func shapeSessionEnd(p map[string]any) bool {
 	rec := object(p["record"])
 	return keys(p, "kind", "record") && only(rec, "schema_version", "session_id", "exit_reason", "resource_usage", "shutdown_steps", "uptime_ms")
 
 }
 
-func shapeRuntimeSession(r retained, p map[string]any) bool {
+func shapeRuntimeSession(p map[string]any) bool {
 	rec := object(p["record"])
 	kind := str(p["kind"])
 	if kind == "agent_tree_initialized" {
@@ -148,11 +152,14 @@ func shapeRuntimeSession(r retained, p map[string]any) bool {
 			return false
 		}
 		event := object(p["event"])
-		switch str(event["kind"]) {
-		case "started":
+		switch runtimeEvent(str(event["kind"])) {
+		case eventStarted:
 			return keys(event, "kind", "prompt")
-		case "assistant_message_committed":
+		case eventAssistantMessageCommitted:
 			return keys(event, "kind", "message_id", "response_id", "text")
+
+		case eventAccepted, eventAssistantToolCallsCommitted, eventCancelled, eventCompleted, eventContextBlockDiagnostic, eventContextBlockUpdated, eventFailed, eventGoalUsageAttribution, eventHookRunStarted, eventHookRunTerminal, eventModelCompleted, eventModelInputTraceRecorded, eventModelRequestConfigured, eventModelResponseCreated, eventProposed, eventProviderRequestOptionsConfigured, eventResourceUsageSampled, eventScheduled, eventSideEffectIntent, eventStatus, eventTaskStreamLinked, eventTerminal, eventToolResultBatchCommitted:
+			// These known variants keep the existing non-special-case behavior.
 		}
 		return true
 	}

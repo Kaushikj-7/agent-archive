@@ -37,14 +37,13 @@ func (Parser) Parse(ctx context.Context, b archive.SourceBundle) (archive.Analys
 	if e != nil {
 		return archive.Analysis{}, e
 	}
-	a := archive.Analysis{View: view, Facts: archive.NativeFacts{NativeStartedAt: time.UnixMicro(rows[0].Timestamp).UTC(), EarliestRecordAt: time.UnixMicro(rows[0].Timestamp).UTC(), TokenScopeUnknown: true}}
 	unavailable := archive.Availability{State: archive.AvailabilityUnavailable, Reason: archive.AvailabilityReasonNotRecorded}
-	a.Observability = archive.Observability{StructuredCounts: archive.Availability{State: archive.AvailabilityAvailable}, Compactions: unavailable, ToolErrors: unavailable, ToolResults: unavailable}
+	a := archive.Analysis{View: view, Facts: archive.NativeFacts{NativeStartedAt: time.UnixMicro(rows[0].Timestamp).UTC(), EarliestRecordAt: time.UnixMicro(rows[0].Timestamp).UTC(), TokenScopeUnknown: true}, Observability: archive.Observability{StructuredCounts: archive.Availability{State: archive.AvailabilityAvailable}, Compactions: unavailable, ToolErrors: unavailable, ToolResults: unavailable}}
 	for _, r := range rows {
-		if r.Type == "runtime.session.metadata" && a.Facts.WorkspaceRoot == "" {
+		if r.Type == payloadRuntimeSessionMetadata && a.Facts.WorkspaceRoot == "" {
 			a.Facts.WorkspaceRoot = str(r.Fields["workspace_root"])
 		}
-		if r.Type == "session.name.changed" {
+		if r.Type == payloadSessionNameChanged {
 			a.Facts.Name = archive.CollapseSessionTitle(str(r.Fields["new_name"]))
 		}
 	}
@@ -69,7 +68,7 @@ func conversation(rows []retained) (archive.NormalizedView, error) {
 		}
 		f := r.Fields
 		switch r.Type {
-		case "runtime.user_intent.accepted":
+		case payloadRuntimeUserIntentAccepted:
 			id := str(f["intent_id"])
 			if id == "" {
 				return view, errFormat
@@ -78,13 +77,13 @@ func conversation(rows []retained) (archive.NormalizedView, error) {
 				return view, errFormat
 			}
 			accepted[id] = r
-		case "runtime.session":
+		case payloadRuntimeSession:
 			if str(f["kind"]) != "run" {
 				continue
 			}
 			run := str(f["run_id"])
-			switch str(f["event_kind"]) {
-			case "started":
+			switch runtimeEvent(str(f["event_kind"])) {
+			case eventStarted:
 				if run == "" || str(f["source_run_record_id"]) == "" {
 					return view, errFormat
 				}
@@ -94,7 +93,7 @@ func conversation(rows []retained) (archive.NormalizedView, error) {
 				started[run] = i
 				sourceRecords[runIdentity{run, str(f["source_run_record_id"])}] = true
 				lastSequence[run] = num(f["source_run_record_sequence"])
-			case "assistant_message_committed":
+			case eventAssistantMessageCommitted:
 				_, ok := started[run]
 				if !ok || !joined[run] {
 					return view, errFormat
@@ -110,8 +109,11 @@ func conversation(rows []retained) (archive.NormalizedView, error) {
 				sourceRecords[runIdentity{run, str(f["source_run_record_id"])}] = true
 				lastSequence[run] = num(f["source_run_record_sequence"])
 				view.Turns = append(view.Turns, archive.NormalizedTurn{RecordIndex: i, Role: "assistant", Kind: archive.TurnKindAssistant, Text: str(f["text"]), ID: r.ID, MessageID: str(f["message_id"]), TurnID: run, Timestamp: ts.Format(time.RFC3339Nano)})
+			case eventAccepted, eventAssistantToolCallsCommitted, eventCancelled, eventCompleted, eventContextBlockDiagnostic, eventContextBlockUpdated, eventFailed, eventGoalUsageAttribution, eventHookRunStarted, eventHookRunTerminal, eventModelCompleted, eventModelInputTraceRecorded, eventModelRequestConfigured, eventModelResponseCreated, eventProposed, eventProviderRequestOptionsConfigured, eventResourceUsageSampled, eventScheduled, eventSideEffectIntent, eventStatus, eventTaskStreamLinked, eventTerminal, eventToolResultBatchCommitted:
+				// Known optional facts do not create visible conversation turns.
+
 			}
-		case "runtime.user_intent.materialized":
+		case payloadRuntimeUserIntentMaterialized:
 			turn, run, e := materializedTurn(r, rows, accepted, started, materialized, consumed)
 			if e != nil {
 				return view, e
@@ -120,6 +122,9 @@ func conversation(rows []retained) (archive.NormalizedView, error) {
 				joined[run] = true
 				view.Turns = append(view.Turns, *turn)
 			}
+
+		case payloadRunModelConfigured, payloadRuntimeCommandIntakeReceived, payloadRuntimeCommandIntakeSessionNameReceived, payloadRuntimeCommandIntakeSettled, payloadRuntimeRetainedFact, payloadRuntimeSessionCaptureSelection, payloadRuntimeSessionMetadata, payloadRuntimeSessionPermissionFormatDeclared, payloadRuntimeSessionPermissionProfileCommitted, payloadRuntimeSessionRouteFacts, payloadRuntimeSessionTask, payloadRuntimeSessionStartIntakeV3, payloadSessionEnd, payloadSessionNameChanged, payloadSessionOpenedObserved, payloadSessionResumed, payloadSessionStarted:
+			// These known variants keep the existing non-special-case behavior.
 		}
 	}
 	if len(accepted) != len(consumed) || len(started) != len(materialized) {
@@ -157,4 +162,7 @@ func materializedTurn(r retained, rows []retained, accepted map[string]retained,
 }
 
 // runIdentity keeps opaque identifiers in separate typed fields without delimiter normalization.
-type runIdentity struct{ run, record string }
+type runIdentity struct {
+	run    string
+	record string
+}

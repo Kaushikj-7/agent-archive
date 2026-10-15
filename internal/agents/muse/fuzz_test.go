@@ -17,9 +17,12 @@ import (
 
 type memoryInput struct{ *bytes.Reader }
 
-func (in memoryInput) Length() int64             { return in.Size() }
+func (in memoryInput) Length() int64 { return in.Size() }
+
 func (in memoryInput) Stamp() transcriptio.Stamp { return transcriptio.Stamp{Size: in.Size()} }
-func (memoryInput) Check() error                 { return nil }
+
+func (memoryInput) Check() error { return nil }
+
 func (memoryInput) Records(context.Context, bool, int64, int64, func([]byte) bool) (transcriptio.RecordWindow, error) {
 	return transcriptio.RecordWindow{}, errFormat
 }
@@ -31,6 +34,9 @@ func FuzzMuseNative(f *testing.F) {
 			f.Fatal(e)
 		}
 		f.Add(raw)
+		if name == "synthetic-exec-empty.jsonl" {
+			f.Add(bytes.Replace(raw, []byte(`,"model_id":"synthetic-model"`), nil, 1))
+		}
 	}
 	f.Fuzz(func(t *testing.T, raw []byte) {
 		if len(raw) > 1<<20 {
@@ -58,6 +64,7 @@ func FuzzMuseNative(f *testing.F) {
 		}
 	})
 }
+
 func FuzzMuseRetained(f *testing.F) {
 	for _, name := range []string{"synthetic-exec-empty.golden.jsonl", "synthetic-msp-conversation.golden.jsonl"} {
 		raw, e := os.ReadFile(filepath.Join("testdata", name))
@@ -71,7 +78,7 @@ func FuzzMuseRetained(f *testing.F) {
 			t.Skip()
 		}
 		b := archive.SourceBundle{SchemaVersion: archive.SourceSchemaVersion, Capture: archive.SourceCapture{Harness: archive.Harness{Name: "muse"}, AdapterName: "muse", SourceFormat: "muse-jsonl"}}
-		for _, line := range bytes.Split(bytes.TrimSpace(raw), []byte("\n")) {
+		for line := range bytes.SplitSeq(bytes.TrimSpace(raw), []byte("\n")) {
 			var m map[string]any
 			if json.Unmarshal(line, &m) != nil {
 				return

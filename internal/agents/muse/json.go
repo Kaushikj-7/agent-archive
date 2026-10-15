@@ -10,8 +10,11 @@ import (
 )
 
 const exactMax int64 = 1<<53 - 1
+
 const maxDepth = 32
+
 const maxString = 1 << 20
+
 const maxNodes = 200000
 
 var errFormat = errors.New("unsupported or incomplete Muse ordinary root")
@@ -77,6 +80,7 @@ func (r *jsonReader) value(depth int) (any, []string, error) {
 	}
 	return nil, nil, errFormat
 }
+
 func (r *jsonReader) object(depth int) (any, []string, error) {
 	m := map[string]any{}
 	var keys []string
@@ -104,6 +108,7 @@ func (r *jsonReader) object(depth int) (any, []string, error) {
 	}
 	return m, keys, nil
 }
+
 func (r *jsonReader) array(depth int) (any, []string, error) {
 	a := []any{}
 	for r.decoder.More() {
@@ -120,7 +125,9 @@ func (r *jsonReader) array(depth int) (any, []string, error) {
 }
 
 func object(v any) map[string]any { m, _ := v.(map[string]any); return m }
-func str(v any) string            { s, _ := v.(string); return s }
+
+func str(v any) string { s, _ := v.(string); return s }
+
 func num(v any) int64 {
 	n, ok := v.(json.Number)
 	if !ok {
@@ -132,6 +139,7 @@ func num(v any) int64 {
 	}
 	return i
 }
+
 func keys(m map[string]any, names ...string) bool {
 	if m == nil || len(m) != len(names) {
 		return false
@@ -143,6 +151,7 @@ func keys(m map[string]any, names ...string) bool {
 	}
 	return true
 }
+
 func stringFields(m map[string]any, names ...string) bool {
 	for _, k := range names {
 		if _, ok := m[k].(string); !ok {
@@ -151,6 +160,7 @@ func stringFields(m map[string]any, names ...string) bool {
 	}
 	return true
 }
+
 func emptyArray(v any) bool { a, ok := v.([]any); return ok && len(a) == 0 }
 
 // validEscapes rejects unpaired surrogate escapes which encoding/json would

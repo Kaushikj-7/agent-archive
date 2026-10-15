@@ -26,11 +26,13 @@ func museLocalFixture(t *testing.T, name string) string {
 	must(t, os.Chtimes(path, misleading, misleading))
 	return path
 }
+
 func TestMuseExplicitFileHandoffUsesReservedStartAndNoSetup(t *testing.T) {
 	t.Parallel()
 	for _, lane := range []string{"exec", "msp"} {
 		for _, content := range []string{"empty", "conversation"} {
 			t.Run(lane+"/"+content, func(t *testing.T) {
+				t.Parallel()
 				path := museLocalFixture(t, "synthetic-"+lane+"-"+content)
 				home := filepath.Join(t.TempDir(), "not-created")
 				env := testEnv(t, home, time.Now())
@@ -76,6 +78,7 @@ func TestMuseExplicitFileHandoffUsesReservedStartAndNoSetup(t *testing.T) {
 		}
 	}
 }
+
 func TestMuseInvalidFileAndBackfillCreateNoArtifacts(t *testing.T) {
 	t.Parallel()
 	path := museLocalFixture(t, "synthetic-exec-conversation")
@@ -102,6 +105,7 @@ func TestMuseInvalidFileAndBackfillCreateNoArtifacts(t *testing.T) {
 		t.Fatalf("unsupported backfill wrote state: %v", e)
 	}
 }
+
 func TestMuseExplicitFileHandoffToSupportedDestination(t *testing.T) {
 	t.Parallel()
 	path := museLocalFixture(t, "synthetic-exec-conversation")

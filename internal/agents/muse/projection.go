@@ -9,45 +9,45 @@ func project(r retained, p map[string]any) (map[string]any, error) {
 		return nil, errFormat
 	}
 	switch r.Type {
-	case "runtime.session.permission_format_declared":
+	case payloadRuntimeSessionPermissionFormatDeclared:
 		return projectRuntimeSessionPermissionFormatDeclared(r, p)
-	case "runtime.session.permission_profile_committed":
+	case payloadRuntimeSessionPermissionProfileCommitted:
 		return projectRuntimeSessionPermissionProfileCommitted(r, p)
-	case "runtime.session.metadata":
+	case payloadRuntimeSessionMetadata:
 		return projectRuntimeSessionMetadata(r, p)
-	case "session.opened.observed":
+	case payloadSessionOpenedObserved:
 		return projectSessionOpenedObserved(r, p)
-	case "runtime.session.capture_selection":
+	case payloadRuntimeSessionCaptureSelection:
 		return projectRuntimeSessionCaptureSelection(r, p)
-	case "runtime.command_intake.received":
+	case payloadRuntimeCommandIntakeReceived:
 		return projectRuntimeCommandIntakeReceived(r, p)
-	case "runtime.session_start.intake_v3":
+	case payloadRuntimeSessionStartIntakeV3:
 		return projectRuntimeSessionStartIntakeV3(r, p)
-	case "session.started":
+	case payloadSessionStarted:
 		return projectSessionStarted(r, p)
-	case "session.resumed":
+	case payloadSessionResumed:
 		return projectSessionResumed(r, p)
-	case "runtime.session.route_facts":
+	case payloadRuntimeSessionRouteFacts:
 		return projectRuntimeSessionRouteFacts(r, p)
-	case "runtime.user_intent.accepted":
+	case payloadRuntimeUserIntentAccepted:
 		return projectRuntimeUserIntentAccepted(r, p)
-	case "runtime.user_intent.materialized":
+	case payloadRuntimeUserIntentMaterialized:
 		return projectRuntimeUserIntentMaterialized(r, p)
-	case "session.name.changed":
+	case payloadSessionNameChanged:
 		return projectSessionNameChanged(r, p)
-	case "run.model.configured":
+	case payloadRunModelConfigured:
 		return projectRunModelConfigured(r, p)
-	case "session.end":
+	case payloadSessionEnd:
 		return projectSessionEnd(r, p)
-	case "runtime.session":
+	case payloadRuntimeSession:
 		return projectRuntimeSession(r, p)
-	case "runtime.session.task":
+	case payloadRuntimeSessionTask:
 		return projectRuntimeSessionTask(r, p)
-	case "runtime.retained_fact":
+	case payloadRuntimeRetainedFact:
 		return projectRuntimeRetainedFact(r, p)
-	case "runtime.command_intake.session_name.received":
+	case payloadRuntimeCommandIntakeSessionNameReceived:
 		return projectRuntimeCommandIntakeSessionNameReceived(r, p)
-	case "runtime.command_intake.settled":
+	case payloadRuntimeCommandIntakeSettled:
 		return projectRuntimeCommandIntakeSettled(r, p)
 	default:
 		return nil, errFormat
@@ -81,10 +81,16 @@ func projectRuntimeSessionMetadata(r retained, p map[string]any) (map[string]any
 		f["kind"] = kind
 	}
 	rec := object(p["record"])
-	if r.PayloadSchema != 1 || kind != "metadata" || !stringFields(rec, "workspace_root", "provider_id", "model_id", "tool_surface_version") {
+	if r.PayloadSchema != 1 || kind != "metadata" || !stringFields(rec, "workspace_root", "provider_id", "tool_surface_version") {
 		return nil, errFormat
 	}
-	copyFields(f, rec, "workspace_root", "provider_id", "model_id", "tool_surface_version")
+	copyFields(f, rec, "workspace_root", "provider_id", "tool_surface_version")
+	if model, present := rec["model_id"]; present {
+		if _, ok := model.(string); !ok {
+			return nil, errFormat
+		}
+		f["model_id"] = model
+	}
 
 	return f, nil
 }
@@ -302,30 +308,30 @@ func projectSessionEnd(r retained, p map[string]any) (map[string]any, error) {
 
 func projectRuntimeSession(r retained, p map[string]any) (map[string]any, error) {
 	f := map[string]any{}
-	kind := str(p["kind"])
+	kind := runtimeRole(str(p["kind"]))
 	if kind != "" {
-		f["kind"] = kind
+		f["kind"] = string(kind)
 	}
 	rec := object(p["record"])
-	if r.PayloadSchema == 2 && kind == "agent_tree_initialized" {
+	if r.PayloadSchema == 2 && kind == roleAgentTreeInitialized {
 		if num(rec["schema_version"]) != 1 || num(rec["writer_protocol"]) != 1 || num(rec["execution_capacity"]) < 1 || !stringFields(rec, "root_agent_id", "root_session_id") {
 			return nil, errFormat
 		}
 		copyFields(f, rec, "root_agent_id", "root_session_id")
 		return f, nil
 	}
-	if r.PayloadSchema != 1 || (kind != "run" && kind != "task") {
+	if r.PayloadSchema != 1 || (kind != roleRun && kind != roleTask) {
 		return nil, errFormat
 	}
 	event := object(p["event"])
-	ek := str(event["kind"])
-	f["event_kind"] = ek
-	if kind == "run" && (ek == "started" || ek == "assistant_message_committed") {
+	ek := runtimeEvent(str(event["kind"]))
+	f["event_kind"] = string(ek)
+	if kind == roleRun && (ek == eventStarted || ek == eventAssistantMessageCommitted) {
 		if !stringFields(p, "run_id", "source_run_record_id") || num(p["source_run_record_sequence"]) < 1 {
 			return nil, errFormat
 		}
 		copyFields(f, p, "run_id", "source_run_record_id", "source_run_record_sequence")
-		if ek == "started" {
+		if ek == eventStarted {
 			if !stringFields(event, "prompt") {
 				return nil, errFormat
 			}
@@ -349,7 +355,7 @@ func projectRuntimeSessionTask(r retained, p map[string]any) (map[string]any, er
 	if kind != "" {
 		f["kind"] = kind
 	}
-	if r.PayloadSchema != 1 || kind != "" || !optionalRuntime("task", str(object(p["event"])["kind"])) {
+	if r.PayloadSchema != 1 || kind != "" || !optionalRuntime(roleTask, runtimeEvent(str(object(p["event"])["kind"]))) {
 		return nil, errFormat
 	}
 	f["event_kind"] = object(p["event"])["kind"]
@@ -399,35 +405,41 @@ func projectRuntimeCommandIntakeSettled(r retained, p map[string]any) (map[strin
 	return f, nil
 }
 
-func optionalRuntime(kind, event string) bool {
-	if kind == "task" {
+func optionalRuntime(kind runtimeRole, event runtimeEvent) bool {
+	if kind == roleTask {
 		switch event {
-		case "proposed", "accepted", "scheduled", "side_effect_intent", "started", "status", "completed", "failed", "cancelled":
+		case eventProposed, eventAccepted, eventScheduled, eventSideEffectIntent, eventStarted, eventStatus, eventCompleted, eventFailed, eventCancelled:
 			return true
+		case eventAssistantMessageCommitted, eventAssistantToolCallsCommitted, eventContextBlockDiagnostic, eventContextBlockUpdated, eventGoalUsageAttribution, eventHookRunStarted, eventHookRunTerminal, eventModelCompleted, eventModelInputTraceRecorded, eventModelRequestConfigured, eventModelResponseCreated, eventProviderRequestOptionsConfigured, eventResourceUsageSampled, eventTaskStreamLinked, eventTerminal, eventToolResultBatchCommitted:
+			return false
 		}
 		return false
 	}
-	if kind != "run" {
+	if kind != roleRun {
 		return false
 	}
 	switch event {
-	case "hook_run_started", "hook_run_terminal", "context_block_diagnostic", "model_request_configured", "context_block_updated", "provider_request_options_configured", "model_input_trace_recorded", "task_stream_linked", "model_response_created", "goal_usage_attribution", "model_completed", "resource_usage_sampled", "terminal", "assistant_tool_calls_committed", "tool_result_batch_committed", "side_effect_intent", "completed", "failed":
+	case eventHookRunStarted, eventHookRunTerminal, eventContextBlockDiagnostic, eventModelRequestConfigured, eventContextBlockUpdated, eventProviderRequestOptionsConfigured, eventModelInputTraceRecorded, eventTaskStreamLinked, eventModelResponseCreated, eventGoalUsageAttribution, eventModelCompleted, eventResourceUsageSampled, eventTerminal, eventAssistantToolCallsCommitted, eventToolResultBatchCommitted, eventSideEffectIntent, eventCompleted, eventFailed:
 		return true
+	case eventAccepted, eventAssistantMessageCommitted, eventCancelled, eventProposed, eventScheduled, eventStarted, eventStatus:
+		return false
 	}
 	return false
 }
+
 func digest(v any) bool {
 	s := str(v)
 	if !strings.HasPrefix(s, "sha256:") || len(s) != 71 {
 		return false
 	}
 	for _, c := range s[7:] {
-		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
 			return false
 		}
 	}
 	return true
 }
+
 func stringArray(v any) bool {
 	a, ok := v.([]any)
 	if !ok {
@@ -440,6 +452,7 @@ func stringArray(v any) bool {
 	}
 	return true
 }
+
 func validProfile(p map[string]any) bool {
 	if !keys(p, "schema_version", "permission_epoch", "source", "resolved_snapshot", "definition_sha256", "managed_ancestor_sha256", "managed_enforcement", "resulting_snapshot_sha256", "cause", "actor", "command", "pending_action_cancellations") || num(p["schema_version"]) != 1 || num(p["permission_epoch"]) != 1 || str(p["cause"]) != "new_session_default" || p["command"] != nil || !emptyArray(p["pending_action_cancellations"]) || !digest(p["definition_sha256"]) || !digest(p["resulting_snapshot_sha256"]) || !emptyArray(p["managed_ancestor_sha256"]) {
 		return false

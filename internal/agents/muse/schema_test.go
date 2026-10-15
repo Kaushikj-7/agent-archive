@@ -38,7 +38,7 @@ func TestRetainedSchemaMatchesSyntheticGoldens(t *testing.T) {
 		if e != nil {
 			t.Fatal(e)
 		}
-		for _, line := range bytes.Split(bytes.TrimSpace(raw), []byte("\n")) {
+		for line := range bytes.SplitSeq(bytes.TrimSpace(raw), []byte("\n")) {
 			v, e := jsonschema.UnmarshalJSON(bytes.NewReader(line))
 			if e != nil {
 				t.Fatal(e)
@@ -81,9 +81,25 @@ func TestProductionAllowlistAndSchemaMatchClosedRetainedDispatch(t *testing.T) {
 		if str(variant["type"]) != str(object(branch["type"])["const"]) || num(variant["payload_schema"]) != num(object(branch["payload_schema"])["const"]) {
 			t.Fatal("discriminator drift")
 		}
+		required := map[string]bool{}
+		for _, name := range object(branch["fields"])["required"].([]any) {
+			required[str(name)] = true
+		}
+		optional := map[string]bool{}
+		if names, ok := variant["optional_fields"].([]any); ok {
+			for _, name := range names {
+				optional[str(name)] = true
+			}
+		}
+		if len(props) != len(variant["fields"].([]any)) {
+			t.Fatal("policy/schema field ceiling drift")
+		}
 		fields := map[string]any{}
 		for _, name := range variant["fields"].([]any) {
 			key := str(name)
+			if required[key] == optional[key] {
+				t.Fatal("policy/schema optional field drift")
+			}
 			prop := object(props[key])
 			if prop == nil {
 				t.Fatal("policy field absent from schema")
@@ -103,12 +119,13 @@ func TestProductionAllowlistAndSchemaMatchClosedRetainedDispatch(t *testing.T) {
 				}
 			}
 		}
-		r := retained{Type: str(variant["type"]), PayloadSchema: num(variant["payload_schema"]), Fields: fields}
+		r := retained{Type: payloadType(str(variant["type"])), PayloadSchema: num(variant["payload_schema"]), Fields: fields}
 		if !validFields(r) {
 			t.Fatalf("schema variant not supported by exact retained decoder: %s %+v", r.Type, fields)
 		}
 	}
-	if optionalRuntime("future_authority", "terminal") {
+	const unsupportedRole runtimeRole = "future_authority"
+	if optionalRuntime(unsupportedRole, eventTerminal) {
 		t.Fatal("unknown runtime kind inherited optional policy")
 	}
 }

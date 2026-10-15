@@ -14,6 +14,7 @@ type position struct {
 	Line  int64 `json:"line"`
 	Child *int  `json:"child"`
 }
+
 type retained struct {
 	Version       int            `json:"v"`
 	Position      position       `json:"pos"`
@@ -22,16 +23,17 @@ type retained struct {
 	Sequence      int64          `json:"seq"`
 	Timestamp     int64          `json:"ts_us"`
 	Schema        int64          `json:"schema"`
-	Type          string         `json:"type"`
+	Type          payloadType    `json:"type"`
 	PayloadSchema int64          `json:"payload_schema"`
 	RecordType    string         `json:"record_type"`
 	Durability    string         `json:"durability"`
 	Causation     *string        `json:"causation_id"`
 	Fields        map[string]any `json:"fields"`
 }
+
 type stream struct {
-	Kind string `json:"kind"`
-	ID   string `json:"id"`
+	Kind streamKind `json:"kind"`
+	ID   string     `json:"id"`
 }
 
 func uuid(s string) ([]byte, bool) {
@@ -41,6 +43,7 @@ func uuid(s string) ([]byte, bool) {
 	b, e := hex.DecodeString(strings.ReplaceAll(s, "-", ""))
 	return b, e == nil && len(b) == 16 && s == strings.ToLower(s)
 }
+
 func canonical(raw []byte) bool {
 	var b bytes.Buffer
 	if json.Compact(&b, raw) != nil {
@@ -112,11 +115,12 @@ func frame(raw []byte, line int64) ([]retained, error) {
 	if str(m["content_sha256"]) != "sha256:"+hex.EncodeToString(hash.Sum(nil)) {
 		return nil, errFormat
 	}
-	if out[0].Type != "runtime.session.permission_format_declared" || out[1].Type != "runtime.session.permission_profile_committed" || out[0].Sequence != 1 || out[1].Sequence != 2 || out[0].Timestamp != out[1].Timestamp || out[0].Stream != out[1].Stream || out[0].Causation != nil || out[1].Causation != nil {
+	if out[0].Type != payloadRuntimeSessionPermissionFormatDeclared || out[1].Type != payloadRuntimeSessionPermissionProfileCommitted || out[0].Sequence != 1 || out[1].Sequence != 2 || out[0].Timestamp != out[1].Timestamp || out[0].Stream != out[1].Stream || out[0].Causation != nil || out[1].Causation != nil {
 		return nil, errFormat
 	}
 	return out, nil
 }
+
 func envelope(raw []byte, pos position) (retained, error) {
 	m, _, e := decodeObject(raw)
 	if e != nil {
@@ -145,7 +149,7 @@ func envelope(raw []byte, pos position) (retained, error) {
 		}
 		cause = &s
 	}
-	r := retained{Version: 1, Position: pos, ID: id, Stream: stream{"session", sid}, Sequence: num(m["sequence"]), Timestamp: num(m["recorded_at"]), Schema: num(m["schema_version"]), Type: str(m["payload_type"]), PayloadSchema: num(m["payload_schema_version"]), RecordType: str(m["record_type"]), Durability: str(m["durability"]), Causation: cause}
+	r := retained{Version: 1, Position: pos, ID: id, Stream: stream{streamSession, sid}, Sequence: num(m["sequence"]), Timestamp: num(m["recorded_at"]), Schema: num(m["schema_version"]), Type: payloadType(str(m["payload_type"])), PayloadSchema: num(m["payload_schema_version"]), RecordType: str(m["record_type"]), Durability: str(m["durability"]), Causation: cause}
 	if r.Schema != 1 || r.Sequence < 1 || r.Timestamp < 1 || r.RecordType != "event" || r.Durability != "durable" {
 		return retained{}, errFormat
 	}

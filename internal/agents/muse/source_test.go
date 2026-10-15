@@ -26,6 +26,7 @@ func readSynthetic(t *testing.T, name string) []byte {
 	}
 	return raw
 }
+
 func filterBytes(t *testing.T, raw []byte, limits agentapi.ReadLimits) (archive.FilteredTranscript, error) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "misleading-name.jsonl")
@@ -57,6 +58,7 @@ func filterBytes(t *testing.T, raw []byte, limits agentapi.ReadLimits) (archive.
 	}()
 	return (Filter{}).Filter(t.Context(), snap.Input(), agentapi.FilterContext{Limits: limits, StartedAt: time.Now()})
 }
+
 func bundleFor(t *testing.T, out archive.FilteredTranscript) archive.SourceBundle {
 	t.Helper()
 	reg := archive.SessionRegistration{ArchiveSessionID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", NativeSessionID: out.SessionIDs[0], ProjectID: strings.Repeat("b", 64), ProjectRoot: "/work/synthetic-muse", Harness: archive.Harness{Name: "muse"}, TranscriptPath: "/unavailable/native.jsonl", SessionStartedAt: time.Unix(2000000000, 0)}
@@ -73,10 +75,12 @@ func bundleFor(t *testing.T, out archive.FilteredTranscript) archive.SourceBundl
 	}
 	return b
 }
+
 func TestSyntheticOrdinaryRootsRetainUsefulConversation(t *testing.T) {
 	t.Parallel()
 	for _, name := range []string{"synthetic-exec-empty", "synthetic-exec-conversation", "synthetic-msp-empty", "synthetic-msp-conversation"} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			out, e := filterBytes(t, readSynthetic(t, name+".jsonl"), agentapi.ReadLimits{})
 			if e != nil {
 				t.Fatal(e)
@@ -117,6 +121,7 @@ func TestSyntheticOrdinaryRootsRetainUsefulConversation(t *testing.T) {
 		})
 	}
 }
+
 func TestNativeAuthorityAndFramingRefusals(t *testing.T) {
 	t.Parallel()
 	raw := readSynthetic(t, "synthetic-exec-conversation.jsonl")
@@ -136,6 +141,7 @@ func TestNativeAuthorityAndFramingRefusals(t *testing.T) {
 	}
 	for name, input := range cases {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			if out, e := filterBytes(t, input, agentapi.ReadLimits{}); e == nil || len(out.Records) > 0 {
 				t.Fatalf("accepted malformed input: %v", e)
 			}
@@ -147,6 +153,7 @@ func TestNativeAuthorityAndFramingRefusals(t *testing.T) {
 		}
 	}
 }
+
 func TestRetainedSchemaIdentityAndExtensionRefusals(t *testing.T) {
 	t.Parallel()
 	out, e := filterBytes(t, readSynthetic(t, "synthetic-exec-conversation.jsonl"), agentapi.ReadLimits{})
@@ -176,6 +183,7 @@ func TestRetainedSchemaIdentityAndExtensionRefusals(t *testing.T) {
 		}
 	}
 }
+
 func TestSharedPrivacyAndTypedOrigin(t *testing.T) {
 	t.Parallel()
 	raw := readSynthetic(t, "synthetic-exec-conversation.jsonl")
@@ -194,6 +202,7 @@ func TestSharedPrivacyAndTypedOrigin(t *testing.T) {
 		}
 	}
 }
+
 func TestCaptureRefusedBeforeNativeReadAndCancelled(t *testing.T) {
 	t.Parallel()
 	for _, env := range []agentapi.SourceEnvironment{{RequireConfinedHistory: true}, {LegacyUnboundRegistration: true}, {NativeRoot: &archive.NativeRoot{}}} {
@@ -207,6 +216,7 @@ func TestCaptureRefusedBeforeNativeReadAndCancelled(t *testing.T) {
 		t.Fatal(e)
 	}
 }
+
 func TestTinyBudgetRefusesAndReleases(t *testing.T) {
 	t.Parallel()
 	budget := agentapi.NewNativeReadBudget(1)
@@ -284,6 +294,7 @@ func TestLocalResumesPreserveOriginalOwnerStartAndWorkspace(t *testing.T) {
 	t.Parallel()
 	for _, lane := range []string{"exec", "msp"} {
 		t.Run(lane, func(t *testing.T) {
+			t.Parallel()
 			raw := readSynthetic(t, "synthetic-"+lane+"-empty.jsonl")
 			lines := bytes.Split(bytes.TrimSpace(raw), []byte("\n"))
 			var last map[string]any
@@ -332,6 +343,7 @@ func TestLeasesReleaseOnSuccessFailureAndCancellation(t *testing.T) {
 	raw := readSynthetic(t, "synthetic-exec-conversation.jsonl")
 	for _, mode := range []string{"success", "failure", "cancel"} {
 		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
 			input := raw
 			if mode == "failure" {
 				input = bytes.TrimSuffix(raw, []byte("\n"))
@@ -450,8 +462,9 @@ func TestRetainedUnknownNullFieldsAndUnsupportedOwnerRefuse(t *testing.T) {
 
 type countedContext struct {
 	context.Context
-	calls, stop int
-	cancel      context.CancelFunc
+	calls  int
+	stop   int
+	cancel context.CancelFunc
 }
 
 func (c *countedContext) Err() error {
@@ -514,5 +527,52 @@ func TestRetainedPrivacyCancellationAndBudgetKinds(t *testing.T) {
 	release()
 	if !errors.Is(e, agentapi.ErrReadBudget) || errors.Is(e, archive.ErrRecordTooLarge) {
 		t.Fatalf("retained pressure misclassified: %v", e)
+	}
+}
+
+func TestOrdinaryRootWithoutStartupModelKeepsIdentityUnknown(t *testing.T) {
+	t.Parallel()
+	raw := readSynthetic(t, "synthetic-exec-empty.jsonl")
+	var metadata map[string]any
+	lines := bytes.Split(raw, []byte("\n"))
+	if e := json.Unmarshal(lines[1], &metadata); e != nil {
+		t.Fatal(e)
+	}
+	record := metadata["payload"].(map[string]any)["record"].(map[string]any)
+	delete(record, "model_id")
+	lines[1], _ = json.Marshal(metadata)
+	out, e := filterBytes(t, bytes.Join(lines, []byte("\n")), agentapi.ReadLimits{})
+	if e != nil {
+		t.Fatal(e)
+	}
+	b := bundleFor(t, out)
+	if _, present := b.NativeRecords[2]["fields"].(map[string]any)["model_id"]; present {
+		t.Fatal("invented model")
+	}
+	a, e := (Parser{}).Parse(t.Context(), b)
+	if e != nil || !a.Facts.NativeStartedAt.Equal(time.UnixMicro(1792083855882704)) {
+		t.Fatalf("logical start lost: %v", e)
+	}
+	h, e := archive.BuildHandoffWithAnalysis(b, a, nil, archive.HandoffOptions{})
+	if e != nil {
+		t.Fatal(e)
+	}
+	rendered, e := json.Marshal(h)
+	if e != nil || !bytes.Contains(rendered, []byte("model_identity_unavailable")) {
+		t.Fatalf("unknown model not explicit: %v", e)
+	}
+	if _, e := (Filter{}).Refilter(t.Context(), b, time.Time{}); e != nil {
+		t.Fatal(e)
+	}
+	for _, bad := range []any{nil, 123, false} {
+		record["model_id"] = bad
+		lines[1], _ = json.Marshal(metadata)
+		if out, e := filterBytes(t, bytes.Join(lines, []byte("\n")), agentapi.ReadLimits{}); e == nil || len(out.Records) != 0 {
+			t.Fatal("non-string model accepted")
+		}
+		b.NativeRecords[2]["fields"].(map[string]any)["model_id"] = bad
+		if _, e := (Parser{}).Parse(t.Context(), b); e == nil {
+			t.Fatal("retained non-string model accepted")
+		}
 	}
 }

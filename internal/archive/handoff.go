@@ -832,9 +832,16 @@ func BuildHandoffWithAnalysis(bundle SourceBundle, analysis Analysis, metadata *
 	if analysis.Facts.WorkspaceRoot == "" {
 		directory = ""
 	}
+	session := handoffSession(bundle, view, metadata, opts)
+	// NativeStartedAt is the integration's original logical session start,
+	// including empty conversations. Prompt and file times are fallbacks only.
+	if !analysis.Facts.NativeStartedAt.IsZero() {
+		at := analysis.Facts.NativeStartedAt.UTC()
+		session.StartedAt = &at
+	}
 	h := Handoff{
 		Version:                HandoffVersion,
-		Session:                handoffSession(bundle, view, metadata, opts),
+		Session:                session,
 		Workspace:              compareWorkspace(HandoffWorkspace{Directory: directory, Branch: analysis.Facts.Branch}, analysis.Facts.WorkspaceRoot, opts.Checkout),
 		ToolResultsUnavailable: toolResultsUnavailable,
 		Exchanges:              exchanges,
@@ -842,12 +849,6 @@ func BuildHandoffWithAnalysis(bundle SourceBundle, analysis Analysis, metadata *
 		Plan:                   plan,
 		FilesTouched:           files,
 		Gaps:                   countGaps(bundle.Capture.Gaps),
-	}
-	// NativeStartedAt is the integration's original logical session start,
-	// including empty conversations. Prompt and file times are fallbacks only.
-	if !analysis.Facts.NativeStartedAt.IsZero() {
-		at := analysis.Facts.NativeStartedAt.UTC()
-		h.Session.StartedAt = &at
 	}
 	return displayHandoff(h), nil
 }

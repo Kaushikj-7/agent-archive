@@ -57,7 +57,10 @@
       ],
       "fixed_fields": {
         "kind": "metadata"
-      }
+      },
+      "optional_fields": [
+        "model_id"
+      ]
     },
     {
       "type": "session.opened.observed",
