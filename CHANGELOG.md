@@ -6,6 +6,20 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- The session browser (`list`, bare `show`, `show <words>`, `handoff` on a
+  terminal that reads keys) has a cursor: `▸` marks a row, ↑ ↓ and the mouse
+  wheel move it, PgUp/PgDn (space, `n`, `p`), Home and End move it a screen
+  or to the ends, and the list scrolls to keep it in view, also across a
+  resize. Enter with nothing typed opens the highlighted row (it used to
+  quit; `q` and Ctrl-D still do), and a typed number or short ID with Enter
+  still opens that row. A strip under the list spells out the highlighted
+  session: its full title, then its agent, project, PR, subagents, when it
+  was last active and its short ID; a very short window leaves it out. The
+  three lines under the list become one footer line, the keys and which rows
+  are on screen (`1–14 of 86`); the hidden-subagent count moves to the
+  heading (`· 403 subagents hidden`), `o older` joins the footer, and the
+  prompt reads `Number or ID to show:`. Piped output and the line-mode
+  picker keep their count line and flag advice.
 - The session list fits your terminal: every session is one line that never
   wraps, as `#`, the agent (a colored dot and "Claude", "Codex" or "Cursor"),
   a readable title cut at a word, the project, the PR and a short time ("2m",

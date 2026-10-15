@@ -548,10 +548,12 @@ showing all projects` in the heading.
   does not apply to `--latest`, which names the current directory's project
   (`--project DIR` moves it).
 
-*Keys.* Type a row number or a short ID and press Enter to hand that session off.
-The list scrolls with the mouse wheel, arrows, PgUp and PgDn (or space, `n`,
-and `p`), Home and End. `q`, Ctrl-D, or Enter with nothing typed quits without
-producing a handoff; Ctrl-C quits at once.
+*Keys.* `▸` marks the highlighted row; Enter hands it off. The mouse wheel,
+arrows, PgUp and PgDn (or space, `n`, and `p`), Home and End move it, and the
+list scrolls to keep it in view; a strip under the list spells out the
+highlighted session. A row number or short ID typed and Enter hands that session
+off instead. `q` or Ctrl-D quits without producing a handoff; Ctrl-C quits at
+once.
 
 - **`/` filters as you type**, as in `less`. A line at the bottom takes the words,
   and the rows narrow with each character. They are the words `handoff

@@ -49,7 +49,7 @@ func TestBrowserKeysRestoreTheTerminal(t *testing.T) {
 		t.Fatal(err)
 	}
 	// One at a time, not as parallel subtests.
-	for _, mode := range []string{"quit", "interrupt", "sigquit", "suspend", "pager"} {
+	for _, mode := range []string{"quit", "enter", "interrupt", "sigquit", "suspend", "pager"} {
 		if out, err := runPTYScript(t, python, keysPTYScript, binary, mode); err != nil {
 			t.Errorf("PTY test %s: %v %s", mode, err, out)
 		}
@@ -147,12 +147,20 @@ def wait_stopped():
 
 // keysPTYScript is ptyKeysHarness with the list browser's modes.
 const keysPTYScript = ptyKeysHarness + `try:
-    wait_for(b'or q to quit')
+    wait_for(b'Number or ID to show')
     wait_until(keys_on, 'key mode not on at the list')
     if mode == 'quit':
         os.write(master, b'\x1b[B\x1b[A1\r')
         wait_for(b't transcript')
         assert keys_on(), 'key mode off at the details'
+        os.write(master, b'q')
+        finish(0)
+    elif mode == 'enter':
+        # Enter with nothing typed opens the highlighted row, which the
+        # detail strip under the list spells out.
+        wait_for(b'last active')
+        os.write(master, b'\x1b[B\r')
+        wait_for(b't transcript')
         os.write(master, b'q')
         finish(0)
     elif mode == 'interrupt':
@@ -188,7 +196,7 @@ const keysPTYScript = ptyKeysHarness + `try:
         # list's prompt is already in the output from before the stop: wait
         # for the alternate screen and then a new prompt after it.
         wait_until(keys_on, 'key mode not back on after continuing')
-        wait_for(b'or q to quit', wait_for(b'\x1b[?1049h', stopped))
+        wait_for(b'Number or ID to show', wait_for(b'\x1b[?1049h', stopped))
         os.write(master, b'q')
         finish(0)
     assert restored(), ('terminal modes not restored', hex(before[3]), hex(termios.tcgetattr(slave)[3]))
@@ -215,7 +223,7 @@ func TestHandoffBrowserTerminalChild(t *testing.T) {
 	env.IsTerminal, env.TerminalSize, env.Interrupts = nil, nil, nil
 	env.LookupEnv = func(string) (string, bool) { return "", false }
 	env.Clipboard = func(text []byte) error {
-		fmt.Printf("\nCLIPBOARD HAS %d BYTES\n", len(text))
+		fmt.Printf("\nCLIPBOARD HAS %d BYTES\n%s\nCLIPBOARD END\n", len(text), text)
 		return nil
 	}
 	if code := Run([]string{"handoff"}, os.Stdin, os.Stdout, os.Stderr, env); code != 0 {
@@ -255,6 +263,73 @@ const handoffPTYScript = ptyKeysHarness + `try:
     wait_for(b'CLIPBOARD HAS ')
     finish(0)
     assert b'\x1b[?1049l' in output, 'alternate screen not left'
+    assert restored(), ('terminal modes not restored', hex(before[3]), hex(termios.tcgetattr(slave)[3]))
+finally:
+    if p.poll() is None: p.kill(); p.wait()
+    # Closing the pty hangs up its session, this script.
+    signal.signal(signal.SIGHUP, signal.SIG_IGN)
+    os.close(master); os.close(slave)
+`
+
+// On a real terminal ↓ moves the highlight and the detail strip under the
+// list follows it; a resize redraws the strip to the new width with the
+// same row highlighted; and Enter with nothing typed hands off the
+// highlighted row, the one the strip named.
+func TestHandoffKeyBrowserCursorAndStripOnATerminal(t *testing.T) {
+	t.Parallel()
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("PTY harness requires Python 3")
+	}
+	binary, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out, err := runPTYScript(t, python, handoffCursorPTYScript, binary, "cursor", "TestHandoffBrowserTerminalChild"); err != nil {
+		t.Errorf("PTY test: %v %s", err, out)
+	}
+}
+
+// handoffCursorPTYScript moves the highlight to the second row, reads the
+// title the strip shows for it, narrows the terminal, and picks the row
+// with Enter alone.
+const handoffCursorPTYScript = ptyKeysHarness + `import re
+rule = '─'.encode()
+mark = '▸ 2'.encode()
+def strip_title(start):
+    # The line after the first rule of the strip drawn from start on.
+    at = wait_for(rule * 20, start)
+    end = wait_for(b'\n', at)
+    title_end = wait_for(b'\n', end)
+    return re.sub(rb'\x1b\[[0-9;]*m|\r', b'', output[end:title_end - 1])
+try:
+    wait_for(b'to hand off')
+    wait_until(keys_on, 'key mode not on at the picker')
+    first = strip_title(0)
+    moved = len(output)
+    os.write(master, b'\x1b[B')
+    second = strip_title(wait_for(mark, moved))
+    assert second and second != first, (first, second)
+    resized = len(output)
+    # This script is not the terminal's foreground job: SIGTTOU is ignored
+    # while it sets the size, as foreground() does to hand the terminal over.
+    signal.signal(signal.SIGTTOU, signal.SIG_IGN)
+    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 24, 70, 0, 0))
+    signal.signal(signal.SIGTTOU, signal.SIG_DFL)
+    os.kill(p.pid, signal.SIGWINCH)
+    # A rule exactly 70 columns wide, not the 100 of before.
+    narrow = re.compile(rb'(?<!\xe2\x94\x80)' + rule * 70 + rb'(?!\xe2\x94\x80)')
+    while not narrow.search(output, resized): pump()
+    after = wait_for(mark, resized)
+    assert strip_title(after) == second, 'the strip names another row after the resize'
+    os.write(master, b'\r')
+    wait_for(b'? Continue in')
+    os.write(master, b'c\r')
+    copied = wait_for(b'CLIPBOARD HAS ')
+    handoff = output[copied:wait_for(b'CLIPBOARD END', copied)]
+    finish(0)
+    assert b'\x1b[?1049l' in output, 'alternate screen not left'
+    assert second in handoff and first not in handoff, ('handed off a row other than the highlighted one', first, second, handoff)
     assert restored(), ('terminal modes not restored', hex(before[3]), hex(termios.tcgetattr(slave)[3]))
 finally:
     if p.poll() is None: p.kill(); p.wait()

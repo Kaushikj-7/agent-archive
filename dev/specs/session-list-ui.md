@@ -229,3 +229,12 @@ Confirmed by the owner 2026-10-14:
   whose sessions all fall on one day still shows that day's heading.
 - PR 4: the verbose table is one flat table. It was grouped by project
   before; day groups add nothing to a debugging view with full timestamps.
+- PR 5: the footer keeps the existing word "filter" (`/ filter`), not
+  "search", and the heading is the scope heading the code already draws
+  (`agent-archive · 42 sessions · … · a all projects`), now with
+  `· N subagents hidden`. A prompt line (`Number or ID to show:`) stays
+  under the footer line so typed numbers echo, and a message takes the
+  footer line's place until the next key. The `1–14 of 86` position counts
+  the rows loaded (the `o older` batch), not the scope's total, which the
+  heading names. The cursor mark is the existing `▸`. The strip has no
+  "+ N more projects": a session records one project.

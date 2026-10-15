@@ -90,10 +90,20 @@ func (l *sessionPicker) view(rows []listRow, totalMatched int, truncated bool, f
 	}
 	shown, matched, laid := rows, len(rows), format
 	q := parseSessionQuery(words)
+	// Reading keys, the footer line under the table says where the screen
+	// is and which keys act (footerLine), and the heading says how many
+	// subagents are hidden: the count and the flags' advice are for a table
+	// read by lines.
+	keyed := l.keys != nil
 	var footer bytes.Buffer
-	if words == "" {
+	switch {
+	case words == "" && keyed:
+		if format.Note != "" {
+			footer.WriteString(format.Note + "\n")
+		}
+	case words == "":
 		printListFooter(&footer, len(rows), totalMatched, truncated, format)
-	} else {
+	default:
 		shown, matched = filterRows(l.universe(rows), q)
 		if l.searchFailure != nil {
 			fmt.Fprintf(&footer, "Search failed: %v; clear the filter and retry.\n", l.searchFailure)
@@ -111,12 +121,12 @@ func (l *sessionPicker) view(rows []listRow, totalMatched int, truncated bool, f
 	if l.boundedNotice != "" {
 		footer.WriteString(l.boundedNotice + "\n")
 	}
-	if l.older != nil {
+	if l.older != nil && !keyed {
 		footer.WriteString("o · " + l.older.Label + " (Esc first while filtering)\n")
 	}
-	// The mark is for the key browser's filter line; a table read by lines
-	// is chosen from by number.
-	laid.Cursor = l.filtering && l.keys != nil
+	// The mark is the key browser's highlight; a table read by lines is
+	// chosen from by number.
+	laid.Cursor = keyed
 	groups := sessionTableGroups(shown, laid)
 	var order []listRow
 	for _, group := range groups {
@@ -126,11 +136,24 @@ func (l *sessionPicker) view(rows []listRow, totalMatched int, truncated bool, f
 	if words != "" {
 		first = max(slices.IndexFunc(order, func(r listRow) bool { return q.matches(r.fields) }), 0)
 	}
+	heading := l.viewHeading(words, matched, len(rows), format.HiddenSubagents)
+	v := &pickerView{words: words, filtering: l.filtering, rows: shown, order: order, first: first, matched: matched, groups: groups, format: laid, heading: heading, footer: footer.String()}
+	l.memo = v
+	return v
+}
+
+// viewHeading is the line above the table for the filter's words, the
+// sessions they match, and the rows given. Reading keys, an unfiltered
+// table's heading names the subagents it hides.
+func (l *sessionPicker) viewHeading(words string, matched, rows, hidden int) string {
 	heading := l.heading
+	if l.keys != nil && words == "" && hidden > 0 && l.headingFor == nil {
+		heading = strings.TrimPrefix(heading+" · "+hiddenSubagents(hidden), " · ")
+	}
 	if l.headingFor != nil {
 		heading = l.headingFor(words, matched)
 		if words != "" && !l.searchRead && (l.search != nil || l.searchContext != nil) {
-			heading = l.headingFor("", len(rows))
+			heading = l.headingFor("", rows)
 			if l.searchFailure != nil {
 				heading += " · Search unavailable"
 			} else {
@@ -141,9 +164,7 @@ func (l *sessionPicker) view(rows []listRow, totalMatched int, truncated bool, f
 	if words != "" && l.searchRead && l.searchPartial {
 		heading += " · local eligibility may be unknown"
 	}
-	v := &pickerView{words: words, filtering: l.filtering, rows: shown, order: order, first: first, matched: matched, groups: groups, format: laid, heading: heading, footer: footer.String()}
-	l.memo = v
-	return v
+	return heading
 }
 
 // universe is every session the filter searches: those of the table's scope
@@ -302,10 +323,13 @@ func highlightGroups(groups []sessionTableGroup, cursor int) []sessionTableGroup
 // filterKey applies one key to the filter line: typed characters add to the
 // filter, Backspace takes one off (and closes the line when none is left),
 // Esc clears the filter, and the arrows, PgUp, PgDn, Home, and End move the
-// highlight. Enter asks for the highlighted row.
-func (l *sessionPicker) filterKey(k key, screen listScreen, v *pickerView) listKeyResult {
-	last := max(len(v.order)-1, 0)
-	page := max(screen.end-screen.start, 1)
+// highlight as they do unfiltered (move). Enter asks for the highlighted
+// row.
+func (l *sessionPicker) filterKey(k key, screen listScreen) listKeyResult {
+	if move, ok := scrollKeys[k.kind]; ok {
+		l.move(move, screen)
+		return listStay
+	}
 	switch k.kind {
 	case keyEnter:
 		return listPick
@@ -322,30 +346,19 @@ func (l *sessionPicker) filterKey(k key, screen listScreen, v *pickerView) listK
 		if l.filter == "" {
 			return listQuit
 		}
-	case keyUp:
-		l.cursor, l.moved = max(l.cursor-1, 0), true
-	case keyDown:
-		l.cursor, l.moved = min(l.cursor+1, last), true
-	case keyPageUp:
-		l.cursor, l.moved = max(l.cursor-page, 0), true
-	case keyPageDown:
-		l.cursor, l.moved = min(l.cursor+page, last), true
-	case keyHome:
-		l.cursor, l.moved = 0, true
-	case keyEnd:
-		l.cursor, l.moved = last, true
 	case keyRune:
 		if unicode.IsPrint(k.r) && len(l.filter) < maxFilterText {
 			l.setFilter(l.filter + string(k.r))
 		}
-	case keyLeft, keyRight, keyResize:
-		// Nothing to do but draw the screen again.
+	case keyUp, keyDown, keyPageUp, keyPageDown, keyHome, keyEnd, keyLeft, keyRight, keyResize:
+		// Moved above, or nothing to do but draw the screen again.
 	}
 	return listStay
 }
 
 // filterScreen is the list's screen for the table v, with the highlighted row
-// scrolled into view.
+// scrolled into view, unfiltered or not. Until a key moves it, the filter's
+// highlight is on the first row its words match.
 func (l *sessionPicker) filterScreen(stdout io.Writer, v *pickerView, prompt string) listScreen {
 	l.shown = v.heading
 	measure := func() listScreen {
@@ -354,10 +367,10 @@ func (l *sessionPicker) filterScreen(stdout io.Writer, v *pickerView, prompt str
 		return s
 	}
 	s := measure()
-	if !l.filtering || len(v.order) == 0 {
+	if len(v.order) == 0 {
 		return s
 	}
-	if !l.moved {
+	if l.filtering && !l.moved {
 		l.cursor = v.first
 	}
 	l.cursor = min(max(l.cursor, 0), len(v.order)-1)
@@ -386,9 +399,4 @@ func (l *sessionPicker) revealStart(s listScreen, at int) int {
 		}
 	}
 	return lo
-}
-
-// filterStatus is the status line while the filter line is open.
-func filterStatus(s listScreen, action string) string {
-	return s.position() + " · ↑↓ move · Enter " + action + " · Esc clear"
 }

@@ -502,7 +502,11 @@ func (l *sessionPicker) pickScopedContext(ctx context.Context, p *prompter, stdo
 		}
 		l.heading, l.toggles, l.toggled = c.heading, choices.canToggle(), false
 		l.headingFor = func(words string, matches int) string {
-			return choices.headingWith(choices.current, c.scopeView, c.constants, headingOptions{Verb: l.verb, Words: words, Matches: matches, Filtering: l.filtering && l.keys != nil})
+			o := headingOptions{Verb: l.verb, Words: words, Matches: matches, Filtering: l.filtering && l.keys != nil}
+			if l.keys != nil && !l.filtering {
+				o.Hidden = c.format.HiddenSubagents
+			}
+			return choices.headingWith(choices.current, c.scopeView, c.constants, o)
 		}
 		l.stopOperations()
 		l.search, l.searchContext, l.searched, l.searchRead = c.search, c.searchContext, nil, false

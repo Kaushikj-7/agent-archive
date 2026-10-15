@@ -104,7 +104,7 @@ func TestEachChooserOpensTheKeyBrowserAndTheLineFallback(t *testing.T) {
 				}
 			}
 			// Keys are read only where the terminal can; lines are the fallback.
-			hasKeys := strings.Contains(out, "/ filter · type a number and Enter · q quit") || strings.Contains(out, "↑↓ move · Enter")
+			hasKeys := strings.Contains(out, "↑↓ move   Enter ")
 			asksForWords := strings.Contains(out, "words to filter, or q to quit: ")
 			if hasKeys != keyed || asksForWords == keyed || keyed && len(fake.history()) == 0 {
 				t.Errorf("%s, %s: key mode %v, line prompt %v\n%s", c.name, mode, hasKeys, asksForWords, out)
@@ -351,12 +351,12 @@ func TestKeyFilterEscBackspaceAndNoMatch(t *testing.T) {
 	if len(rowNumbers(screens[4])) != 30 || !strings.HasSuffix(screens[4], "\n/") {
 		t.Fatalf("after Backspace:\n%s", screens[4])
 	}
-	if !strings.HasSuffix(screens[5], "to show, or q to quit: ") || strings.Contains(screens[5], cursorMark) {
+	if !strings.HasSuffix(screens[5], keyListPrompt) || highlightedRow(screens[5]) != 1 {
 		t.Fatalf("after the last Backspace:\n%s", screens[5])
 	}
 	// Esc clears a filter with words in it, and closes the line.
 	last := screens[len(screens)-1]
-	if len(rowNumbers(last)) != 30 || strings.Contains(last, cursorMark) || !strings.HasSuffix(last, "to show, or q to quit: ") {
+	if len(rowNumbers(last)) != 30 || highlightedRow(last) != 1 || !strings.HasSuffix(last, keyListPrompt) {
 		t.Fatalf("after Esc:\n%s", last)
 	}
 }
@@ -452,7 +452,7 @@ func TestKeyFilterEnterActsOnTheHighlightInBrowseAndPickModes(t *testing.T) {
 	if highlighted(screens[6]) != "Flaky retention test" || !strings.Contains(screens[6], "\n/flaky") {
 		t.Fatalf("back at the list:\n%s", screens[6])
 	}
-	if len(rowNumbers2(screens[7], "")) < 4 || strings.Contains(screens[7], cursorMark) {
+	if len(rowNumbers2(screens[7], "")) < 4 || strings.Contains(screens[7], "\n/flaky") {
 		t.Fatalf("after Esc:\n%s", screens[7])
 	}
 
@@ -619,7 +619,7 @@ func TestListWordsOpenTheKeyBrowserFilteredAndEscClearsThem(t *testing.T) {
 	if got := rowNumbers2(screens[1], ""); len(got) != 3 || !strings.HasSuffix(screens[1], "\n/flaky") {
 		t.Fatalf("opening rows %v:\n%s", got, screens[1])
 	}
-	if got := rowNumbers2(screens[2], ""); len(got) != 4 || strings.Contains(screens[2], "matches") || highlighted(screens[2]) != "" {
+	if got := rowNumbers2(screens[2], ""); len(got) != 4 || strings.Contains(screens[2], "matches") || highlightedRow(screens[2]) != 1 {
 		t.Fatalf("after Esc: %v\n%s", got, screens[2])
 	}
 }

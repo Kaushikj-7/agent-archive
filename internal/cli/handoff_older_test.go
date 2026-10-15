@@ -71,15 +71,15 @@ func TestHandoffOlderActionReturnsAfterScopeToggle(t *testing.T) {
 	screens := keyScreens(t, picker, choices, "hand off", "o", "a", "o", "a", "q")
 	var loaded, scopedDone, allMore, allDone bool
 	for _, screen := range screens {
-		hasOlder := strings.Contains(screen, "o · Older sessions")
+		hasOlder := strings.Contains(screen, "   o older   ")
 		switch {
-		case strings.Contains(screen, "here · 60 sessions") && strings.Contains(screen, "Showing 50 of 60"):
+		case strings.Contains(screen, "here · 60 sessions") && strings.Contains(screen, " of 50\n"):
 			loaded = loaded || hasOlder
-		case strings.Contains(screen, "here · 60 sessions") && !strings.Contains(screen, "Showing 50 of 60"):
+		case strings.Contains(screen, "here · 60 sessions") && !strings.Contains(screen, " of 50\n"):
 			scopedDone = scopedDone || !hasOlder
-		case strings.Contains(screen, "All projects · 121 sessions") && strings.Contains(screen, "Showing 100 of 121"):
+		case strings.Contains(screen, "All projects · 121 sessions") && strings.Contains(screen, " of 100\n"):
 			allMore = allMore || hasOlder
-		case strings.Contains(screen, "All projects · 121 sessions") && !strings.Contains(screen, "Showing 100 of 121"):
+		case strings.Contains(screen, "All projects · 121 sessions") && !strings.Contains(screen, " of 100\n"):
 			allDone = allDone || !hasOlder
 		}
 	}
