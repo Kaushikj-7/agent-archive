@@ -31,6 +31,8 @@ from pathlib import Path
 names=('PATH','HOME','XDG_CONFIG_HOME','TMPDIR','TMP','TEMP','GOMAXPROCS')
 record={name:os.environ[name] for name in names}
 record['argv']=sys.argv[1:]
+Path(os.environ['TMPDIR'],'test-work.bin').write_bytes(b'temporary test payload')
+Path(os.environ['HOME'],'test-config').write_text('temporary configuration')
 record['git']=subprocess.check_output(['git','--version'],text=True).strip()
 with open(os.environ['TRACE'],'a') as handle:handle.write(json.dumps(record)+'\\n')
 if os.environ.get('FAIL_VERSION') and os.environ['FAIL_VERSION'] in os.environ['HOME']:
@@ -81,9 +83,10 @@ if os.environ.get('FAIL_VERSION') and os.environ['FAIL_VERSION'] in os.environ['
             self.assertEqual([r['git'] for r in lane], [expected, expected])
             for record in lane:
                 self.assertEqual(record['GOMAXPROCS'], '2')
-                self.assertEqual(record['HOME'], str(self.output/name/'home'))
-                self.assertEqual(record['XDG_CONFIG_HOME'], str(self.output/name/'xdg'))
-                self.assertEqual(record['TMPDIR'], str(self.output/name/'tmp'))
+                self.assertEqual(Path(record['HOME']).name, 'home')
+                self.assertTrue(Path(record['HOME']).parent.name.startswith('aa-git-identity-'+name+'-'))
+                self.assertEqual(Path(record['XDG_CONFIG_HOME']), Path(record['HOME']).parent/'xdg')
+                self.assertEqual(Path(record['TMPDIR']), Path(record['HOME']).parent/'tmp')
                 self.assertEqual(record['TMP'], record['TMPDIR'])
                 self.assertEqual(record['TEMP'], record['TMPDIR'])
             homes.add(lane[0]['HOME'])
@@ -94,6 +97,22 @@ if os.environ.get('FAIL_VERSION') and os.environ['FAIL_VERSION'] in os.environ['
         self.assertEqual(records[-1]['PATH'], self.env['PATH'])
         self.assertNotIn('upstream-', records[-1]['PATH'])
 
+    def test_artifact_contains_only_diagnostics_and_removes_version_work(self):
+        result, summary = self.execute()
+        self.assertEqual(result.returncode, 0, result.stderr+result.stdout)
+        expected = {'summary.json'} | {name+'/'+leaf for name in runner.VERSIONS
+                                      for leaf in ('receipt.json', 'execution.log')}
+        self.assertEqual({path.relative_to(self.output).as_posix()
+                          for path in self.output.rglob('*') if path.is_file()}, expected)
+        for name in runner.VERSIONS:
+            receipt = json.loads((self.output/name/'receipt.json').read_text())
+            for variable in ('HOME', 'XDG_CONFIG_HOME', 'TMPDIR'):
+                path = Path(receipt['environment'][variable])
+                self.assertNotIn(self.output, path.parents)
+                self.assertFalse(path.exists(), str(path))
+            if name in runner.pinned_git.PINS:
+                self.assertFalse(Path(receipt['binary']).exists())
+
     def test_one_failing_version_still_executes_both_later_versions(self):
         self.env['FAIL_VERSION'] = runner.VERSIONS[0]
         result, summary = self.execute()
@@ -103,16 +122,21 @@ if os.environ.get('FAIL_VERSION') and os.environ['FAIL_VERSION'] in os.environ['
         records = [json.loads(line) for line in self.trace.read_text().splitlines()]
         self.assertEqual(len(records), 5)  # Preserve first-command failure within one version.
         self.assertEqual(records[-1]['git'], 'git version runner-fixture')
+        self.assertEqual(list(self.root.glob('aa-git-identity-*')), [])
+        self.assertFalse(any(path.name in ('install', 'home', 'xdg', 'tmp')
+                             for path in self.output.rglob('*')))
 
     def test_wrong_selected_version_fails_before_any_test_body(self):
         directory = self.root/'lane'
         directory.mkdir()
+        workspace = self.root/'workspace'
+        workspace.mkdir()
         wrong = self.root/'wrong'
         wrong.mkdir()
         (wrong/'git').write_text('#!/bin/sh\necho wrong-version\n')
         (wrong/'git').chmod(0o755)
         with mock.patch.dict(os.environ, self.env, clear=True), mock.patch.object(runner.pinned_git, 'ensure', return_value=wrong):
-            status = runner.version_lane(runner.VERSIONS[0], directory, str(self.git), self.env['PATH'], 'git version runner-fixture', 'a'*40)
+            status = runner.version_lane(runner.VERSIONS[0], directory, str(self.git), self.env['PATH'], 'git version runner-fixture', 'a'*40, workspace)
         self.assertEqual(status, 1)
         report = json.loads((directory/'receipt.json').read_text())
         self.assertFalse(report['success'])
@@ -123,8 +147,10 @@ if os.environ.get('FAIL_VERSION') and os.environ['FAIL_VERSION'] in os.environ['
     def test_pinned_preparation_error_is_a_failed_version_receipt(self):
         directory = self.root/'lane'
         directory.mkdir()
+        workspace = self.root/'workspace'
+        workspace.mkdir()
         with mock.patch.dict(os.environ, self.env, clear=True), mock.patch.object(runner.pinned_git, 'ensure', side_effect=ValueError('invalid pinned receipt')):
-            status = runner.version_lane(runner.VERSIONS[1], directory, str(self.git), self.env['PATH'], 'git version runner-fixture', 'a'*40)
+            status = runner.version_lane(runner.VERSIONS[1], directory, str(self.git), self.env['PATH'], 'git version runner-fixture', 'a'*40, workspace)
         self.assertEqual(status, 1)
         self.assertEqual(json.loads((directory/'receipt.json').read_text())['error'], 'invalid pinned receipt')
 
@@ -134,22 +160,49 @@ if os.environ.get('FAIL_VERSION') and os.environ['FAIL_VERSION'] in os.environ['
             runner.run_all(self.output)
 
     def test_timeout_stops_process_group_and_continues_remaining_versions(self):
-        calls = []
+        calls, workspaces = [], []
         class Process:
             def __init__(self, argv, **kwargs):
                 self.argv = argv
                 calls.append(argv[argv.index('--version')+1])
+                workspaces.append(Path(argv[argv.index('--workspace')+1]))
             def wait(self, timeout):
                 raise subprocess.TimeoutExpired(self.argv, timeout)
-        with mock.patch.dict(os.environ, self.env, clear=True), mock.patch.object(runner.subprocess, 'Popen', side_effect=Process), mock.patch.object(runner, 'stop') as stop, mock.patch('builtins.print'):
+        def stop_before_cleanup(process):
+            self.assertTrue(workspaces[-1].is_dir())
+        with mock.patch.dict(os.environ, self.env, clear=True), mock.patch.object(runner.subprocess, 'Popen', side_effect=Process), mock.patch.object(runner, 'stop', side_effect=stop_before_cleanup) as stop, mock.patch('builtins.print'):
             # Capture baseline probes before mocking Popen (check_output uses it).
             with mock.patch.object(runner.subprocess, 'check_output', side_effect=['git version runner-fixture\n', 'a'*40+'\n']):
                 status = runner.run_all(self.output)
         self.assertEqual(status, 1)
         self.assertEqual(calls, list(runner.VERSIONS))
         self.assertEqual(stop.call_count, 3)
+        self.assertTrue(all(not path.exists() and self.output not in path.parents for path in workspaces))
         summary = json.loads((self.output/'summary.json').read_text())
         self.assertTrue(all(not item['success'] for item in summary['versions']))
+
+    def test_cancel_removes_workspace_after_stopping_owned_process(self):
+        workspaces = []
+        class Process:
+            def __init__(self, argv, **kwargs):
+                workspaces.append(Path(argv[argv.index('--workspace')+1]))
+            def wait(self, timeout):
+                raise KeyboardInterrupt('canceled fixture')
+        def stop_before_cleanup(process):
+            self.assertTrue(workspaces[-1].is_dir())
+        with mock.patch.dict(os.environ, self.env, clear=True), \
+                mock.patch.object(runner.subprocess, 'Popen', side_effect=Process), \
+                mock.patch.object(runner, 'stop', side_effect=stop_before_cleanup) as stop, \
+                mock.patch.object(runner.subprocess, 'check_output', side_effect=['git version runner-fixture\n', 'a'*40+'\n']), \
+                mock.patch('builtins.print'):
+            with self.assertRaises(KeyboardInterrupt):
+                runner.run_all(self.output)
+        stop.assert_called_once()
+        self.assertEqual(len(workspaces), 1)
+        self.assertFalse(workspaces[0].exists())
+        summary = json.loads((self.output/'summary.json').read_text())
+        self.assertFalse(summary['success'])
+        self.assertEqual([v['name'] for v in summary['versions']], [runner.VERSIONS[0]])
 
     @unittest.skipUnless(sys.platform == 'linux', 'production Linux process-group qualification')
     def test_cancel_stops_actual_owned_process_group(self):

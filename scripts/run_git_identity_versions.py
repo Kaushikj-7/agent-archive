@@ -8,6 +8,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 
 import pinned_git
@@ -25,7 +26,7 @@ def write(path, value):
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + '\n')
 
 
-def version_lane(name, directory, baseline_git, baseline_path, baseline_version, source):
+def version_lane(name, directory, baseline_git, baseline_path, baseline_version, source, workspace):
     """Child process: never publish Git through the runner's GITHUB_PATH."""
     report = {'schema': 1, 'name': name, 'source': source, 'success': False,
               'commands': [], 'pin': list(pinned_git.PINS[name]) if name in pinned_git.PINS else None}
@@ -33,7 +34,7 @@ def version_lane(name, directory, baseline_git, baseline_path, baseline_version,
         env = dict(os.environ, PATH=baseline_path, GOMAXPROCS='2')
         for key, part in (('HOME', 'home'), ('XDG_CONFIG_HOME', 'xdg'),
                           ('TMPDIR', 'tmp'), ('TMP', 'tmp'), ('TEMP', 'tmp')):
-            folder = directory/part
+            folder = workspace/part
             folder.mkdir(exist_ok=True)
             env[key] = str(folder)
         # Preparation and child tests use this version's isolated configuration.
@@ -43,7 +44,7 @@ def version_lane(name, directory, baseline_git, baseline_path, baseline_version,
         expected = baseline_version
         if name in pinned_git.PINS:
             binary = pinned_git.ensure(name, Path(env['GOCACHE'])/'aa-pinned-git',
-                                       directory/'install')/'git'
+                                       workspace/'install')/'git'
             expected = pinned_git.PINS[name][2]
         # Keep the original PATH byte-for-byte for runner-current: prepending
         # /usr/bin could otherwise shadow setup-go with a different compiler.
@@ -117,23 +118,27 @@ def run_all(output):
     for name in VERSIONS:
         directory = output/name
         directory.mkdir()
-        command = [sys.executable, '-B', str(Path(__file__).resolve()), '--version', name,
-                   '--output', str(directory), '--baseline-git', baseline_git,
-                   '--baseline-path', baseline_path, '--baseline-version', baseline_version,
-                   '--source', source]
         record = {'name': name, 'success': False}
         start = time.monotonic()
         process = None
         try:
-            with (directory/'execution.log').open('w') as log:
-                process = subprocess.Popen(command, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT,
-                                           start_new_session=True)
-                try:
-                    record['exit_code'] = process.wait(timeout=VERSION_SECONDS)
-                finally:
-                    # A completed parent can still have descendants. Clean the
-                    # session before a later version reuses compiler resources.
-                    stop(process)
+            # Only diagnostics belong under the uploaded output root. Git
+            # installations and test HOME/temp state can be gigabytes. Own
+            # their lifetime outside it, through complete process-group cleanup.
+            with tempfile.TemporaryDirectory(prefix='aa-git-identity-'+name+'-', dir=output.parent) as raw:
+                command = [sys.executable, '-B', str(Path(__file__).resolve()), '--version', name,
+                           '--output', str(directory), '--workspace', raw, '--baseline-git', baseline_git,
+                           '--baseline-path', baseline_path, '--baseline-version', baseline_version,
+                           '--source', source]
+                with (directory/'execution.log').open('w') as log:
+                    process = subprocess.Popen(command, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT,
+                                               start_new_session=True)
+                    try:
+                        record['exit_code'] = process.wait(timeout=VERSION_SECONDS)
+                    finally:
+                        # A completed parent can still have descendants. Clean
+                        # the session before deleting its workspace or reuse.
+                        stop(process)
             receipt = json.loads((directory/'receipt.json').read_text())
             expected = pinned_git.PINS[name][2] if name in pinned_git.PINS else baseline_version
             record.update(actual_version=receipt.get('actual_version'), binary=receipt.get('binary'))
@@ -168,6 +173,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--version', choices=VERSIONS)
+    parser.add_argument('--workspace', type=Path)
     parser.add_argument('--baseline-git')
     parser.add_argument('--baseline-path')
     parser.add_argument('--baseline-version')
@@ -179,10 +185,10 @@ def main():
         signal.signal(sig, interrupted)
     try:
         if args.version:
-            if any(value is None for value in (args.baseline_git, args.baseline_path, args.baseline_version, args.source)):
-                parser.error('version subprocess requires captured baseline and source')
+            if any(value is None for value in (args.baseline_git, args.baseline_path, args.baseline_version, args.source, args.workspace)):
+                parser.error('version subprocess requires captured baseline, source and workspace')
             return version_lane(args.version, args.output, args.baseline_git,
-                                args.baseline_path, args.baseline_version, args.source)
+                                args.baseline_path, args.baseline_version, args.source, args.workspace)
         return run_all(args.output.resolve())
     except (KeyboardInterrupt, OSError, ValueError, subprocess.SubprocessError) as error:
         print('Git compatibility failed: '+str(error), file=sys.stderr)

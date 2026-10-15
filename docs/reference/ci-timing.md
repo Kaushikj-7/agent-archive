@@ -493,9 +493,11 @@ the runner's original Git. Every version executes both original count-one test
 commands with GOMAXPROCS=2 and Go package parallelism 2, in separate test
 processes, PATH/install/configuration/temp directories. A version failure does
 not suppress the other versions. The `git-identity-versions` artifact retains
-all three receipts and raw logs for seven days; a single green job without
-complete version evidence is insufficient qualification. The normal production
-inventory has 24 jobs rather than the prior 28 (Git consolidation removes two;
+all three receipts and raw logs for seven days. Installations, HOME/XDG state
+and test temporary files live outside that artifact root and are removed after
+each version's process group stops; they are not retained diagnostics. A single
+green job without complete version evidence is insufficient qualification. The
+normal production inventory has 24 jobs rather than the prior 28 (Git consolidation removes two;
 local planning and final script aggregation each remove one), with version coverage unchanged.
 
 In normal run 38682572380, the earlier three jobs allocated 112 seconds in
