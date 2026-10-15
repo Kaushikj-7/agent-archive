@@ -311,7 +311,11 @@ func liveCell(r listRow, live bool) string {
 // tableCells is one row of the plain table, in tableHeader's columns. Its
 // title is uncut, with the subagent note and the hint spelled out after it.
 func tableCells(r listRow, opts listFormatOptions) []string {
-	title := cursorCell(r, opts) + liveCell(r, opts.LiveMarks) + titlePrefix(r) + cellTitle(r) + subagentNote(r)
+	title := titlePrefix(r) + cellTitle(r) + subagentNote(r)
+	if opts.Numbered {
+		// A picker whose terminal's size is unknown: its marks still show.
+		title = cursorCell(r, opts) + liveCell(r, opts.LiveMarks) + title
+	}
 	if r.Hint != "" {
 		title += " · " + r.Hint
 	}
