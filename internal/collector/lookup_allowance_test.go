@@ -180,6 +180,7 @@ func TestCodexSessionThatExhaustsTheLookupAllowanceDoesNotBlockLaterCodexSession
 		t.Helper()
 		reg := registration(t, writeTranscript(t, dir, fmt.Sprintf("codex-%d.jsonl", n), codexTranscript))
 		reg.ArchiveSessionID, reg.NativeSessionID = fmt.Sprintf("session-%d", n), fmt.Sprintf("native-%d", n)
+		reg.Origin = archive.SessionOriginImport
 		reg.SessionStartedAt, reg.RegisteredAt = start.Add(time.Duration(n)*time.Minute), start.Add(time.Duration(n)*time.Minute+time.Second)
 		if err := local.SaveRegistration(reg); err != nil {
 			t.Fatal(err)
@@ -202,8 +203,10 @@ func TestCodexSessionThatExhaustsTheLookupAllowanceDoesNotBlockLaterCodexSession
 	}
 	now := start.Add(time.Hour)
 
-	// The heavy session is the oldest, so the first pass reads it first; it
-	// spends the allowance and the session after it is left unopened.
+	// The sessions are imported, so the pass reads them oldest first with no
+	// slot reserved for a live session: the heavy session, the oldest, is
+	// read first; it spends the allowance and the session after it is left
+	// unopened.
 	later := save(2)
 	result := run(now)
 	if result.Deferred[heavy.ArchiveSessionID] != DeferredLookupAllowance || len(result.Published) != 0 {
@@ -283,6 +286,7 @@ func TestSessionWaitingOnTheLookupAllowanceIsNotHeldBehindAHeavierOne(t *testing
 		t.Helper()
 		reg := registration(t, writeTranscript(t, dir, fmt.Sprintf("codex-%d.jsonl", n), codexTranscript))
 		reg.ArchiveSessionID, reg.NativeSessionID = fmt.Sprintf("session-%d", n), fmt.Sprintf("native-%d", n)
+		reg.Origin = archive.SessionOriginImport
 		reg.SessionStartedAt, reg.RegisteredAt = start.Add(time.Duration(n)*time.Minute), start.Add(time.Duration(n)*time.Minute+time.Second)
 		if err := local.SaveRegistration(reg); err != nil {
 			t.Fatal(err)
@@ -307,8 +311,9 @@ func TestSessionWaitingOnTheLookupAllowanceIsNotHeldBehindAHeavierOne(t *testing
 		return result
 	}
 
-	// The heavy session is read first and runs out; the next pass reads the
-	// other session first, and it runs out too.
+	// The sessions are imported, so the pass reads them oldest first. The
+	// heavy session is read first and runs out; the next pass reads the other
+	// session first, and it runs out too.
 	if result := run(); result.Deferred[heavy.ArchiveSessionID] != DeferredLookupAllowance {
 		t.Fatalf("first pass result=%+v, want the heavy session deferred for the lookup allowance", result)
 	}
