@@ -829,3 +829,12 @@ experiment still independently requires comparable actual tested trees, policies
 compiler/cache/image cohorts and runtime lint selected diff endpoints. Different
 source SHAs remain different. The main integration also preserves new product
 and test bodies; older coverage or cost artifacts are not relabeled for this tree.
+Tier-plan provenance retains `base` as the recorded PR-event base and
+`tested_base` as the actual first parent of the tested merge. GitHub may build
+against a newer descendant of the event base. Planning requires exactly two
+parents, the exact event head second, and proof that the event base is an
+ancestor of `tested_base`, with complete history and unchanged tracked source.
+Path selection still conservatively compares the recorded event base to both
+the PR head and tested source, including base advances. Candidate builders and
+throughput qualification must use actual merge parents and keep recorded event
+identity separate; forged, reversed or unrelated parent identities fail closed.

@@ -136,15 +136,23 @@ def pr_extras(event, tested):
                 raise Failure('event commit unavailable')
         if git('rev-parse', 'HEAD') != tested or git('rev-parse', '--is-shallow-repository') != 'false':
             raise Failure('tested source/history unavailable')
-        if git('show', '-s', '--format=%P', tested).split() != [base, head]:
+        # The event records a base snapshot, while GitHub may test a merge
+        # against a newer descendant. Pin the PR parent exactly and prove the
+        # actual first parent contains the recorded base; never relabel either.
+        parents = git('show', '-s', '--format=%P', tested).split()
+        if len(parents) != 2 or parents[1] != head:
             raise Failure('unexpected tested merge')
+        tested_base = parents[0]
+        if git('rev-parse', '--verify', tested_base+'^{commit}') != tested_base:
+            raise Failure('actual tested base unavailable')
+        git('merge-base', '--is-ancestor', base, tested_base)
         git('merge-base', '--is-ancestor', base, tested)
         git('merge-base', '--is-ancestor', head, tested)
         if git('status', '--porcelain', '--untracked-files=all'):
             raise Failure('dirty source')
         # Reuse the verifier's tracked-byte/type/mode proof, including index-hidden edits.
         import scope_native_verify as scope
-        for sha in (base, head, tested):
+        for sha in dict.fromkeys((base, tested_base, head, tested)):
             for record in scope.records(scope.git(ROOT, 'ls-tree', '-r', '-z', sha)):
                 metadata, raw_path = record.split(b'\t', 1)
                 mode, kind, oid = metadata.split(b' ')
@@ -159,7 +167,7 @@ def pr_extras(event, tested):
             if raw and not raw.endswith(b'\0'):
                 raise Failure('invalid changed paths')
             paths.update(p.decode() for p in raw.split(b'\0') if p)
-        return dict(extra_for_paths(sorted(paths)), reason='verified base/head/tested merge', base=base, head=head, paths=sorted(paths))
+        return dict(extra_for_paths(sorted(paths)), reason='verified base/head/tested merge', base=base, tested_base=tested_base, head=head, paths=sorted(paths))
     except (KeyError, TypeError, ValueError, OSError, subprocess.SubprocessError, Failure):
         return dict(full, reason='representative fallback: source proof unavailable')
 
