@@ -9,11 +9,13 @@ from pathlib import Path
 import json
 import re
 import shutil
+import shlex
 import subprocess
 import sys
 import tempfile
 import textwrap
 import unittest
+from unittest import mock
 
 import run_ci_tier as tiers
 from test_release_assets import run_texts, steps
@@ -52,8 +54,8 @@ def job_key(text, key):
     return value
 
 
-def condition_matches(expression, event, ref='', suite='', schedule='17 8 * * 0', cancelled=False):
-    """Evaluate only the small boolean condition grammar used by these jobs."""
+def expression_value(expression, event, ref='', suite='', schedule='17 8 * * 0', cancelled=False):
+    """Evaluate the small condition/value expression grammar used by these jobs."""
     expression = expression.removeprefix('${{').removesuffix('}}').strip().replace('!cancelled()', 'not cancelled()')
     values = {'github.event_name': event, 'github.ref': ref, 'inputs.suite': suite, 'github.event.schedule': schedule}
     for key, value in values.items():
@@ -65,14 +67,16 @@ def condition_matches(expression, event, ref='', suite='', schedule='17 8 * * 0'
             return not value(node.operand)
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == 'cancelled' and not node.args:
             return cancelled
-        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        if isinstance(node, ast.Constant) and isinstance(node.value, (str, int)):
             return node.value
         if isinstance(node, ast.BoolOp):
-            items = [value(item) for item in node.values]
-            if isinstance(node.op, ast.And):
-                return all(items)
-            if isinstance(node.op, ast.Or):
-                return any(items)
+            for item in node.values:
+                result = value(item)
+                if isinstance(node.op, ast.And) and not result:
+                    return result
+                if isinstance(node.op, ast.Or) and result:
+                    return result
+            return result
         if isinstance(node, ast.Compare) and len(node.ops) == 1 and isinstance(node.ops[0], ast.Eq):
             return value(node.left) == value(node.comparators[0])
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == 'always' and not node.args:
@@ -82,7 +86,11 @@ def condition_matches(expression, event, ref='', suite='', schedule='17 8 * * 0'
             return value(node.args[0]).startswith(value(node.args[1]))
         raise AssertionError(f'unsupported CI condition: {expression}')
 
-    return bool(value(tree.body))
+    return value(tree.body)
+
+
+def condition_matches(expression, *args, **kwargs):
+    return bool(expression_value(expression, *args, **kwargs))
 
 
 def step_key(text, key):
@@ -172,6 +180,42 @@ class LinuxFullMemoryTest(unittest.TestCase):
         self.assertEqual(len(extras), 1)
         self.assertIn('pr', extras[0][0])
         self.assertIsNone(extras[0][1])
+
+    def test_extended_linux_outer_budget_fits_full_tier_and_keeps_daily_limit(self):
+        job = jobs(EXTENDED_YML.read_text())['linux-race']
+        step = next(step for workflow, step in self.consumers() if workflow == 'extended')
+        command = next(line.strip() for line in run_texts(step)[0].splitlines()
+                       if line.strip().startswith('python3 scripts/run_ci_tier.py '))
+        config = tiers.catalog()
+        for event, suite, schedule in (
+                ('workflow_dispatch', 'linux', ''),
+                ('workflow_dispatch', 'all', ''),
+                ('schedule', 'all', config['weekly_cron']),
+                ('schedule', 'all', config['daily_cron'])):
+            with self.subTest(event=event, suite=suite, schedule=schedule):
+                self.assertTrue(condition_matches(job_key(job, 'if'), event,
+                                                  suite=suite, schedule=schedule))
+                # Exercise the actual workflow argv and CLI default without
+                # starting Go. The outer job must outlive its full tier deadline
+                # and leave time for setup, vet, purge and evidence upload.
+                environment = {'GITHUB_EVENT_NAME': event, 'GITHUB_REF': 'refs/heads/main',
+                               'CI_SUITE': suite, 'CI_SCHEDULE': schedule}
+                with mock.patch.dict(tiers.os.environ, environment, clear=True), \
+                        mock.patch.object(sys, 'argv', shlex.split(command)[1:]), \
+                        mock.patch.object(tiers.signal, 'signal'), \
+                        mock.patch.object(tiers, 'run_suite') as run:
+                    self.assertEqual(tiers.main(), 0)
+                tier, actual_suite, _, _, seconds = run.call_args.args
+                self.assertEqual(actual_suite, 'linux')
+                self.assertEqual(seconds, 2400)
+                minutes = expression_value(job_key(job, 'timeout-minutes'), event,
+                                           suite=suite, schedule=schedule)
+                if tier == 'full':
+                    self.assertGreater(minutes * 60, seconds)
+                    self.assertEqual(minutes, 60)
+                else:
+                    self.assertEqual(tier, 'daily')
+                    self.assertEqual(minutes, 30)
 
     def test_extended_weekly_full_run_forwards_budget_and_daily_keeps_environment(self):
         step = next(step for workflow, step in self.consumers() if workflow == 'extended')
