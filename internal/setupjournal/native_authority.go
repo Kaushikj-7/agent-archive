@@ -26,7 +26,7 @@ func (j Journal) MarshalJSON() ([]byte, error) {
 		return nil, err
 	}
 	j.NativeAuthorityProtection = protected
-	raw, err := j.marshalBaseJSON()
+	raw, err := marshalBaseJSON(j)
 	if err != nil || !protected {
 		return raw, err
 	}
@@ -77,8 +77,8 @@ func (j *Journal) UnmarshalJSON(raw []byte) error {
 			return err
 		}
 	}
-	var plain Journal
-	if err := plain.unmarshalBaseJSON(raw); err != nil {
+	plain, err := unmarshalBaseJSON(raw)
+	if err != nil {
 		return err
 	}
 	protected, err := nativeJournalProtected(plain)

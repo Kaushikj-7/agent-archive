@@ -60,7 +60,7 @@ type journalV2 struct {
 }
 
 // marshalBaseJSON preserves the legacy or managed wire beneath the native fence.
-func (j Journal) marshalBaseJSON() ([]byte, error) {
+func marshalBaseJSON(j Journal) ([]byte, error) {
 	if len(j.Jobs) == 0 {
 		return json.Marshal(journalJSON(j))
 	}
@@ -76,46 +76,44 @@ func (j Journal) marshalBaseJSON() ([]byte, error) {
 }
 
 // unmarshalBaseJSON validates lifecycle records after the native fence is checked.
-func (j *Journal) unmarshalBaseJSON(data []byte) error {
+func unmarshalBaseJSON(data []byte) (Journal, error) {
 	var shape map[string]json.RawMessage
 	if err := json.Unmarshal(data, &shape); err != nil {
-		return err
+		return Journal{}, err
 	}
 	if _, ok := shape["schema_version"]; !ok {
 		if _, ok := shape["jobs"]; ok {
-			return errors.New("managed jobs require journal version 2")
+			return Journal{}, errors.New("managed jobs require journal version 2")
 		}
 		var legacy journalJSON
 		if err := json.Unmarshal(data, &legacy); err != nil {
-			return err
+			return Journal{}, err
 		}
-		*j = Journal(legacy)
-		return nil
+		return Journal(legacy), nil
 	}
 	if err := checkJournalKeys(json.NewDecoder(bytes.NewReader(data)), 0); err != nil {
-		return err
+		return Journal{}, err
 	}
 	var wire journalV2
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&wire); err != nil {
-		return err
+		return Journal{}, err
 	}
 	if wire.Version != 2 || wire.Changes == nil {
-		return errors.New("unsupported setup journal version or changes shape")
+		return Journal{}, errors.New("unsupported setup journal version or changes shape")
 	}
 	var changes map[string]json.RawMessage
 	if err := json.Unmarshal(shape["changes"], &changes); err != nil {
-		return err
+		return Journal{}, err
 	}
 	if rawFiles, ok := changes["files"]; !ok || bytes.Equal(bytes.TrimSpace(rawFiles), []byte("null")) {
-		return errors.New("journal changes requires files")
+		return Journal{}, errors.New("journal changes requires files")
 	}
 	if err := validateJobs(wire.Jobs); err != nil {
-		return err
+		return Journal{}, err
 	}
-	*j = Journal{NativeAuthorityProtection: wire.NativeAuthorityProtection, FilesOnly: wire.FilesOnly, Changes: wire.Changes.Files, Jobs: wire.Jobs, Legacy: wire.Legacy, Relabeled: wire.Relabeled, MoreRelabeled: wire.MoreRelabeled}
-	return nil
+	return Journal{NativeAuthorityProtection: wire.NativeAuthorityProtection, FilesOnly: wire.FilesOnly, Changes: wire.Changes.Files, Jobs: wire.Jobs, Legacy: wire.Legacy, Relabeled: wire.Relabeled, MoreRelabeled: wire.MoreRelabeled}, nil
 }
 
 func validateJobs(jobs []ManagedJob) error {
