@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 )
@@ -70,45 +69,6 @@ func TestBareCommandBrowsesOnTTY(t *testing.T) {
 	}
 	if strings.Contains(text, "Get started") {
 		t.Fatalf("should not print usage on TTY browse:\n%s", text)
-	}
-}
-
-func TestListGroupsByProject(t *testing.T) {
-	t.Parallel()
-	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
-	rows := []listRow{
-		{Index: 1, Title: "one", ShortID: "aaaaaaaa", Project: "alpha", When: "1 hour ago", Harness: "claude"},
-		{Index: 2, Title: "two", ShortID: "bbbbbbbb", Project: "beta", When: "2 hours ago", Harness: "claude"},
-		{Index: 3, Title: "three", ShortID: "cccccccc", Project: "alpha", When: "3 hours ago", Harness: "codex"},
-	}
-	var out bytes.Buffer
-	if err := printSessionTable(&out, rows, listFormatOptions{Now: now, GroupByProject: true}); err != nil {
-		t.Fatal(err)
-	}
-	text := out.String()
-	if !strings.Contains(text, "alpha (2)") || !strings.Contains(text, "beta (1)") {
-		t.Fatalf("missing group headings:\n%s", text)
-	}
-	alphaAt := strings.Index(text, "alpha (2)")
-	betaAt := strings.Index(text, "beta (1)")
-	if alphaAt < 0 || betaAt < alphaAt {
-		t.Fatalf("group order:\n%s", text)
-	}
-}
-
-func TestListKeepsProjectsWithSameNameSeparate(t *testing.T) {
-	t.Parallel()
-	rows := []listRow{
-		{Index: 1, Title: "one", ShortID: "aaaaaaaa", Project: "app", ProjectID: "project-1", Harness: "claude"},
-		{Index: 2, Title: "two", ShortID: "bbbbbbbb", Project: "app", ProjectID: "project-2", Harness: "codex"},
-	}
-	var out bytes.Buffer
-	if err := printSessionTable(&out, rows, listFormatOptions{GroupByProject: true}); err != nil {
-		t.Fatal(err)
-	}
-	text := out.String()
-	if !strings.Contains(text, "app [project-1] (1)") || !strings.Contains(text, "app [project-2] (1)") {
-		t.Fatalf("same-name projects were combined:\n%s", text)
 	}
 }
 

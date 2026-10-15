@@ -169,7 +169,7 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	}
 	format := listFormatOptions{
 		Now: env.now(), Verbose: opts.verbose, Projects: labels, Style: styleFor(stdout),
-		GroupByProject: true, Numbered: browsing, Children: listingChildren(listed, sessions, full),
+		GroupByDay: true, Numbered: browsing, Children: listingChildren(listed, sessions, full),
 	}
 	words := strings.Join(strings.Fields(query), " ")
 	choices := listChoices(scope, format, browsing, sessions, opts.limit, view, words)
@@ -1030,8 +1030,11 @@ func selectedShowMetadata(ctx context.Context, store storage.ObjectStore, harnes
 }
 
 func printListWithPager(ctx context.Context, env listCommandDependencies, stdout, stderr io.Writer, noPager bool, choices *scopeChoices) int {
+	// On a terminal, each row is fit to one line of it; piped, it is the
+	// plain table.
+	width, _, _ := env.terminalSize(stdout)
 	if err := withPager(ctx, stdout, stderr, env, noPager, func(w io.Writer) error {
-		return printListTable(w, choices.shown())
+		return printListTable(w, choices.shown(), width)
 	}); err != nil {
 		terminal.Printf(stderr, "agent-archive: list: %v\n", err)
 		return 1

@@ -134,12 +134,15 @@ func (s *S3Store) GetCatalogVersion(ctx context.Context, relative string, limit 
 		return nil, CatalogObjectVersion{}, err
 	}
 	defer func() { _ = output.Body.Close() }()
+	if output.ContentLength != nil && *output.ContentLength > limit {
+		return nil, CatalogObjectVersion{}, ErrObjectTooLarge
+	}
 	data, err := io.ReadAll(io.LimitReader(output.Body, limit+1))
 	if err != nil {
-		return nil, CatalogObjectVersion{}, err
+		return data, CatalogObjectVersion{}, err
 	}
 	if int64(len(data)) > limit {
-		return nil, CatalogObjectVersion{}, ErrObjectTooLarge
+		return data, CatalogObjectVersion{}, ErrObjectTooLarge
 	}
 	return data, CatalogObjectVersion{ETag: strings.Trim(aws.ToString(output.ETag), `"`), LastModified: aws.ToTime(output.LastModified)}, nil
 }

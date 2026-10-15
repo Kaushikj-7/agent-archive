@@ -3,8 +3,8 @@ package cli
 import (
 	"fmt"
 	"io"
+	"slices"
 	"strings"
-	"text/tabwriter"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/terminal"
@@ -39,9 +39,9 @@ func quotedWord(s string) string {
 	return shellWord(s)
 }
 
-// print writes the table: one line for the question, a row for each session
-// (ID, harness, project when the rows span several, when, PR when a row has
-// one, title), and the exact next command.
+// print writes the table: one line for the question, the matching sessions
+// in the piped list's columns (printCandidateRows), and the exact next
+// command.
 func (c candidateList) print(w io.Writer) {
 	var b strings.Builder
 	where := ""
@@ -49,32 +49,7 @@ func (c candidateList) print(w io.Writer) {
 		where = " in " + archive.DisplayLine(c.label)
 	}
 	fmt.Fprintf(&b, "agent-archive: %s: %q matches %d sessions%s; pass one ID:\n", c.command, queryLabel(c.query), c.total, where)
-	showPR := false
-	for _, row := range c.rows {
-		showPR = showPR || row.PR != ""
-	}
-	showProject := distinctProjects(c.rows) > 1
-	tw := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
-	for _, row := range c.rows {
-		// The ID is stored data, like the title, and may hold control
-		// characters. Nothing is left long or invisible either: an agent
-		// reads this.
-		cells := []string{"  " + cappedLine(row.ShortID, 12), cappedLine(row.Harness, 20)}
-		if showProject {
-			cells = append(cells, cappedLine(row.Project, 30))
-		}
-		cells = append(cells, row.When)
-		if showPR {
-			cells = append(cells, row.PR)
-		}
-		title := cappedLine(row.Title, matchFieldWidth)
-		if row.Parent != "" {
-			title += subagentHint(row)
-		}
-		terminal.Println(tw, strings.Join(append(cells, title), "\t"))
-	}
-	// The table is built in memory, where writes cannot fail.
-	_ = tw.Flush()
+	printCandidateRows(&b, c.rows)
 	if len(c.rows) < c.total {
 		fmt.Fprintf(&b, "  ... and %d more; add words, a PR number, or --harness to narrow\n", c.total-len(c.rows))
 	}
@@ -87,4 +62,52 @@ func (c candidateList) print(w io.Writer) {
 		}
 	}
 	terminal.Print(w, b.String())
+}
+
+// candidateTitleWidth is the most display columns of a title a list of
+// matches shows. A captured title or name is at most 129 characters, so a
+// real one is never cut; a sidecar written by something else can be any
+// length, and is.
+const candidateTitleWidth = 160
+
+// printCandidateRows writes rows as `list | cat` does, each line indented
+// two columns under the question: WHEN AGENT PROJECT PR ID TITLE, with the
+// title last and whole (tableHeader, tableCells). PROJECT is left out when
+// the rows share one and PR when none has one; AGENT is the harness name
+// --harness takes. Every cell is stored data, which may hold control
+// characters or be any length, so each is cut to one bounded line: an agent
+// reads this.
+func printCandidateRows(w io.Writer, rows []listRow) {
+	if len(rows) == 0 {
+		return
+	}
+	opts := listFormatOptions{
+		HideProject: distinctProjects(rows) <= 1,
+		ShowPR:      slices.ContainsFunc(rows, func(r listRow) bool { return r.PR != "" }),
+	}
+	tw := &columnWriter{out: w}
+	terminal.Println(tw, "  "+strings.Join(tableHeader(opts), "\t"))
+	for _, r := range rows {
+		r.ShortID = cappedLine(r.ShortID, 80)
+		r.Harness = cappedLine(r.Harness, 20)
+		r.Project = cappedLine(r.Project, 30)
+		r.Title = cappedLine(r.Title, candidateTitleWidth)
+		terminal.Println(tw, "  "+strings.Join(tableCells(r, opts), "\t"))
+	}
+	// The table is built in memory, where writes cannot fail.
+	_ = tw.Flush()
+}
+
+// distinctProjects is how many projects rows come from, told apart by
+// project ID where they have one, else by name.
+func distinctProjects(rows []listRow) int {
+	seen := map[string]bool{}
+	for _, r := range rows {
+		key := "name:" + r.Project
+		if r.ProjectID != "" {
+			key = "id:" + r.ProjectID
+		}
+		seen[key] = true
+	}
+	return len(seen)
 }

@@ -548,6 +548,34 @@ class InstallScriptTest(InstallScriptBase):
                 else:
                     self.assertNotIn('--source-ref', argv)
 
+    def test_linux_gh_attestation_pins_public_host_despite_enterprise_gh_host(self):
+        order = self.root / 'order.log'
+        curl, _ = self.fake_release_curl()
+        for strict in (False, True):
+            with self.subTest(strict=strict):
+                order.unlink(missing_ok=True)
+                shutil.rmtree(self.home / '.local', ignore_errors=True)
+                self.order_logging_linux_binary(order)
+                # The enterprise host stays in gh's environment: the explicit
+                # --hostname, not clearing the user's setting, must select
+                # the public host.
+                gh = ('[ "${GH_HOST:-}" = github.corporate.example ] || exit 10\n'
+                      + self.fake_gh(order))
+                env = {'GH_HOST': 'github.corporate.example'}
+                if strict:
+                    env['AGENT_ARCHIVE_REQUIRE_ATTESTATION'] = '1'
+                result = self.run_linux_from_github_base({'curl': curl, 'gh': gh}, env)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                argv = self.gh_argv(order)
+                self.assertEqual(argv[argv.index('--hostname') + 1], 'github.com')
+                self.assertEqual(argv[argv.index('--signer-workflow') + 1],
+                                 'wangjohn/agent-archive/.github/workflows/release.yml')
+                lines = order.read_text().splitlines()
+                self.assertLess(next(i for i, l in enumerate(lines) if l.startswith('gh ')),
+                                lines.index('ran'))
+                self.assertIn('Attestation verified', result.stdout)
+                self.assertEqual(self.installed_output(), self.linux_output('amd64'))
+
     def test_linux_printed_advice_carries_the_same_pins(self):
         curl, _ = self.fake_release_curl()
         result = self.run_linux_from_github_base({'curl': curl}, {'AGENT_ARCHIVE_VERSION': 'v0.2.0'})

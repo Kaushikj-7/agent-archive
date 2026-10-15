@@ -1,7 +1,8 @@
 name: Levenshtein
 # Shared lint and security checks from wangjohn/levenshtein, run in its pinned
-# Linux worker. PRs use native tools over staged declared inputs; other runs
-# keep the pinned container. levenshtein.json selects the checks. Run the
+# Linux worker. CI uses native tools over staged declared inputs with a
+# fail-closed policy guard; the repository config retains local Dagger support.
+# levenshtein.json selects the checks. Run the
 # same thing locally from a sibling checkout of Levenshtein:
 #
 #   ../levenshtein/verify pre-merge --source .
@@ -18,6 +19,11 @@ on:
     # waiting for the next change.
     - cron: '41 7 * * *'
   workflow_dispatch:
+    inputs:
+      benchmark-checker-jobs:
+        description: 'Manual diagnostic: fresh full shared checks at jobs 4/2/2/4 (adds one standard Linux job)'
+        type: boolean
+        default: false
 # Ignore persistent per-user Go configuration; all compiler flags are explicit.
 env:
   GOENV: 'off'
@@ -118,35 +124,76 @@ jobs:
           source: app
           profile: shared
           shared-source: levenshtein
-      - name: Stage PR inputs and select checks
-        if: github.event_name == 'pull_request'
+      - name: Stage declared inputs and preserve event-specific checks
         id: stage
         env:
           PYTHONDONTWRITEBYTECODE: '1'
           NO_COLOR: '1'
+          EVENT: ${{ github.event_name }}
           XDG_CACHE_HOME: ${{ runner.temp }}/native-xdg
         run: |
           python3 -B ./app/scripts/stage_native_verify.py --source ./app \
             --destination "$RUNNER_TEMP/native-source" --shared ./levenshtein \
-            --run pre-merge --pr-scope
+            --ci-event "$EVENT"
       - name: Verify
         env:
-          EVENT: ${{ github.event_name }}
           NO_COLOR: '1'
-          PR_RUN: ${{ steps.stage.outputs.run }}
+          CHECK_RUN: ${{ steps.stage.outputs.run }}
         run: |
-          run=pre-merge
-          if [[ "$EVENT" == schedule ]]; then
-            run=main
-          fi
-          source=./app
-          if [[ "$EVENT" == pull_request ]]; then
-            # Native inputs fingerprint source but do not restrict discovery.
-            # Stage the tracked configured inputs to match the container scope.
-            # Only verified compilation/modules are reused; XDG/results stay fresh.
-            export XDG_CACHE_HOME="$RUNNER_TEMP/native-xdg"
-            source="$RUNNER_TEMP/native-source"
-            run="$PR_RUN"
-          fi
-          ./levenshtein/verify "$run" --source "$source" --jobs 4 \
+          # Stage selection permits scoped PR checks only on pull_request.
+          # Push/manual retain all six; schedule retains main/rerun_checks.
+          export XDG_CACHE_HOME="$RUNNER_TEMP/native-xdg"
+          ./levenshtein/verify "$CHECK_RUN" --source "$RUNNER_TEMP/native-source" --jobs 4 \
             --cache-dir "$RUNNER_TEMP/verification"
+
+  checker-benchmark:
+    if: github.event_name == 'workflow_dispatch' && inputs.benchmark-checker-jobs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      GOTOOLCHAIN: local
+      GOWORK: 'off'
+      GOFLAGS: '-mod=readonly'
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - name: Check out exact product source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: app
+          persist-credentials: false
+      - name: Check out pinned shared policy
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: wangjohn/levenshtein
+          ref: 6f799f72befb925d10f2ef01a7c9a46725fa714d
+          path: levenshtein
+          persist-credentials: false
+      - name: Install exact shared compiler
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: levenshtein/.go-version
+          cache: false
+      - name: Set controlled compilation/module paths
+        shell: bash
+        run: |
+          printf 'GOCACHE=%s/pr-go-build\nGOMODCACHE=%s/pr-go-modules\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Restore verified trusted-main compilation seed
+        uses: ./app/.github/actions/verified-go-cache
+        with:
+          source: app
+          profile: shared
+          shared-source: levenshtein
+      - name: Compare fresh complete shared checks with identical warm compilation
+        env:
+          NO_COLOR: '1'
+        run: |
+          python3 -B app/scripts/benchmark_shared_verify.py --source app --shared levenshtein \
+            --output "$RUNNER_TEMP/checker-benchmark-evidence" --scratch "$RUNNER_TEMP"
+      - name: Preserve bounded diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: checker-concurrency-benchmark
+          path: ${{ runner.temp }}/checker-benchmark-evidence
+          retention-days: 7
+          if-no-files-found: warn

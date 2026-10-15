@@ -87,6 +87,13 @@ func reviewRows(cfg config.Config, discoveries map[string]applicationDiscovery, 
 	}
 	rows = append(rows, reviewRow{label: "Projects", values: projects})
 	rows = append(rows, codexConsentRows(cfg)...)
+	if cfg.SearchLifecycleProtection {
+		choice := "Off"
+		if cfg.SearchIndexing {
+			choice = "On"
+		}
+		rows = append(rows, reviewRow{label: "Search indexing", values: []string{choice}, detail: "Private local conversation index; automatic work pauses with capture"})
+	}
 	skillScope := string(cfg.EffectiveSkillEvidence())
 	if cfg.SkillEvidence == "" {
 		skillScope += " (kept from previous setup)"

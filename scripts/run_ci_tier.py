@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Explicit CI cadence, conservative PR backstops and actual execution evidence."""
 import argparse
+import copy
 import hashlib
 import json
 import os
@@ -14,6 +15,7 @@ import tempfile
 import time
 
 import full_race
+import go_cache_context as cache_keys
 
 ROOT = Path(__file__).resolve().parent.parent
 MODULE = 'github.com/wangjohn/agent-archive/'
@@ -134,15 +136,23 @@ def pr_extras(event, tested):
                 raise Failure('event commit unavailable')
         if git('rev-parse', 'HEAD') != tested or git('rev-parse', '--is-shallow-repository') != 'false':
             raise Failure('tested source/history unavailable')
-        if git('show', '-s', '--format=%P', tested).split() != [base, head]:
+        # The event records a base snapshot, while GitHub may test a merge
+        # against a newer descendant. Pin the PR parent exactly and prove the
+        # actual first parent contains the recorded base; never relabel either.
+        parents = git('show', '-s', '--format=%P', tested).split()
+        if len(parents) != 2 or parents[1] != head:
             raise Failure('unexpected tested merge')
+        tested_base = parents[0]
+        if git('rev-parse', '--verify', tested_base+'^{commit}') != tested_base:
+            raise Failure('actual tested base unavailable')
+        git('merge-base', '--is-ancestor', base, tested_base)
         git('merge-base', '--is-ancestor', base, tested)
         git('merge-base', '--is-ancestor', head, tested)
         if git('status', '--porcelain', '--untracked-files=all'):
             raise Failure('dirty source')
         # Reuse the verifier's tracked-byte/type/mode proof, including index-hidden edits.
         import scope_native_verify as scope
-        for sha in (base, head, tested):
+        for sha in dict.fromkeys((base, tested_base, head, tested)):
             for record in scope.records(scope.git(ROOT, 'ls-tree', '-r', '-z', sha)):
                 metadata, raw_path = record.split(b'\t', 1)
                 mode, kind, oid = metadata.split(b' ')
@@ -157,9 +167,47 @@ def pr_extras(event, tested):
             if raw and not raw.endswith(b'\0'):
                 raise Failure('invalid changed paths')
             paths.update(p.decode() for p in raw.split(b'\0') if p)
-        return dict(extra_for_paths(sorted(paths)), reason='verified base/head/tested merge', base=base, head=head, paths=sorted(paths))
+        return dict(extra_for_paths(sorted(paths)), reason='verified base/head/tested merge', base=base, tested_base=tested_base, head=head, paths=sorted(paths))
     except (KeyError, TypeError, ValueError, OSError, subprocess.SubprocessError, Failure):
         return dict(full, reason='representative fallback: source proof unavailable')
+
+
+def read_unique_json(path):
+    def unique(pairs):
+        value = dict(pairs)
+        if len(value) != len(pairs):
+            raise Failure('duplicate JSON field in plan evidence')
+        return value
+    return json.loads(Path(path).read_text(), object_pairs_hook=unique)
+
+
+def verify_plan(path, expected):
+    source = git('rev-parse', 'HEAD')
+    if (not isinstance(expected, dict) or expected.get('source') != source or source != os.environ.get('GITHUB_SHA', source)
+            or read_unique_json(path) != expected):
+        raise Failure('canonical and independently recomputed tier plans differ')
+
+
+def verify_native_plan(directory, expected):
+    """Bind native selection; Darwin still owns its raw/context verification."""
+    report = read_unique_json(Path(directory)/'tier.json')
+    proof = full_race.source_proof(ROOT)
+    if not isinstance(expected, dict) or not isinstance(report, dict):
+        raise Failure('malformed native plan evidence')
+    native = report.get('native_smoke', {})
+    if not isinstance(native, dict):
+        raise Failure('malformed native selection evidence')
+    if (expected.get('tier') != 'pr' or proof.get('source') != expected.get('source')
+            or expected.get('source') != os.environ['GITHUB_SHA']
+            or report.get('source') != expected['source'] or report.get('source_proof') != proof
+            or report.get('schema') != 1 or report.get('success') is not True
+            or report.get('tier') != 'pr' or report.get('suite') != 'macos'
+            or report.get('event') != os.environ.get('GITHUB_EVENT_NAME')
+            or report.get('ref') != os.environ.get('GITHUB_REF', '')
+            or report.get('extras') != expected
+            or native.get('sensitive') is not bool(expected.get('native'))
+            or native.get('source_proof') != proof or native.get('post_source_proof') != proof):
+        raise Failure('native coverage selection differs from independent current tier plan')
 
 
 def terminals(text):
@@ -375,7 +423,7 @@ def execute_plain_vet(out, deadline):
             'performance_enabled': False, 'real_systemd_enabled': False}
 
 
-def verify_plain_vet(directory, report, expected, expected_context_sha256, historical=False, *, strict_full_context=False):
+def verify_plain_vet(directory, report, expected, expected_context_sha256, historical=False, *, strict_full_context=False, historical_vet_contract=None):
     """Require canonical successful execution receipt separately from audit bodies."""
     import run_go_shard
     receipt = report.get('plain_vet')
@@ -384,7 +432,13 @@ def verify_plain_vet(directory, report, expected, expected_context_sha256, histo
     context = receipt.get('context', {})
     import go_cache_context
     try:
-        go_cache_context.validate_context(context)
+        if historical_vet_contract is None:
+            go_cache_context.validate_context(context)
+        else:
+            if not historical:
+                raise go_cache_context.InvalidContext('historical vet authority forbidden for live verification')
+            import historical_vet_contract as old_vet
+            old_vet.validate_context(context, expected, historical_vet_contract, ROOT)
     except go_cache_context.InvalidContext as error:
         raise Failure('plain vet recorded context malformed') from error
     identity_schema = receipt.get('identity_schema')
@@ -428,7 +482,7 @@ def verify_plain_vet(directory, report, expected, expected_context_sha256, histo
         raise Failure('plain vet raw log mismatch')
 
 
-def verify_source_audit(directory, source, *, expected_source_proof=None, require_plain_vet=False, expected_vet_context_sha256=None, strict_full_context=False):
+def verify_source_audit(directory, source, *, expected_source_proof=None, require_plain_vet=False, expected_vet_context_sha256=None, strict_full_context=False, historical_vet_contract=None):
     """Require exact-source plain named body and package PASS, never compilation."""
     directory = Path(directory)
     report = json.loads((directory / 'tier.json').read_text())
@@ -458,11 +512,238 @@ def verify_source_audit(directory, source, *, expected_source_proof=None, requir
         raise Failure('plain source audit raw body evidence mismatch')
     if require_plain_vet:
         verify_plain_vet(directory, report, expected, expected_vet_context_sha256,
-                         historical=expected_source_proof is not None, strict_full_context=strict_full_context)
+                         historical=expected_source_proof is not None, strict_full_context=strict_full_context,
+                         historical_vet_contract=historical_vet_contract)
     return report
 
 
-def run_suite(tier, suite, out, extras=None, seconds=2400, *, own_plain_vet=False):
+
+NATIVE_PACKAGES = ['./internal/credentials', './internal/scheduler/launchd',
+                   './internal/scheduler/host', './internal/terminal',
+                   './internal/termlaunch', './internal/sourcefacts', './internal/discovery']
+NATIVE_CLI = ['TestScreens', 'TestGuidedPromptTerminalCells',
+              'TestGuidedPromptEmissionPreservesTerminalOwnership',
+              'TestGuidedCommandsTerminalOwnership', 'TestPairingCodeDisplayRecognizesWrappedTerminal',
+              'TestGuidedPromptCollapseRequiresOwnedVisibleRows', 'TestGuidedEOFNeverResolvesDefault',
+              'TestFirstSetupLaunchctlSequence', 'TestSetupAndUninstallNeedATerminal',
+              'TestBrowserKeysRestoreTheTerminal', 'TestStatsScreenOnARealTerminal',
+              'TestSupportedDiscoveryPublishesWithoutHooksAndAcceptsRecentCopy']
+NATIVE_COMMON = ['go', 'test', '-race', '-short', '-count=1', '-json', '-timeout', '10m']
+
+
+def native_selections(sensitive):
+    cli = NATIVE_CLI + (PR_REGRESSIONS['cli']['internal/cli'] if sensitive else [])
+    selected = {MODULE+'internal/cli': sorted(cli)}
+    if sensitive:
+        selected[MODULE+'internal/catalog'] = sorted(PR_REGRESSIONS['catalog']['internal/catalog'])
+    return selected
+
+
+def native_selected_phases(sensitive):
+    phases = {'native-cli': {MODULE+'internal/cli': sorted(NATIVE_CLI)}}
+    if sensitive:
+        phases['native-sensitive-cli'] = {MODULE+'internal/cli': sorted(PR_REGRESSIONS['cli']['internal/cli'])}
+        phases['native-sensitive-catalog'] = {MODULE+'internal/catalog': sorted(PR_REGRESSIONS['catalog']['internal/catalog'])}
+    return phases
+
+
+def native_commands(sensitive):
+    commands = [('native-packages', NATIVE_COMMON+NATIVE_PACKAGES)]
+    for phase, selected in native_selected_phases(sensitive).items():
+        pkg, names = next(iter(selected.items()))
+        pattern = '^('+'|'.join(re.escape(n) for n in names)+')$'
+        common = list(NATIVE_COMMON)
+        if phase.startswith('native-sensitive-'):
+            # Keep original command/deadline ownership: 10m base smoke and
+            # separate 20m conditional regressions. Never pool their budgets.
+            common[common.index('-timeout')+1] = '20m'
+        commands.append((phase, common+['-run', pattern, './'+pkg[len(MODULE):]]))
+    return commands
+
+
+def native_host_context():
+    """Use the one compiler/SDK/image identity shared with compilation caches."""
+    try:
+        context = cache_keys.validate_context(cache_keys.runtime_context(native=True), native=True)
+        if context['go']['GOOS'] != 'darwin':
+            raise cache_keys.InvalidContext('native smoke requires Darwin')
+        return context
+    except cache_keys.InvalidContext as error:
+        raise Failure(str(error)) from error
+
+
+def verify_native_smoke(directory, report, sensitive, *, local=False):
+    """External verification always resolves current source/compiler identity."""
+    if local and (os.environ.get('GITHUB_ACTIONS') == 'true' or os.environ.get('GITHUB_EVENT_NAME')):
+        raise Failure('local native diagnostics cannot qualify a hosted event')
+    proof = None if local else full_race.source_proof(ROOT)
+    context = None if local else native_host_context()
+    return _verify_native_smoke(directory, report, sensitive, local=local,
+                                source_proof=proof, context=context)
+
+
+def _verify_native_smoke(directory, report, sensitive, *, local, source_proof, context):
+    """Private producer path consumes only its pinned live post checkpoints."""
+    directory = Path(directory)
+    native = report.get('native_smoke', {})
+    if local and (os.environ.get('GITHUB_ACTIONS') == 'true' or os.environ.get('GITHUB_EVENT_NAME')):
+        raise Failure('local native diagnostics cannot qualify a hosted event')
+    proof = source_proof
+    if not local:
+        try:
+            cache_keys.validate_context(native.get('context'), native=True)
+            cache_keys.validate_context(native.get('post_context'), native=True)
+        except cache_keys.InvalidContext as error:
+            raise Failure(str(error)) from error
+    if (native.get('qualification') != ('local-diagnostic-only' if local else 'hosted')
+            or native.get('schema') != 1 or native.get('source_proof') != proof
+            or native.get('post_source_proof') != proof
+            or not local and (report.get('source') != proof['source']
+                              or report.get('source_proof') != native.get('source_proof'))
+            or native.get('context') != context or native.get('post_context') != context
+            or native.get('context_sha256') != (None if local else cache_keys.digest(context))
+            or local and not valid_native_local_guard(native.get('local_guard'))
+            or native.get('sensitive') is not sensitive
+            or native.get('build_command') != ['go', 'build', './...']
+            or native.get('build_sha256') != hashlib.sha256((directory/'native-build.log').read_bytes()).hexdigest()):
+        raise Failure('native production build/source/context mismatch')
+    if native.get('cache_observation') is not None:
+        import native_smoke_reference as reference
+        try:
+            observation = json.loads((directory/'cache-observation.json').read_text())
+            if observation != native['cache_observation']:
+                raise reference.Failure('native cache observation raw receipt mismatch')
+            reference.verify_observation(observation, proof, context)
+        except reference.Failure as error:
+            raise Failure(str(error)) from error
+    selected = native_selections(sensitive)
+    packages = {MODULE+p[2:] for p in NATIVE_PACKAGES}
+    try:
+        listing = full_race.listing((directory/'native-list.jsonl').read_text(),
+                                   {p: True for p in selected})
+    except full_race.shards.Failure as error:
+        raise Failure(str(error)) from error
+    if set(listing) != set(selected) or listing != native.get('discovery'):
+        raise Failure('native compiled inventory mismatch')
+    if any(not set(names) <= set(listing.get(pkg, [])) for pkg, names in selected.items()):
+        raise Failure('native selected test missing from compiled inventory')
+    allowed = dict(native_commands(sensitive))
+    invocations = [i for i in report['invocations'] if i['log'].startswith('native-')]
+    if len(invocations) != len(allowed) or {i['log'] for i in invocations} != {n+'.jsonl' for n in allowed}:
+        raise Failure('native invocation coverage mismatch')
+    for invocation in invocations:
+        name = invocation['log'][:-6]
+        if (invocation['command'] != allowed[name] or invocation.get('performance_enabled')
+                or invocation.get('real_systemd_enabled')):
+            raise Failure('native invocation command/environment mismatch')
+        raw = (directory/invocation['log']).read_text()
+        expected = native_selected_phases(sensitive).get(name)
+        if name == 'native-packages':
+            # The immutable unrestricted command owns the whole ordinary
+            # package obligations. No second listing/test process is needed.
+            try:
+                full_race.shards.coverage(raw, {p: True for p in packages})
+            except full_race.shards.Failure as error:
+                raise Failure(str(error)) from error
+        else:
+            verify_pr_stream(raw, expected)
+        evidence = body_evidence(raw, True)
+        if evidence != invocation['evidence']:
+            raise Failure('native raw evidence mismatch')
+        starts = [(e.get('Package'), e['Test']) for e in full_race.shards.json_stream(raw)
+                  if e.get('Test') and e.get('Action') == 'run']
+        if len(starts) != len(set(starts)) or set(starts) != {
+                (r['package'], r['test']) for r in evidence['actual']}:
+            raise Failure('native bodies lack unique actual run/terminal lifecycle')
+        observed = {(r['package'], r['test'].split('/')[0]) for r in evidence['actual']}
+        if name == 'native-packages':
+            if {p for p, _ in observed} != packages:
+                raise Failure('native ordinary package body evidence missing')
+        elif observed != {(p, n) for p, names in expected.items() for n in names}:
+            raise Failure('native selected parents did not all terminate')
+        # Ordinary native packages retain their established opt-in skips (real
+        # Keychain, unavailable host capabilities). Every selected CLI/catalog
+        # regression and every observed child must actually pass.
+        if name != 'native-packages':
+            verify_selected(evidence['actual'], expected)
+    phases = native.get('phase_seconds', {})
+    if set(phases) != {'build', 'discovery', *allowed} or any(
+            type(v) not in (int, float) or not 0 <= v < float('inf') for v in phases.values()):
+        raise Failure('native phase timings missing or malformed')
+
+
+def valid_native_local_guard(context):
+    # This is the original standalone platform/cgo precondition, explicitly
+    # not a compiler/cache identity or hosted qualification receipt.
+    return (isinstance(context, dict) and set(context) == {'GOOS', 'CGO_ENABLED', 'GOVERSION'}
+            and context['GOOS'] == 'darwin' and context['CGO_ENABLED'] == '1'
+            and isinstance(context['GOVERSION'], str) and bool(context['GOVERSION']))
+
+
+def run_native_smoke(out, deadline, report, save, execute, sensitive, *, local=False):
+    if local:
+        context = json.loads(subprocess.check_output(['go', 'env', '-json', 'GOOS', 'CGO_ENABLED', 'GOVERSION'], timeout=30))
+        if not valid_native_local_guard(context):
+            raise Failure('macOS smoke requires native Darwin with cgo')
+    else:
+        context = native_host_context()
+    if local and (os.environ.get('GITHUB_ACTIONS') == 'true' or os.environ.get('GITHUB_EVENT_NAME')):
+        raise Failure('local native diagnostics cannot qualify a hosted event')
+    if local:
+        print('native smoke: local diagnostics only; no hosted compiler/source qualification', flush=True)
+    pre_source_proof = None if local else full_race.source_proof(ROOT)
+    report['source_proof'] = copy.deepcopy(pre_source_proof)
+    native = report['native_smoke'] = {'schema': 1, 'source_proof': copy.deepcopy(pre_source_proof),
+        'context': None if local else copy.deepcopy(context),
+        'context_sha256': None if local else cache_keys.digest(context),
+        'qualification': 'local-diagnostic-only' if local else 'hosted',
+        **({'local_guard': context} if local else {}), 'sensitive': sensitive, 'build_command': ['go', 'build', './...'], 'phase_seconds': {}}
+    observation = out/'cache-observation.json'
+    if observation.exists():
+        if local:
+            raise Failure('local diagnostics cannot claim a hosted cache observation')
+        native['cache_observation'] = json.loads(observation.read_text())
+    save()
+    def timed(name, operation):
+        start = time.monotonic()
+        try:
+            return operation()
+        finally:
+            native['phase_seconds'][name] = time.monotonic()-start
+            save()
+            print('native phase timing: '+json.dumps({name: native['phase_seconds'][name]}), flush=True)
+    timed('build', lambda: checked(native['build_command'], out/'native-build.log', deadline))
+    native['build_sha256'] = hashlib.sha256((out/'native-build.log').read_bytes()).hexdigest()
+    selected = native_selections(sensitive)
+    listing = timed('discovery', lambda: discover(
+        ['./'+p[len(MODULE):] for p in selected],
+        out/'native-list.jsonl', deadline, race=True))
+    native['discovery'] = listing
+    if any(not set(names) <= set(listing.get(pkg, [])) for pkg, names in selected.items()):
+        raise Failure('native selected test missing from compiled inventory')
+    save()
+    # Keep host-sensitive groups serial: launchd observers and PTY tests must
+    # not compete with a second test process mutating shared native resources.
+    # Share only compiled discovery. Base and conditional CLI executions
+    # retain their original separate package lifetimes and TestMain isolation.
+    for name, command in native_commands(sensitive):
+        chosen = native_selected_phases(sensitive).get(name)
+        timed(name, lambda: execute(command, name, short=True, selected=chosen or None))
+    post_context = None if local else native_host_context()
+    post_source_proof = None if local else full_race.source_proof(ROOT)
+    native['post_context'] = copy.deepcopy(post_context)
+    native['post_source_proof'] = copy.deepcopy(post_source_proof)
+    save()
+    # Both checkpoints were just collected live around all build/test commands.
+    # Reuse those pinned values privately, never proof claimed by an artifact.
+    _verify_native_smoke(out, report, sensitive, local=local,
+                         source_proof=post_source_proof, context=post_context)
+
+
+def run_suite(tier, suite, out, extras=None, seconds=2400, *, own_plain_vet=False, native_local=False):
+    if native_local and (tier != 'pr' or suite != 'macos'
+            or os.environ.get('GITHUB_ACTIONS') == 'true' or os.environ.get('GITHUB_EVENT_NAME')):
+        raise Failure('local native diagnostics require an explicit local PR smoke run')
     if own_plain_vet and (tier != 'pr' or suite != 'audit'):
         raise Failure('plain vet ownership requires PR source-audit suite')
     out.mkdir(parents=True, exist_ok=True)
@@ -477,7 +758,9 @@ def run_suite(tier, suite, out, extras=None, seconds=2400, *, own_plain_vet=Fals
     path.write_text(json.dumps(report, indent=2)+'\n')
     deadline = time.monotonic()+seconds
     if tier == 'pr':
-        report['source_proof'] = full_race.source_proof(ROOT)
+        # Native smoke owns its two actual checkpoints around all commands.
+        # Avoid adding redundant whole-repository scans outside that boundary.
+        report['source_proof'] = None if suite == 'macos' else full_race.source_proof(ROOT)
     def execute(command, name, short=False, selected=None, children=None, env=None, real_manager=False):
         if env is None:
             env = dict(os.environ, AGENT_ARCHIVE_REAL_SYSTEMD='0')
@@ -527,21 +810,11 @@ def run_suite(tier, suite, out, extras=None, seconds=2400, *, own_plain_vet=Fals
             raise Failure('plain source audit source changed during execution')
     common = ['go', 'test', '-race', '-count=1', '-json', '-timeout', '20m']
     if suite == 'macos' and tier in ('pr', 'daily'):
-        execute(['bash', 'scripts/test_macos_smoke.sh'], 'native-smoke', short=True)
-        if not report['invocations'][-1]['evidence']['actual']:
-            raise Failure('native smoke executed no bodies')
+        run_native_smoke(out, deadline, report,
+            lambda: path.write_text(json.dumps(report, indent=2)+'\n'), execute,
+            sensitive=bool(tier == 'pr' and extras and extras['native']), local=native_local)
     if suite == 'macos' and tier == 'daily':
         execute(common + ['-short', './internal/config', './internal/catalog', './internal/capture', './internal/sourceio'], 'native-integration', True)
-    if suite == 'macos' and tier == 'pr' and extras and extras['native']:
-        selected = {MODULE+'internal/cli': ['TestCodexExceptionRequiresNamedOtherAppConsentBeforeAdmission', 'TestRealCLIOverflowShowKeepsFullBodyAndSourceAuthority', 'TestRealCLICatalogDefaultList50Bounded'],
-                    MODULE+'internal/catalog': ['TestPublicationBoundsAndCoordinatorMutationRefuseBeforeWrite', 'TestMissingCorruptAndOversizedNodesFailClosed', 'TestPickerUnsupportedAndBudgetAreNotEmptyProofs']}
-        for pkg, names in selected.items():
-            relative = './'+pkg[len(MODULE):]
-            listing = discover([relative], out/('native-list-'+pkg.rsplit('/',1)[1]+'.jsonl'), deadline, race=True)
-            if not set(names) <= set(listing.get(pkg, [])):
-                raise Failure('native sensitive regression absent from discovery')
-            pattern = '^('+'|'.join(re.escape(n) for n in names)+')$'
-            execute(common + ['-short', '-run', pattern, relative], 'native-sensitive-'+pkg.rsplit('/',1)[1], True, selected={pkg:names})
     if suite in ('linux', 'extra') or suite == 'macos' and tier == 'full':
         packages = extras['packages'] if suite == 'extra' else ['./...']
         if packages:
@@ -625,7 +898,7 @@ def run_suite(tier, suite, out, extras=None, seconds=2400, *, own_plain_vet=Fals
             raise Failure(str(error)) from error
     if own_plain_vet:
         report['plain_vet'] = execute_plain_vet(out, deadline)
-    if tier == 'pr' and full_race.source_proof(ROOT) != report['source_proof']:
+    if tier == 'pr' and suite != 'macos' and full_race.source_proof(ROOT) != report['source_proof']:
         raise Failure('PR regression source changed during execution')
     report['success'] = True
     path.write_text(json.dumps(report,indent=2)+'\n')
@@ -794,14 +1067,24 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--plan', action='store_true')
     parser.add_argument('--verify', action='store_true')
+    parser.add_argument('--verify-plan', action='store_true')
+    parser.add_argument('--verify-native-plan', action='store_true')
+    parser.add_argument('--require-pr-proof', action='store_true', help='local fan-out planning refuses history/source fallback')
     parser.add_argument('--verify-audit', action='store_true')
     parser.add_argument('--own-plain-vet', action='store_true')
+    parser.add_argument('--native-local', action='store_true', help='local native diagnostics only; cannot qualify hosted CI')
     parser.add_argument('--tier', choices=['pr','daily','full'])
     parser.add_argument('--suite', choices=['linux','macos','fuzz','systemd','extra','audit'], default='linux')
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--extra-plan', type=Path)
     parser.add_argument('--seconds', type=int, default=2400)
     args = parser.parse_args()
+    if (args.verify_plan or args.verify_native_plan) and args.extra_plan is None:
+        parser.error('plan verification requires --extra-plan')
+    if args.require_pr_proof and not args.plan:
+        parser.error('--require-pr-proof requires --plan')
+    if args.native_local and (args.plan or args.verify or args.verify_audit or args.verify_plan or args.verify_native_plan or args.own_plain_vet):
+        parser.error('--native-local only supports local native test execution')
     if args.seconds <= 0:
         parser.error('--seconds must be positive')
     def interrupted(signum, frame):
@@ -820,6 +1103,12 @@ def main():
             tier = 'full'  # exact candidates and manual suites cannot be downgraded
         if event == 'schedule' and args.tier and args.tier != resolved:
             raise Failure('explicit tier conflicts with scheduled cadence')
+        if args.verify_plan:
+            verify_plan(args.output, read_unique_json(args.extra_plan))
+            return 0
+        if args.verify_native_plan:
+            verify_native_plan(args.output, read_unique_json(args.extra_plan))
+            return 0
         if args.verify_audit:
             import run_go_shard
             context_hash = run_go_shard.digest(plain_vet_identity(plain_vet_context())) if args.own_plain_vet else None
@@ -836,6 +1125,9 @@ def main():
             if source != os.environ.get('GITHUB_SHA',source):
                 raise Failure('plan source mismatch')
             extra = pr_extras(json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text()),source) if tier == 'pr' else {'packages':[],'native':False,'systemd':False,'fuzz':False,'purge':False}
+            if (args.require_pr_proof and tier == 'pr'
+                    and extra.get('reason') != 'verified base/head/tested merge'):
+                raise Failure('local fan-out planning requires verified PR source and complete history')
             plan = dict(extra, source=source, tier=tier)
             args.output.parent.mkdir(parents=True,exist_ok=True)
             args.output.write_text(json.dumps(plan,indent=2)+'\n')
@@ -849,7 +1141,7 @@ def main():
                 raise Failure('extra plan source mismatch')
             if tier == 'pr' and args.suite not in ('extra', 'macos', 'audit'):
                 raise Failure('PR ordinary coverage belongs to exhaustive shards')
-            run_suite(tier,args.suite,args.output,extra,args.seconds,own_plain_vet=args.own_plain_vet)
+            run_suite(tier,args.suite,args.output,extra,args.seconds,own_plain_vet=args.own_plain_vet,native_local=args.native_local)
     except (Failure,ValueError,KeyError,TypeError,OSError,subprocess.SubprocessError) as error:
         print('tier gate failed: '+str(error),file=sys.stderr)
         return 1
