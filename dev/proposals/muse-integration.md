@@ -3,7 +3,11 @@
 Status: proposed. Add Meta's Muse Code as a fourth agent in agent-archive,
 alongside Claude Code, Codex and Cursor. Native investigation established
 feasibility; production capture, privacy, publication and full parity are not
-qualified. Implementation still requires separate authorization.
+qualified. A separate runtime-presence subset detects noninteractive shell
+commands and clears inherited session keys when launching supported agents;
+[its evidence and limits](../qualification/muse/runtime-presence.md) do not enable
+capture, exact current-session selection or any other Muse operation.
+Remaining implementation still requires separate authorization.
 
 This is the single implementation plan. Qualification findings and design
 decisions are incorporated below, and §6 and §7 record the probe results the

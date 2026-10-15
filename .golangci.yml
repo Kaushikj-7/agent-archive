@@ -45,6 +45,8 @@ linters:
               desc: only builtin composes concrete integrations
             - pkg: github.com/wangjohn/agent-archive/internal/agents/cursor
               desc: only builtin composes concrete integrations
+            - pkg: github.com/wangjohn/agent-archive/internal/agents/muse
+              desc: only builtin composes concrete integrations
         concrete-integrations-only-at-builtin:
           files:
             - "$all"
@@ -56,6 +58,8 @@ linters:
             - pkg: github.com/wangjohn/agent-archive/internal/agents/codex
               desc: builtin is the sole native composition root
             - pkg: github.com/wangjohn/agent-archive/internal/agents/cursor
+              desc: builtin is the sole native composition root
+            - pkg: github.com/wangjohn/agent-archive/internal/agents/muse
               desc: builtin is the sole native composition root
         integrations-never-import-orchestration:
           files:

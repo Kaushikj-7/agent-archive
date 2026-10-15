@@ -15,6 +15,7 @@ const (
 	Claude ID = "claude"
 	Codex  ID = "codex"
 	Cursor ID = "cursor"
+	Muse   ID = "muse"
 )
 
 // Operation names an implemented integration port, not host health or evidence.
@@ -174,9 +175,15 @@ func Names(c Catalog) []string {
 	return out
 }
 
-// SetupNames preserves the established setup presentation: Codex first.
+// SetupNames lists integrations with implemented hook configuration,
+// preserving the established presentation with Codex first.
 func SetupNames(c Catalog) []string {
-	names := Names(c)
+	var names []string
+	for _, d := range c.All() {
+		if slices.Contains(d.Operations, ManagedHooks) {
+			names = append(names, string(d.ID))
+		}
+	}
 	if i := slices.Index(names, string(Codex)); i > 0 {
 		names = slices.Concat(names[i:i+1], names[:i], names[i+1:])
 	}
@@ -187,6 +194,7 @@ var identities = mustCatalog([]Descriptor{
 	{ID: Claude, Aliases: []string{"claude-code"}, DisplayName: "Claude Code"},
 	{ID: Codex, DisplayName: "Codex"},
 	{ID: Cursor, DisplayName: "Cursor"},
+	{ID: Muse, Aliases: []string{"muse-code"}, DisplayName: "Muse Code"},
 })
 
 func mustCatalog(ds []Descriptor) Catalog {

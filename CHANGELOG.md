@@ -6,6 +6,11 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Commands run inside Muse detect its session environment to avoid interactive
+  prompts and pagers. Handoff into supported agents removes inherited Muse
+  session variables. This adds presence detection only; Muse capture, current
+  session selection and destination launch remain unavailable.
+
 - Terminal content search now browses ranked snippets and exact bounded source
   context in the shared browser, with next/previous matching passages, explicit
   rerun after index changes, and current-session handoff through existing gates.

@@ -5,6 +5,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/skillownership"
 	"github.com/wangjohn/agent-archive/internal/testutil/agenttest"
+	"slices"
 	"testing"
 )
 
@@ -26,6 +27,9 @@ func TestSkillsConformance(t *testing.T) {
 func TestSkillsPurposeLocationsPreserveCurrentCoverage(t *testing.T) {
 	t.Parallel()
 	r := NewBuiltins()
+	if got := r.SkillAgents(); !slices.Equal(got, []string{"claude", "codex", "cursor"}) {
+		t.Fatalf("existing skill coverage changed: %v", got)
+	}
 	cursor, _ := r.LookupSkills("cursor")
 	codex, _ := r.LookupSkills("codex")
 	l := agentapi.SkillLocations{UserHome: "/synthetic/home", ProjectRoot: "/synthetic/project"}
@@ -43,8 +47,9 @@ func TestSkillsPurposeLocationsPreserveCurrentCoverage(t *testing.T) {
 				found = true
 			}
 		}
-		if !found {
-			t.Fatalf("missing projection %s", d.ID)
+		_, available := r.LookupSkills(string(d.ID))
+		if found != available {
+			t.Fatalf("skills projection differs from implementation for %s", d.ID)
 		}
 	}
 }

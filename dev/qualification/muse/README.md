@@ -175,3 +175,10 @@ empty-corpus/manifest preservation, stream/queue flood and oversized-file refusa
 commands were rerun on the current base; see results for actual commands/outcomes.
 They do not validate any unimplemented Muse adapter. Native campaigns are opt-in
 local qualification, not automatically run against developer machines in CI.
+
+## Runtime presence (independent of capture)
+
+[Runtime presence evidence](runtime-presence.md) qualifies a fresh root shell on
+1.4.9 for noninteractive behavior and environment cleanup only. It does not
+qualify that producer for retained decoding or capture, current-session identity,
+resume, children or monitors. The authority gates above remain open.

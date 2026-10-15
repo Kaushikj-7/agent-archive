@@ -185,7 +185,7 @@ agent-archive handoff "fix the auth bug" --to claude   # words, as for show
 `handoff` asks where to continue only on a terminal, and not with `--to`,
 `--output`, `--format json`, or `--no-preamble`. Inside Claude Code, Codex,
 or Cursor (`CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID`, or `CURSOR_AGENT` is
-set), or with `AGENT_ARCHIVE_NONINTERACTIVE=1`, it never asks anything, even
+set), inside Muse (`MUSE_THREAD_ID` or `MUSE_SESSION_ID` is nonblank), or with `AGENT_ARCHIVE_NONINTERACTIVE=1`, it never asks anything, even
 on a terminal; `AGENT_ARCHIVE_NONINTERACTIVE=0` turns asking back on. See
 [scripting and other outputs](#scripting-and-other-outputs) and
 [configuration](../reference/configuration.md#environment-variables).
@@ -453,7 +453,7 @@ With no session selector, `handoff` opens the session picker when stdin and
 stdout are terminals. In a script or pipeline, pass a session ID or words,
 `--latest`, or `--file`. The picker never opens when a coding agent runs the
 command, even in a pseudo-terminal: `CLAUDE_CODE_SESSION_ID`,
-`CODEX_THREAD_ID`, or `CURSOR_AGENT` in the environment (or
+`CODEX_THREAD_ID`, `CURSOR_AGENT`, `MUSE_THREAD_ID`, or `MUSE_SESSION_ID` in the environment (or
 `AGENT_ARCHIVE_NONINTERACTIVE=1`) turns prompts off, and `handoff` without a
 selector is a usage error (exit 2) instead. `AGENT_ARCHIVE_NONINTERACTIVE=0`
 turns them back on; see
@@ -464,7 +464,9 @@ the session it is running in without asking: the one Claude Code names in
 `CLAUDE_CODE_SESSION_ID` or Codex in `CODEX_THREAD_ID`. Cursor names no
 session, so inside Cursor (`CURSOR_AGENT` is set) it takes the newest Cursor
 session for the current directory, as `--latest --harness cursor` would.
-That is not a prompt, so it works while prompts are off. Otherwise a terminal
+That is not a prompt, so it works while prompts are off. Muse environment keys
+indicate presence only and cannot select a current or newest session; provide
+an existing supported archive session explicitly. Otherwise a terminal
 gets the picker, and anything else is told to name a session.
 
 A session registered on this machine is read from its transcript as it is now, so
