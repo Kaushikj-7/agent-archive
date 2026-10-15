@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -11,8 +12,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/search"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
@@ -41,7 +44,7 @@ func TestContentSearchExplicitRefreshAndOfflineQuery(t *testing.T) {
 		t.Fatalf("query created index: %v", err)
 	}
 	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return objects, nil }
-	if code, out, errOut := run("--refresh", "--session", id, "--harness", "codex"); code != 0 || !strings.Contains(out, "Indexed "+id) {
+	if code, out, errOut := run("--refresh", "--session", id, "--harness", "codex"); code != 0 || !strings.Contains(out, "Observed "+id) {
 		t.Fatalf("%d %s %s", code, out, errOut)
 	}
 	env.OpenStore = func(config.Config) (storage.ObjectStore, error) {
@@ -90,7 +93,9 @@ func TestContentSearchExplicitRefreshAndOfflineQuery(t *testing.T) {
 }
 
 func TestContentSearchScopeBeforeLimit(t *testing.T) {
-	env, _, _ := publishedFixture(t)
+	env, objects, originalID := publishedFixture(t)
+	_, seed, err := reader.RefreshAndLoad(t.Context(), objects, "sessions/codex/"+originalID+"/metadata.json", reader.Limits{})
+	must(t, err)
 	home, _ := env.readHome()
 	cfg, _, err := config.Load(home)
 	if err != nil {
@@ -103,11 +108,30 @@ func TestContentSearchScopeBeforeLimit(t *testing.T) {
 	}
 	for i, m := range []archive.Metadata{{SessionID: "outside", ProjectID: "outside", ProjectName: "outside", RepoKey: "outside-repo"}, {SessionID: "inside", ProjectID: "inside", ProjectName: "inside", RepoKey: "inside-repo"}} {
 		m.Name = "checksum"
-		m.Harness = archive.Harness{Name: "codex"}
 		m.CapturedAt = env.now().AddDate(0, 0, i)
-		source := search.Source{Destination: namespace, SessionID: m.SessionID, ExtractorVersion: search.ExtractorVersion}
-		if _, err = index.Replace(t.Context(), m, []search.Projection{{Source: source}}); err != nil {
-			t.Fatal(err)
+		bundle := seed
+		bundle.ArchiveSessionID = m.SessionID
+		bundle.ProjectID = m.ProjectID
+		bundle.Capture.CapturedAt = m.CapturedAt
+		packed, e := archive.BuildCompressedSource(bundle)
+		must(t, e)
+		key, e := archive.SourceObjectKey(bundle, packed.SHA256)
+		must(t, e)
+		must(t, objects.Put(t.Context(), key, packed.Bytes))
+		parser, ok := parsersFor(env).LookupParser("codex")
+		if !ok {
+			t.Fatal("missing parser")
+		}
+		analysis, parseErr := agentapi.Analyze(t.Context(), parser, bundle)
+		verified, e := archive.BuildMetadataWithAnalysis(bundle, analysis, parseErr, "synthetic", m.CapturedAt, m.CapturedAt, archive.SourceReference{Key: key, SHA256: packed.SHA256, CompressedBytes: len(packed.Bytes)}, archive.ParserInfo{Version: parser.Version()})
+		must(t, e)
+		verified.Name = m.Name
+		verified.ProjectName = m.ProjectName
+		verified.RepoKey = m.RepoKey
+		must(t, index.Observe(t.Context(), verified, parsersFor(env), env.now(), 0))
+		progress, e := index.Run(t.Context(), objects, parsersFor(env), env.now(), search.Budget{})
+		if e != nil || progress.Committed != 1 {
+			t.Fatalf("%+v %v", progress, e)
 		}
 	}
 	if err = index.Close(); err != nil {
@@ -169,5 +193,108 @@ func TestContentSearchDestinationIsolation(t *testing.T) {
 	}
 	if filepath.Dir(dirA) != filepath.Join(home, "search") {
 		t.Fatal(dirA)
+	}
+}
+
+type searchRefreshStore struct {
+	storage.ObjectStore
+	before    func()
+	inspect   func(context.Context)
+	reads     int
+	interrupt chan<- os.Signal
+}
+
+func (s *searchRefreshStore) Get(ctx context.Context, key string) ([]byte, error) {
+	s.reads++
+	if s.inspect != nil {
+		s.inspect(ctx)
+	}
+	return s.ObjectStore.Get(ctx, key)
+}
+
+func (s *searchRefreshStore) GetLimited(ctx context.Context, key string, limit int64) ([]byte, error) {
+	s.reads++
+	if s.inspect != nil {
+		s.inspect(ctx)
+	}
+	if s.before != nil {
+		callback := s.before
+		s.before = nil
+		callback()
+	}
+	if s.interrupt != nil {
+		signal := s.interrupt
+		s.interrupt = nil
+		signal <- os.Interrupt
+		<-ctx.Done()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return s.ObjectStore.(storage.LimitedGetter).GetLimited(ctx, key, limit)
+}
+
+func TestContentSearchConcurrentRefreshDoesNotReadMetadata(t *testing.T) {
+	t.Parallel()
+	env, objects, id := publishedFixture(t)
+	wrapped := &searchRefreshStore{ObjectStore: objects}
+	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return wrapped, nil }
+	wrapped.before = func() {
+		before := wrapped.reads
+		var out, errOut bytes.Buffer
+		if code := Run([]string{"search", "--refresh", "--session", id, "--harness", "codex"}, nil, &out, &errOut, env); code != 1 || !strings.Contains(errOut.String(), "another search refresh is running") {
+			t.Fatalf("overlap code=%d %s %s", code, &out, &errOut)
+		}
+		if wrapped.reads != before {
+			t.Fatal("overlapping refresh read archive metadata or source")
+		}
+	}
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"search", "--refresh", "--session", id, "--harness", "codex"}, nil, &out, &errOut, env); code != 0 {
+		t.Fatalf("%d %s %s", code, &out, &errOut)
+	}
+	// A later independent invocation acquires the released work lock.
+	out.Reset()
+	errOut.Reset()
+	if code := Run([]string{"search", "--refresh", "--session", id, "--harness", "codex"}, nil, &out, &errOut, env); code != 0 {
+		t.Fatalf("lock retained %d %s %s", code, &out, &errOut)
+	}
+}
+
+func TestContentSearchInterruptedRefreshReleasesWorkLock(t *testing.T) {
+	t.Parallel()
+	env, objects, id := publishedFixture(t)
+	signals := make(chan os.Signal, 1)
+	env.Interrupts = func() (<-chan os.Signal, func()) { return signals, func() {} }
+	wrapped := &searchRefreshStore{ObjectStore: objects, interrupt: signals}
+	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return wrapped, nil }
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"search", "--refresh", "--session", id, "--harness", "codex"}, nil, &out, &errOut, env); code != 1 || !strings.Contains(errOut.String(), "context canceled") {
+		t.Fatalf("%d %s %s", code, &out, &errOut)
+	}
+	env.Interrupts = noInterrupts
+	out.Reset()
+	errOut.Reset()
+	if code := Run([]string{"search", "--refresh", "--session", id, "--harness", "codex"}, nil, &out, &errOut, env); code != 0 {
+		t.Fatalf("lock retained after cancellation %d %s %s", code, &out, &errOut)
+	}
+}
+
+func TestContentSearchRefreshBoundsWholePass(t *testing.T) {
+	t.Parallel()
+	env, objects, id := publishedFixture(t)
+	wrapped := &searchRefreshStore{ObjectStore: objects, inspect: func(ctx context.Context) {
+		deadline, ok := ctx.Deadline()
+		if !ok || time.Until(deadline) <= 0 || time.Until(deadline) > 30*time.Second {
+			t.Fatalf("refresh archive read has no finite pass deadline: %v %v", deadline, ok)
+		}
+	}}
+	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return wrapped, nil }
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"search", "--refresh", "--session", id, "--harness", "codex"}, nil, &out, &errOut, env); code != 0 {
+		t.Fatalf("%d %s %s", code, &out, &errOut)
+	}
+	if wrapped.reads < 2 {
+		t.Fatalf("did not exercise metadata and source reads: %d", wrapped.reads)
 	}
 }

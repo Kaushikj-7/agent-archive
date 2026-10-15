@@ -1,6 +1,7 @@
 package search
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -14,6 +15,8 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/storage"
 	_ "modernc.org/sqlite" // Register the same pure-Go driver used by the metadata catalog.
 )
 
@@ -22,6 +25,7 @@ import (
 type Store struct {
 	db          *sql.DB
 	destination string
+	dir         string
 }
 
 // Open creates or opens a private content database with short bounded writes.
@@ -68,7 +72,7 @@ func Open(ctx context.Context, dir, destination string) (*Store, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	s := &Store{db: db, destination: destination}
+	s := &Store{db: db, destination: destination, dir: dir}
 	if err = s.initialize(ctx); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -81,7 +85,7 @@ func (s *Store) initialize(ctx context.Context) error {
 	if err := s.db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version != 0 && version != 1 {
+	if version != 0 && version != 1 && version != 2 {
 		return errors.New("unsupported search schema; rebuild index")
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -95,7 +99,12 @@ func (s *Store) initialize(ctx context.Context) error {
  CREATE TABLE IF NOT EXISTS search_passages (id INTEGER PRIMARY KEY,session TEXT NOT NULL,reference BLOB,role TEXT NOT NULL,title_hit INTEGER NOT NULL);
  CREATE INDEX IF NOT EXISTS search_membership ON search_passages(session);
  CREATE VIRTUAL TABLE IF NOT EXISTS search_fts USING fts5(title,body,tokenize='unicode61 remove_diacritics 0');
- PRAGMA user_version=1;`)
+ CREATE TABLE IF NOT EXISTS search_work (id TEXT PRIMARY KEY, metadata BLOB NOT NULL, desired TEXT NOT NULL, indexed TEXT NOT NULL DEFAULT '', source_identity TEXT NOT NULL,indexed_sources TEXT NOT NULL DEFAULT '', generation INTEGER NOT NULL, due INTEGER NOT NULL, touched INTEGER NOT NULL, failures INTEGER NOT NULL DEFAULT 0, last_error TEXT NOT NULL DEFAULT '', blocked INTEGER NOT NULL DEFAULT 0,priority INTEGER NOT NULL DEFAULT 1);
+ CREATE INDEX IF NOT EXISTS search_work_eligible ON search_work(touched,priority,id) WHERE desired!=indexed AND blocked=0;
+ CREATE INDEX IF NOT EXISTS search_work_clock ON search_work(touched);
+ CREATE INDEX IF NOT EXISTS search_work_pending ON search_work(touched,priority,id) WHERE desired!=indexed;
+ CREATE TABLE IF NOT EXISTS search_sources (session TEXT NOT NULL, identity TEXT NOT NULL, projection BLOB NOT NULL, PRIMARY KEY(session,identity));
+ PRAGMA user_version=2;`)
 	if err != nil {
 		return err
 	}
@@ -115,6 +124,31 @@ func (s *Store) initialize(ctx context.Context) error {
 // Close releases the database. No worker or goroutine is started by Open.
 func (s *Store) Close() error { return s.db.Close() }
 
+// ErrWorkBusy means another refresh or indexing pass owns this physical index.
+var ErrWorkBusy = errors.New("another search refresh is running")
+
+// LockWork acquires the dedicated, nonblocking index work lock. Composition must
+// hold it from authoritative metadata discovery through Observe and Run, then
+// defer release on every path. Queries and content-free hints do not take it.
+// Never acquire it while holding the collector lock; Run does not nest this lock.
+func (s *Store) LockWork(ctx context.Context) (func(), error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	release, err := local.NamedLock(s.dir, "search-worker.lock")
+	if errors.Is(err, local.ErrBusy) {
+		return nil, ErrWorkBusy
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err = ctx.Err(); err != nil {
+		release()
+		return nil, err
+	}
+	return release, nil
+}
+
 // WriteStats separates metadata-only updates from passage/FTS mutations.
 type WriteStats struct {
 	Deleted   int  `json:"Deleted"`
@@ -122,39 +156,59 @@ type WriteStats struct {
 	Unchanged bool `json:"Unchanged"`
 }
 
-// Replace atomically installs a complete observed session projection. This is
-// the S1 engine boundary; S2 adds expected-generation work commits around it.
-// Exact metadata-only changes leave FTS untouched. Active sources precede
-// preserved sources so proven shared native history prefers the active reference.
-func (s *Store) Replace(ctx context.Context, metadata archive.Metadata, projections []Projection) (WriteStats, error) {
-	stats := WriteStats{}
+type sessionProjection struct {
+	passages []Passage
+	hash     string
+	gaps     []byte
+}
+
+// prepareSession performs projection validation, deduplication and hashing before
+// opening a write transaction. Metadata-only updates do not call this path.
+func (s *Store) prepareSession(metadata archive.Metadata, projections []Projection) (sessionProjection, error) {
 	passages, gaps, err := s.project(metadata, projections)
 	if err != nil {
-		return stats, err
+		return sessionProjection{}, err
 	}
 	encoded, err := json.Marshal(passages)
 	if err != nil {
-		return stats, err
+		return sessionProjection{}, err
 	}
 	sum := sha256.Sum256(encoded)
-	hash := hex.EncodeToString(sum[:])
 	gapData, err := json.Marshal(gaps)
 	if err != nil {
-		return stats, err
+		return sessionProjection{}, err
+	}
+	return sessionProjection{passages: passages, hash: hex.EncodeToString(sum[:]), gaps: gapData}, nil
+}
+
+func (s *Store) replaceTx(ctx context.Context, tx *sql.Tx, metadata archive.Metadata, prepared *sessionProjection) (WriteStats, error) {
+	stats := WriteStats{}
+	var passages []Passage
+	var hash string
+	var gapData []byte
+	var err error
+	metadataOnly := prepared == nil
+	if metadataOnly {
+		err = tx.QueryRowContext(ctx, "SELECT projection_hash,gaps FROM search_sessions WHERE id=?", metadata.Harness.Name+"/"+metadata.SessionID).Scan(&hash, &gapData)
+		if errors.Is(err, sql.ErrNoRows) {
+			return stats, ErrChanged
+		}
+		if err != nil {
+			return stats, err
+		}
+	} else {
+		passages = prepared.passages
+		hash = prepared.hash
+		gapData = prepared.gaps
 	}
 	title := archive.DisplayTitle(metadata)
 	sessionKey := metadata.Harness.Name + "/" + metadata.SessionID
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return stats, err
-	}
-	defer func() { _ = tx.Rollback() }()
 	var oldHash, oldTitle string
 	err = tx.QueryRowContext(ctx, "SELECT projection_hash,title FROM search_sessions WHERE id=?", sessionKey).Scan(&oldHash, &oldTitle)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return stats, err
 	}
-	rebuild := oldHash != hash || errors.Is(err, sql.ErrNoRows)
+	rebuild := !metadataOnly && (oldHash != hash || errors.Is(err, sql.ErrNoRows))
 	titleChanged := oldTitle != title || errors.Is(err, sql.ErrNoRows)
 	deleteRows := func(titleHit int) error {
 		var count int
@@ -195,17 +249,8 @@ func (s *Store) Replace(ctx context.Context, metadata archive.Metadata, projecti
 			return e
 		}
 		if rebuild {
-			if err = deleteRows(0); err != nil {
+			if err = s.replaceBodyTx(ctx, tx, sessionKey, passages, add, &stats); err != nil {
 				return stats, err
-			}
-			for _, p := range passages {
-				ref, e := json.Marshal(p.Reference)
-				if e != nil {
-					return stats, e
-				}
-				if err = add(ref, p.Role, 0, "", p.Text); err != nil {
-					return stats, err
-				}
 			}
 		}
 		if titleChanged {
@@ -227,7 +272,7 @@ func (s *Store) Replace(ctx context.Context, metadata archive.Metadata, projecti
 		return stats, err
 	}
 	stats.Unchanged = !rebuild
-	return stats, tx.Commit()
+	return stats, nil
 }
 
 func (s *Store) project(metadata archive.Metadata, projections []Projection) ([]Passage, []Gap, error) {
@@ -264,7 +309,7 @@ func (s *Store) project(metadata archive.Metadata, projections []Projection) ([]
 				seen[key] = true
 			}
 			if len(passages) >= maxSessionPassages || len(v.Text) > maxSessionBytes-totalText {
-				return nil, nil, errors.New("search session projection exceeds passage or 32 MiB limit")
+				return nil, nil, fmt.Errorf("search session projection exceeds passage or 32 MiB limit: %w", storage.ErrObjectTooLarge)
 			}
 			totalText += len(v.Text)
 			passages = append(passages, v)
@@ -281,4 +326,70 @@ type Observation struct {
 	Failed         int       `json:"Failed"`
 	Complete       bool      `json:"Complete"`
 	Limitations    []string  `json:"Limitations"`
+}
+
+// replaceBodyTx preserves FTS rows when text is unchanged even if a source's
+// verified checksum/reference changed. Repeated equal messages retain separate
+// rows; matching by text here never removes an intentional repeated prompt.
+func (s *Store) replaceBodyTx(ctx context.Context, tx *sql.Tx, session string, passages []Passage, add func(any, string, int, string, string) error, stats *WriteStats) error {
+	type oldPassage struct {
+		id        int64
+		reference []byte
+	}
+	old := map[string][]oldPassage{}
+	rows, err := tx.QueryContext(ctx, "SELECT p.id,p.reference,p.role,f.body FROM search_passages p JOIN search_fts f ON f.rowid=p.id WHERE p.session=? AND p.title_hit=0 ORDER BY p.id", session)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var id int64
+		var ref []byte
+		var role string
+		var text string
+		if err = rows.Scan(&id, &ref, &role, &text); err != nil {
+			return err
+		}
+		key := digest([]string{role, text})
+		old[key] = append(old[key], oldPassage{id, ref})
+	}
+	if err = rows.Err(); err != nil {
+		return err
+	}
+	if err = rows.Close(); err != nil {
+		return err
+	}
+	for _, passage := range passages {
+		ref, e := json.Marshal(passage.Reference)
+		if e != nil {
+			return e
+		}
+		key := digest([]string{passage.Role, passage.Text})
+		candidates := old[key]
+		if len(candidates) == 0 {
+			if err = add(ref, passage.Role, 0, "", passage.Text); err != nil {
+				return err
+			}
+			continue
+		}
+		previous := candidates[0]
+		old[key] = candidates[1:]
+		if !bytes.Equal(ref, previous.reference) {
+			if _, err = tx.ExecContext(ctx, "UPDATE search_passages SET reference=? WHERE id=?", ref, previous.id); err != nil {
+				return err
+			}
+		}
+	}
+	for _, candidates := range old {
+		for _, previous := range candidates {
+			if _, err = tx.ExecContext(ctx, "DELETE FROM search_fts WHERE rowid=?", previous.id); err != nil {
+				return err
+			}
+			if _, err = tx.ExecContext(ctx, "DELETE FROM search_passages WHERE id=?", previous.id); err != nil {
+				return err
+			}
+			stats.Deleted++
+		}
+	}
+	return nil
 }

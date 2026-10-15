@@ -10,6 +10,10 @@ follow [Semantic Versioning](https://semver.org/).
   archived session with `search --refresh --session ID --harness NAME`, query
   cached titles/messages with `search "WORDS"`, and read exact matching passages.
   Coverage is partial and refresh is manual; no background work is installed.
+  Refresh now resumes bounded work after interruption, reuses unchanged sources,
+  and records retry/backoff state without delaying archive publication.
+  Verified unsupported source formats report coverage gaps instead of retrying
+  the same immutable bytes indefinitely.
 
 - The session browser (`list`, bare `show`, `show <words>`, `handoff` on a
   terminal that reads keys) has a cursor: `▸` marks a row, ↑ ↓ and the mouse

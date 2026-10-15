@@ -134,3 +134,72 @@ GETs, source verification, unchanged-body FTS avoidance, scoped grouping,
 selected-only snippets and complete retained alternatives. S2 must measure growing
 session lifetime amplification and worker fairness; S3 discovery accounting;
 S4 CLI startup and pagination under writes; S5 capture/lock interference.
+
+## Bounded worker evidence (S2)
+
+Production refresh now uses `Store.Observe` and `Store.Run`; eager `LoadSession`
+and `Replace` remain only as test fixture conveniences. One source is loaded at
+once. Desired/indexed source identity is separate from searchable metadata, so
+metadata-only refresh does not deserialize cached passage text. A changed source
+can update exact references without replacing equal FTS text. Intermediate
+revisions coalesce, while a short transaction rejects superseded generations.
+Source projections are staged in the same private search database; full source
+bundles are not cached. This adds a second local copy of projected message text
+alongside FTS, bounded per current session membership and discarded on rebuild.
+Legacy preserved sidecars may omit privacy/schema provenance that verified source
+bytes supply. Their unchanged reader-bound requests reuse certified projections;
+new unknown requests still invalidate old text and verify source provenance.
+
+Reproduce deterministic work counts and the small lifetime workload with:
+
+```sh
+go test ./internal/search -run Worker -count=1
+go test ./internal/search -run '^$' -bench Worker -benchmem -benchtime=3x -count=1
+```
+
+On the same non-isolated Intel Mac / Go 1.27.2, final three-iteration timings
+were about 23.4 ms per true display-only metadata refresh, zero source GETs and
+zero FTS writes. Ten growing synthetic publications indexed separately measured
+about 778 ms total, ten GETs / parses, 3443 compressed bytes and eleven FTS inserts
+(one title plus ten messages). Observing the same ten revisions before one worker
+pass measured about 36.4 ms, one GET / parse, 373 compressed bytes and the same
+eleven inserts. Full parsing processes 55 cumulative message records in the first
+workload versus ten when coalesced. This demonstrates work reduction, not constant
+lifetime parsing cost; changed snapshots still parse in full. The final metadata
+path allocates about 38 KB/op; this workload does not grow its message payload.
+
+Earlier runs observed roughly 1.5 ms metadata refresh, 28 ms separate lifetime
+work and 8 ms coalesced work. This large host variability makes these timings
+unsuitable for comparing small optimizations or setting an SLA. Counted work is
+the reliable evidence; repeat timings on a quiet host. No peak-RSS or realistic
+large-history disk-growth claim follows from these tiny fixtures.
+
+Fixtures cover source staging and restart, stale-generation rejection, unchanged
+preserved-source reuse, metadata-only work, equal-text reference updates, retry
+backoff, finite oversized units, privacy invalidation, cancellation, busy writer
+recovery and atomic failure of the final indexed-state transaction. Timing values
+are advisory; operation counts are the deterministic contract. These tiny local
+sources do not model real network delay, peak RSS, or large tool-heavy histories.
+
+Composition must acquire `Store.LockWork(ctx)` before authoritative metadata
+reads, then hold it through `Observe` and `Run`, releasing it with `defer` on
+success, cancellation and failure. It is the existing nonblocking `local.NamedLock`
+in the private physical index directory, named `search-worker.lock`. Busy
+attempts return `ErrWorkBusy` before any archive read. There is no nested Run
+lock, durable lease or worker framework. Cached queries and content-free hints
+remain independent; callers must never acquire this lock while holding a
+collector/publication lock. Future reconciliation/scheduling must use the same
+boundary so observations cannot arrive out of order and overlapping processes
+cannot each start source reads. Index purge must stop workers before removing
+its directory/lock inode, like other retained archive state.
+
+Reuse also binds all of reader's ownership checks: archive/native session,
+project identity, parent session, exact active harness producer facts and capture
+time. Preserved sources use their own capture time and harness-name check, as
+reader does. These fields are verification provenance; changing them requires
+verification even if bytes/checksum stay equal. Display-only updates such as
+RepoKey/title/project labels can take the metadata fast path. Tests mutate each
+identity fact and require the verified reader to reject mismatches rather than
+accepting a cached projection. Initial work timestamps preserve FIFO fairness
+against a continuing arrival of completed sessions; completion priority breaks
+ties without indefinitely starving older active work.
