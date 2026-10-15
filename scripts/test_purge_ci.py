@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import purge_ci as ci
 import test_purge_recipe as purge
-from test_ci_workflow import ROOT, jobs, job_key
+from test_ci_workflow import ROOT, jobs, job_key, steps, step_key
 
 PROOF = {'source': 'a' * 40, 'tree': 'b' * 40}
 
@@ -158,7 +158,8 @@ class PurgeUnionTest(unittest.TestCase):
 
     def test_two_workers_and_reconciliation_are_mandatory_workflow_steps(self):
         found = jobs((ROOT/'.github/workflows/test.yml').read_text())
-        lane, aggregate = found['script-purge'], found['script-tests']
+        lane, aggregate = found['script-purge'], found['linux-race']
+        self.assertNotIn('script-tests', found)
         self.assertIn('fail-fast: false', lane)
         self.assertIn('shard: [0, 1]', lane)
         self.assertIn('--workers 2 --shard "$SHARD"', lane)
@@ -175,6 +176,12 @@ class PurgeUnionTest(unittest.TestCase):
         self.assertIn('pattern: purge-tier-*', aggregate)
         self.assertIn('scripts/purge_ci.py --tier "$tier"', aggregate)
         self.assertNotIn('continue-on-error:', aggregate)
+        purge_step = next(step for step in steps(aggregate) if 'scripts/purge_ci.py' in step)
+        download = next(step for step in steps(aggregate) if 'pattern: purge-tier-*' in step)
+        self.assertIsNone(step_key(purge_step, 'if'))
+        self.assertIsNone(step_key(download, 'if'))
+        self.assertLess(aggregate.index('--verdict'), aggregate.index('pattern: purge-tier-*'))
+        self.assertLess(aggregate.index('scripts/purge_ci.py'), aggregate.index('--reconcile'))
 
 
 if __name__ == '__main__':
