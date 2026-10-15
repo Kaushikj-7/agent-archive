@@ -362,3 +362,59 @@ func TestContentSearchNamedRefreshAndContextUseCatalogSelection(t *testing.T) {
 		t.Fatalf("catalog context %d %+v %s", code, doc, diag)
 	}
 }
+
+func TestContentSearchRebuildWaitRetainsRequestWhileBusy(t *testing.T) {
+	env, _, _ := publishedFixture(t)
+	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return storagetest.NewMemoryStore(), nil }
+	home, _ := env.readHome()
+	cfg, _, err := config.Load(home)
+	must(t, err)
+	ns, dir := contentSearchLocation(home, cfg)
+	index, err := search.Open(t.Context(), dir, ns)
+	must(t, err)
+	page, err := index.Search(t.Context(), search.Query{Text: "visible"})
+	must(t, err)
+	must(t, index.Close())
+	release, err := local.NamedLock(home, "search-worker.lock")
+	must(t, err)
+	released := make(chan struct{})
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		release()
+		close(released)
+	}()
+	code, doc, diag := searchJSONRun(t, env, "--refresh", "--rebuild", "--wait", "3s")
+	<-released
+	if code != 1 || doc.Error == nil || doc.Error.Code != "coverage_incomplete" || doc.Refresh.Passes < 2 {
+		t.Fatalf("busy rebuild %d %+v %s", code, doc, diag)
+	}
+	index, err = search.OpenRead(t.Context(), dir, ns)
+	must(t, err)
+	defer func() { _ = index.Close() }()
+	rebuilt, err := index.Search(t.Context(), search.Query{Text: "visible"})
+	must(t, err)
+	if rebuilt.Generation != page.Generation+1 {
+		t.Fatalf("rebuild lost after busy pass: generation %d, want %d", rebuilt.Generation, page.Generation+1)
+	}
+}
+
+func TestContentSearchEscapedContextBudgetAlwaysAdvancesUTF8(t *testing.T) {
+	doc := contentSearchDocument{SchemaVersion: 1, Kind: contentSearchContextRead, OK: true, Results: []contentSearchHit{}, Context: &contentSearchContext{Selected: contentSearchSlice{Reference: "identity", Text: "😀x", End: 5, Complete: true}, Before: []contentSearchSlice{}, After: []contentSearchSlice{}}}
+	data, err := jsonDocument(doc)
+	must(t, err)
+	// Fit a valid envelope just above its budget using identity bytes that cannot
+	// be truncated. Only one raw text byte needs to be removed.
+	doc.Context.Selected.Reference += strings.Repeat("a", 4097-len(data))
+	fitContentSearchContext(&doc, 4096)
+	var out, diagnostics bytes.Buffer
+	code := writeContentSearch(doc, contentSearchOptions{json: true, outputBytes: 4096}, &out, &diagnostics)
+	var result contentSearchDocument
+	must(t, json.Unmarshal(out.Bytes(), &result))
+	if code != 0 || len(out.Bytes()) > 4096 || result.Context == nil {
+		t.Fatalf("context fit %d %s %s", code, out.String(), diagnostics.String())
+	}
+	selected := result.Context.Selected
+	if selected.Text != "😀" || selected.End != 4 || selected.Next == nil || *selected.Next != 4 || selected.Complete {
+		t.Fatalf("context fitting lost progress: %+v", selected)
+	}
+}

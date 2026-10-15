@@ -112,6 +112,7 @@ type contentSearchPass struct {
 	Observation search.Observation
 	Complete    bool
 	Observed    bool
+	Rebuilt     bool
 }
 
 func runContentSearchPass(ctx context.Context, home string, expected config.Config, env searchCommandDependencies, opts contentSearchOptions) (contentSearchPass, error) {
@@ -152,6 +153,7 @@ func runContentSearchPass(ctx context.Context, home string, expected config.Conf
 		if err = index.Rebuild(ctx); err != nil {
 			return result, err
 		}
+		result.Rebuilt = true
 	}
 	objects, err := env.openStore(cfg)
 	if err != nil {
@@ -219,7 +221,9 @@ func refreshContentSearch(ctx context.Context, home string, cfg config.Config, e
 	for {
 		result, err := runContentSearchPass(ctx, home, cfg, env, opts)
 		d, p, o, complete := result.Discovery, result.Progress, result.Observation, result.Complete
-		opts.rebuild = false
+		if result.Rebuilt {
+			opts.rebuild = false
+		}
 		r.Passes++
 		r.Loaded += p.Loaded
 		r.Reused += p.Reused
@@ -316,14 +320,28 @@ func readSearchContext(ctx context.Context, env searchCommandDependencies, cfg c
 	for _, v := range append(c.Before, c.After...) {
 		doc.Truncated = doc.Truncated || !v.Complete
 	}
+	fitContentSearchContext(&doc, opts.outputBytes)
+	if !opts.json {
+		terminal.Printf(stderr, "Passage bytes %d–%d; next offset %d (0 means complete).\n", c.Selected.Start, c.Selected.End, func() int {
+			if c.Selected.Next != nil {
+				return *c.Selected.Next
+			}
+			return 0
+		}())
+	}
+	return writeContentSearch(doc, opts, stdout, stderr)
+}
+
+func fitContentSearchContext(doc *contentSearchDocument, outputBytes int) {
+	c := doc.Context
 	// Shrink only raw UTF-8 text; encoded identity and offsets remain untouched.
 	for {
 		data, e := jsonDocument(doc)
 		if e != nil {
-			setSearchError(&doc, e)
+			setSearchError(doc, e)
 			break
 		}
-		if len(data) <= opts.outputBytes {
+		if len(data) <= outputBytes {
 			break
 		}
 		var largest *contentSearchSlice
@@ -339,6 +357,9 @@ func readSearchContext(ctx context.Context, env searchCommandDependencies, cfg c
 		for n > 0 && !utf8.RuneStart(largest.Text[n]) {
 			n--
 		}
+		if n == 0 {
+			_, n = utf8.DecodeRuneInString(largest.Text)
+		}
 		largest.Text = largest.Text[:n]
 		largest.End = largest.Start + n
 		next := largest.End
@@ -346,15 +367,6 @@ func readSearchContext(ctx context.Context, env searchCommandDependencies, cfg c
 		largest.Complete = false
 		doc.Truncated = true
 	}
-	if !opts.json {
-		terminal.Printf(stderr, "Passage bytes %d–%d; next offset %d (0 means complete).\n", c.Selected.Start, c.Selected.End, func() int {
-			if c.Selected.Next != nil {
-				return *c.Selected.Next
-			}
-			return 0
-		}())
-	}
-	return writeContentSearch(doc, opts, stdout, stderr)
 }
 
 func slicePointers(values []contentSearchSlice) []*contentSearchSlice {
