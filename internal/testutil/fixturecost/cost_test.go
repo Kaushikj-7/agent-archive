@@ -6,6 +6,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	_ "github.com/wangjohn/agent-archive/internal/testutil/golden" // registers -update for go test ./... -update
 )
 
 func TestOperationBudgetRejectsExcessAndInvalidLimits(t *testing.T) {
@@ -31,13 +33,16 @@ type receiptTB struct {
 }
 
 func (*receiptTB) Helper() {}
+
 func (tb *receiptTB) Logf(format string, args ...any) {
 	tb.logs = append(tb.logs, fmt.Sprintf(format, args...))
 }
+
 func (tb *receiptTB) Fatal(args ...any) {
 	tb.fatal = fmt.Sprint(args...)
 	panic(tb)
 }
+
 func (tb *receiptTB) Fatalf(format string, args ...any) {
 	tb.fatal = fmt.Sprintf(format, args...)
 	panic(tb)

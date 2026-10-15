@@ -12,10 +12,12 @@ import (
 // Phase measures a single, non-overlapping setup phase. It is owned by its
 // calling goroutine. Finish must run before starting a nested fixture phase.
 type Phase struct {
-	tb                 testing.TB
-	fixture, phase     string
-	started            time.Time
-	operations, limits map[string]int64
+	tb         testing.TB
+	fixture    string
+	phase      string
+	started    time.Time
+	operations map[string]int64
+	limits     map[string]int64
 }
 
 // Start begins a phase with optional deterministic operation ceilings. A nil
