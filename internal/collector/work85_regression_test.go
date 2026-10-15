@@ -26,6 +26,13 @@ const (
 	liveLaneRejectAll   liveLaneRejectionLayout = "all"
 )
 
+type liveLaneFixtureID string
+
+const (
+	liveLaneFixtureLive        liveLaneFixtureID = "live"
+	liveLaneFixtureFirstImport liveLaneFixtureID = "i1"
+)
+
 func TestRunLiveLaneIgnoresRejectedRegistrations(t *testing.T) {
 	t.Parallel()
 	for _, rejected := range []liveLaneRejectionLayout{liveLaneRejectNone, liveLaneRejectTop, liveLaneRejectChild, liveLaneRejectMixed, liveLaneRejectAll} {
@@ -81,7 +88,8 @@ func TestRunLiveLaneIgnoresRejectedRegistrations(t *testing.T) {
 			}
 			for _, reg := range identities {
 				id := reg.ArchiveSessionID
-				if id != "live" && id != "i1" || rejected == liveLaneRejectAll {
+				fixtureID := liveLaneFixtureID(id)
+				if fixtureID != liveLaneFixtureLive && fixtureID != liveLaneFixtureFirstImport || rejected == liveLaneRejectAll {
 					for _, kind := range []string{"requests", "registrations"} {
 						path := filepath.Join(local.Home(), kind, id+".json")
 						raw, err := os.ReadFile(path)
