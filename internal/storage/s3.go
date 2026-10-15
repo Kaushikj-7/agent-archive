@@ -244,13 +244,16 @@ func (s *S3Store) getVersioned(ctx context.Context, relative string, limit int64
 		return nil, "", err
 	}
 	defer func() { _ = output.Body.Close() }()
+	if output.ContentLength != nil && *output.ContentLength > limit {
+		return nil, "", fmt.Errorf("%w: %q exceeds %d bytes", ErrObjectTooLarge, relative, limit)
+	}
 	limited := io.LimitReader(output.Body, limit+1)
 	data, err := io.ReadAll(limited)
 	if err != nil {
-		return nil, "", err
+		return data, "", err
 	}
 	if int64(len(data)) > limit {
-		return nil, "", fmt.Errorf("%w: %q exceeds %d bytes", ErrObjectTooLarge, relative, limit)
+		return data, "", fmt.Errorf("%w: %q exceeds %d bytes", ErrObjectTooLarge, relative, limit)
 	}
 	return data, strings.Trim(aws.ToString(output.ETag), "\""), nil
 }

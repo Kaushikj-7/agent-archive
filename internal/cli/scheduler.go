@@ -36,6 +36,9 @@ func collectorJob(executable, home string, environment map[string]string) schedu
 // planJob is the plan that defines spec as this installation's job at the
 // site of userHome. It reads nothing.
 func (in installation) planJob(userHome string, spec scheduler.JobSpec) (scheduler.Plan, error) {
+	if in.role == scheduler.Search {
+		spec.Args = []string{"_search-index"}
+	}
 	return in.sched().Plan(userSite(userHome), in.schedulerInstallation(), spec)
 }
 

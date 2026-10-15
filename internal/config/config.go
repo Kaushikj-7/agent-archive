@@ -73,6 +73,10 @@ const (
 // private file elsewhere; see destination.Config.R2CredentialRef)
 // and S3 credentials are resolved through the named AWS profile.
 type Config struct {
+	// SearchIndexing is this machine's explicit background indexing consent.
+	SearchIndexing bool `json:"search_indexing,omitempty"`
+	// SearchLifecycleProtection stays set after opt-in, including after disabling.
+	SearchLifecycleProtection bool `json:"search_lifecycle_protection,omitempty"`
 	// NativeAuthorityProtection permanently refuses writers unable to preserve native roots and bindings.
 	NativeAuthorityProtection        bool                 `json:"native_authority_protection,omitempty"`
 	NativeRoots                      []archive.NativeRoot `json:"native_roots,omitempty"`

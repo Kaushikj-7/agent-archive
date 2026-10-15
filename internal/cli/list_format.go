@@ -21,6 +21,8 @@ const minShortSessionID = 8
 
 // listRow is one session as the human list table renders it.
 type listRow struct {
+	searchSnippet   string
+	searchMatches   int
 	pickerSelection *handoffPickerSelection
 	selectionKey    string
 	Index           int
@@ -81,6 +83,7 @@ type listRow struct {
 
 // listFormatOptions controls how session rows are built and printed.
 type listFormatOptions struct {
+	Search   bool
 	Now      time.Time
 	Verbose  bool
 	Numbered bool
@@ -90,6 +93,7 @@ type listFormatOptions struct {
 	Projects   map[string]string // project_id → display label (basename)
 	Style      textStyle
 	NarrowHint string // the truncation footer's advice; "" for list's flags
+
 	// Children is how many subagent sessions each parent has among the
 	// sessions loaded, keyed by childKey; the table hints at them.
 	Children map[string]int

@@ -6,6 +6,36 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Terminal content search now browses ranked snippets and exact bounded source
+  context in the shared browser, with next/previous matching passages, explicit
+  rerun after index changes, and current-session handoff through existing gates.
+  The owned archive skill explains snippets-first retrieval and coverage limits.
+
+- Preserve both native source authority and search indexing lifecycle protection
+  when their configuration and setup recovery records are combined.
+
+- Add explicit machine-local `setup --yes --search-indexing on|off` consent,
+  an independent bounded search indexing job, and best-effort content-free
+  publication hints after collection releases its lock. Pause and teardown
+  fence running indexing; legacy collector-only lifecycle records stay compatible.
+
+- Search adds bounded JSON, explicit wait/rebuild, source context neighbors and
+  existing-only cached readers; queries require explicit project broadening.
+  Named refresh removes cached text when fresh authority confirms deletion,
+  while unavailable metadata preserves the existing index.
+
+- Search conversation text with a private local index. Explicitly index one
+  archived session with `search --refresh --session ID --harness NAME`, query
+  cached titles/messages with `search "WORDS"`, and read exact matching passages.
+  `search --refresh` now resumes bounded namespace-wide archive catch-up, including
+  other-machine metadata/privacy changes and confirmed removals. Coverage reports
+  local observation and stable-snapshot discovery separately from indexing gaps.
+  Automatic refresh remains off until explicitly enabled for this machine.
+  Refresh now resumes bounded work after interruption, reuses unchanged sources,
+  and records retry/backoff state without delaying archive publication.
+  Verified unsupported source formats report coverage gaps instead of retrying
+  the same immutable bytes indefinitely.
+
 - The session browser (`list`, bare `show`, `show <words>`, `handoff` on a
   terminal that reads keys) has a cursor: `▸` marks a row, ↑ ↓ and the mouse
   wheel move it, PgUp/PgDn (space, `n`, `p`), Home and End move it a screen

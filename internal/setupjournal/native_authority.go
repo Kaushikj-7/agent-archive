@@ -25,15 +25,20 @@ func (j Journal) MarshalJSON() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	plain := journalJSON(j)
-	if !protected {
-		return json.Marshal(plain)
+	j.NativeAuthorityProtection = protected
+	raw, err := marshalBaseJSON(j)
+	if err != nil || !protected {
+		return raw, err
 	}
-	plain.NativeAuthorityProtection = true
-	return json.Marshal(struct {
-		FilesOnly nativeJournalFence `json:"files_only"`
-		*journalJSON
-	}{nativeJournalFence{Version: 1, Writer: "native-authority-v16", Value: j.FilesOnly}, &plain})
+	var doc map[string]json.RawMessage
+	if err = json.Unmarshal(raw, &doc); err != nil {
+		return nil, err
+	}
+	doc["files_only"], err = json.Marshal(nativeJournalFence{Version: 1, Writer: "native-authority-v16", Value: j.FilesOnly})
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(doc)
 }
 
 // UnmarshalJSON validates the recovery fence before interpreting any changes.
@@ -48,6 +53,11 @@ func (j *Journal) UnmarshalJSON(raw []byte) error {
 	filesOnly := bytes.TrimSpace(doc["files_only"])
 	fenced := len(filesOnly) > 0 && filesOnly[0] == '{'
 	if fenced {
+		// Validate the original envelope before normalizing its fence: a map
+		// would otherwise collapse duplicate managed authority fields.
+		if err := checkJournalKeys(json.NewDecoder(bytes.NewReader(raw)), 0); err != nil {
+			return err
+		}
 		if err := checkNativeJournalKeys(filesOnly, true); err != nil {
 			return err
 		}
@@ -67,18 +77,18 @@ func (j *Journal) UnmarshalJSON(raw []byte) error {
 			return err
 		}
 	}
-	var plain journalJSON
-	if err := json.Unmarshal(raw, &plain); err != nil {
+	plain, err := unmarshalBaseJSON(raw)
+	if err != nil {
 		return err
 	}
-	protected, err := nativeJournalProtected(Journal(plain))
+	protected, err := nativeJournalProtected(plain)
 	if err != nil {
 		return err
 	}
 	if protected != fenced || doc["native_authority_protection"] != nil && !fenced {
 		return errors.New("native setup recovery requires its exact writer fence")
 	}
-	*j = Journal(plain)
+	*j = plain
 	return nil
 }
 
