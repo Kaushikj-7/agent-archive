@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"strings"
@@ -28,17 +29,29 @@ func TestSearchBrowserKeysAndLinesKeepExactBodyReference(t *testing.T) {
 	for _, keyed := range []bool{false, true} {
 		t.Run(map[bool]string{false: "lines", true: "keys"}[keyed], func(t *testing.T) {
 			env, _, id := prepareSearchBrowser(t)
+			var document, diagnostics bytes.Buffer
+			if code := Run([]string{"search", "visible", "--all-projects", "--json"}, nil, &document, &diagnostics, env); code != 0 {
+				t.Fatalf("JSON query: %d %s", code, &diagnostics)
+			}
+			var jsonPage contentSearchDocument
+			if err := json.Unmarshal(document.Bytes(), &jsonPage); err != nil || len(jsonPage.Results) != 1 || jsonPage.Results[0].Reference == nil {
+				t.Fatalf("JSON identity: %s %v", &document, err)
+			}
+			jsonReference, err := decodeSearchReference(*jsonPage.Results[0].Reference)
+			if err != nil {
+				t.Fatal(err)
+			}
 			var fake *fakeKeys
 			input := "1\nn\np\nb\nq\n"
 			if keyed {
-				fake = newFakeKeys("1\r", "n", "p", "b", "q")
+				fake = newFakeKeys("1\r", later(100*time.Millisecond, "n"), "p", "b", "q")
 				input = ""
 			}
 			out, errOut, code := runOnTerminal(t, env, fake, input, "search", "visible", "--all-projects")
 			if code != 0 {
 				t.Fatalf("%d %s %s", code, errOut, out)
 			}
-			for _, want := range []string{id, "Reference:", "[selected · assistant]", "visible", "Hand off current session", "no further matching body passage."} {
+			for _, want := range []string{id, jsonPage.Results[0].Harness + " / " + jsonPage.Results[0].Session, jsonReference.Source.Reference.SHA256, "Reference:", "[selected · assistant]", "visible", "Hand off current session", "no further matching body passage."} {
 				if !strings.Contains(out, want) {
 					t.Errorf("missing %q: %s", want, out)
 				}
