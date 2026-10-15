@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -55,9 +56,10 @@ func usageTopLevelCommands(text string) []string {
 
 // helpTierCommands returns the top-level commands of both help tiers in
 // display order (standard tier first, then advanced), failing the test
-// unless every public command in commandHelp (the dispatched user-facing
-// commands, plus the version pseudo-command, which the standard tier names
-// only in its footer) appears in exactly one tier.
+// unless every public command — each commandHelp top level and each
+// user-facing command Run dispatches, except the version pseudo-command,
+// which the standard tier names only in its footer — appears in exactly
+// one tier.
 func helpTierCommands(t *testing.T) []string {
 	t.Helper()
 	standard := usageTopLevelCommands(usage)
@@ -81,7 +83,50 @@ func helpTierCommands(t *testing.T) []string {
 			t.Errorf("%s (top level of %s) appears in %d help tiers, want exactly 1 (standard %v, advanced %v)", top, command, seen[top], standard, advanced)
 		}
 	}
+	// commandHelp alone does not prove coverage: a command Run dispatches
+	// without a commandHelp entry would sit in neither tier unnoticed, so
+	// check the dispatch switch itself (hidden _commands and the
+	// help/version spellings excluded).
+	for _, command := range dispatchedCommands(t) {
+		if seen[command] != 1 {
+			t.Errorf("dispatched command %s appears in %d help tiers, want exactly 1 (standard %v, advanced %v)", command, seen[command], standard, advanced)
+		}
+	}
 	return append(standard, advanced...)
+}
+
+// dispatchedCommands is every user-facing command name in Run's dispatch
+// switch in cli.go, parsed from the source because the switch is not
+// enumerable at run time.
+func dispatchedCommands(t *testing.T) []string {
+	t.Helper()
+	source, err := os.ReadFile("cli.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	start := strings.Index(text, "switch args[0] {")
+	if start < 0 {
+		t.Fatal("cli.go: Run dispatch switch not found")
+	}
+	text = text[start:]
+	if end := strings.Index(text, "\tdefault:"); end >= 0 {
+		text = text[:end]
+	}
+	var commands []string
+	for _, line := range regexp.MustCompile(`(?m)^\tcase (.+):$`).FindAllStringSubmatch(text, -1) {
+		for _, m := range regexp.MustCompile(`"([^"]+)"`).FindAllStringSubmatch(line[1], -1) {
+			name := m[1]
+			if strings.HasPrefix(name, "-") || strings.HasPrefix(name, "_") || name == "help" || name == "version" {
+				continue
+			}
+			commands = append(commands, name)
+		}
+	}
+	if len(commands) == 0 {
+		t.Fatal("cli.go: no dispatched commands parsed from the switch")
+	}
+	return commands
 }
 
 // referenceTopLevelOrder is the order the per-command sections appear in
