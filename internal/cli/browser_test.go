@@ -529,7 +529,9 @@ func TestASubagentMatchShowsItsParent(t *testing.T) {
 		t.Fatalf("heading:\n%s", opening)
 	}
 	var lines []string
-	for line := range strings.SplitSeq(opening, "\n") {
+	// The table's rows, above the detail strip that repeats the title.
+	table, _, _ := strings.Cut(opening, "\n─")
+	for line := range strings.SplitSeq(table, "\n") {
 		if strings.Contains(line, "Orchestrate the release") || strings.Contains(line, "(5b-1b)") || strings.Contains(line, "changelog") || strings.Contains(line, "lone task") {
 			lines = append(lines, line)
 		}
