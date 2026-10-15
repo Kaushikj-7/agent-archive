@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -502,10 +503,11 @@ func (r newSessionRunner) save(n int, heavy bool) archive.SessionRegistration {
 // spending it: those sessions' lookups alone need more than all of it. The
 // transcript at once is refused that way the first time only.
 type spendingSources struct {
-	heavy, refused *sync.Map
-	once           string
-	onceDone       *atomic.Bool
-	lookup         *allowanceLookup
+	heavy    *sync.Map
+	refused  *sync.Map
+	once     string
+	onceDone *atomic.Bool
+	lookup   *allowanceLookup
 }
 
 func (s spendingSources) LookupSources(name string) (agentapi.SourceProvider, agentapi.TranscriptFilter, bool) {
@@ -576,10 +578,8 @@ func TestWaiterIsReadWhileNewCodexSessionsUseUpEveryPassAllowance(t *testing.T) 
 		if pass > 1 && len(result.Published) == 0 {
 			t.Fatalf("pass %d result=%+v, want the new session read too", pass, result)
 		}
-		for _, id := range result.Published {
-			if id == waiter.ArchiveSessionID {
-				return
-			}
+		if slices.Contains(result.Published, waiter.ArchiveSessionID) {
+			return
 		}
 		if result.Errors[waiter.ArchiveSessionID] != nil {
 			return
