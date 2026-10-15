@@ -510,7 +510,14 @@ API job identity fail reporting. Inconsistent job/run/source/workflow/attempt or
 repository identities make inventories incomplete, so authoritative resource
 and batch completion totals remain null. Raw job identities and their enclosing
 snapshot identities remain separately visible; an inconsistent run ID is never
-rewritten to create a false physical-allocation alias. Collect **all attempt views**, including failed
+rewritten to create a false physical-allocation alias. Live workflows cannot
+establish complete inventories because more jobs can still appear. Malformed
+raw job/step timestamps remain visible with `timestamp_issues`; invalid job
+intervals supply no usage or required-completion timestamp, and malformed timing
+evidence cannot establish carried-forward allocation aliases. Explicit evidence
+of no allocation still contributes zero; null runner fields on canceled jobs
+remain unknown. Valid job allocation intervals can supply known usage even when
+step or creation timestamps are malformed. Collect **all attempt views**, including failed
 and canceled attempts, to account for total campaign usage; the latest view alone
 can omit work. Older carried-forward job attempts are allowed; future attempts
 are invalid. Auxiliary campaigns such as compilation seeds can use

@@ -134,6 +134,13 @@ class ReportTests(unittest.TestCase):
         value['job_readiness']['2'] = {'eligible_at': '2026-10-14T00:00:06Z'}
         with self.assertRaises(ValueError):
             timing.sample_report(value)
+        value['job_readiness']['2'] = {'source': 'retained scheduler event receipt',
+            'dependencies_ready_at': '2026-10-14T00:00:04Z', 'eligible_at': '2026-10-14T00:00:06Z'}
+        value['workflows'][0]['jobs']['jobs'][0]['started_at'] = 'invalid'
+        row = timing.sample_report(value)['jobs'][0]
+        self.assertIsNone(row['eligible_to_start_seconds'])
+        self.assertEqual(row['dependency_wait_seconds'], 3)
+        self.assertTrue(row['timestamp_issues'])
 
     def test_batch_span_full_pipeline_peak_and_reused_run_rejection(self):
         first = self.allocated(sample())
@@ -315,14 +322,105 @@ class ReportTests(unittest.TestCase):
         value['required_jobs']['Levenshtein'].append('checker-benchmark')
         self.assertFalse(timing.sample_report(value)['qualifying'])
 
-    def test_allocated_and_unknown_backwards_timestamps_still_fail_closed(self):
+    def test_malformed_allocated_and_unknown_intervals_retain_rows_with_null_usage(self):
         for metadata in ({'runner_id': 42, 'runner_name': 'runner'}, {}):
             for start in ('2026-10-14T00:03:00Z', 'invalid'):
                 value = sample()
                 value['workflows'][0]['jobs']['jobs'][0].update(
                     metadata, conclusion='cancelled', started_at=start)
-                with self.subTest(metadata=metadata, start=start), self.assertRaises(ValueError):
-                    timing.sample_report(value)
+                with self.subTest(metadata=metadata, start=start):
+                    result = timing.report({'schema': 1, 'samples': [value],
+                        'batches': [{'id': 'broken', 'sample_ids': ['one']}]})
+                    row = result['samples'][0]['jobs'][0]
+                    self.assertEqual(row['started_at'], start)
+                    self.assertEqual(row['runner_allocation'], 'allocated' if metadata else 'unknown')
+                    self.assertIsNone(row['runner_seconds'])
+                    self.assertTrue(row['timestamp_issues'])
+                    self.assertIsNone(result['samples'][0]['required_completed_at'])
+                    self.assertIsNone(result['batches'][0]['first_event_to_last_required_completion_seconds'])
+                    for resource in (result['samples'][0], result['resources_across_snapshots'], result['batches'][0]):
+                        self.assertIsNone(resource['actual_runner_minutes'])
+                        self.assertAlmostEqual(resource['known_runner_minutes'], 110/60)
+
+    def test_actual_null_runner_cancel_placeholders_are_unknown_not_zero(self):
+        value = self.allocated(sample())
+        workflow = value['workflows'][0]
+        for job_id, name in ((116273098499, 'script-purge'), (116273098860, 'macos-smoke'),
+                             (116273098943, 'linux-full')):
+            workflow['jobs']['jobs'].append({
+                'id': job_id, 'name': name, 'status': 'completed', 'conclusion': 'cancelled',
+                'runner_id': None, 'runner_name': None, 'steps': [],
+                'started_at': '2026-10-15T06:00:24Z', 'completed_at': '2026-10-15T06:00:23Z'})
+        explicit = copy.deepcopy(workflow['jobs']['jobs'][-1])
+        explicit.update(id=999, name='explicit-no-runner', runner_id=0, runner_name='')
+        workflow['jobs']['jobs'].append(explicit)
+        workflow['jobs']['total_count'] = 5
+        result = timing.report({'schema': 1, 'samples': [value]})
+        rows = result['samples'][0]['jobs'][1:4]
+        self.assertEqual([r['runner_allocation'] for r in rows], ['unknown'] * 3)
+        self.assertEqual([r['runner_seconds'] for r in rows], [None] * 3)
+        self.assertTrue(all(r['timestamp_issues'] for r in rows))
+        explicit_row = result['samples'][0]['jobs'][4]
+        self.assertEqual((explicit_row['runner_allocation'], explicit_row['runner_seconds']), ('unallocated', 0))
+        resources = result['resources_across_snapshots']
+        self.assertIsNone(resources['actual_runner_minutes'])
+        self.assertIsNone(resources['linux_runner_minutes'])
+        self.assertIsNone(resources['peak_simultaneous_linux_jobs'])
+        self.assertAlmostEqual(resources['known_runner_minutes'], 220/60)
+        self.assertEqual(resources['known_peak_simultaneous_linux_jobs'], 2)
+
+    def test_malformed_step_and_creation_timestamps_cannot_forge_retry_alias(self):
+        first = self.allocated(sample())
+        for workflow in first['workflows']:
+            job = workflow['jobs']['jobs'][0]
+            job.update(created_at='2026-10-14T00:00:01Z', steps=[{
+                'name': 'body', 'number': 1, 'status': 'completed', 'conclusion': 'success',
+                'started_at': job['started_at'], 'completed_at': job['completed_at']}])
+        for field in ('step-start', 'step-end', 'created_at'):
+            retry = copy.deepcopy(first)
+            retry['id'] = 'malformed-retry'
+            for workflow in retry['workflows']:
+                workflow['run']['run_attempt'] = 2
+                job = workflow['jobs']['jobs'][0]
+                job.update(id=job['id']+100, run_attempt=2, created_at='2026-10-14T00:03:00Z')
+                if field == 'created_at':
+                    job['created_at'] = 'invalid'
+                else:
+                    job['steps'][0]['started_at' if field == 'step-start' else 'completed_at'] = 'invalid'
+            with self.subTest(field=field):
+                result = timing.report({'schema': 1, 'samples': [retry, first]})
+                self.assertFalse(result['samples'][0]['qualifying'])
+                self.assertTrue(result['samples'][0]['jobs'][0]['timestamp_issues'])
+                resources = result['resources_across_snapshots']
+                self.assertEqual(resources['carried_forward_allocation_aliases'], [])
+                self.assertEqual(resources['physical_job_rows'], 4)
+                self.assertAlmostEqual(resources['actual_runner_minutes'], 440/60)
+
+    def test_invalid_job_attempt_is_retained_without_sorting_failure(self):
+        for attempt in (None, '2', True, 0):
+            value = self.allocated(sample())
+            value['workflows'][0]['jobs']['jobs'][0]['run_attempt'] = attempt
+            with self.subTest(attempt=attempt):
+                result = timing.report({'schema': 1, 'samples': [value]})
+                self.assertEqual(result['samples'][0]['jobs'][0]['job_attempt'], attempt)
+                self.assertFalse(result['resources_across_snapshots']['inventory_complete'])
+                self.assertIsNone(result['resources_across_snapshots']['actual_runner_minutes'])
+
+    def test_live_workflow_and_unfinished_required_job_cannot_claim_completion(self):
+        for live_run in (True, False):
+            value = self.allocated(sample())
+            if live_run:
+                value['workflows'][0]['run'].update(status='in_progress', conclusion=None)
+            else:
+                value['workflows'][0]['jobs']['jobs'][0]['status'] = 'in_progress'
+            result = timing.report({'schema': 1, 'samples': [value],
+                'batches': [{'id': 'live', 'sample_ids': ['one']}]})
+            with self.subTest(live_run=live_run):
+                self.assertIsNone(result['samples'][0]['required_completed_at'])
+                self.assertIsNone(result['batches'][0]['first_event_to_last_required_completion_seconds'])
+                self.assertFalse(result['samples'][0]['inventory_complete'])
+                self.assertIsNone(result['resources_across_snapshots']['actual_runner_minutes'])
+                self.assertAlmostEqual(result['resources_across_snapshots']['known_runner_minutes'], 220/60)
 
     def test_missing_cancelled_failed_skipped_and_cold(self):
         for state in ('failure', 'cancelled', 'skipped', None):
@@ -520,13 +618,16 @@ class ReportTests(unittest.TestCase):
         self.assertEqual([r['seconds'] for r in record['invocations']], [2.0, 3.0])
 
 
-    def test_reject_duplicate_and_backwards_evidence(self):
+    def test_reject_duplicate_and_retain_backwards_evidence(self):
         with self.assertRaises(ValueError):
             timing.report({'schema': 1, 'samples': [sample(), sample()]})
         value = sample()
         value['workflows'][0]['jobs']['jobs'][0]['completed_at'] = '2026-10-13T00:00:00Z'
-        with self.assertRaises(ValueError):
-            timing.sample_report(value)
+        result = timing.sample_report(value)
+        self.assertFalse(result['qualifying'])
+        self.assertIsNone(result['actual_runner_minutes'])
+        self.assertIsNone(result['required_completed_at'])
+        self.assertEqual(result['jobs'][0]['timestamp_issues'], ['job interval: timestamps run backwards'])
 
 
 if __name__ == '__main__':
