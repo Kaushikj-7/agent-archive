@@ -263,8 +263,10 @@ type Result struct {
 	// Unreached maps each session with a pending request that the pass
 	// ended before (Options.Stop, or the context ending) to how many such
 	// sessions it ordered ahead of it. Its request is untouched and the next
-	// pass carries on with it; it is counted as pending, and is neither a
-	// failure nor a deferral.
+	// pass carries on with it; it is counted as pending, and not being
+	// reached is neither a failure nor a deferral. A session in Errors (a
+	// failure found before or after the pass's run of sessions) can be here
+	// too; sync counts it as failed only.
 	Unreached map[string]int
 }
 

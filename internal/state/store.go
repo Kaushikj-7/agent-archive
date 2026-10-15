@@ -1115,7 +1115,9 @@ type Status struct {
 	// pending request that the last pass ran out of time before reaching,
 	// and how many such sessions the pass had ordered ahead of it
 	// (collector.Result.Unreached). Such a session is pending and queued for
-	// the next pass; it is neither a failure nor a deferral.
+	// the next pass; not being reached is neither a failure nor a deferral,
+	// though the pass may also have recorded a failure for it in
+	// SessionIssues (one found before or after its run of sessions).
 	UnreachedSessions map[string]int `json:"unreached_sessions,omitempty"`
 	LastScanAt        time.Time      `json:"last_scan_at,omitzero"`
 	LastPublishedAt   time.Time      `json:"last_published_at,omitzero"`
