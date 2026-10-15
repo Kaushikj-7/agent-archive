@@ -35,6 +35,16 @@ registrations remain readable. A requested damaged identity is recorded absent
 only after a complete census succeeds. Outstanding child candidates retain
 their reserved archive IDs; they cannot recreate a missing parent.
 
+Local discovery admits a session only after a census has recorded its
+identity absent. When a version-1 census is complete, discovery's request
+holds only that session's identity: hooks keep admitting other new sessions
+and subagents, `identity_recovery` stays complete, and the next collector pass
+re-reads every registration and records the requested identity absent (or
+repairs its lost owner) without rebuilding the index. A request made after
+that pass read the registrations waits for the following pass. With no
+complete census, a packed index or damaged evidence, the request starts the
+full recovery described above.
+
 For a completed packed identity index, a new registration or another change
 in local session membership makes the recorded census stale. The
 `identity_recovery` status reports `unknown` until the collector starts a fresh
