@@ -1,20 +1,20 @@
-alpha (continued)
- 9  ● Codex  Session number 9                                         alpha   8h
-10  ● Codex  Session number 10                                        alpha   9h
-11  ● Codex  Session number 11                                        alpha  10h
-12  ● Codex  Session number 12                                        alpha  11h
-13  ● Codex  Session number 13                                        alpha  12h
-14  ● Codex  Session number 14                                        alpha  Mon
-15  ● Codex  Session number 15                                        alpha  Mon
-16  ● Codex  Session number 16                                        alpha  Mon
-17  ● Codex  Session number 17                                        alpha  Mon
-18  ● Codex  Session number 18                                        alpha  Mon
-
-beta (12)
-19  ● Codex  Session number 19                                        beta   Mon
-20  ● Codex  Session number 20                                        beta   Mon
-21  ● Codex  Session number 21                                        beta   Mon
-30 session(s).
-70% · ↑↓ scroll · PgUp/PgDn page · / filter · type a number and Enter · q quit
-
-Enter number (or unique short SESSION_ID) to show, or q to quit: 12
+YESTERDAY (continued)
+  18  ● Codex  Session number 18                                      alpha  Mon
+  19  ● Codex  Session number 19                                      beta   Mon
+  20  ● Codex  Session number 20                                      beta   Mon
+  21  ● Codex  Session number 21                                      beta   Mon
+  22  ● Codex  Session number 22                                      beta   Mon
+  23  ● Codex  Session number 23                                      beta   Mon
+  24  ● Codex  Session number 24                                      beta   Mon
+  25  ● Codex  Session number 25                                      beta   Mon
+  26  ● Codex  Session number 26                                      beta   Mon
+  27  ● Codex  Session number 27                                      beta   Mon
+▸ 28  ● Codex  Session number 28                                      beta   Mon
+  29  ● Codex  Session number 29                                      beta   Mon
+  30  ● Codex  Session number 30                                      beta   Mon
+────────────────────────────────────────────────────────────────────────────────
+Session number 28
+Codex · beta · last active 27 hours ago · id 1a2e4335
+────────────────────────────────────────────────────────────────────────────────
+↑↓ move   Enter show   / search   number + Enter jump   q quit       18–30 of 30
+Number or ID to show: 12

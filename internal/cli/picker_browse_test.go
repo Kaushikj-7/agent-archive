@@ -237,7 +237,8 @@ func TestBoundedArchiveRowsKeepActivityAgeAndUnambiguousShortIDs(t *testing.T) {
 	}
 	for _, id := range []string{"collision-a", "collision-b"} {
 		r, ok := found[id]
-		if !ok || r.When != relativeAge(format.Now, active) || r.CapturedAt != formatTimeOrNever(captured) {
+		// Active files the row under its day's heading (dayBucket).
+		if !ok || r.When != relativeAge(format.Now, active) || !r.Active.Equal(active) || r.CapturedAt != formatTimeOrNever(captured) {
 			t.Fatal("activity display used capture time", r)
 		}
 	}

@@ -1,0 +1,160 @@
+name: Linux worker qualification
+# Diagnostic shard topology only. Never supplies a required production verdict.
+on:
+  workflow_dispatch:
+    inputs:
+      expected_source:
+        description: Full selected branch workflow and checkout SHA
+        required: true
+        type: string
+      workers:
+        description: Linux test workers (other PR lanes are not part of this diagnostic)
+        required: true
+        type: choice
+        default: '4'
+        options: ['4', '8']
+permissions:
+  contents: read
+concurrency:
+  group: linux-worker-qualification-${{ github.run_id }}
+  cancel-in-progress: false
+env:
+  GOENV: 'off'
+  GOTOOLCHAIN: local
+  GOWORK: 'off'
+  GOFLAGS: '-mod=readonly'
+  PYTHONDONTWRITEBYTECODE: '1'
+  EXPECTED_SOURCE: ${{ inputs.expected_source }}
+  QUALIFICATION_WORKERS: ${{ inputs.workers }}
+jobs:
+  plan:
+    if: github.repository == 'wangjohn/agent-archive'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      workers: ${{ steps.plan.outputs.workers }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Pin workflow and checkout identity before provisioning workers
+        id: plan
+        run: python3 -B scripts/ci_worker_qualification.py --plan
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: qualification-plan
+          path: qualification.json
+          if-no-files-found: error
+          retention-days: 7
+
+  workers:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Guard immutable workflow and checkout
+        run: python3 -B scripts/ci_worker_qualification.py
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.2'
+          cache: false
+      - name: Require exact compiler and controlled cache paths
+        run: |
+          go version | grep -q ' go1\.27\.2 '
+          printf 'GOCACHE=%s/pr-go-build\nGOMODCACHE=%s/pr-go-modules\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Restore verified trusted seed without publishing
+        id: cache
+        uses: ./.github/actions/verified-go-cache
+      - name: Execute unchanged discovered race-short shard
+        env:
+          SHARD: ${{ matrix.shard }}
+          WORKERS: ${{ needs.plan.outputs.workers }}
+          CI_CACHE_RESTORE_STATE: ${{ steps.cache.outputs.restore-state }}
+        run: python3 -B scripts/run_go_shard.py --workers "$WORKERS" --shard "$SHARD" --plain-audit-owned --plain-vet-owned --output shard-results
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: qualification-shard-${{ matrix.shard }}
+          path: shard-results
+          if-no-files-found: error
+          retention-days: 7
+
+  audit:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Guard immutable workflow and checkout
+        run: python3 -B scripts/ci_worker_qualification.py
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.2'
+          cache: false
+      - name: Require exact compiler and controlled cache paths
+        run: |
+          go version | grep -q ' go1\.27\.2 '
+          printf 'GOCACHE=%s/pr-go-build\nGOMODCACHE=%s/pr-go-modules\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Restore verified trusted seed without publishing
+        id: cache
+        uses: ./.github/actions/verified-go-cache
+      - name: Independent plain whole-source audit and owned vet
+        run: python3 -B scripts/ci_worker_qualification.py --audit
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: qualification-source-audit
+          path: source-audit-results
+          if-no-files-found: error
+          retention-days: 7
+
+  reconcile:
+    if: always()
+    needs: [plan, workers, audit]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Require every role to succeed
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          python3 -B -c 'import json,os; n=json.loads(os.environ["NEEDS"]); assert set(n)=={"plan","workers","audit"} and all(v["result"]=="success" for v in n.values()), "incomplete diagnostic roles"'
+      - name: Guard immutable workflow and checkout
+        run: python3 -B scripts/ci_worker_qualification.py
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.2'
+          cache: false
+      - name: Require exact compiler and controlled cache paths
+        run: |
+          go version | grep -q ' go1\.27\.2 '
+          printf 'GOCACHE=%s/pr-go-build\nGOMODCACHE=%s/pr-go-modules\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: qualification-shard-*
+          path: shard-evidence
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: qualification-source-audit
+          path: source-audit-evidence
+      - name: Exhaustive actual-source union, audit and plain vet reconciliation
+        env:
+          WORKERS: ${{ needs.plan.outputs.workers }}
+        run: python3 -B scripts/run_go_shard.py --workers "$WORKERS" --plain-vet-owned --audit-evidence source-audit-evidence --reconcile shard-evidence

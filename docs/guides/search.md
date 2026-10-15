@@ -141,3 +141,9 @@ again on each invocation and otherwise change the query identity. After a failed
 refresh whose observation could not be read, coverage is null; successful queries
 against a missing index instead report known local zero counts and index_present
 false. Unknown matching totals always remain null.
+
+Checksum-verified sources in unsupported immutable formats (including legacy
+source schema 1) become explicit `unsupported_source_schema` coverage gaps.
+They are not downloaded repeatedly; a changed source or extraction contract
+rechecks them. Corrupt, unverified and transiently unreadable sources remain
+retryable failures. Unsupported content is never indexed.

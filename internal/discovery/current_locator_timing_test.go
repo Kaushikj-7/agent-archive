@@ -50,7 +50,8 @@ func TestCurrentLocatorUsesRemainingOperationBudget(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				defer done()
+				var operationErr error
+				defer done(&operationErr)
 				type result struct {
 					path  string
 					found bool

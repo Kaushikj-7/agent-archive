@@ -1,8 +1,11 @@
 agent-archive · 5 sessions · claude · a all projects
+TODAY
 1  Fix the retry budget in the upload queue                  #213  live
 2  Stop rereading the config on every hook call                      4m
 3  Add a status line for paused collection                   #212   38m
 4  Investigate slow listings on a large archive                      5h
+
+LAST WEEK
 5  Rename the export flag and update the… · not uploaded     #204   Sun
 5 session(s).
 

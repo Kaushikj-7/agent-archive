@@ -31,7 +31,7 @@ func TestHistoryInitialProducerAndKnownBindingControls(t *testing.T) {
 	if err != nil {
 		t.Fatalf("original producer rejected after revision: %v", err)
 	}
-	if evidence.Binding.PhysicalProducerVersion != "0.161.0" || evidence.Binding.PhysicalProducerOriginator != "codex_revision_test" {
+	if evidence.Binding.Codex.PhysicalProducerVersion != "0.161.0" || evidence.Binding.Codex.PhysicalProducerOriginator != "codex_revision_test" {
 		t.Fatal("selected producer evidence lost")
 	}
 	wrong := admission
@@ -74,9 +74,9 @@ func TestHistoryInitialProducerAndKnownBindingControls(t *testing.T) {
 	if _, err := missingReader.AdmissionEvidence(t.Context(), known); err != nil {
 		t.Fatal("known immutable binding refused without original", err)
 	}
-	modifiedBinding := evidence.Binding
+	modifiedBinding := *evidence.Binding.Codex
 	modifiedBinding.PhysicalProducerVersion = "wrong-current-version"
-	known.Binding = &modifiedBinding
+	known.Binding = agentapi.BindCodex(&modifiedBinding)
 	if _, err := missingReader.AdmissionEvidence(t.Context(), known); !agentapi.HasFailure(err, agentapi.Unsafe) {
 		t.Fatal("same physical producer mutation accepted", err)
 	}

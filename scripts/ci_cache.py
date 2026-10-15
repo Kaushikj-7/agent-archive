@@ -171,13 +171,15 @@ def general_plan(context, source, runner_temp):
     return CachePlan(key, key, owned_paths(runner_temp), source, key)
 
 
-def restore_compilation(plan, context, outcome, matched, guard, command=execute_modules):
+def restore_compilation(plan, context, outcome, matched, guard, command=execute_modules, *, observation=None):
     """Corrupt/missing accelerators are discarded, then redownloaded and verified."""
-    state = 'miss'
+    state, accepted_bytes = 'miss', None
+    if observation is not None:
+        observation.clear()
     try:
         if outcome != 'success' or matched != plan.seed:
             raise InvalidContext('trusted seed unavailable')
-        validate_manifest(plan, context)
+        accepted_bytes = validate_manifest(plan, context)
         state = 'trusted'
     except (InvalidContext, OSError, ValueError, TypeError):
         prepare_paths(plan, clear=True)
@@ -192,11 +194,21 @@ def restore_compilation(plan, context, outcome, matched, guard, command=execute_
         if state != 'trusted':
             raise
         prepare_paths(plan, clear=True)
-        state = 'corrupt-rebuilt'
+        state, accepted_bytes = 'corrupt-rebuilt', None
         command(['go', 'mod', 'download'])
         command(['go', 'mod', 'verify'])
     guard(plan.source)
+    if observation is not None:
+        observation.update(state=state, raw_payload_bytes=accepted_bytes)
     return state
+
+
+def observe_cache(phase, profile, state, raw_payload_bytes):
+    # Bytes are the already-validated/captured uncompressed payload inventory,
+    # excluding manifest metadata. Never infer archive transfer/storage bytes.
+    print('compilation-cache-observation: ' + json.dumps({
+        'schema': 1, 'phase': phase, 'profile': profile, 'state': state,
+        'raw_payload_bytes': raw_payload_bytes}, sort_keys=True))
 
 
 def current_source(source, tested):
@@ -246,18 +258,22 @@ def main():
             if json.loads(state_path.read_text()) != json.loads(json.dumps(saved)):
                 raise InvalidContext('source/context differs from prepared cache')
             if args.phase == 'verify':
+                observation = {}
                 state = restore_compilation(plan, context, env.get('RESTORE_OUTCOME'),
-                                            env.get('MATCHED_KEY'), guard)
+                                            env.get('MATCHED_KEY'), guard, observation=observation)
                 if shared is not None:
                     try:
                         verify_modules(shared)
                     except subprocess.SubprocessError:
                         if state != 'trusted':
                             raise
-                        state = restore_compilation(plan, context, 'failure', '', guard)
+                        state = restore_compilation(plan, context, 'failure', '', guard, observation=observation)
                         verify_modules(shared)
                     guard(current)
+                # Emit only the final outcome after shared-module retry and
+                # all source/compiler guards. A discarded hit retains no bytes.
                 emit({'restore_state': state}, env['GITHUB_OUTPUT'])
+                observe_cache('restore', args.profile, state, observation['raw_payload_bytes'])
             else:
                 guard(current)
                 # General consumers are read-only. Only the main seed job
@@ -271,10 +287,12 @@ def main():
                     size = publish_manifest(plan, context)
                 except InvalidContext:
                     emit({'save_ready': 'false'}, env['GITHUB_OUTPUT'])
+                    observe_cache('capture', args.profile, 'not-captured', None)
                     print('::notice::Compilation exceeds publication budget; continuing uncached')
                     return 0
                 guard(current)
                 emit({'save_ready': 'true', 'cache_bytes': str(size), 'seed': plan.seed}, env['GITHUB_OUTPUT'])
+                observe_cache('capture', args.profile, 'ready-for-save', size)
         return 0
     except (InvalidContext, OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError):
         print('Compilation cache source/context contract failed', file=sys.stderr)

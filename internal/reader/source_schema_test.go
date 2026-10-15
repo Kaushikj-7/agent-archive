@@ -38,7 +38,7 @@ func TestLoadSourceRefusesSchemaOneBundles(t *testing.T) {
 	}
 	metadata.SourceBundle = archive.SourceReference{Key: legacyKey, SHA256: storage.SHA256Hex(compressed.Bytes()), CompressedBytes: compressed.Len()}
 	_, err = LoadSource(context.Background(), store, metadata, Limits{})
-	if err == nil || !strings.Contains(err.Error(), "unsupported source schema version 1") {
+	if err == nil || !strings.Contains(err.Error(), "unsupported source schema version 1") || !IsUnsupportedSource(err) {
 		t.Fatalf("schema 1 bundle error = %v", err)
 	}
 }

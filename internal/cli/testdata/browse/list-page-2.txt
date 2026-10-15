@@ -1,10 +1,9 @@
-alpha (continued)
+YESTERDAY
+14  ● Codex  Session number 14                                        alpha  Mon
 15  ● Codex  Session number 15                                        alpha  Mon
 16  ● Codex  Session number 16                                        alpha  Mon
 17  ● Codex  Session number 17                                        alpha  Mon
 18  ● Codex  Session number 18                                        alpha  Mon
-
-beta (12)
 19  ● Codex  Session number 19                                        beta   Mon
 20  ● Codex  Session number 20                                        beta   Mon
 21  ● Codex  Session number 21                                        beta   Mon
@@ -13,6 +12,7 @@ beta (12)
 24  ● Codex  Session number 24                                        beta   Mon
 25  ● Codex  Session number 25                                        beta   Mon
 26  ● Codex  Session number 26                                        beta   Mon
+27  ● Codex  Session number 27                                        beta   Mon
 30 session(s).
 Page 2 of 3 · 30 sessions · [n] next  [p] previous
 

@@ -232,3 +232,18 @@ version bumps. The lookup revision a Codex source signature hashes no longer
 carries coverage completeness or a coverage-proven candidate set, so each Codex
 session's signature changes once and its next pass reads it again; unchanged
 content publishes nothing new.
+
+Private native source authority reserves outer wire writer version **16**, token
+`native-authority-v16`. Its required `base` is numeric 1 or an exact supported
+lower protected writer object. The in-memory `Config.SchemaVersion` continues to
+mean the lower schema, so existing v14 scoped catalog and v15 settled Cursor
+semantics and capability guards remain intact. Decode validates the lower
+configuration after strict, nonrecursive unwrapping; unknown, missing, ambiguous
+or incompatible bases refuse. Native root removal never clears the permanent
+marker. This adds private `native_roots` and registration `native_binding` v1;
+filter, adapter, parser and uploaded schemas are unchanged.
+Native-protected setup journals separately wrap the known `files_only` field
+with journal fence version 1 / writer `native-authority-v16` / original boolean
+`value`, requiring their true native protection marker. This blocks older raw
+rollback recovery before config loading; adding an ignored journal field alone
+would not protect authority.

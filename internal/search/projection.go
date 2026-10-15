@@ -188,6 +188,9 @@ func LoadProjection(ctx context.Context, objects storage.ObjectStore, parsers ag
 		bundle, err = reader.LoadSource(ctx, objects, metadata, limits)
 	}
 	if err != nil {
+		if reader.IsUnsupportedSource(err) {
+			return Projection{Source: source, Gap: &Gap{revisionID, "unsupported_source_schema"}}, nil
+		}
 		return Projection{}, err
 	}
 	source.FilterVersion = bundle.Capture.FilterVersion

@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import purge_ci as ci
 import test_purge_recipe as purge
-from test_ci_workflow import ROOT, jobs, job_key
+from test_ci_workflow import ROOT, jobs, job_key, steps, step_key
 
 PROOF = {'source': 'a' * 40, 'tree': 'b' * 40}
 
@@ -158,18 +158,35 @@ class PurgeUnionTest(unittest.TestCase):
 
     def test_two_workers_and_reconciliation_are_mandatory_workflow_steps(self):
         found = jobs((ROOT/'.github/workflows/test.yml').read_text())
-        lane, aggregate = found['script-purge'], found['script-tests']
+        lane, aggregate = found['script-purge'], found['linux-race']
+        self.assertNotIn('script-tests', found)
         self.assertIn('fail-fast: false', lane)
         self.assertIn('shard: [0, 1]', lane)
         self.assertIn('--workers 2 --shard "$SHARD"', lane)
         self.assertIn('name: purge-tier-${{ matrix.shard }}', lane)
         self.assertIn('retention-days: 7', lane)
         self.assertIn('TMPDIR=%s/script-purge-tmp', lane)
-        self.assertEqual(job_key(aggregate, 'if'), 'always()')
-        self.assertIn('tier-plan', job_key(aggregate, 'needs'))
+        self.assertEqual(job_key(aggregate, 'if'), '${{ !cancelled() }}')
+        self.assertNotIn('tier-plan', job_key(aggregate, 'needs'))
+        self.assertIn('script-purge', job_key(aggregate, 'needs'))
+        for job in (lane, aggregate):
+            self.assertIn('fetch-depth: 0', job)
+            self.assertIn('--plan --require-pr-proof', job)
+            self.assertIn('steps.plan.outputs.purge', job)
         self.assertIn('pattern: purge-tier-*', aggregate)
         self.assertIn('scripts/purge_ci.py --tier "$tier"', aggregate)
-        self.assertNotIn('continue-on-error:', aggregate)
+        self.assertNotIn('continue-on-error:', aggregate.split('    steps:', 1)[0])
+        for step in steps(aggregate):
+            if 'scripts/collect_ci_timing.py' in step:
+                self.assertEqual(step_key(step, 'continue-on-error'), 'true')
+            else:
+                self.assertNotIn('continue-on-error:', step)
+        purge_step = next(step for step in steps(aggregate) if 'scripts/purge_ci.py' in step)
+        download = next(step for step in steps(aggregate) if 'pattern: purge-tier-*' in step)
+        self.assertIsNone(step_key(purge_step, 'if'))
+        self.assertIsNone(step_key(download, 'if'))
+        self.assertLess(aggregate.index('--verdict'), aggregate.index('pattern: purge-tier-*'))
+        self.assertLess(aggregate.index('scripts/purge_ci.py'), aggregate.index('--reconcile'))
 
 
 if __name__ == '__main__':
