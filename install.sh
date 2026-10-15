@@ -183,6 +183,10 @@ main() {
   esac
   if [ "$configured" = 0 ]; then
     say ""
+    say "To see it work right away, with no bucket needed, run:"
+    say ""
+    say "agent-archive handoff"
+    say ""
     say "To get started, run:"
     say ""
     say "agent-archive setup"

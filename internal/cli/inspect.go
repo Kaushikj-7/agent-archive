@@ -25,12 +25,20 @@ import (
 // archive.SourceObjectKey, which both produce "sessions/<harness>/<id>/...".
 const archiveSessionsPrefix = "sessions"
 
-// notSetUpMessage is what every read-only command prints, to stderr with
-// exit 1 like sync and pause, when setup has never run: its output is often
+// notSetUpMessage is what handoff and the other commands that need a
+// configured archive print, to stderr with exit 1 like sync and pause,
+// when setup has never run: its output is often
 // captured (claude "$(agent-archive handoff --latest)"), and must not pass
 // the message off as a result. It is deliberately the same line `status`
 // prints, so a first-time user gets one consistent answer.
 const notSetUpMessage = "Not set up. Run `agent-archive setup` to get started."
+
+// notSetUpHandoffMessage is what list, show, and stats print before
+// setup, and what a bare invocation leads with then: unlike the other
+// commands that print notSetUpMessage, these are the ones a new user
+// tries first, and `handoff` already works for them on the sessions
+// this machine has, so say so instead of dead-ending at setup.
+const notSetUpHandoffMessage = "Not set up yet. For sessions already on this machine, try `agent-archive handoff`; to start archiving, run `agent-archive setup`."
 
 // openReadOnlyStore loads configuration and opens the configured object
 // store the same way a collector pass does (env.openStore), but without the
@@ -115,7 +123,7 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		return 1
 	}
 	if !found {
-		terminal.Println(stderr, notSetUpMessage)
+		terminal.Println(stderr, notSetUpHandoffMessage)
 		return 1
 	}
 	if *rebuildIndex && !rebuildListingIndex(env, store, stderr) {
@@ -620,7 +628,7 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		return 1
 	}
 	if !found {
-		terminal.Println(stderr, notSetUpMessage)
+		terminal.Println(stderr, notSetUpHandoffMessage)
 		return 1
 	}
 

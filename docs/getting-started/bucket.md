@@ -20,6 +20,10 @@ Choose the route that matches what you need:
 Cloudflare has two different token forms: **R2 → Manage API Tokens** creates
 R2 credentials, while **Manage account → Account API tokens** lets you choose
 custom account permissions. Automatic bucket creation below needs the latter.
+Which one do I have? If the form gave you an **Access Key ID** and a **Secret
+Access Key**, that was the R2 form, for the manual route; if it gave you a
+single token value after you picked custom permission rows, that was the
+account form, the one automatic creation needs.
 
 ### Let setup create it
 

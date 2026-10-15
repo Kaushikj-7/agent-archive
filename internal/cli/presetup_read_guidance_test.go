@@ -1,0 +1,69 @@
+package cli
+
+import (
+	"bytes"
+	"strings"
+	"testing"
+	"time"
+)
+
+// Before setup, the read commands a new user tries first point at the
+// handoff that already works on this machine's own sessions, not only
+// at setup. Exit 1 and an empty stdout are unchanged, so --json keeps
+// exactly the shape it had: nothing on stdout, the message on stderr.
+func TestReadCommandsPreSetupMentionHandoff(t *testing.T) {
+	t.Parallel()
+	env := testEnv(t, t.TempDir(), time.Now())
+	for _, args := range [][]string{
+		{"list"}, {"list", "--json"},
+		{"show", "session-1"}, {"show", "session-1", "--json"},
+		{"stats"}, {"stats", "--json"},
+	} {
+		var out, errOut bytes.Buffer
+		if code := Run(args, nil, &out, &errOut, env); code != 1 {
+			t.Fatalf("%v: code=%d stderr=%q", args, code, errOut.String())
+		}
+		if out.Len() != 0 {
+			t.Fatalf("%v: stdout=%q, want empty", args, out.String())
+		}
+		if !strings.Contains(errOut.String(), "`agent-archive handoff`") ||
+			!strings.Contains(errOut.String(), "`agent-archive setup`") {
+			t.Fatalf("%v: stderr=%q, want handoff and setup guidance", args, errOut.String())
+		}
+	}
+}
+
+// Commands that write to the archive keep the terse not-set-up answer:
+// handoff is not a substitute for collecting or importing.
+func TestWriteCommandsPreSetupKeepTerseMessage(t *testing.T) {
+	t.Parallel()
+	env := testEnv(t, t.TempDir(), time.Now())
+	for _, args := range [][]string{{"sync"}, {"backfill", "history"}} {
+		var out, errOut bytes.Buffer
+		if code := Run(args, nil, &out, &errOut, env); code != 1 {
+			t.Fatalf("%v: code=%d stderr=%q", args, code, errOut.String())
+		}
+		if strings.Contains(errOut.String(), "handoff") {
+			t.Fatalf("%v: stderr=%q, want no handoff hint", args, errOut.String())
+		}
+		if !strings.Contains(errOut.String(), "agent-archive setup") {
+			t.Fatalf("%v: stderr=%q, want setup guidance", args, errOut.String())
+		}
+	}
+}
+
+// A bare invocation before setup leads with the same handoff and setup
+// guidance, before the command list, and still exits 0.
+func TestNoArgsPreSetupLeadsWithHandoff(t *testing.T) {
+	t.Parallel()
+	env := setupTestEnv(t, t.TempDir(), t.TempDir(), newFakeKeychain(), time.Now())
+	var out bytes.Buffer
+	if code := Run(nil, nil, &out, nil, env); code != 0 {
+		t.Fatalf("code=%d out=%q", code, out.String())
+	}
+	first, _, _ := strings.Cut(out.String(), "\n")
+	if !strings.Contains(first, "`agent-archive handoff`") ||
+		!strings.Contains(first, "`agent-archive setup`") {
+		t.Fatalf("first line=%q, want handoff and setup guidance", first)
+	}
+}

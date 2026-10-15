@@ -192,6 +192,9 @@ class InstallScriptTest(InstallScriptBase):
         self.assertIn('export PATH="' + str(target.parent) + ':$PATH"', result.stdout)
         self.assertIn(f'✓ installed agent-archive v9.9.9-arm64 to {target}\n', result.stdout)
         self.assertIn('\nTo get started, run:\n\nagent-archive setup\n', result.stdout)
+        # The handoff that works before setup is named first.
+        self.assertLess(result.stdout.index('agent-archive handoff'),
+                        result.stdout.index('agent-archive setup'))
         self.assertEqual([p.name for p in target.parent.iterdir()], ['agent-archive'])
 
     def test_zsh_path_instructions(self):

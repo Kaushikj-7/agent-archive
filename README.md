@@ -26,7 +26,7 @@ OpenAI and Anthropic are constantly one-upping each other or the best model, but
 
    The latest published release, v0.1.1, has macOS binaries only. On Linux, [build from source](docs/getting-started/install.md#build-from-source). These docs describe the current checkout; local handoff before setup and other newer features require a current source build until the next release is published.
 
-2. **Try a local handoff before setup** inside a project:
+2. **See it work — no bucket needed.** Inside a project, hand a session you already have to another agent:
 
    ```sh
    agent-archive handoff
@@ -35,7 +35,7 @@ OpenAI and Anthropic are constantly one-upping each other or the best model, but
    Browse existing Claude Code or Codex conversations without configuring storage.
    [Local handoff scope, preview limits and cleanup](docs/guides/handoff.md#before-setup-native-local-sessions).
 
-3. **Create a private bucket** and an access key for it ([R2 and S3 steps](docs/getting-started/bucket.md)).
+3. **Create a private bucket** and an access key for it ([R2 and S3 steps](docs/getting-started/bucket.md)). On Cloudflare R2, start with [let setup create it](docs/getting-started/bucket.md#let-setup-create-it): you make one temporary token and setup creates the bucket and its key.
 
 4. **Review [what is uploaded](docs/security/privacy.md#what-is-uploaded)** before enabling capture. Capture can include visible user-level skill instructions as well as your conversation. Redaction is best effort and there is no client-side encryption. **Run setup** inside a project you want to include, or choose projects when prompted ([setup guide](docs/getting-started/setup.md)):
 

@@ -147,7 +147,7 @@ func runStatsCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 		return 1
 	}
 	if !found {
-		terminal.Println(stderr, notSetUpMessage)
+		terminal.Println(stderr, notSetUpHandoffMessage)
 		return 1
 	}
 	// The page on standard output carries nothing but the page: no spinner.
