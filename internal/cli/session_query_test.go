@@ -237,3 +237,21 @@ func TestNativeSessionIDFindsTheSession(t *testing.T) {
 		}
 	}
 }
+
+// A Claude Code subagent's native ID begins with its parent's, so the
+// parent's ID names the parent alone; and a word that is one session's
+// archive short ID is that session, not another whose native ID shares it.
+func TestNativeSessionIDNamesOneSession(t *testing.T) {
+	t.Parallel()
+	parent := archive.Metadata{SessionID: "aaaa1111000000000000000000000000", NativeSessionID: "3f2a9c1e-0000-4000-8000-000000000001", Title: "Parent"}
+	child := archive.Metadata{SessionID: "bbbb2222000000000000000000000000", NativeSessionID: "3f2a9c1e-0000-4000-8000-000000000001:subagent:agent-1", Title: "Child"}
+	byArchive := archive.Metadata{SessionID: "01a10e11ffff00000000000000000000", NativeSessionID: "77777777-0000-4000-8000-000000000001", Title: "Archive ID"}
+	byNative := archive.Metadata{SessionID: "cccc3333000000000000000000000000", NativeSessionID: "01a10e11-4bd0-7041-b71c-58103545883a", Title: "Native ID"}
+	fields := func(m archive.Metadata) sessionFields { return fieldsOf(m, "") }
+	if got := matchPool([]archive.Metadata{parent, child}, parseSessionQuery("3f2a9c1e"), fields); len(got) != 1 || got[0].SessionID != parent.SessionID {
+		t.Fatalf("parent's native short ID matched %d sessions", len(got))
+	}
+	if got := matchPool([]archive.Metadata{byNative, byArchive}, parseSessionQuery("01a10e11"), fields); len(got) != 1 || got[0].SessionID != byArchive.SessionID {
+		t.Fatalf("archive short ID did not win: %d sessions", len(got))
+	}
+}

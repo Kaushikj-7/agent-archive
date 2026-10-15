@@ -128,11 +128,13 @@ func (q sessionQuery) matches(r sessionFields) bool {
 }
 
 // ids are the row's session IDs, lower-cased: the archive's, then the
-// agent's own when it has one.
+// agent's own when it has one. A Claude Code subagent's native ID extends its
+// parent's ("PARENT:subagent:ID"), so it is left out: the parent's ID names
+// the parent, and the subagent is reached by its archive ID.
 func (r sessionFields) ids() []string {
 	ids := []string{strings.ToLower(r.SessionID)}
-	if r.NativeSessionID != "" && !strings.EqualFold(r.NativeSessionID, r.SessionID) {
-		ids = append(ids, strings.ToLower(r.NativeSessionID))
+	if n := r.NativeSessionID; n != "" && !strings.Contains(n, ":") && !strings.EqualFold(n, r.SessionID) {
+		ids = append(ids, strings.ToLower(n))
 	}
 	return ids
 }
@@ -180,15 +182,23 @@ func exactIDWins[T any](items []T, q sessionQuery, fields func(T) sessionFields)
 		return nil
 	}
 	word := q.words[0]
-	var exact []T
+	is := func(id string) bool { return id == word || len(word) == minShortSessionID && strings.HasPrefix(id, word) }
+	// The archive's own ID wins over another session's native ID that
+	// happens to share the word.
+	var archived, native []T
 	for _, item := range items {
-		if slices.ContainsFunc(fields(item).ids(), func(id string) bool {
-			return id == word || len(word) == minShortSessionID && strings.HasPrefix(id, word)
-		}) {
-			exact = append(exact, item)
+		ids := fields(item).ids()
+		switch {
+		case is(ids[0]):
+			archived = append(archived, item)
+		case slices.ContainsFunc(ids[1:], is):
+			native = append(native, item)
 		}
 	}
-	return exact
+	if len(archived) > 0 {
+		return archived
+	}
+	return native
 }
 
 // matchPool returns the items q matches, in the order given (newest activity
