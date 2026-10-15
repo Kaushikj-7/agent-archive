@@ -17,11 +17,16 @@
 # that fails, or this runs as root, the install still succeeds.
 #
 # Linux release assets (linux-amd64, linux-arm64) are static and not signed,
-# so the Developer ID check does not apply to them; the script prints the
-# `gh attestation verify` command that confirms where one came from. On every
-# OS the SHA256SUMS check is mandatory: the install stops before anything is
-# installed if there is no SHA-256 tool, no single well-formed entry, or a
-# mismatch. Releases up to v0.1.1 have no Linux asset.
+# so the Developer ID check does not apply to them. After the checksum
+# passes and before anything is installed or run, the script verifies the
+# downloaded file's GitHub build-provenance attestation when the `gh` CLI is
+# on PATH, and stops if that verification fails or cannot be checked.
+# Without `gh` it prints the not-signed warning and the `gh attestation
+# verify` command before proceeding, unless AGENT_ARCHIVE_REQUIRE_ATTESTATION
+# is set to 1, in which case it stops. On every OS the SHA256SUMS check is
+# mandatory: the install stops before anything is installed if there is no
+# SHA-256 tool, no single well-formed entry, or a mismatch. Releases up to
+# v0.1.1 have no Linux asset.
 #
 # Environment:
 #   AGENT_ARCHIVE_VERSION      release tag to install, e.g. v0.1.0 (default: latest)
@@ -30,7 +35,15 @@
 #                              if writable, else ~/.local/bin)
 #   AGENT_ARCHIVE_HOME         data directory of the installation to refresh
 #                              (default: ~/.local/share/agent-archive)
-#   AGENT_ARCHIVE_DOWNLOAD_URL release download base, for testing only
+#   AGENT_ARCHIVE_DOWNLOAD_URL release download base, for testing only; a
+#                              custom source has no GitHub attestation, so
+#                              attestation verification is skipped with a
+#                              printed note
+#   AGENT_ARCHIVE_REQUIRE_ATTESTATION
+#                              Linux only: set to 1 to fail unless the `gh`
+#                              CLI verifies the download's GitHub attestation
+#                              before it is installed; cannot be combined
+#                              with AGENT_ARCHIVE_DOWNLOAD_URL
 #
 # The whole script is one function called on the last line, so a download
 # cut off partway through runs nothing.
@@ -50,6 +63,17 @@ main() {
   # this script could accept on macOS. (Linux binaries have no signature.)
   if [ "$os" = darwin ]; then
     check_team_id
+  fi
+
+  # Linux attestation strict mode is also decided before downloading: a
+  # custom download source has no GitHub attestation, and without gh there
+  # is nothing that could verify one.
+  if [ "$os" != darwin ] && [ "${AGENT_ARCHIVE_REQUIRE_ATTESTATION:-}" = "1" ]; then
+    if [ -n "${AGENT_ARCHIVE_DOWNLOAD_URL:-}" ]; then
+      fail "AGENT_ARCHIVE_REQUIRE_ATTESTATION=1 cannot be combined with AGENT_ARCHIVE_DOWNLOAD_URL, because a custom download source has no GitHub attestation to verify; unset one of them."
+    fi
+    command -v gh >/dev/null 2>&1 ||
+      fail "AGENT_ARCHIVE_REQUIRE_ATTESTATION=1 requires the gh CLI to verify the download's attestation, but gh was not found on PATH; not installing it."
   fi
 
   arch="$(detect_arch "$os")" || exit 1
@@ -123,6 +147,7 @@ main() {
     say "Signature verified (Developer ID, team ${team_id})"
   else
     say "Skipping the Developer ID signature check, which is macOS only."
+    verify_attestation "${tmp}/${asset}"
   fi
 
   [ ! -d "$target" ] || fail "${target} is a directory; not installing over it."
@@ -140,14 +165,6 @@ main() {
   installed_version="$("$target" --version 2>&1)" ||
     fail "installed ${target}, but it failed to run: ${installed_version}"
   say "✓ installed agent-archive ${installed_version} to ${target}"
-  if [ "$os" != darwin ]; then
-    # This advice holds only for releases whose workflow attests the Linux
-    # binaries (Linux PR 1, #174); it says nothing about older releases.
-    say ""
-    say "The checksum only guards against a damaged download, and this binary is not signed."
-    say "To confirm it came from the project's release workflow, run (needs the gh CLI):"
-    say "  gh attestation verify $(shell_quote "$target") --repo wangjohn/agent-archive"
-  fi
 
   # An upgrade of a set-up machine: the app hooks, the background collector, and
   # the skills name this binary, so bring them up to date. A fresh install
@@ -328,6 +345,43 @@ verify_signature() {
   if ! codesign --verify --strict -R="$requirement" "$1" 2>/dev/null; then
     fail "${asset} is not signed by the agent-archive Developer ID (team ${team_id}); not installing it."
   fi
+}
+
+# verify_attestation checks the downloaded Linux binary's GitHub
+# build-provenance attestation before it is installed or run. This advice
+# holds only for releases whose workflow attests the Linux binaries; it
+# says nothing about older releases. With `gh` on PATH a failed or
+# unavailable check stops the install. Without `gh` it warns and continues,
+# unless strict mode already stopped earlier. A custom download source
+# (AGENT_ARCHIVE_DOWNLOAD_URL, for testing) has no GitHub attestation;
+# strict mode refuses that combination before downloading.
+verify_attestation() {
+  if [ -n "${AGENT_ARCHIVE_DOWNLOAD_URL:-}" ]; then
+    say "Skipping attestation verification: AGENT_ARCHIVE_DOWNLOAD_URL is set, so this download has no GitHub attestation to verify."
+    return 0
+  fi
+  if command -v gh >/dev/null 2>&1; then
+    if attest_out="$(gh attestation verify "$1" --repo wangjohn/agent-archive 2>&1)"; then
+      say "Attestation verified (GitHub build provenance, wangjohn/agent-archive)"
+      return 0
+    fi
+    case "$attest_out" in
+      *[Ff]"ailed to verify"* | *"verification failed"* | *"Verification failed"* | *"no attestation"* | *"No attestation"* | *"could not find an attestation"*)
+        fail "attestation verification failed for ${asset}, so it was not installed or run: ${attest_out}"
+        ;;
+      *)
+        fail "could not verify the attestation for ${asset} with gh, so it was not installed or run: ${attest_out:-gh attestation verify failed with no output}"
+        ;;
+    esac
+  fi
+  if [ "${AGENT_ARCHIVE_REQUIRE_ATTESTATION:-}" = "1" ]; then
+    fail "AGENT_ARCHIVE_REQUIRE_ATTESTATION=1 requires the gh CLI to verify the download's attestation, but gh was not found on PATH; not installing it."
+  fi
+  say "The checksum only guards against a damaged download, and this binary is not signed."
+  say "To confirm it came from the project's release workflow, run (needs the gh CLI):"
+  say "  gh attestation verify $(shell_quote "$target") --repo wangjohn/agent-archive"
+  say "To verify before anything is installed, use the manual download-verify-install flow in docs/getting-started/install.md ('Install a release build by hand')."
+  say "Continuing without attestation verification because gh is not on PATH; set AGENT_ARCHIVE_REQUIRE_ATTESTATION=1 to refuse instead."
 }
 
 check_team_id() {
