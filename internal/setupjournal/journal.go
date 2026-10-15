@@ -35,7 +35,9 @@ func TransactionPending(home string) bool {
 // every file change with its before and after bytes, the collector's plist
 // and whether its job was loaded, and the jobs the setup retires.
 type Journal struct {
-	Legacy *LegacyJob `json:"legacy,omitempty"`
+	// NativeAuthorityProtection permanently fences old recovery before file actions.
+	NativeAuthorityProtection bool       `json:"native_authority_protection,omitempty"`
+	Legacy                    *LegacyJob `json:"legacy,omitempty"`
 	// Relabeled and MoreRelabeled are the collectors earlier releases
 	// installed for this data directory under other labels (see
 	// scheduler.EarlierLabel); setup retires them in favor of the

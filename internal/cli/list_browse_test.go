@@ -321,16 +321,20 @@ func TestPickerPagesATableTallerThanTheTerminal(t *testing.T) {
 	}
 }
 
-// In the grouped table a page's rows are not a numeric range, so the page
-// line counts pages instead of naming row numbers.
-func TestPickerPageLineNamesNoRowRangeWhenProjectsInterleave(t *testing.T) {
+// In the grouped table a page's rows are not a numeric range when the rows
+// given are not newest first, so the page line counts pages instead of
+// naming row numbers.
+func TestPickerPageLineNamesNoRowRangeWhenDaysInterleave(t *testing.T) {
 	t.Parallel()
-	sessions := pickerSessions(30, func(i int) string { return []string{"alpha", "beta"}[i%2] })
-	_, _, screens := runSessionPicker(t, &sessionPicker{env: fixedTerminal{120, 19}}, sessions, listFormatOptions{GroupByProject: true}, "n\nq\n")
+	sessions := pickerSessions(30, oneProject)
+	for i := range sessions {
+		sessions[i].CapturedAt = pickerNow.Add(-time.Duration(i%2) * 72 * time.Hour)
+	}
+	_, _, screens := runSessionPicker(t, &sessionPicker{env: fixedTerminal{120, 19}}, sessions, listFormatOptions{GroupByDay: true}, "n\nq\n")
 	checkScreensFit(t, screens, 120, 19)
 	first := rowNumbers(screens[0])
-	if len(first) < 2 || first[1] != 3 {
-		t.Fatalf("first page does not list alpha's rows 1, 3, …:\n%s", screens[0])
+	if len(first) < 2 || first[1] != 3 || !strings.HasPrefix(screens[0], "TODAY\n") {
+		t.Fatalf("first page does not list today's rows 1, 3, …:\n%s", screens[0])
 	}
 	for i, screen := range screens {
 		if strings.Contains(screen, "Sessions ") || !strings.Contains(screen, fmt.Sprintf("Page %d of 3 · 30 sessions ·", i+1)) {
@@ -395,24 +399,35 @@ func TestPickerOnTheNormalScreenPrintsMessagesBelow(t *testing.T) {
 	}
 }
 
-func TestPickerRepeatsTheProjectHeadingOnAPageStartingMidProject(t *testing.T) {
+// A page that starts partway through a day repeats the day's heading,
+// marked continued. The 30 sessions an hour apart from noon are 13 of today
+// and 17 of yesterday.
+func TestPickerRepeatsTheDayHeadingOnAPageStartingMidDay(t *testing.T) {
 	t.Parallel()
-	sessions := pickerSessions(30, func(i int) string {
-		if i < 18 {
-			return "alpha"
-		}
-		return "beta"
-	})
-	_, _, screens := runSessionPicker(t, &sessionPicker{env: fixedTerminal{120, 20}}, sessions, listFormatOptions{GroupByProject: true}, "n\nn\nq\n")
-	checkScreensFit(t, screens, 120, 20)
-	if !strings.HasPrefix(screens[0], "alpha (18)\n 1  ") {
+	sessions := pickerSessions(30, oneProject)
+	_, _, screens := runSessionPicker(t, &sessionPicker{env: fixedTerminal{120, 13}}, sessions, listFormatOptions{GroupByDay: true}, "n\nn\nn\nq\n")
+	checkScreensFit(t, screens, 120, 13)
+	if len(screens) != 4 {
+		t.Fatalf("%d screens:\n%s", len(screens), strings.Join(screens, "\n----\n"))
+	}
+	if !strings.HasPrefix(screens[0], "TODAY\n 1  ") {
 		t.Fatalf("first page:\n%s", screens[0])
 	}
-	if !strings.HasPrefix(screens[1], "alpha (continued)\n") || !strings.Contains(screens[1], "\n\nbeta (12)\n") {
+	if !strings.HasPrefix(screens[1], "TODAY (continued)\n") || !strings.Contains(screens[1], "\n\nYESTERDAY\n") {
 		t.Fatalf("second page:\n%s", screens[1])
 	}
-	if !strings.HasPrefix(screens[2], "beta (continued)\n") {
-		t.Fatalf("third page:\n%s", screens[2])
+	if !strings.HasPrefix(screens[2], "YESTERDAY (continued)\n") || !strings.HasPrefix(screens[3], "YESTERDAY (continued)\n") {
+		t.Fatalf("later pages:\n%s\n----\n%s", screens[2], screens[3])
+	}
+	// Every row is on exactly one page, in order.
+	var all []int
+	for _, screen := range screens {
+		all = append(all, rowNumbers(screen)...)
+	}
+	for i, n := range all {
+		if n != i+1 || len(all) != 30 {
+			t.Fatalf("rows across pages: %v", all)
+		}
 	}
 }
 
@@ -423,14 +438,14 @@ func TestPickerPrintsTheWholeTableWhenItFits(t *testing.T) {
 	sessions := pickerSessions(30, func(i int) string { return []string{"alpha", "beta"}[i%2] })
 	for _, size := range []fixedTerminal{{}, {120, 40}, {200, 1000}} {
 		width, _, _ := size.terminalSize(nil)
-		format := listFormatOptions{Now: pickerNow, GroupByProject: true, Numbered: true, Width: width}
+		format := listFormatOptions{Now: pickerNow, GroupByDay: true, Numbered: true, Width: width}
 		var want bytes.Buffer
 		if err := printSessionTable(&want, formatSessionRows(sessions, format), format); err != nil {
 			t.Fatal(err)
 		}
 		printListFooter(&want, len(sessions), len(sessions), false, listFormatOptions{})
 		want.WriteString("\nEnter number (or unique short SESSION_ID) to show, words to filter, or q to quit: ")
-		_, _, screens := runSessionPicker(t, &sessionPicker{env: size}, sessions, listFormatOptions{GroupByProject: true}, "q\n")
+		_, _, screens := runSessionPicker(t, &sessionPicker{env: size}, sessions, listFormatOptions{GroupByDay: true}, "q\n")
 		if len(screens) != 1 || screens[0] != want.String() {
 			t.Errorf("%v:\n%s\nwant:\n%s", size, screens[0], want.String())
 		}
@@ -526,7 +541,7 @@ func TestPickerPageGolden(t *testing.T) {
 		}
 		return "beta"
 	})
-	_, _, screens := runSessionPicker(t, &sessionPicker{env: fixedTerminal{80, 20}}, sessions, listFormatOptions{GroupByProject: true}, "n\nq\n")
+	_, _, screens := runSessionPicker(t, &sessionPicker{env: fixedTerminal{80, 20}}, sessions, listFormatOptions{GroupByDay: true}, "n\nq\n")
 	golden.Check(t, filepath.Join("testdata", "browse", "list-page-2.txt"), []byte(screens[1]))
 }
 

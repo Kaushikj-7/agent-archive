@@ -498,21 +498,25 @@ Run inside a project, it lists that repository's sessions (every checkout and
 worktree of it, and its sessions from other machines), with a heading naming the
 repository; when there are none, it lists all projects and says so. --project
 lists another project's, and --all-projects every project's. Outside any
-project it lists every session, grouped by project. On a terminal, the a key,
-typed alone, switches between the repository and all projects.
-Default text columns: TITLE (the Claude Code or Cursor session name when
-available, else a preview of its first filtered prompt, else a short
-SESSION_ID prefix; Codex uses the prompt preview), PR (the
-last pull request the session linked or created, when any row has one),
-relative capture time, harness, project, and a short SESSION_ID. A harness or
+project it lists every session. On a terminal, sessions are grouped by day
+(TODAY, YESTERDAY, ...), and the a key, typed alone, switches between the
+repository and all projects.
+On a terminal each session is one line, cut to the window: its number, agent,
+title (the Claude Code or Cursor session name when available, else a preview
+of its first filtered prompt, in a readable form; Codex uses the prompt
+preview), project, PR (the last pull request the session linked or created,
+when any row has one), and when it was last active (2m, Mon, Oct 9). Piped,
+the plain table is WHEN, AGENT, PROJECT, PR, short SESSION_ID, and TITLE, one
+line a session with the whole title last; scripts read --json. An agent or
 project every row shares is left out of the table and named in the heading.
 On a terminal with an interactive stdin, list a numbered table and pick a
 session to show its summary, then t for its transcript, Enter or b to go
 back, or q to quit. Keys act as pressed; the wheel, arrows, and PgUp/PgDn
-scroll. Press / to filter the rows as you type, with the words WORDS takes:
-the first match is highlighted, the arrows move the highlight, Enter shows it,
-and Esc clears the filter. A subagent that matches is shown under its parent,
-which is shown too. Rows keep their numbers while filtered. WORDS open the
+move the highlight, which Enter opens. Press / to filter the rows as you
+type, with the words WORDS takes: the first match is highlighted, the arrows
+move the highlight, Enter shows it, and Esc clears the filter, keeping the
+highlighted row. A subagent that matches is shown under its parent, which is
+shown too. Rows keep their numbers while filtered. WORDS open the
 browser with the filter already filled in, to edit. Where keys cannot be read,
 the browser reads lines, and an answer that is not a row number, a
 SESSION_ID, or q is words to filter by (an empty answer clears them). Piped
@@ -1051,12 +1055,12 @@ On the picker, the a key, typed alone, switches between the repository and
 all projects, and / filters the rows as you type (the arrows move the
 highlight, Enter hands off the highlighted session, Esc clears the filter; a
 subagent that matches shows under its parent). The heading names what is shown,
-and a dot marks a session active in the last 2 minutes. Several matches on a
+and live marks a session active in the last 2 minutes. Several matches on a
 terminal open the same picker on them, with the words in its filter; without
-one, or inside a coding agent, they are listed on
-stderr, with a PR column and the exact command to run next, and the command
-exits 1, never guessing. WORDS skip the agent session running the command,
-unless --to is given.
+one, or inside a coding agent, they are listed on stderr in list's piped
+columns, with the exact command to run next, and the command exits 1, never
+guessing. WORDS skip the agent session running the command, unless --to is
+given.
   --latest              The most recent session for the project: one that ran
                         at this path, else one from another checkout of the
                         same repository (its remote origin), such as on

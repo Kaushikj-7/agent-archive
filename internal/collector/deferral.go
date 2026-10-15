@@ -17,6 +17,10 @@ const (
 	// when the session needed it. A session that needs more than its own
 	// share (SessionReadCeiling) is a size-limit gap instead.
 	DeferredReadBudget = "read_budget"
+	// DeferredLookupAllowance: the pass's allowance for finding Codex
+	// rollouts ran out while the session was being read
+	// (agentapi.CauseLookupAllowanceSpent). The next pass has a fresh one.
+	DeferredLookupAllowance = "lookup_allowance"
 )
 
 // readBudgetDeferralError marks a source read the pass's shared read ledger
@@ -89,13 +93,18 @@ func (p *pass) carryDeferredSince(id string) {
 
 // deferralReason reports whether a scan's error only defers the session, and
 // why: every failure it joins is a source refusal the next pass is expected
-// to clear, a source that changed while being read (agentapi.Changed). One failure of any other kind makes the
+// to clear, a source that changed while being read (agentapi.Changed) or a
+// Codex lookup past the pass's allowance (agentapi.CauseLookupAllowanceSpent).
+// One failure of any other kind makes the
 // whole error a failure. The outermost SourceError of each failure decides,
 // as agentapi.Failure does.
 func deferralReason(err error) (string, bool) {
 	if classified, ok := err.(agentapi.Classified); ok {
-		if kind, _ := classified.Classification(); kind == agentapi.Changed {
+		switch kind, cause := classified.Classification(); {
+		case kind == agentapi.Changed:
 			return DeferredSourceChanged, true
+		case kind == agentapi.Limit && cause == agentapi.CauseLookupAllowanceSpent:
+			return DeferredLookupAllowance, true
 		}
 		return "", false
 	}

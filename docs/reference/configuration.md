@@ -293,3 +293,9 @@ Uninstall checks both roles, including stale search definitions while disabled.
 Local-data purge removes the cache and search logs under the lifecycle lock.
 An interrupted setup that manages search needs a current binary for recovery;
 older binaries refuse its journal before changing files or jobs.
+
+When native source authority is also protected, its exact `native-authority-v16`
+outer fence wraps the `search-lifecycle-v16` base fence. Both protections stay
+after disabling indexing or removing native roots; the wrapper grants neither
+capture nor indexing consent. Setup recovery retains the native `files_only`
+fence together with both managed job roles.

@@ -298,7 +298,7 @@ func planSetupRefresh(home, userHome, exe string, cfg config.Config, env Env) (r
 	// The job is left as it is: no file change needs launchd, and none asks
 	// it anything. A new plist for a loaded job is the one thing that does,
 	// since launchd runs the definition it loaded, not the file.
-	plan.journal = setupjournal.Journal{Changes: changes, Plist: definitionPath(definition), Backend: in.sched().Name(), JobRef: string(in.ref()), FilesOnly: true}
+	plan.journal = setupjournal.Journal{NativeAuthorityProtection: cfg.NativeAuthorityProtection, Changes: changes, Plist: definitionPath(definition), Backend: in.sched().Name(), JobRef: string(in.ref()), FilesOnly: true}
 	if plan.plist {
 		if err := planJobRestart(&plan, in, userHome, env); err != nil {
 			return plan, err

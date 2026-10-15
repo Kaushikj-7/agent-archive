@@ -232,9 +232,9 @@ func TestSettledIndexHintsLeaveDatabaseAndDirectoryUnchanged(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	hints, queries, bytes, outcome := indexHints(context.Background(), root)
+	hints, queries, bytes, outcome, refusal := indexHintsDetailed(context.Background(), root)
 	if outcome != "" || len(hints) != 1 || queries != 4 || bytes == 0 || bytes > 4<<20 {
-		t.Fatalf("bounded hint failed: %v %d %d %s", hints, queries, bytes, outcome)
+		t.Fatalf("bounded hint failed: %v %d %d %s; original refusal: %v", hints, queries, bytes, outcome, refusal)
 	}
 	after, err := os.ReadFile(path)
 	if err != nil || string(before) != string(after) {

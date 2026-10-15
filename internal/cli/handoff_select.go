@@ -137,7 +137,7 @@ func selectHandoffSession(env handoffSelectDependencies, home string, opts hando
 		defer stopReads()
 		ctx = catalog.WithReadView(ctx)
 	}
-	boundedFormat := listFormatOptions{Now: env.now(), Projects: projectLabels(cfg), Style: styleFor(stdout), GroupByProject: true, Numbered: true,
+	boundedFormat := listFormatOptions{Now: env.now(), Projects: projectLabels(cfg), Style: styleFor(stdout), GroupByDay: true, Numbered: true,
 		NarrowHint: "Narrow with --harness, or name a session: agent-archive handoff SESSION_ID."}
 	stopBounded := startActivity(stdout, "Finding sessions…")
 	choices, model, used, boundedErr := handoffChoicesForStore(ctx, env, store, home, opts, scope, regs, boundedFormat, stderr, err)
@@ -179,7 +179,7 @@ func selectHandoffSession(env handoffSelectDependencies, home string, opts hando
 		return "", "", false, 1
 	}
 	picker := handoffPicker{localLabels: make(map[localLabelKey]localLabelResult), ctx: ctx, env: env, home: home, harness: opts.harness, source: opts.source, archiveRead: err == nil}
-	format := listFormatOptions{Now: env.now(), Projects: projectLabels(cfg), Style: styleFor(stdout), GroupByProject: true, Numbered: true, Children: childCounts(archived),
+	format := listFormatOptions{Now: env.now(), Projects: projectLabels(cfg), Style: styleFor(stdout), GroupByDay: true, Numbered: true, Children: childCounts(archived),
 		NarrowHint: "Narrow with --harness, or name a session: agent-archive handoff SESSION_ID."}
 	choices = pagedHandoffChoices(scope, format, picker, regs, archived)
 	stop()
@@ -567,7 +567,7 @@ func formatHandoffRows(rows []handoffPickerRow, format listFormatOptions) []list
 	}
 	out := formatSessionRows(sessions, format)
 	for i, row := range rows {
-		out[i].When, out[i].WhenShort = relativeAge(format.Now, row.active), shortWhen(format.Now, row.active)
+		out[i].setActive(format.Now, row.active)
 		if row.notUploaded {
 			out[i].Hint, out[i].ShortHint = notUploadedHint, notUploadedShortHint
 		}

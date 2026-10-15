@@ -118,8 +118,13 @@ func (s *Store) recoverSessionIndexSlice(ctx context.Context, allowance time.Dur
 		return false, err
 	}
 	cursor, complete, err := s.prepareRecoveryCursor(ctx)
-	if err != nil || complete {
-		return complete, err
+	if err != nil {
+		return false, err
+	}
+	if complete {
+		// A complete census stays authoritative for every other key while
+		// discovery's per-key absence requests are certified.
+		return s.certifyRequestedAbsences(ctx, allowance)
 	}
 	revision, err := s.ensureSessionMembershipRevision()
 	if err != nil {
@@ -162,13 +167,9 @@ func (s *Store) recoverSessionIndexSlice(ctx context.Context, allowance time.Dur
 			return false, err
 		}
 	}
-	candidateInventory := make(map[agentmeta.SessionKey][]SubagentCandidate, len(candidates))
-	for _, candidate := range candidates {
-		key, err := agentmeta.NewSessionKey(candidate.Harness.Name, candidate.NativeSessionID)
-		if err != nil {
-			return false, err
-		}
-		candidateInventory[key] = append(candidateInventory[key], candidate)
+	candidateInventory, err := subagentCandidateInventory(candidates)
+	if err != nil {
+		return false, err
 	}
 	entries, err := os.ReadDir(filepath.Join(s.home, "sessions-v1"))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -185,7 +186,7 @@ func (s *Store) recoverSessionIndexSlice(ctx context.Context, allowance time.Dur
 	complete, err = s.applyRecoveryPhase(ctx, &cursor, deadline, len(entries), func(i int) error {
 		entry := entries[i]
 		entries[i] = nil
-		return s.recoverRequestedMiss(ctx, entry, inventory, candidateInventory)
+		return s.recoverRequestedMiss(ctx, entry, inventory, candidateInventory, nil)
 	})
 	if err != nil || !complete {
 		return false, err
@@ -205,6 +206,18 @@ func (s *Store) recoverSessionIndexSlice(ctx context.Context, allowance time.Dur
 		return false, err
 	}
 	return true, nil
+}
+
+func subagentCandidateInventory(candidates []SubagentCandidate) (map[agentmeta.SessionKey][]SubagentCandidate, error) {
+	inventory := make(map[agentmeta.SessionKey][]SubagentCandidate, len(candidates))
+	for _, candidate := range candidates {
+		key, err := agentmeta.NewSessionKey(candidate.Harness.Name, candidate.NativeSessionID)
+		if err != nil {
+			return nil, err
+		}
+		inventory[key] = append(inventory[key], candidate)
+	}
+	return inventory, nil
 }
 
 func (s *Store) applyOrdinaryRecovery(ctx context.Context, cursor *sessionRecoveryCursor, keys []agentmeta.SessionKey, inventory map[agentmeta.SessionKey][]string, deadline time.Time) ([]SubagentCandidate, bool, error) {

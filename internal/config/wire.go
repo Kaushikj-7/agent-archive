@@ -57,7 +57,7 @@ type writerVersion struct {
 // through the known schema_version field. Published older integer decoders
 // reject this object before they can discard unknown authorization fields.
 // Normalize a value copy so edited nested setup drafts retain that fence.
-func (c Config) MarshalJSON() ([]byte, error) {
+func (c Config) marshalBaseJSON() ([]byte, error) {
 	if c.RetentionDays == 0 {
 		c.RetentionProtection = true
 	}
@@ -135,6 +135,12 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 }
 
 func decodeConfig(data []byte, c *Config) (bool, error) {
+	var nativeProtected bool
+	var unwrapErr error
+	data, nativeProtected, unwrapErr = unwrapNativeConfig(data)
+	if unwrapErr != nil {
+		return false, unwrapErr
+	}
 	if err := checkStagedConfigAuthority(data); err != nil {
 		return false, err
 	}
@@ -181,6 +187,12 @@ func decodeConfig(data []byte, c *Config) (bool, error) {
 		if err := validateDiscoveryConfig(Config(plain)); err != nil {
 			return false, err
 		}
+	}
+	if err := Config(plain).validateNativeRoots(); err != nil {
+		return false, err
+	}
+	if (plain.NativeAuthorityProtection || len(plain.NativeRoots) > 0) && !nativeProtected {
+		return false, errors.New("native authority requires its permanent writer fence")
 	}
 	*c = Config(plain)
 	if c.RetentionDays == 0 {
@@ -398,7 +410,7 @@ func writerHasPermissionFloors(writer configWriter) bool {
 	switch writer {
 	case searchLifecycleWriter, generationWriter, codexHistoryWriter, durableStorageWriter, retentionWriter, importStagingWriter, historicalProjectWriter, catalogWriter, publicationCompositionWriter, stagedSelectionWriter, settledCursorSelectionWriter, scopedPickerWriter:
 		return true
-	case legacyDiscoveryWriter, discoveryWriter, legacyCodexWriter, codexWriter:
+	case legacyDiscoveryWriter, discoveryWriter, legacyCodexWriter, codexWriter, nativeAuthorityWriter:
 		return false
 	default:
 		return false
