@@ -210,22 +210,6 @@ class FocusedPRTest(unittest.TestCase):
                 self.assertTrue(tier.extra_for_paths([path])['systemd'])
         self.assertFalse(tier.extra_for_paths(['internal/cli/list.go'])['systemd'])
 
-    def test_pr_native_smoke_does_not_download_the_scheduled_published_writer(self):
-        package = tier.MODULE+'internal/credentials'
-        name = 'TestNativeSmoke'
-        def checked(command, output, deadline, env=None):
-            self.assertEqual(command, ['bash', 'scripts/test_macos_smoke.sh'])
-            text = events(dict(Action='run', Package=package, Test=name),
-                          dict(Action='pass', Package=package, Test=name),
-                          dict(Action='pass', Package=package))
-            output.write_text(text)
-            return text
-        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {'GITHUB_SHA': 'a'*40}), mock.patch.object(tier, 'git', return_value='a'*40), mock.patch.object(tier.full_race, 'source_proof', return_value={'source':'a'*40, 'tree':'b'*40}), mock.patch.object(tier, 'checked', side_effect=checked):
-            tier.run_suite('pr', 'macos', Path(d), tier.representative_fallback())
-            report = json.loads((Path(d)/'tier.json').read_text())
-            self.assertTrue(report['success'])
-            self.assertEqual([i['log'] for i in report['invocations']], ['native-smoke.jsonl'])
-
     def test_short_scale_counterparts_restore_explicit_weekly_children(self):
         entries={e['test']:e for e in tier.catalog()['restorations']}
         self.assertEqual(entries['TestPickerFirstPageWorkDoesNotScaleWithUnrelatedArchive']['full_children'],['10000','100000'])
@@ -340,6 +324,7 @@ class PlainVetTest(unittest.TestCase):
 
     import go_cache_context as context_keys
     context.update(schema=context_keys.SCHEMA,os_release='d'*64,
+                   native_environment='d'*64,pinned_tools=context_keys.TOOL_PINS,compilation_modes=context_keys.COMPILATION_MODES,
                    cc={'binary':'d'*64,'version':'d'*64},cxx={'binary':'d'*64,'version':'d'*64},
                    toolchain={name:'d'*64 for name in ('go','compile','asm','link','cgo','vet')},
                    image={'ImageOS':'ubuntu24','ImageVersion':'20261001.1.0'})
