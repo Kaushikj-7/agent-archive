@@ -493,29 +493,36 @@ func TestKeyPickerKeepsTheDayHeading(t *testing.T) {
 }
 
 // Every screen fits the terminal, however narrow or short, wherever the
-// list is scrolled.
+// list is scrolled or filtered: its day headings (continued or not), the
+// detail strip, the footer line, a notice, and the prompt. Where three rows
+// and their headings do not fit, the strip goes first and then rows, down
+// to one.
 func TestKeyPickerScreensFitTheTerminal(t *testing.T) {
 	t.Parallel()
-	sessions := pickerSessions(40, func(i int) string { return []string{"alpha", "beta", "gamma"}[i%7%3] })
-	for i := range sessions {
-		sessions[i].SkillsUsed = []archive.SkillUse{{Name: "code-review"}}
+	hourly := pickerSessions(40, func(i int) string { return []string{"alpha", "beta", "gamma"}[i%7%3] })
+	for i := range hourly {
+		hourly[i].SkillsUsed = []archive.SkillUse{{Name: "code-review"}}
 	}
-	for _, width := range []int{40, 80, 120} {
-		for _, height := range []int{8, 12, 24} {
-			for _, format := range []listFormatOptions{{}, {GroupByDay: true, Style: textStyle{color: true}}} {
-				_, _, screens := runKeyPicker(t, &sessionPicker{env: fixedTerminal{width, height}}, sessions, format,
-					"\x1b[B", "\x1b[B\x1b[B\x1b[B", "\x1b[6~", "123456789", "\r", "\x1b[F", "\x1b[5~", "\x1b[A", "q")
-				if len(screens) != 9 {
-					t.Fatalf("%dx%d: %d screens", width, height, len(screens))
-				}
-				// A tiny terminal still shows a few rows, as the pages do,
-				// though they take more rows than it has.
-				if height >= 24 || width >= 80 && height >= 12 {
+	// A day group of a row or two each, TODAY to OLDER.
+	daily := pickerSessions(40, oneProject)
+	for i := range daily {
+		daily[i].CapturedAt = pickerNow.Add(-time.Duration(i*i*7) * time.Hour)
+	}
+	for _, sessions := range [][]archive.Metadata{hourly, daily} {
+		for _, width := range []int{40, 60, 80, 120, 200} {
+			for height := 8; height <= 40; height++ {
+				for _, format := range []listFormatOptions{{}, {GroupByDay: true, Style: textStyle{color: true}}} {
+					_, _, screens := runKeyPicker(t, &sessionPicker{env: fixedTerminal{width, height}}, sessions, format,
+						"\x1b[B", "\x1b[B\x1b[B\x1b[B", "\x1b[6~", "123456789", "\r", "\x1b[F", "\x1b[5~", "\x1b[A",
+						"/", "1", "\x1b[B", "\x1b", "q")
+					if len(screens) != 13 {
+						t.Fatalf("%dx%d: %d screens", width, height, len(screens))
+					}
 					checkKeyScreensFit(t, screens, width, height)
-				}
-				for i, screen := range screens {
-					if highlightedRow(screen) == 0 {
-						t.Fatalf("%dx%d screen %d has no highlight:\n%s", width, height, i, screen)
+					for i, screen := range screens {
+						if highlightedRow(screen) == 0 {
+							t.Fatalf("%dx%d screen %d has no highlight:\n%s", width, height, i, screen)
+						}
 					}
 				}
 			}

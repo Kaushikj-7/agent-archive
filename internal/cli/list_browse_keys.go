@@ -343,15 +343,23 @@ const minStripListLines = 5
 // first row.
 //
 // The detail strip is left out first: on a terminal too short for it and
-// minStripListLines of the table, and when the fewest rows a screen shows
-// (minPickerPageRows, with their day headings) would not fit above it.
+// minStripListLines of the table, and when fewer than minPickerPageRows
+// rows (with their day headings) would fit above it. Only then does a
+// screen show fewer rows, down to one, so it never takes more lines than
+// the terminal has while a row fits.
 func (l *sessionPicker) screen(stdout io.Writer, groups []sessionTableGroup, format listFormatOptions, n int, footer, prompt string) listScreen {
 	s := l.measureScreen(stdout, groups, format, n, footer, prompt, n > 0)
-	if s.strip && s.width > 0 && l.tableLines(s.groups, s.format, pickerPage{s.start, s.end}, s.width) > s.budget {
+	if s.strip && s.width > 0 && s.end-s.start < min(minPickerPageRows, s.n-s.start) {
 		s = l.measureScreen(stdout, groups, format, n, footer, prompt, false)
 	}
 	return s
 }
+
+// minKeyScreenRows is the fewest rows a screen of the key browser shows,
+// however short the terminal: unlike a page read by lines, which keeps
+// minPickerPageRows, a screen that took more lines than the terminal has
+// would scroll its heading away.
+const minKeyScreenRows = 1
 
 // measureScreen is screen with the detail strip under the table when strip
 // is set and the terminal has lines for it.
@@ -372,7 +380,7 @@ func (l *sessionPicker) measureScreen(stdout io.Writer, groups []sessionTableGro
 	if s.strip {
 		chrome += detailStripLines
 	}
-	s.budget = max(height-chrome, minPickerPageRows)
+	s.budget = max(height-chrome, minKeyScreenRows)
 	s.bottom = l.lastScreen(s)
 	s.start = min(l.start, s.bottom)
 	l.start = s.start
@@ -381,9 +389,9 @@ func (l *sessionPicker) measureScreen(stdout io.Writer, groups []sessionTableGro
 }
 
 // fit is how many rows, from start, fill the screen's lines: as many as
-// fit, but at least a few.
+// fit, but at least one.
 func (l *sessionPicker) fit(s listScreen, start int) int {
-	lo, hi := 1, min(s.n-start, max(s.budget, minPickerPageRows))
+	lo, hi := 1, min(s.n-start, max(s.budget, minKeyScreenRows))
 	for lo < hi {
 		mid := (lo + hi + 1) / 2
 		if l.tableLines(s.groups, s.format, pickerPage{start, start + mid}, s.width) <= s.budget {
@@ -392,13 +400,13 @@ func (l *sessionPicker) fit(s listScreen, start int) int {
 			hi = mid - 1
 		}
 	}
-	return max(lo, min(minPickerPageRows, s.n-start))
+	return lo
 }
 
 // reachesEnd reports whether the screen starting at start shows the last
 // row.
 func (l *sessionPicker) reachesEnd(s listScreen, start int) bool {
-	return s.n-start <= minPickerPageRows || s.n-start <= s.budget && l.tableLines(s.groups, s.format, pickerPage{start, s.n}, s.width) <= s.budget
+	return s.n-start <= minKeyScreenRows || s.n-start <= s.budget && l.tableLines(s.groups, s.format, pickerPage{start, s.n}, s.width) <= s.budget
 }
 
 // lastScreen is the first row of the screen that shows the last row, the
@@ -409,7 +417,7 @@ func (l *sessionPicker) lastScreen(s listScreen) int {
 	}
 	// Only a screen with fewer rows than lines can reach the end, and one
 	// reaching it still does from a later row.
-	lo, hi := max(s.n-max(s.budget, minPickerPageRows), 0), s.n-1
+	lo, hi := max(s.n-max(s.budget, minKeyScreenRows), 0), s.n-1
 	for lo < hi {
 		mid := (lo + hi) / 2
 		if l.reachesEnd(s, mid) {
@@ -428,7 +436,7 @@ func (l *sessionPicker) previousScreen(s listScreen) int {
 	if s.budget == 0 {
 		return 0
 	}
-	lo, hi := max(s.start-max(s.budget, minPickerPageRows), 0), s.start
+	lo, hi := max(s.start-max(s.budget, minKeyScreenRows), 0), s.start
 	for lo < hi {
 		mid := (lo + hi) / 2
 		if mid+l.fit(s, mid) >= s.start {

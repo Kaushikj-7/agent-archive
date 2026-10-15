@@ -242,7 +242,10 @@ Confirmed by the owner 2026-10-14:
   Esc out of the filter keeps the highlighted row when the unfiltered table
   has it, else the first row; `/` keeps the highlight until words are
   typed. The cursor mark is the existing `▸`. The strip has no
-  "+ N more projects": a session records one project.
+  "+ N more projects": a session records one project. A screen never takes
+  more lines than the terminal has while one row fits: where three rows and
+  their day headings do not fit, the strip goes first, then rows, down to
+  one (the line-mode pages keep their three-row minimum).
 - PR 6: the non-interactive candidate table (`show` / `handoff` words with
   several matches, on stderr) shows the full display title, not
   `listTitle`, following decision 3's piped table: it is what an agent or a
