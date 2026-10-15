@@ -177,7 +177,7 @@ func TestDefaultRepositoryScopeBodyBudgetAndEmptyFallback(t *testing.T) {
 						format := listFormatOptions{Now: a.env.now(), Projects: projectLabelsMust(t, a.env), GroupByProject: true, Children: childCounts(expected)}
 						var expectedOut bytes.Buffer
 						choices := listChoices(scope, format, false, expected, 50, view, "")
-						if err := printListTable(&expectedOut, choices.shown()); err != nil {
+						if err := printListTable(&expectedOut, choices.shown(), 0); err != nil {
 							t.Fatal(err)
 						}
 						if out != expectedOut.String() {

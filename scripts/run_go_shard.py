@@ -436,7 +436,7 @@ def execute_worker_vet(out, deadline, settings):
         (out/'plain-vet-receipt.json').write_text(json.dumps(receipt, indent=2, sort_keys=True)+'\n')
 
 
-def verify_worker_vet(directory, manifest, expected):
+def verify_worker_vet(directory, manifest, expected, *, historical_vet_contract=None):
     import run_ci_tier
     settings = manifest.get('settings', {})
     if type(settings.get('plain_vet_receipt_schema')) is not int or settings['plain_vet_receipt_schema'] != 1:
@@ -450,7 +450,11 @@ def verify_worker_vet(directory, manifest, expected):
     context = settings.get('plain_vet_context')
     import go_cache_context
     try:
-        go_cache_context.validate_context(context)
+        if historical_vet_contract is None:
+            go_cache_context.validate_context(context)
+        else:
+            import historical_vet_contract as old_vet
+            old_vet.validate_context(context, expected, historical_vet_contract, ROOT)
     except go_cache_context.InvalidContext as error:
         raise Failure('worker vet full image/context identity malformed') from error
     if (receipt.get('identity_schema') != 'full-v1'
@@ -467,13 +471,23 @@ def verify_worker_vet(directory, manifest, expected):
     # context above, never the aggregate runner's unrelated native context.
     # The live worker also invokes this canonical verifier with historical=False.
     run_ci_tier.verify_plain_vet(directory, {'plain_vet': receipt}, expected,
-                                digest(context), historical=True, strict_full_context=True)
+                                digest(context), historical=True, strict_full_context=True,
+                                historical_vet_contract=historical_vet_contract)
     if receipt.get('stderr_sha256') != hashlib.sha256((directory/'plain-vet.stderr').read_bytes()).hexdigest():
         raise Failure('worker vet raw stderr mismatch')
 
 
-def reconcile(directory, workers=2, audit_evidence=None, *, expected_source_proof=None, require_plain_vet=False, historical_legacy=False):
+def reconcile(directory, workers=2, audit_evidence=None, *, expected_source_proof=None, require_plain_vet=False, historical_legacy=False, historical_vet_contract=None):
     worker_count(workers)
+    if historical_vet_contract is not None:
+        import historical_vet_contract as old_vet
+        import go_cache_context
+        try:
+            if (not historical_legacy or expected_source_proof is None
+                    or old_vet.resolve(ROOT, expected_source_proof) != historical_vet_contract):
+                raise Failure('historical vet requires explicit measured timing-import authority')
+        except go_cache_context.InvalidContext as error:
+            raise Failure('historical vet measured timing-import authority unavailable') from error
     paths = sorted(Path(directory).glob('**/manifest.json'))
     if len(paths) != workers:
         raise Failure('expected complete worker manifest count')
@@ -530,7 +544,8 @@ def reconcile(directory, workers=2, audit_evidence=None, *, expected_source_proo
                     raise Failure('owned plain vet requires complete independent evidence')
                 audit = run_ci_tier.verify_source_audit(audit_evidence, first['source'],
                     expected_source_proof=expected_source_proof, require_plain_vet=True,
-                    expected_vet_context_sha256=next(iter(contexts)), strict_full_context=True)
+                    expected_vet_context_sha256=next(iter(contexts)), strict_full_context=True,
+                    historical_vet_contract=historical_vet_contract)
             else:
                 audit = run_ci_tier.verify_source_audit(audit_evidence, first['source'],
                     expected_source_proof=expected_source_proof)
@@ -539,7 +554,8 @@ def reconcile(directory, workers=2, audit_evidence=None, *, expected_source_proo
                 if settings.get('plain_vet_source_proof') != audit.get('source_proof'):
                     raise Failure('owned plain vet worker tracked source proof mismatch')
                 if not legacy:
-                    verify_worker_vet(path.parent, manifest, audit['source_proof'])
+                    verify_worker_vet(path.parent, manifest, audit['source_proof'],
+                                      historical_vet_contract=historical_vet_contract)
         except run_ci_tier.Failure as error:
             raise Failure(str(error)) from error
     for manifest in manifests:
