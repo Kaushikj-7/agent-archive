@@ -37,7 +37,10 @@ type browserSpec struct {
 	Search    *contentSearchBrowser
 	LoadOlder *browserLoadAction
 	Notice    string
-	Mode      browserMode
+	// KeysNotice, when set, replaces Notice for a browser reading keys,
+	// whose keys differ from the answers a line-mode prompt takes.
+	KeysNotice string
+	Mode       browserMode
 	// Verb is what Enter does, which leads the heading ("Hand off", "Show").
 	// Empty for none. Lower-cased, it is what the line-mode prompt says
 	// Enter does when the browser picks.
@@ -102,7 +105,11 @@ func runBrowser(ctx context.Context, env sessionBrowserDependencies, p *prompter
 	if spec.LoadOlder == nil {
 		spec.LoadOlder = spec.Choices.loadOlder
 	}
-	list := &sessionPicker{ctx: ctx, older: spec.LoadOlder, boundedNotice: spec.Notice, env: env, clear: redraw, keys: keys, verb: spec.Verb, filter: spec.Query, filtering: spec.Query != "" && keys != nil, contentSearch: spec.Search}
+	notice := spec.Notice
+	if keys != nil && spec.KeysNotice != "" {
+		notice = spec.KeysNotice
+	}
+	list := &sessionPicker{ctx: ctx, older: spec.LoadOlder, boundedNotice: notice, env: env, clear: redraw, keys: keys, verb: spec.Verb, filter: spec.Query, filtering: spec.Query != "" && keys != nil, contentSearch: spec.Search}
 	defer list.stopOperations()
 	var err error
 	if spec.Mode == browseSessions || spec.Mode == browseSearch {

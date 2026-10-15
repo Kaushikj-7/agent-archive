@@ -262,8 +262,10 @@ session's summary replace each other instead of piling up:
   can be loaded, moving down past the last row (↓ or the wheel on it, PgDn
   with it on screen, or End on it) loads the next batch and goes on into it:
   ↓ to the first session loaded, PgDn a screen further, End to the new last
-  row. Esc stops a load that is taking a while. If no older session turns
-  up, the footer says `No older sessions.` Enter shows its
+  row. While a load takes a while, the footer line says so, and Esc stops
+  it. If no older session turns up, the footer says `No older sessions.`,
+  and moving past that end loads nothing more until the list changes (`o`
+  still tries again). Enter shows its
   summary. Under the list, a strip spells out the highlighted session: its
   full title, then its agent, project, PR, subagents, when it was last
   active, and its short ID. A very short window leaves the strip out.

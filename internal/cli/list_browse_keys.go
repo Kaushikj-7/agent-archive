@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -98,6 +99,7 @@ func (l *sessionPicker) pickKeysContext(ctx context.Context, p *prompter, stdout
 		}
 		return question + typed
 	}
+	l.loadingFrame = nil
 	for first := true; ; first = false {
 		if !first && l.clear != nil {
 			l.clear()
@@ -109,27 +111,15 @@ func (l *sessionPicker) pickKeysContext(ctx context.Context, p *prompter, stdout
 		v := l.view(rows, totalMatched, truncated, format)
 		screen := l.filterScreen(stdout, v, prompt())
 		screen, notice = l.continueOlder(stdout, v, screen, prompt(), notice)
-		var frame bytes.Buffer
-		if v.heading != "" {
-			frame.WriteString(oneRow(v.heading, screen.width) + "\n")
-		}
-		groups := highlightGroups(v.groups, l.cursor)
-		if err := printSessionGroups(&frame, pageSessionGroups(groups, pickerPage{screen.start, screen.end}), v.formatFor(screen.width)); err != nil {
-			return listRow{}, false, err
-		}
-		if screen.strip {
-			for _, line := range detailStrip(v.order[screen.cursor], screen.width, format.Style) {
-				frame.WriteString(line + "\n")
-			}
-		}
-		frame.WriteString(l.displayFooter(v.footer, screen.width))
 		bottom := l.footerLine(screen, action)
 		if notice != "" {
 			bottom = oneRow(notice, screen.width)
 		}
-		frame.WriteString(bottom + "\n")
-		frame.WriteString(prompt())
-		terminal.Print(stdout, frame.String())
+		frame, err := l.keysFrame(v, screen, format, bottom, prompt())
+		if err != nil {
+			return listRow{}, false, err
+		}
+		terminal.Print(stdout, frame)
 		notice = ""
 		for {
 			k, err := l.nextBrowserKey()
@@ -145,6 +135,7 @@ func (l *sessionPicker) pickKeysContext(ctx context.Context, p *prompter, stdout
 			}
 			if l.loadsOlder(k, typed, v, screen) {
 				l.loadedOlder = true
+				l.loadingFrame = l.redrawWith(stdout, v, screen, format, prompt())
 				return listRow{}, false, nil
 			}
 			var result listKeyResult
@@ -167,6 +158,7 @@ func (l *sessionPicker) pickKeysContext(ctx context.Context, p *prompter, stdout
 				return listRow{}, false, nil
 			case listToggle:
 				l.toggled = true
+				l.loadingFrame = l.redrawWith(stdout, v, screen, format, prompt())
 				return listRow{}, false, nil
 			case listSubmit:
 				if row, ok := matchBrowseRow(typed, rows); ok {
@@ -187,6 +179,46 @@ func (l *sessionPicker) pickKeysContext(ctx context.Context, p *prompter, stdout
 				break
 			}
 		}
+	}
+}
+
+// keysFrame is the list's screen, drawn for the table v as measured by
+// screen: the heading, the rows on screen, the detail strip, the footer,
+// bottom (the footer line, or a message in its place), and the prompt.
+func (l *sessionPicker) keysFrame(v *pickerView, screen listScreen, format listFormatOptions, bottom, prompt string) (string, error) {
+	var frame bytes.Buffer
+	if v.heading != "" {
+		frame.WriteString(oneRow(v.heading, screen.width) + "\n")
+	}
+	groups := highlightGroups(v.groups, l.cursor)
+	if err := printSessionGroups(&frame, pageSessionGroups(groups, pickerPage{screen.start, screen.end}), v.formatFor(screen.width)); err != nil {
+		return "", err
+	}
+	if screen.strip {
+		for _, line := range detailStrip(v.order[screen.cursor], screen.width, format.Style) {
+			frame.WriteString(line + "\n")
+		}
+	}
+	frame.WriteString(l.displayFooter(v.footer, screen.width))
+	frame.WriteString(bottom + "\n")
+	frame.WriteString(prompt)
+	return frame.String(), nil
+}
+
+// redrawWith returns what draws the list as it is now, the table v as
+// measured by screen, again with a message in place of its footer line
+// (loadingFrame). The screen is cleared first, so the message never
+// pushes the list up a line.
+func (l *sessionPicker) redrawWith(stdout io.Writer, v *pickerView, screen listScreen, format listFormatOptions, prompt string) func(string) {
+	return func(message string) {
+		frame, err := l.keysFrame(v, screen, format, oneRow(message, screen.width), prompt)
+		if err != nil {
+			return
+		}
+		if l.clear != nil {
+			l.clear()
+		}
+		terminal.Print(stdout, frame)
 	}
 }
 
@@ -271,8 +303,9 @@ func (l *sessionPicker) listRune(r rune, screen listScreen, typed string) (strin
 		return "", listStay
 	case typed == "" && r == '/':
 		// The highlight stays where it is until words are typed, so Esc
-		// with none typed comes back to the same row.
-		l.filtering, l.moved = true, true
+		// with none typed comes back to the same row. Moving past the end
+		// loads older rows again afterwards, even where it found none.
+		l.filtering, l.moved, l.olderSpent = true, true, ""
 	case typed == "" && (r == 'n' || r == 'N'):
 		l.move(scrollPageDown, screen)
 	case typed == "" && (r == 'p' || r == 'P'):
@@ -732,9 +765,21 @@ type olderMove struct {
 
 // canLoadOlder reports whether older rows (or a content search's next
 // results) can load: the footer's position then ends in "+", and a move down
-// past the last row loads them.
+// past the last row loads them. A move past an end where a load found none
+// loads nothing (olderSpent).
 func (l *sessionPicker) canLoadOlder() bool {
-	return l.older != nil && (l.contentSearch == nil || l.contentSearch.hasNextPage())
+	if l.older == nil || l.contentSearch != nil && !l.contentSearch.hasNextPage() {
+		return false
+	}
+	return l.olderSpent == "" || l.memo == nil || olderEnd(l.memo) != l.olderSpent
+}
+
+// olderEnd names the end of the table v: how many rows it has, and its last.
+func olderEnd(v *pickerView) string {
+	if len(v.order) == 0 {
+		return "0"
+	}
+	return strconv.Itoa(len(v.order)) + " " + rowIdentity(v.order[len(v.order)-1])
 }
 
 // olderMoveFor is the move k asks for when it cannot go past the rows
@@ -774,6 +819,8 @@ func (l *sessionPicker) continueOlder(stdout io.Writer, v *pickerView, screen li
 		return screen, notice
 	}
 	if len(v.order) <= m.rows {
+		// Moving past this end again loads nothing more.
+		l.olderSpent = olderEnd(v)
 		if l.contentSearch != nil {
 			return screen, "No more results."
 		}

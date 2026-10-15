@@ -11,7 +11,9 @@ follow [Semantic Versioning](https://semver.org/).
   (↓ or the wheel on it, PgDn with it on screen, or End on it) loads the next
   batch and moves on into it, with no `o` to press first (`o` still works).
   The footer's count ends in `+` while more can load (`1–14 of 50+`), says
-  `No older sessions.` when a load finds none, and names `PgUp/PgDn page`.
+  `No older sessions.` when a load finds none (moving past that end then loads
+  nothing more until the list changes), shows `Loading …` in place of the
+  footer line instead of under the prompt, and names `PgUp/PgDn page`.
   Reading lines is unchanged.
 
 - Commands run inside Muse detect its session environment to avoid interactive

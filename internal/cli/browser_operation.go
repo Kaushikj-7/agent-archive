@@ -83,6 +83,8 @@ func (l *sessionPicker) prepareSearchContext(ctx context.Context, rows []listRow
 func (l *sessionPicker) loadOlderContext(ctx context.Context, p *prompter, stdout io.Writer) (bool, error) {
 	l.stopOperations()
 	l.operationCanceled = false
+	redraw := l.loadingFrame
+	l.loadingFrame = nil
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	done := make(chan browserOperationResult, 1)
@@ -103,7 +105,14 @@ func (l *sessionPicker) loadOlderContext(ctx context.Context, p *prompter, stdou
 		}
 	}()
 	typedAhead := l.keys != nil && l.keys.buffered() || l.keys == nil && p.in.Buffered() > 0
-	terminal.Println(stdout, "Loading "+loader.Label+"… Esc cancels")
+	message := "Loading " + loader.Label + "… Esc cancels"
+	if redraw != nil && l.keys != nil {
+		// Reading keys, the list is drawn again with the message as its
+		// footer line, rather than under the prompt, which scrolls it.
+		redraw(message)
+	} else {
+		terminal.Println(stdout, message)
+	}
 	for {
 		select {
 		case result := <-done:

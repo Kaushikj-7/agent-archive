@@ -43,7 +43,8 @@ func runContentSearchBrowser(ctx context.Context, env searchCommandDependencies,
 	s.installRows()
 	input := newTypedInput(opts.stdin)
 	p := input.prompter(stdout)
-	row, picked, code := runBrowser(ctx, env, p, stdout, stderr, browserSpec{Mode: browseSearch, Search: s, Choices: s.choices, Command: "search", Verb: "Read matching passage", Notice: "Content query: " + archive.DisplayLine(opts.query.Text) + "; / filtering disabled. r rerun · o next results. Scope never widens."})
+	query := archive.DisplayLine(opts.query.Text)
+	row, picked, code := runBrowser(ctx, env, p, stdout, stderr, browserSpec{Mode: browseSearch, Search: s, Choices: s.choices, Command: "search", Verb: "Read matching passage", Notice: "Content query: " + query + "; / filtering disabled. r rerun · o next results. Scope never widens.", KeysNotice: "Content query: " + query + "; / filtering disabled. r rerun · ↓ past the end for more results. Scope never widens."})
 	return row, picked, input, code
 }
 

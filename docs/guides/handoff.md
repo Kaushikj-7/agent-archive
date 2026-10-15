@@ -49,8 +49,9 @@ Conflicting identities require the explicit-file path.
 
 The picker initially inspects filtered labels for the newest 50 candidates.
 Scroll past the last row to inspect another 50 (reading lines, answer
-**o · Load older sessions**); clear a key-mode `/` filter with Esc first. Redrawing, scrolling and filtering inspect no additional
-transcripts. Word queries search only loaded previews and report their bounded
+**o · Load older sessions**); clear a key-mode `/` filter with Esc first.
+Redrawing, filtering, and scrolling within the loaded rows inspect no
+additional transcripts. Word queries search only loaded previews and report their bounded
 coverage. A partial label falls back to the first filtered prompt or native ID.
 Discovery inspects at most 10,000 files, with a cumulative 64 MiB discovery and
 preview read budget per invocation. After header inspection finishes, unused

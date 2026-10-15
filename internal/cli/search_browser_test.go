@@ -66,6 +66,10 @@ func TestSearchBrowserKeysAndLinesKeepExactBodyReference(t *testing.T) {
 			if !strings.Contains(strings.ReplaceAll(out, "\n", ""), jsonReference.Source.Reference.SHA256) {
 				t.Fatalf("terminal wrapped source identity differs from JSON: %s", out)
 			}
+			// Reading keys, the next results load past the end, not with o.
+			if keyed == strings.Contains(out, "o next results") || keyed != strings.Contains(out, "r rerun · ↓ past the end for more results") {
+				t.Errorf("next results named for the wrong mode: %s", out)
+			}
 			if strings.Contains(out, "words to filter") || strings.Contains(out, "/ filter ·") {
 				t.Fatalf("metadata filter exposed: %s", out)
 			}

@@ -153,10 +153,15 @@ func TestKeyPickerKeysDuringALoadDoNotLoadAgain(t *testing.T) {
 	positions, rows, screens := olderScreens(t, &sessionPicker{}, table.choices,
 		"\x1b[F", "\x1b[B", later(50*time.Millisecond, "\x1b[B"), later(50*time.Millisecond, "\x1b[B\x1b[B"), later(400*time.Millisecond, "q"))
 	checkOlderScreens(t, positions, rows,
-		[]string{"1–12 of 20+", "9–20 of 20+", "10–21 of 40+"},
-		[]int{1, 20, 21}, screens)
+		// While it loads, the list is drawn again with the loading message
+		// as its footer line, above the prompt.
+		[]string{"1–12 of 20+", "9–20 of 20+", "", "10–21 of 40+"},
+		[]int{1, 20, 20, 21}, screens)
 	if loads != 1 {
 		t.Fatalf("%d loads", loads)
+	}
+	if !strings.HasSuffix(screens[2], "\nLoading Older sessions… Esc cancels\nNumber or ID to show: ") {
+		t.Fatalf("loading message not in the footer line's place:\n%s", screens[2])
 	}
 }
 
@@ -196,12 +201,13 @@ func TestKeyPickerSaysWhenNoOlderSessionsLoad(t *testing.T) {
 		loads++
 		return loads < 2, nil
 	}}
-	positions, rows, screens := olderScreens(t, &sessionPicker{}, choices, "\x1b[F", "\x1b[B", "\x1b[B", "\x1b[B", "q")
+	positions, rows, screens := olderScreens(t, &sessionPicker{}, choices, "\x1b[F", "\x1b[B", "\x1b[B", "\x1b[B", "o", "q")
 	checkOlderScreens(t, positions, rows,
-		// The notice takes the footer line's place.
-		[]string{"1–5 of 5+", "1–5 of 5+", "", "", "1–5 of 5"},
-		[]int{1, 5, 5, 5, 5}, screens)
-	for i, want := range []bool{false, false, true, true, false} {
+		// The notice takes the footer line's place. Past that end, ↓ loads
+		// nothing again, and the position loses its "+"; o still loads.
+		[]string{"1–5 of 5+", "1–5 of 5+", "", "1–5 of 5", "1–5 of 5", "1–5 of 5"},
+		[]int{1, 5, 5, 5, 5, 5}, screens)
+	for i, want := range []bool{false, false, true, false, false, false} {
 		if got := strings.Contains(screens[i], "\nNo older sessions.\n"); got != want {
 			t.Fatalf("screen %d: notice %v, want %v:\n%s", i, got, want, screens[i])
 		}
@@ -209,6 +215,47 @@ func TestKeyPickerSaysWhenNoOlderSessionsLoad(t *testing.T) {
 	if loads != 2 {
 		t.Fatalf("%d loads", loads)
 	}
+}
+
+// After a load past the end that found nothing, opening the filter line
+// lets a move past the end load again, and rows loaded make a new end.
+func TestKeyPickerLoadsPastAnEmptyEndAgainAfterAChange(t *testing.T) {
+	t.Parallel()
+	loads := 0
+	choices := rowChoices(formatSessionRows(pickerSessions(5, oneProject), listFormatOptions{Numbered: true}), listFormatOptions{Now: pickerNow, Numbered: true})
+	choices.loadOlder = &browserLoadAction{Label: "Older sessions", Load: func() (bool, error) {
+		loads++
+		return true, nil
+	}}
+	positions, rows, screens := olderScreens(t, &sessionPicker{}, choices, "\x1b[F", "\x1b[B", "\x1b[B", "/", "\x1b", "\x1b[B", "q")
+	checkOlderScreens(t, positions, rows,
+		[]string{"1–5 of 5+", "1–5 of 5+", "", "1–5 of 5", "1–5 of 5", "1–5 of 5+", ""},
+		[]int{1, 5, 5, 5, 5, 5, 5}, screens)
+	if loads != 2 {
+		t.Fatalf("%d loads:\n%s", loads, strings.Join(screens, "\n----\n"))
+	}
+	// So does changing the scope, though the other scope's rows end on the
+	// same row.
+	loads = 0
+	format := listFormatOptions{Now: pickerNow, Numbered: true}
+	choices = newScopeChoices(sessionScope{Label: "app", ProjectIDs: []string{"id-app"}}, format, false, func(sessionScope) scopeView {
+		rows := formatSessionRows(pickerSessions(5, oneProject), format)
+		return scopeView{rows: rows, total: len(rows)}
+	})
+	choices.loadOlder = &browserLoadAction{Label: "Older sessions", Load: func() (bool, error) {
+		loads++
+		return true, nil
+	}}
+	_, _, screens = olderScreens(t, &sessionPicker{}, choices, "\x1b[F", "\x1b[B", "a", "\x1b[F", "\x1b[B", "q")
+	if loads != 2 || !strings.Contains(screens[len(screens)-1], "\nNo older sessions.\n") {
+		t.Fatalf("after a: %d loads:\n%s", loads, strings.Join(screens, "\n----\n"))
+	}
+	// A table whose rows grow has a new end: older rows load past it.
+	table := newOlderTable(60)
+	positions, rows, screens = olderScreens(t, &sessionPicker{}, table.choices, "\x1b[F", "\x1b[B", "\x1b[F", "\x1b[B", "q")
+	checkOlderScreens(t, positions, rows,
+		[]string{"1–12 of 20+", "9–20 of 20+", "10–21 of 40+", "29–40 of 40+", "30–41 of 60"},
+		[]int{1, 20, 21, 40, 41}, screens)
 }
 
 // Esc stops a load that is taking a while: the highlight stays on the last
@@ -222,7 +269,7 @@ func TestKeyPickerEscStopsALoadPastTheEnd(t *testing.T) {
 		return false, ctx.Err()
 	}
 	positions, rows, screens := olderScreens(t, &sessionPicker{}, table.choices, "\x1b[F", "\x1b[B", later(50*time.Millisecond, "\x1b"), later(time.Second, "q"))
-	checkOlderScreens(t, positions, rows, []string{"1–12 of 20+", "9–20 of 20+", "9–20 of 20+"}, []int{1, 20, 20}, screens)
+	checkOlderScreens(t, positions, rows, []string{"1–12 of 20+", "9–20 of 20+", "", "9–20 of 20+"}, []int{1, 20, 20, 20}, screens)
 	if strings.Contains(screens[2], "No older sessions.") {
 		t.Fatalf("a stopped load said none loaded:\n%s", screens[2])
 	}
@@ -298,5 +345,29 @@ func TestKeyPickerFooterLineWithOlderRows(t *testing.T) {
 	l.older, screen.width = nil, 120
 	if got := l.footerLine(screen, "show"); !strings.HasSuffix(got, " 1–14 of 50") {
 		t.Errorf("no older rows: %q", got)
+	}
+}
+
+// Rows loaded need not come after the rows there were: ↓ past the end goes
+// on from the row it left, found again by identity, to the row after it.
+func TestKeyPickerDownPastTheEndFollowsTheRowWhenRowsReorder(t *testing.T) {
+	t.Parallel()
+	sessions := pickerSessions(7, oneProject)
+	format := listFormatOptions{Now: pickerNow, Numbered: true}
+	shown := sessions[1:6]
+	choices := newScopeChoices(sessionScope{Label: "All projects"}, format, false, func(sessionScope) scopeView {
+		rows := formatSessionRows(shown, format)
+		return scopeView{rows: rows, total: len(rows)}
+	})
+	choices.loadOlder = &browserLoadAction{Label: "Older sessions", Load: func() (bool, error) {
+		// A newer session turns up above the rows, and an older one below.
+		shown = sessions
+		choices.built = [2]*scopeChoice{}
+		return false, nil
+	}}
+	positions, rows, screens := olderScreens(t, &sessionPicker{}, choices, "\x1b[F", "\x1b[B", "q")
+	checkOlderScreens(t, positions, rows, []string{"1–5 of 5+", "1–5 of 5+", "1–7 of 7"}, []int{1, 5, 7}, screens)
+	if !strings.Contains(screens[2], cursorMark+" 7  Session number 7") {
+		t.Fatalf("highlight not on the row after the one left:\n%s", screens[2])
 	}
 }
