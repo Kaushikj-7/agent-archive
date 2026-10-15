@@ -47,7 +47,9 @@ func (*readBudgetDeferralError) deferralReason() string { return DeferredReadBud
 // for good. A pass that scans the session without deferring it (it fails
 // otherwise, or succeeds) starts the clock again; a pass that ends before
 // scanning it, or leaves it unopened, leaves the clock running, and fails it
-// once the clock has run for MaxDeferral (leaveForNextPass).
+// once the clock has run for MaxDeferral (leaveForNextPass). A Codex session
+// that failed this way while waiting on the lookup allowance is then
+// retried on a backoff schedule, not on every pass (nextLookupRetry).
 const MaxDeferral = 24 * time.Hour
 
 // DeferralExpiredProblem prefixes the error of a session whose deferral
@@ -57,8 +59,9 @@ var DeferralExpiredProblem = fmt.Sprintf("still not read after %d hours of retri
 // loadDeferredSince reads when each session's run of deferred scans began
 // (state.Status.DeferredSince), why the previous pass deferred each
 // (state.Status.DeferredSessions), where it left each it did not reach
-// (state.Status.UnreachedSessions), and when it ran (state.Status.LastScanAt),
-// from the previous pass's status. A status
+// (state.Status.UnreachedSessions), when it ran (state.Status.LastScanAt),
+// and which sessions are on the lookup allowance's backoff schedule
+// (state.Status.NextRetryAt), from the previous pass's status. A status
 // that cannot be read starts every clock again, delaying a failure by at
 // most MaxDeferral.
 func (p *pass) loadDeferredSince() {
@@ -67,6 +70,7 @@ func (p *pass) loadDeferredSince() {
 		p.priorDeferred = previous.DeferredSessions
 		p.priorUnreached = previous.UnreachedSessions
 		p.priorScanAt = previous.LastScanAt
+		p.priorRetryAt = previous.NextRetryAt
 	}
 }
 

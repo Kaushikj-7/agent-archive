@@ -271,6 +271,14 @@ type Result struct {
 	// failure found before or after the pass's run of sessions) can be here
 	// too; sync counts it as failed only.
 	Unreached map[string]int
+	// RetryLater maps each Codex session this pass held unopened on its
+	// backoff schedule to when its next attempt is due: its wait on the
+	// Codex lookup allowance outlasted MaxDeferral, a pass failed it for
+	// that, and no attempt was due on this pass (or another session took
+	// the one attempt). It is pending and still failing (status carries its
+	// issue), but this pass records no new failure for it, so it is not in
+	// Errors.
+	RetryLater map[string]time.Time
 }
 
 // Run performs one collector pass over every registered session: for each,
@@ -395,6 +403,10 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 		if p.opts.AcceptSession != nil && !p.opts.AcceptSession(reg) {
 			continue
 		}
+		if _, held := p.lookupRetryHeld[reg.ArchiveSessionID]; held {
+			p.leaveForNextPass(p.registrations[i : i+1])
+			continue
+		}
 		if p.codexLookupSpent(reg) {
 			p.startLookupAllowanceWait(reg)
 			p.leaveForNextPass(p.registrations[i : i+1])
@@ -495,6 +507,16 @@ type pass struct {
 	// and deferredAt this pass's (see deferredSince, keepDeferredSince).
 	priorDeferredSince map[string]time.Time
 	deferredAt         map[string]time.Time
+	// priorRetryAt is the previous pass's state.Status.NextRetryAt, and
+	// retryAt this pass's (see scheduleLookupRetry). lookupRetryHeld holds
+	// the sessions on that schedule this pass leaves unopened, with their
+	// next attempt (holdForLookupRetry), and lookupWaiters the requested
+	// Codex sessions waiting on the lookup allowance this pass
+	// (markLookupWaiter).
+	priorRetryAt    map[string]time.Time
+	retryAt         map[string]time.Time
+	lookupRetryHeld map[string]time.Time
+	lookupWaiters   map[string]bool
 	// unreachedAhead counts the sessions this pass has left for the next
 	// one so far, so each later call of leaveForNextPass numbers its
 	// sessions after those.
@@ -592,6 +614,10 @@ func (p *pass) loadWork() error {
 // session the pass never opens is never deferred, so without this one left
 // unopened on every pass would wait as queued for good, never reported.
 // It stays in Result.Unreached, so the next pass still knows its place.
+// When it was waiting on the Codex lookup allowance, it goes on the backoff
+// schedule (scheduleLookupRetry). A session on that schedule with no
+// attempt this pass is held instead (holdForLookupRetry): no failure, and
+// not in Result.Unreached.
 func (p *pass) leaveForNextPass(rest []archive.SessionRegistration) {
 	for _, reg := range rest {
 		accepted := p.opts.AcceptSession == nil || p.opts.AcceptSession(reg)
@@ -601,6 +627,9 @@ func (p *pass) leaveForNextPass(rest []archive.SessionRegistration) {
 		if p.requests[reg.ArchiveSessionID].Token == "" || !accepted {
 			continue
 		}
+		if p.holdForLookupRetry(reg.ArchiveSessionID) {
+			continue
+		}
 		if p.result.Unreached == nil {
 			p.result.Unreached = map[string]int{}
 		}
@@ -608,6 +637,9 @@ func (p *pass) leaveForNextPass(rest []archive.SessionRegistration) {
 		p.unreachedAhead++
 		if since, running := p.deferredAt[reg.ArchiveSessionID]; running && p.now.Sub(since) >= MaxDeferral {
 			addError(p.result.Errors, reg.ArchiveSessionID, fmt.Errorf("%s: %w", DeferralExpiredProblem, errLeftUnopened))
+			if p.lookupWaiters[reg.ArchiveSessionID] {
+				p.scheduleLookupRetry(reg.ArchiveSessionID, since)
+			}
 		}
 		if !p.durableCounted[reg.ArchiveSessionID] {
 			p.pending++
@@ -635,6 +667,11 @@ func (p *pass) deferScan(id, reason string, err error) {
 	// the session fails it again rather than starting a new run of
 	// "rechecking" passes.
 	p.keepDeferredSince(id, since)
+	if reason == DeferredLookupAllowance && p.requests[id].Token != "" && p.now.Sub(since) >= MaxDeferral {
+		// It fails below; later attempts of a requested session follow
+		// the backoff schedule (orderLookupAllowanceDeferralsLast).
+		p.scheduleLookupRetry(id, since)
+	}
 	if p.result.Errors[id] != nil {
 		// One failure already makes it a failed session; it is counted once.
 		p.fail(id, err)
@@ -723,8 +760,12 @@ func (p *pass) scan(ctx context.Context, reg archive.SessionRegistration) {
 	if err != nil && p.ctx.Err() != nil {
 		// The pass ran out of time (or was cancelled) with this session in
 		// flight. That is not the session failing: its pending publication
-		// is intact and the next pass carries on with it.
+		// is intact and the next pass carries on with it. A session on the
+		// backoff schedule keeps an attempt due for the next pass.
 		p.carryDeferredSince(id)
+		if _, retrying := p.priorRetryAt[id]; retrying {
+			p.keepRetryAt(id, p.now)
+		}
 		p.pending++
 		p.opts.progress(id, false)
 		return
@@ -828,6 +869,8 @@ func (p *pass) saveStatus() error {
 		PendingNativeLinks:     p.result.PendingNativeLinks, NativeLinkPendingReasons: p.result.NativeLinkPendingReasons,
 		DeferredSessions:  p.result.Deferred,
 		DeferredSince:     p.deferredAt,
+		NextRetryAt:       p.retryAt,
+		SessionIssues:     carriedIssues(previous.SessionIssues, p.retryAt, p.result.Errors),
 		UnreachedSessions: p.result.Unreached,
 		WaitingSubagents:  len(p.result.WaitingSubagents),
 		RunningSubagents:  len(p.result.RunningSubagents),
@@ -840,6 +883,25 @@ func (p *pass) saveStatus() error {
 		return fmt.Errorf("save status: %w", err)
 	}
 	return nil
+}
+
+// carriedIssues is the previous pass's issue for each session on the lookup
+// allowance's backoff schedule (retrying) that this pass recorded no failure
+// for (failed): it held the session (Result.RetryLater), or ended with its
+// attempt in flight, so the failure the last attempt recorded still stands.
+// The caller records this pass's own failures beside them (internal/cli's
+// recordSessionIssues).
+func carriedIssues(previous map[string]string, retrying map[string]time.Time, failed map[string]error) map[string]string {
+	var issues map[string]string
+	for id := range retrying {
+		if code := previous[id]; code != "" && failed[id] == nil {
+			if issues == nil {
+				issues = map[string]string{}
+			}
+			issues[id] = code
+		}
+	}
+	return issues
 }
 
 func (o Options) progress(archiveSessionID string, published bool) {

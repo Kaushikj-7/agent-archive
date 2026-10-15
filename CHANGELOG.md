@@ -57,7 +57,14 @@ follow [Semantic Versioning](https://semver.org/).
   such a session nor a stream of new Codex sessions keeps the waiting ones
   from their turn. A waiting session still not read after 24 hours is now
   reported as failed even when the pass leaves it unopened, rather than
-  staying queued with no error.
+  staying queued with no error. From then on it is retried with backoff
+  instead of on every pass: 1 hour after it failed, then 2, then 4, the
+  wait doubling up to a week, and never given up. A pass with a retry due
+  reads it first and, if it still cannot be read, reports it failed again;
+  a pass with none leaves it unopened, so it no longer uses the allowance
+  on every pass, and does not report it again (`sync` counts it as "held
+  for a later retry" and exits 0 for it), while `status` keeps listing it
+  as failed with its next retry time (`status --json`: `next_retry_at`).
 - Stop a new session from waiting for hours behind a long upload queue.
   Each collection pass now starts with the most recently started session
   that was not imported (a session before its own subagents), and gives
