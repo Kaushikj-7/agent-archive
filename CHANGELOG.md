@@ -10,6 +10,10 @@ follow [Semantic Versioning](https://semver.org/).
   context in the shared browser, with next/previous matching passages, explicit
   rerun after index changes, and current-session handoff through existing gates.
   The owned archive skill explains snippets-first retrieval and coverage limits.
+- Add explicit machine-local `setup --yes --search-indexing on|off` consent,
+  an independent bounded search indexing job, and best-effort content-free
+  publication hints after collection releases its lock. Pause and teardown
+  fence running indexing; legacy collector-only lifecycle records stay compatible.
 
 - Search adds bounded JSON, explicit wait/rebuild, source context neighbors and
   existing-only cached readers; queries require explicit project broadening.
@@ -20,7 +24,7 @@ follow [Semantic Versioning](https://semver.org/).
   `search --refresh` now resumes bounded namespace-wide archive catch-up, including
   other-machine metadata/privacy changes and confirmed removals. Coverage reports
   local observation and stable-snapshot discovery separately from indexing gaps.
-  Refresh is manual; no background work is installed.
+  Automatic refresh remains off until explicitly enabled for this machine.
   Refresh now resumes bounded work after interruption, reuses unchanged sources,
   and records retry/backoff state without delaying archive publication.
 

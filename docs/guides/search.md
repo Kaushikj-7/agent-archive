@@ -55,7 +55,8 @@ The private index is under AGENT_ARCHIVE_HOME/search/, partitioned by archive
 destination, installation, destination activation and privacy version. It is
 separate from the metadata cache. No automatic indexing job is installed by these
 commands. Uninstall retains local archive data. To discard searchable text,
-stop search commands and remove that search directory; archive sources remain.
+disable automatic indexing with `setup --yes --search-indexing off`, stop explicit
+refresh commands, and remove that search directory; archive sources remain.
 See [privacy](../security/privacy.md) and
 [engine contracts](../../dev/proposals/content-search-engine.md).
 
@@ -179,3 +180,43 @@ full harness/session ID and archive source. Existing repository, destination and
 launch gates apply. It hands off the authorized current session, which may differ
 from a historical search match. Searching does not authorize indexing, setup,
 refresh or rebuild.
+## Automatic indexing and publication hints
+
+Enable automatic indexing on this machine with
+`agent-archive setup --yes --search-indexing on`; use `off` to disable it.
+The worker may create a fresh index or retry an interrupted empty initial
+creation. An existing old or future schema requires explicit refresh with a
+supported binary; automatic passes and hints never migrate it.
+Omitting this flag preserves the local choice. Fresh setup, pairing and upgrades
+leave automatic indexing off. Setup installs a separate search job on a
+one-minute advisory cadence. A large archive takes multiple bounded passes;
+there is no freshness deadline. Pause waits briefly for an active pass or refuses
+before saving. It stops automatic indexing and reconciliation; explicit
+`search --refresh` remains allowed while paused and never changes consent.
+
+After collection, verification, retention and machine registration release the
+collector lock, a bounded local hint can mark harness/session identities for
+recheck. The hint performs no archive GET, parsing or indexing. It drops when a
+worker/lifecycle change is busy, the cache is absent or old, or the captured
+namespace no longer matches. Periodic reconciliation recovers missed hints.
+
+Coverage reports `pending_rechecks` separately from pending extraction work.
+Hints preserve the real last metadata revision and do not invent a new desired
+version. Historical discovery time (`last_reconciled`) remains unchanged by a
+hint. `last_observed` is the maximum retained settled identity observation or
+discovery time, so it can conservatively decrease while identities await recheck.
+Identity-check completion stays false until those identities have
+been authoritatively rechecked. A normal known-identity sweep either observes
+current metadata (including an unchanged revision) or forgets a confirmed absence.
+It keeps its fair cursor; an identity inserted behind it waits for the next cycle.
+The last observed timestamp is not a historical high-water mark or proof that
+every identity has already been checked at that time.
+
+Disabling retains the cache for offline queries. `uninstall --delete-local-data`
+removes it and its search logs. The permanent lifecycle writer fence remains
+once enabled. Older binaries refuse this configuration during ordinary setup,
+refresh and uninstall, and normal recovery rejects the two-job journal before
+changing jobs or configuration. Use a current binary for recovery. An older
+binary's explicit `setup --abandon-recovery` escape hatch can still rename an
+unreadable journal aside, removing the pending-journal gate while leaving
+application files and jobs as they are.

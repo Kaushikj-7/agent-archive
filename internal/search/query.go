@@ -344,7 +344,7 @@ func (s *Store) readObservation(ctx context.Context, tx *sql.Tx, observation *Ob
 	if err = tx.QueryRowContext(ctx, "SELECT observed,mode,complete_root,seeded,checked_root FROM search_discovery WHERE id=1").Scan(&reconciled, &mode, &complete, &seeded, &checked); err != nil {
 		return err
 	}
-	if err = tx.QueryRowContext(ctx, "SELECT coalesce(max(observed),0) FROM search_observed").Scan(&observed); err != nil {
+	if err = tx.QueryRowContext(ctx, "SELECT coalesce(max(observed),0),(SELECT count(*) FROM search_observed WHERE observed=0) FROM search_observed").Scan(&observed, &observation.Rechecks); err != nil {
 		return err
 	}
 	if reconciled > 0 {
@@ -358,7 +358,7 @@ func (s *Store) readObservation(ctx context.Context, tx *sql.Tx, observation *Ob
 	if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM search_sessions WHERE coalesce(json_array_length(gaps),0)>0").Scan(&gaps); err != nil {
 		return err
 	}
-	observation.IdentityChecksComplete = seeded == 3 && (mode != "catalog" || (checked != "" && checked == complete))
+	observation.IdentityChecksComplete = observation.Rechecks == 0 && seeded == 3 && (mode != "catalog" || (checked != "" && checked == complete))
 	observation.Complete = observation.DiscoveryComplete && observation.IdentityChecksComplete && observation.Pending == 0 && gaps == 0
 	if reconciled > 0 || observed > 0 {
 		observation.Limitations = []string{"remote changes after last observation are unknown"}

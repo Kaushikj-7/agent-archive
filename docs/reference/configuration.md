@@ -11,7 +11,7 @@ consistent with each other.
 | Field | Meaning |
 | --- | --- |
 | `mcp_server_names` | Optional map, edited by hand; setup keeps it. Exact recorded MCP server IDs mapped to display names, for example `{"opaque-server-id": "GitHub"}`. Stats uses these labels in terminal output and HTML with names included; JSON preserves each original `name` and adds `display_name`. Unknown UUIDs receive neutral labels rather than guessed service names. |
-| `schema_version` | Shape of this file. Currently `1`. |
+| `schema_version` | Shape and permanent writer capabilities of this file. Legacy configurations use `1`; protected capabilities use a versioned object. Search opt-in permanently requires the search lifecycle writer (version 16), including after disabling. Older binaries refuse it safely. |
 | `machine_id` | This machine's random identity, written into every session it captures. Kept across reconfiguration, and copied with the data directory by Migration Assistant, a backup restore, or a VM or container clone; see [multiple machines](../guides/multiple-machines.md#migration-assistant-and-time-machine-macos) and [on Linux](../guides/multiple-machines.md#cloned-machines-on-linux). |
 | `host_id` | Linux only: a digest of the machine ID (`/etc/machine-id`) of the machine setup first ran on, recorded once beside `machine_id` and never uploaded. `status` and `setup` warn when it differs from the machine they run on, which means the data directory was copied (a cloned VM or container image). If the original is retired, or the operating system was reinstalled on the same machine, remove the entry and setup records the current machine. Absent on macOS and where there is no machine ID (or only one made anew at every boot). |
 | `allow_network_home` | Linux only: `true` after `agent-archive setup --allow-network-home`, which allows the data directory or the systemd unit directory to be on a network filesystem (NFS, SMB/CIFS and the like), which setup and `setup --refresh` otherwise refuse. Setup records it only while a directory is on one, and drops it when none is. `status` warns of the network filesystem whether or not it is set. Absent otherwise, on macOS always, and in a config from before the field; older binaries ignore it. See [a home directory shared across machines](../guides/multiple-machines.md#a-home-directory-shared-across-machines). |
@@ -34,7 +34,9 @@ consistent with each other.
 | `codex_name_lookup` | Optional `files` (default) or `native`. Native explicitly permits a bounded Codex app-server startup for admitted ordinary session names. Startup can write Codex databases/system skills; desktop coexistence and real authentication are unverified. See [Codex session names](codex-session-names.md). |
 | `skill_evidence` | `none` omits filesystem skill inventory and snapshots; `metadata` uploads skill names and hashes of filtered skill text but no body; `body` uploads filtered SKILL.md snapshots. Fresh setup saves `metadata`. A schema 1 config without this field retains `body` and setup labels it “kept from previous setup”. Skill use detected in a native transcript can still satisfy `require_skill_use` with `none`. |
 | `no_skills` | `true` after `agent-archive setup --no-skills`: setup installs no agent skills (such as `/handoff`) and removes the ones it wrote, and later setup runs keep it. `setup --skills` removes the field. Absent means skills are installed, as in a config from before the field. |
-| `paused` | Set by `pause`, cleared by `resume`. |
+| `search_indexing` | This machine's explicit consent to automatic local content indexing. False or absent by default. Set with `setup --yes --search-indexing on` or `off`; omitting the flag preserves the local choice. Refresh, upgrade and pairing never enable it implicitly. |
+| `search_lifecycle_protection` | Permanent lifecycle writer protection after the first explicit opt-in. Disabling keeps this fence so older setup/uninstall binaries cannot orphan the search job. |
+| `paused` | Set by `pause`, cleared by `resume`. Stops automatic collection, indexing and reconciliation. Pause waits briefly for an active indexing pass or refuses before saving; cached search stays available. Explicit search refresh remains allowed while paused and never enables automatic indexing. |
 | `handoff.args` | Optional, edited by hand; setup keeps it. Per destination (`claude`, `codex`, `cursor`), arguments `handoff --to` passes before any given after `--`, for example `{"codex": ["--model", "o3"]}`. |
 | `handoff.default_to` | Optional, edited by hand. Per source harness, the destination `handoff` offers first, for example `{"claude": "codex"}`. Unknown agent names are refused when the file is read. |
 | `destination_since`, `previous_destinations` | When the current storage destination was configured, and the ones it replaced. Sessions stay with the destination they were published to. |
@@ -274,3 +276,20 @@ historical identities and decisions; pairing cannot overwrite a local disabled
 permission. Destination changes retain previous permissions without granting new
 ones. A historical import never turns an empty live project list into legacy
 catch-all capture authorization.
+
+## Background content indexing
+
+Search indexing is opt-in for each machine. Setup installs a separate search
+LaunchAgent or systemd timer, with its own `search.log` and `search-error.log`.
+The initial cadence is one minute; each bounded pass makes resumable progress.
+Ticks and publication hints are advisory: this is no freshness deadline, and
+large archives require multiple ticks. Missed hints recover through periodic
+reconciliation. Hints contain only destination and harness/session identities;
+they perform bounded local writes after collection, verification, retention and
+registration have returned and released the collector lock.
+
+Disabling removes the owned search job and retains the private disposable cache.
+Uninstall checks both roles, including stale search definitions while disabled.
+Local-data purge removes the cache and search logs under the lifecycle lock.
+An interrupted setup that manages search needs a current binary for recovery;
+older binaries refuse its journal before changing files or jobs.

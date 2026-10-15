@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -11,6 +12,10 @@ import (
 
 // ErrUpgradeRequired requires explicit refresh to migrate an existing index.
 var ErrUpgradeRequired = errors.New("search index needs upgrade; run search --refresh")
+
+// ErrUninitialized identifies a schema-zero file with no application objects.
+// Read callers still require explicit refresh; an opted-in worker may retry initialization.
+var ErrUninitialized = fmt.Errorf("%w: initial index creation was interrupted", ErrUpgradeRequired)
 
 // ErrWorkBusy means another refresh or lifecycle change owns search state.
 var ErrWorkBusy = errors.New("another search refresh is running or lifecycle change owns search state")
@@ -37,6 +42,15 @@ func OpenRead(ctx context.Context, dir, destination string) (*Store, error) {
 	err = db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version)
 	if err == nil && version != schemaVersion {
 		err = ErrUpgradeRequired
+		if version == 0 {
+			var objects int
+			probe := db.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_schema").Scan(&objects)
+			if probe != nil {
+				err = probe
+			} else if objects == 0 {
+				err = ErrUninitialized
+			}
+		}
 	}
 	var actual string
 	if err == nil {

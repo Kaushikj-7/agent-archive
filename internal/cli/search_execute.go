@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -144,17 +145,21 @@ func runContentSearchPass(ctx context.Context, home string, expected config.Conf
 	if err = ctx.Err(); err != nil {
 		return result, err
 	}
-	if setupjournal.TransactionPending(home) {
-		return result, errors.New(recoveryPending(home))
-	}
-	cfg, found, err := config.Load(home)
+	cfg, err := loadSearchPassConfig(home, expected, opts.automatic)
 	if err != nil {
 		return result, err
 	}
-	if !found || cfg.DestinationID() != expected.DestinationID() || cfg.MachineID != expected.MachineID || !cfg.DestinationSince.Equal(expected.DestinationSince) {
-		return result, errors.New("search configuration changed; retry command")
+
+	if opts.automatic {
+		_ = local.TrimLog(filepath.Join(home, "search-error.log"), errorLogMaxBytes, errorLogKeepBytes)
+		_ = local.TrimLog(filepath.Join(home, "search.log"), errorLogMaxBytes, errorLogKeepBytes)
 	}
 	namespace, dir := contentSearchLocation(home, cfg)
+	if opts.automatic {
+		if err = admitAutomaticSearch(ctx, dir, namespace); err != nil {
+			return result, err
+		}
+	}
 	index, err := search.Open(ctx, dir, namespace)
 	if err != nil {
 		return result, err
@@ -212,6 +217,45 @@ func runContentSearchPass(ctx context.Context, home string, expected config.Conf
 	}
 	result.Discovery, result.Progress, result.Observation, result.Complete = discovery, progress, observation, complete
 	return result, err
+}
+
+// admitAutomaticSearch permits fresh initialization, including a first Open
+// interrupted before its atomic schema transaction. Existing versions only
+// migrate through an explicit public refresh/rebuild.
+func admitAutomaticSearch(ctx context.Context, dir, namespace string) error {
+	index, err := search.OpenRead(ctx, dir, namespace)
+	if os.IsNotExist(err) || errors.Is(err, search.ErrUninitialized) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return index.Close()
+}
+
+func loadSearchPassConfig(home string, expected config.Config, automatic bool) (config.Config, error) {
+	if setupjournal.TransactionPending(home) {
+		if automatic {
+			return config.Config{}, errAutomaticSearchSkipped
+		}
+		return config.Config{}, errors.New(recoveryPending(home))
+	}
+	cfg, found, err := config.Load(home)
+	if err != nil {
+		return config.Config{}, err
+	}
+	if automatic && (!found || !cfg.SearchIndexing || !cfg.Archive.Enabled || cfg.Paused) {
+		return config.Config{}, errAutomaticSearchSkipped
+	}
+	namespace, _ := contentSearchLocation(home, cfg)
+	expectedNamespace, _ := contentSearchLocation(home, expected)
+	if !found || namespace != expectedNamespace {
+		if automatic {
+			return config.Config{}, errAutomaticSearchSkipped
+		}
+		return config.Config{}, errors.New("search configuration changed; retry command")
+	}
+	return cfg, nil
 }
 
 func refreshContentSearch(ctx context.Context, home string, cfg config.Config, env searchCommandDependencies, opts contentSearchOptions) (*contentSearchRefresh, *contentSearchCoverage, error) {
@@ -406,7 +450,7 @@ func runSearchIndexCommand(args []string, stdout, stderr io.Writer, env searchCo
 		return runSearchIndexPass(args, stdout, stderr, env)
 	}
 	if isHelpFlag(args[0]) {
-		if err := writeOutput(stdout, []byte("Usage: agent-archive _search-index\n\nRun one bounded search indexing pass. No automatic installation.\n")); err != nil {
+		if err := writeOutput(stdout, []byte("Usage: agent-archive _search-index\n\nRun one bounded search indexing pass when local indexing consent is enabled.\n")); err != nil {
 			return searchCommandError(stderr, err)
 		}
 		return 0
@@ -414,10 +458,32 @@ func runSearchIndexCommand(args []string, stdout, stderr io.Writer, env searchCo
 	return runSearchIndexPass(args, stdout, stderr, env)
 }
 
-func runSearchIndexPass(args []string, stdout, stderr io.Writer, env searchCommandDependencies) int {
+var errAutomaticSearchSkipped = errors.New("automatic search indexing skipped")
+
+func runSearchIndexPass(args []string, _ io.Writer, stderr io.Writer, env searchCommandDependencies) int {
 	fs := env.newCommandFlags("_search-index", stderr)
 	if !fs.parseFlagsOnly(args) {
 		return 2
 	}
-	return executeContentSearch(contentSearchOptions{refresh: true, outputBytes: 262144}, stdout, stderr, env)
+	home, err := env.readHome()
+	if err != nil {
+		return searchCommandError(stderr, err)
+	}
+	cfg, found, err := config.Load(home)
+	if err != nil {
+		return searchCommandError(stderr, err)
+	}
+	if !found || !cfg.SearchIndexing || !cfg.Archive.Enabled || cfg.Paused {
+		return 0
+	}
+	ctx, stop := readCommandContext(env)
+	defer stop()
+	_, err = runContentSearchPass(ctx, home, cfg, env, contentSearchOptions{automatic: true, refresh: true})
+	if errors.Is(err, search.ErrWorkBusy) || errors.Is(err, errAutomaticSearchSkipped) {
+		return 0
+	}
+	if err != nil {
+		return searchCommandError(stderr, err)
+	}
+	return 0
 }

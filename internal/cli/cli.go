@@ -96,6 +96,8 @@ func describeVersion(version string, info *debug.BuildInfo) string {
 // substitute a temporary home directory, a fixed clock, and an in-memory
 // object store. A nil field defaults to the real thing.
 type Env struct {
+	// sessionChangeConsumers replaces only the finite post-pass consumer list in tests.
+	sessionChangeConsumers []sessionChangeConsumer
 	// CodexLabelHost overrides opt-in native hosting; never consulted in files mode.
 	CodexLabelHost agentapi.LabelHostFactory
 	// Agents overrides immutable production composition, including its catalog.

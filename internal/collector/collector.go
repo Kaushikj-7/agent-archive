@@ -221,6 +221,13 @@ func (o Options) minUploadInterval() time.Duration {
 	return 3 * time.Minute
 }
 
+// PublicationCandidate is content-free evidence that a publication completed.
+// Retention or a later error can follow it; consumers must recheck authority.
+type PublicationCandidate struct {
+	Harness          string
+	ArchiveSessionID string
+}
+
 // Result summarizes one Run call. It never includes transcript content.
 // CloseStagedResults ends copied staged diagnostic ownership after all result
 // aliases and diagnostic consumers finish; it is a no-op for legacy results.
@@ -229,6 +236,8 @@ type Result struct {
 
 	Scanned   int
 	Published []string
+	// PublicationCandidates bounds best-effort follow-up identities independently of Published.
+	PublicationCandidates []PublicationCandidate
 	// Skipped lists sessions with nothing new to publish.
 	Skipped []string
 	// Waiting lists sessions whose new evidence is saved and held for the
@@ -692,6 +701,9 @@ func (p *pass) scan(ctx context.Context, reg archive.SessionRegistration) {
 	switch outcome {
 	case outcomePublished:
 		p.result.Published = append(p.result.Published, id)
+		if len(p.result.PublicationCandidates) < 256 {
+			p.result.PublicationCandidates = append(p.result.PublicationCandidates, PublicationCandidate{Harness: reg.Harness.Name, ArchiveSessionID: reg.ArchiveSessionID})
+		}
 		if err := announceSubagent(p.local, reg, published); err != nil {
 			addError(p.result.Errors, id, err)
 			p.pending++

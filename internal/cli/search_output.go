@@ -94,6 +94,7 @@ type contentSearchCoverage struct {
 	Known       int        `json:"known_sessions"`
 	Indexed     int        `json:"indexed_sessions"`
 	Pending     int        `json:"pending_sessions"`
+	Rechecks    int        `json:"pending_rechecks"`
 	Failed      int        `json:"failed_sessions"`
 	Unsupported int        `json:"unsupported_sessions"`
 	Limitations []string   `json:"limitations"`
@@ -147,7 +148,7 @@ func contentSearchCoverageOf(o search.Observation, present bool) *contentSearchC
 	if !present {
 		limitations = append(limitations, "index_missing")
 	}
-	c := &contentSearchCoverage{Scope: "namespace", Present: present, Reconciled: reconciled, Observed: observed, Discovery: o.DiscoveryComplete, Checks: o.IdentityChecksComplete, Complete: o.Complete, Known: o.Known, Indexed: o.Indexed, Pending: o.Pending, Failed: o.Failed, Unsupported: o.Unsupported, Limitations: limitations}
+	c := &contentSearchCoverage{Scope: "namespace", Present: present, Reconciled: reconciled, Observed: observed, Discovery: o.DiscoveryComplete, Checks: o.IdentityChecksComplete, Complete: o.Complete, Known: o.Known, Indexed: o.Indexed, Pending: o.Pending, Rechecks: o.Rechecks, Failed: o.Failed, Unsupported: o.Unsupported, Limitations: limitations}
 
 	return c
 }
@@ -339,6 +340,9 @@ func writeContentSearch(doc contentSearchDocument, opts contentSearchOptions, st
 
 func printContentSearchCoverage(out *bytes.Buffer, c *contentSearchCoverage) {
 	fmt.Fprintf(out, "Index: %d indexed / %d locally known; %d pending, %d failed, %d unsupported.\n", c.Indexed, c.Known, c.Pending, c.Failed, c.Unsupported)
+	if c.Rechecks > 0 {
+		fmt.Fprintf(out, "Identity rechecks pending: %d. Historical discovery remains tied to its last observation.\n", c.Rechecks)
+	}
 	if c.Observed != nil {
 		fmt.Fprintf(out, "Last observed: %s. Remote changes after this time are unknown.\n", c.Observed.UTC().Format(time.RFC3339))
 	} else {

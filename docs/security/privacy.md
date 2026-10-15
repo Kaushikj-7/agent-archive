@@ -371,9 +371,9 @@ projects. Three things follow.
 
 ## What changes on your machine
 
-The `hooks` entry of each included app's settings file, one background job (a
+The `hooks` entry of each included app's settings file, a collector background job (a
 LaunchAgent on macOS; on Linux a systemd user timer and service in
-`~/.config/systemd/user`), two
+`~/.config/systemd/user`), an independent search job only after local opt-in, two
 agent skill files per app location (`agent-archive` and `/handoff`, marked so
 uninstall removes only setup's), local state private to your account
 (transcripts are read in place, not copied), and, for R2, one Keychain item on
@@ -652,7 +652,8 @@ exact-reference context reads use the configured archive provider and existing
 checksum/ownership verification. Cached queries make no archive requests.
 
 Coverage reports the last local observation. A remote deletion or stricter
-privacy policy cannot be known until observed by explicit refresh; context reads
+privacy policy cannot be known until observed by explicit refresh or the opted-in
+periodic worker; context reads
 verify the exact retained reference and never substitute a newer source. Unknown
 privacy provenance is not searchable. No automatic indexing job is installed by
 search commands, and an existing index is not consent to automatic indexing.
@@ -660,6 +661,23 @@ Explicit refresh is allowed while capture is paused.
 
 `search --refresh --rebuild` atomically discards searchable derived state and
 starts bounded catch-up. It is not secure erasure of SQLite/WAL blocks. To remove
-the local search copy, stop search commands before deleting the search directory;
+the local search copy, disable automatic indexing with
+`setup --yes --search-indexing off` and stop explicit search refresh commands before
+deleting the search directory (or use `uninstall --delete-local-data`);
 this does not delete archived sources. See [search](../guides/search.md) and
 [archive cleanup](archive-cleanup.md).
+
+### Optional background search indexing
+
+Automatic search indexing is a machine-local opt-in, off by default. Pairing,
+refresh and upgrade do not opt in. Enabling installs an independent search job;
+it reads retained archive metadata and verified source bundles into the private
+local content index under the same extraction/privacy rules as explicit refresh.
+Collection sends at most 256 content-free harness/session candidates per batch,
+after every publication lock and deferred registration step finishes. The hint
+consumer performs bounded local identity writes only, with no source fetch or
+parsing. Missing, old or busy caches drop hints and reconcile periodically.
+Pause stops automatic indexing/reconciliation after an active pass ends, or
+refuses before changing settings. Explicit refresh remains available while
+paused. Disabling keeps cached text; local-data purge removes the index, its
+SQLite companions and search logs while holding the search lifecycle fence.

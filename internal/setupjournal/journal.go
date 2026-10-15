@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/wangjohn/agent-archive/internal/fileapply"
 	"github.com/wangjohn/agent-archive/internal/local"
@@ -69,6 +70,8 @@ type Journal struct {
 	// until setup runs. Only an interrupted refresh (a crash or SIGKILL;
 	// refresh absorbs the signals) followed by a downgrade can meet that.
 	FilesOnly bool `json:"files_only,omitempty"`
+	// Jobs is present only for the guarded two-role journal wire format.
+	Jobs []ManagedJob `json:"-"`
 }
 
 // relabeled lists every collector the journal retires under another label.
@@ -93,15 +96,11 @@ func (j Journal) retired() []*LegacyJob {
 // the journal retires, and starts the collector. A failure on the way puts
 // everything back from the journal (Restore); success removes it.
 func Commit(home string, journal Journal, backends Backends) error {
-	// A job the journal could not drive is refused before anything is
-	// recorded or changed, rather than found halfway.
-	var collector target
-	if !journal.FilesOnly {
-		var err error
-		if collector, err = backends.resolve(journal); err != nil {
-			return fmt.Errorf("nothing was changed: %w", err)
-		}
+	jobs, err := backends.managed(home, journal, false)
+	if err != nil {
+		return fmt.Errorf("nothing was changed: %w", err)
 	}
+
 	if err := local.Write(JournalPath(home), journal); err != nil {
 		return err
 	}
@@ -111,33 +110,32 @@ func Commit(home string, journal Journal, backends Backends) error {
 		}
 		return fmt.Errorf("previous installation restored: %w", cause)
 	}
-	if journal.FilesOnly {
-		if err := fileapply.Apply(journal.Changes); err != nil {
-			return fail(err)
-		}
-		if err := os.Remove(JournalPath(home)); err != nil {
-			return fail(err)
-		}
-		return nil
-	}
-	if journal.WasLoaded {
-		if err := collector.unload(); err != nil {
-			return fail(fmt.Errorf("stop previous collector: %w", err))
+	for _, job := range jobs {
+		if job.mutates() && job.WasLoaded {
+			if err := job.target.unload(); err != nil {
+				return fail(fmt.Errorf("stop previous %s: %w", job.Role, err))
+			}
 		}
 	}
 	if err := fileapply.Apply(journal.Changes); err != nil {
 		return fail(err)
 	}
-	if err := retireLegacyJob(journal.Legacy, backends); err != nil {
-		return fail(err)
-	}
-	for _, job := range journal.relabeled() {
-		if err := retireLegacyJob(job, backends); err != nil {
-			return fail(fmt.Errorf("retire the %s: %w", relabeledJobName, err))
+	if !journal.FilesOnly || len(journal.Jobs) > 0 {
+		if err := retireLegacyJob(journal.Legacy, backends); err != nil {
+			return fail(err)
+		}
+		for _, job := range journal.relabeled() {
+			if err := retireLegacyJob(job, backends); err != nil {
+				return fail(fmt.Errorf("retire the %s: %w", relabeledJobName, err))
+			}
 		}
 	}
-	if err := collector.load(); err != nil {
-		return fail(fmt.Errorf("start background collector: %w", err))
+	for _, job := range jobs {
+		if job.starts() {
+			if err := job.target.load(); err != nil {
+				return fail(fmt.Errorf("start background %s: %w", job.Role, err))
+			}
+		}
 	}
 	if err := os.Remove(JournalPath(home)); err != nil {
 		return fail(err)
@@ -161,59 +159,62 @@ func Restore(home string, journal Journal, backends Backends) error {
 		}
 		changed = append(changed, c)
 	}
-	if journal.FilesOnly {
-		if err := fileapply.Rollback(changed); err != nil {
-			return &RecoveryBlockedError{home: home, cause: fmt.Sprintf("the files setup changed could not all be put back (%v)", err)}
-		}
-		return os.Remove(JournalPath(home))
-	}
-	if err := checkLegacyJob(home, journal.Legacy, legacyJobName); err != nil {
-		return err
-	}
-	for _, job := range journal.relabeled() {
-		if err := checkLegacyJob(home, job, relabeledJobName); err != nil {
+
+	if !journal.FilesOnly || len(journal.Jobs) > 0 {
+		if err := checkLegacyJob(home, journal.Legacy, legacyJobName); err != nil {
 			return err
+		}
+		for _, job := range journal.relabeled() {
+			if err := checkLegacyJob(home, job, relabeledJobName); err != nil {
+				return err
+			}
 		}
 	}
 	// So is every job it drives: one it names that cannot be driven here (a
 	// backend this system does not have, a definition no plan of that
 	// backend writes) is never asked about, stopped or started.
-	collector, err := backends.resolve(journal)
+	jobs, err := backends.managed(home, journal, true)
 	if err != nil {
+		var blocked *RecoveryBlockedError
+		if errors.As(err, &blocked) {
+			return blocked
+		}
 		return &RecoveryBlockedError{home: home, cause: fmt.Sprintf("%v, so recovery changed nothing", err)}
 	}
-	state := collector.state()
-	if state.Active() {
-		if err := collector.unload(); err != nil {
-			return collector.blocked(home, "stop the background collector", err)
+	for _, job := range jobs {
+		if !job.mutates() {
+			continue
 		}
-	} else if state == scheduler.Unknown {
-		return &RecoveryBlockedError{home: home, cause: "the background collector's state is unknown, so recovery cannot safely continue; restore access to " + collector.tool() + " and rerun setup"}
+		if job.state.Active() {
+			if err := job.target.unload(); err != nil {
+				return job.target.blocked(home, "stop the background "+string(job.Role), err)
+			}
+		}
 	}
 	if err := fileapply.Rollback(changed); err != nil {
 		return &RecoveryBlockedError{home: home, cause: fmt.Sprintf("the files setup changed could not all be put back (%v)", err)}
 	}
-	if err := collector.removeStranded(journal.Changes); err != nil {
-		return &RecoveryBlockedError{home: home, cause: fmt.Sprintf("what the failed setup left of the background collector's definition could not be removed (%v)", err)}
-	}
-	// A job another installation runs from its own definition is not this
-	// one's to restart: the scheduler refuses to load over it, and stopping
-	// it is not ours to do. The files are back and the record is removed
-	// below, so the journal never outlives the point where anything more
-	// can be done for the job. Setup, run again, refuses to install over
-	// the other installation and says what to do (uninstall it, or set
-	// AGENT_ARCHIVE_HOME).
-	if journal.WasLoaded && state != scheduler.AnotherInstallation {
-		if err := collector.load(); err != nil {
-			return collector.blocked(home, "restart the background collector", err)
+	for _, job := range jobs {
+		if !job.mutates() {
+			continue
+		}
+		if err := job.target.removeStranded(journal.Changes); err != nil {
+			return &RecoveryBlockedError{home: home, cause: fmt.Sprintf("the background %s's definition could not be removed (%v)", job.Role, err)}
+		}
+		if job.WasLoaded && job.state != scheduler.AnotherInstallation {
+			if err := job.target.load(); err != nil {
+				return job.target.blocked(home, "restart the background "+string(job.Role), err)
+			}
 		}
 	}
-	if err := restoreLegacyJob(home, journal.Legacy, legacyJobName, backends); err != nil {
-		return err
-	}
-	for _, job := range journal.relabeled() {
-		if err := restoreLegacyJob(home, job, relabeledJobName, backends); err != nil {
+	if !journal.FilesOnly || len(journal.Jobs) > 0 {
+		if err := restoreLegacyJob(home, journal.Legacy, legacyJobName, backends); err != nil {
 			return err
+		}
+		for _, job := range journal.relabeled() {
+			if err := restoreLegacyJob(home, job, relabeledJobName, backends); err != nil {
+				return err
+			}
 		}
 	}
 	return os.Remove(JournalPath(home))
@@ -270,5 +271,10 @@ func Recover(home string, backends Backends, lockCollector func() (func(), error
 		return err
 	}
 	defer releaseHooks()
+	releaseSearch, err := local.NamedLockWait(home, "search-worker.lock", 2*time.Second)
+	if err != nil {
+		return err
+	}
+	defer releaseSearch()
 	return Restore(home, journal, backends)
 }

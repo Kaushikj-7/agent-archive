@@ -81,7 +81,7 @@ Guide: [Set up capture](../getting-started/setup.md).
 Usage: agent-archive setup [--abandon-recovery] [--verbose]
                [--no-skills | --skills] [--allow-network-home]
        agent-archive setup --yes [--provider r2|s3 ...] [--project DIR ...]
-               [--codex-discovery on|off]
+               [--codex-discovery on|off] [--search-indexing on|off]
                [--codex-capture-scope included-projects|all-projects]
                [--prefix PREFIX] [--retention-days DAYS | --keep-forever]
                [--require-skill-use | --no-require-skill-use]
@@ -168,6 +168,8 @@ An interrupted setup is recovered on the next run.
   --codex-discovery MODE on or off; fresh scripted Codex setup must choose.
                         Reconfiguration keeps an omitted choice. Discovery
                         finds supported sources; recent native copies may count
+  --search-indexing MODE on or off; automatic local content indexing.
+                        Omitted preserves the local choice; fresh setup is off.
   --codex-capture-scope MODE included-projects or all-projects (Codex only).
                         Fresh scripts must choose; default: included projects.
                         Omitted reconfiguration never expands recorded scope.
@@ -210,6 +212,7 @@ Example: printf '%s\n' "$SECRET" | agent-archive setup --yes --provider r2 \
 | `--region` | a value | — |
 | `--require-skill-use` | no value | — |
 | `--retention-days` | a value | `0` |
+| `--search-indexing` | a value | — |
 | `--skill-evidence` | a value | — |
 | `--skills` | no value | — |
 | `--verbose` | no value | — |

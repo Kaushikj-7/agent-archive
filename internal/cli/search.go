@@ -23,6 +23,7 @@ type searchCommandDependencies interface {
 
 type contentSearchOptions struct {
 	stdin       io.Reader
+	automatic   bool
 	query       search.Query
 	refresh     bool
 	session     string
