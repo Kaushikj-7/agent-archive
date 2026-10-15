@@ -24,9 +24,69 @@ follow [Semantic Versioning](https://semver.org/).
   Refresh now resumes bounded work after interruption, reuses unchanged sources,
   and records retry/backoff state without delaying archive publication.
 
+- The session list fits your terminal: every session is one line that never
+  wraps, as `#`, the agent (a colored dot and "Claude", "Codex" or "Cursor"),
+  a readable title cut at a word, the project, the PR and a short time ("2m",
+  "Mon", "Oct 9"), with the project, PR and time kept next to the title. On a
+  narrower terminal the title shrinks first; once keeping the project would
+  leave the title under 36 columns the project column goes, then the PR, then
+  the agent's name. A session active right now reads "live" (green) where its
+  time would be, in place of the dot before its title. The ID leaves the
+  interactive list (you can still type a number or a unique short ID, and
+  `show` has the ID), and the skill and subagent notes leave the title; a
+  session's subagents show as a dim "+4" where the whole title leaves room.
+  In `handoff`, a session not yet uploaded always says so (a dim "· not
+  uploaded"), with its title cut to make room. This applies to `list`, `show`
+  and `handoff`.
+- **Changed for scripts:** piped `list` output (not a terminal) is now one
+  plain line per session, newest first with no project headings, in the
+  columns `WHEN AGENT PROJECT PR ID TITLE`, with WHEN the short time, an
+  empty PR or unknown project as `-`, and TITLE last: the session's full
+  title as recorded (not the shortened title the terminal list shows), never
+  cut, with its subagent note spelled out. The columns are aligned for
+  reading, not for splitting on spaces (WHEN can read "Sep 20"). Anything
+  parsing the old `TITLE PR WHEN HARNESS PROJECT ID` text should switch to
+  `list --json`, which is unchanged and is the stable format. `list
+  --verbose` is unchanged.
+
+## [0.2.2]
+
+Candidate scope prepared on 2026-10-14 for the intended `v0.2.2` tag, which
+had not been created at that preparation snapshot. This record establishes no
+release date or publication. Freeze the final code/documentation SHA and complete
+a fresh exact-commit campaign before tagging.
+Comparison links below name the intended tag and may not resolve before its
+authorized creation.
+Published installation examples remain pinned to v0.1.1 until the tested candidate
+is promoted. Production S3/R2 scoped catalog activation remains refused pending
+provider qualification and credential authority.
+
+Two failed candidate tags remain immutable:
+
+- `v0.2.0` points to `22267534cc85af61858dd53162a5020d90fc815b`.
+  Its [tagged build run](https://github.com/wangjohn/agent-archive/actions/runs/38593942465)
+  passed the unsigned macOS build; Linux attempt 2 passed full Go validation but
+  failed on missing purge prerequisites before building binaries. Publishing was
+  skipped and no release assets were signed or published. PR527 fixed the prerequisites.
+- `v0.2.1` points to `f29fcc98f9a4591aadc91f9ee3b38385c4895007`.
+  Its [tagged build run](https://github.com/wangjohn/agent-archive/actions/runs/38630441745)
+  attempt 1 passed Linux prerequisite setup, then stopped with a runner shutdown
+  and incomplete qualification. macOS passed the first Go invocation and ordinary
+  CLI tests, but 100k qualification remained incomplete; a permission error at a
+  time consistent with the shared deadline does not prove its underlying cause.
+  Neither job built binaries; publishing was skipped, with no signing or promotion.
+
+This candidate retains the original 0.2 scope and includes the Linux prerequisite
+fix and reviewed supervisor cleanup repair below. Neither failed tag may move;
+new source requires a new candidate campaign and tag. Earlier passing campaigns
+and the cleanup repair do not turn either failed tagged gate into a pass.
+
+### Latest development changes
+
 - `show` gives when a session was last active as a weekday ("Mon") or date
   ("Oct 9", "2025-03-01") once it is before today, instead of a count of
   hours or days ago; activity earlier today still reads "2h ago".
+
 - Capture Codex sessions again while Codex is running. A thread's history is
   now read by following Codex's own record of its current rollout back through
   the rollout each one continues from, instead of waiting for a full inventory
@@ -39,23 +99,10 @@ follow [Semantic Versioning](https://semver.org/).
   cannot be read, or does not fit beside the thread's own history, is left out
   rather than failing the thread's capture.
 
-## [0.2.1]
-
-Candidate scope for the intended `v0.2.1` tag; no release date or publication
-is established here. Published installation examples remain pinned to v0.1.1
-until the tested candidate is promoted. Production S3/R2 scoped catalog
-activation remains refused pending provider qualification and credential
-authority.
-
-The original `v0.2.0` candidate tag remains at commit
-`22267534cc85af61858dd53162a5020d90fc815b`. Its
-[tagged build run](https://github.com/wangjohn/agent-archive/actions/runs/38593942465)
-passed the macOS build; Linux attempt 2 passed full Go validation but failed
-on missing purge prerequisites before building binaries. Publishing was skipped;
-no release assets were signed or published. This candidate retains the original
-0.2 scope and includes the Linux prerequisite fix below.
-
-### Latest development changes
+- Preserve the primary validation failure alongside cleanup diagnostics, and
+  continue bounded cleanup of other owned processes after signal, poll or wait
+  errors. Cleanup errors still fail validation; this does not establish a fix
+  for the incomplete tagged 100k qualification or its underlying permission error.
 
 - Provision Linux purge acceptance prerequisites before tagged release
   validation, matching the ordinary CI and Extended Linux jobs.
@@ -1704,7 +1751,7 @@ The first release.
   `credential_process` fails there. See
   [configuration](docs/reference/configuration.md#environment-variables).
 
-[Unreleased]: https://github.com/wangjohn/agent-archive/compare/v0.2.1...HEAD
-[0.2.1]: https://github.com/wangjohn/agent-archive/compare/v0.1.1...v0.2.1
+[Unreleased]: https://github.com/wangjohn/agent-archive/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/wangjohn/agent-archive/compare/v0.1.1...v0.2.2
 [0.1.1]: https://github.com/wangjohn/agent-archive/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/wangjohn/agent-archive/releases/tag/v0.1.0

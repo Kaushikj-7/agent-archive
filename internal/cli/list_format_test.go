@@ -57,7 +57,7 @@ func TestFormatSessionRowsDefaultAndVerbose(t *testing.T) {
 	if r.Title != "Fix flaky OAuth callback tests" || r.ShortID != "abcdef01" || r.When != "2 hours ago" || r.Project != "agent-archive" {
 		t.Fatalf("row=%+v", r)
 	}
-	if r.Model != "claude-opus-5" || r.SkillHint != " · code-review" || r.Origin != "imported" {
+	if r.Model != "claude-opus-5" || r.Skills != "code-review" || r.Hint != "" || r.WhenShort != "Thu" || r.Origin != "imported" {
 		t.Fatalf("row=%+v", r)
 	}
 }
@@ -134,9 +134,9 @@ func TestMatchBrowseRow(t *testing.T) {
 	}
 }
 
-// With color on, a dimmed hint, a dimmed ID, the live dot and the cursor
-// mark take no room of their own: every row's PR, WHEN and ID start in the
-// same column as the header's, hint or not.
+// With color on, the colored agent dot, a dimmed hint, the live dot and the
+// cursor mark take no room of their own: every row's PR and time end in the
+// same column, hint or not.
 func TestColoredCellsKeepTheColumnsAligned(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 1, 2, 1, 0, 0, 0, time.UTC)
@@ -149,14 +149,14 @@ func TestColoredCellsKeepTheColumnsAligned(t *testing.T) {
 		rows[i].PR = "#12"
 	}
 	rows[0].Live, rows[1].Highlight = true, true
-	format, _ := listFormatOptions{Style: textStyle{color: true}, DimID: true, Cursor: true}.withColumns(rows)
+	format, _ := listFormatOptions{Style: textStyle{color: true}, Cursor: true, Width: 100}.withColumns(rows)
 	var out bytes.Buffer
 	if err := printSessionTable(&out, rows, format); err != nil {
 		t.Fatal(err)
 	}
 	lines := strings.Split(strings.TrimRight(out.String(), "\n"), "\n")
-	if len(lines) != 4 || !strings.Contains(lines[1], "\x1b[2m") {
-		t.Fatalf("want a header and three colored rows:\n%s", out.String())
+	if len(lines) != 3 || !strings.Contains(lines[1], "\x1b[2m+18") {
+		t.Fatalf("want three colored rows, a dim count of subagents:\n%s", out.String())
 	}
 	column := func(line, cell string) int {
 		i := strings.Index(line, cell)
@@ -165,12 +165,12 @@ func TestColoredCellsKeepTheColumnsAligned(t *testing.T) {
 		}
 		return visibleWidth(line[:i])
 	}
-	for i, r := range rows {
-		line := lines[i+1]
-		for _, cells := range [][2]string{{"PR", "#12"}, {"WHEN", "just now"}, {"ID", r.ShortID}} {
-			if got, want := column(line, cells[1]), column(lines[0], cells[0]); got != want {
-				t.Errorf("%s starts at column %d, want %d (the header's), in %q", cells[0], got, want, line)
-			}
+	for _, line := range lines {
+		if got, want := column(line, "#12"), column(lines[0], "#12"); got != want {
+			t.Errorf("PR starts at column %d, want %d, in %q", got, want, line)
+		}
+		if got, want := visibleWidth(line), visibleWidth(lines[0]); got != want {
+			t.Errorf("row is %d columns, want %d, in %q", got, want, line)
 		}
 	}
 }
