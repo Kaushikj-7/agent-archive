@@ -32,7 +32,7 @@ jobs:
         env:
           PYTHONDONTWRITEBYTECODE: '1'
         run: python3 -B scripts/run_ci_tier.py --plan --output "$RUNNER_TEMP/extra-plan.json"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ci-tier-plan
           path: ${{ runner.temp }}/extra-plan.json
@@ -67,7 +67,7 @@ jobs:
         run: python3 -B scripts/run_ci_tier.py --tier pr --suite audit --own-plain-vet --seconds 780 --output source-audit-results
       - name: Preserve exact-source plain audit evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: go-source-audit
           path: source-audit-results
@@ -168,7 +168,7 @@ jobs:
         run: echo '::warning::Go cache service failed; current module/source/test verdicts remain authoritative'
       - name: Preserve catalog and execution evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: go-shard-${{ matrix.shard }}
           path: shard-results
@@ -185,7 +185,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ci-tier-plan
           path: ${{ runner.temp }}/tier-plan
@@ -212,7 +212,7 @@ jobs:
           fi
       - name: Preserve source-bound full or focused body evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: go-full-tier
           path: tier-results
@@ -316,7 +316,7 @@ jobs:
           tier=pr
           if [ "$EVENT" != pull_request ] || [ "$FULL_PURGE" = true ]; then tier=full; fi
           python3 scripts/test_purge_recipe.py --workers 2 --shard "$SHARD" --tier "$tier" --evidence "$RUNNER_TEMP/purge-tier.json"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: purge-tier-${{ matrix.shard }}
@@ -341,7 +341,7 @@ jobs:
           NEEDS: ${{ toJSON(needs) }}
         run: python3 -B scripts/ci_lane_verdict.py script-tests
       - name: Download complete purge worker evidence
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: purge-tier-*
           path: ${{ runner.temp }}/purge-evidence
@@ -375,13 +375,13 @@ jobs:
         run: python3 scripts/run_go_shard.py --verdict
       - name: Download all eight successful shard catalogs
         if: github.event_name == 'pull_request'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: go-shard-*
           path: shard-evidence
       - name: Download required plain source audit evidence
         if: github.event_name == 'pull_request'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: go-source-audit
           path: ${{ runner.temp }}/source-audit-evidence
@@ -394,11 +394,11 @@ jobs:
       - name: Reconcile actual source and exhaustive shard coverage
         if: github.event_name == 'pull_request'
         run: python3 scripts/run_go_shard.py --workers 8 --audit-evidence "$RUNNER_TEMP/source-audit-evidence" --plain-vet-owned --reconcile shard-evidence
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ci-tier-plan
           path: ${{ runner.temp }}/tier-plan
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: go-full-tier
           path: full-evidence
@@ -502,7 +502,7 @@ jobs:
         run: |
           go version
           go version | grep -q ' go1\.27\.2 ' || { echo "expected go1.27.2, matching go.mod's toolchain line" >&2; exit 1; }
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ci-tier-plan
           path: ${{ runner.temp }}/tier-plan
@@ -515,7 +515,7 @@ jobs:
           else
             ./scripts/test_macos_smoke.sh --output native-tier-results
           fi
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always() && github.event_name == 'pull_request'
         with:
           name: native-full-tier
