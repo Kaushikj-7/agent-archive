@@ -392,6 +392,53 @@ class ReportTests(unittest.TestCase):
         other.update(id='two', cache_state='cold', cohort='native-platform')
         self.assertEqual(len(timing.report({'schema': 1, 'samples': [sample(), other]})['summaries']), 2)
 
+    def test_inconsistent_identity_cannot_claim_complete_resources_or_batch(self):
+        mutations = (
+            lambda v: v['workflows'][0]['jobs']['jobs'][0].update(run_id=99),
+            lambda v: v['workflows'][0]['jobs']['jobs'][0].update(run_attempt=2),
+            lambda v: v['workflows'][0]['jobs']['jobs'][0].update(head_sha='other'),
+            lambda v: v['workflows'][0]['jobs']['jobs'][0].update(workflow_name='Other'),
+            lambda v: v.update(source='other'),
+            lambda v: v.update(repository='other/repository'),
+            lambda v: v['workflows'][0]['run'].update(repository={'full_name': 'other/repository'}),
+        )
+        for mutate in mutations:
+            value = self.allocated(sample())
+            mutate(value)
+            with self.subTest(mutate=mutate):
+                result = timing.report({'schema': 1, 'samples': [value],
+                    'batches': [{'id': 'invalid', 'sample_ids': ['one']}]})
+                self.assertIsNone(result['samples'][0]['required_completed_at'])
+                self.assertIsNone(result['batches'][0]['first_event_to_last_required_completion_seconds'])
+                for row in (result['samples'][0], result['resources_across_snapshots'], result['batches'][0]):
+                    self.assertFalse(row['inventory_complete'])
+                    self.assertIsNone(row['actual_runner_minutes'])
+                    self.assertIsNone(row['linux_runner_minutes'])
+                    self.assertIsNone(row['peak_simultaneous_linux_jobs'])
+
+    def test_raw_job_identity_is_retained_and_unrelated_runs_never_collapse(self):
+        first = self.allocated(sample())
+        second = copy.deepcopy(first)
+        second['id'] = 'wrong-run'
+        second['workflows'][0]['jobs']['jobs'][0].update(run_id=99)
+        result = timing.report({'schema': 1, 'samples': [first, second]})
+        row = result['samples'][1]['jobs'][0]
+        self.assertEqual(row['run_id'], 99)
+        self.assertEqual(row['snapshot_run_id'], 1)
+        self.assertEqual(result['resources_across_snapshots']['physical_job_rows'], 3)
+        self.assertAlmostEqual(result['resources_across_snapshots']['known_runner_minutes'], 330/60)
+        second['workflows'][0]['jobs']['jobs'][0].update(head_sha='other', workflow_name='Other')
+        row = timing.sample_report(second)['jobs'][0]
+        self.assertEqual((row['source'], row['workflow']), ('other', 'Other'))
+        self.assertEqual((row['snapshot_source'], row['snapshot_workflow']), ('abc', 'Test'))
+
+    def test_malformed_workflow_attempt_is_rejected(self):
+        for attempt in (0, -1, True, '2', None):
+            value = self.allocated(sample())
+            value['workflows'][0]['run']['run_attempt'] = attempt
+            with self.subTest(attempt=attempt), self.assertRaisesRegex(ValueError, 'workflow attempt'):
+                timing.sample_report(value)
+
     def test_pagination_attempt_and_run_identity(self):
         for mutate in (lambda w: w['jobs'].update(total_count=2),
                        lambda w: w['jobs']['jobs'][0].update(run_id=99),

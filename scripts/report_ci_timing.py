@@ -226,10 +226,16 @@ def sample_report(sample):
     for snapshot in sample['workflows']:
         run = snapshot['run']
         name = run['name']
+        if type(run.get('run_attempt', 1)) is not int or run.get('run_attempt', 1) < 1:
+            raise ValueError('workflow attempt must be a positive integer')
         if name in seen or name not in required:
             raise ValueError('duplicate or undeclared workflow')
         seen.add(name)
         identities.append(run['head_sha'])
+        repository = run.get('repository', {}).get('full_name', sample.get('repository'))
+        if sample.get('repository') and repository != sample['repository']:
+            issues.append(name + ': workflow repository mismatch')
+            inventory_complete = False
         if run.get('status') != 'completed' or run.get('conclusion') != 'success':
             issues.append(name + ': workflow not successful/completed')
         raw = snapshot['jobs']
@@ -239,8 +245,16 @@ def sample_report(sample):
         raw = raw['jobs'] if isinstance(raw, dict) else raw
         if any(j.get('run_id', run['id']) != run['id'] for j in raw):
             issues.append(name + ': job belongs to another run')
+            inventory_complete = False
         if any(type(j.get('run_attempt', 1)) is not int or not 1 <= j.get('run_attempt', 1) <= run.get('run_attempt', 1) for j in raw):
             issues.append(name + ': invalid/future job attempt')
+            inventory_complete = False
+        if any(j.get('head_sha', run['head_sha']) != run['head_sha'] for j in raw):
+            issues.append(name + ': job source mismatch')
+            inventory_complete = False
+        if any(j.get('workflow_name', name) != name for j in raw):
+            issues.append(name + ': job workflow mismatch')
+            inventory_complete = False
         if len({j.get('id') for j in raw if j.get('id') is not None}) != sum(j.get('id') is not None for j in raw):
             raise ValueError('duplicate job id within workflow snapshot')
         names = Counter(job['name'] for job in raw)
@@ -278,13 +292,16 @@ def sample_report(sample):
                             if step.get('started_at') and step.get('completed_at') else None)
                 steps.append({'name': step['name'], 'category': category(step['name']),
                               'seconds': duration, 'conclusion': step.get('conclusion')})
-            jobs.append({'workflow': name, 'name': job['name'], 'required': selected,
-                         'id': job.get('id'), 'run_id': run['id'],
-                         'repository': run.get('repository', {}).get('full_name', sample.get('repository')),
+            jobs.append({'workflow': job.get('workflow_name', name), 'snapshot_workflow': name,
+                         'name': job['name'], 'required': selected,
+                         'id': job.get('id'), 'run_id': job.get('run_id', run['id']),
+                         'snapshot_run_id': run['id'],
+                         'repository': repository,
                          'job_attempt': job.get('run_attempt', run.get('run_attempt', 1)),
                          'snapshot_attempt': run.get('run_attempt', 1),
                          'runner_id': job.get('runner_id'), 'platform': platform(job),
-                         'source': run['head_sha'], 'created_at': job.get('created_at'),
+                         'source': job.get('head_sha', run['head_sha']),
+                         'snapshot_source': run['head_sha'], 'created_at': job.get('created_at'),
                          'allocation_steps': [{k: step.get(k) for k in ('name', 'number', 'status', 'conclusion', 'started_at', 'completed_at')} for step in job.get('steps', [])],
                          **readiness(job, run, sample.get('job_readiness', {}).get(str(job.get('id')))),
                          'conclusion': job.get('conclusion'), 'seconds': seconds,
@@ -295,12 +312,17 @@ def sample_report(sample):
                          'runner_name': job.get('runner_name'), 'labels': job.get('labels', []),
                          'steps': steps})
         workflows.append({'name': name, 'id': run['id'], 'attempt': run.get('run_attempt', 1),
-                          'source': run['head_sha'], 'created_at': run['created_at']})
+                          'source': run['head_sha'], 'repository': repository,
+                          'event': run.get('event'), 'created_at': run['created_at']})
     if seen != set(required):
         issues.append('missing required workflows')
         inventory_complete = False
     if set(identities) != {sample['source']}:
         issues.append('workflow source mismatch')
+        inventory_complete = False
+    if len({w['repository'] for w in workflows if w['repository']}) > 1:
+        issues.append('workflow repositories differ')
+        inventory_complete = False
     event = sample.get('event_at')
     if not event:
         issues.append('event timestamp unavailable: run-created latency is a lower bound')

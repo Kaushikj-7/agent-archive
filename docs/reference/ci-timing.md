@@ -506,7 +506,11 @@ name, positive runner identity, exact interval, labels and step evidence, plus a
 later attempt created after the allocation completed. Both records need API job
 IDs and a timed successful executed step within the allocation interval. Alias IDs remain visible.
 A runner ID alone never establishes an alias. Conflicting snapshots for the same
-API job identity fail reporting. Collect **all attempt views**, including failed
+API job identity fail reporting. Inconsistent job/run/source/workflow/attempt or
+repository identities make inventories incomplete, so authoritative resource
+and batch completion totals remain null. Raw job identities and their enclosing
+snapshot identities remain separately visible; an inconsistent run ID is never
+rewritten to create a false physical-allocation alias. Collect **all attempt views**, including failed
 and canceled attempts, to account for total campaign usage; the latest view alone
 can omit work. Older carried-forward job attempts are allowed; future attempts
 are invalid. Auxiliary campaigns such as compilation seeds can use
