@@ -16,7 +16,10 @@ Record operation counts at their actual call sites, including explicit zeroes
 when a budgeted operation does no work. `Start` accepts optional per-construction
 operation ceilings. `Finish` fails the test on an exceeded ceiling or a missing
 budget measurement. For example, a publication constructor permits at most one
-real commit per input metadata row; it still publishes every row. These local
+real commit per input metadata row; it still publishes every row. Constructors
+and private-store clones permit one construction or clone per invocation,
+counted at the call site. The storage ownership contract separately verifies
+that snapshot clones reuse immutable bodies without copying them. These local
 ceilings do not approve larger fixture universes or replace the CI gate's trusted
 admission policy and reviewed baseline.
 

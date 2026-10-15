@@ -82,6 +82,8 @@ func privateCatalogFromLegacy(t *testing.T, source *storagetest.MemoryStore) *ca
 	normalization := fixturecost.Start(t, "private_catalog", "normalize", nil)
 	normalizePrivateCatalogSources(t, source)
 	normalization.Finish()
+	construction := fixturecost.Start(t, "private_catalog", "construct", map[string]int64{"constructors": 1})
+	construction.Add("constructors", 1)
 	raw := &qualifiedCLIStore{storagetest.NewMemoryStore()}
 	objects, err := source.List(t.Context(), "sessions/")
 	if err != nil {
@@ -105,6 +107,7 @@ func privateCatalogFromLegacy(t *testing.T, source *storagetest.MemoryStore) *ca
 			t.Fatal(err)
 		}
 	}
+	construction.Finish()
 	publication := fixturecost.Start(t, "private_catalog", "publication", map[string]int64{"commits": int64(len(metadata))})
 	publication.Add("commits", 0)
 	for _, obj := range metadata {

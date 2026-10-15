@@ -52,7 +52,8 @@ func pickerReaderFixture(t *testing.T) (*Snapshot, *Writer, *qualifiedStore, []a
 	if len(pickerReaderSeed.metadata) == 0 {
 		t.Fatal("picker reader fixture initialization did not complete")
 	}
-	clone := fixturecost.Start(t, "picker_reader", "clone", nil)
+	clone := fixturecost.Start(t, "picker_reader", "clone", map[string]int64{"store_clones": 1})
+	clone.Add("store_clones", 1)
 	memory, err := pickerReaderSeed.objects.Clone(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -82,8 +83,9 @@ func buildPickerReaderFixture(t *testing.T) (*Snapshot, *Writer, *qualifiedStore
 
 func buildPickerReaderFixtureSize(t *testing.T, size int) (*Snapshot, *Writer, *qualifiedStore, []archive.Metadata) {
 	t.Helper()
-	phase := fixturecost.Start(t, "picker_reader", "publication", map[string]int64{"commits": int64(size)})
+	phase := fixturecost.Start(t, "picker_reader", "publication", map[string]int64{"commits": int64(size), "constructors": 1})
 	phase.Add("commits", 0)
+	phase.Add("constructors", 1)
 	w, store := fixture(t)
 	var metadata []archive.Metadata
 	for i := range size {
