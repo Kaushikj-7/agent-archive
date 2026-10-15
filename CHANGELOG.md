@@ -12,6 +12,8 @@ Candidate scope prepared on 2026-10-14 for the intended `v0.2.2` tag, which
 had not been created at that preparation snapshot. This record establishes no
 release date or publication. Freeze the final code/documentation SHA and complete
 a fresh exact-commit campaign before tagging.
+Comparison links below name the intended tag and may not resolve before its
+authorized creation.
 Published installation examples remain pinned to v0.1.1 until the tested candidate
 is promoted. Production S3/R2 scoped catalog activation remains refused pending
 provider qualification and credential authority.
@@ -1706,7 +1708,7 @@ The first release.
   `credential_process` fails there. See
   [configuration](docs/reference/configuration.md#environment-variables).
 
-[Unreleased]: https://github.com/wangjohn/agent-archive/compare/v0.1.1...HEAD
-[0.2.2]: https://github.com/wangjohn/agent-archive/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/wangjohn/agent-archive/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/wangjohn/agent-archive/compare/v0.1.1...v0.2.2
 [0.1.1]: https://github.com/wangjohn/agent-archive/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/wangjohn/agent-archive/releases/tag/v0.1.0
