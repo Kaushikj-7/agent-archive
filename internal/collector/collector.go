@@ -382,20 +382,31 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	p.reconcileNativeLinks()
 	p.observeLabels(ctx)
 	p.repairListingIndex()
-	orderRequests(p.registrations, p.requests)
-	for i, reg := range p.registrations {
+	// Reserve scheduling slots only for sessions eligible for this pass.
+	// Keep the full registration census for diagnostics and maintenance.
+	registrations := p.registrations
+	if p.opts.AcceptSession != nil {
+		registrations = make([]archive.SessionRegistration, 0, len(p.registrations))
+		for _, reg := range p.registrations {
+			if p.opts.AcceptSession(reg) {
+				registrations = append(registrations, reg)
+			}
+		}
+	}
+	orderRequests(registrations, p.requests)
+	for i, reg := range registrations {
 		// A pass past its deadline ends like a stopped one: nothing more can
 		// reach storage, so the rest keep their work rather than each
 		// failing on the expired context.
 		if (p.opts.Stop != nil && p.opts.Stop()) || ctx.Err() != nil {
-			p.leaveForNextPass(p.registrations[i:])
+			p.leaveForNextPass(registrations[i:])
 			break
 		}
 		if p.opts.AcceptSession != nil && !p.opts.AcceptSession(reg) {
 			continue
 		}
 		if p.codexLookupSpent(reg) {
-			p.leaveForNextPass(p.registrations[i : i+1])
+			p.leaveForNextPass(registrations[i : i+1])
 			continue
 		}
 		p.scan(ctx, reg)
