@@ -17,7 +17,7 @@ Prepared 2026-10-13 against main
 This implemented source slice extends
 [listing at scale](listing-at-scale.md) and
 [CLI performance](cli-performance.md). It preserves the product behavior in
-[session finding](../specs/session-finding.md). Production activation remains
+[session finding](implemented/session-finding.md). Production activation remains
 subject to [provider qualification](../catalog/provider-qualification.md) and
 [migration authority](../catalog/migration-and-query.md).
 

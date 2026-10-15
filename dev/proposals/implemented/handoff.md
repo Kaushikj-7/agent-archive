@@ -3,8 +3,8 @@
 Status: implemented (PRs H1–H3). Written 2026-09-22 from a probe of real
 Claude Code, Codex, and Cursor transcripts run through filter 3 / parser
 0.6.0; the versions named below are those of the time (see
-[versions](../maintainers/versions.md) for today's). How to use it:
-[handoff guide](../../docs/guides/handoff.md).
+[versions](../../maintainers/versions.md) for today's). How to use it:
+[handoff guide](../../../docs/guides/handoff.md).
 
 ## Problem
 

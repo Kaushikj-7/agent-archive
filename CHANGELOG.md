@@ -169,6 +169,10 @@ follow [Semantic Versioning](https://semver.org/).
   MACHINE and COMMAND, under a header, with the short time and the agent's
   name.
 
+- Reuse verified ordinary Codex inspection facts during repeated backfill planning.
+  Planning can update a bounded private disposable cache, including with `--dry-run`;
+  archive and configuration changes still require import confirmation.
+
 ## [0.2.2]
 
 Candidate scope prepared on 2026-10-14 for the intended `v0.2.2` tag, which

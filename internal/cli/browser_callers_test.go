@@ -11,7 +11,7 @@ import (
 )
 
 // chooserCallers are the places a person chooses a session (the table of
-// design section 5 of dev/specs/session-finding.md). Each names the chain of
+// design section 5 of dev/proposals/implemented/session-finding.md). Each names the chain of
 // functions from the command down to the one that calls runBrowser: every
 // function in a chain must call the next, and the last must call runBrowser.
 var chooserCallers = []struct {
