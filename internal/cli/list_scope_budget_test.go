@@ -174,7 +174,7 @@ func TestDefaultRepositoryScopeBodyBudgetAndEmptyFallback(t *testing.T) {
 						expected := append([]archive.Metadata(nil), oracle...)
 						sortByActivity(expected)
 						view := listViews{sessions: expected, listed: reader.RecentResult{TotalMatched: len(expected), Complete: true}, full: true, limit: 50}.view
-						format := listFormatOptions{Now: a.env.now(), Projects: projectLabelsMust(t, a.env), GroupByProject: true, Children: childCounts(expected)}
+						format := listFormatOptions{Now: a.env.now(), Projects: projectLabelsMust(t, a.env), GroupByDay: true, Children: childCounts(expected)}
 						var expectedOut bytes.Buffer
 						choices := listChoices(scope, format, false, expected, 50, view, "")
 						if err := printListTable(&expectedOut, choices.shown(), 0); err != nil {
