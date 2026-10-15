@@ -152,7 +152,7 @@ class CandidateCampaignTest(unittest.TestCase):
     def test_candidate_validation_never_restores_shared_go_build_state(self):
         # Candidate evidence must come from fresh source/module verification,
         # not executable build state restored from another workflow's cache.
-        expected = {'test': 10, 'levenshtein': 2, 'extended': 8}
+        expected = {'test': 10, 'levenshtein': 2, 'extended': 9}
         for name, count in expected.items():
             workflow = (ROOT / '.github/workflows' / f'{name}.yml').read_text()
             setup = [step for job in jobs(workflow).values() for step in steps(job)
@@ -189,6 +189,7 @@ class CandidateCampaignTest(unittest.TestCase):
         conditions = {name: job_key(text, 'if') for name, text in jobs(workflow).items()}
         expected = {
             'pr-reference': "github.event_name == 'workflow_dispatch' && inputs.suite == 'pr-reference'",
+            'native-smoke-reference': "github.event_name == 'workflow_dispatch' && inputs.suite == 'native-smoke-reference'",
             'linux-race': "github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'linux'))",
             'macos-full': "(github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release-candidate/')) || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'macos'))",
         }
@@ -297,9 +298,9 @@ class CadenceTest(unittest.TestCase):
         workflow = EXTENDED_YML.read_text()
         self.assertIn("    branches: ['release-candidate/**']", workflow)
         self.assertIn('  schedule:', workflow)
-        self.assertIn('options: [all, macos, linux, fuzz, systemd, pr-reference]', workflow)
+        self.assertIn('options: [all, macos, linux, fuzz, systemd, pr-reference, native-smoke-reference]', workflow)
         found = jobs(workflow)
-        all_jobs = set(found) - {'pr-reference'}
+        all_jobs = set(found) - {'pr-reference', 'native-smoke-reference'}
         for event, ref, suite, expected in (
                 ('pull_request', 'refs/pull/1/merge', '', set()),
                 ('push', 'refs/heads/main', '', set()),
@@ -312,6 +313,7 @@ class CadenceTest(unittest.TestCase):
                 ('workflow_dispatch', 'refs/heads/main', 'fuzz', {'fuzz'}),
                 ('workflow_dispatch', 'refs/heads/main', 'systemd', {'real-systemd'}),
                 ('workflow_dispatch', 'refs/heads/main', 'pr-reference', {'pr-reference'}),
+                ('workflow_dispatch', 'refs/heads/main', 'native-smoke-reference', {'native-smoke-reference'}),
                 ('workflow_dispatch', 'refs/heads/main', 'unknown', set())):
             with self.subTest(event=event, ref=ref, suite=suite):
                 actual = {name for name, text in found.items()
@@ -350,13 +352,20 @@ class CadenceTest(unittest.TestCase):
         self.assertIn('--tier pr --suite macos', smoke)
         self.assertNotIn('--tier full', smoke)
 
-    def test_native_smoke_retains_build_and_runs_short_race_tests(self):
+    def test_native_smoke_uses_the_verified_tier_entry_point(self):
         smoke = (ROOT / 'scripts/test_macos_smoke.sh').read_text()
-        self.assertIn('go build ./...', smoke)
-        self.assertEqual(len(re.findall(r'go test -race -short ', smoke)), 3)
-        self.assertNotRegex(smoke, r'go test -race (?!-short)')
-        self.assertIn('macOS smoke test missing:', smoke)
-        self.assertIn('CGO_ENABLED', smoke)
+        standalone = (ROOT / 'scripts/run_macos_smoke.py').read_text()
+        self.assertIn('exec python3 -B scripts/run_macos_smoke.py "$@"', smoke)
+        self.assertIn("tier.run_suite('pr', 'macos',", standalone)
+        workflow = jobs((ROOT / '.github/workflows/test.yml').read_text())
+        self.assertIn('./scripts/test_macos_smoke.sh --output native-tier-results', workflow['macos-smoke'])
+        self.assertIn('scripts/test_macos_smoke.py', workflow['script-static'])
+        self.assertIn('uses: ./.github/actions/verified-go-cache', workflow['macos-smoke'])
+        extended = jobs((ROOT / '.github/workflows/extended.yml').read_text())
+        daily = next(step for step in steps(extended['macos-full']) if 'name: Native daily platform backstop' in step)
+        for control in ("GOTOOLCHAIN: local", "GOWORK: 'off'", "GOFLAGS: '-mod=readonly'", "GOENV: 'off'"):
+            self.assertIn(control, daily)
+        self.assertEqual(step_key(daily, 'if'), "github.event_name == 'schedule' && github.event.schedule == '17 8 * * 1-6'")
 
     def test_daily_vulnerability_audit_remains_fresh(self):
         workflow = (ROOT / '.github/workflows/levenshtein.yml').read_text()
@@ -378,7 +387,10 @@ class GitIdentityCompatibilityTest(unittest.TestCase):
         }.items():
             self.assertRegex(text, rf'git: upstream-{version}\n            tag: v{version}\n            ref: {commit}\n            expected: git version {version}')
         self.assertIn('git: runner-current', text)
-        self.assertIn('repository: git/git', text)
+        self.assertIn('scripts/pinned_git.py', text)
+        helper = (ROOT/'scripts/pinned_git.py').read_text()
+        self.assertIn('https://github.com/git/git.git', helper)
+        self.assertIn("tag+'^{commit}'", helper)
         self.assertIn('test "$(git --version)" = "$EXPECTED_GIT_VERSION"', text)
         self.assertIn('HOME: ${{ runner.temp }}/git-identity-home', text)
         self.assertIn('XDG_CONFIG_HOME: ${{ runner.temp }}/git-identity-xdg', text)
