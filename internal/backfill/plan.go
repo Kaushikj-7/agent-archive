@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
@@ -18,6 +19,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/trace"
 	"github.com/wangjohn/agent-archive/internal/transcriptio"
 )
 
@@ -196,6 +198,8 @@ func markDuplicates(group []*work) {
 // BuildPlan finds every session on this machine and decides, for each, whether it
 // is imported or why not. It writes nothing.
 func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg config.Config, filters Filters) (Plan, error) {
+	span := trace.Start("backfill planning")
+	defer span.End()
 	var err error
 	filters, err = filters.Canonicalize(env.Discovery)
 	if err != nil {
@@ -299,12 +303,30 @@ func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg con
 	if err := bindRecoveryPolicy(cfg, &plan); err != nil {
 		return Plan{}, err
 	}
+	tracePlanSelection(plan)
 	return plan, nil
+}
+
+// tracePlanSelection records the completed plan without retaining candidates.
+func tracePlanSelection(plan Plan) {
+	if !trace.Enabled() {
+		return
+	}
+	selected := 0
+	for _, candidate := range plan.Candidates {
+		if candidate.Skip == "" {
+			selected++
+		}
+	}
+	trace.Add(trace.SelectedSessions, int64(selected))
+	trace.Add(trace.SkippedSessions, int64(len(plan.Candidates)-selected))
 }
 
 // preparePlanWork performs local discovery, reads transcript heads, and maps
 // working directories to projects before any archive-state classification.
 func preparePlanWork(ctx context.Context, env Environment, cfg config.Config, filters Filters) ([]*work, *resolver, unreadable, int, error) {
+	span := trace.Start("backfill inventory and recovery")
+	defer span.End()
 	var unread unreadable
 	if err := validateProjectMappings(env, cfg, filters.ProjectMappings); err != nil {
 		return nil, nil, unread, 0, err
@@ -447,6 +469,8 @@ func resolveWorkspaceWitnesses(ctx context.Context, env Environment, r *resolver
 // classifyPlanWork asks the archive about native IDs, then reads full
 // transcripts only where the decision requires their contents or start time.
 func classifyPlanWork(ctx context.Context, env Environment, state ArchiveState, filters Filters, items []*work, projectFilter []string, since, until time.Time, workers int) error {
+	span := trace.Start("backfill checking")
+	defer span.End()
 	env.planningProgress(PlanningStageCheckingArchive, 0, 0)
 	sessions := map[agentmeta.SessionKey][]*work{}
 	for _, w := range items {
@@ -488,10 +512,22 @@ func classifyPlanWork(ctx context.Context, env Environment, state ArchiveState, 
 	toFilter := selectAdapterWork(items, since, until)
 	budget := newByteBudget(maxBytesInFlight)
 	completed := env.planningCounter(PlanningStageCheckingSessions, len(toFilter))
+	tracing := trace.Enabled()
+	var activeWorkers atomic.Int64
 	if err := forEach(ctx, workers, toFilter, func(w *work) {
 		defer completed()
+		var waiting time.Time
+		if tracing {
+			waiting = time.Now()
+		}
 		n := budget.acquire(w.t.size)
 		defer budget.release(n)
+		if tracing {
+			started := time.Now()
+			trace.Add(trace.BudgetWaitMicroseconds, started.Sub(waiting).Microseconds())
+			trace.Maximum(trace.PeakWorkers, activeWorkers.Add(1))
+			defer func() { activeWorkers.Add(-1); trace.Add(trace.WorkerMicroseconds, time.Since(started).Microseconds()) }()
+		}
 		runAdapter(ctx, env, w)
 	}); err != nil {
 		return err
@@ -545,6 +581,8 @@ func selectAdapterWork(items []*work, since, until time.Time) []*work {
 // finalizePlanWork decides skip reasons and checks subagents of imported
 // Claude sessions. Its I/O is confined to project existence and subagents.
 func finalizePlanWork(ctx context.Context, env Environment, items []*work, unread *unreadable, since, until, now time.Time, workers int) error {
+	span := trace.Start("backfill final decisions")
+	defer span.End()
 	budget := newByteBudget(maxBytesInFlight)
 	for _, w := range items {
 		if !w.vanished && w.res.root != "" {
@@ -743,6 +781,7 @@ func runAdapter(ctx context.Context, env Environment, w *work) {
 		freshStart = created.UTC()
 		w.c.StartedAt, w.c.StartedAtSource = freshStart, archive.StartedAtSourceFileCreated
 	}
+	trace.Add(trace.AdapterInvocations, 1)
 	filtered, release, err := filterImportSource(ctx, env, w, freshStart)
 	defer release()
 	if err != nil {

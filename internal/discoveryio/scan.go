@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/trace"
 	"io"
 )
 
@@ -16,7 +17,9 @@ func ScanRecords(ctx context.Context, files agentapi.DiscoveryFiles, path string
 		return err
 	}
 	defer func() { err = errors.Join(err, f.Close()) }()
-	reader := bufio.NewReaderSize(io.LimitReader(f, headScanLimit), 64*1024)
+	input, finish := trace.CountReads(io.LimitReader(f, headScanLimit), trace.HeaderBytes)
+	defer finish()
+	reader := bufio.NewReaderSize(input, 64*1024)
 	var line []byte
 	tooLong := false
 	for {
