@@ -20,7 +20,7 @@ Historical-only ownership status reconciled 2026-10-12 after #433 merged as
 | [Handoff](handoff.md) | Implemented; [local pre-setup handoff](../proposals/implemented/local-handoff-before-setup.md) extends the original design. |
 | [Agent skills](agent-skill.md) | Implemented; explicit follow-ups and per-app live verification limits remain. |
 | [Session finding](session-finding.md) | PRs 1–8 merged; owner live-check evidence remains unrecorded in the spec. |
-| [Session list UI](session-list-ui.md) | In progress: one-line rows, day groups, cursor and detail strip; PRs 1–6 planned 2026-10-14. |
+| [Session list UI](session-list-ui.md) | Implemented: one-line rows, day groups, cursor and detail strip; PRs 1–6 merged 2026-10-15. Owner live check not recorded. |
 | [Git HEAD](git-head.md) | Implemented session-start commit metadata. |
 | [Eval export](eval-export.md) | Implemented archived/local/bulk export; schema and golden fixtures define the contract. |
 | [Replay sessions](replay-sessions.md) | Implemented replay classification and default-history exclusion. |

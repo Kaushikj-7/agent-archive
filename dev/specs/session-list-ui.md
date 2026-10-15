@@ -1,9 +1,8 @@
 # Session list UI — engineering plan
 
-Status: in progress; planned 2026-10-14, [decisions](#decisions) confirmed the same day.
-PRs 1–4 and 6 are merged (PR 6, remaining callers and `show`, in #560);
-PR 5 (cursor, detail strip, footer) is in #562, so the live check below has
-not run.
+Status: implemented; planned 2026-10-14, [decisions](#decisions) confirmed the same day;
+PRs 1 to 6 merged (#537, #536, #550, #558, #562, #560; the last on 2026-10-15).
+The owner's [live check](#live-check-after-pr-5) is not recorded yet.
 Where this plan and the code differ once PRs merge, the code is the reference
 and differences go under Deviations.
 
