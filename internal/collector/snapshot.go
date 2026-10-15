@@ -268,7 +268,7 @@ func readImportSourceSet(ctx context.Context, reg archive.SessionRegistration, a
 		return archive.SourceBundle{}, nil, err
 	}
 	if selected != nil {
-		*selected = observed.binding
+		*selected = observed.binding.CodexBinding()
 	}
 	bundle, err := archive.NewSourceBundle(reg, adapter, filtered, at, nil)
 	if err != nil {
