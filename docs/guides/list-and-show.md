@@ -427,7 +427,7 @@ way, removed after 7 days and by `uninstall --delete-local-data`. A limit too sm
 step, the header, or the sidecar alone, prints a warning on stderr and as much
 as it can. Nothing here prompts, and without a terminal nothing is paged.
 
-Before setup has run, both commands print `Not set up yet. For sessions already on this machine, try \`agent-archive handoff\`; to start archiving, run \`agent-archive setup\`.` to stderr and exit 1.
+Before setup has run, both commands print ``Not set up yet. For sessions already on this machine, try `agent-archive handoff`; to start archiving, run `agent-archive setup`.`` to stderr and exit 1.
 
 ## Scrolling
 
