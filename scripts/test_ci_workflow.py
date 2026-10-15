@@ -258,9 +258,11 @@ class CadenceTest(unittest.TestCase):
         self.assertIsNone(job_key(found['linux-full'],'if'))
         self.assertIn('--suite extra --extra-plan', found['linux-full'])
         self.assertIn('--tier full --suite linux', found['linux-full'])
-        self.assertIn('shard: [0, 1, 2, 3, 4, 5, 6, 7]', found['linux-short'])
+        self.assertIn('fromJSON(', found['linux-short'])
+        self.assertIn("'{\"workers\":[4],\"shard\":[0,1,2,3]}'", found['linux-short'])
+        self.assertIn("'{\"workers\":[8],\"shard\":[0,1,2,3,4,5,6,7]}'", found['linux-short'])
         self.assertIn('fail-fast: false', found['linux-short'])
-        self.assertIn('python3 -B scripts/run_go_shard.py --workers 8 --plain-audit-owned --plain-vet-owned --shard',found['linux-short'])
+        self.assertIn('python3 -B scripts/run_go_shard.py --workers "$WORKERS" --plain-audit-owned --plain-vet-owned --shard',found['linux-short'])
         self.assertEqual(job_key(found['linux-race'],'if'),'${{ !cancelled() }}')
         self.assertEqual(job_key(found['linux-race'],'needs'),'[linux-short, linux-full, script-static, script-install, script-purge, macos-smoke, source-audit]')
         self.assertIn('--verdict', found['linux-race'])
@@ -302,7 +304,9 @@ class CadenceTest(unittest.TestCase):
         self.assertEqual(setup, [])
         self.assertIn('--plain-vet-owned --reconcile', verifier)
         self.assertIn('scripts/run_ci_tier.py --verify --tier full', verifier)
-        self.assertNotIn('continue-on-error:', verifier)
+        for step in verifier_steps:
+            if 'collect_ci_timing.py' not in step:
+                self.assertNotIn('continue-on-error:', step)
         self.assertIn('--audit-evidence "$RUNNER_TEMP/source-audit-evidence"',found['linux-race'])
         self.assertIn('source-audit',job_key(found['linux-race'],'needs'))
         boundary=(ROOT/'internal/agents/builtin/nativecapture_boundary_test.go').read_text()
@@ -513,7 +517,7 @@ class WorkerQualificationTests(unittest.TestCase):
         self.assertIn('needs: [plan, workers, audit]', found['reconcile'])
         self.assertIn('all(v["result"]=="success"', found['reconcile'])
         production = (ROOT / '.github/workflows/test.yml').read_text()
-        self.assertIn('shard: [0, 1, 2, 3, 4, 5, 6, 7]', production)
+        self.assertIn("'{\"workers\":[8],\"shard\":[0,1,2,3,4,5,6,7]}'", production)
         self.assertIn('github.event.pull_request.number || github.ref', production)
         self.assertIn('cancel-in-progress: true', production)
 

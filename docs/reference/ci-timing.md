@@ -65,7 +65,7 @@ commit). Existing worker manifests and source proofs retain the tested checkout
 identity. Keep those artifacts with the observation; this report does not replace
 source verification or coverage reconciliation.
 
-Allowed cohorts: `source-only`, `cli-catalog`, `native-platform`,
+Allowed cohorts: `unknown` (unclassified and never qualifying), `source-only`, `cli-catalog`, `native-platform`,
 `dependency-toolchain`, `fork-cold-cache`. Assign conservatively from changed
 paths and the existing tier plan; don't silently mix sensitive platform changes
 into the small-source cohort. Use a new `comparable_group` when worker counts,
@@ -485,6 +485,54 @@ subtotal. Older successful snapshots without allocation metadata retain an
 explicit `legacy-success-timestamps` estimate. Required unsuccessful jobs still
 exclude the observation from latency qualification.
 
+## Ancillary runner demand
+
+The Git compatibility job uses one runner and one verified compilation restore
+for three sequential versions: exact upstream 2.30.2, exact upstream 2.39.2 and
+the runner's original Git. Every version executes both original count-one test
+commands with GOMAXPROCS=2 and Go package parallelism 2, in separate test
+processes, PATH/install/configuration/temp directories. A version failure does
+not suppress the other versions. The `git-identity-versions` artifact retains
+all three receipts and raw logs for seven days. Installations, HOME/XDG state
+and test temporary files live outside that artifact root and are removed after
+each version's process group stops; they are not retained diagnostics. A single
+green job without complete version evidence is insufficient qualification. The
+normal production inventory has 24 jobs rather than the prior 28 (Git consolidation removes two;
+local planning and final script aggregation each remove one), with version coverage unchanged.
+
+In normal run 38682572380, the earlier three jobs allocated 112 seconds in
+aggregate, including 39 seconds in their test steps. Sharing setup should reduce
+runner demand and duplicated work, but a 60–75 second combined warm job remains
+a planning estimate until the new topology is measured. Separate cold pinned
+Git compilation from verified cache restores. Do not compare a historical
+three-job cohort with the new one as if only elapsed test work changed.
+
+The Linux final gate still validates every worker's exact source, full compiler
+context, vet receipt, independent source audit, exhaustive raw body evidence and
+focused/full tier evidence. It does not install Go: those validators do not
+execute Go or compare the aggregate machine's unrelated compiler context.
+Both validators were replayed against actual source-bound f69a1bc artifacts from
+run 38682572380 with Go blocked. They passed, while compiler/receipt/source/
+command/terminal/missing-evidence tampering failed. This establishes removal of
+unused installation; it does not qualify a later source revision or predict the
+entire final gate's speedup.
+
+Mac smoke keeps its current build/discovery/package/CLI/sensitive phase timing,
+serial native resource isolation and all assertions. Profile those phases before
+changing them. The three cross-build lanes retain all targets and release
+binary validation: their observed body steps alone totaled 166 seconds, so
+serializing all three would not support the 150-second objective.
+
+The `linux-race` and `cross-build` job gates use
+`${{ !cancelled() }}`: prerequisite failures/skips still reach their fail-closed
+verdicts, but superseded workflows can release runners and their per-PR
+concurrency group. Step-level evidence uploads and cleanup retain `always()`.
+A canceled run never satisfies required CI. During this campaign, Test run
+38689881223 explicitly waited for superseded run 38689498661, whose
+`always()` gates continued after cancellation. This is an observed dependency
+on cancellation completion, not a measured runner-queue duration or quantified
+latency saving. See GitHub's
+[status-function guidance](https://docs.github.com/en/actions/reference/workflows-and-actions/expressions#always).
 ## Throughput and contention
 
 The reporter includes every saved job in Test and Levenshtein, including builds,
@@ -609,54 +657,125 @@ and preserve unknown event/cache states. Validate a chosen production policy
 against at least twenty comparable normal observations rather than creating
 those observations artificially.
 
-## Ancillary runner demand
 
-The Git compatibility job uses one runner and one verified compilation restore
-for three sequential versions: exact upstream 2.30.2, exact upstream 2.39.2 and
-the runner's original Git. Every version executes both original count-one test
-commands with GOMAXPROCS=2 and Go package parallelism 2, in separate test
-processes, PATH/install/configuration/temp directories. A version failure does
-not suppress the other versions. The `git-identity-versions` artifact retains
-all three receipts and raw logs for seven days. Installations, HOME/XDG state
-and test temporary files live outside that artifact root and are removed after
-each version's process group stops; they are not retained diagnostics. A single
-green job without complete version evidence is insufficient qualification. The
-normal production inventory has 24 jobs rather than the prior 28 (Git consolidation removes two;
-local planning and final script aggregation each remove one), with version coverage unchanged.
+## Full PR topology and contention qualification
 
-In normal run 38682572380, the earlier three jobs allocated 112 seconds in
-aggregate, including 39 seconds in their test steps. Sharing setup should reduce
-runner demand and duplicated work, but a 60–75 second combined warm job remains
-a planning estimate until the new topology is measured. Separate cold pinned
-Git compilation from verified cache restores. Do not compare a historical
-three-job cohort with the new one as if only elapsed test work changed.
+Ordinary PRs retain **eight** Linux test workers. Four workers are an experiment,
+not an adopted cost saving. Both configurations execute the same complete-parent
+race/count/CPU/deadline policy, owned plain vet, independent source audit and
+exhaustive raw-evidence reconciliation. Ancillary Test and Levenshtein lanes remain.
 
-The Linux final gate still validates every worker's exact source, full compiler
-context, vet receipt, independent source audit, exhaustive raw body evidence and
-focused/full tier evidence. It does not install Go: those validators do not
-execute Go or compare the aggregate machine's unrelated compiler context.
-Both validators were replayed against actual source-bound f69a1bc artifacts from
-run 38682572380 with Go blocked. They passed, while compiler/receipt/source/
-command/terminal/missing-evidence tampering failed. This establishes removal of
-unused installation; it does not qualify a later source revision or predict the
-entire final gate's speedup.
+For same-repository PRs only, a captured head branch of
+`ci-qualification/workers-4/<campaign>/<replicate>` selects four; the equivalent
+`workers-8` branch explicitly selects eight. Campaign/replicate components contain
+1–40 ASCII letters/digits/hyphens, beginning with a letter/digit. Matching is case
+insensitive, agreeing with GitHub expressions. A malformed reserved same-repository
+branch fails closed. A fork branch cannot select an override. Labels are descriptive
+only; no `labeled`/`unlabeled` triggers or mutable API metadata controls workers.
 
-Mac smoke keeps its current build/discovery/package/CLI/sensitive phase timing,
-serial native resource isolation and all assertions. Profile those phases before
-changing them. The three cross-build lanes retain all targets and release
-binary validation: their observed body steps alone totaled 166 seconds, so
-serializing all three would not support the 150-second objective.
+The fixed matrix, worker cache count/argv and aggregate count are guarded against
+the same captured event policy. After local-plan integration the full expected
+Test plus Levenshtein inventory is 24 jobs with eight workers and 20 with four
+(including two Mac jobs, so Linux inventory is 22/18);
+Git compatibility remains all three version receipts inside one job. Guard receipts record real PR/head/base/ordered
+merge parents/tree/workflow identities. Different merge commits remain different
+SHAs even if independent Git evidence establishes identical trees. Every topology
+must reconcile every worker plus current source audit; `linux-race` stays the
+required stable verdict. No extra planning runner or global PR serialization is
+introduced. Supersession cancellation is still scoped to each PR, so four
+qualification PRs sharing a head commit do not cancel one another.
 
-The `linux-race` and `cross-build` job gates use
-`${{ !cancelled() }}`: prerequisite failures/skips still reach their fail-closed
-verdicts, but superseded workflows can release runners and their per-PR
-concurrency group. Step-level evidence uploads and cleanup retain `always()`.
-A canceled run never satisfies required CI. During this campaign, Test run
-38689881223 explicitly waited for superseded run 38689498661, whose
-`always()` gates continued after cancellation. This is an observed dependency
-on cancellation completion, not a measured runner-queue duration or quantified
-latency saving. See GitHub's
-[status-function guidance](https://docs.github.com/en/actions/reference/workflows-and-actions/expressions#always).
+After component integration, fresh independent review and meaningful local checks,
+the initial bounded experiment is the substantive implementation PR as one
+8-worker member, one 8-worker qualification sibling, and two 4-worker siblings.
+Confirm the remote actually supports these distinct head branches/PR identities.
+A root-owned fixed qualification base branch may point to the implementation
+PR first observed base B0 for the three siblings. Never advance or merge that
+base branch; actual implementation PR still targets main. Preserve the different
+base ref names as real metadata. Keep head commit, base and full tested tree equal where Git permits; retain actual
+workflow/source SHAs, compiler/image/cache cohorts and all raw coverage evidence.
+Begin each same-configuration pair close together, wait for both full pipelines
+before the next configuration, and report actual arrival spacing/background
+traffic. A completed nonoverlapping run is not a simultaneous batch member.
+The implementation PR's own exact candidate/checks alone establish its readiness.
+The existing revive lint command keeps its policy and now records its actual
+resolved `origin/$BASE_REF` SHA and merge-base endpoints before execution. Require
+identical selected diff endpoints, tested trees and policy across the comparison;
+a moving main ref can differ from the fixed sibling base. If that invalidates
+the implementation PR as an 8-worker member, mark the comparison inconclusive,
+retain validated eight and stop; do not automatically purchase more full runs.
+Root may later authorize a justified bounded follow-up with actual evidence/cost.
+Cache branch visibility/hits are separate cohorts, unknown until observed.
+Close every qualification-only sibling **after terminal evidence collection and
+before merging the implementation PR**, so a shared head does not cause GitHub to
+mark those experiment PRs merged automatically. Never merge an experiment sibling.
+
+The initial budget is four complete full pipelines total, three incremental ones.
+The earlier 41.88 Linux runner-minute observation implies approximately 125.64
+incremental Linux runner-minutes plus Mac, solely as a planning envelope before
+these optimizations. Record actual all-attempt allocation and Mac/manual/seed costs
+separately. Do not run a redundant shard-only campaign when full audited runs supply
+that evidence. A failed guard/code check stops the experiment until repaired and
+reviewed. Reverse-order repeats require a new recorded budget justified by initial
+results, not automatic retries. Two batches cannot establish p95 or a causal queue
+saving. Keep production eight when full-pipeline resource/turnaround comparisons
+are inconclusive; a default change requires new review and current CI.
+
+## Partial live summaries and complete offline collection
+
+The existing final Linux aggregate emits a bounded **partial** advisory summary
+using `collect_ci_timing.py`. Only that job gets `actions: read` in addition to
+contents read. It makes GET requests solely to `api.github.com` for this repository,
+rejects redirects, caps pages/requests/response size and uses short network
+timeouts. The diagnostic step has its own one-minute upper bound and runs only
+after successful authoritative checks; its failure cannot override their verdict.
+There is no extra reporting runner, privileged `workflow_run`, artifact execution,
+new scheduler, secret or write permission. Restricted fork tokens may make this
+snapshot unavailable without weakening any test.
+
+The current collector job has no final allocation end while it is executing, and
+the paired workflow may be pending. Summary values are known allocation subtotals
+and observed peaks, not final totals. Whole-pipeline completion, own final usage,
+source/cache cohort and event timestamp remain unknown unless actually evidenced.
+The live snapshot never qualifies p95. Its JSON includes collection time, raw API
+snapshots and topology provenance; the step summary exposes the known subtotals.
+`unknown` source cohort and unknown cache state are explicitly nonqualifying.
+
+Finalize actual completed normal runs with explicit paired run IDs and a retained
+source-verified topology receipt from the guard logs:
+
+```sh
+GH_TOKEN="$READ_ONLY_ACTIONS_TOKEN" python3 -B scripts/collect_ci_timing.py \
+  --topology /path/to/worker-topology.json \
+  --test-run 123 --levenshtein-run 124 \
+  --cohort source-only --cache-state mixed \
+  --output /path/to/pr-observation.json
+```
+
+The token is read from the environment, never an argument or diagnostic value.
+This command provisions no runners. The adapter reuses `report_ci_timing.py`,
+retains every earlier attempt as auxiliary usage, paginates completely and preserves
+strict physical-allocation deduplication. Pairing checks repository, workflow path,
+event, PR number, head repository/branch/SHA and base SHA: sharing a head SHA is not
+sufficient. Missing PR association or ambiguous live peers remain unavailable;
+explicit offline run IDs still must satisfy the exact context. Missing expected
+jobs cannot disappear by deriving inventory from the measured run.
+
+Use `--experiment` on the implementation PR when it participates in the deliberate
+batch; reserved-prefix receipts already identify experiment siblings. Intentional
+experiments are excluded from normal-traffic percentile qualification. `--event-at`
+is permitted only with retained initiating-event telemetry. For a captured genuine
+opened event, use PR creation only after proving it is that exact initiating event;
+never substitute it for synchronization/reopen events. Otherwise omit the argument:
+the terminal report retains only run-created lower-bound latency. Do not fabricate
+normal traffic to fill twenty observations. At least twenty unique comparable
+actual normal observations with adequate event/cache/source evidence are needed
+before the existing reporter can publish a provisional p95.
+
+This work makes no hosted elapsed-time claim from the separate model-family lookup
+optimization: it reduced isolated lookup CPU work, while both local elapsed pairs
+were slower. Four workers, 150 seconds and steady-state savings remain measurement
+decisions, not assumptions embedded in this control.
 
 
 Consumers resolve their own deterministic plan using the existing planner,
@@ -681,6 +800,38 @@ batch turnaround and allocated minutes before claiming a queue or cost benefit.
 No shard waits on a planner, and no capacity or test cadence increases.
 
 
+### Qualification caveat after local plan integration
+
+Before final script-verdict consolidation, removing the standalone tier planner
+reduced total full-pipeline jobs from 26 to 25 at eight workers, but statically initially eligible Linux Test jobs increase
+from 16 to 18, or 18 to 20 including Levenshtein. That intermediate revision used six actual consumer plan
+invocations and full-history fetches to replace one planner allocation; purge has
+two physical consumers. Current event/source guards and aggregate canonical,
+focused, native and purge proof checks remain. Lower total job count is not
+proof of a lower initial burst, fewer runner-minutes, or less queueing. Record
+these costs and actual overlap in the full-pipeline comparison before adopting
+four or claiming throughput improvement.
+
+
+### Captured base versus actual tested merge base
+
+A normal PR may be tested by GitHub on a newer descendant of the base SHA retained
+in its triggering event. This is accepted only with exactly two actual merge
+parents, the second equal to the captured head, and real full-history Git proof
+that `event_base` is an ancestor of the actual first parent `tested_base`. Every
+receipt retains these two distinct values plus actual source/tree/ordered parents;
+it never rewrites the captured event base. Unrelated/reversed/wrong-head parents,
+missing commits or shallow history fail the guard. Source-audit now explicitly
+fetches full history for that proof, an additional fetch cost to include in usage.
+
+The collector's API PR association base is checked against `event_base`, not
+silently against `parents[0]`. The aggregate's independent plan and native/cache
+source guards similarly retain the authentic identities. Accepting this ordinary
+GitHub base race does not qualify differing campaign content: the four/eight
+experiment still independently requires comparable actual tested trees, policies,
+compiler/cache/image cohorts and runtime lint selected diff endpoints. Different
+source SHAs remain different. The main integration also preserves new product
+and test bodies; older coverage or cost artifacts are not relabeled for this tree.
 Tier-plan provenance retains `base` as the recorded PR-event base and
 `tested_base` as the actual first parent of the tested merge. GitHub may build
 against a newer descendant of the event base. Planning requires exactly two
@@ -701,3 +852,18 @@ plan/history checkout while keeping every script body and purge receipt check.
 Initial ready-role counts stay unchanged by this consolidation; it removes a
 later dependent job, not a producer. Measure current CI before attributing a
 specific latency saving to this scheduling change.
+
+
+### Current final-gate inventory
+
+The standalone unrequired `script-tests` verdict runner is removed; final
+`linux-race` directly requires static/install/purge roles and retains the complete,
+unconditional current-source purge method/case union before Go evidence checks.
+The five existing local planner consumers (including two physical purge jobs)
+retain canonical/native/extra source proof. Required check names and all bodies
+remain intact. Full inventories are 24 jobs at eight workers / 20 at four, with
+two Mac jobs included (22/18 Linux). This removes one allocation/history fetch
+and sequential verdict boundary; initially eligible Linux jobs remain 20/16
+including Levenshtein, so no reduced initial burst or measured queue benefit is
+claimed. Actual source-bound runtime, cache cohorts and full-pipeline comparison
+remain necessary; prior 28-job source evidence cannot certify this new tree.

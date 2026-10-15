@@ -14,7 +14,7 @@ import re
 from statistics import median
 
 
-COHORTS = ('source-only', 'cli-catalog', 'native-platform', 'dependency-toolchain', 'fork-cold-cache')
+COHORTS = ('unknown', 'source-only', 'cli-catalog', 'native-platform', 'dependency-toolchain', 'fork-cold-cache')
 
 
 def stamp(value):
@@ -215,6 +215,11 @@ def sample_report(sample):
     required = sample['required_jobs']
     if not required or any(not names or len(set(names)) != len(names) for names in required.values()):
         raise ValueError('nonempty unique required job inventories are mandatory')
+    observation_kind = sample.get('observation_kind', 'normal')
+    if observation_kind not in ('normal', 'full-pipeline-experiment'):
+        raise ValueError('unsupported observation kind')
+    if observation_kind != 'normal':
+        issues.append('intentional experiment is excluded from normal-traffic percentile qualification')
     scope = sample.get('scope', 'production-pipeline')
     if scope not in ('production-pipeline', 'linux-shard-topology-only', 'auxiliary-campaign'):
         raise ValueError('unsupported observation scope')
@@ -341,6 +346,8 @@ def sample_report(sample):
     cohort, cache = sample['cohort'], sample['cache_state']
     if cohort not in COHORTS or cache not in ('warm', 'cold', 'mixed', 'unknown'):
         raise ValueError('unsupported cohort/cache state')
+    if cohort == 'unknown':
+        issues.append('source cohort unknown')
     if cache == 'unknown':
         issues.append('cache state unknown')
     if not sample.get('comparable_group'):
@@ -360,6 +367,7 @@ def sample_report(sample):
                                               for j in jobs if j['required']) else None),
             'event_at': event, 'worker_count': sample.get('worker_count'),
             'scope': sample.get('scope', 'production-pipeline'),
+            'observation_kind': observation_kind, 'tested_checkout': sample.get('tested_checkout'),
             'workflows': workflows, 'jobs': jobs,
             'cache_inventory': sample.get('cache_inventory'),
             'artifact_inventory': sample.get('artifact_inventory'),
