@@ -83,6 +83,58 @@ class LocalPlanTest(unittest.TestCase):
         self.assertEqual(self.git('status', '--porcelain'), '')
         self.assertFalse((self.root/'go-invoked').exists())
 
+    def advanced_candidate(self):
+        self.git('checkout', '-qb', 'newer-base', self.base)
+        advance = self.source/'internal/config/base_advance.go'
+        advance.parent.mkdir(parents=True)
+        advance.write_text('package config\n')
+        self.git('add', '.')
+        self.git('commit', '-qm', 'base advanced after event')
+        actual_base = self.git('rev-parse', 'HEAD')
+        self.git('merge', '--no-ff', '-m', 'tested newer base', self.head)
+        self.tested = self.git('rev-parse', 'HEAD')
+        self.env['GITHUB_SHA'] = self.tested
+        return actual_base
+
+    def test_newer_descendant_base_is_accepted_with_distinct_recorded_identity(self):
+        actual_base = self.advanced_candidate()
+        self.assertEqual(self.git('show', '-s', '--format=%P', self.tested).split(), [actual_base, self.head])
+        status, plan = self.plan('advanced-base')
+        self.assertEqual(status, 0)
+        self.assertEqual(plan['base'], self.base)
+        self.assertEqual(plan['tested_base'], actual_base)
+        self.assertNotEqual(plan['base'], plan['tested_base'])
+        self.assertIn('internal/config/base_advance.go', plan['paths'])
+        self.assertTrue(plan['systemd'])
+        self.assertTrue(plan['native'])
+        canonical = self.root/'forged-actual-base.json'
+        canonical.write_text(json.dumps(dict(plan, tested_base=self.base)))
+        with mock.patch.object(tier, 'ROOT', self.source), mock.patch.dict(os.environ, self.env):
+            with self.assertRaisesRegex(tier.Failure, 'plans differ'):
+                tier.verify_plan(canonical, plan)
+
+    def test_reversed_actual_parents_and_unrelated_first_parent_are_rejected(self):
+        actual_base = self.advanced_candidate()
+        self.git('checkout', '-qb', 'reversed-merge', self.head)
+        self.git('merge', '--no-ff', '-m', 'reversed parents', actual_base)
+        self.env['GITHUB_SHA'] = self.git('rev-parse', 'HEAD')
+        self.assertEqual(self.git('show', '-s', '--format=%P', 'HEAD').split(), [self.head, actual_base])
+        status, plan = self.plan('reversed')
+        self.assertEqual(status, 1)
+        self.assertIsNone(plan)
+        self.git('checkout', '--orphan', 'unrelated-base')
+        self.git('rm', '-rf', '.')
+        (self.source/'foreign.txt').write_text('independent history\n')
+        self.git('add', '.')
+        self.git('commit', '-qm', 'unrelated first parent')
+        foreign = self.git('rev-parse', 'HEAD')
+        self.git('merge', '--allow-unrelated-histories', '--no-ff', '-m', 'foreign tested merge', self.head)
+        self.env['GITHUB_SHA'] = self.git('rev-parse', 'HEAD')
+        self.assertEqual(self.git('show', '-s', '--format=%P', 'HEAD').split(), [foreign, self.head])
+        status, plan = self.plan('foreign-parent')
+        self.assertEqual(status, 1)
+        self.assertIsNone(plan)
+
     def test_changed_event_base_and_real_shallow_history_fail_before_coverage(self):
         event = json.loads(self.event.read_text())
         event['pull_request']['base']['sha'] = self.head
