@@ -15,8 +15,7 @@ import (
 // label, the short and long times, and the day group. Nothing here does
 // I/O, so every list, picker and summary formats a session the same way.
 
-// agentDot is the mark before an agent's name. It is the same glyph as
-// liveMark; the agent's color tells the two apart.
+// agentDot is the mark before an agent's name, colored by the agent.
 const agentDot = "●"
 
 // agentLabel is the dot and short name that stand for a harness in a

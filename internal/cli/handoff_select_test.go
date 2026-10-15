@@ -145,7 +145,7 @@ func TestHandoffPickerMergesLocalAndArchivedSessionsByActivity(t *testing.T) {
 		t.Fatalf("an archived session is marked not uploaded:\n%s", out)
 	}
 	// The local session's activity, not its older capture, dates the row.
-	if !strings.Contains(oldest, "2 hours ago") {
+	if fields := strings.Fields(oldest); len(fields) < 2 || fields[1] != shortWhen(f.env.now(), f.env.now().Add(-2*time.Hour)) {
 		t.Fatalf("registered row is not dated by local activity: %q", oldest)
 	}
 	if !strings.Contains(out, "3 session(s).") {

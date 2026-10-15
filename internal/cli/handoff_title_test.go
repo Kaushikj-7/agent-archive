@@ -422,7 +422,7 @@ func TestHandoffTitleLimitsTheCandidatesListed(t *testing.T) {
 		t.Fatalf("not the newest first:\n%s", errOut)
 	}
 	out, errOut, code := runPicker(t, f.env, "q\n", "bulk job")
-	if code != 0 || !strings.Contains(out, fmt.Sprintf(`"bulk job" matches %d`, extra)) || !strings.Contains(out, "Bulk job 0 ") || strings.Contains(out, "Showing") {
+	if code != 0 || !strings.Contains(out, fmt.Sprintf(`"bulk job" matches %d`, extra)) || !strings.Contains(out, "Bulk job 0\n") || strings.Contains(out, "Showing") {
 		t.Fatalf("picker: code=%d stderr=%s\n%s", code, errOut, out)
 	}
 }
