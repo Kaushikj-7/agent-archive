@@ -187,7 +187,7 @@ func TestListHidesSubagentsAndJSONKeepsThem(t *testing.T) {
 	if !strings.Contains(out, "3 sessions (4 subagent sessions hidden; search to find one).") {
 		t.Fatalf("footer:\n%s", out)
 	}
-	if !strings.Contains(out, "Orchestrate the release · 3 subagents") || !strings.Contains(out, "A separate task · 1 subagent ") {
+	if !strings.Contains(out, "Orchestrate the release · 3 subagents") || !strings.Contains(out, "A separate task · 1 subagent\n") {
 		t.Fatalf("the parents carry no hint:\n%s", out)
 	}
 	if strings.Contains(out, "Child task") {
@@ -373,7 +373,7 @@ func TestShowSeveralMatchesPrintTheCandidateTable(t *testing.T) {
 	if want := fmt.Sprintf(`agent-archive: show: "wobbly" matches 2 sessions in %s; pass one ID:`, a.label); lines[0] != want {
 		t.Fatalf("first line %q, want %q\n%s", lines[0], want, errOut)
 	}
-	if !strings.Contains(errOut, "wobbly01  codex") || !strings.Contains(errOut, "#213") || !strings.Contains(errOut, "Fix wobbly retention test") || strings.Contains(errOut, "Reviewer") {
+	if !strings.Contains(errOut, "\n  WHEN  AGENT  PR    ID        TITLE\n") || !strings.Contains(errOut, "  codex  #213  wobbly01  Fix wobbly retention test · 1 subagent\n") || !strings.Contains(errOut, "  codex  -     wobbly02  Fix wobbly hook-lock test\n") || strings.Contains(errOut, "Reviewer") {
 		t.Fatalf("rows:\n%s", errOut)
 	}
 	if !strings.Contains(errOut, "\nNext: agent-archive show wobbly01\n") || !strings.HasSuffix(errOut, "      (or: agent-archive list \"wobbly\" --json)\n") {

@@ -28,6 +28,7 @@ import (
 
 	"golang.org/x/term"
 
+	"github.com/wangjohn/agent-archive/internal/backfill"
 	"github.com/wangjohn/agent-archive/internal/cloudflare"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
@@ -96,6 +97,8 @@ func describeVersion(version string, info *debug.BuildInfo) string {
 // substitute a temporary home directory, a fixed clock, and an in-memory
 // object store. A nil field defaults to the real thing.
 type Env struct {
+	// sessionChangeConsumers replaces only the finite post-pass consumer list in tests.
+	sessionChangeConsumers []sessionChangeConsumer
 	// CodexLabelHost overrides opt-in native hosting; never consulted in files mode.
 	CodexLabelHost agentapi.LabelHostFactory
 	// Agents overrides immutable production composition, including its catalog.
@@ -145,6 +148,9 @@ type Env struct {
 	// removed no session ("undo recorded"). A test returns an error from it
 	// to stop the import or undo there, as a crash would.
 	backfillCheckpoint func(step string) error
+	// observeBackfillPlan, set only by tests, sees the actual completed plan.
+	// The observer must not mutate it or grant admission authority.
+	observeBackfillPlan func(backfill.Plan)
 	// backfillHoldSteps, when positive (only in tests), caps the steps
 	// registration takes per hold of hooks.lock, to force several holds.
 	backfillHoldSteps int
@@ -559,6 +565,7 @@ Manage capture
 
 Inspect history
   agent-archive list        Find archived sessions
+  agent-archive search      Search indexed conversation text
   agent-archive show        Read a session's summary or transcript
   agent-archive stats       See your usage: tokens, cost, agents, projects
 
@@ -634,6 +641,8 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 		return runHookCommand(args[1:], stdin, stderr, env)
 	case "_collect":
 		return runCollectCommand(args[1:], stdout, stderr, env)
+	case "_search-index":
+		return runSearchIndexCommand(args[1:], stdout, stderr, env)
 	case "_catalog":
 		return runCatalogOperator(args[1:], stdout, stderr, env)
 	case "machines":
@@ -655,6 +664,8 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 		return runUninstallCommand(args[1:], stdin, stdout, stderr, env)
 	case "list":
 		return runListCommand(args[1:], stdin, stdout, stderr, env)
+	case "search":
+		return runSearchCommand(args[1:], stdin, stdout, stderr, env)
 	case "show":
 		return runShowCommand(args[1:], stdin, stdout, stderr, env)
 	case "stats":

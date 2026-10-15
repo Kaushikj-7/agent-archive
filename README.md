@@ -78,6 +78,7 @@ Setup edits each included app's hook settings, adds one background job (a Launch
 | `sync` | Collect and upload pending sessions now. | `agent-archive sync` |
 | `pause`, `resume` | Pause collection, uploads, and cleanup until you resume ([everyday commands](docs/guides/troubleshooting.md#everyday-commands)). | `agent-archive pause` |
 | `list` | Find archived sessions, by filters or by a few words. | `agent-archive list "retention"` |
+| `search` | Search conversation text in a private local index ([search guide](docs/guides/search.md)). | `agent-archive search "upload checksum"` |
 | `show` | View a session's summary, or its transcript with `--transcript`. | `agent-archive show SESSION_ID` |
 | `stats` | See your usage: tokens by day, estimated cost, agents, models, projects, highlights. | `agent-archive stats --days 7` |
 | `backfill` | Preview sessions already on this machine for import. | `agent-archive backfill --dry-run` |

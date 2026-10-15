@@ -329,8 +329,15 @@ and below (the newest 50 at first), match a name, title, branch, project, app,
 or the start of a native ID but not a pull request number, can match a session
 with no prompt yet, and never widen to other projects unless you pass
 `--all-projects`. Several matches open the picker on a
-terminal; without one, the first 20 are printed as `local <ID> (<app>): <title>`
-and the command exits 1, saying how many matched, with no `Next:` line.
+terminal; without one, the first 20 are printed in the columns of the
+candidate table below, with the whole native ID in the ID column, and the
+command exits 1, saying how many matched, with no `Next:` line:
+
+```text
+  WHEN  AGENT   ID                                    TITLE
+  1h    claude  11111111-1111-1111-1111-111111111111  # fix the OAuth callback
+  Wed   codex   22222222-2222-2222-2222-222222222222  Retry the OAuth refresh
+```
 
 **What a word matches.** Every word must appear, case-insensitively, in some
 field of the session: its name (the one your agent shows in its sidebar), its
@@ -402,15 +409,19 @@ archive holds other matches, so name an ID when in doubt.
 
   ```text
   agent-archive: handoff: "flaky" matches 3 sessions in agent-archive; pass one ID:
-    d7a77938  claude  just now        #213  Fix flaky retention hook-request test
-    36a7d5ee  claude  36 minutes ago  #209  Fix flaky hook-lock timeout test bound
-    76941c69  claude  12 hours ago    #183  Fix flaky TestBrowserKeysRestoreTheTerminal
+    WHEN  AGENT   PR    ID        TITLE
+    now   claude  #213  d7a77938  Fix flaky retention hook-request test
+    36m   claude  #209  36a7d5ee  Fix flaky hook-lock timeout test bound
+    12h   claude  #183  76941c69  Fix flaky TestBrowserKeysRestoreTheTerminal
   Next: agent-archive handoff d7a77938 --harness claude
         (or: agent-archive list "flaky" --json)
   ```
 
-  Each row has its short ID, app, project (when the rows span several
-  projects), age, pull request (when a row has one), and title. The first line
+  The rows are in the columns of `list | cat`: when the session was last
+  active, its app (the name `--harness` takes), project (when the rows span
+  several projects), pull request (when a row has one, `-` for the others),
+  short ID, and the whole title last, with `· not yet uploaded` or the
+  subagent note after it. The first line
   names the scope when the scope answered. `Next:` is the exact command for the
   first row; edit the ID for another. The second line is the `list` command that
   prints the archive's matches for the same words as data (a session not
@@ -432,7 +443,7 @@ that task finds it. A candidate table labels it `subagent of <parent short ID>`,
 and in the picker, while you filter, it appears indented under its parent
 (`↳ Review and fix PR #208 (5b-1b)`). Handing one off works like any session,
 by its ID or by picking it. A parent shows how many subagents it has
-(`· 45 subagents`), and `list --json` without words keeps every row,
+(`+45` in the picker, `· 45 subagents` in the candidate table), and `list --json` without words keeps every row,
 subagents included. Only the archive's subagents are searched: one that is
 registered on this machine is handed off by its full ID.
 
@@ -481,21 +492,25 @@ session off, and the heading starts with `Hand off ·`. This section describes
 the picker after setup; [before setup](#before-setup-native-local-sessions) its
 heading starts with `Hand off local ·`, it lists only this machine's Claude
 Code and Codex sessions in this directory and below, including ones with no
-prompt yet (an unnamed one is titled by its native ID; no PR column, `●`,
-`· not yet uploaded`, or `a`), and `o` loads 50 older ones.
+prompt yet (an unnamed one is titled by its native ID; no PR column, `live`,
+`· not uploaded`, or `a`), and `o` loads 50 older ones.
 
 ```text
 Hand off · agent-archive · 5 sessions · claude · a all projects
-#  TITLE                                                            PR    WHEN            ID
-1  ● Fix the retry budget in the upload queue                       #213  just now        d7a77938
-2    Stop rereading the config on every hook call                         4 minutes ago   36a7d5ee
-3    Add a status line for paused collection · 1 subagent           #212  38 minutes ago  76941c69
-4    Investigate slow listings on a large archive                         5 hours ago     5b0c1e22
-5    Rename the export flag and update the docs · not yet uploaded  #204  2 days ago      9f3a64d0
-5 session(s).
-All · / filter · type a number and Enter · q quit
+TODAY
+▸ 1  Fix the retry budget in the upload queue                  #213  live
+  2  Stop rereading the config on every hook call                      4m
+  3  Add a status line for paused collection +1                #212   38m
+  4  Investigate slow listings on a large archive                      5h
 
-Enter number (or unique short SESSION_ID) to hand off, or q to quit:
+LAST WEEK
+  5  Rename the export flag and update the… · not uploaded     #204   Sun
+────────────────────────────────────────────────────────────────────────────────
+Fix the retry budget in the upload queue
+Claude · agent-archive · PR #213 · last active just now · id d7a77938
+────────────────────────────────────────────────────────────────────────────────
+↑↓ move   Enter hand off   / search   number + Enter jump   q quit      1–5 of 5
+Number or ID to hand off:
 ```
 
 *What it lists.* Top-level sessions, newest activity first: this machine's,
@@ -504,7 +519,7 @@ both appears once. Subagent sessions and sessions with no prompt yet, on this
 machine or in the archive, are left out (one uploaded before its first prompt
 is listed once its transcript here has one), and `--harness` narrows the list
 (`--source local` or `--source archive` limits where it looks). The newest 50 rows
-are listed initially. Press **o · Older sessions** to add up to 50 more
+are listed initially. Press **o** (`o older` in the footer) to add up to 50 more
 rows in the current scope. The action disappears when that scope is complete
 and returns if `a` switches to a scope with more rows. The filter below
 searches the complete archived scope before older rows are loaded. When the
@@ -513,28 +528,38 @@ and says why archived ones are missing.
 
 *What a row shows.*
 
+Each session is one line cut to the window's width, under its day's heading,
+in the same columns as [`list`](list-and-show.md#which-sessions-list-shows):
+number, agent, title, project, PR, and when.
+
 - **The title is the name your agent gave the session** (the one in Claude
-  Code's sidebar, or a Cursor chat's name), else a preview of its first prompt.
+  Code's sidebar, or a Cursor chat's name), else a preview of its first prompt,
+  in its readable list form and cut at a word to fit. Before setup, a session
+  with neither is titled by its native ID.
+- **The agent** is a colored `●` and its name (`Claude`, `Codex`). PROJECT and
+  the agent appear when rows differ in them. When every row shares one value,
+  the heading names it (`claude`) instead.
 - **PR** is the last pull request the session linked or created, and appears
   when some row has one.
-- **`●`** marks a session on this machine that was active in the last 2
-  minutes, the same test that makes `handoff` ask about a shared checkout (see
+- **WHEN** is short: `4m`, `5h`, `Sun`, `Sep 20`. **`live`**, in green, marks a
+  session on this machine that was active in the last 2 minutes, the same test
+  that makes `handoff` ask about a shared checkout (see
   [working in a separate checkout](#working-in-a-separate-checkout---worktree)).
   The archive says nothing about what is running here, so only this machine's
   sessions get one.
-- **`· not yet uploaded`** marks a session on this machine that the archive does
+- **`· not uploaded`** marks a session on this machine that the archive does
   not have yet (shown once the archive was read, so a failed read marks nothing).
-  You can hand it off; it is read from its transcript as it is now.
-- **`· 45 subagents`** says how many subagent sessions a session has. They are
-  not rows; search for one.
-- The **ID** is dim: numbers choose rows, and a typed short ID works too.
-  HARNESS and PROJECT columns appear when rows differ in them. When every row
-  shares one value, the heading names it (`claude`) instead.
+  You can hand it off; it is read from its transcript as it is now. The title
+  is cut to make room for it.
+- **`+45`** after a title says how many subagent sessions it has, where the
+  title leaves room. They are not rows; search for one.
+- There is no ID column: numbers choose rows, and a typed short ID works too.
 
 *Which sessions: the scope.* In a git repository with an `origin` remote, or
 inside a project you configured, the picker starts on that repository's
 sessions, across all its checkouts and worktrees and from your other Macs, and
-the heading says so. Elsewhere it lists every session, grouped by project. If the
+the heading says so. Elsewhere it lists every session. Either way the sessions are
+grouped by day (TODAY, YESTERDAY, EARLIER THIS WEEK, ...). If the
 repository has none yet, it opens on all projects with `Nothing in agent-archive ·
 showing all projects` in the heading.
 
@@ -547,10 +572,12 @@ showing all projects` in the heading.
   does not apply to `--latest`, which names the current directory's project
   (`--project DIR` moves it).
 
-*Keys.* Type a row number or a short ID and press Enter to hand that session off.
-The list scrolls with the mouse wheel, arrows, PgUp and PgDn (or space, `n`,
-and `p`), Home and End. `q`, Ctrl-D, or Enter with nothing typed quits without
-producing a handoff; Ctrl-C quits at once.
+*Keys.* `▸` marks the highlighted row; Enter hands it off. The mouse wheel,
+arrows, PgUp and PgDn (or space, `n`, and `p`), Home and End move it, and the
+list scrolls to keep it in view; a strip under the list spells out the
+highlighted session. A row number or short ID typed and Enter hands that session
+off instead. `q` or Ctrl-D quits without producing a handoff; Ctrl-C quits at
+once.
 
 - **`/` filters as you type**, as in `less`. A line at the bottom takes the words,
   and the rows narrow with each character. They are the words `handoff
@@ -566,15 +593,19 @@ producing a handoff; Ctrl-C quits at once.
   a subagent can be picked like any row. The mark starts on the subagent.
 - **Rows keep the numbers they have unfiltered**, and Esc clears the words and
   closes the filter line (Backspace on an empty filter does too), after which the
-  list's own numbers choose again.
+  list's own numbers choose again. The mark stays on the session it was on
+  when the plain list shows it, and goes to the first row when it does not.
 
 ```text
 Hand off · agent-archive · "208" matches 1 · claude · Esc clear
-#  TITLE                                                   PR    WHEN            ID
-3    Add a status line for paused collection · 1 subagent  #212  38 minutes ago  76941c69
-   ▸   ↳ Review and fix PR #208 (5b-1b)                    #208  3 hours ago     a1b2c3d4
-All · ↑↓ move · Enter hand off · Esc clear
-
+TODAY
+  3  Add a status line for paused collection +1                #212  38m
+▸      ↳ Review and fix PR #208 (5b-1b)                        #208   3h
+────────────────────────────────────────────────────────────────────────────────
+Review and fix PR #208 (5b-1b)
+Claude · agent-archive · PR #208 · subagent of 76941c69 · last active 3 hours…
+────────────────────────────────────────────────────────────────────────────────
+↑↓ move   Enter hand off   Esc clear                                    1–2 of 2
 /208
 ```
 
@@ -621,8 +652,9 @@ has an older one at the same path, add `--source archive`.
   workspace lines also say when the session ran in a different directory
   than yours, so the agent checks paths against the tree in front of it.
 - **When nothing matches**, `handoff` says what it tried (the repository,
-  then the path) and lists the five most recent archived sessions with the
-  command for each.
+  then the path) and lists the five most recent archived sessions, each with
+  when it was last active, its agent, whose machine captured it, and the
+  command that hands it off.
 
 A repository can name any origin, and so can anyone who can write to the
 archive, so the key is a convenience and not proof that a session is yours.
@@ -752,4 +784,4 @@ ordinary file and rejects symbolic links and other file types. Failed writes
 preserve the previous output.
 `--format json` prints the structured handoff document the prompt is rendered
 from; see [JSON output](../reference/json-output.md). The format is specified
-in the [handoff design](../../dev/specs/handoff.md).
+in the [handoff design](../../dev/proposals/implemented/handoff.md).

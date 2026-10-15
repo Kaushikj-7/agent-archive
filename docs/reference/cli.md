@@ -39,6 +39,7 @@ Manage capture
 
 Inspect history
   agent-archive list        Find archived sessions
+  agent-archive search      Search indexed conversation text
   agent-archive show        Read a session's summary or transcript
   agent-archive stats       See your usage: tokens, cost, agents, projects
 
@@ -100,7 +101,7 @@ Guide: [Set up capture](../getting-started/setup.md).
 Usage: agent-archive setup [--abandon-recovery] [--verbose]
                [--no-skills | --skills] [--allow-network-home]
        agent-archive setup --yes [--provider r2|s3 ...] [--project DIR ...]
-               [--codex-discovery on|off]
+               [--codex-discovery on|off] [--search-indexing on|off]
                [--codex-capture-scope included-projects|all-projects]
                [--prefix PREFIX] [--retention-days DAYS | --keep-forever]
                [--require-skill-use | --no-require-skill-use]
@@ -187,6 +188,8 @@ An interrupted setup is recovered on the next run.
   --codex-discovery MODE on or off; fresh scripted Codex setup must choose.
                         Reconfiguration keeps an omitted choice. Discovery
                         finds supported sources; recent native copies may count
+  --search-indexing MODE on or off; automatic local content indexing.
+                        Omitted preserves the local choice; fresh setup is off.
   --codex-capture-scope MODE included-projects or all-projects (Codex only).
                         Fresh scripts must choose; default: included projects.
                         Omitted reconfiguration never expands recorded scope.
@@ -229,6 +232,7 @@ Example: printf '%s\n' "$SECRET" | agent-archive setup --yes --provider r2 \
 | `--region` | a value | — |
 | `--require-skill-use` | no value | — |
 | `--retention-days` | a value | `0` |
+| `--search-indexing` | a value | — |
 | `--skill-evidence` | a value | — |
 | `--skills` | no value | — |
 | `--verbose` | no value | — |
@@ -514,21 +518,25 @@ Run inside a project, it lists that repository's sessions (every checkout and
 worktree of it, and its sessions from other machines), with a heading naming the
 repository; when there are none, it lists all projects and says so. --project
 lists another project's, and --all-projects every project's. Outside any
-project it lists every session, grouped by project. On a terminal, the a key,
-typed alone, switches between the repository and all projects.
-Default text columns: TITLE (the Claude Code or Cursor session name when
-available, else a preview of its first filtered prompt, else a short
-SESSION_ID prefix; Codex uses the prompt preview), PR (the
-last pull request the session linked or created, when any row has one),
-relative capture time, harness, project, and a short SESSION_ID. A harness or
+project it lists every session. On a terminal, sessions are grouped by day
+(TODAY, YESTERDAY, ...), and the a key, typed alone, switches between the
+repository and all projects.
+On a terminal each session is one line, cut to the window: its number, agent,
+title (the Claude Code or Cursor session name when available, else a preview
+of its first filtered prompt, in a readable form; Codex uses the prompt
+preview), project, PR (the last pull request the session linked or created,
+when any row has one), and when it was last active (2m, Mon, Oct 9). Piped,
+the plain table is WHEN, AGENT, PROJECT, PR, short SESSION_ID, and TITLE, one
+line a session with the whole title last; scripts read --json. An agent or
 project every row shares is left out of the table and named in the heading.
 On a terminal with an interactive stdin, list a numbered table and pick a
 session to show its summary, then t for its transcript, Enter or b to go
 back, or q to quit. Keys act as pressed; the wheel, arrows, and PgUp/PgDn
-scroll. Press / to filter the rows as you type, with the words WORDS takes:
-the first match is highlighted, the arrows move the highlight, Enter shows it,
-and Esc clears the filter. A subagent that matches is shown under its parent,
-which is shown too. Rows keep their numbers while filtered. WORDS open the
+move the highlight, which Enter opens. Press / to filter the rows as you
+type, with the words WORDS takes: the first match is highlighted, the arrows
+move the highlight, Enter shows it, and Esc clears the filter, keeping the
+highlighted row. A subagent that matches is shown under its parent, which is
+shown too. Rows keep their numbers while filtered. WORDS open the
 browser with the filter already filled in, to edit. Where keys cannot be read,
 the browser reads lines, and an answer that is not a row number, a
 SESSION_ID, or q is words to filter by (an empty answer clears them). Piped
@@ -607,6 +615,72 @@ Example: agent-archive list --skill review-pr --skill-sha256 HASH --since 7d
 | `--skill-sha256` | a value | — |
 | `--skill-usage` | a value | `used` |
 | `--verbose` | no value | — |
+
+## agent-archive search
+
+Guide: [Search conversation text](../guides/search.md).
+
+```text
+Usage: agent-archive search "QUERY" [options]
+       agent-archive search --refresh [--session SESSION_ID --harness NAME]
+       agent-archive search --read REF [--offset N] [--max-bytes N]
+
+Search visible conversation messages and titles in the private local index.
+Queries never read storage. Choose --project or --all-projects outside a known
+project; an empty scoped result never broadens. Coverage describes a past local
+observation, not current remote contents. Refresh is namespace-wide unless a
+session is named. It does not install or enable automatic indexing.
+Words are ANDed, quotes match phrases, and a trailing * enables prefix matching.
+Punctuation splits words; this is keyword search, not substring/semantic search.
+References bind exact source revisions. Reads print escaped, quoted text.
+On an interactive terminal, browse ranked snippets and exact bounded context.
+Use n/p for matching body passages, r to rerun the fixed query, and h to
+hand off the current session through existing gates. Metadata / filtering is
+disabled. JSON and piped output remain bounded documents.
+  --json              Print one versioned bounded JSON document
+  --refresh           Run a bounded verified archive refresh
+  --session SESSION_ID  Exact refresh target; requires --harness
+  --harness NAME      Session harness: codex, claude or cursor
+  --wait DURATION     Wait 1s–10m with --refresh (default one pass, no wait)
+  --rebuild           With namespace --refresh, clear derived local content
+  --read REF          Read an exact source-bound passage reference
+  --offset N          Absolute UTF-8 byte offset (default passage start, -1)
+  --max-bytes N       Raw text bytes per context slice, 4–8192 (default 4096)
+  --before N          Preceding visible messages with --read, 0–2 (default 0)
+  --after N           Following visible messages with --read, 0–2 (default 0)
+  --max-output-bytes N  Escaped stdout bytes, 4096–1048576 (default 262144)
+  --project DIR|NAME  Restrict to a project (default current repository)
+  --all-projects      Search every project's indexed sessions
+  --since DATE|AGE    Inclusive capture start, date/RFC3339 time/age
+  --until DATE|AGE    Inclusive capture end, date/RFC3339 time/age
+  --replays MODE      hide (default), include or only replay sessions
+  --children MODE     hide (default), include or only child sessions
+  --limit N           Maximum returned sessions, 1–100 (default 20)
+  --cursor CURSOR     Continue a page; index writes require restarting
+```
+
+| Flag | Takes | Default |
+| --- | --- | --- |
+| `--after` | a value | `0` |
+| `--all-projects` | no value | — |
+| `--before` | a value | `0` |
+| `--children` | a value | `hide` |
+| `--cursor` | a value | — |
+| `--harness` | a value | — |
+| `--json` | no value | — |
+| `--limit` | a value | `20` |
+| `--max-bytes` | a value | `4096` |
+| `--max-output-bytes` | a value | `262144` |
+| `--offset` | a value | `-1` |
+| `--project` | a value | — |
+| `--read` | a value | — |
+| `--rebuild` | no value | — |
+| `--refresh` | no value | — |
+| `--replays` | a value | `hide` |
+| `--session` | a value | — |
+| `--since` | a value | — |
+| `--until` | a value | — |
+| `--wait` | a value | `0s` |
 
 ## agent-archive show
 
@@ -806,8 +880,9 @@ Usage: agent-archive backfill [options]
 
 Import the Claude Code, Codex, and Cursor sessions already on this machine that
 the archive has not captured. First shows each project with its session count
-per app, and why any session is not imported; nothing is written until you
-confirm. Live repositories can be proposed for matching deleted worktrees.
+per app, and why any session is not imported; archive and configuration changes
+require confirmation. Planning may update a disposable local inspection cache.
+Live repositories can be proposed for matching deleted worktrees.
 Projects the import needs are added to capture. Prints project
 folders, counts, and recovery reasons, never conversation content.
 After confirmation, filtered evidence is staged before admission; uploads can
@@ -825,7 +900,7 @@ publication. History reports admitted and remotely verified uploads separately.
   --include-home        Include sessions run from the home folder
   --include-temp        Include sessions run from temporary directories
   --include-removed     Include sessions retention or undo removed
-  --dry-run             Print the plan and exit; nothing is written
+  --dry-run             Print the plan; no archive or configuration changes
   --json                With --dry-run, print the plan as JSON
   --yes                 Skip the confirmation (required without a terminal)
   --background          Stage and register sessions, then exit; the background
@@ -1005,12 +1080,12 @@ On the picker, the a key, typed alone, switches between the repository and
 all projects, and / filters the rows as you type (the arrows move the
 highlight, Enter hands off the highlighted session, Esc clears the filter; a
 subagent that matches shows under its parent). The heading names what is shown,
-and a dot marks a session active in the last 2 minutes. Several matches on a
+and live marks a session active in the last 2 minutes. Several matches on a
 terminal open the same picker on them, with the words in its filter; without
-one, or inside a coding agent, they are listed on
-stderr, with a PR column and the exact command to run next, and the command
-exits 1, never guessing. WORDS skip the agent session running the command,
-unless --to is given.
+one, or inside a coding agent, they are listed on stderr in list's piped
+columns, with the exact command to run next, and the command exits 1, never
+guessing. WORDS skip the agent session running the command, unless --to is
+given.
   --latest              The most recent session for the project: one that ran
                         at this path, else one from another checkout of the
                         same repository (its remote origin), such as on

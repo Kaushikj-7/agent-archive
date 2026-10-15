@@ -45,3 +45,28 @@ type ImportInspector interface {
 type ImportsLookup interface {
 	LookupImport(string) (ImportInspector, bool)
 }
+
+// ImportSummary contains bounded intrinsic observations from complete filtering.
+// It neither grants native admission nor supplies current header preference.
+type ImportSummary struct {
+	Conversation    bool      `json:"Conversation"`
+	NativeStartAt   time.Time `json:"NativeStartAt"`
+	RetainedBytes   int64     `json:"RetainedBytes"`
+	RetainedRecords int       `json:"RetainedRecords"`
+}
+
+// StreamingImportFilter optionally inspects safe rows without retaining them.
+// Both attestation and input support must hold on the actual injected filter.
+type StreamingImportFilter interface {
+	InspectionFor(archive.Adapter) bool
+	SupportsImportInspection(NativeInput) bool
+	InspectFilteredImport(context.Context, NativeInput, FilterContext) (ImportSummary, error)
+}
+
+// SummaryImportInspector interprets compact facts under its native policy.
+// Membership-sensitive inspectors must decline unsupported intrinsic summaries.
+type SummaryImportInspector interface {
+	SummaryFor(ImportInspector) bool
+	SupportsImportSummary() bool
+	InspectImportSummary(context.Context, ImportInspectionRequest, ImportSummary) (ImportInspection, error)
+}

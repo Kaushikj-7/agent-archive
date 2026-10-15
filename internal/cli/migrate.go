@@ -45,14 +45,8 @@ func runMigrateCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	if !found {
 		return fail(errNotSetUp)
 	}
-	targetConfig := cfg
-	targetConfig.Storage.ArchiveFormat = destination.FormatCatalogV4
-	if *prefix != "" {
-		targetConfig.Storage.Prefix = *prefix
-	}
-	if *bucket != "" {
-		targetConfig.Storage.Bucket = *bucket
-	}
+	targetConfig := migrationDestinationConfig(cfg, *prefix, *bucket)
+
 	ctx := context.Background()
 	// Provider qualification and cutover authority are checked before acquiring
 	// local locks, creating migration objects or changing any configuration.
@@ -77,6 +71,12 @@ func runMigrateCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		return fail(err)
 	}
 	defer unlock()
+	releaseSearch, err := lockSearchDestination(home, cfg)
+	if err != nil {
+		return fail(err)
+	}
+	defer releaseSearch()
+
 	migration, err := openMigrationForCLI(ctx, home, *scoped, source, target, sourceConfig.Storage, targetConfig.Storage, authority)
 	if err != nil {
 		return fail(err)
@@ -164,4 +164,15 @@ func openMigrationForCLI(ctx context.Context, home string, scoped bool, source, 
 		return nil, err
 	}
 	return migrationOpener(scoped)(ctx, source, target, sourceConfig, targetConfig, authority)
+}
+
+func migrationDestinationConfig(cfg config.Config, prefix, bucket string) config.Config {
+	cfg.Storage.ArchiveFormat = destination.FormatCatalogV4
+	if prefix != "" {
+		cfg.Storage.Prefix = prefix
+	}
+	if bucket != "" {
+		cfg.Storage.Bucket = bucket
+	}
+	return cfg
 }

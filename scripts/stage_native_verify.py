@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stage tracked declared inputs for PR native checks; this is not a sandbox."""
+"""Stage tracked declared inputs for native checks; this is not a sandbox."""
 import argparse
 import json
 import os
@@ -71,18 +71,76 @@ def stage(source, destination, config, plan):
     return files
 
 
+CHECKS = {'lint': 'go-lint', 'vet': 'go-vet', 'modules': 'go-mod',
+          'vulnerabilities': 'go-vuln', 'workflow-lint': 'workflow-lint',
+          'workflow-security': 'workflow-security'}
+
+
+def ci_run(event):
+    if event == 'schedule':
+        return 'main'
+    if event in ('pull_request', 'push', 'workflow_dispatch'):
+        return 'pre-merge'
+    raise ValueError('unsupported native verification event: '+event)
+
+
+def guard_ci_policy(config, run):
+    """Refuse future policy that the fixed native adapter cannot preserve.
+
+    Version-one native lint skips community rule modules with a warning. A
+    broader CI route must fail before execution rather than silently omit them.
+    Environment overrides are likewise deliberate only for this known policy.
+    """
+    if (set(config) != {'version', 'targets', 'environments', 'checks', 'runs'}
+            or config.get('version') != 1
+            or config.get('environments') != {'go': {'executor': 'dagger'}}):
+        raise ValueError('unsupported native CI policy or environment; review adapter equivalence')
+    expected_targets = {
+        'archive': {'dir': '.', 'workspace': '.', 'inputs': ['go.mod', 'go.sum', 'cmd', 'internal', 'schemas']},
+        'workflows': {'dir': '.', 'workspace': '.', 'inputs': ['.github']}}
+    expected_checks = {name: {'kind': kind, 'target': 'workflows' if name.startswith('workflow-') else 'archive',
+                              'environment': 'go'} for name, kind in CHECKS.items()}
+    if config.get('targets') != expected_targets or config.get('checks') != expected_checks:
+        raise ValueError('unsupported native CI check/target policy; all six checks must remain equivalent')
+    selected = config.get('runs', {}).get(run, {})
+    expected_options = {'checks'} if run == 'pre-merge' else {'checks', 'rerun_checks'}
+    if (run not in ('pre-merge', 'main') or set(selected) != expected_options
+            or not isinstance(selected.get('checks'), list)
+            or len(selected['checks']) != len(CHECKS) or set(selected['checks']) != set(CHECKS)
+            or (run == 'main' and selected.get('rerun_checks') is not True)):
+        raise ValueError('unsupported native CI run policy; preserve six checks and scheduled freshness')
+
+
+def guard_ci_plan(plan, run):
+    checks = plan.get('checks', [])
+    if (len(checks) != len(CHECKS) or {item.get('id') for item in checks} != set(CHECKS)
+            or any(item.get('rule_modules') for item in checks)
+            or (run == 'main' and plan.get('rerun_checks') is not True)):
+        raise ValueError('native CI planner omitted checks, added community policy, or lost scheduled freshness')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source', type=Path, required=True)
     parser.add_argument('--destination', type=Path, required=True)
     parser.add_argument('--shared', type=Path, required=True)
     parser.add_argument('--run', default='pre-merge')
+    parser.add_argument('--ci-event', help='guarded complete CI route; only PR events may select PR scope')
     parser.add_argument('--pr-scope', action='store_true', help='prove unchanged PR workflow inputs before selecting a generated Go-only run')
     args = parser.parse_args()
+    if args.ci_event:
+        if args.pr_scope and args.ci_event != 'pull_request':
+            parser.error('PR scoping is forbidden outside pull_request')
+        args.run = ci_run(args.ci_event)
+        args.pr_scope = args.ci_event == 'pull_request'
+    config = json.loads((args.source / 'levenshtein.json').read_text())
+    if args.ci_event:
+        guard_ci_policy(config, args.run)
     # The pinned planner validates configuration before the consumer copies it.
     plan = json.loads(subprocess.check_output([str(args.shared.resolve() / 'verify'), args.run,
                                               '--source', str(args.source.resolve()), '--dry-run']))
-    config = json.loads((args.source / 'levenshtein.json').read_text())
+    if args.ci_event:
+        guard_ci_plan(plan, args.run)
     run, reason = args.run, 'full run requested'
     if args.pr_scope and args.run == 'pre-merge':
         try:
@@ -99,11 +157,13 @@ def main():
     subprocess.run([str(args.shared.resolve() / 'verify'), run,
                     '--source', str(args.destination.resolve()), '--dry-run'], check=True,
                    stdout=subprocess.DEVNULL)
-    if args.pr_scope:
-        print(scope.summarize(run, reason), end='')
+    if args.pr_scope or args.ci_event:
+        message = (scope.summarize(run, reason) if args.pr_scope else
+                   f'Selected original complete {run} run. {reason}\n')
+        print(message, end='')
         if os.environ.get('GITHUB_STEP_SUMMARY'):
             with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
-                summary.write(scope.summarize(run, reason))
+                summary.write(message)
         if os.environ.get('GITHUB_OUTPUT'):
             with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
                 output.write(f'run={run}\n')

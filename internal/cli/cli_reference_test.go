@@ -138,7 +138,7 @@ func dispatchedCommands(t *testing.T) []string {
 // section; a new command is added here as it lands in a tier.
 var referenceTopLevelOrder = []string{
 	"setup", "machines", "status", "sync", "pause", "resume", "recover",
-	"list", "show", "stats", "feedback", "backfill", "migrate", "handoff",
+	"list", "search", "show", "stats", "feedback", "backfill", "migrate", "handoff",
 	"eval", "uninstall", "purge",
 }
 
@@ -180,6 +180,7 @@ func referenceCommandOrder(t *testing.T) []string {
 // examples, linked under its reference entry. A command without one fails
 // TestCLIReferenceIsCurrent, so a new command arrives with a guide.
 var commandGuides = map[string]string{
+	"search":            "[Search conversation text](../guides/search.md)",
 	"recover":           "[Recover a blocked transcript](../guides/transcript-recovery.md)",
 	"machines revoke":   "[Multiple machines](../guides/multiple-machines.md)",
 	"machines own-key":  "[Multiple machines](../guides/multiple-machines.md)",
@@ -323,7 +324,7 @@ func TestHelpAdvancedTier(t *testing.T) {
 	}
 	advanced := usageTopLevelCommands(advancedUsage)
 	named := 0
-	for _, name := range strings.Split(footer[1], ",") {
+	for name := range strings.SplitSeq(footer[1], ",") {
 		name = strings.TrimSpace(name)
 		if name == "..." {
 			continue
