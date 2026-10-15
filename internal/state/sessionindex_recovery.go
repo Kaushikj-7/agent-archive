@@ -182,22 +182,42 @@ func (s *Store) RequestSessionIndexRecovery(key agentmeta.SessionKey) error {
 // that entry, or the next slice does when the census listing missed it.
 // Anything else takes the full request. The caller holds hooks.lock.
 func (s *Store) requestDuringPendingCensus(key agentmeta.SessionKey) (bool, error) {
-	var marker sessionIndexMarker
-	if err := readRecoveryJSON(filepath.Join(s.home, sessionIndexMarkerFile), &marker); err != nil || !recoveryMarkerVersion(marker.Version) || marker.Complete || marker.Generation == "" {
+	version, pending := s.pendingCensusVersion()
+	if !pending {
 		return false, nil
 	}
-	entry, found, err := s.readQualifiedIndex(key)
-	if err != nil {
-		return false, nil
+	owned, unowned := s.pendingCensusRequestKind(key)
+	if owned {
+		return true, nil
 	}
-	if found && !entry.Absent {
-		valid, err := s.matchingRegistration(key, entry.ArchiveSessionID)
-		return err == nil && valid, nil
-	}
-	if marker.Version != 1 {
+	if !unowned || version != 1 {
 		return false, nil
 	}
 	return true, s.retainAbsenceRequest(key)
+}
+
+// pendingCensusVersion reports the marker version of a census in progress.
+func (s *Store) pendingCensusVersion() (int, bool) {
+	var marker sessionIndexMarker
+	if readRecoveryJSON(filepath.Join(s.home, sessionIndexMarkerFile), &marker) != nil {
+		return 0, false
+	}
+	return marker.Version, recoveryMarkerVersion(marker.Version) && !marker.Complete && marker.Generation != ""
+}
+
+// pendingCensusRequestKind reports a key whose entry names a valid owner, or
+// one with no entry or a certified absence. Damaged or uncertain evidence is
+// neither and keeps the full request.
+func (s *Store) pendingCensusRequestKind(key agentmeta.SessionKey) (owned, unowned bool) {
+	entry, found, err := s.readQualifiedIndex(key)
+	if err != nil {
+		return false, false
+	}
+	if found && !entry.Absent {
+		valid, err := s.matchingRegistration(key, entry.ArchiveSessionID)
+		return err == nil && valid, false
+	}
+	return false, true
 }
 
 // sessionIndexDirectoriesLost detects total derived-index loss even when Open
