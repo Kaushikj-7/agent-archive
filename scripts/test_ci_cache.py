@@ -86,7 +86,7 @@ class CompilationTests(unittest.TestCase):
         self.assertEqual(observation,{'state':'corrupt-rebuilt','raw_payload_bytes':None})
         self.assertEqual(len(calls),4)
 
-    def main_observation(self, phase='verify', shared=False, module_results=None, bad_guard=False, oversized=False, late_guard=False, darwin=False, event_name='push', priority=True):
+    def main_observation(self, phase='verify', shared=False, module_results=None, bad_guard=False, oversized=False, late_guard=False, darwin=False, event_name='push', priority=True, budget=None):
         self.context['go']['GOOS'] = 'darwin' if darwin else 'linux'
         source=self.root/'product';source.mkdir(exist_ok=True)
         shared_root=self.root/'shared';shared_root.mkdir(exist_ok=True)
@@ -99,6 +99,10 @@ class CompilationTests(unittest.TestCase):
         event_path=self.root/'event.json';event_path.write_text(json.dumps(event))
         (self.root/'compilation-cache-plan.json').write_text(json.dumps(
             {'plan':asdict(plan),'context':actual_context}))
+        if budget is not None:
+            # Leave one payload byte free: the serialized manifest exceeds it.
+            payload = sum(item[2] for item in cache.cache_files(cache.snapshot_paths(plan, 'seed')))
+            (Path(plan.paths[1])/'cache'/'near-cap').write_bytes(b'x'*(budget-payload-1))
         size=cache.publish_manifest(plan,actual_context)
         if darwin and priority:
             cache.capture_product_priority(plan,actual_context,self.root)
@@ -125,7 +129,7 @@ class CompilationTests(unittest.TestCase):
               mock.patch.object(cache,'execute_modules'),
               mock.patch.object(cache,'file_inventory',wraps=cache.file_inventory) as inventory,
               contextlib.redirect_stdout(output),contextlib.redirect_stderr(errors)):
-            with mock.patch.object(cache,'MAX_BYTES',0 if oversized else cache.MAX_BYTES):
+            with mock.patch.object(cache,'MAX_BYTES',0 if oversized else budget if budget is not None else cache.MAX_BYTES):
                 code=cache.main()
         lines=[json.loads(line.split(': ',1)[1]) for line in output.getvalue().splitlines()
                if line.startswith('compilation-cache-observation: ')]
@@ -246,6 +250,27 @@ class CompilationTests(unittest.TestCase):
         (Path(self.plan.paths[0])/'big').write_bytes(b'12345')
         with mock.patch.object(cache, 'MAX_BYTES', 4), self.assertRaises(keys.InvalidContext):
             cache.publish_manifest(self.plan, self.context)
+
+    def test_macos_publication_counts_actual_retained_manifest_bytes(self):
+        code, lines, size, _, _ = self.main_observation(phase='complete', darwin=True, budget=2000)
+        self.assertEqual(size, 1999)
+        self.assertEqual(code, 0)
+        self.assertEqual(lines, [{'schema': 1, 'phase': 'capture', 'profile': 'product',
+                                 'state': 'not-captured', 'raw_payload_bytes': None}])
+        self.assertIn('save_ready=false', (self.root/'output').read_text())
+        self.assertNotIn('save_ready=true', (self.root/'output').read_text())
+        self.assertTrue((Path(self.plan.paths[1])/'cache'/'near-cap').is_file())
+
+    def test_macos_restore_discards_seed_over_cap_including_manifest(self):
+        self.context['go']['GOOS'] = 'darwin'
+        payload = sum(item[2] for item in cache.cache_files(cache.snapshot_paths(self.plan, 'seed')))
+        (Path(self.plan.paths[1])/'cache'/'near-cap').write_bytes(b'x'*(2000-payload-1))
+        self.assertEqual(cache.publish_manifest(self.plan, self.context), 1999)
+        with mock.patch.object(cache, 'MAX_BYTES', 10000):
+            self.assertEqual(self.call(), 'trusted')
+        with mock.patch.object(cache, 'MAX_BYTES', 2000):
+            self.assertEqual(self.call(), 'miss')
+        self.assertFalse((Path(self.plan.paths[1])/'cache'/'near-cap').exists())
 
     def test_product_priority_survives_newer_checker_objects_without_raising_budget(self):
         build = Path(self.plan.paths[0])

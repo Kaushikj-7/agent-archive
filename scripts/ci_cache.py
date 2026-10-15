@@ -184,6 +184,9 @@ def validate_manifest(plan, context, kind='seed'):
         raise InvalidContext('compilation manifest kind differs')
     paths = snapshot_paths(plan, manifest.get('kind'))
     files, size = file_inventory(paths)
+    if (kind == 'seed' and context.get('go', {}).get('GOOS') == 'darwin'
+            and size + path.stat().st_size > MAX_BYTES):
+        raise InvalidContext('retained macOS seed exceeds publication budget')
     if (not isinstance(manifest, dict) or set(manifest) != {
             'schema', 'kind', 'context', 'dependency', 'source', 'files', 'bytes'}
             or manifest['schema'] != SCHEMA or manifest['context'] != digest(context)
@@ -335,6 +338,14 @@ def main():
                     preferred = (read_product_priority(plan, context, Path(env['RUNNER_TEMP']))
                                  if args.profile == 'product' and runtime['go']['GOOS'] == 'darwin' else ())
                     size = publish_manifest(plan, context, preferred=preferred)
+                    if args.profile == 'product' and runtime['go']['GOOS'] == 'darwin':
+                        # Recount the actual saved paths after eviction and manifest
+                        # creation. Non-evictable bytes can consume the reserved
+                        # metadata room; never publish beyond the existing cap.
+                        retained = sum(item[2] for item in cache_files(snapshot_paths(plan, 'seed')))
+                        retained += manifest_path(plan).stat().st_size
+                        if retained > MAX_BYTES:
+                            raise InvalidContext('retained macOS seed exceeds publication budget')
                 except InvalidContext:
                     emit({'save_ready': 'false'}, env['GITHUB_OUTPUT'])
                     observe_cache('capture', args.profile, 'not-captured', None)

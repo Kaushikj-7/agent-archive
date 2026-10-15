@@ -13,7 +13,11 @@ outside every restored/saved cache path, and is bound to the exact source and
 compiler/SDK context. Final publication evicts nonpriority recoverable Go objects
 first, then priority objects if still necessary. Modules and pinned executables
 are never eviction candidates. All retained bytes still receive the existing
-checksum manifest and module verification; priority is not test/check evidence.
+checksum manifest and module verification. A final inventory counts actual saved
+bytes, including manifest metadata; an oversized Mac seed continues uncached.
+A restored Mac seed over that same total cap is discarded and rebuilt cold.
+The logged raw payload size continues to exclude manifest metadata.
+Priority is not test/check evidence.
 
 This changes only cold macOS product seed publication. Linux and shared-tool
 seed retention, all PR checks, runner counts, cache profiles, deadlines, and the
