@@ -207,6 +207,7 @@ func TestSyncCountsDeferredSessionsByReason(t *testing.T) {
 	}{
 		{nil, ""},
 		{map[string]string{"a": collector.DeferredReadBudget}, "; 1 waiting for read memory other sessions held"},
+		{map[string]string{"a": collector.DeferredLookupAllowance}, "; 1 left for the next pass after this pass's time for finding Codex rollouts ran out"},
 		{map[string]string{"a": collector.DeferredReadBudget, "b": collector.DeferredReadBudget, "c": collector.DeferredSourceChanged, "d": "from_a_later_version"},
 			"; 1 rechecking after the source changed while being read; 1 rechecking on the next pass; 2 waiting for read memory other sessions held"},
 		// A status an earlier version wrote can still name the retired

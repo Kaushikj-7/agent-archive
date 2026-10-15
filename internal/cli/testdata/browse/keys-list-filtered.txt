@@ -1,7 +1,7 @@
 agent-archive · "208" matches 1 · claude · Esc clear
-#  TITLE                                                   PR    WHEN            ID
-3    Add a status line for paused collection · 1 subagent  #212  38 minutes ago  76941c69
-   ▸   ↳ Review and fix PR #208 (5b-1b)                    #208  3 hours ago     a1b2c3d4
+TODAY
+  3  Add a status line for paused collection +1                #212  38m
+▸      ↳ Review and fix PR #208 (5b-1b)                        #208   3h
 All · ↑↓ move · Enter show · Esc clear
 
 /208

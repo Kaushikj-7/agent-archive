@@ -71,6 +71,73 @@ def evidence(root, c):
 
 
 class ParentScheduling(unittest.TestCase):
+    def test_lane_allocation_does_not_hide_ordinary_work_behind_cli_weights(self):
+        packages = {r.CLI: True, **{name: True for name in ('a','b','c','d')}}
+        hints = {'packages': {'a':100, 'b':90, 'c':80, 'd':70},
+                 'cli': {'TestExpensive':10000}}
+        c = p.build(SOURCE['source'], SOURCE, CONFIG, packages, ['TestExpensive'], {}, hints, 2)
+        p.validate(c, 2)
+        self.assertEqual(c['schema'], 3)
+        self.assertEqual(c['allocation'], p.ALLOCATION)
+        loads = [sum(hints['packages'][name] for name in a['packages']) for a in c['assignments']]
+        self.assertEqual(loads, [170,170])
+        self.assertEqual(sum(len(a['cli']) for a in c['assignments']), 1)
+        mixed_weights = dict(hints['packages'], **{p.unit(r.CLI,'TestExpensive'):10000})
+        mixed = r.partition(c['units'], mixed_weights, 2)
+        self.assertEqual(max(sum(hints['packages'].get(name,0) for name in b) for b in mixed),340)
+        # A huge stale/renamed hint cannot introduce a body or hide a new one.
+        hints['cli']['TestRemoved'] = 99999999
+        hints['packages']['not-discovered'] = 99999999
+        changed = p.build(SOURCE['source'], SOURCE, CONFIG, packages, ['TestRenamed'], {}, hints, 2)
+        p.validate(changed,2)
+        self.assertEqual(set(changed['units']), set(packages)-{r.CLI} | {p.unit(r.CLI,'TestRenamed')})
+
+    def test_collector_compiled_parents_split_but_reader_stays_whole(self):
+        collector = p.MODULE + 'internal/collector'
+        reader = p.MODULE + 'internal/reader'
+        self.assertIn(collector,p.HEAVY)
+        self.assertNotIn(reader,p.HEAVY)
+        packages = {r.CLI:True, collector:True, reader:True}
+        names = ['ExampleCollector','FuzzCollector','TestNewCollector','TestRenamedCollector']
+        compiled = p.listing(listing(collector,names),[collector])
+        c = p.build(SOURCE['source'],SOURCE,CONFIG,packages,['TestCLI'],compiled,
+                    {'packages':{collector:9999999,reader:1000},'cli':{}},4)
+        p.validate(c,4)
+        self.assertIn(reader,c['units'])
+        self.assertNotIn(collector,c['units'])
+        self.assertEqual(set(c['units']), {reader,p.unit(r.CLI,'TestCLI')} |
+                         {p.unit(collector,n) for n in names})
+        with tempfile.TemporaryDirectory() as d:
+            # All descendants remain in their selected complete parent trees.
+            root=Path(d); evidence(root,c)
+            for index,a in enumerate(c['assignments']):
+                p.verify_logs(root/str(index),c,a)
+
+    def test_sparse_lanes_preserve_nonempty_combined_workers_and_fixed_advice(self):
+        c=catalog(8)
+        fixed=[10000]+[0]*7
+        updated=p.build(SOURCE['source'],SOURCE,CONFIG,c['packages'],c['cli'],c['parents'],
+                        {'packages':{},'cli':{}},8,fixed)
+        p.validate(updated,8)
+        self.assertEqual(set(updated['units']),set(c['units']))
+        self.assertEqual(len(updated['assignments'][0]['packages']) +
+                         sum(map(len,updated['assignments'][0]['parents'].values())),0)
+        self.assertTrue(updated['assignments'][0]['cli'])
+        # Even absurd advisory fixed loads cannot strand workers when the
+        # discovered union contains enough executable units.
+        sparse=p.build(SOURCE['source'],SOURCE,CONFIG,
+                       {r.CLI:True,**{name:True for name in ('a','b','c','d')}},
+                       ['TestOnly'],{}, {'packages':{},'cli':{}},4,[1000000]*3+[0])
+        p.validate(sparse,4)
+        self.assertEqual(len(sparse['units']),5)
+        self.assertTrue(all(a['packages'] or a['cli'] or a['parents'] for a in sparse['assignments']))
+        with self.assertRaises(r.Failure):
+            p.build(SOURCE['source'],SOURCE,CONFIG,{r.CLI:True},['TestOnly'],{},
+                    {'packages':{},'cli':{}},8)
+        with self.assertRaises(r.Failure):
+            r.partition(['one'],{},2)
+        self.assertEqual(r.partition(['one'],{},2,allow_empty=True),[['one'],[]])
+
     def test_four_and_eight_cover_new_fuzz_example_and_whole_packages(self):
         for workers in (4,8):
             c = catalog(workers);p.validate(c,workers)
@@ -126,7 +193,7 @@ class ParentScheduling(unittest.TestCase):
             root=Path(d);evidence(root,c)
             settings={str(i):json.loads((root/str(i)/'manifest.json').read_text())['settings'] for i in range(8)}
             result=hints.generate([('unit-current-schema',root)],SOURCE['source'],settings,list(c['packages']),c['cli'])
-            self.assertEqual(len(result['parents']),15)
+            self.assertEqual(len(result['parents']),5 * len(p.HEAVY))
             self.assertEqual(set(result['cli']),set(c['cli']))
             self.assertEqual(result['parents'][p.unit(p.HEAVY[0],'TestNewlyAdded')],1)
             bad=root/'0'/'manifest.json';value=json.loads(bad.read_text());value['settings']['workers']=4;bad.write_text(json.dumps(value))
@@ -134,7 +201,7 @@ class ParentScheduling(unittest.TestCase):
 
     def test_catalog_rejects_schema_source_configuration_and_unit_tampering(self):
         good=catalog()
-        changes=[lambda c:c.update(schema=1),lambda c:c.update(schema=True),
+        changes=[lambda c:c.update(schema=2),lambda c:c.update(allocation='mixed-lpt'),lambda c:c.update(schema=1),lambda c:c.update(schema=True),
                  lambda c:c['source_proof'].update(tree='broken'),
                  lambda c:c['configuration'].update(GOFLAGS='-mod=mod'),
                  lambda c:c['configuration'].update(GOVERSION='go1.99'),
