@@ -6,6 +6,10 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Read-path benchmarks now account for provider LIST pages and transferred
+  headers, including range overread. Content-free trace counts distinguish
+  local catalog validation and decoding from remote discovery costs.
+
 - Muse local handoff previews now read only their reserved head/tail windows,
   avoiding whole-file hashes while browsing large histories. Selected sessions
   retain complete filtering and independent content verification.
@@ -17,6 +21,10 @@ follow [Semantic Versioning](https://semver.org/).
 - Pending-publication cleanup refuses malformed JSON inside records it scans
   without retaining, preserving damaged journals for recovery while keeping
   the bounded-memory checks used for large Codex histories.
+
+- Interactive legacy reads overlap fresh header discovery with independent
+  local preparation. Registration reads use eight workers, and handoff reuses
+  the picker's storage client. Scoped native-read rules remain unchanged.
 
 - When Codex discovery is unavailable but every published automatic session has
   recorded read-back verification, status says “discovery unknown; archive
