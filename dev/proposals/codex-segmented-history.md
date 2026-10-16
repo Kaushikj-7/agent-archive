@@ -114,14 +114,17 @@ filtered on its own. A thread's **segment set** for one revision is the ordered
 list of segments covering that revision's chain, and its ordinals are the
 existing physical ordinals (the spans of today's manifest, cut finer):
 
+- Every rollout's span is cut by one **chunking rule**: the collector seals a
+  chunk when the filtered bytes captured since the last seal pass the chunk
+  target (D2), cutting at the next newline-complete record boundary. A chunk
+  can exceed the target only by its last record, which is already bounded by
+  `archive.MaxRecordBytes`. The rule applies to earlier rollouts as well as
+  the tip, so a first (migration) read or a checkpoint-invalidating re-read of
+  a large ancestor produces several chunks, never one oversized segment.
 - An earlier rollout contributes the span its successor's `history_base`
-  boundary includes. It is **sealed** when that boundary is proved: it never
-  changes again for this chain.
+  boundary includes, as one or more chunks. They are **sealed** when that
+  boundary is proved: they never change again for this chain.
 - The tip contributes zero or more **sealed chunks** and one **open tail**.
-  The collector seals a chunk when the filtered bytes captured since the last
-  seal pass the chunk target (D2), cutting at the next newline-complete record
-  boundary. A chunk can exceed the target only by its last record, which is
-  already bounded by `archive.MaxRecordBytes`.
 - A rollout that becomes an earlier rollout (Codex continued into a new tip)
   has its open tail sealed at the new successor's boundary.
 
@@ -162,34 +165,56 @@ placeholders):
 
 - **Segment source** (source schema S, Codex-only). One gzip JSONL object per
   segment, same line kinds as schemas 2/3. Its header carries the thread ID,
-  `rollout_id`, `start_ordinal`, `end_ordinal_exclusive`, the record count,
-  whether the segment is sealed, and `own_start_ordinal` when an explicit
-  child/fork boundary falls inside or before it. Records carry exact ordinals
-  as in schema 3. Only the segment that holds the active rollout's
-  `session_meta` carries it; supplemental evidence (`session_labels`, skill
-  evidence, child links) lives only on the **head** object (below), never on
-  a sealed segment, so renames and label updates never rewrite a segment.
+  `rollout_id`, `start_ordinal`, `end_ordinal_exclusive`, the record count
+  and whether the segment is sealed. It carries no ownership boundary and no
+  rollout header: both depend on which revision lists the segment, so they
+  live on the head. Records carry exact ordinals as in schema 3. A segment
+  never carries a `session_meta` record. Supplemental evidence
+  (`session_labels`, skill evidence, child links) also lives only on the
+  **head** object (below), so renames and label updates never rewrite a
+  segment.
 - **Segmented metadata** (metadata schema M). The sidecar's `source_bundle`
   reference names the **head**: a small source object holding the envelope
   (identity, capture, `native_child`, parent, linked sessions, supplemental
-  evidence) and the active revision's ordered segment list. Each list entry is
+  evidence), the revision's `own_start_ordinal` when it has an explicit child
+  or fork boundary, the filtered `session_meta` header of **every** rollout
+  its list covers (each bound to its rollout ID and validated as today's
+  active header is), and the ordered segment list. Each list entry is
   `{segment reference, rollout_id, start_ordinal, end_ordinal_exclusive,
-  captured_at}`. Preserved revisions become `{revision_id, captured_at, head
-  reference}` and their heads list their own segments, so revisions that share
-  a prefix share its segment objects.
+  captured_at}`. Because each head carries the headers of its own rollouts, a
+  preserved revision whose tip was an earlier rollout of the current chain
+  still has that rollout's header to validate identity and native start from,
+  while sharing its segments. Preserved revisions become `{revision_id,
+  captured_at, head reference}` and their heads list their own segments, so
+  revisions that share a prefix share its segment objects.
 
-`Metadata.SourceReferences()` returns the head, every distinct segment the
-active and preserved heads list, and every preserved head, so the 20-odd
-callers that already walk it (`internal/retention`, `internal/purge`,
-`internal/catalog` GC and migration, search, the collector's fences and
-readback) see every object without each learning the format. All keys stay
-checksum-addressed under the session's prefix; a reader refuses any reference
-outside it before reading.
+All keys stay checksum-addressed under the session's prefix; a reader refuses
+any reference outside it before reading.
 
 The segment list lives only in the head (decision D3). Listing reads bounded
 metadata bodies ([listing at scale](listing-at-scale.md)), so this keeps the
-sidecar's size independent of the segment count, and `SourceReferences()` read heads (bounded, small) when it needs
-the full set.
+sidecar's size independent of the segment count. The cost is that the
+sidecar alone no longer names every live object:
+
+- `Metadata.SourceReferences()` in `internal/archive` keeps its signature (no
+  context, no store) and returns only what the sidecar names: the active and
+  preserved heads. It is renamed or documented as such, so no caller mistakes
+  it for the complete set.
+- A new bounded **head resolver** in `internal/reader` (reads belong there,
+  construction in `internal/archive`) takes the sidecar and an object store,
+  reads each head under a small fixed limit, validates it, and returns the
+  complete live set: heads plus every distinct segment they list.
+- Every lifecycle caller that protects or deletes objects moves to the
+  resolver: catalog GC and migration (`internal/catalog`), retention and
+  delete (`internal/retention`), purge (`internal/purge`), search
+  (`internal/search`), the collector's fences, readback and authority
+  recovery, and the state journal's reference checks. Callers that only hold
+  a metadata summary (catalog GC today) must load the heads or fail closed.
+- **Fail closed:** if any head of a live sidecar cannot be read or validated,
+  GC and retention delete nothing under that session's prefix in that run.
+  Whole-session delete and purge are unaffected, since they remove the prefix.
+
+This refactor is part of PR 7 and must merge before PR 8 enables a writer.
 
 ### Collector flow
 
@@ -231,10 +256,13 @@ the full set.
   previous one within a rollout, and each rollout's first segment starts where
   its base's included prefix ended. Gaps, regressions, duplicate segment
   identities and a list that does not end on the active rollout refuse.
-- `own_start_ordinal` keeps its meaning. A segment entirely before the own
-  boundary is inherited context, a segment that straddles it carries the
-  boundary, and `OwnRecord` applies per segment. An absent child boundary still
-  excludes nothing.
+- `own_start_ordinal` keeps its meaning and is recorded once per revision, on
+  its head, never on a segment (a segment can be shared by revisions with
+  different boundaries). `OwnRecord` compares each record's physical ordinal
+  with the head's boundary, so every record of a segment wholly before it is
+  inherited context, and a segment straddling it is split by ordinal. An
+  absent child boundary still excludes nothing; validation refuses a head
+  whose boundary lies outside its list's ordinal range.
 - A segment's identity is `(thread_id, rollout_id, start_ordinal,
   end_ordinal_exclusive, filter_version)`; its content address is the SHA-256
   of its compressed bytes. Two chains that include different prefixes of one
@@ -260,8 +288,9 @@ segment list:
 Each publication streams every segment again (decision D4): memory bounded
 by one segment, CPU proportional to F, rate limited by the upload interval.
 The alternative, resuming from a private serialized accumulator checkpoint at
-the last sealed segment, was set aside: streaming needs no new persisted state, and an equivalence test (iterator over the segment list ==
-`ParseCodex` over the assembled bundle) proves it. A checkpoint is a follow-up
+the last sealed segment, was set aside: streaming needs no new persisted
+state, and an equivalence test (iterator over the segment list == `ParseCodex`
+over the assembled bundle) proves it. A checkpoint is a follow-up
 only if profiles show derivation CPU matters.
 
 ### Reading: show, handoff, search, verification
@@ -335,8 +364,9 @@ new one is complete.
 - Session delete and purge keep their order: metadata first, then the whole
   prefix. Because segments live under the session prefix, whole-prefix
   deletion removes them.
-- GC protects every object `SourceReferences()` returns for the live sidecar
-  and every pending journal's stages, and rechecks metadata before deleting a
+- GC protects every object the head resolver returns for the live sidecar
+  (failing closed when a head cannot be read) and every pending journal's
+  stages, and rechecks metadata before deleting a
   source, as today. A sealed segment shared by several revisions is deleted
   only when no live head lists it.
 - Undo and import batch ownership stay whole-session.
@@ -344,17 +374,33 @@ new one is complete.
 ### Reader-before-writer rollout and versioning
 
 1. **Reader release.** PR 2 ships readers for the segment source and segmented
-   metadata in a release before any writer exists. Readers before it refuse the
-   new schemas (they already refuse unknown versions), so a segmented session
-   is unreadable to an old `show`/`handoff` and the error must say to upgrade.
-2. **Writer capability.** The writer is enabled behind a new permanent
+   metadata in a release before any writer exists. An upgrade message cannot
+   be added to builds already released. Today's builds fail metadata
+   validation with `unsupported metadata schema version N`, and exhaustive
+   listing skips invalid or newer sidecars. So on a build from before PR 2 a
+   segmented session is **hidden**: absent from `list`, and `show` or
+   `handoff` by ID reports no matching session or the generic schema error.
+   The user docs and CHANGELOG for PR 8 say so plainly; nothing in this
+   design relies on old builds explaining it.
+2. **Destination reader gate.** Waiting a release does not prove every
+   machine reading the bucket has upgraded. So the writer is not enabled by
+   release alone: PR 8 adds an explicit per-destination opt-in. Before turning
+   it on, the CLI reads the destination's machine records
+   (`machines/<machine_id>.json`, which carry `agent_archive_version`) and
+   names every paired machine whose last recorded version predates the PR 2
+   reader. The owner confirms knowing those machines will hide segmented
+   sessions until upgraded, or upgrades them first. A machine with no record
+   (an unpaired reader using shared keys) cannot be detected, which the
+   prompt says. The opt-in is recorded in configuration under the writer
+   capability below, never inferred.
+3. **Writer capability.** The writer is enabled behind a new permanent
    configuration writer capability (the next unreserved configuration version
    in `internal/config/wire.go`, coordinated with open reservations), so an
    older collector on the same configuration refuses to write rather than
    republishing a whole-chain schema-3 source over segmented metadata. Older
    collectors that read remote segmented metadata already refuse unknown
    schemas.
-3. **Versions.** The writer PR bumps the Codex adapter and filter versions (the
+4. **Versions.** The writer PR bumps the Codex adapter and filter versions (the
    uploaded representation changes), the source and metadata schema versions,
    and the Codex parser version only if derived values change (equivalence
    says they should not). `schemas/` and versions.md change in the same PRs,
@@ -407,10 +453,14 @@ Each PR has one concern and is merged in order unless marked parallel.
 6. **Collector writer.** Segmented capture path in `sessionScan`, reconciliation
    as segment lists, per-segment size limits and gaps, pending/readback; behind
    the new configuration capability, off until PR 8.
-7. **Lifecycle.** Privacy maintenance, retention, delete, purge, GC and catalog
-   migration over segment sets, with tests that a shared segment survives the
-   deletion of one revision. Must merge before PR 8.
-8. **Enable and migrate.** Turn the writer on for threads selected by D1;
+7. **Lifecycle.** The `internal/reader` head resolver and the move of every
+   protecting or deleting caller to it (catalog GC and migration, retention,
+   purge, search, collector fences/readback, state reference checks), with
+   fail-closed tests for an unreadable head. Privacy maintenance, retention,
+   delete, purge and GC over segment sets, with tests that a shared segment
+   survives the deletion of one revision. Must merge before PR 8.
+8. **Enable and migrate.** The per-destination opt-in and its machine-version
+   check; turn the writer on for threads selected by D1;
    migration of schema-3 sessions by recapture; adapter/filter/parser bumps,
    CHANGELOG, privacy changelog, user docs (`docs/` size-limit and status
    wording), versions.md.
@@ -427,7 +477,12 @@ Synthetic (every PR, CI):
   tail (count source read bytes filtered vs hashed) and uploads one segment
   plus head and sidecar.
 - Rollback, fork and child cases: a base rollout continued at two boundaries;
-  an off-chain tail preserved as a revision sharing sealed segments.
+  an off-chain tail preserved as a revision sharing sealed segments, validated
+  from its own head's rollout header; a child boundary after several whole
+  segments, proving none of their prompts, tools, usage, titles or timestamps
+  count as the child's own.
+- A first read of a chain whose earlier rollout filters to several times the
+  chunk target produces only segments within the per-segment ceiling.
 - Crash at each journal step; stricter privacy re-filter of a 32-segment
   thread with one segment in memory; delete/purge/GC of shared segments.
 
@@ -460,7 +515,7 @@ records the decision.
 | D5 | Keep sealed segments locally (counted in the 1 GiB staging quota), or drop past a bound and fetch from the bucket when needed. | Keep locally up to 256 MiB per session, fetch with checksum verification beyond it. |
 | D6 | Verify sealed raw prefixes by full streaming re-hash on each changed pass, or trust file identity and size for sealed rollouts with periodic full checks. Same question for remote readback of kept segments. | Full re-hash locally (it is O(1) memory and only on changed passes); HEAD-size plus checksum metadata for kept remote segments, full readback for new ones. |
 | D7 | New ceilings: per-thread total filtered, segments per revision, total raw. | 1 GiB filtered, 256 segments, 4 GiB raw. |
-| D8 | Release spacing: how long the reader ships before the writer is enabled, given older builds cannot read segmented sessions. | One release between PR 2 and PR 8, with the upgrade message in the old reader's refusal path already present. |
+| D8 | Release spacing: how long the reader ships before the writer is enabled, given older builds cannot read segmented sessions. | One release between PR 2 and PR 8. Review revised this: since released builds cannot gain an upgrade message, PR 8 also needs the per-destination opt-in that names paired machines on pre-reader builds. |
 | D9 | Migrate schema-3 sessions by recapture, or by splitting retained objects. | Recapture (splitting yields no raw checkpoints). |
 
 ## Risks
@@ -474,8 +529,9 @@ records the decision.
   invalidates checkpoints and falls back to a full segmented re-read, which is
   correct but slow; the pinned producer references in the codex-history spec
   are rechecked in PR 3.
-- **Old readers.** Between enablement and the owner upgrading every machine
-  that reads the archive, segmented sessions are unreadable there.
+- **Old readers.** Builds from before PR 2 hide segmented sessions (they skip
+  newer sidecars rather than explain them). The destination opt-in names the
+  paired machines still on such builds, but cannot see unpaired readers.
 - **Scope.** This touches capture, state, reader and lifecycle. The PR order
   keeps the writer off until the readers and lifecycle that understand
   segments have merged.
