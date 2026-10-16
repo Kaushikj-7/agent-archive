@@ -13,7 +13,25 @@ on:
         required: true
         default: all
         type: choice
-        options: [all, macos, linux, fuzz, systemd]
+        options: [all, macos, linux, fuzz, systemd, pr-reference, native-smoke-reference]
+      reference_source:
+        description: Full immutable tested merge SHA (only for pr-reference)
+        required: false
+        type: string
+      expected_source:
+        description: Exact workflow/checkout SHA for manual native smoke only
+        required: false
+        type: string
+      native_smoke_mode:
+        description: Manual native smoke cohort only
+        type: choice
+        default: normal
+        options: [normal, sensitive]
+      native_smoke_cache:
+        description: Manual native cache start only
+        type: choice
+        default: trusted-seed
+        options: [cold, trusted-seed]
 env:
   CI_SCHEDULE: ${{ github.event.schedule }}
   CI_SUITE: ${{ inputs.suite || 'all' }}
@@ -27,9 +45,11 @@ concurrency:
 # Every action is pinned to a full commit SHA; keep these in step with test.yml.
 jobs:
   linux-race:
+    name: Extended Linux race
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'linux'))
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Full Linux has a 40-minute tier deadline plus setup and post-tier checks.
+    timeout-minutes: ${{ (github.event_name == 'workflow_dispatch' || github.event.schedule == '17 8 * * 0') && 60 || 30 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -43,7 +63,12 @@ jobs:
           go version
           go version | grep -q ' go1\.27\.2 ' || { echo "expected go1.27.2, matching go.mod's toolchain line" >&2; exit 1; }
       - name: Actual source and tier race bodies
-        run: python3 scripts/run_ci_tier.py --suite linux --output tier-results
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] || [ "$CI_SCHEDULE" = '17 8 * * 0' ]; then
+            # Soft Go-managed memory target; race/native allocations also need headroom.
+            export GOMEMLIMIT=3GiB
+          fi
+          python3 scripts/run_ci_tier.py --suite linux --output tier-results
       - run: go vet ./...
       - run: python3 scripts/test_release_signing.py
       - run: python3 scripts/test_release_assets.py
@@ -64,6 +89,7 @@ jobs:
       - run: python3 scripts/test_linux_acceptance.py
       - run: python3 -B scripts/test_go_shards.py
       - run: python3 -B scripts/test_ci_tiers.py
+      - run: python3 -B scripts/test_native_full.py
       - run: python3 -B scripts/test_stage_native_verify.py
       - run: python3 -B scripts/test_scope_native_verify.py
       - run: python3 -B scripts/test_stage_release_vulnerability_scan.py
@@ -78,8 +104,8 @@ jobs:
             ${{ runner.temp }}/purge-tier.json
           if-no-files-found: error
 
-  macos-full:
-    if: (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release-candidate/')) || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'macos'))
+  macos-plan:
+    if: (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release-candidate/')) || (github.event_name == 'schedule' && github.event.schedule == '17 8 * * 0') || (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'macos'))
     runs-on: macos-14
     timeout-minutes: 45
     steps:
@@ -94,8 +120,114 @@ jobs:
         run: |
           go version
           go version | grep -q ' go1\.27\.2 ' || { echo "expected go1.27.2, matching go.mod's toolchain line" >&2; exit 1; }
-      - name: Native daily platform backstop or full macOS tier
+      - name: Compile the exhaustive native catalog and assign three workers
+        run: python3 -B scripts/run_native_full.py plan --output native-plan
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: native-plan
+          path: native-plan
+          if-no-files-found: error
+
+  macos-workers:
+    needs: macos-plan
+    if: (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release-candidate/')) || (github.event_name == 'schedule' && github.event.schedule == '17 8 * * 0') || (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'macos'))
+    runs-on: macos-14
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        worker: [0, 1, 2]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.2'
+          cache: false
+      - name: Require Go 1.27.2 (go.mod's toolchain line)
+        run: |
+          go version
+          go version | grep -q ' go1\.27\.2 ' || { echo "expected go1.27.2, matching go.mod's toolchain line" >&2; exit 1; }
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: native-plan
+          path: native-plan
+      - name: Run assigned complete native bodies on this independent host
+        run: python3 -B scripts/run_native_full.py worker --worker ${{ matrix.worker }} --plan native-plan --output native-worker-${{ matrix.worker }}
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: native-worker-${{ matrix.worker }}
+          path: native-worker-${{ matrix.worker }}
+          if-no-files-found: error
+
+  macos-obligations:
+    needs: macos-plan
+    if: (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release-candidate/')) || (github.event_name == 'schedule' && github.event.schedule == '17 8 * * 0') || (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'macos'))
+    runs-on: macos-14
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.2'
+          cache: false
+      - name: Require Go 1.27.2 (go.mod's toolchain line)
+        run: |
+          go version
+          go version | grep -q ' go1\.27\.2 ' || { echo "expected go1.27.2, matching go.mod's toolchain line" >&2; exit 1; }
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: native-plan
+          path: native-plan
+      - name: Plain performance compilation, named bodies and pinned published writer
+        run: python3 -B scripts/run_native_full.py obligations --plan native-plan --output native-obligations
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: native-obligations
+          path: native-obligations
+          if-no-files-found: error
+
+  macos-full:
+    needs: [macos-plan, macos-workers, macos-obligations]
+    if: always() && ((github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release-candidate/')) || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'macos')))
+    runs-on: macos-14
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.2'
+          cache: false
+      - name: Require Go 1.27.2 (go.mod's toolchain line)
+        run: |
+          go version
+          go version | grep -q ' go1\.27\.2 ' || { echo "expected go1.27.2, matching go.mod's toolchain line" >&2; exit 1; }
+      - name: Native daily platform backstop
+        if: github.event_name == 'schedule' && github.event.schedule == '17 8 * * 1-6'
+        env:
+          GOTOOLCHAIN: local
+          GOWORK: 'off'
+          GOFLAGS: '-mod=readonly'
+          GOENV: 'off'
         run: python3 scripts/run_ci_tier.py --suite macos --output tier-results
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        if: github.event_name != 'schedule' || github.event.schedule == '17 8 * * 0'
+        with:
+          pattern: native-*
+          path: native-results
+      - name: Reconcile exact-source native workers and plain obligations
+        if: github.event_name != 'schedule' || github.event.schedule == '17 8 * * 0'
+        env:
+          NATIVE_NEEDS: ${{ toJSON(needs) }}
+        run: python3 -B scripts/run_native_full.py reconcile --output native-results --needs "$NATIVE_NEEDS"
       - run: go vet ./...
       - run: python3 scripts/test_release_signing.py
       - run: python3 scripts/test_release_assets.py
@@ -122,6 +254,7 @@ jobs:
           name: extended-macos-full-tier
           path: |
             tier-results
+            native-results
             ${{ runner.temp }}/purge-tier.json
           if-no-files-found: error
 
@@ -183,3 +316,93 @@ jobs:
           systemctl --user list-units --all --no-pager 'agent-archive*' || true
           systemctl --user status --no-pager 'agent-archive*' || true
           journalctl --user --no-pager -n 100 || true
+
+  pr-reference:
+    # Bounded qualification only: never included in all, PR, push or schedules.
+    if: github.event_name == 'workflow_dispatch' && inputs.suite == 'pr-reference'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      GOENV: 'off'
+      GOTOOLCHAIN: local
+      GOWORK: 'off'
+      GOFLAGS: '-mod=readonly'
+      PYTHONDONTWRITEBYTECODE: '1'
+      REFERENCE_SOURCE: ${{ inputs.reference_source }}
+    steps:
+      - name: Require an immutable qualification source before checkout
+        run: python3 -c 'import os,re,sys; sys.exit(0 if re.fullmatch("[0-9a-f]{40}",os.environ.get("REFERENCE_SOURCE","")) else "reference_source must be a full commit SHA")'
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.reference_source }}
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.2'
+          cache: false
+      - name: Unrestricted same-source race-short bodies and source/compiler receipts
+        run: python3 -B scripts/run_pr_reference.py run --source "$REFERENCE_SOURCE" --output reference-results
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: pr-unrestricted-reference
+          path: reference-results
+          if-no-files-found: error
+          retention-days: 7
+
+  native-smoke-reference:
+    # One bounded standard Mac only when explicitly selected; excluded from all.
+    if: github.event_name == 'workflow_dispatch' && inputs.suite == 'native-smoke-reference'
+    runs-on: macos-14
+    timeout-minutes: 45
+    env:
+      GOENV: 'off'
+      GOTOOLCHAIN: local
+      GOWORK: 'off'
+      GOFLAGS: '-mod=readonly'
+      PYTHONDONTWRITEBYTECODE: '1'
+      EXPECTED_NATIVE_SOURCE: ${{ inputs.expected_source }}
+      NATIVE_SMOKE_MODE: ${{ inputs.native_smoke_mode }}
+      NATIVE_SMOKE_CACHE: ${{ inputs.native_smoke_cache }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Require explicit same-source manual qualification
+        run: python3 -B scripts/native_smoke_reference.py guard
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.2'
+          cache: false
+      - name: Set controlled compilation/module paths
+        shell: bash
+        run: |
+          printf 'GOCACHE=%s/pr-go-build\nGOMODCACHE=%s/pr-go-modules\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Prove empty cold caches before normal module prelude
+        id: cold_cache
+        if: inputs.native_smoke_cache == 'cold'
+        env:
+          RESTORE_OUTCOME: skipped
+          MATCHED_KEY: ''
+        run: |
+          python3 -B scripts/ci_cache.py prepare --source .
+          python3 -B scripts/native_smoke_reference.py assert-empty --output native-tier-results/cold-start.json
+          python3 -B scripts/ci_cache.py verify --source .
+      - name: Restore pristine verified trusted-main seed
+        id: warm_cache
+        if: inputs.native_smoke_cache == 'trusted-seed'
+        uses: ./.github/actions/verified-go-cache
+      - name: Execute the unchanged native smoke producer and verifier
+        env:
+          NATIVE_CACHE_STATE: ${{ steps.warm_cache.outputs.restore-state || steps.cold_cache.outputs.restore_state }}
+        run: python3 -B scripts/native_smoke_reference.py run --output native-tier-results
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: native-smoke-reference-${{ inputs.native_smoke_mode }}-${{ inputs.native_smoke_cache }}-${{ github.run_attempt }}
+          path: native-tier-results
+          if-no-files-found: error
+          retention-days: 7

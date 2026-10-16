@@ -38,7 +38,7 @@ func (p *relatedSourcePass) genericLegacySignature(ctx context.Context, ref agen
 	if err != nil {
 		return observation, err
 	}
-	sum := sha256.Sum256([]byte(observation.Signature.Token + "\x00" + set.LineageToken()))
+	sum := sha256.Sum256([]byte(observation.Signature.Token + "\x00" + set.Revision))
 	observation.Signature.Token = hex.EncodeToString(sum[:])
 	return observation, p.env.CodexRollouts.Check(ctx, ref.Key, set.Revision)
 }
@@ -58,23 +58,22 @@ func (p *relatedSourcePass) genericLegacyRead(ctx context.Context, ref agentapi.
 	if err := p.env.CodexRollouts.Check(ctx, ref.Key, set.Revision); err != nil {
 		return nil, errors.Join(err, snapshot.Close())
 	}
-	return &registeredLegacySnapshot{SourceSnapshot: snapshot, owner: p, ref: ref, revision: set.Revision, lineage: set.LineageToken(), ctx: ctx}, nil
+	return &registeredLegacySnapshot{SourceSnapshot: snapshot, owner: p, ref: ref, revision: set.Revision, ctx: ctx}, nil
 }
 
 type registeredLegacySnapshot struct {
 	agentapi.SourceSnapshot
-	owner    *relatedSourcePass
-	ref      agentapi.SourceRef
+	owner *relatedSourcePass
+	ref   agentapi.SourceRef
+	// revision is the token genericLegacySignature hashes, so the signature
+	// a read records matches the next pass's Signature of an unchanged source.
 	revision string
-	// lineage is the token genericLegacySignature hashes, so the signature a
-	// read records matches the next pass's Signature of an unchanged source.
-	lineage string
-	ctx     context.Context
+	ctx      context.Context
 }
 
 func (s *registeredLegacySnapshot) Observation() agentapi.SourceObservation {
 	observation := s.SourceSnapshot.Observation()
-	sum := sha256.Sum256([]byte(observation.Signature.Token + "\x00" + s.lineage))
+	sum := sha256.Sum256([]byte(observation.Signature.Token + "\x00" + s.revision))
 	observation.Signature.Token = hex.EncodeToString(sum[:])
 	return observation
 }
@@ -120,7 +119,10 @@ func (s legacyOrdinarySnapshot) RelocatedFrom(registered agentapi.SourceRef) (ag
 }
 
 func (s legacyOrdinarySnapshot) ValidateAdmission(ctx context.Context, a agentapi.SourceAdmission) error {
-	if a.Binding != nil || !a.NativeCreatedAt.IsZero() {
+	if err := a.Binding.ValidateFor("codex"); err != nil {
+		return err
+	}
+	if a.Binding.CodexBinding() != nil || !a.NativeCreatedAt.IsZero() {
 		return sourceFailure(agentapi.Unavailable, "legacy compatibility requires unbound admission")
 	}
 	return s.SourceSnapshot.(agentapi.SourceAdmissionValidator).ValidateAdmission(ctx, a)

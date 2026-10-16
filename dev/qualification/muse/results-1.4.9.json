@@ -1,0 +1,287 @@
+{
+  "schema": 1,
+  "date_utc": "2026-10-15",
+  "source_base": "41755fc7cee5edd4b67d5d94b7394a77ddc063d3",
+  "producer": "1.4.9-R6297.1",
+  "binary_sha256": "4c6ed04ccd5a453bd7b38799aeb9eb290b8635b32c95b5a35e6950a2f20446cb",
+  "binary_bytes": 389577808,
+  "platform": {
+    "system": "Darwin",
+    "machine": "x86_64"
+  },
+  "runner_sha256": "9276a72330c97a7a9f199f3f1649efa83ea0a48ebf0744ced7563b10f232cb31",
+  "raw_report_sha256": "fb9d8fb065ce531086c43978dea6476a5a6a9edebdd711efd5b3b6f6935001c0",
+  "version_command": {
+    "exit": 0,
+    "stdout": "Muse Code 1.4.9 (1.4.9-R6297.1)\n",
+    "stderr": "",
+    "timeout": false
+  },
+  "selected_cases": [
+    "exec-utc"
+  ],
+  "provider": "synthetic loopback Responses only; incoming context discarded; exactly two requests",
+  "isolation": "constructed HOME/XDG/workspace/temp; file credential backend; dummy loopback key; no inherited personal config or credentials",
+  "assertions": {
+    "fresh_exact_own_starts": true,
+    "fresh_own_stream_identity": true,
+    "fresh_exact_own_replies": true,
+    "fresh_exact_own_usage": true,
+    "fresh_no_unowned_run_events": true,
+    "fresh_exact_own_tools": true,
+    "resumed_exact_own_starts": true,
+    "resumed_own_stream_identity": true,
+    "resumed_exact_own_replies": true,
+    "resumed_exact_own_usage": true,
+    "resumed_no_unowned_run_events": true,
+    "resumed_exact_own_tools": true,
+    "resume_has_true_open": true,
+    "fresh_has_one_false_resume_open": true,
+    "resume_success": true,
+    "resume_preserves_prefix": true,
+    "native_valid_export_clean": true,
+    "native_exact_permission_clean": true,
+    "native_bad_checksum_diagnostic": true,
+    "copy_bytes_identical": true,
+    "copy_native_export_clean": true,
+    "mutation_diagnostics_match": true
+  },
+  "exports": {
+    "valid_export": {
+      "exit": 0,
+      "timeout": false,
+      "export_written": true,
+      "diagnostics": {
+        "unparseable_lines": 0,
+        "unknown_payload_kinds": 0,
+        "gaps": 0,
+        "omitted_live_only": 0,
+        "duplicate_records": 0
+      },
+      "unparseable_lines": 0
+    },
+    "permission_exact_export": {
+      "exit": 0,
+      "timeout": false,
+      "export_written": true,
+      "diagnostics": {
+        "unparseable_lines": 0,
+        "unknown_payload_kinds": 0,
+        "gaps": 0,
+        "omitted_live_only": 0,
+        "duplicate_records": 0
+      },
+      "unparseable_lines": 0
+    },
+    "permission_invalid_export": {
+      "exit": 0,
+      "timeout": false,
+      "export_written": true,
+      "diagnostics": {
+        "unparseable_lines": 1,
+        "unknown_payload_kinds": 0,
+        "gaps": 0,
+        "omitted_live_only": 0,
+        "duplicate_records": 0
+      },
+      "unparseable_lines": 1
+    },
+    "copied_export": {
+      "exit": 0,
+      "timeout": false,
+      "export_written": true,
+      "diagnostics": {
+        "unparseable_lines": 0,
+        "unknown_payload_kinds": 0,
+        "gaps": 0,
+        "omitted_live_only": 0,
+        "duplicate_records": 0
+      },
+      "unparseable_lines": 0
+    }
+  },
+  "mutations": {
+    "permission-exact": {
+      "input_sha256": "a8f9520d4e5d53ab40714627c52a4645dfee1f9fc0d2f968c4cad8c0e7e840c1",
+      "exit": 0,
+      "timeout": false,
+      "diagnostics": {
+        "unparseable_lines": 0,
+        "unknown_payload_kinds": 0,
+        "gaps": 0,
+        "omitted_live_only": 0,
+        "duplicate_records": 0
+      },
+      "expected_unparseable_lines": 0,
+      "matched": true
+    },
+    "permission-checksum-zero": {
+      "input_sha256": "5addf6fc8c148378c07448c89616c0ff65f2d1de990f7066470959c7d1998602",
+      "exit": 0,
+      "timeout": false,
+      "diagnostics": {
+        "unparseable_lines": 1,
+        "unknown_payload_kinds": 0,
+        "gaps": 0,
+        "omitted_live_only": 0,
+        "duplicate_records": 0
+      },
+      "expected_unparseable_lines": 1,
+      "matched": true
+    },
+    "permission-reordered": {
+      "input_sha256": "de7b5d4d7c36acfd854b4b279a8075e1a876dbb5e274962600b24040ff234921",
+      "exit": 0,
+      "timeout": false,
+      "diagnostics": {
+        "unparseable_lines": 1,
+        "unknown_payload_kinds": 0,
+        "gaps": 0,
+        "omitted_live_only": 0,
+        "duplicate_records": 0
+      },
+      "expected_unparseable_lines": 1,
+      "matched": true
+    },
+    "permission-leading-space": {
+      "input_sha256": "b6259fa98959af014d16f5909b4a71d6b90f0e717d8641a67253075bf2c992d7",
+      "exit": 0,
+      "timeout": false,
+      "diagnostics": {
+        "unparseable_lines": 1,
+        "unknown_payload_kinds": 0,
+        "gaps": 0,
+        "omitted_live_only": 0,
+        "duplicate_records": 0
+      },
+      "expected_unparseable_lines": 1,
+      "matched": true
+    },
+    "permission-future-version": {
+      "input_sha256": "fa02b4733dc6f100425c23f07580b9c7981e5d2d5c2bb73e7b5d5d6406f468c3",
+      "exit": 0,
+      "timeout": false,
+      "diagnostics": {
+        "unparseable_lines": 1,
+        "unknown_payload_kinds": 0,
+        "gaps": 0,
+        "omitted_live_only": 0,
+        "duplicate_records": 0
+      },
+      "expected_unparseable_lines": 1,
+      "matched": true
+    },
+    "ordinary-exact": {
+      "input_sha256": "72be2713d52942ce0f81f789d052c4051df6c2d6aa36d87ea62043ed1cc18003",
+      "exit": 0,
+      "timeout": false,
+      "diagnostics": {
+        "unparseable_lines": 0,
+        "unknown_payload_kinds": 0,
+        "gaps": 0,
+        "omitted_live_only": 0,
+        "duplicate_records": 0
+      },
+      "expected_unparseable_lines": 0,
+      "matched": true
+    },
+    "ordinary-future-version": {
+      "input_sha256": "15c9699e30594f6f55762a23372926eab90fc9b9d68fb0f498fbf53c63cdab32",
+      "exit": 0,
+      "timeout": false,
+      "diagnostics": {
+        "unparseable_lines": 0,
+        "unknown_payload_kinds": 0,
+        "gaps": 0,
+        "omitted_live_only": 0,
+        "duplicate_records": 0
+      },
+      "expected_unparseable_lines": 0,
+      "matched": true
+    },
+    "ordinary-missing-version": {
+      "input_sha256": "a95c3054196d3bd7b089e9d4b4ffdfc06dc83faeb690ce653883b4b8699a159b",
+      "exit": 0,
+      "timeout": false,
+      "diagnostics": {
+        "unparseable_lines": 1,
+        "unknown_payload_kinds": 0,
+        "gaps": 0,
+        "omitted_live_only": 0,
+        "duplicate_records": 0
+      },
+      "expected_unparseable_lines": 1,
+      "matched": true
+    },
+    "ordinary-changed-timestamp": {
+      "input_sha256": "972d6cf4903119c5a8e77fbc70f1c6c128c70eab87ca3a5c25ed2d5d3509e49c",
+      "exit": 0,
+      "timeout": false,
+      "diagnostics": {
+        "unparseable_lines": 0,
+        "unknown_payload_kinds": 0,
+        "gaps": 0,
+        "omitted_live_only": 0,
+        "duplicate_records": 0
+      },
+      "expected_unparseable_lines": 0,
+      "matched": true
+    }
+  },
+  "native_vector_hashes": {
+    "opened-native-1.4.9.jsonl": {
+      "bytes": 605,
+      "sha256": "72be2713d52942ce0f81f789d052c4051df6c2d6aa36d87ea62043ed1cc18003"
+    },
+    "complete-native-resumed-1.4.9.jsonl": {
+      "bytes": 241313,
+      "sha256": "b532ccc2f5e09890c3239dba051502aa3f8c50c2333f44593d7401cc31275658"
+    },
+    "permission-native-1.4.9.jsonl": {
+      "bytes": 3036,
+      "sha256": "a8f9520d4e5d53ab40714627c52a4645dfee1f9fc0d2f968c4cad8c0e7e840c1"
+    }
+  },
+  "cleanup": {
+    "native_invocations": 17,
+    "all_reaped": true,
+    "remaining_python_threads": [
+      "MainThread"
+    ]
+  },
+  "initial_attempts": [
+    {
+      "outcome": "failed before session creation: sandbox rejected loopback listener bind",
+      "version_exit": 0,
+      "owned_processes_reaped": true,
+      "raw_report_sha256": "c4b5ddc99a66265af4355b0d4ad713c9e6f59b44c8f942685b0b901042b99f87"
+    },
+    {
+      "outcome": "PASS 22 exec assertions with scratch-only 1.4.9 pin modification; historical, not final-source evidence",
+      "runner_sha256": "2e484a4691d79d94bcd5f93efe82696b5fd08e0963f43a81e666b62c7ad7dfb1",
+      "raw_report_sha256": "8ccc6db7892cdc4519a2376c16952cb779b39792748985caf68c8c24b06fbd13"
+    }
+  ],
+  "cross_version_baseline": {
+    "scope": "15 exact 1.4.8 synthetic vectors exported by 1.4.9 with initial scratch runner; all hashes and diagnostics matched prior results",
+    "results_sha256": "51888a030c09ef1e746b9471363a8f07c8a392367e367939e5df9548357563a5",
+    "independent_integrity": false
+  },
+  "comparison": {
+    "baseline": "muse-q0-review-c-20261015 exec-utc (1.4.8)",
+    "baseline_report_sha256": "d3f8006f6a43c473f21c39437248a377a019b01a61ec605510155c7926ac5930",
+    "observations": "Initial 1.4.9 exec session has identical frame keys/version/ordinal, child keysets/payload types, envelope/opened-record keysets, and payload/event counts to matched 1.4.8 exec; values differ as expected. No retained-format change observed in this bounded lane.",
+    "matched_shape_sha256": "39c43741ef77c8bf5b430e273087c0f668898f6556fc16c18ad170d688106f0f"
+  },
+  "validation": [
+    "python3 -B scripts/test_muse_qualification.py: PASS 20 tests",
+    "python3 -B scripts/test_ci_workflow.py: PASS 30 tests",
+    "python3 -B scripts/test_ci_lane_verdict.py: PASS 6 tests"
+  ],
+  "limitations": [
+    "Exporter success/mutation rejection does not establish independent checksum encoding.",
+    "Copy/resume preserves native identity and opening observations; original creation authority remains unresolved.",
+    "No new 1.4.9 MSP, PTY, child, fork, checkpoint, tool-turn, date-zone, Linux/arm64, real-accounting, publication/read-back or production capture qualification.",
+    "No product adapter or capture enablement; historical 1.4.8 matrix and corpus provenance remain unchanged."
+  ]
+}

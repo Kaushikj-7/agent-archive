@@ -79,7 +79,7 @@ func TestNativeFilterLeaseCancellationAndHistoryMetadataOwnership(t *testing.T) 
 	a, raw := historyFile(t, dir, threadA, threadA, 0, nil, "copied", "old own")
 	end := len(strings.SplitAfter(string(raw), "\n")[0]) + len(strings.SplitAfter(string(raw), "\n")[1])
 	b, _ := historyFile(t, dir, threadB, threadA, 2, map[string]any{"history_base": map[string]any{"thread_id": threadA, "end_ordinal_exclusive": 2, "end_byte_offset": end}}, "new own")
-	lookup := &historyLookup{thread: agentapi.CodexRolloutSet{Current: &b, Candidates: []agentapi.SourceRef{a, b}, Complete: true, Revision: "stable"}, rollouts: map[string][]agentapi.SourceRef{threadA: {a}, threadB: {b}}}
+	lookup := &historyLookup{thread: agentapi.CodexRolloutSet{Current: &b, Candidates: []agentapi.SourceRef{a, b}, Revision: "stable"}, rollouts: map[string][]agentapi.SourceRef{threadA: {a}, threadB: {b}}}
 	budget := agentapi.NewNativeReadBudget(4 << 20)
 	pass, err := (SourceProvider{}).OpenPass(t.Context(), agentapi.SourceEnvironment{ReadBudget: budget, CodexRollouts: lookup})
 	if err != nil {

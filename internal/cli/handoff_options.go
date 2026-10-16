@@ -10,6 +10,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
 type handoffConfigState struct {
@@ -25,14 +26,16 @@ func handoffConfig(home string, opts handoffOptions) (config.Config, bool, error
 }
 
 type handoffOptions struct {
-	readCtx   context.Context
-	selection **handoffPickerSelection
-	config    *handoffConfigState
-	native    bool
-	sessionID string
-	revision  string
-	project   string
-	harness   string
+	readCtx context.Context
+	// archiveStore retains the exact client bound to the query read view.
+	archiveStore storage.ObjectStore
+	selection    **handoffPickerSelection
+	config       *handoffConfigState
+	native       bool
+	sessionID    string
+	revision     string
+	project      string
+	harness      string
 	// allProjects searches and lists every project, not only the working
 	// directory's repository.
 	allProjects bool
@@ -54,6 +57,9 @@ type handoffOptions struct {
 	newWindow bool
 	// agentArgs are the arguments after `--`, given to the launched agent.
 	agentArgs []string
+	// preparing stops the "Preparing handoff…" spinner a run started before
+	// reading the chosen session; it may be called more than once.
+	preparing func()
 }
 
 type handoffDestination string
@@ -70,7 +76,7 @@ func parseHandoffOptions(args []string, stderr io.Writer, env handoffOptionsDepe
 	latest := fs.Bool("latest", false, "the most recent session for the project, by path or by repository (remote origin)")
 	project := fs.String("project", "", "the project to pick from and search, as a directory or a project name, and the directory --latest searches (default: the current directory's repository)")
 	allProjects := fs.Bool("all-projects", false, "pick from and search every project, not only the current repository's")
-	harness := fs.String("harness", "", "only sessions from this harness (claude, codex, cursor)")
+	harness := fs.String("harness", "", "only sessions from this harness (claude, codex, cursor, muse)")
 	file := fs.String("file", "", "render this native transcript file directly (requires --harness)")
 	source := fs.String("source", "auto", "where session content comes from: auto, local, or archive")
 	maxBytes := fs.Int("max-bytes", archive.DefaultHandoffMaxBytes, "output budget in bytes; 0 means no limit")
@@ -156,7 +162,7 @@ func validateHandoffFlagCombinations(opts handoffOptions, interactive bool) stri
 	case selectors > 1:
 		return "a session ID, --latest, and --file are mutually exclusive"
 	case opts.file != "" && opts.harness == "":
-		return "--file requires --harness (claude, codex, or cursor)"
+		return "--file requires --harness (claude, codex, cursor, or muse)"
 	case opts.project != "" && opts.allProjects:
 		return "--project and --all-projects cannot be used together: --project picks one project, --all-projects searches every project"
 	case opts.project != "" && opts.file != "":

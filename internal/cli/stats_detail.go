@@ -350,7 +350,14 @@ func (p *statsPrinter) detailNotes() []string {
 	}
 	notes = append(notes, "~ marks an estimate at list price.")
 	if p.partialSpend() || p.anyPartial() {
-		notes = append(notes, "+ leaves out tokens of models the price table does not list"+p.unpricedModels()+".")
+		text := "+ leaves out tokens of models the price table does not list" + p.unpricedModels() + "."
+		if p.s.Coverage.ObservationOnlySessions > 0 && p.s.Overview.Cost.UnpricedTokens == 0 {
+			text = "+ marks partial priced coverage."
+		}
+		if cov.ObservationOnlySessions > 0 {
+			text += fmt.Sprintf(" Priced subset also excludes %d observation-only sessions.", cov.ObservationOnlySessions)
+		}
+		notes = append(notes, text)
 	}
 	if m := s.MCP; m != nil {
 		notes = append(notes, "MCP: "+clean(m.Scope))
@@ -384,7 +391,7 @@ func (p *statsPrinter) unknownTokenText() string {
 	if len(parts) == 0 {
 		return ""
 	}
-	return "Sessions with no token data are left out of token and cost totals (" + strings.Join(parts, ", ") + ")."
+	return p.observationAccountingContext("Sessions with no token data are left out of token and cost totals (" + strings.Join(parts, ", ") + ").")
 }
 
 // unpricedNames lists the models the window used that the price table does not

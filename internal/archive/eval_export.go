@@ -60,37 +60,39 @@ type EvalExport struct {
 	NativeSessionID string `json:"native_session_id,omitempty"`
 	// TranscriptPath is the local transcript's absolute path; absent for
 	// an archived session.
-	TranscriptPath  string          `json:"transcript_path,omitempty"`
-	MachineID       string          `json:"machine_id,omitempty"`
-	ParentSessionID string          `json:"parent_session_id,omitempty"`
-	Harness         Harness         `json:"harness"`
-	Project         EvalProject     `json:"project"`
-	Branch          string          `json:"branch,omitempty"`
-	GitHead         *SessionGitHead `json:"git_head,omitempty"`
-	Replay          *Replay         `json:"replay,omitempty"`
-	StartedAt       *time.Time      `json:"started_at,omitempty"`
-	EndedAt         *time.Time      `json:"ended_at,omitempty"`
-	CapturedAt      *time.Time      `json:"captured_at,omitempty"`
-	State           MetadataState   `json:"state,omitempty"`
-	TurnOutcome     TurnOutcome     `json:"turn_outcome,omitempty"`
-	Parser          ParserInfo      `json:"parser"`
-	FilterVersion   string          `json:"filter_version"`
-	Models          []ModelSummary  `json:"models,omitempty"`
-	Counts          Counts          `json:"counts"`
-	ModelTokens     []ModelTokens   `json:"model_tokens,omitempty"`
-	ToolsUsed       []ToolUsage     `json:"tools_used,omitempty"`
-	MCPCalls        []ToolUsage     `json:"mcp_calls,omitempty"`
-	SkillsUsed      []SkillUse      `json:"skills_used,omitempty"`
-	GitActivity     []GitEvent      `json:"git_activity,omitempty"`
-	CaptureGaps     []CaptureGap    `json:"capture_gaps,omitempty"`
+	TranscriptPath    string                   `json:"transcript_path,omitempty"`
+	MachineID         string                   `json:"machine_id,omitempty"`
+	ParentSessionID   string                   `json:"parent_session_id,omitempty"`
+	Harness           Harness                  `json:"harness"`
+	Project           EvalProject              `json:"project"`
+	Branch            string                   `json:"branch,omitempty"`
+	GitHead           *SessionGitHead          `json:"git_head,omitempty"`
+	Replay            *Replay                  `json:"replay,omitempty"`
+	StartedAt         *time.Time               `json:"started_at,omitempty"`
+	EndedAt           *time.Time               `json:"ended_at,omitempty"`
+	CapturedAt        *time.Time               `json:"captured_at,omitempty"`
+	State             MetadataState            `json:"state,omitempty"`
+	TurnOutcome       TurnOutcome              `json:"turn_outcome,omitempty"`
+	Parser            ParserInfo               `json:"parser"`
+	FilterVersion     string                   `json:"filter_version"`
+	Models            []ModelSummary           `json:"models,omitempty"`
+	Counts            Counts                   `json:"counts"`
+	ModelTokens       []ModelTokens            `json:"model_tokens,omitempty"`
+	TokenObservations *TokenObservationSummary `json:"token_observations,omitempty"`
+	ToolsUsed         []ToolUsage              `json:"tools_used,omitempty"`
+	MCPCalls          []ToolUsage              `json:"mcp_calls,omitempty"`
+	SkillsUsed        []SkillUse               `json:"skills_used,omitempty"`
+	GitActivity       []GitEvent               `json:"git_activity,omitempty"`
+	CaptureGaps       []CaptureGap             `json:"capture_gaps,omitempty"`
 
-	// Full detail only. Prompts and FilesEdited are present (possibly
+	// Full detail only. Prompts are present (possibly
 	// empty) at full detail and absent at metadata detail.
 	Prompts       *[]EvalPrompt      `json:"prompts,omitempty"`
 	FinalResponse *EvalFinalResponse `json:"final_response,omitempty"`
-	FilesEdited   *[]string          `json:"files_edited,omitempty"`
-	Feedback      []EvalFeedback     `json:"feedback,omitempty"`
-	Trimmed       *EvalTrimmed       `json:"trimmed,omitempty"`
+	// FilesEdited is absent when edited-file evidence is unavailable.
+	FilesEdited *[]string      `json:"files_edited,omitempty"`
+	Feedback    []EvalFeedback `json:"feedback,omitempty"`
+	Trimmed     *EvalTrimmed   `json:"trimmed,omitempty"`
 }
 
 // EvalProject names the project without its path: the project root's base
@@ -209,7 +211,8 @@ func EvalExportFromMetadata(m Metadata, source EvalExportSource) EvalExport {
 		Harness: m.Harness, Project: EvalProject{Name: m.ProjectName, RepoKey: m.RepoKey},
 		GitHead: m.GitHead, Replay: m.Replay, EndedAt: m.EndedAt,
 		State: m.State, TurnOutcome: m.TurnOutcome, Parser: m.Parser, FilterVersion: m.FilterVersion,
-		Models: m.Models, Counts: m.Counts, ModelTokens: m.ModelTokens, ToolsUsed: m.ToolsUsed, MCPCalls: m.MCPCalls,
+		TokenObservations: CloneTokenObservations(m.TokenObservations),
+		Models:            m.Models, Counts: m.Counts, ModelTokens: m.ModelTokens, ToolsUsed: m.ToolsUsed, MCPCalls: m.MCPCalls,
 		SkillsUsed: m.SkillsUsed, GitActivity: m.GitActivity, CaptureGaps: m.CaptureGaps,
 		StartedAt: startedAt, CapturedAt: capturedAt, MachineID: machineID,
 	}
@@ -260,7 +263,10 @@ func BuildEvalExportWithAnalysis(bundle SourceBundle, analysis Analysis, m Metad
 	if len(bundle.NativeRecords) > 0 {
 		files = append(files, sessionFilesTouched(view.ToolCalls, analysis.Facts.WorkspaceRoot)...)
 	}
-	e.Prompts, e.FinalResponse, e.FilesEdited = &prompts, last, &files
+	e.Prompts, e.FinalResponse = &prompts, last
+	if analysis.Observability.structuredEvidenceAvailable(analysis.Observability.FilesTouched) {
+		e.FilesEdited = &files
+	}
 	e.Feedback = explicitFeedback(bundle.SupplementalEvidence)
 	return e, nil
 }
@@ -285,6 +291,7 @@ func (e *EvalExport) rederiveWithAnalysis(bundle SourceBundle, analysis Analysis
 		return err
 	}
 	e.EndedAt, e.State, e.TurnOutcome, e.Parser = derived.EndedAt, derived.State, derived.TurnOutcome, derived.Parser
+	e.TokenObservations = CloneTokenObservations(derived.TokenObservations)
 	e.Models, e.Counts, e.ModelTokens, e.ToolsUsed, e.MCPCalls = derived.Models, derived.Counts, derived.ModelTokens, derived.ToolsUsed, derived.MCPCalls
 	e.SkillsUsed, e.GitActivity, e.CaptureGaps = derived.SkillsUsed, derived.GitActivity, derived.CaptureGaps
 	for _, gap := range m.CaptureGaps {
@@ -393,6 +400,7 @@ func FitEvalExport(e EvalExport, maxBytes int) EvalExport {
 // cloneEvalTexts copies the slices FitEvalExport changes, so the caller's
 // record is left alone.
 func cloneEvalTexts(e EvalExport) EvalExport {
+	e.TokenObservations = CloneTokenObservations(e.TokenObservations)
 	if e.Prompts != nil {
 		e.Prompts = new(slices.Clone(*e.Prompts))
 	}

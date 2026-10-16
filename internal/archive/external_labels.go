@@ -150,15 +150,19 @@ func CurrentSessionLabel(bundle SourceBundle) (SessionLabel, time.Time, bool) {
 }
 
 // ValidateSessionLabels prevents a label from changing another source's name.
+// An ordinary source and a self-contained history source both carry at most
+// one label for their own native session.
 func ValidateSessionLabels(bundle SourceBundle) error {
+	ordinary := bundle.History == nil && bundle.SchemaVersion == SourceSchemaVersion
+	history := bundle.History != nil && bundle.SchemaVersion == HistorySourceSchemaVersion
 	seen := false
 	for _, e := range bundle.SupplementalEvidence {
 		if e.Kind != EvidenceKindSessionLabels {
 			continue
 		}
 		l, ok := labelFromEvidence(e)
-		if seen || !ok || !reflect.DeepEqual(l.Evidence(e.ObservedAt, bundle.Capture.Harness.Name).Payload, e.Payload) || e.Provenance != labelProvenance(bundle.Capture.Harness.Name) || l.NativeID != bundle.NativeSessionID || bundle.History != nil || bundle.SchemaVersion != SourceSchemaVersion {
-			return errors.New("session label does not match its owning ordinary source")
+		if seen || !ok || !reflect.DeepEqual(l.Evidence(e.ObservedAt, bundle.Capture.Harness.Name).Payload, e.Payload) || e.Provenance != labelProvenance(bundle.Capture.Harness.Name) || l.NativeID != bundle.NativeSessionID || (!ordinary && !history) {
+			return errors.New("session label does not match its owning source")
 		}
 		seen = true
 	}

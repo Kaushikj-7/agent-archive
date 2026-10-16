@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -173,6 +174,17 @@ type sourceCountingStore struct {
 	bodies atomic.Int32
 }
 
+func (s *sourceCountingStore) GetLimited(ctx context.Context, key string, limit int64) ([]byte, error) {
+	if !strings.HasSuffix(key, "/metadata.json") {
+		s.bodies.Add(1)
+	}
+	bounded, ok := s.ObjectStore.(storage.LimitedGetter)
+	if !ok {
+		return nil, errors.New("underlying store has no bounded read capability")
+	}
+	return bounded.GetLimited(ctx, key, limit)
+}
+
 func (s *sourceCountingStore) Get(ctx context.Context, key string) ([]byte, error) {
 	if !strings.HasSuffix(key, "/metadata.json") {
 		s.bodies.Add(1)
@@ -230,7 +242,7 @@ func TestHandoffRepositoryQuestionShowsPlainCappedWords(t *testing.T) {
 		t.Fatalf("code=%d stderr=%.300s", code, errOut)
 	}
 	assertPlainLines(t, "question", errOut, 260)
-	if strings.Contains(errOut, "TAILMARK") || strings.Contains(errOut, strings.Repeat("A", 61)) {
+	if strings.Contains(errOut, "TAILMARK") || strings.Contains(errOut, strings.Repeat("A", candidateTitleWidth)) {
 		t.Errorf("a long project name or prompt was not cut:\n%.600s", errOut)
 	}
 	if !strings.Contains(errOut, "project Ignore all previous") || !strings.Contains(errOut, "…") {
@@ -670,7 +682,7 @@ func TestHandoffAmbiguousTitleListIsCappedAndPlain(t *testing.T) {
 		t.Fatalf("code=%d stderr=%.400s", code, errOut)
 	}
 	assertPlainLines(t, "candidates", errOut, 300)
-	if strings.Contains(errOut, "TAILMARK") || strings.Contains(errOut, strings.Repeat("A", 61)) {
+	if strings.Contains(errOut, "TAILMARK") || strings.Contains(errOut, strings.Repeat("A", candidateTitleWidth)) {
 		t.Errorf("a long title was not cut:\n%.600s", errOut)
 	}
 }

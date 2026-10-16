@@ -13,7 +13,7 @@ import (
 
 // Startup/warm selection never runs the shared enumeration epoch. Large SQL
 // and catalog fixtures contain metadata only; the selected source is real.
-func BenchmarkCurrentStartupBeforeCoverage(b *testing.B) {
+func BenchmarkCurrentStartupFromRestoredCatalog(b *testing.B) {
 	store, cfg, at, root := fixture(b)
 	wanted := writeRollout(b, root, cfg.Archive.Projects[0].Root, at, 100000, "sessions")
 	path := filepath.Join(root, "sessions", "rollout-2026-10-01T12-00-00-"+wanted+".jsonl")
@@ -46,8 +46,7 @@ func BenchmarkCurrentStartupBeforeCoverage(b *testing.B) {
 	if _, err := db.ExecContext(b.Context(), "PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
 		b.Fatal(err)
 	}
-	c := catalog{Version: catalogVersion, Roots: []string{root}, Coverage: newCoverage([]string{root}), Cache: map[string]cached{}}
-	c.Coverage.request(wanted)
+	c := catalog{Version: catalogVersion, Roots: []string{root}, Cache: map[string]cached{}}
 	for n := range maxCatalog {
 		id := fmt.Sprintf("00000000-0000-0000-0000-%012d", n+1)
 		key := filepath.Join(root, "sessions", fmt.Sprintf("cached-%d.jsonl", n))
@@ -71,7 +70,7 @@ func BenchmarkCurrentStartupBeforeCoverage(b *testing.B) {
 		constructor := time.Since(start)
 		start = time.Now()
 		set, err := l.Thread(b.Context(), wanted)
-		if err != nil || set.Current == nil || set.Current.Path != path || set.Complete {
+		if err != nil || set.Current == nil || set.Current.Path != path {
 			b.Fatal(set, err)
 		}
 		if err := l.Check(b.Context(), wanted, set.Revision); err != nil {
@@ -82,7 +81,7 @@ func BenchmarkCurrentStartupBeforeCoverage(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		dirty := l.coverageDirty
+		dirty := l.dirty
 		used, peak := l.readBudget.Charged()
 		if err := l.Close(); err != nil {
 			b.Fatal(err)

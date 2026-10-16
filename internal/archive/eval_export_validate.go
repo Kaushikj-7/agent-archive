@@ -52,6 +52,7 @@ func ValidateEvalExport(e EvalExport) error {
 		check(slices.Contains([]ResponseModelStatus{ResponseModelStatusNotExposed, ResponseModelStatusObserved}, m.ResponseModelStatus), "invalid model response status")
 		check(m.TurnCount == nil || *m.TurnCount >= 0, "negative model turn count")
 	}
+	check(validTokenObservationSummary(e.TokenObservations), "invalid token_observations")
 	check(len(e.ModelTokens) <= 32, "too many model_tokens")
 	for _, m := range e.ModelTokens {
 		check(m.Model != "" && utf8.RuneCountInString(m.Model) <= maxModelNameRunes && nonNegativeCounts(m), "invalid model_tokens entry")

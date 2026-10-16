@@ -93,9 +93,9 @@ type refusedStarts struct {
 }
 
 // admissionRefusedStarts is the record for a pass that decides admissions,
-// or nil for a native-only or inventory-only pass, which decides none.
+// or nil for a native-only pass, which decides none.
 func admissionRefusedStarts(home string, cfg config.Config, agent string, o Options) *refusedStarts {
-	if o.nativeOnly || o.inventoryOnly {
+	if o.nativeOnly {
 		return nil
 	}
 	return loadRefusedStarts(home, cfg, agent)

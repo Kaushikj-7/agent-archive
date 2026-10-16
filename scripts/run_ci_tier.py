@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Explicit CI cadence, conservative PR backstops and actual execution evidence."""
 import argparse
+import copy
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -13,6 +15,7 @@ import tempfile
 import time
 
 import full_race
+import go_cache_context as cache_keys
 
 ROOT = Path(__file__).resolve().parent.parent
 MODULE = 'github.com/wangjohn/agent-archive/'
@@ -41,8 +44,12 @@ def catalog():
 
 def resolve(event, ref='', schedule='', suite='all'):
     if event == 'pull_request':
+        if ref.startswith('refs/tags/'):
+            raise Failure('release tag cannot be a pull request event')
         return 'pr'
     if event == 'push' and ref.startswith('refs/heads/release-candidate/') and ref != 'refs/heads/release-candidate/':
+        return 'full'
+    if event == 'push' and re.fullmatch(r'refs/tags/v[0-9]+\.[0-9]+\.[0-9]+', ref):
         return 'full'
     if event == 'workflow_dispatch' and suite in ('all', 'linux', 'macos', 'fuzz', 'systemd'):
         return 'full'
@@ -59,52 +66,69 @@ def git(*args):
     return subprocess.check_output(['git', '-C', str(ROOT), *args], stderr=subprocess.PIPE, timeout=20).decode().strip()
 
 
+PR_REGRESSIONS = {
+    'catalog': {'internal/catalog': ['TestPublicationBoundsAndCoordinatorMutationRefuseBeforeWrite', 'TestMissingCorruptAndOversizedNodesFailClosed', 'TestPickerUnsupportedAndBudgetAreNotEmptyProofs']},
+    'archive': {'internal/state': ['TestImportStageCapacityEncodedBoundary', 'TestImportStageCapacityRefilterBoundary'], 'internal/agents/codex': ['TestRelatedCachedRecordCountLimitIsTypedAndReleasesBudget']},
+    'recovery': {'internal/state': ['TestImportStageCapacityEncodedBoundary', 'TestImportStageCapacityRefilterBoundary']},
+    'cli': {'internal/cli': ['TestCodexExceptionRequiresNamedOtherAppConsentBeforeAdmission', 'TestRealCLIOverflowShowKeepsFullBodyAndSourceAuthority', 'TestRealCLICatalogDefaultList50Bounded']},
+}
+
+
+# Shared CLI dispatch, installation identity and status observation participate
+# in setup/uninstall even though their filenames do not name those commands.
+SYSTEMD_SHARED_CLI = {'cli.go', 'install_paths.go', 'status.go'}
+
+
+def representative_fallback():
+    # The required verdict reconciles the exact-source unrestricted Linux short
+    # shards and native smoke. Unknown inputs do not duplicate that complete run.
+    return {'packages': [], 'regressions': {}, 'ordinary_coverage': 'required-linux-short-shards',
+            'native': False, 'systemd': False, 'fuzz': False, 'purge': False}
+
+
 def extra_for_paths(paths):
-    """Reviewed semantic dependency families; unmapped inputs require all backstops."""
-    result = {'packages': [], 'native': False, 'systemd': False, 'fuzz': False, 'purge': False}
+    """Explicit targeted PR backstops on top of mandatory complete short coverage."""
+    result = representative_fallback()
     families = {
-        'catalog': {'reader', 'catalog', 'cli', 'storage', 'state', 'sourcefacts', 'collector', 'discovery'},
+        'catalog': {'reader', 'catalog', 'storage'},
         'recovery': {'state', 'backfill', 'retention', 'revocation', 'setupjournal', 'collector', 'sourceio', 'discovery'},
         'archive': {'archive', 'agents', 'capture', 'nativecodec', 'transcriptio', 'sourcefacts'},
-        'platform': {'scheduler', 'config', 'credentials', 'platform', 'setupresources', 'skillownership', 'termlaunch', 'terminal', 'sourcefacts', 'sourceio', 'discovery', 'capture'},
-        'presentation': {'stats', 'statshtml', 'statsfmt', 'cli'},
-        'purge': {'purge', 'retention', 'storage'},
+        'platform': {'scheduler', 'config', 'credentials', 'platform', 'setupresources', 'skillownership', 'termlaunch', 'terminal'},
+        'presentation': {'stats', 'statshtml', 'statsfmt'},
+        'purge': {'purge'}, 'cli': {'cli'},
     }
-    groups = set()
+    groups, uncertain = set(), False
     for path in paths:
-        if path in {'CHANGELOG.md','CONTRIBUTING.md','CODE_OF_CONDUCT.md','LICENSE'}:
-            continue  # ordinary doc/link and script gates cover these reviewed prose inputs
-        if path.startswith('internal/archive/'):
-            # Shared metadata/history/limits feed every product family.
-            return dict(result, packages=['./...'], native=True, systemd=True, fuzz=True, purge=True)
+        if path.startswith(('docs/', 'dev/')) or path.endswith('.md') or path == 'LICENSE':
+            continue
         if path.startswith('internal/'):
             components = path.split('/')
-            if len(components) < 3 or components[1] == 'testutil':
-                return dict(result, packages=['./...'], native=True, systemd=True, fuzz=True, purge=True)
-            found = {name for name, members in families.items() if components[1] in members}
+            found = {name for name, members in families.items() if len(components) > 2 and components[1] in members}
             if not found:
-                return dict(result, packages=['./...'], native=True, systemd=True, fuzz=True, purge=True)
+                uncertain = True
             groups.update(found)
-            if components[1] == 'cli':
-                groups.update(families)  # setup, consent, purge and presentation share this facade
-        elif path in ('docs/security/archive-cleanup.md', 'docs/getting-started/uninstall.md'):
-            groups.add('purge')
+            if len(components) > 2 and (components[1] in {'scheduler', 'setupjournal', 'setupresources'}
+                    or components[1] == 'cli' and (components[-1] in SYSTEMD_SHARED_CLI
+                        or any(word in components[-1] for word in ('setup', 'uninstall', 'systemd', 'scheduler')))):
+                result['systemd'] = True
         else:
-            # Even unknown docs/config/test changes may affect declarative contracts.
-            return dict(result, packages=['./...'], native=True, systemd=True, fuzz=True, purge=True)
-    packages = set()
+            uncertain = True
+    # Keep critical targeted integration backstops even alongside unknown paths.
+    if uncertain:
+        groups.update(('catalog', 'archive', 'cli'))
+    selected = {}
     for group in groups:
-        for member in families[group]:
-            if (ROOT / 'internal' / member).is_dir():
-                packages.add('./internal/' + member + '/...')
-    result.update(packages=sorted(packages), native='platform' in groups,
-                  systemd='platform' in groups, fuzz='archive' in groups, purge='purge' in groups)
+        for package, names in PR_REGRESSIONS.get(group, {}).items():
+            selected.setdefault(package, set()).update(names)
+    result.update(regressions={p: sorted(n) for p,n in sorted(selected.items())},
+                  packages=['./'+p for p in sorted(selected)],
+                  native=bool(groups & {'platform', 'archive', 'catalog', 'cli'}))
     return result
 
 
 def pr_extras(event, tested):
-    """Require exact base/head/tested-merge proof; uncertainty selects full."""
-    full = {'packages': ['./...'], 'native': True, 'systemd': True, 'fuzz': True, 'purge': True}
+    """Require exact base/head/tested-merge proof; uncertainty repeats all short."""
+    full = extra_for_paths(['unmapped-source-proof'])
     try:
         base, head = event['pull_request']['base']['sha'], event['pull_request']['head']['sha']
         for sha in (base, head, tested):
@@ -112,15 +136,23 @@ def pr_extras(event, tested):
                 raise Failure('event commit unavailable')
         if git('rev-parse', 'HEAD') != tested or git('rev-parse', '--is-shallow-repository') != 'false':
             raise Failure('tested source/history unavailable')
-        if git('show', '-s', '--format=%P', tested).split() != [base, head]:
+        # The event records a base snapshot, while GitHub may test a merge
+        # against a newer descendant. Pin the PR parent exactly and prove the
+        # actual first parent contains the recorded base; never relabel either.
+        parents = git('show', '-s', '--format=%P', tested).split()
+        if len(parents) != 2 or parents[1] != head:
             raise Failure('unexpected tested merge')
+        tested_base = parents[0]
+        if git('rev-parse', '--verify', tested_base+'^{commit}') != tested_base:
+            raise Failure('actual tested base unavailable')
+        git('merge-base', '--is-ancestor', base, tested_base)
         git('merge-base', '--is-ancestor', base, tested)
         git('merge-base', '--is-ancestor', head, tested)
         if git('status', '--porcelain', '--untracked-files=all'):
             raise Failure('dirty source')
         # Reuse the verifier's tracked-byte/type/mode proof, including index-hidden edits.
         import scope_native_verify as scope
-        for sha in (base, head, tested):
+        for sha in dict.fromkeys((base, tested_base, head, tested)):
             for record in scope.records(scope.git(ROOT, 'ls-tree', '-r', '-z', sha)):
                 metadata, raw_path = record.split(b'\t', 1)
                 mode, kind, oid = metadata.split(b' ')
@@ -135,9 +167,47 @@ def pr_extras(event, tested):
             if raw and not raw.endswith(b'\0'):
                 raise Failure('invalid changed paths')
             paths.update(p.decode() for p in raw.split(b'\0') if p)
-        return dict(extra_for_paths(sorted(paths)), reason='verified base/head/tested merge', base=base, head=head, paths=sorted(paths))
+        return dict(extra_for_paths(sorted(paths)), reason='verified base/head/tested merge', base=base, tested_base=tested_base, head=head, paths=sorted(paths))
     except (KeyError, TypeError, ValueError, OSError, subprocess.SubprocessError, Failure):
-        return dict(full, reason='full fallback: source proof unavailable')
+        return dict(full, reason='representative fallback: source proof unavailable')
+
+
+def read_unique_json(path):
+    def unique(pairs):
+        value = dict(pairs)
+        if len(value) != len(pairs):
+            raise Failure('duplicate JSON field in plan evidence')
+        return value
+    return json.loads(Path(path).read_text(), object_pairs_hook=unique)
+
+
+def verify_plan(path, expected):
+    source = git('rev-parse', 'HEAD')
+    if (not isinstance(expected, dict) or expected.get('source') != source or source != os.environ.get('GITHUB_SHA', source)
+            or read_unique_json(path) != expected):
+        raise Failure('canonical and independently recomputed tier plans differ')
+
+
+def verify_native_plan(directory, expected):
+    """Bind native selection; Darwin still owns its raw/context verification."""
+    report = read_unique_json(Path(directory)/'tier.json')
+    proof = full_race.source_proof(ROOT)
+    if not isinstance(expected, dict) or not isinstance(report, dict):
+        raise Failure('malformed native plan evidence')
+    native = report.get('native_smoke', {})
+    if not isinstance(native, dict):
+        raise Failure('malformed native selection evidence')
+    if (expected.get('tier') != 'pr' or proof.get('source') != expected.get('source')
+            or expected.get('source') != os.environ['GITHUB_SHA']
+            or report.get('source') != expected['source'] or report.get('source_proof') != proof
+            or report.get('schema') != 1 or report.get('success') is not True
+            or report.get('tier') != 'pr' or report.get('suite') != 'macos'
+            or report.get('event') != os.environ.get('GITHUB_EVENT_NAME')
+            or report.get('ref') != os.environ.get('GITHUB_REF', '')
+            or report.get('extras') != expected
+            or native.get('sensitive') is not bool(expected.get('native'))
+            or native.get('source_proof') != proof or native.get('post_source_proof') != proof):
+        raise Failure('native coverage selection differs from independent current tier plan')
 
 
 def terminals(text):
@@ -179,38 +249,27 @@ def body_evidence(text, short):
     return {'actual': actual, 'full_restorations': scale}
 
 
-def checked(command, output, deadline, env=None):
-    """Linux retains the existing subreaper; Darwin stops the entire process group."""
-    if sys.platform == 'linux':
-        import run_go_shard
-        try:
-            run_go_shard.supervise([(command, output, env or os.environ.copy())], deadline)
-        except run_go_shard.Failure as error:
-            raise Failure(str(error)) from error
-        return output.read_text()
+def checked_many(commands, deadline):
+    """One bounded supervisor owns every process and joins the complete batch."""
     def cancel(signum, frame):
         raise Failure('tier command cancelled')
     old = {sig: signal.signal(sig, cancel) for sig in (signal.SIGTERM, signal.SIGINT)}
-    process = None
     try:
-        with output.open('w') as handle:
-            process = subprocess.Popen(command, stdout=handle, start_new_session=True, env=env)
-            try:
-                status = process.wait(timeout=max(.01, deadline-time.monotonic()))
-            except subprocess.TimeoutExpired as error:
-                raise Failure('tier deadline exceeded') from error
-            if status:
-                raise Failure('tier command failed')
-        return output.read_text()
+        started = time.monotonic()
+        durations = full_race.shards.supervise(commands, deadline)
+        print('tier invocation timing: ' + json.dumps({'batch_wall_seconds': time.monotonic()-started,
+            'invocations': [{'log': str(command[1]), 'seconds': duration} for command, duration in zip(commands, durations)],
+            'overlap': len(commands) > 1}), flush=True)
+    except full_race.shards.Failure as error:
+        raise Failure(str(error)) from error
     finally:
-        if process:
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            process.wait()
         for sig, handler in old.items():
             signal.signal(sig, handler)
+
+
+def checked(command, output, deadline, env=None):
+    checked_many([(command, output, env or os.environ.copy())], deadline)
+    return output.read_text()
 
 
 def discover(packages, out, deadline, race=False):
@@ -289,7 +348,404 @@ def verify_selected(actual, selected, children=None, real_manager=False):
                     raise Failure('required full-scale child missing')
 
 
-def run_suite(tier, suite, out, extras=None, seconds=2400):
+SOURCE_AUDIT_PACKAGE = MODULE + 'internal/agents/builtin'
+SOURCE_AUDIT_TEST = 'TestNativeCaptureWholeSourceBoundary'
+SOURCE_AUDIT_ENV = 'AGENT_ARCHIVE_PLAIN_SOURCE_AUDIT_OWNED'
+SOURCE_AUDIT_SKIP = 'whole-source audit owned by required plain source-audit gate; race body NOT RUN'
+SOURCE_AUDIT_COMMAND = ['go', 'test', '-count=1', '-json', '-timeout', '12m', '-p', '1',
+                        '-parallel', '1', '-run', '^' + SOURCE_AUDIT_TEST + '$', './internal/agents/builtin']
+
+
+def verify_owned_audit_skip(raw):
+    actual = terminals(raw)
+    audit = [r for r in actual if r['package'] == SOURCE_AUDIT_PACKAGE and r['test'] == SOURCE_AUDIT_TEST]
+    if len(audit) != 1 or audit[0]['status'] != 'skip' or SOURCE_AUDIT_SKIP not in audit[0].get('reason', ''):
+        raise Failure('owned race audit must record explicit NOT RUN skip')
+
+
+def source_audit_body(raw):
+    selected = {SOURCE_AUDIT_PACKAGE: [SOURCE_AUDIT_TEST]}
+    verify_pr_stream(raw, selected)
+    lifecycle = [r['Action'] for r in full_race.shards.json_stream(raw)
+                 if r.get('Test') == SOURCE_AUDIT_TEST and r.get('Action') != 'output']
+    if lifecycle != ['run', 'pass']:
+        raise Failure('plain source audit lacks actual named passing body')
+    actual = body_evidence(raw, short=False)
+    verify_selected(actual['actual'], selected)
+    return actual
+
+
+PLAIN_VET_COMMAND = ['go', 'vet', './...']
+PLAIN_VET_IDENTITY_SCHEMA = 'plain-vet-compatible-v1'
+
+
+def plain_vet_context():
+    """Use the existing strict Go/compiler identity for native Linux plain vet."""
+    import go_cache_context
+    try:
+        context = go_cache_context.runtime_context()
+    except go_cache_context.InvalidContext as error:
+        raise Failure('plain vet runtime context invalid') from error
+    if context['go']['GOARCH'] != 'amd64':
+        raise Failure('plain vet requires native Linux amd64')
+    return dict(context, race=False)
+
+
+def plain_vet_identity(context):
+    """Cross-job vet identity excludes only the runner image release label.
+
+    Raw context and cache keys retain that label. Go/compiler/tool/OS identity
+    and ImageOS remain part of this projection, including any future fields.
+    """
+    image = context.get('image') if isinstance(context, dict) else None
+    if (not isinstance(image, dict) or set(image) != {'ImageOS','ImageVersion'}
+            or any(not isinstance(v,str) or not re.fullmatch('[A-Za-z0-9_.-]+',v)
+                   for v in image.values())):
+        raise Failure('plain vet raw image provenance missing')
+    return dict(context, image={'ImageOS':image['ImageOS']})
+
+
+def execute_plain_vet(out, deadline):
+    env = dict(os.environ, AGENT_ARCHIVE_REAL_SYSTEMD='0')
+    env.pop('AGENT_ARCHIVE_PERF', None)
+    before = full_race.source_proof(ROOT)
+    context = plain_vet_context()
+    started = time.monotonic()
+    raw = checked(PLAIN_VET_COMMAND, out/'plain-vet.txt', deadline, env)
+    after = full_race.source_proof(ROOT)
+    if before != after or context != plain_vet_context():
+        raise Failure('plain vet source or context changed during execution')
+    return {'command': PLAIN_VET_COMMAND, 'log': 'plain-vet.txt', 'exit_code': 0,
+            'pre_source_proof': before, 'post_source_proof': after, 'context': context,
+            'identity_schema': PLAIN_VET_IDENTITY_SCHEMA,
+            'log_sha256': hashlib.sha256(raw.encode()).hexdigest(),
+            'invocation_seconds': time.monotonic()-started,
+            'performance_enabled': False, 'real_systemd_enabled': False}
+
+
+def verify_plain_vet(directory, report, expected, expected_context_sha256, historical=False, *, strict_full_context=False, historical_vet_contract=None):
+    """Require canonical successful execution receipt separately from audit bodies."""
+    import run_go_shard
+    receipt = report.get('plain_vet')
+    if not isinstance(receipt, dict):
+        raise Failure('owned plain vet receipt missing')
+    context = receipt.get('context', {})
+    import go_cache_context
+    try:
+        if historical_vet_contract is None:
+            go_cache_context.validate_context(context)
+        else:
+            if not historical:
+                raise go_cache_context.InvalidContext('historical vet authority forbidden for live verification')
+            import historical_vet_contract as old_vet
+            old_vet.validate_context(context, expected, historical_vet_contract, ROOT)
+    except go_cache_context.InvalidContext as error:
+        raise Failure('plain vet recorded context malformed') from error
+    identity_schema = receipt.get('identity_schema')
+    if strict_full_context:
+        if identity_schema != 'full-v1' and not (historical and identity_schema is None):
+            raise Failure('strict plain vet full-context schema missing or unsupported')
+        plain_vet_identity(context)  # Validate raw provenance; never compare projection.
+        compatibility = context
+    elif identity_schema == PLAIN_VET_IDENTITY_SCHEMA:
+        compatibility = plain_vet_identity(context)
+    elif historical and identity_schema is None:
+        plain_vet_identity(context)  # Validate full raw image provenance too.
+        compatibility = context  # Old full-digest receipts remain historical facts only.
+    else:
+        raise Failure('plain vet compatibility identity schema missing or unsupported')
+    go = context['go']
+    if (context.get('race') is not False or context.get('tags') != []
+            or context.get('version') != 'go version go1.27.2 linux/amd64'
+            or context.get('runner_os') != 'Linux' or context.get('runner_arch') != 'X64'
+            or any(go.get(k) != v for k,v in {'GOVERSION':'go1.27.2', 'GOOS':'linux',
+                'GOHOSTOS':'linux','GOARCH':'amd64','GOHOSTARCH':'amd64','CGO_ENABLED':'1',
+                'GOTOOLCHAIN':'local','GOWORK':'off','GOFLAGS':'-mod=readonly'}.items())
+            or not isinstance(expected_context_sha256,str)
+            or not re.fullmatch('[0-9a-f]{64}',expected_context_sha256)
+            or run_go_shard.digest(compatibility) != expected_context_sha256):
+        raise Failure('plain vet recorded context mismatch')
+    current = plain_vet_context() if not historical else None
+    if not historical and compatibility != (current if strict_full_context else plain_vet_identity(current)):
+        raise Failure('plain vet current context mismatch')
+    if (receipt.get('command') != PLAIN_VET_COMMAND or receipt.get('log') != 'plain-vet.txt'
+            or type(receipt.get('exit_code')) is not int or receipt['exit_code'] != 0
+            or receipt.get('pre_source_proof') != expected or receipt.get('post_source_proof') != expected
+            or receipt.get('performance_enabled') is not False
+            or receipt.get('real_systemd_enabled') is not False):
+        raise Failure('plain vet execution/source receipt mismatch')
+    try:
+        raw = (Path(directory)/'plain-vet.txt').read_bytes()
+    except OSError as error:
+        raise Failure('plain vet raw log missing') from error
+    if receipt.get('log_sha256') != hashlib.sha256(raw).hexdigest():
+        raise Failure('plain vet raw log mismatch')
+
+
+def verify_source_audit(directory, source, *, expected_source_proof=None, require_plain_vet=False, expected_vet_context_sha256=None, strict_full_context=False, historical_vet_contract=None):
+    """Require exact-source plain named body and package PASS, never compilation."""
+    directory = Path(directory)
+    report = json.loads((directory / 'tier.json').read_text())
+    proof = report.get('source_proof', {})
+    if (report.get('schema') != 1 or report.get('success') is not True
+            or report.get('source') != source or proof.get('source') != source
+            or not re.fullmatch('[0-9a-f]{40}', proof.get('tree', ''))
+            or report.get('tier') != 'pr' or report.get('suite') != 'audit'
+            or len(report.get('invocations', [])) != 1):
+        raise Failure('plain source audit source/status mismatch')
+    # Historical importers resolve this proof from Git, never from the report.
+    # Live callers retain the current tracked-byte and event-source guard.
+    expected = full_race.source_proof(ROOT) if expected_source_proof is None else expected_source_proof
+    if (not isinstance(expected, dict) or set(expected) != {'source', 'tree'}
+            or expected.get('source') != source
+            or not re.fullmatch('[0-9a-f]{40}', expected.get('tree', ''))
+            or proof != expected):
+        raise Failure('plain source audit tracked source proof mismatch')
+    invocation = report['invocations'][0]
+    if (invocation.get('command') != SOURCE_AUDIT_COMMAND or invocation.get('log') != 'source-audit.jsonl'
+            or invocation.get('performance_enabled') is not False
+            or invocation.get('real_systemd_enabled') is not False):
+        raise Failure('plain source audit command/environment mismatch')
+    raw = (directory / 'source-audit.jsonl').read_text()
+    actual = source_audit_body(raw)
+    if invocation.get('evidence') != actual:
+        raise Failure('plain source audit raw body evidence mismatch')
+    if require_plain_vet:
+        verify_plain_vet(directory, report, expected, expected_vet_context_sha256,
+                         historical=expected_source_proof is not None, strict_full_context=strict_full_context,
+                         historical_vet_contract=historical_vet_contract)
+    return report
+
+
+
+NATIVE_PACKAGES = ['./internal/credentials', './internal/scheduler/launchd',
+                   './internal/scheduler/host', './internal/terminal',
+                   './internal/termlaunch', './internal/sourcefacts', './internal/discovery']
+NATIVE_CLI = ['TestScreens', 'TestGuidedPromptTerminalCells',
+              'TestGuidedPromptEmissionPreservesTerminalOwnership',
+              'TestGuidedCommandsTerminalOwnership', 'TestPairingCodeDisplayRecognizesWrappedTerminal',
+              'TestGuidedPromptCollapseRequiresOwnedVisibleRows', 'TestGuidedEOFNeverResolvesDefault',
+              'TestFirstSetupLaunchctlSequence', 'TestSetupAndUninstallNeedATerminal',
+              'TestBrowserKeysRestoreTheTerminal', 'TestStatsScreenOnARealTerminal',
+              'TestSupportedDiscoveryPublishesWithoutHooksAndAcceptsRecentCopy']
+NATIVE_COMMON = ['go', 'test', '-race', '-short', '-count=1', '-json', '-timeout', '10m']
+
+
+def native_selections(sensitive):
+    cli = NATIVE_CLI + (PR_REGRESSIONS['cli']['internal/cli'] if sensitive else [])
+    selected = {MODULE+'internal/cli': sorted(cli)}
+    if sensitive:
+        selected[MODULE+'internal/catalog'] = sorted(PR_REGRESSIONS['catalog']['internal/catalog'])
+    return selected
+
+
+def native_selected_phases(sensitive):
+    phases = {'native-cli': {MODULE+'internal/cli': sorted(NATIVE_CLI)}}
+    if sensitive:
+        phases['native-sensitive-cli'] = {MODULE+'internal/cli': sorted(PR_REGRESSIONS['cli']['internal/cli'])}
+        phases['native-sensitive-catalog'] = {MODULE+'internal/catalog': sorted(PR_REGRESSIONS['catalog']['internal/catalog'])}
+    return phases
+
+
+def native_commands(sensitive):
+    commands = [('native-packages', NATIVE_COMMON+NATIVE_PACKAGES)]
+    for phase, selected in native_selected_phases(sensitive).items():
+        pkg, names = next(iter(selected.items()))
+        pattern = '^('+'|'.join(re.escape(n) for n in names)+')$'
+        common = list(NATIVE_COMMON)
+        if phase.startswith('native-sensitive-'):
+            # Keep original command/deadline ownership: 10m base smoke and
+            # separate 20m conditional regressions. Never pool their budgets.
+            common[common.index('-timeout')+1] = '20m'
+        commands.append((phase, common+['-run', pattern, './'+pkg[len(MODULE):]]))
+    return commands
+
+
+def native_host_context():
+    """Use the one compiler/SDK/image identity shared with compilation caches."""
+    try:
+        context = cache_keys.validate_context(cache_keys.runtime_context(native=True), native=True)
+        if context['go']['GOOS'] != 'darwin':
+            raise cache_keys.InvalidContext('native smoke requires Darwin')
+        return context
+    except cache_keys.InvalidContext as error:
+        raise Failure(str(error)) from error
+
+
+def verify_native_smoke(directory, report, sensitive, *, local=False):
+    """External verification always resolves current source/compiler identity."""
+    if local and (os.environ.get('GITHUB_ACTIONS') == 'true' or os.environ.get('GITHUB_EVENT_NAME')):
+        raise Failure('local native diagnostics cannot qualify a hosted event')
+    proof = None if local else full_race.source_proof(ROOT)
+    context = None if local else native_host_context()
+    return _verify_native_smoke(directory, report, sensitive, local=local,
+                                source_proof=proof, context=context)
+
+
+def _verify_native_smoke(directory, report, sensitive, *, local, source_proof, context):
+    """Private producer path consumes only its pinned live post checkpoints."""
+    directory = Path(directory)
+    native = report.get('native_smoke', {})
+    if local and (os.environ.get('GITHUB_ACTIONS') == 'true' or os.environ.get('GITHUB_EVENT_NAME')):
+        raise Failure('local native diagnostics cannot qualify a hosted event')
+    proof = source_proof
+    if not local:
+        try:
+            cache_keys.validate_context(native.get('context'), native=True)
+            cache_keys.validate_context(native.get('post_context'), native=True)
+        except cache_keys.InvalidContext as error:
+            raise Failure(str(error)) from error
+    if (native.get('qualification') != ('local-diagnostic-only' if local else 'hosted')
+            or native.get('schema') != 1 or native.get('source_proof') != proof
+            or native.get('post_source_proof') != proof
+            or not local and (report.get('source') != proof['source']
+                              or report.get('source_proof') != native.get('source_proof'))
+            or native.get('context') != context or native.get('post_context') != context
+            or native.get('context_sha256') != (None if local else cache_keys.digest(context))
+            or local and not valid_native_local_guard(native.get('local_guard'))
+            or native.get('sensitive') is not sensitive
+            or native.get('build_command') != ['go', 'build', './...']
+            or native.get('build_sha256') != hashlib.sha256((directory/'native-build.log').read_bytes()).hexdigest()):
+        raise Failure('native production build/source/context mismatch')
+    if native.get('cache_observation') is not None:
+        import native_smoke_reference as reference
+        try:
+            observation = json.loads((directory/'cache-observation.json').read_text())
+            if observation != native['cache_observation']:
+                raise reference.Failure('native cache observation raw receipt mismatch')
+            reference.verify_observation(observation, proof, context)
+        except reference.Failure as error:
+            raise Failure(str(error)) from error
+    selected = native_selections(sensitive)
+    packages = {MODULE+p[2:] for p in NATIVE_PACKAGES}
+    try:
+        listing = full_race.listing((directory/'native-list.jsonl').read_text(),
+                                   {p: True for p in selected})
+    except full_race.shards.Failure as error:
+        raise Failure(str(error)) from error
+    if set(listing) != set(selected) or listing != native.get('discovery'):
+        raise Failure('native compiled inventory mismatch')
+    if any(not set(names) <= set(listing.get(pkg, [])) for pkg, names in selected.items()):
+        raise Failure('native selected test missing from compiled inventory')
+    allowed = dict(native_commands(sensitive))
+    invocations = [i for i in report['invocations'] if i['log'].startswith('native-')]
+    if len(invocations) != len(allowed) or {i['log'] for i in invocations} != {n+'.jsonl' for n in allowed}:
+        raise Failure('native invocation coverage mismatch')
+    for invocation in invocations:
+        name = invocation['log'][:-6]
+        if (invocation['command'] != allowed[name] or invocation.get('performance_enabled')
+                or invocation.get('real_systemd_enabled')):
+            raise Failure('native invocation command/environment mismatch')
+        raw = (directory/invocation['log']).read_text()
+        expected = native_selected_phases(sensitive).get(name)
+        if name == 'native-packages':
+            # The immutable unrestricted command owns the whole ordinary
+            # package obligations. No second listing/test process is needed.
+            try:
+                full_race.shards.coverage(raw, {p: True for p in packages})
+            except full_race.shards.Failure as error:
+                raise Failure(str(error)) from error
+        else:
+            verify_pr_stream(raw, expected)
+        evidence = body_evidence(raw, True)
+        if evidence != invocation['evidence']:
+            raise Failure('native raw evidence mismatch')
+        starts = [(e.get('Package'), e['Test']) for e in full_race.shards.json_stream(raw)
+                  if e.get('Test') and e.get('Action') == 'run']
+        if len(starts) != len(set(starts)) or set(starts) != {
+                (r['package'], r['test']) for r in evidence['actual']}:
+            raise Failure('native bodies lack unique actual run/terminal lifecycle')
+        observed = {(r['package'], r['test'].split('/')[0]) for r in evidence['actual']}
+        if name == 'native-packages':
+            if {p for p, _ in observed} != packages:
+                raise Failure('native ordinary package body evidence missing')
+        elif observed != {(p, n) for p, names in expected.items() for n in names}:
+            raise Failure('native selected parents did not all terminate')
+        # Ordinary native packages retain their established opt-in skips (real
+        # Keychain, unavailable host capabilities). Every selected CLI/catalog
+        # regression and every observed child must actually pass.
+        if name != 'native-packages':
+            verify_selected(evidence['actual'], expected)
+    phases = native.get('phase_seconds', {})
+    if set(phases) != {'build', 'discovery', *allowed} or any(
+            type(v) not in (int, float) or not 0 <= v < float('inf') for v in phases.values()):
+        raise Failure('native phase timings missing or malformed')
+
+
+def valid_native_local_guard(context):
+    # This is the original standalone platform/cgo precondition, explicitly
+    # not a compiler/cache identity or hosted qualification receipt.
+    return (isinstance(context, dict) and set(context) == {'GOOS', 'CGO_ENABLED', 'GOVERSION'}
+            and context['GOOS'] == 'darwin' and context['CGO_ENABLED'] == '1'
+            and isinstance(context['GOVERSION'], str) and bool(context['GOVERSION']))
+
+
+def run_native_smoke(out, deadline, report, save, execute, sensitive, *, local=False):
+    if local:
+        context = json.loads(subprocess.check_output(['go', 'env', '-json', 'GOOS', 'CGO_ENABLED', 'GOVERSION'], timeout=30))
+        if not valid_native_local_guard(context):
+            raise Failure('macOS smoke requires native Darwin with cgo')
+    else:
+        context = native_host_context()
+    if local and (os.environ.get('GITHUB_ACTIONS') == 'true' or os.environ.get('GITHUB_EVENT_NAME')):
+        raise Failure('local native diagnostics cannot qualify a hosted event')
+    if local:
+        print('native smoke: local diagnostics only; no hosted compiler/source qualification', flush=True)
+    pre_source_proof = None if local else full_race.source_proof(ROOT)
+    report['source_proof'] = copy.deepcopy(pre_source_proof)
+    native = report['native_smoke'] = {'schema': 1, 'source_proof': copy.deepcopy(pre_source_proof),
+        'context': None if local else copy.deepcopy(context),
+        'context_sha256': None if local else cache_keys.digest(context),
+        'qualification': 'local-diagnostic-only' if local else 'hosted',
+        **({'local_guard': context} if local else {}), 'sensitive': sensitive, 'build_command': ['go', 'build', './...'], 'phase_seconds': {}}
+    observation = out/'cache-observation.json'
+    if observation.exists():
+        if local:
+            raise Failure('local diagnostics cannot claim a hosted cache observation')
+        native['cache_observation'] = json.loads(observation.read_text())
+    save()
+    def timed(name, operation):
+        start = time.monotonic()
+        try:
+            return operation()
+        finally:
+            native['phase_seconds'][name] = time.monotonic()-start
+            save()
+            print('native phase timing: '+json.dumps({name: native['phase_seconds'][name]}), flush=True)
+    timed('build', lambda: checked(native['build_command'], out/'native-build.log', deadline))
+    native['build_sha256'] = hashlib.sha256((out/'native-build.log').read_bytes()).hexdigest()
+    selected = native_selections(sensitive)
+    listing = timed('discovery', lambda: discover(
+        ['./'+p[len(MODULE):] for p in selected],
+        out/'native-list.jsonl', deadline, race=True))
+    native['discovery'] = listing
+    if any(not set(names) <= set(listing.get(pkg, [])) for pkg, names in selected.items()):
+        raise Failure('native selected test missing from compiled inventory')
+    save()
+    # Keep host-sensitive groups serial: launchd observers and PTY tests must
+    # not compete with a second test process mutating shared native resources.
+    # Share only compiled discovery. Base and conditional CLI executions
+    # retain their original separate package lifetimes and TestMain isolation.
+    for name, command in native_commands(sensitive):
+        chosen = native_selected_phases(sensitive).get(name)
+        timed(name, lambda: execute(command, name, short=True, selected=chosen or None))
+    post_context = None if local else native_host_context()
+    post_source_proof = None if local else full_race.source_proof(ROOT)
+    native['post_context'] = copy.deepcopy(post_context)
+    native['post_source_proof'] = copy.deepcopy(post_source_proof)
+    save()
+    # Both checkpoints were just collected live around all build/test commands.
+    # Reuse those pinned values privately, never proof claimed by an artifact.
+    _verify_native_smoke(out, report, sensitive, local=local,
+                         source_proof=post_source_proof, context=post_context)
+
+
+def run_suite(tier, suite, out, extras=None, seconds=2400, *, own_plain_vet=False, native_local=False):
+    if native_local and (tier != 'pr' or suite != 'macos'
+            or os.environ.get('GITHUB_ACTIONS') == 'true' or os.environ.get('GITHUB_EVENT_NAME')):
+        raise Failure('local native diagnostics require an explicit local PR smoke run')
+    if own_plain_vet and (tier != 'pr' or suite != 'audit'):
+        raise Failure('plain vet ownership requires PR source-audit suite')
     out.mkdir(parents=True, exist_ok=True)
     source = git('rev-parse', 'HEAD')
     if source != os.environ.get('GITHUB_SHA', source):
@@ -301,6 +757,10 @@ def run_suite(tier, suite, out, extras=None, seconds=2400):
     path = out / 'tier.json'
     path.write_text(json.dumps(report, indent=2)+'\n')
     deadline = time.monotonic()+seconds
+    if tier == 'pr':
+        # Native smoke owns its two actual checkpoints around all commands.
+        # Avoid adding redundant whole-repository scans outside that boundary.
+        report['source_proof'] = None if suite == 'macos' else full_race.source_proof(ROOT)
     def execute(command, name, short=False, selected=None, children=None, env=None, real_manager=False):
         if env is None:
             env = dict(os.environ, AGENT_ARCHIVE_REAL_SYSTEMD='0')
@@ -313,16 +773,48 @@ def run_suite(tier, suite, out, extras=None, seconds=2400):
         text = checked(command, out/(name+'.jsonl'), deadline, env)
         if command[0] == 'bash':
             text = '\n'.join(line for line in text.splitlines() if line.startswith('{'))
-        proof = body_evidence(text, short)
+        proof = source_audit_body(text) if command == SOURCE_AUDIT_COMMAND else body_evidence(text, short)
         if selected:
+            if tier == 'pr' or command == SOURCE_AUDIT_COMMAND:
+                verify_pr_stream(text, selected)
             verify_selected(proof['actual'], selected, children, real_manager=real_manager)
         invocation['evidence'] = proof
         path.write_text(json.dumps(report, indent=2)+'\n')
+    def execute_full_batch(batch):
+        if len(batch) == 1:
+            command, name = batch[0]
+            execute(command, name)
+            return
+        # Record both exact ordered entries before launching. The supervisor is
+        # synchronous; no threads mutate the report or execute callbacks.
+        env = dict(os.environ, AGENT_ARCHIVE_REAL_SYSTEMD='0')
+        env.pop('AGENT_ARCHIVE_PERF', None)
+        invocations = [{'command': command, 'log': name+'.jsonl', 'evidence': None,
+                        'performance_enabled': False, 'real_systemd_enabled': False}
+                       for command, name in batch]
+        report['invocations'].extend(invocations)
+        path.write_text(json.dumps(report, indent=2)+'\n')
+        commands = [(invocation['command'], out/invocation['log'], dict(env))
+                    for invocation in invocations]
+        checked_many(commands, deadline)
+        for invocation in invocations:
+            invocation['evidence'] = body_evidence((out/invocation['log']).read_text(), False)
+        path.write_text(json.dumps(report, indent=2)+'\n')
+    if suite == 'audit' or tier == 'daily' and suite == 'linux':
+        audit_source = full_race.source_proof(ROOT)
+        report['audit_source_proof'] = audit_source
+        audit_started = time.monotonic()
+        execute(SOURCE_AUDIT_COMMAND, 'source-audit', selected={SOURCE_AUDIT_PACKAGE: [SOURCE_AUDIT_TEST]})
+        report['audit_plain_seconds'] = time.monotonic() - audit_started
+        if full_race.source_proof(ROOT) != audit_source:
+            raise Failure('plain source audit source changed during execution')
     common = ['go', 'test', '-race', '-count=1', '-json', '-timeout', '20m']
+    if suite == 'macos' and tier in ('pr', 'daily'):
+        run_native_smoke(out, deadline, report,
+            lambda: path.write_text(json.dumps(report, indent=2)+'\n'), execute,
+            sensitive=bool(tier == 'pr' and extras and extras['native']), local=native_local)
     if suite == 'macos' and tier == 'daily':
-        execute(['bash', 'scripts/test_macos_smoke.sh'], 'native-smoke', short=True)
-        if not report['invocations'][-1]['evidence']['actual']:
-            raise Failure('native smoke executed no bodies')
+        execute(common + ['-short', './internal/config', './internal/catalog', './internal/capture', './internal/sourceio'], 'native-integration', True)
     if suite in ('linux', 'extra') or suite == 'macos' and tier == 'full':
         packages = extras['packages'] if suite == 'extra' else ['./...']
         if packages:
@@ -330,12 +822,25 @@ def run_suite(tier, suite, out, extras=None, seconds=2400):
                 try:
                     full_race.run(packages, out, deadline, report,
                                   lambda: path.write_text(json.dumps(report, indent=2)+'\n'),
-                                  checked, execute, ROOT, body_evidence, verify_selected,
+                                  checked, execute_full_batch, ROOT, body_evidence, verify_selected,
                                   catalog()['restorations'])
                 except full_race.shards.Failure as error:
                     raise Failure(str(error)) from error
             else:
-                execute(common + ['-short'] + packages, 'race', True)
+                if tier == 'pr':
+                    report['representative_discovery'] = discover(packages, out/'representative-list.jsonl', deadline, race=True)
+                    for relative, names in extras['regressions'].items():
+                        pkg = MODULE+relative
+                        if not set(names) <= set(report['representative_discovery'].get(pkg, [])):
+                            raise Failure('PR targeted regression missing from compiled source')
+                        pattern = '^('+'|'.join(re.escape(n) for n in names)+')$'
+                        execute(common + ['-short', '-run', pattern, './'+relative], 'regression-'+relative.replace('/', '-'), True, selected={pkg:names})
+                else:
+                    short_env = dict(os.environ, AGENT_ARCHIVE_REAL_SYSTEMD='0', **{SOURCE_AUDIT_ENV: '1'})
+                    short_env.pop('AGENT_ARCHIVE_PERF', None)
+                    execute(common + ['-short'] + packages, 'race', True, env=short_env)
+                    if tier == 'daily':
+                        verify_owned_audit_skip((out/'race.jsonl').read_text())
         if tier == 'daily' and suite == 'linux':
             chosen = [e for e in catalog()['restorations'] if e['restore'] == 'daily']
             by_pkg = {}
@@ -356,7 +861,7 @@ def run_suite(tier, suite, out, extras=None, seconds=2400):
                 out, deadline, performance_env, report['full_schedule']['source_proof'])
             path.write_text(json.dumps(report, indent=2)+'\n')
             execute(PERFORMANCE, 'performance', env=performance_env)
-    if suite == 'macos':
+    if suite == 'macos' and tier in ('daily', 'full'):
         execute(['bash','scripts/test_published_writer.sh'],'published-writer', selected={MODULE+'internal/config':['TestPublishedWriterRefusesProtectedConfiguration']})
     if suite == 'fuzz' or suite == 'extra' and extras['fuzz']:
         listing = discover(['./...'], out/'fuzz-list.jsonl', deadline)
@@ -391,16 +896,30 @@ def run_suite(tier, suite, out, extras=None, seconds=2400):
             full_race.verify(out, report, packages, ROOT, body_evidence, verify_selected, catalog()['restorations'])
         except full_race.shards.Failure as error:
             raise Failure(str(error)) from error
+    if own_plain_vet:
+        report['plain_vet'] = execute_plain_vet(out, deadline)
+    if tier == 'pr' and suite != 'macos' and full_race.source_proof(ROOT) != report['source_proof']:
+        raise Failure('PR regression source changed during execution')
     report['success'] = True
     path.write_text(json.dumps(report,indent=2)+'\n')
+    if suite == 'audit':
+        import run_go_shard
+        context_hash = run_go_shard.digest(plain_vet_identity(report['plain_vet']['context'])) if own_plain_vet else None
+        verify_source_audit(out, source, require_plain_vet=own_plain_vet, expected_vet_context_sha256=context_hash)
 
 
-def verify_full(directory, plan):
+def verify_full(directory, plan, expected_suite=None):
     """Required verdict demands exact-source successful full/empty-extra proof."""
     path = directory / 'tier.json'
     report = json.loads(path.read_text())
+    if (expected_suite is not None and report.get('suite') != expected_suite
+            and not (expected_suite == 'linux' and report.get('suite') == 'extra')):
+        raise Failure('full verdict platform suite mismatch')
     if plan.get('source') != os.environ['GITHUB_SHA']:
         raise Failure('plan source mismatch')
+    if report.get('tier') == 'pr':
+        verify_pr(directory, report, plan)
+        return
     if (report.get('schema') != 1 or report.get('success') is not True
             or report.get('source') != os.environ['GITHUB_SHA'] or report.get('tier') != 'full'):
         raise Failure('full tier source/status mismatch')
@@ -411,7 +930,7 @@ def verify_full(directory, plan):
     extra = report.get('suite') == 'extra'
     if extra and report.get('extras') != plan:
         raise Failure('extra coverage differs from exact-source plan')
-    if not extra and report.get('suite') != 'linux':
+    if not extra and report.get('suite') not in ('linux', 'macos'):
         raise Failure('unexpected full verdict suite')
     expected_packages = plan['packages'] if extra else ['./...']
     if expected_packages:
@@ -437,6 +956,17 @@ def verify_full(directory, plan):
     allowed = {f'race-{n}.jsonl': cmd for n, cmd in enumerate(report.get('full_schedule', {}).get('commands', []))}
     if expected_packages:
         allowed['performance.jsonl'] = PERFORMANCE
+    if report.get('suite') == 'macos':
+        allowed['published-writer.jsonl'] = ['bash', 'scripts/test_published_writer.sh']
+        selected = {MODULE+'internal/config': ['TestPublishedWriterRefusesProtectedConfiguration']}
+        writer = (directory/'published-writer.jsonl').read_text()
+        writer = '\n'.join(line for line in writer.splitlines() if line.startswith('{'))
+        verify_pr_stream(writer, selected)
+        verify_selected(body_evidence(writer, False)['actual'], selected)
+        receipt = [i for i in report['invocations'] if i['log'] == 'published-writer.jsonl']
+        if (len(receipt) != 1 or receipt[0].get('performance_enabled') is not False
+                or receipt[0].get('real_systemd_enabled') is not False):
+            raise Failure('published writer environment weakened')
     if extra and plan['systemd']:
         for name, pattern, relative in [('systemd', '^TestReal', './internal/scheduler/systemd'), ('cli', '^TestRealSystemd', './internal/cli')]:
             allowed['systemd-'+name+'.jsonl'] = ['go', 'test', '-count=1', '-json', '-timeout', '8m', '-run', pattern, relative]
@@ -452,16 +982,109 @@ def verify_full(directory, plan):
         raise Failure('required full fuzz campaign missing')
 
 
+def verify_pr_stream(text, selected):
+    # Body PASS events alone do not establish a complete successful package.
+    try:
+        full_race.shards.coverage(text, {p: True for p in selected},
+                                  [n for names in selected.values() for n in names])
+    except full_race.shards.Failure as error:
+        raise Failure(str(error)) from error
+
+
+def verify_pr(directory, report, plan):
+    """Recompute exact-source focused short evidence without calling it full."""
+    if (report.get('schema') != 1 or report.get('success') is not True
+            or report.get('source') != os.environ['GITHUB_SHA'] or report.get('suite') != 'extra'
+            or report.get('extras') != plan or plan.get('tier') != 'pr'
+            or report.get('event') != os.environ.get('GITHUB_EVENT_NAME', 'local')
+            or report.get('ref') != os.environ.get('GITHUB_REF', '')
+            or report.get('schedule') != os.environ.get('CI_SCHEDULE', '')
+            or report.get('source_proof') != full_race.source_proof(ROOT)):
+        raise Failure('PR regression source/status/plan mismatch')
+    if plan.get('ordinary_coverage') != 'required-linux-short-shards':
+        raise Failure('PR plan omits mandatory ordinary coverage')
+    allowed, selected_by_log = {}, {}
+    for relative, names in plan.get('regressions', {}).items():
+        name = 'regression-'+relative.replace('/', '-')+'.jsonl'
+        pattern = '^('+'|'.join(re.escape(n) for n in names)+')$'
+        allowed[name] = ['go', 'test', '-race', '-count=1', '-json', '-timeout', '20m', '-short', '-run', pattern, './'+relative]
+        selected_by_log[name] = {MODULE+relative:names}
+    if plan['systemd']:
+        for name, pattern, relative in [('systemd', '^TestReal', './internal/scheduler/systemd'), ('cli', '^TestRealSystemd', './internal/cli')]:
+            allowed['systemd-'+name+'.jsonl'] = ['go', 'test', '-count=1', '-json', '-timeout', '8m', '-run', pattern, relative]
+    if report.get('full_schedule') or report.get('performance_compile') or report.get('fuzz_completed'):
+        raise Failure('PR evidence contains unexpected full campaign')
+    invocations = report.get('invocations', [])
+    if len(invocations) != len(allowed) or {i['log'] for i in invocations} != set(allowed):
+        raise Failure('missing or unexpected PR regression invocation')
+    for invocation in invocations:
+        name = invocation['log']
+        if invocation['command'] != allowed[name] or invocation.get('performance_enabled'):
+            raise Failure('weakened PR regression invocation')
+        short = name.startswith('regression-')
+        proof = body_evidence((directory/name).read_text(), short)
+        if invocation['evidence'] != proof or not proof['actual']:
+            raise Failure('PR regression raw evidence mismatch/empty')
+        if short:
+            listing = discover_from_log((directory/'representative-list.jsonl').read_text())
+            if report.get('representative_discovery') != listing:
+                raise Failure('PR compiled discovery differs from raw evidence')
+            selected = selected_by_log[name]
+            if any(not set(names) <= set(listing.get(pkg, [])) for pkg,names in selected.items()):
+                raise Failure('PR selected compiled parent absent')
+            verify_pr_stream((directory/name).read_text(), selected)
+            verify_selected(proof['actual'], selected)
+        if not short:
+            listing = discover_from_log((directory/('systemd-list.jsonl' if name == 'systemd-systemd.jsonl' else 'cli-list.jsonl')).read_text())
+            pattern = allowed[name][-2]
+            selected = {p:[n for n in names if re.search(pattern,n)] for p,names in listing.items()}
+            if not any(selected.values()) or not invocation.get('real_systemd_enabled'):
+                raise Failure('PR real-manager selection empty/disabled')
+            verify_pr_stream((directory/name).read_text(), selected)
+            verify_selected(proof['actual'], selected, real_manager=True)
+
+
+def discover_from_log(text):
+    names, ended = {}, set()
+    for line in text.splitlines():
+        item = json.loads(line)
+        if item.get('Action') in ('fail', 'build-fail', 'run'):
+            raise Failure('invalid PR compiled listing')
+        if item.get('Action') in ('pass', 'skip') and not item.get('Test'):
+            ended.add(item.get('Package'))
+        if item.get('Action') == 'output':
+            name = item.get('Output', '').strip()
+            if re.fullmatch(r'(Test|Fuzz|Example)\w*', name) and name != 'TestMain':
+                if name in names.setdefault(item['Package'], []):
+                    raise Failure('duplicate PR compiled listing name')
+                names[item['Package']].append(name)
+    if not ended or set(names) - ended:
+        raise Failure('PR compiled listing lacks package terminals')
+    return {p:sorted(n) for p,n in names.items()}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--plan', action='store_true')
     parser.add_argument('--verify', action='store_true')
+    parser.add_argument('--verify-plan', action='store_true')
+    parser.add_argument('--verify-native-plan', action='store_true')
+    parser.add_argument('--require-pr-proof', action='store_true', help='local fan-out planning refuses history/source fallback')
+    parser.add_argument('--verify-audit', action='store_true')
+    parser.add_argument('--own-plain-vet', action='store_true')
+    parser.add_argument('--native-local', action='store_true', help='local native diagnostics only; cannot qualify hosted CI')
     parser.add_argument('--tier', choices=['pr','daily','full'])
-    parser.add_argument('--suite', choices=['linux','macos','fuzz','systemd','extra'], default='linux')
+    parser.add_argument('--suite', choices=['linux','macos','fuzz','systemd','extra','audit'], default='linux')
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--extra-plan', type=Path)
     parser.add_argument('--seconds', type=int, default=2400)
     args = parser.parse_args()
+    if (args.verify_plan or args.verify_native_plan) and args.extra_plan is None:
+        parser.error('plan verification requires --extra-plan')
+    if args.require_pr_proof and not args.plan:
+        parser.error('--require-pr-proof requires --plan')
+    if args.native_local and (args.plan or args.verify or args.verify_audit or args.verify_plan or args.verify_native_plan or args.own_plain_vet):
+        parser.error('--native-local only supports local native test execution')
     if args.seconds <= 0:
         parser.error('--seconds must be positive')
     def interrupted(signum, frame):
@@ -471,6 +1094,8 @@ def main():
     try:
         event = os.environ.get('GITHUB_EVENT_NAME')
         resolved = resolve(event,os.environ.get('GITHUB_REF',''),os.environ.get('CI_SCHEDULE',''),os.environ.get('CI_SUITE','all')) if event else None
+        if event == 'push' and os.environ.get('GITHUB_REF', '').startswith('refs/tags/') and args.tier not in (None, 'full'):
+            raise Failure('release tags require the full tier')
         tier = args.tier or resolved
         if tier is None:
             raise Failure('local execution requires an explicit tier')
@@ -478,8 +1103,20 @@ def main():
             tier = 'full'  # exact candidates and manual suites cannot be downgraded
         if event == 'schedule' and args.tier and args.tier != resolved:
             raise Failure('explicit tier conflicts with scheduled cadence')
+        if args.verify_plan:
+            verify_plan(args.output, read_unique_json(args.extra_plan))
+            return 0
+        if args.verify_native_plan:
+            verify_native_plan(args.output, read_unique_json(args.extra_plan))
+            return 0
+        if args.verify_audit:
+            import run_go_shard
+            context_hash = run_go_shard.digest(plain_vet_identity(plain_vet_context())) if args.own_plain_vet else None
+            verify_source_audit(args.output, os.environ['GITHUB_SHA'],
+                require_plain_vet=args.own_plain_vet, expected_vet_context_sha256=context_hash)
+            return 0
         if args.verify:
-            verify_full(args.output, json.loads(args.extra_plan.read_text()))
+            verify_full(args.output, json.loads(args.extra_plan.read_text()), expected_suite=args.suite)
             return 0
         if args.plan:
             tier = resolved or tier  # event-owned planning cannot be downgraded by a flag
@@ -488,6 +1125,9 @@ def main():
             if source != os.environ.get('GITHUB_SHA',source):
                 raise Failure('plan source mismatch')
             extra = pr_extras(json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text()),source) if tier == 'pr' else {'packages':[],'native':False,'systemd':False,'fuzz':False,'purge':False}
+            if (args.require_pr_proof and tier == 'pr'
+                    and extra.get('reason') != 'verified base/head/tested merge'):
+                raise Failure('local fan-out planning requires verified PR source and complete history')
             plan = dict(extra, source=source, tier=tier)
             args.output.parent.mkdir(parents=True,exist_ok=True)
             args.output.write_text(json.dumps(plan,indent=2)+'\n')
@@ -499,9 +1139,9 @@ def main():
             extra = json.loads(args.extra_plan.read_text()) if args.extra_plan else None
             if extra and extra['source'] != git('rev-parse','HEAD'):
                 raise Failure('extra plan source mismatch')
-            if tier == 'pr' and args.suite != 'extra':
+            if tier == 'pr' and args.suite not in ('extra', 'macos', 'audit'):
                 raise Failure('PR ordinary coverage belongs to exhaustive shards')
-            run_suite('full' if args.suite == 'extra' else tier,args.suite,args.output,extra,args.seconds)
+            run_suite(tier,args.suite,args.output,extra,args.seconds,own_plain_vet=args.own_plain_vet,native_local=args.native_local)
     except (Failure,ValueError,KeyError,TypeError,OSError,subprocess.SubprocessError) as error:
         print('tier gate failed: '+str(error),file=sys.stderr)
         return 1

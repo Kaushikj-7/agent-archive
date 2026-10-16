@@ -92,12 +92,12 @@ type unchanged struct {
 
 func snapshotAll(t *testing.T, f *backfillFixture, bucket *storagetest.MemoryStore) unchanged {
 	t.Helper()
-	return unchanged{snapshotTree(t, f.data), bucketSnapshot(t, bucket)}
+	return unchanged{snapshotArchiveTree(t, f.data), bucketSnapshot(t, bucket)}
 }
 
 func (u unchanged) check(t *testing.T, f *backfillFixture, bucket *storagetest.MemoryStore) {
 	t.Helper()
-	if after := snapshotTree(t, f.data); after != u.data {
+	if after := snapshotArchiveTree(t, f.data); after != u.data {
 		t.Fatalf("data directory changed:\n%s\n---\n%s", u.data, after)
 	}
 	if after := bucketSnapshot(t, bucket); after != u.bucket {

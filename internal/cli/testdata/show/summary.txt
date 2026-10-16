@@ -1,5 +1,5 @@
 Stabilize the OAuth tests
-claude · agent-archive · 2h ago                                      ✓ completed
+Claude · agent-archive · last active 2 hours ago                     ✓ completed
 
   Prompt    Fix flaky OAuth callback tests
   When      Sep 29, 10:14 → 10:58 (44m)

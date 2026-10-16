@@ -5,8 +5,10 @@ browser source are implemented in the dependent picker stack. Matched synthetic
 CLI qualification completed at `cc26f45aba6c76307aecf3c9d32b2650aef79eed`:16
 processes / 104 cases, including both 10k/100k cold/warm/changed and native matrices.
 [Exact results and limits](../maintainers/picker-qualification/results-20261013.md)
-retain source/harness/body evidence. Final source review and required hosted
-checks are tracked in [PR499](https://github.com/wangjohn/agent-archive/pull/499);
+retain source/harness/body evidence. List/show browsers and asynchronous search
+landed in [PR493](https://github.com/wangjohn/agent-archive/pull/493); qualification
+landed in [PR499](https://github.com/wangjohn/agent-archive/pull/499). These source
+and synthetic results do not establish final candidate or live provider acceptance;
 production release gates remain separate.
 Production activation remains refused pending provider and credential authority.
 Prepared 2026-10-13 against main
@@ -15,7 +17,7 @@ Prepared 2026-10-13 against main
 This implemented source slice extends
 [listing at scale](listing-at-scale.md) and
 [CLI performance](cli-performance.md). It preserves the product behavior in
-[session finding](../specs/session-finding.md). Production activation remains
+[session finding](implemented/session-finding.md). Production activation remains
 subject to [provider qualification](../catalog/provider-qualification.md) and
 [migration authority](../catalog/migration-and-query.md).
 

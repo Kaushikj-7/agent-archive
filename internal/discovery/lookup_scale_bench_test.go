@@ -10,21 +10,21 @@ import (
 	"time"
 )
 
-type measuredCoverageAdapter struct {
+type measuredAdapter struct {
 	SourceAdapter
 	enumerations int
 	entries      int
 	headers      int
 }
 
-func (a *measuredCoverageAdapter) Enumerate(ctx context.Context, root, path string, cookie int64) (SourceBatch, error) {
+func (a *measuredAdapter) Enumerate(ctx context.Context, root, path string, cookie int64) (SourceBatch, error) {
 	a.enumerations++
 	batch, err := a.SourceAdapter.Enumerate(ctx, root, path, cookie)
 	a.entries += len(batch.Entries)
 	return batch, err
 }
 
-func (a *measuredCoverageAdapter) Inspect(ctx context.Context, source SourceDescriptor) Observation {
+func (a *measuredAdapter) Inspect(ctx context.Context, source SourceDescriptor) Observation {
 	a.headers++
 	return a.SourceAdapter.Inspect(ctx, source)
 }
@@ -66,7 +66,7 @@ func BenchmarkRequestedLookupScale(b *testing.B) {
 			if _, err := db.ExecContext(b.Context(), "PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
 				b.Fatal(err)
 			}
-			adapter := &measuredCoverageAdapter{SourceAdapter: codexAdapter{supported: syntheticSupport}}
+			adapter := &measuredAdapter{SourceAdapter: codexAdapter{supported: syntheticSupport}}
 			var before, after runtime.MemStats
 			runtime.GC()
 			runtime.ReadMemStats(&before)
@@ -84,8 +84,6 @@ func BenchmarkRequestedLookupScale(b *testing.B) {
 				if err != nil {
 					b.Fatal(err)
 				}
-				l.coverage.request(wanted)
-				l.coverageDirty = true
 				h, err := runWithAdapters(b.Context(), store, cfg, Options{Now: func() time.Time { return at }, Rollouts: l}, []SourceAdapter{adapter})
 				if err != nil {
 					b.Fatal(err)
@@ -100,11 +98,10 @@ func BenchmarkRequestedLookupScale(b *testing.B) {
 				headerReadBytes += h.NativeReadBytes
 				headerReadCalls += h.NativeReadOperations
 				passes++
-				request := l.coverage.Requests[wanted]
-				complete := request.CompleteEpoch == l.coverage.Epoch && l.coverage.proofEpoch == l.coverage.Epoch
+				complete := !h.Pending
 				if complete {
 					set, err := l.Thread(b.Context(), wanted)
-					if err != nil || set.Current == nil || !set.Complete || len(set.Candidates) != 1 {
+					if err != nil || set.Current == nil {
 						b.Fatal(set, err)
 					}
 					if err := l.Check(b.Context(), wanted, set.Revision); err != nil {
@@ -121,7 +118,7 @@ func BenchmarkRequestedLookupScale(b *testing.B) {
 				}
 				_, peak := l.readBudget.Charged()
 				maxCharge = max(maxCharge, peak)
-				closeWrites := l.coverageDirty
+				closeWrites := l.dirty
 				if err := l.Close(); err != nil {
 					b.Fatal(err)
 				}

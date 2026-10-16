@@ -9,7 +9,7 @@ measurements with the repaired command harness completed 2026-10-13:
 `a187e1b883924fd36c9d6700606a5c2756fc2b6f` and candidate
 `cc26f45aba6c76307aecf3c9d32b2650aef79eed`.
 [Results, hashes and limits](../maintainers/picker-qualification/results-20261013.md)
-cover10k/100k cold/warm/changed and native 20/120 cases.
+cover 10k/100k cold/warm/changed and native 20/120 cases.
 [PR499](https://github.com/wangjohn/agent-archive/pull/499) merged into main
 `c8dcf2a88e0479eb63cf682d8d76e1428ff7609a` on 2026-10-14. These are recorded
 author claims for the pinned source/fixture envelope, not independently renewed
@@ -111,7 +111,7 @@ In scope: how the archive is listed and read for `handoff`, `list`, `show` and
 
 Out of scope: which sessions the picker shows and how they are labelled.
 That includes hiding subagents, native titles, repo scoping, filtering, and
-the search matcher. That work is the [session-finding plan](../specs/session-finding.md).
+the search matcher. That work is the [session-finding plan](implemented/session-finding.md).
 Phase 4 below lists what it needs from the listing.
 
 ## Phase 1: parallel range listing
@@ -255,7 +255,7 @@ new format or complete the proportional-header-cost acceptance. The spec must de
    deletion. Handoff re-reads the chosen session before using it. The spec
    must say what each command verifies before it shows a row.
 
-What the [session-finding plan](../specs/session-finding.md) needs from phase 4:
+What the [session-finding plan](implemented/session-finding.md) needs from phase 4:
 
 - **(a) Subagent count per parent,** from the parent's `LinkedSessions`, with
   no scan of subagent hints.

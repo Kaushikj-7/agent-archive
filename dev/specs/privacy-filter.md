@@ -1,6 +1,6 @@
 # Privacy filter rules
 
-> **Status: implemented** (filter 18). The user-facing summary is
+> **Status: implemented** (filter 23). The user-facing summary is
 > [privacy](../../docs/security/privacy.md); what changed in each filter
 > version is in the [filter changelog](privacy-filter-changelog.md).
 
@@ -415,9 +415,10 @@ examples are preserved, as is human text following a context wrapper.
 
 Verified Codex external names are typed `session_labels` supplemental evidence:
 `native_session_id`, `state`, optional `name`, `source`, and `contract` only.
-The UUID must match the owning ordinary Codex source. `present` requires a
-nonempty filtered name; `confirmed_absent` carries no name. Unknown fields,
-malformed IDs and history bundles are refused. Raw names are bounded to 16 KiB,
+The UUID must match the owning Codex source, ordinary or (filter 26) a
+self-contained history source. `present` requires a
+nonempty filtered name; `confirmed_absent` carries no name. Unknown fields
+and malformed IDs are refused. Raw names are bounded to 16 KiB,
 receive normal credential redaction, normalize whitespace/control characters,
 and truncate to 512 bytes on a UTF-8 boundary before hashing or caching.
 An unavailable observation is not absence and preserves previously verified
@@ -425,7 +426,109 @@ evidence. Native paths, raw database rows and index contents are not retained.
 Codex `session_meta` additionally retains only the `legacy` or `paginated`
 `history_mode` enum to establish index interpretation. Other values are omitted.
 
+Filter 27 admits the same shape for Cursor (`native:cursor:session_labels`,
+`database`/`cursor-composer-name-v1`): the chat's `name` from its
+`composerData` row, on any Cursor source format.
+
+Filter 26 adds the `index`/`codex-session-index-v3` contract: the name is
+the last nonempty `thread_name` Codex's `session_index.jsonl` holds for the
+thread, read for any Codex release; earlier `codex-files-159.2-*` evidence
+stays readable.
+
 Filter 18 accepts the fixed `api`/`codex-api-159.2-v1` session-label pair in
 addition to the file contract. It retains only the same owning ID, filtered
 bounded name or explicit absent state, contract and stable observation time.
 Native JSON responses and process output are discarded before persistence.
+
+## Muse explicit local evidence
+
+Filter 24 supports `handoff --file PATH --harness muse` for complete ordinary
+exec/MSP roots in the qualified grammar. The [inner record union](../../schemas/muse-retained-record.schema.json)
+uses unchanged v1 ordinary rows plus closed timestamp-free v2 omissions. Ordinary rows retain: original envelope identity, physical line and nullable child
+index, exact safe integers, discriminator/schema, causal identity and only the
+fixed per-type safe fields. Initial permission profiles are validated locally
+and reduced to format/schema/epoch/cause; raw child strings and native checksums
+are never retained. Complete startup binds the logical reserved start and own
+workspace. Integrity is unkeyed and grants no producer or capture consent.
+
+Own conversation requires accepted main/chat intent, matching materialization,
+actual run-start record and committed assistant linkage. Model context, deltas,
+terminal copies, task starts and notifications are not prompts. Explicit gaps
+mark complete accounting, tools, model switches and children unavailable. Qualified
+own completions additionally retain recorded model and exact input/output
+observations, without filling normalized or billable token fields. Unknown
+authority, unsupported versions, forks, children, checkpoints, malformed or
+partial records refuse the whole file. The native JSON decoder bounds depth
+at 32, strings at 1 MiB and nodes per physical record at 200,000, in addition to
+existing raw, record, retained and shared-memory limits. It reserves expansion
+before decoding; no limits or cache reserves increase. Retained-only refilter
+and analysis preserve position, owner, start and workspace after native loss.
+Registered capture, backfill and Muse launch stay unavailable. Explicit files and bounded automatic local handoff share this strict whole-file reader.
+
+The [production local v1 field policy](../qualification/muse/retained-allowlist-local-v1.json) is the exact current retained projection. The original `retained-allowlist.json` and derived corpus remain byte-frozen historical Q0 evidence; their broader metrics ceiling is not a production promise.
+
+Muse startup metadata may omit the optional model label. The local projection
+retains it only when present as a string, never infers a provider default, and
+reports `model_identity_unavailable` when the initial metadata has no model.
+Original owner, reserved start and workspace validation remain required.
+
+Muse retains the shared privacy gap codes for redaction, hidden-context omission
+and per-string truncation in the existing outer capture provenance. Each fixed
+code records its earliest affected 1-based retained logical record; details are
+fixed text, never native content. Retained refilter preserves only recognized
+privacy codes at valid positions, canonicalizes details and recomputes current
+availability gaps. Direct retained parsing refuses text that still needs a
+privacy transformation; refilter it first so that loss is represented.
+
+Filter 23 recognizes only the qualified reasoning-committed, schema3 approval,
+approval-wait/tool-batch effect and task-output shapes. Every nested object is
+closed; structural discriminators are finite and private leaf strings are typed,
+bounded and discarded. Enriched assistant events may add one typed string
+`provider_item_id`, also discarded. Own visible text still requires the existing
+accepted→started→materialized and committed-assistant graph. The exact initial
+model-resolution lane permits metadata without a model followed immediately by
+matching metadata with a model and the owning original-open event; its private
+build/search copies must agree before omission. Genuine ordered timestamps do
+not replace permission-frame birth authority.
+
+The v2 `native_omission` branch contains exactly v/kind/pos/stream/position/schema/
+marker/omitted_record. Its sole classification is schema1 omitted_live_only,
+ephemeral status/runtime.session/schema1/task/task_tool_delta_v1. Native position
+identity/sequence and physical provenance remain distinct. It consumes one stream
+position and participates in shared stream/identity uniqueness, contiguous logical
+sequence, physical position and exact prefix comparison, but contributes no time,
+run/task, activity, turn, pending response, tool or accounting fact. It cannot
+interrupt required startup blocks. Existing v1 row bytes are unchanged.
+
+Only minimal new-family identities survive: run/source record for reasoning;
+run/pending/task/call for requests and wait starts; run/pending/review for review
+rows; run/pending for wait terminals; run/effect/task/call/index for tool effects;
+run/task for output. Typed prior references and immutable identities are checked
+after native loss; these are subset joins, not full task lifecycle or full native
+source-run coverage. Internally consistent optional-family prefixes are allowed
+after a complete valid own root graph. Completion requires the matching prior
+start; no completeness or tool success is inferred.
+
+Validated new rows deterministically require `muse_private_native_bodies_omitted`
+and markers require `muse_ephemeral_task_delta_omitted`. Refilter reconstructs and
+deduplicates these fixed gaps. Direct parsing refuses missing, duplicated or
+altered required omission coverage; refilter can repair it without native files.
+Old retained readers refuse the new variants and markers; unchanged ordinary v1
+rows remain readable. Frozen historical Q0 policy/corpus/projector are unchanged.
+
+Muse's closed own `model_completed` branch validates a nonempty model string,
+nonnegative exact `duration_ms`, and all six input/output/cache/reasoning counters
+between zero and 2^53−1. Only the model, input/output and typed run/source identity
+survive. Duration, cache and reasoning counters are dropped. Every completion
+requires an earlier own materialized run; source IDs and relevant source sequences
+are unique within that run. Multiple completions in one run count separately.
+Legacy event-only retained rows stay readable and contribute no invented zeros.
+
+The optional `token_observations` summary carries nullable input/output sums, at
+most 32 bounded recorded model labels, and explicit observed/coverage/composition/
+pricing availability. Complete usage, cache/reasoning relationships and billing
+remain unavailable. Models beyond the deterministic first 31 fold into
+`other`; no label establishes a billed product. Session overflow refuses;
+cross-session overflow publishes no observation numbers with the fixed
+`observation_limit` reason. Required `own_usage_observations_partial` and
+`cache_reasoning_cost_unqualified` gaps survive retained-only refresh.

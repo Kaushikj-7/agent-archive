@@ -19,7 +19,9 @@ and source status are linked here.
 ## Current reconciliation
 
 Source status reconciled against main `c8dcf2a88e0479eb63cf682d8d76e1428ff7609a` (2026-10-14). Closed original PRs were
-source-superseded rather than merged unchanged. Their historical measurements
+source-superseded rather than merged unchanged. Rechecked 2026-10-16 against
+main `0966523baa7c0ea6cbce7704b85569519bb443dc`, preserving the historical
+measurement pins and separate provider/performance gates. Their historical measurements
 do not establish current-main performance acceptance.
 
 | Original work | Integrated replacement | Remaining work |

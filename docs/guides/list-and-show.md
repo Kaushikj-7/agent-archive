@@ -12,10 +12,10 @@ spent choosing a session or scrolling in the pager has no read deadline.
 ```sh
 # The most recently active archived sessions matching the filters (at most
 # 50 by default), top-level sessions only, from this repository when you are
-# in one: title (the name your agent gave the session, else a preview of the
-# first filtered prompt), pull request, how long ago it was last active
-# (WHEN: its latest record, so a session backfill imported is dated by when
-# it ran, not the import), harness, project, and short ID. --json keeps the
+# in one: when it was last active (WHEN: its latest record, so a session
+# backfill imported is dated by when it ran, not the import), agent,
+# project, pull request, short ID, and title (the name your agent gave the
+# session, else a preview of the first filtered prompt). --json keeps the
 # newest captured first. Metadata only, never full transcript text. On an
 # interactive terminal, pick a numbered row to see that session's summary
 # (see below).
@@ -73,7 +73,7 @@ A summary looks like this:
 
 ```text
 Stabilize the OAuth tests
-claude · agent-archive · 2h ago                                      ✓ completed
+Claude · agent-archive · last active 2 hours ago                     ✓ completed
 
   Prompt    Fix flaky OAuth callback tests
   When      Sep 29, 10:14 → 10:58 (44m)
@@ -97,7 +97,9 @@ claude · agent-archive · 2h ago                                      ✓ compl
   JSON:       agent-archive show 03e60c25f1a04b7c9d2e8f6a1b3c5d7e --harness claude --json
 ```
 
-Rows the metadata has no data for are left out; a count that is unknown is
+The line under the title names the agent as the session lists do (`Claude`,
+`Codex`, `Cursor`, in its color on a color terminal), the project, and how
+long ago the session was last active. Rows the metadata has no data for are left out; a count that is unknown is
 not shown as zero, and shell commands, compactions, and edited files are
 listed only when there were some. A model's count is how many responses it
 gave, and Tools lists the most-called tools (`tools_used`). Times are in
@@ -135,24 +137,63 @@ ignoring case against the project name archived with the session and the labels
 in your configuration. The two flags together are a usage error. When the
 repository has no archived session yet, `list` shows all projects and says so
 (`Nothing in agent-archive · showing all projects`). Outside any repository or
-configured project there is no scope: every session is listed, grouped by
-project (projects with one name stay apart, labeled with their ID prefixes).
-Within one project the table is not grouped, so a repository's checkouts are one
-list.
+configured project there is no scope: every session is listed, with its
+project in a column. On a terminal the sessions are grouped by day, newest
+first, under the headings TODAY, YESTERDAY, EARLIER THIS WEEK (weeks start on
+Monday), LAST WEEK, EARLIER THIS MONTH, and OLDER; piped output and
+`--verbose` are one flat table. When every session shares a project, the
+column is left out and the heading line names the project, so a repository's
+checkouts are one list.
 
 **Top-level sessions only.** A subagent session is left out of the table and the
 browser, before `--limit` counts, so `--limit 50` is 50 sessions you started. The
 footer says how many were left out (`42 sessions (318 subagent sessions hidden;
-search to find one).`) and a parent carries `· 45 subagents`. Words find a
+search to find one).`) and a parent carries `+45` on a terminal, `· 45 subagents`
+in the plain table. Words find a
 subagent (see below). `list --json` keeps every row, subagents included; each has
 `parent_session_id`.
 
-**Columns.** TITLE, PR (the last pull request the session linked or created,
-when some row has one), WHEN, HARNESS, PROJECT, and ID. A HARNESS or PROJECT that
-every row shares is left out and named in the heading instead; `--verbose` keeps
-every column. The leading `●` that marks a session active in the last 2
-minutes is for the [handoff picker](handoff.md#the-picker): `list` reads the
-archive, which says nothing about what is running here.
+**Columns.** On a terminal each session takes one line, cut to the window's
+width: its number, the agent (a colored `●` and `Claude`, `Codex`, or
+`Cursor`), the title, the project, the PR (the last pull request the session
+linked or created, when some row has one), and when it was last active, in
+short (`2m`, `13h`, `Mon`, `Oct 9`, `2025-03-01`). The title is a readable
+form of the session's name or first prompt (a leading markdown heading or a
+pasted-files preamble is shortened, for example), cut at a word with `…` to
+fit; `show` and `--json` keep the full title. On a narrow terminal the project
+goes first, then the PR, then the agent's name. There is no ID column; type a
+row's number, or its short ID from `show` or `list | cat`.
+
+```text
+agent-archive · 5 sessions · claude · a all projects
+TODAY
+1  Fix the retry budget in the upload queue                  #213  live
+2  Stop rereading the config on every hook call                      4m
+3  Add a status line for paused collection                   #212   38m
+4  Investigate slow listings on a large archive                      5h
+
+LAST WEEK
+5  Rename the export flag and update the docs                #204   Sun
+```
+
+Piped or run by an agent, `list` prints a plain table with one line per
+session and no day headings or color: `WHEN AGENT PROJECT PR ID TITLE`. The
+title comes last and whole (the session's full display title, with any
+`· 45 subagents` note after it), and an empty PR is `-`. Scripts should read
+`list --json`; the plain table's columns are for people and may change.
+
+```text
+agent-archive · 5 sessions · claude · --all-projects lists every project
+WHEN  PR    ID        TITLE
+now   #213  d7a77938  Fix the retry budget in the upload queue
+4m    -     36a7d5ee  Stop rereading the config on every hook call
+38m   #212  76941c69  Add a status line for paused collection
+```
+
+An AGENT or PROJECT column that every row shares is left out and named in the
+heading instead; `--verbose` keeps every column. A session active in the last
+2 minutes reads `live` in WHEN only in the [handoff picker](handoff.md#the-picker):
+`list` reads the archive, which says nothing about what is running here.
 
 **Words.** `list "<words>"` shows only the sessions the words find, by the
 rules `show` and `handoff` use. Every word must appear, in any case, in some
@@ -167,7 +208,8 @@ The first of these that has a match answers:
 3. subagent sessions, in the scope and then everywhere.
 
 For `list` and `handoff`, a session ID, full or the 8-character short one,
-names that session first. `show` gives a full ID that precedence; a short ID
+names that session first; the agent's own session ID (a Codex thread ID, a
+Claude Code or Cursor session ID) does too. `show` gives a full ID that precedence; a short ID
 combines prefix matches with title and pull request matches, then applies the
 scope tiers above. When the scope answers, the footer says how many more match
 elsewhere (`1 match in agent-archive (3 more in other projects: --all-projects or a project name finds
@@ -202,7 +244,8 @@ sessions; local eligibility beyond that work remains explicitly unknown.
 ## Browsing on a terminal
 
 The list and bare-show browsers offer **Older sessions** when the initial table
-is limited. Press `o` to extend it by another batch. Search checks older
+is limited. Scrolling past the last row extends it by another batch (reading
+lines, answer `o`). Search checks older
 sessions and subagents as well as the rows on screen; `a` changes the project
 scope. Repeated searches reuse private local summaries, while each command
 checks the archive for changed and deleted sessions. `--no-cache` bypasses
@@ -214,18 +257,34 @@ session's summary replace each other instead of piling up:
 
 - The browser reads each key as you press it; there is no need to press
   Enter after a command.
-- Type a row number or short SESSION_ID and press Enter to see that
-  session's summary. What you type shows at the prompt; Backspace edits it
-  and Esc clears it. Row numbers are those of the whole list, so any listed
-  number or short ID works wherever the list is scrolled (in the list
-  grouped by project, the numbers on screen need not be consecutive).
-- A list taller than the window scrolls: the mouse wheel and ↑ ↓ by a
-  row, PgUp and PgDn (or space, `n`, and `p`) by a screen, Home and End to
-  the top and bottom. A status line below it says where you are (`Top`, a
-  percentage, `Bottom`, or `All` when the whole list fits), for example
-  `Top · ↑↓ scroll · PgUp/PgDn page · / filter · type a number and Enter · q quit`. A
-  project scrolled into keeps its heading at the top, marked
-  `(continued)`. `a`, `n`, `p`, `q`, and `/` act only when nothing is typed.
+- `▸` marks the highlighted row: ↑ ↓ (and the mouse wheel) move it a row,
+  PgUp and PgDn (or space, `n`, and `p`) a screen, Home and End to the top
+  and bottom, and the list scrolls to keep it in view. When older sessions
+  can be loaded, moving down past the last row (↓ or the wheel on it, PgDn
+  with it on screen, or End on it) loads the next batch and goes on into it:
+  ↓ to the first session loaded, PgDn a screen further, End to the new last
+  row. While a load takes a while, the footer line says so, and Esc stops
+  it. If no older session turns up, the footer says `No older sessions.`,
+  and moving past that end loads nothing more until the list changes (`o`
+  still tries again). Enter shows its
+  summary. Under the list, a strip spells out the highlighted session: its
+  full title, then its agent, project, PR, subagents, when it was last
+  active, and its short ID. A very short window leaves the strip out.
+- Typing a row number or short SESSION_ID and pressing Enter shows that
+  session instead. What you type shows at the prompt
+  (`Number or ID to show:`); Backspace edits it and Esc clears it. Row
+  numbers are those of the whole list, so any listed number or short ID
+  works wherever the list is scrolled (in the list grouped by day, the
+  numbers on screen need not be consecutive).
+- The footer line names the keys and which rows are on screen, for example
+  `↑↓ move   PgUp/PgDn page   Enter show   / search   number + Enter jump   q quit   1–14 of 86`.
+  When older sessions can be loaded, the count ends in `+` (`1–14 of 50+`).
+  A narrow window drops `number + Enter jump` first, then `PgUp/PgDn page`,
+  then `/ search`; `Enter` stays longest.
+  The heading says how many subagent sessions are hidden. A day scrolled
+  into keeps its heading at the top, marked `(continued)`, as in
+  `TODAY (continued)`. `a`, `n`, `p`, `q`, and `/` act only when
+  nothing is typed, as does `o`, which also loads older sessions.
 - Press `/` to filter the rows as you type, as in `less`: a line at the
   bottom takes the words, and the rows narrow with each character. The words
   are the ones `list "<words>"` takes: every word must appear in a session's
@@ -233,7 +292,9 @@ session's summary replace each other instead of piling up:
   `212` also matches a pull request number. The first session that matches
   is marked `▸`, ↑ and ↓ move the mark, and Enter shows the marked session
   (and `b` brings back the filtered list). Esc clears the filter and closes the line, and
-  Backspace on an empty one does too. Rows keep the numbers they have
+  Backspace on an empty one does too; the mark stays on the session it was
+  on, or goes to the first row when the plain list does not show that
+  session. `/` itself leaves the mark where it is until you type. Rows keep the numbers they have
   unfiltered; a session the filter finds past the list's limit is numbered
   on from its last row, and is chosen with the mark (after Esc only the
   list's own numbers choose). A subagent session that matches is shown indented under its
@@ -251,8 +312,7 @@ session's summary replace each other instead of piling up:
 - A summary taller than the window scrolls the same way, with a line such
   as `↑ 3 lines above · ↓ 12 more lines` below it; `m` opens the whole
   summary through the pager, as `t` does the transcript.
-- `q` (or Enter with nothing typed at the list, or Ctrl-D) quits from
-  anywhere but the filter line, and Ctrl-C quits at once. The last summary you viewed is printed
+- `q` (or Ctrl-D) quits from anywhere but the filter line, and Ctrl-C quits at once. The last summary you viewed is printed
   to the normal screen as the browser closes, so its ID stays in your
   scrollback.
 - Every place a session is picked from a list is this one browser: `list`,
@@ -263,7 +323,7 @@ session's summary replace each other instead of piling up:
 - When the terminal's input cannot be read a key at a time, the browser reads
   lines. A list taller than the window is shown a page at a time, with a line
   such as `Page 2 of 3 · 50 sessions · [n] next  [p] previous`: `n` and `p`
-  move between pages, and a project whose sessions started on the previous
+  move between pages, and a day whose sessions started on the previous
   page is headed again, marked `(continued)`. Type a row number or short
   SESSION_ID to choose; any other answer is words to filter by, the table is
   drawn again with the sessions that match (`3 sessions match "flaky" · a
@@ -300,14 +360,16 @@ stderr; the rest are listed.
 
 `list` shows each session's `name` when metadata has one: the name your agent
 gave the session (the one in Claude Code's sidebar, which `/rename` sets, or a
-Cursor chat's name). Otherwise it shows the `title`, a short preview of the
+Cursor chat's name, which the collector reads from Cursor's database on the
+machine that has the chat, since Cursor's transcripts do not record it).
+Otherwise it shows the `title`, a short preview of the
 first filtered human prompt, derived at publish time. Older sidecars without
 either fall back to the short SESSION_ID in that column. `project_name`
 in metadata labels the project when present; otherwise `list` uses this machine's
-configured project basename. The ID column is a short prefix you can pass to
-`show`; if multiple archived IDs share that prefix, use a longer ID from
-`list --verbose` or add `--harness`. Projects with the same basename stay in
-separate groups, labeled with their project ID prefixes.
+configured project basename. The plain table's ID column (`list | cat`) is a
+short prefix you can pass to `show`; if multiple archived IDs share that prefix, use a longer ID from
+`list --verbose` or add `--harness`. Projects with the same basename show the
+same name in the PROJECT column; `--project DIR` lists one of them.
 
 Claude Code names come from typed native `custom-title` and `ai-title`
 transcript records. The latest explicit `/rename` wins over generated titles;
@@ -318,9 +380,9 @@ this capture contract. The separate `title` remains the first human prompt.
 
 Codex currently uses the first-prompt preview because its sidebar title is
 stored separately from the transcript. The table leaves subagent sessions
-out: the footer says how many, and a parent carries a `· N subagents` hint.
-Words find one, as for `list "<words>"`, and its row reads `· subagent of`
-its parent's short ID; a Claude Code subagent's name is the description its
+out: the footer says how many, and a parent carries a `+N` (`· N subagents`
+in the plain table) hint. Words find one, as for `list "<words>"`, and its
+row reads `subagent of` its parent's short ID; a Claude Code subagent's name is the description its
 parent gave the task (see below). New and refreshed previews keep up to 128
 characters from parser `0.17.1`; older metadata keeps its shorter saved
 preview.
@@ -427,7 +489,7 @@ way, removed after 7 days and by `uninstall --delete-local-data`. A limit too sm
 step, the header, or the sidecar alone, prints a warning on stderr and as much
 as it can. Nothing here prompts, and without a terminal nothing is paged.
 
-Before setup has run, both commands print `Not set up.` to stderr and exit 1.
+Before setup has run, both commands print ``Not set up yet. For Claude Code or Codex sessions already on this machine, try `agent-archive handoff`; to start archiving, run `agent-archive setup`.`` to stderr and exit 1. While a setup is under way (a saved setup draft, or an interrupted setup waiting for recovery), handoff refuses, so they print ``Setup is not finished. Run `agent-archive setup` to finish it.`` instead.
 
 ## Scrolling
 

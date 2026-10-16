@@ -123,7 +123,8 @@ Step 3 of 3 · Review and start
   Codex     Included projects only
   Skills    Metadata, including user folders
   Storage   s3://agent-archive-alex/agent-archive/
-  Keep for  90 days
+  Keep for  90 days · Sessions with no new activity for 90 days are deleted from
+            your bucket; change with Edit a setting, or keep forever
   ✓ Storage connected
   ! Bucket privacy unknown · public-access settings could not be read
     Make sure public access is off:

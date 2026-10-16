@@ -2,7 +2,6 @@
 
 Status: Implemented for supported ordinary-session publication; history-source name refresh and broader native acceptance remain incomplete. Prepared October 6, 2026; status reconciled October 11, 2026. Claude generated/custom titles, Codex external label evidence and collector refresh, and injected-context cleanup are implemented. Codex defaults to verified settled file lookup; bounded native metadata lookup requires explicit `codex_name_lookup: "native"` opt-in because startup can write native state and desktop coexistence remains unverified. Real sidebar/picker comparisons remain pending in the linked acceptance record. The design below preserves the original plan; current code and user documentation own the shipped contract.
 
-
 Source status checked against main
 `c8dcf2a88e0479eb63cf682d8d76e1428ff7609a` on 2026-10-14. Implementations
 [#346](https://github.com/wangjohn/agent-archive/pull/346),
@@ -14,7 +13,11 @@ acceptance is blocked. Narrow disposable metadata lookup probes do not establish
 sidebar parity, desktop coexistence, authentication or a latency distribution.
 History-source refresh and desktop coexistence remain separate acceptance gaps.
 The producer versions and implementation descriptions below are historical
-observations from preparation, not new runtime probes.
+observations from preparation, not new runtime probes. Source rechecked
+2026-10-16 at main `0966523baa7c0ea6cbce7704b85569519bb443dc`: #611 adds
+injected AGENTS.md cleanup and #614 integrates Codex transcript-name and Cursor
+chat-name handling. Those merged source changes do not establish native UI
+acceptance.
 
 Agent Archive should display the name a person recognizes from Codex or Claude Code, using a cleaned prompt preview only when a native name is unavailable. Capture names during collection, retain the filtered evidence, refresh them after renames, and publish them through the existing archive pipeline. Ordinary `list` must continue to work from archived metadata without launching an agent or reading local conversations.
 
@@ -48,7 +51,7 @@ Anthropic's official SDK session reader recognizes `customTitle` and `aiTitle`, 
 
 The generated title is carried by an `ai-title` record with `aiTitle`, while explicit renames use `custom-title` with `customTitle`. Reported native head/tail blind spots can miss an old rename in a long transcript. Retained full-source parsing should preserve explicit-name precedence rather than reproduce that sampling defect. Verify the installed producer during acceptance. [Producer record examples and resolution behavior](https://github.com/anthropics/claude-code/issues/93115)
 
-At proposal preparation, code filtered `custom-title` records in `internal/agents/nativecodec/filter_session_labels.go`, derives their latest value in `parse.go`, and prefers `Metadata.Name` in `internal/archive/session_labels.go`. `ai-title` was not yet handled by that label filter; it is now retained by the implemented typed filter. The documentation explicitly leaves automatic CLI naming unverified. The retained preparation record reported `TestSessionLabelsLastCustomTitleWins` passing; this source reconciliation did not rerun it or renew that historical result.
+At proposal preparation, code filtered `custom-title` records in `internal/agents/nativecodec/filter_session_labels.go`, derived their latest value in `parse.go`, and preferred `Metadata.Name` in `internal/archive/session_labels.go`. `ai-title` was not yet handled by that label filter; it is now retained by the implemented typed filter. The documentation explicitly leaves automatic CLI naming unverified. The retained preparation record reported `TestSessionLabelsLastCustomTitleWins` passing; this source reconciliation did not rerun it or renew that historical result.
 
 ## Shared design
 

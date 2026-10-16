@@ -32,14 +32,14 @@ func checkStagedConfigAuthority(data []byte) error {
 		if err = d.Decode(&value); err != nil {
 			return err
 		}
-		for _, name := range []stagedConfigField{stagedConfigSchemaField, stagedConfigSelectionField, stagedConfigCursorField, stagedConfigPickerField} {
+		for _, name := range []stagedConfigField{stagedConfigSchemaField, stagedConfigSelectionField, stagedConfigCursorField, stagedConfigPickerField, stagedConfigSearchField} {
 			if strings.EqualFold(key, string(name)) {
 				seen[string(name)]++
 				if name == stagedConfigSchemaField {
 					schema = value
 					schemaExact = schemaExact && key == string(name)
 				}
-				if name == stagedConfigSelectionField || name == stagedConfigCursorField || name == stagedConfigPickerField {
+				if name == stagedConfigSelectionField || name == stagedConfigCursorField || name == stagedConfigPickerField || name == stagedConfigSearchField {
 					staged = true
 					if key != string(name) || seen[string(name)] != 1 || bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
 						return errors.New("invalid staged configuration authority")
@@ -95,6 +95,7 @@ const (
 type stagedConfigField string
 
 const (
+	stagedConfigSearchField    stagedConfigField = "search_lifecycle_protection"
 	stagedConfigSchemaField    stagedConfigField = "schema_version"
 	stagedConfigSelectionField stagedConfigField = "staged_selection_protection"
 	stagedConfigCursorField    stagedConfigField = "settled_cursor_selection_protection"

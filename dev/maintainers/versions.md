@@ -8,20 +8,36 @@ affects.
 | Version | Where | Recorded in | Current | Changes when |
 | --- | --- | --- | --- | --- |
 | Release | `cli.Version` (set at build time) | `--version` | Build-dependent (`dev-<commit>` from source) | A tag is cut. |
-| Filter | `archive.FilterVersion` | source header `capture.filter_version`, metadata `filter_version` | 18 | What the privacy filter keeps, drops, or redacts changes: any change to filtered output. |
-| Adapter | `adapterVersion` in `internal/archive/adapters.go` | `capture.adapter_version` | 0.18.0 | An adapter's output changes (bumped with the filter in practice). |
+| Filter | `archive.FilterVersion` | source header `capture.filter_version`, metadata `filter_version` | 27 | What the privacy filter keeps, drops, or redacts changes: any change to filtered output. |
+| Adapter | `adapterVersion` in `internal/agents/nativecodec/adapters.go` | `capture.adapter_version` | 0.27.0 | An adapter's output changes (bumped with the filter in practice). |
 | Parser | per-agent `Parser.Version()` / `archive.DefaultParserVersion` | metadata `parser.version` | 0.21.0 | How metadata is derived from a source changes: counts, turns, models, skills, gaps, titles, session names, branch, linked pull requests, tools used, end time, tokens (per model too), tool errors, MCP calls, git activity, the repository key (derived from the project's git origin, not the source). |
 | Source schema | `archive.SourceSchemaVersion` / `HistorySourceSchemaVersion` | source header `schema_version` | 2 | The source bundle's line format changes. Readers refuse other versions. |
 | Metadata schema | `archive.MetadataSchemaVersion` / `HistoryMetadataSchemaVersion` | metadata `schema_version` | 1 | The metadata sidecar changes incompatibly. Optional fields don't bump it. |
 | Codex parser | `codex.Parser.Version()` | metadata `parser.version` | 0.27.0 | Codex identity, ownership or metadata interpretation changes. |
-| History source schema | `archive.HistorySourceSchemaVersion` | source header `schema_version` | 3 | The self-contained Codex history manifest or record envelopes change. |
+| History source schema | `archive.HistorySourceSchemaVersion` | source header `schema_version` | 3 | The self-contained Codex history manifest or record envelopes change. Filter 26 lets it carry a `session_labels` item; a reader before filter 26 refuses such a source ("session label does not match its owning ordinary source"), so read continued Codex threads with a current build. |
 | History metadata schema | `archive.HistoryMetadataSchemaVersion` | metadata `schema_version` | 2 | Preserved native revision references change incompatibly. |
 | Machine record | `machines.SchemaVersion` | `machines/<machine_id>.json` and `machines --json` | 1 | Informational registry format changes incompatibly; independent of session schemas and filtering. |
 | Configuration | `config.SchemaVersion` | `config.json` `schema_version` | 1 | `config.json` changes incompatibly. |
 | List JSON | `cli.listSchemaVersion` | `list --json` `schema_version` | 4 | The script-facing list document changes incompatibly. Version 3 removed `unavailable`; version 4 makes exact-count knowledge explicit. |
 | Status JSON | `statusView.Version` in `internal/cli/status.go` | `status --json` `schema_version` | 4 | Status output changes incompatibly; schema 4 separates discovery from actual hook evidence. |
 
-Claude uses the common parser version; Cursor remains at parser 0.20.0.
+Muse uses its independent parser 0.4.0 and archive-native `muse-jsonl` mixed ordinary-v1/native-omission-v2
+([inner union schema](../../schemas/muse-retained-record.schema.json)). Explicit-file
+and bounded automatic local handoff are supported; this does not alter outer
+bundle schemas or
+registration authority. Handoff builders now prefer existing `NativeStartedAt`
+facts over first prompts/file observations, also correcting Codex handoff start.
+The original native-start correction did not change metadata derivation.
+
+Claude uses the common parser version; Cursor uses parser 0.23.0.
+
+Cursor parser 0.23.0 names a session from retained `session_labels` evidence
+with the pinned `cursor-composer-name-v1` contract and `database` source, read
+from the chat's `composerData` row in Cursor's `state.vscdb`; a cursor-composer
+session record's own name still wins. The bump re-derives existing Cursor
+metadata from retained sources. Retaining that evidence on `cursor-jsonl`
+bundles changes what is uploaded for them: filter 27 and adapter 0.27.0.
+Claude, Codex and the common parser are unchanged.
 Codex has its own parser version as recorded above.
 
 The per-version filter changes are in the
@@ -221,3 +237,79 @@ all publication, durable-storage, import and authorization floors. Exact
 this is capability composition, not numeric version ordering. Prior settled
 writers refuse the scoped header, and remote coordinator protocol 11 permanently
 fences older catalog writers. Legacy settled configuration 15 remains unchanged.
+
+Codex lineage selection by chain walk (the rollout Codex's index names, then
+each rollout's `history_base`) replaces the global `native_coverage` epoch in
+the private discovery catalog. The catalog stays at version 6: a read ignores
+the retired field and the next checkpoint drops it, and an earlier writer
+reading a catalog without it starts a fresh epoch. Filtering, adapter output,
+derived metadata and published source/metadata schemas are unchanged, so no
+version bumps. The lookup revision a Codex source signature hashes no longer
+carries coverage completeness or a coverage-proven candidate set, so each Codex
+session's signature changes once and its next pass reads it again; unchanged
+content publishes nothing new.
+
+Private native source authority reserves outer wire writer version **16**, token
+`native-authority-v16`. Its required `base` is numeric 1 or an exact supported
+lower protected writer object. The in-memory `Config.SchemaVersion` continues to
+mean the lower schema, so existing v14 scoped catalog and v15 settled Cursor
+semantics and capability guards remain intact. Decode validates the lower
+configuration after strict, nonrecursive unwrapping; unknown, missing, ambiguous
+or incompatible bases refuse. Native root removal never clears the permanent
+marker. This adds private `native_roots` and registration `native_binding` v1;
+filter, adapter, parser and uploaded schemas are unchanged.
+Native-protected setup journals separately wrap the known `files_only` field
+with journal fence version 1 / writer `native-authority-v16` / original boolean
+`value`, requiring their true native protection marker. This blocks older raw
+rollback recovery before config loading; adding an ignored journal field alone
+would not protect authority.
+
+Muse parser 0.2.0 corrects unavailable tool/file/Git counts and full export file
+presence without losing qualified prompt/message counts. Cursor parser 0.22.0
+corrects unavailable tool-result counts and omits full export files for
+unstructured text evidence. It also refreshes sidecars written when Cursor
+inherited common parser 0.21.0. Existing Claude, Codex and common parser versions
+are unchanged. The shared new tool-call/file/Git availability categories inherit
+structured-count availability only when a legacy producer leaves them unset;
+explicit unknown/unavailable values never establish measured zeros. Existing
+tool-result availability remains explicit. Parser-only refresh rederives metadata
+from retained sources; full export refreshes older sidecar counts when parser
+versions differ. Filter 19, adapter 0.19.0, retained Muse v1 and published schema
+versions are unchanged; existing schemas allow omitted counts and edited files.
+
+Muse native omission recognition allocates filter23/global adapter0.23.0 and Muse
+parser0.3.0. Filter20/adapter0.20, filter21/adapter0.21 and filter22/adapter0.22 are reserved
+by separate open PR611, PR613 and PR614 respectively; their policies are not
+included by this allocation. Existing ordinary-v1 bytes remain unchanged;
+new finite ordinary variants and timestamp-free v2 omissions are closed and older
+readers refuse them. Exact observed two-metadata startup preserves permission
+birth authority. Required omission coverage is derived from validated rows;
+retained parsing refuses concealed coverage and refilter reconstructs it. Other
+agent parser versions and outer source/metadata/configuration schemas do not change.
+
+Private native binding **version 2** is reserved for Muse's successful raw
+validation checkpoint. Its mandatory `checkpoint` uses version 1, domain
+`muse-ordinary`, algorithm `sha256`, a positive raw byte boundary and lowercase
+hex SHA-256. Version 1 has no checkpoint; existing Muse v1 cannot upgrade by
+hashing current bytes. Current ordinary writers preserve exact checkpoints and
+cannot introduce, drop or advance them. The dedicated prepared commit retains
+immutable owner/root facts and compares the expected prior proof. The existing
+native-authority-v16 configuration fence remains; earlier binding-v1 writers
+refuse version 2 during registration validation. Uploaded schemas, filter,
+adapter and parser versions do not change.
+
+Muse local file observations use provider `file`, signature version 1, and a
+55-character raw-base64url token: recognized algorithm byte 1, uint64 big-endian
+raw boundary, then SHA-256. Old stat tokens and unknown encodings cannot equal a
+fresh strong observation. This disposable equality cache is separate from the
+protected successful checkpoint and cannot supply continuity authority.
+
+Muse own observations allocate filter24/global adapter0.24.0/Muse filter0.24.0
+and Muse parser0.4.0. The additive metadata/eval/handoff/stats token_observations
+envelope leaves legacy normalized tokens/counts/model_tokens absent. Old typed
+metadata readers ignore observations and cannot auto-price them; old strict
+schemas refuse the new field. Old retained event-only completions remain readable,
+while frozen filter23 schemas refuse enriched rows. This observation expansion
+leaves Source2/metadata1 and private configuration/state formats unchanged. Other agent parser versions do not
+change. Parser refresh and full export rederive the summary from retained evidence
+after native loss. Real billing/cache/completeness gates remain unqualified.
