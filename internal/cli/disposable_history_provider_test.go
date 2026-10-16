@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"reflect"
 	"testing"
 	"time"
 
@@ -191,7 +190,20 @@ func TestDisposableProviderHistoryRecoversAfterNativeAndLocalLoss(t *testing.T) 
 		must(t, err)
 		recovered = recovered || bytes.Contains(encoded, []byte("synthetic outgoing-only"))
 	}
-	if !recovered || !reflect.DeepEqual(metadata.SourceBundle, pending.SourceReference()) {
+	// The independent reader must refuse a genuinely missing preserved object;
+	// metadata alone and the already-read active source cannot prove history.
+	revision := metadata.History.Preserved[0]
+	preservedBytes, err := cloud.Get(t.Context(), revision.Source.Key)
+	must(t, err)
+	must(t, cloud.Delete(t.Context(), revision.Source.Key))
+	if _, err := reader.LoadRevision(t.Context(), peer, metadata, revision.RevisionID, reader.Limits{}); !errors.Is(err, storage.ErrNotFound) {
+		t.Fatal("independent reader accepted missing preserved source", err)
+	}
+	must(t, cloud.Put(t.Context(), revision.Source.Key, preservedBytes))
+	if _, err := reader.LoadRevision(t.Context(), peer, metadata, revision.RevisionID, reader.Limits{}); err != nil {
+		t.Fatal("restored exact preserved source did not recover", err)
+	}
+	if !recovered || metadata.SourceBundle != pending.SourceReference() {
 		t.Fatal("independent retained history lost exact active/preserved sources")
 	}
 }
