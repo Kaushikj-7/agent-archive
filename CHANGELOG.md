@@ -35,6 +35,11 @@ follow [Semantic Versioning](https://semver.org/).
   decoded again. Capturing such a thread's growth needs about 5 times its
   filtered size in read memory instead of about 12.
 
+- Cached catalog-v4 complete-summary reads reuse verified root deltas and local
+  queries. No-cache and model-evidence fallbacks remain complete, and selected
+  metadata retains its pinned revision and hash checks. Provider activation
+  gates are unchanged.
+
 - Archived Cursor sessions now carry the chat's name. Sessions captured from
   Cursor's agent transcripts, which record no name, read it from the chat's
   `composerData` row in Cursor's database (read-only, in place), imported

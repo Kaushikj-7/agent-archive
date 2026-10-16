@@ -350,6 +350,17 @@ Pass:
 
 ## PR 5: Catalog-v4 qualification and reader work
 
+PR 5b reader reuse is implemented behind the existing qualification gate, with
+independently reviewed source, full reader short-race coverage and synthetic
+unchanged-root/small-delta controls. At 1.8k synthetic rows, the scale fixture
+records 65 cold GETs, 5 unchanged-root GETs and 11 after a single deletion,
+with zero canonical LISTs or metadata-body GETs. These are operation counts,
+not qualified end-to-end latency. Local row checksums and cache inventory
+remain O(N); larger scale accounting runs separately. Existing catalog
+selection counters are preserved, including the preexisting `Outside` count
+difference from the legacy exhaustive reader for some top-level scope cases.
+PR 5a qualification, capability enablement and cutover remain unimplemented.
+
 Goal: qualified warm reads avoid `sessions/` LIST and reuse verified catalog
 deltas. Account separately for activation/head reads, tree-node reads, local
 refresh, summary selection and registration work. Reusing `RefreshRemote`
