@@ -47,19 +47,37 @@ def policy():
 
 
 class API:
-    def __init__(self, reviews=None, author='author', head='c'*40):
+    def __init__(self, reviews=None, author='author', head='c'*40, comments=None,
+                 final_head=None, state='open', final_state=None):
         self.reviews = reviews or []
+        self.comments = comments or []
         self.author, self.head = author, head
+        self.final_head, self.state, self.final_state = final_head, state, final_state
+        self.paths, self.live_reads = [], 0
 
     def get(self, path):
-        if '/reviews?' in path:
-            return self.reviews
-        return {'state': 'open', 'head': {'sha': self.head}, 'user': {'login': self.author}}
+        self.paths.append(path)
+        if '/reviews?' in path or '/comments?' in path:
+            page = int(path.rsplit('=', 1)[1])
+            rows = self.reviews if '/reviews?' in path else self.comments
+            return rows[(page - 1)*100:page*100]
+        self.live_reads += 1
+        return {'state': (self.final_state or self.state) if self.live_reads > 1 else self.state,
+                'head': {'sha': (self.final_head or self.head) if self.live_reads > 1 else self.head},
+                'user': {'login': self.author}}
 
 
 def approved(**changes):
     result = {'id': 1, 'state': 'APPROVED', 'commit_id': 'c'*40,
               'submitted_at': '2026-10-15T00:00:00Z', 'user': {'login': 'wangjohn', 'type': 'User'}}
+    result.update(changes)
+    return result
+
+
+def comment(action='approve', head='c'*40, **changes):
+    result = {'id': 1, 'body': f'/{action}-performance-exceptions {head}',
+              'created_at': '2026-10-15T00:00:00Z', 'updated_at': '2026-10-15T00:00:00Z',
+              'user': {'login': 'wangjohn', 'type': 'User'}}
     result.update(changes)
     return result
 
@@ -278,6 +296,171 @@ class GateTests(unittest.TestCase):
         # Only explicit drafts are ignored; malformed submitted reviews fail.
         with self.assertRaisesRegex(ValueError, 'submitted review identity'):
             self.run_gate(API([approved(), approved(id=4, submitted_at=None)]))
+
+    def test_author_maintainer_can_explicitly_approve_current_revision_exceptions(self):
+        self.new_test(own_elapsed_seconds=84)
+        self.exception()
+        for author in ('wangjohn', 'WangJohn', 'another-author'):
+            api = API(author=author, comments=[comment()])
+            with self.subTest(author=author):
+                result = self.run_gate(api)
+                self.assertTrue(result['passed'])
+                self.assertEqual(result['exceptions'][0]['approval'], {
+                    'comment_id': 1, 'reviewer': 'wangjohn', 'head': 'c'*40})
+                self.assertEqual(api.live_reads, 2)
+                self.assertEqual(len(api.paths), 4)
+                self.assertIn('/issues/12/comments?', api.paths[2])
+        # A formal author review remains insufficient; only an actual command
+        # comment supplies the newly supported author path.
+        with self.assertRaises(ValueError):
+            self.run_gate(API([approved()], author='wangjohn'))
+
+    def test_comment_cannot_waive_structured_exception_or_hard_budgets(self):
+        self.new_test(own_elapsed_seconds=84)
+        api = API(author='wangjohn', comments=[comment()])
+        self.assertFalse(self.run_gate(api)['passed'])
+        self.assertEqual(api.paths, [])
+        self.exception(maximum_seconds=80)
+        self.assertFalse(self.run_gate(api)['passed'])
+        self.exception()
+        self.rows[0]['fixture_metrics'] = [{'test_id': PREFIX + 'TestNew', 'fixture': 'rows',
+            'phase': 'build', 'seconds': 1, 'additive': False, 'operations': {'writes': 2}}]
+        self.policy['work_budgets'] = [{'test_id': PREFIX + 'TestNew', 'fixture': 'rows',
+            'phase': 'build', 'operation': 'writes', 'maximum': 1}]
+        self.assertFalse(self.run_gate(api)['passed'])
+        for changes in ({'source': 'f'*40}, {'success': False}, {'phases': []}):
+            original = copy.deepcopy(self.rows[0])
+            self.rows[0].update(changes)
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                self.run_gate(api)
+            self.rows[0] = original
+        for field in ('owner', 'reason', 'expires'):
+            self.exception()
+            del self.exceptions['exceptions'][0][field]
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                self.run_gate(api)
+
+    def test_comment_approval_rejects_bots_unlisted_users_stale_and_noncommands(self):
+        self.new_test(own_elapsed_seconds=84)
+        self.exception()
+        command = comment()['body']
+        invalid = [comment(user={'login': 'outsider', 'type': 'User'}),
+                   comment(user={'login': 'wangjohn', 'type': 'Bot'}),
+                   comment(head='b'*40)]
+        bodies = ['approved', 'LGTM', '', '> ' + command, '`' + command + '`',
+                  '```\n' + command + '\n```', 'For example: ' + command,
+                  command + '\n', ' ' + command, command + ' because coverage matters',
+                  command.replace('c'*40, 'c'*39), command.replace('c'*40, 'C'*40),
+                  command + '\n/revoke-performance-exceptions ' + 'c'*40]
+        invalid.extend(comment(body=body) for body in bodies)
+        for row in invalid:
+            with self.subTest(row=row), self.assertRaises(ValueError):
+                self.run_gate(API(author=row['user']['login'], comments=[row]))
+        # Neither a non-approving review body nor its draft is a conversation
+        # comment, even if it contains exactly the command text.
+        for state in ('COMMENTED', 'PENDING'):
+            with self.subTest(state=state), self.assertRaises(ValueError):
+                self.run_gate(API([approved(state=state, body=command)]))
+        for row in (comment(created_at=None), comment(updated_at=None),
+                    comment(created_at='2026-10-15T00:00:00'), comment(body=None),
+                    comment(updated_at='2026-10-14T00:00:00Z')):
+            with self.subTest(row=row), self.assertRaises(ValueError):
+                self.run_gate(API(author='wangjohn', comments=[row]))
+
+    def test_latest_created_command_controls_revocation_independent_of_api_order(self):
+        self.new_test(own_elapsed_seconds=84)
+        self.exception()
+        revoke = comment('revoke', id=2, created_at='2026-10-15T01:00:00Z',
+                         updated_at='2026-10-15T01:00:00Z')
+        for comments in ([comment(), revoke], [revoke, comment()]):
+            with self.subTest(comments=comments), self.assertRaises(ValueError):
+                self.run_gate(API(author='wangjohn', comments=comments))
+        reapprove = comment(id=3, created_at='2026-10-15T02:00:00Z',
+                            updated_at='2026-10-15T02:00:00Z')
+        self.assertTrue(self.run_gate(API(author='wangjohn', comments=[reapprove, revoke, comment()]))['passed'])
+        # Within the comment channel, IDs break simultaneous creation times.
+        with self.assertRaises(ValueError):
+            self.run_gate(API(author='wangjohn', comments=[comment(), comment('revoke', id=2)]))
+        # Stale commands and ordinary unedited conversation do not supersede
+        # an explicit current-revision command.
+        for body in ('approved', '/revoke-performance-exceptions ' + 'b'*40):
+            self.assertTrue(self.run_gate(API(author='wangjohn', comments=[comment(),
+                comment(id=5, body=body, created_at='2026-10-15T02:00:00Z',
+                        updated_at='2026-10-15T02:00:00Z')]))['passed'])
+
+    def test_detectably_edited_comments_cannot_approve_or_revive_earlier_approval(self):
+        self.new_test(own_elapsed_seconds=84)
+        self.exception()
+        # The API has no edit history: even a generic edited body could have
+        # previously approved. It conservatively blocks earlier decisions.
+        for body in (comment()['body'], '/revoke-performance-exceptions ' + 'c'*40, 'ordinary text'):
+            edited = comment(id=2, body=body, created_at='2026-10-15T01:00:00Z',
+                             updated_at='2026-10-15T03:00:00Z')
+            for comments in ([edited], [comment(), edited], [edited, comment()]):
+                with self.subTest(body=body, comments=comments), self.assertRaises(ValueError):
+                    self.run_gate(API(author='wangjohn', comments=comments))
+            fresh = comment(id=3, created_at='2026-10-15T02:00:00Z', updated_at='2026-10-15T02:00:00Z')
+            self.assertTrue(self.run_gate(API(author='wangjohn', comments=[fresh, edited]))['passed'])
+            with self.assertRaises(ValueError):
+                self.run_gate(API([approved()], comments=[edited]))
+
+    def test_reviews_and_commands_use_latest_decision_with_nonapproval_winning_time_ties(self):
+        self.new_test(own_elapsed_seconds=84)
+        self.exception()
+        later = '2026-10-15T01:00:00Z'
+        for state in ('CHANGES_REQUESTED', 'COMMENTED', 'DISMISSED'):
+            rejection = approved(id=2, state=state, submitted_at=later)
+            with self.subTest(state=state), self.assertRaises(ValueError):
+                self.run_gate(API([rejection], comments=[comment()]))
+            self.assertTrue(self.run_gate(API([approved(state=state)], comments=[
+                comment(created_at=later, updated_at=later)]))['passed'])
+            # Different API ID sequences cannot break cross-channel ties.
+            for review_id, comment_id in ((1, 9000), (9000, 1)):
+                with self.subTest(state=state, review_id=review_id), self.assertRaises(ValueError):
+                    self.run_gate(API([approved(id=review_id, state=state)],
+                                      comments=[comment(id=comment_id)]))
+        with self.assertRaises(ValueError):
+            self.run_gate(API([approved(id=9000)], comments=[comment('revoke')]))
+        self.assertTrue(self.run_gate(API([approved(submitted_at=later)],
+            comments=[comment('revoke')]))['passed'])
+        pending = approved(state='PENDING', submitted_at=None)
+        self.assertTrue(self.run_gate(API([pending], comments=[comment()]))['passed'])
+
+    def test_approval_rechecks_live_open_head_after_both_inventories(self):
+        self.new_test(own_elapsed_seconds=84)
+        self.exception()
+        for changes in ({'head': 'f'*40}, {'final_head': 'f'*40}, {'state': 'closed'}, {'final_state': 'closed'}):
+            for source in ({'reviews': [approved()]}, {'author': 'wangjohn', 'comments': [comment()]}):
+                with self.subTest(changes=changes, source=source), self.assertRaisesRegex(ValueError, 'live PR differs'):
+                    self.run_gate(API(**source, **changes))
+
+    def test_approval_inventories_are_bounded_complete_and_reject_duplicate_ids(self):
+        self.new_test(own_elapsed_seconds=84)
+        self.exception()
+        reviews = [approved(id=i, user={'login': 'outsider', 'type': 'User'}) for i in range(1, 400)]
+        comments = [comment(id=i, user={'login': 'outsider', 'type': 'User'}) for i in range(1, 400)]
+        comments[-1] = comment(id=399)
+        api = API(reviews, author='wangjohn', comments=comments)
+        # Enclosing workflow and jobs consume two requests before approval.
+        def opener(request, timeout):
+            from test_collect_ci_timing import Response
+            return Response(api.get(request.full_url.removeprefix(collect_ci_timing.ORIGIN)), request.full_url)
+        bounded = collect_ci_timing.API('synthetic', request_limit=12, opener=opener)
+        bounded.get('/repos/' + collect_ci_timing.REPOSITORY + '/actions/runs/12')
+        bounded.get('/repos/' + collect_ci_timing.REPOSITORY + '/actions/runs/12/attempts/1/jobs')
+        self.assertTrue(self.run_gate(bounded)['passed'])
+        self.assertEqual(bounded.remaining, 0)
+        self.assertEqual(len(api.paths), 12)
+        for field, rows in (('reviews', reviews), ('comments', comments)):
+            for invalid in (rows + [dict(rows[-1], id=400)], rows[:100] + rows[:1]):
+                changes = {field: invalid}
+                with self.subTest(field=field, size=len(invalid)), self.assertRaisesRegex(ValueError, 'bounded page limit|duplicate'):
+                    self.run_gate(API([approved()], **changes) if field == 'comments' else API(comments=[comment()], **changes))
+        # An approval on the first page cannot skip a later-page revocation.
+        comments[-1] = comment('revoke', id=399)
+        comments[0] = comment()
+        with self.assertRaises(ValueError):
+            self.run_gate(API(author='wangjohn', comments=comments))
 
     def test_bare_compiled_parent_names_receive_budgets_and_can_be_admitted(self):
         for name in ('Test', 'Fuzz', 'Example'):

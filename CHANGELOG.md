@@ -6,6 +6,11 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- An authorized human maintainer can explicitly approve performance-budget
+  exceptions on their own PR with a current-commit comment command. Explicit
+  revocation and later review decisions control that approval; ordinary CI
+  correctness, coverage and hard operation budgets still apply.
+
 - `agent-archive list` shows its progress while it loads: how many sessions
   it has scanned, then how many it has loaded of those it will show.
   `agent-archive handoff` shows "Preparing handoff…" after you pick a session,
