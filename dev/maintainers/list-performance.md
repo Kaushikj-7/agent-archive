@@ -9,13 +9,19 @@ requests. The historical baselines below retain their original constants and
 source pins; new modeled runs do not revise that evidence or qualify live R2
 performance. See the [read-path plan](../proposals/sublinear-read-paths.md).
 
-`BenchmarkCommandReadPaths` covers the six list/show/handoff read paths at
+`BenchmarkCommandReadPaths` covers the six list/show/handoff read paths plus
+a named-project list whose newest match lies beyond the initial global page, at
 1,800 sessions by default, with 10k/25k/50k behind `AGENT_ARCHIVE_PERF=1`.
 Cold, warm and one-percent-changed fixtures reset to the same exact object
 snapshot for each iteration; `--no-cache` cases apply to list, which supports
 that flag. Local trace accounting uses a separate untimed invocation so trace
 recording does not inflate the benchmark's time and allocation measurements.
-Ordinary tests retain 1,800-session command-result and operation-budget gates.
+The current 24-case matrix includes cold/warm/changed for all seven commands
+and no-cache for the three list cases. Ordinary tests gate the same applicable
+states at 1,800 sessions. The historical 20-case measurements predate the four
+scoped cases. The scoped fixture selects project-0: its newest match is global
+row 100, beyond the first 50 rows, and its oracle requires every returned scoped result
+in order, with exact totals and changed revisions.
 Picker checks validate every advertised visible row's identity, revision and
 order, including the initial 50-row window marker. Selected show/handoff JSON
 checks a changed output-visible revision. Handoff picker homes contain one
