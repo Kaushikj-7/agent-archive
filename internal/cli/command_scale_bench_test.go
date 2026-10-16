@@ -557,6 +557,17 @@ func BenchmarkCommandReadPaths(b *testing.B) {
 							storagetest.SeedReadPathArchive(b, observed, size, 1)
 						}
 					}
+					observationStore := storagetest.NewMeasuredStore(observed, 0)
+					observationModel := *store.ListingModel
+					observationModel.ListPageDelay = 0
+					observationModel.ListKeyDelay = 0
+					observationModel.Headers, err = observed.List(context.Background(), "")
+					if err != nil {
+						b.Fatal(err)
+					}
+					observationStore.ListingModel = &observationModel
+					observationStore.CaptureListingCosts = true
+					observedEnv.OpenStore = func(config.Config) (storage.ObjectStore, error) { return observationStore, nil }
 					observedEnv.LookupEnv = func(key string) (string, bool) {
 						if key == envTrace {
 							return "1", true
@@ -567,6 +578,14 @@ func BenchmarkCommandReadPaths(b *testing.B) {
 					if err := validateReadPathOutput(command, size, code, output, state == readPathChanged); err != nil {
 						b.Fatal(err)
 					}
+					waves, err := readPathModeledListingWaves(observationStore.ListingCosts(), observationModel.StopAtBoundary)
+					if err != nil {
+						b.Fatal(err)
+					}
+					if int64(len(observationStore.ListingCosts())) != observationStore.Metrics().Lists {
+						b.Fatal("unrecorded listing services")
+					}
+					b.ReportMetric(float64(waves), "modeled-critical-page-waves/op")
 					localCounts := readPathLocalCounts(diagnostic)
 					if command == readPathHandoffPicker && localCounts["local-registrations"] != int64(size) {
 						b.Fatal("handoff registration accounting omitted fixture reads", localCounts)
@@ -708,6 +727,10 @@ func testCommandReadPathOperationBudgets(t *testing.T, command readPathCommand) 
 	const size = 1800
 	seed := storagetest.NewMemoryStore()
 	storagetest.SeedReadPathArchive(t, seed, size, 0)
+	baselineHeaders, err := seed.List(t.Context(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	baseline, err := storagetest.SnapshotMemoryStore(t.Context(), seed)
 	if err != nil {
 		t.Fatal(err)
@@ -725,6 +748,7 @@ func testCommandReadPathOperationBudgets(t *testing.T, command readPathCommand) 
 			home := t.TempDir()
 			store := storagetest.NewMeasuredStore(mem, 0)
 			store.ListingModel = &storagetest.ListingLatencyModel{}
+			store.CaptureListingCosts = true
 			env := readPathEnv(t, home, store, command)
 			seedReadPathRegistrations(t, home, size, command)
 			args := readPathBenchmarkArgs(command, cacheState == readPathNoCache)
@@ -742,12 +766,16 @@ func testCommandReadPathOperationBudgets(t *testing.T, command readPathCommand) 
 				t.Fatal(err)
 			}
 			store.ListingModel.Headers = headers
+			expectedListings := readPathExpectedListingCosts(command, cacheState, baselineHeaders, headers, *store.ListingModel)
 			store.Reset()
 			code, out, diag := runReadPathBenchmark(args, command, env)
 			if err := validateReadPathOutput(command, size, code, out, changed); err != nil {
 				t.Fatalf("%v %s", err, diag)
 			}
 			m := store.Metrics()
+			if err := readPathDiscoveryBudget(m, store.ListingCosts(), expectedListings, store.ListingModel.StopAtBoundary); err != nil {
+				t.Fatal(err)
+			}
 			if err := readPathOperationBudget(command, cacheState, size, m); err != nil {
 				t.Fatal(err)
 			}
@@ -779,7 +807,7 @@ func readPathOperationBudget(command readPathCommand, cacheState readPathCacheSt
 	default:
 		return fmt.Errorf("unknown cache state %q", cacheState)
 	}
-	if m.Gets > maxGets || m.Lists > 20 || m.ListPages > 40 || m.ListKeys > 20000 || m.ListBytes > 8<<20 {
+	if m.Gets > maxGets {
 		return fmt.Errorf("exceeded operation budget: %+v", m)
 	}
 	if m.Lists == 0 || m.ListPages == 0 {

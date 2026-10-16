@@ -32,6 +32,15 @@ type ListingPageCost struct {
 	DiscardedBytes int64
 }
 
+// ListingRequestCost retains one modeled service and its range for deterministic
+// scheduling under the caller's declared prefix/slot topology.
+type ListingRequestCost struct {
+	Prefix  string
+	After   string
+	Through string
+	Cost    ListingPageCost
+}
+
 // ModelListingRange models StartAfter pagination over sorted prefix headers.
 // An empty prefix still requires one request. Returned headers are independent
 // of the early-exit policy; only transferred pages and bytes can differ.
@@ -81,6 +90,9 @@ func (s *MeasuredStore) modeledListing(ctx context.Context, prefix, after, throu
 	}
 	objects, cost := ModelListingRange(headers, after, through, *s.ListingModel)
 	s.mu.Lock()
+	if s.CaptureListingCosts {
+		s.listings = append(s.listings, ListingRequestCost{Prefix: prefix, After: after, Through: through, Cost: cost})
+	}
 	s.metrics.ListPages += cost.Pages
 	s.metrics.ListKeys += cost.Keys
 	s.metrics.DiscardedListBytes += cost.DiscardedBytes
