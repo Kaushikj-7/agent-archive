@@ -52,6 +52,8 @@ func validRestorationRequest(j SessionDeletion, req Request) bool {
 // baseline. The actual request remains owed: these bytes do not contain its new
 // hook evidence. The caller verifies current remote absence before persistence.
 func (s *Store) PrepareRetentionRestoration(ctx context.Context, budget *agentapi.NativeReadBudget, reg archive.SessionRegistration, req Request, published *Published, policy, admission, skill string) (PendingPublication, error) {
+	s, ctx, closeContext := s.withDurableContext(ctx)
+	defer closeContext()
 	var p PendingPublication
 	j, found, err := s.LoadSessionDeletion(reg)
 	if err != nil {
