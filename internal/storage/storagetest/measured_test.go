@@ -125,3 +125,39 @@ func TestMeasuredStoreForwardsAtomicCapabilitiesAndCountsBoundedReads(t *testing
 		t.Fatal("legacy fixture replacement lost", err)
 	}
 }
+
+func TestMeasuredListingCostsCaptureIsOptionalPrivateAndReset(t *testing.T) {
+	t.Parallel()
+	mem := NewMemoryStore()
+	if err := mem.Put(t.Context(), "sessions/a", []byte("body")); err != nil {
+		t.Fatal(err)
+	}
+	measured := NewMeasuredStore(mem, 0)
+	measured.ListingModel = &ListingLatencyModel{}
+	if _, err := measured.List(t.Context(), "sessions/"); err != nil {
+		t.Fatal(err)
+	}
+	if len(measured.ListingCosts()) != 0 {
+		t.Fatal("timed default retained allocating request records")
+	}
+	measured.Reset()
+	measured.CaptureListingCosts = true
+	if _, err := measured.ListRange(t.Context(), "sessions/", "", "sessions/a"); err != nil {
+		t.Fatal(err)
+	}
+	costs := measured.ListingCosts()
+	if len(costs) != 1 || costs[0].Prefix != "sessions/" || costs[0].Through != "sessions/a" || costs[0].Cost.Pages != 1 || costs[0].Cost.Keys != 1 || measured.Metrics().Lists != 1 {
+		t.Fatal("incorrect recorded service", costs, measured.Metrics())
+	}
+	costs[0].Cost.Pages = 100
+	if measured.ListingCosts()[0].Cost.Pages != 1 {
+		t.Fatal("caller changed recorded service")
+	}
+	measured.Reset()
+	if len(measured.ListingCosts()) != 0 || measured.Metrics() != (ReadMetrics{}) {
+		t.Fatal("reset retained request costs")
+	}
+	if costs[0].Cost.Pages != 100 {
+		t.Fatal("reset changed prior private snapshot")
+	}
+}
