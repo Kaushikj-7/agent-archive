@@ -43,6 +43,16 @@ func TestRolloutLookupRevalidatesUnchangedCurrentAfterWALCheckpoint(t *testing.T
 	if _, err := os.Stat(oldPrivate); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("discarded private index was not cleaned up: %v", err)
 	}
+	// Prime the replacement's first refresh so the next checkpoint must take
+	// the incremental failure/rebuild path when the actual locator changes.
+	addHint(t, db, "unrelated-before-locator-change", "unused", at.Add(3*time.Minute))
+	if err := lookup.Check(t.Context(), id, set.Revision); err != nil {
+		t.Fatal(err)
+	}
+	if !lookup.indexes[root].refreshed {
+		t.Fatal("replacement view did not reach incremental revalidation")
+	}
+	oldPrivate = lookup.indexes[root].snapshot.dir
 	// Rebuilding the private view must still reject an actual locator change.
 	if _, err := db.ExecContext(t.Context(), "PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
 		t.Fatal(err)
@@ -54,5 +64,15 @@ func TestRolloutLookupRevalidatesUnchangedCurrentAfterWALCheckpoint(t *testing.T
 	}
 	if err := lookup.Check(t.Context(), id, set.Revision); agentapi.Failure(err) != agentapi.Changed {
 		t.Fatalf("changed selected thread accepted: %v", err)
+	}
+	view := lookup.indexes[root]
+	if view == nil || view.snapshot == nil || view.unavailable {
+		t.Fatal("changed locator was not checked through an available rebuilt index")
+	}
+	if view.snapshot.dir == oldPrivate {
+		t.Fatal("changed locator was not checked through a rebuilt private index")
+	}
+	if _, err := os.Stat(oldPrivate); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("changed-locator checkpoint left the old private index: %v", err)
 	}
 }
