@@ -145,7 +145,7 @@ func TestCreateBucketChecksTheNameThenCreatesWithTheRightConstraint(t *testing.T
 		if err != nil {
 			t.Fatalf("%s: %v", tc.region, err)
 		}
-		want := []string{"HEAD /agent-archive-1/?", "PUT /agent-archive-1/?"}
+		want := []string{"HEAD /agent-archive-1?", "PUT /agent-archive-1?"}
 		if got := fake.methods(); strings.Join(got, ",") != strings.Join(want, ",") {
 			t.Fatalf("%s: requests %q, want %q (the name is checked first in every region)", tc.region, got, want)
 		}
@@ -452,7 +452,7 @@ func TestBlockPublicAccessTurnsAllFourSettingsOn(t *testing.T) {
 	if err := adminIn(server, "us-east-1").BlockPublicAccess(context.Background(), "agent-archive-1"); err != nil {
 		t.Fatal(err)
 	}
-	if len(fake.calls) != 1 || fake.calls[0].method != http.MethodPut || fake.calls[0].path != "/agent-archive-1/" || !strings.Contains(fake.calls[0].query, "publicAccessBlock") {
+	if len(fake.calls) != 1 || fake.calls[0].method != http.MethodPut || fake.calls[0].path != "/agent-archive-1" || !strings.Contains(fake.calls[0].query, "publicAccessBlock") {
 		t.Fatalf("requests %q, want one PUT ?publicAccessBlock", fake.methods())
 	}
 	for _, flag := range []string{"BlockPublicAcls", "IgnorePublicAcls", "BlockPublicPolicy", "RestrictPublicBuckets"} {
@@ -480,8 +480,14 @@ func TestDeleteBucketDeletesOnlyThatBucket(t *testing.T) {
 	if err := adminIn(server, "us-east-1").DeleteBucket(context.Background(), "agent-archive-1"); err != nil {
 		t.Fatal(err)
 	}
-	if got := fake.methods(); len(got) != 1 || got[0] != "DELETE /agent-archive-1/?" {
+	if got := fake.methods(); len(got) != 1 {
 		t.Fatalf("requests %q, want one DELETE of the bucket", got)
+	}
+	// The current SDK spells bucket-root operations without a trailing slash.
+	// Deletion must not target an object or select an S3 subresource.
+	call := fake.calls[0]
+	if call.method != http.MethodDelete || call.path != "/agent-archive-1" || call.query != "" || call.body != "" {
+		t.Fatalf("request %+v, want one empty DELETE of the exact bucket root", call)
 	}
 }
 
