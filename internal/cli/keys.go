@@ -302,7 +302,14 @@ func (k *keyInput) readAhead(wait time.Duration) ([]key, error) {
 		k.stale = nil
 		return nil, k.aheadFailed(err)
 	}
-	return k.decode(data), nil
+	keys := k.decode(data)
+	if failed := k.failed; errors.Is(failed, errSuspended) || errors.Is(failed, errWindowResized) {
+		// Ctrl-Z ended the burst: it is answered now, as one read first
+		// is, so that the load still reads an Esc pressed after it.
+		k.failed, k.stale = nil, nil
+		return keys, k.aheadFailed(failed)
+	}
+	return keys, nil
 }
 
 // aheadFailed answers readAhead's failed read: Ctrl-Z is answered, a resize

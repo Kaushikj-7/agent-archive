@@ -1017,8 +1017,8 @@ Usage: agent-archive handoff [SESSION_ID|WORDS|--latest|--file PATH] [options]
 Before setup, browse Claude Code and Codex native sessions in this checkout
 and its descendants. Local IDs (qualified with --harness) or unique prefixes
 select beyond the first 50 filtered previews. Scrolling past the last row
-loads another 50; / filters loaded rows only. Word queries report their
-bounded preview window.
+(o when reading lines) loads another 50; / filters loaded rows only. Word
+queries report their bounded preview window.
 --project requires a directory; --all-projects explicitly broadens the scope.
 Local --latest ranks file modification time and requires complete identity
 coverage. Direct --to uses an exact current identity or asks for selection;
@@ -1029,8 +1029,8 @@ older than seven days, best effort. Cursor discovery is not automatic.
 
 
 After setup, the picker lists the newest 50 rows initially. Scroll past the
-last row to add up to 50 older rows in the current scope; a switches to all
-projects or back.
+last row (o when reading lines) to add up to 50 older rows in the current
+scope; a switches to all projects or back.
 Archived search remains complete before older rows are loaded.
 
 After setup, continue a session in another coding agent. On a terminal, pick
