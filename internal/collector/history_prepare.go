@@ -37,12 +37,8 @@ func (s *sessionScan) advanceHistoryPreparation(p *state.PendingPublication) err
 	if err := s.unmarshalRetained(p.MetadataBytes, &metadata); err != nil {
 		return err
 	}
-	for i := range p.History.Inputs {
-		if p.History.Inputs[i].ParentSessionID == nil {
-			parent := metadata.ParentSessionID
-			p.History.Inputs[i].ParentSessionID = &parent
-		}
-	}
+	// Missing per-input provenance belongs to legacy journals. Decode their
+	// checksum-bound originals before applying the output's resolved parent.
 	if p.History.PrivacyCursor < len(p.History.Inputs) {
 		input := p.History.Inputs[p.History.PrivacyCursor]
 		if err := s.prepareHistoryInput(p, &metadata, input); err != nil {
