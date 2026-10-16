@@ -366,7 +366,8 @@ func testCachedLabelRefusalAndRecovery(t *testing.T, legacyOffset bool) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		data := append(line, '\n')
+		line = append(line, '\n')
+		data := line
 		if unfinished != "" {
 			// A record Codex is still appending proves nothing.
 			data = append(data, `{"id":"`+reg.NativeSessionID+`","thread_name":"`+unfinished...)
