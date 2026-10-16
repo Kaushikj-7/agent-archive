@@ -6,6 +6,10 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Muse local handoff accepts the observed file-read effect profile and complete
+  or failed effect bodies. These private bodies are still omitted; they do not
+  establish tool success, errors or parallel execution.
+
 - Muse local handoff previews now read only their reserved head/tail windows,
   avoiding whole-file hashes while browsing large histories. Selected sessions
   retain complete filtering and independent content verification.

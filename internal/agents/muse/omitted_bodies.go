@@ -346,14 +346,12 @@ func projectToolEffect(r retained, p, e, f map[string]any) (map[string]any, erro
 	names := []string{"kind", "effect_id", "task_stream", "task_id", "call_id", "model_call_index"}
 	if r.Type == payloadToolBatchStarted {
 		names = append(names, "tool_name", "parallel_profile")
-		if k != "started" || !stringFields(e, "tool_name") || !tagged(e["parallel_profile"], "ineligible") {
+		if k != "started" || !stringFields(e, "tool_name") || !toolParallelProfile(e["parallel_profile"]) {
 			return nil, errFormat
 		}
 	} else {
 		names = append(names, "outcome")
-		o := object(e["outcome"])
-		t := object(o["task_completion"])
-		if k != "terminal" || !keys(o, "kind", "output_ref_count", "task_completion") || str(o["kind"]) != "completed" || !integer(o["output_ref_count"], 0) || !keys(t, "kind", "terminal") || str(t["kind"]) != "terminal" || !tagged(t["terminal"], "completed") {
+		if k != "terminal" || !toolEffectOutcome(e["outcome"]) {
 			return nil, errFormat
 		}
 	}
@@ -363,4 +361,23 @@ func projectToolEffect(r retained, p, e, f map[string]any) (map[string]any, erro
 	copyFields(f, e, "effect_id", "task_id", "model_call_index")
 	f["tool_call_id"] = e["call_id"]
 	return f, nil
+}
+
+// These private bodies are validated only; neither their tags nor leaf strings
+// contribute retained tool results, error attribution or parallelism facts.
+func toolParallelProfile(v any) bool {
+	m := object(v)
+	return tagged(v, "ineligible") || keys(m, "kind", "subject") && str(m["kind"]) == "file_read" && stringFields(m, "subject")
+}
+
+func toolEffectOutcome(v any) bool {
+	m := object(v)
+	switch str(m["kind"]) {
+	case "failed":
+		return keys(m, "kind", "reason") && stringFields(m, "reason")
+	case "completed":
+		t := object(m["task_completion"])
+		return keys(m, "kind", "task_completion", "output_ref_count") && integer(m["output_ref_count"], 0) && (tagged(t, "complete") || keys(t, "kind", "terminal") && str(t["kind"]) == "terminal" && tagged(t["terminal"], "completed"))
+	}
+	return false
 }
