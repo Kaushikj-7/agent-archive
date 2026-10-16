@@ -14,7 +14,7 @@ import (
 type Parser struct{}
 
 // Version identifies the Muse retained analysis policy.
-func (Parser) Version() string { return "0.4.0" }
+func (Parser) Version() string { return "0.5.0" }
 
 // Parse interprets the complete validated Muse ordinary/omission union.
 func (Parser) Parse(ctx context.Context, b archive.SourceBundle) (archive.Analysis, error) {
@@ -49,7 +49,11 @@ func (Parser) Parse(ctx context.Context, b archive.SourceBundle) (archive.Analys
 		return archive.Analysis{}, e
 	}
 	unavailable := archive.Availability{State: archive.AvailabilityUnavailable, Reason: archive.AvailabilityReasonNotRecorded}
-	a := archive.Analysis{View: view, Facts: archive.NativeFacts{NativeStartedAt: time.UnixMicro(slots[0].Timestamp).UTC(), EarliestRecordAt: time.UnixMicro(slots[0].Timestamp).UTC(), TokenScopeUnknown: false}, Observability: archive.Observability{StructuredCounts: archive.Availability{State: archive.AvailabilityAvailable}, ToolCalls: unavailable, FilesTouched: unavailable, GitActivity: unavailable, Compactions: unavailable, ToolErrors: unavailable, ToolResults: unavailable}}
+	toolCalls := unavailable
+	if toolCountAvailable(slots, view) {
+		toolCalls = archive.Availability{State: archive.AvailabilityAvailable}
+	}
+	a := archive.Analysis{View: view, Facts: archive.NativeFacts{NativeStartedAt: time.UnixMicro(slots[0].Timestamp).UTC(), EarliestRecordAt: time.UnixMicro(slots[0].Timestamp).UTC(), TokenScopeUnknown: false}, Observability: archive.Observability{StructuredCounts: archive.Availability{State: archive.AvailabilityAvailable}, ToolCalls: toolCalls, FilesTouched: unavailable, GitActivity: unavailable, Compactions: unavailable, ToolErrors: unavailable, ToolResults: unavailable}}
 	for _, r := range slots {
 		if r.Type == payloadRuntimeSessionMetadata && a.Facts.WorkspaceRoot == "" {
 			a.Facts.WorkspaceRoot = str(r.Fields["workspace_root"])
@@ -74,6 +78,7 @@ func conversation(rows []retained) (archive.NormalizedView, error) {
 
 func conversationObserved(rows []retained) (archive.NormalizedView, *archive.TokenObservationSummary, error) {
 	var observations archive.ObservationAccumulator
+	var tools toolObservations
 	view := archive.NormalizedView{}
 	accepted := map[string]retained{}
 	started := map[string]int{}
@@ -111,10 +116,7 @@ func conversationObserved(rows []retained) (archive.NormalizedView, *archive.Tok
 			run := str(f["run_id"])
 			switch runtimeEvent(str(f["event_kind"])) {
 			case eventStarted:
-				if !conversationSourceShape(f) {
-					return view, nil, errFormat
-				}
-				if _, ok := started[run]; ok {
+				if !newConversationRun(f, run, started) {
 					return view, nil, errFormat
 				}
 				started[run] = i
@@ -138,7 +140,11 @@ func conversationObserved(rows []retained) (archive.NormalizedView, *archive.Tok
 				if observeCompletion(r, joined, lastSequence, sourceRecords, &observations) != nil {
 					return view, nil, errFormat
 				}
-			case eventAccepted, eventAssistantToolCallsCommitted, eventCancelled, eventCompleted, eventContextBlockDiagnostic, eventContextBlockUpdated, eventFailed, eventGoalUsageAttribution, eventHookRunStarted, eventHookRunTerminal, eventModelInputTraceRecorded, eventModelRequestConfigured, eventModelResponseCreated, eventProposed, eventProviderRequestOptionsConfigured, eventResourceUsageSampled, eventScheduled, eventSideEffectIntent, eventStatus, eventTaskStreamLinked, eventTerminal, eventToolResultBatchCommitted:
+			case eventAssistantToolCallsCommitted, eventToolResultBatchCommitted:
+				if observeCommittedTools(r, i, joined, lastSequence, sourceRecords, &tools, &view) != nil {
+					return view, nil, errFormat
+				}
+			case eventAccepted, eventCancelled, eventCompleted, eventContextBlockDiagnostic, eventContextBlockUpdated, eventFailed, eventGoalUsageAttribution, eventHookRunStarted, eventHookRunTerminal, eventModelInputTraceRecorded, eventModelRequestConfigured, eventModelResponseCreated, eventProposed, eventProviderRequestOptionsConfigured, eventResourceUsageSampled, eventScheduled, eventSideEffectIntent, eventStatus, eventTaskStreamLinked, eventTerminal:
 				// Known optional facts do not create visible conversation turns.
 
 			}
@@ -220,4 +226,9 @@ func observeCompletion(r retained, joined map[string]bool, last map[string]int64
 		return errFormat
 	}
 	return observations.Add(str(f["model"]), num(f["input_tokens"]), num(f["output_tokens"]))
+}
+
+func newConversationRun(f map[string]any, run string, started map[string]int) bool {
+	_, exists := started[run]
+	return conversationSourceShape(f) && !exists
 }
