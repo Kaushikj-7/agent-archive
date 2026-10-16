@@ -460,7 +460,10 @@ func importRecentSessions(p *prompter, errOut io.Writer, home, userHome string, 
 		// below, so only the cause is said.
 		var stopped *importStoppedError
 		var registration *importRegistrationError
+		var cleanup *nativefacts.LiveCaptureCleanupError
 		switch {
+		case errors.As(err, &cleanup):
+			err = cleanup
 		case errors.As(err, &stopped):
 			err = errors.New("stopped")
 		case errors.As(err, &registration):

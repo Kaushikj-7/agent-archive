@@ -76,6 +76,10 @@ func importPlanLocked(env Env, stdout, stderr io.Writer, home string, plan backf
 	if errors.Is(err, errCollectorBusy) {
 		return fail("%v; run backfill again. Nothing was changed", err)
 	}
+	var retainedCleanup *nativefacts.LiveCaptureCleanupError
+	if errors.As(err, &retainedCleanup) {
+		return fail("%v", err)
+	}
 	var stopped *importStoppedError
 	if errors.As(err, &stopped) {
 		terminal.Printf(reg.out, "Stopped. %s registered as import %s; run agent-archive backfill again with the same options to finish it.\n", countNoun(stopped.sessions, "session"), stopped.batchID)

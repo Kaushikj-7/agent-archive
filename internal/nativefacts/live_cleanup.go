@@ -14,9 +14,9 @@ type liveCleanupCustody struct {
 // Error explains the retained obligation without discarding its retry handle.
 func (e *LiveCaptureCleanupError) Error() string {
 	if e == nil || e.custody == nil {
-		return "live Cursor scratch cleanup remains incomplete"
+		return "live Cursor capture cleanup failed"
 	}
-	return "live Cursor scratch cleanup remains incomplete: " + e.custody.cause.Error()
+	return "live Cursor capture cleanup failed: " + e.custody.cause.Error()
 }
 
 // Unwrap preserves the original filesystem/accounting cause through error chains.
