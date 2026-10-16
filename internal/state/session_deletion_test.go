@@ -240,3 +240,83 @@ func TestDeletionOwnerFreezesSourceAndRelationshipAuthority(t *testing.T) {
 		t.Fatal("hook observation retargeted owner", found, err)
 	}
 }
+
+func TestRegistrationUpdatesCannotRetargetDeletionOwner(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	reg := registration(t)
+	if err := s.SaveRegistration(reg); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.PrepareSessionDeletion(reg, RemovalReasonRetention, nil, time.Now(), ""); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(s.registrationPath(reg.ArchiveSessionID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpdateRegistration(reg.ArchiveSessionID, func(r *archive.SessionRegistration) error { r.TranscriptPath += "-moved"; return nil }); !errors.Is(err, ErrRemovalPending) {
+		t.Fatal("relocation retargeted active deletion", err)
+	}
+	after, err := os.ReadFile(s.registrationPath(reg.ArchiveSessionID))
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatal("refused relocation changed registration", err)
+	}
+	observed := time.Now()
+	if err := s.RecordHookObservation(reg.ArchiveSessionID, observed); err != nil {
+		t.Fatal("hook observation was blocked", err)
+	}
+	if _, err := s.UpdateRegistration(reg.ArchiveSessionID, func(r *archive.SessionRegistration) error { r.LastHeadSeenAt = &observed; return nil }); err != nil {
+		t.Fatal("git observation was blocked", err)
+	}
+	current, found, err := s.LoadRegistration(reg.ArchiveSessionID)
+	if err != nil || !found {
+		t.Fatal(found, err)
+	}
+	if _, found, err := s.LoadSessionDeletion(current); err != nil || !found {
+		t.Fatal("observations invalidated deletion owner", found, err)
+	}
+}
+
+func TestDeletionSelectionRechecksCurrentRegistrationOwner(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	reg := registration(t)
+	if err := s.SaveRegistration(reg); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpdateRegistration(reg.ArchiveSessionID, func(r *archive.SessionRegistration) error { r.TranscriptPath += "-new"; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.PrepareSessionDeletion(reg, RemovalReasonRetention, nil, time.Now(), ""); !errors.Is(err, ErrDurableStorageRecovery) {
+		t.Fatal("selected deletion for stale registration", err)
+	}
+	if _, err := os.Stat(filepath.Join(s.home, deletionPath(reg.ArchiveSessionID))); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("stale owner acquired deletion intent", err)
+	}
+}
+
+func TestRegistrationCommitSeesDeletionSelectedAfterStaging(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	reg := registration(t)
+	if err := s.SaveRegistration(reg); err != nil {
+		t.Fatal(err)
+	}
+	s.onWriteSync = func() {
+		s.onWriteSync = nil
+		if _, err := s.PrepareSessionDeletion(reg, RemovalReasonRetention, nil, time.Now(), ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.UpdateRegistration(reg.ArchiveSessionID, func(r *archive.SessionRegistration) error { r.TranscriptPath += "-new"; return nil }); !errors.Is(err, ErrRemovalPending) {
+		t.Fatal("staged relocation bypassed newly selected deletion", err)
+	}
+	current, found, err := s.LoadRegistration(reg.ArchiveSessionID)
+	if err != nil || !found || current.TranscriptPath != reg.TranscriptPath {
+		t.Fatal("staged relocation changed active owner", found, err)
+	}
+	if _, found, err := s.LoadSessionDeletion(current); err != nil || !found {
+		t.Fatal("actual owner cannot resume deletion", found, err)
+	}
+}

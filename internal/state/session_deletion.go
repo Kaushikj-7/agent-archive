@@ -303,12 +303,19 @@ func (s *Store) saveSessionDeletion(j SessionDeletion, expected *string) error {
 			}
 		}
 		commit := func(rename func() error) error {
+			unlock, err := s.lockRequest(j.Registration.ArchiveSessionID)
+			if err != nil {
+				return err
+			}
+			defer unlock()
+			current, found, err := s.LoadRegistration(j.Registration.ArchiveSessionID)
+			if err != nil {
+				return err
+			}
+			if found && deletionOwner(current) != j.OwnerSHA256 {
+				return ErrDurableStorageRecovery
+			}
 			if expected != nil {
-				unlock, err := s.lockRequest(j.Registration.ArchiveSessionID)
-				if err != nil {
-					return err
-				}
-				defer unlock()
 				req, found, err := s.LoadRequest(j.Registration.ArchiveSessionID)
 				if err != nil {
 					return err
@@ -663,6 +670,20 @@ func (s *Store) retainDeletionCharge(n int64) error {
 		*s.resourceReleases = append(*s.resourceReleases, func() { reservation.Release(n) })
 	} else {
 		reservation.Release(n)
+	}
+	return nil
+}
+
+// Shared by the existing registration preflight and request-lock commit check,
+// including blind replacements and prepared source binding updates. A durable
+// intent may appear after a proposed registration was staged.
+func (s *Store) checkDeletionRegistrationTransition(next archive.SessionRegistration) error {
+	j, found, err := s.loadSessionDeletion(next.ArchiveSessionID)
+	if err != nil {
+		return err
+	}
+	if found && j.OwnerSHA256 != deletionOwner(next) {
+		return ErrRemovalPending
 	}
 	return nil
 }

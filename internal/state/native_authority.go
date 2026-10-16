@@ -66,6 +66,11 @@ func (s *Store) checkNativeRegistrationTransition(path string, next archive.Sess
 			return err
 		}
 	}
+	if !before.found || deletionOwner(previous) != deletionOwner(next) {
+		if err := s.checkDeletionRegistrationTransition(next); err != nil {
+			return err
+		}
+	}
 	if err := preserveNativeRegistrationAuthority(previous, next, before.found, prepared); err != nil {
 		return err
 	}

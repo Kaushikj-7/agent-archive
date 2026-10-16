@@ -90,6 +90,13 @@ func (p *pass) reconcileNativeLink(i int, reg archive.SessionRegistration, paren
 	if !reg.NativeChild || reg.ParentSessionID != "" && reg.NativeLinkVersion >= 1 {
 		return
 	}
+	// An admitted deletion freezes the source and relationship owner until
+	// exact restoration/cleanup removes its intent. Linking first would make the
+	// current registration unable to resume its own removal.
+	if _, found, err := p.local.LoadSessionDeletion(reg); found || err != nil {
+		p.nativeLinkPending("session_removal_pending")
+		return
+	}
 	if reg.ParentNativeSessionID == "" {
 		p.nativeLinkPending("native_parent_not_recorded")
 		return
