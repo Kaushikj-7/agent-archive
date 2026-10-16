@@ -6,6 +6,10 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Muse local handoff previews now read only their reserved head/tail windows,
+  avoiding whole-file hashes while browsing large histories. Selected sessions
+  retain complete filtering and independent content verification.
+
 - Interrupted history privacy preparation now reads each retained revision's
   original parent before applying a later resolved parent. Older pending
   journals can resume without replacing the original provenance.

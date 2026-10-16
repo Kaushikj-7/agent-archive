@@ -80,6 +80,13 @@ type SourceProvider interface {
 	OpenPass(context.Context, SourceEnvironment) (SourcePass, error)
 }
 
+// PreviewSourceProvider optionally opens sources without whole-file acquisition
+// for bounded label previews. These passes grant no admission or content proof;
+// selected-source filtering must open a fresh ordinary source pass.
+type PreviewSourceProvider interface {
+	OpenPreviewPass(context.Context, SourceEnvironment) (SourcePass, error)
+}
+
 // SourcePass is serial, lazy, single-owner, and terminal after Close.
 type SourcePass interface {
 	Signature(context.Context, SourceRef) (SourceObservation, error)

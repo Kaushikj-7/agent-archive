@@ -43,6 +43,41 @@ func proofFixture(t *testing.T, name string) (*sourcePass, *sourceSnapshot, []by
 	return p, snap.(*sourceSnapshot), raw, p.env.ReadBudget
 }
 
+func TestPreviewPassDoesNotSupplyContentAuthority(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "preview.jsonl")
+	if err := os.WriteFile(path, readSynthetic(t, "synthetic-exec-conversation.jsonl"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	pass, err := (SourceProvider{}).OpenPreviewPass(t.Context(), agentapi.SourceEnvironment{Policy: transcriptio.OpenPolicy{Root: filepath.Dir(path), RejectSymlinks: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := pass.Read(t.Context(), agentapi.SourceRef{Path: path}, agentapi.ReadLimits{})
+	if err != nil {
+		t.Fatal(errors.Join(err, pass.Close()))
+	}
+	if _, ok := snapshot.(agentapi.VerifiedContentSnapshot); ok {
+		t.Error("preview snapshot supplied whole-source authority")
+	}
+	if err := errors.Join(snapshot.Close(), pass.Close()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := snapshot.Input().File.ReadAt(make([]byte, 1), 0); !errors.Is(err, agentapi.ErrClosed) {
+		t.Fatalf("closed preview input: %v", err)
+	}
+	for _, env := range []agentapi.SourceEnvironment{{RequireConfinedHistory: true}, {NativeRoot: &archive.NativeRoot{}}, {LegacyUnboundRegistration: true}} {
+		if pass, err := (SourceProvider{}).OpenPreviewPass(t.Context(), env); err == nil || pass != nil {
+			t.Fatal("preview pass bypassed capture refusal")
+		}
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := (SourceProvider{}).OpenPreviewPass(ctx, agentapi.SourceEnvironment{}); !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+}
+
 func TestLocalSnapshotProofOwnsExactInputAndLifetime(t *testing.T) {
 	t.Parallel()
 	p, s, raw, budget := proofFixture(t, "synthetic-exec-conversation.jsonl")
