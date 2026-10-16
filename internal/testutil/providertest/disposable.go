@@ -99,7 +99,7 @@ func NewDisposableS3(t *testing.T) *DisposableS3 {
 		t.Fatal("acceptance requires an exact disposable run prefix")
 	}
 	prefix := runPrefix + "/run-" + hex.EncodeToString(suffix[:])
-	remote, err := storage.NewS3Store(storage.S3StoreOptions{Provider: "s3", Client: storage.NewClient(cfg, endpoint, true, 1), Bucket: bucket, Prefix: prefix, MaxGetBytes: 128 << 20})
+	remote, err := storage.NewS3Store(storage.S3StoreOptions{Provider: "s3", Client: storage.NewClient(cfg, endpoint, true, 1), Bucket: bucket, Prefix: prefix})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +118,7 @@ func (s *DisposableS3) IndependentOwner(t *testing.T) *DisposableS3 {
 		t.Fatal("a separately issued disposable provider identity is required")
 	}
 	cfg := aws.Config{Region: "us-east-1", Credentials: awscredentials.NewStaticCredentialsProvider(access, secret, ""), HTTPClient: s.http}
-	remote, err := storage.NewS3Store(storage.S3StoreOptions{Provider: "s3", Client: storage.NewClient(cfg, s.endpoint, true, 1), Bucket: s.bucket, Prefix: s.prefix, MaxGetBytes: 128 << 20})
+	remote, err := storage.NewS3Store(storage.S3StoreOptions{Provider: "s3", Client: storage.NewClient(cfg, s.endpoint, true, 1), Bucket: s.bucket, Prefix: s.prefix})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,18 +151,18 @@ func cleanupDisposableS3(t *testing.T, s *DisposableS3) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	objects, err := s.List(ctx, "")
-	if err != nil || len(objects) > 512 {
+	page, err := s.ListPage(ctx, "", "", 513)
+	if err != nil || len(page.Objects) > 512 || page.Next != "" {
 		t.Error("disposable prefix cleanup inventory failed or exceeded bounds", err)
 		return
 	}
-	for _, object := range objects {
+	for _, object := range page.Objects {
 		if err := s.Delete(ctx, object.Key); err != nil {
 			t.Error("disposable prefix cleanup failed", err)
 		}
 	}
-	remaining, err := s.List(ctx, "")
-	if err != nil || len(remaining) != 0 {
+	remaining, err := s.ListPage(ctx, "", "", 1)
+	if err != nil || len(remaining.Objects) != 0 || remaining.Next != "" {
 		t.Error("disposable prefix cleanup incomplete", err)
 	}
 	s.http.mu.Lock()
