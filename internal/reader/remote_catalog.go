@@ -533,6 +533,8 @@ func selectBoundedCatalog(ctx context.Context, snapshot *catalog.Snapshot, q Met
 }
 
 func remoteCachedRows(ctx context.Context, tx *sql.Tx) (cachedKeys map[string]bool, invalid []string, err error) {
+	span := trace.Start("catalog remote validation")
+	defer span.End()
 	rows, err := tx.QueryContext(ctx, "SELECT key,etag,hash,capture,activity,summary,search,lowerid,unlabeled,summary_hash FROM sessions")
 	if err != nil {
 		return nil, nil, err
@@ -548,6 +550,8 @@ func remoteCachedRows(ctx context.Context, tx *sql.Tx) (cachedKeys map[string]bo
 		if err = record.scan(rows); err != nil {
 			return nil, nil, err
 		}
+		span.Count("rows-scanned", 1)
+		span.Count("summary-B-hashed", len(record.summary))
 		cachedKeys[record.key] = true
 		if !record.valid() {
 			invalid = append(invalid, record.key)

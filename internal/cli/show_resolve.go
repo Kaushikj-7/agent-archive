@@ -71,6 +71,8 @@ func resolveShowQuery(ctx context.Context, store storage.ObjectStore, env showQu
 		}
 	}
 
+	ctx, stopDiscovery := startReadDiscovery(ctx, env, store, false)
+	defer stopDiscovery()
 	scope, err := scopeFor(env, "", false)
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: show: %v\n", err)
