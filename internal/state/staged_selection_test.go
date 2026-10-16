@@ -16,7 +16,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
-func stagedPreparedFixture(t *testing.T, request bool) (*Store, PendingPublication, *local.CollectorGuard) {
+func stagedPreparedFixture(t *testing.T, request bool, records ...[]map[string]any) (*Store, PendingPublication, *local.CollectorGuard) {
 	t.Helper()
 	s := newTestStore(t)
 	cfg, _, err := config.Load(s.Home())
@@ -60,6 +60,10 @@ func stagedPreparedFixture(t *testing.T, request bool) (*Store, PendingPublicati
 		t.Fatal(err)
 	}
 	p := PendingPublication{MetadataKey: metadataKey, MetadataBytes: metadataBytes, Bundle: archive.SourceBundle{SchemaVersion: archive.SourceSchemaVersion, ArchiveSessionID: id, NativeSessionID: reg.NativeSessionID, ProjectID: reg.ProjectID, Capture: archive.SourceCapture{Harness: reg.Harness, AdapterName: "synthetic", FilterVersion: archive.FilterVersion, CapturedAt: at}, NativeRecords: []map[string]any{{"content": strings.Repeat("x", 96<<10)}}}, ReadyAt: at, Attempted: true, SkillEvidence: string(cfg.EffectiveSkillEvidence())}
+	if len(records) != 0 {
+		p.Bundle.NativeRecords = records[0]
+		p.Bundle.Capture.SourceFormat = "jsonl"
+	}
 	source, err := archive.BuildCompressedSource(p.Bundle)
 	if err != nil {
 		t.Fatal(err)
