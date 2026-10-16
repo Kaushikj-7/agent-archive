@@ -51,7 +51,7 @@ func (p *pass) skipUnchanged(reg archive.SessionRegistration, req state.Request)
 		p.fail(id, unchangedSinceFailureError{message: failure, cursor: reg.SourceKind == archive.SourceKindCursorSQLite})
 		return true
 	}
-	if entry, ok := p.opts.labels[id]; ok && entry.Label.Fingerprint() != signature.PublishedLabel && (signature.Blocked == "" || signature.Blocked == state.BlockedReasonTranscriptMissing && !p.retainedHistorySet(id)) {
+	if entry, ok := p.opts.labels[id]; ok && entry.Label.Fingerprint() != signature.PublishedLabel && (signature.Blocked == "" || (signature.Blocked == state.BlockedReasonTranscriptMissing || sizeLimitGap(signature.Blocked)) && !p.retainedHistorySet(id)) {
 		if p.labelStates[id] != nil {
 			return false
 		}

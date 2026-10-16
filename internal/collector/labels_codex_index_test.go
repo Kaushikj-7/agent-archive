@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -176,5 +177,54 @@ func TestPublishedHistorySourceSetIsNamedByLookup(t *testing.T) {
 	metadata = fetchMetadata(t, scan.remote, "codex", scan.id())
 	if metadata.History == nil || metadata.Name != "Native thread name" {
 		t.Fatalf("history %v name %q", metadata.History, metadata.Name)
+	}
+}
+
+// A thread stopped at a size limit keeps its last snapshot, and that snapshot
+// is named: the name is what finds it. The gap stays recorded.
+func TestThreadStoppedAtASizeLimitIsNamed(t *testing.T) {
+	local, home, reg := codexIndexFixture(t)
+	remote := storagetest.NewMemoryStore()
+	now := reg.RegisteredAt.Add(time.Hour)
+	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "machine", Now: func() time.Time { return now }, LabelEnvironment: agentapi.LabelEnvironment{Homes: []string{home}}}
+	if result, err := Run(t.Context(), local, remote, opts); err != nil || len(result.Errors) != 0 || len(result.Published) != 1 {
+		t.Fatal(result, err)
+	}
+	f, err := os.OpenFile(reg.TranscriptPath, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 200 {
+		if _, err := f.WriteString(`{"type":"response_item","payload":{"type":"message","role":"assistant","content":"` + strings.Repeat("grown ", 200) + `"}}` + "\n"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	opts.MaxTranscriptBytes = 64 << 10
+	now = now.Add(time.Hour)
+	if _, err := Run(t.Context(), local, remote, opts); err != nil {
+		t.Fatal(err)
+	}
+	if signature, _, err := local.LoadScanSignature(reg.ArchiveSessionID); err != nil || signature.Blocked != state.BlockedReasonTranscriptTooLarge {
+		t.Fatalf("fixture not stopped at the size limit: %+v %v", signature, err)
+	}
+	opts.Labels = codexFileLabelLookup{}
+	for range 2 {
+		now = now.Add(time.Hour)
+		if _, err := Run(t.Context(), local, remote, opts); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if name := fetchMetadata(t, remote, "codex", reg.ArchiveSessionID).Name; name != "Review book generation quality" {
+		t.Fatalf("name %q", name)
+	}
+	if signature, _, err := local.LoadScanSignature(reg.ArchiveSessionID); err != nil || signature.Blocked != state.BlockedReasonTranscriptTooLarge {
+		t.Fatalf("size-limit gap lost: %+v %v", signature, err)
+	}
+	now = now.Add(time.Hour)
+	if result, err := Run(t.Context(), local, remote, opts); err != nil || len(result.Published) != 0 {
+		t.Fatal("named gap published again", result, err)
 	}
 }

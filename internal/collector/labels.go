@@ -298,8 +298,15 @@ func (s *sessionScan) refreshLabels() (sessionOutcome, bool, error) {
 	if !found || !labelPublicationOwned(s.published, last.bundle, s.reg, s.opts.MachineID) || !sourceEvidenceWithinPolicy(last.bundle.SupplementalEvidence, s.opts.skillEvidence()) || labelFingerprint(last.bundle) == entry.Label.Fingerprint() {
 		return outcomeSkipped, false, nil
 	}
+	// A session stopped at a size limit keeps its last snapshot, which no
+	// read will replace; its name is refreshed from that snapshot, as for a
+	// missing transcript, and the gap is recorded again afterwards.
+	gap, stoppedAtLimit, err := s.sizeLimitSignature()
+	if err != nil {
+		return outcomeSkipped, false, err
+	}
 	reader, hasReader := newSourceReader(s.reg, s.opts)
-	if hasReader {
+	if hasReader && !stoppedAtLimit {
 		_, err := reader.Signature(s.ctx)
 		if err == nil && last.bundle.Capture.FilterVersion != archive.FilterVersion {
 			// Refilter available native input normally before refreshing its
@@ -335,7 +342,25 @@ func (s *sessionScan) refreshLabels() (sessionOutcome, bool, error) {
 		}
 	}
 	outcome, err := s.publish(s.ctx, sourceRead{observed: *observed}, candidate)
+	if err == nil && stoppedAtLimit {
+		// The renamed snapshot is still the one the limit stopped at; once
+		// it is published, the gap records its name.
+		if outcome == outcomePublished {
+			gap.PublishedLabel = entry.Label.Fingerprint()
+		}
+		err = s.local.SaveScanSignature(s.id(), gap)
+	}
 	return outcome, true, err
+}
+
+// sizeLimitSignature is the session's last scan signature when that scan
+// recorded a size-limit gap.
+func (s *sessionScan) sizeLimitSignature() (state.ScanSignature, bool, error) {
+	signature, found, err := s.local.LoadScanSignature(s.id())
+	if err != nil || !found || !sizeLimitGap(signature.Blocked) {
+		return state.ScanSignature{}, false, err
+	}
+	return signature, true, nil
 }
 
 // Verification output ends before rendering the renamed source. Both compression
