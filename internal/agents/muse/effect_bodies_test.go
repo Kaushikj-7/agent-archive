@@ -60,6 +60,7 @@ func TestToolEffectBodiesPreserveOmissionProjection(t *testing.T) {
 	for pi, profile := range []any{oldProfile, readProfile()} {
 		for oi, outcome := range []any{oldOutcome, completeOutcome(), failedOutcome()} {
 			t.Run(fmt.Sprintf("profile%d-outcome%d", pi, oi), func(t *testing.T) {
+				t.Parallel()
 				out, err := filterBytes(t, effectBodies(t, profile, outcome), agentapi.ReadLimits{})
 				if err != nil {
 					t.Fatal(err)
@@ -100,6 +101,10 @@ func TestToolEffectBodiesPreserveOmissionProjection(t *testing.T) {
 
 func TestToolEffectBodiesRejectUnknownShapes(t *testing.T) {
 	t.Parallel()
+	const (
+		taskCompletion fieldName = "task_completion"
+		outputRefCount fieldName = "output_ref_count"
+	)
 	type change struct {
 		name    string
 		profile bool
@@ -115,10 +120,10 @@ func TestToolEffectBodiesRejectUnknownShapes(t *testing.T) {
 	} {
 		for key := range spec.value {
 			badValues := []any{nil, true, []any{}, map[string]any{}}
-			if key != "output_ref_count" {
+			if fieldName(key) != outputRefCount {
 				badValues = append(badValues, json.Number("2"))
 			}
-			if key == "kind" || key == "task_completion" || key == "output_ref_count" {
+			if fieldName(key) == fieldKind || fieldName(key) == taskCompletion || fieldName(key) == outputRefCount {
 				badValues = append(badValues, "future")
 			}
 			for _, bad := range badValues {
@@ -132,6 +137,7 @@ func TestToolEffectBodiesRejectUnknownShapes(t *testing.T) {
 	// start from their own variant so every refusal tests the intended boundary.
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			p, o := readProfile(), completeOutcome()
 			if len(c.name) >= 6 && c.name[:6] == "failed" {
 				o = failedOutcome()
@@ -149,6 +155,7 @@ func TestToolEffectBodiesRejectUnknownShapes(t *testing.T) {
 	}
 	for i, count := range []any{json.Number("0"), json.Number("9007199254740991")} {
 		t.Run(fmt.Sprintf("exact-count%d", i), func(t *testing.T) {
+			t.Parallel()
 			o := completeOutcome()
 			o["output_ref_count"] = count
 			if _, err := filterBytes(t, effectBodies(t, readProfile(), o), agentapi.ReadLimits{}); err != nil {
@@ -158,6 +165,7 @@ func TestToolEffectBodiesRejectUnknownShapes(t *testing.T) {
 	}
 	for i, bad := range []any{-1, 1.5, json.Number("9007199254740992"), "1", false, nil} {
 		t.Run(fmt.Sprintf("count%d", i), func(t *testing.T) {
+			t.Parallel()
 			o := completeOutcome()
 			o["output_ref_count"] = bad
 			out, err := filterBytes(t, effectBodies(t, readProfile(), o), agentapi.ReadLimits{})
@@ -168,6 +176,7 @@ func TestToolEffectBodiesRejectUnknownShapes(t *testing.T) {
 	}
 	for i, bad := range []any{map[string]any{"kind": "completed"}, map[string]any{"kind": "complete", "terminal": map[string]any{"kind": "completed"}}, map[string]any{"kind": "terminal", "terminal": map[string]any{"kind": "complete"}}, map[string]any{"kind": "complete", "future": true}} {
 		t.Run(fmt.Sprintf("completion%d", i), func(t *testing.T) {
+			t.Parallel()
 			o := completeOutcome()
 			o["task_completion"] = bad
 			out, err := filterBytes(t, effectBodies(t, readProfile(), o), agentapi.ReadLimits{})
@@ -180,6 +189,14 @@ func TestToolEffectBodiesRejectUnknownShapes(t *testing.T) {
 
 func TestToolEffectBodiesPreserveIdentityJoins(t *testing.T) {
 	t.Parallel()
+	type identityField string
+	const (
+		runID          identityField = "run_id"
+		stream         identityField = "stream"
+		causationID    identityField = "causation_id"
+		taskStream     identityField = "task_stream"
+		modelCallIndex identityField = "model_call_index"
+	)
 	for oi, outcome := range []any{completeOutcome(), failedOutcome()} {
 		raw := effectBodies(t, readProfile(), outcome)
 		lines := bytes.Split(bytes.TrimSpace(raw), []byte("\n"))
@@ -193,22 +210,23 @@ func TestToolEffectBodiesPreserveIdentityJoins(t *testing.T) {
 			}
 			for _, key := range []string{"effect_id", "task_id", "call_id", "model_call_index", "task_stream", "run_id", "stream", "causation_id"} {
 				t.Run(fmt.Sprintf("outcome%d-line%d-%s", oi, i, key), func(t *testing.T) {
+					t.Parallel()
 					clone, _, err := decodeObject(line)
 					if err != nil {
 						t.Fatal(err)
 					}
 					p := object(clone["payload"])
 					r := object(p["record"])
-					switch key {
-					case "run_id":
+					switch identityField(key) {
+					case runID:
 						p[key] = "ffffffff-ffff-4fff-8fff-ffffffffffff"
-					case "stream":
+					case stream:
 						object(clone[key])["id"] = "ffffffff-ffff-4fff-8fff-ffffffffffff"
-					case "causation_id":
+					case causationID:
 						clone[key] = json.Number("1")
-					case "task_stream":
+					case taskStream:
 						object(r[key])["id"] = "ffffffff-ffff-4fff-8fff-ffffffffffff"
-					case "model_call_index":
+					case modelCallIndex:
 						r[key] = json.Number("1")
 					default:
 						r[key] = "ffffffff-ffff-4fff-8fff-ffffffffffff"
@@ -224,6 +242,7 @@ func TestToolEffectBodiesPreserveCommittedCalls(t *testing.T) {
 	t.Parallel()
 	for i, outcome := range []any{completeOutcome(), failedOutcome()} {
 		t.Run(fmt.Sprintf("outcome%d", i), func(t *testing.T) {
+			t.Parallel()
 			raw := effectBodies(t, readProfile(), outcome)
 			base, err := filterBytes(t, raw, agentapi.ReadLimits{})
 			if err != nil {
