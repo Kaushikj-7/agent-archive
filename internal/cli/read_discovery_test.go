@@ -18,6 +18,8 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agents/builtin"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/reader"
+	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
@@ -44,7 +46,7 @@ func (s *blockedReadDiscoveryStore) List(ctx context.Context, prefix string) ([]
 
 func TestReadCommandsOverlapScopeWithFreshHeaders(t *testing.T) {
 	t.Parallel()
-	for _, command := range []string{"list", "show", "show-query", "show-query-no-catalog", "handoff"} {
+	for _, command := range []string{"list", "list-no-catalog", "show", "show-query", "show-query-no-catalog", "handoff"} {
 		t.Run(command, func(t *testing.T) {
 			t.Parallel()
 			env, mem, id := publishedFixture(t)
@@ -61,7 +63,7 @@ func TestReadCommandsOverlapScopeWithFreshHeaders(t *testing.T) {
 				close(store.release)
 				return ""
 			}
-			if command == "show-query-no-catalog" {
+			if command == "show-query-no-catalog" || command == "list-no-catalog" {
 				if listCache(env, false) == nil {
 					t.Fatal("cache unavailable")
 				}
@@ -70,6 +72,9 @@ func TestReadCommandsOverlapScopeWithFreshHeaders(t *testing.T) {
 				must(t, os.WriteFile(filepath.Join(home, "cache", "catalog"), []byte("unavailable disposable catalog"), 0600))
 			}
 			args := []string{command}
+			if command == "list-no-catalog" {
+				args = []string{"list"}
+			}
 			if command == "show-query" || command == "show-query-no-catalog" {
 				args = []string{"show", id[:8], "--json"}
 			}
@@ -205,6 +210,48 @@ func TestHandoffActivityPreparationPreservesScopeAndMissingObservations(t *testi
 			}
 			if calls != want {
 				t.Fatalf("native activity calls=%d want=%d", calls, want)
+			}
+		})
+	}
+}
+
+func TestHandoffBrowserScopeRebuildRefreshesPreparedActivity(t *testing.T) {
+	t.Parallel()
+	for _, missing := range []bool{false, true} {
+		name := "changed"
+		if missing {
+			name = "newly-available"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newHandoffFixture(t, true)
+			regs, err := state.OpenReadOnly(f.home).LoadRegistrations()
+			must(t, err)
+			archived, err := reader.ListMetadataWithOptions(t.Context(), f.mem, archiveSessionsPrefix, reader.Filter{}, reader.ListOptions{})
+			must(t, err)
+			path := filepath.Join(f.project, "codex.jsonl")
+			raw, err := os.ReadFile(path)
+			must(t, err)
+			if missing {
+				must(t, os.Remove(path))
+			}
+			activity := pickerActivities(t.Context(), f.env, regs)
+			picker := handoffPicker{ctx: t.Context(), env: f.env, home: f.home, source: "auto", archiveRead: true, activity: activity, activityRead: map[pickerIdentity]bool{pickerID("codex", f.id): true}, localLabels: map[localLabelKey]localLabelResult{}}
+			choices := pagedHandoffChoices(sessionScope{Label: "current", Dir: f.project, All: true}, listFormatOptions{Now: f.env.now()}, picker, regs, archived)
+			initial := choices.shown()
+			if len(initial.rows) != 1 {
+				t.Fatalf("initial rows=%d", len(initial.rows))
+			}
+			initialActive := initial.rows[0].Active
+			if missing {
+				must(t, os.WriteFile(path, raw, 0600))
+			}
+			newer := f.env.now().Add(time.Hour)
+			must(t, os.Chtimes(path, newer, newer))
+			choices.toggle()
+			rebuilt := choices.shown()
+			if len(rebuilt.rows) != 1 || !rebuilt.rows[0].Active.Equal(newer) || rebuilt.rows[0].Active.Equal(initialActive) {
+				t.Fatalf("scope rebuild retained prepared activity: before=%s rows=%+v want=%s", initialActive, rebuilt.rows, newer)
 			}
 		})
 	}

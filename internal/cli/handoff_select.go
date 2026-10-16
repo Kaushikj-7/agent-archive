@@ -229,6 +229,9 @@ func pagedHandoffChoices(scope sessionScope, format listFormatOptions, picker ha
 	choices := newScopeChoices(scope, format, false, func(s sessionScope) scopeView {
 		picker.scope = s
 		rows, total, truncated := picker.rows(regs, archived, limit)
+		// Preparation belongs to the first draw. Scope, older-page and search
+		// rebuilds retain their existing fresh observations of native activity.
+		picker.activity, picker.activityRead = nil, nil
 		return scopeView{rows: formatHandoffRows(rows, format), total: total, truncated: truncated, hidden: handoffHiddenSubagents(picker, s, archived),
 			search: handoffSearch(picker, s, regs, archived, format)}
 	})
