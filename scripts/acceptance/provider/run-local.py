@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import secrets
+import signal
 import socket
 import subprocess
 import sys
@@ -105,9 +106,19 @@ def main():
                 command = ['go', 'test', '-json', '-race', '-p', '2', '-short', '-count=1',
                            '-timeout', '20m', '-run', TESTS, './internal/listingindex', './internal/collector']
                 with (output / 'tests.jsonl').open('wb') as events:
-                    result = subprocess.run(command, cwd=root, env=test_env, stdout=events,
-                                            stderr=subprocess.STDOUT, timeout=1500)
-                (output / 'command.json').write_text(json.dumps({'command': command, 'exit_code': result.returncode}))
+                    tests = subprocess.Popen(command, cwd=root, env=test_env, stdout=events,
+                                             stderr=subprocess.STDOUT, start_new_session=True)
+                    try:
+                        returncode = tests.wait(timeout=1500)
+                    except BaseException:
+                        os.killpg(tests.pid, signal.SIGTERM)
+                        try:
+                            tests.wait(timeout=15)
+                        except subprocess.TimeoutExpired:
+                            os.killpg(tests.pid, signal.SIGKILL)
+                            tests.wait(timeout=15)
+                        raise
+                (output / 'command.json').write_text(json.dumps({'command': command, 'exit_code': returncode}))
                 events_path = output / 'tests.jsonl'
                 contents = events_path.read_bytes()
                 leaked = False
@@ -118,7 +129,7 @@ def main():
                 events_path.write_bytes(contents)
                 if leaked:
                     raise RuntimeError('credential found in evidence; redacted and acceptance refused')
-                if result.returncode:
+                if returncode:
                     raise RuntimeError('provider fixtures failed; inspect test events')
             finally:
                 process.terminate()
