@@ -69,14 +69,17 @@ func (p *pass) observeLabels(ctx context.Context) {
 			p.opts.labels[id] = entry
 		}
 	}
-	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
-	defer cancel()
 	requests := p.prepareLabelRequests(ctx, providers, &cache, ids, eligible)
 	// Cursor's database location comes from the collector's own setting, the
 	// one its cursor-sqlite source reads; it is outside the cached scope.
 	env := p.opts.LabelEnvironment
 	env.CursorDatabase = p.opts.cursorDatabase()
 	requests = prioritizeLabelRequests(requests, providers, env, &cache)
+	// Retained context preparation is bounded by the request and byte caps.
+	// Give the native lookup its own bounded window so that preparation does
+	// not consume every cohort's opportunity before the provider is called.
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
 	results := lookupLabelRequests(ctx, providers, env, requests)
 	p.recordLabelResults(requests, results, &cache)
 	trimLabelCache(&cache)

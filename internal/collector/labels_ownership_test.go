@@ -26,6 +26,11 @@ const (
 )
 
 func TestExternalRenameRequiresCurrentPublishedOwnerBeforeLookup(t *testing.T) {
+	t.Run("legacy", func(t *testing.T) { testExternalRenameRequiresCurrentPublishedOwner(t, false) })
+	t.Run("source-set", func(t *testing.T) { testExternalRenameRequiresCurrentPublishedOwner(t, true) })
+}
+
+func testExternalRenameRequiresCurrentPublishedOwner(t *testing.T, selecting bool) {
 	for _, tc := range []struct {
 		name   string
 		warm   bool
@@ -61,6 +66,13 @@ func TestExternalRenameRequiresCurrentPublishedOwnerBeforeLookup(t *testing.T) {
 				}
 			}
 			run()
+			// Exercise the legacy ownership check independently of v5's
+			// selecting-body checksum, which rejects an edited body earlier.
+			// These files still carry the original source revision after an
+			// owner edit, so that revision cannot authorize native naming.
+			if !selecting {
+				editPublishedState(t, local, func(map[string]any) {})
+			}
 			if tc.warm {
 				now = now.Add(time.Hour)
 				run()
@@ -113,7 +125,11 @@ func TestExternalRenameRequiresCurrentPublishedOwnerBeforeLookup(t *testing.T) {
 				}
 				injectPublishedMetadata(t, local, reg.ArchiveSessionID, published.Metadata(), encoded)
 				checksum, _, err := local.LabelRevision(reg.ArchiveSessionID)
-				if err != nil || checksum != originalChecksum {
+				if selecting {
+					if !errors.Is(err, state.ErrDurableStorageRecovery) || checksum != "" {
+						t.Fatalf("edited selecting body authorized a label revision: %q %v", checksum, err)
+					}
+				} else if err != nil || checksum != originalChecksum {
 					t.Fatalf("owner edit changed source revision: %s %s %v", originalChecksum, checksum, err)
 				}
 			}
@@ -130,7 +146,7 @@ func TestExternalRenameRequiresCurrentPublishedOwnerBeforeLookup(t *testing.T) {
 			if runErr != nil {
 				t.Fatal(runErr)
 			}
-			if tc.mutate == labelMachineChange {
+			if !selecting || tc.mutate == labelMachineChange {
 				if len(result.Errors) != 0 {
 					t.Fatal(result)
 				}
