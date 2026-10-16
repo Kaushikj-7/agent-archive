@@ -31,7 +31,7 @@ func mergeNativeCatalog(ctx context.Context, path string, expected, replacement 
 	// An ordinary writer rebuilds an over-cap catalog without reading it. There
 	// can be no supported optional inventory to preserve in that file.
 	if !nativeOnly {
-		if info, err := os.Stat(path); err == nil && info.Mode().IsRegular() && info.Size() > maxCatalogBytes {
+		if info := oversizedOrdinaryCatalog(path); info != nil {
 			return replaceOversizedCatalog(ctx, path, info, replacement)
 		}
 	}
@@ -125,6 +125,7 @@ func mergeNativeCatalog(ctx context.Context, path string, expected, replacement 
 }
 
 func boundedCatalogBytes(path string, inputLimit int64) ([]byte, error) {
+	// #nosec G703 -- caller-owned discovery-catalog.json, never formed from a native locator.
 	f, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
@@ -221,29 +222,9 @@ func nativeCatalogMembers(raw []byte) (map[string]json.RawMessage, bool) {
 		}
 		i++
 		start = i
-		depth := 0
-		for i < len(raw) {
-			c := raw[i]
-			if c == '"' {
-				i = nativeJSONStringEnd(raw, i)
-				if i < 0 {
-					return nil, false
-				}
-				continue
-			}
-			if c == '[' || c == '{' {
-				depth++
-			}
-			if c == ']' || c == '}' {
-				if depth == 0 {
-					break
-				}
-				depth--
-			}
-			if c == ',' && depth == 0 {
-				break
-			}
-			i++
+		i = nativeJSONValueEnd(raw, i)
+		if i < 0 {
+			return nil, false
 		}
 		members[key] = bytes.TrimSpace(raw[start:i])
 	}
@@ -285,6 +266,7 @@ func replaceOversizedCatalog(ctx context.Context, path string, before os.FileInf
 	if err != nil {
 		return err
 	}
+	// #nosec G703 -- same caller-owned local catalog whose staged replacement was prepared above.
 	current, err := os.Stat(path)
 	if err == nil && !transcriptio.SameObservation(before, current) {
 		err = errNativeCatalogChanged
@@ -385,4 +367,41 @@ func compareNativeCatalogBytes(path string, expected []byte) error {
 		err = errNativeCatalogChanged
 	}
 	return err
+}
+
+func nativeJSONValueEnd(raw []byte, i int) int {
+	depth := 0
+	for i < len(raw) {
+		c := raw[i]
+		if c == '"' {
+			i = nativeJSONStringEnd(raw, i)
+			if i < 0 {
+				return -1
+			}
+			continue
+		}
+		if c == '[' || c == '{' {
+			depth++
+		}
+		if c == ']' || c == '}' {
+			if depth == 0 {
+				break
+			}
+			depth--
+		}
+		if c == ',' && depth == 0 {
+			break
+		}
+		i++
+	}
+	return i
+}
+
+func oversizedOrdinaryCatalog(path string) os.FileInfo {
+	// #nosec G703 -- caller-owned local discovery-catalog.json; native locators cannot form this path.
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Size() <= maxCatalogBytes {
+		return nil
+	}
+	return info
 }

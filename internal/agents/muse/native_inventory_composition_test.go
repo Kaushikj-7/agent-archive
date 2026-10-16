@@ -86,6 +86,11 @@ func TestInventoryPendingNoRequestThroughActualMuseProofAndGuardedCommit(t *test
 			if err != nil {
 				t.Fatal(err)
 			}
+			// Keep the synthetic project independent of any Git repository above
+			// TMPDIR, including managed sandbox sentinel directories.
+			if err := os.Mkdir(filepath.Join(project, ".git"), 0700); err != nil {
+				t.Fatal(err)
+			}
 			rootPath, err := filepath.EvalSymlinks(t.TempDir())
 			if err != nil {
 				t.Fatal(err)
