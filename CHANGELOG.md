@@ -10,6 +10,11 @@ follow [Semantic Versioning](https://semver.org/).
   original parent before applying a later resolved parent. Older pending
   journals can resume without replacing the original provenance.
 
+- When Codex discovery is unavailable but every published automatic session has
+  recorded read-back verification, status says “discovery unknown; archive
+  verified at recorded time”. Restore source access and run sync to check
+  current capture health.
+
 - A long Codex thread whose history spans more than one rollout needs far less
   read memory to capture, so it is captured at sizes that were recorded as too
   large to read (`transcript_too_large`, per-session read memory, from about
@@ -51,6 +56,10 @@ follow [Semantic Versioning](https://semver.org/).
   Codex thread whose ID starts `01a10e11`.
 
 ### Local native validation foundation
+
+- Add opt-in offline-tested Muse read success, missing-file and two-call
+  qualification controls with finite provider/process bounds and joined cleanup.
+  These controls add no native status, cancellation or parallel-execution claim.
 
 - Muse local snapshots now supply exact raw content proofs and bounded provisional
   startup facts. Protected native binding v2 can retain a successful raw validation

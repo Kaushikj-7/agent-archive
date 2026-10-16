@@ -95,7 +95,7 @@ jobs:
       - run: python3 -B scripts/test_stage_release_vulnerability_scan.py
       - run: python3 -B scripts/test_measure_hook.py
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: extended-linux-race-tier
@@ -122,7 +122,7 @@ jobs:
           go version | grep -q ' go1\.27\.2 ' || { echo "expected go1.27.2, matching go.mod's toolchain line" >&2; exit 1; }
       - name: Compile the exhaustive native catalog and assign three workers
         run: python3 -B scripts/run_native_full.py plan --output native-plan
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: native-plan
@@ -150,13 +150,13 @@ jobs:
         run: |
           go version
           go version | grep -q ' go1\.27\.2 ' || { echo "expected go1.27.2, matching go.mod's toolchain line" >&2; exit 1; }
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: native-plan
           path: native-plan
       - name: Run assigned complete native bodies on this independent host
         run: python3 -B scripts/run_native_full.py worker --worker ${{ matrix.worker }} --plan native-plan --output native-worker-${{ matrix.worker }}
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: native-worker-${{ matrix.worker }}
@@ -180,13 +180,13 @@ jobs:
         run: |
           go version
           go version | grep -q ' go1\.27\.2 ' || { echo "expected go1.27.2, matching go.mod's toolchain line" >&2; exit 1; }
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: native-plan
           path: native-plan
       - name: Plain performance compilation, named bodies and pinned published writer
         run: python3 -B scripts/run_native_full.py obligations --plan native-plan --output native-obligations
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: native-obligations
@@ -218,7 +218,7 @@ jobs:
           GOFLAGS: '-mod=readonly'
           GOENV: 'off'
         run: python3 scripts/run_ci_tier.py --suite macos --output tier-results
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         if: github.event_name != 'schedule' || github.event.schedule == '17 8 * * 0'
         with:
           pattern: native-*
@@ -248,7 +248,7 @@ jobs:
       - run: python3 scripts/test_ci_workflow.py
       - run: python3 scripts/test_linux_acceptance.py
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: extended-macos-full-tier
@@ -274,7 +274,7 @@ jobs:
           cache: false
       - name: Every discovered fuzz target at the selected tier
         run: python3 scripts/run_ci_tier.py --suite fuzz --output tier-results
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: extended-fuzz-tier
@@ -304,7 +304,7 @@ jobs:
         env:
           AGENT_ARCHIVE_REAL_SYSTEMD: '1'
         run: python3 scripts/run_ci_tier.py --suite systemd --output tier-results
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: extended-systemd-tier
@@ -343,7 +343,7 @@ jobs:
           cache: false
       - name: Unrestricted same-source race-short bodies and source/compiler receipts
         run: python3 -B scripts/run_pr_reference.py run --source "$REFERENCE_SOURCE" --output reference-results
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: pr-unrestricted-reference
@@ -399,7 +399,7 @@ jobs:
         env:
           NATIVE_CACHE_STATE: ${{ steps.warm_cache.outputs.restore-state || steps.cold_cache.outputs.restore_state }}
         run: python3 -B scripts/native_smoke_reference.py run --output native-tier-results
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: native-smoke-reference-${{ inputs.native_smoke_mode }}-${{ inputs.native_smoke_cache }}-${{ github.run_attempt }}
