@@ -6,6 +6,12 @@
 
 A lightweight CLI that captures Claude Code, Codex, and Cursor sessions and stores them in cloud storage (S3 or R2).
 
+Continue a Claude Code session in Codex: browse, select, and hand off.
+
+![Browse sessions, select a Claude Code session, and continue the work in Codex](docs/assets/demos/handoff.gif)
+
+*Demos use synthetic sessions, with loading waits trimmed.*
+
 OpenAI and Anthropic are constantly one-upping each other or the best model, but it's a pain to switch between their coding agents. Every time you switch, you lose your history, and then don't have a single source of truth for where all your sessions live. Also, if you run out of limits in the middle of a session, it's very annoying to have to figure out how to hand that session over to the other coding agent.
 
 `agent-archive` solves these problems, and can perform the following:
@@ -15,6 +21,12 @@ OpenAI and Anthropic are constantly one-upping each other or the best model, but
 - Pull a past session into the agent you are in, by asking. Setup gives Claude Code, Codex, and Cursor an `agent-archive` skill, so "pull in the auth session from Codex" or "continue where my other agent left off" finds the session by a word or two (its name, branch, project, or PR number) and hands it to the agent as context, without you typing a command ([agent skills](docs/guides/agent-skills.md)).
 - Hand off a session from one computer to another with the same `agent-archive handoff`. When working locally across multiple computers, agent-archive makes it very easy to continue sessions and to keep a single source of truth for all of your sessions.
 - View all of your past sessions across coding agents with `agent-archive list` (from inside a repository it shows that repository's sessions first; `agent-archive list "retention"` finds one by words). This allows you to set up automations to understand how you're using your agents, how different coding agents perform across different tasks, and can help you perform meta-improvements on your AGENTS.md and lint rules that span across Claude Code, Codex, and Cursor.
+
+## See your usage across agents
+
+Run `agent-archive stats` to explore session counts, tokens, estimated spend, and breakdowns by agent, model, and project. Switch views with a keypress ([usage guide](docs/guides/stats.md)).
+
+![Agent Archive stats showing 150 synthetic sessions, estimated spend, and usage across agents](docs/assets/demos/stats.gif)
 
 ## Quickstart
 
@@ -87,6 +99,12 @@ Setup edits each included app's hook settings, adds one background job (a Launch
 Setup also gives Claude Code, Codex, and Cursor an `agent-archive` skill, so you can ask an agent to "pull in the auth session from Codex" and it runs the read-only commands for you; Claude Code asks before it first uses the skill and before it runs its commands ([agent skills](docs/guides/agent-skills.md#permissions)). After upgrading, `install.sh` runs `agent-archive setup --refresh` to keep the skills current.
 
 Listings return at most 50 matching sessions by default: text shows top-level sessions by last activity; JSON includes subagents and sorts by capture time. For analytics over every match, use `agent-archive list --json --limit 0`; add `--all-projects` to include every project when running inside a repository, and `--replays include` if your analysis should include replay sessions (hidden by default). Unreadable metadata is skipped with a warning on stderr ([list guide](docs/guides/list-and-show.md), [JSON contract](docs/reference/json-output.md)).
+
+### Browse your sessions
+
+Use `agent-archive list` to browse sessions across agents, then press `/` to filter by topic, project, branch, or PR number.
+
+![Browse 151 synthetic sessions across agents and filter the list by topic](docs/assets/demos/list.gif)
 
 Use a session ID from `list` with `show`. More commands (machines, uninstall, purge, …) are under `agent-archive help advanced`; for every command and option, see the **[full CLI reference](docs/reference/cli.md)** or run `agent-archive help COMMAND`.
 
