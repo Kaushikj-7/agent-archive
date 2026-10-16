@@ -147,7 +147,19 @@ covers are unchanged. For each sealed segment the collector keeps a private
 
 `raw_end` is the byte offset just past the segment's last newline. This follows
 the precedent of the Muse successful-validation checkpoint (private native
-binding version 2: positive raw byte boundary plus SHA-256). A pass:
+binding version 2: positive raw byte boundary plus SHA-256).
+
+Progress must also be durable where nothing is retained: the filter can drop
+a long run of raw records (large tool outputs) without producing a chunk. So
+the collector also writes a **progress checkpoint** at a newline-aligned raw
+boundary once 64 MiB of raw input has passed since the last checkpoint of
+either kind. It has the same fields with no `segment_sha256`, plus the
+content-free gap codes and omitted-key names the filter has accumulated since
+the last sealed chunk, so the next chunk's gap set comes out the same as an
+uninterrupted read. A pass that stops at the per-pass limit therefore always
+stops at a checkpoint, even when the last 512 MiB produced no output.
+
+A pass:
 
 1. Reopens the chain as today (tip from Codex's index, walk `history_base`,
    header proofs, admission checks). Lineage selection is unchanged.
@@ -194,7 +206,11 @@ placeholders):
   captured_at, kind, reference}`, where `kind` is required: `head` for a
   segmented revision, or `source` with its legacy source schema (2 or 3) for a
   revision carried over from before migration. Heads list their own segments,
-  so revisions that share a prefix share its segment objects.
+  so revisions that share a prefix share its segment objects. In schema M the
+  active `source_bundle` always names a head; legacy sources appear only as
+  preserved `source` entries. Segmentation is therefore **sticky**: once a
+  session has any segmented revision it is always published in schema M, even
+  when a rollback leaves its active chain under the D1 threshold.
 
 All keys stay checksum-addressed under the session's prefix; a reader refuses
 any reference outside it before reading.
@@ -246,6 +262,8 @@ This refactor is part of PR 7 and must merge before PR 8 enables a writer.
   deferred, not gapped. Publication happens once the chain is covered up to
   its open tail. Checkpoints for staged but unpublished chunks are private
   and are discarded with their stages if the chain they assumed changes.
+  Stages not yet published are never dropped (they cannot be fetched from
+  the bucket); see local state below for how they are bounded.
 - **build / compare / guard**: the candidate is the head plus the open tail.
   `state.Published` caches the head, the segment list and the open tail
   instead of the whole bundle. `nativeEvidenceExtends` guards the open tail
@@ -347,6 +365,19 @@ private spool (an on-disk sorted, de-duplicated run merged at the end), so
 memory stays bounded without changing the count. PR 4's benchmark includes a
 thread with one million distinct response IDs.
 
+Tool-call correlation has the same shape. `dedupeToolCalls` keeps every
+invocation ID to suppress later completion echoes, and `linkToolResults`
+maps call IDs to results for tool errors and git activity. PR 4 establishes
+from the pinned producer and tests whether a call's echoes and results
+always arrive before its turn ends. If they do, correlation state holds only
+the calls open in the current turn and is cleared at each turn boundary,
+proved equal by the equivalence test. If not, calls and results are written to
+the spool keyed by ID and joined by an on-disk sort-merge at the end, exactly.
+Either way derived values do not change, so no parser bump is needed; if PR 4
+finds that neither holds, the change in derived values is treated as a
+parser version change under versions.md, not shipped silently. The
+benchmark adds a thread with one million unique tool-call IDs.
+
 Consumers that need a whole per-record view use a **spooled view** instead of
 memory: segments are streamed through the existing normalization into a
 private temporary file under the agent-archive home (record per line,
@@ -395,7 +426,12 @@ one rendered record; disk is the normalized view's size.
   receipt, so an append costs one segment, not the whole set (re-reading a
   set near 1 GiB within its five-minute timeout would fail on slow links and
   block privacy cleanup that waits on verification). A segment listed by
-  several heads is read at most once per verification. Receipts are
+  several heads is read at most once per verification. A receipt's key is
+  the segment checksum, compressed length, segment source schema and a
+  verification-algorithm version that any change to segment decoding or
+  validation bumps. A receipt from an older key is ignored, so a later
+  release re-reads and re-validates each object once under its own checks
+  before verification can authorize privacy cleanup. Receipts are also
   invalidated when the session's privacy policy or the destination changes.
 - Eval export (`exportArchivedSession` in `cli/eval_export.go`, through
   `loadArchiveSelection`, including `--revision`) renders
@@ -435,8 +471,17 @@ capture is the last fully published segment set.
   privacy maintenance, parser refresh and readback recovery never need native
   input. They count against the shared 1 GiB staging/publication quota
   (`state.durableStorageQuota`). Past 256 MiB per session (decision D5) the
-  oldest are dropped and fetched from the bucket with checksum verification
-  when needed.
+  oldest **published** stages are dropped and fetched from the bucket with
+  checksum verification when needed. Stages not yet published (a first
+  migration read or a checkpoint-invalidating re-read in progress) are never
+  dropped. One session's unpublished stages may hold at most 512 MiB of the
+  1 GiB quota, compressed; the 1 GiB filtered thread ceiling normally
+  compresses well below that. A session that would need more records a
+  size-limit gap of a new `unpublished_stage_bytes` kind (bytes, so a changed
+  limit reads it again) rather than dropping work or starving other
+  sessions' staging. No segment is uploaded before the chain is covered:
+  the existing rule that preparation makes no remote write until every input
+  is staged is kept.
 - **Pending journal**: a new `PendingHistory` journal version carrying the head,
   segment stages and kept references. Older journal versions keep their
   current recovery paths.
@@ -483,13 +528,16 @@ new one is complete.
    machine reading the bucket has upgraded. So the writer is not enabled by
    release alone: PR 8 adds an explicit per-destination opt-in. Before turning
    it on, the CLI reads the destination's machine records
-   (`machines/<machine_id>.json`, which carry `agent_archive_version`) and
-   names every paired machine whose last recorded version predates the PR 2
-   reader. The owner confirms knowing those machines will hide segmented
-   sessions until upgraded, or upgrades them first. A machine with no record
-   (an unpaired reader using shared keys) cannot be detected, which the
-   prompt says. The opt-in is recorded in configuration under the writer
-   capability below, never inferred.
+   (`machines/<machine_id>.json`). PR 2 adds an optional `reader_capabilities`
+   list to the record, which builds from PR 2 on write with
+   `codex-segments-v1`. The CLI names every paired machine whose record lacks
+   that capability, including source builds (`dev-<commit>`) and any version
+   it cannot order, so an unknown reader is always treated as unable to read
+   segmented sessions, never assumed able. The owner confirms knowing those
+   machines will hide segmented sessions until upgraded, or upgrades them first.
+   A machine with no record (an unpaired reader using shared keys) cannot be
+   detected, which the prompt says. The opt-in is recorded in configuration
+   under the writer capability below, never inferred.
 3. **Writer capability.** The writer is enabled behind a new permanent
    configuration writer capability (the next unreserved configuration version
    in `internal/config/wire.go`, coordinated with open reservations), so an
@@ -621,6 +669,15 @@ Synthetic (every PR, CI):
   gap recorded.
 - A session gapped by a build with the opt-in off is read on the first pass
   after the opt-in is turned on, with no native change.
+- More than 512 MiB of raw input that the filter drops entirely advances by
+  progress checkpoints across passes and reaches publication, with the same
+  gap set as one uninterrupted read.
+- A rollback that leaves a segmented thread's active chain under 16 MiB
+  still publishes schema M with the old revision preserved as a head.
+- A paired machine whose record lacks `codex-segments-v1` (including a
+  `dev-<commit>` build) is named by the opt-in check.
+- A receipt written under an older verification-algorithm version does not
+  skip re-validation.
 
 Sandboxed live (maintainer, before PR 8 enables the writer): the
 [local end-to-end recipe](../contributing/testing.md) with a temporary `HOME`,
@@ -644,7 +701,7 @@ records the decision.
 
 | | Question | Decision |
 | --- | --- | --- |
-| D1 | Which sessions use segments: every Codex history thread, only threads whose filtered size passes a threshold, or every Codex session including single-rollout ones. | Threads (history or single-rollout) whose filtered size passes 16 MiB. Smaller sessions keep schema 2/3, so the migration and its bucket churn touch only the few long threads. |
+| D1 | Which sessions use segments: every Codex history thread, only threads whose filtered size passes a threshold, or every Codex session including single-rollout ones. | Threads (history or single-rollout) whose filtered size passes 16 MiB. Smaller sessions keep schema 2/3, so the migration and its bucket churn touch only the few long threads. The threshold decides only entry: once a session has any segmented revision, active or preserved, it stays segmented, so a rollback to a short chain is still published as a head (there is no sidecar shape with a legacy active source and a preserved head). |
 | D2 | Whether to chunk the open tip, and the chunk target. | Yes, it is required for `87b47b56`, whose tip is 240 MB. Target 16 MiB filtered. |
 | D3 | Segment list in the metadata sidecar, or in a small head object it references. | Head object, so sidecar size (read by listing) stays independent of segment count. |
 | D4 | Derive metadata by streaming every segment per publication, or keep a private accumulator checkpoint. | Stream first; checkpoint only if profiles demand it. |
