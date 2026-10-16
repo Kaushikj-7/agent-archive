@@ -377,7 +377,9 @@ unchanged-root/small-delta controls. At 1.8k synthetic rows, the scale fixture
 records 65 cold GETs, 5 unchanged-root GETs and 11 after a single deletion,
 with zero canonical LISTs or metadata-body GETs. These are operation counts,
 not qualified end-to-end latency. Local row checksums and cache inventory
-remain O(N); larger scale accounting runs separately. Existing catalog
+remain O(N). The [full synthetic scale evidence](../maintainers/read-path-delta-scale-2026-10-16.txt)
+records 1.8k/10k/25k/50k counts and limitations at exact source `03e20cef`.
+Existing catalog
 selection counters are preserved, including the preexisting `Outside` count
 difference from the legacy exhaustive reader for some top-level scope cases.
 PR 5a qualification, capability enablement and cutover remain unimplemented.
@@ -486,6 +488,14 @@ historical results with their original constants and source pins.
   session IDs or titles. Record unmet targets alongside improvements.
 
 ## PR 7: Measured local refresh and query improvements
+
+The PR 5b scale matrix triggers investigation: the 50k complete query takes
+979 ms in one unchanged-root sample, with 484 ms in refresh. It intentionally
+returns every summary, so this does not establish the cost of eligible bounded
+queries. Follow-up code remains pending representative consumer profiles and
+an integrity-preserving refresh design; no index, relaxed validation or flat
+latency claim is justified by these samples alone. See the
+[measured follow-up constraints](../maintainers/read-path-delta-scale-2026-10-16.txt).
 
 After PR 5b removes the LIST from the relevant path, use PR 6 to identify the
 remaining critical work. Query time above 100 ms at 50k triggers query work;

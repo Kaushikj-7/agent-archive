@@ -1,0 +1,61 @@
+Synthetic complete-summary delta scale evidence — 2026-10-16
+
+Measured source: 03e20cef75286a8f354d1e17848371732577c32d
+Go: go1.27.2 linux/amd64, nonrace, GOMAXPROCS=2, -p=1.
+Test: AGENT_ARCHIVE_PERF=1 go test -p=1 -count=1 -timeout=20m
+      -run '^TestRemoteSummaryDeltaScale$' -v ./internal/cli
+Outcome: PASS, 163.004s including bulk fixture construction and oracle checks.
+
+One observation per cell on a shared host, concurrent with integrated CLI race
+coverage. Timing includes trace accounting and complete-summary API work; it is
+not a repeated matched command comparison or live-provider latency acceptance.
+The bulk fixture uses the existing independently checked qualification builder,
+not N sequential catalog commits.
+
+Sessions   Phase        GETs   Tree nodes   Elapsed       Refresh    Query
+1800       cold          65      63        205 ms        183 ms      17 ms
+1800       unchanged      5       3         34 ms         10 ms      20 ms
+1800       deletion      11       9         36 ms         15 ms      18 ms
+10000      cold         329     327       1392 ms       1232 ms     151 ms
+10000      unchanged      5       3        581 ms         59 ms     511 ms
+10000      deletion      11       9        192 ms         58 ms     127 ms
+25000      cold         814     812       5479 ms       4751 ms     708 ms
+25000      unchanged      6       4       2605 ms        508 ms    2058 ms
+25000      deletion      12      10       1570 ms        329 ms    1223 ms
+50000      cold        1621    1619      24991 ms      23663 ms    1303 ms
+50000      unchanged      6       4       1494 ms        484 ms     979 ms
+50000      deletion      14      12       2415 ms        504 ms    1882 ms
+
+Every cell performs zero canonical LISTs, zero metadata/source body GETs, one
+head GET and one coordinator GET. Tree requests include count validation; fixed
+trace phases separately expose delta, count, repair and selected-identity work,
+but these samples do not count GETs separately for each phase. Prefix/title
+queries assert complete candidates and zero LISTs without separate time samples.
+
+Unchanged-root refresh validates N persisted tuples; this complete query then
+validates/decodes N rows. At 50k, the two passes visit 100k application-level rows
+and hash 56,879,894 summary bytes, excluding other checksum tuple fields. The
+single-deletion refresh still scans the prior N rows before querying N-1 rows.
+These counters do not measure SQLite engine scans or exact COUNT work.
+
+Cache inventory visits one marker entry, without an N-directory body cache.
+This does not qualify populated body-cache inventory, eviction, registrations,
+real network latency, production provider semantics or end-to-end first draw.
+The slower 25k unchanged sample than 50k demonstrates shared-host timing noise;
+do not interpret these single samples as scaling medians or guarantees.
+
+PR 7 investigation
+------------------
+The complete-query >100 ms trigger is observed. This API intentionally returns
+all N rows; it cannot acquire a page-sized decoding bound without changing its
+contract. Profile representative bounded scope/prefix/text consumers before
+choosing typed columns, indexes or an unused-count API change. Preserve complete
+ambiguity and query-time label semantics. An index requires useful EXPLAIN QUERY
+PLAN evidence and matched command-level improvement.
+
+Refresh alone approaches 500 ms at 50k before real-provider latency or populated
+body-cache inventory. Any unchanged-root or incremental refresh optimization
+needs explicit corruption detection, completeness and repair semantics, while
+retaining selected-row checksums and authoritative body validation. Matching a
+root alone does not justify skipping validation. This evidence does not enable
+catalog-v4 or claim its flat command target.
