@@ -6,6 +6,10 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Pending-publication cleanup refuses malformed JSON inside records it scans
+  without retaining, preserving damaged journals for recovery while keeping
+  the bounded-memory checks used for large Codex histories.
+
 - A long Codex thread whose history spans more than one rollout needs far less
   read memory to capture, so it is captured at sizes that were recorded as too
   large to read (`transcript_too_large`, per-session read memory, from about

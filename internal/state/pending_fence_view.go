@@ -53,8 +53,8 @@ var pendingFenceFields = jsonProjection{
 // looks at. A staged import's proof is decoded closed, refusing any field
 // it does not know anywhere in the publication, so a publication carrying
 // one is read whole (catalogPendingForFence), as before; it is bounded by
-// the import's own stage. The view does not check the fields it scans past;
-// a read of the whole publication (LoadPending) does.
+// the import's own stage. The view validates JSON syntax in fields it scans
+// past, but only a whole read (LoadPending) checks their typed values.
 func (s *Store) pendingFenceView(id string) (PendingPublication, bool, error) {
 	var pending PendingPublication
 	err := s.readProjected(s.pendingPath(id), pendingFenceFields, &pending)
@@ -247,6 +247,10 @@ func (p *projector) trailing() error {
 // object reads an object whose opening brace is next (or, when open is
 // false, already read) and copies the members projection keeps.
 func (p *projector) object(projection jsonProjection, open bool) error {
+	if p.depth++; p.depth > 10000 {
+		return errPendingFenceView
+	}
+	defer func() { p.depth-- }()
 	if open {
 		c, err := p.nonSpace()
 		if err != nil {
@@ -430,22 +434,82 @@ func (p *projector) member(c byte, copyOut func(...byte) error) (byte, error) {
 // scalar reads a number or a literal whose first byte (first) was read: its
 // bytes run to the next delimiter, which is left unread.
 func (p *projector) scalar(first byte, copyOut func(...byte) error) error {
-	if first != '-' && (first < '0' || first > '9') && first != 't' && first != 'f' && first != 'n' {
-		return errPendingFenceView
+	// Literals have fixed spellings. Numbers follow JSON's grammar without
+	// buffering their potentially unbounded digits.
+	literal := ""
+	switch first {
+	case 't':
+		literal = "true"
+	case 'f':
+		literal = "false"
+	case 'n':
+		literal = "null"
 	}
-	if err := copyOut(first); err != nil {
-		return err
-	}
+	// States mark the start, sign, zero, integer, decimal point, fraction,
+	// exponent marker, exponent sign, and exponent digits respectively.
+	state, position := byte('s'), 0
+	c := first
 	for {
-		c, err := p.next()
+		if literal != "" {
+			if position >= len(literal) || c != literal[position] {
+				return errPendingFenceView
+			}
+			position++
+		} else {
+			switch state {
+			case 's', '-':
+				switch {
+				case c == '-' && state == 's':
+					state = '-'
+				case c == '0':
+					state = '0'
+				case c >= '1' && c <= '9':
+					state = 'i'
+				default:
+					return errPendingFenceView
+				}
+			case '0', 'i', 'f':
+				switch {
+				case c >= '0' && c <= '9' && state != '0':
+				case c == '.' && state != 'f':
+					state = '.'
+				case c == 'e' || c == 'E':
+					state = 'e'
+				default:
+					return errPendingFenceView
+				}
+			case '.', 'e', '+':
+				switch {
+				case (c == '+' || c == '-') && state == 'e':
+					state = '+'
+				case c >= '0' && c <= '9':
+					if state == '.' {
+						state = 'f'
+					} else {
+						state = 'x'
+					}
+				default:
+					return errPendingFenceView
+				}
+			case 'x':
+				if c < '0' || c > '9' {
+					return errPendingFenceView
+				}
+			}
+		}
+		if err := copyOut(c); err != nil {
+			return err
+		}
+		var err error
+		c, err = p.next()
 		if err != nil {
 			return err
 		}
 		if c == ',' || c == '}' || c == ']' || c == ' ' || c == '\t' || c == '\n' || c == '\r' {
+			if literal != "" && position != len(literal) || literal == "" && state != '0' && state != 'i' && state != 'f' && state != 'x' {
+				return errPendingFenceView
+			}
 			return p.in.UnreadByte()
-		}
-		if err := copyOut(c); err != nil {
-			return err
 		}
 	}
 }
@@ -454,14 +518,27 @@ func (p *projector) scalar(first byte, copyOut func(...byte) error) error {
 // quote, passing each content byte (escapes as written) to each.
 func (p *projector) str(each func(byte) error) error {
 	escaped := false
+	hexLeft := 0
 	for {
 		c, err := p.next()
 		if err != nil {
 			return err
 		}
 		switch {
+		case hexLeft > 0:
+			if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F') {
+				return errPendingFenceView
+			}
+			hexLeft--
 		case escaped:
 			escaped = false
+			switch c {
+			case 'u':
+				hexLeft = 4
+			case '"', '\\', '/', 'b', 'f', 'n', 'r', 't':
+			default:
+				return errPendingFenceView
+			}
 		case c == '\\':
 			escaped = true
 		case c == '"':
