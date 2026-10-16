@@ -6,6 +6,10 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Muse local handoff previews now read only their reserved head/tail windows,
+  avoiding whole-file hashes while browsing large histories. Selected sessions
+  retain complete filtering and independent content verification.
+
 - A long Codex thread whose history spans more than one rollout needs far less
   read memory to capture, so it is captured at sizes that were recorded as too
   large to read (`transcript_too_large`, per-session read memory, from about
