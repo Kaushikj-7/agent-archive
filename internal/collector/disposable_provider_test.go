@@ -188,7 +188,10 @@ func disposableStagedGroup(t *testing.T, loseAcknowledgement bool) {
 		}
 	}
 	peer := remote.IndependentOwner(t)
-	for _, reg := range []struct{ id, harness string }{{parent.ArchiveSessionID, parent.Harness.Name}, {child.ArchiveSessionID, child.Harness.Name}} {
+	for _, reg := range []struct {
+		id      string
+		harness string
+	}{{parent.ArchiveSessionID, parent.Harness.Name}, {child.ArchiveSessionID, child.Harness.Name}} {
 		metadata := fetchMetadata(t, peer, reg.harness, reg.id)
 		bundle, readErr := reader.LoadSource(t.Context(), peer, metadata, reader.Limits{})
 		if readErr != nil || len(bundle.NativeRecords) == 0 {

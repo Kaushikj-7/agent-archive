@@ -26,7 +26,7 @@ func TestDisposableProviderPortableListingKeepsCanonicalCoverage(t *testing.T) {
 	if len(strings.Split(strings.TrimPrefix(hints[0].Key, listingindex.V3Prefix), "/")) < 5 {
 		t.Fatal("fixture did not exercise segmented summary")
 	}
-	for _, component := range strings.Split(store.ObjectKey(hints[0].Key), "/") {
+	for component := range strings.SplitSeq(store.ObjectKey(hints[0].Key), "/") {
 		if len(component) > 255 {
 			t.Fatal("oversized provider component")
 		}
