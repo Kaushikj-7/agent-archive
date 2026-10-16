@@ -21,7 +21,7 @@ type rangePlan struct {
 }
 
 // planKeyRanges balances actual listed keys. Small prefixes stay sequential;
-// larger ones use approximately page-sized ranges. All prefixes share the
+// larger ones use page-sized ranges with a shorter final range. All prefixes share the
 // sixteen request slots, so extra small ranges add transfers and queueing.
 // The policy bounds hints by 15 + ceil(keys/1000) boundaries per prefix.
 func planKeyRanges(keys []string) []string {
@@ -36,8 +36,8 @@ func planKeyRanges(keys []string) []string {
 	}
 	ranges := (len(ordered) + 999) / 1000
 	bounds := make([]string, 0, ranges-1)
-	for i := 1; i < ranges; i++ {
-		bounds = append(bounds, ordered[i*len(ordered)/ranges-1])
+	for i := 1000; i < len(ordered); i += 1000 {
+		bounds = append(bounds, ordered[i-1])
 	}
 	return bounds
 }

@@ -36,14 +36,13 @@ func TestKeyRangePlansBalanceActualKeys(t *testing.T) {
 		slices.Sort(keys)
 		counts := make([]int, len(bounds)+1)
 		for _, key := range keys {
-			i := 0
-			for i < len(bounds) && key > bounds[i] {
-				i++
-			}
+			i, _ := slices.BinarySearch(bounds, key)
 			counts[i]++
 		}
-		if slices.Max(counts)-slices.Min(counts) > 1 {
-			t.Fatalf("%d keys unbalanced: %v", n, counts)
+		for i, count := range counts {
+			if (i < len(counts)-1 && count != 1000) || count < 1 || count > 1000 {
+				t.Fatalf("%d keys not split into full provider pages and a tail: %v", n, counts)
+			}
 		}
 	}
 }
