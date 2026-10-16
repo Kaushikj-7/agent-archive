@@ -89,11 +89,13 @@ func NewDisposableS3(t *testing.T) *DisposableS3 {
 	if _, err := rand.Read(suffix[:]); err != nil {
 		t.Fatal(err)
 	}
-	counter := &disposableHTTP{origin: endpoint, statuses: map[int]int{}, client: &http.Client{Timeout: 15 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = nil // Ephemeral credentials never pass through an ambient proxy.
+	counter := &disposableHTTP{origin: endpoint, statuses: map[int]int{}, client: &http.Client{Transport: transport, Timeout: 15 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
 	cfg := aws.Config{Region: "us-east-1", Credentials: awscredentials.NewStaticCredentialsProvider(access, secret, ""), HTTPClient: counter}
 	runPrefix := os.Getenv("AA_PROVIDER_RUN_PREFIX")
 	decoded, err := hex.DecodeString(strings.TrimPrefix(runPrefix, "aa-provider-"))
-	if err != nil || !strings.HasPrefix(runPrefix, "aa-provider-") || len(decoded) != 8 {
+	if err != nil || !strings.HasPrefix(runPrefix, "aa-provider-") || len(decoded) != 8 || hex.EncodeToString(decoded) != strings.TrimPrefix(runPrefix, "aa-provider-") {
 		t.Fatal("acceptance requires an exact disposable run prefix")
 	}
 	prefix := runPrefix + "/run-" + hex.EncodeToString(suffix[:])

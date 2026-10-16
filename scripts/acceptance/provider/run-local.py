@@ -68,7 +68,8 @@ def main():
         peer, peer_secret = 'peer' + secrets.token_hex(8), secrets.token_hex(24)
         prefix = 'aa-provider-' + secrets.token_hex(8)
         base_env = {key: value for key, value in os.environ.items()
-                    if not key.startswith(('MINIO_', 'AWS_', 'AA_PROVIDER_'))}
+                    if not key.startswith(('MINIO_', 'AWS_', 'AA_PROVIDER_'))
+                    and key.lower() not in ('http_proxy', 'https_proxy', 'all_proxy')}
         env = dict(base_env, MINIO_ROOT_USER=admin, MINIO_ROOT_PASSWORD=admin_secret,
                    HOME=str(work), MINIO_BROWSER='off')
         # Service diagnostics stay private and ephemeral. Only test events and
