@@ -82,7 +82,162 @@ def comment(action='approve', head='c'*40, **changes):
     return result
 
 
+class PhysicalRetryAPI(FakeAPI):
+    """One real retry and seven new logical IDs for unchanged allocations."""
+    def __init__(self):
+        super().__init__()
+        original = [copy.deepcopy(job) for job in self.jobs[1]
+                    if job['name'].startswith('linux-short (')]
+        for job in original:
+            job['created_at'] = '2026-10-15T00:00:01Z'
+            job['runner_group_id'] = 0
+            job['steps'][0]['number'] = 1
+        inherited = copy.deepcopy(original)
+        for job in inherited:
+            job.update(id=job['id'] + 1000, run_attempt=2,
+                       created_at='2026-10-15T01:00:01Z', runner_group_id=None)
+        rerun = next(job for job in inherited if job['name'] == 'linux-short (5)')
+        rerun.update(runner_id=9999, started_at='2026-10-15T01:00:05Z',
+                     completed_at='2026-10-15T01:01:05Z')
+        rerun['steps'][0].update(started_at=rerun['started_at'], completed_at=rerun['completed_at'])
+        self.attempt_jobs = {1: original, 2: inherited}
+        self.paths = []
+
+    def get(self, path):
+        self.paths.append(path)
+        return super().get(path)
+
+    def pages(self, path, key):
+        self.paths.append(path)
+        attempt = int(path.split('/attempts/')[1].split('/')[0])
+        rows = copy.deepcopy(self.attempt_jobs[attempt])
+        return {'total_count': len(rows), key: rows}
+
+
 class GateTests(unittest.TestCase):
+    def test_inherited_job_ids_do_not_change_physical_receipt_attempts(self):
+        api = PhysicalRetryAPI()
+        actual = gate.current_worker_attempts(api, receipt(), '1', '2')
+        self.assertEqual(actual, {shard: 2 if shard == 5 else 1 for shard in range(8)})
+        rows = [worker(shard) for shard in range(8)]
+        for row in rows:
+            row.update(run_id='1', run_attempt=str(actual[row['shard']]))
+        gate.observations(rows, receipt(), '1', '2', actual)
+        rows[0]['run_attempt'] = '2'
+        with self.assertRaisesRegex(ValueError, 'physical worker receipt'):
+            gate.observations(rows, receipt(), '1', '2', actual)
+        rows[0]['run_attempt'], rows[5]['run_attempt'] = '1', '1'
+        with self.assertRaisesRegex(ValueError, 'physical worker receipt'):
+            gate.observations(rows, receipt(), '1', '2', actual)
+        self.assertEqual(len(api.paths), 3)
+
+    def test_physical_retry_refuses_changed_or_incomplete_api_evidence(self):
+        changes = [
+            lambda j: j.update(runner_id=8888),
+            lambda j: j.update(runner_name='another runner'),
+            lambda j: j.update(labels=['another image']),
+            lambda j: j.update(started_at='2026-10-15T00:00:06Z'),
+            lambda j: j.update(completed_at='2026-10-15T00:01:06Z'),
+            lambda j: j.update(created_at='2026-10-15T00:00:02Z'),
+            lambda j: j.update(created_at=None),
+            lambda j: j.update(head_sha='f'*40),
+            lambda j: j.update(run_id=2),
+            lambda j: j.update(run_attempt=3),
+            lambda j: j.update(conclusion='failure'),
+            lambda j: j.update(steps=[]),
+            lambda j: j['steps'][0].update(name='another body'),
+            lambda j: j['steps'][0].update(number=2),
+            lambda j: j['steps'][0].update(status='in_progress'),
+            lambda j: j['steps'][0].update(conclusion='failure'),
+            lambda j: j['steps'][0].update(started_at='2026-10-15T00:00:06Z'),
+            lambda j: j['steps'][0].update(completed_at='2026-10-15T00:01:06Z'),
+            lambda j: j['steps'].append(copy.deepcopy(j['steps'][0])),
+        ]
+        for index, change in enumerate(changes):
+            api = PhysicalRetryAPI()
+            change(api.attempt_jobs[2][0])
+            with self.subTest(change=index), self.assertRaises(ValueError):
+                gate.current_worker_attempts(api, receipt(), 1, 2)
+        for change in (
+                lambda rows: rows.pop(),
+                lambda rows: rows.append(copy.deepcopy(rows[0])),
+                lambda rows: rows[0].update(head_sha='f'*40),
+                lambda rows: rows[0].update(conclusion='unknown'),
+                lambda rows: rows[0].update(created_at='2026-10-15T01:00:01Z'),
+                lambda rows: rows[0].update(run_attempt=2)):
+            api = PhysicalRetryAPI()
+            change(api.attempt_jobs[1])
+            with self.subTest(history=change), self.assertRaises(ValueError):
+                gate.current_worker_attempts(api, receipt(), 1, 2)
+
+    def test_physical_retry_preserves_reused_ids_and_prior_failed_allocations(self):
+        api = PhysicalRetryAPI()
+        for original, current in zip(api.attempt_jobs[1], api.attempt_jobs[2]):
+            if current['name'] != 'linux-short (5)':
+                current.update(id=original['id'], run_attempt=1, created_at=original['created_at'])
+        api.attempt_jobs[1][0]['conclusion'] = 'failure'  # This inherited success has no proof.
+        with self.assertRaises(ValueError):
+            gate.current_worker_attempts(api, receipt(), 1, 2)
+        api.attempt_jobs[1][0]['conclusion'] = 'success'
+        failed = next(j for j in api.attempt_jobs[1] if j['name'] == 'linux-short (5)')
+        failed['conclusion'] = 'failure'
+        actual = gate.current_worker_attempts(api, receipt(), 1, 2)
+        self.assertEqual(actual, {shard: 2 if shard == 5 else 1 for shard in range(8)})
+
+    def test_complete_new_attempt_keeps_new_physical_receipts(self):
+        api = PhysicalRetryAPI()
+        self.assertEqual(gate.current_worker_attempts(api, receipt(), 1, 1), {i: 1 for i in range(8)})
+        for job in api.attempt_jobs[2]:
+            job.update(runner_id=job['runner_id']+2000, started_at='2026-10-15T01:00:05Z',
+                       completed_at='2026-10-15T01:01:05Z')
+            job['steps'][0].update(started_at=job['started_at'], completed_at=job['completed_at'])
+        self.assertEqual(gate.current_worker_attempts(api, receipt(), 1, 2), {i: 2 for i in range(8)})
+        api.attempt_jobs[2][0]['run_attempt'] = 1
+        with self.assertRaisesRegex(ValueError, 'physical origin unproven'):
+            gate.current_worker_attempts(api, receipt(), 1, 2)
+
+    def test_physical_retry_refuses_conflicting_ids_and_noncontiguous_aliases(self):
+        api = PhysicalRetryAPI()
+        original = next(j for j in api.attempt_jobs[1] if j['name'] == 'linux-short (5)')
+        current = next(j for j in api.attempt_jobs[2] if j['name'] == original['name'])
+        current['id'] = original['id']
+        with self.assertRaisesRegex(ValueError, 'conflicting API worker job identity'):
+            gate.current_worker_attempts(api, receipt(), 1, 2)
+        api = PhysicalRetryAPI()
+        third = copy.deepcopy(api.attempt_jobs[2])
+        for job in third:
+            job.update(id=job['id']+1000, run_attempt=3, created_at='2026-10-15T02:00:01Z')
+        api.attempt_jobs[3] = third
+        changed = api.attempt_jobs[2][0]
+        changed.update(started_at='2026-10-15T01:00:05Z', completed_at='2026-10-15T01:01:05Z')
+        changed['steps'][0].update(started_at=changed['started_at'], completed_at=changed['completed_at'])
+        with self.assertRaisesRegex(ValueError, 'not contiguous'):
+            gate.current_worker_attempts(api, receipt(), 1, 3)
+
+    def test_physical_retry_history_stays_in_existing_request_and_attempt_bounds(self):
+        api = PhysicalRetryAPI()
+        for number in range(3, 11):
+            jobs = copy.deepcopy(api.attempt_jobs[number-1])
+            for job in jobs:
+                job.update(id=job['id']+1000, run_attempt=number,
+                           created_at=f'2026-10-15T{number:02d}:00:01Z')
+            api.attempt_jobs[number] = jobs
+        actual = gate.current_worker_attempts(api, receipt(), 1, 10)
+        self.assertEqual(actual, {shard: 2 if shard == 5 else 1 for shard in range(8)})
+        self.assertEqual(len(api.paths), 11)
+        api.paths.clear()
+        with self.assertRaisesRegex(ValueError, 'exceeds bound'):
+            gate.current_worker_attempts(api, receipt(), 1, 11)
+        self.assertEqual(api.paths, [])
+        api = PhysicalRetryAPI()
+        with mock.patch.object(api, 'pages', side_effect=ValueError('diagnostic request budget exhausted')):
+            with self.assertRaisesRegex(ValueError, 'budget exhausted'):
+                gate.current_worker_attempts(api, receipt(), 1, 2)
+        api = PhysicalRetryAPI()
+        api.runs[1]['head_sha'] = 'f'*40
+        with self.assertRaisesRegex(ValueError, 'exact PR/workflow/revision'):
+            gate.current_worker_attempts(api, receipt(), 1, 2)
+
     def test_offline_legacy_admission_is_explicit_and_retains_body_validation(self):
         import test_go_parent_shards as parent_fixture
         with tempfile.TemporaryDirectory() as directory:
