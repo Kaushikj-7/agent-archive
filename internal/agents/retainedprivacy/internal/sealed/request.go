@@ -49,17 +49,27 @@ type requestState struct {
 
 // FreezeRequest detaches the host's retained input under the original scope.
 func FreezeRequest(ctx context.Context, expected Expectation, source []byte, budget *agentapi.NativeReadBudget) (*Request, error) {
+	if budget == nil {
+		return nil, agentapi.ErrReadBudget
+	}
+	return FreezeRequestCaptured(ctx, expected, source, budget, budget.Reservation())
+}
+
+// FreezeRequestCaptured preserves an already captured owner while retaining the
+// original ledger identity. The detached request obtains an independent charge
+// owner; its close cannot release the caller's other outstanding reservations.
+func FreezeRequestCaptured(ctx context.Context, expected Expectation, source []byte, budget *agentapi.NativeReadBudget, original *agentapi.NativeReadReservation) (*Request, error) {
 	if ctx == nil || budget == nil || len(expected.StageSHA256) != 64 || len(source) == 0 || len(source) > 32<<20 {
 		return nil, agentapi.ErrReadBudget
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	owner := budget.Reservation()
-	captured, err := owner.CapturedBudget()
+	captured, err := budget.CaptureFromReservation(original)
 	if err != nil {
 		return nil, err
 	}
+	owner := captured.Reservation()
 	const scratch int64 = 32 << 10
 	if !owner.Reserve(scratch) {
 		return nil, agentapi.ErrReadBudget

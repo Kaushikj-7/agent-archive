@@ -27,3 +27,9 @@ type Expectation = sealed.Expectation
 func FreezeRequest(ctx context.Context, expected Expectation, original []byte, budget *agentapi.NativeReadBudget) (*Request, error) {
 	return sealed.FreezeRequest(ctx, expected, original, budget)
 }
+
+// FreezeRequestCaptured snapshots an existing scoped owner without borrowing
+// later ambient credit. It grants only fixed retained transformation access.
+func FreezeRequestCaptured(ctx context.Context, expected Expectation, original []byte, budget *agentapi.NativeReadBudget, owner *agentapi.NativeReadReservation) (*Request, error) {
+	return sealed.FreezeRequestCaptured(ctx, expected, original, budget, owner)
+}

@@ -278,3 +278,40 @@ func closeRetained(t *testing.T, resource interface{ Close() error }) {
 		t.Error(err)
 	}
 }
+
+func TestRetainedRequestCapturedOwnerKeepsRawLedgerIdentityAndExistingCharges(t *testing.T) {
+	expected, source, budget := retainedFixture(t)
+	original := budget.Reservation()
+	if !original.Reserve(123) {
+		t.Fatal("original other reservation")
+	}
+	defer original.Release(123)
+	endOther := budget.BeginScope(1)
+	defer endOther()
+	other := budget.Reservation()
+	if !other.Reserve(1) {
+		t.Fatal("later scope fixture")
+	}
+	defer other.Release(1)
+	request, err := retainedprivacy.FreezeRequestCaptured(t.Context(), expected, source, budget, original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeRetained(t, request)
+	proof, err := builtin.NewBuiltins().TransformRetainedPrivacy(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = proof.WithVerifiedTransform(t.Context(), request, budget, func(context.Context, archive.SourceBundle, archive.CompressedSource, retainedprivacy.Facts) error {
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := proof.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if used, _ := budget.Charged(); used != 124 {
+		t.Fatal("request released original or later owner's charge", used)
+	}
+}

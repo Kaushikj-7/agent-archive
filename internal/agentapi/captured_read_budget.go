@@ -10,3 +10,23 @@ func (reservation *NativeReadReservation) CapturedBudget() (*NativeReadBudget, e
 	}
 	return &NativeReadBudget{captured: reservation.owner}, nil
 }
+
+// CaptureFromReservation borrows an existing scoped owner only when it belongs
+// to this actual ledger. A pinned facade additionally requires its exact scope;
+// neither a foreign owner nor the receiver's later ambient scope supplies credit.
+func (b *NativeReadBudget) CaptureFromReservation(reservation *NativeReadReservation) (*NativeReadBudget, error) {
+	if b == nil || reservation == nil || reservation.owner == nil || reservation.owner.budget == nil || reservation.owner.scope == nil {
+		return nil, ErrReadBudget
+	}
+	actual := b
+	if b.captured != nil {
+		actual = b.captured.budget
+		if reservation.owner.scope != b.captured.scope {
+			return nil, ErrReadBudget
+		}
+	}
+	if reservation.owner.budget != actual {
+		return nil, ErrReadBudget
+	}
+	return reservation.CapturedBudget()
+}

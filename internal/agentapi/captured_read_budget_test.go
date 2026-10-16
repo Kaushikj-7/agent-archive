@@ -98,3 +98,54 @@ func TestCapturedReadBudgetRefusesUnownedFacade(t *testing.T) {
 		}
 	}
 }
+
+func TestCaptureFromReservationChecksActualLedgerAndPinnedScope(t *testing.T) {
+	b := NewNativeReadBudget(100)
+	endOriginal := b.BeginScope(20)
+	original := b.Reservation()
+	if !original.Reserve(3) {
+		t.Fatal("original charge")
+	}
+	pinned, err := b.CaptureFromReservation(original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	endOriginal()
+	endOther := b.BeginScope(10)
+	defer endOther()
+	other := b.Reservation()
+	if !other.Reserve(10) {
+		t.Fatal("later scope fixture")
+	}
+	defer other.Release(10)
+	captured, err := b.CaptureFromReservation(original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fresh := captured.Reservation()
+	if !fresh.Reserve(17) || fresh.Reserve(1) {
+		t.Fatal("capture borrowed later scope or increased original")
+	}
+	fresh.Release(17)
+	original.Release(3)
+	foreign := NewNativeReadBudget(100)
+	endForeign := foreign.BeginScope(20)
+	defer endForeign()
+	for _, receiver := range []*NativeReadBudget{nil, foreign, pinned} {
+		reservation := original
+		if receiver == pinned {
+			reservation = other
+		}
+		if got, err := receiver.CaptureFromReservation(reservation); err == nil || got != nil {
+			t.Fatal("foreign ledger or pinned scope accepted")
+		}
+	}
+	for _, reservation := range []*NativeReadReservation{nil, {}, NewNativeReadBudget(100).Reservation()} {
+		if got, err := b.CaptureFromReservation(reservation); err == nil || got != nil {
+			t.Fatal("unowned/unscoped owner accepted")
+		}
+	}
+	if used, _ := b.Charged(); used != 10 {
+		t.Fatal("capture or independent close changed other charges", used)
+	}
+}
