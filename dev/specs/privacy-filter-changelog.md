@@ -5,6 +5,22 @@ rules, as a whole, are in the [filter specification](privacy-filter.md);
 version numbers and bump rules are in [versions](../maintainers/versions.md). Each archived session
 records the filter version that produced it (`filter_version`).
 
+## Source filter version 20
+
+Adapter 0.20.0 accompanies this change.
+
+- **Codex project instructions.** Codex 0.160 sends a project's AGENTS.md as
+  the first user message of a thread, and again after compaction, as a
+  `# AGENTS.md instructions for DIR` heading followed by an
+  `<INSTRUCTIONS>…</INSTRUCTIONS>` block, instead of the `<user_instructions>`
+  block earlier releases used. Filter 19 kept it as text the person wrote, so
+  it became the session's title and the first prompt in a handoff. The heading
+  and block are now dropped with a `hidden_instruction_omitted` gap, like
+  `<user_instructions>`. Only a heading at the start of a string, on its own
+  line and followed by the tag, counts: a message that quotes it later, or
+  indents it as a code example, keeps it. An unclosed block drops the rest of
+  the string. Less leaves the machine: nothing new is kept.
+
 ## Source filter version 19
 
 Adapter 0.19.0 accompanies the new Muse parser 0.1.0.

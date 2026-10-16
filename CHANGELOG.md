@@ -6,6 +6,13 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Codex sessions are no longer titled with their injected AGENTS.md
+  instructions. Codex 0.160 sends a project's AGENTS.md as the first user
+  message (`# AGENTS.md instructions for …`); it is now dropped like other
+  injected instructions (filter 20), so the title and the handoff's first
+  prompt are what you typed. Existing sessions are refiltered on the next
+  collection.
+
 - Read complete supported Muse exec/MSP roots with `handoff --file PATH
   --harness muse`, including safe own prompts and committed assistant text,
   JSON/Markdown output and handoff into an existing supported agent. Creation

@@ -258,7 +258,8 @@ and uploaded with the session.
 - **Hidden reasoning** (thinking blocks, reasoning items) and
   **system/developer instructions**.
 - **Injected instructions**: `<system-reminder>`, `<user_instructions>`,
-  `<environment_context>`, and `<recommended_plugins>` blocks, and the text of
+  `<environment_context>`, and `<recommended_plugins>` blocks, Codex's
+  `# AGENTS.md instructions for …` `<INSTRUCTIONS>` block, and the text of
   Claude Code's `isMeta` records (expanded skills and slash commands).
 - **Images, documents, audio, and other binary content**, including base64
   `data:` URLs inside text.

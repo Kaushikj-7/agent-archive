@@ -419,3 +419,20 @@ func TestParserV06TextBundlesLeaveCountsUnknown(t *testing.T) {
 		t.Fatal("explicit feedback is evidence-derived and should stay known")
 	}
 }
+
+// Codex 0.160 sends a project's AGENTS.md as the thread's first user message,
+// under a "# AGENTS.md instructions for DIR" heading, and again after
+// compaction. Neither is a prompt the person wrote.
+func TestCodexProjectInstructionsAreNotTheTitleOrAPrompt(t *testing.T) {
+	t.Parallel()
+	view, metadata := parsedFixture(t, "codex", "codex-project-instructions.jsonl")
+	if metadata.Title != "Review the widget parser's error handling." {
+		t.Fatalf("title = %q", metadata.Title)
+	}
+	countIs(t, "turns", metadata.Counts.Turns, 2)
+	for _, turn := range view.Turns {
+		if strings.Contains(turn.Text, "AGENTS.md") || strings.Contains(turn.Text, "INSTRUCTIONS") {
+			t.Fatalf("injected instructions kept as a turn: %#v", turn)
+		}
+	}
+}
