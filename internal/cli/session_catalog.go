@@ -18,16 +18,16 @@ func catalogCandidateSessions(ctx context.Context, env metadataCacheDependencies
 	if reader.CatalogAuthority(store) {
 		cache := listCache(env, opts.noCache)
 		if cache != nil {
-			c, err := reader.OpenSessionCatalog(ctx, cache, store, reader.ListOptions{Cache: cache, BodyRead: showBodyObserver(reuse, catalogBodyObserver(env)), Progress: listReadProgress(ctx)})
-			if err == nil {
+			c, err := reader.OpenRemoteSessionCatalog(ctx, store, reader.ListOptions{Cache: cache, BodyRead: showBodyObserver(reuse, catalogBodyObserver(env)), Progress: listReadProgress(ctx)})
+			if err != nil {
+				return nil, true, false, err
+			}
+			if c != nil {
 				defer func() {
 					if reuse == nil || reuse.close == nil {
 						_ = c.Close()
 					}
 				}()
-				if err = c.RefreshRemote(ctx); err != nil {
-					return nil, true, false, err
-				}
 				page, e := c.Query(ctx, reader.CatalogQuery{Words: words, Metadata: reader.MetadataQuery{Filter: opts.filter, Order: reader.ActivityOrder}})
 				if e == nil {
 					var sessions []archive.Metadata
