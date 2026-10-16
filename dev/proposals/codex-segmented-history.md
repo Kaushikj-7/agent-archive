@@ -60,9 +60,10 @@ only risk is the rollout files being deleted from the Codex home before then.
 
 Goals:
 
-- A pass reads, filters, holds and uploads only the open tail of the tip
-  (plus at most one new rollout), so memory and CPU follow the segment size,
-  not the thread size.
+- A pass reads, filters, holds and uploads only what is new since the last
+  sealed checkpoint: normally the open tail of the tip, but after a pause or
+  an offline machine possibly several new rollouts. Memory follows the
+  segment size, not the thread size or the amount of new input.
 - Sealed segments are uploaded once and referenced by content address from
   every later publication and every preserved revision that shares them.
 - Reading (show, handoff, search, verification, parser refresh) walks the
@@ -234,7 +235,17 @@ This refactor is part of PR 7 and must merge before PR 8 enables a writer.
   checkpoints and returns new sealed chunks plus the open tail as separate
   `FilteredTranscript`s. Each chunk is staged (compressed, checksum-named,
   durable) as soon as it is sealed, and its records are released before the
-  next chunk is filtered. Peak work is one chunk plus the tail.
+  next chunk is filtered. Peak work is one chunk plus the tail. Any number of
+  previously unseen rollouts (Codex continued the thread several times while
+  collection was paused or the machine was offline, up to the existing
+  64-rollout chain depth) are read in chain order by the same loop. Each
+  sealed chunk's raw checkpoint and stage are made durable before the next
+  chunk is read, so a pass that reaches the per-pass unsealed-input limit
+  (512 MiB) or its time budget stops at a sealed checkpoint, publishes
+  nothing yet, and the next pass resumes from that checkpoint; the session is
+  deferred, not gapped. Publication happens once the chain is covered up to
+  its open tail. Checkpoints for staged but unpublished chunks are private
+  and are discarded with their stages if the chain they assumed changes.
 - **build / compare / guard**: the candidate is the head plus the open tail.
   `state.Published` caches the head, the segment list and the open tail
   instead of the whole bundle. `nativeEvidenceExtends` guards the open tail
@@ -325,6 +336,17 @@ difference. The equivalence test compares the resulting metadata, not
 `Analysis.View`, and the benchmark asserts heap grows with distinct keys, not
 records.
 
+Assistant message counting deduplicates streamed responses by
+`message.id` (`summarizeTurns` in `internal/archive/metadata.go` keeps every
+ID it has seen), and that set grows with the number of responses, not with
+distinct names. PR 4 first establishes from the pinned producer and tests
+whether Codex's records sharing an ID are always contiguous. If they are, the
+accumulator compares only with the previous ID (constant memory), proved
+equal by the equivalence test. If not, the ID set is kept exactly in the
+private spool (an on-disk sorted, de-duplicated run merged at the end), so
+memory stays bounded without changing the count. PR 4's benchmark includes a
+thread with one million distinct response IDs.
+
 Consumers that need a whole per-record view use a **spooled view** instead of
 memory: segments are streamed through the existing normalization into a
 private temporary file under the agent-archive home (record per line,
@@ -345,7 +367,11 @@ one rendered record; disk is the normalized view's size.
   memory is one segment plus the rendered window. `show --transcript --json`
   and `--normalized` need the whole normalized view (turns, calls, results)
   and trim it afterwards, so they render from the spooled view, keeping their
-  current trimming and their no-limit mode.
+  current trimming and their no-limit mode. The summary-only
+  `show SESSION_ID --revision REVISION_ID` (`loadShowSummarySelection` →
+  `loadArchiveSelection` in `cli/revisions.go`) re-derives a revision's
+  summary; for a segmented revision it uses the aggregate-only derivation over
+  the iterator instead of assembling the source.
 - `cli/picker_handoff.go` keeps the `archive.FitHandoff` contract: no prompt
   is ever dropped, and the first prompt keeps its body up to its cap. The
   output bound is not a source-read cutoff. Handoff streams every segment in
@@ -389,10 +415,16 @@ one rendered record; disk is the normalized view's size.
 | Record | 64 MiB | Unchanged. |
 | Chain depth | 64 rollouts | Unchanged. |
 
-A thread over a new ceiling records the existing size-limit gap kinds with the
-new `LimitBytes`, so `readCeilingChanged`-style signature checks read it again
-when a build changes the limit. The gap's capture is the last fully published
-segment set.
+A thread over a byte ceiling (total filtered, total raw, per-segment work)
+records the existing size-limit gap kinds with the new `LimitBytes`, so
+`readCeilingChanged`-style signature checks read it again when a build
+changes the limit. The count ceilings (segments per revision, distinct
+objects per session, distinct derivation keys) are not bytes: PR 5 adds
+count-aware gap kinds to `state.SizeLimitGap` (`segment_count`,
+`object_count`, `derivation_keys`) carrying `{limit, count}`, words for
+`SizeLimitLabel` and the status problem, and includes each count ceiling in
+the signature check, so changing one reads the session again. The gap's
+capture is the last fully published segment set.
 
 ### Local state
 
@@ -498,8 +530,16 @@ would keep capture times but produce no raw checkpoints, so the next pass would
 read the whole chain anyway; recapture is simpler and gives the same result.
 
 A session in a `SizeLimitReadBudget` or `SizeLimitFiltered` gap (like
-`87b47b56`) is read again once the writer is enabled, because its recorded gap
-limit no longer matches the build's.
+`87b47b56`) must be read again once the writer is enabled, but nothing in its
+recorded gap changes then: the read ceiling stays 160 MiB, and a build
+installed with the opt-in still off may already have refreshed its signature
+to the new versions while recording the same gap. So the scan signature
+records whether segmentation was enabled for the session's destination when
+it was taken, and unchanged-source skipping (`unchangedSinceLastScan`) treats
+a signature taken with segmentation off as stale once it is on. Enabling the
+opt-in additionally requeues every Codex session currently in a size-limit
+gap, so the change takes effect on the next pass rather than on the next
+native change.
 
 ## PR breakdown
 
@@ -530,8 +570,10 @@ Each PR has one concern and is merged in order unless marked parallel.
    synthetic threads asserting heap grows with distinct keys, not records.
 5. **Local state.** Raw checkpoints in the native binding, sealed segment
    stages and quota accounting, the new `PendingHistory` journal version and
-   `Published` cache shape, with crash-recovery tests for every checkpoint
-   boundary.
+   `Published` cache shape, count-aware size-limit gap kinds and their
+   signature invalidation, the segmentation-enabled bit in scan signatures,
+   resumable pre-publication checkpoints across passes, with crash-recovery
+   tests for every checkpoint boundary.
 6. **Collector writer.** Segmented capture path in `sessionScan`, reconciliation
    as segment lists, per-segment size limits and gaps, pending/readback; behind
    the new configuration capability, off until PR 8.
@@ -541,8 +583,9 @@ Each PR has one concern and is merged in order unless marked parallel.
    fail-closed tests for an unreadable head. Privacy maintenance, retention,
    delete, purge and GC over segment sets, with tests that a shared segment
    survives the deletion of one revision. Must merge before PR 8.
-8. **Enable and migrate.** The per-destination opt-in and its machine-version
-   check; turn the writer on for threads selected by D1;
+8. **Enable and migrate.** The per-destination opt-in, its machine-version
+   check and the requeue of Codex sessions in size-limit gaps; turn the
+   writer on for threads selected by D1;
    migration of schema-3 sessions by recapture; adapter/filter/parser bumps,
    CHANGELOG, privacy changelog, user docs (`docs/` size-limit and status
    wording), versions.md.
@@ -573,6 +616,11 @@ Synthetic (every PR, CI):
   stays able to run.
 - A segment shared by heads with different ownership boundaries is searchable
   as each head's own records only.
+- Five unseen rollouts totalling more than 512 MiB of new input are captured
+  over several passes, each resuming from the last sealed checkpoint, with no
+  gap recorded.
+- A session gapped by a build with the opt-in off is read on the first pass
+  after the opt-in is turned on, with no native change.
 
 Sandboxed live (maintainer, before PR 8 enables the writer): the
 [local end-to-end recipe](../contributing/testing.md) with a temporary `HOME`,
