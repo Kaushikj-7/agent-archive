@@ -23,7 +23,6 @@ import (
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/nativesessions"
 	"github.com/wangjohn/agent-archive/internal/reader"
-	"github.com/wangjohn/agent-archive/internal/setupjournal"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/terminal"
@@ -108,12 +107,8 @@ func runHandoffWithInput(args []string, stdin io.Reader, stdout, stderr io.Write
 		}
 		opts.config = &handoffConfigState{cfg, found}
 		if !found {
-			if setupjournal.TransactionPending(home) {
-				terminal.Println(stderr, "agent-archive: handoff: setup recovery is pending; run agent-archive setup")
-				return 1
-			}
-			if _, e := os.Lstat(draftPath(home)); !errors.Is(e, os.ErrNotExist) {
-				terminal.Println(stderr, "agent-archive: handoff: saved setup is pending or inaccessible; run agent-archive setup")
+			if reason := pendingSetupReason(home); reason != "" {
+				terminal.Printf(stderr, "agent-archive: handoff: %s; run agent-archive setup\n", reason)
 				return 1
 			}
 			opts.native = true

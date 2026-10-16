@@ -841,6 +841,10 @@ func commandPreflight(args []string, out, errOut io.Writer) (bool, int) {
 			terminal.Print(out, usage)
 			return true, 0
 		}
+		if len(args) == 2 && args[1] == "advanced" {
+			terminal.Print(out, advancedUsage)
+			return true, 0
+		}
 		if cmd == "help" && (len(args) == 2 || len(args) == 3) {
 			if help, ok := commandHelp[strings.Join(args[1:], " ")]; ok {
 				terminal.Print(out, help)

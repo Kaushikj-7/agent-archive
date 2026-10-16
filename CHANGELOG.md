@@ -6,10 +6,12 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-- Keep unavailable Muse tool, file and Git measurements absent in derived
-  metadata and full evaluation exports while preserving prompt/message counts.
-  Cursor tool calls without recorded results no longer claim zero results;
-  unstructured exports omit unavailable edited-file lists.
+- `agent-archive --help` is shorter: it shows the commands for everyday use
+  (setup, status, sync, pause, resume, list, search, show, stats, backfill,
+  handoff).
+  The rest (machines, recover, feedback, migrate, eval, uninstall, purge) are
+  listed by `agent-archive help advanced`; they work as before, and
+  `agent-archive help COMMAND` still shows any command's help.
 
 - The session browser (`list`, bare `show`, `handoff`, and content `search` on
   a terminal) loads older sessions as you scroll: moving down past the last row
@@ -27,6 +29,11 @@ follow [Semantic Versioning](https://semver.org/).
   time uses the validated reserved start. Accounting, tools, model switches,
   children, automatic browse, backfill, capture and Muse destination launch
   remain unavailable. Handoff also now respects Codex's recorded native start.
+
+- Keep unavailable Muse tool, file and Git measurements absent in derived
+  metadata and full evaluation exports while preserving prompt/message counts.
+  Cursor tool calls without recorded results no longer claim zero results;
+  unstructured exports omit unavailable edited-file lists.
 
 - Commands run inside Muse detect its session environment to avoid interactive
   prompts and pagers. Handoff into supported agents removes inherited Muse
