@@ -89,6 +89,12 @@ type Lease struct {
 	request *Request
 	Wire    Expectation
 	Source  []byte
+	custody *leaseCustody
+}
+
+// leaseCustody keeps copied input views on one terminal charge owner.
+type leaseCustody struct {
+	mu      sync.Mutex
 	owner   *agentapi.NativeReadReservation
 	charged int64
 	closed  bool
@@ -119,12 +125,18 @@ func (r *Request) Borrow() (*Lease, error) {
 		return nil, err
 	}
 	s.borrowed = true
-	return &Lease{request: r, Wire: wire, Source: bytes.Clone(s.source), owner: owner, charged: charge}, nil
+	return &Lease{request: r, Wire: wire, Source: bytes.Clone(s.source), custody: &leaseCustody{owner: owner, charged: charge}}, nil
 }
 
 // Check rejects closure or cancellation before another borrowed operation.
 func (l *Lease) Check() error {
-	if l == nil || l.request == nil || l.closed {
+	if l == nil || l.request == nil || l.custody == nil {
+		return agentapi.ErrClosed
+	}
+	l.custody.mu.Lock()
+	closed := l.custody.closed
+	l.custody.mu.Unlock()
+	if closed {
 		return agentapi.ErrClosed
 	}
 	s := l.request.state
@@ -144,12 +156,18 @@ func (l *Lease) Budget() *agentapi.NativeReadBudget { return l.request.state.cap
 
 // Close releases only this detached view's independent charges.
 func (l *Lease) Close() {
-	if l == nil || l.closed {
+	if l == nil || l.custody == nil {
 		return
 	}
-	l.closed = true
-	l.owner.Release(l.charged)
-	l.charged = 0
+	c := l.custody
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return
+	}
+	c.closed = true
+	c.owner.Release(c.charged)
+	c.charged = 0
 	l.Source = nil
 	l.Wire = Expectation{}
 }

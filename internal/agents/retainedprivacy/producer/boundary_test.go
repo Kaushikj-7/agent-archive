@@ -240,7 +240,7 @@ func retainedDeclarationProblems(path string, file *ast.File, imports map[string
 		}
 		allowed["FreezeRequest"] = "func(context.Context, Expectation, []byte, *agentapi.NativeReadBudget) (*Request, error)"
 	case "internal/agents/retainedprivacy/internal/sealed/request.go":
-		for _, name := range []string{"Policy", "Expectation", "Request", "requestState", "Lease"} {
+		for _, name := range []string{"Policy", "Expectation", "Request", "requestState", "Lease", "leaseCustody"} {
 			allowedTypes[name] = true
 		}
 		allowed["FreezeRequest"] = "func(context.Context, Expectation, []byte, *agentapi.NativeReadBudget) (*Request, error)"
@@ -367,11 +367,12 @@ var retainedDomainImports = map[string]map[string]string{
 // Every custody and data carrier is closed, including unexported fields and tags.
 // A function-valued issuer cannot be smuggled through an otherwise unchanged method.
 var retainedStructShapes = map[string]string{
+	"leaseCustody": "struct {\n\tmu sync.Mutex\n\towner *agentapi.NativeReadReservation\n\tcharged int64\n\tclosed bool\n}",
 	"Policy":       "struct {\n\tFilterVersion  string `json:\"filter_version\"`\n\tAdapterVersion string `json:\"adapter_version\"`\n\tSkillEvidence  string `json:\"skill_evidence\"`\n}",
 	"Expectation":  "struct {\n\tCoveredToken string                      `json:\"covered_token\"`\n\tHadRequest   bool                        `json:\"had_request\"`\n\tRegistration archive.SessionRegistration `json:\"registration\"`\n\tStageSHA256  string                      `json:\"stage_sha256\"`\n\tMetadata     archive.Metadata            `json:\"metadata\"`\n\tOldPolicy    Policy                      `json:\"old_policy\"`\n\tTarget       Policy                      `json:\"target\"`\n}",
 	"Request":      "struct{ state *requestState }",
 	"requestState": "struct {\n\tmu               sync.Mutex\n\tctx              context.Context\n\tcancel           context.CancelCauseFunc\n\tbudget           *agentapi.NativeReadBudget\n\tcaptured         *agentapi.NativeReadBudget\n\towner            *agentapi.NativeReadReservation\n\traw, source      []byte\n\tcharged          int64\n\tclosed, borrowed bool\n}",
-	"Lease":        "struct {\n\trequest *Request\n\tWire    Expectation\n\tSource  []byte\n\towner   *agentapi.NativeReadReservation\n\tcharged int64\n\tclosed  bool\n}",
+	"Lease":        "struct {\n\trequest *Request\n\tWire    Expectation\n\tSource  []byte\n\tcustody *leaseCustody\n}",
 	"Facts":        "struct {\n\tOwnerSHA256    string                  `json:\"owner_sha256\"`\n\tCoveredToken   string                  `json:\"covered_token\"`\n\tHadRequest     bool                    `json:\"had_request\"`\n\tStageSHA256    string                  `json:\"stage_sha256\"`\n\tInput          archive.SourceReference `json:\"input\"`\n\tOutput         archive.SourceReference `json:\"output\"`\n\tOriginalPolicy Policy                  `json:\"original_policy\"`\n\tTargetPolicy   Policy                  `json:\"target_policy\"`\n}",
 	"Proof":        "struct{ transform *transform }",
 	"transform":    "struct {\n\tmu        sync.Mutex\n\tlease     *Lease\n\tbundle    archive.SourceBundle\n\tsource    archive.CompressedSource\n\tfacts     Facts\n\tbundleSHA string\n\trelease   func()\n\tclosed    bool\n}",

@@ -241,3 +241,33 @@ func TestFixedRetainedTransformRejectsChangedPolicyAndCorruptInput(t *testing.T)
 		}
 	}
 }
+
+func TestRetainedRequestLeaseCopiesShareTerminalClose(t *testing.T) {
+	expected, source, budget := retainedFixture(t)
+	request, err := retainedprivacy.FreezeRequest(t.Context(), expected, source, budget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer request.Close()
+	lease, err := request.Borrow()
+	if err != nil {
+		t.Fatal(err)
+	}
+	alias := *lease
+	lease.Close()
+	if err := alias.Check(); !errors.Is(err, agentapi.ErrClosed) {
+		t.Fatalf("closed lease alias remained usable: %v", err)
+	}
+	defer func() {
+		if value := recover(); value != nil {
+			t.Errorf("copied lease released another owner's charges: %v", value)
+		}
+	}()
+	alias.Close()
+	if err := request.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if used, _ := budget.Charged(); used != 0 {
+		t.Fatal("copied close retained charges", used)
+	}
+}
