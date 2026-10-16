@@ -18,17 +18,24 @@ type PublicationSelection struct {
 }
 
 // ImmutableStageHandle has no caller-selected filesystem path.
+type PublicationStageNamespace string
+
+const (
+	PendingSourceNamespace  PublicationStageNamespace = "session-pending-sources"
+	DeletionSourceNamespace PublicationStageNamespace = "session-deletion-sources"
+)
+
 type ImmutableStageHandle struct {
-	Version          int                    `json:"version"`
-	Kind             PublicationPayloadKind `json:"kind"`
-	Namespace        string                 `json:"namespace"`
-	SessionID        string                 `json:"session_id"`
-	OwnerSHA256      string                 `json:"owner_sha256"`
-	DestinationID    string                 `json:"destination_id"`
-	AdmissionContext string                 `json:"admission_context"`
-	SourceSHA256     string                 `json:"source_sha256"`
-	CompressedBytes  int                    `json:"compressed_bytes"`
-	Selection        PublicationSelection   `json:"selection"`
+	Version          int                       `json:"version"`
+	Kind             PublicationPayloadKind    `json:"kind"`
+	Namespace        PublicationStageNamespace `json:"namespace"`
+	SessionID        string                    `json:"session_id"`
+	OwnerSHA256      string                    `json:"owner_sha256"`
+	DestinationID    string                    `json:"destination_id"`
+	AdmissionContext string                    `json:"admission_context"`
+	SourceSHA256     string                    `json:"source_sha256"`
+	CompressedBytes  int                       `json:"compressed_bytes"`
+	Selection        PublicationSelection      `json:"selection"`
 }
 
 // PublicationPayload is the closed single source-byte authority.
@@ -134,7 +141,7 @@ func selectedHistoryStagePayload(history *PendingHistory, source PublicationSour
 	for _, stage := range history.Sources {
 		if stage.Reference == source.Reference {
 			ref := source.Reference
-			return PublicationPayload{Kind: PublicationHistoryStage, Stage: &ImmutableStageHandle{Version: 1, Kind: PublicationHistoryStage, Namespace: "session-pending-sources", SessionID: m.SessionID, OwnerSHA256: publicationOwner(m, destination, admission), DestinationID: destination, AdmissionContext: admission, SourceSHA256: ref.SHA256, CompressedBytes: ref.CompressedBytes, Selection: source.Selection}}
+			return PublicationPayload{Kind: PublicationHistoryStage, Stage: &ImmutableStageHandle{Version: 1, Kind: PublicationHistoryStage, Namespace: PendingSourceNamespace, SessionID: m.SessionID, OwnerSHA256: publicationOwner(m, destination, admission), DestinationID: destination, AdmissionContext: admission, SourceSHA256: ref.SHA256, CompressedBytes: ref.CompressedBytes, Selection: source.Selection}}
 		}
 	}
 	return source.Payload
@@ -158,7 +165,7 @@ func validatePublicationPayloadWithFacts(source PublicationSource, m archive.Met
 		}
 	case PublicationHistoryStage:
 		h := p.Stage
-		if len(p.Inline) != 0 || h == nil || h.Version != 1 || h.Kind != p.Kind || (h.Namespace != "session-pending-sources" && h.Namespace != "session-deletion-sources") || h.SessionID != m.SessionID || h.OwnerSHA256 != publicationOwner(m, destination, admission) || h.DestinationID != destination || h.AdmissionContext != admission || h.SourceSHA256 != source.Reference.SHA256 || h.CompressedBytes != source.Reference.CompressedBytes || h.Selection != source.Selection {
+		if len(p.Inline) != 0 || h == nil || h.Version != 1 || h.Kind != p.Kind || (h.Namespace != PendingSourceNamespace && h.Namespace != DeletionSourceNamespace) || h.SessionID != m.SessionID || h.OwnerSHA256 != publicationOwner(m, destination, admission) || h.DestinationID != destination || h.AdmissionContext != admission || h.SourceSHA256 != source.Reference.SHA256 || h.CompressedBytes != source.Reference.CompressedBytes || h.Selection != source.Selection {
 			return errors.New("history stage authority mismatch")
 		}
 	case PublicationAdmissionStage:

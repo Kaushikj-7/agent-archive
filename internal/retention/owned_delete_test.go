@@ -192,20 +192,29 @@ func (s *deletionSourceBoundaryStore) GetLimited(ctx context.Context, key string
 	}
 	return data, err
 }
+
 func (s *deletionSourceBoundaryStore) Delete(ctx context.Context, key string) error {
 	s.deletes++
 	return s.MemoryStore.Delete(ctx, key)
 }
 
+type deletionBoundaryFault string
+
+const (
+	deletionSourceFault deletionBoundaryFault = "source"
+	deletionWinnerFault deletionBoundaryFault = "winner"
+	deletionIntentFault deletionBoundaryFault = "intent"
+)
+
 func TestOwnedDeletionRefusesSourceWinnerOrIntentChangesBeforeMetadataRemoval(t *testing.T) {
 	t.Parallel()
-	for _, kind := range []string{"source", "winner", "intent"} {
-		t.Run(kind, func(t *testing.T) {
+	for _, kind := range []deletionBoundaryFault{deletionSourceFault, deletionWinnerFault, deletionIntentFault} {
+		t.Run(string(kind), func(t *testing.T) {
 			t.Parallel()
 			local := newTestStore(t)
 			remote := &deletionSourceBoundaryStore{MemoryStore: storagetest.NewMemoryStore()}
 			at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-			reg := registration("boundary-"+kind, writeTranscript(t, t.TempDir(), "session.jsonl", codexTranscript))
+			reg := registration("boundary-"+string(kind), writeTranscript(t, t.TempDir(), "session.jsonl", codexTranscript))
 			if err := local.SaveRegistration(reg); err != nil {
 				t.Fatal(err)
 			}
@@ -220,15 +229,15 @@ func TestOwnedDeletionRefusesSourceWinnerOrIntentChangesBeforeMetadataRemoval(t 
 			winner := original
 			remote.beforeSource = func(data []byte) []byte {
 				switch kind {
-				case "source":
+				case deletionSourceFault:
 					data = bytes.Clone(data)
 					data[0] ^= 1
-				case "winner":
+				case deletionWinnerFault:
 					winner = append(bytes.Clone(original), ' ')
-					if err := remote.MemoryStore.Put(t.Context(), key, winner); err != nil {
+					if err := remote.Put(t.Context(), key, winner); err != nil {
 						t.Fatal(err)
 					}
-				case "intent":
+				case deletionIntentFault:
 					path := filepath.Join(local.Home(), "session-deletions", reg.ArchiveSessionID, "intent.json")
 					body, err := os.ReadFile(path)
 					if err != nil {
@@ -263,6 +272,7 @@ func (s *deletionMetadataBudgetStore) GetLimited(ctx context.Context, key string
 	s.reads++
 	return s.MemoryStore.GetLimited(ctx, key, limit)
 }
+
 func TestDeletionMetadataReadReservesBeforeProviderAndReleasesItsOwner(t *testing.T) {
 	t.Parallel()
 	remote := &deletionMetadataBudgetStore{MemoryStore: storagetest.NewMemoryStore()}

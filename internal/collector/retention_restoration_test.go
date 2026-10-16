@@ -38,6 +38,7 @@ func (s *restorationHookStore) Delete(ctx context.Context, key string) error {
 	}
 	return err
 }
+
 func (s *restorationHookStore) Put(ctx context.Context, key string, data []byte) error {
 	s.puts++
 	return s.MemoryStore.Put(ctx, key, data)
@@ -120,10 +121,19 @@ func TestRetentionRestoresCompleteHistoryUnionAfterLostDeleteAcknowledgment(t *t
 	}
 }
 
+type restorationFault string
+
+const (
+	restorationIntentFault restorationFault = "intent"
+	restorationPolicyFault restorationFault = "policy"
+	restorationWinnerFault restorationFault = "winner"
+	restorationSourceFault restorationFault = "source"
+)
+
 func TestRetentionRestorationRefusesMissingIntentChangedPolicyWinnerOrSource(t *testing.T) {
 	t.Parallel()
-	for _, fault := range []string{"intent", "policy", "winner", "source"} {
-		t.Run(fault, func(t *testing.T) {
+	for _, fault := range []restorationFault{restorationIntentFault, restorationPolicyFault, restorationWinnerFault, restorationSourceFault} {
+		t.Run(string(fault), func(t *testing.T) {
 			t.Parallel()
 			local := newTestStore(t)
 			remote := &restorationHookStore{MemoryStore: storagetest.NewMemoryStore()}
@@ -159,18 +169,18 @@ func TestRetentionRestorationRefusesMissingIntentChangedPolicyWinnerOrSource(t *
 			key := p.MetadataKey
 			var winner []byte
 			switch fault {
-			case "intent":
+			case restorationIntentFault:
 				if err := os.Remove(filepath.Join(local.Home(), "session-deletions", reg.ArchiveSessionID, "intent.json")); err != nil {
 					t.Fatal(err)
 				}
-			case "policy":
+			case restorationPolicyFault:
 				opts.SkillEvidence = config.SkillEvidenceNone
-			case "winner":
+			case restorationWinnerFault:
 				winner = append(bytes.Clone(p.MetadataBytes), ' ')
 				if err := remote.MemoryStore.Put(t.Context(), key, winner); err != nil {
 					t.Fatal(err)
 				}
-			case "source":
+			case restorationSourceFault:
 				path := filepath.Join(local.Home(), "session-deletions", reg.ArchiveSessionID, "sources", p.SourceSHA256+".gz")
 				raw, err := os.ReadFile(path)
 				if err != nil {
@@ -189,7 +199,7 @@ func TestRetentionRestorationRefusesMissingIntentChangedPolicyWinnerOrSource(t *
 				t.Fatal("refusal performed remote PUT", fault)
 			}
 			after, err := remote.Get(t.Context(), key)
-			if fault == "winner" {
+			if fault == restorationWinnerFault {
 				if err != nil || !bytes.Equal(after, winner) {
 					t.Fatal("winner changed", err)
 				}

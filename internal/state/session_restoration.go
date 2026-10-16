@@ -17,6 +17,7 @@ func retentionBinding(r *RetentionRestoration, raw []byte) []byte {
 	}
 	return append([]byte("\x00retention-restoration/v1\x00"), raw...)
 }
+
 func (a PreparationAuthority) validateRetention() error {
 	if a.Retention != nil {
 		r := a.Retention
@@ -28,7 +29,7 @@ func (a PreparationAuthority) validateRetention() error {
 		if a.Retention != nil && input.HookObservations != nil {
 			return ErrDurableStorageRecovery
 		}
-		if input.Payload.Stage != nil && input.Payload.Stage.Namespace == "session-deletion-sources" && a.Retention == nil {
+		if input.Payload.Stage != nil && input.Payload.Stage.Namespace == DeletionSourceNamespace && a.Retention == nil {
 			return ErrDurableStorageRecovery
 		}
 	}
@@ -78,10 +79,11 @@ func (s *Store) PrepareRetentionRestoration(ctx context.Context, budget *agentap
 	if err != nil {
 		return p, err
 	}
-	p = PendingPublication{Bundle: bundle, SourceKey: refs[0].Key, SourceSHA256: refs[0].SHA256, MetadataKey: key, MetadataBytes: slices.Clone(j.MetadataBytes), SkillEvidence: skill}
+	var history *PendingHistory
 	if metadata.History != nil {
-		p.History = &PendingHistory{Version: 2}
+		history = &PendingHistory{Version: 2}
 	}
+	p = PendingPublication{Bundle: bundle, SourceKey: refs[0].Key, SourceSHA256: refs[0].SHA256, MetadataKey: key, MetadataBytes: slices.Clone(j.MetadataBytes), SkillEvidence: skill, History: history}
 	if err := populateRestorationPayloads(&p, metadata, refs, published, reg, admission); err != nil {
 		return p, err
 	}
@@ -112,7 +114,7 @@ func (s *Store) PrepareRetentionRestoration(ctx context.Context, budget *agentap
 	j.Phase = DeletionRestoring
 	j.RestoringToken = req.Token
 	j.RestorationSHA256 = p.Commit.MetadataSHA256
-	if err = s.saveSessionDeletion(j, &req.Token); err != nil {
+	if err = s.saveSessionDeletionContext(ctx, j, &req.Token); err != nil {
 		return p, err
 	}
 	return p, nil
@@ -139,7 +141,7 @@ func populateRestorationPayloads(p *PendingPublication, metadata archive.Metadat
 			}
 			p.History.Inputs = append(p.History.Inputs, HistoryInput{Reference: ref, RevisionID: selection.RevisionID, CapturedAt: selection.CapturedAt, SourceSchemaVersion: selection.SourceSchemaVersion, FilterVersion: version})
 		}
-		handle := &ImmutableStageHandle{Version: 1, Kind: PublicationHistoryStage, Namespace: "session-deletion-sources", SessionID: reg.ArchiveSessionID, OwnerSHA256: publicationOwner(metadata, reg.DestinationID, admission), DestinationID: reg.DestinationID, AdmissionContext: admission, SourceSHA256: ref.SHA256, CompressedBytes: ref.CompressedBytes, Selection: selection}
+		handle := &ImmutableStageHandle{Version: 1, Kind: PublicationHistoryStage, Namespace: DeletionSourceNamespace, SessionID: reg.ArchiveSessionID, OwnerSHA256: publicationOwner(metadata, reg.DestinationID, admission), DestinationID: reg.DestinationID, AdmissionContext: admission, SourceSHA256: ref.SHA256, CompressedBytes: ref.CompressedBytes, Selection: selection}
 		p.Sources = append(p.Sources, PublicationSource{Reference: ref, Selection: selection, Payload: PublicationPayload{Kind: PublicationHistoryStage, Stage: handle}})
 	}
 	return nil

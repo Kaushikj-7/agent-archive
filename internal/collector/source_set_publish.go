@@ -327,8 +327,8 @@ func (s *sessionScan) sourceSetUpload(pending state.PendingPublication) (*storag
 		case state.PublicationAdmissionStage:
 			return nil, nil, state.ErrDurableStorageRecovery
 		case state.PublicationHistoryStage:
-			if source.Payload.Stage != nil && source.Payload.Stage.Namespace == "session-deletion-sources" {
-				scoped, closeScope := s.local.WithReadBudget(s.ctx, s.readBudget())
+			if source.Payload.Stage != nil && source.Payload.Stage.Namespace == state.DeletionSourceNamespace {
+				scoped, closeScope := s.local.WithReadBudget(ctx, s.readBudget())
 				s.retainedReleases = append(s.retainedReleases, closeScope)
 				data, err = scoped.ReadDeletionSource(s.id(), source.Reference)
 				break

@@ -2,6 +2,7 @@ package state
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -17,6 +18,7 @@ import (
 )
 
 const deletionDirectory = "session-deletions"
+
 const deletionWireLimit int64 = durableControlBytes / 2
 
 // ErrRemovalPending keeps an interrupted, authorized deletion actionable.
@@ -83,6 +85,7 @@ func deletionSHA(j SessionDeletion) string {
 	raw, _ := json.Marshal(j)
 	return publicationSHA256(raw)
 }
+
 func deletionIntentSHA(j SessionDeletion) string {
 	j.Phase = DeletionPrepared
 	j.RestoringToken = ""
@@ -90,6 +93,7 @@ func deletionIntentSHA(j SessionDeletion) string {
 	j.LocalRemoved = false
 	return deletionSHA(j)
 }
+
 func deletionPath(id string) string { return filepath.Join(deletionDirectory, id, "intent.json") }
 
 func (j SessionDeletion) validateControl(id string) error {
@@ -167,6 +171,7 @@ func (s *Store) LoadSessionDeletion(reg archive.SessionRegistration) (SessionDel
 	}
 	return j, found, err
 }
+
 func (s *Store) loadSessionDeletion(id string) (SessionDeletion, bool, error) {
 	var j SessionDeletion
 	if unsafeDurableSessionID(id) {
@@ -295,17 +300,25 @@ func (s *Store) readDeletionObject(home *local.RootedHome, dir *os.Root, name st
 }
 
 func (s *Store) saveSessionDeletion(j SessionDeletion, expected *string) error {
+	return s.saveSessionDeletionContext(s.durableContext(), j, expected)
+}
+
+func (s *Store) saveSessionDeletionContext(ctx context.Context, j SessionDeletion, expected *string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
 	previousSHA := j.SHA256
 	j.SHA256 = deletionSHA(j)
 	if err := j.validate(j.Registration.ArchiveSessionID); err != nil {
 		return err
 	}
-	if _, err := agentmeta.JSONWireBound(s.durableContext(), j, durableControlBytes/2-1); err != nil {
+	if _, err := agentmeta.JSONWireBound(ctx, j, durableControlBytes/2-1); err != nil {
 		return errors.Join(ErrDurableStorageCapacity, err)
 	}
 	return config.WithDeletionProtection(s.home, func(g config.DurableStorageGuard) error {
 		if len(j.MetadataBytes) > 0 {
-			if err := s.retainDeletionMetadata(g, j); err != nil {
+			if err := s.retainDeletionMetadata(ctx, g, j); err != nil {
 				return err
 			}
 		}
@@ -336,7 +349,7 @@ func (s *Store) saveSessionDeletion(j SessionDeletion, expected *string) error {
 			}
 			return rename()
 		}
-		return s.writeDurableGuardChecked(s.durableContext(), g, deletionPath(j.Registration.ArchiveSessionID), j, commit)
+		return s.writeDurableGuardChecked(ctx, g, deletionPath(j.Registration.ArchiveSessionID), j, commit)
 	})
 }
 
@@ -586,7 +599,7 @@ func validateDeletionSourceNames(dir *os.Root, j SessionDeletion) error {
 	}
 }
 
-func (s *Store) retainDeletionMetadata(g config.DurableStorageGuard, j SessionDeletion) (err error) {
+func (s *Store) retainDeletionMetadata(ctx context.Context, g config.DurableStorageGuard, j SessionDeletion) (err error) {
 	q, err := s.openDurableQuota(g)
 	if err != nil {
 		return err
@@ -607,7 +620,7 @@ func (s *Store) retainDeletionMetadata(g config.DurableStorageGuard, j SessionDe
 	} else if !errors.Is(e, os.ErrNotExist) {
 		return e
 	}
-	return q.write(path, int64(len(j.MetadataBytes)), func(w io.Writer) error { _, e := w.Write(j.MetadataBytes); return e })
+	return q.writeWithHeadroomContext(ctx, path, int64(len(j.MetadataBytes)), func(w io.Writer) error { _, e := w.Write(j.MetadataBytes); return e }, nil, 0)
 }
 
 func (j SessionDeletion) validateReferences(id string) error {

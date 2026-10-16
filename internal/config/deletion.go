@@ -118,13 +118,20 @@ func WithDeletionProtection(home string, fn func(DurableStorageGuard) error) err
 	})
 }
 
+type deletionSelector string
+
+const (
+	deletionSchemaSelector deletionSelector = "schema_version"
+	deletionFlagSelector   deletionSelector = "deletion_protection"
+)
+
 func checkDeletionSelectors(raw []byte) error {
 	d := json.NewDecoder(bytes.NewReader(raw))
 	token, err := d.Token()
 	if err != nil || token != json.Delim('{') {
 		return errors.New("invalid deletion configuration")
 	}
-	seen := map[string]bool{}
+	seen := map[deletionSelector]bool{}
 	for d.More() {
 		token, err = d.Token()
 		if err != nil {
@@ -134,8 +141,8 @@ func checkDeletionSelectors(raw []byte) error {
 		if !ok {
 			return errors.New("invalid configuration selector")
 		}
-		canonical := strings.ToLower(key)
-		if seen[canonical] || (canonical == "schema_version" || canonical == "deletion_protection") && key != canonical {
+		canonical := deletionSelector(strings.ToLower(key))
+		if seen[canonical] || (canonical == deletionSchemaSelector || canonical == deletionFlagSelector) && key != string(canonical) {
 			return errors.New("ambiguous deletion configuration selector")
 		}
 		seen[canonical] = true
