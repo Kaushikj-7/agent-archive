@@ -257,7 +257,7 @@ func parseBackfillOptions(args []string, stderr io.Writer, env Env) (backfillCom
 		}
 		filters.MappingFile = *mappingFile
 	}
-	filters, err = filters.Canonicalize(env.agentRegistry())
+	filters, err = filters.Canonicalize(selectedDiscoveryApps{DiscoveryLookup: env.agentRegistry(), apps: env.backfillDiscoveryAgents()})
 	if err != nil {
 		return usageError(err.Error())
 	}
