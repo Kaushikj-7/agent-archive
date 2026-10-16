@@ -1,9 +1,11 @@
 # Read paths at realistic scale: implementation plan
 
 Status: proposed 2026-10-15, revised 2026-10-16 after real-command
-measurements and design review. Per-PR source and synthetic validation status is
-recorded below. Production qualification, conditional follow-ups and end-to-end
-latency acceptance remain open. This plan takes the
+measurements and design review. The approved source scopes for PRs 1, 2, 3,
+4a, 5b and 6 are implemented; per-PR source and synthetic validation status is
+recorded below. Provider qualification, production activation, conditional
+PR 4b and PR 7 follow-ups, and matched live command latency acceptance remain
+open. This plan takes the
 remaining read-path work from [CLI performance](cli-performance.md) PRs 7 and 9 and
 [archive listing at scale](listing-at-scale.md) phase 4 down to per-PR scope
 and acceptance gates. It does not change any output, search rule, retention
