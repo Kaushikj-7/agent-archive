@@ -135,7 +135,7 @@ listing page of 1,000 keys takes
 [listing-at-scale](../proposals/listing-at-scale.md) phase 1 change, the scan is
 split into contiguous key ranges listed concurrently. Sessions and both
 listing-index prefixes share at most sixteen in-flight listings. After a
-complete listing, each prefix saves private key-quantile hints for roughly
+complete listing, each prefix saves private complete-key hints for roughly
 1,000-key ranges; prefixes with at most 1,000 keys stay sequential. This policy
 accounts for full provider pages transferred past range boundaries rather than
 assuming that sixteen short returned ranges transfer sixteen short responses.
