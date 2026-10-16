@@ -6,6 +6,10 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Read-path benchmarks now account for provider LIST pages and transferred
+  headers, including range overread. Content-free trace counts distinguish
+  local catalog validation and decoding from remote discovery costs.
+
 - Muse local handoff previews now read only their reserved head/tail windows,
   avoiding whole-file hashes while browsing large histories. Selected sessions
   retain complete filtering and independent content verification.
