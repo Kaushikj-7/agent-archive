@@ -26,18 +26,18 @@ OpenAI and Anthropic are constantly one-upping each other or the best model, but
 
    The latest published release, v0.1.1, has macOS binaries only. On Linux, [build from source](docs/getting-started/install.md#build-from-source). These docs describe the current checkout; local handoff before setup and other newer features require a current source build until the next release is published.
 
-2. **Try a local handoff before setup** inside a project:
+2. **See it work — no bucket needed.** Inside a project, hand a session you already have to another agent:
 
    ```sh
    agent-archive handoff
    ```
 
-   Browse existing Claude Code or Codex conversations without configuring storage.
+   Browse existing Claude Code, Codex or Muse Code conversations without configuring storage.
    [Local handoff scope, preview limits and cleanup](docs/guides/handoff.md#before-setup-native-local-sessions).
 
-3. **Create a private bucket** and an access key for it ([R2 and S3 steps](docs/getting-started/bucket.md)).
+3. **Create a private bucket** and an access key for it ([R2 and S3 steps](docs/getting-started/bucket.md)). On Cloudflare R2, start with [let setup create it](docs/getting-started/bucket.md#let-setup-create-it): you make one temporary token and setup creates the bucket and its key.
 
-4. **Review [what is uploaded](docs/security/privacy.md#what-is-uploaded)** before enabling capture. Capture can include visible user-level skill instructions as well as your conversation. Redaction is best effort and there is no client-side encryption. **Run setup** inside a project you want to include, or choose projects when prompted ([setup guide](docs/getting-started/setup.md)):
+4. **Review [what is uploaded](docs/security/privacy.md#what-is-uploaded)** before enabling capture. Capture can include visible user-level skill instructions as well as your conversation. Redaction is best effort and there is no client-side encryption. **Run setup** inside a project you want to include, or choose projects when prompted ([setup guide](docs/getting-started/setup.md)); by default, sessions with no new activity for 90 days are deleted from your bucket, which the setup review shows and lets you change or keep forever:
 
    ```sh
    agent-archive setup
@@ -69,14 +69,16 @@ flowchart LR
 
 Setup edits each included app's hook settings, adds one background job (a LaunchAgent on macOS, a systemd user timer on Linux), and writes two skill files for Claude Code (in `~/.claude/skills`) and two for Codex and Cursor together (in `~/.agents/skills`; `agent-archive setup --no-skills` skips them); for Cursor it also adds a missing `version` field ([everything it changes](docs/getting-started/setup.md#what-setup-changes-on-your-machine)). Old sessions are deleted from the bucket after 90 days by default.
 
-## Commands and docs
+## Core commands
 
 | Command | What it does | Example |
 | --- | --- | --- |
 | `setup` | Configure apps, projects, and storage. | `agent-archive setup` |
 | `status` | Check capture health and see what to do next; `status claude` shows one app in full. | `agent-archive status` |
 | `sync` | Collect and upload pending sessions now. | `agent-archive sync` |
+| `pause`, `resume` | Pause collection, uploads, and cleanup until you resume ([everyday commands](docs/guides/troubleshooting.md#everyday-commands)). | `agent-archive pause` |
 | `list` | Find archived sessions, by filters or by a few words. | `agent-archive list "retention"` |
+| `search` | Search conversation text in a private local index ([search guide](docs/guides/search.md)). | `agent-archive search "upload checksum"` |
 | `show` | View a session's summary, or its transcript with `--transcript`. | `agent-archive show SESSION_ID` |
 | `stats` | See your usage: tokens by day, estimated cost, agents, models, projects, highlights. | `agent-archive stats --days 7` |
 | `backfill` | Preview sessions already on this machine for import. | `agent-archive backfill --dry-run` |
@@ -86,7 +88,7 @@ Setup also gives Claude Code, Codex, and Cursor an `agent-archive` skill, so you
 
 Listings return at most 50 matching sessions by default: text shows top-level sessions by last activity; JSON includes subagents and sorts by capture time. For analytics over every match, use `agent-archive list --json --limit 0`; add `--all-projects` to include every project when running inside a repository, and `--replays include` if your analysis should include replay sessions (hidden by default). Unreadable metadata is skipped with a warning on stderr ([list guide](docs/guides/list-and-show.md), [JSON contract](docs/reference/json-output.md)).
 
-Use a session ID from `list` with `show`. For every command and option, see the **[full CLI reference](docs/reference/cli.md)** or run `agent-archive help COMMAND`.
+Use a session ID from `list` with `show`. More commands (machines, uninstall, purge, …) are under `agent-archive help advanced`; for every command and option, see the **[full CLI reference](docs/reference/cli.md)** or run `agent-archive help COMMAND`.
 
 [Install](docs/getting-started/install.md) ·
 [Setup](docs/getting-started/setup.md) ·

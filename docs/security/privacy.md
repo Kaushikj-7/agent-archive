@@ -5,10 +5,11 @@ page says what that copy contains, what is kept out of it, what the tool
 changes on your machine, and where its protections stop. The per-version history
 of the filter is in the [filter changelog](../../dev/specs/privacy-filter-changelog.md).
 
-Native Codex name lookup is optional and defaults to files. Explicit `native`
-mode can write Codex startup databases and system skills; desktop coexistence
-and native credential behavior remain unverified. Only the filtered owning name
-or confirmed absence is archived. See [Codex session names](../reference/codex-session-names.md).
+Codex thread names are read from Codex's own name index,
+`~/.codex/session_index.jsonl`; no Codex process is started and no database is
+opened. Explicit `native` mode can write Codex startup databases and system
+skills; desktop coexistence and native credential behavior remain unverified.
+Only the filtered owning name or confirmed absence is archived. See [Codex session names](../reference/codex-session-names.md).
 
 Before enabling capture, review these choices:
 
@@ -258,7 +259,8 @@ and uploaded with the session.
 - **Hidden reasoning** (thinking blocks, reasoning items) and
   **system/developer instructions**.
 - **Injected instructions**: `<system-reminder>`, `<user_instructions>`,
-  `<environment_context>`, and `<recommended_plugins>` blocks, and the text of
+  `<environment_context>`, and `<recommended_plugins>` blocks, Codex's
+  `# AGENTS.md instructions for …` `<INSTRUCTIONS>` block, and the text of
   Claude Code's `isMeta` records (expanded skills and slash commands).
 - **Images, documents, audio, and other binary content**, including base64
   `data:` URLs inside text.
@@ -371,9 +373,9 @@ projects. Three things follow.
 
 ## What changes on your machine
 
-The `hooks` entry of each included app's settings file, one background job (a
+The `hooks` entry of each included app's settings file, a collector background job (a
 LaunchAgent on macOS; on Linux a systemd user timer and service in
-`~/.config/systemd/user`), two
+`~/.config/systemd/user`), an independent search job only after local opt-in, two
 agent skill files per app location (`agent-archive` and `/handoff`, marked so
 uninstall removes only setup's), local state private to your account
 (transcripts are read in place, not copied), and, for R2, one Keychain item on
@@ -634,10 +636,101 @@ activity/retention. Injected Codex `external_codex_apps_open_page` context
 wrappers at the start of a message are omitted; quoted markup and examples in
 human prose/code remain intact. Text outside context remains prompt text.
 
-Codex name refresh reads bounded metadata only for already admitted ordinary
-sessions in approved homes. It retains the filtered current name and typed
+Codex name refresh reads the name index only for already admitted top-level
+threads in approved homes, ordinary or continued into later rollouts. It retains the filtered current name and typed
 owning-ID evidence, with the same credential redaction as prompt text. Native
 paths, raw index/database rows and unrelated session names are not uploaded.
 Name changes publish new source evidence but preserve conversation activity,
-capture time and retention. Collection never starts a native Codex process to
-retrieve a name; live WAL storage is unavailable to the safe file reader.
+capture time and retention, except for a thread continued into later rollouts,
+whose rename is published with a fresh capture. Collection never starts a native Codex process to
+retrieve a name and never opens Codex's databases.
+
+Cursor name refresh does the same for already admitted Cursor sessions,
+including imported ones, whose agent transcripts record no chat name. It reads
+only the `composerData` row of each admitted chat from Cursor's `state.vscdb`,
+read-only and in place, and retains the same typed evidence: the chat's
+filtered `name`, or that Cursor has not named it. Nothing else in the row
+(messages, workspace, model, timestamps) is uploaded, and a chat missing from
+the database leaves any earlier name in place.
+
+## Local conversation search
+
+Explicit search refresh stores derived visible conversation text in a private
+local SQLite index under `AGENT_ARCHIVE_HOME/search/`, separate from the metadata
+cache. The index, staging rows and SQLite WAL can contain readable conversation
+content. Search does not send that text to a new service: explicit refresh and
+exact-reference context reads use the configured archive provider and existing
+checksum/ownership verification. Cached queries make no archive requests.
+
+Coverage reports the last local observation. A remote deletion or stricter
+privacy policy cannot be known until observed by explicit refresh or the opted-in
+periodic worker; context reads
+verify the exact retained reference and never substitute a newer source. Unknown
+privacy provenance is not searchable. No automatic indexing job is installed by
+search commands, and an existing index is not consent to automatic indexing.
+Explicit refresh is allowed while capture is paused.
+
+`search --refresh --rebuild` atomically discards searchable derived state and
+starts bounded catch-up. It is not secure erasure of SQLite/WAL blocks. To remove
+the local search copy, disable automatic indexing with
+`setup --yes --search-indexing off` and stop explicit search refresh commands before
+deleting the search directory (or use `uninstall --delete-local-data`);
+this does not delete archived sources. See [search](../guides/search.md) and
+[archive cleanup](archive-cleanup.md).
+
+### Optional background search indexing
+
+Automatic search indexing is a machine-local opt-in, off by default. Pairing,
+refresh and upgrade do not opt in. Enabling installs an independent search job;
+it reads retained archive metadata and verified source bundles into the private
+local content index under the same extraction/privacy rules as explicit refresh.
+Collection sends at most 256 content-free harness/session candidates per batch,
+after every publication lock and deferred registration step finishes. The hint
+consumer performs bounded local identity writes only, with no source fetch or
+parsing. Missing, old or busy caches drop hints and reconcile periodically.
+Pause stops automatic indexing/reconciliation after an active pass ends, or
+refuses before changing settings. Explicit refresh remains available while
+paused. Disabling keeps cached text; local-data purge removes the index, its
+SQLite companions and search logs while holding the search lifecycle fence.
+
+### Explicit Muse local handoff
+
+`handoff --file PATH --harness muse` reads a complete supported ordinary exec/MSP
+root without setup or registration. It validates the initial permission frame
+and startup locally, retains only minimal safe authority and linked own visible
+conversation, and applies shared credential/instruction redaction. Permission
+profiles, provider/model context, hidden reasoning and native checksum/child
+strings are never retained. Unsupported authority or incomplete files refuse
+without producing a successful artifact. Complete usage/cost, tools, model switches and
+children remain unavailable; this local operation grants no capture consent.
+
+Shared redaction, hidden-context omission and text truncation are disclosed with
+fixed capture-gap codes. These codes survive retained-only privacy refresh;
+arbitrary native or archived diagnostic details are not copied into them.
+
+The qualified Muse grammar also recognizes reasoning, approval/review, wait/tool
+effect and task-output records while dropping their private bodies completely.
+Minimal identities let the retained reader recheck ownership and prior references;
+they do not expose tool results, review assessments or accounting. A narrowly
+classified ephemeral task marker retains only its original position and omission
+classification, with no invented timestamp or task identity. Fixed
+`muse_private_native_bodies_omitted` and `muse_ephemeral_task_delta_omitted` gaps
+survive privacy refresh. Direct parsing refuses evidence whose required omission
+gaps were removed or altered; retained-only refilter reconstructs them.
+
+Muse's closed own `model_completed` branch validates a nonempty model string,
+nonnegative exact `duration_ms`, and all six input/output/cache/reasoning counters
+between zero and 2^53−1. Only the model, input/output and typed run/source identity
+survive. Duration, cache and reasoning counters are dropped. Every completion
+requires an earlier own materialized run; source IDs and relevant source sequences
+are unique within that run. Multiple completions in one run count separately.
+Legacy event-only retained rows stay readable and contribute no invented zeros.
+
+The optional `token_observations` summary carries nullable input/output sums, at
+most 32 bounded recorded model labels, and explicit observed/coverage/composition/
+pricing availability. Complete usage, cache/reasoning relationships and billing
+remain unavailable. Models beyond the deterministic first 31 fold into
+`other`; no label establishes a billed product. Session overflow refuses;
+cross-session overflow publishes no observation numbers with the fixed
+`observation_limit` reason. Required `own_usage_observations_partial` and
+`cache_reasoning_cost_unqualified` gaps survive retained-only refresh.

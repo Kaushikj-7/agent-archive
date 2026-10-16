@@ -1,0 +1,265 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/wangjohn/agent-archive/main/schemas/native-source-authority.schema.json",
+  "title": "Private native source authority (not uploaded)",
+  "$defs": {
+    "token": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^[^\u0000\r\n]+$"
+    },
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^/[^\u0000\r\n]*$"
+    },
+    "root": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "agent",
+        "configured",
+        "canonical",
+        "revision"
+      ],
+      "properties": {
+        "agent": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "configured": {
+          "$ref": "#/$defs/path"
+        },
+        "canonical": {
+          "$ref": "#/$defs/path"
+        },
+        "revision": {
+          "$ref": "#/$defs/token"
+        }
+      }
+    },
+    "binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "agent",
+        "version",
+        "native_id",
+        "native_created_at",
+        "cwd",
+        "path",
+        "root_revision"
+      ],
+      "properties": {
+        "agent": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "version": {
+          "enum": [
+            1,
+            2
+          ]
+        },
+        "native_id": {
+          "$ref": "#/$defs/token"
+        },
+        "root_id": {
+          "$ref": "#/$defs/token"
+        },
+        "parent_id": {
+          "$ref": "#/$defs/token"
+        },
+        "native_created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "cwd": {
+          "$ref": "#/$defs/path"
+        },
+        "stream_id": {
+          "$ref": "#/$defs/token"
+        },
+        "path": {
+          "$ref": "#/$defs/path"
+        },
+        "root_revision": {
+          "$ref": "#/$defs/token"
+        },
+        "checkpoint": {
+          "$ref": "#/$defs/checkpoint"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "version": {
+                "const": 2
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "checkpoint"
+            ],
+            "properties": {
+              "agent": {
+                "const": "muse"
+              }
+            }
+          },
+          "else": {
+            "not": {
+              "required": [
+                "checkpoint"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "fence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "writer",
+        "base"
+      ],
+      "properties": {
+        "version": {
+          "const": 16
+        },
+        "writer": {
+          "const": "native-authority-v16"
+        },
+        "base": {
+          "enum": [
+            1,
+            {
+              "version": 2,
+              "writer": "discovery-v2"
+            },
+            {
+              "version": 2,
+              "writer": "discovery-floor-v2"
+            },
+            {
+              "version": 3,
+              "writer": "codex-scope-v3"
+            },
+            {
+              "version": 3,
+              "writer": "codex-scope-floor-v3"
+            },
+            {
+              "version": 4,
+              "writer": "archive-generations-v4"
+            },
+            {
+              "version": 5,
+              "writer": "codex-history-v5"
+            },
+            {
+              "version": 7,
+              "writer": "durable-storage-v7"
+            },
+            {
+              "version": 8,
+              "writer": "retention-forever-v8"
+            },
+            {
+              "version": 9,
+              "writer": "import-staging-v9"
+            },
+            {
+              "version": 10,
+              "writer": "historical-projects-v10"
+            },
+            {
+              "version": 11,
+              "writer": "catalog-v4-v11"
+            },
+            {
+              "version": 12,
+              "writer": "publication-composition-v12"
+            },
+            {
+              "version": 13,
+              "writer": "staged-selection-v13"
+            },
+            {
+              "version": 14,
+              "writer": "scoped-picker-v1"
+            },
+            {
+              "version": 15,
+              "writer": "settled-cursor-selection-v15"
+            },
+            {
+              "version": 16,
+              "writer": "search-lifecycle-v16"
+            }
+          ]
+        }
+      }
+    },
+    "journalFence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "writer",
+        "value"
+      ],
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "writer": {
+          "const": "native-authority-v16"
+        },
+        "value": {
+          "type": "boolean"
+        }
+      }
+    },
+    "checkpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "domain",
+        "algorithm",
+        "boundary",
+        "sha256"
+      ],
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "domain": {
+          "const": "muse-ordinary"
+        },
+        "algorithm": {
+          "const": "sha256"
+        },
+        "boundary": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9223372036854775807
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    }
+  },
+  "description": "Go additionally checks canonical agents, clean absolute paths, exact supported base version/writer pairs and all lower permission/storage floors. The outer fence requires native_authority_protection=true on its configuration. No capture operations are enabled by this schema."
+}

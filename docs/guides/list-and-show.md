@@ -208,7 +208,8 @@ The first of these that has a match answers:
 3. subagent sessions, in the scope and then everywhere.
 
 For `list` and `handoff`, a session ID, full or the 8-character short one,
-names that session first. `show` gives a full ID that precedence; a short ID
+names that session first; the agent's own session ID (a Codex thread ID, a
+Claude Code or Cursor session ID) does too. `show` gives a full ID that precedence; a short ID
 combines prefix matches with title and pull request matches, then applies the
 scope tiers above. When the scope answers, the footer says how many more match
 elsewhere (`1 match in agent-archive (3 more in other projects: --all-projects or a project name finds
@@ -243,7 +244,8 @@ sessions; local eligibility beyond that work remains explicitly unknown.
 ## Browsing on a terminal
 
 The list and bare-show browsers offer **Older sessions** when the initial table
-is limited. Press `o` to extend it by another batch. Search checks older
+is limited. Scrolling past the last row extends it by another batch (reading
+lines, answer `o`). Search checks older
 sessions and subagents as well as the rows on screen; `a` changes the project
 scope. Repeated searches reuse private local summaries, while each command
 checks the archive for changed and deleted sessions. `--no-cache` bypasses
@@ -255,18 +257,34 @@ session's summary replace each other instead of piling up:
 
 - The browser reads each key as you press it; there is no need to press
   Enter after a command.
-- Type a row number or short SESSION_ID and press Enter to see that
-  session's summary. What you type shows at the prompt; Backspace edits it
-  and Esc clears it. Row numbers are those of the whole list, so any listed
-  number or short ID works wherever the list is scrolled (in the list
-  grouped by day, the numbers on screen need not be consecutive).
-- A list taller than the window scrolls: the mouse wheel and ↑ ↓ by a
-  row, PgUp and PgDn (or space, `n`, and `p`) by a screen, Home and End to
-  the top and bottom. A status line below it says where you are (`Top`, a
-  percentage, `Bottom`, or `All` when the whole list fits), for example
-  `Top · ↑↓ scroll · PgUp/PgDn page · / filter · type a number and Enter · q quit`. A
-  day scrolled into keeps its heading at the top, marked
-  `(continued)`, as in `TODAY (continued)`. `a`, `n`, `p`, `q`, and `/` act only when nothing is typed.
+- `▸` marks the highlighted row: ↑ ↓ (and the mouse wheel) move it a row,
+  PgUp and PgDn (or space, `n`, and `p`) a screen, Home and End to the top
+  and bottom, and the list scrolls to keep it in view. When older sessions
+  can be loaded, moving down past the last row (↓ or the wheel on it, PgDn
+  with it on screen, or End on it) loads the next batch and goes on into it:
+  ↓ to the first session loaded, PgDn a screen further, End to the new last
+  row. While a load takes a while, the footer line says so, and Esc stops
+  it. If no older session turns up, the footer says `No older sessions.`,
+  and moving past that end loads nothing more until the list changes (`o`
+  still tries again). Enter shows its
+  summary. Under the list, a strip spells out the highlighted session: its
+  full title, then its agent, project, PR, subagents, when it was last
+  active, and its short ID. A very short window leaves the strip out.
+- Typing a row number or short SESSION_ID and pressing Enter shows that
+  session instead. What you type shows at the prompt
+  (`Number or ID to show:`); Backspace edits it and Esc clears it. Row
+  numbers are those of the whole list, so any listed number or short ID
+  works wherever the list is scrolled (in the list grouped by day, the
+  numbers on screen need not be consecutive).
+- The footer line names the keys and which rows are on screen, for example
+  `↑↓ move   PgUp/PgDn page   Enter show   / search   number + Enter jump   q quit   1–14 of 86`.
+  When older sessions can be loaded, the count ends in `+` (`1–14 of 50+`).
+  A narrow window drops `number + Enter jump` first, then `PgUp/PgDn page`,
+  then `/ search`; `Enter` stays longest.
+  The heading says how many subagent sessions are hidden. A day scrolled
+  into keeps its heading at the top, marked `(continued)`, as in
+  `TODAY (continued)`. `a`, `n`, `p`, `q`, and `/` act only when
+  nothing is typed, as does `o`, which also loads older sessions.
 - Press `/` to filter the rows as you type, as in `less`: a line at the
   bottom takes the words, and the rows narrow with each character. The words
   are the ones `list "<words>"` takes: every word must appear in a session's
@@ -274,7 +292,9 @@ session's summary replace each other instead of piling up:
   `212` also matches a pull request number. The first session that matches
   is marked `▸`, ↑ and ↓ move the mark, and Enter shows the marked session
   (and `b` brings back the filtered list). Esc clears the filter and closes the line, and
-  Backspace on an empty one does too. Rows keep the numbers they have
+  Backspace on an empty one does too; the mark stays on the session it was
+  on, or goes to the first row when the plain list does not show that
+  session. `/` itself leaves the mark where it is until you type. Rows keep the numbers they have
   unfiltered; a session the filter finds past the list's limit is numbered
   on from its last row, and is chosen with the mark (after Esc only the
   list's own numbers choose). A subagent session that matches is shown indented under its
@@ -292,8 +312,7 @@ session's summary replace each other instead of piling up:
 - A summary taller than the window scrolls the same way, with a line such
   as `↑ 3 lines above · ↓ 12 more lines` below it; `m` opens the whole
   summary through the pager, as `t` does the transcript.
-- `q` (or Enter with nothing typed at the list, or Ctrl-D) quits from
-  anywhere but the filter line, and Ctrl-C quits at once. The last summary you viewed is printed
+- `q` (or Ctrl-D) quits from anywhere but the filter line, and Ctrl-C quits at once. The last summary you viewed is printed
   to the normal screen as the browser closes, so its ID stays in your
   scrollback.
 - Every place a session is picked from a list is this one browser: `list`,
@@ -341,7 +360,9 @@ stderr; the rest are listed.
 
 `list` shows each session's `name` when metadata has one: the name your agent
 gave the session (the one in Claude Code's sidebar, which `/rename` sets, or a
-Cursor chat's name). Otherwise it shows the `title`, a short preview of the
+Cursor chat's name, which the collector reads from Cursor's database on the
+machine that has the chat, since Cursor's transcripts do not record it).
+Otherwise it shows the `title`, a short preview of the
 first filtered human prompt, derived at publish time. Older sidecars without
 either fall back to the short SESSION_ID in that column. `project_name`
 in metadata labels the project when present; otherwise `list` uses this machine's
@@ -468,7 +489,7 @@ way, removed after 7 days and by `uninstall --delete-local-data`. A limit too sm
 step, the header, or the sidecar alone, prints a warning on stderr and as much
 as it can. Nothing here prompts, and without a terminal nothing is paged.
 
-Before setup has run, both commands print `Not set up.` to stderr and exit 1.
+Before setup has run, both commands print ``Not set up yet. For Claude Code or Codex sessions already on this machine, try `agent-archive handoff`; to start archiving, run `agent-archive setup`.`` to stderr and exit 1. While a setup is under way (a saved setup draft, or an interrupted setup waiting for recovery), handoff refuses, so they print ``Setup is not finished. Run `agent-archive setup` to finish it.`` instead.
 
 ## Scrolling
 

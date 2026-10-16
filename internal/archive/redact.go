@@ -24,7 +24,16 @@ var injectedInstructionOpenByTag = map[string]*regexp.Regexp{
 	"user_instructions":             regexp.MustCompile(`<user_instructions\b[^>]*>`),
 	"environment_context":           regexp.MustCompile(`<environment_context\b[^>]*>`),
 	"recommended_plugins":           regexp.MustCompile(`<recommended_plugins\b[^>]*>`),
+	"INSTRUCTIONS":                  regexp.MustCompile(`<INSTRUCTIONS>`),
 }
+
+// codexProjectInstructions matches the heading and opening tag Codex 0.160
+// writes before a project's AGENTS.md as the first user message of a thread
+// (and again after compaction): "# AGENTS.md instructions for DIR", a blank
+// line, then <INSTRUCTIONS>. Earlier Codex releases used <user_instructions>.
+// Only a leading heading on its own line is matched, so a person quoting it
+// later in a message keeps their text.
+var codexProjectInstructions = regexp.MustCompile(`\A# AGENTS\.md instructions for [^\r\n]*\r?\n(?:[ \t]*\r?\n)*<INSTRUCTIONS>`)
 
 // stripInjectedInstructions removes every injected instruction block from one
 // string. It reports whether anything was removed and returns the remaining
@@ -38,14 +47,20 @@ func stripInjectedInstructions(value string) (bool, string) {
 	// Native open-page context is a leading wrapper. A mention in prose or a
 	// quoted/code example is user text, not proof of injected page context.
 	// Four spaces or a tab starts a Markdown code example.
+	// Codex's project instructions are a leading wrapper in the same way.
 	for !startsWithIndentedCode(safe) {
 		leading := strings.TrimLeft(safe, " \t\r\n")
-		open := injectedInstructionOpenByTag["external_codex_apps_open_page"].FindStringIndex(leading)
+		tag := "external_codex_apps_open_page"
+		open := injectedInstructionOpenByTag[tag].FindStringIndex(leading)
+		if open == nil || open[0] != 0 {
+			tag = "INSTRUCTIONS"
+			open = codexProjectInstructions.FindStringIndex(leading)
+		}
 		if open == nil || open[0] != 0 {
 			break
 		}
 		changed = true
-		end := injectedInstructionEnd(leading, open[1], "external_codex_apps_open_page")
+		end := injectedInstructionEnd(leading, open[1], tag)
 		if end < 0 {
 			safe = ""
 			break

@@ -100,7 +100,18 @@ chain (an abandoned branch after a rollback, say) never block capture or choose
 the tip; ones whose files still exist are offered after the chain as
 best-effort historical revisions, up to the 64-candidate limit with the
 chain's own segments first; off-chain ones past it are left out rather than
-refusing the capture. The source marks them best effort: a failure reading one
+refusing the capture. The source also names the chain's tip, the rollout its
+read took as the current revision. Reconciliation reads each segment before the
+tip as a historical revision but not the tip itself: the scan's own read already
+holds it (with the whole chain it inherits), so reading it again would only
+double what a long thread needs in read memory. The read's encoded records are
+released once the current candidate is built from them, and the pending
+publication's fences read only the proofs and catalog commit it carries, not
+the whole file. A pending publication is written one record at a time,
+and preparing a publication a scan froze from its own candidate takes its
+current source from that candidate rather than decoding the staged copy. The
+source marks the off-chain candidates best effort: a
+failure reading one
 (its own base gone, an unreadable header, the reconciliation's byte budget
 spent, or the session's own read ceiling, which the session meets again on
 every pass) or staging one (the revision planner's stage count or bytes, an
@@ -112,7 +123,19 @@ shared read budget held by others, a rollout changed while reading,
 cancellation)
 still fails it too, so the session defers and a later pass reads the branch:
 leaving it out would record a signature that an abandoned branch never
-changes again. Without an admitted source home
+changes again. A branch kept while reconciling holds what it retained for
+the rest of the scan; if guarding, settling or publishing then meets the
+session's read ceiling before any publication is saved, the scan runs once
+more from the start with every off-chain branch left out, so the branches
+never make the chain's own capture too large to read; a branch it does not
+read again but an earlier publication preserves by reference, unchanged
+since, is still published, so it is not left out (one that changed since is
+published only as it was, even when it is staged again from the last
+publication that carried it as current, so it is). A branch left out is
+recorded as the local capture diagnostic `revision_left_out` (the app, the
+included project and the time only) once the scan ends without the session
+recorded as a capture gap; an import leaves branches out without one.
+Without an admitted source home
 they are not read at all. Beside a current locator, a thread with more than 64
 observed same-thread rollouts is still captured: the lookup offers the 64
 newest that still exist, the chain's own segments come first and the newest

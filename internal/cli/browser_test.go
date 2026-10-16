@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"io"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -104,7 +105,8 @@ func TestEachChooserOpensTheKeyBrowserAndTheLineFallback(t *testing.T) {
 				}
 			}
 			// Keys are read only where the terminal can; lines are the fallback.
-			hasKeys := strings.Contains(out, "/ filter · type a number and Enter · q quit") || strings.Contains(out, "↑↓ move · Enter")
+			// Opened on words, the filter line's footer leaves out paging.
+			hasKeys := strings.Contains(out, "↑↓ move   PgUp/PgDn page   Enter ") || strings.Contains(out, "↑↓ move   Enter ")
 			asksForWords := strings.Contains(out, "words to filter, or q to quit: ")
 			if hasKeys != keyed || asksForWords == keyed || keyed && len(fake.history()) == 0 {
 				t.Errorf("%s, %s: key mode %v, line prompt %v\n%s", c.name, mode, hasKeys, asksForWords, out)
@@ -351,13 +353,34 @@ func TestKeyFilterEscBackspaceAndNoMatch(t *testing.T) {
 	if len(rowNumbers(screens[4])) != 30 || !strings.HasSuffix(screens[4], "\n/") {
 		t.Fatalf("after Backspace:\n%s", screens[4])
 	}
-	if !strings.HasSuffix(screens[5], "to show, or q to quit: ") || strings.Contains(screens[5], cursorMark) {
+	if !strings.HasSuffix(screens[5], keyListPrompt) || highlightedRow(screens[5]) != 1 {
 		t.Fatalf("after the last Backspace:\n%s", screens[5])
 	}
-	// Esc clears a filter with words in it, and closes the line.
+	// Esc clears a filter with words in it, and closes the line; the
+	// highlight stays on the row it was on.
 	last := screens[len(screens)-1]
-	if len(rowNumbers(last)) != 30 || strings.Contains(last, cursorMark) || !strings.HasSuffix(last, "to show, or q to quit: ") {
+	if len(rowNumbers(last)) != 30 || highlightedRow(last) != 17 || !strings.HasSuffix(last, keyListPrompt) {
 		t.Fatalf("after Esc:\n%s", last)
+	}
+}
+
+// / keeps the highlight where it is until words are typed, and Esc out of
+// the filter keeps the row it highlights when the whole list has it.
+func TestKeyFilterEscKeepsTheHighlightedRow(t *testing.T) {
+	t.Parallel()
+	sessions := pickerSessions(30, oneProject)
+	_, _, screens := runKeyPicker(t, &sessionPicker{env: fixedTerminal{120, 20}}, sessions, listFormatOptions{},
+		strings.Repeat("\x1b[B", 19), "/", "\x1b", "/", "number 2", "\x1b[B", "\x1b", "q")
+	var rows []int
+	for _, screen := range screens {
+		rows = append(rows, highlightedRow(screen))
+	}
+	// ↓ ×19, /, Esc, /, the words (2, 12 and 20…29 match; 2 is highlighted), ↓, Esc.
+	if want := []int{1, 20, 20, 20, 20, 2, 12, 12}; !slices.Equal(rows, want) {
+		t.Fatalf("highlighted %v, want %v:\n%s", rows, want, strings.Join(screens, "\n----\n"))
+	}
+	if !strings.Contains(screens[len(screens)-1], cursorMark+" 12  ") {
+		t.Fatalf("row 12 is not in view:\n%s", screens[len(screens)-1])
 	}
 }
 
@@ -452,7 +475,7 @@ func TestKeyFilterEnterActsOnTheHighlightInBrowseAndPickModes(t *testing.T) {
 	if highlighted(screens[6]) != "Flaky retention test" || !strings.Contains(screens[6], "\n/flaky") {
 		t.Fatalf("back at the list:\n%s", screens[6])
 	}
-	if len(rowNumbers2(screens[7], "")) < 4 || strings.Contains(screens[7], cursorMark) {
+	if len(rowNumbers2(screens[7], "")) < 4 || strings.Contains(screens[7], "\n/flaky") {
 		t.Fatalf("after Esc:\n%s", screens[7])
 	}
 
@@ -529,7 +552,9 @@ func TestASubagentMatchShowsItsParent(t *testing.T) {
 		t.Fatalf("heading:\n%s", opening)
 	}
 	var lines []string
-	for line := range strings.SplitSeq(opening, "\n") {
+	// The table's rows, above the detail strip that repeats the title.
+	table, _, _ := strings.Cut(opening, "\n─")
+	for line := range strings.SplitSeq(table, "\n") {
 		if strings.Contains(line, "Orchestrate the release") || strings.Contains(line, "(5b-1b)") || strings.Contains(line, "changelog") || strings.Contains(line, "lone task") {
 			lines = append(lines, line)
 		}
@@ -619,7 +644,8 @@ func TestListWordsOpenTheKeyBrowserFilteredAndEscClearsThem(t *testing.T) {
 	if got := rowNumbers2(screens[1], ""); len(got) != 3 || !strings.HasSuffix(screens[1], "\n/flaky") {
 		t.Fatalf("opening rows %v:\n%s", got, screens[1])
 	}
-	if got := rowNumbers2(screens[2], ""); len(got) != 4 || strings.Contains(screens[2], "matches") || highlighted(screens[2]) != "" {
+	// The highlight stays on the row the filter highlighted.
+	if got := rowNumbers2(screens[2], ""); len(got) != 4 || strings.Contains(screens[2], "matches") || highlightedRow(screens[2]) != highlightedRow(screens[1]) || highlightedRow(screens[2]) == 0 {
 		t.Fatalf("after Esc: %v\n%s", got, screens[2])
 	}
 }
@@ -742,6 +768,13 @@ func TestKeysListFilteredGolden(t *testing.T) {
 		t.Fatalf("%d screens", len(screens))
 	}
 	golden.Check(t, filepath.Join("testdata", "browse", "keys-list-filtered.txt"), []byte(screens[2]))
+	// The whole list hides the subagent the filter highlighted, so Esc
+	// leaves the highlight on its first row.
+	choices = newScopeChoices(scope, format, false, archiveRows(sessions, defaultListLimit, format))
+	screens = keyScreens(t, &sessionPicker{env: fixedTerminal{100, 30}}, choices, "show", "/", "208", "\x1b", "q")
+	if last := screens[len(screens)-1]; highlightedRow(last) != 1 || strings.Contains(last, "#208 (5b-1b)") {
+		t.Fatalf("after Esc:\n%s", last)
+	}
 }
 
 // Regenerate with `go test ./internal/cli -run TestKeysHandoffFilteredGolden -update`

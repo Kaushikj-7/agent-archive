@@ -61,6 +61,9 @@ jobs:
           while IFS= read -r package; do
             go test -race -vet=off -c -o "$RUNNER_TEMP/seed.test" "$package"
           done < "$RUNNER_TEMP/seed-packages.txt"
+      - name: Prioritize product objects before macOS checker compilation
+        if: runner.os == 'macOS' && matrix.profile == 'product' && steps.restored.outputs.restore-state != 'trusted'
+        run: python3 -B scripts/ci_cache.py prioritize-product
       - name: Compile pinned checker binaries
         if: runner.os == 'macOS' && steps.restored.outputs.restore-state != 'trusted'
         run: |
@@ -71,6 +74,9 @@ jobs:
         run: |
           python3 -B scripts/pinned_git.py upstream-2.30.2
           python3 -B scripts/pinned_git.py upstream-2.39.2
+      - name: Prefetch checksummed product tidy dependencies
+        if: matrix.profile == 'shared' && steps.restored.outputs.restore-state != 'trusted'
+        run: python3 -B scripts/warm_shared_module_graph.py
       - name: Compile immutable shared checker helpers on Linux
         if: matrix.profile == 'shared' && steps.restored.outputs.restore-state != 'trusted'
         run: python3 -B scripts/warm_shared_tools.py

@@ -500,11 +500,11 @@ class ReleaseWorkflowTest(unittest.TestCase):
         self.assertIsNotNone(match, f'no step {name!r} in publish')
         return match.group(1)
 
-    def test_attestation_subjects_are_exactly_the_binaries_and_candidate_manifest(self):
+    def test_attestation_subjects_are_exactly_the_binaries_checksums_and_candidate_manifest(self):
         attest = self.publish[self.publish.index('actions/attest-build-provenance@'):]
         subjects = block_lines(attest, 'subject-path: |')
         self.assertEqual(len(subjects), len(set(subjects)), subjects)
-        self.assertEqual(set(subjects), self.dist | {'dist/release-candidate.json'})
+        self.assertEqual(set(subjects), self.dist | {'dist/SHA256SUMS', 'dist/release-candidate.json'})
 
     def test_uploaded_and_released_assets_are_the_binaries_checksums_and_manifest(self):
         upload = self.publish[self.publish.index('name: agent-archive-${{ github.ref_name }}'):]

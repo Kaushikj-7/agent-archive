@@ -1,10 +1,11 @@
 # uninstall with own and two earlier-label collectors, two loaded
 # each launchctl call, then the state of the files as it was asked
 print gui/UID/com.agent-archive.collector  |  journal=absent own=present earlier:223bda05f72f=present earlier:cf1324b3e539=present
+print gui/UID/com.agent-archive.collector.223bda05f72f  |  journal=absent own=present earlier:223bda05f72f=present earlier:cf1324b3e539=present
+print gui/UID/com.agent-archive.collector.cf1324b3e539  |  journal=absent own=present earlier:223bda05f72f=present earlier:cf1324b3e539=present
+print gui/UID/com.agent-archive.search  |  journal=absent own=present earlier:223bda05f72f=present earlier:cf1324b3e539=present
 print gui/UID/com.agent-archive.collector  |  journal=absent own=present earlier:223bda05f72f=present earlier:cf1324b3e539=present
 bootout gui/UID/com.agent-archive.collector  |  journal=absent own=present earlier:223bda05f72f=present earlier:cf1324b3e539=present
 print gui/UID/com.agent-archive.collector.223bda05f72f  |  journal=absent own=present earlier:223bda05f72f=present earlier:cf1324b3e539=present
-print gui/UID/com.agent-archive.collector.223bda05f72f  |  journal=absent own=present earlier:223bda05f72f=present earlier:cf1324b3e539=present
 bootout gui/UID/com.agent-archive.collector.223bda05f72f  |  journal=absent own=present earlier:223bda05f72f=present earlier:cf1324b3e539=present
-print gui/UID/com.agent-archive.collector.cf1324b3e539  |  journal=absent own=present earlier:223bda05f72f=present earlier:cf1324b3e539=present
 # exit 0, end: journal=absent own=absent earlier:223bda05f72f=absent earlier:cf1324b3e539=absent
