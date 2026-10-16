@@ -10,9 +10,11 @@ import argparse
 import collections
 import contextlib
 import datetime
+import ctypes
 import fcntl
 import hashlib
 import http.server
+import itertools
 import json
 import os
 import pathlib
@@ -22,6 +24,9 @@ import re
 import select
 import shlex
 import signal
+import socket
+import socketserver
+import stat
 import subprocess
 import struct
 import sys
@@ -45,6 +50,16 @@ MSP_LINE_LIMIT = 1024 * 1024
 MSP_QUEUE_LIMIT = 1024
 FILE_LIMIT = 32 * 1024 * 1024  # Harness input/export cap, not a native format limit.
 HOOK_LIMIT = 1024 * 1024
+TOOL_SCENARIOS = ("exec-read-success", "exec-read-missing", "exec-read-two")
+SCENARIO_CONNECTIONS = 4
+SCENARIO_REQUESTS = 4
+SCENARIO_BODY_LIMIT = 256 * 1024
+SCENARIO_INPUT_LIMIT = 1024 * 1024
+SCENARIO_HEADER_LIMIT = 8192
+SCENARIO_HANDLER_SECONDS = 2
+SCENARIO_SECONDS = 45
+SCENARIO_GROUP_LIMIT = 16  # Detection threshold, not a kernel pre-fork limit.
+SCENARIO_FILE_LIMIT = 1024
 USAGE = {"input_tokens": 101, "output_tokens": 23, "total_tokens": 124,
          "input_tokens_details": {"cached_tokens": 17},
          "output_tokens_details": {"reasoning_tokens": 5}}
@@ -201,16 +216,131 @@ def termination_cleanup():
         signal.signal(signal.SIGTERM, previous)
 
 
-def run_process(argv, *, env, cwd, timeout=40):
+
+class OwnedGroupOverflow(RuntimeError):
+    """A bounded query observed more owned members than the scenario permits."""
+
+    def __init__(self):
+        super().__init__("owned process-group descendant limit")
+
+
+def owned_group_members(group):
+    """Read PID membership of this recorded group only; never argv or environment."""
+    if sys.platform == "darwin":
+        library = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+        # SDK libproc.h: uint32 type/typeinfo, void* buffer, int byte capacity.
+        # Use proc_listpids (byte return), not the count-returning convenience API.
+        listing = library.proc_listpids
+        listing.argtypes = (ctypes.c_uint32, ctypes.c_uint32, ctypes.c_void_p, ctypes.c_int)
+        listing.restype = ctypes.c_int
+        values = (ctypes.c_int * (SCENARIO_GROUP_LIMIT + 1))()
+        ctypes.set_errno(0)
+        size = listing(2, group, values, ctypes.sizeof(values))  # PROC_PGRP_ONLY = 2.
+        if size < 0 or ctypes.get_errno() or size % ctypes.sizeof(ctypes.c_int):
+            raise RuntimeError("owned process-group inspection unavailable")
+        if size >= ctypes.sizeof(values):
+            raise OwnedGroupOverflow()
+        members = set(values[:size // ctypes.sizeof(ctypes.c_int)])
+        if any(value <= 0 for value in members):
+            raise RuntimeError("owned process-group inspection unavailable")
+        return members
+    if sys.platform.startswith("linux"):
+        members, entries, reads = set(), 0, 0
+        deadline = time.monotonic() + .25
+        # Bound even the global catalog traversal, not just matching members.
+        with os.scandir("/proc") as catalog:
+            for entry in catalog:
+                entries += 1
+                if entries > 4096 or reads >= 2048 or time.monotonic() >= deadline:
+                    raise RuntimeError("owned process-group inspection unavailable")
+                if not entry.name.isdecimal():
+                    continue
+                try:
+                    reads += 1
+                    raw = read_limited(pathlib.Path(entry.path) / "stat", 4096).decode()
+                    fields = raw[raw.rfind(")") + 2:].split()
+                    if int(fields[2]) == group:
+                        members.add(int(entry.name))
+                        if len(members) > SCENARIO_GROUP_LIMIT:
+                            raise OwnedGroupOverflow()
+                except (FileNotFoundError, ProcessLookupError):
+                    continue  # An exited PID cannot be an active group member.
+                except (OSError, ValueError, IndexError) as error:
+                    raise RuntimeError("owned process-group inspection unavailable") from error
+        return members
+    raise RuntimeError("owned process-group inspection unavailable on this platform")
+
+
+def wait_owned_group(process):
+    """Verify bounded group cleanup after leader reaping; no foreign PID signals."""
+    deadline = time.monotonic() + 3
+    while True:
+        try:
+            if not owned_group_members(process.pid):
+                return
+        except RuntimeError:
+            pass  # Unknown/overflow is never absence; keep checking after KILL.
+        if time.monotonic() >= deadline:
+            raise RuntimeError("owned process-group cleanup incomplete")
+        time.sleep(.02)
+
+
+def stop_scenario_process(process, receipt):
+    """Signal only this still-present owned group; verify absence after reaping."""
+    def present():
+        try:
+            return bool(owned_group_members(process.pid))
+        except OwnedGroupOverflow:
+            return True  # Truncation proves nonempty, never absence.
+    def send(signum, label):
+        if not present():
+            receipt[label] = "not_needed"
+            return
+        try:
+            os.killpg(process.pid, signum)
+            receipt[label] = "sent"
+        except OSError as error:
+            receipt[label] = "signal_failed"
+            receipt[label + "_errno"] = error.errno
+            # A racing exit can remove the group. Only a complete fresh query
+            # can establish that no further signal is necessary.
+            receipt[label + "_post_signal_present"] = present()
+            try:
+                wait_owned_group(process)
+            except RuntimeError as error:
+                raise RuntimeError("owned process-group signal failed") from error
+    try:
+        send(signal.SIGTERM, "term")
+        try:
+            process.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            pass
+        send(signal.SIGKILL, "kill")
+    finally:
+        try:
+            process.wait(timeout=5)
+            receipt["leader_reaped"] = True
+        finally:
+            wait_owned_group(process)
+            receipt["group_absent"] = True
+
+
+def run_process(argv, *, env, cwd, timeout=40, group_limit=False, abort=None, evidence=None):
     process = subprocess.Popen(argv, env=env, cwd=cwd, stdin=subprocess.DEVNULL,
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                start_new_session=True)
     captured = {process.stdout: bytearray(), process.stderr: bytearray()}
     pending = list(captured)
     deadline = time.monotonic() + timeout
-    timed_out = False
+    timed_out, finished = False, False
+    started = time.monotonic()
+    cleanup = {"term": "unavailable", "kill": "unavailable", "leader_reaped": False, "group_absent": False}
     try:
-        while pending:
+        while pending or process.poll() is None:
+            if abort and abort():
+                raise RuntimeError("scenario provider refused")
+            if group_limit:
+                owned_group_members(process.pid)
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 timed_out = True
@@ -229,13 +359,270 @@ def run_process(argv, *, env, cwd, timeout=40):
                 process.wait(timeout=max(.001, deadline - time.monotonic()))
             except subprocess.TimeoutExpired:
                 timed_out = True
+        finished = True
     finally:
-        stop_process(process)
-        process.stdout.close()
-        process.stderr.close()
+        try:
+            if group_limit:
+                stop_scenario_process(process, cleanup)
+            else:
+                stop_process(process)
+        finally:
+            process.stdout.close()
+            process.stderr.close()
+            try:
+                if group_limit:
+                    wait_owned_group(process)
+            finally:
+                if evidence is not None:
+                    for label, stream in (("stdout", process.stdout), ("stderr", process.stderr)):
+                        (evidence / (label + ".bin")).write_bytes(captured[stream])
+                    write_json(evidence / "process.json", {"argv": argv, "pid": process.pid,
+                        "exit": process.returncode, "timeout": timed_out, "finished": finished, "cleanup": cleanup,
+                        "duration_seconds": time.monotonic() - started,
+                        "stdout_sha256": digest(captured[process.stdout]), "stderr_sha256": digest(captured[process.stderr])})
     return {"argv": argv, "exit": process.returncode,
             "stdout": captured[process.stdout].decode(errors="replace"),
             "stderr": captured[process.stderr].decode(errors="replace"), "timeout": timed_out}
+
+
+class ToolScenario:
+    """Closed synthetic provider transitions, independent of native status grammar."""
+
+    def __init__(self, name, workspace):
+        if name not in TOOL_SCENARIOS:
+            raise ValueError("unknown tool scenario")
+        self.name, self.workspace = name, workspace
+        self.calls = 2 if name == "exec-read-two" else 1
+        self.paths = [workspace / ("missing.txt" if name == "exec-read-missing" else "artifact.txt")]
+        if self.calls == 2:
+            self.paths.append(workspace / "artifact-two.txt")
+            self.paths[1].write_text("SYNTHETIC_SECOND_RESULT\n")
+        self.phase, self.result_order = "initial", False
+        self.validate_files()
+
+    def validate_files(self):
+        for path in self.paths:
+            if path.parent != self.workspace or path.is_symlink():
+                raise RuntimeError("scenario fixture path refused")
+            if self.name == "exec-read-missing":
+                if path.exists():
+                    raise RuntimeError("scenario missing fixture exists")
+            else:
+                info = path.stat()
+                if not stat.S_ISREG(info.st_mode) or info.st_size > SCENARIO_FILE_LIMIT:
+                    raise RuntimeError("scenario fixture regular-file byte limit")
+
+    def call_ids(self):
+        return ["call_control_" + str(index) for index in range(self.calls)]
+
+    def arguments(self, index):
+        return {"path": str(self.paths[index]), "offset": 1, "limit": 10}
+
+    def respond(self, body):
+        if not isinstance(body, dict) or body.get("model") != MODEL or body.get("stream") is not True:
+            raise RuntimeError("scenario provider request refused")
+        inputs = body.get("input")
+        if not isinstance(inputs, list):
+            raise RuntimeError("scenario provider input refused")
+        outputs = [item for item in inputs if isinstance(item, dict) and item.get("type") == "function_call_output"]
+        # Context is deliberately ignored. Only controlled call associations matter.
+        echoed = [item for item in inputs if isinstance(item, dict) and item.get("type") == "function_call"]
+        if echoed:
+            ids = [item.get("call_id") for item in echoed]
+            if self.phase != "results" or len(ids) != self.calls or set(ids) != set(self.call_ids()):
+                raise RuntimeError("scenario echoed call association refused")
+            for item in echoed:
+                index = self.call_ids().index(item["call_id"])
+                if (item.get("name") != "read_file" or not isinstance(item.get("arguments"), str) or
+                        json.loads(item["arguments"]) != self.arguments(index)):
+                    raise RuntimeError("scenario echoed tool or path refused")
+        if self.phase == "initial":
+            if outputs:
+                raise RuntimeError("scenario unexpected result transition")
+            tools = body.get("tools")
+            if not isinstance(tools, list):
+                raise RuntimeError("scenario tool declaration refused")
+            declared = [item for tool in tools if isinstance(tool, dict)
+                        for item in tool.get("tools", [tool]) if isinstance(item, dict)]
+            if not any(item.get("name") == "read_file" for item in declared):
+                raise RuntimeError("scenario read tool unavailable")
+            self.validate_files()
+            events = [{"type": "response.function_call_arguments.done", "output_index": index,
+                       "item_id": "fc_control_" + str(index), "namespace": "muse", "name": "read_file",
+                       "call_id": call_id, "arguments": json.dumps(self.arguments(index))}
+                      for index, call_id in enumerate(self.call_ids())]
+            self.phase = "results"
+        elif self.phase == "results":
+            ids = [item.get("call_id") for item in outputs]
+            if (len(ids) != self.calls or any(not isinstance(value, str) for value in ids) or
+                    len(set(ids)) != self.calls or set(ids) != set(self.call_ids()) or
+                    any(set(item) != {"type", "call_id", "output"} or
+                        not isinstance(item["output"], (str, list)) for item in outputs)):
+                raise RuntimeError("scenario result association refused")
+            self.result_order = ids == self.call_ids()
+            events = [{"type": "response.output_text.delta", "output_index": 0,
+                       "item_id": "msg_control", "content_index": 0, "delta": REPLY}]
+            self.phase = "complete"
+        else:
+            raise RuntimeError("scenario unexpected provider transition")
+        index = 1 if self.phase == "results" else 2
+        frame = {"id": "resp_control_" + str(index), "object": "response", "model": MODEL,
+                 "status": "in_progress", "output": []}
+        frames = [{"type": "response.created", "response": frame}] + events + [
+            {"type": "response.completed", "response": dict(frame, status="completed", usage=USAGE)}]
+        return b"".join(("data: " + json.dumps(dict(event, sequence_number=number)) + "\n\n").encode()
+                        for number, event in enumerate(frames, 1))
+
+
+class ScenarioEndpoint(socketserver.BaseRequestHandler):
+    """One bounded HTTP request per owned connection, with an absolute deadline."""
+
+    def handle(self):
+        deadline = min(self.server.deadline, time.monotonic() + SCENARIO_HANDLER_SECONDS)
+        def receive(size):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise RuntimeError("scenario handler deadline")
+            self.request.settimeout(remaining)
+            chunk = self.request.recv(size)
+            if not chunk:
+                raise RuntimeError("scenario incomplete request")
+            return chunk
+        try:
+            data = bytearray()
+            while not data.endswith(b"\r\n\r\n"):
+                if len(data) >= SCENARIO_HEADER_LIMIT:
+                    raise RuntimeError("scenario header byte limit")
+                # Avoid overreading a body before its advertised size is checked.
+                data.extend(receive(1))
+            lines = bytes(data).decode("ascii").split("\r\n")
+            method, path, protocol = lines[0].split(" ")
+            if protocol != "HTTP/1.1" or method not in ("GET", "POST"):
+                raise RuntimeError("scenario HTTP request refused")
+            headers = {}
+            for line in lines[1:-2]:
+                key, value = line.split(":", 1)
+                key = key.lower()
+                if key in headers:
+                    raise RuntimeError("scenario duplicate header")
+                headers[key] = value.strip()
+            if "transfer-encoding" in headers:
+                raise RuntimeError("scenario transfer encoding refused")
+            length_text = headers.get("content-length", "0")
+            if not length_text.isdecimal() or len(length_text) > 9:
+                raise RuntimeError("scenario body length refused")
+            length = int(length_text)
+            if length > SCENARIO_BODY_LIMIT:
+                raise RuntimeError("scenario body byte limit")
+            with self.server.lock:
+                if self.server.error or time.monotonic() >= self.server.deadline:
+                    raise RuntimeError("scenario aborted or expired")
+                if self.server.requests >= SCENARIO_REQUESTS:
+                    raise RuntimeError("scenario request limit")
+                self.server.requests += 1
+                if self.server.input_bytes + len(data) + length > SCENARIO_INPUT_LIMIT:
+                    raise RuntimeError("scenario aggregate input byte limit")
+                self.server.input_bytes += len(data) + length
+            body = bytearray()
+            while len(body) < length:
+                body.extend(receive(min(16384, length - len(body))))
+            with self.server.lock:
+                if method == "GET" and path == "/models" and length == 0 and self.server.model_requests < 2:
+                    self.server.model_requests += 1
+                    payload = json.dumps({"object": "list", "data": [{"id": MODEL, "object": "model",
+                        "metadata": {"muse-code": {"release_date": "2026-01-01", "is_hidden": False,
+                        "limit": {"context": 1000000, "output": 1024}}}}]}).encode()
+                    content_type = b"application/json"
+                elif method == "POST" and path == "/responses" and length > 0:
+                    payload = self.server.scenario.respond(json.loads(body))
+                    content_type = b"text/event-stream"
+                else:
+                    raise RuntimeError("scenario request route refused")
+            del body, data  # Do not retain provider context in a receipt or exception.
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise RuntimeError("scenario handler deadline")
+            self.request.settimeout(remaining)
+            self.request.sendall(b"HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Type: " + content_type +
+                                 b"\r\nContent-Length: " + str(len(payload)).encode() + b"\r\n\r\n" + payload)
+        except Exception:
+            self.server.fail()  # Fixed failure code only; never incoming content.
+
+
+class ScenarioServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
+    """Finite owned sockets and non-daemon threads, all closed and joined."""
+
+    allow_reuse_address = False
+    daemon_threads = False
+    block_on_close = True
+
+    def __init__(self, scenario):
+        self.scenario, self.lock = scenario, threading.Lock()
+        self.connections = self.requests = self.input_bytes = self.model_requests = 0
+        self.error, self.closed, self.joined = False, False, False
+        self.stop = threading.Event()
+        self.timeout = .05
+        self.sockets, self.handlers = set(), []
+        self.deadline = time.monotonic() + SCENARIO_SECONDS
+        super().__init__(("127.0.0.1", 0), ScenarioEndpoint)
+
+    def serve_forever(self, poll_interval=.05):
+        while not self.stop.is_set():
+            if time.monotonic() >= self.deadline:
+                self.fail()
+                break
+            self.handle_request()
+
+    def shutdown(self):
+        self.stop.set()
+
+    def fail(self):
+        with self.lock:
+            self.error = True
+            self.stop.set()
+
+    def process_request(self, request, client_address):
+        with self.lock:
+            if self.closed or self.error or self.connections >= SCENARIO_CONNECTIONS or time.monotonic() >= self.deadline:
+                self.error = True
+                self.stop.set()
+                self.shutdown_request(request)
+                return
+            self.connections += 1
+            self.sockets.add(request)
+            thread = threading.Thread(target=self.process_request_thread, args=(request, client_address))
+            self.handlers.append(thread)
+            thread.start()
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            with self.lock:
+                self.sockets.discard(request)
+
+    def close(self, thread):
+        self.shutdown()
+        with self.lock:
+            self.closed = True
+            sockets = list(self.sockets)
+        for connection in sockets:
+            with contextlib.suppress(OSError):
+                connection.shutdown(socket.SHUT_RDWR)
+            connection.close()
+        thread.join(timeout=3)
+        self.server_close()
+        for handler in self.handlers:
+            handler.join(timeout=3)
+        if thread.is_alive() or any(handler.is_alive() for handler in self.handlers) or self.sockets:
+            raise RuntimeError("scenario endpoint cleanup incomplete")
+        self.joined = True
+
+    def receipt(self):
+        return {"requests": self.requests, "connections": self.connections,
+                "provider_complete": self.scenario.phase == "complete", "provider_refused": self.error,
+                "provider_result_order": self.scenario.result_order,
+                "handlers_joined": self.joined and not self.sockets and all(not t.is_alive() for t in self.handlers)}
 
 
 class Endpoint(http.server.BaseHTTPRequestHandler):
@@ -294,39 +681,45 @@ class Endpoint(http.server.BaseHTTPRequestHandler):
 
 
 class Case:
-    def __init__(self, root, binary, timezone="UTC", tool=False):
+    def __init__(self, root, binary, timezone="UTC", tool=False, scenario=None):
         root.mkdir()
         self.root, self.binary = root, binary
         self.env = isolated_env(root, timezone)
         self.workspace = root / "workspace"
         self.workspace.mkdir()
         (self.workspace / "artifact.txt").write_text("SYNTHETIC_TOOL_RESULT λ\n")
-        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Endpoint)
-        self.server.daemon_threads = True
-        self.server.requests = 0
-        self.server.request_lock = threading.Lock()
-        self.server.tool = tool
-        self.server.artifact = self.workspace / "artifact.txt"
-        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
-        self.thread.start()
-        config = root / "config/muse"
-        config.mkdir()
-        # The recorder intentionally drops prompt/tool/result and arbitrary env.
-        hook = root / "hook.py"
-        hook.write_text("import json,os,sys\n"
-                        "p=json.loads(sys.stdin.read(65536))\n"
-                        "p={k:p[k] for k in ('hook_event_name','session_id','transcript_path','cwd','source','reason') if k in p}\n"
-                        "e={k:os.environ[k] for k in ('MUSE_SESSION_ID','MUSE_THREAD_ID') if k in os.environ}\n"
-                        "with open(sys.argv[1],'a') as f:f.write(json.dumps({'payload':p,'env':e})+'\\n')\n")
-        command = shlex.join([sys.executable, str(hook), str(root / "hooks.jsonl")])
-        hooks = {event: [{"hooks": [{"type": "command", "command": command, "timeout": 3}]}]
-                 for event in ("SessionStart", "UserPromptSubmit", "Stop", "SessionEnd",
-                               "PostToolUseFailure", "StopFailure")}
-        write_json(config / "settings.json", {"schema_version": 1,
-                   "endpoint_transport": {"base_url": "http://127.0.0.1:" +
-                                          str(self.server.server_port), "auth": "bearer"}, "hooks": hooks})
-        write_json(config / "auth.json", {"schema_version": 1, "providers": {
-            "meta": {"api_key": "synthetic-loopback-only-not-a-credential"}}})
+        self.scenario = ToolScenario(scenario, self.workspace) if scenario else None
+        self.server = (ScenarioServer(self.scenario) if scenario else
+                       http.server.ThreadingHTTPServer(("127.0.0.1", 0), Endpoint))
+        try:
+            self.server.daemon_threads = scenario is None
+            self.server.requests = 0
+            self.server.request_lock = threading.Lock()
+            self.server.tool = tool
+            self.server.artifact = self.workspace / "artifact.txt"
+            self.thread = threading.Thread(target=self.server.serve_forever, daemon=scenario is None)
+            config = root / "config/muse"
+            config.mkdir()
+            # The recorder intentionally drops prompt/tool/result and arbitrary env.
+            hook = root / "hook.py"
+            hook.write_text("import json,os,sys\n"
+                            "p=json.loads(sys.stdin.read(65536))\n"
+                            "p={k:p[k] for k in ('hook_event_name','session_id','transcript_path','cwd','source','reason') if k in p}\n"
+                            "e={k:os.environ[k] for k in ('MUSE_SESSION_ID','MUSE_THREAD_ID') if k in os.environ}\n"
+                            "with open(sys.argv[1],'a') as f:f.write(json.dumps({'payload':p,'env':e})+'\\n')\n")
+            command = shlex.join([sys.executable, str(hook), str(root / "hooks.jsonl")])
+            hooks = {event: [{"hooks": [{"type": "command", "command": command, "timeout": 3}]}]
+                     for event in ("SessionStart", "UserPromptSubmit", "Stop", "SessionEnd",
+                                   "PostToolUseFailure", "StopFailure")}
+            write_json(config / "settings.json", {"schema_version": 1,
+                       "endpoint_transport": {"base_url": "http://127.0.0.1:" +
+                                              str(self.server.server_address[1]), "auth": "bearer"}, "hooks": hooks})
+            write_json(config / "auth.json", {"schema_version": 1, "providers": {
+                "meta": {"api_key": "synthetic-loopback-only-not-a-credential"}}})
+            self.thread.start()
+        except BaseException:
+            self.server.server_close()
+            raise
 
     def argv(self, mode):
         return [str(self.binary), mode, "--provider", "meta", "--model", MODEL,
@@ -336,12 +729,19 @@ class Case:
         return run_process(self.argv("exec") + ["--disable-reminders", "--no-foreign-personal-context",
                            "--max-model-steps", "3", "--workspace",
                            str(self.workspace)] + list(extra) + [PROMPT],
-                           env=self.env, cwd=self.workspace)
+                           env=self.env, cwd=self.workspace,
+                           **({"timeout": max(.001, self.server.deadline - time.monotonic()),
+                               "group_limit": True, "abort": lambda: self.server.error,
+                               "evidence": self.root} if self.scenario else {}))
 
     def logs(self):
-        return sorted((self.root / "data/muse/sessions").glob("*/*/*/*/session.jsonl"))
+        paths = (self.root / "data/muse/sessions").glob("*/*/*/*/session.jsonl")
+        return sorted(itertools.islice(paths, 2) if self.scenario else paths)
 
     def close(self):
+        if self.scenario:
+            self.server.close(self.thread)
+            return
         self.server.shutdown()
         self.server.server_close()
         self.thread.join(timeout=3)
@@ -422,6 +822,91 @@ def retained_turn_assertions(path, expected_runs, artifact=None):
             json.loads(calls[0][1].get("args", "null")) == {"path": str(artifact), "offset": 1, "limit": 10} and
             results[0][1].get("text") == "Read text file `" + str(artifact) + "`.\n1|SYNTHETIC_TOOL_RESULT λ")
     return checks
+
+
+def scenario_tool_receipt(case, path):
+    """Inspect controlled joins only; never infer typed status from result prose."""
+    scenario = case.scenario
+    if not path.resolve(strict=True).is_relative_to(case.root.resolve(strict=True)):
+        raise RuntimeError("scenario native path refused")
+    descriptor = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
+    with os.fdopen(descriptor, "rb") as source:
+        info = os.fstat(source.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_size > FILE_LIMIT:
+            raise RuntimeError("scenario native regular-file byte limit")
+        data = source.read(FILE_LIMIT + 1)
+        if len(data) > FILE_LIMIT:
+            raise RuntimeError("scenario native file byte limit")
+    rows = logical_rows(data)
+    calls, results, owner, batch, call_position = [], [], None, None, None
+    for position, (_, _, row) in enumerate(rows):
+        if row.get("payload_type") != "runtime.session":
+            continue
+        payload = row.get("payload", {})
+        event = payload.get("event", {})
+        kind = event.get("kind")
+        if kind not in ("assistant_tool_calls_committed", "tool_result_batch_committed"):
+            continue
+        if row.get("stream", {}).get("id") != path.parent.name or payload.get("kind") != "run":
+            raise RuntimeError("scenario tool owner refused")
+        if kind == "assistant_tool_calls_committed":
+            if calls or results or not isinstance(payload.get("run_id"), str) or not payload["run_id"]:
+                raise RuntimeError("scenario call transition refused")
+            owner, batch, call_position = payload["run_id"], event.get("message_id"), position
+            calls = event.get("tool_calls")
+            if not isinstance(batch, str) or not batch or not isinstance(calls, list) or len(calls) != scenario.calls:
+                raise RuntimeError("scenario call count refused")
+            for index, call in enumerate(calls):
+                if (not isinstance(call, dict) or set(call) != {"id", "call_id", "name", "args"} or
+                        call["id"] != "fc_control_" + str(index) or call["call_id"] != scenario.call_ids()[index] or
+                        call["name"] != "read_file" or not isinstance(call["args"], str) or
+                        json.loads(call["args"]) != scenario.arguments(index)):
+                    raise RuntimeError("scenario call identity or path refused")
+        else:
+            if (not calls or results or position <= call_position or payload.get("run_id") != owner or
+                    event.get("batch_id") != batch):
+                raise RuntimeError("scenario result transition refused")
+            results = event.get("results")
+            if not isinstance(results, list) or len(results) != scenario.calls:
+                raise RuntimeError("scenario result count refused")
+            seen = set()
+            for result in results:
+                if (not isinstance(result, dict) or set(result) != {"tool_call_index", "tool_call_id", "text"} or
+                        type(result["tool_call_index"]) is not int or
+                        not 0 <= result["tool_call_index"] < scenario.calls or
+                        result["tool_call_index"] in seen or
+                        result["tool_call_id"] != scenario.call_ids()[result["tool_call_index"]] or
+                        not isinstance(result["text"], str)):
+                    raise RuntimeError("scenario result index or identity refused")
+                seen.add(result["tool_call_index"])
+    if len(calls) != scenario.calls or len(results) != scenario.calls:
+        raise RuntimeError("scenario missing controlled tool observations")
+    success = "unavailable"
+    if scenario.name != "exec-read-missing":
+        expected = ["SYNTHETIC_TOOL_RESULT λ", "SYNTHETIC_SECOND_RESULT"]
+        success = "matched" if all(result["text"] == "Read text file `" +
+            str(scenario.paths[result["tool_call_index"]]) + "`.\n1|" + expected[result["tool_call_index"]]
+            for result in results) else "mismatched"
+    return {"success_output": success, "observed_shape": "call-result-batch", "calls": len(calls), "results": len(results),
+            "call_ids_unique": True, "item_ids_unique": True, "result_indices_unique": True,
+            "call_result_association": True, "batch_owner_join": True, "call_before_result": True,
+            "result_order": [result["tool_call_index"] for result in results] == list(range(scenario.calls)),
+            "typed_status": "unavailable", "cancellation": "unavailable", "parallel_execution": "unavailable"}
+
+
+def probe_tool_scenario(case):
+    """Run one opt-in finite read scenario; raw command evidence stays private."""
+    command = case.execute()
+    write_json(case.root / "fresh-command.json", command)
+    paths = case.logs()
+    receipt = {"assertions": {"command_success": command["exit"] == 0 and not command["timeout"],
+                               "one_root_log": len(paths) == 1}}
+    if len(paths) == 1:
+        receipt["tools"] = scenario_tool_receipt(case, paths[0])
+        receipt["assertions"]["controlled_success_output"] = receipt["tools"]["success_output"] != "mismatched"
+        write_json(case.root / "private-attribution.json", {
+            "native_sha256": file_digest(paths[0]), "command_sha256": file_digest(case.root / "fresh-command.json")})
+    return receipt
 
 
 def export_diagnostics(case, source, name):
@@ -742,31 +1227,50 @@ def native_run(binary, output, selected=None):
                                       ("exec-minus12", probe_exec, "Etc/GMT+12"),
                                       ("exec-plus14", probe_exec, "Pacific/Kiritimati"),
                                       ("exec-tool", probe_exec, "UTC"),
+                                      *((name, probe_tool_scenario, "UTC") for name in TOOL_SCENARIOS),
                                       ("msp", probe_msp, "UTC"), ("pty", probe_pty, "UTC")):
-            if selected and name not in selected:
+            if ((name in TOOL_SCENARIOS and (not selected or name not in selected)) or
+                    (selected and name not in selected)):
                 continue
-            case = Case(output / name, binary, timezone, tool=name == "exec-tool")
+            scenario = name in TOOL_SCENARIOS
+            case = None
             try:
+                case = Case(output / name, binary, timezone, tool=name == "exec-tool",
+                            **({"scenario": name} if scenario else {}))
                 report["cases"][name] = probe(case)
             except (KeyboardInterrupt, SystemExit) as error:
-                report["cases"][name] = {"failed": type(error).__name__, "detail": str(error)}
+                report["cases"][name] = {"failed": type(error).__name__, "detail": "scenario interrupted" if scenario else str(error)}
                 raise
             except Exception as error:
-                report["cases"][name] = {"failed": type(error).__name__, "detail": str(error)}
-                command = case.root / "fresh-command.json"
-                if command.exists():
+                report["cases"][name] = {"failed": type(error).__name__, "detail": "scenario refused" if scenario else str(error)}
+                command = case.root / "fresh-command.json" if case else None
+                if command is not None and command.exists() and not scenario:
                     report["cases"][name]["fresh"] = json.loads(read_limited(command).decode())
             finally:
-                case.close()
-                report["cases"][name]["timezone"] = timezone
-                report["cases"][name]["observed_utc"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
                 try:
-                    report["cases"][name]["sessions"] = [inspect_session(path) for path in case.logs()]
-                    hooks = case.root / "hooks.jsonl"
-                    report["cases"][name]["hooks"] = [json.loads(line) for line in read_limited(hooks, HOOK_LIMIT).decode().splitlines()] if hooks.exists() else []
+                    if case is not None:
+                        case.close()
                 except Exception as error:
-                    report["cases"][name].update(failed=type(error).__name__, detail=str(error))
-                write_json(output / "report.json", report)
+                    report["cases"][name].update(failed=type(error).__name__, detail="endpoint cleanup failed")
+                if case is None:
+                    write_json(output / "report.json", report)
+                elif scenario:
+                    receipt = case.server.receipt()
+                    report["cases"][name]["endpoint"] = receipt
+                    report["cases"][name].setdefault("assertions", {}).update(
+                        provider_complete=receipt["provider_complete"], provider_accepted=not receipt["provider_refused"],
+                        handlers_joined=receipt["handlers_joined"])
+                    write_json(output / "report.json", report)
+                else:
+                    report["cases"][name]["timezone"] = timezone
+                    report["cases"][name]["observed_utc"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+                    try:
+                        report["cases"][name]["sessions"] = [inspect_session(path) for path in case.logs()]
+                        hooks = case.root / "hooks.jsonl"
+                        report["cases"][name]["hooks"] = [json.loads(line) for line in read_limited(hooks, HOOK_LIMIT).decode().splitlines()] if hooks.exists() else []
+                    except Exception as error:
+                        report["cases"][name].update(failed=type(error).__name__, detail=str(error))
+                    write_json(output / "report.json", report)
     finally:
         write_json(output / "report.json", report)
     return report
@@ -778,7 +1282,7 @@ def main():
     parser.add_argument("--output", required=True, type=pathlib.Path,
                         help="new disposable directory; contains native logs, never commit it")
     parser.add_argument("--cases", nargs="+", choices=["exec-utc", "exec-minus12", "exec-plus14",
-                                                      "exec-tool", "msp", "pty"])
+                                                      "exec-tool", "msp", "pty", *TOOL_SCENARIOS])
     args = parser.parse_args()
     with termination_cleanup():
         report = native_run(args.binary.resolve(strict=True), args.output.absolute(), args.cases)
