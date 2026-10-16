@@ -68,13 +68,8 @@ func (p *pass) observeLabels(ctx context.Context) {
 			delete(cache.Entries, id)
 			continue
 		}
-		checksum, stamp, err := p.local.LabelRevision(id)
-		_, registrationContext := providers[reg.Harness.Name].(agentapi.RegistrationLabelContextProvider)
-		if err != nil && !(registrationContext && errors.Is(err, state.ErrNoLabelPublication)) {
-			if errors.Is(err, state.ErrDurableStorageRecovery) {
-				addError(p.result.Errors, id, err)
-				p.unreadable[id] = true
-			}
+		checksum, stamp, ok := p.labelRevision(id, providers[reg.Harness.Name])
+		if !ok {
 			delete(cache.Entries, id)
 			continue
 		}
@@ -87,6 +82,16 @@ func (p *pass) observeLabels(ctx context.Context) {
 	requests := p.prepareLabelRequests(ctx, providers, &cache, ids, eligible)
 	requests = prioritizeLabelRequests(requests, providers, p.opts.LabelEnvironment, &cache)
 	results := lookupLabelRequests(ctx, providers, p.opts.LabelEnvironment, requests)
+	p.recordLabelResults(requests, results, &cache)
+	trimLabelCache(&cache)
+	if err := p.local.SaveLabels(cache); err != nil {
+		addError(p.result.Errors, "session-labels", err)
+	}
+}
+
+// recordLabelResults keeps each lookup's observation, with backoff for an
+// unavailable one, and the labels this pass applies.
+func (p *pass) recordLabelResults(requests []agentapi.LabelRequest, results map[string]archive.SessionLabel, cache *state.LabelCache) {
 	for _, request := range requests {
 		id := request.Registration.ArchiveSessionID
 		entry := cache.Entries[id]
@@ -111,7 +116,11 @@ func (p *pass) observeLabels(ctx context.Context) {
 			p.opts.labels[id] = entry
 		}
 	}
-	// The cache is a bounded set of observations, never a native inventory.
+}
+
+// trimLabelCache bounds the cache: it is a set of observations, never a
+// native inventory.
+func trimLabelCache(cache *state.LabelCache) {
 	if len(cache.Entries) > state.MaxLabelCacheEntries {
 		keys := make([]string, 0, len(cache.Entries))
 		for id := range cache.Entries {
@@ -122,10 +131,25 @@ func (p *pass) observeLabels(ctx context.Context) {
 			delete(cache.Entries, id)
 		}
 	}
-	pruneLabelTargetCursors(&cache)
-	if err := p.local.SaveLabels(cache); err != nil {
-		addError(p.result.Errors, "session-labels", err)
+	pruneLabelTargetCursors(cache)
+}
+
+// labelRevision is the session's label revision, or none yet before its
+// first publication for a provider that takes its context from the
+// registration. ok is false when the session cannot be named this pass.
+func (p *pass) labelRevision(id string, provider agentapi.LabelProvider) (checksum, stamp string, ok bool) {
+	checksum, stamp, err := p.local.LabelRevision(id)
+	if err == nil {
+		return checksum, stamp, true
 	}
+	if _, fromRegistration := provider.(agentapi.RegistrationLabelContextProvider); fromRegistration && errors.Is(err, state.ErrNoLabelPublication) {
+		return "", "", true
+	}
+	if errors.Is(err, state.ErrDurableStorageRecovery) {
+		addError(p.result.Errors, id, err)
+		p.unreadable[id] = true
+	}
+	return "", "", false
 }
 
 func (p *pass) labelEligible(reg archive.SessionRegistration) bool {
@@ -170,14 +194,10 @@ func (p *pass) prepareLabelRequests(ctx context.Context, providers map[string]ag
 		}
 		provider := providers[reg.Harness.Name]
 		fromRegistration, registrationContext := provider.(agentapi.RegistrationLabelContextProvider)
-		checksum, stamp, err := p.local.LabelRevision(id)
 		// A provider that needs nothing of the retained source is asked
 		// before the first publication, so that one carries the name.
-		if err != nil && !(registrationContext && errors.Is(err, state.ErrNoLabelPublication)) {
-			if errors.Is(err, state.ErrDurableStorageRecovery) {
-				addError(p.result.Errors, id, err)
-				p.unreadable[id] = true
-			}
+		checksum, stamp, ok := p.labelRevision(id, provider)
+		if !ok {
 			continue
 		}
 		interpretation := "generic-label-context-v1"
