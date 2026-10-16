@@ -45,6 +45,11 @@ find none say so without creating the data directory.
   off after 24 hours of passes is reported as failed, with "still not read
   after 24 hours of retries", on every pass until one reads it.
 
+  Unrelated Codex database checkpoints are revalidated with a fresh private
+  index snapshot under the same resource limits. They do not by themselves
+  mean that the selected session changed. An actual rollout change, or an
+  index that cannot be read consistently, still waits for a later pass.
+
   A pass stops starting new sessions after about ten minutes, and `sync`
   counts the queued sessions it did not get to:
 

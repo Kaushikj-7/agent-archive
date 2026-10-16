@@ -6,6 +6,10 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Codex capture and backfill revalidate unchanged sessions after unrelated
+  database checkpoints instead of repeatedly reporting that their source changed.
+  Fresh private snapshots retain the existing time, memory, and source checks.
+
 - An authorized human maintainer can explicitly approve performance-budget
   exceptions on their own PR with a current-commit comment command. Explicit
   revocation and later review decisions control that approval; ordinary CI
