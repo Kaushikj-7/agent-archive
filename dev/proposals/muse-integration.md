@@ -32,8 +32,13 @@ native conversational acceptance.
 Original P1/P4 residual requirements remain: qualified usage authority, cache,
 reasoning/cost, task/call and MCP/Git/tool pairing, model switches, complete
 export/view agreement, complete names/version/skills, native show/search, launch
-into Muse and replay. Those metrics are unavailable in
-the current local output. P2 capture/admission/storage/read-back and P3 child,
+into Muse and replay. Complete tool/status metrics remain unavailable in
+the current local output. A finite own committed-call slice now retains minimal
+call IDs and exact prior result joins, with observed invocation counts only for
+nonempty enriched sources without erased legacy tool rows. Blank calls remain
+unlisted in narrative handoff; normalized result objects and result/error counts
+remain omitted to preserve older typed consumers. Native qualification is one
+single-item case; multi-item/partial/reordered grammar has synthetic coverage. P2 capture/admission/storage/read-back and P3 child,
 checkpoint/rewrite, platform, privacy/retention and resource/release gates retain
 their original owners and acceptance below. [Automatic handoff](../qualification/muse/local-handoff.md)
 now uses one qualified effective XDG data home, bounded

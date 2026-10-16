@@ -1,7 +1,7 @@
 {
   "version": 1,
   "format": "muse-jsonl",
-  "status": "Explicit local own conversation and input/output observations only; capture unavailable",
+  "status": "Explicit local own conversation, input/output observations and committed tool identity only; capture unavailable",
   "record_schema": "schemas/muse-retained-record.schema.json",
   "envelope": [
     "v",
@@ -892,6 +892,40 @@
         "kind": "run",
         "event_kind": "model_completed"
       }
+    },
+    {
+      "type": "runtime.session",
+      "payload_schema": 1,
+      "fields": [
+        "kind",
+        "event_kind",
+        "run_id",
+        "source_run_record_id",
+        "source_run_record_sequence",
+        "message_id",
+        "tool_calls"
+      ],
+      "fixed_fields": {
+        "kind": "run",
+        "event_kind": "assistant_tool_calls_committed"
+      }
+    },
+    {
+      "type": "runtime.session",
+      "payload_schema": 1,
+      "fields": [
+        "kind",
+        "event_kind",
+        "run_id",
+        "source_run_record_id",
+        "source_run_record_sequence",
+        "batch_id",
+        "results"
+      ],
+      "fixed_fields": {
+        "kind": "run",
+        "event_kind": "tool_result_batch_committed"
+      }
     }
   ],
   "privacy": "Shared policy applies to every retained string/key; changed authority refuses; no raw record_json, permission bodies, native checksums, provider/context or native binding paths",
@@ -900,7 +934,7 @@
     "cache",
     "reasoning",
     "cost",
-    "tools",
+    "tool names/arguments/result bodies/status and result/error counts",
     "model_switches",
     "children"
   ],
