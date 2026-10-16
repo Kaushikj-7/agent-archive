@@ -78,10 +78,11 @@ func TestRemoteCompleteSelectionMatchesExhaustiveFallback(t *testing.T) {
 		for _, order := range []QueryOrder{CaptureOrder, ActivityOrder} {
 			for _, skill := range []string{"", "selected"} {
 				for _, scope := range []string{"", "alternate", "missing"} {
-					opts := ListOptions{}
+					var scopeMatch func(archive.Metadata) bool
 					if scope != "" {
-						opts.ScopeMatch = func(m archive.Metadata) bool { return m.ProjectID == scope }
+						scopeMatch = func(m archive.Metadata) bool { return m.ProjectID == scope }
 					}
+					opts := ListOptions{ScopeMatch: scopeMatch}
 					q := MetadataQuery{Filter: Filter{Harness: "claude", Replays: ReplaysIncluded, Skill: skill}, Order: order, TopLevelOnly: topLevel, Limit: 5}
 					want, err := SelectMetadata(t.Context(), remote, "sessions", q, opts)
 					if err != nil {
