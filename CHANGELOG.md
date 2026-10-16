@@ -48,6 +48,10 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Local native validation foundation
 
+- Add opt-in offline-tested Muse read success, missing-file and two-call
+  qualification controls with finite provider/process bounds and joined cleanup.
+  These controls add no native status, cancellation or parallel-execution claim.
+
 - Muse local snapshots now supply exact raw content proofs and bounded provisional
   startup facts. Protected native binding v2 can retain a successful raw validation
   checkpoint through the collector's prepared commit. Real Muse capture and empty
