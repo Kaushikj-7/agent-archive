@@ -4,7 +4,7 @@
 [![Go 1.27](https://img.shields.io/badge/go-1.27.2-00ADD8?logo=go)](go.mod)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-A lightweight CLI that captures Claude Code, Codex, and Cursor sessions and stores them in cloud storage (S3 or R2).
+A CLI for archiving sessions and continuing work across Claude Code, Codex, and Cursor.
 
 Continue a Claude Code session in Codex: browse, select, and hand off.
 
@@ -12,21 +12,9 @@ Continue a Claude Code session in Codex: browse, select, and hand off.
 
 *Demos use synthetic sessions, with loading waits trimmed.*
 
-OpenAI and Anthropic are constantly one-upping each other or the best model, but it's a pain to switch between their coding agents. Every time you switch, you lose your history, and then don't have a single source of truth for where all your sessions live. Also, if you run out of limits in the middle of a session, it's very annoying to have to figure out how to hand that session over to the other coding agent.
-
-`agent-archive` solves these problems, and can perform the following:
-
-- Automatically upload Claude Code, Codex, and Cursor transcripts into a cloud object storage like S3 or R2.
-- Hand off a session from one coding agent to another. Type `/handoff codex` in Claude Code (or ask for `$handoff` in Codex) and Codex opens in a new terminal tab or window with the session as its context (on Linux, a new tmux window; outside tmux it prints the command to paste); from a terminal, run `agent-archive handoff`, pick a session (press `/` and type a few words, a PR number, or a branch to narrow the list), and press Enter. Or name it: `agent-archive handoff "flaky retention"`. No copying and pasting. Useful especially if you run into rate limits halfway through a session ([handoff guide](docs/guides/handoff.md)).
-- Pull a past session into the agent you are in, by asking. Setup gives Claude Code, Codex, and Cursor an `agent-archive` skill, so "pull in the auth session from Codex" or "continue where my other agent left off" finds the session by a word or two (its name, branch, project, or PR number) and hands it to the agent as context, without you typing a command ([agent skills](docs/guides/agent-skills.md)).
-- Hand off a session from one computer to another with the same `agent-archive handoff`. When working locally across multiple computers, agent-archive makes it very easy to continue sessions and to keep a single source of truth for all of your sessions.
-- View all of your past sessions across coding agents with `agent-archive list` (from inside a repository it shows that repository's sessions first; `agent-archive list "retention"` finds one by words). This allows you to set up automations to understand how you're using your agents, how different coding agents perform across different tasks, and can help you perform meta-improvements on your AGENTS.md and lint rules that span across Claude Code, Codex, and Cursor.
-
-## See your usage across agents
-
-Run `agent-archive stats` to explore session counts, tokens, estimated spend, and breakdowns by agent, model, and project. Switch views with a keypress ([usage guide](docs/guides/stats.md)).
-
-![Agent Archive stats showing 150 synthetic sessions, estimated spend, and usage across agents](docs/assets/demos/stats.gif)
+- Capture sessions automatically in your own S3 or R2 bucket.
+- Continue work across agents and computers ([handoff guide](docs/guides/handoff.md)).
+- Ask an agent to pull in a past session using the bundled [agent skills](docs/guides/agent-skills.md).
 
 ## Quickstart
 
@@ -65,6 +53,22 @@ To add a second machine, install and run setup there with the same bucket (see [
 
 **Platforms.** macOS (Apple Silicon and Intel) and Linux (x86-64 and arm64) capture in the background. On Linux the collector is a systemd user timer, which needs systemd 240 or newer and a user manager (`loginctl enable-linger` on a headless machine); R2 credentials are kept in a private file rather than the Keychain; and Cursor capture is best effort, because the real Cursor app and `cursor-agent` hooks have not been verified there. Windows is not supported. [What was tested, and what was not](docs/getting-started/install.md#platforms).
 
+## Understand your usage
+
+Run `agent-archive stats` to explore session counts, tokens, estimated spend, and breakdowns by agent, model, and project. Switch views with a keypress ([usage guide](docs/guides/stats.md)).
+
+![Agent Archive stats showing 150 synthetic sessions, estimated spend, and usage across agents](docs/assets/demos/stats.gif)
+
+## Find and revisit sessions
+
+Run `agent-archive list` to browse archived sessions across agents. Press `/` to filter by topic, project, branch, or PR number, then select a session to view it ([browsing guide](docs/guides/list-and-show.md)).
+
+![Browse 151 synthetic sessions across agents and filter the list by topic](docs/assets/demos/list.gif)
+
+Use a session ID from `list` with `agent-archive show SESSION_ID` to open its summary, or add `--transcript` to read the conversation.
+
+Setup also gives Claude Code, Codex, and Cursor an `agent-archive` skill, so you can ask an agent to "pull in the auth session from Codex" and it runs the read-only commands for you; Claude Code asks before it first uses the skill and before it runs its commands ([agent skills](docs/guides/agent-skills.md#permissions)). After upgrading, `install.sh` runs `agent-archive setup --refresh` to keep the skills current.
+
 ## How it works
 
 ```mermaid
@@ -81,7 +85,7 @@ flowchart LR
 
 Setup edits each included app's hook settings, adds one background job (a LaunchAgent on macOS, a systemd user timer on Linux), and writes two skill files for Claude Code (in `~/.claude/skills`) and two for Codex and Cursor together (in `~/.agents/skills`; `agent-archive setup --no-skills` skips them); for Cursor it also adds a missing `version` field ([everything it changes](docs/getting-started/setup.md#what-setup-changes-on-your-machine)). Old sessions are deleted from the bucket after 90 days by default.
 
-## Core commands
+## Command reference
 
 | Command | What it does | Example |
 | --- | --- | --- |
@@ -96,17 +100,9 @@ Setup edits each included app's hook settings, adds one background job (a Launch
 | `backfill` | Preview sessions already on this machine for import. | `agent-archive backfill --dry-run` |
 | `handoff` | Continue a session in another agent; inside Claude Code, `/handoff codex`. | `agent-archive handoff` |
 
-Setup also gives Claude Code, Codex, and Cursor an `agent-archive` skill, so you can ask an agent to "pull in the auth session from Codex" and it runs the read-only commands for you; Claude Code asks before it first uses the skill and before it runs its commands ([agent skills](docs/guides/agent-skills.md#permissions)). After upgrading, `install.sh` runs `agent-archive setup --refresh` to keep the skills current.
-
 Listings return at most 50 matching sessions by default: text shows top-level sessions by last activity; JSON includes subagents and sorts by capture time. For analytics over every match, use `agent-archive list --json --limit 0`; add `--all-projects` to include every project when running inside a repository, and `--replays include` if your analysis should include replay sessions (hidden by default). Unreadable metadata is skipped with a warning on stderr ([list guide](docs/guides/list-and-show.md), [JSON contract](docs/reference/json-output.md)).
 
-### Browse your sessions
-
-Use `agent-archive list` to browse sessions across agents, then press `/` to filter by topic, project, branch, or PR number.
-
-![Browse 151 synthetic sessions across agents and filter the list by topic](docs/assets/demos/list.gif)
-
-Use a session ID from `list` with `show`. More commands (machines, uninstall, purge, …) are under `agent-archive help advanced`; for every command and option, see the **[full CLI reference](docs/reference/cli.md)** or run `agent-archive help COMMAND`.
+More commands (machines, uninstall, purge, …) are under `agent-archive help advanced`; for every command and option, see the **[full CLI reference](docs/reference/cli.md)** or run `agent-archive help COMMAND`.
 
 [Install](docs/getting-started/install.md) ·
 [Setup](docs/getting-started/setup.md) ·
