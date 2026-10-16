@@ -115,6 +115,12 @@ func TestProductionAllowlistAndSchemaMatchClosedRetainedDispatch(t *testing.T) {
 				switch prop["type"] {
 				case "integer":
 					fields[key] = json.Number("1")
+				case "array":
+					if key == "tool_calls" {
+						fields[key] = []any{map[string]any{"call_id": "synthetic_call"}}
+					} else {
+						fields[key] = []any{map[string]any{"tool_call_index": json.Number("0"), "tool_call_id": "synthetic_call"}}
+					}
 				case "boolean":
 					fields[key] = false
 				default:

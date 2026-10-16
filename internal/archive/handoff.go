@@ -615,7 +615,8 @@ func callToolName(call NormalizedToolCall) string {
 // completion echo that no invocation reported (dedupeToolCalls already
 // dropped the ones that were) is listed only when its summary says what ran,
 // such as a CommandExecution's command; an Extension item with nothing to
-// show says only that something finished.
+// show says only that something finished. Privacy-omitted Muse names/actions
+// also remain unlisted, independently of their observed call identity.
 func listedCall(call NormalizedToolCall, root string) (name, summary string, listed bool) {
 	name = callToolName(call)
 	if name == "" {

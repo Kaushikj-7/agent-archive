@@ -8,6 +8,12 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Local native validation foundation
 
+- Muse retains own committed tool-call identities and validates exact prior
+  result batch/index/call joins after native loss. Nonempty enriched sources
+  expose observed call counts; legacy or mixed coverage stays unavailable.
+  Tool names, arguments, result bodies/status and result/error counts remain
+  omitted; narrative handoff keeps explicit unavailable detail. Capture stays
+  disabled and complete tool parity remains pending.
 - Muse local snapshots now supply exact raw content proofs and bounded provisional
   startup facts. Protected native binding v2 can retain a successful raw validation
   checkpoint through the collector's prepared commit. Real Muse capture and empty
