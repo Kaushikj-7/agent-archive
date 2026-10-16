@@ -891,10 +891,10 @@ func metadataWithLinks(ctx context.Context, store storage.ObjectStore, metadata 
 // NativeSkillUses is left out: it is an intermediate deriveSkills folds into
 // the metadata's skills_used, which the sidecar printed first already shows.
 //
-// Each tool call carries the tool's name, its retained arguments, and the
-// result it was linked to (record index, error flag, and retained output
-// size). tool_results lists the results themselves, including any the parser
-// could not safely link to a call.
+// Each tool call carries its observed identity and whichever name, arguments
+// and individual result facts the retained evidence establishes. Unknown result
+// status or body size stays absent. tool_results contains only representable
+// result facts, including results the parser could not safely link to a call.
 //
 // Trimmed appears only when --max-bytes trimmed the view (see fitNormalized).
 type normalizedOutput struct {

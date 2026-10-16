@@ -53,6 +53,13 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Local native validation foundation
 
+- Muse retains own committed tool-call identities and validates exact prior
+  result batch/index/call joins after native loss. Nonempty enriched sources
+  expose observed call counts; legacy or mixed coverage stays unavailable.
+  Tool names, arguments, result bodies/status and result/error counts remain
+  omitted; narrative handoff keeps explicit unavailable detail. Capture stays
+  disabled and complete tool parity remains pending.
+
 - Add opt-in offline-tested Muse read success, missing-file and two-call
   qualification controls with finite provider/process bounds and joined cleanup.
   These controls add no native status, cancellation or parallel-execution claim.
