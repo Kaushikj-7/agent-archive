@@ -177,6 +177,10 @@ func (s *Store) loadSessionDeletion(id string) (SessionDeletion, bool, error) {
 	if unsafeDurableSessionID(id) {
 		return j, true, ErrDurableStorageRecovery
 	}
+	inactive, err := s.deletionInactive()
+	if err != nil || inactive {
+		return j, !inactive, err
+	}
 	home, err := local.OpenRootedHome(s.home)
 	if err != nil {
 		return j, true, err

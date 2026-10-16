@@ -17,7 +17,7 @@ type PublicationSelection struct {
 	SourceSchemaVersion int             `json:"source_schema_version"`
 }
 
-// ImmutableStageHandle has no caller-selected filesystem path.
+// PublicationStageNamespace selects a closed, owner-validated stage store.
 type PublicationStageNamespace string
 
 const (
@@ -25,6 +25,7 @@ const (
 	DeletionSourceNamespace PublicationStageNamespace = "session-deletion-sources"
 )
 
+// ImmutableStageHandle has no caller-selected filesystem path.
 type ImmutableStageHandle struct {
 	Version          int                       `json:"version"`
 	Kind             PublicationPayloadKind    `json:"kind"`

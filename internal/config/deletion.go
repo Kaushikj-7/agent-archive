@@ -153,3 +153,53 @@ func checkDeletionSelectors(raw []byte) error {
 	}
 	return nil
 }
+
+// DeletionGuardRequired inspects only the selecting control fields retained by
+// a bounded projection. It grants no configuration or storage authority: full
+// configuration loading still validates every typed setting before use.
+func DeletionGuardRequired(projected []byte) (bool, error) {
+	if err := checkDeletionSelectors(projected); err != nil {
+		return false, err
+	}
+	raw, protected, err := unwrapDeletionConfig(projected)
+	if err != nil || protected {
+		return protected, err
+	}
+	var view struct {
+		Schema json.RawMessage `json:"schema_version"`
+	}
+	if err := json.Unmarshal(raw, &view); err != nil {
+		return false, err
+	}
+	return false, validateDeletionGuardVersion(bytes.TrimSpace(view.Schema))
+}
+
+func validateDeletionGuardVersion(raw []byte) error {
+	if len(raw) == 0 {
+		return nil
+	}
+	if raw[0] != '{' {
+		var version int
+		if err := json.Unmarshal(raw, &version); err != nil || bytes.Equal(raw, []byte("null")) || version < 0 || version > 17 {
+			return errors.New("unsupported deletion guard configuration version")
+		}
+		return nil
+	}
+	var version nativeAuthorityVersion
+	if err := json.Unmarshal(raw, &version); err != nil {
+		return err
+	}
+	if version.Writer == nativeAuthorityWriter {
+		if version.Version != 16 {
+			return errors.New("unsupported native authority configuration version")
+		}
+		if err := exactAuthorityObject(raw, []string{"version", "writer", "base"}); err != nil {
+			return err
+		}
+		return validateNativeBase(version.Base)
+	}
+	if err := exactAuthorityObject(raw, []string{"version", "writer"}); err != nil {
+		return err
+	}
+	return validateSupportedWriterVersion(writerVersion{Version: version.Version, Writer: version.Writer})
+}

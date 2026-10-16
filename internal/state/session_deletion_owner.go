@@ -16,6 +16,10 @@ func (s *Store) SessionDeletionPresent(id string) (present bool, err error) {
 	if unsafeDurableSessionID(id) {
 		return true, ErrDurableStorageRecovery
 	}
+	inactive, err := s.deletionInactive()
+	if err != nil || inactive {
+		return false, err
+	}
 	home, err := local.OpenRootedHome(s.home)
 	if err != nil {
 		return true, err
@@ -30,6 +34,10 @@ func (s *Store) SessionDeletionPresent(id string) (present bool, err error) {
 func (s *Store) loadDeletionControl(id string) (j SessionDeletion, found bool, err error) {
 	if unsafeDurableSessionID(id) {
 		return j, true, ErrDurableStorageRecovery
+	}
+	inactive, err := s.deletionInactive()
+	if err != nil || inactive {
+		return j, !inactive, err
 	}
 	home, err := local.OpenRootedHome(s.home)
 	if err != nil {
