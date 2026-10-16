@@ -212,13 +212,7 @@ func openSessionCatalog(ctx context.Context, cache *MetadataCache, store storage
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	err = rebuildCatalogLayout(ctx, db)
-	if err == nil {
-		_, err = db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS catalog_state (id INTEGER PRIMARY KEY CHECK(id=1), generation INTEGER NOT NULL, epoch TEXT NOT NULL, complete INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS sessions (key TEXT PRIMARY KEY, etag TEXT NOT NULL, hash TEXT NOT NULL, capture TEXT NOT NULL, activity TEXT NOT NULL, summary BLOB NOT NULL, search TEXT NOT NULL, lowerid TEXT NOT NULL, unlabeled INTEGER NOT NULL, summary_hash TEXT NOT NULL); CREATE INDEX IF NOT EXISTS sessions_capture ON sessions(capture DESC,key); CREATE INDEX IF NOT EXISTS sessions_activity ON sessions(activity DESC,capture DESC,key)`)
-	}
-	if err == nil {
-		err = initializeCatalogState(ctx, db)
-	}
+	err = initializeCatalogLayout(ctx, db)
 	if err != nil {
 		_ = db.Close()
 		var damaged *sqlite.Error
@@ -236,6 +230,17 @@ func openSessionCatalog(ctx context.Context, cache *MetadataCache, store storage
 	}
 	opts.Cache = cache
 	return &SQLiteSessionCatalog{db: db, store: store, opts: opts, namespace: catalogStoreNamespace(store)}, nil
+}
+
+// initializeCatalogLayout prepares a disposable projection before it can bind a view.
+func initializeCatalogLayout(ctx context.Context, db *sql.DB) error {
+	if err := rebuildCatalogLayout(ctx, db); err != nil {
+		return err
+	}
+	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS catalog_state (id INTEGER PRIMARY KEY CHECK(id=1), generation INTEGER NOT NULL, epoch TEXT NOT NULL, complete INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS sessions (key TEXT PRIMARY KEY, etag TEXT NOT NULL, hash TEXT NOT NULL, capture TEXT NOT NULL, activity TEXT NOT NULL, summary BLOB NOT NULL, search TEXT NOT NULL, lowerid TEXT NOT NULL, unlabeled INTEGER NOT NULL, summary_hash TEXT NOT NULL); CREATE INDEX IF NOT EXISTS sessions_capture ON sessions(capture DESC,key); CREATE INDEX IF NOT EXISTS sessions_activity ON sessions(activity DESC,capture DESC,key)`); err != nil {
+		return err
+	}
+	return initializeCatalogState(ctx, db)
 }
 
 // catalogLayoutVersion identifies the complete private projection, including
