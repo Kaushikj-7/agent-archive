@@ -16,14 +16,26 @@ snapshot for each iteration; `--no-cache` cases apply to list, which supports
 that flag. Local trace accounting uses a separate untimed invocation so trace
 recording does not inflate the benchmark's time and allocation measurements.
 Ordinary tests retain 1,800-session command-result and operation-budget gates.
+Picker checks validate every advertised visible row's identity, revision and
+order, including the initial 50-row window marker. Selected show/handoff JSON
+checks a changed output-visible revision. Handoff picker homes contain one
+synthetic registration per archived session; their missing native files remain
+inside those homes. Successful registration counts and attempted reads (where
+available) are reported separately. Cache eviction spans include inventory and
+filesystem deletion, counting only successful removals.
 `AGENT_ARCHIVE_READ_LATENCY=1` enables a modeled timing replay: 200 ms per page,
 400 microseconds per transferred key, and 160 ms per GET. These values are one
 explicit sensitivity decomposition within the observed full-page and GET ranges,
 not a calibration of the provider's page overhead and per-key cost.
 
-`BenchmarkReadPathListingPolicies` compares sequential, eight-range,
-sixteen-range and page-sized schedules across all three prefixes sharing
-sixteen slots. Its page/key delay decompositions are sensitivity assumptions:
+`BenchmarkReadPathListingPolicies` explicitly separates the legacy topology
+from post-PR1 projections. The legacy full-warm comparison uses sidecar-based
+canonical ranges in their own sixteen-slot pool, with independent sequential
+v2/v3 listings and strict-beyond boundary overread. The post-PR1 comparisons
+use one, eight, sixteen or page-sized ranges across a shared sixteen-slot pool
+and inclusive boundary termination. These labels describe the modeled policy;
+post-PR1 results do not establish behavior on a pre-fix binary. Its page/key
+delay decompositions are sensitivity assumptions:
 the observed full-page timings do not calibrate small-page latency. Qualified
 catalog root/delta scale accounting accompanies the catalog-reader work;
 mixed and maximum-body RSS/concurrency trials remain a separate measured step.

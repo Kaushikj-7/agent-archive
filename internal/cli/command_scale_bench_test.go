@@ -19,6 +19,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/listingindex"
 	"github.com/wangjohn/agent-archive/internal/platform"
+	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
@@ -451,6 +452,7 @@ func BenchmarkCommandReadPaths(b *testing.B) {
 						b.Log("synthetic latency: LIST page overhead200ms +400us/transferred key; GET160ms; assumed decomposition, not provider calibration")
 					}
 					env := benchmarkEnv(b, home, store)
+					seedReadPathRegistrations(b, home, size, command)
 					opens := 0
 					env.OpenStore = func(config.Config) (storage.ObjectStore, error) { opens++; return store, nil }
 					args := readPathBenchmarkArgs(command, state == readPathNoCache)
@@ -484,7 +486,7 @@ func BenchmarkCommandReadPaths(b *testing.B) {
 						b.StartTimer()
 						code, out, diagnostic := runReadPathBenchmark(args, command, env)
 						b.StopTimer()
-						if err := validateReadPathOutput(command, size, code, out); err != nil {
+						if err := validateReadPathOutput(command, size, code, out, state == readPathChanged); err != nil {
 							b.Fatalf("%v: %s", err, diagnostic)
 						}
 					}
@@ -495,7 +497,9 @@ func BenchmarkCommandReadPaths(b *testing.B) {
 					if err != nil {
 						b.Fatal(err)
 					}
-					observedEnv := benchmarkEnv(b, b.TempDir(), observed)
+					observationHome := b.TempDir()
+					observedEnv := benchmarkEnv(b, observationHome, observed)
+					seedReadPathRegistrations(b, observationHome, size, command)
 					if state == readPathWarm || state == readPathChanged {
 						if code, _, diagnostic := runReadPathBenchmark(args, command, observedEnv); code != 0 {
 							b.Fatalf("observation warmup: %d %s", code, diagnostic)
@@ -511,10 +515,14 @@ func BenchmarkCommandReadPaths(b *testing.B) {
 						return "", false
 					}
 					code, output, diagnostic := runReadPathBenchmark(args, command, observedEnv)
-					if err := validateReadPathOutput(command, size, code, output); err != nil {
+					if err := validateReadPathOutput(command, size, code, output, state == readPathChanged); err != nil {
 						b.Fatal(err)
 					}
-					for name, count := range readPathLocalCounts(diagnostic) {
+					localCounts := readPathLocalCounts(diagnostic)
+					if command == readPathHandoffPicker && localCounts["local-registrations"] != int64(size) {
+						b.Fatal("handoff registration accounting omitted fixture reads", localCounts)
+					}
+					for name, count := range localCounts {
 						b.ReportMetric(float64(count), name+"/op")
 					}
 
@@ -564,7 +572,7 @@ func runReadPathBenchmark(args []string, command readPathCommand, env Env) (int,
 	return code, out.Bytes(), diagnostic.String()
 }
 
-var readPathTraceCounter = regexp.MustCompile(`(rows-scanned|summary-B-hashed|summaries-decoded|entries-visited|key-dirs-evicted|evictions|registration reads|from cache|downloaded) ([0-9]+)`)
+var readPathTraceCounter = regexp.MustCompile(`(rows-scanned|summary-B-hashed|summaries-decoded|entries-visited|key-dirs-evicted|evictions|registration reads|registrations|from cache|downloaded) ([0-9]+)`)
 
 func readPathLocalCounts(diagnostic string) map[string]int64 {
 	counts := map[string]int64{}
@@ -588,7 +596,14 @@ func readPathLocalCounts(diagnostic string) map[string]int64 {
 		default:
 			continue
 		}
-		for _, match := range readPathTraceCounter.FindAllStringSubmatch(line, -1) {
+		_, counters, ok := strings.Cut(line, " · ")
+		if !ok {
+			_, counters, ok = strings.Cut(line, "(")
+		}
+		if !ok {
+			continue
+		}
+		for _, match := range readPathTraceCounter.FindAllStringSubmatch(counters, -1) {
 			count, _ := strconv.ParseInt(match[2], 10, 64)
 			counts[prefix+strings.ReplaceAll(match[1], " ", "-")] += count
 		}
@@ -610,6 +625,7 @@ func TestCommandReadPathOperationBudgets(t *testing.T) {
 			store := storagetest.NewMeasuredStore(mem, 0)
 			store.ListingModel = &storagetest.ListingLatencyModel{StopAtBoundary: true}
 			env := benchmarkEnv(t, home, store)
+			seedReadPathRegistrations(t, home, size, command)
 			args := readPathBenchmarkArgs(command, false)
 			if code, _, diag := runReadPathBenchmark(args, command, env); code != 0 {
 				t.Fatalf("warmup: %d %s", code, diag)
@@ -625,13 +641,16 @@ func TestCommandReadPathOperationBudgets(t *testing.T) {
 				store.ListingModel.Headers = headers
 				store.Reset()
 				code, out, diag := runReadPathBenchmark(args, command, env)
-				if err := validateReadPathOutput(command, size, code, out); err != nil {
+				if err := validateReadPathOutput(command, size, code, out, changed); err != nil {
 					t.Fatalf("changed=%v: %v %s", changed, err, diag)
 				}
 				m := store.Metrics()
 				maxGets := int64(2)
 				if changed {
 					maxGets += size / 100
+				}
+				if changed && command != readPathListPiped && m.Gets < size/100 {
+					t.Fatalf("changed metadata was not refreshed: %+v", m)
 				}
 				if m.Gets > maxGets || m.Lists > 20 || m.ListPages > 40 || m.ListKeys > 20000 || m.ListBytes > 8<<20 {
 					t.Fatalf("changed=%v exceeded operation budget: %+v", changed, m)
@@ -644,7 +663,7 @@ func TestCommandReadPathOperationBudgets(t *testing.T) {
 	}
 }
 
-func validateReadPathOutput(command readPathCommand, size, code int, out []byte) error {
+func validateReadPathOutput(command readPathCommand, size, code int, out []byte, changed bool) error {
 	if code != 0 {
 		return fmt.Errorf("command exit %d", code)
 	}
@@ -659,18 +678,32 @@ func validateReadPathOutput(command readPathCommand, size, code int, out []byte)
 		}
 		for i, m := range doc.Sessions {
 			identity := size - i
-			if m.SessionID != fmt.Sprintf("%08x%024x", identity, identity) || m.NativeSessionID != fmt.Sprintf("native-%08x", identity) {
+			if m.SessionID != fmt.Sprintf("%08x%024x", identity, identity) || m.NativeSessionID != fmt.Sprintf("native-%08x", identity) || m.Title != fmt.Sprintf("synthetic-%08x-v0", identity) || !m.CapturedAt.Equal(storagetest.BenchmarkTime.Add(time.Duration(identity-1)*time.Second)) {
 				return errors.New("incorrect list order or identity")
 			}
 		}
-	case readPathShowShort, readPathHandoffQuery:
-		if !bytes.Contains(out, []byte("00000001000000000000000000000001")) || !bytes.Contains(out, []byte("native-00000001")) {
-			return errors.New("incorrect selected identity")
+	case readPathShowShort:
+		var metadata archive.Metadata
+		if err := json.Unmarshal(out, &metadata); err != nil {
+			return err
+		}
+		if metadata.SessionID != "00000001000000000000000000000001" || metadata.NativeSessionID != "native-00000001" || metadata.Title != fmt.Sprintf("synthetic-%08x-v%d", 1, boolVersion(changed)) {
+			return errors.New("incorrect selected identity or revision")
+		}
+	case readPathHandoffQuery:
+		var handoff archive.Handoff
+		if err := json.Unmarshal(out, &handoff); err != nil {
+			return err
+		}
+		outcome := archive.TurnOutcomeCompleted
+		if changed {
+			outcome = archive.TurnOutcomeInterrupted
+		}
+		if handoff.Session.ArchiveSessionID != "00000001000000000000000000000001" || handoff.Session.NativeSessionID != "native-00000001" || handoff.Session.TurnOutcome != outcome {
+			return errors.New("incorrect selected handoff identity or revision")
 		}
 	case readPathListPicker, readPathShowPicker, readPathHandoffPicker:
-		if !bytes.Contains(out, []byte("synthetic")) {
-			return errors.New("picker omitted synthetic sessions")
-		}
+		return validateReadPathPicker(size, out, changed)
 	default:
 		return fmt.Errorf("unknown read path benchmark command %q", command)
 	}
@@ -680,7 +713,7 @@ func validateReadPathOutput(command readPathCommand, size, code int, out []byte)
 func TestReadPathOutputRejectsIncorrectSuccessfulCommands(t *testing.T) {
 	t.Parallel()
 	for _, command := range []readPathCommand{readPathListPicker, readPathShowPicker, readPathHandoffPicker, readPathShowShort, readPathHandoffQuery, readPathListPiped} {
-		if err := validateReadPathOutput(command, 1800, 0, []byte(`{"sessions":[]}`)); err == nil {
+		if err := validateReadPathOutput(command, 1800, 0, []byte(`{"sessions":[]}`), false); err == nil {
 			t.Fatal("accepted incorrect successful output", command)
 		}
 	}
@@ -693,9 +726,140 @@ func TestReadPathLocalCountsSeparateRefreshQueryAndInventory(t *testing.T) {
 		"cache key inventory 1ms (entries-visited 1800)\n" +
 		"cache directory inventory 1ms (entries-visited 64)\n" +
 		"cache key eviction 1ms (key-dirs-evicted 1)\n" +
+		"load registrations 1ms (registrations 1800, registration reads 1801)\n" +
 		"read sidecars 1ms (from cache 1800, downloaded 18)\n"
 	got := readPathLocalCounts(diagnostic)
-	if got["refresh-rows-scanned"] != 1800 || got["query-rows-scanned"] != 50 || got["query-summaries-decoded"] != 50 || got["cache-entries-visited"] != 1864 || got["cache-key-dirs-evicted"] != 1 || got["body-from-cache"] != 1800 || got["body-downloaded"] != 18 {
+	if got["refresh-rows-scanned"] != 1800 || got["query-rows-scanned"] != 50 || got["query-summaries-decoded"] != 50 || got["cache-entries-visited"] != 1864 || got["cache-key-dirs-evicted"] != 1 || got["body-from-cache"] != 1800 || got["body-downloaded"] != 18 || got["local-registrations"] != 1800 || got["local-registration-reads"] != 1801 {
 		t.Fatal(got)
+	}
+}
+
+func boolVersion(changed bool) int {
+	if changed {
+		return 1
+	}
+	return 0
+}
+
+// Synthetic persisted registrations mirror the archive universe. Missing native
+// files stay inside the private home and leave archive activity/order unchanged.
+func seedReadPathRegistrations(tb testing.TB, home string, size int, command readPathCommand) {
+	tb.Helper()
+	if command != readPathHandoffPicker {
+		return
+	}
+	dir := filepath.Join(home, "registrations")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		tb.Fatal(err)
+	}
+	for i := range size {
+		harness := "codex"
+		if i%20 == 19 {
+			harness = "future-agent"
+		}
+		id := fmt.Sprintf("%08x%024x", i+1, i+1)
+		reg := archive.SessionRegistration{ArchiveSessionID: id, NativeSessionID: fmt.Sprintf("native-%08x", i+1), ProjectID: fmt.Sprintf("project-%d", i%100), ProjectRoot: filepath.Join(home, "synthetic-project"), Harness: archive.Harness{Name: harness}, SourceKind: archive.SourceKindFile, TranscriptPath: filepath.Join(home, "missing-native", id+".jsonl"), SessionStartedAt: storagetest.BenchmarkTime.Add(time.Duration(i) * time.Second), RegisteredAt: storagetest.BenchmarkTime}
+		if err := reg.Validate(); err != nil {
+			tb.Fatal(err)
+		}
+		raw, err := json.Marshal(reg)
+		if err != nil {
+			tb.Fatal(err)
+		}
+		if err = os.WriteFile(filepath.Join(dir, id+".json"), raw, 0600); err != nil {
+			tb.Fatal(err)
+		}
+	}
+}
+
+var readPathFrameRange = regexp.MustCompile(`([0-9]+)–([0-9]+) of ([0-9,]+)(\+?)`)
+
+var readPathVisibleTitle = regexp.MustCompile(`synthetic-([0-9a-f]{8})-v([01])`)
+
+func validateReadPathPicker(size int, out []byte, changed bool) error {
+	plain := stripANSI(string(out))
+	footer := readPathFrameRange.FindStringSubmatch(plain)
+	if len(footer) != 5 {
+		return errors.New("picker omitted complete first-frame range")
+	}
+	first, _ := strconv.Atoi(footer[1])
+	last, _ := strconv.Atoi(footer[2])
+	total, _ := strconv.Atoi(strings.ReplaceAll(footer[3], ",", ""))
+	if first != 1 || last < min(size, 2) || last > total || total != min(size, 50) || (footer[4] == "+") != (size > 50) {
+		return fmt.Errorf("incorrect picker visible range %v for %d sessions", footer[1:], size)
+	}
+	seen := 0
+	for line := range strings.SplitSeq(plain, "\n") {
+		fields := strings.Fields(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), cursorMark)))
+		if len(fields) == 0 {
+			continue
+		}
+		number, err := strconv.Atoi(fields[0])
+		if err != nil {
+			continue
+		}
+		title := readPathVisibleTitle.FindStringSubmatch(line)
+		if len(title) != 3 {
+			return errors.New("picker row omitted full identity/revision title")
+		}
+		identity, err := strconv.ParseInt(title[1], 16, 32)
+		expectedVersion := 0
+		if changed && int(identity) <= max(1, size/100) {
+			expectedVersion = 1
+		}
+		if err != nil || number != seen+1 || int(identity) != size-seen || title[2] != strconv.Itoa(expectedVersion) {
+			return errors.New("incorrect picker identity, revision or order")
+		}
+		seen++
+	}
+	if seen != last {
+		return errors.New("picker frame omitted rows advertised by footer")
+	}
+	return nil
+}
+
+func TestReadPathRegistrationFixtureCoversPickerUniverse(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	seedReadPathRegistrations(t, home, 40, readPathHandoffPicker)
+	regs, err := state.OpenReadOnly(home).LoadRegistrations()
+	if err != nil || len(regs) != 40 {
+		t.Fatalf("registrations=%d err=%v", len(regs), err)
+	}
+	for _, reg := range regs {
+		if !strings.HasPrefix(reg.TranscriptPath, home+string(os.PathSeparator)) {
+			t.Fatal("native locator escaped synthetic home")
+		}
+	}
+}
+
+func TestReadPathPickerRejectsPartialWrongAndStaleFrames(t *testing.T) {
+	t.Parallel()
+	valid := "1 Codex synthetic-00000002-v0\n2 Codex synthetic-00000001-v1\n1–2 of 2\n"
+	if err := validateReadPathPicker(2, []byte(valid), true); err != nil {
+		t.Fatal(err)
+	}
+	for _, invalid := range []string{
+		"synthetic\n",
+		strings.Replace(valid, "2 Codex synthetic-00000001-v1\n", "", 1),
+		strings.Replace(valid, "synthetic-00000002-v0", "synthetic-00000003-v0", 1),
+		strings.Replace(valid, "synthetic-00000001-v1", "synthetic-00000001-v0", 1),
+		"1 Codex synthetic-00000001-v1\n2 Codex synthetic-00000002-v0\n1–2 of 2\n",
+	} {
+		if err := validateReadPathPicker(2, []byte(invalid), true); err == nil {
+			t.Fatal("accepted partial, wrong, reordered or stale frame")
+		}
+	}
+}
+
+func TestReadPathHandoffRejectsStaleSelectedMetadata(t *testing.T) {
+	t.Parallel()
+	stale := archive.Handoff{Session: archive.HandoffSession{ArchiveSessionID: "00000001000000000000000000000001", NativeSessionID: "native-00000001", TurnOutcome: archive.TurnOutcomeCompleted}}
+	raw, err := json.Marshal(stale)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = validateReadPathOutput(readPathHandoffQuery, 1800, 0, raw, true); err == nil {
+		t.Fatal("accepted unchanged handoff metadata after selected revision changed")
 	}
 }
