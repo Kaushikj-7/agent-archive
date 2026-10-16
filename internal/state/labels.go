@@ -31,22 +31,25 @@ type LabelEntry struct {
 	Scope          string                `json:"scope"`
 }
 
+// ErrNoLabelPublication is LabelRevision for a session never published: it
+// has no revision yet.
+var ErrNoLabelPublication = errors.New("label publication unavailable")
+
 // LabelRevision reads only the leading published summary and a content-free stat.
 func (s *Store) LabelRevision(id string) (string, string, error) {
 	if !safeFileComponent(id) {
 		return "", "", errors.New("invalid label state identity")
 	}
-	summary, found, head, info, err := s.publishedPrefix(id)
+	summary, found, _, info, err := s.publishedPrefix(id)
 	if err != nil {
 		return "", "", err
 	}
 	if !found {
-		return "", "", errors.New("label publication unavailable")
+		return "", "", ErrNoLabelPublication
 	}
+	// A history source set is named too, like an ordinary source
+	// (archive.ValidateSessionLabels).
 	token := sha256.Sum256([]byte(fmt.Sprintf("%d:%d", info.Size(), info.ModTime().UnixNano())))
-	if head && (summary.CurrentRevision != "" || summary.SourceSchemaVersion == archive.HistorySourceSchemaVersion || summary.MetadataSchemaVersion == archive.HistoryMetadataSchemaVersion) {
-		return "", "", errors.New("external labels cannot use a retained history source set")
-	}
 	checksum := summary.LabelSourceChecksum
 	if len(checksum) != 64 {
 		checksum = ""

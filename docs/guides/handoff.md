@@ -542,7 +542,8 @@ in the same columns as [`list`](list-and-show.md#which-sessions-list-shows):
 number, agent, title, project, PR, and when.
 
 - **The title is the name your agent gave the session** (the one in Claude
-  Code's sidebar, or a Cursor chat's name), else a preview of its first prompt,
+  Code's sidebar, or a Cursor chat's name, once the collector has read it from
+  Cursor's database), else a preview of its first prompt,
   in its readable list form and cut at a word to fit. Before setup, a session
   with neither is titled by its native ID.
 - **The agent** is a colored `●` and its name (`Claude`, `Codex`). PROJECT and

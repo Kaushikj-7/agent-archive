@@ -8,13 +8,13 @@ affects.
 | Version | Where | Recorded in | Current | Changes when |
 | --- | --- | --- | --- | --- |
 | Release | `cli.Version` (set at build time) | `--version` | Build-dependent (`dev-<commit>` from source) | A tag is cut. |
-| Filter | `archive.FilterVersion` | source header `capture.filter_version`, metadata `filter_version` | 25 | What the privacy filter keeps, drops, or redacts changes: any change to filtered output. |
-| Adapter | `adapterVersion` in `internal/agents/nativecodec/adapters.go` | `capture.adapter_version` | 0.25.0 | An adapter's output changes (bumped with the filter in practice). |
+| Filter | `archive.FilterVersion` | source header `capture.filter_version`, metadata `filter_version` | 27 | What the privacy filter keeps, drops, or redacts changes: any change to filtered output. |
+| Adapter | `adapterVersion` in `internal/agents/nativecodec/adapters.go` | `capture.adapter_version` | 0.27.0 | An adapter's output changes (bumped with the filter in practice). |
 | Parser | per-agent `Parser.Version()` / `archive.DefaultParserVersion` | metadata `parser.version` | 0.21.0 | How metadata is derived from a source changes: counts, turns, models, skills, gaps, titles, session names, branch, linked pull requests, tools used, end time, tokens (per model too), tool errors, MCP calls, git activity, the repository key (derived from the project's git origin, not the source). |
 | Source schema | `archive.SourceSchemaVersion` / `HistorySourceSchemaVersion` | source header `schema_version` | 2 | The source bundle's line format changes. Readers refuse other versions. |
 | Metadata schema | `archive.MetadataSchemaVersion` / `HistoryMetadataSchemaVersion` | metadata `schema_version` | 1 | The metadata sidecar changes incompatibly. Optional fields don't bump it. |
 | Codex parser | `codex.Parser.Version()` | metadata `parser.version` | 0.27.0 | Codex identity, ownership or metadata interpretation changes. |
-| History source schema | `archive.HistorySourceSchemaVersion` | source header `schema_version` | 3 | The self-contained Codex history manifest or record envelopes change. |
+| History source schema | `archive.HistorySourceSchemaVersion` | source header `schema_version` | 3 | The self-contained Codex history manifest or record envelopes change. Filter 26 lets it carry a `session_labels` item; a reader before filter 26 refuses such a source ("session label does not match its owning ordinary source"), so read continued Codex threads with a current build. |
 | History metadata schema | `archive.HistoryMetadataSchemaVersion` | metadata `schema_version` | 2 | Preserved native revision references change incompatibly. |
 | Machine record | `machines.SchemaVersion` | `machines/<machine_id>.json` and `machines --json` | 1 | Informational registry format changes incompatibly; independent of session schemas and filtering. |
 | Configuration | `config.SchemaVersion` | `config.json` `schema_version` | 1 | `config.json` changes incompatibly. |
@@ -29,7 +29,15 @@ registration authority. Handoff builders now prefer existing `NativeStartedAt`
 facts over first prompts/file observations, also correcting Codex handoff start.
 The original native-start correction did not change metadata derivation.
 
-Claude uses the common parser version; Cursor uses parser 0.22.0.
+Claude uses the common parser version; Cursor uses parser 0.23.0.
+
+Cursor parser 0.23.0 names a session from retained `session_labels` evidence
+with the pinned `cursor-composer-name-v1` contract and `database` source, read
+from the chat's `composerData` row in Cursor's `state.vscdb`; a cursor-composer
+session record's own name still wins. The bump re-derives existing Cursor
+metadata from retained sources. Retaining that evidence on `cursor-jsonl`
+bundles changes what is uploaded for them: filter 27 and adapter 0.27.0.
+Claude, Codex and the common parser are unchanged.
 Codex has its own parser version as recorded above.
 
 The per-version filter changes are in the

@@ -11,7 +11,10 @@ import (
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
-func TestExternalLabelsExcludeOrdinaryActiveHistoryAuthority(t *testing.T) {
+// A provider that derives its context from the retained publication (one
+// without agentapi.RegistrationLabelContextProvider) is still not asked about
+// a history source set, and no name it gave earlier is applied to one.
+func TestRetainedContextLabelsExcludeHistorySourceSets(t *testing.T) {
 	for _, warm := range []bool{false, true} {
 		t.Run(map[bool]string{false: "cold", true: "cached debt during backoff"}[warm], func(t *testing.T) {
 			local := newTestStore(t)
@@ -61,29 +64,30 @@ func TestExternalLabelsExcludeOrdinaryActiveHistoryAuthority(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if provider.calls != calls || len(p.opts.labels) != 0 || len(cache.Entries) != 0 {
+			if provider.calls != calls || len(p.opts.labels) != 0 {
 				t.Fatalf("history authority admitted external naming: calls %d/%d labels %v cache %v", calls, provider.calls, p.opts.labels, cache.Entries)
 			}
 		})
 	}
 }
 
-func TestOrdinaryLabelObservationDoesNotBlockHistoryTransition(t *testing.T) {
+// A thread that continues into a later rollout becomes a history source set,
+// and keeps the name it had: the label is retained in the history source and
+// becomes the published session's name.
+func TestSessionNameCarriesIntoHistorySourceSet(t *testing.T) {
 	scan, _ := reconciliationFixture(t)
 	defer scan.releaseRetained()
-	scan.opts.labels = map[string]state.LabelEntry{scan.id(): {Label: archive.SessionLabel{NativeID: revisionThread, State: archive.SessionLabelPresent, Name: "Ordinary native name", Source: archive.SessionLabelDatabase, Contract: codex.LabelContract}, ObservedAt: scan.now}}
+	scan.opts.labels = map[string]state.LabelEntry{scan.id(): {Label: archive.SessionLabel{NativeID: revisionThread, State: archive.SessionLabelPresent, Name: "Native thread name", Source: archive.SessionLabelIndex, Contract: codex.LabelContract}, ObservedAt: scan.now}}
 	read, ok, err := scan.read()
 	if err != nil || !ok {
 		t.Fatal("history read failed", ok, err)
 	}
-	candidate, evidence, err := scan.build(read)
+	candidate, _, err := scan.build(read)
 	if err != nil || candidate.History == nil {
-		t.Fatal("ordinary label blocked supported history candidate", err)
+		t.Fatal("label blocked supported history candidate", err)
 	}
-	for _, item := range evidence {
-		if item.Kind == archive.EvidenceKindSessionLabels {
-			t.Fatal("ordinary label entered history evidence")
-		}
+	if label, _, ok := archive.CurrentSessionLabel(candidate); !ok || label.Name != "Native thread name" {
+		t.Fatalf("history candidate lost the name: %+v %v", label, ok)
 	}
 	for pass := range 3 {
 		result, err := Run(t.Context(), scan.local, scan.remote, scan.opts)
@@ -99,7 +103,10 @@ func TestOrdinaryLabelObservationDoesNotBlockHistoryTransition(t *testing.T) {
 	if metadata.History == nil || len(metadata.History.Preserved) != 2 || bundle.History == nil {
 		t.Fatal("history source set was flattened", metadata.History)
 	}
-	if _, _, ok := archive.CurrentSessionLabel(bundle); ok {
-		t.Fatal("ordinary lookup entered published history")
+	if label, _, ok := archive.CurrentSessionLabel(bundle); !ok || label.Name != "Native thread name" {
+		t.Fatalf("published history source lost the name: %+v %v", label, ok)
+	}
+	if metadata.Name != "Native thread name" || archive.DisplayTitle(metadata) != "Native thread name" {
+		t.Fatalf("name %q, display title %q", metadata.Name, archive.DisplayTitle(metadata))
 	}
 }

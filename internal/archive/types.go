@@ -49,7 +49,7 @@ const (
 	// Filter 19 adds the strictly validated local Muse conversation projection.
 	// Filter 17 retains typed, owning Codex session_labels metadata with
 	// prompt redaction and a bounded display name; it never establishes activity.
-	FilterVersion = "25"
+	FilterVersion = "27"
 	// OpenTelemetryGenAIRevision pins the upstream definitions used by the
 	// three gen_ai.* attributes emitted by BuildMetadata. The archive is not
 	// an OTLP payload; all agent_archive.* attributes are local extensions.
