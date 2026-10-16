@@ -153,9 +153,15 @@ Progress must also be durable where nothing is retained: the filter can drop a
 long run of raw records (large tool outputs) without producing a chunk. So the
 collector also writes a **progress checkpoint** at a newline-aligned raw
 boundary once 64 MiB of raw input has passed since the last checkpoint of either
-kind. It has the same fields with no `segment_sha256`, plus the content-free gap
-codes and omitted-key names the filter has accumulated since the last sealed
-chunk, so the next chunk's gap set comes out the same as an uninterrupted read.
+kind. It has the same fields with no `segment_sha256`, plus the filter's
+**complete cross-record accumulator** at that boundary, serialized as a
+versioned, content-free private record: the gap set, omitted and denied
+key-name sets, `NativeStartComplete`, the identity facts gathered by
+`noteOutputNativeIdentity`, and any other state the filter carries between
+records. PR 3 enumerates every such field in the filter and its test asserts
+that a read resumed at each checkpoint equals an uninterrupted read in every
+field, not only in records; state that cannot be serialized forces the
+checkpoint back to the last boundary before it was set.
 When the chunk in progress already holds retained records, the progress
 checkpoint also stages them as a private **partial stage** (checksum-named,
 durable, never uploaded) and records its checksum; the next pass reloads it and
@@ -201,22 +207,25 @@ placeholders):
 - **Segmented metadata** (metadata schema M). The sidecar's `source_bundle`
   reference names the **head**: a small source object holding the envelope
   (identity, capture, `native_child`, parent, linked sessions, supplemental
-  evidence), the revision's `own_start_ordinal` when it has an explicit child
-  or fork boundary, the filtered `session_meta` header of **every** rollout
-  its list covers (each bound to its rollout ID and validated as today's
-  active header is), and the ordered segment list. Each list entry is
-  `{segment reference, rollout_id, start_ordinal, end_ordinal_exclusive,
-  captured_at}`. Because each head carries the headers of its own rollouts, a
-  preserved revision whose tip was an earlier rollout of the current chain
-  still has that rollout's header to validate identity and native start from,
-  while sharing its segments. Preserved revisions become `{revision_id,
-  captured_at, kind, reference}`, where `kind` is required: `head` for a
-  segmented revision, or `source` with its legacy source schema (2 or 3) for a
-  revision carried over from before migration. Heads list their own segments,
-  so revisions that share a prefix share its segment objects. In schema M the
-  active `source_bundle` always names a head; legacy sources appear only as
-  preserved `source` entries. Segmentation is therefore **sticky**: once a
-  session has any segmented revision it is always published in schema M, even
+  evidence), the revision's `own_start_ordinal` when it has an explicit child or
+  fork boundary, the filtered `session_meta` header of **every** rollout its
+  list covers (each bound to its rollout ID and validated as today's active
+  header is), and the ordered range list. Each list entry is `{rollout_id,
+  start_ordinal, end_ordinal_exclusive, captured_at}` plus either a segment
+  reference or, for a range whose records the filter dropped entirely, `empty:
+  true` with no object. Empty ranges prove ordinal coverage the same way
+  segments do, so a rollout that retains nothing still appears in the list and
+  the list can end on the active rollout. Because each head carries the headers
+  of its own rollouts, a preserved revision whose tip was an earlier rollout of
+  the current chain still has that rollout's header to validate identity and
+  native start from, while sharing its segments. Preserved revisions become
+  `{revision_id, captured_at, kind, reference}`, where `kind` is required:
+  `head` for a segmented revision, or `source` with its legacy source schema (2
+  or 3) for a revision carried over from before migration. Heads list their own
+  segments, so revisions that share a prefix share its segment objects. In
+  schema M the active `source_bundle` always names a head; legacy sources appear
+  only as preserved `source` entries. Segmentation is therefore **sticky**: once
+  a session has any segmented revision it is always published in schema M, even
   when a rollback leaves its active chain under the D1 threshold.
 
 All keys stay checksum-addressed under the session's prefix; a reader refuses
@@ -295,13 +304,14 @@ This refactor is part of PR 7 and must merge before PR 8 enables a writer.
 
 ### Ordinals, `history_base` boundaries and ownership
 
-- Segment boundaries are a refinement of today's spans: every span boundary is
-  a segment boundary; chunk boundaries add more. Validation is the existing
-  `SourceHistory.Validate` rule applied to the concatenated list: contiguous
-  ordinals across segments, `start` of each segment equals `end` of the
-  previous one within a rollout, and each rollout's first segment starts where
-  its base's included prefix ended. Gaps, regressions, duplicate segment
-  identities and a list that does not end on the active rollout refuse.
+- Segment boundaries are a refinement of today's spans: every span boundary is a
+  segment boundary; chunk boundaries add more. Validation is the existing
+  `SourceHistory.Validate` rule applied to the concatenated range list (segments
+  and empty ranges alike): contiguous ordinals across entries, `start` of each
+  segment equals `end` of the previous one within a rollout, and each rollout's
+  first segment starts where its base's included prefix ended. Gaps,
+  regressions, duplicate segment identities and a list that does not end on the
+  active rollout refuse.
 - `own_start_ordinal` keeps its meaning and is recorded once per revision, on
   its head, never on a segment (a segment can be shared by revisions with
   different boundaries). `OwnRecord` compares each record's physical ordinal
@@ -409,15 +419,31 @@ record; disk is the normalized view's size.
 - `internal/reader` gains a segment iterator: open the head, then each segment
   in order, each decoded under today's per-object `Limits` and checked against
   its list entry (thread, rollout, ordinals, count, checksum) before any record
-  is yielded. A malformed reference cannot widen reads.
+  is yielded. A malformed reference cannot widen reads. Because a later
+  segment can still fail after earlier records were yielded, no display path
+  writes to the user from the iterator directly: every display path (show
+  text, `show --json`/`--normalized`, the browser's `t` action in
+  `cli/list_browse.go`, eval export) first builds the spooled view, and
+  shows nothing unless the iterator reached a successful end. A failure
+  reports the error and shows no partial transcript, as `LoadSource` does
+  today.
 - `LoadSource` keeps returning one assembled `SourceBundle` for callers that
   need it, but only when the assembled size fits the caller's limits; past
   that it returns a named error telling the caller to use the iterator.
-- `cli/show_transcript.go` streams segments into the pager for text output;
-  memory is one segment plus the rendered window. `show --transcript --json`
-  and `--normalized` need the whole normalized view (turns, calls, results)
-  and trim it afterwards, so they render from the spooled view, keeping their
-  current trimming and their no-limit mode. The summary-only
+- `cli/show_transcript.go` renders text from the validated spool. With the
+  default 120,000-byte limit or any nonzero `--max-bytes`, `FitTranscript`
+  (`internal/archive/transcript_fit.go`) needs the whole session to protect
+  the newest exchanges, choose the fewest oldest-first elisions and save the
+  untrimmed copy when it trims. PR 2 gives it a spool-backed form: an index
+  of per-exchange rendered sizes built in one pass, the same prefix search
+  over that index, then a second pass that writes the fitted output (and the
+  untrimmed copy) from the spool. Memory is the index plus one exchange.
+  Only the no-limit mode writes the spool straight through. `show
+  --transcript --json` and `--normalized` render from the same spool, keeping
+  their current trimming and their no-limit mode.
+- The browser's `t` action builds the normalized transcript into a
+  `bytes.Buffer` today; it renders from the spool into a file the pager
+  reads instead, so it no longer holds the whole thread. The summary-only
   `show SESSION_ID --revision REVISION_ID` (`loadShowSummarySelection` →
   `loadArchiveSelection` in `cli/revisions.go`) re-derives a revision's
   summary; for a segmented revision it uses the aggregate-only derivation over
@@ -432,7 +458,10 @@ record; disk is the normalized view's size.
   When even the prompts and one-line exchanges exceed the handoff bound,
   handoff reports it does not fit, as `FitHandoff` does today.
 - `internal/search/projection.go` caches an **ownership-neutral** extraction
-  of each sealed segment once, keyed by its checksum, and applies the listing
+  of each sealed segment once, keyed by its checksum, the segment source
+  schema, the parser version and the search `ExtractorVersion` (the same
+  interpretation versions today's search source identity carries, so an
+  upgrade re-extracts unchanged bytes), and applies the listing
   head's `own_start_ordinal` (and rollout headers) when assembling the
   session's projection. A segment shared by heads with different ownership
   boundaries is therefore indexed correctly for each; only the tail and the
@@ -465,6 +494,7 @@ record; disk is the normalized view's size.
 | --- | --- | --- |
 | Filtered size | 64 MiB per thread (`DefaultMaxTranscriptBytes`) | Chunk target 16 MiB (D2), sealed before a record would pass it; only a lone record larger than the target exceeds it (bounded by the 64 MiB record limit). A new per-thread total filtered ceiling 1 GiB (D7). |
 | Segment count | 64 spans per thread | 256 per revision (D7) and 1024 distinct objects per session. |
+| Retained records | 1,000,000 per thread (`archive.MaxHistoryRecords`) | Replaced in schema M: 1,000,000 per segment, 16,000,000 per revision, with a `record_count` gap. |
 | Raw size | 512 MiB per thread read (`MaxCodexRawTranscriptBytes`) | 512 MiB of *unsealed* bytes filtered in one pass; a separate total raw ceiling for the checkpoint hash 4 GiB (D7). |
 | Read ceiling | 160 MiB per session, ~3–4×F | Unchanged constant; work is ~3–4× one chunk, about 64 MiB at the 16 MiB target. A lone record over ~40 MiB filtered still meets it, as today. |
 | Record | 64 MiB | Unchanged. |
@@ -474,9 +504,10 @@ A thread over a byte ceiling (total filtered, total raw, per-segment work)
 records the existing size-limit gap kinds with the new `LimitBytes`, so
 `readCeilingChanged`-style signature checks read it again when a build
 changes the limit. The count ceilings (segments per revision, distinct
-objects per session, distinct derivation keys) are not bytes: PR 5 adds
-count-aware gap kinds to `state.SizeLimitGap` (`segment_count`,
-`object_count`, `derivation_keys`) carrying `{limit, count}`, words for
+objects per session, distinct derivation keys, retained records) are not
+bytes: PR 5 adds count-aware gap kinds to `state.SizeLimitGap`
+(`segment_count`, `object_count`, `derivation_keys`, `record_count`) carrying
+`{limit, count}`, words for
 `SizeLimitLabel` and the status problem, and includes each count ceiling in
 the signature check, so changing one reads the session again. The gap's
 capture is the last fully published segment set.
@@ -633,8 +664,10 @@ Each PR has one concern and is merged in order unless marked parallel.
    versions.md; schema tests. No code paths.
 2. **Archive types and reader.** `internal/archive` segment types and
    validators; `internal/reader` segment iterator, bounded `LoadSource`
-   assembly; the head resolver's legacy `source` branch; show text, browse
-   and search (ownership-neutral segment cache) consume the iterator;
+   assembly; the head resolver's legacy `source` branch; search
+   (ownership-neutral segment cache keyed with interpretation versions)
+   consumes the iterator; show text (spool-backed `FitTranscript`) and the
+   browser's `t` action render from the validated spool;
    verification with checksum-keyed segment receipts; bounded handoff summary
    state that keeps every prompt; the spooled view for `show --json` /
    `--normalized` and eval export (including `--revision` and
@@ -707,6 +740,12 @@ Synthetic (every PR, CI):
 - More than 512 MiB of raw input that the filter drops entirely advances by
   progress checkpoints across passes and reaches publication, with the same
   gap set as one uninterrupted read.
+- A segment that fails validation after earlier segments decoded shows no
+  partial transcript in show, browse or eval export.
+- `show` with the default limit on a 1 GiB synthetic thread produces the same
+  fitted output and untrimmed copy as `FitTranscript` over the assembled
+  bundle, with bounded memory.
+- A rollout whose records are all dropped publishes as an empty range.
 - A pass stopped at the per-pass limit with 8 MiB of retained output in an
   unsealed chunk resumes from its partial stage and publishes every record.
 - A `show --json` process killed mid-spool leaves a file the next command
