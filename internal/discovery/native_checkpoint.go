@@ -197,7 +197,7 @@ func nativeCatalogScratch(path string, replacement int64, budget *agentapi.Nativ
 // nativeCatalogMembers indexes validated top-level values without copying their
 // potentially large nested documents. The input owns every returned value.
 func nativeCatalogMembers(raw []byte) (map[string]json.RawMessage, bool) {
-	raw = bytes.TrimSpace(raw)
+	raw = bytes.Trim(raw, " \t\r\n")
 	if len(raw) < 2 || raw[0] != '{' || !utf8.Valid(raw) || !json.Valid(raw) {
 		return nil, false
 	}

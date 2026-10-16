@@ -32,7 +32,7 @@ func TestNativeCatalogMemberViewsValidateBoundaries(t *testing.T) {
 			t.Fatal("member omitted")
 		}
 	}
-	for _, raw := range []string{`[]`, `{"version":6`, `{"v":1,"v":2}`, `{"v":1,"\u0076":2}`, `{"x":"unterminated}`, `{"x":1,}`} {
+	for _, raw := range []string{`[]`, `{"version":6`, `{"v":1,"v":2}`, `{"v":1,"\u0076":2}`, `{"x":"unterminated}`, `{"x":1,}`, "{}\v", "\f{}"} {
 		if _, ok := nativeCatalogMembers([]byte(raw)); ok {
 			t.Fatal("invalid catalog accepted", raw)
 		}
