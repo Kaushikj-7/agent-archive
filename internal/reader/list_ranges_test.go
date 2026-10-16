@@ -108,7 +108,7 @@ func TestListRangesEqualsListForAnyKeysAndBoundaries(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !slices.Equal(keysOf(got), keysOf(want)) {
+		if !slices.Equal(got, want) {
 			t.Fatalf("trial %d, bounds %q:\nranges %q\nlist   %q", trial, bounds, keysOf(got), keysOf(want))
 		}
 	}
@@ -285,7 +285,7 @@ func TestListRangesReportsTheCallersCancellation(t *testing.T) {
 func TestListMetadataUsesCachePlannedRanges(t *testing.T) {
 	ctx := context.Background()
 	store := &rangeRecorder{MemoryStore: storagetest.NewMemoryStore()}
-	for i := range 2*rangeSidecars + 50 {
+	for i := range 1100 {
 		putSession(t, store, "claude", fmt.Sprintf("%032x", i*7919), baseTime.Add(time.Duration(i)*time.Minute))
 	}
 	cache, err := OpenMetadataCache(t.TempDir())
@@ -310,7 +310,7 @@ func TestListMetadataUsesCachePlannedRanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	if store.lists != 1 || len(store.ranges) != 3 {
-		t.Fatalf("warm cache: %d lists and %d ranges, want 3 ranges and no plain listing", store.lists, len(store.ranges))
+		t.Fatalf("warm cache: %d lists and %d ranges, want 3 key-balanced ranges and no plain listing", store.lists, len(store.ranges))
 	}
 	plain, err := ListMetadata(ctx, store, "sessions", Filter{})
 	if err != nil {

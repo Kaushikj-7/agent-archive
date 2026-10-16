@@ -470,7 +470,7 @@ func selectListingRevisions(objects []storage.Object, revisions map[RevisionID]l
 
 // listRevisionHeaders reads discovery summaries without downloading hint bodies.
 func listRevisionHeaders(ctx context.Context, store storage.ObjectStore) ([]storage.Object, error) {
-	objects, _, err := listHeaderGroups(ctx, store, "", nil, false, listingindex.V3Prefix)
+	objects, _, err := listHeaderGroups(ctx, store, "", nil, false, listingindex.V3Prefix, nil)
 	if err != nil {
 		return nil, err
 	}
