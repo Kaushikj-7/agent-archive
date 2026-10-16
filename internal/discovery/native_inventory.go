@@ -109,6 +109,7 @@ func NewNativeInventory(ctx context.Context, home string, roots []archive.Native
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	constructorStart := time.Now()
 	l := &NativeInventory{ctx: ctx, path: filepath.Join(home, "discovery-catalog.json"), budget: budget, validate: validate, remaining: Budget, tokens: map[string]nativeSelection{}}
 	if budget == nil || validate == nil {
 		return nil, agentapi.ErrInvalidSourceBinding
@@ -136,7 +137,6 @@ func NewNativeInventory(ctx context.Context, home string, roots []archive.Native
 	if valid == 0 {
 		return l, nil
 	}
-	constructorStart := time.Now()
 	defer func() { elapsed := time.Since(constructorStart); l.remaining -= elapsed; l.counts.Active += elapsed }()
 	// Preflight bounds directories/pages/owners/edges before typed allocation.
 	// Within existing cache headroom: <=1MiB wire implies <=3MiB total for typed
@@ -528,11 +528,7 @@ func (l *NativeInventory) directory(path string) (f *os.File, g nativeGeneration
 }
 
 func (l *NativeInventory) acquire(ctx context.Context) error {
-	beforeStats, beforeOpens := l.counts.Stats, l.counts.Opens
-	defer func() {
-		l.counts.AcquireStats += l.counts.Stats - beforeStats
-		l.counts.AcquireOpens += l.counts.Opens - beforeOpens
-	}()
+	defer l.accountNativeOperations(&l.counts.AcquireStats, &l.counts.AcquireOpens, l.counts.Stats, l.counts.Opens)
 	for index := 0; index < len(l.progress.Directories); index++ {
 		if err := l.allowed(ctx); err != nil {
 			return err
@@ -642,6 +638,11 @@ func (l *NativeInventory) acquire(ctx context.Context) error {
 	return nil
 }
 
+func (l *NativeInventory) accountNativeOperations(stats, opens *int64, beforeStats, beforeOpens int64) {
+	*stats += l.counts.Stats - beforeStats
+	*opens += l.counts.Opens - beforeOpens
+}
+
 func nativeGenerationChanged(before, after nativeGeneration, err error) bool {
 	return err == nil && before != after
 }
@@ -663,11 +664,7 @@ func (l *NativeInventory) withinRetainedLimits() bool {
 }
 
 func (l *NativeInventory) coverage(ctx context.Context) error {
-	beforeStats, beforeOpens := l.counts.Stats, l.counts.Opens
-	defer func() {
-		l.counts.SweepStats += l.counts.Stats - beforeStats
-		l.counts.SweepOpens += l.counts.Opens - beforeOpens
-	}()
+	defer l.accountNativeOperations(&l.counts.SweepStats, &l.counts.SweepOpens, l.counts.Stats, l.counts.Opens)
 	l.counts.Sweeps++
 	for _, d := range l.progress.Directories {
 		if !completeNative(d) {
@@ -693,11 +690,7 @@ func (l *NativeInventory) coverage(ctx context.Context) error {
 }
 
 func (l *NativeInventory) candidate(ctx context.Context, id string) (agentapi.SourceRef, nativeGeneration, int, error) {
-	beforeStats, beforeOpens := l.counts.Stats, l.counts.Opens
-	defer func() {
-		l.counts.CandidateStats += l.counts.Stats - beforeStats
-		l.counts.CandidateOpens += l.counts.Opens - beforeOpens
-	}()
+	defer l.accountNativeOperations(&l.counts.CandidateStats, &l.counts.CandidateOpens, l.counts.Stats, l.counts.Opens)
 	var ref agentapi.SourceRef
 	var stamp nativeGeneration
 	found := 0
@@ -977,8 +970,17 @@ type nativeCountedFile struct {
 	read  int64
 }
 
-func (f *nativeCountedFile) Stat() (os.FileInfo, error) { f.owner.counts.Stats++; return f.File.Stat() }
+func (f *nativeCountedFile) Stat() (os.FileInfo, error) {
+	if err := f.owner.metadata(); err != nil {
+		return nil, err
+	}
+	f.owner.counts.Stats++
+	return f.File.Stat()
+}
 func (f *nativeCountedFile) ReadAt(b []byte, offset int64) (int, error) {
+	if err := f.owner.metadata(); err != nil {
+		return 0, err
+	}
 	if f.read+int64(len(b)) > sourcefacts.HeaderBytes {
 		return 0, agentapi.Wrap(agentapi.Unavailable, errors.New("native startup byte allowance spent"))
 	}

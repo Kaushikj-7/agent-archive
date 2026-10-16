@@ -15,6 +15,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agents/muse"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/collector"
+	"github.com/wangjohn/agent-archive/internal/transcriptio"
 )
 
 func TestNativeInventorySharedCacheCompositionAndRelease(t *testing.T) {
@@ -161,5 +162,37 @@ func TestNativeInventoryTypedVectorBound(t *testing.T) {
 				t.Fatal("pinned typed/wire charge proof", typ, n, vector.Cap(), len(wire))
 			}
 		}
+	}
+}
+
+// An injected descriptor observes whether canceled operations reach native I/O.
+type inventoryCanceledFile struct {
+	transcriptio.File
+	calls int
+}
+
+func (f *inventoryCanceledFile) Stat() (os.FileInfo, error) {
+	f.calls++
+	return nil, errors.New("unexpected stat")
+}
+func (f *inventoryCanceledFile) ReadAt([]byte, int64) (int, error) {
+	f.calls++
+	return 0, errors.New("unexpected read")
+}
+func TestNativeInventoryCanceledDescriptorDoesNoLaterIO(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	owner := &NativeInventory{ctx: ctx, remaining: Budget}
+	descriptor := &inventoryCanceledFile{}
+	counted := &nativeCountedFile{File: descriptor, owner: owner}
+	if _, err := counted.Stat(); !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+	if _, err := counted.ReadAt(make([]byte, 1), 0); !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+	if descriptor.calls != 0 || owner.Counts() != (NativeInventoryCounts{}) {
+		t.Fatal("canceled native IO", descriptor.calls, owner.Counts())
 	}
 }

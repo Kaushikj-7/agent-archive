@@ -192,7 +192,10 @@ catalog members and compare expected bytes before atomic replacement.
 
 The pass reserves persistence time within its existing five-second active-work
 allowance and retains the original cancellation/deadline. It never renews a
-per-owner budget. The native member is at most 1 MiB, with 8 MiB charged for its
+per-owner budget. An acquired page whose final generation checks could not
+finish remains uncommitted and may be read again; counters include that work.
+Already qualified pages survive a work cutoff, while an observed generation or
+cookie mismatch invalidates dependent coverage. The native member is at most 1 MiB, with 8 MiB charged for its
 bounded typed state and transient serialization in the existing 96 MiB cache
 reserve. Existing Codex caches account for 84 MiB; the collector's maximum
 8192-query snapshot and pending ordering storage use less than 2 MiB. Catalog
