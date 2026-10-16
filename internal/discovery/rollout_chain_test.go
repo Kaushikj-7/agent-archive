@@ -530,20 +530,20 @@ func TestRolloutSearchPastListingAllowanceStillFindsTheRollout(t *testing.T) {
 	}
 }
 
-// A directory a rollout search cannot read (archived_sessions/ too large to
-// list, say) does not hide the rollout from the directories it can.
-func TestRolloutSearchPastAnUnreadableDirectoryStillFindsTheRollout(t *testing.T) {
+// A readable copy cannot establish uniqueness when a relevant directory
+// cannot be searched. A regular-file archive is a real failure even as root.
+func TestRolloutSearchRefusesAnUnreadableDirectoryDespiteAReadableRollout(t *testing.T) {
 	t.Parallel()
 	root := chainRoot(t)
 	id := v7ID(chainEpoch, 6)
-	path, _ := chainRollout(t, root, rolloutDirectories(id)[1], id, id, 0, nil, "day")
+	_, _ = chainRollout(t, root, rolloutDirectories(id)[1], id, id, 0, nil, "day")
 	if err := os.WriteFile(filepath.Join(root, "archived_sessions"), []byte("not a directory"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	lookup := chainLookup(t, root)
 	refs, err := lookup.Rollout(t.Context(), id)
-	if err != nil || len(refs) != 1 || refs[0].Path != path {
-		t.Fatal(refs, err)
+	if err == nil || !agentapi.HasFailure(err, agentapi.Unavailable) || agentapi.Failure(err) != agentapi.Unavailable || len(refs) != 0 {
+		t.Fatal("accepted incomplete relevant-store search", refs, err)
 	}
 	// With nothing found, the unreadable directory is still the failure.
 	if refs, err := lookup.Rollout(t.Context(), v7ID(chainEpoch, 7)); err == nil {

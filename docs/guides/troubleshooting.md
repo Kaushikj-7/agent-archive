@@ -187,7 +187,11 @@ More: agent-archive status --verbose · agent-archive status claude
 counts. For Codex with automatic discovery enabled, the main row says
 **automatic capture** and names the selected project scope. Waiting or unknown
 capture states remain visible. Optional hooks do not add a setup step to the
-normal status screen.
+normal status screen. If discovery is unavailable but all published automatic
+sessions have recorded read-back verification, the row says **discovery unknown;
+archive verified at recorded time**. That verification describes the recorded
+publication; restore source access and run `agent-archive sync` to check current
+capture health.
 
 Session counts distinguish sessions found from sessions **archived** (uploaded)
 and **verified** (the uploaded publication was read back). Archived and verified
