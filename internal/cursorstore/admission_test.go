@@ -36,8 +36,10 @@ type syntheticAdmissionWorkspace struct {
 	fail         error
 }
 
-func (w *syntheticAdmissionWorkspace) Root() string                     { return w.root }
+func (w *syntheticAdmissionWorkspace) Root() string { return w.root }
+
 func (w *syntheticAdmissionWorkspace) OpenWorkspace() (*os.Root, error) { return os.OpenRoot(w.root) }
+
 func (w *syntheticAdmissionWorkspace) Reserve(n int64) error {
 	w.reserveCalls++
 	if w.reserveErr != nil {
@@ -52,8 +54,11 @@ func (w *syntheticAdmissionWorkspace) Reserve(n int64) error {
 	w.reserved += n
 	return nil
 }
-func (w *syntheticAdmissionWorkspace) Err() error   { return w.fail }
+
+func (w *syntheticAdmissionWorkspace) Err() error { return w.fail }
+
 func (w *syntheticAdmissionWorkspace) Close() error { return os.RemoveAll(w.root) }
+
 func admissionWorkspace(t *testing.T) *syntheticAdmissionWorkspace {
 	t.Helper()
 	return &syntheticAdmissionWorkspace{root: filepath.Join(t.TempDir(), "scratch")}

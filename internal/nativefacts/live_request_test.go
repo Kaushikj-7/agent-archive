@@ -50,15 +50,15 @@ func TestLiveCaptureCancelledOriginalRefusesBeforeWorkspaceCallbacks(t *testing.
 func TestLiveCaptureCopiedBindingIsOneShotAndCleanupWaitsBorrower(t *testing.T) {
 	t.Parallel()
 	live, _, _, cleanups := liveMechanismFixture(t)
-	copy := *live
+	copied := *live
 	lease, err := live.Borrow()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = copy.Borrow(); err == nil {
+	if _, err = copied.Borrow(); err == nil {
 		t.Fatal("copy restarted capture")
 	}
-	if err = copy.Close(); err != nil {
+	if err = copied.Close(); err != nil {
 		t.Fatal(err)
 	}
 	if *cleanups != 0 {

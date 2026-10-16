@@ -80,6 +80,7 @@ func (l *LiveCaptureLease) Err() error {
 	defer s.mu.Unlock()
 	return s.checkLocked()
 }
+
 func (s *liveRequestState) checkLocked() error {
 	if s.closed || !s.active {
 		return os.ErrClosed
@@ -141,6 +142,7 @@ func (r *LiveCaptureRequest) Close() error {
 	}
 	return s.finishLocked()
 }
+
 func (s *liveRequestState) finishLocked() error {
 	if s.cleaned {
 		return nil
