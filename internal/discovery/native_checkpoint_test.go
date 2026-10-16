@@ -146,7 +146,17 @@ func TestNativeCatalogLargeUnrelatedMemberFitsChargedScratch(t *testing.T) {
 	replacement := []byte(`{"version":1,"progress":true}`)
 	// Three old-input lengths plus member/output overhead and fixed scratch:
 	// retained input/key maps + one exact output. CAS uses only32KiB scratch.
+	membersBefore, ok := nativeCatalogMembers(before)
+	if !ok {
+		t.Fatal("invalid unrelated-member fixture")
+	}
+	membersBefore["native_inventory"] = replacement
+	outputSize, err := nativeCatalogOutputSize(membersBefore)
+	if err != nil {
+		t.Fatal(err)
+	}
 	required := 3*int64(len(before)) + 3*int64(len(replacement)) + (512 << 10)
+	required += max(int64(outputSize)-int64(len(before))-int64(len(replacement)), 0)
 	refused := agentapi.NewNativeReadBudget(required - 1)
 	if err := mergeNativeCatalog(t.Context(), path, nil, replacement, true, refused); !errors.Is(err, agentapi.ErrReadBudget) {
 		t.Fatal("tight scratch pressure accepted", err)
