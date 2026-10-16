@@ -312,6 +312,10 @@ func (s *sessionScan) liveTranscriptChanged(lastPublished archive.SourceBundle) 
 		}
 		return false
 	}
+	if err := s.persistNativeValidation(observed.prepared); err != nil {
+		s.warn(err)
+		return false
+	}
 	// Normal capture reads this same source next unless the refresh ends the
 	// scan, so it keeps what was read here.
 	s.filtered = &filteredSource{filterLease: s.nativeFilterLease(filterMark), adapter: adapter, transcript: filtered, observed: observed}

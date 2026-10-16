@@ -19,7 +19,14 @@ func TestHistoricalImportConformance(t *testing.T) {
 			t.Parallel()
 			provider, ok := r.LookupImport(name)
 			if !ok {
-				t.Fatal("missing inspector")
+				if name != "muse" {
+					t.Fatal("missing inspector")
+				}
+				discovery, _ := r.LookupDiscovery(name)
+				if _, err := discovery.Discover(t.Context(), agentapi.DiscoveryRequest{Purpose: agentapi.DiscoveryImport}, func(agentapi.DiscoveryCandidate) error { t.Fatal("emitted unsupported import"); return nil }); err == nil {
+					t.Fatal("handoff-only discovery accepted import")
+				}
+				return
 			}
 			request := agentapi.ImportInspectionRequest{Session: agentapi.NativeSession{Agent: agentmeta.ID(name), NativeID: "qualified"}, Header: agentapi.NativeHeader{StartedAt: headerStart}, Filtered: archive.FilteredTranscript{Records: [][]byte{[]byte(`{"type":"user"}`)}, SessionIDs: []string{"copied", "qualified"}, NativeStartAt: nativeStart}}
 			expected := agentapi.ImportInspection{Conversation: true}
@@ -31,7 +38,7 @@ func TestHistoricalImportConformance(t *testing.T) {
 			case agentmeta.Codex:
 				expected.StartedAt = headerStart
 			case agentmeta.Muse:
-				t.Fatal("runtime-only Muse cannot inspect historical imports")
+				t.Fatal("handoff-only Muse cannot inspect historical imports")
 			}
 			cases := []agenttest.ImportCase{{Name: "copied identity remains valid", Request: request, Want: expected}}
 			missing := request

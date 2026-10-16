@@ -8,8 +8,8 @@ affects.
 | Version | Where | Recorded in | Current | Changes when |
 | --- | --- | --- | --- | --- |
 | Release | `cli.Version` (set at build time) | `--version` | Build-dependent (`dev-<commit>` from source) | A tag is cut. |
-| Filter | `archive.FilterVersion` | source header `capture.filter_version`, metadata `filter_version` | 19 | What the privacy filter keeps, drops, or redacts changes: any change to filtered output. |
-| Adapter | `adapterVersion` in `internal/archive/adapters.go` | `capture.adapter_version` | 0.19.0 | An adapter's output changes (bumped with the filter in practice). |
+| Filter | `archive.FilterVersion` | source header `capture.filter_version`, metadata `filter_version` | 24 | What the privacy filter keeps, drops, or redacts changes: any change to filtered output. |
+| Adapter | `adapterVersion` in `internal/agents/nativecodec/adapters.go` | `capture.adapter_version` | 0.24.0 | An adapter's output changes (bumped with the filter in practice). |
 | Parser | per-agent `Parser.Version()` / `archive.DefaultParserVersion` | metadata `parser.version` | 0.21.0 | How metadata is derived from a source changes: counts, turns, models, skills, gaps, titles, session names, branch, linked pull requests, tools used, end time, tokens (per model too), tool errors, MCP calls, git activity, the repository key (derived from the project's git origin, not the source). |
 | Source schema | `archive.SourceSchemaVersion` / `HistorySourceSchemaVersion` | source header `schema_version` | 2 | The source bundle's line format changes. Readers refuse other versions. |
 | Metadata schema | `archive.MetadataSchemaVersion` / `HistoryMetadataSchemaVersion` | metadata `schema_version` | 1 | The metadata sidecar changes incompatibly. Optional fields don't bump it. |
@@ -21,14 +21,15 @@ affects.
 | List JSON | `cli.listSchemaVersion` | `list --json` `schema_version` | 4 | The script-facing list document changes incompatibly. Version 3 removed `unavailable`; version 4 makes exact-count knowledge explicit. |
 | Status JSON | `statusView.Version` in `internal/cli/status.go` | `status --json` `schema_version` | 4 | Status output changes incompatibly; schema 4 separates discovery from actual hook evidence. |
 
-Muse uses its independent parser 0.1.0 and archive-native `muse-jsonl` v1
-([inner record schema](../../schemas/muse-retained-v1.schema.json)). Explicit
-local handoff alone is supported; this does not alter outer bundle schemas or
+Muse uses its independent parser 0.4.0 and archive-native `muse-jsonl` mixed ordinary-v1/native-omission-v2
+([inner union schema](../../schemas/muse-retained-record.schema.json)). Explicit-file
+and bounded automatic local handoff are supported; this does not alter outer
+bundle schemas or
 registration authority. Handoff builders now prefer existing `NativeStartedAt`
 facts over first prompts/file observations, also correcting Codex handoff start.
-Metadata derivation and the existing three parser versions are unchanged.
+The original native-start correction did not change metadata derivation.
 
-Claude uses the common parser version; Cursor remains at parser 0.20.0.
+Claude uses the common parser version; Cursor uses parser 0.22.0.
 Codex has its own parser version as recorded above.
 
 The per-version filter changes are in the
@@ -254,3 +255,53 @@ with journal fence version 1 / writer `native-authority-v16` / original boolean
 `value`, requiring their true native protection marker. This blocks older raw
 rollback recovery before config loading; adding an ignored journal field alone
 would not protect authority.
+
+Muse parser 0.2.0 corrects unavailable tool/file/Git counts and full export file
+presence without losing qualified prompt/message counts. Cursor parser 0.22.0
+corrects unavailable tool-result counts and omits full export files for
+unstructured text evidence. It also refreshes sidecars written when Cursor
+inherited common parser 0.21.0. Existing Claude, Codex and common parser versions
+are unchanged. The shared new tool-call/file/Git availability categories inherit
+structured-count availability only when a legacy producer leaves them unset;
+explicit unknown/unavailable values never establish measured zeros. Existing
+tool-result availability remains explicit. Parser-only refresh rederives metadata
+from retained sources; full export refreshes older sidecar counts when parser
+versions differ. Filter 19, adapter 0.19.0, retained Muse v1 and published schema
+versions are unchanged; existing schemas allow omitted counts and edited files.
+
+Muse native omission recognition allocates filter23/global adapter0.23.0 and Muse
+parser0.3.0. Filter20/adapter0.20, filter21/adapter0.21 and filter22/adapter0.22 are reserved
+by separate open PR611, PR613 and PR614 respectively; their policies are not
+included by this allocation. Existing ordinary-v1 bytes remain unchanged;
+new finite ordinary variants and timestamp-free v2 omissions are closed and older
+readers refuse them. Exact observed two-metadata startup preserves permission
+birth authority. Required omission coverage is derived from validated rows;
+retained parsing refuses concealed coverage and refilter reconstructs it. Other
+agent parser versions and outer source/metadata/configuration schemas do not change.
+
+Private native binding **version 2** is reserved for Muse's successful raw
+validation checkpoint. Its mandatory `checkpoint` uses version 1, domain
+`muse-ordinary`, algorithm `sha256`, a positive raw byte boundary and lowercase
+hex SHA-256. Version 1 has no checkpoint; existing Muse v1 cannot upgrade by
+hashing current bytes. Current ordinary writers preserve exact checkpoints and
+cannot introduce, drop or advance them. The dedicated prepared commit retains
+immutable owner/root facts and compares the expected prior proof. The existing
+native-authority-v16 configuration fence remains; earlier binding-v1 writers
+refuse version 2 during registration validation. Uploaded schemas, filter,
+adapter and parser versions do not change.
+
+Muse local file observations use provider `file`, signature version 1, and a
+55-character raw-base64url token: recognized algorithm byte 1, uint64 big-endian
+raw boundary, then SHA-256. Old stat tokens and unknown encodings cannot equal a
+fresh strong observation. This disposable equality cache is separate from the
+protected successful checkpoint and cannot supply continuity authority.
+
+Muse own observations allocate filter24/global adapter0.24.0/Muse filter0.24.0
+and Muse parser0.4.0. The additive metadata/eval/handoff/stats token_observations
+envelope leaves legacy normalized tokens/counts/model_tokens absent. Old typed
+metadata readers ignore observations and cannot auto-price them; old strict
+schemas refuse the new field. Old retained event-only completions remain readable,
+while frozen filter23 schemas refuse enriched rows. This observation expansion
+leaves Source2/metadata1 and private configuration/state formats unchanged. Other agent parser versions do not
+change. Parser refresh and full export rederive the summary from retained evidence
+after native loss. Real billing/cache/completeness gates remain unqualified.

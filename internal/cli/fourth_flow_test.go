@@ -267,7 +267,8 @@ func TestFourthHistoricalQualifiedLocatorFlow(t *testing.T) {
 	must(t, config.Save(home, cfg))
 	local, err := state.Open(home)
 	must(t, err)
-	env := backfill.Environment{Home: userHome, Discovery: registry, Sources: registry, Imports: registry, NativePaths: registry, Now: func() time.Time { return at }, CursorDatabase: func(context.Context) (backfill.CursorDatabaseResult, error) {
+	cliEnv := Env{Agents: registry}
+	env := backfill.Environment{Home: userHome, Discovery: selectedDiscoveryApps{DiscoveryLookup: registry, apps: cliEnv.backfillDiscoveryAgents()}, Sources: registry, Imports: registry, NativePaths: registry, Now: func() time.Time { return at }, CursorDatabase: func(context.Context) (backfill.CursorDatabaseResult, error) {
 		return backfill.CursorDatabaseResult{Checked: true}, nil
 	}}
 	plan, err := backfill.BuildPlan(ctx, env, newArchiveState(home, cfg), cfg, backfill.Filters{Harnesses: []string{string(orbifold.ID)}})

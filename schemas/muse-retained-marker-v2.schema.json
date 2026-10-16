@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/wangjohn/agent-archive/main/schemas/muse-retained-marker-v2.schema.json",
+  "title": "Muse timestamp-free native omission v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "v",
+    "kind",
+    "pos",
+    "stream",
+    "position",
+    "schema",
+    "marker",
+    "omitted_record"
+  ],
+  "properties": {
+    "v": {
+      "const": 2
+    },
+    "kind": {
+      "const": "native_omission"
+    },
+    "pos": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "line",
+        "child"
+      ],
+      "properties": {
+        "line": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 9007199254740991
+        },
+        "child": {
+          "type": "null"
+        }
+      }
+    },
+    "stream": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "id"
+      ],
+      "properties": {
+        "kind": {
+          "const": "session"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        }
+      }
+    },
+    "position": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "sequence"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 3,
+          "maximum": 9007199254740991
+        }
+      }
+    },
+    "schema": {
+      "const": 1
+    },
+    "marker": {
+      "const": "omitted_live_only"
+    },
+    "omitted_record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "record_type",
+        "durability",
+        "payload_type",
+        "payload_schema_version",
+        "payload_kind",
+        "omission_class"
+      ],
+      "properties": {
+        "record_type": {
+          "const": "status"
+        },
+        "durability": {
+          "const": "ephemeral"
+        },
+        "payload_type": {
+          "const": "runtime.session"
+        },
+        "payload_schema_version": {
+          "const": 1
+        },
+        "payload_kind": {
+          "const": "task"
+        },
+        "omission_class": {
+          "const": "task_tool_delta_v1"
+        }
+      }
+    }
+  }
+}

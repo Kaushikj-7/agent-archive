@@ -9,14 +9,14 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 )
 
-// Parser derives only qualified own visible conversation from retained evidence.
+// Parser derives qualified own conversation and input/output observations from retained evidence.
 // It never opens a native file or infers missing accounting.
 type Parser struct{}
 
 // Version identifies the Muse retained analysis policy.
-func (Parser) Version() string { return "0.1.0" }
+func (Parser) Version() string { return "0.4.0" }
 
-// Parse interprets the complete validated muse-jsonl v1 evidence.
+// Parse interprets the complete validated Muse ordinary/omission union.
 func (Parser) Parse(ctx context.Context, b archive.SourceBundle) (archive.Analysis, error) {
 	rows, e := retainedRows(ctx, b)
 	if e != nil {
@@ -26,7 +26,7 @@ func (Parser) Parse(ctx context.Context, b archive.SourceBundle) (archive.Analys
 		if e = ctx.Err(); e != nil {
 			return archive.Analysis{}, e
 		}
-		rows[i], e = privacyWithGaps(r, i+1, func(string, int, string) {})
+		rows[i], e = privacyLogical(r, i+1, func(string, int, string) {})
 		if e != nil {
 			return archive.Analysis{}, e
 		}
@@ -37,16 +37,20 @@ func (Parser) Parse(ctx context.Context, b archive.SourceBundle) (archive.Analys
 			return archive.Analysis{}, errFormat
 		}
 	}
-	if e = validateRootRows(rows); e != nil {
+	if e = validateLogical(rows); e != nil {
 		return archive.Analysis{}, e
 	}
-	view, e := conversation(rows)
+	if !validOmissionGaps(rows, b.Capture.Gaps) {
+		return archive.Analysis{}, errFormat
+	}
+	slots := ordinarySlots(rows)
+	view, observations, e := conversationObserved(slots)
 	if e != nil {
 		return archive.Analysis{}, e
 	}
 	unavailable := archive.Availability{State: archive.AvailabilityUnavailable, Reason: archive.AvailabilityReasonNotRecorded}
-	a := archive.Analysis{View: view, Facts: archive.NativeFacts{NativeStartedAt: time.UnixMicro(rows[0].Timestamp).UTC(), EarliestRecordAt: time.UnixMicro(rows[0].Timestamp).UTC(), TokenScopeUnknown: true}, Observability: archive.Observability{StructuredCounts: archive.Availability{State: archive.AvailabilityAvailable}, Compactions: unavailable, ToolErrors: unavailable, ToolResults: unavailable}}
-	for _, r := range rows {
+	a := archive.Analysis{View: view, Facts: archive.NativeFacts{NativeStartedAt: time.UnixMicro(slots[0].Timestamp).UTC(), EarliestRecordAt: time.UnixMicro(slots[0].Timestamp).UTC(), TokenScopeUnknown: false}, Observability: archive.Observability{StructuredCounts: archive.Availability{State: archive.AvailabilityAvailable}, ToolCalls: unavailable, FilesTouched: unavailable, GitActivity: unavailable, Compactions: unavailable, ToolErrors: unavailable, ToolResults: unavailable}}
+	for _, r := range slots {
 		if r.Type == payloadRuntimeSessionMetadata && a.Facts.WorkspaceRoot == "" {
 			a.Facts.WorkspaceRoot = str(r.Fields["workspace_root"])
 		}
@@ -54,11 +58,22 @@ func (Parser) Parse(ctx context.Context, b archive.SourceBundle) (archive.Analys
 			a.Facts.Name = archive.CollapseSessionTitle(str(r.Fields["new_name"]))
 		}
 	}
-	a.Facts.IdentityConflict = b.NativeSessionID != "" && b.NativeSessionID != rows[0].Stream.ID
+	if observations != nil && !observationGapsPresent(b.Capture.Gaps) {
+		return archive.Analysis{}, errFormat
+	}
+	a.Facts.TokenScopeUnknown = observations == nil
+	a.TokenObservations = observations
+	a.Facts.IdentityConflict = b.NativeSessionID != "" && b.NativeSessionID != slots[0].Stream.ID
 	return a, nil
 }
 
 func conversation(rows []retained) (archive.NormalizedView, error) {
+	view, _, err := conversationObserved(rows)
+	return view, err
+}
+
+func conversationObserved(rows []retained) (archive.NormalizedView, *archive.TokenObservationSummary, error) {
+	var observations archive.ObservationAccumulator
 	view := archive.NormalizedView{}
 	accepted := map[string]retained{}
 	started := map[string]int{}
@@ -69,19 +84,24 @@ func conversation(rows []retained) (archive.NormalizedView, error) {
 	materialized := map[string]bool{}
 	consumed := map[string]bool{}
 	for i, r := range rows {
+		if r.Version == 0 {
+			continue
+		}
 		ts := time.UnixMicro(r.Timestamp).UTC()
 		if ts.After(view.LatestRecordAt) {
 			view.LatestRecordAt = ts
 		}
 		f := r.Fields
 		switch r.Type {
+		case payloadApprovalWaitStarted, payloadApprovalWaitTerminal, payloadToolBatchStarted, payloadToolBatchTerminal:
+			// Omitted private effects do not create conversation facts.
 		case payloadRuntimeUserIntentAccepted:
 			id := str(f["intent_id"])
 			if id == "" {
-				return view, errFormat
+				return view, nil, errFormat
 			}
 			if _, ok := accepted[id]; ok {
-				return view, errFormat
+				return view, nil, errFormat
 			}
 			accepted[id] = r
 		case payloadRuntimeSession:
@@ -91,39 +111,41 @@ func conversation(rows []retained) (archive.NormalizedView, error) {
 			run := str(f["run_id"])
 			switch runtimeEvent(str(f["event_kind"])) {
 			case eventStarted:
-				if run == "" || str(f["source_run_record_id"]) == "" {
-					return view, errFormat
+				if !conversationSourceShape(f) {
+					return view, nil, errFormat
 				}
 				if _, ok := started[run]; ok {
-					return view, errFormat
+					return view, nil, errFormat
 				}
 				started[run] = i
 				sourceRecords[runIdentity{run, str(f["source_run_record_id"])}] = true
 				lastSequence[run] = num(f["source_run_record_sequence"])
-			case eventAssistantMessageCommitted:
-				_, ok := started[run]
-				if !ok || !joined[run] {
-					return view, errFormat
+			case eventReasoningCommitted:
+				if observeConversationSource(f, run, joined, lastSequence, sourceRecords) != nil {
+					return view, nil, errFormat
 				}
-				if num(f["source_run_record_sequence"]) <= lastSequence[run] || sourceRecords[runIdentity{run, str(f["source_run_record_id"])}] {
-					return view, errFormat
+			case eventAssistantMessageCommitted:
+				if observeConversationSource(f, run, joined, lastSequence, sourceRecords) != nil {
+					return view, nil, errFormat
 				}
 				key := runIdentity{run, str(f["message_id"])}
 				if str(f["message_id"]) == "" || str(f["response_id"]) == "" || messages[key] {
-					return view, errFormat
+					return view, nil, errFormat
 				}
 				messages[key] = true
-				sourceRecords[runIdentity{run, str(f["source_run_record_id"])}] = true
-				lastSequence[run] = num(f["source_run_record_sequence"])
 				view.Turns = append(view.Turns, archive.NormalizedTurn{RecordIndex: i, Role: "assistant", Kind: archive.TurnKindAssistant, Text: str(f["text"]), ID: r.ID, MessageID: str(f["message_id"]), TurnID: run, Timestamp: ts.Format(time.RFC3339Nano)})
-			case eventAccepted, eventAssistantToolCallsCommitted, eventCancelled, eventCompleted, eventContextBlockDiagnostic, eventContextBlockUpdated, eventFailed, eventGoalUsageAttribution, eventHookRunStarted, eventHookRunTerminal, eventModelCompleted, eventModelInputTraceRecorded, eventModelRequestConfigured, eventModelResponseCreated, eventProposed, eventProviderRequestOptionsConfigured, eventResourceUsageSampled, eventScheduled, eventSideEffectIntent, eventStatus, eventTaskStreamLinked, eventTerminal, eventToolResultBatchCommitted:
+			case eventModelCompleted:
+				if observeCompletion(r, joined, lastSequence, sourceRecords, &observations) != nil {
+					return view, nil, errFormat
+				}
+			case eventAccepted, eventAssistantToolCallsCommitted, eventCancelled, eventCompleted, eventContextBlockDiagnostic, eventContextBlockUpdated, eventFailed, eventGoalUsageAttribution, eventHookRunStarted, eventHookRunTerminal, eventModelInputTraceRecorded, eventModelRequestConfigured, eventModelResponseCreated, eventProposed, eventProviderRequestOptionsConfigured, eventResourceUsageSampled, eventScheduled, eventSideEffectIntent, eventStatus, eventTaskStreamLinked, eventTerminal, eventToolResultBatchCommitted:
 				// Known optional facts do not create visible conversation turns.
 
 			}
 		case payloadRuntimeUserIntentMaterialized:
 			turn, run, e := materializedTurn(r, rows, accepted, started, materialized, consumed)
 			if e != nil {
-				return view, e
+				return view, nil, e
 			}
 			if turn != nil {
 				joined[run] = true
@@ -135,10 +157,10 @@ func conversation(rows []retained) (archive.NormalizedView, error) {
 		}
 	}
 	if len(accepted) != len(consumed) || len(started) != len(materialized) {
-		return view, errFormat
+		return view, nil, errFormat
 	}
 	sort.Slice(view.Turns, func(i, j int) bool { return view.Turns[i].RecordIndex < view.Turns[j].RecordIndex })
-	return view, nil
+	return view, observations.Summary(), nil
 }
 
 func materializedTurn(r retained, rows []retained, accepted map[string]retained, started map[string]int, materialized, consumed map[string]bool) (*archive.NormalizedTurn, string, error) {
@@ -172,4 +194,30 @@ func materializedTurn(r retained, rows []retained, accepted map[string]retained,
 type runIdentity struct {
 	run    string
 	record string
+}
+
+func observeConversationSource(f map[string]any, run string, joined map[string]bool, last map[string]int64, seen map[runIdentity]bool) error {
+	key := runIdentity{run, str(f["source_run_record_id"])}
+	seq := num(f["source_run_record_sequence"])
+	if !conversationSourceShape(f) || !joined[run] || seq <= last[run] || seen[key] {
+		return errFormat
+	}
+	seen[key] = true
+	last[run] = seq
+	return nil
+}
+
+func conversationSourceShape(f map[string]any) bool {
+	return identifier(f["run_id"]) && identifier(f["source_run_record_id"]) && integer(f["source_run_record_sequence"], 1)
+}
+
+func observeCompletion(r retained, joined map[string]bool, last map[string]int64, seen map[runIdentity]bool, observations *archive.ObservationAccumulator) error {
+	f := r.Fields
+	if !completionEnriched(f) {
+		return nil
+	}
+	if !completionFields(r) || observeConversationSource(f, str(f["run_id"]), joined, last, seen) != nil {
+		return errFormat
+	}
+	return observations.Add(str(f["model"]), num(f["input_tokens"]), num(f["output_tokens"]))
 }
