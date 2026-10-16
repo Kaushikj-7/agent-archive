@@ -55,6 +55,9 @@ type Options struct {
 	// NativeRoots are committed setup roots, never launch-environment defaults.
 	NativeRoots    []archive.NativeRoot
 	NativeLocators agentapi.NativeLocatorLookup
+	// NativeLocatorFactory owns a lookup built once from this pass's immutable work.
+	// It is mutually exclusive with the borrowed NativeLocators.
+	NativeLocatorFactory func(context.Context, NativeLocatorPass) (agentapi.NativeLocatorLookup, func() error, error)
 	// ResolveCodexReadHomes revalidates trusted default/hook/import/config roots
 	// against current configuration; lookup observations never supply authority.
 	ResolveCodexReadHomes func(config.Config) ([]string, error)
@@ -312,9 +315,7 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	if durableErr != nil {
 		return Result{Errors: map[string]error{"durable-storage": durableErr}}, durableErr
 	}
-	admission, closeAdmission := local.WithReadBudget(ctx, (&sessionScan{opts: opts}).readBudget())
-	admissionErr := admission.ResumeImportAdmissions(ctx)
-	closeAdmission()
+	admissionErr := resumeImportAdmissionsForPass(ctx, local, opts)
 	if admissionErr != nil {
 		return Result{Errors: map[string]error{"staged-imports": admissionErr}}, admissionErr
 	}
@@ -362,13 +363,11 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	}
 	// Establish one lazy source scope before child admission borrows its ledger.
 	closeCursorPass := openCursorPass(nil, &opts)
-	defer func() {
-		if err := closeCursorPass(); err != nil {
-			runErr = errors.Join(runErr, err)
-		}
-	}()
+	var closeNativeInventory func() error
+	defer func() { runErr = errors.Join(runErr, closeSourceAndNative(closeCursorPass, closeNativeInventory)) }()
 	local, closeAccounting := local.WithPublicationAccounting(ctx, (&sessionScan{opts: opts}).readBudget())
 	defer closeAccounting()
+
 	subagents := materializeSubagentCandidates(ctx, local, opts, now)
 	opts.repoKeys = newRepoKeyCache(opts.RepoKey)
 	p := &pass{
@@ -397,13 +396,17 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	if err := p.loadWork(); err != nil {
 		return Result{}, err
 	}
+	var inventoryErr error
+	closeNativeInventory, inventoryErr = p.configureNativeInventory()
+	if inventoryErr != nil {
+		return Result{}, inventoryErr
+	}
+
 	p.loadDeferredSince()
 	p.reconcileNativeLinks()
 	p.observeLabels(ctx)
 	p.repairListingIndex()
-	registrations := p.executionRegistrations()
-	orderRequests(registrations, p.requests)
-	p.orderLookupAllowanceDeferralsLast(registrations)
+	registrations := p.orderedExecutionRegistrations()
 	for i, reg := range registrations {
 		// A pass past its deadline ends like a stopped one: nothing more can
 		// reach storage, so the rest keep their work rather than each
@@ -426,6 +429,21 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 		return p.result, err
 	}
 	return p.result, p.saveStatus()
+}
+
+func resumeImportAdmissionsForPass(ctx context.Context, local *state.Store, opts Options) error {
+	admission, closeAdmission := local.WithReadBudget(ctx, (&sessionScan{opts: opts}).readBudget())
+	err := admission.ResumeImportAdmissions(ctx)
+	closeAdmission()
+	return err
+}
+
+func (p *pass) orderedExecutionRegistrations() []archive.SessionRegistration {
+	registrations := p.executionRegistrations()
+	orderRequests(registrations, p.requests)
+	p.orderLookupAllowanceDeferralsLast(registrations)
+	p.orderPendingNative(registrations)
+	return registrations
 }
 
 // executionRegistrations reserves scheduling slots only for eligible sessions.
@@ -742,13 +760,10 @@ func (p *pass) scan(ctx context.Context, reg archive.SessionRegistration) {
 	defer func() { closeLocal(); p.local = priorLocal }()
 	id := reg.ArchiveSessionID
 	p.result.Scanned++
-	if p.unreadable[id] {
-		if !p.durableCounted[id] {
-			p.pending++
-		}
-		p.opts.progress(id, false)
+	if p.holdUnopenedScan(reg) {
 		return
 	}
+
 	req := p.requests[id]
 	if done := p.skipUnchanged(reg, req); done {
 		return

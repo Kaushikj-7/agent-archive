@@ -20,6 +20,10 @@ import (
 
 const proofScratch = 64 << 10
 
+// Matches the existing shared 256 KiB source-header ceiling; it is aggregate,
+// not a separate allowance for each of the supported startup records.
+const startupHeaderBytes = 256 << 10
+
 type sourcePass struct {
 	env               agentapi.SourceEnvironment
 	live              map[*sourceSnapshot]bool
@@ -201,7 +205,7 @@ func (s *sourceSnapshot) startupFacts(ctx context.Context) (archive.NativeSource
 	}
 	held := int64(4096)
 	defer func() { reservation.Release(held) }()
-	reader := bufio.NewReaderSize(io.NewSectionReader(s.file, 0, s.file.Length()), 4096)
+	reader := bufio.NewReaderSize(io.NewSectionReader(s.file, 0, min(s.file.Length(), startupHeaderBytes)), 4096)
 	_, limit := boundedNativeLimits(s.limits)
 	rows := make([]retained, 0, 8)
 	joins := nativeBodyJoins{}
@@ -257,17 +261,18 @@ func (s *sourceSnapshot) AdmissionEvidence(ctx context.Context, admission agenta
 
 func (s *sourceSnapshot) admissionEvidence(ctx context.Context, admission agentapi.SourceAdmission, warm bool) (agentapi.AdmissionEvidence, error) {
 	var empty agentapi.AdmissionEvidence
-	var previous *archive.NativeSourceBinding
-	if admission.Binding != nil && admission.Binding.Codex == nil {
-		previous = admission.Binding.Native
-	}
-	if admission.NativeID == "" || previous == nil || previous.Version != 2 || previous.Validate() != nil {
-		return empty, agentapi.Wrap(agentapi.Unavailable, agentapi.ErrInvalidSourceBinding)
+	previous, err := nativePreviousAdmission(admission)
+	if err != nil {
+		return empty, err
 	}
 	facts, err := s.startupFacts(ctx)
 	if err != nil {
 		return empty, err
 	}
+	if previous == nil {
+		return s.firstBindingEvidence(ctx, admission, facts)
+	}
+
 	if root := s.owner.env.NativeRoot; root != nil {
 		if root.Validate() != nil || root.Agent != facts.Agent || root.Revision != previous.RootRevision || !ordinaryRootLocator(root.Canonical, facts.Path) {
 			return empty, agentapi.ErrInvalidSourceBinding
@@ -357,4 +362,39 @@ func (p *sourcePass) Close() error {
 	p.closed = true
 	p.prepared = nil
 	return p.err
+}
+
+func nativePreviousAdmission(admission agentapi.SourceAdmission) (*archive.NativeSourceBinding, error) {
+	if admission.NativeID == "" {
+		return nil, agentapi.Wrap(agentapi.Unavailable, agentapi.ErrInvalidSourceBinding)
+	}
+	if admission.Binding == nil {
+		return nil, nil
+	}
+	if admission.Binding.Codex != nil || admission.Binding.Native == nil {
+		return nil, agentapi.Wrap(agentapi.Unavailable, agentapi.ErrInvalidSourceBinding)
+	}
+	previous := admission.Binding.Native
+	if previous.Version != 2 || previous.Validate() != nil {
+		return nil, agentapi.Wrap(agentapi.Unavailable, agentapi.ErrInvalidSourceBinding)
+	}
+	return previous, nil
+}
+
+func (s *sourceSnapshot) firstBindingEvidence(ctx context.Context, admission agentapi.SourceAdmission, facts archive.NativeSourceBinding) (agentapi.AdmissionEvidence, error) {
+	var empty agentapi.AdmissionEvidence
+	if err := ctx.Err(); err != nil {
+		return empty, err
+	}
+	root := s.owner.env.NativeRoot
+	opener, confined := s.owner.env.Files.(transcriptio.RootOpener)
+	if root == nil || root.Validate() != nil || root.Agent != "muse" || !confined || opener.Root != root.Canonical || s.owner.env.Policy.Root != root.Canonical || !s.owner.env.Policy.RejectSymlinks || !ordinaryRootLocator(root.Canonical, facts.Path) || filepath.Base(filepath.Dir(facts.Path)) != facts.NativeID || facts.NativeID != admission.NativeID || s.ref.Key != admission.NativeID || admission.Cwd != "" && admission.Cwd != facts.Cwd || !admission.NativeCreatedAt.IsZero() && !admission.NativeCreatedAt.Equal(facts.NativeCreatedAt) {
+		return empty, agentapi.ErrInvalidSourceBinding
+	}
+	facts.RootRevision = root.Revision
+	facts.Checkpoint = &archive.NativeCheckpoint{Version: 1, Domain: "muse-ordinary", Algorithm: "sha256", Boundary: s.proof.Boundary, SHA256: hex.EncodeToString(s.proof.SHA256[:])}
+	if err := s.file.Check(); err != nil {
+		return empty, err
+	}
+	return agentapi.AdmissionEvidence{Binding: agentapi.SourceBinding{Native: &facts}}, nil
 }

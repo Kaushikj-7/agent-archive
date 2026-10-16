@@ -177,14 +177,6 @@ func publishExactSource(ctx context.Context, store ObjectStore, source SourcePub
 	return verifyStoredObject(ctx, store, source.Key, source.SHA256, source.Size)
 }
 
-// VerifySourceSet checks a bounded complete set sequentially. Ref-only entries
-// are read-only; entries with frozen bytes may fill absent immutable objects.
-// A mismatching existing object is never overwritten. Each object gets one
-// bounded retry allowance, independently of the later metadata allowance.
-func VerifySourceSet(ctx context.Context, store ObjectStore, sources []SourcePublication, retry RetryPolicy) error {
-	return verifyResolvedSourceSet(ctx, store, sources, retry, nil, nil)
-}
-
 func verifyResolvedSourceSet(ctx context.Context, store ObjectStore, sources []SourcePublication, retry RetryPolicy, resolve SourceResolver, verify SourceVerifier) error {
 	if len(sources) == 0 || len(sources) > 65 {
 		return errors.New("source-set reference count exceeds bounds")

@@ -31,13 +31,14 @@ type passCost struct {
 func measurePass(t *testing.T, local *state.Store, remote storage.ObjectStore, opts Options) (Result, passCost) {
 	t.Helper()
 	before := snapshotMtimes(t, local.Home())
-	loads := state.PublishedStateLoads()
-	summaryBytes := state.SummaryValidationBytes()
+	var beforeReads, afterReads state.PublishedReadObservation
+	loads := state.PublishedStateLoads(&beforeReads)
 	result, err := Run(context.Background(), local, remote, opts)
 	if err != nil {
 		t.Fatal(err)
 	}
-	cost := passCost{loads: state.PublishedStateLoads() - loads, summaryBytes: state.SummaryValidationBytes() - summaryBytes}
+	afterLoads := state.PublishedStateLoads(&afterReads)
+	cost := passCost{loads: afterLoads - loads, summaryBytes: afterReads.SummaryValidationBytes - beforeReads.SummaryValidationBytes}
 	for path, mtime := range snapshotMtimes(t, local.Home()) {
 		// status.json is the pass's own summary, rewritten every pass.
 		if was, ok := before[path]; (!ok || !was.Equal(mtime)) && filepath.Base(path) != "status.json" {

@@ -349,7 +349,7 @@ func (p ImportStage) Validate(ctx context.Context, reg archive.SessionRegistrati
 }
 
 func (p ImportStage) validateOwner(reg archive.SessionRegistration) error {
-	if reg.StagedImportSHA256 != "" && reg.StagedImportSHA256 != p.SHA256 || p.Registration.ArchiveSessionID != reg.ArchiveSessionID || p.Registration.NativeSessionID != reg.NativeSessionID || p.Registration.Harness.Name != reg.Harness.Name || p.Registration.ProjectID != reg.ProjectID || p.Registration.ProjectRoot != reg.ProjectRoot || !sameHistoricalProjectProof(p.Registration, reg) || !sameImportParentProof(p.Registration, reg) || !sameNativeImportBinding(p.Registration.NativeBinding, reg.NativeBinding) || p.Registration.DestinationID != reg.DestinationID || !p.Registration.InBatch(reg.ImportBatch.Recorded()) || p.Bundle.ArchiveSessionID != reg.ArchiveSessionID || p.Bundle.NativeSessionID != reg.NativeSessionID || p.Bundle.ProjectID != reg.ProjectID || p.Bundle.Capture.Harness.Name != reg.Harness.Name {
+	if reg.StagedImportSHA256 != "" && reg.StagedImportSHA256 != p.SHA256 || !sameImportStageOwner(p.Registration, reg) || p.Bundle.ArchiveSessionID != reg.ArchiveSessionID || p.Bundle.NativeSessionID != reg.NativeSessionID || p.Bundle.ProjectID != reg.ProjectID || p.Bundle.Capture.Harness.Name != reg.Harness.Name {
 		return ErrDurableStorageRecovery
 	}
 	if len(p.Preserved) > archive.MaxHistorySpans {
@@ -897,6 +897,15 @@ func (s *Store) preparedImportChildren(ctx context.Context, stage ImportStage) (
 	return children, nil
 }
 
+// sameImportStageOwner preserves the existing stage admission projection.
+// Hook paths and Git observations can advance without changing selected evidence.
+func sameImportStageOwner(staged, current archive.SessionRegistration) bool {
+	return staged.ArchiveSessionID == current.ArchiveSessionID && staged.NativeSessionID == current.NativeSessionID &&
+		staged.Harness.Name == current.Harness.Name && staged.ProjectID == current.ProjectID && staged.ProjectRoot == current.ProjectRoot &&
+		sameHistoricalProjectProof(staged, current) && sameImportParentProof(staged, current) &&
+		sameNativeImportBinding(staged.NativeBinding, current.NativeBinding) && staged.DestinationID == current.DestinationID && staged.InBatch(current.ImportBatch.Recorded())
+}
+
 func sameImportParentProof(staged, current archive.SessionRegistration) bool {
 	if staged.ParentSessionID == current.ParentSessionID {
 		return true
@@ -1259,4 +1268,36 @@ func unsupportedSettledStageOwner(p ImportStage, reg archive.SessionRegistration
 
 func sameNativeImportBinding(a, b *archive.NativeSourceBinding) bool {
 	return a.PreservesFacts(b) && b.PreservesFacts(a) && a.SameCheckpoint(b)
+}
+
+// SaveLiveCursorImportStage stages separately typed actual live capture under
+// the existing staged3/Cursor4 contracts after native scratch cleanup succeeds.
+func (s *Store) SaveLiveCursorImportStage(ctx context.Context, reg archive.SessionRegistration, expected *nativefacts.CaptureRequest, evidence *nativecapture.LiveProof) (digest string, err error) {
+	if s.resourceBudget == nil || !safeFileComponent(reg.ArchiveSessionID) {
+		return "", ErrReadySelectionFrozen
+	}
+	err = evidence.WithVerifiedLiveCapture(ctx, reg, expected, s.resourceBudget, func(loanCtx context.Context, bundle archive.SourceBundle, facts nativefacts.SettledImportFacts) error {
+		lease, e := expected.Borrow()
+		if e != nil {
+			return e
+		}
+		defer lease.Close()
+		scoped, closeScoped := s.WithReadBudget(loanCtx, s.resourceBudget)
+		scoped.resourceReservation = func() stateReservation { return lease.Reservation() }
+		defer closeScoped()
+		cfg, present, e := scoped.loadConfig()
+		if e != nil || !present || !cfg.SupportsSettledCursorSelection() || cfg.Paused || !cfg.Archive.Enabled || !cfg.AcceptSession(reg) || reg.DestinationID != cfg.DestinationID() {
+			return errors.Join(ErrReadySelectionFrozen, e)
+		}
+		if e := scoped.validateSettledIndex(reg); e != nil {
+			return e
+		}
+		if !expected.MatchesPolicy(nativefacts.CapturePolicy{FilterVersion: archive.FilterVersion, SkillEvidence: nativefacts.CaptureSkillMode(cfg.EffectiveSkillEvidence())}) {
+			return ErrReadySelectionFrozen
+		}
+		stage := ImportStage{Version: 3, TypedSelection: true, Registration: reg, Bundle: bundle, CursorFacts: &facts, SkillEvidence: cfg.EffectiveSkillEvidence()}
+		digest, e = scoped.savePreparedImportStage(loanCtx, reg, stage)
+		return e
+	})
+	return digest, err
 }

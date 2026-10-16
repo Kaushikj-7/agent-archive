@@ -405,12 +405,32 @@ func (s *Store) publishedPath(archiveSessionID string) string {
 // publishedStateLoads counts LoadPublishedState calls; see PublishedStateLoads.
 var publishedStateLoads atomic.Int64
 
+// PublishedReadObservation contains process-wide read diagnostics for cost tests.
+// Its fields and the returned load count are separate atomic snapshots, not a
+// jointly atomic view; comparisons require sequential test execution.
+type PublishedReadObservation struct {
+	// SummaryValidationBytes counts actual complete-wire bytes hashed by summaries.
+	SummaryValidationBytes int64
+}
+
 // PublishedStateLoads reports how many times this process has read a
 // session's published state (LoadPublishedState, and every Store method
 // built on it). The file holds whole source bundles, so a collector scan
 // reads it once per session. It exists for tests, which use the count to
 // keep it that way; production code has no use for it.
-func PublishedStateLoads() int64 { return publishedStateLoads.Load() }
+// Optional observations also receive the actual summary validation byte count.
+func PublishedStateLoads(observations ...*PublishedReadObservation) int64 {
+	loads := publishedStateLoads.Load()
+	if len(observations) > 0 {
+		bytes := summaryValidationBytes.Load()
+		for _, observation := range observations {
+			if observation != nil {
+				observation.SummaryValidationBytes = bytes
+			}
+		}
+	}
+	return loads
+}
 
 // LoadPublishedState reads a session's published state. A session with none
 // yet yields an empty one (Found reports false) that saves create.
@@ -955,10 +975,4 @@ func (s *Store) PublishedMetadata(archiveSessionID string) ([]byte, error) {
 		return nil, fmt.Errorf("read published state %q: %w", archiveSessionID, os.ErrNotExist)
 	}
 	return p.Metadata(), nil
-}
-
-// readLeadingSummaryProtocol preserves the legacy prefix-reader port. Selecting
-// protocols always require the complete validated decoder.
-func readLeadingSummaryProtocol(reader io.Reader, _ bool) (PublishedSummary, bool, error) {
-	return readLeadingSummary(reader)
 }

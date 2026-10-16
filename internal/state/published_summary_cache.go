@@ -44,10 +44,6 @@ type publishedSummaryBorrow struct {
 
 var summaryValidationBytes atomic.Int64
 
-// SummaryValidationBytes counts actual bytes hashed by summary cache checks.
-// Cache hits avoid source decoding, not reading the complete local file.
-func SummaryValidationBytes() int64 { return summaryValidationBytes.Load() }
-
 func summaryOwnedBytes(id string, p PublishedSummary) int64 {
 	n := int64(1024 + len(id) + len(p.LabelSourceChecksum) + len(p.SourceSetDigest) + len(p.CurrentRevision) + len(p.Harness) + len(p.Status) + len(p.BlockedReason))
 	for _, link := range p.LinkedPublished {

@@ -48,28 +48,8 @@ func ReadRecovery(ctx context.Context, path string, budget agentapi.RecoveryRead
 		src = settled
 	}
 	return readInPlace(ctx, src, Options{}, func(ctx context.Context, db *sql.DB) error {
-		// Native decoding and payload preflights require one row per exact key.
-		// Explicit collations are outside the known native schema: the decoder's
-		// ordinary selectors must retain exact binary key comparisons.
-		// Keep this scalar schema observation on the same immutable handle.
-		if err := budget.Charge(1, 8); err != nil {
+		if err := validateRecoverySchema(ctx, db, budget); err != nil {
 			return err
-		}
-		var unique bool
-		err := db.QueryRowContext(ctx, `SELECT EXISTS (
- SELECT 1 FROM pragma_index_list('cursorDiskKV') AS idx
- WHERE idx."unique" = 1 AND idx.partial = 0
- AND EXISTS (SELECT 1 FROM sqlite_schema
- WHERE type = 'table' AND name = 'cursorDiskKV' AND sql NOT LIKE '%COLLATE%')
- AND (SELECT count(*) FROM pragma_index_xinfo(idx.name) WHERE "key" = 1) = 1
- AND EXISTS (SELECT 1 FROM pragma_index_xinfo(idx.name)
- WHERE "key" = 1 AND name = 'key' AND coll = 'BINARY')
-)`).Scan(&unique)
-		if err != nil {
-			return err
-		}
-		if !unique {
-			return NotChecked(UnknownFormat)
 		}
 		return read(ctx, db)
 	})
@@ -267,4 +247,31 @@ func settledHeaderCount(ctx context.Context, value []byte, limit int) (int, erro
 		count++
 	}
 	return count, nil
+}
+
+func validateRecoverySchema(ctx context.Context, db *sql.DB, budget agentapi.RecoveryReadBudget) error {
+	// Native decoding and payload preflights require one row per exact key.
+	// Explicit collations are outside the known native schema: the decoder's
+	// ordinary selectors must retain exact binary key comparisons.
+	// Keep this scalar schema observation on the same immutable handle.
+	if err := budget.Charge(1, 8); err != nil {
+		return err
+	}
+	var unique bool
+	err := db.QueryRowContext(ctx, `SELECT EXISTS (
+ SELECT 1 FROM pragma_index_list('cursorDiskKV') AS idx
+ WHERE idx."unique" = 1 AND idx.partial = 0
+ AND EXISTS (SELECT 1 FROM sqlite_schema
+ WHERE type = 'table' AND name = 'cursorDiskKV' AND sql NOT LIKE '%COLLATE%')
+ AND (SELECT count(*) FROM pragma_index_xinfo(idx.name) WHERE "key" = 1) = 1
+ AND EXISTS (SELECT 1 FROM pragma_index_xinfo(idx.name)
+ WHERE "key" = 1 AND name = 'key' AND coll = 'BINARY')
+)`).Scan(&unique)
+	if err != nil {
+		return err
+	}
+	if !unique {
+		return NotChecked(UnknownFormat)
+	}
+	return nil
 }

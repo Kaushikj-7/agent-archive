@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
@@ -86,8 +87,12 @@ func TestHistoryCachedStateRefusesMaintenanceBeforeWrites(t *testing.T) {
 	if e := p.Save(b, time.Now(), state.CacheStatusPublished); e != nil {
 		t.Fatal(e)
 	}
-	s := sessionScan{published: p}
+	before := snapshotMtimes(t, local.Home())
+	s := sessionScan{ctx: t.Context(), local: local, reg: archive.SessionRegistration{ArchiveSessionID: "session-1"}, published: p}
 	if _, e := s.run(s.ctx); !errors.Is(e, archive.ErrHistoryMutationPending) {
 		t.Fatalf("cached history maintenance: %v", e)
+	}
+	if !reflect.DeepEqual(before, snapshotMtimes(t, local.Home())) {
+		t.Fatal("fenced cached history maintenance wrote local state")
 	}
 }
