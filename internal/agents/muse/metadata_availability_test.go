@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +14,52 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 )
+
+func TestModelAvailabilityUsesCompleteStartup(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"synthetic-exec-conversation.jsonl", "synthetic-model-resolution-omissions.jsonl"} {
+		t.Run(name, func(t *testing.T) {
+			out, err := filterBytes(t, readSynthetic(t, name), agentapi.ReadLimits{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			hasMissingModel := func(gaps []archive.CaptureGap) bool {
+				return slices.ContainsFunc(gaps, func(gap archive.CaptureGap) bool { return gap.Code == "model_identity_unavailable" })
+			}
+			if hasMissingModel(out.Gaps) {
+				t.Fatal("qualified startup model reported unavailable")
+			}
+			b := bundleFor(t, out)
+			// A retained source from the previous filter may carry this false gap.
+			b.Capture.Gaps = append(b.Capture.Gaps, archive.CaptureGap{Code: "model_identity_unavailable", Detail: "Startup metadata does not identify a model"})
+			refiltered, err := (Filter{}).Refilter(t.Context(), b, time.Time{})
+			if err != nil || hasMissingModel(refiltered.Gaps) {
+				t.Fatalf("retained refilter did not repair model availability: %v", err)
+			}
+			b = bundleFor(t, refiltered)
+			a, err := (Parser{}).Parse(t.Context(), b)
+			if err != nil {
+				t.Fatal(err)
+			}
+			h, err := archive.BuildHandoffWithAnalysis(b, a, nil, archive.HandoffOptions{})
+			if err != nil || slices.ContainsFunc(h.Gaps, func(gap archive.HandoffGap) bool { return gap.Code == "model_identity_unavailable" }) {
+				t.Fatalf("handoff lost model availability: %v", err)
+			}
+		})
+	}
+}
+
+func TestEmptyStartupModelRemainsUnavailable(t *testing.T) {
+	t.Parallel()
+	raw := bytes.ReplaceAll(readSynthetic(t, "synthetic-exec-conversation.jsonl"), []byte(`"model_id":"synthetic-model"`), []byte(`"model_id":""`))
+	out, err := filterBytes(t, raw, agentapi.ReadLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.ContainsFunc(out.Gaps, func(gap archive.CaptureGap) bool { return gap.Code == "model_identity_unavailable" }) {
+		t.Fatal("empty startup model reported available")
+	}
+}
 
 func TestRetainedConversationDoesNotClaimToolMeasurements(t *testing.T) {
 	t.Parallel()

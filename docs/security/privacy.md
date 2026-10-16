@@ -695,6 +695,10 @@ SQLite companions and search logs while holding the search lifecycle fence.
 
 ### Explicit Muse local handoff
 
+Startup model availability uses the complete validated startup prefix, including
+the resolved model in a qualified second metadata record. Missing or empty model
+labels remain explicitly unavailable; no provider default or billing is inferred.
+
 `handoff --file PATH --harness muse` reads a complete supported ordinary exec/MSP
 root without setup or registration. It validates the initial permission frame
 and startup locally, retains only minimal safe authority and linked own visible

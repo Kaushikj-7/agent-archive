@@ -24,7 +24,7 @@ type Filter struct{}
 func (Filter) Name() string { return "muse" }
 
 // Version identifies the current privacy projection.
-func (Filter) Version() string { return "0.24.0" }
+func (Filter) Version() string { return "0.29.0" }
 
 // LeasedFilterFor refuses decorators which may change filtering semantics.
 func (Filter) LeasedFilterFor(a archive.Adapter) bool { _, ok := a.(Filter); return ok }
@@ -217,13 +217,17 @@ func filtered(rows []logicalRow, limits agentapi.ReadLimits, gaps []archive.Capt
 	}
 	out.Gaps = append(out.Gaps, gaps...)
 	out.Gaps = append(out.Gaps, omissionGaps(rows)...)
+	modelAvailable := false
 	for _, r := range slots {
-		if r.Type == payloadRuntimeSessionMetadata {
-			if _, present := r.Fields["model_id"]; !present {
-				out.Gaps = append(out.Gaps, archive.CaptureGap{Code: "model_identity_unavailable", Detail: "Startup metadata does not identify a model"})
-			}
+		if r.Type == payloadSessionOpenedObserved {
 			break
 		}
+		if r.Type == payloadRuntimeSessionMetadata && str(r.Fields["model_id"]) != "" {
+			modelAvailable = true
+		}
+	}
+	if !modelAvailable {
+		out.Gaps = append(out.Gaps, archive.CaptureGap{Code: "model_identity_unavailable", Detail: "Startup metadata does not identify a model"})
 	}
 	if pendingResponse(slots) {
 		out.Gaps = append(out.Gaps, archive.CaptureGap{Code: "muse_response_pending", Detail: "A qualified own prompt has no committed assistant response yet"})

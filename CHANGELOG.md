@@ -6,6 +6,10 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Muse handoff no longer reports model identity as unavailable when the qualified
+  second startup metadata record supplies it. Retained refiltering also repairs
+  this warning (filter 29, adapter 0.29.0); complete usage and cost stay unavailable.
+
 - A long Codex thread whose history spans more than one rollout needs far less
   read memory to capture, so it is captured at sizes that were recorded as too
   large to read (`transcript_too_large`, per-session read memory, from about
