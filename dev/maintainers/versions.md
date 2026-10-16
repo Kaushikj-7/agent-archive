@@ -8,8 +8,8 @@ affects.
 | Version | Where | Recorded in | Current | Changes when |
 | --- | --- | --- | --- | --- |
 | Release | `cli.Version` (set at build time) | `--version` | Build-dependent (`dev-<commit>` from source) | A tag is cut. |
-| Filter | `archive.FilterVersion` | source header `capture.filter_version`, metadata `filter_version` | 21 | What the privacy filter keeps, drops, or redacts changes: any change to filtered output. |
-| Adapter | `adapterVersion` in `internal/archive/adapters.go` | `capture.adapter_version` | 0.21.0 | An adapter's output changes (bumped with the filter in practice). |
+| Filter | `archive.FilterVersion` | source header `capture.filter_version`, metadata `filter_version` | 22 | What the privacy filter keeps, drops, or redacts changes: any change to filtered output. |
+| Adapter | `adapterVersion` in `internal/archive/adapters.go` | `capture.adapter_version` | 0.22.0 | An adapter's output changes (bumped with the filter in practice). |
 | Parser | per-agent `Parser.Version()` / `archive.DefaultParserVersion` | metadata `parser.version` | 0.21.0 | How metadata is derived from a source changes: counts, turns, models, skills, gaps, titles, session names, branch, linked pull requests, tools used, end time, tokens (per model too), tool errors, MCP calls, git activity, the repository key (derived from the project's git origin, not the source). |
 | Source schema | `archive.SourceSchemaVersion` / `HistorySourceSchemaVersion` | source header `schema_version` | 2 | The source bundle's line format changes. Readers refuse other versions. |
 | Metadata schema | `archive.MetadataSchemaVersion` / `HistoryMetadataSchemaVersion` | metadata `schema_version` | 1 | The metadata sidecar changes incompatibly. Optional fields don't bump it. |
@@ -28,7 +28,7 @@ registration authority. Handoff builders now prefer existing `NativeStartedAt`
 facts over first prompts/file observations, also correcting Codex handoff start.
 Metadata derivation and the existing three parser versions are unchanged.
 
-Claude uses the common parser version; Cursor remains at parser 0.20.0.
+Claude uses the common parser version; Cursor is at parser 0.21.0.
 Codex has its own parser version as recorded above.
 
 The per-version filter changes are in the
@@ -254,3 +254,11 @@ with journal fence version 1 / writer `native-authority-v16` / original boolean
 `value`, requiring their true native protection marker. This blocks older raw
 rollback recovery before config loading; adding an ignored journal field alone
 would not protect authority.
+
+Cursor parser 0.21.0 names a session from retained `session_labels` evidence
+with the pinned `cursor-composer-name-v1` contract and `database` source, read
+from the chat's `composerData` row in Cursor's `state.vscdb`; a cursor-composer
+session record's own name still wins. The bump re-derives existing Cursor
+metadata from retained sources. Retaining that evidence on `cursor-jsonl`
+bundles changes what is uploaded for them: filter 22 and adapter 0.22.0.
+Claude, Codex and the common parser are unchanged.

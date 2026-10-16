@@ -645,6 +645,14 @@ capture time and retention, except for a thread continued into later rollouts,
 whose rename is published with a fresh capture. Collection never starts a native Codex process to
 retrieve a name and never opens Codex's databases.
 
+Cursor name refresh does the same for already admitted Cursor sessions,
+including imported ones, whose agent transcripts record no chat name. It reads
+only the `composerData` row of each admitted chat from Cursor's `state.vscdb`,
+read-only and in place, and retains the same typed evidence: the chat's
+filtered `name`, or that Cursor has not named it. Nothing else in the row
+(messages, workspace, model, timestamps) is uploaded, and a chat missing from
+the database leaves any earlier name in place.
+
 ## Local conversation search
 
 Explicit search refresh stores derived visible conversation text in a private

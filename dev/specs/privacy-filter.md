@@ -426,6 +426,10 @@ evidence. Native paths, raw database rows and index contents are not retained.
 Codex `session_meta` additionally retains only the `legacy` or `paginated`
 `history_mode` enum to establish index interpretation. Other values are omitted.
 
+Filter 22 admits the same shape for Cursor (`native:cursor:session_labels`,
+`database`/`cursor-composer-name-v1`): the chat's `name` from its
+`composerData` row, on any Cursor source format.
+
 Filter 21 adds the `index`/`codex-session-index-v3` contract: the name is
 the last nonempty `thread_name` Codex's `session_index.jsonl` holds for the
 thread, read for any Codex release; earlier `codex-files-159.2-*` evidence

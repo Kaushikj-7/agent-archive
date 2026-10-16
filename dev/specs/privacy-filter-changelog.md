@@ -5,6 +5,22 @@ rules, as a whole, are in the [filter specification](privacy-filter.md);
 version numbers and bump rules are in [versions](../maintainers/versions.md). Each archived session
 records the filter version that produced it (`filter_version`).
 
+## Source filter version 22
+
+Adapter 0.22.0 and Cursor parser 0.21.0 accompany this change.
+
+- **Cursor's chat name on every Cursor session.** A session captured from
+  Cursor's agent transcripts (`cursor-jsonl`), which record no name, now
+  retains a `session_labels` item with the chat's `name` from its
+  `composerData:<id>` row in Cursor's global `state.vscdb` (provenance
+  `native:cursor:session_labels`, source `database`, contract
+  `cursor-composer-name-v1`), read in place and read-only. Only that row's
+  `name` is read; message rows are not. A string name, trimmed, is present;
+  a missing, null or blank one is confirmed absence; anything else, a missing
+  row or an unreadable database is unavailable and keeps an earlier name.
+- What is newly uploaded: the filtered chat name on Cursor sessions that came
+  from agent transcripts (a database-only chat already carried it).
+
 ## Source filter version 21
 
 Adapter 0.21.0 accompanies this change.

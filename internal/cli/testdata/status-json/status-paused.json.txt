@@ -65,7 +65,7 @@ $ agent-archive status --json
       "verification_state": "verified_at_recorded_time",
       "trust": "unknown",
       "observed_adapter_versions": [
-        "0.21.0"
+        "0.22.0"
       ],
       "installed": false,
       "installed_version_state": "unknown",

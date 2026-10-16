@@ -6,6 +6,13 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Archived Cursor sessions now carry the chat's name. Sessions captured from
+  Cursor's agent transcripts, which record no name, read it from the chat's
+  `composerData` row in Cursor's database (read-only, in place), imported
+  sessions included, so `list`, `show` and the handoff picker show the name
+  Cursor gave the chat rather than a prompt preview. Cursor parser 0.21.0
+  re-derives existing sessions' metadata (filter 22).
+
 - Codex sessions are titled with their Codex thread name, so `list`, search
   and `handoff "words"` find them by it. Names come from Codex's own name index
   (`~/.codex/session_index.jsonl`) for every Codex release, while Codex is

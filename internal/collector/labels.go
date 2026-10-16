@@ -45,16 +45,8 @@ func (p *pass) observeLabels(ctx context.Context) {
 	eligible := map[string]archive.SessionRegistration{}
 	ids := []string{}
 	for _, reg := range p.registrations {
-		if !p.labelEligible(reg) {
+		if !p.labelEligible(reg) || !p.labelProvider(reg, providers) {
 			continue
-		}
-		_, ok := providers[reg.Harness.Name]
-		if !ok {
-			provider, ok := p.opts.Labels.LookupLabels(reg.Harness.Name)
-			if !ok {
-				continue
-			}
-			providers[reg.Harness.Name] = provider
 		}
 		eligible[reg.ArchiveSessionID] = reg
 		ids = append(ids, reg.ArchiveSessionID)
@@ -80,8 +72,12 @@ func (p *pass) observeLabels(ctx context.Context) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	requests := p.prepareLabelRequests(ctx, providers, &cache, ids, eligible)
-	requests = prioritizeLabelRequests(requests, providers, p.opts.LabelEnvironment, &cache)
-	results := lookupLabelRequests(ctx, providers, p.opts.LabelEnvironment, requests)
+	// Cursor's database location comes from the collector's own setting, the
+	// one its cursor-sqlite source reads; it is outside the cached scope.
+	env := p.opts.LabelEnvironment
+	env.CursorDatabase = p.opts.cursorDatabase()
+	requests = prioritizeLabelRequests(requests, providers, env, &cache)
+	results := lookupLabelRequests(ctx, providers, env, requests)
 	p.recordLabelResults(requests, results, &cache)
 	trimLabelCache(&cache)
 	if err := p.local.SaveLabels(cache); err != nil {
@@ -150,6 +146,22 @@ func (p *pass) labelRevision(id string, provider agentapi.LabelProvider) (checks
 		p.unreadable[id] = true
 	}
 	return "", "", false
+}
+
+// labelProvider resolves reg's provider into providers, reporting whether it
+// may name reg. An imported session is named only by a provider that
+// interprets the registration itself; a retained-source context of an import
+// (Codex's) is not one the label cache accepts.
+func (p *pass) labelProvider(reg archive.SessionRegistration, providers map[string]agentapi.LabelProvider) bool {
+	provider, ok := providers[reg.Harness.Name]
+	if !ok {
+		if provider, ok = p.opts.Labels.LookupLabels(reg.Harness.Name); !ok {
+			return false
+		}
+		providers[reg.Harness.Name] = provider
+	}
+	_, fromRegistration := provider.(agentapi.RegistrationLabelContextProvider)
+	return !reg.Imported() || fromRegistration
 }
 
 func (p *pass) labelEligible(reg archive.SessionRegistration) bool {
