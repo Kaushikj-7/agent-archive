@@ -214,8 +214,12 @@ func TestS3StoreListRangePageBoundaryTransferCounts(t *testing.T) {
 		keys[i] = fmt.Sprintf("agent-archive/sessions/custom/k%05d", i)
 	}
 	for _, tc := range []struct {
-		name, after, through         string
-		returned, pages, transferred int
+		name        string
+		after       string
+		through     string
+		returned    int
+		pages       int
+		transferred int
 	}{
 		{"exact first page", "", "sessions/custom/k00999", 1000, 1, 1000},
 		{"exact second page", "", "sessions/custom/k01999", 2000, 2, 2000},
