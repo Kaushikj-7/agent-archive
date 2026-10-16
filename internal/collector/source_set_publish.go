@@ -188,31 +188,40 @@ func (s *sessionScan) sourceSetAcknowledgeReadback(pending state.PendingPublicat
 		}
 	}
 	if !keepPending {
-		if pending.History == nil && pending.Commit.Purpose == state.PublicationPrivacyRewrite {
-			if err := s.local.SettleOrdinaryPublicationPrivacy(s.id(), pending); err != nil {
-				return outcomeSkipped, err
-			}
-		}
-		if pending.History != nil && pending.Commit.Purpose == state.PublicationPrivacyRewrite {
-			if err := s.local.SettleHistoryPublicationPrivacy(s.id(), pending); err != nil {
-				return outcomeSkipped, fmt.Errorf("settle history privacy original: %w", err)
-			}
-		}
-		if err := s.local.SettlePublicationMigration(s.id(), pending); err != nil {
+		if err := s.finishSourceSetAcknowledgment(pending); err != nil {
 			return outcomeSkipped, err
-		}
-		if pending.Catalog != nil && s.ctx.Value(catalogSettledKey{}) != true {
-			if remote, ok := s.remote.(storage.CatalogLifecycle); ok {
-				if err := remote.CompletePublication(s.ctx, pending.Catalog.ID, pending.MetadataBytes); err != nil {
-					return outcomeSkipped, err
-				}
-			}
-		}
-		if err := s.removeCompletedCatalogJournal(pending); err != nil {
-			return outcomeSkipped, fmt.Errorf("remove completed source-set journal: %w", err)
 		}
 	}
 	return outcomePublished, nil
+}
+
+// finishSourceSetAcknowledgment runs only after closing proof, local commit and
+// covered request completion; pending removal remains the final operation.
+func (s *sessionScan) finishSourceSetAcknowledgment(pending state.PendingPublication) error {
+	if pending.History == nil && pending.Commit.Purpose == state.PublicationPrivacyRewrite {
+		if err := s.local.SettleOrdinaryPublicationPrivacy(s.id(), pending); err != nil {
+			return err
+		}
+	}
+	if pending.History != nil && pending.Commit.Purpose == state.PublicationPrivacyRewrite {
+		if err := s.local.SettleHistoryPublicationPrivacy(s.id(), pending); err != nil {
+			return fmt.Errorf("settle history privacy original: %w", err)
+		}
+	}
+	if err := s.local.SettlePublicationMigration(s.id(), pending); err != nil {
+		return err
+	}
+	if pending.Catalog != nil && s.ctx.Value(catalogSettledKey{}) != true {
+		if remote, ok := s.remote.(storage.CatalogLifecycle); ok {
+			if err := remote.CompletePublication(s.ctx, pending.Catalog.ID, pending.MetadataBytes); err != nil {
+				return err
+			}
+		}
+	}
+	if err := s.removeCompletedCatalogJournal(pending); err != nil {
+		return fmt.Errorf("remove completed source-set journal: %w", err)
+	}
+	return nil
 }
 
 func (s *sessionScan) sourceSetUpload(pending state.PendingPublication) (*storage.ValidatedPublicationReadback, error) {
