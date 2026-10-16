@@ -6,6 +6,13 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- `stats` names each model by its exact version: cost by model, the models
+  view, the favorite model, `--json` and `--html` show `opus-5.5`, `opus-5`,
+  `gpt-6.1-sol` and `gpt-6-luna` as separate rows instead of grouping them
+  under `opus` or `gpt-6`. Only two names of one model share a row (the
+  `gpt-5.6` alias with `gpt-5.6-sol`). Bar colors still follow the family. The
+  built-in price table is now version `2026-10.1`; its prices are unchanged.
+
 - Muse local handoff previews now read only their reserved head/tail windows,
   avoiding whole-file hashes while browsing large histories. Selected sessions
   retain complete filtering and independent content verification.
