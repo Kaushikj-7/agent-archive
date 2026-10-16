@@ -62,7 +62,7 @@ explicitly rejected below.
 | `list --limit L` eligible filters, warm catalog | Theta(N) summary decodes + sort | O(log N + L) rows decoded |
 | `list` model/skill/coverage filters | Theta(N) | Theta(N) retained (summary predicates), no body reads |
 | `show` short-ID / prefix | Theta(N) bodies cold | Indexed candidate pages; unique results avoid unrelated summaries, ambiguous results retain complete counts and choices |
-| `show`/`handoff` topic words | Theta(N) | Bounded overscan pages until 2 final matches or exhaustion |
+| `show`/`handoff` topic words | Theta(N) | Candidate pages; ambiguous queries continue or fall back for complete counts and choices |
 | Cold exhaustive list/show | Theta(N) bodies + Theta(N) cache prunes | Theta(N) bodies; zero per-put directory scans |
 | Catalog-v4 text/prefix fallback | All rows loaded via `lazyCatalogRows` | Delta-synced local SQLite query; no full row materialization |
 
