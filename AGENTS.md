@@ -89,20 +89,13 @@ integration defects.
 Do not enable GitHub's "Require branches to be up to date before merging",
 change bypass settings, or change any repository protection settings.
 
-## Worktree resources and disk usage
+## Worktree storage
 
-- Ordinary local Go builds and reviews use the user's configured shared build
-  and module caches. Do not create a separate `GOCACHE` or `GOMODCACHE` for every
-  worktree, PR, reviewer, or agent.
-- Preserve isolation explicitly required by CI, qualification, security, or
-  cold-cache measurements. For exceptional local caches, reuse an existing
-  self-cleaning runner or a temporary directory with cleanup on success,
-  failure, and cancellation. Record why isolation is required.
-- Keep small logs, reports, and patches separately from compiler output. Do not
-  retain a whole cache or build tree merely to preserve evidence.
-- Stop owned background processes before removing their scratch. Track the owner
-  and cleanup action for disposable databases, simulators, and containers.
-  Remove only task-owned resources after checking that they are no longer in use;
-  preserve shared caches, other tasks' resources, and unmerged/untracked work.
-- At completion, report any retained large directories, why they remain, and how
-  to clean them. Follow [worktree storage and cleanup](dev/contributing/worktree-storage.md) when running many worktrees.
+- Share configured Go build/module caches; do not create per-task `GOCACHE`
+  or `GOMODCACHE` paths.
+- Preserve explicitly required isolation; clean temporary caches on success,
+  failure, and cancellation.
+- Remove only idle task-owned resources. Preserve shared resources, other tasks'
+  work, and unmerged/untracked files.
+
+Follow [storage and cleanup](dev/contributing/worktree-storage.md) for evidence retention and worktree cleanup.
