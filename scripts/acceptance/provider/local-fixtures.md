@@ -25,10 +25,13 @@ and LIST denial before running lifecycle assertions and verify their own child
 prefix is empty during cleanup. HTTP requests have fixed time and attempt bounds.
 Credential detection redacts evidence and fails acceptance.
 
-The three named tests cover portable summaries and canonical reader fallback,
+The four named tests cover portable summaries and canonical reader fallback,
 actual successful metadata PUT followed by injected acknowledgement loss and
-exact journal-2 recovery after native deletion/restart, and journal-3 staged
-parent/child publication after both native files disappear. A separate staged
+exact journal-2 recovery after native deletion/restart, single-session journal-3 exact replay that settles all covered work after a lost
+acknowledgement, and initial staged parent/child publication after both native
+files disappear. Child publication always creates a newer parent notification;
+the group case requires that followup to remain guarded and retained, even when
+the initial source publication succeeds. A separate staged
 subtest loses the parent acknowledgement while the child publishes and creates
 a genuinely newer parent request: it requires the frozen parent to refuse
 cleanup and preserve both the exact journal and the newer request across restart.
@@ -36,7 +39,7 @@ That guarded refusal is a safety result, not completed newer-work publication. I
 clients read the retained sources without access to local state. Ordinary CI
 compiles these tests and skips them without explicit provider opt-in. A skip is
 not provider acceptance. Retain successful command exit and independently verify
-all three named tests and their package terminals using the evidence verifier.
+all four named tests and both staged-group descendants and their package terminals using the evidence verifier.
 
 These fixtures do not establish sourceSet5 history publication, changed-policy
 history replay, live-WAL admission, complete deletion/retention/restoration,

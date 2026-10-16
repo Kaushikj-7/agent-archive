@@ -5,9 +5,12 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/reader"
@@ -124,8 +127,15 @@ func disposableStagedGroup(t *testing.T, loseAcknowledgement bool) {
 	if !loseAcknowledgement {
 		result, runErr := Run(t.Context(), store, remote, opts)
 		defer result.CloseStagedResults()
-		if runErr != nil || len(result.Errors) != 0 || len(result.Published) != 2 {
-			t.Fatal("staged parent/child publication failed", result, runErr)
+		if runErr != nil || len(result.Published) != 2 || len(result.Errors) != 1 || !errors.Is(result.Errors[parent.ArchiveSessionID], state.ErrReadySelectionFrozen) {
+			t.Fatal("staged parent/child publication or newer-work guard failed", result, runErr)
+		}
+		request, found, requestErr := store.LoadRequest(parent.ArchiveSessionID)
+		if requestErr != nil || !found || request.Token == "" || !slices.Contains(request.Reasons, "subagent-published") || len(request.HookEvidence) == 0 {
+			t.Fatal("published child lost parent followup", found, requestErr)
+		}
+		if _, found, stageErr := store.LoadImportStage(t.Context(), parent); stageErr != nil || found {
+			t.Fatal("completed initial parent stage retained", found, stageErr)
 		}
 	} else {
 		uncertain := &uncertainDisposableCommit{DisposableS3: remote, key: "sessions/claude/" + parent.ArchiveSessionID + "/metadata.json"}
@@ -141,7 +151,7 @@ func disposableStagedGroup(t *testing.T, loseAcknowledgement bool) {
 		proof := *pending.StagedSelection
 		selected = bytes.Clone(pending.MetadataBytes)
 		request, requested, requestErr := store.LoadRequest(parent.ArchiveSessionID)
-		if requestErr != nil || !requested || request.Token == proof.CoveredToken || len(request.HookEvidence) == 0 {
+		if requestErr != nil || !requested || request.Token == proof.CoveredToken || !slices.Contains(request.Reasons, "subagent-published") || len(request.HookEvidence) == 0 {
 			t.Fatal("child publication did not retain newer parent evidence", requested, requestErr)
 		}
 		newerToken := request.Token
@@ -187,5 +197,106 @@ func disposableStagedGroup(t *testing.T, loseAcknowledgement bool) {
 		if _, found, loadErr := store.LoadPending(reg.id); loadErr != nil || found != (loseAcknowledgement && reg.id == parent.ArchiveSessionID) {
 			t.Fatal("acknowledged staged journal retained", found, loadErr)
 		}
+	}
+}
+
+// A single staged session creates no child notification, so its exact selected
+// publication can completely settle after a lost acknowledgement.
+func TestDisposableProviderStagedSelectionRecoversExactCommit(t *testing.T) {
+	remote := providertest.NewDisposableS3(t)
+	store := newTestStore(t)
+	cfg, _, err := config.Load(store.Home())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Archive.Enabled = true
+	cfg.DurableStorageProtection = true
+	cfg.PublicationCompositionProtection = true
+	cfg.ImportStagingProtection = true
+	cfg.StagedSelectionProtection = true
+	if err = config.Save(store.Home(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err = config.Load(store.Home())
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := writeTranscript(t, store.Home(), "single.jsonl", `{"type":"assistant","sessionId":"native-1","timestamp":"2026-01-01T00:01:00Z","message":{"role":"assistant","content":"synthetic staged source"}}`+"\n")
+	reg := registration(t, path)
+	reg.Harness.Name = "claude"
+	reg.Origin = archive.SessionOriginImport
+	reg.ImportBatch = archive.NewImportBatch("provider-single")
+	reg.DestinationID = cfg.DestinationID()
+	at := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
+	reg.AdmittedAt = at
+	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "synthetic-provider", Now: func() time.Time { return at }, AcceptSession: cfg.AcceptSession, SkillEvidence: cfg.EffectiveSkillEvidence(), Retry: storage.RetryPolicy{MaxAttempts: 1}}
+	bundle, preserved, _, err := ReadImportSourceSelection(t.Context(), reg, at, opts)
+	if err != nil || len(preserved) != 0 {
+		t.Fatal("single staged source preparation", err)
+	}
+	reg.StagedImportSHA256, err = store.SaveImportStage(t.Context(), reg, bundle, cfg.EffectiveSkillEvidence())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = store.SaveRegistration(reg); err != nil {
+		t.Fatal(err)
+	}
+	if err = store.SaveRequest(reg.ArchiveSessionID, "backfill", at); err != nil {
+		t.Fatal(err)
+	}
+	confirmation := struct {
+		ID            string `json:"id"`
+		DestinationID string `json:"destination_id"`
+	}{reg.ImportBatch.Recorded(), cfg.DestinationID()}
+	if err = local.Write(filepath.Join(store.Home(), "imports", reg.ImportBatch.Recorded()+".json"), confirmation); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	guard, err := local.LockCollectorGuard(store.Home())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer guard.Release()
+	opts.CollectorGuard = guard
+	uncertain := &uncertainDisposableCommit{DisposableS3: remote, key: "sessions/claude/" + reg.ArchiveSessionID + "/metadata.json"}
+	result, err := Run(t.Context(), store, uncertain, opts)
+	result.CloseStagedResults()
+	if err != nil || !uncertain.lost || len(result.Errors) == 0 {
+		t.Fatal("missing actual staged uncertain commit", result, err)
+	}
+	pending, found, err := store.LoadPending(reg.ArchiveSessionID)
+	if err != nil || !found || pending.JournalVersion != 3 || pending.StagedSelection == nil || pending.StagedSelection.StageSHA256 != reg.StagedImportSHA256 {
+		t.Fatal("missing exact stage3 authority", found, err)
+	}
+	exact := bytes.Clone(pending.MetadataBytes)
+	store, err = openTestStore(store.Home())
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err = Run(t.Context(), store, remote, opts)
+	defer result.CloseStagedResults()
+	if err != nil || len(result.Errors) != 0 || len(result.Published) != 1 {
+		t.Fatal("exact single staged replay failed", result, err)
+	}
+	raw, err := remote.Get(t.Context(), pending.MetadataKey)
+	if err != nil || !bytes.Equal(raw, exact) {
+		t.Fatal("staged replay changed selected metadata", err)
+	}
+	if _, found, err = store.LoadPending(reg.ArchiveSessionID); err != nil || found {
+		t.Fatal("acknowledged stage3 pending retained", found, err)
+	}
+	if _, found, err = store.LoadRequest(reg.ArchiveSessionID); err != nil || found {
+		t.Fatal("covered staged request retained", found, err)
+	}
+	if _, found, err = store.LoadImportStage(t.Context(), reg); err != nil || found {
+		t.Fatal("acknowledged stage retained", found, err)
+	}
+	peer := remote.IndependentOwner(t)
+	metadata := fetchMetadata(t, peer, reg.Harness.Name, reg.ArchiveSessionID)
+	retained, err := reader.LoadSource(t.Context(), peer, metadata, reader.Limits{})
+	if err != nil || len(retained.NativeRecords) == 0 {
+		t.Fatal("settled staged retained read failed", err)
 	}
 }

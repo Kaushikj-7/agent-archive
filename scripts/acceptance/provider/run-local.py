@@ -16,7 +16,7 @@ import urllib.request
 
 MODULES = {'minio': 'v0.0.0-20260212201848-7aac2a2c5b7c',
            'mc': 'v0.0.0-20251106162529-77f82e18b540'}
-TESTS = '^(TestDisposableProviderPortableListingKeepsCanonicalCoverage|TestDisposableProviderReadySelectionRecoversExactCommit|TestDisposableProviderStagedGroupSurvivesNativeLoss)$'
+TESTS = '^(TestDisposableProviderPortableListingKeepsCanonicalCoverage|TestDisposableProviderReadySelectionRecoversExactCommit|TestDisposableProviderStagedGroupSurvivesNativeLoss|TestDisposableProviderStagedSelectionRecoversExactCommit)$'
 
 
 def policy(prefix):
