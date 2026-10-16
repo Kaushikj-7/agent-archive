@@ -141,8 +141,10 @@ func SeedReadPathArchive(tb testing.TB, store *MemoryStore, count, generation in
 			}
 			source.SHA256 = compressed.SHA256
 			source.CompressedBytes = len(compressed.Bytes)
-			if err = store.Put(ctx, source.Key, compressed.Bytes); err != nil {
-				tb.Fatal(err)
+			if generation == 0 {
+				if err = store.Put(ctx, source.Key, compressed.Bytes); err != nil {
+					tb.Fatal(err)
+				}
 			}
 		} else if generation == 0 {
 			if err := store.Put(ctx, source.Key, []byte{0}); err != nil {

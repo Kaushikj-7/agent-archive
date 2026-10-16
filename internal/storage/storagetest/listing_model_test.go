@@ -97,6 +97,8 @@ func TestReadPathFixtureHasStableOnePercentChanges(t *testing.T) {
 		for i, h := range headers {
 			if h.ETag != before[i].ETag {
 				changed++
+			} else if !reflect.DeepEqual(h, before[i]) {
+				t.Fatal("unchanged canonical header mutated", h.Key)
 			}
 		}
 		if changed != 1 {
@@ -105,6 +107,9 @@ func TestReadPathFixtureHasStableOnePercentChanges(t *testing.T) {
 		hints, err := candidate.List(t.Context(), "listing/v3/")
 		if err != nil {
 			t.Fatal(err)
+		}
+		if len(hints) != 101 {
+			t.Fatalf("one changed sidecar must add one revision: %d", len(hints))
 		}
 		if changedHeaders != 0 && changedHeaders != len(hints) {
 			t.Fatalf("hint inventory grew: %d -> %d", changedHeaders, len(hints))
