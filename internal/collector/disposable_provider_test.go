@@ -113,10 +113,29 @@ func TestDisposableProviderStagedGroupSurvivesNativeLoss(t *testing.T) {
 	}
 	defer guard.Release()
 	opts.CollectorGuard = guard
-	result, err := Run(t.Context(), store, remote, opts)
+	uncertain := &uncertainDisposableCommit{DisposableS3: remote, key: "sessions/claude/" + parent.ArchiveSessionID + "/metadata.json"}
+	result, err := Run(t.Context(), store, uncertain, opts)
+	result.CloseStagedResults()
+	if err != nil || !uncertain.lost || len(result.Errors) == 0 {
+		t.Fatal("staged uncertain acknowledgement was not retained", result, err)
+	}
+	pending, found, err := store.LoadPending(parent.ArchiveSessionID)
+	if err != nil || !found || pending.JournalVersion != 3 || pending.StagedSelection == nil || pending.StagedSelection.StageSHA256 != parent.StagedImportSHA256 {
+		t.Fatal("staged publication lost current stage3 authority", found, err)
+	}
+	exact := bytes.Clone(pending.MetadataBytes)
+	store, err = openTestStore(store.Home())
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err = Run(t.Context(), store, remote, opts)
 	defer result.CloseStagedResults()
-	if err != nil || len(result.Errors) != 0 || len(result.Published) != 2 {
+	if err != nil || len(result.Errors) != 0 || len(result.Published) == 0 {
 		t.Fatal("staged group publication failed", result, err)
+	}
+	raw, err := remote.Get(t.Context(), pending.MetadataKey)
+	if err != nil || !bytes.Equal(raw, exact) {
+		t.Fatal("staged retry changed exact metadata", err)
 	}
 	peer := remote.IndependentOwner(t)
 	for _, reg := range []struct{ id, harness string }{{parent.ArchiveSessionID, parent.Harness.Name}, {child.ArchiveSessionID, child.Harness.Name}} {
