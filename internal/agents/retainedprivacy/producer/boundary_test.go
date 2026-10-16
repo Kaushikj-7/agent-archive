@@ -268,13 +268,11 @@ func retainedDeclarationProblems(path string, file *ast.File, imports map[string
 		for _, name := range []string{"Proof", "Request", "Policy", "Facts", "Expectation"} {
 			allowedTypes[name] = true
 		}
-		allowed["FreezeRequest"] = "func(context.Context, Expectation, []byte, *agentapi.NativeReadBudget) (*Request, error)"
 		allowed["FreezeRequestCaptured"] = "func(context.Context, Expectation, []byte, *agentapi.NativeReadBudget, *agentapi.NativeReadReservation) (*Request, error)"
 	case retainedRequestPath:
 		for _, name := range []string{"Policy", "Expectation", "Request", "requestState", "Lease", "leaseCustody"} {
 			allowedTypes[name] = true
 		}
-		allowed["FreezeRequest"] = "func(context.Context, Expectation, []byte, *agentapi.NativeReadBudget) (*Request, error)"
 		allowed["FreezeRequestCaptured"] = "func(context.Context, Expectation, []byte, *agentapi.NativeReadBudget, *agentapi.NativeReadReservation) (*Request, error)"
 		allowed["*Request.Borrow"] = "func() (*Lease, error)"
 		allowed["*Request.Close"] = "func() error"

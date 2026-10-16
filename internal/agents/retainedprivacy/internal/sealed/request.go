@@ -47,14 +47,6 @@ type requestState struct {
 	borrowed bool
 }
 
-// FreezeRequest detaches the host's retained input under the original scope.
-func FreezeRequest(ctx context.Context, expected Expectation, source []byte, budget *agentapi.NativeReadBudget) (*Request, error) {
-	if budget == nil {
-		return nil, agentapi.ErrReadBudget
-	}
-	return FreezeRequestCaptured(ctx, expected, source, budget, budget.Reservation())
-}
-
 // FreezeRequestCaptured preserves an already captured owner while retaining the
 // original ledger identity. The detached request obtains an independent charge
 // owner; its close cannot release the caller's other outstanding reservations.

@@ -23,11 +23,6 @@ type Facts = sealed.Facts
 // Expectation describes the actual host operation without granting proof authority.
 type Expectation = sealed.Expectation
 
-// FreezeRequest snapshots source bytes and the exact original resource owner.
-func FreezeRequest(ctx context.Context, expected Expectation, original []byte, budget *agentapi.NativeReadBudget) (*Request, error) {
-	return sealed.FreezeRequest(ctx, expected, original, budget)
-}
-
 // FreezeRequestCaptured snapshots an existing scoped owner without borrowing
 // later ambient credit. It grants only fixed retained transformation access.
 func FreezeRequestCaptured(ctx context.Context, expected Expectation, original []byte, budget *agentapi.NativeReadBudget, owner *agentapi.NativeReadReservation) (*Request, error) {

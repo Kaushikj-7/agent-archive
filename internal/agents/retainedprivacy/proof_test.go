@@ -37,7 +37,7 @@ func retainedFixture(t *testing.T) (retainedprivacy.Expectation, []byte, *agenta
 
 func TestFixedRetainedTransformPreservesOriginalFactsAndOwnsDetachedOutput(t *testing.T) {
 	expected, source, budget := retainedFixture(t)
-	request, err := retainedprivacy.FreezeRequest(t.Context(), expected, source, budget)
+	request, err := freezeRetainedRequest(t.Context(), expected, source, budget)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +89,7 @@ func TestFixedRetainedTransformPreservesOriginalFactsAndOwnsDetachedOutput(t *te
 
 func TestFixedRetainedTransformRejectsCustomRegistryAndForeignRequest(t *testing.T) {
 	expected, source, budget := retainedFixture(t)
-	request, err := retainedprivacy.FreezeRequest(t.Context(), expected, source, budget)
+	request, err := freezeRetainedRequest(t.Context(), expected, source, budget)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +115,7 @@ func TestFixedRetainedTransformRejectsCustomRegistryAndForeignRequest(t *testing
 		t.Fatal(err)
 	}
 	defer closeRetained(t, proof)
-	other, err := retainedprivacy.FreezeRequest(t.Context(), expected, source, budget)
+	other, err := freezeRetainedRequest(t.Context(), expected, source, budget)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +136,7 @@ func TestFixedRetainedTransformRejectsCustomRegistryAndForeignRequest(t *testing
 
 func TestFixedRetainedTransformOriginalCloseReachesActualLoanContext(t *testing.T) {
 	expected, source, budget := retainedFixture(t)
-	request, err := retainedprivacy.FreezeRequest(t.Context(), expected, source, budget)
+	request, err := freezeRetainedRequest(t.Context(), expected, source, budget)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +161,7 @@ func TestFixedRetainedTransformOriginalCloseReachesActualLoanContext(t *testing.
 
 func TestFixedRetainedTransformKeepsCapturedScopeAcrossPortDispatch(t *testing.T) {
 	expected, source, budget := retainedFixture(t)
-	request, err := retainedprivacy.FreezeRequest(t.Context(), expected, source, budget)
+	request, err := freezeRetainedRequest(t.Context(), expected, source, budget)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,7 +199,7 @@ func TestFixedRetainedTransformCannotBorrowLaterScopeCapacity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request, err := retainedprivacy.FreezeRequest(t.Context(), expected, source, budget)
+	request, err := freezeRetainedRequest(t.Context(), expected, source, budget)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,7 +225,7 @@ func TestFixedRetainedTransformRejectsChangedPolicyAndCorruptInput(t *testing.T)
 		} else {
 			expected.Target.AdapterVersion = "forged-production-version"
 		}
-		request, err := retainedprivacy.FreezeRequest(t.Context(), expected, source, budget)
+		request, err := freezeRetainedRequest(t.Context(), expected, source, budget)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -244,7 +244,7 @@ func TestFixedRetainedTransformRejectsChangedPolicyAndCorruptInput(t *testing.T)
 
 func TestRetainedRequestLeaseCopiesShareTerminalClose(t *testing.T) {
 	expected, source, budget := retainedFixture(t)
-	request, err := retainedprivacy.FreezeRequest(t.Context(), expected, source, budget)
+	request, err := freezeRetainedRequest(t.Context(), expected, source, budget)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -314,4 +314,10 @@ func TestRetainedRequestCapturedOwnerKeepsRawLedgerIdentityAndExistingCharges(t 
 	if used, _ := budget.Charged(); used != 124 {
 		t.Fatal("request released original or later owner's charge", used)
 	}
+}
+
+// Test convenience only: production callers must supply their actual captured
+// owner explicitly, as the state stage factory does.
+func freezeRetainedRequest(ctx context.Context, expected retainedprivacy.Expectation, source []byte, budget *agentapi.NativeReadBudget) (*retainedprivacy.Request, error) {
+	return retainedprivacy.FreezeRequestCaptured(ctx, expected, source, budget, budget.Reservation())
 }
