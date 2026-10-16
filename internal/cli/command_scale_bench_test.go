@@ -664,49 +664,94 @@ func readPathLocalCounts(diagnostic string) map[string]int64 {
 
 // The observed-size gate runs in ordinary CI. Timings are advisory; stable
 // request ceilings detect duplicated discovery/body reads without wall clocks.
-func TestCommandReadPathOperationBudgets(t *testing.T) {
+func TestCommandReadPathListPickerOperationBudgets(t *testing.T) {
 	t.Parallel()
+	testCommandReadPathOperationBudgets(t, readPathListPicker)
+}
+
+func TestCommandReadPathShowPickerOperationBudgets(t *testing.T) {
+	t.Parallel()
+	testCommandReadPathOperationBudgets(t, readPathShowPicker)
+}
+
+func TestCommandReadPathHandoffPickerOperationBudgets(t *testing.T) {
+	t.Parallel()
+	testCommandReadPathOperationBudgets(t, readPathHandoffPicker)
+}
+
+func TestCommandReadPathShowShortIDOperationBudgets(t *testing.T) {
+	t.Parallel()
+	testCommandReadPathOperationBudgets(t, readPathShowShort)
+}
+
+func TestCommandReadPathHandoffQueryOperationBudgets(t *testing.T) {
+	t.Parallel()
+	testCommandReadPathOperationBudgets(t, readPathHandoffQuery)
+}
+
+func TestCommandReadPathListPipedOperationBudgets(t *testing.T) {
+	t.Parallel()
+	testCommandReadPathOperationBudgets(t, readPathListPiped)
+}
+
+func TestCommandReadPathListScopedLateOperationBudgets(t *testing.T) {
+	t.Parallel()
+	testCommandReadPathOperationBudgets(t, readPathListScoped)
+}
+
+// Keep command families separate: CI shards top-level command behavior, while
+// each state retains its private home, writable store and independent warmup.
+// Reuse encoded immutable objects within a command instead of republishing the
+// entire 1,800-session archive for each state.
+func testCommandReadPathOperationBudgets(t *testing.T, command readPathCommand) {
+	t.Helper()
 	const size = 1800
-	for _, command := range readPathCommands() {
-		for _, cacheState := range []readPathCacheState{readPathCold, readPathWarm, readPathChanged, readPathNoCache} {
-			if cacheState == readPathNoCache && !command.supportsNoCache() {
-				continue
-			}
-			t.Run(string(command)+"/"+string(cacheState), func(t *testing.T) {
-				t.Parallel()
-				mem := storagetest.NewMemoryStore()
-				storagetest.SeedReadPathArchive(t, mem, size, 0)
-				home := t.TempDir()
-				store := storagetest.NewMeasuredStore(mem, 0)
-				store.ListingModel = &storagetest.ListingLatencyModel{}
-				env := readPathEnv(t, home, store, command)
-				seedReadPathRegistrations(t, home, size, command)
-				args := readPathBenchmarkArgs(command, cacheState == readPathNoCache)
-				if cacheState == readPathWarm || cacheState == readPathChanged {
-					if code, _, diag := runReadPathBenchmark(args, command, env); code != 0 {
-						t.Fatalf("warmup: %d %s", code, diag)
-					}
-				}
-				changed := cacheState == readPathChanged
-				if changed {
-					storagetest.SeedReadPathArchive(t, mem, size, 1)
-				}
-				headers, err := mem.List(t.Context(), "")
-				if err != nil {
-					t.Fatal(err)
-				}
-				store.ListingModel.Headers = headers
-				store.Reset()
-				code, out, diag := runReadPathBenchmark(args, command, env)
-				if err := validateReadPathOutput(command, size, code, out, changed); err != nil {
-					t.Fatalf("%v %s", err, diag)
-				}
-				m := store.Metrics()
-				if err := readPathOperationBudget(command, cacheState, size, m); err != nil {
-					t.Fatal(err)
-				}
-			})
+	seed := storagetest.NewMemoryStore()
+	storagetest.SeedReadPathArchive(t, seed, size, 0)
+	baseline, err := storagetest.SnapshotMemoryStore(t.Context(), seed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, cacheState := range []readPathCacheState{readPathCold, readPathWarm, readPathChanged, readPathNoCache} {
+		if cacheState == readPathNoCache && !command.supportsNoCache() {
+			continue
 		}
+		t.Run(string(cacheState), func(t *testing.T) {
+			t.Parallel()
+			mem, err := baseline.Clone(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			home := t.TempDir()
+			store := storagetest.NewMeasuredStore(mem, 0)
+			store.ListingModel = &storagetest.ListingLatencyModel{}
+			env := readPathEnv(t, home, store, command)
+			seedReadPathRegistrations(t, home, size, command)
+			args := readPathBenchmarkArgs(command, cacheState == readPathNoCache)
+			if cacheState == readPathWarm || cacheState == readPathChanged {
+				if code, _, diag := runReadPathBenchmark(args, command, env); code != 0 {
+					t.Fatalf("warmup: %d %s", code, diag)
+				}
+			}
+			changed := cacheState == readPathChanged
+			if changed {
+				storagetest.SeedReadPathArchive(t, mem, size, 1)
+			}
+			headers, err := mem.List(t.Context(), "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			store.ListingModel.Headers = headers
+			store.Reset()
+			code, out, diag := runReadPathBenchmark(args, command, env)
+			if err := validateReadPathOutput(command, size, code, out, changed); err != nil {
+				t.Fatalf("%v %s", err, diag)
+			}
+			m := store.Metrics()
+			if err := readPathOperationBudget(command, cacheState, size, m); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 
