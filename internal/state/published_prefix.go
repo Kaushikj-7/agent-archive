@@ -66,13 +66,11 @@ func (s *Store) publishedPrefix(id string) (summary PublishedSummary, found, hea
 	}
 	summary, head, err = readLeadingSummary(io.LimitReader(f, 8192))
 	if errors.Is(err, errSelectingPublishedFullDecode) || cfg.PublicationCompositionProtection || cfg.SourceSetPublicationProtection {
-		read, closeRead := s.WithReadBudget(s.durableContext(), s.resourceBudget)
-		defer closeRead()
-		published, readErr := read.LoadPublishedState(id)
-		if readErr != nil || !published.Found() {
-			return PublishedSummary{}, true, false, info, errors.Join(ErrDurableStorageRecovery, readErr)
+		summary, err = s.validatedPublishedSummary(id, home, path, info, cfg.SourceSetPublicationProtection)
+		if err != nil {
+			return PublishedSummary{}, true, false, info, err
 		}
-		summary, head, err = published.Summary(), true, nil
+		head = true
 	}
 	if errors.Is(err, ErrDurableStorageRecovery) {
 		return summary, true, false, info, err

@@ -52,6 +52,12 @@ import (
 // never stores credentials or a second copy of conversation content beyond
 // what the published source bundle itself already contains.
 type Store struct {
+	summaryCache        *publishedSummaryCache
+	summaryBorrow       *publishedSummaryBorrow
+	publishedReadDigest *[32]byte
+	// summaryDecodeBoundary injects same-stamp replacements around a cold
+	// selecting decode; production stores leave this test seam nil.
+	summaryDecodeBoundary func(after bool)
 	publicationAccounting *publicationAccounting
 	durableInspection     *durableInspectionCache
 	resourceBudget        *agentapi.NativeReadBudget
@@ -97,7 +103,7 @@ type Store struct {
 // it (status, handoff, backfill planning). A missing directory reads as
 // nothing recorded.
 func OpenReadOnly(home string) *Store {
-	return &Store{home: home, durableInspection: &durableInspectionCache{}}
+	return &Store{home: home, durableInspection: &durableInspectionCache{}, summaryCache: &publishedSummaryCache{}}
 }
 
 // Open creates (if needed) the local store's directory layout under
@@ -112,7 +118,7 @@ func Open(home string) (*Store, error) {
 			return nil, fmt.Errorf("create local store directory %q: %w", dir, err)
 		}
 	}
-	return &Store{home: home, durableInspection: &durableInspectionCache{}}, nil
+	return &Store{home: home, durableInspection: &durableInspectionCache{}, summaryCache: &publishedSummaryCache{}}, nil
 }
 
 // Home returns the data directory the store keeps its files in.
@@ -764,10 +770,6 @@ func (s *Store) CompleteRequest(archiveSessionID, coveredToken string) (bool, er
 	return true, nil
 }
 
-// PendingPublication is one fully rendered publication transaction. Source
-// and metadata bytes are persisted together before the first remote write, so
-// every retry uses the same hash and timestamps even after process restart.
-// Bundle remains available for change detection and future parser-only rebuilds.
 // CatalogPublication freezes the remote transaction before source upload.
 type CatalogPublication struct {
 	Protocol         uint64                `json:"protocol"`
@@ -776,6 +778,10 @@ type CatalogPublication struct {
 	Recovery         *local.CatalogJournal `json:"recovery,omitempty"`
 }
 
+// PendingPublication is one fully rendered publication transaction. Source
+// and metadata bytes are persisted together before the first remote write, so
+// every retry uses the same hash and timestamps even after process restart.
+// Bundle remains available for change detection and future parser-only rebuilds.
 type PendingPublication struct {
 	CursorSelection *StagedSelection    `json:"cursor_commit4,omitempty"`
 	JournalVersion  int                 `json:"journal_version,omitempty"`

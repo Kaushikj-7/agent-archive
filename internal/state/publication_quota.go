@@ -131,6 +131,9 @@ func (s *Store) readPublishedDecoded(ctx context.Context, home *local.RootedHome
 	if err = decodePublishedState(raw, p, ctx, s.resourceBudget, reservation); err != nil {
 		return sum, func() {}, errors.Join(ErrDurableStorageRecovery, err)
 	}
+	if s.publishedReadDigest != nil {
+		*s.publishedReadDigest = sum
+	}
 	finalOpened, err := f.Stat()
 	if err != nil || !sameDurableStamp(expected, finalOpened) {
 		return sum, func() {}, errors.Join(ErrDurableStorageRecovery, err)

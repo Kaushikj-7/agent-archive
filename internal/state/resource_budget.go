@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"io"
@@ -32,6 +33,7 @@ func (s *Store) WithReadBudget(ctx context.Context, budget *agentapi.NativeReadB
 	scoped.resourceBudget = budget
 	scoped.resourceContext = ctx
 	scoped.resourceReleases = &[]func(){}
+	scoped.summaryBorrow = &publishedSummaryBorrow{}
 	var once sync.Once
 	return &scoped, func() {
 		once.Do(func() {
@@ -356,6 +358,9 @@ func (s *Store) decodePublicationOwned(ctx context.Context, data []byte, value a
 	}
 	if err != nil && !json.Valid(data) {
 		return json.Unmarshal(data, value)
+	}
+	if _, published := value.(*publishedState); published && err == nil && s.publishedReadDigest != nil {
+		*s.publishedReadDigest = sha256.Sum256(data)
 	}
 	return err
 }
