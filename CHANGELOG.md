@@ -10,6 +10,10 @@ follow [Semantic Versioning](https://semver.org/).
   second startup metadata record supplies it. Retained refiltering also repairs
   this warning (filter 29, adapter 0.29.0); complete usage and cost stay unavailable.
 
+- Interrupted history privacy preparation now reads each retained revision's
+  original parent before applying a later resolved parent. Older pending
+  journals can resume without replacing the original provenance.
+
 - Pending-publication cleanup refuses malformed JSON inside records it scans
   without retaining, preserving damaged journals for recovery while keeping
   the bounded-memory checks used for large Codex histories.
