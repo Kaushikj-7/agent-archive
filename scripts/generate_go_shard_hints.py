@@ -165,7 +165,7 @@ def _read_parent_sample(directory, source, expected_settings, package_cost_exclu
         if m['settings'] != expected_settings[index] or catalog['source'] != source:
             raise runner.Failure('parent sample settings/source mismatch')
         assignment = catalog['assignments'][m['shard']]
-        raw = parents.verify_logs(path.parent, catalog, assignment)
+        raw = parents.verify_logs(path.parent, catalog, assignment, allow_legacy=True)
         records = runner.json_stream(raw)
         for e in records:
             if not e.get('Test') and e.get('Action') in ('pass','skip') and e.get('Package') in assignment['packages']:

@@ -97,8 +97,8 @@ func TestMuseRuntimeCannotConfigureCaptureOrLaunch(t *testing.T) {
 	if message := validateHandoffOptionsWithCatalog(&opts, false, env.agentRegistry().Catalog()); message == "" {
 		t.Fatal("runtime-only launch flag accepted")
 	}
-	if p, f, ok := env.agentRegistry().LookupSources("muse"); ok || p != nil || f != nil {
-		t.Fatal("runtime-only source enabled")
+	if p, f, ok := env.agentRegistry().LookupSources("muse"); !ok || p == nil || f == nil {
+		t.Fatal("explicit local source unavailable")
 	}
 }
 

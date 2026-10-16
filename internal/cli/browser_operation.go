@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -83,6 +84,8 @@ func (l *sessionPicker) prepareSearchContext(ctx context.Context, rows []listRow
 func (l *sessionPicker) loadOlderContext(ctx context.Context, p *prompter, stdout io.Writer) (bool, error) {
 	l.stopOperations()
 	l.operationCanceled = false
+	redraw := l.loadingFrame
+	l.loadingFrame = nil
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	done := make(chan browserOperationResult, 1)
@@ -103,7 +106,14 @@ func (l *sessionPicker) loadOlderContext(ctx context.Context, p *prompter, stdou
 		}
 	}()
 	typedAhead := l.keys != nil && l.keys.buffered() || l.keys == nil && p.in.Buffered() > 0
-	terminal.Println(stdout, "Loading "+loader.Label+"… Esc cancels")
+	message := "Loading " + loader.Label + "… Esc cancels"
+	if redraw != nil && l.keys != nil {
+		// Reading keys, the list is drawn again with the message as its
+		// footer line, rather than under the prompt, which scrolls it.
+		redraw(message)
+	} else {
+		terminal.Println(stdout, message)
+	}
 	for {
 		select {
 		case result := <-done:
@@ -116,7 +126,18 @@ func (l *sessionPicker) loadOlderContext(ctx context.Context, p *prompter, stdou
 			return false, ctx.Err()
 		default:
 		}
-		if typedAhead {
+		cancelled, readable, err := false, true, error(nil)
+		switch {
+		case typedAhead && l.keys != nil:
+			// The keys typed ahead are handled after the load, but an
+			// Esc pressed while it runs still stops it.
+			cancelled, readable, err = l.loadInputAhead()
+		case typedAhead:
+			readable = false
+		default:
+			cancelled, err = l.loadInput(p)
+		}
+		if !readable {
 			select {
 			case result := <-done:
 				joined = true
@@ -128,7 +149,6 @@ func (l *sessionPicker) loadOlderContext(ctx context.Context, p *prompter, stdou
 				return false, ctx.Err()
 			}
 		}
-		cancelled, err := l.loadInput(p)
 		if err != nil {
 			cancel()
 			join()
@@ -136,6 +156,15 @@ func (l *sessionPicker) loadOlderContext(ctx context.Context, p *prompter, stdou
 		}
 		if cancelled {
 			l.operationCanceled = true
+			if l.keys != nil {
+				// What was left of a wheel burst would scroll past the end,
+				// and load again, at once.
+				l.keys.dropMoves()
+			}
+			if l.toggled {
+				// The scope's own load says so where this one did.
+				l.loadingFrame = redraw
+			}
 			cancel()
 			result := join()
 			if result.err != nil && !errors.Is(result.err, context.Canceled) {
@@ -317,6 +346,35 @@ func (l *sessionPicker) pollBrowserLine(p *prompter) (string, bool, error) {
 		terminal.Println(p.out)
 	}
 	return strings.TrimSpace(answer), true, nil
+}
+
+// loadInputAhead is loadInput for a load started with keys typed ahead,
+// which it leaves to be handled after the load: Esc, q, and the end of
+// input pressed while the load runs act on it, and other keys are queued
+// after the keys typed ahead. readable is false when no key can be read
+// until the keys waiting are handled.
+func (l *sessionPicker) loadInputAhead() (cancelled, readable bool, err error) {
+	if !l.keys.canReadAhead() {
+		return false, false, nil
+	}
+	keys, err := l.keys.readAhead(50 * time.Millisecond)
+	if err != nil {
+		return false, true, err
+	}
+	for i, k := range keys {
+		switch {
+		case k.kind == keyEscape:
+		case k.kind == keyEndOfInput || k.kind == keyRune && k.r == 'q':
+			l.operationQuit = true
+		default:
+			continue
+		}
+		// Keys pressed with it, before or after, are kept like the rest.
+		l.keys.queue(slices.Delete(keys, i, i+1))
+		return true, true, nil
+	}
+	l.keys.queue(keys)
+	return false, true, nil
 }
 
 func (l *sessionPicker) loadInput(p *prompter) (bool, error) {

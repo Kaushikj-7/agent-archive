@@ -438,8 +438,19 @@ type sessionPicker struct {
 	operationQuit     bool
 	older             *browserLoadAction
 	loadedOlder       bool
-	boundedNotice     string
-	env               terminalSizeDependencies
+	// pendingOlder is the move down that loaded older rows, which the list
+	// goes on with once it has them (continueOlder).
+	pendingOlder *olderMove
+	// olderSpent is the end (olderEnd) of the table past which a move down
+	// loaded no rows: moving past it again loads nothing until the table
+	// changes, its scope does, or the filter line opens; o still loads.
+	olderSpent string
+	// loadingFrame, when set, draws the list as it was when a key asked for
+	// a load, with the message given in place of its footer line: reading
+	// keys, a load says so there instead of under the prompt.
+	loadingFrame  func(message string)
+	boundedNotice string
+	env           terminalSizeDependencies
 	// keys, when set, reads the list a key at a time: it scrolls instead
 	// of turning pages (see pickKeys).
 	keys *keyInput
@@ -506,6 +517,7 @@ type sessionPicker struct {
 // chosen, under its heading, and shows the other when `a` is typed alone.
 // It returns when a row is picked or the user quits.
 func (l *sessionPicker) pickScopedContext(ctx context.Context, p *prompter, stdout io.Writer, choices *scopeChoices, action string) (listRow, bool, error) {
+	defer func() { l.pendingOlder = nil }()
 	for {
 		c := choices.shown()
 		if loader := choices.loadOlder; loader != nil && loader.Available != nil {
@@ -555,10 +567,14 @@ func (l *sessionPicker) pickScopedContext(ctx context.Context, p *prompter, stdo
 				}
 				l.toggled = false
 				// The other table starts at its top.
-				l.start, l.cursor = 0, 0
+				l.start, l.cursor, l.pendingOlder, l.olderSpent = 0, 0, nil, ""
 			}
 			if !more {
 				l.older = nil
+			}
+			if l.operationCanceled {
+				// Esc stopped the load: the highlight stays where it was.
+				l.pendingOlder = nil
 			}
 			l.memo, l.cache, l.bottom = nil, nil, nil
 			l.searched, l.searchRead = nil, false
@@ -578,7 +594,7 @@ func (l *sessionPicker) pickScopedContext(ctx context.Context, p *prompter, stdo
 		}
 		// The other table starts at its top, highlighting its first row, on
 		// a cleared screen.
-		l.start, l.cursor, l.cache, l.bottom = 0, 0, nil, nil
+		l.start, l.cursor, l.cache, l.bottom, l.olderSpent = 0, 0, nil, nil, ""
 		if l.clear != nil {
 			l.clear()
 		}

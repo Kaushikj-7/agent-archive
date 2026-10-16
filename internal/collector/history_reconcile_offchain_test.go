@@ -6,15 +6,20 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/state"
 )
+
+// revisionD is an off-chain rollout of the thread that does not read as one.
+const revisionD = "44444444-4444-4444-8444-444444444444"
 
 // offChainTexts is n synthetic transcript messages of size bytes each that
 // compress little, so a revision staged from them retains about as much as
@@ -167,6 +172,135 @@ func TestOffChainCeilingAfterTheSavedPublicationIsNotRetried(t *testing.T) {
 	if !hasRevisionLeftOut(t, scan) {
 		t.Fatal("no diagnostic for a revision left out of a session whose upload is owed")
 	}
+}
+
+// A publication owed before the scan began, which the scan may replace (one
+// never attempted, waiting out its upload interval, that a stop request
+// replaces with a richer one), does not keep the scan from running again
+// without its off-chain revisions: only a publication the scan itself saved
+// is owed as it is. Run again, the scan captures the chain, A then C, under
+// a ceiling that leaves the chain alone 1 MiB of room. Kept from the retry,
+// the session would be deferred on every pass until it failed.
+func TestOffChainCeilingRetriesPastAnEarlierReplaceablePublication(t *testing.T) {
+	t.Parallel()
+	scan, err := runUnderCeiling(t, 64<<20, false)
+	if !errors.Is(err, archive.ErrHistoryMutationPending) {
+		t.Fatal("the chain alone does not capture: ", err)
+	}
+	_, peak := scan.readBudget().Charged()
+	scan = withEarlierReplaceablePublication(t)
+	t.Cleanup(scan.readBudget().BeginScope(peak + 1<<20))
+	_, err = scan.run(scan.ctx)
+	if !scan.withoutOffChain {
+		t.Fatal("the scan did not run again without B, so the earlier publication defers it on every pass: ", err)
+	}
+	captured, ids := capturedChain(t, scan, err)
+	if !captured || slices.Contains(ids, revisionB) || !slices.Contains(ids, revisionC) {
+		t.Fatalf("captured %v, revisions %v, err %v", captured, ids, err)
+	}
+}
+
+// A scan that replaced an earlier publication with its own, B included, and
+// then met the session's read ceiling still runs again, since a publication
+// was owed when it began; but the second scan resumes the replacement as it
+// was saved, B included, rather than building one without B over it. The
+// ceiling sits just under the scan's peak with B kept, which it reaches only
+// after saving the replacement.
+func TestOffChainCeilingRetryResumesTheReplacementItSaved(t *testing.T) {
+	t.Parallel()
+	scan := withEarlierReplaceablePublication(t)
+	t.Cleanup(scan.readBudget().BeginScope(64 << 20))
+	_, err := scan.run(scan.ctx)
+	if captured, ids := capturedChain(t, scan, err); !captured || scan.withoutOffChain || !slices.Contains(ids, revisionB) {
+		t.Fatalf("B was not kept with room for it: captured %v, inputs %v, retried %v", captured, ids, scan.withoutOffChain)
+	}
+	_, peak := scan.readBudget().Charged()
+	scan = withEarlierReplaceablePublication(t)
+	t.Cleanup(scan.readBudget().BeginScope(peak - 2<<10))
+	_, err = scan.run(scan.ctx)
+	if !scan.withoutOffChain {
+		t.Fatal("the scan did not meet the ceiling with B kept; the fixture no longer exercises the retry: ", err)
+	}
+	// Only the first scan kept B, and the earlier publication had no history,
+	// so a publication with B is the first scan's replacement.
+	captured, ids := capturedChain(t, scan, err)
+	if !captured || !slices.Contains(ids, revisionB) || !slices.Contains(ids, revisionC) {
+		t.Fatalf("the retry replaced the saved publication: captured %v, inputs %v, err %v", captured, ids, err)
+	}
+	if pending, _, _ := scan.local.LoadPending(scan.id()); pending.RequestToken != scan.req.Token {
+		t.Fatalf("owed publication token %q, want the stop request's", pending.RequestToken)
+	}
+	if hasRevisionLeftOut(t, scan) {
+		t.Fatal("recorded a diagnostic with nothing left out")
+	}
+}
+
+// A replacement the first scan saved without an off-chain revision it could
+// not read is still reported as leaving it out when the second scan resumes
+// it: the second scan never reconciles, so the first scan's record stands.
+func TestOffChainCeilingRetryKeepsTheLeftOutRecordOfTheReplacementItResumes(t *testing.T) {
+	t.Parallel()
+	withUnreadable := func() *sessionScan {
+		scan := withEarlierReplaceablePublication(t)
+		lookup := scan.opts.CodexRollouts.(*reconciliationLookup)
+		d := agentapi.SourceRef{Path: filepath.Join(scan.reg.ProjectRoot, "rollout-2026-10-01T12-00-00-"+revisionD+".jsonl"), Key: revisionThread}
+		if err := os.WriteFile(d.Path, []byte("D-only is not a rollout\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		lookup.set.Candidates = append(lookup.set.Candidates, d)
+		lookup.refs[revisionD] = []agentapi.SourceRef{d}
+		return scan
+	}
+	scan := withUnreadable()
+	t.Cleanup(scan.readBudget().BeginScope(64 << 20))
+	_, err := scan.run(scan.ctx)
+	if captured, ids := capturedChain(t, scan, err); !captured || scan.withoutOffChain || !slices.Contains(ids, revisionB) || slices.Contains(ids, revisionD) {
+		t.Fatalf("with room, B was not kept or D was: captured %v, inputs %v, retried %v", captured, ids, scan.withoutOffChain)
+	}
+	_, peak := scan.readBudget().Charged()
+	scan = withUnreadable()
+	t.Cleanup(scan.readBudget().BeginScope(peak - 2<<10))
+	_, err = scan.run(scan.ctx)
+	if !scan.withoutOffChain {
+		t.Fatal("the scan did not meet the ceiling with B kept; the fixture no longer exercises the retry: ", err)
+	}
+	if captured, ids := capturedChain(t, scan, err); !captured || !slices.Contains(ids, revisionB) || slices.Contains(ids, revisionD) {
+		t.Fatalf("the retry did not resume the saved replacement: captured %v, inputs %v, err %v", captured, ids, err)
+	}
+	if !hasRevisionLeftOut(t, scan) {
+		t.Fatal("no diagnostic for D, left out of the replacement the retry resumed")
+	}
+}
+
+// withEarlierReplaceablePublication is largeOffChainFixture with a
+// publication of the thread alone already owed: never attempted, waiting out
+// its upload interval, under an earlier request than the scan's stop request,
+// which may replace it.
+func withEarlierReplaceablePublication(t *testing.T) *sessionScan {
+	t.Helper()
+	scan, lookup := largeOffChainFixture(t)
+	filtered, adapter, err := FilterSource(scan.ctx, "codex", lookup.refs[revisionThread][0], scan.now, testSources)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle, err := archive.NewSourceBundle(scan.reg, adapter, filtered, scan.now, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rendered, err := renderPublication(scan.ctx, scan.resolveParser(), scan.parserVersion(), bundle, scan.reg, scan.now, scan.opts, scan.priorRepoKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	earlier := state.PendingPublication{
+		SkillEvidence: string(scan.opts.skillEvidence()), Bundle: bundle, SourceKey: rendered.source.Key, MetadataKey: rendered.metadataKey,
+		SourceSHA256: rendered.source.SHA256, SourceBytes: rendered.sourceBytes, MetadataBytes: rendered.metadata,
+		RequestToken: "earlier-request", ReadyAt: scan.now.Add(time.Minute),
+	}
+	if err := scan.local.SavePending(scan.id(), earlier); err != nil {
+		t.Fatal(err)
+	}
+	scan.req.Token = "stop-request"
+	return scan
 }
 
 func hasRevisionLeftOut(t *testing.T, scan *sessionScan) bool {

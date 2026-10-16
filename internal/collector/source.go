@@ -132,6 +132,8 @@ func newSourceReader(reg archive.SessionRegistration, opts Options) (sourceReade
 // providerReader keeps only read dependencies; boxing whole registrations and
 // collector options would allocate their unrelated policy fields per source.
 type providerReader struct {
+	// localRead is set only by the explicit unregistered source entry point.
+	localRead               bool
 	countInspection         bool
 	inspectionCache         *inspectioncache.Cache
 	inspectionObservation   **inspectioncache.Observation
@@ -240,6 +242,9 @@ func (r providerReader) pass(ctx context.Context, p agentapi.SourceProvider, key
 			return nil, nil, agentapi.ErrInvalidSourceBinding
 		}
 	}
+	if r.localRead && r.passes != nil {
+		return nil, nil, errors.New("local source reads cannot reuse capture passes")
+	}
 	if r.passes != nil && r.historicalSourceAllowed == nil {
 		pass, err := r.passes.get(ctx, sourcePassKey{name: key, root: r.discoveryRoot(), discovery: r.discovery != nil, nativeRoot: rootValue(r.nativeRoot), legacy: r.harness == archive.HarnessCodex && r.admission.Binding == nil && (r.discovery == nil || r.discovery.Origin != archive.SessionOriginDiscovery)}, p)
 		if err != nil {
@@ -249,6 +254,9 @@ func (r providerReader) pass(ctx context.Context, p agentapi.SourceProvider, key
 		return pass, func() error { r.passes.active--; return nil }, nil
 	}
 	env := sourceEnvironment(r.discovery, r.database)
+	if r.localRead {
+		env.RequireConfinedHistory = false
+	}
 	if r.nativeRoot != nil {
 		env.NativeRoot = r.nativeRoot
 		env.Files = sourcefacts.RootOpener{Root: r.nativeRoot.Canonical}

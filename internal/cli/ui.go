@@ -119,7 +119,11 @@ func lineMetrics(line string, width int) (int, int) {
 		return 1, visibleWidth(line)
 	}
 	rows, column := 1, 0
-	line = ansiEscape.ReplaceAllString(line, "")
+	// Most measured rows are plain. ReplaceAllString copies even strings
+	// without a match, which is costly while repeatedly fitting a table.
+	if strings.ContainsRune(line, '\x1b') {
+		line = ansiEscape.ReplaceAllString(line, "")
+	}
 	for line != "" {
 		r, size := utf8.DecodeRuneInString(line)
 		w := runeWidthBefore(r, line[size:])
@@ -239,7 +243,9 @@ var ansiReset = regexp.MustCompile("^\x1b\\[0*m$")
 // and color codes none.
 func visibleWidth(text string) int {
 	n := 0
-	text = ansiEscape.ReplaceAllString(text, "")
+	if strings.ContainsRune(text, '\x1b') {
+		text = ansiEscape.ReplaceAllString(text, "")
+	}
 	for text != "" {
 		r, size := utf8.DecodeRuneInString(text)
 		n += runeWidthBefore(r, text[size:])
@@ -249,6 +255,11 @@ func visibleWidth(text string) int {
 }
 
 func runeWidth(r rune) int {
+	// ASCII has no combining or wide characters. Preserve the historical
+	// one-column treatment of control characters as well as printable ones.
+	if r >= 0 && r <= unicode.MaxASCII {
+		return 1
+	}
 	if unicode.In(r, unicode.Mn, unicode.Me, unicode.Cf) {
 		return 0
 	}

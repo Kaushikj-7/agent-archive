@@ -45,15 +45,28 @@ type reviewRow struct {
 	label  string
 	values []string
 	detail string
+	// note marks a detail that explains the values rather than adding to
+	// them, such as what a retention period means. A "was" line leaves it
+	// out, since it repeats or follows from the values.
+	note bool
 }
 
-// text is the row as one string, for comparing and for "was".
+// text is the row as one string, for comparing.
 func (r reviewRow) text() string {
 	text := strings.Join(r.values, ", ")
 	if r.detail != "" {
 		text += "  " + r.detail
 	}
 	return text
+}
+
+// wasText is the row as one string for a "was" line: its values, and its
+// detail unless that is only a note.
+func (r reviewRow) wasText() string {
+	if r.note {
+		return strings.Join(r.values, ", ")
+	}
+	return r.text()
 }
 
 // reviewRows lists what setup will save, in the order the review shows it.
@@ -98,7 +111,7 @@ func reviewRows(cfg config.Config, discoveries map[string]applicationDiscovery, 
 	if cfg.SkillEvidence == "" {
 		skillScope += " (kept from previous setup)"
 	}
-	rows = append(rows, reviewRow{label: "Skills", values: []string{skillScope}, detail: "User skill roots outside selected projects may be scanned; change with Edit a setting"})
+	rows = append(rows, reviewRow{label: "Skills", values: []string{skillScope}, detail: "User skill roots outside selected projects may be scanned; change with Edit a setting", note: true})
 	if showSessions {
 		rows = append(rows, reviewRow{label: "Sessions", values: []string{sessions}})
 	}
@@ -115,7 +128,11 @@ func reviewRows(cfg config.Config, discoveries map[string]applicationDiscovery, 
 		rows = append(rows, reviewRow{label: "Machine", values: []string{machine}})
 	}
 	days := config.RetentionLabel(cfg.RetentionDays)
-	return append(rows, reviewRow{label: "Keep for", values: []string{days}})
+	retentionDetail := "agent-archive never deletes sessions automatically"
+	if cfg.RetentionDays != 0 {
+		retentionDetail = fmt.Sprintf("Sessions with no new activity for %s are deleted from your bucket; change with Edit a setting, or keep forever", days)
+	}
+	return append(rows, reviewRow{label: "Keep for", values: []string{days}, detail: retentionDetail, note: true})
 }
 
 // storageAddress is where sessions are stored, as one address such as
@@ -188,7 +205,7 @@ func buildSetupReviewModel(cfg config.Config, review setupReview, at time.Time) 
 		}
 	}
 	if len(exclusions) > 0 {
-		m.rows = append(m.rows, reviewRow{label: "Excluded", values: exclusions, detail: "Nearest explicit project rule wins"})
+		m.rows = append(m.rows, reviewRow{label: "Excluded", values: exclusions, detail: "Nearest explicit project rule wins", note: true})
 	}
 	var oldExclusions []string
 	for _, rule := range review.existing.Archive.Projects {
@@ -197,7 +214,7 @@ func buildSetupReviewModel(cfg config.Config, review setupReview, at time.Time) 
 		}
 	}
 	if len(oldExclusions) > 0 {
-		m.before["Excluded"] = reviewRow{label: "Excluded", values: oldExclusions, detail: "Nearest explicit project rule wins"}
+		m.before["Excluded"] = reviewRow{label: "Excluded", values: oldExclusions, detail: "Nearest explicit project rule wins", note: true}
 		if len(exclusions) == 0 {
 			m.rows = append(m.rows, reviewRow{label: "Excluded", values: []string{"none"}})
 		}
@@ -271,6 +288,7 @@ const (
 	reviewCompactProjects     reviewCompactSetupLabel = "Projects"
 	reviewCompactSkills       reviewCompactSetupLabel = "Skills"
 	reviewCompactStorage      reviewCompactSetupLabel = "Storage"
+	reviewCompactKeepFor      reviewCompactSetupLabel = "Keep for"
 )
 
 func reviewCompactReviewRows(m *setupReviewModel) []reviewRow {
@@ -289,7 +307,7 @@ func reviewCompactReviewRows(m *setupReviewModel) []reviewRow {
 					continue
 				}
 			}
-		case reviewCompactApps, reviewCompactProjects, reviewCompactSkills, reviewCompactStorage:
+		case reviewCompactApps, reviewCompactProjects, reviewCompactSkills, reviewCompactStorage, reviewCompactKeepFor:
 			// These essentials stay in the compact review.
 		}
 		row.values = slices.Clone(row.values)
@@ -306,6 +324,12 @@ func reviewCompactReviewRows(m *setupReviewModel) []reviewRow {
 				row.detail = ""
 			case reviewCompactStorage:
 				row.detail = ""
+			case reviewCompactKeepFor:
+				// Fresh setup explains retention; an unchanged reconfigure
+				// keeps what the user already chose, so it shows the period.
+				if m.review.reconfiguring {
+					row.detail = ""
+				}
 			case reviewCompactDestination, reviewCompactHookFiles, reviewCompactSources, reviewCompactMachine, reviewCompactCodexSources, reviewCompactStarts, reviewCompactHistory, reviewCompactCopies, reviewCompactHooks, reviewCompactExceptions, reviewCompactR2Keys, reviewCompactSkipped, reviewCompactImported, reviewCompactCodexCapture:
 				// Preserve the already compact values for other rows.
 			}
@@ -403,7 +427,7 @@ func printSetupReviewRows(p *prompter, rows []reviewRow, m *setupReviewModel) in
 			mark = "  "
 		}
 		if m.changed[row.label] {
-			was := m.before[row.label].text()
+			was := m.before[row.label].wasText()
 			if was == "" {
 				was = "not set"
 			}

@@ -46,9 +46,10 @@ const (
 	// from the sibling .meta.json. Filter 15 redacts aa-pair1 pairing bundles,
 	// including truncated payloads. See dev/specs/privacy-filter.md.
 	// Filter 18 additionally accepts pinned opt-in API label evidence.
+	// Filter 19 adds the strictly validated local Muse conversation projection.
 	// Filter 17 retains typed, owning Codex session_labels metadata with
 	// prompt redaction and a bounded display name; it never establishes activity.
-	FilterVersion = "18"
+	FilterVersion = "19"
 	// OpenTelemetryGenAIRevision pins the upstream definitions used by the
 	// three gen_ai.* attributes emitted by BuildMetadata. The archive is not
 	// an OTLP payload; all agent_archive.* attributes are local extensions.

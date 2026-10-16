@@ -228,3 +228,28 @@ func TestCorruptChildIdentityRequestsExactKeyRecovery(t *testing.T) {
 		t.Fatalf("child retry: %#v %v", candidates, err)
 	}
 }
+
+// A SubagentStop whose own parent identity is damaged still requests that
+// parent's recovery; only a child request made through an owned parent spares
+// the parent's.
+func TestSubagentStopWithDamagedParentRequestsParentRecovery(t *testing.T) {
+	t.Parallel()
+	home, project := t.TempDir(), t.TempDir()
+	at := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	setUpTestConfig(t, home, project, at.Add(-time.Hour))
+	if err := HandleEvent(home, "claude", claudeStart(project, "parent", "startup", "/synthetic/parent.jsonl"), at, WithDecoders(testDecoders)); err != nil {
+		t.Fatal(err)
+	}
+	store := state.OpenReadOnly(home)
+	if err := recoverytest.Exhaust(context.Background(), store, state.SessionIndexRecoverySlice, false); err != nil {
+		t.Fatal(err)
+	}
+	corruptQualifiedIndex(t, home, agentmeta.SessionKey{Agent: agentmeta.Claude, NativeID: "parent"})
+	payload := map[string]any{"hook_event_name": "SubagentStop", "session_id": "parent", "cwd": project, "agent_id": "child", "agent_transcript_path": "/synthetic/child.jsonl"}
+	if err := HandleEvent(home, "claude", payload, at.Add(time.Minute), WithDecoders(testDecoders)); !errors.Is(err, state.ErrSessionIndexRecoveryRequired) {
+		t.Fatalf("lookup: %v", err)
+	}
+	if status, _ := store.SessionIndexRecoveryStatus(); status.Complete {
+		t.Fatalf("damaged parent not requested: %+v", status)
+	}
+}
