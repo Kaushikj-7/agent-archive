@@ -76,6 +76,10 @@ follow [Semantic Versioning](https://semver.org/).
   first-refusal diagnostics. Existing request bounds and call/result checks
   remain; this adds no native tool-status qualification.
 
+- Muse handoff no longer reports model identity as unavailable when the qualified
+  second startup metadata record supplies it. Retained refiltering also repairs
+  this warning (filter 29, adapter 0.29.0); complete usage and cost stay unavailable.
+
 - Muse retains own committed tool-call identities and validates exact prior
   result batch/index/call joins after native loss. Nonempty enriched sources
   expose observed call counts; legacy or mixed coverage stays unavailable.

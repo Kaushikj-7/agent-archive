@@ -798,6 +798,11 @@ in the [handoff design](../../dev/proposals/implemented/handoff.md).
 
 ### Muse local sessions
 
+The model-unavailable warning reflects the complete validated startup prefix.
+A model resolved in the qualified second metadata record is available; missing
+or empty model labels remain unavailable. This does not establish complete usage
+or cost.
+
 Use `agent-archive handoff --file /path/to/session.jsonl --harness muse` to read
 a complete supported ordinary exec/MSP root without setup. Add `--format json`,
 `--output FILE`, or `--to codex` (also Claude/Cursor) as usual. The handoff keeps
