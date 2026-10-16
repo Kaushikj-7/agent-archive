@@ -6,6 +6,9 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Refuse generation recovery when its exact prior publication changed, and serialize
+  cached publication updates with recovery routing.
+
 - Recover complete historical source-set publications from exact private retained evidence,
   with one shared disk/memory budget and permanent source-set writer protection.
   Stronger privacy replaces all selected revisions and retires obsolete private

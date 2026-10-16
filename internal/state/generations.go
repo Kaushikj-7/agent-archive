@@ -390,36 +390,8 @@ func (s *Store) resumeGenerationRecovery(g config.DurableStorageGuard, ctx conte
 		}
 		return nil
 	}
-	if r.Registration == nil || r.Pending == nil || r.Request == nil || r.Registration.ArchiveSessionID != r.Next || r.Registration.PreviousGenerationID != id || r.Pending.Bundle.ArchiveSessionID != r.Next || r.Request.ArchiveSessionID != r.Next || r.Request.Token != r.Pending.RequestToken {
-		return ErrSessionIndexRecoveryRequired
-	}
-	// A journal is durable intent, not permission to alter admission. Validate
-	// it against the predecessor before even fencing native routing. A retry
-	// after freezing differs only in that locally committed capture flag.
-	old, present, err := s.LoadRegistration(id)
-	if err != nil || !present {
-		return ErrSessionIndexRecoveryRequired
-	}
-	old.CaptureFrozen = false
-	key, err := registrationKey(old)
-	if err != nil || key != r.Key {
-		return ErrSessionIndexRecoveryRequired
-	}
-	validationErr := validateGenerationSuccessor(old, *r.Registration, *r.Pending, r.Next, r.Request.RequestedAt, s.resourceBudget, ctx)
-	if generationReadRefusal(validationErr) {
-		return validationErr
-	}
-	if validationErr != nil {
-		return ErrSessionIndexRecoveryRequired
-	}
-	if r.Version == 2 {
-		priorMetadata, priorSources, err := s.generationCommittedAuthority(old)
-		if generationReadRefusal(err) {
-			return err
-		}
-		if err != nil || priorMetadata != r.PriorMetadataSHA256 || priorSources != r.PriorSourceSetSHA256 {
-			return ErrSessionIndexRecoveryRequired
-		}
+	if err := s.validateGenerationRecoveryReplay(ctx, id, r); err != nil {
+		return err
 	}
 	if err := s.freezeGenerationRecovery(r); err != nil {
 		return fmt.Errorf("freeze recovery predecessor: %w", err)
@@ -1042,4 +1014,39 @@ func (s *Store) generationCommittedAuthority(reg archive.SessionRegistration) (s
 		return "", "", err
 	}
 	return publicationSHA256(prior.Body), digest, nil
+}
+
+func (s *Store) validateGenerationRecoveryReplay(ctx context.Context, id string, r generationRecovery) error {
+	if r.Registration == nil || r.Pending == nil || r.Request == nil || r.Registration.ArchiveSessionID != r.Next || r.Registration.PreviousGenerationID != id || r.Pending.Bundle.ArchiveSessionID != r.Next || r.Request.ArchiveSessionID != r.Next || r.Request.Token != r.Pending.RequestToken {
+		return ErrSessionIndexRecoveryRequired
+	}
+	// A journal is durable intent, not permission to alter admission. Validate
+	// it against the predecessor before even fencing native routing. A retry
+	// after freezing differs only in that locally committed capture flag.
+	old, present, err := s.LoadRegistration(id)
+	if err != nil || !present {
+		return ErrSessionIndexRecoveryRequired
+	}
+	old.CaptureFrozen = false
+	key, err := registrationKey(old)
+	if err != nil || key != r.Key {
+		return ErrSessionIndexRecoveryRequired
+	}
+	validationErr := validateGenerationSuccessor(old, *r.Registration, *r.Pending, r.Next, r.Request.RequestedAt, s.resourceBudget, ctx)
+	if generationReadRefusal(validationErr) {
+		return validationErr
+	}
+	if validationErr != nil {
+		return ErrSessionIndexRecoveryRequired
+	}
+	if r.Version == 2 {
+		priorMetadata, priorSources, err := s.generationCommittedAuthority(old)
+		if generationReadRefusal(err) {
+			return err
+		}
+		if err != nil || priorMetadata != r.PriorMetadataSHA256 || priorSources != r.PriorSourceSetSHA256 {
+			return ErrSessionIndexRecoveryRequired
+		}
+	}
+	return nil
 }

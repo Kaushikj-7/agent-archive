@@ -139,10 +139,18 @@ func (s *Store) readBudgetedContext(ctx context.Context, path string, value any,
 }
 
 func (s *Store) writeCompact(path string, value any) error {
+	return s.writeCompactUsing(path, value, func() error { return local.WriteCompact(path, value) })
+}
+
+func (s *Store) writeCompactAt(root *os.Root, path string, value any) error {
+	return s.writeCompactUsing(filepath.Join(s.home, path), value, func() error { return local.RootedWrite(root, path, value) })
+}
+
+func (s *Store) writeCompactUsing(path string, value any, write func() error) error {
 	s.invalidatePublishedAccounting(path)
 	reservation := s.readReservation()
 	if s.resourceBudget == nil {
-		return local.WriteCompact(path, value)
+		return write()
 	}
 	const scratch = 32 << 10
 	if !reservation.Reserve(scratch) {
@@ -161,7 +169,7 @@ func (s *Store) writeCompact(path string, value any) error {
 		return errStateBudget
 	}
 	defer reservation.Release(n + 1)
-	return local.WriteCompact(path, value)
+	return write()
 }
 
 // unmarshalOwned charges an additional decoded view of bytes already owned by

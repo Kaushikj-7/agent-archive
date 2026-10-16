@@ -325,6 +325,15 @@ New generation-recovery journals and completed receipts use version 2. Before
 freezing routing, they bind the exact prior cached metadata bytes and every
 committed source reference with separate SHA-256 digests. Replay refuses a
 changed predecessor selection, missing digests or an unsupported journal version.
+Every legacy published-cache writer shares the transition's hooks lock, checks
+the exact file digest captured by its own decoded view, and refuses stale views
+before replacing cached metadata or source references. The lock spans the whole
+routing transition; an attempted concurrent cache update cannot change its prior
+authority between validation and activation. Completed frozen generations still
+allow subsequent retained metadata maintenance through a current view. Existing
+unprotected home permissions and aliases remain supported; protected generation
+records retain the private rooted-home requirement.
+
 Version 1 journals keep their original replay semantics and are not promoted or
 given inferred digests. Older binaries refuse version 2 both during recovery and
 when resolving a completed successor. A predecessor without exact cached

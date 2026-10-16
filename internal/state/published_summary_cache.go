@@ -212,6 +212,10 @@ func (s *Store) summaryConfig(home *local.RootedHome) (sum [32]byte, identity os
 }
 
 func (s *Store) summaryFileHash(home *local.RootedHome, path string, expected os.FileInfo) (sum [32]byte, err error) {
+	return s.hashPublishedFile(home.Root, path, expected, home.Check)
+}
+
+func (s *Store) hashPublishedFile(root *os.Root, path string, expected os.FileInfo, check func() error) (sum [32]byte, err error) {
 	if expected == nil || !expected.Mode().IsRegular() || expected.Size() < 0 || expected.Size() > durableStorageQuota {
 		return sum, ErrDurableStorageRecovery
 	}
@@ -221,7 +225,7 @@ func (s *Store) summaryFileHash(home *local.RootedHome, path string, expected os
 		return sum, errStateBudget
 	}
 	defer owner.Release(scratch)
-	f, err := home.Root.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	f, err := root.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return sum, err
 	}
@@ -255,12 +259,12 @@ func (s *Store) summaryFileHash(home *local.RootedHome, path string, expected os
 		return sum, errors.Join(ErrDurableStorageRecovery, e)
 	}
 	opened, err = f.Stat()
-	named, e := home.Root.Lstat(path)
+	named, e := root.Lstat(path)
 	if err != nil || e != nil || !sameDurableStamp(expected, opened) || !sameDurableStamp(expected, named) {
 		return sum, errors.Join(ErrDurableStorageRecovery, err, e)
 	}
 	copy(sum[:], hash.Sum(nil))
-	return sum, errors.Join(home.Check(), s.durableContext().Err())
+	return sum, errors.Join(check(), s.durableContext().Err())
 }
 
 // Successful source-set writes already validate the typed selecting state and

@@ -390,10 +390,12 @@ func (p publishedState) next(bundle archive.SourceBundle, publishedAt time.Time,
 // each of them. It assumes it is that file's only writer while in use, which
 // the collector lock guarantees for a pass.
 type Published struct {
-	store *Store
-	id    string
-	state publishedState
-	found bool
+	observedWireSHA256 [32]byte
+	observedHome       os.FileInfo
+	store              *Store
+	id                 string
+	state              publishedState
+	found              bool
 }
 
 func (s *Store) publishedPath(archiveSessionID string) string {
@@ -434,7 +436,26 @@ func (s *Store) loadPublishedStateContext(ctx context.Context, archiveSessionID 
 	s.preparePublicationAccounting(archiveSessionID)
 	publishedStateLoads.Add(1)
 	p := &Published{store: s, id: archiveSessionID}
-	found, err := s.readPublishedOwned(s.publishedPath(archiveSessionID), &p.state)
+	observedHome, err := os.Stat(s.home)
+	if errors.Is(err, os.ErrNotExist) {
+		return p, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	p.observedHome = observedHome
+	reader := *s
+	reader.publishedReadDigest = &p.observedWireSHA256
+	found, err := reader.readPublishedOwned(s.publishedPath(archiveSessionID), &p.state)
+	if err == nil {
+		currentHome, e := os.Stat(s.home)
+		if e != nil || !os.SameFile(observedHome, currentHome) {
+			return nil, errors.Join(ErrDurableStorageRecovery, e)
+		}
+	}
+	if err == nil && s.publishedReadDigest != nil {
+		*s.publishedReadDigest = p.observedWireSHA256
+	}
 	if err != nil {
 		// In a collector pass a corrupt file was moved aside: reported once,
 		// then the session is one that never published (quarantineInPass).
@@ -524,7 +545,7 @@ func (p *Published) write(next publishedState) error {
 			return nil
 		})
 	} else {
-		writeErr = p.store.writeCompact(p.store.publishedPath(p.id), next)
+		savedDigest, writeErr = p.writeLegacyPublished(next)
 	}
 	if err := writeErr; err != nil {
 		return err
@@ -535,6 +556,7 @@ func (p *Published) write(next publishedState) error {
 		}
 	}
 	p.state, p.found = next, true
+	p.observedWireSHA256 = savedDigest
 	if next.PublicationVersion == 5 {
 		p.store.cacheSavedSummary(p.id, summary, savedDigest)
 	}
