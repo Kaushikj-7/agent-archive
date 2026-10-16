@@ -6,10 +6,14 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-- Muse local handoff recognizes the qualified reasoning, approval and tool-effect
-  records while omitting their private bodies. A timestamp-free ephemeral task
-  marker preserves position without inventing activity or tool results. Fixed
-  omission gaps survive retained-only privacy refresh; unknown shapes still refuse.
+- Codex capture and backfill revalidate unchanged sessions after unrelated
+  database checkpoints instead of repeatedly reporting that their source changed.
+  Fresh private snapshots retain the existing time, memory, and source checks.
+
+- An authorized human maintainer can explicitly approve performance-budget
+  exceptions on their own PR with a current-commit comment command. Explicit
+  revocation and later review decisions control that approval; ordinary CI
+  correctness, coverage and hard operation budgets still apply.
 
 - `agent-archive list` shows its progress while it loads: how many sessions
   it has scanned, then how many it has loaded of those it will show.
@@ -39,6 +43,11 @@ follow [Semantic Versioning](https://semver.org/).
   recorded automatic names/activity or IDs; the selected file receives complete
   strict validation. Muse capture, native show/search and destination launch
   remain unavailable.
+
+- Muse local handoff recognizes the qualified reasoning, approval and tool-effect
+  records while omitting their private bodies. A timestamp-free ephemeral task
+  marker preserves position without inventing activity or tool results. Fixed
+  omission gaps survive retained-only privacy refresh; unknown shapes still refuse.
 
 - Read complete supported Muse exec/MSP roots with `handoff --file PATH
   --harness muse`, including safe own prompts and committed assistant text,

@@ -16,6 +16,7 @@ IDENT = re.compile(r'github\.com/wangjohn/agent-archive/[^:]+::(?:Test|Fuzz|Exam
 MAX_BYTES = 16 * 1024 * 1024
 POLICY = 'scripts/ci_performance_policy.json'
 EXCEPTIONS = 'scripts/ci_performance_exceptions.json'
+EXCEPTION_COMMAND = re.compile(r'/(approve|revoke)-performance-exceptions ([0-9a-f]{40})')
 
 
 def read(path):
@@ -283,38 +284,85 @@ def normalize_workers(paths, topology, *, verify_coverage=False, allow_legacy=Fa
     return rows
 
 
-def approval(api, topology, maintainers):
-    path = f'/repos/{collect_ci_timing.REPOSITORY}/pulls/{topology["pr_number"]}'
-    live = api.get(path)
-    if live.get('head', {}).get('sha') != topology['head'] or live.get('state') != 'open':
-        raise ValueError('live PR differs from current approval revision')
-    author = live['user']['login'].casefold()
-    allowed = {v.casefold() for v in maintainers} - {author}
-    latest = {}
-    for page in range(1, 6):
-        rows = api.get(path + f'/reviews?per_page=100&page={page}')
+def approval_rows(api, path, kind):
+    seen = set()
+    for page in range(1, 5):
+        rows = api.get(path + f'?per_page=100&page={page}')
         if not isinstance(rows, list) or len(rows) > 100:
-            raise ValueError('invalid review API response')
+            raise ValueError(f'invalid {kind} API response')
         for row in rows:
-            login = row.get('user', {}).get('login', '').casefold()
-            if login in allowed and row.get('state') != 'PENDING':
-                if type(row.get('id')) is not int or not isinstance(row.get('submitted_at'), str):
-                    raise ValueError('invalid submitted review identity')
-                submitted = datetime.fromisoformat(row['submitted_at'].replace('Z', '+00:00'))
-                if submitted.tzinfo is None:
-                    raise ValueError('submitted review timestamp lacks timezone')
-                order = (submitted, row['id'])
-                if login not in latest or order > latest[login][0]:
-                    latest[login] = (order, row)
+            if (not isinstance(row, dict) or type(row.get('id')) is not int
+                    or row['id'] <= 0 or row['id'] in seen):
+                raise ValueError(f'invalid or duplicate {kind} identity')
+            seen.add(row['id'])
+            yield row
         if len(rows) < 100:
-            break
-    else:
-        raise ValueError('review inventory exceeds bounded page limit')
-    for login, (_, row) in sorted(latest.items()):
-        if (row.get('state') == 'APPROVED' and row.get('commit_id') == topology['head']
-                and row.get('user', {}).get('type') == 'User'):
-            return {'review_id': row['id'], 'reviewer': login, 'head': topology['head']}
-    raise ValueError('performance exception requires designated non-author maintainer approval at current HEAD')
+            return
+    raise ValueError(f'{kind} inventory exceeds bounded page limit')
+
+
+def approval_time(value, kind):
+    if not isinstance(value, str):
+        raise ValueError(f'invalid {kind} identity')
+    instant = datetime.fromisoformat(value.replace('Z', '+00:00'))
+    if instant.tzinfo is None:
+        raise ValueError(f'{kind} timestamp lacks timezone')
+    return instant
+
+
+def approval(api, topology, maintainers):
+    head = topology['head']
+    if not isinstance(head, str) or not SHA.fullmatch(head):
+        raise ValueError('invalid performance approval revision')
+    path = f'/repos/{collect_ci_timing.REPOSITORY}/pulls/{topology["pr_number"]}'
+
+    def live_revision():
+        live = api.get(path)
+        if live.get('head', {}).get('sha') != head or live.get('state') != 'open':
+            raise ValueError('live PR differs from current approval revision')
+        return live['user']['login'].casefold()
+
+    author = live_revision()
+    allowed = {v.casefold() for v in maintainers}
+    reviews, comments = {}, {}
+    for row in approval_rows(api, path + '/reviews', 'review'):
+        login = row.get('user', {}).get('login', '').casefold()
+        if login in allowed - {author} and row.get('state') != 'PENDING':
+            submitted = approval_time(row.get('submitted_at'), 'submitted review')
+            order = (submitted, row['id'])
+            if login not in reviews or order > reviews[login][0]:
+                approved = (row.get('state') == 'APPROVED' and row.get('commit_id') == head
+                            and row.get('user', {}).get('type') == 'User')
+                reviews[login] = (order, approved, {'review_id': row['id'], 'reviewer': login, 'head': head})
+    comment_path = f'/repos/{collect_ci_timing.REPOSITORY}/issues/{topology["pr_number"]}/comments'
+    for row in approval_rows(api, comment_path, 'comment'):
+        login = row.get('user', {}).get('login', '').casefold()
+        if login not in allowed or row.get('user', {}).get('type') != 'User':
+            continue
+        created = approval_time(row.get('created_at'), 'comment')
+        updated = approval_time(row.get('updated_at'), 'comment')
+        if updated < created or not isinstance(row.get('body'), str):
+            raise ValueError('invalid comment body or edit timestamp')
+        edited = updated != created
+        command = EXCEPTION_COMMAND.fullmatch(row['body'])
+        # The API exposes no prior body. Any edited human maintainer comment
+        # may have been an approval, so it must not revive an older decision.
+        if not edited and (command is None or command[2] != head):
+            continue
+        order = (created, row['id'])
+        if login not in comments or order > comments[login][0]:
+            approved = not edited and command[1] == 'approve'
+            comments[login] = (order, approved, {'comment_id': row['id'], 'reviewer': login, 'head': head})
+    for login in sorted(reviews.keys() | comments.keys()):
+        decisions = [source[login] for source in (reviews, comments) if login in source]
+        # IDs only order decisions within a channel. Across channels, a
+        # nonapproval wins equal timestamps; GitHub's ID sequences differ.
+        latest = max(decisions, key=lambda decision: (decision[0][0], not decision[1]))
+        if latest[1]:
+            if live_revision() != author:
+                raise ValueError('live PR author changed during approval lookup')
+            return latest[2]
+    raise ValueError('performance exception requires explicit designated human maintainer approval at current HEAD')
 
 
 def exceptions_check(document, today):
