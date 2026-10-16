@@ -6,6 +6,13 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Local native validation foundation
+
+- Muse local snapshots now supply exact raw content proofs and bounded provisional
+  startup facts. Protected native binding v2 can retain a successful raw validation
+  checkpoint through the collector's prepared commit. Real Muse capture and empty
+  locator resolution remain unavailable.
+
 - Codex capture and backfill revalidate unchanged sessions after unrelated
   database checkpoints instead of repeatedly reporting that their source changed.
   Fresh private snapshots retain the existing time, memory, and source checks.

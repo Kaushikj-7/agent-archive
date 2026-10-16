@@ -63,13 +63,16 @@ func (s *Store) ForHook() *Store {
 
 // lockedWrite is one read-modify-write for writeUnderLock.
 type lockedWrite struct {
-	snapshot       func(string) (fileSnapshot, error)
-	expectation    *local.Staged
-	packedEpoch    string
-	packedHome     string
-	expiryPath     string
-	membership     *local.Staged
-	membershipHome string
+	// beforeLock verifies prepared external evidence after staging, on every retry.
+	beforeLock       func() error
+	nativeValidation *nativeValidationCommit
+	snapshot         func(string) (fileSnapshot, error)
+	expectation      *local.Staged
+	packedEpoch      string
+	packedHome       string
+	expiryPath       string
+	membership       *local.Staged
+	membershipHome   string
 	// lock takes the lock guarding path.
 	lock func() (func(), error)
 	path string
@@ -198,6 +201,14 @@ func (s *Store) writeUnderLock(w lockedWrite) error {
 			return err
 		}
 		w.membership, w.membershipHome = membership, s.home
+		if w.beforeLock != nil {
+			if err := w.beforeLock(); err != nil {
+				membership.Discard()
+				w.expectation.Discard()
+				staged.Discard()
+				return err
+			}
+		}
 		committed, err := commitUnderLock(w, before, staged)
 		membership.Discard()
 		w.expectation.Discard()

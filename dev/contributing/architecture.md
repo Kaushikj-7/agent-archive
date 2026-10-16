@@ -51,7 +51,7 @@ flowchart LR
 | `agentmeta` wire sizing | Standard-library-only JSON wire sizing at the existing pure metadata boundary, without encoding a document or accessing native, local or remote state. Archive and operational callers share one counter; stats consumers reach it only through archive. |
 | `agentapi` | Pure narrow operation contracts for launch/runtime, lifecycle, hooks, source/filter/parser/preview, purpose-specific discovery, native projects/catalogs and read-only transcript-path recognition, skills and capability/version evidence. Shared consumers request only their operation. |
 | `agents/claude`, `agents/codex`, `agents/cursor` | Native vocabulary, formats, argv/environment, locations, ownership and bounded interpretation. Pure codecs and planners never perform shared capture/publication or apply setup transactions. Source implementations own serial native reads. |
-| `agents/muse` | Injected runtime presence, session cleanup, strict local file source/filter, retained-only own-conversation parser and bounded automatic handoff discovery/headers/name/activity previews; capture contexts refuse before reads. No version probe or launch implementation. |
+| `agents/muse` | Injected runtime presence, session cleanup, strict local file source/filter, live local snapshot content proofs and provisional startup facts, retained-only own-conversation parser and bounded automatic handoff discovery/headers/name/activity previews; capture contexts refuse before reads. No version probe or launch implementation. |
 | `agents/builtin` | Immutable production operation bindings and precomputed runtime/cleanup projections; composition does no filesystem, version or executable probing. CLI composition injects narrow lookups into real consumers. |
 | `testutil/agenttest` | Launch and runtime conformance suites called by each native integration's tests. |
 | `archive` | Pure shared privacy policy, source envelope, normalized Analysis values and metadata/transcript/handoff builders. Native filtering and semantic parsing live in integration codecs; builders consume one caller-owned Analysis. |
@@ -214,3 +214,11 @@ references and rechecks the current set before deletion; whole-prefix deletion
 removes metadata first. Privacy/parser/link-only work preserves meaningful age.
 The native/index charged ledger does not bound process RSS: retained decode/filter/
 compression/comparison scratch and staged disk are separate performance evidence.
+
+
+Local [native validation checkpoints](../specs/native-validation.md) are nested
+inside protected bindings. A collector-private lease owns native input until the
+prepared state commit finishes. Its independent verifier runs after staging and
+before the short hooks/request policy fence; staging and directory fsync remain
+outside that fence. The durable checkpoint is independent of disposable scan
+signatures and frozen publication acknowledgement. Muse capture remains fenced.
