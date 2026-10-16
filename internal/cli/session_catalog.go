@@ -62,7 +62,7 @@ func catalogCandidateSessions(ctx context.Context, env metadataCacheDependencies
 			_ = catalog.Close()
 		}
 	}()
-	headers, err := reader.DiscoverCatalogHeaders(ctx, store, readOpts)
+	headers, err := discoverReadHeaders(ctx, store, readOpts)
 	if err != nil {
 		return nil, true, false, err
 	}
@@ -127,7 +127,15 @@ func readShowCandidates(ctx context.Context, store storage.ObjectStore, env meta
 		return showCandidates{sessions: sessions, fullBodies: fullBodies, reuse: reuse}, err
 	}
 	readOpts := reader.ListOptions{Cache: listCache(env, false), Skipped: warnSkippedSidecar(stderr, "show"), BodyRead: catalogBodyObserver(env)}
-	sessions, err = reader.FindMetadataPrefix(ctx, store, archiveSessionsPrefix, query, opts.filter, readOpts, func(archive.Metadata) bool { return true })
+	if ctx.Value(readDiscoveryKey{}) != nil {
+		headers, discoveryErr := discoverReadHeaders(ctx, store, readOpts)
+		if discoveryErr != nil {
+			return showCandidates{}, discoveryErr
+		}
+		sessions, err = reader.ListMetadataFromSnapshot(ctx, store, headers, opts.filter, readOpts)
+	} else {
+		sessions, err = reader.FindMetadataPrefix(ctx, store, archiveSessionsPrefix, query, opts.filter, readOpts, func(archive.Metadata) bool { return true })
+	}
 	return showCandidates{sessions: sessions, fullBodies: true}, err
 }
 
