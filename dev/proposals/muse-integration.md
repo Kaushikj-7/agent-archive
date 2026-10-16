@@ -43,7 +43,12 @@ checkpoint/rewrite, platform, privacy/retention and resource/release gates retai
 their original owners and acceptance below. [Automatic handoff](../qualification/muse/local-handoff.md)
 now uses one qualified effective XDG data home, bounded
 startup corroboration and safe name/activity/ID previews; selected sources still
-require complete strict validation. Capture is a later separate slice. This
+require complete strict validation. A shared resumable inventory now supplies bounded content-free directory
+observations for already admitted empty-locator owners. Per-owner fresh metadata
+currentness uses the same allowance; bound owners bypass it. Actual no-request
+collector resolution through strict Muse source/filter/proof and guarded first
+binding is tested with a private injected producer. Public source capture still
+refuses before content reads. Capture is a later separate slice. This
 partial delivery does not redefine full integration success or qualify capture.
 
 ## 1. Scope and success criteria
@@ -251,13 +256,19 @@ boundary, without inheriting Codex automatic admission, catalog or consent.
 is unsuitable unchanged. Bound directory acquisition, entry and byte counts and
 active time; charge unrelated entries; let valid owners progress beside fair
 retries so unreadable early folders cannot starve later sessions. Cache compact
-observations, not raw headers or parent transcripts. The traversal keeps its
-position across ticks in memory, scoped to root and revision, so a store larger
-than one pass budget is still covered; a process restart starts it over.
+observations, not raw headers or parent transcripts. The traversal resumes content-free progress in the existing local
+`discovery-catalog.json` optional `native_inventory` member. Measurements of the
+actual once-process collector lifecycle established that an in-memory position
+alone restarts the same prefix on larger-than-pass stores. Recognized complete
+pages and actual EOF are historical installation-produced observations, distinct
+from scheduling hints and from fresh per-owner currentness.
 Negative results require completed scoped coverage; cookie invalidation,
-eviction and root or membership changes invalidate it. Persist the position as
-a content-free cursor only if P5 measurements show restarts keep the fallback
-from completing.
+eviction and root/revision changes invalidate it. Current eligibility is independent
+of an exact historical scheduling cohort: arrivals wait for the next cohort,
+removed/bound owners receive no action, and changed cohorts start without inherited
+pages. Missing or incompatible observations reset coverage. This historical
+local-state trust model does not claim tamper resistance against coherent manual
+state forgery; fresh native source proof, policy and atomic commit remain required.
 
 Identity facts can follow the first permission frame: use budgeted multi-record
 inspection. Keep first-record-only `DiscoveryBoundedProjects` unchanged and return
