@@ -259,6 +259,15 @@ func (s *sessionScan) finishSourceSetAcknowledgment(pending state.PendingPublica
 			}
 		}
 	}
+	// Untyped imports can retain their original selected source set while the
+	// source-set transaction is prepared. Release it only after exact closing
+	// readback and the local commit, keeping the journal if cleanup must retry.
+	// Typed stage release remains owned by its separate readback protocol.
+	if s.reg.StagedImportSHA256 != "" {
+		if err := s.local.RemoveImportStage(s.id()); err != nil {
+			return fmt.Errorf("release completed source-set import stage: %w", err)
+		}
+	}
 	if err := s.removeCompletedCatalogJournal(pending); err != nil {
 		return fmt.Errorf("remove completed source-set journal: %w", err)
 	}

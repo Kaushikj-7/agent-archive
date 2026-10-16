@@ -13,6 +13,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -60,8 +61,9 @@ func TestHistoricalRevisedHistoryKeepsAllSourcesWithoutNativeCheckout(t *testing
 	must(t, err)
 
 	cloud := storagetest.NewMemoryStore()
+	remote := &fourthPublicationStore{MemoryStore: cloud}
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), at.Add(2*time.Minute))
-	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return cloud, nil }
+	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return remote, nil }
 	mapping := writeHistoricalMapping(t, project)
 	env.repoKey = func(string) string { t.Fatal("historical source invoked Git"); return "" }
 	var out, errOut bytes.Buffer
@@ -80,6 +82,36 @@ func TestHistoricalRevisedHistoryKeepsAllSourcesWithoutNativeCheckout(t *testing
 	}
 	must(t, db.Close())
 	must(t, os.RemoveAll(nativeHome))
+	// A failed selecting upload must retain the exact original stage even when
+	// every native dependency has gone. Only a complete verified retry releases it.
+	remote.failures = 64
+	for range 4 {
+		result, err := runOnePass(env, true)
+		must(t, err)
+		for _, issue := range result.Errors {
+			if !errors.Is(issue, archive.ErrHistoryMutationPending) && !errors.Is(issue, io.ErrUnexpectedEOF) {
+				t.Fatalf("failed selected revision recovery: %+v", result)
+			}
+		}
+		if len(result.Published) != 0 {
+			t.Fatal("failed selecting upload claimed publication")
+		}
+		if remote.failures < 64 {
+			break
+		}
+	}
+	if remote.failures == 64 {
+		t.Fatal("control never attempted the selecting metadata upload")
+	}
+	retained, found, err := local.LoadImportStage(t.Context(), regs[0])
+	must(t, err)
+	if !found || retained.SHA256 != stage.SHA256 || !reflect.DeepEqual(retained.Preserved, stage.Preserved) {
+		t.Fatal("failed selecting upload changed or released original stage")
+	}
+	if pending, err := local.HasPending(regs[0].ArchiveSessionID); err != nil || !pending {
+		t.Fatal("failed selecting upload lost its retry journal", pending, err)
+	}
+	remote.failures = 0
 	for range 4 {
 		result, err := runOnePass(env, true)
 		must(t, err)
