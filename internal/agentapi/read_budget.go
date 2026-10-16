@@ -8,6 +8,7 @@ import (
 // NativeReadBudget bounds charged native extents, immutable caches and borrowed
 // scratch across one pass. It is not a bound on filtered maps or process RSS.
 type NativeReadBudget struct {
+	captured     *readReservationOwner
 	mu           sync.Mutex
 	limit        int64
 	used         int64
@@ -68,6 +69,9 @@ type readReservationOwner struct {
 func (b *NativeReadBudget) Reservation() *NativeReadReservation {
 	if b == nil {
 		return &NativeReadReservation{owner: &readReservationOwner{}}
+	}
+	if b.captured != nil {
+		return &NativeReadReservation{owner: &readReservationOwner{budget: b.captured.budget, scope: b.captured.scope}}
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -166,6 +170,9 @@ func (reservation *NativeReadReservation) Refuse(bytes int64) {
 // nor marks the scope exceeded when refused. Its owner releases it with
 // ReleaseUnscoped.
 func (b *NativeReadBudget) ReserveUnscoped(bytes int64) bool {
+	if b != nil && b.captured != nil {
+		return false
+	}
 	if b == nil {
 		return true
 	}
@@ -185,6 +192,9 @@ func (b *NativeReadBudget) ReserveUnscoped(bytes int64) bool {
 // marks the scope pressured, so the session is deferred to a later pass
 // rather than failed.
 func (b *NativeReadBudget) ReserveUnscopedRequired(bytes int64) bool {
+	if b != nil && b.captured != nil {
+		return false
+	}
 	if b.ReserveUnscoped(bytes) {
 		return true
 	}
@@ -199,6 +209,12 @@ func (b *NativeReadBudget) ReserveUnscopedRequired(bytes int64) bool {
 // ReleaseUnscoped returns a ReserveUnscoped charge without lowering the
 // current scope's count.
 func (b *NativeReadBudget) ReleaseUnscoped(bytes int64) {
+	if b != nil && b.captured != nil {
+		if bytes != 0 {
+			panic("captured read budget has no unscoped charges")
+		}
+		return
+	}
 	if b == nil {
 		return
 	}
@@ -218,6 +234,9 @@ func (b *NativeReadBudget) ReleaseUnscoped(bytes int64) {
 // same owner meets again however long it waits, from one where others held
 // the shared ledger, which a later pass need not meet.
 func (b *NativeReadBudget) BeginScope(ceiling int64) (end func()) {
+	if b != nil && b.captured != nil {
+		panic("captured read budget cannot open a scope")
+	}
 	if b == nil {
 		return func() {}
 	}
@@ -240,6 +259,10 @@ func (b *NativeReadBudget) BeginScope(ceiling int64) (end func()) {
 // and found it too large before asking: past the scope's own ceiling, it
 // marks the scope exceeded.
 func (b *NativeReadBudget) Refuse(bytes int64) {
+	if b != nil && b.captured != nil {
+		b.Reservation().Refuse(bytes)
+		return
+	}
 	if b == nil {
 		return
 	}
@@ -257,6 +280,12 @@ func (b *NativeReadBudget) Refuse(bytes int64) {
 // ScopePressured reports whether the current scope was refused a charge
 // within its own ceiling because others held the shared ledger.
 func (b *NativeReadBudget) ScopePressured() bool {
+	if b != nil && b.captured != nil {
+		owner := b.captured
+		owner.budget.mu.Lock()
+		defer owner.budget.mu.Unlock()
+		return owner.scope != nil && owner.scope.pressured
+	}
 	if b == nil {
 		return false
 	}
@@ -268,6 +297,12 @@ func (b *NativeReadBudget) ScopePressured() bool {
 // ScopeExceeded reports whether the current scope refused a charge at its
 // own ceiling.
 func (b *NativeReadBudget) ScopeExceeded() bool {
+	if b != nil && b.captured != nil {
+		owner := b.captured
+		owner.budget.mu.Lock()
+		defer owner.budget.mu.Unlock()
+		return owner.scope != nil && owner.scope.exceeded
+	}
 	if b == nil {
 		return false
 	}
@@ -280,6 +315,9 @@ func (b *NativeReadBudget) ScopeExceeded() bool {
 // own ceiling, for an owner that left out the work refused and released what
 // it held for it, so a later refusal in the scope is classified on its own.
 func (b *NativeReadBudget) ForgetScopeExceeded() {
+	if b != nil && b.captured != nil {
+		return
+	}
 	if b == nil {
 		return
 	}
@@ -293,6 +331,9 @@ func (b *NativeReadBudget) ForgetScopeExceeded() {
 // Available returns remaining capacity for a bounded optional cache: the
 // lesser of the shared and the current scope's remaining capacity.
 func (b *NativeReadBudget) Available() int64 {
+	if b != nil && b.captured != nil {
+		return b.Reservation().Available()
+	}
 	if b == nil {
 		return 1 << 62
 	}
@@ -307,6 +348,9 @@ func (b *NativeReadBudget) Available() int64 {
 
 // Charged returns current and highest pass charges for measured evidence.
 func (b *NativeReadBudget) Charged() (used, peak int64) {
+	if b != nil && b.captured != nil {
+		return b.captured.budget.Charged()
+	}
 	if b == nil {
 		return 0, 0
 	}
