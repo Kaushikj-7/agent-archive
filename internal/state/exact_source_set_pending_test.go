@@ -11,10 +11,20 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 )
 
+type sourceSetCleanupFault string
+
+const (
+	cleanupRequestToken sourceSetCleanupFault = "request-token"
+	cleanupCatalog      sourceSetCleanupFault = "catalog"
+	cleanupPhase        sourceSetCleanupFault = "phase"
+	cleanupWire         sourceSetCleanupFault = "wire"
+	cleanupCancel       sourceSetCleanupFault = "cancel"
+)
+
 func TestExactSourceSetCleanupRefusesChangedWireAndAuthority(t *testing.T) {
 	t.Parallel()
-	for _, fault := range []string{"request-token", "catalog", "phase", "wire", "cancel"} {
-		t.Run(fault, func(t *testing.T) {
+	for _, fault := range []sourceSetCleanupFault{cleanupRequestToken, cleanupCatalog, cleanupPhase, cleanupWire, cleanupCancel} {
+		t.Run(string(fault), func(t *testing.T) {
 			t.Parallel()
 			s := newTestStore(t)
 			p := publicationFixture(t, publicationThread, time.Date(2026, 10, 6, 0, 0, 0, 0, time.UTC))
@@ -32,18 +42,18 @@ func TestExactSourceSetCleanupRefusesChangedWireAndAuthority(t *testing.T) {
 			}
 			owner := s
 			switch fault {
-			case "request-token":
+			case cleanupRequestToken:
 				p.RequestToken = "different-owned-request"
-			case "catalog":
+			case cleanupCatalog:
 				p.Catalog = &CatalogPublication{Protocol: 11, ID: "foreign"}
-			case "phase":
+			case cleanupPhase:
 				p.Phase = PublicationPreparing
-			case "wire":
+			case cleanupWire:
 				before = append(before, ' ')
 				if err = os.WriteFile(s.pendingPath(id), before, 0600); err != nil {
 					t.Fatal(err)
 				}
-			case "cancel":
+			case cleanupCancel:
 				ctx, cancel := context.WithCancel(t.Context())
 				cancel()
 				var closeOwner func()

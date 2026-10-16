@@ -26,19 +26,27 @@ func retainedFixture(t *testing.T) (archive.SessionRegistration, archive.SourceB
 	return reg, bundle
 }
 
+type retainedLeaseOperation string
+
+const (
+	leaseCompression retainedLeaseOperation = "compression"
+	leaseEnvelope    retainedLeaseOperation = "envelope"
+	leaseRefilter    retainedLeaseOperation = "refilter"
+)
+
 func TestRetainedLeasesPreserveAnotherSessionsScope(t *testing.T) {
 	reg, bundle := retainedFixture(t)
-	for _, operation := range []string{"compression", "envelope", "refilter"} {
-		t.Run(operation, func(t *testing.T) {
+	for _, operation := range []retainedLeaseOperation{leaseCompression, leaseEnvelope, leaseRefilter} {
+		t.Run(string(operation), func(t *testing.T) {
 			budget := agentapi.NewNativeReadBudget(8 << 20)
 			var release func()
 			var err error
 			switch operation {
-			case "compression":
+			case leaseCompression:
 				_, release, err = agentapi.CompressRetainedSource(t.Context(), bundle, budget)
-			case "envelope":
+			case leaseEnvelope:
 				_, release, err = agentapi.DetachRetainedEnvelope(t.Context(), bundle, budget)
-			case "refilter":
+			case leaseRefilter:
 				_, release, err = agentapi.RefilterRetainedSource(t.Context(), reg, claude.Filter{}, bundle, budget)
 			}
 			if err != nil {

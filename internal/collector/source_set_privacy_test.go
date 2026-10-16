@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -207,7 +208,7 @@ func (s *privacyPositionStore) GetLimited(ctx context.Context, key string, limit
 func TestOrdinaryPrivacyRefusesUnknownOrUnreadablePosition(t *testing.T) {
 	t.Parallel()
 	for _, unreadable := range []bool{false, true} {
-		t.Run(fmt.Sprint(unreadable), func(t *testing.T) {
+		t.Run(strconv.FormatBool(unreadable), func(t *testing.T) {
 			t.Parallel()
 			local, remote, reg, opts, original, raw := ordinaryPrivacyFixture(t)
 			opts.SkillEvidence = config.SkillEvidenceNone
@@ -215,12 +216,13 @@ func TestOrdinaryPrivacyRefusesUnknownOrUnreadablePosition(t *testing.T) {
 			if err := remote.MemoryStore.Put(t.Context(), original.MetadataKey, winner); err != nil {
 				t.Fatal(err)
 			}
-			controlled := &privacyPositionStore{metadataFailStore: remote, metadataKey: original.MetadataKey}
 			want := storage.ErrPublicationConflict
+			var readError error
 			if unreadable {
 				want = errors.New("synthetic unreadable metadata")
-				controlled.readError = want
+				readError = want
 			}
+			controlled := &privacyPositionStore{metadataFailStore: remote, metadataKey: original.MetadataKey, readError: readError}
 			published, err := local.LoadPublishedState(reg.ArchiveSessionID)
 			if err != nil {
 				t.Fatal(err)
@@ -235,7 +237,7 @@ func TestOrdinaryPrivacyRefusesUnknownOrUnreadablePosition(t *testing.T) {
 			if err != nil || !bytes.Equal(after, raw) {
 				t.Fatal("uncertain position replaced the original pending bytes", err)
 			}
-			actual, err := remote.MemoryStore.Get(t.Context(), original.MetadataKey)
+			actual, err := remote.Get(t.Context(), original.MetadataKey)
 			if err != nil || !bytes.Equal(actual, winner) {
 				t.Fatal("uncertain winner changed", err)
 			}
@@ -285,7 +287,7 @@ func TestOrdinaryPrivacyRechecksPositionBeforeSelectingSuccessor(t *testing.T) {
 	if err != nil || !bytes.Equal(after, raw) {
 		t.Fatal("stale predecessor replaced original evidence", err)
 	}
-	actual, err := remote.MemoryStore.Get(t.Context(), original.MetadataKey)
+	actual, err := remote.Get(t.Context(), original.MetadataKey)
 	if err != nil || !bytes.Equal(actual, winner) {
 		t.Fatal("fresh winner was overwritten", err)
 	}

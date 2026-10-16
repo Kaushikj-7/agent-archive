@@ -157,6 +157,7 @@ func IsUnsupportedSource(err error) bool {
 type unsupportedSourceError struct{ cause error }
 
 func (e *unsupportedSourceError) Error() string { return e.cause.Error() }
+
 func (e *unsupportedSourceError) Unwrap() error { return e.cause }
 
 func verifyUnsupportedEncoding(data []byte, limit int) error {
