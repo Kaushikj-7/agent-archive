@@ -754,6 +754,10 @@ func TestRunCommittedStrongerHistoryAcknowledgesExactAndQueuesWithoutNative(t *t
 	if err := scan.local.SavePending(scan.id(), p); err != nil {
 		t.Fatal(err)
 	}
+	frozenBytes, err := os.ReadFile(filepath.Join(scan.local.Home(), "pending", scan.id()+".json"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := scan.local.SaveRequest(scan.id(), "stop", scan.now.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
@@ -775,9 +779,42 @@ func TestRunCommittedStrongerHistoryAcknowledgesExactAndQueuesWithoutNative(t *t
 			t.Fatal("broader frozen bytes uploaded", key)
 		}
 	}
-	next, found, err := scan.local.LoadPending(scan.id())
+	if _, found, err := scan.local.LoadPending(scan.id()); !found || !errors.Is(err, state.ErrDurableStorageRecovery) {
+		t.Fatalf("generic reader ignored retained privacy original: %v %v", found, err)
+	}
+	originalPath := filepath.Join(scan.local.Home(), "publication-evidence", scan.id(), "original.json")
+	retainedBefore, err := os.ReadFile(originalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := state.Open(scan.local.Home())
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, found, err := restarted.LoadPublicationPending(scan.id())
 	if err != nil || !found || next.Attempted || next.History.ExpectedMetadataSHA256 != metadataSHA(p.MetadataBytes) {
 		t.Fatal("successor absent", err)
+	}
+	retained, err := os.ReadFile(originalPath)
+	var original state.PublicationOriginalEvidence
+	if err != nil || !bytes.Equal(retained, retainedBefore) || json.Unmarshal(retained, &original) != nil || original.PrivacyOrigin == nil {
+		t.Fatal("cold successor changed exact original publication evidence", err)
+	}
+	var expected, frozen state.PendingPublication
+	if err := json.Unmarshal(frozenBytes, &expected); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(original.PrivacyOrigin.Raw, &frozen); err != nil {
+		t.Fatal(err)
+	}
+	if expected.History.MaintenanceOwed {
+		t.Fatal("fixture already had the maintenance obligation")
+	}
+	// Run journals this obligation before acknowledging the broader selection.
+	// Every other field, including all frozen payloads and ownership, stays exact.
+	expected.History.MaintenanceOwed = true
+	if !reflect.DeepEqual(expected, frozen) {
+		t.Fatal("retained original changed more than the required maintenance obligation")
 	}
 	published, err := scan.local.LoadPublishedState(scan.id())
 	if err != nil {

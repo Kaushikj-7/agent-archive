@@ -129,8 +129,10 @@ func TestNativeChildCreationAcrossDiscoveryImportAndCapture(t *testing.T) {
 						loads = state.PublishedStateLoads()
 						settled, e := runOnePass(env, true)
 						must(t, e)
-						if state.PublishedStateLoads() != loads || len(settled.Errors) != 0 || len(settled.Published) != 0 {
-							t.Fatal("revalidated child proof did not settle", settled)
+						// The next CLI invocation has a fresh Store: its cold summary
+						// requires one closed validation, while native work stays skipped.
+						if decoded := state.PublishedStateLoads() - loads; decoded != 1 || len(settled.Skipped) != 1 || len(settled.Errors) != 0 || len(settled.Published) != 0 {
+							t.Fatalf("settled child cold validation decoded %d states: %+v", decoded, settled)
 						}
 					}
 					before := bucketSnapshot(t, cloud)

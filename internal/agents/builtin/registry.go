@@ -476,3 +476,16 @@ func (r *Registry) CaptureSettledCursor(request *nativefacts.CaptureRequest) (*n
 	}
 	return r.fixedCapture.capture(request)
 }
+
+func (*fixedCursorCapture) captureLive(request *nativefacts.LiveCaptureRequest) (*nativecapture.LiveProof, error) {
+	return cursor.CaptureLiveRequest(request)
+}
+
+// CaptureLiveCursor projects only the real provider installed by NewBuiltins.
+// Arbitrary integration bindings cannot supply scratch or captured native bytes.
+func (r *Registry) CaptureLiveCursor(request *nativefacts.LiveCaptureRequest) (*nativecapture.LiveProof, error) {
+	if r == nil || r.fixedCapture == nil {
+		return nil, errors.New("live capture requires builtin provider")
+	}
+	return r.fixedCapture.captureLive(request)
+}
