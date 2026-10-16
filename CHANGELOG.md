@@ -6,6 +6,10 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Codex capture and backfill revalidate unchanged sessions after unrelated
+  database checkpoints instead of repeatedly reporting that their source changed.
+  Fresh private snapshots retain the existing time, memory, and source checks.
+
 - Commands run inside Muse detect its session environment to avoid interactive
   prompts and pagers. Handoff into supported agents removes inherited Muse
   session variables. This adds presence detection only; Muse capture, current
