@@ -98,3 +98,35 @@ func FuzzMuseRetained(f *testing.F) {
 		}
 	})
 }
+
+func FuzzMuseHeaderPreview(f *testing.F) {
+	for _, name := range []string{"synthetic-exec-conversation.jsonl", "synthetic-msp-conversation.jsonl"} {
+		raw, err := os.ReadFile(filepath.Join("testdata", name))
+		if err != nil {
+			f.Fatal(err)
+		}
+		f.Add(raw)
+	}
+	f.Fuzz(func(t *testing.T, raw []byte) {
+		if len(raw) > 256<<10 {
+			t.Skip()
+		}
+		h, err := (NativeHeaders{}).InspectHeader(agentapi.NativeHeaderRequest{Purpose: agentapi.DiscoveryHandoff, Path: "/store/00000000-0000-7000-8000-000000000001/session.jsonl", Scan: func(visit func([]byte) bool) error {
+			for line := range bytes.SplitSeq(raw, []byte("\n")) {
+				if !visit(line) {
+					break
+				}
+			}
+			return nil
+		}})
+		if err == nil && (h.NativeID == "" || !filepath.IsAbs(h.Directory) || h.StartedAt.IsZero()) {
+			t.Fatal("unqualified header")
+		}
+		for line := range bytes.SplitSeq(raw, []byte("\n")) {
+			p, err := (Previewer{}).PreviewRecord(t.Context(), line)
+			if err == nil && (p.Title != "" || p.Kind == archive.TurnKindHumanPrompt || p.Name != "" && (p.NameSource != archive.SessionNameGenerated || p.NameNativeID == "")) {
+				t.Fatal("unqualified preview")
+			}
+		}
+	})
+}

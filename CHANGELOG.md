@@ -6,11 +6,18 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Browse supported ordinary Muse roots before setup with local `handoff`,
+  including exact IDs/prefixes, project scope, older preview batches and existing
+  destinations. Discovery uses one effective XDG data home. Previews show safe
+  recorded automatic names/activity or IDs; the selected file receives complete
+  strict validation. Muse capture, native show/search and destination launch
+  remain unavailable.
+
 - Read complete supported Muse exec/MSP roots with `handoff --file PATH
   --harness muse`, including safe own prompts and committed assistant text,
   JSON/Markdown output and handoff into an existing supported agent. Creation
   time uses the validated reserved start. Accounting, tools, model switches,
-  children, automatic browse, backfill, capture and Muse destination launch
+  children, backfill, capture and Muse destination launch
   remain unavailable. Handoff also now respects Codex's recorded native start.
 
 

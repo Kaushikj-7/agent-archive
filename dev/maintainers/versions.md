@@ -22,8 +22,8 @@ affects.
 | Status JSON | `statusView.Version` in `internal/cli/status.go` | `status --json` `schema_version` | 4 | Status output changes incompatibly; schema 4 separates discovery from actual hook evidence. |
 
 Muse uses its independent parser 0.1.0 and archive-native `muse-jsonl` v1
-([inner record schema](../../schemas/muse-retained-v1.schema.json)). Explicit
-local handoff alone is supported; this does not alter outer bundle schemas or
+([inner record schema](../../schemas/muse-retained-v1.schema.json)). Explicit-file and bounded automatic
+local handoff are supported; this does not alter outer bundle schemas or
 registration authority. Handoff builders now prefer existing `NativeStartedAt`
 facts over first prompts/file observations, also correcting Codex handoff start.
 Metadata derivation and the existing three parser versions are unchanged.
