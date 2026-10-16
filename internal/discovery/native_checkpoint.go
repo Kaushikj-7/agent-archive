@@ -10,7 +10,9 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/local"
@@ -77,7 +79,7 @@ func mergeNativeCatalog(ctx context.Context, path string, expected, replacement 
 		}
 		maps.Copy(object, next)
 	}
-	raw, err := json.Marshal(object)
+	raw, err := encodeNativeCatalogMembers(object)
 	if err != nil {
 		return err
 	}
@@ -96,10 +98,7 @@ func mergeNativeCatalog(ctx context.Context, path string, expected, replacement 
 	if err != nil {
 		return err
 	}
-	current, err := boundedCatalogBytes(path, inputLimit)
-	if err == nil && !bytes.Equal(current, before) {
-		err = errNativeCatalogChanged
-	}
+	err = compareNativeCatalogBytes(path, before)
 	if err == nil {
 		err = ctx.Err()
 	}
@@ -132,11 +131,17 @@ func boundedCatalogBytes(path string, inputLimit int64) ([]byte, error) {
 	if info.Size() > inputLimit {
 		return nil, errCatalogChanged
 	}
-	raw, err := io.ReadAll(io.LimitReader(f, inputLimit+1))
+	// The reserved stat size bounds the exact backing allocation; avoid
+	// geometric ReadAll growth while other catalog buffers are retained.
+	raw := make([]byte, info.Size())
+	if _, err := io.ReadFull(f, raw); err != nil {
+		return nil, err
+	}
+	after, err := f.Stat()
 	if err != nil {
 		return nil, err
 	}
-	if int64(len(raw)) > inputLimit || int64(len(raw)) != info.Size() {
+	if !transcriptio.SameObservation(info, after) {
 		return nil, errCatalogChanged
 	}
 	return raw, nil
@@ -156,10 +161,14 @@ func nativeCatalogScratch(path string, replacement int64, budget *agentapi.Nativ
 		return nil, 0, err
 	}
 	// Top-level member values borrow slices of the bounded input rather than
-	// decoding/copying their nested values. Three input lengths cover ReadAll
-	// growth, the later comparison read and member keys; three replacement
-	// lengths cover the encoder/output. Fixed scratch bounds scanner/key maps.
-	charge := n*3 + replacement*3 + (256 << 10)
+	// decoding/copying their nested values. Three input lengths cover the exact
+	// input, borrowed member keys/maps and single exact output buffer.
+	// UTF-8 refusal prevents replacement-rune expansion of decoded keys.
+	// Comparison uses fixed streaming scratch instead of a second whole read;
+	// output assembly never invokes a whole-map encoder. Three replacement
+	// lengths cover its member/output overhead. Fixed scratch bounds scanner,
+	// temporary encoded keys, sorted key headers and comparison buffers.
+	charge := n*3 + replacement*3 + (512 << 10)
 	reservation := budget.Reservation()
 	if !reservation.Reserve(charge) {
 		return nil, 0, errCatalogBudget
@@ -171,7 +180,7 @@ func nativeCatalogScratch(path string, replacement int64, budget *agentapi.Nativ
 // potentially large nested documents. The input owns every returned value.
 func nativeCatalogMembers(raw []byte) (map[string]json.RawMessage, bool) {
 	raw = bytes.TrimSpace(raw)
-	if len(raw) < 2 || raw[0] != '{' || !json.Valid(raw) {
+	if len(raw) < 2 || raw[0] != '{' || !utf8.Valid(raw) || !json.Valid(raw) {
 		return nil, false
 	}
 	members := map[string]json.RawMessage{}
@@ -232,14 +241,18 @@ func nativeJSONStringEnd(raw []byte, i int) int {
 	if i >= len(raw) || raw[i] != '"' {
 		return -1
 	}
-	for i++; i < len(raw); i++ {
-		if raw[i] == '\\' {
-			i++
-			continue
+	for i++; i < len(raw); {
+		// Skip ordinary string bodies with the standard vectorized byte search;
+		// catalog health/error strings can legitimately approach the wire cap.
+		next := bytes.IndexAny(raw[i:], "\\\"")
+		if next < 0 {
+			return -1
 		}
+		i += next
 		if raw[i] == '"' {
 			return i + 1
 		}
+		i += 2
 	}
 	return -1
 }
@@ -275,4 +288,79 @@ func replaceOversizedCatalog(ctx context.Context, path string, before os.FileInf
 		return err
 	}
 	return staged.SyncDir()
+}
+
+// encodeNativeCatalogMembers copies already validated member values once. Exact
+// sizing refuses over-cap output before allocation and avoids encoder copies of
+// large unrelated catalog members.
+func encodeNativeCatalogMembers(members map[string]json.RawMessage) ([]byte, error) {
+	keys := make([]string, 0, len(members))
+	n := 2
+	for key, value := range members {
+		encoded, err := json.Marshal(key)
+		if err != nil {
+			return nil, err
+		}
+		n += len(encoded) + 1 + len(value)
+		if len(keys) > 0 {
+			n++
+		}
+		if n > maxCatalogBytes {
+			return nil, errCatalogTooLarge
+		}
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	raw := make([]byte, 0, n)
+	raw = append(raw, '{')
+	for i, key := range keys {
+		if i > 0 {
+			raw = append(raw, ',')
+		}
+		encoded, err := json.Marshal(key)
+		if err != nil {
+			return nil, err
+		}
+		raw = append(raw, encoded...)
+		raw = append(raw, ':')
+		raw = append(raw, members[key]...)
+	}
+	return append(raw, '}'), nil
+}
+
+// compareNativeCatalogBytes checks expected ownership without allocating a
+// second whole-catalog copy while the staged output and original are retained.
+func compareNativeCatalogBytes(path string, expected []byte) error {
+	f, err := os.Open(path)
+	if errors.Is(err, os.ErrNotExist) && len(expected) == 0 {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+	info, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() || info.Size() != int64(len(expected)) {
+		return errNativeCatalogChanged
+	}
+	var scratch [32 << 10]byte
+	offset := 0
+	for offset < len(expected) {
+		n := min(len(scratch), len(expected)-offset)
+		if _, err := io.ReadFull(f, scratch[:n]); err != nil {
+			return err
+		}
+		if !bytes.Equal(scratch[:n], expected[offset:offset+n]) {
+			return errNativeCatalogChanged
+		}
+		offset += n
+	}
+	after, err := f.Stat()
+	if err == nil && !transcriptio.SameObservation(info, after) {
+		err = errNativeCatalogChanged
+	}
+	return err
 }

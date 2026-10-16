@@ -1,11 +1,13 @@
 package discovery
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
@@ -130,4 +132,66 @@ func FuzzNativeCatalogMembers(f *testing.F) {
 			}
 		}
 	})
+}
+
+func TestNativeCatalogLargeUnrelatedMemberFitsChargedScratch(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "discovery-catalog.json")
+	before := append([]byte(`{"version":6,"large_unrelated":"`), bytes.Repeat([]byte("x"), 2<<20)...)
+	before = append(before, []byte(`"}`)...)
+	if err := os.WriteFile(path, before, 0600); err != nil {
+		t.Fatal(err)
+	}
+	replacement := []byte(`{"version":1,"progress":true}`)
+	// Three old-input lengths plus member/output overhead and fixed scratch:
+	// retained input/key maps + one exact output. CAS uses only32KiB scratch.
+	required := 3*int64(len(before)) + 3*int64(len(replacement)) + (512 << 10)
+	refused := agentapi.NewNativeReadBudget(required - 1)
+	if err := mergeNativeCatalog(t.Context(), path, nil, replacement, true, refused); !errors.Is(err, agentapi.ErrReadBudget) {
+		t.Fatal("tight scratch pressure accepted", err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(raw, before) {
+		t.Fatal("refusal changed catalog", err)
+	}
+	budget := agentapi.NewNativeReadBudget(required)
+	if err := mergeNativeCatalog(t.Context(), path, nil, replacement, true, budget); err != nil {
+		t.Fatal("supported unrelated member cannot be preserved", err)
+	}
+	if used, peak := budget.Charged(); used != 0 || peak != required {
+		t.Fatal("scratch charge/release", used, peak)
+	}
+	raw, err = os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	members, ok := nativeCatalogMembers(raw)
+	if !ok || !bytes.Equal(members["native_inventory"], replacement) || len(members["large_unrelated"]) != (2<<20)+2 {
+		t.Fatal("unrelated member changed")
+	}
+}
+
+func TestNativeCatalogMemberKeysStayBoundedAcrossEncoding(t *testing.T) {
+	t.Parallel()
+	if _, ok := nativeCatalogMembers([]byte{'{', '"', 0xff, '"', ':', '1', '}'}); ok {
+		t.Fatal("invalid UTF-8 key accepted")
+	}
+	key := strings.Repeat("<&>", 1024)
+	input := []byte(`{"` + key + `":"retained","escaped\"key":"value"}`)
+	members, ok := nativeCatalogMembers(input)
+	if !ok {
+		t.Fatal("bounded escaped keys refused")
+	}
+	output, err := encodeNativeCatalogMembers(members)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]string
+	if json.Unmarshal(output, &decoded) != nil || decoded[key] != "retained" || decoded["escaped\"key"] != "value" {
+		t.Fatal("escaped key changed")
+	}
+	oversized := map[string]json.RawMessage{"large": json.RawMessage(append(append([]byte{'"'}, bytes.Repeat([]byte("x"), maxCatalogBytes)...), '"'))}
+	if raw, err := encodeNativeCatalogMembers(oversized); !errors.Is(err, errCatalogTooLarge) || raw != nil {
+		t.Fatal("over-cap output allocated", err)
+	}
 }
