@@ -107,7 +107,10 @@ holds it (with the whole chain it inherits), so reading it again would only
 double what a long thread needs in read memory. The read's encoded records are
 released once the current candidate is built from them, and the pending
 publication's fences read only the proofs and catalog commit it carries, not
-the whole file. The source marks the off-chain candidates best effort: a
+the whole file. A pending publication is written one record at a time,
+and preparing a publication a scan froze from its own candidate takes its
+current source from that candidate rather than decoding the staged copy. The
+source marks the off-chain candidates best effort: a
 failure reading one
 (its own base gone, an unreadable header, the reconciliation's byte budget
 spent, or the session's own read ceiling, which the session meets again on

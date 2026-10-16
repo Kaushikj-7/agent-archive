@@ -73,13 +73,21 @@ type longChain struct {
 	next uint64
 }
 
-// newLongChain writes a long chain with a and c messages of chainMessage
-// bytes in A and C, with a stop request queued for it.
+// newLongChain writes a long chain with a and c incompressible messages of
+// chainMessage bytes in A and C, with a stop request queued for it.
 func newLongChain(t *testing.T, a, c int) *longChain {
 	t.Helper()
+	return newLongChainTexts(t, offChainTexts("a", a, chainMessage), offChainTexts("c", c, chainMessage))
+}
+
+// newLongChainTexts writes a long chain with one user message per text in
+// A and in C, with a stop request queued for it.
+func newLongChainTexts(t *testing.T, aTexts, cTexts []string) *longChain {
+	t.Helper()
 	root := t.TempDir()
-	first := writeChainRollout(t, root, revisionThread, "", 0, offChainTexts("a", a, chainMessage))
-	tip := writeChainRollout(t, root, revisionC, first.Path, uint64(a)+1, offChainTexts("c", c, chainMessage))
+	a, c := len(aTexts), len(cTexts)
+	first := writeChainRollout(t, root, revisionThread, "", 0, aTexts)
+	tip := writeChainRollout(t, root, revisionC, first.Path, uint64(a)+1, cTexts)
 	lookup := &budgetedLookup{reconciliationLookup: reconciliationLookup{set: agentapi.CodexRolloutSet{Current: &tip, Candidates: []agentapi.SourceRef{first, tip}, Revision: "current"}, refs: map[string][]agentapi.SourceRef{revisionThread: {first}, revisionC: {tip}}}}
 	local := newTestStore(t)
 	reg := registration(t, first.Path)
@@ -271,5 +279,27 @@ func TestReadCeilingGapWithoutItsRawLimitIsReadOnceMore(t *testing.T) {
 	}
 	if transcriptFilters.Load() != filters {
 		t.Fatal("the gap reached again under the current limits was read on later passes")
+	}
+}
+
+// A scan that freezes a history publication from its own candidate prepares
+// the publication's current source from that candidate, which the
+// publication carries, instead of decoding its staged bytes again: for a
+// long thread that would hold a second copy of the whole chain.
+//
+// Not parallel: it counts currentInputDecodes.
+func TestPreparingAFrozenCandidateDoesNotDecodeItAgain(t *testing.T) {
+	chain := newLongChain(t, 4, 4)
+	decodes := currentInputDecodes.Load()
+	result, _ := chain.run(t)
+	if len(result.Published) != 1 || len(result.Errors) != 0 {
+		t.Fatalf("first capture: %+v", result)
+	}
+	if n := currentInputDecodes.Load() - decodes; n != 0 {
+		t.Fatalf("preparation decoded the scan's own candidate %d times", n)
+	}
+	metadata := fetchMetadata(t, chain.remote, "codex", chain.reg.ArchiveSessionID)
+	if metadata.History == nil || metadata.History.CurrentRevision != revisionC {
+		t.Fatalf("published history %+v", metadata.History)
 	}
 }

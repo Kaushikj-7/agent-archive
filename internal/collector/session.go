@@ -83,6 +83,11 @@ type sessionScan struct {
 	// either the read this scan went on from or the read that was refused.
 	// The gap is recorded at its state (see overCeiling).
 	lastRead *sourceRead
+	// frozenSource is the current source of the history publication this
+	// scan froze from its own candidate, whose bundle (the publication's
+	// Bundle) is exactly what that source's bytes encode until preparation
+	// changes the publication (see historyInputBundle).
+	frozenSource archive.SourceReference
 	// subagentRunning reports that the scan ended waiting for a resumed
 	// subagent to stop again (see errSubagentRunning).
 	subagentRunning bool
@@ -184,6 +189,7 @@ func (s *sessionScan) forgetForRunWithoutOffChain() {
 	s.readBudget().ForgetScopeExceeded()
 	s.filtered, s.lastRead, s.revisions, s.rewritten = nil, nil, nil, nil
 	s.gap, s.sizeLimit, s.readyAt, s.subagentRunning = "", nil, time.Time{}, false
+	s.frozenSource = archive.SourceReference{}
 	// offChainLeftOut stands until the second scan reconciles: one that
 	// resumes the first scan's replacement leaves out what the first did.
 	s.offChainKept, s.withoutOffChain = 0, true
@@ -817,6 +823,8 @@ func (s *sessionScan) publish(ctx context.Context, read sourceRead, candidate ar
 		return outcomeSkipped, fmt.Errorf("persist pending publication: %w", err)
 	}
 	if pending.History != nil {
+		// Its current source is exactly this candidate (historyInputBundle).
+		s.frozenSource = pending.SourceReference()
 		outcome, err := s.resumeHistory(ctx, pending)
 		if err != nil || outcome != outcomePublished {
 			return outcome, err

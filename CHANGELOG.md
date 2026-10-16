@@ -12,9 +12,11 @@ follow [Semantic Versioning](https://semver.org/).
   60 MB of rollouts). Reconciling its history no longer reads and filters the
   current rollout a second time, the read's encoded records are released once
   the candidate is built, and saving a pending publication no longer reserves
-  twice the existing pending file to check its catalog commit. Capturing such
-  a thread's growth needs about 7 times its filtered size in read memory
-  instead of about 12.
+  twice the existing pending file to check its catalog commit. A pending
+  publication is also written without holding its whole encoding, and its
+  current source is prepared from the candidate it was frozen from rather than
+  decoded again. Capturing such a thread's growth needs about 5 times its
+  filtered size in read memory instead of about 12.
 
 - Read complete supported Muse exec/MSP roots with `handoff --file PATH
   --harness muse`, including safe own prompts and committed assistant text,
