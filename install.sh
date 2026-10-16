@@ -213,6 +213,11 @@ main() {
   esac
   if [ "$configured" = 0 ]; then
     say ""
+    say "To see it work right away, with no bucket needed, run this inside a"
+    say "project that already has Claude Code or Codex sessions:"
+    say ""
+    say "  $(shell_quote "$target") handoff"
+    say ""
     say "To get started, run:"
     say ""
     say "agent-archive setup"
