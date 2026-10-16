@@ -16,7 +16,11 @@ func TestDisposableCancelledRequestDoesNotConsumeProviderAttempt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = client.Do(r); err == nil || client.requests != 0 {
+	response, err := client.Do(r)
+	if response != nil {
+		_ = response.Body.Close()
+	}
+	if err == nil || client.requests != 0 {
 		t.Fatalf("cancelled request consumed provider work: attempts=%d error=%v", client.requests, err)
 	}
 }
