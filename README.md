@@ -10,16 +10,16 @@ OpenAI and Anthropic are constantly one-upping each other or the best model, but
 
 `agent-archive` solves these problems, and can perform the following:
 
-- Automatically upload Claude Code, Codex, and Cursor transcripts into a cloud object storage like S3 or R2.
-- Hand off a session to another coding agent or computer without losing context. Run `agent-archive handoff` and pick a session. After setup, you can also ask Claude Code or Codex to continue a previous session by name; the agent uses the CLI to find it and load its context. Useful when you hit rate limits or want to switch models ([handoff guide](docs/guides/handoff.md)).
+- **Archive automatically.** Upload Claude Code, Codex, and Cursor transcripts to your own S3 or R2 bucket.
+- **Continue across agents and computers.** Run `agent-archive handoff` to pick a session and continue with its context. After setup, you can also ask Claude Code or Codex to continue a previous session by name; the agent uses the CLI to find it and load its context. Useful when you hit rate limits or want to switch models ([handoff guide](docs/guides/handoff.md)).
 
   <img src="docs/assets/demos/handoff.gif" alt="Browse sessions, select a Claude Code session, and continue the work in Codex" width="800">
 
-- View all of your past sessions across coding agents with `agent-archive list`. Find a session by topic, project, branch, or PR number, then open it to revisit the conversation ([browsing guide](docs/guides/list-and-show.md)).
+- **Browse your session history.** Use `agent-archive list` to browse sessions across coding agents. Filter by topic, project, branch, or PR number, then open a session to revisit the conversation ([browsing guide](docs/guides/list-and-show.md)).
 
   <img src="docs/assets/demos/list.gif" alt="Browse 151 synthetic sessions across agents and filter the list by topic" width="800">
 
-- See how you're using your coding agents with `agent-archive stats`. Track session counts, tokens, and estimated spend, and compare usage across agents, models, and projects ([usage guide](docs/guides/stats.md)).
+- **See your usage and spend.** Track session counts, tokens, and estimated spend with `agent-archive stats`, broken down by agent, model, and project ([usage guide](docs/guides/stats.md)).
 
   <img src="docs/assets/demos/stats.gif" alt="Agent Archive stats showing 150 sessions, estimated spend, and usage across agents" width="800">
 
@@ -46,18 +46,6 @@ OpenAI and Anthropic are constantly one-upping each other or the best model, but
    ```
 
 [Setup guide](docs/getting-started/setup.md) · [Bucket options](docs/getting-started/bucket.md) · [Platforms](docs/getting-started/install.md#platforms) · [Privacy](docs/security/privacy.md) · [Multiple machines](docs/guides/multiple-machines.md)
-
-## Understand your usage
-
-Run `agent-archive stats` to explore session counts, tokens, estimated spend, and breakdowns by agent, model, and project. Switch views with a keypress ([usage guide](docs/guides/stats.md)).
-
-## Find and revisit sessions
-
-Run `agent-archive list` to browse archived sessions across agents. Press `/` to filter by topic, project, branch, or PR number, then select a session to view it ([browsing guide](docs/guides/list-and-show.md)).
-
-Use a session ID from `list` with `agent-archive show SESSION_ID` to open its summary, or add `--transcript` to read the conversation.
-
-Setup also gives Claude Code, Codex, and Cursor an `agent-archive` skill, so you can ask an agent to "pull in the auth session from Codex" and it runs the read-only commands for you; Claude Code asks before it first uses the skill and before it runs its commands ([agent skills](docs/guides/agent-skills.md#permissions)). After upgrading, `install.sh` runs `agent-archive setup --refresh` to keep the skills current.
 
 ## How it works
 
@@ -90,16 +78,9 @@ Setup edits each included app's hook settings, adds one background job (a Launch
 | `backfill` | Preview sessions already on this machine for import. | `agent-archive backfill --dry-run` |
 | `handoff` | Continue a session in another agent; inside Claude Code, `/handoff codex`. | `agent-archive handoff` |
 
-Listings return at most 50 matching sessions by default: text shows top-level sessions by last activity; JSON includes subagents and sorts by capture time. For analytics over every match, use `agent-archive list --json --limit 0`; add `--all-projects` to include every project when running inside a repository, and `--replays include` if your analysis should include replay sessions (hidden by default). Unreadable metadata is skipped with a warning on stderr ([list guide](docs/guides/list-and-show.md), [JSON contract](docs/reference/json-output.md)).
+For all commands and options, see the [CLI reference](docs/reference/cli.md) or run `agent-archive help COMMAND`.
 
-More commands (machines, uninstall, purge, …) are under `agent-archive help advanced`; for every command and option, see the **[full CLI reference](docs/reference/cli.md)** or run `agent-archive help COMMAND`.
-
-[Install](docs/getting-started/install.md) ·
-[Setup](docs/getting-started/setup.md) ·
-[Troubleshooting](docs/guides/troubleshooting.md) ·
-[FAQ](docs/guides/faq.md) ·
-[Privacy](docs/security/privacy.md) ·
-[All docs](docs/README.md)
+[Documentation](docs/README.md) · [Troubleshooting](docs/guides/troubleshooting.md) · [FAQ](docs/guides/faq.md) · [Privacy](docs/security/privacy.md)
 
 ## Contributing and security
 
