@@ -120,19 +120,8 @@ func selectHandoffSession(env handoffSelectDependencies, home string, opts *hand
 		}
 		return "", "", false, 1
 	}
-	ctx := opts.readCtx
-	if ctx == nil {
-		var stopReads func()
-		ctx, stopReads = readCommandContext(env)
-		defer stopReads()
-		ctx = catalog.WithReadView(ctx)
-	}
-	stopDiscovery := func() {}
-	if err == nil {
-		opts.archiveStore = store
-		ctx, stopDiscovery = startReadDiscovery(ctx, env, store, false)
-	}
-	defer stopDiscovery()
+	ctx, stopReads := handoffPickerReadContext(env, opts, store, err)
+	defer stopReads()
 	regs, regErr := state.OpenReadOnly(home).LoadRegistrations()
 	if regErr != nil {
 		terminal.Printf(stderr, "agent-archive: handoff: %v\n", regErr)
@@ -206,6 +195,23 @@ func selectHandoffSession(env handoffSelectDependencies, home string, opts *hand
 		return "", "", false, code
 	}
 	return row.SessionID, row.HarnessKey, selected, 0
+}
+
+// handoffPickerReadContext retains the invoking read view and the successfully
+// opened client while owning discovery and any picker-local signal subscription.
+func handoffPickerReadContext(env handoffSelectDependencies, opts *handoffOptions, store storage.ObjectStore, storeErr error) (context.Context, func()) {
+	ctx := opts.readCtx
+	stopReads := func() {}
+	if ctx == nil {
+		ctx, stopReads = readCommandContext(env)
+		ctx = catalog.WithReadView(ctx)
+	}
+	stopDiscovery := func() {}
+	if storeErr == nil {
+		opts.archiveStore = store
+		ctx, stopDiscovery = startReadDiscovery(ctx, env, store, false)
+	}
+	return ctx, func() { stopDiscovery(); stopReads() }
 }
 
 // prepareHandoffActivity reads only activity whose eligibility is independent
