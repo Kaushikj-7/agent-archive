@@ -193,8 +193,10 @@ func TestGenerationRecoveryRefusesIncompleteVersionTwoAuthority(t *testing.T) {
 				wire["version"] = 3
 			case generationDowngradeVersion:
 				wire["version"] = 1
-			default:
+			case generationRemoveMetadata, generationRemoveSources:
 				delete(wire, string(field))
+			default:
+				t.Fatal("unknown generation authority mutation", field)
 			}
 			if err := local.Write(path, wire); err != nil {
 				t.Fatal(err)

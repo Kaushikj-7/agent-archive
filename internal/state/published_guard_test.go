@@ -37,8 +37,10 @@ func legacyGenerationMutation(p *Published, method legacyGenerationMethod, bundl
 		return p.Save(bundle, at, CacheStatusPublished, raw)
 	case legacyGenerationPublication:
 		return p.SavePublication(bundle, at, metadata.SourceBundle, raw)
-	default:
+	case legacyGenerationRepublished:
 		return p.SaveRepublishedMetadata(PendingPublication{MetadataOnly: true, Bundle: bundle, MetadataBytes: raw, SourceKey: metadata.SourceBundle.Key, SourceSHA256: metadata.SourceBundle.SHA256, SourceSize: metadata.SourceBundle.CompressedBytes}, at)
+	default:
+		return errors.New("unknown legacy generation writer method")
 	}
 }
 
