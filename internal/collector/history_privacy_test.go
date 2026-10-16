@@ -754,6 +754,10 @@ func TestRunCommittedStrongerHistoryAcknowledgesExactAndQueuesWithoutNative(t *t
 	if err := scan.local.SavePending(scan.id(), p); err != nil {
 		t.Fatal(err)
 	}
+	frozenBytes, err := os.ReadFile(filepath.Join(scan.local.Home(), "pending", scan.id()+".json"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := scan.local.SaveRequest(scan.id(), "stop", scan.now.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
@@ -775,9 +779,21 @@ func TestRunCommittedStrongerHistoryAcknowledgesExactAndQueuesWithoutNative(t *t
 			t.Fatal("broader frozen bytes uploaded", key)
 		}
 	}
-	next, found, err := scan.local.LoadPending(scan.id())
+	if _, found, err := scan.local.LoadPending(scan.id()); !found || !errors.Is(err, state.ErrDurableStorageRecovery) {
+		t.Fatalf("generic reader ignored retained privacy original: %v %v", found, err)
+	}
+	restarted, err := state.Open(scan.local.Home())
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, found, err := restarted.LoadPublicationPending(scan.id())
 	if err != nil || !found || next.Attempted || next.History.ExpectedMetadataSHA256 != metadataSHA(p.MetadataBytes) {
 		t.Fatal("successor absent", err)
+	}
+	retained, err := os.ReadFile(filepath.Join(scan.local.Home(), "publication-evidence", scan.id(), "original.json"))
+	var original state.PublicationOriginalEvidence
+	if err != nil || json.Unmarshal(retained, &original) != nil || original.PrivacyOrigin == nil || !bytes.Equal(original.PrivacyOrigin.Raw, frozenBytes) {
+		t.Fatal("cold successor lost exact original publication evidence", err)
 	}
 	published, err := scan.local.LoadPublishedState(scan.id())
 	if err != nil {
