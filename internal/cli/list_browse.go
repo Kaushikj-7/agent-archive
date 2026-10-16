@@ -13,7 +13,6 @@ import (
 	"golang.org/x/term"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/catalog"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/search"
@@ -1043,15 +1042,6 @@ func readSessionView(ctx context.Context, store storage.ObjectStore, harness, se
 		return sessionView{}, err
 	}
 	return metadataWithLinks(ctx, store, metadata), nil
-}
-
-// loadSessionsForBrowse lists metadata with the same filters list uses, for
-// interactive show and handoff. It reads every match, newest activity first,
-// for the caller to scope and limit.
-func loadSessionsForBrowse(env browseReadDependencies, store storage.ObjectStore, opts listOptions, stderr io.Writer, command string) ([]archive.Metadata, error) {
-	ctx, stopReads := readCommandContext(env)
-	defer stopReads()
-	return loadSessionsForBrowseContext(catalog.WithReadView(ctx), env, store, opts, stderr, command)
 }
 
 // loadSessionsForBrowseContext preserves the invocation's cancellation and view.
