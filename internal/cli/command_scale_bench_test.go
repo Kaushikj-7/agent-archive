@@ -540,13 +540,15 @@ func runReadPathBenchmark(args []string, command string, env Env) (int, []byte, 
 	return code, out.Bytes(), diagnostic.String()
 }
 
-var readPathTraceCounter = regexp.MustCompile(`(rows-scanned|summary-B-hashed|summaries-decoded|entries-visited|key-dirs-evicted|evictions|registration reads) ([0-9]+)`)
+var readPathTraceCounter = regexp.MustCompile(`(rows-scanned|summary-B-hashed|summaries-decoded|entries-visited|key-dirs-evicted|evictions|registration reads|from cache|downloaded) ([0-9]+)`)
 
 func readPathLocalCounts(diagnostic string) map[string]int64 {
 	counts := map[string]int64{}
 	for line := range strings.SplitSeq(diagnostic, "\n") {
 		prefix := ""
 		switch {
+		case strings.Contains(line, "read sidecars"):
+			prefix = "body-"
 		case strings.Contains(line, "catalog refresh validation"):
 			prefix = "refresh-"
 		case strings.Contains(line, "catalog remote validation"):
@@ -664,9 +666,10 @@ func TestReadPathLocalCountsSeparateRefreshQueryAndInventory(t *testing.T) {
 		"catalog candidate decoding 1ms (rows-scanned 50, summary-B-hashed 9000, summaries-decoded 50)\n" +
 		"cache key inventory 1ms (entries-visited 1800)\n" +
 		"cache directory inventory 1ms (entries-visited 64)\n" +
-		"cache key eviction 1ms (key-dirs-evicted 1)\n"
+		"cache key eviction 1ms (key-dirs-evicted 1)\n" +
+		"read sidecars 1ms (from cache 1800, downloaded 18)\n"
 	got := readPathLocalCounts(diagnostic)
-	if got["refresh-rows-scanned"] != 1800 || got["query-rows-scanned"] != 50 || got["query-summaries-decoded"] != 50 || got["cache-entries-visited"] != 1864 || got["cache-key-dirs-evicted"] != 1 {
+	if got["refresh-rows-scanned"] != 1800 || got["query-rows-scanned"] != 50 || got["query-summaries-decoded"] != 50 || got["cache-entries-visited"] != 1864 || got["cache-key-dirs-evicted"] != 1 || got["body-from-cache"] != 1800 || got["body-downloaded"] != 18 {
 		t.Fatal(got)
 	}
 }
