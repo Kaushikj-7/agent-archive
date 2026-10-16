@@ -268,7 +268,15 @@ func TestOmissionOpenPrefixesAndMarkerChronology(t *testing.T) {
 	}
 	for _, r := range rows {
 		if r.omission != nil {
-			if _, present := r.timestamp(); present {
+			wire, err := json.Marshal(r)
+			if err != nil {
+				t.Fatal(err)
+			}
+			m, _, err := decodeObject(wire)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, present := m["ts_us"]; present {
 				t.Fatal("marker timestamp present")
 			}
 			if !r.valid() {

@@ -61,13 +61,6 @@ func (r logicalRow) identity() (stream, string, int64, position) {
 	return o.Stream, o.Native.ID, o.Native.Sequence, o.Position
 }
 
-func (r logicalRow) timestamp() (int64, bool) {
-	if r.ordinary == nil {
-		return 0, false
-	}
-	return r.ordinary.Timestamp, true
-}
-
 func marker(raw []byte, pos position) (logicalRow, error) {
 	m, _, e := decodeObject(raw)
 	if e != nil || !keys(m, "retained_marker", "schema_version", "stream", "position", "omitted_record") {
