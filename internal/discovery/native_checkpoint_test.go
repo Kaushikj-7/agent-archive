@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -193,5 +194,52 @@ func TestNativeCatalogMemberKeysStayBoundedAcrossEncoding(t *testing.T) {
 	oversized := map[string]json.RawMessage{"large": json.RawMessage(append(append([]byte{'"'}, bytes.Repeat([]byte("x"), maxCatalogBytes)...), '"'))}
 	if raw, err := encodeNativeCatalogMembers(oversized); !errors.Is(err, errCatalogTooLarge) || raw != nil {
 		t.Fatal("over-cap output allocated", err)
+	}
+}
+
+func TestNativeCatalogChargesExpandedQuotedKeysBeforeAllocation(t *testing.T) {
+	t.Parallel()
+	var before bytes.Buffer
+	before.WriteString(`{"version":6`)
+	for i := range 1000 {
+		fmt.Fprintf(&before, `,"%s%04d":1`, strings.Repeat("<&>", 1024), i)
+	}
+	before.WriteByte('}')
+	path := filepath.Join(t.TempDir(), "discovery-catalog.json")
+	if err := os.WriteFile(path, before.Bytes(), 0600); err != nil {
+		t.Fatal(err)
+	}
+	replacement := []byte(`{"version":1}`)
+	members, ok := nativeCatalogMembers(before.Bytes())
+	if !ok {
+		t.Fatal("valid adversarial key fixture refused")
+	}
+	members["native_inventory"] = replacement
+	outputSize, err := nativeCatalogOutputSize(members)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := 3*int64(before.Len()) + 3*int64(len(replacement)) + (512 << 10)
+	extra := int64(outputSize) - int64(before.Len()) - int64(len(replacement))
+	if extra <= 0 {
+		t.Fatal("fixture did not expand")
+	}
+	refused := agentapi.NewNativeReadBudget(base)
+	if err := mergeNativeCatalog(t.Context(), path, nil, replacement, true, refused); !errors.Is(err, agentapi.ErrReadBudget) {
+		t.Fatal("unpaid expanded keys accepted", err)
+	}
+	if used, _ := refused.Charged(); used != 0 {
+		t.Fatal("pressure leaked", used)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(raw, before.Bytes()) {
+		t.Fatal("pressure changed checkpoint", err)
+	}
+	budget := agentapi.NewNativeReadBudget(base + extra)
+	if err := mergeNativeCatalog(t.Context(), path, nil, replacement, true, budget); err != nil {
+		t.Fatal("paid output refused", err)
+	}
+	if used, peak := budget.Charged(); used != 0 || peak != base+extra {
+		t.Fatal("output ownership", used, peak)
 	}
 }

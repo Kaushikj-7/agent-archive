@@ -79,6 +79,18 @@ func mergeNativeCatalog(ctx context.Context, path string, expected, replacement 
 		}
 		maps.Copy(object, next)
 	}
+	outputSize, err := nativeCatalogOutputSize(object)
+	if err != nil {
+		return err
+	}
+	// Quoted keys may expand under JSON's HTML escaping. Pay any exact output
+	// excess before allocation, independently of the baseline input scratch.
+	outputCharge := max(int64(outputSize)-inputLimit-int64(len(replacement)), 0)
+	outputReservation := budget.Reservation()
+	if !outputReservation.Reserve(outputCharge) {
+		return errCatalogBudget
+	}
+	defer outputReservation.Release(outputCharge)
 	raw, err := encodeNativeCatalogMembers(object)
 	if err != nil {
 		return err
@@ -294,20 +306,12 @@ func replaceOversizedCatalog(ctx context.Context, path string, before os.FileInf
 // sizing refuses over-cap output before allocation and avoids encoder copies of
 // large unrelated catalog members.
 func encodeNativeCatalogMembers(members map[string]json.RawMessage) ([]byte, error) {
+	n, err := nativeCatalogOutputSize(members)
+	if err != nil {
+		return nil, err
+	}
 	keys := make([]string, 0, len(members))
-	n := 2
-	for key, value := range members {
-		encoded, err := json.Marshal(key)
-		if err != nil {
-			return nil, err
-		}
-		n += len(encoded) + 1 + len(value)
-		if len(keys) > 0 {
-			n++
-		}
-		if n > maxCatalogBytes {
-			return nil, errCatalogTooLarge
-		}
+	for key := range members {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
@@ -326,6 +330,24 @@ func encodeNativeCatalogMembers(members map[string]json.RawMessage) ([]byte, err
 		raw = append(raw, members[key]...)
 	}
 	return append(raw, '}'), nil
+}
+
+func nativeCatalogOutputSize(members map[string]json.RawMessage) (int, error) {
+	n := 2
+	if len(members) > 0 {
+		n += len(members) - 1
+	}
+	for key, value := range members {
+		encoded, err := json.Marshal(key)
+		if err != nil {
+			return 0, err
+		}
+		n += len(encoded) + 1 + len(value)
+		if n > maxCatalogBytes {
+			return 0, errCatalogTooLarge
+		}
+	}
+	return n, nil
 }
 
 // compareNativeCatalogBytes checks expected ownership without allocating a
