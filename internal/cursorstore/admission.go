@@ -44,6 +44,7 @@ type admissionCopyOptions struct {
 	afterStep             func(int)
 	beforeSourceOpen      func()
 	beforeDestinationOpen func()
+	afterImage            func(*os.File, string) error
 }
 
 // prepareReservedLiveImage is the preparatory bounded SQLite copy backend.
@@ -172,7 +173,7 @@ func copyAdmissionIntoWorkspace(ctx context.Context, conn *sql.Conn, workspace a
 		return "", err
 	}
 	defer func() { err = errors.Join(err, f.Close()) }()
-	out = filepath.Join(workspace.Root(), "native.db")
+	out = filepath.Join(root.Name(), "native.db")
 	dest, err := newAdmissionDestinationVFS(ctx, out, f, imageBytes)
 	if err != nil {
 		return "", err
@@ -191,6 +192,11 @@ func copyAdmissionIntoWorkspace(ctx context.Context, conn *sql.Conn, workspace a
 	}
 	if err = verifyAdmissionImage(root, imageBytes); err != nil {
 		return "", err
+	}
+	if opts.afterImage != nil {
+		if err = opts.afterImage(f, out); err != nil {
+			return "", err
+		}
 	}
 	return out, ctx.Err()
 }
@@ -286,13 +292,15 @@ func admissionDSN(dsn, name string) string {
 	u, _ := url.Parse(dsn)
 	q := u.Query()
 	q.Set("vfs", name)
+	q.Add("_pragma", "cache_size(-2048)")
+	q.Add("_pragma", "mmap_size(0)")
 	u.RawQuery = q.Encode()
 	return u.String()
 }
 
 func admissionDestinationDSN(path, name string, pageSize, pages int64) string {
 	q := url.Values{"mode": {"rw"}, "vfs": {name}}
-	for _, pragma := range []string{"journal_mode(MEMORY)", "temp_store(MEMORY)", "mmap_size(0)", "page_size(" + strconv.FormatInt(pageSize, 10) + ")", "max_page_count(" + strconv.FormatInt(pages, 10) + ")"} {
+	for _, pragma := range []string{"journal_mode(MEMORY)", "temp_store(MEMORY)", "mmap_size(0)", "cache_size(-2048)", "page_size(" + strconv.FormatInt(pageSize, 10) + ")", "max_page_count(" + strconv.FormatInt(pages, 10) + ")"} {
 		q.Add("_pragma", pragma)
 	}
 	return (&url.URL{Scheme: "file", Path: path, RawQuery: q.Encode()}).String()
@@ -344,8 +352,11 @@ func admissionConnection(ctx context.Context, db *sql.DB) (*sql.Conn, error) {
 // charge the pass memory ledger and keep its captured reservation through reader
 // closure. Root/OpenWorkspace must denote the same private rooted directory.
 // No implementation is wired into production until those contracts are sealed.
-type admissionWorkspaceBudget interface {
-	Root() string
+type admissionWorkspaceBudget = LiveAdmissionWorkspace
+
+// LiveAdmissionWorkspace supplies bounded scratch IO, never capture authority.
+// Only the sealed live producer can turn an actual fixed read into a proof.
+type LiveAdmissionWorkspace interface {
 	OpenWorkspace() (*os.Root, error)
 	Reserve(int64) error
 	Err() error

@@ -64,7 +64,7 @@ func admissionReadDestination(v *admissionVFS, b uintptr, n int32, offset int64)
 	if v.context.Err() != nil {
 		return sqlite3.SQLITE_INTERRUPT
 	}
-	if n <= 0 || int64(n) > admissionImageLimit || offset < 0 || offset > admissionImageLimit-int64(n) {
+	if n <= 0 || int64(n) > 65536 || offset < 0 || offset > admissionImageLimit-int64(n) {
 		return sqlite3.SQLITE_IOERR_READ
 	}
 	buffer := make([]byte, int(n))
@@ -82,7 +82,7 @@ func admissionReadDestination(v *admissionVFS, b uintptr, n int32, offset int64)
 func admissionWriteDestination(v *admissionVFS, b uintptr, n int32, offset int64) int32 {
 	// The caller already checked context and the reserved end offset before
 	// this bounded allocation and before the actual filesystem write.
-	if n < 0 || int64(n) > admissionImageLimit {
+	if n < 0 || int64(n) > 65536 {
 		return sqlite3.SQLITE_IOERR_WRITE
 	}
 	if n == 0 {

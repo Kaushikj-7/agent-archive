@@ -13,6 +13,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/nativefacts"
 )
 
 const cursorScratchLimit int64 = 128 << 20
@@ -418,4 +419,39 @@ func checkCursorScratchReceipt(home *local.RootedHome, receipt cursorScratchRece
 	}
 
 	return nil
+}
+
+// NewLiveCaptureRequest binds only a real durable owner to the original frozen
+// request's captured lease. Its private callbacks cannot be retargeted by callers.
+func (s *Store) NewLiveCaptureRequest(original *nativefacts.CaptureRequest) (_ *nativefacts.LiveCaptureRequest, err error) {
+	if original == nil || !original.MatchesBudget(s.resourceBudget) {
+		return nil, ErrReadySelectionFrozen
+	}
+	captured, err := original.Borrow()
+	if err != nil {
+		return nil, err
+	}
+	keep := false
+	defer func() {
+		if !keep {
+			captured.Close()
+		}
+	}()
+	reg, err := captured.Registration()
+	if err != nil {
+		return nil, err
+	}
+	scoped, closeScoped := s.WithReadBudget(captured.Context(), captured.Budget())
+	defer closeScoped()
+	scoped.resourceReservation = func() stateReservation { return captured.Reservation() }
+	scratch, err := scoped.NewCursorScratch(captured.Context(), reg.ArchiveSessionID)
+	if err != nil {
+		return nil, err
+	}
+	bound, err := nativefacts.BindLiveCaptureRequest(original, captured, scratch.Reserve, scratch.OpenWorkspace, scratch.Close, scratch.Err)
+	if err != nil {
+		return nil, errors.Join(err, scratch.Close())
+	}
+	keep = true
+	return bound, nil
 }

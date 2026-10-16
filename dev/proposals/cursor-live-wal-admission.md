@@ -1,6 +1,7 @@
 # Bounded Cursor live-WAL admission
 
-Status: preparatory backend only, reviewed against `d338beef`. This does not
+Status: backend, durable owner and distinct sealed producer under review against
+`d338beef`; production caller integration remains pending. This does not
 enable live database admission. The current [backfill contract](../specs/backfill.md)
 continues to require settled evidence; live WAL frames remain pending.
 
@@ -15,7 +16,7 @@ not be restored.
 
 ## Preparatory implementation
 
-`internal/cursorstore/admission*.go` contains a private backend with no production
+`internal/cursorstore/admission*.go` contains a bounded backend with no production
 caller. It reuses the pinned online-backup/VFS design from #359, adapted to a
 private rooted scratch-reservation contract. It refuses ordinary settled paths;
 those retain their existing read-only capture path. The copy holds one actual
@@ -35,18 +36,26 @@ macOS acceptance evidence.
 
 ## Integration gates
 
-1. Implement a durable scratch owner using current storage protections. Reserve
-   capacity before allocating scratch, persist its receipt, retain quota across
-   failed deletion/crashes, and recover stale receipts without deleting unrelated
-   paths. Bind a captured shared memory reservation to the entire SQLite/image
-   read lifetime, including SQLite working memory and simultaneous decoded views.
-   The preparatory backend's tests use a synthetic owner; they do not implement
-   or prove these durable guarantees.
-2. Add a distinct sealed producer operation that binds the original request,
-   context, source home, exact database/source identity and captured reservation
-   to the held image. Check routing and metadata from the same pinned image.
-   A generic filesystem path must never satisfy `CaptureSettledCursor` or mint a
-   `nativecapture.Proof`. Preserve exact selected source bytes before admission.
+1. The current candidate adds a durable `CursorScratch` owner under existing
+   storage protection. It persists image capacity before creation and retains
+   receipts across failed cleanup and crashes. Its bounded recovery refuses active
+   owners, unknown receipt shapes, symlinks and unexpected children. Current generic
+   durable writers conservatively refuse all temporary obligations, so cleanup is
+   mandatory before staging; no older-writer acceptance rule is relaxed. Control
+   memory uses the original captured request scope. The SQLite operation charges
+   a 32 MiB working allowance before opening, caps WAL-index mappings at 4 MiB,
+   requests 2 MiB SQLite caches and bounds destination page buffers at 64 KiB.
+   This bounds charged logical work, not process RSS. Independent review and
+   supported-platform failure/acceptance evidence remain required.
+2. The candidate's distinct `LiveCaptureRequest` binds the exact original request
+   lease to a real state-issued scratch owner. Whole-source type/object checks
+   restrict issuance to the exact state method and actual owner method values.
+   A fixed live producer reads composer and metadata on the held copied image,
+   requires synchronous scratch cleanup before minting separate `LiveProof`, and
+   retains its original request scope through proof use. A generic filesystem path
+   cannot satisfy `CaptureSettledCursor` or create settled proof. Synthetic tests
+   cover first staging after the native database disappears. This path still needs
+   independent whole-source/lifetime review before runtime wiring.
 3. Compose the sealed result with existing staged3/Cursor4 ownership and recovery
    controls. Do not require or weaken the separate source-set publication protocol.
    Preserve catalog compatibility, stage quotas, finalizer ordering and the

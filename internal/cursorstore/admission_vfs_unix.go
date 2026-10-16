@@ -378,6 +378,10 @@ func admissionFileControl(tls *libc.TLS, p uintptr, op int32, arg uintptr) int32
 
 func admissionShmMap(tls *libc.TLS, p uintptr, region, size, extend int32, out uintptr) int32 {
 	f, m := admissionLookup(p)
+	// Bound borrowed WAL-index mappings inside the charged SQLite allowance.
+	if region < 0 || size <= 0 || int64(size) > 4<<20 || int64(region)+1 > (4<<20)/int64(size) {
+		return sqlite3.SQLITE_READONLY
+	}
 	if f.vfs.writable || m.FxShmMap == 0 {
 		return sqlite3.SQLITE_READONLY
 	}

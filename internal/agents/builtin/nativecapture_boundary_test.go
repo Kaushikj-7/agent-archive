@@ -182,6 +182,12 @@ func TestNativeCaptureWholeSourceBoundary(t *testing.T) {
 				if id.Pos() < f.Pos() || id.Pos() > f.End() {
 					continue
 				}
+				if obj.Pkg() != nil && obj.Pkg().Path() == captureFactsPath && obj.Name() == "BindLiveCaptureRequest" {
+					if !captureLiveIssuerReferenceAllowed(p.ImportPath, rel, obj, f, id, info) {
+						t.Errorf("live owner issuer outside exact state binding at %s", fset.Position(id.Pos()))
+					}
+					continue
+				}
 				if obj.Pkg() != nil && obj.Pkg().Path() == captureCodecPath && obj.Exported() {
 					if !captureCodecObjectAllowed(p.ImportPath, rel, obj, calls, id) {
 						t.Errorf("forbidden codec bridge object %s at %s", obj.Name(), fset.Position(id.Pos()))
@@ -189,12 +195,12 @@ func TestNativeCaptureWholeSourceBoundary(t *testing.T) {
 					continue
 				}
 				if obj.Pkg() != nil && obj.Pkg().Path() == captureProducerPath && obj.Exported() {
-					if p.ImportPath != captureCursorAdapterPath || rel != "settled_import.go" || obj.Name() != "CaptureSettledCursor" || !captureDirectCallObject(f, id, "CaptureSettledRequest", false) {
+					if !captureProducerReferenceAllowed(p.ImportPath, rel, obj, f, id) {
 						t.Errorf("forbidden fixed producer reference at %s", fset.Position(id.Pos()))
 					}
 					continue
 				}
-				if obj.Pkg() != nil && obj.Pkg().Path() == captureSealedPath && obj.Name() == "New" && (p.ImportPath != captureProducerPath || !captureDirectCallObject(f, id, "CaptureSettledCursor", true)) {
+				if obj.Pkg() != nil && obj.Pkg().Path() == captureSealedPath && (obj.Name() == "New" || obj.Name() == "NewLive") && !captureMintReferenceAllowed(p.ImportPath, rel, obj, f, id) {
 					t.Errorf("issuer mint outside final capture return at %s", fset.Position(id.Pos()))
 					continue
 				}
@@ -241,16 +247,23 @@ const (
 type captureAuthorityFile string
 
 const (
-	captureAuthorityProof   captureAuthorityFile = "proof.go"
-	captureAuthorityCursor  captureAuthorityFile = "cursor.go"
-	captureAuthorityAdapter captureAuthorityFile = "settled_import.go"
-	captureAuthorityCodec   captureAuthorityFile = "codec.go"
+	captureAuthorityProof       captureAuthorityFile = "proof.go"
+	captureAuthorityCursor      captureAuthorityFile = "cursor.go"
+	captureAuthorityAdapter     captureAuthorityFile = "settled_import.go"
+	captureAuthorityCodec       captureAuthorityFile = "codec.go"
+	captureAuthorityLiveCursor  captureAuthorityFile = "live_cursor.go"
+	captureAuthorityLiveAdapter captureAuthorityFile = "live_import.go"
+	captureAuthorityLiveProof   captureAuthorityFile = "live_proof.go"
 )
 
 type captureSymbolName string
 
 const (
 	captureSymbolCursor         captureSymbolName = "CaptureSettledCursor"
+	captureSymbolLiveCursor     captureSymbolName = "CaptureLiveCursor"
+	captureSymbolLiveProof      captureSymbolName = "LiveProof"
+	captureSymbolLiveLoan       captureSymbolName = "WithVerifiedLiveCapture"
+	captureSymbolNewLive        captureSymbolName = "NewLive"
 	captureSymbolProof          captureSymbolName = "Proof"
 	captureSymbolLoan           captureSymbolName = "WithVerifiedCapture"
 	captureSymbolClose          captureSymbolName = "Close"
@@ -285,9 +298,9 @@ func captureSymbolAllowed(pkg, name string, fixture bool) bool {
 	}
 	symbol := captureSymbolName(name)
 	if capturePackagePath(pkg) == capturePackageCursor || fixture {
-		return symbol == captureSymbolCursor || symbol == captureSymbolProof || symbol == captureSymbolLoan || symbol == captureSymbolClose
+		return symbol == captureSymbolCursor || symbol == captureSymbolLiveCursor || symbol == captureSymbolProof || symbol == captureSymbolLiveProof || symbol == captureSymbolLoan || symbol == captureSymbolLiveLoan || symbol == captureSymbolClose
 	}
-	return symbol == captureSymbolProof || symbol == captureSymbolLoan || symbol == captureSymbolClose
+	return symbol == captureSymbolProof || symbol == captureSymbolLiveProof || symbol == captureSymbolLoan || symbol == captureSymbolLiveLoan || symbol == captureSymbolClose
 }
 
 func TestNativeCaptureSymbolBoundaryControls(t *testing.T) {
@@ -317,7 +330,7 @@ func captureObjectAllowed(pkg string, obj types.Object, fixture bool) bool {
 	if capturePackagePath(pkg) == capturePackageDomain || capturePackagePath(pkg) == capturePackageCursor || fixture {
 		return true
 	}
-	if captureSymbolName(obj.Name()) == captureSymbolProof {
+	if captureSymbolName(obj.Name()) == captureSymbolProof || captureSymbolName(obj.Name()) == captureSymbolLiveProof {
 		_, ok := obj.(*types.TypeName)
 		return ok
 	}
@@ -334,7 +347,7 @@ func captureObjectAllowed(pkg string, obj types.Object, fixture bool) bool {
 		receiver = types.Unalias(pointer.Elem())
 	}
 	named, ok := receiver.(*types.Named)
-	return ok && named.Obj().Pkg() != nil && (named.Obj().Pkg().Path() == captureDomainPath || named.Obj().Pkg().Path() == captureSealedPath) && named.Obj().Name() == "Proof"
+	return ok && named.Obj().Pkg() != nil && (named.Obj().Pkg().Path() == captureDomainPath || named.Obj().Pkg().Path() == captureSealedPath) && (named.Obj().Name() == "Proof" || named.Obj().Name() == "LiveProof")
 }
 
 // These typed source probes check architecture restrictions, not native mint authority.
@@ -418,7 +431,7 @@ func (i captureProbeImporter) Import(path string) (*types.Package, error) {
 const captureCursorAdapterPath = "github.com/wangjohn/agent-archive/internal/agents/cursor"
 
 func captureBoundaryImport(path string) bool {
-	return capturePackagePath(path) == capturePackageDomain || capturePackagePath(path) == capturePackageCursor || capturePackagePath(path) == capturePackageSealed || capturePackagePath(path) == capturePackageProducer || capturePackagePath(path) == capturePackageCodec
+	return path == captureFactsPath || capturePackagePath(path) == capturePackageDomain || capturePackagePath(path) == capturePackageCursor || capturePackagePath(path) == capturePackageSealed || capturePackagePath(path) == capturePackageProducer || capturePackagePath(path) == capturePackageCodec
 }
 
 func captureAdapterConstructor(obj types.Object) bool {
@@ -430,11 +443,11 @@ func captureAdapterConstructor(obj types.Object) bool {
 		return false
 	}
 	signature, ok := function.Type().(*types.Signature)
-	return ok && signature.Recv() == nil && (obj.Name() == "CaptureSettledRequest" || obj.Name() == "CaptureSettledImport")
+	return ok && signature.Recv() == nil && (obj.Name() == "CaptureSettledRequest" || obj.Name() == "CaptureSettledImport" || obj.Name() == "CaptureLiveRequest")
 }
 
 func captureAdapterReferenceAllowed(pkg, file string, fixture bool) bool {
-	return fixture || pkg == captureCursorAdapterPath && captureAuthorityFile(file) == captureAuthorityAdapter || pkg == "github.com/wangjohn/agent-archive/internal/agents/builtin" && file == "registry.go"
+	return fixture || pkg == captureCursorAdapterPath && (captureAuthorityFile(file) == captureAuthorityAdapter || captureAuthorityFile(file) == captureAuthorityLiveAdapter) || pkg == "github.com/wangjohn/agent-archive/internal/agents/builtin" && file == "registry.go"
 }
 
 func TestNativeCaptureAdapterWrapperTypedControls(t *testing.T) {
@@ -495,6 +508,8 @@ const captureSealedPath = captureDomainPath + "/internal/sealed"
 
 const captureProducerPath = captureDomainPath + "/producer"
 
+const captureFactsPath = "github.com/wangjohn/agent-archive/internal/nativefacts"
+
 const captureCodecPath = "github.com/wangjohn/agent-archive/internal/agents/capturecodec"
 
 func captureSourcePath(dir, name string) string {
@@ -507,11 +522,11 @@ func captureSourcePath(dir, name string) string {
 func captureAuthorityImportAllowed(pkg, file, imported string) bool {
 	switch capturePackagePath(imported) {
 	case capturePackageSealed:
-		return pkg == captureDomainPath && captureAuthorityFile(file) == captureAuthorityProof || pkg == captureProducerPath && captureAuthorityFile(file) == captureAuthorityCursor
+		return pkg == captureDomainPath && (captureAuthorityFile(file) == captureAuthorityProof || captureAuthorityFile(file) == captureAuthorityLiveProof) || pkg == captureProducerPath && (captureAuthorityFile(file) == captureAuthorityCursor || captureAuthorityFile(file) == captureAuthorityLiveCursor)
 	case capturePackageProducer:
-		return pkg == captureCursorAdapterPath && captureAuthorityFile(file) == captureAuthorityAdapter
+		return pkg == captureCursorAdapterPath && (captureAuthorityFile(file) == captureAuthorityAdapter || captureAuthorityFile(file) == captureAuthorityLiveAdapter)
 	case capturePackageCodec:
-		return pkg == captureProducerPath && captureAuthorityFile(file) == captureAuthorityCursor
+		return pkg == captureProducerPath && (captureAuthorityFile(file) == captureAuthorityCursor || captureAuthorityFile(file) == captureAuthorityLiveCursor)
 	case capturePackageDomain, capturePackageCursor, capturePackageState, capturePackageBackfill, capturePackageBuiltin:
 		return true
 	default:
@@ -559,7 +574,7 @@ func captureOriginalAuthorityError(root string, selectedDirs, selectedSources ma
 			return err
 		}
 		pkg := "github.com/wangjohn/agent-archive/" + filepath.ToSlash(rel)
-		if (pkg == captureDomainPath || strings.HasPrefix(pkg, captureDomainPath+"/") || pkg == captureCodecPath || strings.HasPrefix(pkg, captureCodecPath+"/")) && !selectedSources[path] {
+		if (pkg == captureFactsPath || pkg == captureDomainPath || strings.HasPrefix(pkg, captureDomainPath+"/") || pkg == captureCodecPath || strings.HasPrefix(pkg, captureCodecPath+"/")) && !selectedSources[path] {
 			return fmt.Errorf("unqualified closed-domain profile source %s", path)
 		}
 		f, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
@@ -567,7 +582,7 @@ func captureOriginalAuthorityError(root string, selectedDirs, selectedSources ma
 			return err
 		}
 		if pkg == captureDomainPath {
-			if captureAuthorityFile(entry.Name()) != captureAuthorityProof || len(f.Decls) != 2 || len(f.Imports) != 1 {
+			if (captureAuthorityFile(entry.Name()) != captureAuthorityProof && captureAuthorityFile(entry.Name()) != captureAuthorityLiveProof) || len(f.Decls) != 2 || len(f.Imports) != 1 {
 				return fmt.Errorf("neutral facade shape changed in %s", path)
 			}
 			decl, ok := f.Decls[1].(*ast.GenDecl)
@@ -575,7 +590,11 @@ func captureOriginalAuthorityError(root string, selectedDirs, selectedSources ma
 				return fmt.Errorf("neutral facade declaration in %s", path)
 			}
 			alias, ok := decl.Specs[0].(*ast.TypeSpec)
-			if !ok || alias.Name.Name != "Proof" || !alias.Assign.IsValid() {
+			expected := "Proof"
+			if captureAuthorityFile(entry.Name()) == captureAuthorityLiveProof {
+				expected = "LiveProof"
+			}
+			if !ok || alias.Name.Name != expected || !alias.Assign.IsValid() {
 				return fmt.Errorf("neutral facade must only alias Proof in %s", path)
 			}
 		}
@@ -610,16 +629,16 @@ func captureAuthorityObjectAllowed(pkg, file string, obj types.Object, calls map
 	if obj.Pkg() == nil || obj.Pkg().Path() != captureSealedPath {
 		return false
 	}
-	if pkg == captureDomainPath && captureAuthorityFile(file) == captureAuthorityProof {
+	if pkg == captureDomainPath && (captureAuthorityFile(file) == captureAuthorityProof || captureAuthorityFile(file) == captureAuthorityLiveProof) {
 		name, ok := obj.(*types.TypeName)
-		return ok && name.Name() == "Proof"
+		return ok && (name.Name() == "Proof" || name.Name() == "LiveProof")
 	}
 	if pkg == captureSealedPath {
 		return true
 	}
-	if pkg == captureProducerPath && captureAuthorityFile(file) == captureAuthorityCursor {
+	if pkg == captureProducerPath && (captureAuthorityFile(file) == captureAuthorityCursor || captureAuthorityFile(file) == captureAuthorityLiveCursor) {
 		switch captureSymbolName(obj.Name()) {
-		case captureSymbolProof, captureSymbolReservation:
+		case captureSymbolProof, captureSymbolLiveProof, captureSymbolReservation:
 			_, ok := obj.(*types.TypeName)
 			return ok
 		case captureSymbolReserve, captureSymbolRelease, captureSymbolAvailable, captureSymbolRefuse:
@@ -647,7 +666,7 @@ func captureAuthorityObjectAllowed(pkg, file string, obj types.Object, calls map
 			return false
 		case captureSymbolCursor, captureSymbolLoan, captureSymbolClose:
 			break
-		case captureSymbolNew, captureSymbolNewReservation, captureSymbolDigest:
+		case captureSymbolNew, captureSymbolNewLive, captureSymbolNewReservation, captureSymbolDigest:
 			fn, ok := obj.(*types.Func)
 			if !ok {
 				return false
@@ -663,19 +682,23 @@ func captureAuthorityObjectAllowed(pkg, file string, obj types.Object, calls map
 			}
 		}
 	}
-	return captureObjectAllowed(pkg, obj, false) && (captureSymbolName(obj.Name()) == captureSymbolProof || captureSymbolName(obj.Name()) == captureSymbolClose || captureSymbolName(obj.Name()) == captureSymbolLoan)
+	return captureObjectAllowed(pkg, obj, false) && (captureSymbolName(obj.Name()) == captureSymbolProof || captureSymbolName(obj.Name()) == captureSymbolLiveProof || captureSymbolName(obj.Name()) == captureSymbolClose || captureSymbolName(obj.Name()) == captureSymbolLoan || captureSymbolName(obj.Name()) == captureSymbolLiveLoan)
 }
 
 func captureCheckExports(t *testing.T, pkg *types.Package) {
 	t.Helper()
+	if pkg.Path() == captureFactsPath {
+		captureCheckLiveFactsShape(t, pkg)
+		return
+	}
 	var allowed map[string]bool
 	switch capturePackagePath(pkg.Path()) {
 	case capturePackageDomain:
-		allowed = map[string]bool{"Proof": true}
+		allowed = map[string]bool{"Proof": true, "LiveProof": true}
 	case capturePackageSealed:
-		allowed = map[string]bool{"Proof": true, "Reservation": true, "New": true, "NewReservation": true, "Digest": true}
+		allowed = map[string]bool{"Proof": true, "Reservation": true, "New": true, "NewReservation": true, "Digest": true, "LiveProof": true, "NewLive": true}
 	case capturePackageProducer:
-		allowed = map[string]bool{"CaptureSettledCursor": true}
+		allowed = map[string]bool{"CaptureSettledCursor": true, "CaptureLiveCursor": true}
 	case capturePackageCodec:
 		allowed = captureCodecExports()
 	case capturePackageCursor, capturePackageState, capturePackageBackfill, capturePackageBuiltin:
@@ -729,6 +752,7 @@ func captureCheckExports(t *testing.T, pkg *types.Package) {
 		}
 	}
 	if pkg.Path() == captureProducerPath {
+		captureCheckLiveProducerSignature(t, pkg)
 		fn, ok := pkg.Scope().Lookup("CaptureSettledCursor").(*types.Func)
 		if !ok {
 			t.Error("fixed producer must be a function")
@@ -744,7 +768,7 @@ func captureCheckExports(t *testing.T, pkg *types.Package) {
 		}
 	}
 	if pkg.Path() == captureSealedPath {
-		for _, typeName := range []string{"Proof", "Reservation"} {
+		for _, typeName := range []string{"Proof", "LiveProof", "Reservation"} {
 			object, ok := pkg.Scope().Lookup(typeName).(*types.TypeName)
 			if !ok {
 				t.Errorf("sealed %s is not a type", typeName)
@@ -758,13 +782,13 @@ func captureCheckExports(t *testing.T, pkg *types.Package) {
 			methodCount := named.NumMethods()
 			for i := range methodCount {
 				name := named.Method(i).Name()
-				permitted := captureSymbolName(typeName) == captureSymbolProof && (captureSymbolName(name) == captureSymbolClose || captureSymbolName(name) == captureSymbolLoan) || captureSymbolName(typeName) == captureSymbolReservation && (captureSymbolName(name) == captureSymbolReserve || captureSymbolName(name) == captureSymbolRelease || captureSymbolName(name) == captureSymbolAvailable || captureSymbolName(name) == captureSymbolRefuse)
+				permitted := (captureSymbolName(typeName) == captureSymbolProof && (captureSymbolName(name) == captureSymbolClose || captureSymbolName(name) == captureSymbolLoan) || captureSymbolName(typeName) == captureSymbolLiveProof && (captureSymbolName(name) == captureSymbolClose || captureSymbolName(name) == captureSymbolLiveLoan)) || captureSymbolName(typeName) == captureSymbolReservation && (captureSymbolName(name) == captureSymbolReserve || captureSymbolName(name) == captureSymbolRelease || captureSymbolName(name) == captureSymbolAvailable || captureSymbolName(name) == captureSymbolRefuse)
 				if named.Method(i).Exported() && !permitted {
 					t.Errorf("unexpected sealed method %s.%s", typeName, name)
 				}
 			}
 		}
-		for _, name := range []string{"New", "NewReservation", "Digest"} {
+		for _, name := range []string{"New", "NewLive", "NewReservation", "Digest"} {
 			fn, ok := pkg.Scope().Lookup(name).(*types.Func)
 			if !ok {
 				t.Errorf("sealed %s must be a fixed function", name)
@@ -1018,7 +1042,7 @@ func captureCodecObjectAllowed(pkg, file string, object types.Object, calls map[
 	if pkg == captureCodecPath && captureAuthorityFile(file) == captureAuthorityCodec {
 		return true
 	}
-	if pkg != captureProducerPath || captureAuthorityFile(file) != captureAuthorityCursor {
+	if pkg != captureProducerPath || (captureAuthorityFile(file) != captureAuthorityCursor && captureAuthorityFile(file) != captureAuthorityLiveCursor) {
 		return false
 	}
 	if field, ok := object.(*types.Var); ok && field.IsField() {
@@ -1162,6 +1186,174 @@ func TestNativeCaptureCodecBridgeOriginalProfileControls(t *testing.T) {
 			err := captureOriginalAuthorityError(root, map[string]bool{dir: true}, selected)
 			if (err == nil) != test.allowed {
 				t.Fatal("codec original profile boundary changed", err)
+			}
+		})
+	}
+}
+
+func captureProducerReferenceAllowed(pkg, file string, obj types.Object, f *ast.File, id *ast.Ident) bool {
+	if pkg != captureCursorAdapterPath {
+		return false
+	}
+	if obj.Name() == "CaptureSettledCursor" {
+		return file == "settled_import.go" && captureDirectCallObject(f, id, "CaptureSettledRequest", false)
+	}
+	return obj.Name() == "CaptureLiveCursor" && file == "live_import.go" && captureDirectCallObject(f, id, "CaptureLiveRequest", false)
+}
+
+func captureMintReferenceAllowed(pkg, file string, obj types.Object, f *ast.File, id *ast.Ident) bool {
+	if pkg != captureProducerPath {
+		return false
+	}
+	if obj.Name() == "New" {
+		return file == "cursor.go" && captureDirectCallObject(f, id, "CaptureSettledCursor", true)
+	}
+	return obj.Name() == "NewLive" && file == "live_cursor.go" && captureDirectCallObject(f, id, "CaptureLiveCursor", true)
+}
+
+func captureLiveIssuerReferenceAllowed(pkg, file string, obj types.Object, f *ast.File, id *ast.Ident, info *types.Info) bool {
+	if pkg != capturePackageStateString() || file != "cursor_scratch.go" || obj.Pkg() == nil || obj.Pkg().Path() != captureFactsPath || obj.Name() != "BindLiveCaptureRequest" {
+		return false
+	}
+	function, ok := obj.(*types.Func)
+	if !ok {
+		return false
+	}
+	signature, ok := function.Type().(*types.Signature)
+	if !ok || signature.Recv() != nil {
+		return false
+	}
+	for _, decl := range f.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Name.Name != "NewLiveCaptureRequest" || fn.Recv == nil || fn.Body == nil {
+			continue
+		}
+		allowed := false
+		ast.Inspect(fn.Body, func(node ast.Node) bool {
+			if _, nested := node.(*ast.FuncLit); nested {
+				return false
+			}
+			call, ok := node.(*ast.CallExpr)
+			if !ok || !captureExactCalleeIdent(call.Fun, id) || len(call.Args) != 6 {
+				return true
+			}
+			// The closed issuer must bind actual concrete state-owner method values,
+			// never forwarding arbitrary callbacks supplied by another integration.
+			var ownerObject types.Object
+			for i, name := range []string{"Reserve", "OpenWorkspace", "Close", "Err"} {
+				sel, ok := call.Args[i+2].(*ast.SelectorExpr)
+				if !ok {
+					return true
+				}
+				receiver, ok := sel.X.(*ast.Ident)
+				if !ok {
+					return true
+				}
+				object := info.Uses[receiver]
+				if object == nil {
+					return true
+				}
+				if ownerObject == nil {
+					ownerObject = object
+				} else if ownerObject != object {
+					return true
+				}
+				selection := info.Selections[sel]
+				if selection == nil || selection.Obj().Name() != name || types.TypeString(selection.Recv(), func(p *types.Package) string { return p.Path() }) != "*"+capturePackageStateString()+".CursorScratch" {
+					return true
+				}
+			}
+			allowed = true
+			return true
+		})
+		return allowed
+	}
+	return false
+}
+
+func captureCheckLiveProducerSignature(t *testing.T, pkg *types.Package) {
+	t.Helper()
+	fn, ok := pkg.Scope().Lookup("CaptureLiveCursor").(*types.Func)
+	if !ok {
+		t.Error("fixed live producer must be a function")
+		return
+	}
+	signature, ok := fn.Type().(*types.Signature)
+	if !ok || signature.Recv() != nil || signature.Variadic() || signature.Params().Len() != 1 || signature.Results().Len() != 2 {
+		t.Error("live producer signature changed")
+		return
+	}
+	fullName := func(p *types.Package) string { return p.Path() }
+	if types.TypeString(signature.Params().At(0).Type(), fullName) != "*"+captureFactsPath+".LiveCaptureRequest" || types.TypeString(signature.Results().At(0).Type(), fullName) != "*"+captureSealedPath+".LiveProof" || !types.Identical(signature.Results().At(1).Type(), types.Universe.Lookup("error").Type()) {
+		t.Error("live producer accepts arbitrary structural scratch authority")
+	}
+}
+func captureCheckLiveFactsShape(t *testing.T, pkg *types.Package) {
+	t.Helper()
+	for name, methods := range map[string]map[string]bool{"LiveCaptureRequest": {"Borrow": true, "Close": true}, "LiveCaptureLease": {"Original": true, "Context": true, "Err": true, "Reserve": true, "OpenWorkspace": true, "Close": true}} {
+		obj, ok := pkg.Scope().Lookup(name).(*types.TypeName)
+		if !ok || obj.IsAlias() {
+			t.Errorf("live binding %s must be concrete", name)
+			continue
+		}
+		named, ok := obj.Type().(*types.Named)
+		if !ok {
+			t.Error("live binding not named")
+			continue
+		}
+		structure, ok := named.Underlying().(*types.Struct)
+		if !ok || structure.NumFields() != 1 || structure.Field(0).Exported() {
+			t.Errorf("live binding %s exposes owner mutation", name)
+		}
+		for i := range named.NumMethods() {
+			method := named.Method(i)
+			if method.Exported() && !methods[method.Name()] {
+				t.Errorf("unexpected live authority method %s.%s", name, method.Name())
+			}
+		}
+	}
+}
+
+func TestLiveCaptureIssuerTypedReferenceControls(t *testing.T) {
+	facts := types.NewPackage(captureFactsPath, "nativefacts")
+	anyType := types.Universe.Lookup("any").Type()
+	params := types.NewTuple(types.NewVar(token.NoPos, facts, "original", anyType), types.NewVar(token.NoPos, facts, "captured", anyType), types.NewVar(token.NoPos, facts, "reserve", anyType), types.NewVar(token.NoPos, facts, "open", anyType), types.NewVar(token.NoPos, facts, "close", anyType), types.NewVar(token.NoPos, facts, "check", anyType))
+	facts.Scope().Insert(types.NewFunc(token.NoPos, facts, "BindLiveCaptureRequest", types.NewSignatureType(nil, nil, nil, params, types.NewTuple(), false)))
+	facts.MarkComplete()
+	prefix := `package state; import facts "` + captureFactsPath + `";type Store struct{};type CursorScratch struct{};func(*CursorScratch)Reserve(){};func(*CursorScratch)OpenWorkspace(){};func(*CursorScratch)Close(){};func(*CursorScratch)Err(){};`
+	for _, test := range []struct {
+		name, body, file string
+		allowed          bool
+	}{
+		{"exact-owner", `func(*Store)NewLiveCaptureRequest(){scratch:=new(CursorScratch);facts.BindLiveCaptureRequest(nil,nil,scratch.Reserve,scratch.OpenWorkspace,scratch.Close,scratch.Err)}`, "cursor_scratch.go", true},
+		{"different-owner", `func(*Store)NewLiveCaptureRequest(){scratch:=new(CursorScratch);other:=new(CursorScratch);facts.BindLiveCaptureRequest(nil,nil,scratch.Reserve,other.OpenWorkspace,scratch.Close,scratch.Err)}`, "cursor_scratch.go", false},
+		{"function-value", `func(*Store)NewLiveCaptureRequest(){ctor:=facts.BindLiveCaptureRequest;_ = ctor}`, "cursor_scratch.go", false},
+		{"reexport", `var Constructor=facts.BindLiveCaptureRequest`, "cursor_scratch.go", false},
+		{"nested-callback", `func(*Store)NewLiveCaptureRequest(){f:=func(){scratch:=new(CursorScratch);facts.BindLiveCaptureRequest(nil,nil,scratch.Reserve,scratch.OpenWorkspace,scratch.Close,scratch.Err)};_ = f}`, "cursor_scratch.go", false},
+		{"test-issuer", `func(*Store)NewLiveCaptureRequest(){scratch:=new(CursorScratch);facts.BindLiveCaptureRequest(nil,nil,scratch.Reserve,scratch.OpenWorkspace,scratch.Close,scratch.Err)}`, "cursor_scratch_test.go", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fset := token.NewFileSet()
+			file, err := parser.ParseFile(fset, test.file, prefix+test.body, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			info := &types.Info{Uses: map[*ast.Ident]types.Object{}, Selections: map[*ast.SelectorExpr]*types.Selection{}}
+			cfg := types.Config{Importer: captureProbeImporter{domain: facts}}
+			if _, err = cfg.Check(capturePackageStateString(), fset, []*ast.File{file}, info); err != nil {
+				t.Fatal(err)
+			}
+			seen := false
+			for id, obj := range info.Uses {
+				if obj.Pkg() != nil && obj.Pkg().Path() == captureFactsPath && obj.Name() == "BindLiveCaptureRequest" {
+					seen = true
+					if got := captureLiveIssuerReferenceAllowed(capturePackageStateString(), test.file, obj, file, id, info); got != test.allowed {
+						t.Fatalf("issuer allowed=%v want=%v", got, test.allowed)
+					}
+				}
+			}
+			if !seen {
+				t.Fatal("probe did not resolve actual issuer object")
 			}
 		})
 	}
