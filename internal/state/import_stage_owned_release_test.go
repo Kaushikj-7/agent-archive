@@ -23,7 +23,7 @@ func ownedImportReleaseFixture(t *testing.T, content string) (*Store, archive.Se
 	reg := registration(t)
 	reg.Origin = archive.SessionOriginImport
 	reg.ImportBatch = archive.NewImportBatch("synthetic-owned-release")
-	bundle := archive.SourceBundle{SchemaVersion: archive.SourceSchemaVersion, ArchiveSessionID: reg.ArchiveSessionID, NativeSessionID: reg.NativeSessionID, ProjectID: reg.ProjectID, Capture: archive.SourceCapture{Harness: reg.Harness, AdapterName: "test", CapturedAt: reg.RegisteredAt}, NativeRecords: []map[string]any{{"synthetic": content}}}
+	bundle := archive.SourceBundle{SchemaVersion: archive.SourceSchemaVersion, ArchiveSessionID: reg.ArchiveSessionID, NativeSessionID: reg.NativeSessionID, ProjectID: reg.ProjectID, Capture: archive.SourceCapture{Harness: reg.Harness, AdapterName: "test", AdapterVersion: "test-v1", FilterVersion: archive.FilterVersion, CapturedAt: reg.RegisteredAt}, NativeRecords: []map[string]any{{"synthetic": content}}}
 	var err error
 	reg.StagedImportSHA256, err = s.SaveImportStage(t.Context(), reg, bundle, config.SkillEvidenceNone)
 	if err != nil {
@@ -169,7 +169,7 @@ func TestOwnedImportStageReleasePreservesEvidenceOnRefusal(t *testing.T) {
 				if err := os.Mkdir(s.Home(), 0700); err != nil {
 					t.Fatal(err)
 				}
-				if err := s.removeOwnedImportStageAt(t.Context(), home, reg, reg, home.Check); !errors.Is(err, ErrDurableStorageRecovery) {
+				if err := s.removeOwnedImportStageAt(t.Context(), home, reg, reg, home.Check, syncDurableParent); !errors.Is(err, ErrDurableStorageRecovery) {
 					t.Fatal("cleanup followed a replaced named home")
 				}
 				path = filepath.Join(moved, importStageRelative(reg.ArchiveSessionID))

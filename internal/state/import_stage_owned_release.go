@@ -18,7 +18,13 @@ import (
 // The caller has verified the complete publication. The staging lock keeps a
 // cooperating writer from replacing that exact owner between decoding and unlink.
 // Typed stages retain their separate readback and release authority.
-func (s *Store) RemoveOwnedImportStage(reg archive.SessionRegistration) (err error) {
+func (s *Store) RemoveOwnedImportStage(reg archive.SessionRegistration) error {
+	return s.removeOwnedImportStageUsing(reg, syncDurableParent)
+}
+
+// The local barrier dependency lets fault controls exercise the actual release
+// and retry path. Production always syncs the held directory above.
+func (s *Store) removeOwnedImportStageUsing(reg archive.SessionRegistration, syncParent func(*os.Root) error) (err error) {
 	ctx := s.durableContext()
 	if !safeFileComponent(reg.ArchiveSessionID) || !readyDigestValid(reg.StagedImportSHA256) {
 		return ErrDurableStorageRecovery
@@ -68,25 +74,35 @@ func (s *Store) RemoveOwnedImportStage(reg archive.SessionRegistration) (err err
 		}
 		return errors.Join(ctx.Err(), home.Check())
 	}
-	return s.removeOwnedImportStageAt(ctx, home, reg, current, check)
+	return s.removeOwnedImportStageAt(ctx, home, reg, current, check, syncParent)
 }
 
-func (s *Store) removeOwnedImportStageAt(ctx context.Context, home *local.RootedHome, reg, current archive.SessionRegistration, check func() error) (err error) {
+func (s *Store) removeOwnedImportStageAt(ctx context.Context, home *local.RootedHome, reg, current archive.SessionRegistration, check func() error, syncParent func(*os.Root) error) (err error) {
 	if err := check(); err != nil {
 		return errors.Join(ErrDurableStorageRecovery, err)
 	}
 	relative := filepath.Dir(importStageRelative(reg.ArchiveSessionID))
-	root, err := privateDirectory(home.Root, relative, false)
+	parentRelative := filepath.Dir(relative)
+	parent, err := privateDirectory(home.Root, parentRelative, false)
+	if err != nil {
+		return errors.Join(ErrDurableStorageRecovery, err)
+	}
+	defer func() { err = errors.Join(err, parent.Close()) }()
+	checkParent := func() error { return checkOwnedImportDirectory(home, parent, parentRelative, check) }
+	root, err := privateDirectory(parent, filepath.Base(relative), false)
 	if errors.Is(err, os.ErrNotExist) {
-		return check()
+		return syncAbsentOwnedImportDirectory(home, parent, parentRelative, filepath.Base(relative), check, syncParent)
 	}
 	if err != nil {
 		return err
 	}
 	defer func() { err = errors.Join(err, root.Close()) }()
+	finish := func() error {
+		return finishOwnedImportStageDirectory(home, parent, root, relative, checkParent, syncParent)
+	}
 	info, err := root.Lstat("stage.json")
 	if errors.Is(err, os.ErrNotExist) {
-		return check()
+		return finish()
 	}
 	if err != nil || !info.Mode().IsRegular() || info.Size() < 0 || info.Size() > maxPendingHistoryBytes {
 		return errors.Join(ErrDurableStorageRecovery, err)
@@ -108,20 +124,62 @@ func (s *Store) removeOwnedImportStageAt(ctx context.Context, home *local.Rooted
 	if err := s.validateOwnedImportStage(ctx, reg, current, file, info.Size(), reservation); err != nil {
 		return err
 	}
-	if err := checkOwnedImportStage(ctx, home, root, relative, info, check); err != nil {
+	if err := checkOwnedImportStage(ctx, home, root, relative, info, checkParent); err != nil {
 		return err
 	}
 	if err := root.Remove("stage.json"); err != nil {
 		return err
 	}
-	dir, err := root.Open(".")
-	if err != nil {
+	return finish()
+}
+
+func checkOwnedImportDirectory(home *local.RootedHome, root *os.Root, relative string, check func() error) error {
+	opened, err := root.Stat(".")
+	named, e := home.Root.Lstat(relative)
+	if err != nil || e != nil || !os.SameFile(opened, named) || !named.IsDir() || named.Mode()&os.ModeSymlink != 0 {
+		return errors.Join(ErrDurableStorageRecovery, err, e)
+	}
+	return check()
+}
+
+func syncOwnedImportDirectory(home *local.RootedHome, root *os.Root, relative string, check func() error, syncParent func(*os.Root) error) error {
+	if err := checkOwnedImportDirectory(home, root, relative, check); err != nil {
 		return err
 	}
-	if err := errors.Join(dir.Sync(), dir.Close()); err != nil {
+	err := syncParent(root)
+	return errors.Join(err, checkOwnedImportDirectory(home, root, relative, check))
+}
+
+func syncAbsentOwnedImportDirectory(home *local.RootedHome, parent *os.Root, parentRelative, name string, check func() error, syncParent func(*os.Root) error) error {
+	absent := func() error {
+		if _, err := parent.Lstat(name); !errors.Is(err, os.ErrNotExist) {
+			return errors.Join(ErrDurableStorageRecovery, err)
+		}
+		return check()
+	}
+	if err := absent(); err != nil {
 		return err
 	}
-	return removeEmptyImportDirectory(home, relative)
+	return errors.Join(syncOwnedImportDirectory(home, parent, parentRelative, absent, syncParent), absent())
+}
+
+func finishOwnedImportStageDirectory(home *local.RootedHome, parent, root *os.Root, relative string, check func() error, syncParent func(*os.Root) error) error {
+	absent := func() error {
+		if _, err := root.Lstat("stage.json"); !errors.Is(err, os.ErrNotExist) {
+			return errors.Join(ErrDurableStorageRecovery, err)
+		}
+		return check()
+	}
+	if err := syncOwnedImportDirectory(home, root, relative, absent, syncParent); err != nil {
+		return err
+	}
+	if err := parent.Remove(filepath.Base(relative)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if errors.Is(err, syscall.ENOTEMPTY) || errors.Is(err, syscall.EEXIST) {
+			return checkOwnedImportDirectory(home, root, relative, absent)
+		}
+		return err
+	}
+	return syncAbsentOwnedImportDirectory(home, parent, filepath.Dir(relative), filepath.Base(relative), check, syncParent)
 }
 
 func (s *Store) validateOwnedImportStage(ctx context.Context, reg, current archive.SessionRegistration, reader io.Reader, size int64, reservation stateReservation) error {
