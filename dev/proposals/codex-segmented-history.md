@@ -186,11 +186,9 @@ readback) see every object without each learning the format. All keys stay
 checksum-addressed under the session's prefix; a reader refuses any reference
 outside it before reading.
 
-Whether the segment list lives in the metadata sidecar itself or only in the
-head is decision D3. Listing reads bounded metadata bodies
-([listing at scale](listing-at-scale.md)), so the recommended shape keeps the
-sidecar's size independent of the segment count by putting the list in the
-head, and has `SourceReferences()` read heads (bounded, small) when it needs
+The segment list lives only in the head (decision D3). Listing reads bounded
+metadata bodies ([listing at scale](listing-at-scale.md)), so this keeps the
+sidecar's size independent of the segment count, and `SourceReferences()` read heads (bounded, small) when it needs
 the full set.
 
 ### Collector flow
@@ -259,11 +257,10 @@ segment list:
 - Filter gaps are the union across segments, deduplicated by code and detail
   as `addGap` does now.
 
-Decision D4 is whether each publication streams every segment again (memory
-bounded by one segment, CPU proportional to F, rate limited by the upload
-interval) or resumes from a private, serialized accumulator checkpoint at the
-last sealed segment. The proposal recommends streaming first: it needs no new
-persisted state, and an equivalence test (iterator over the segment list ==
+Each publication streams every segment again (decision D4): memory bounded
+by one segment, CPU proportional to F, rate limited by the upload interval.
+The alternative, resuming from a private serialized accumulator checkpoint at
+the last sealed segment, was set aside: streaming needs no new persisted state, and an equivalence test (iterator over the segment list ==
 `ParseCodex` over the assembled bundle) proves it. A checkpoint is a follow-up
 only if profiles show derivation CPU matters.
 
@@ -291,10 +288,10 @@ only if profiles show derivation CPU matters.
 
 | Limit | Today | Proposed |
 | --- | --- | --- |
-| Filtered size | 64 MiB per thread (`DefaultMaxTranscriptBytes`) | Chunk target (D2, recommended 16 MiB) and a hard per-segment ceiling of target + one record. A new per-thread total filtered ceiling (D7, recommended 1 GiB). |
-| Segment count | 64 spans per thread | Per revision (D7, recommended 256) and distinct objects per session (recommended 1024); sealed chunk size could grow geometrically past the count if D7 prefers. |
-| Raw size | 512 MiB per thread read (`MaxCodexRawTranscriptBytes`) | 512 MiB of *unsealed* bytes filtered in one pass; a separate total raw ceiling for the checkpoint hash (D7, recommended 4 GiB). |
-| Read ceiling | 160 MiB per session, ~3–4×F | Unchanged constant; work is ~3–4× (one chunk + tail), about 64 MiB at the recommended target. |
+| Filtered size | 64 MiB per thread (`DefaultMaxTranscriptBytes`) | Chunk target 16 MiB (D2) and a hard per-segment ceiling of target + one record. A new per-thread total filtered ceiling 1 GiB (D7). |
+| Segment count | 64 spans per thread | 256 per revision (D7) and 1024 distinct objects per session. |
+| Raw size | 512 MiB per thread read (`MaxCodexRawTranscriptBytes`) | 512 MiB of *unsealed* bytes filtered in one pass; a separate total raw ceiling for the checkpoint hash 4 GiB (D7). |
+| Read ceiling | 160 MiB per session, ~3–4×F | Unchanged constant; work is ~3–4× (one chunk + tail), about 64 MiB at the 16 MiB target. |
 | Record | 64 MiB | Unchanged. |
 | Chain depth | 64 rollouts | Unchanged. |
 
@@ -311,8 +308,9 @@ segment set.
 - **Sealed segment stages** are kept as owned, checksum-named stages so that
   privacy maintenance, parser refresh and readback recovery never need native
   input. They count against the shared 1 GiB staging/publication quota
-  (`state.durableStorageQuota`); decision D5 is whether past a bound they are
-  dropped and fetched from the bucket with checksum verification instead.
+  (`state.durableStorageQuota`). Past 256 MiB per session (decision D5) the
+  oldest are dropped and fetched from the bucket with checksum verification
+  when needed.
 - **Pending journal**: a new `PendingHistory` journal version carrying the head,
   segment stages and kept references. Older journal versions keep their
   current recovery paths.
