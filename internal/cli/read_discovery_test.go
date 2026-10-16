@@ -137,6 +137,56 @@ func TestReadDiscoveryCancelsAndJoinsOnLocalError(t *testing.T) {
 	}
 }
 
+type harnessSidecarReadStore struct {
+	storage.ObjectStore
+	reads atomic.Int32
+}
+
+func (s *harnessSidecarReadStore) Get(ctx context.Context, key string) ([]byte, error) {
+	if strings.HasSuffix(key, "/metadata.json") {
+		s.reads.Add(1)
+		if !strings.HasPrefix(key, "sessions/codex/") {
+			return nil, errors.New("unrelated harness sidecar must not be read")
+		}
+	}
+	return s.ObjectStore.Get(ctx, key)
+}
+
+func TestReadDiscoveryFallbackHydratesOnlyRequestedHarness(t *testing.T) {
+	t.Parallel()
+	for _, command := range []readDiscoveryScenario{discoveryHandoff, discoveryShowQueryNoCatalog} {
+		t.Run(string(command), func(t *testing.T) {
+			t.Parallel()
+			env, mem, id := publishedFixture(t)
+			// A cold unrelated sidecar must not be downloaded or decoded. Its
+			// presence in the shared global discovery is nevertheless legitimate.
+			must(t, mem.Put(t.Context(), "sessions/claude/unrelated/metadata.json", []byte("unrelated body")))
+			store := &harnessSidecarReadStore{ObjectStore: mem}
+			env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return store, nil }
+			if listCache(env, false) == nil {
+				t.Fatal("cache unavailable")
+			}
+			home, err := env.Home()
+			must(t, err)
+			must(t, os.WriteFile(filepath.Join(home, "cache", "catalog"), []byte("unavailable disposable catalog"), 0600))
+			args := []string{"handoff", "--harness", "codex", "--all-projects", "--source", "archive"}
+			if command == discoveryShowQueryNoCatalog {
+				args = []string{"show", id[:8], "--harness", "codex", "--json"}
+			}
+			stdin := strings.NewReader("q\n")
+			var stdout, stderr bytes.Buffer
+			env.IsTerminal = func(stream any) bool { return stream == any(stdin) || stream == any(&stdout) }
+			env.openKeys = func(io.Reader) (keyTerminal, bool) { return nil, false }
+			if code := Run(args, stdin, &stdout, &stderr, env); code != 0 {
+				t.Fatalf("code=%d stderr=%s", code, stderr.String())
+			}
+			if reads := store.reads.Load(); reads != 1 {
+				t.Fatalf("cold metadata body reads=%d, want selected harness only", reads)
+			}
+		})
+	}
+}
+
 func TestHandoffPickerReusesItsOpenStoreAfterSelection(t *testing.T) {
 	t.Parallel()
 	f := newPickerFixture(t)
