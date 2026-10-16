@@ -401,7 +401,7 @@ Pass:
 
 ## PR 6: Latency-modeled command benchmarks and operation-count gates
 
-Measurement code revision: `b441ed88`. The observed-size 22-case command
+Measurement code revision: `b441ed88`. The observed-size 20-case command
 matrix and ordinary 1,800-session operation/output controls pass with exact
 Go 1.27.2, alongside synthetic S3 provider-page conformance. Independent source
 and documentation review found no unresolved blockers. Historical controls
