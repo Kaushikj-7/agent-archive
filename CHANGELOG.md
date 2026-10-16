@@ -10,6 +10,11 @@ follow [Semantic Versioning](https://semver.org/).
   avoiding whole-file hashes while browsing large histories. Selected sessions
   retain complete filtering and independent content verification.
 
+- When Codex discovery is unavailable but every published automatic session has
+  recorded read-back verification, status says “discovery unknown; archive
+  verified at recorded time”. Restore source access and run sync to check
+  current capture health.
+
 - A long Codex thread whose history spans more than one rollout needs far less
   read memory to capture, so it is captured at sizes that were recorded as too
   large to read (`transcript_too_large`, per-session read memory, from about
