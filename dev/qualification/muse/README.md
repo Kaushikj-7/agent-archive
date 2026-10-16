@@ -264,7 +264,13 @@ it. Unknown exceptions map to `unclassified`, without their text or class names.
 Separate cleanup-failure visibility remains available. Route observations are
 fixed booleans for the two exact catalog GET routes and the existing response
 POST route only; unknown targets, queries, headers and bodies are never copied.
-These diagnostics add no native tool/status qualification.
+The controlled provider-call echo accepts the existing exact `read_file` form
+and exact `muse.read_file` only when the `namespace` member is absent. A qualified
+name with any namespace member, unknown prefix/suffix/tool, wrong controlled
+arguments or mismatched call/result associations still refuses. This finite
+provider API representation does not change native retained names or status;
+there is no general namespace stripping.
+These fixture compatibilities and diagnostics add no native tool/status qualification.
 Success output is compared privately with the fixed synthetic
 file; missing-file prose is never interpreted as typed failure. Typed status,
 parallelism and cancellation remain unavailable pending a separately reviewed

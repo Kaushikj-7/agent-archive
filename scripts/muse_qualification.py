@@ -462,7 +462,9 @@ class ToolScenario:
                 raise ScenarioRefusal("association")
             for item in echoed:
                 index = self.call_ids().index(item["call_id"])
-                if (item.get("name") != "read_file" or not isinstance(item.get("arguments"), str) or
+                known_name = (item.get("name") == "read_file" or
+                              (item.get("name") == "muse.read_file" and "namespace" not in item))
+                if (not known_name or not isinstance(item.get("arguments"), str) or
                         json.loads(item["arguments"]) != self.arguments(index)):
                     raise ScenarioRefusal("association")
         if self.phase == "initial":

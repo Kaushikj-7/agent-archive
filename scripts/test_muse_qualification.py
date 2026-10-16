@@ -558,6 +558,97 @@ class ToolScenarioTests(unittest.TestCase):
             self.assertTrue(receipt["provider_complete"])
         self.assertTrue(server.receipt()["handlers_joined"])
 
+    def controlled_echo(self, frames, name):
+        calls = [frame for frame in frames if frame["type"] == "response.function_call_arguments.done"]
+        echoed = [{"type": "function_call", "call_id": call["call_id"], "name": name,
+                   "arguments": call["arguments"]} for call in calls]
+        body = self.results(len(calls))
+        body["input"] = echoed + body["input"]
+        return body
+
+    def echo_turn(self, server, name):
+        self.assertIn(b"200 OK", self.exchange(server, raw=b"GET /muse-code/models HTTP/1.1\r\n\r\n"))
+        frames = self.frames(self.exchange(server, self.initial()))
+        return self.controlled_echo(frames, name)
+
+    def test_qualified_controlled_echo_without_namespace_completes_provider_turn(self):
+        with self.endpoint("exec-read-success") as server:
+            body = self.echo_turn(server, "muse.read_file")
+            self.assertEqual(len(body["input"]), 2)
+            response = self.exchange(server, body)
+            self.assertIn(b"200 OK", response, server.receipt()["first_refusal"])
+            self.assertEqual(self.frames(response)[-1]["type"], "response.completed")
+            receipt = server.receipt()
+            self.assertTrue(receipt["provider_complete"])
+            self.assertEqual(receipt["first_refusal"], "none")
+            self.assertEqual(receipt["requests"], 3)
+            self.assertTrue(receipt["muse_code_models_get_seen"])
+            self.assertNotIn("muse.read_file", json.dumps(receipt))
+        self.assertTrue(server.receipt()["handlers_joined"])
+
+    def test_legacy_controlled_echo_behavior_remains_supported(self):
+        for namespace in ("absent", "muse", None):
+            with self.subTest(namespace=namespace), self.endpoint("exec-read-success") as server:
+                body = self.echo_turn(server, "read_file")
+                if namespace != "absent":
+                    body["input"][0]["namespace"] = namespace
+                response = self.exchange(server, body)
+                self.assertIn(b"200 OK", response, server.receipt()["first_refusal"])
+                self.assertTrue(server.receipt()["provider_complete"])
+                self.assertEqual(server.receipt()["first_refusal"], "none")
+
+    def test_two_qualified_echoes_preserve_distinct_controlled_associations(self):
+        with self.endpoint() as server:
+            body = self.echo_turn(server, "muse.read_file")
+            self.assertEqual(len(body["input"]), 4)
+            response = self.exchange(server, body)
+            self.assertIn(b"200 OK", response, server.receipt()["first_refusal"])
+            self.assertTrue(server.receipt()["provider_complete"])
+            self.assertFalse(server.receipt()["provider_refused"])
+
+    def test_qualified_echo_names_namespaces_and_associations_remain_closed(self):
+        variants = ("namespace-null", "namespace-muse", "namespace-conflict", "namespace-empty",
+                    "prefix", "suffix", "other-tool", "case", "arguments", "path", "id", "count", "duplicate",
+                    "early", "output-id", "output-extra", "output-type")
+        for mutation in variants:
+            with self.subTest(mutation=mutation), self.endpoint() as server:
+                if mutation == "early":
+                    frames = [{"type": "response.function_call_arguments.done", "call_id": call_id,
+                               "arguments": json.dumps(server.scenario.arguments(index))}
+                              for index, call_id in enumerate(server.scenario.call_ids())]
+                    body = self.controlled_echo(frames, "muse.read_file")
+                else:
+                    body = self.echo_turn(server, "muse.read_file")
+                echo = body["input"][0]
+                if mutation.startswith("namespace-"):
+                    echo["namespace"] = {"namespace-null": None, "namespace-muse": "muse",
+                        "namespace-conflict": "PRIVATE_NAMESPACE", "namespace-empty": ""}[mutation]
+                elif mutation in ("prefix", "suffix", "other-tool", "case"):
+                    echo["name"] = {"prefix": "PRIVATE.muse.read_file", "suffix": "muse.read_file.PRIVATE",
+                        "other-tool": "muse.PRIVATE", "case": "Muse.read_file"}[mutation]
+                elif mutation == "arguments":
+                    echo["arguments"] = json.dumps(dict(server.scenario.arguments(0), offset=2))
+                elif mutation == "path":
+                    echo["arguments"] = json.dumps(dict(server.scenario.arguments(0), path="/PRIVATE_FOREIGN"))
+                elif mutation == "id":
+                    echo["call_id"] = "PRIVATE_FOREIGN"
+                elif mutation == "count":
+                    del body["input"][1]
+                elif mutation == "duplicate":
+                    body["input"][1]["call_id"] = echo["call_id"]
+                elif mutation == "output-id":
+                    body["input"][2]["call_id"] = "PRIVATE_OUTPUT_ID"
+                elif mutation == "output-extra":
+                    body["input"][2]["PRIVATE_KEY"] = "PRIVATE_VALUE"
+                elif mutation == "output-type":
+                    body["input"][2]["output"] = 7
+                self.assertEqual(self.exchange(server, body), b"")
+                receipt = server.receipt()
+                self.assertEqual(receipt["first_refusal"], "association")
+                self.assertFalse(receipt["provider_complete"])
+                self.assertNotIn("PRIVATE", json.dumps(receipt))
+            self.assertTrue(server.receipt()["handlers_joined"])
+
     def test_model_catalog_aliases_share_the_existing_two_request_limit(self):
         with self.endpoint() as server:
             for path in (b"/models", b"/muse-code/models"):
