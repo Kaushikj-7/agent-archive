@@ -9,12 +9,20 @@ import (
 	"io"
 )
 
+// catalogSessionsInContext retains the complete candidate set: its callers
+// still apply scope, origin and child rules after this query. Their display
+// limit cannot become a SQL limit until all those predicates are exact in SQL.
 func catalogSessionsInContext(ctx context.Context, env metadataCacheDependencies, store storage.ObjectStore, opts listOptions, stderr io.Writer, command string, words []string) ([]archive.Metadata, bool, error) {
 	sessions, used, _, err := catalogCandidateSessions(ctx, env, store, opts, stderr, command, words, nil)
 	return sessions, used, err
 }
 
 func catalogCandidateSessions(ctx context.Context, env metadataCacheDependencies, store storage.ObjectStore, opts listOptions, stderr io.Writer, command string, words []string, reuse *showBodyReuse) ([]archive.Metadata, bool, bool, error) {
+	// Token-observation-only model names are absent from SearchSummary. Keep
+	// the complete metadata matcher until the projection represents that input.
+	if opts.filter.Model != "" {
+		return nil, false, false, nil
+	}
 	if reader.CatalogAuthority(store) {
 		cache := listCache(env, opts.noCache)
 		if cache != nil {
@@ -122,7 +130,7 @@ func readListCandidates(ctx context.Context, env metadataCacheDependencies, stor
 func readShowCandidates(ctx context.Context, store storage.ObjectStore, env metadataCacheDependencies, harness, query string, stderr io.Writer) (showCandidates, error) {
 	reuse := &showBodyReuse{verified: map[string]bool{}}
 	opts := listOptions{filter: reader.Filter{Harness: harness}}
-	sessions, used, fullBodies, err := catalogCandidateSessions(ctx, env, store, opts, stderr, "show", nil, reuse)
+	sessions, used, fullBodies, err := catalogCandidateSessions(ctx, env, store, opts, stderr, "show", parseSessionQuery(query).words, reuse)
 	if used {
 		return showCandidates{sessions: sessions, fullBodies: fullBodies, reuse: reuse}, err
 	}
@@ -192,6 +200,7 @@ func catalogBodyObserver(env metadataCacheDependencies) func(string, bool) {
 type catalogBrowseCommand string
 
 const (
-	catalogBrowseShow catalogBrowseCommand = "show"
-	catalogBrowseList catalogBrowseCommand = "list"
+	catalogBrowseHandoff catalogBrowseCommand = "handoff"
+	catalogBrowseShow    catalogBrowseCommand = "show"
+	catalogBrowseList    catalogBrowseCommand = "list"
 )

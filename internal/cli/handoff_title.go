@@ -464,7 +464,11 @@ func (r *handoffQueryResolver) archiveRows() []handoffPickerRow {
 		return nil
 	}
 	stop := startActivity(r.stdout, "Finding sessions…")
-	sessions, err := loadSessionsForBrowseContext(r.ctx, r.env, store, listOptions{filter: reader.Filter{Harness: r.opts.harness}}, r.stderr, "handoff")
+	opts := listOptions{filter: reader.Filter{Harness: r.opts.harness}}
+	sessions, used, err := catalogSessionsInContext(r.ctx, r.env, store, opts, r.stderr, "handoff", r.q.words)
+	if !used {
+		sessions, err = loadSessionsForBrowseContext(r.ctx, r.env, store, opts, r.stderr, "handoff")
+	}
 	stop()
 	if err != nil {
 		r.archiveErr = err
