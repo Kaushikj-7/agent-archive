@@ -48,6 +48,9 @@ const prototypeFix = "preserve it and resolve it before setup"
 func (s Scheduler) Installed(_ context.Context, site scheduler.Site, inst scheduler.Installation) ([]scheduler.Job, error) {
 	own := s.Ref(inst)
 	jobs := []scheduler.Job{{Ref: own}}
+	if inst.Role == scheduler.Search {
+		return jobs, nil
+	}
 	var blocked error
 	if inst.Default {
 		found, err := prototypeJob(site)

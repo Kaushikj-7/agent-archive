@@ -207,6 +207,33 @@ func classifySessions(sessionErrs map[string]error, isSubagent func(string) bool
 	return issues
 }
 
+// carryRetrying adds the sessions on the Codex lookup allowance's backoff
+// schedule (state.Status.NextRetryAt) that the pass recorded no failure
+// for, because it held them until their next attempt: each keeps the issue
+// its last attempt recorded, which the collector carried into
+// current.SessionIssues (capture_failed, which every such failure is, when
+// it carried none), and counts in the summary as it did then, so status
+// still shows it failing.
+func (i sessionIssues) carryRetrying(current state.Status, isSubagent func(string) bool) {
+	for id := range current.NextRetryAt {
+		if _, failed := i.codes[id]; failed {
+			continue
+		}
+		code := current.SessionIssues[id]
+		if code == "" {
+			code = issueCaptureFailed
+		}
+		i.codes[id] = code
+		tally := i.tallies[code]
+		if isSubagent(id) {
+			tally.subagents++
+		} else {
+			tally.sessions++
+		}
+		i.tallies[code] = tally
+	}
+}
+
 // summary is the problem the last error records for these sessions.
 func (i sessionIssues) summary() string { return issueSummary(i.tallies) }
 
@@ -218,13 +245,15 @@ func (i sessionIssues) summary() string { return issueSummary(i.tallies) }
 // recorded. Both collection and retention record through here, so a pass
 // with both kinds of failure reports one message covering all of them. Best
 // effort, like recordPreflightError: the pass's own error is what the
-// caller reports. It returns the summary it recorded.
+// caller reports. It returns the summary it recorded. A Codex session the
+// pass held for a later retry keeps its issue among them (carryRetrying).
 func recordSessionIssues(localStore *state.Store, sessionErrs map[string]error, isSubagent func(string) bool, old string) (string, error) {
 	current, err := localStore.LoadStatus()
 	if err != nil {
 		return "", err
 	}
 	issues := classifySessions(sessionErrs, isSubagent)
+	issues.carryRetrying(current, isSubagent)
 	current.SessionIssues = issues.codes
 	current.IssueCounts = make(map[string]int, len(issues.tallies))
 	for code, tally := range issues.tallies {

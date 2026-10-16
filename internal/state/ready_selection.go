@@ -455,7 +455,7 @@ func (s *Store) checkSelectingPendingWrite(ctx context.Context, id string, p Pen
 func (s *Store) checkSelectingPendingRemoval(id string) error {
 	read, closeRead := s.WithReadBudget(s.durableContext(), s.resourceBudget)
 	defer closeRead()
-	pending, found, err := read.catalogPendingForFence(id)
+	pending, found, err := read.pendingFenceView(id)
 	if err != nil {
 		return errors.Join(ErrDurableStorageRecovery, err)
 	}
@@ -467,6 +467,10 @@ func (s *Store) checkSelectingPendingRemoval(id string) error {
 	}
 	if pending.Selection == nil {
 		return nil
+	}
+	// A selection is validated against the whole publication it selects.
+	if pending, found, err = read.catalogPendingForFence(id); err != nil || !found || pending.Selection == nil {
+		return errors.Join(ErrDurableStorageRecovery, err)
 	}
 	if err = read.validateReadySelection(s.durableContext(), pending); err != nil {
 		return err

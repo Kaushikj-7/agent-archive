@@ -29,6 +29,67 @@ def event(action, package=CLI, **kw):
     return dict(Action=action, Package=package, **kw)
 
 
+class JSONStreamTest(unittest.TestCase):
+    def test_concatenated_multiline_objects_and_all_strip_whitespace(self):
+        items = [{'ImportPath': 'synthetic/pkg', 'Nested': {'a': [1, True, None]}},
+                 event('output', Output='quoted braces {} and newline\n'), {}]
+        for separator in ('', '\n', ' \t\r\n', '\v\f\u0085\u00a0\u2003'):
+            with self.subTest(separator=separator):
+                text = separator + separator.join(json.dumps(item, indent=2) for item in items) + separator
+                self.assertEqual(runner.json_stream(text), items)
+        for text in ('', ' \t\r\n\v\f\u0085\u00a0\u2003'):
+            self.assertEqual(runner.json_stream(text), [])
+
+    def test_malformed_trailing_input_and_nonobject_records_still_fail(self):
+        for text in ('{', '{} bad-json', '{} {"incomplete":', '{}\n{"x":1,}', '{}\x00'):
+            with self.subTest(text=text), self.assertRaises(json.JSONDecodeError):
+                runner.json_stream(text)
+        for value in ([], 'text', 1, True, None):
+            with self.subTest(value=value), self.assertRaisesRegex(runner.Failure, 'JSON record is not an object'):
+                runner.json_stream('{}\n' + json.dumps(value))
+
+    def test_malformed_error_retains_record_relative_document_and_position(self):
+        malformed = '{\n  "x": 1,\n}'
+        with self.assertRaises(json.JSONDecodeError) as expected:
+            json.JSONDecoder().raw_decode(malformed)
+        with self.assertRaises(json.JSONDecodeError) as actual:
+            runner.json_stream('{} \n\u2003' + malformed)
+        for field in ('msg', 'doc', 'pos', 'lineno', 'colno'):
+            self.assertEqual(getattr(actual.exception, field), getattr(expected.exception, field))
+        self.assertEqual(str(actual.exception), str(expected.exception))
+
+    def test_large_stream_decodes_original_input_at_advancing_indices_without_suffix_copies(self):
+        class ImmutableInput(str):
+            def strip(self, *args):
+                raise AssertionError('whole-stream strip scans the remaining suffix')
+
+            def lstrip(self, *args):
+                raise AssertionError('whole-stream lstrip copies the remaining suffix')
+
+            def __getitem__(self, key):
+                if isinstance(key, slice):
+                    raise AssertionError('JSON stream copied a suffix')
+                return super().__getitem__(key)
+
+        count = 4096
+        row = event('output', Output='synthetic ' * 128)
+        text = ImmutableInput('\n' + (json.dumps(row) + '\n') * count)
+        decoder = json.JSONDecoder()
+        indices = []
+
+        def decode(source, index):
+            self.assertIs(source, text)
+            self.assertGreater(index, indices[-1] if indices else -1)
+            indices.append(index)
+            return decoder.raw_decode(source, index)
+
+        with mock.patch.object(runner.json, 'JSONDecoder', return_value=mock.Mock(raw_decode=decode)):
+            actual = runner.json_stream(text)
+        self.assertEqual(actual, [row] * count)
+        self.assertEqual(len(indices), count)
+        self.assertEqual(indices[0], 1)
+
+
 def synthetic_vet_context(image='unit1'):
     """Synthetic unit identity; never evidence of hosted/native execution."""
     import go_cache_context
@@ -233,7 +294,7 @@ class WorkerCountTest(unittest.TestCase):
                     if command[1]=='list':
                         path.write_text(records(*[{'ImportPath':p,'Dir':'/tmp','TestGoFiles':['test.go']} for p in ['p0','p1',CLI]]))
                     elif '-list' in command:
-                        path.write_text(records(event('output',Output='TestA\n'),event('output',Output='TestB\n'),event('pass')))
+                        path.write_text(records(event('start'),event('output',Output='TestA\n'),event('output',Output='TestB\n'),event('pass')))
                     elif command[1]=='vet':path.write_text('')
                     elif CLI in command:
                         pattern=command[command.index('-run')+1]
@@ -313,7 +374,7 @@ class WorkerVetReceiptTest(unittest.TestCase):
 
 class GateTest(unittest.TestCase):
     def test_event_verdict_fail_closed(self):
-        pr = {j: {'result': s} for j, s in [('linux-short', 'success'), ('linux-full', 'success'), ('script-tests', 'success'), ('macos-smoke','success'), ('tier-plan','success'), ('source-audit','success')]}
+        pr = {j: {'result': s} for j, s in [('linux-short', 'success'), ('linux-full', 'success'), ('script-static', 'success'), ('script-install', 'success'), ('script-purge', 'success'), ('macos-smoke','success'), ('source-audit','success')]}
         runner.verdict('pull_request', 'refs/pull/1/merge', pr)
         candidate = copy.deepcopy(pr)
         candidate['linux-short']['result'], candidate['linux-full']['result'], candidate['source-audit']['result'] = 'skipped', 'success', 'skipped'
@@ -324,6 +385,13 @@ class GateTest(unittest.TestCase):
                 runner.verdict(event_name, ref, needs)
         for base, event_name, ref in ((pr, 'pull_request', ''), (candidate, 'push', 'refs/heads/release-candidate/x')):
             for job in base:
+                missing = copy.deepcopy(base); del missing[job]
+                with self.subTest(event=event_name, missing=job), self.assertRaises(runner.Failure):
+                    runner.verdict(event_name, ref, missing)
+                if base[job]['result'] == 'success':
+                    skipped = copy.deepcopy(base); skipped[job]['result'] = 'skipped'
+                    with self.subTest(event=event_name, skipped=job), self.assertRaises(runner.Failure):
+                        runner.verdict(event_name, ref, skipped)
                 for result in ('failure', 'cancelled', None, 'unexpected'):
                     bad = copy.deepcopy(base);bad[job]['result'] = result
                     with self.assertRaises(runner.Failure):
@@ -377,6 +445,7 @@ def emit(action,package,**kw):print(json.dumps(dict(Action=action,Package=packag
 if args[0]=='list':
  for name,has_tests in packages.items():print(json.dumps(dict(ImportPath=name,Dir='/fixture',TestGoFiles=['x_test.go'] if has_tests else [])))
 elif '-list' in args:
+ emit('start',cli)
  for name in ['TestA','FuzzB','Example']:emit('output',cli,Output=name+'\n')
  emit('pass',cli)
 elif args[0]=='vet':print('vet complete')

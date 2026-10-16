@@ -91,8 +91,8 @@ type Handoff struct {
 	Plan         []HandoffPlanItem `json:"plan,omitempty"`
 	FilesTouched []string          `json:"files_touched,omitempty"`
 	Exchanges    []HandoffExchange `json:"exchanges"`
-	// ToolResultsUnavailable is true when the harness records no tool
-	// results at all (Cursor), so their absence is stated once.
+	// ToolResultsUnavailable is true when retained evidence cannot establish
+	// tool results, so their unavailability is stated once.
 	ToolResultsUnavailable bool             `json:"tool_results_unavailable,omitempty"`
 	Gaps                   []HandoffGap     `json:"capture_gaps,omitempty"`
 	Elisions               []HandoffElision `json:"elisions,omitempty"`
@@ -106,19 +106,20 @@ type Handoff struct {
 // was supplied, its lifecycle state and last turn outcome. Source names where
 // the bundle came from (HandoffOptions.Source).
 type HandoffSession struct {
-	RevisionID       string        `json:"revision_id,omitempty"`
-	CapturedAt       *time.Time    `json:"captured_at,omitempty"`
-	FilterVersion    string        `json:"filter_version,omitempty"`
-	ArchiveSessionID string        `json:"archive_session_id,omitempty"`
-	NativeSessionID  string        `json:"native_session_id,omitempty"`
-	Harness          string        `json:"harness"`
-	HarnessVersion   string        `json:"harness_version,omitempty"`
-	Models           []string      `json:"models,omitempty"`
-	StartedAt        *time.Time    `json:"started_at,omitempty"`
-	LastActivityAt   *time.Time    `json:"last_activity_at,omitempty"`
-	State            MetadataState `json:"state,omitempty"`
-	TurnOutcome      TurnOutcome   `json:"turn_outcome,omitempty"`
-	Source           string        `json:"source,omitempty"`
+	TokenObservations *TokenObservationSummary `json:"token_observations,omitempty"`
+	RevisionID        string                   `json:"revision_id,omitempty"`
+	CapturedAt        *time.Time               `json:"captured_at,omitempty"`
+	FilterVersion     string                   `json:"filter_version,omitempty"`
+	ArchiveSessionID  string                   `json:"archive_session_id,omitempty"`
+	NativeSessionID   string                   `json:"native_session_id,omitempty"`
+	Harness           string                   `json:"harness"`
+	HarnessVersion    string                   `json:"harness_version,omitempty"`
+	Models            []string                 `json:"models,omitempty"`
+	StartedAt         *time.Time               `json:"started_at,omitempty"`
+	LastActivityAt    *time.Time               `json:"last_activity_at,omitempty"`
+	State             MetadataState            `json:"state,omitempty"`
+	TurnOutcome       TurnOutcome              `json:"turn_outcome,omitempty"`
+	Source            string                   `json:"source,omitempty"`
 }
 
 // HandoffWorkspace is what the transcript recorded about where the work
@@ -782,6 +783,7 @@ func shortenAssistantText(steps []HandoffStep, limit int) ([]HandoffStep, int) {
 // cloneHandoff copies everything FitHandoff mutates.
 func cloneHandoff(h Handoff) Handoff {
 	out := h
+	out.Session.TokenObservations = CloneTokenObservations(h.Session.TokenObservations)
 	out.Elisions = append([]HandoffElision(nil), h.Elisions...)
 	out.Exchanges = make([]HandoffExchange, len(h.Exchanges))
 	for i, exchange := range h.Exchanges {
@@ -832,9 +834,17 @@ func BuildHandoffWithAnalysis(bundle SourceBundle, analysis Analysis, metadata *
 	if analysis.Facts.WorkspaceRoot == "" {
 		directory = ""
 	}
+	session := handoffSession(bundle, view, metadata, opts)
+	session.TokenObservations = CloneTokenObservations(analysis.TokenObservations)
+	// NativeStartedAt is the integration's original logical session start,
+	// including empty conversations. Prompt and file times are fallbacks only.
+	if !analysis.Facts.NativeStartedAt.IsZero() {
+		at := analysis.Facts.NativeStartedAt.UTC()
+		session.StartedAt = &at
+	}
 	h := Handoff{
 		Version:                HandoffVersion,
-		Session:                handoffSession(bundle, view, metadata, opts),
+		Session:                session,
 		Workspace:              compareWorkspace(HandoffWorkspace{Directory: directory, Branch: analysis.Facts.Branch}, analysis.Facts.WorkspaceRoot, opts.Checkout),
 		ToolResultsUnavailable: toolResultsUnavailable,
 		Exchanges:              exchanges,

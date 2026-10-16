@@ -18,7 +18,7 @@ func catalogCandidateSessions(ctx context.Context, env metadataCacheDependencies
 	if reader.CatalogAuthority(store) {
 		cache := listCache(env, opts.noCache)
 		if cache != nil {
-			c, err := reader.OpenSessionCatalog(ctx, cache, store, reader.ListOptions{Cache: cache, BodyRead: showBodyObserver(reuse, catalogBodyObserver(env))})
+			c, err := reader.OpenSessionCatalog(ctx, cache, store, reader.ListOptions{Cache: cache, BodyRead: showBodyObserver(reuse, catalogBodyObserver(env)), Progress: listReadProgress(ctx)})
 			if err == nil {
 				defer func() {
 					if reuse == nil || reuse.close == nil {
@@ -52,7 +52,7 @@ func catalogCandidateSessions(ctx context.Context, env metadataCacheDependencies
 	}
 	span := trace.Start("list metadata")
 	defer span.End()
-	readOpts := reader.ListOptions{Cache: cache, Skipped: warnSkippedSidecar(stderr, command), BodyRead: showBodyObserver(reuse, catalogBodyObserver(env))}
+	readOpts := reader.ListOptions{Cache: cache, Skipped: warnSkippedSidecar(stderr, command), BodyRead: showBodyObserver(reuse, catalogBodyObserver(env)), Progress: listReadProgress(ctx)}
 	catalog, err := reader.OpenSessionCatalog(ctx, cache, store, readOpts)
 	if err != nil {
 		return nil, false, false, nil

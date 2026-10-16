@@ -6,6 +6,242 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- A long Codex thread whose history spans more than one rollout needs far less
+  read memory to capture, so it is captured at sizes that were recorded as too
+  large to read (`transcript_too_large`, per-session read memory, from about
+  60 MB of rollouts). Reconciling its history no longer reads and filters the
+  current rollout a second time, the read's encoded records are released once
+  the candidate is built, and saving a pending publication no longer reserves
+  twice the existing pending file to check its catalog commit. A pending
+  publication is also written without holding its whole encoding, and its
+  current source is prepared from the candidate it was frozen from rather than
+  decoded again. Capturing such a thread's growth needs about 5 times its
+  filtered size in read memory instead of about 12.
+
+- Archived Cursor sessions now carry the chat's name. Sessions captured from
+  Cursor's agent transcripts, which record no name, read it from the chat's
+  `composerData` row in Cursor's database (read-only, in place), imported
+  sessions included, so `list`, `show` and the handoff picker show the name
+  Cursor gave the chat rather than a prompt preview. Cursor parser 0.23.0
+  re-derives existing sessions' metadata (filter 27).
+
+- Codex sessions are titled with their Codex thread name, so `list`, search
+  and `handoff "words"` find them by it. Names come from Codex's own name index
+  (`~/.codex/session_index.jsonl`) for every Codex release, while Codex is
+  running, for imported sessions too, and stay with a thread that continues
+  into a later rollout. Before, only threads from Codex 0.159.2 with Codex
+  closed could be named, so in practice none were. Existing sessions are named
+  on the next collection (filter 26). A build older than this one cannot read
+  a named Codex thread that continued into a later rollout; update every
+  machine that reads the archive.
+
+- Codex sessions are no longer titled with their injected AGENTS.md
+  instructions. Codex 0.160 sends a project's AGENTS.md as the first user
+  message (`# AGENTS.md instructions for …`); it is now dropped like other
+  injected instructions (filter 25), so the title and the handoff's first
+  prompt are what you typed. Existing sessions are refiltered on the next
+  collection.
+
+- `list`, `show` and `handoff` find a session by the agent's own session ID
+  as well as the archive's: `handoff 01a10e11 --harness codex` finds the
+  Codex thread whose ID starts `01a10e11`.
+
+### Local native validation foundation
+
+- Add opt-in offline-tested Muse read success, missing-file and two-call
+  qualification controls with finite provider/process bounds and joined cleanup.
+  These controls add no native status, cancellation or parallel-execution claim.
+
+- Muse local snapshots now supply exact raw content proofs and bounded provisional
+  startup facts. Protected native binding v2 can retain a successful raw validation
+  checkpoint through the collector's prepared commit. Real Muse capture and empty
+  locator resolution remain unavailable.
+
+- Muse local handoff now shows recorded own input/output observations from
+  qualified completions. Full usage, cache/reasoning composition and cost remain
+  unavailable. Metadata, eval export and stats use a separate optional observation
+  summary; mixed stats disclose sessions excluded from the priced subset. Model
+  filters also select available recorded observation labels without enabling cost.
+
+- Codex capture and backfill revalidate unchanged sessions after unrelated
+  database checkpoints instead of repeatedly reporting that their source changed.
+  Fresh private snapshots retain the existing time, memory, and source checks.
+
+- An authorized human maintainer can explicitly approve performance-budget
+  exceptions on their own PR with a current-commit comment command. Explicit
+  revocation and later review decisions control that approval; ordinary CI
+  correctness, coverage and hard operation budgets still apply.
+
+- `agent-archive list` shows its progress while it loads: how many sessions
+  it has scanned, then how many it has loaded of those it will show.
+  `agent-archive handoff` shows "Preparing handoff…" after you pick a session,
+  until its first question.
+
+- `agent-archive --help` is shorter: it shows the commands for everyday use
+  (setup, status, sync, pause, resume, list, search, show, stats, backfill,
+  handoff).
+  The rest (machines, recover, feedback, migrate, eval, uninstall, purge) are
+  listed by `agent-archive help advanced`; they work as before, and
+  `agent-archive help COMMAND` still shows any command's help.
+
+- The session browser (`list`, bare `show`, `handoff`, and content `search` on
+  a terminal) loads older sessions as you scroll: moving down past the last row
+  (↓ or the wheel on it, PgDn with it on screen, or End on it) loads the next
+  batch and moves on into it, with no `o` to press first (`o` still works).
+  The footer's count ends in `+` while more can load (`1–14 of 50+`), says
+  `No older sessions.` when a load finds none (moving past that end then loads
+  nothing more until the list changes), shows `Loading …` in place of the
+  footer line instead of under the prompt, and names `PgUp/PgDn page`.
+  Reading lines is unchanged.
+
+- Browse supported ordinary Muse roots before setup with local `handoff`,
+  including exact IDs/prefixes, project scope, older preview batches and existing
+  destinations. Discovery uses one effective XDG data home. Previews show safe
+  recorded automatic names/activity or IDs; the selected file receives complete
+  strict validation. Muse capture, native show/search and destination launch
+  remain unavailable.
+
+- Muse local handoff recognizes the qualified reasoning, approval and tool-effect
+  records while omitting their private bodies. A timestamp-free ephemeral task
+  marker preserves position without inventing activity or tool results. Fixed
+  omission gaps survive retained-only privacy refresh; unknown shapes still refuse.
+
+- Read complete supported Muse exec/MSP roots with `handoff --file PATH
+  --harness muse`, including safe own prompts and committed assistant text,
+  JSON/Markdown output and handoff into an existing supported agent. Creation
+  time uses the validated reserved start. Accounting, tools, model switches,
+  children, backfill, capture and Muse destination launch
+  remain unavailable. Handoff also now respects Codex's recorded native start.
+
+
+- Keep unavailable Muse tool, file and Git measurements absent in derived
+  metadata and full evaluation exports while preserving prompt/message counts.
+  Cursor tool calls without recorded results no longer claim zero results;
+  unstructured exports omit unavailable edited-file lists.
+
+- Commands run inside Muse detect its session environment to avoid interactive
+  prompts and pagers. Handoff into supported agents removes inherited Muse
+  session variables. This adds presence detection only; Muse capture, current
+  session selection and destination launch remain unavailable.
+
+- Terminal content search now browses ranked snippets and exact bounded source
+  context in the shared browser, with next/previous matching passages, explicit
+  rerun after index changes, and current-session handoff through existing gates.
+  The owned archive skill explains snippets-first retrieval and coverage limits.
+
+- Preserve both native source authority and search indexing lifecycle protection
+  when their configuration and setup recovery records are combined.
+
+- Add explicit machine-local `setup --yes --search-indexing on|off` consent,
+  an independent bounded search indexing job, and best-effort content-free
+  publication hints after collection releases its lock. Pause and teardown
+  fence running indexing; legacy collector-only lifecycle records stay compatible.
+
+- Search adds bounded JSON, explicit wait/rebuild, source context neighbors and
+  existing-only cached readers; queries require explicit project broadening.
+  Named refresh removes cached text when fresh authority confirms deletion,
+  while unavailable metadata preserves the existing index.
+
+- Search conversation text with a private local index. Explicitly index one
+  archived session with `search --refresh --session ID --harness NAME`, query
+  cached titles/messages with `search "WORDS"`, and read exact matching passages.
+  `search --refresh` now resumes bounded namespace-wide archive catch-up, including
+  other-machine metadata/privacy changes and confirmed removals. Coverage reports
+  local observation and stable-snapshot discovery separately from indexing gaps.
+  Automatic refresh remains off until explicitly enabled for this machine.
+  Refresh now resumes bounded work after interruption, reuses unchanged sources,
+  and records retry/backoff state without delaying archive publication.
+  Verified unsupported source formats report coverage gaps instead of retrying
+  the same immutable bytes indefinitely.
+
+- The session browser (`list`, bare `show`, `show <words>`, `handoff` on a
+  terminal that reads keys) has a cursor: `▸` marks a row, ↑ ↓ and the mouse
+  wheel move it, PgUp/PgDn (space, `n`, `p`), Home and End move it a screen
+  or to the ends, and the list scrolls to keep it in view, also across a
+  resize. Enter with nothing typed opens the highlighted row (it used to
+  quit; `q` and Ctrl-D still do), and a typed number or short ID with Enter
+  still opens that row. A strip under the list spells out the highlighted
+  session: its full title, then its agent, project, PR, subagents, when it
+  was last active and its short ID; a very short window leaves it out. The
+  three lines under the list become one footer line, the keys
+  (`/ search`) and which rows are on screen (`1–14 of 86`); the
+  hidden-subagent count moves to the heading (`· 403 subagents hidden`),
+  `o older` joins the footer, and the prompt reads `Number or ID to show:`.
+  Esc out of the `/` filter keeps the highlighted session when the plain
+  list shows it. Piped output and the line-mode
+  picker keep their count line and flag advice.
+- A Codex thread whose abandoned branches fit while being read, but left too
+  little of the per-session read memory to publish the thread, is captured
+  without those branches instead of being recorded as too large to capture.
+  Whenever a branch is left out from a session that is otherwise captured,
+  `status` now says so ("Codex left out part of a session"), with only the
+  app, the project and the time; `status --json` carries it as the capture
+  diagnostic `revision_left_out`.
+- Such a thread is also captured without those branches when an earlier,
+  not yet uploaded version of the session was waiting to be replaced, instead
+  of being deferred on every pass until it failed.
+- `status` no longer says Codex left out part of a session when the only
+  branch not read again was already kept from an earlier capture of the
+  session and has not changed since: that branch is still in the archive.
+  A branch that grew since that capture is still reported, since what it
+  added is left out.
+- Stop failing every Codex session in a pass that found many new Codex
+  files. Finding where a Codex thread's rollouts are has a time allowance
+  per pass, and discovery could use all of it, so each Codex session the
+  collector then read failed ("filter transcript: source limit") while
+  Claude Code sessions published. The collector now has its own allowance.
+  When that runs out too, the Codex session being read is put off until the
+  next pass instead of failing (`sync` and `status` say "left for the next
+  pass after this pass's time for finding Codex rollouts ran out";
+  `deferred_sessions` code `lookup_allowance`), and the pass's remaining
+  Codex sessions are left for the next pass without being opened, so they
+  no longer slow the rest of the pass. A Codex session whose lookup is cut
+  off part way when the allowance runs out is put off the same way rather
+  than failing with "context deadline exceeded"; a native index read cut
+  off by a deadline is read again later in the pass instead of being
+  treated as unavailable; and discovery's lookups are charged to the
+  allowance once, not twice.
+- Stop one Codex session that needs more than a pass's whole time for
+  finding Codex rollouts from holding back every Codex session after it.
+  Such a session was first in line on every pass, spent the allowance, and
+  left the rest for the next pass, every pass. A Codex session put off for
+  that reason (`lookup_allowance`) is now read after the other Codex
+  sessions on the following passes, including once it has been put off for
+  24 hours and is reported as failed. The Codex sessions waiting on the
+  allowance, including those left unopened, form a queue, and each pass
+  reads the one at its front before any other Codex session, so neither
+  such a session nor a stream of new Codex sessions keeps the waiting ones
+  from their turn. A waiting session still not read after 24 hours is now
+  reported as failed even when the pass leaves it unopened, rather than
+  staying queued with no error. From then on it is retried with backoff
+  instead of on every pass. Retry times are anchored to when the session
+  first started waiting: after the 24-hour allowance expires, attempts
+  fall 1, 3, then 7 hours later, with gaps doubling up to a week. A late
+  failure uses the next scheduled time; it does not start a fresh one-hour
+  wait. Retries are never given up. A pass with a retry due
+  reads it first and, if it still cannot be read, reports it failed again;
+  a pass with none leaves it unopened, so it no longer uses the allowance
+  on every pass, and does not report it again (`sync` counts it as "held
+  for a later retry" and exits 0 for it), while `status` keeps listing it
+  as failed with its next retry time (`status --json`: `next_retry_at`).
+- Stop a new session from waiting for hours behind a long upload queue.
+  Each collection pass now starts with the most recently started session
+  that was not imported (a session before its own subagents), and gives
+  such sessions one slot in every four; the rest still
+  go oldest first, so imports keep uploading their oldest sessions first.
+  Codex subagent sessions whose parent session is not registered yet go
+  after every other queued session. A session a pass runs out of time
+  before reaching is now listed by `status` as "queued for the next pass,
+  N ahead" instead of "waiting for its first upload", `sync` adds "N left
+  for the next pass" to its summary, and `status --json` reports them in
+  `collector.unreached_sessions` and as the `queued` uploading state.
+- Add inert native source authority contracts and permanent writer protection, preserving existing agent capture behavior. No Muse capture operations are enabled.
+
+- Reserve publication space before new ordinary Codex backfill staging fills the durable quota,
+  including validated legacy imports with live rollout lookup and no modern binding,
+  allowing foreground imports to publish verified sessions and continue admission.
+  Already saturated retained evidence still requires separate recovery.
+
 - The session list fits your terminal: every session is one line that never
   wraps, as `#`, the agent (a colored dot and "Claude", "Codex" or "Cursor"),
   a readable title cut at a word, the project, the PR and a short time ("2m",
@@ -56,6 +292,13 @@ follow [Semantic Versioning](https://semver.org/).
   finds no session, its list of recent archived sessions reads WHEN, AGENT,
   MACHINE and COMMAND, under a header, with the short time and the agent's
   name.
+- `status --verbose` no longer prints "Capture skipped in  (Codex)" for a
+  Codex all-projects capture problem that has no project; the line reads
+  "Capture skipped (Codex)".
+
+- Reuse verified ordinary Codex inspection facts during repeated backfill planning.
+  Planning can update a bounded private disposable cache, including with `--dry-run`;
+  archive and configuration changes still require import confirmation.
 
 ## [0.2.2]
 
@@ -122,6 +365,9 @@ and the cleanup repair do not turn either failed tagged gate into a pass.
   machine. Downgrading to an earlier version while such a subagent is queued
   makes that version's collector report an admission-intent error for it each
   pass until it expires after 24 hours; nothing else is held back.
+- A resumed Claude Code subagent that finishes again before the next collector
+  pass has proved its identity no longer withdraws the identity census for
+  every session: only that subagent waits for the next pass.
 
 - Preserve the primary validation failure alongside cleanup diagnostics, and
   continue bounded cleanup of other owned processes after signal, poll or wait

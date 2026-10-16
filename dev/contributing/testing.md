@@ -26,6 +26,7 @@ python3 -B scripts/test_generate_go_shard_hints.py         # matched artifact me
 python3 -B scripts/test_go_cache_context.py               # cache identity and tracked source proof
 python3 -B scripts/test_go_cache_steps.py                 # cache failure paths and PR-only wiring
 python3 scripts/test_measure_hook.py                     # synthetic hook benchmark effect/cleanup checks
+python3 -B scripts/test_muse_qualification.py             # offline Muse isolation/corpus and bounded synthetic loopback controls
 ./scripts/test_macos_smoke.sh                             # native macOS with cgo; the PR gate
 VERSION=dev ./scripts/build-release.sh                   # the release build (CI runs it on a release tag)
 ```
@@ -42,19 +43,20 @@ retain actual vet evidence bound to their source and compiler context. Each work
 records its source, catalog, assignment and terminal coverage; the stable required
 `linux-race` verdict reconciles all eight artifacts and fails on any missing, failed or cancelled worker. All Linux
 Python gates run in independent `script-static`, `script-install` and
-`script-purge` jobs. Only purge waits for the tier plan; static and installer
-fixtures start immediately. Each lane uses isolated HOME/XDG/temp directories.
+`script-purge` jobs. Purge resolves the existing exact-source plan locally;
+static and installer fixtures start immediately. Each lane uses isolated HOME/XDG/temp directories.
 Purge discovers every complete unittest method and assigns sorted methods to two
 standard Linux workers. Each parent retains all runtime-generated cases; only
 its existing tier selection changes repeated resume boundaries. The aggregate
 checks both current-source catalogs, assignments, passing parent terminals and
 bound child streams, including the exact existing resume/cadence case union.
 Missing, duplicate or unexpected workers, parents or cases fail closed.
-The stable required `script-tests` verdict rejects missing, failed, skipped or
-cancelled lanes and remains a dependency of `linux-race`. The independent
+The required `linux-race` verdict directly rejects missing, failed, skipped or
+cancelled script lanes and validates the complete current-source purge union.
+It also verifies the Linux/Go evidence, without a separate script aggregate job. The independent
 Linux/arm64 build+vet, Darwin/arm64 no-cgo vet and Linux release build+verification
 also run in separate standard Linux jobs behind the stable `cross-build` verdict.
-A separate exact-source plan
+The existing deterministic planner runs locally in its consumers and
 selects focused representative regressions for sensitive PR changes. Its proof
 compares event base, actual head and tested merge, checks tracked bytes/types/modes,
 and includes both paths of renames and deletions. CLI, catalog, recovery, archive,
@@ -160,25 +162,25 @@ Predicted bin loads are logged separately from measured worker phase durations.
 Git invocation and worker0 vet costs stay separate from weights; the assigned
 Git package stays isolated on whichever worker receives it.
 
-The current hints use the complete four-worker observation from successful
-run38536640565 at tested merge0cd8a00e32255b89dbe22d737c30848bf5c08a7d.
-Artifact IDs, archive digests, exact settings, raw-file hashes and immutable
-historical catalog bytes are pinned; prior requests remain in the attribution.
+The current hints use the complete eight-worker schema 4 observation from successful
+normal Test run38816393618 and paired Levenshtein38816394218, at tested merge
+39c550ebd40bf68e62e8a2cf4e58fd69b3c954dc. Artifact IDs, archive digests, exact
+settings, raw-file hashes and immutable measured catalog bytes are pinned.
 Fetch that exact commit before regeneration. The importer resolves its Git tree
 and regular catalog blob independently, checks the requested catalog bytes, and
 verifies the separate named plain audit body and package PASS against that tree.
 Each sample supplies an explicit `audit_directory`; audit report and raw stream
-hashes are included. This historical import path does not change the live
-verdict's current tracked-source/event guard.
+hashes are included. This import path does not change the live verdict's
+current tracked-source/event guard or permit old schemas in live CI.
 
-The observed owned builtin package already skips the relocated race audit, so
-its elapsed cost is used directly, without another subtraction. Local shards
-without ownership add the verified same-source plain audit body cost only as
-ranking advice; this is not a measurement of race cost. Vet2.214s and isolated
-Git3.012s are observed invocation advice. All four caches restored a previous
-source prefix (exact hit false); CLI listing/build/TestMain took24–26s. These
-samples are neither empty-cache cold nor exact-cache warm controls. The body
-weights rank logical work and do not predict worker elapsed or CPU time.
+The owned builtin package already skips the relocated race audit, so its elapsed
+cost is used directly, without another subtraction. Local shards without ownership
+add the verified same-source plain audit body cost only as ranking advice.
+All eight caches reported a previous source prefix, rather than exact hits or
+empty-cache cold controls. Parent lifecycle sums include parallel descendant
+waits and process fixture effects; they rank work, not elapsed or CPU forecasts.
+The same-workload balance comparison and exact source limitations are recorded
+in [CI timing](../../docs/reference/ci-timing.md#current-schema-4-hint-refresh).
 The PR source-audit job also executes complete native Linux/amd64 plain
 `go vet ./...` sequentially after the actual named audit body. Its separate vet
 receipt pins canonical command, successful exit, raw-log hash, source before
@@ -270,7 +272,7 @@ exact reason: a real manager cannot be put in a loaded state over damaged unit
 files. The fake-manager conformance suite covers that case. Artifacts retain
 the actual SKIP and reason; other skips and missing selected manager bodies fail.
 
-The Git identity compatibility job separately runs isolated native Git tests on
+The Git identity compatibility job runs three serial isolated native Git versions on one runner:
 pinned upstream Git 2.30.2 and 2.39.2, and the runner's current Git. It logs exact
 executable versions and verifies the pinned cases. Upstream 2.30.2 tests older
 command semantics; it does not establish acceptance of a Debian-patched Git
@@ -456,15 +458,19 @@ checks. The full lint selection includes `bodyclose` and `sqlclosecheck`;
 separate `go-http` and `go-sql` checks would repeat those analyses. Keep those
 rules in the full lint selection when updating the pin.
 
-PRs run the pinned tools natively with Go from Levenshtein's `.go-version`,
+CI runs the pinned tools natively with Go from Levenshtein's `.go-version`,
 Linux amd64 build settings, and cgo enabled. `scripts/stage_native_verify.py`
 copies the tracked inputs selected by the pinned planner into a fresh temporary
 root, preserving relative paths and excluding private files and symlinks.
 This keeps unrelated packages such as `scripts/acceptance/cloudflare` outside
 the analysis, just as the container does. Native tools still have normal host
 filesystem access; staging is not a container sandbox. The checked-in
-configuration keeps Dagger for local runs, main pushes, nightly audits, and
-exact release candidates. Go build caches are not restored between CI runs,
+configuration keeps Dagger for local runs. Pushes and manual runs retain all
+six checks; nightly audits retain the `main` run and `rerun_checks: true`. Only
+PR events may select the guarded Go-only run described below. The CI adapter
+fails before execution if future community rules, environment settings, checks
+or target/run policy cannot be preserved by the native route. Verified trusted
+compilation/module seeds may be restored; check results and XDG state stay fresh,
 and vulnerability checks continue querying current advisory data.
 
 The additional `native-release-vulnerabilities` job runs on the same workflow

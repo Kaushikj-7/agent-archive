@@ -25,7 +25,7 @@ def event(package, action, **kw):
 
 
 def listing(package, names):
-    return rows([event(package,'output',Output=n+'\n') for n in names]+[event(package,'pass')])
+    return rows([event(package,'start')]+[event(package,'output',Output=n+'\n') for n in names]+[event(package,'pass')])
 
 
 def catalog(workers=8):
@@ -50,6 +50,7 @@ def evidence(root, c):
         (d/'packages.json').write_text(rows([dict(ImportPath=name,Dir='/tmp',TestGoFiles=['test.go'] if tested else []) for name,tested in c['packages'].items()]))
         (d/'listing.json').write_text(listing(r.CLI,c['cli']))
         (d/'listing-parents.json').write_text('\n'.join(listing(n,ns) for n,ns in c['parents'].items()))
+        (d/'listing-combined.json').write_text((d/'listing.json').read_text()+'\n'+(d/'listing-parents.json').read_text())
         (d/'discovery-config.json').write_text(json.dumps(CONFIG))
         for name,ns in a['parents'].items():
             (d/p.log_name(name)).write_text(body(name,ns))
@@ -71,13 +72,65 @@ def evidence(root, c):
 
 
 class ParentScheduling(unittest.TestCase):
+    def test_combined_listing_preserves_all_events_and_rejects_invalid_streams(self):
+        heavy = p.HEAVY[:2]
+        raw = listing(r.CLI, ['TestCLI']) + '\n' + '\n'.join(listing(n, ['TestA']) for n in heavy)
+        cli, parents = p.split_listing(raw, heavy)
+        self.assertEqual(r.listed_names(cli), ['TestCLI'])
+        self.assertEqual(p.listing(parents, heavy), {n:['TestA'] for n in heavy})
+        self.assertEqual(r.json_stream(cli) + r.json_stream(parents), r.json_stream(raw))
+        for invalid in (raw + '\n' + listing('unexpected', ['TestX']),
+                        raw + '\n' + listing(r.CLI, ['TestCLI']),
+                        listing(r.CLI, ['TestCLI']),
+                        raw + '\n' + rows([event(heavy[0], 'run', Test='TestA')]),
+                        raw + '\n' + rows([event(heavy[0], 'start')])):
+            with self.assertRaises(r.Failure):
+                p.split_listing(invalid, heavy)
+
+    def test_combined_primary_receipt_is_required_and_derivatives_cannot_diverge(self):
+        c = catalog(4)
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d); evidence(root, c)
+            worker = root/'0'; a = c['assignments'][0]
+            primary = worker/'listing-combined.json'; original = primary.read_text()
+            primary.unlink()
+            with self.assertRaises(r.Failure): p.verify_logs(worker, c, a)
+            primary.write_text(original)
+            derivative = worker/'listing.json'; derivative.write_text(listing(r.CLI, ['TestOther']))
+            with self.assertRaises(r.Failure): p.verify_logs(worker, c, a)
+
+    def test_schema_three_requires_explicit_historical_import_authority(self):
+        c = catalog(4); c['schema'] = 3
+        with self.assertRaises(r.Failure): p.validate(c, 4)
+        p.validate(c, 4, allow_legacy=True)
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(run_ci_tier.full_race, 'source_proof', return_value=SOURCE), mock.patch.dict(os.environ, {'GITHUB_SHA':SOURCE['source']}):
+            root = Path(d); evidence(root, dict(c, schema=4))
+            for path in root.glob('*/manifest.json'):
+                m = json.loads(path.read_text()); m['catalog'] = c; m['catalog_sha256'] = r.digest(c)
+                path.write_text(json.dumps(m)); (path.parent/'listing-combined.json').unlink()
+            with self.assertRaises(r.Failure): r.reconcile(root, 4)
+            r.reconcile(root, 4, historical_legacy=True)
+            with self.assertRaises(r.Failure): p.verify_logs(root/'0', c, c['assignments'][0])
+            p.verify_logs(root/'0', c, c['assignments'][0], allow_legacy=True)
+
+    def test_unknown_and_stale_hint_diagnostics_never_remove_compiled_units(self):
+        c = catalog(4)
+        hints = {'packages': {'light': 7, 'removed': 99}, 'cli': {'TestCLI': 1, 'TestRemoved': 9},
+                 'parents': {p.unit(p.HEAVY[0], 'TestRemoved'): 5}}
+        report = p.hint_diagnostics(c, hints)
+        self.assertIn(p.unit(r.CLI, 'FuzzSeed'), report['unknown_units'])
+        self.assertIn(p.unit(p.HEAVY[0], 'TestNewlyAdded'), report['unknown_units'])
+        self.assertEqual(report['stale_hints']['packages'], ['removed'])
+        self.assertEqual(report['stale_hints']['cli'], ['TestRemoved'])
+        self.assertEqual(set(report['unknown_units']), set(c['units']) - {'light', p.unit(r.CLI, 'TestCLI')})
+
     def test_lane_allocation_does_not_hide_ordinary_work_behind_cli_weights(self):
         packages = {r.CLI: True, **{name: True for name in ('a','b','c','d')}}
         hints = {'packages': {'a':100, 'b':90, 'c':80, 'd':70},
                  'cli': {'TestExpensive':10000}}
         c = p.build(SOURCE['source'], SOURCE, CONFIG, packages, ['TestExpensive'], {}, hints, 2)
         p.validate(c, 2)
-        self.assertEqual(c['schema'], 3)
+        self.assertEqual(c['schema'], 4)
         self.assertEqual(c['allocation'], p.ALLOCATION)
         loads = [sum(hints['packages'][name] for name in a['packages']) for a in c['assignments']]
         self.assertEqual(loads, [170,170])
@@ -248,9 +301,10 @@ class ParentScheduling(unittest.TestCase):
         workflow=(Path(__file__).resolve().parent.parent/'.github/workflows/test.yml').read_text()
         short=workflow
         self.assertIn('      - run: python3 -B scripts/test_go_parent_shards.py', workflow)
-        self.assertIn('WORKERS: 8',short)
-        self.assertIn('shard: [0, 1, 2, 3, 4, 5, 6, 7]',short)
-        self.assertEqual(short.count('run_go_shard.py --workers 8'),2)
+        self.assertIn('WORKERS: ${{ matrix.workers }}',short)
+        self.assertIn("'{\"workers\":[8],\"shard\":[0,1,2,3,4,5,6,7]}'",short)
+        self.assertIn("'{\"workers\":[4],\"shard\":[0,1,2,3]}'",short)
+        self.assertEqual(short.count('run_go_shard.py --workers \"$WORKERS\"'),2)
         for n in (2,4,8):self.assertEqual(r.worker_count(n),n)
         self.assertIn('linux-short',workflow.split('  linux-race:',1)[1])
 

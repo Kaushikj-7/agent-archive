@@ -12,6 +12,24 @@ import (
 	"io"
 )
 
+// UnsupportedSourceSchemaError identifies an otherwise readable format header
+// whose schema this binary cannot interpret. It does not verify source ownership
+// or the compressed checksum; callers must establish those independently.
+type UnsupportedSourceSchemaError struct {
+	Version int
+}
+
+func (e *UnsupportedSourceSchemaError) Error() string {
+	return fmt.Sprintf("unsupported source schema version %d; this build reads schema %d only", e.Version, SourceSchemaVersion)
+}
+
+func unsupportedSourceSchema(version int) error {
+	if version == SourceSchemaVersion || version == HistorySourceSchemaVersion {
+		return errors.New("source line 1 is not a JSONL header")
+	}
+	return &UnsupportedSourceSchemaError{Version: version}
+}
+
 // Source bundle wire format, schema versions 2 and 3: gzip of newline-delimited JSON.
 // Every line is one object with a "kind" discriminator, in this order:
 //
@@ -331,7 +349,7 @@ func (s *sourceDecodeState) decodeLine(raw []byte, unterminated bool, scanErr er
 func sourceUnterminatedError(raw []byte, lineNo int, scanErr error) error {
 	var probe sourceProbe
 	if lineNo == 1 && json.Unmarshal(raw, &probe) == nil && probe.Kind == "" && probe.SchemaVersion != nil {
-		return fmt.Errorf("unsupported source schema version %d; this build reads schema %d only", *probe.SchemaVersion, SourceSchemaVersion)
+		return unsupportedSourceSchema(*probe.SchemaVersion)
 	}
 	switch {
 	case errors.Is(scanErr, ErrSourceTooLarge):
@@ -359,7 +377,7 @@ func sourceLineProbe(raw []byte, lineNo int) (sourceProbe, error) {
 func (s *sourceDecodeState) decodeHeader(raw []byte, probe sourceProbe) (SourceLine, error) {
 	if probe.Kind != SourceLineHeader {
 		if probe.Kind == "" && probe.SchemaVersion != nil {
-			return SourceLine{}, fmt.Errorf("unsupported source schema version %d; this build reads schema %d only", *probe.SchemaVersion, SourceSchemaVersion)
+			return SourceLine{}, unsupportedSourceSchema(*probe.SchemaVersion)
 		}
 		return SourceLine{}, fmt.Errorf("source line 1 is %q, but the header must come first", probe.Kind)
 	}
@@ -368,7 +386,7 @@ func (s *sourceDecodeState) decodeHeader(raw []byte, probe sourceProbe) (SourceL
 		return SourceLine{}, fmt.Errorf("decode source header: %w", err)
 	}
 	if decoded.SchemaVersion != SourceSchemaVersion && decoded.SchemaVersion != HistorySourceSchemaVersion {
-		return SourceLine{}, fmt.Errorf("unsupported source schema version %d; this build reads schema %d only", decoded.SchemaVersion, SourceSchemaVersion)
+		return SourceLine{}, unsupportedSourceSchema(decoded.SchemaVersion)
 	}
 	if decoded.Counts.NativeRecords < 0 || decoded.Counts.NativeText < 0 || decoded.Counts.SupplementalEvidence < 0 {
 		return SourceLine{}, errors.New("source header has negative counts")

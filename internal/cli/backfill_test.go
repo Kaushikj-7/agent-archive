@@ -303,20 +303,19 @@ func TestBackfillGolden(t *testing.T) {
 	}
 }
 
-// A dry run writes nothing: the data directory, and the folder holding
-// Cursor's database, are byte-for-byte unchanged, with no -journal, -wal, or
-// -shm file created beside the database.
-func TestBackfillDryRunWritesNothing(t *testing.T) {
+// A dry run changes only disposable inspection facts. Archive/configuration
+// and Cursor database contents remain byte-for-byte unchanged.
+func TestBackfillDryRunPreservesArchiveAndNativeData(t *testing.T) {
 	t.Parallel()
 	f := newBackfillFixture(t)
 	cursorDir := filepath.Dir(macCursorDatabase(f.userHome))
-	before, cursorBefore := snapshotTree(t, f.data), snapshotTree(t, cursorDir)
+	before, cursorBefore := snapshotArchiveTree(t, f.data), snapshotTree(t, cursorDir)
 	for _, args := range [][]string{{"--dry-run"}, {"--dry-run", "--json"}} {
 		if _, errOut, code := f.run(t, args...); code != 0 {
 			t.Fatalf("%v: code %d: %s", args, code, errOut)
 		}
 	}
-	if after := snapshotTree(t, f.data); after != before {
+	if after := snapshotArchiveTree(t, f.data); after != before {
 		t.Fatalf("data directory changed:\n%s\n---\n%s", before, after)
 	}
 	if after := snapshotTree(t, cursorDir); after != cursorBefore {
@@ -379,10 +378,29 @@ func TestBackfillUnreadableFolder(t *testing.T) {
 
 func snapshotTree(t *testing.T, dir string) string {
 	t.Helper()
+	return snapshotTreeFiltered(t, dir, false)
+}
+
+// snapshotArchiveTree permits only the command-owned disposable cache. Every
+// other child retains its original bytes, modes, size and modification time.
+func snapshotArchiveTree(t *testing.T, dir string) string {
+	t.Helper()
+	return snapshotTreeFiltered(t, dir, true)
+}
+
+func snapshotTreeFiltered(t *testing.T, dir string, ignoreCache bool) string {
+	t.Helper()
 	var b strings.Builder
 	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
+		}
+		if ignoreCache && path == filepath.Join(dir, "backfill-inspection-cache") {
+			return filepath.SkipDir
+		}
+		if ignoreCache && path == dir {
+			fmt.Fprintf(&b, "%s\n", info.Mode())
+			return nil
 		}
 		fmt.Fprintf(&b, "%s %d %s %s", strings.TrimPrefix(path, dir), info.Size(), info.Mode(), info.ModTime().Format(time.RFC3339Nano))
 		if info.Mode().IsRegular() {

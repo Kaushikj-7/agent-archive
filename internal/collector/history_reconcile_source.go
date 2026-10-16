@@ -9,79 +9,96 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 )
 
+// revisionsRead counts what one revisions call did with the thread's
+// best-effort (off-chain) candidates: kept were read and consumed, so they
+// still hold what the consumer retained; leftOut were not.
+type revisionsRead struct {
+	offChainKept    int
+	offChainLeftOut int
+}
+
 // revisions owns a serial read lease. The consumer must release its native
 // values before returning; only bounded filtered/staged evidence may survive.
 // A consumer that returns an error must leave its own state as it was before
 // the call: a best-effort revision it refuses for a limit is left out.
-func (r providerReader) revisions(ctx context.Context, adapter agentapi.TranscriptFilter, expected sourceState, maxBytes int64, related bool, consume func(archive.FilteredTranscript, *archive.CodexSourceBinding) error) (err error) {
+// offChain false leaves out every best-effort candidate without reading it.
+func (r providerReader) revisions(ctx context.Context, adapter agentapi.TranscriptFilter, expected sourceState, maxBytes int64, related, offChain bool, consume func(archive.FilteredTranscript, *archive.CodexSourceBinding) error) (read revisionsRead, err error) {
 	provider, _, err := r.binding()
 	if err != nil {
-		return err
+		return read, err
 	}
 	pass, closePass, err := r.pass(ctx, provider, adapter.Name())
 	if err != nil {
-		return err
+		return read, err
 	}
 	defer func() { err = errors.Join(err, closePass()) }()
 	historical, ok := pass.(agentapi.SourceRevisions)
 	if !ok {
-		return agentapi.Wrap(agentapi.Unavailable, errors.New("historical revision reader unavailable"))
+		return read, agentapi.Wrap(agentapi.Unavailable, errors.New("historical revision reader unavailable"))
 	}
 	limits := agentapi.ReadLimits{RawBytes: maxRawBytes(r.harness, maxBytes), RecordBytes: recordLimit, SubagentMetadata: r.subagentMetadata}
 	snap, err := pass.Read(ctx, r.ref, limits)
 	if err != nil {
-		return err
+		return read, err
 	}
 	candidates, ok := snap.(agentapi.SourceRevisionCandidates)
 	if !ok {
-		return errors.Join(agentapi.Wrap(agentapi.Unavailable, errors.New("historical candidate coverage unavailable")), snap.Close())
+		return read, errors.Join(agentapi.Wrap(agentapi.Unavailable, errors.New("historical candidate coverage unavailable")), snap.Close())
 	}
 	if snap.Observation().Signature != expected.observation.Signature {
-		return errors.Join(agentapi.Wrap(agentapi.Changed, errors.New("active revision changed during reconciliation")), snap.Close())
+		return read, errors.Join(agentapi.Wrap(agentapi.Changed, errors.New("active revision changed during reconciliation")), snap.Close())
 	}
 	_, admissionErr := r.snapshotBinding(ctx, snap)
 	if admissionErr != nil {
-		return errors.Join(admissionErr, snap.Close())
+		return read, errors.Join(admissionErr, snap.Close())
 	}
 	set, candidateErr := candidates.RevisionCandidates(ctx)
 	if err := errors.Join(candidateErr, snap.Close()); err != nil {
-		return err
+		return read, err
 	}
 	if r.discoveryRoot() == "" {
 		if related || len(set.Chain) > 1 {
-			return agentapi.Wrap(agentapi.Unavailable, errors.New("historical reconciliation requires an admitted source home"))
+			return read, agentapi.Wrap(agentapi.Unavailable, errors.New("historical reconciliation requires an admitted source home"))
 		}
 		// Off-chain rollouts are only ever best effort; without an admitted
 		// source home they are not read at all.
 		set.BestEffort = nil
 	}
+	if !offChain {
+		read.offChainLeftOut, set.BestEffort = len(set.BestEffort), nil
+	}
 	if len(set.Chain)+len(set.BestEffort) > archive.MaxHistorySpans {
-		return agentapi.Wrap(agentapi.Limit, errors.New("historical candidate count exceeded"))
+		return read, agentapi.Wrap(agentapi.Limit, errors.New("historical candidate count exceeded"))
 	}
 	// Raw, retained records, and filtered bytes have independent aggregate bounds.
 	budget := revisionBudget{raw: maxRawBytes(r.harness, maxBytes), filtered: 128 << 20, records: archive.MaxHistoryRecords}
 	for _, ref := range set.Chain {
+		// The chain's tip is the current revision, which the scan's own read
+		// already holds and which the consumer would only drop. Reading it
+		// again would hold a second filtered copy of the whole chain (the
+		// tip's history includes every segment before it), so a long thread
+		// would need about twice its size to reconcile.
+		if set.Active.Path != "" && ref.Path == set.Active.Path {
+			continue
+		}
 		if err := r.readRevision(ctx, historical, adapter, ref, limits, maxBytes, &budget, consume); err != nil {
-			return err
+			return read, err
 		}
 	}
-	// A best-effort candidate that cannot be read, or no longer fits the
-	// budget the chain left or the consumer's own limits, is left out: an
-	// off-chain rollout never blocks the chain's own capture. A failure that
-	// clears on its own (the pass's shared read budget, a source changed while
-	// reading, cancellation) still fails, so the session defers and a later
-	// pass reads the candidate: leaving it out would record a signature that
-	// an abandoned branch never changes again. The consumer's other failures
-	// still fail. A refusal at the session's own read ceiling is lasting, not
-	// the shared budget's pressure: the session meets it again every pass, and
-	// failing would record the whole session as too large although its chain
-	// fits, so the candidate is left out. A left-out candidate releases what
-	// it retained and its ceiling refusal is forgotten, so neither counts
-	// against what the scan does next.
+	// Lasting read refusals and fixed limits may leave a best-effort revision
+	// out without blocking the chain's capture. Classified Unavailable errors
+	// instead fail reconciliation so a later pass retries the missing input.
+	// Shared read-budget pressure, source changes, and cancellation also fail;
+	// only source changes use the caller's deferral path. Omitting retryable
+	// evidence would record a signature an abandoned branch never changes.
+	// A refusal at the session's own read ceiling is lasting: the session
+	// meets it every pass even when its chain fits. A left-out candidate
+	// releases what it retained and its ceiling refusal is forgotten, so
+	// neither counts against what the scan does next.
 	readBudget := r.retainedBudget()
 	for _, ref := range set.BestEffort {
 		if err := ctx.Err(); err != nil {
-			return err
+			return read, err
 		}
 		before, mark, exceeded := budget, r.retainedMark(), readBudget.ScopeExceeded()
 		var consumeErr error
@@ -90,25 +107,27 @@ func (r providerReader) revisions(ctx context.Context, adapter agentapi.Transcri
 			return consumeErr
 		})
 		if err == nil {
+			read.offChainKept++
 			continue
 		}
 		if ctx.Err() != nil || !leaveOutBestEffort(err, consumeErr != nil, readBudget.ScopeExceeded()) {
-			return errors.Join(err, ctx.Err())
+			return read, errors.Join(err, ctx.Err())
 		}
 		budget = before
 		r.releaseRetainedAfter(mark)
 		if !exceeded {
 			readBudget.ForgetScopeExceeded()
 		}
+		read.offChainLeftOut++
 	}
 	final, err := pass.Signature(ctx, r.ref)
 	if err != nil {
-		return err
+		return read, err
 	}
 	if final.Signature != expected.observation.Signature {
-		return agentapi.Wrap(agentapi.Changed, errors.New("active revision changed after reconciliation"))
+		return read, agentapi.Wrap(agentapi.Changed, errors.New("active revision changed after reconciliation"))
 	}
-	return nil
+	return read, nil
 }
 
 // errRevisionDoesNotFit marks a revisions consumer's refusal of one revision
@@ -118,17 +137,17 @@ func (r providerReader) revisions(ctx context.Context, adapter agentapi.Transcri
 var errRevisionDoesNotFit = errors.New("historical revision does not fit")
 
 // leaveOutBestEffort reports whether a best-effort revision's failure only
-// leaves it out: a failure that will not clear on its own (a missing,
-// unreadable or unsafe rollout, a limit, or a read budget refusal at the
-// session's own ceiling, overCeiling). One that can clear (the pass's shared
-// read budget held by others, a source changed while reading, cancellation)
-// fails the reconciliation so it is retried. A consumer's failures are left
+// leaves it out: a lasting refusal such as unsafe format, a limit, or a
+// read budget refusal at the session's own ceiling, overCeiling. A classified
+// Unavailable read, the pass's shared read budget held by others, a source
+// changed while reading, or cancellation can clear on a later pass, so
+// they fail the reconciliation so it is retried. A consumer's failures are left
 // out only for its limits, which leave its state unchanged.
 func leaveOutBestEffort(err error, consumer, overCeiling bool) bool {
 	if errors.Is(err, errRevisionDoesNotFit) {
 		return true
 	}
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || agentapi.HasFailure(err, agentapi.Changed) {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || agentapi.HasFailure(err, agentapi.Changed) || agentapi.HasFailure(err, agentapi.Unavailable) {
 		return false
 	}
 	if errors.Is(err, agentapi.ErrReadBudget) {
@@ -206,7 +225,8 @@ func (r providerReader) readRevision(ctx context.Context, historical agentapi.So
 
 func (r providerReader) filterRevision(ctx context.Context, snapshot agentapi.SourceSnapshot, adapter agentapi.TranscriptFilter, ref agentapi.SourceRef, limits agentapi.ReadLimits, maxBytes int64, recordsLeft *int) (filtered archive.FilteredTranscript, binding *archive.CodexSourceBinding, err error) {
 	defer func() { err = errors.Join(err, snapshot.Close()) }()
-	binding, err = r.snapshotBinding(ctx, snapshot)
+	carrier, admissionErr := r.snapshotBinding(ctx, snapshot)
+	binding, err = carrier.CodexBinding(), admissionErr
 	if err != nil || binding == nil {
 		return filtered, binding, errors.Join(err, missingRevisionBinding(binding))
 	}

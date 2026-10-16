@@ -208,9 +208,33 @@ func (l *CodexRolloutLookup) checkBudget(ctx context.Context) error {
 		return err
 	}
 	if l.remaining <= 0 {
-		return agentapi.Wrap(agentapi.Limit, errors.New("native lookup pass deadline"))
+		return allowanceSpent("native lookup pass deadline")
 	}
 	return nil
+}
+
+// allowanceSpent is the refusal of a lookup call past the pass's allowance:
+// a limit of this pass, not of the source, which the next pass reads.
+func allowanceSpent(what string) error {
+	return agentapi.WithCause(agentapi.Wrap(agentapi.Limit, errors.New(what)), agentapi.CauseLookupAllowanceSpent)
+}
+
+// AllowanceSpent reports whether this pass's lookup time is used up, so that
+// every further Rollout, Thread and Check call fails (see
+// agentapi.CodexRolloutAllowance).
+func (l *CodexRolloutLookup) AllowanceSpent() bool { return !l.closed && l.remaining <= 0 }
+
+// BeginCollection gives a collector pass its own lookup allowance, a fresh
+// Budget of lookup time and HeaderProbes header probes, separate from what
+// discovery (or import registration) spent of the same lookup before it.
+// Discovery takes as much of Budget as it can use, so without this a pass
+// with a large discovery backlog left the collector none, and every Codex
+// session failed. Observations and cached threads carry over: they are the
+// same pass's validated facts, and every consumer rechecks a locator before
+// using it.
+func (l *CodexRolloutLookup) BeginCollection() {
+	l.remaining = Budget
+	l.probes = 0
 }
 
 func (l *CodexRolloutLookup) inspect(ctx context.Context, path, thread string) (*agentapi.SourceRef, error) {
@@ -230,7 +254,7 @@ func (l *CodexRolloutLookup) inspect(ctx context.Context, path, thread string) (
 		}
 	}
 	if l.probes >= HeaderProbes {
-		return nil, agentapi.Wrap(agentapi.Limit, errors.New("native header probe limit"))
+		return nil, allowanceSpent("native header probe limit")
 	}
 	const headerCharge = int64(sourcefacts.HeaderBytes + 128<<10)
 	if !reservation.Reserve(headerCharge) {
@@ -254,19 +278,18 @@ func (l *CodexRolloutLookup) inspect(ctx context.Context, path, thread string) (
 }
 
 // Rollout returns the locators of one physical rollout, found by its ID: its
-// observed locators that still exist, or else the rollout files named for it
+// observed locators that still exist, together with rollout files named for it
 // in the day directories its UUIDv7 creation time selects and in
 // archived_sessions/. The source provider reopens each and checks its header
 // identity. A Key is the observed thread, or empty for a locator found by
 // name alone.
-func (l *CodexRolloutLookup) Rollout(ctx context.Context, id string) ([]agentapi.SourceRef, error) {
-	var done func()
-	var operationErr error
-	ctx, done, operationErr = l.beginOperation(ctx)
-	if operationErr != nil {
-		return nil, operationErr
+func (l *CodexRolloutLookup) Rollout(ctx context.Context, id string) (_ []agentapi.SourceRef, err error) {
+	var done func(*error)
+	ctx, done, err = l.beginOperation(ctx)
+	if err != nil {
+		return nil, err
 	}
-	defer done()
+	defer done(&err)
 	if err := l.checkBudget(ctx); err != nil {
 		return nil, err
 	}
@@ -275,7 +298,14 @@ func (l *CodexRolloutLookup) Rollout(ctx context.Context, id string) ([]agentapi
 	}
 	paths := map[string]string{}
 	for path := range l.byPhysical[id] {
-		if !rolloutPresent(path) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		present, err := physicalLocatorPresent(path)
+		if err != nil {
+			return nil, err
+		}
+		if !present {
 			continue
 		}
 		if len(paths) >= archive.MaxHistorySpans {
@@ -283,17 +313,21 @@ func (l *CodexRolloutLookup) Rollout(ctx context.Context, id string) ([]agentapi
 		}
 		paths[path] = l.observations[path].identity.ThreadID
 	}
-	if len(paths) == 0 {
-		located, err := l.locate(ctx, id)
-		if err != nil {
-			return nil, err
+	// An observed locator is a hint, never evidence that a second copy does
+	// not exist in the bounded native directories. Preserve observed paths
+	// outside those directories as well as their validated thread hints.
+	located, err := l.locate(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	for _, path := range located {
+		if _, observed := paths[path]; observed {
+			continue
 		}
-		for _, path := range located {
-			if len(paths) >= archive.MaxHistorySpans {
-				return nil, agentapi.Wrap(agentapi.Limit, errors.New("physical locator limit"))
-			}
-			paths[path] = ""
+		if len(paths) >= archive.MaxHistorySpans {
+			return nil, agentapi.Wrap(agentapi.Limit, errors.New("physical locator limit"))
 		}
+		paths[path] = ""
 	}
 	refs := make([]agentapi.SourceRef, 0, len(paths))
 	for path, thread := range paths {
@@ -330,14 +364,13 @@ func (l *CodexRolloutLookup) RegisteredThread(ctx context.Context, id string) (a
 	return l.thread(ctx, id)
 }
 
-func (l *CodexRolloutLookup) thread(ctx context.Context, id string) (agentapi.CodexRolloutSet, error) {
-	var done func()
-	var operationErr error
-	ctx, done, operationErr = l.beginOperation(ctx)
-	if operationErr != nil {
-		return agentapi.CodexRolloutSet{}, operationErr
+func (l *CodexRolloutLookup) thread(ctx context.Context, id string) (_ agentapi.CodexRolloutSet, err error) {
+	var done func(*error)
+	ctx, done, err = l.beginOperation(ctx)
+	if err != nil {
+		return agentapi.CodexRolloutSet{}, err
 	}
-	defer done()
+	defer done(&err)
 	if err := l.checkBudget(ctx); err != nil {
 		return agentapi.CodexRolloutSet{}, err
 	}
@@ -494,16 +527,16 @@ func (l *CodexRolloutLookup) candidateDigests(paths []string) []rolloutObservati
 	return out
 }
 
-// Check revalidates selection within the pass. One private refresh per home is
-// allowed; later same-generation appends replay into that existing private view.
-func (l *CodexRolloutLookup) Check(ctx context.Context, id, revision string) error {
-	var done func()
-	var operationErr error
-	ctx, done, operationErr = l.beginOperation(ctx)
-	if operationErr != nil {
-		return operationErr
+// Check revalidates selection within the pass. Same-generation appends replay
+// into the private view; a settled checkpoint requires a new coherent snapshot.
+// Both paths share the operation's remaining time and native memory ledger.
+func (l *CodexRolloutLookup) Check(ctx context.Context, id, revision string) (err error) {
+	var done func(*error)
+	ctx, done, err = l.beginOperation(ctx)
+	if err != nil {
+		return err
 	}
-	defer done()
+	defer done(&err)
 	if err := l.checkBudget(ctx); err != nil {
 		return err
 	}
@@ -602,6 +635,17 @@ func (l *CodexRolloutLookup) indexDeadline(ctx context.Context, root string, ref
 			}
 			view.db = nil
 			if err := appendCurrentIndex(ctx, root, view.snapshot, l.readBudget); err != nil {
+				if errors.Is(err, errIndexChanged) && ctx.Err() == nil {
+					// A checkpoint invalidates the incremental projection, not
+					// necessarily the selected thread. Discard it completely and
+					// requery a verified snapshot without renewing the allowance.
+					if cleanupErr := view.snapshot.close(); cleanupErr != nil {
+						view.unavailable = true
+						return nil, agentapi.Wrap(agentapi.Cleanup, cleanupErr)
+					}
+					delete(l.indexes, root)
+					return l.indexDeadline(ctx, root, false, deadline)
+				}
 				view.unavailable = true
 				return nil, err
 			}
@@ -630,7 +674,10 @@ func (l *CodexRolloutLookup) indexDeadline(ctx context.Context, root string, ref
 	capturedStamps := indexStamps(root)
 	snapshot, err := snapshotCurrentIndexBudget(ctx, root, nil, l.readBudget)
 	if err != nil {
-		if agentapi.Failure(err) == agentapi.Limit {
+		// A read cut off by a deadline or cancellation says nothing about
+		// the index: a later call, under a later allowance of the same pass
+		// (the collector's after discovery's), reads it again.
+		if agentapi.Failure(err) == agentapi.Limit || ctx.Err() != nil {
 			delete(l.indexes, root)
 			return nil, err
 		}
@@ -790,9 +837,18 @@ func (l *CodexRolloutLookup) closeWithContext(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-var _ agentapi.CodexRolloutLookup = (*CodexRolloutLookup)(nil)
+var (
+	_ agentapi.CodexRolloutLookup    = (*CodexRolloutLookup)(nil)
+	_ agentapi.CodexRolloutAllowance = (*CodexRolloutLookup)(nil)
+)
 
-func (l *CodexRolloutLookup) beginOperation(ctx context.Context) (context.Context, func(), error) {
+// beginOperation starts one lookup call within the allowance left, and
+// returns its end, which charges the call's time to the allowance. A call
+// that fails because the allowance ran out while it ran (its own deadline
+// passed, its caller's did not) fails as one past the allowance, whatever the
+// interrupted step reported (a context error, an index unavailable), so the
+// caller can put the source off rather than fail it.
+func (l *CodexRolloutLookup) beginOperation(ctx context.Context) (context.Context, func(*error), error) {
 	if err := l.checkBudget(ctx); err != nil {
 		return ctx, nil, err
 	}
@@ -800,7 +856,13 @@ func (l *CodexRolloutLookup) beginOperation(ctx context.Context) (context.Contex
 	deadline := started.Add(l.remaining)
 	l.deadline = deadline
 	operation, cancel := context.WithDeadline(ctx, deadline)
-	return operation, func() { cancel(); l.remaining -= time.Since(started) }, nil
+	return operation, func(err *error) {
+		if *err != nil && ctx.Err() == nil && errors.Is(operation.Err(), context.DeadlineExceeded) {
+			*err = allowanceSpent("native lookup pass deadline")
+		}
+		cancel()
+		l.remaining -= time.Since(started)
+	}, nil
 }
 
 // NativeReadBudget is the pass-owned shared native/source/cache charge ledger.

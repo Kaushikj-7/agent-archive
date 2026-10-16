@@ -135,6 +135,12 @@ func TestMemorySnapshotSurvivesSourceAndCloneMutation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The clone owns its map but must reuse the seed's immutable body. This
+	// bounded ownership check detects a regression to GET/PUT body copies
+	// without scanning or hashing a production-size fixture.
+	if &first.objects["body"].data[0] != &snapshot.entries[0].object.data[0] {
+		t.Fatal("snapshot clone copied immutable body")
+	}
 	got, v, err := first.GetCatalogVersion(ctx, "body", 100)
 	if err != nil || !bytes.Equal(got, original) || v != version {
 		t.Fatal("source mutation changed immutable snapshot", err)

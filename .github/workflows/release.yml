@@ -103,7 +103,7 @@ jobs:
 
       - name: Preserve source-bound release validation evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-validation-macos
           path: release-tier-results
@@ -130,7 +130,7 @@ jobs:
             exit 1
           fi
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: unsigned
           path: |
@@ -194,6 +194,8 @@ jobs:
         run: |
           go vet ./...
           python3 -B scripts/run_ci_tier.py --plan --tier full --output release-tier-results/plan.json
+          # Soft Go-managed memory target; race/native allocations also need headroom.
+          export GOMEMLIMIT=3GiB
           python3 -B scripts/run_ci_tier.py --tier full --suite linux --seconds 2400 --output release-tier-results
           python3 -B scripts/run_ci_tier.py --verify --tier full --suite linux --extra-plan release-tier-results/plan.json --output release-tier-results
           python3 scripts/test_release_signing.py
@@ -204,7 +206,7 @@ jobs:
 
       - name: Preserve source-bound release validation evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-validation-linux
           path: release-tier-results
@@ -220,7 +222,7 @@ jobs:
       - name: Verify build reports the release version
         run: ./scripts/verify-linux-release.sh
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: linux
           path: |
@@ -263,14 +265,14 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
         run: ./scripts/check-release-signing.sh
 
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: unsigned
           path: dist
 
       # Unsigned by design (the Codesign and Notarize steps below name only
       # the macOS binaries); see the build-linux job.
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: linux
           path: dist
@@ -354,9 +356,9 @@ jobs:
       # Records, signed by GitHub, that these exact bytes came from this
       # workflow run at this commit. Check one with:
       #   gh attestation verify agent-archive-darwin-arm64 --repo wangjohn/agent-archive
-      # Subjects are the four binaries and identity/notary manifest. The
-      # retained artifact and candidate upload also include SHA256SUMS;
-      # scripts/test_release_assets.py checks those inventories.
+      # Subjects are the four binaries, SHA256SUMS, and the identity/notary
+      # manifest; the retained artifact and candidate upload carry the same
+      # inventory. scripts/test_release_assets.py checks those inventories.
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: |
@@ -364,9 +366,10 @@ jobs:
             dist/agent-archive-darwin-arm64
             dist/agent-archive-linux-amd64
             dist/agent-archive-linux-arm64
+            dist/SHA256SUMS
             dist/release-candidate.json
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: agent-archive-${{ github.ref_name }}
           path: |
