@@ -11,6 +11,8 @@ var CaptureGapCodes = []string{
 	CaptureGapDiscoveredWithoutHookEvidence,
 	"recovered_generation",
 	"history_cumulative_tokens_unavailable",
+	"own_usage_observations_partial",
+	"cache_reasoning_cost_unqualified",
 	// Source filter (every format).
 	"binary_content_omitted",
 	"content_truncated",

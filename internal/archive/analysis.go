@@ -5,9 +5,10 @@ import "time"
 // Analysis is one pure derivation of retained evidence for all shared builders.
 // It is never a second persisted transcript and owns no source handles.
 type Analysis struct {
-	View          NormalizedView
-	Facts         NativeFacts
-	Observability Observability
+	View              NormalizedView
+	Facts             NativeFacts
+	Observability     Observability
+	TokenObservations *TokenObservationSummary
 }
 
 // AvailabilityState distinguishes a measured zero from unavailable evidence.
@@ -29,12 +30,13 @@ const (
 	AvailabilityReasonNotRecorded      AvailabilityReason = "not_recorded"
 	AvailabilityReasonHistoricalFilter AvailabilityReason = "historical_filter"
 	AvailabilityReasonParseFailed      AvailabilityReason = "parse_failed"
+	AvailabilityReasonObservationLimit AvailabilityReason = "observation_limit"
 )
 
 // Availability describes evidence in this bundle, not a current capability.
 type Availability struct {
-	State  AvailabilityState
-	Reason AvailabilityReason
+	State  AvailabilityState  `json:"state"`
+	Reason AvailabilityReason `json:"reason,omitempty"`
 }
 
 // Available reports whether this evidence can support a measured value.

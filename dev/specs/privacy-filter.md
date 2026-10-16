@@ -432,7 +432,7 @@ Native JSON responses and process output are discarded before persistence.
 
 ## Muse explicit local evidence
 
-Filter 23 supports `handoff --file PATH --harness muse` for complete ordinary
+Filter 24 supports `handoff --file PATH --harness muse` for complete ordinary
 exec/MSP roots in the qualified grammar. The [inner record union](../../schemas/muse-retained-record.schema.json)
 uses unchanged v1 ordinary rows plus closed timestamp-free v2 omissions. Ordinary rows retain: original envelope identity, physical line and nullable child
 index, exact safe integers, discriminator/schema, causal identity and only the
@@ -444,7 +444,9 @@ workspace. Integrity is unkeyed and grants no producer or capture consent.
 Own conversation requires accepted main/chat intent, matching materialization,
 actual run-start record and committed assistant linkage. Model context, deltas,
 terminal copies, task starts and notifications are not prompts. Explicit gaps
-mark accounting, tools, model switches and children unavailable. Unknown
+mark complete accounting, tools, model switches and children unavailable. Qualified
+own completions additionally retain recorded model and exact input/output
+observations, without filling normalized or billable token fields. Unknown
 authority, unsupported versions, forks, children, checkpoints, malformed or
 partial records refuse the whole file. The native JSON decoder bounds depth
 at 32, strings at 1 MiB and nodes per physical record at 200,000, in addition to
@@ -503,3 +505,20 @@ deduplicates these fixed gaps. Direct parsing refuses missing, duplicated or
 altered required omission coverage; refilter can repair it without native files.
 Old retained readers refuse the new variants and markers; unchanged ordinary v1
 rows remain readable. Frozen historical Q0 policy/corpus/projector are unchanged.
+
+Muse's closed own `model_completed` branch validates a nonempty model string,
+nonnegative exact `duration_ms`, and all six input/output/cache/reasoning counters
+between zero and 2^53−1. Only the model, input/output and typed run/source identity
+survive. Duration, cache and reasoning counters are dropped. Every completion
+requires an earlier own materialized run; source IDs and relevant source sequences
+are unique within that run. Multiple completions in one run count separately.
+Legacy event-only retained rows stay readable and contribute no invented zeros.
+
+The optional `token_observations` summary carries nullable input/output sums, at
+most 32 bounded recorded model labels, and explicit observed/coverage/composition/
+pricing availability. Complete usage, cache/reasoning relationships and billing
+remain unavailable. Models beyond the deterministic first 31 fold into
+`other`; no label establishes a billed product. Session overflow refuses;
+cross-session overflow publishes no observation numbers with the fixed
+`observation_limit` reason. Required `own_usage_observations_partial` and
+`cache_reasoning_cost_unqualified` gaps survive retained-only refresh.

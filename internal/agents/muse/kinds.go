@@ -66,6 +66,9 @@ const (
 type fieldName string
 
 const (
+	fieldObservedModel           fieldName = "model"
+	fieldObservedInput           fieldName = "input_tokens"
+	fieldObservedOutput          fieldName = "output_tokens"
 	fieldPrompt                  fieldName = "prompt"
 	fieldKind                    fieldName = "kind"
 	fieldEventKind               fieldName = "event_kind"

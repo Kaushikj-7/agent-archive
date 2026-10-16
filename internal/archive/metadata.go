@@ -696,6 +696,7 @@ func BuildMetadataWithAnalysis(bundle SourceBundle, analysis Analysis, parseErr 
 
 func assembleAnalyzedMetadata(bundle SourceBundle, analysis Analysis, metadata Metadata) Metadata {
 	view := analysis.View
+	metadata.TokenObservations = CloneTokenObservations(analysis.TokenObservations)
 	// A native end-of-turn record fills in only what the hook evidence could
 	// not establish: an observed hook stop, interrupt, or closure still wins.
 	if end := analysis.Facts.TurnEnd; end.Present {

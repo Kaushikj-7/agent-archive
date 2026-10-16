@@ -817,3 +817,16 @@ the bounded supported startup; the selected source is completely validated
 before output or destination launch. Unsupported forks, checkpoints, malformed
 suffixes and changes during reads refuse selection without falling back to a
 different root. Automatic current-session selection for Muse remains unavailable.
+
+Own input/output observations use an optional `token_observations` object with
+`input`, `output`, bounded `models`, and explicit `observed`, `coverage`,
+`composition`, `pricing` availability (`state`, optional fixed `reason`). They are
+recorded observations, not complete usage or billed tokens. A known model or
+`--prices` file cannot turn them into cost. Legacy normalized token fields remain
+absent for observation-only sessions. Stats JSON also reports
+`observation_sessions` and `coverage.observation_only_sessions`; each cost has an
+optional `observation_only_sessions` count. Mixed spend is the qualified priced
+subset and is partial even when an excluded session recorded zero input/output.
+No unpriced token total is inferred from observations. Terminal and HTML show a
+compact observation and coverage note; handoff JSON includes the same summary in
+its session and Markdown keeps values with their unavailable-accounting context.
