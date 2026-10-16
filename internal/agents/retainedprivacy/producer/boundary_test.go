@@ -14,6 +14,36 @@ import (
 	"testing"
 )
 
+type retainedSourcePath string
+
+const (
+	retainedPublicPath   retainedSourcePath = "internal/agents/retainedprivacy/proof.go"
+	retainedRequestPath  retainedSourcePath = "internal/agents/retainedprivacy/internal/sealed/request.go"
+	retainedProofPath    retainedSourcePath = "internal/agents/retainedprivacy/internal/sealed/proof.go"
+	retainedProducerPath retainedSourcePath = "internal/agents/retainedprivacy/producer/transform.go"
+)
+
+type retainedImportPath string
+
+const (
+	retainedUnsafe  retainedImportPath = "unsafe"
+	retainedReflect retainedImportPath = "reflect"
+)
+
+type retainedPrivateType string
+
+const (
+	retainedProofType     retainedPrivateType = "Proof"
+	retainedTransformType retainedPrivateType = "transform"
+)
+
+type retainedOperation string
+
+const (
+	retainedLoanOperation  retainedOperation = "*Proof.WithVerifiedTransform"
+	retainedCloseOperation retainedOperation = "*Proof.Close"
+)
+
 const retainedDomain = "github.com/wangjohn/agent-archive/internal/agents/retainedprivacy"
 
 // Every source file is parsed, including ignored files and alternate build tags.
@@ -102,7 +132,7 @@ func retainedBoundaryProblems(path string, raw []byte) []string {
 			}
 		}
 		for _, imported := range imports {
-			if imported == "unsafe" || imported == "reflect" {
+			if retainedImportPath(imported) == retainedUnsafe || retainedImportPath(imported) == retainedReflect {
 				fail("retained domain cannot bypass private proof fields")
 			}
 		}
@@ -233,13 +263,13 @@ func retainedDeclarationProblems(path string, file *ast.File, imports map[string
 	fail := func(message string) { problems = append(problems, message) }
 	allowedTypes := map[string]bool{}
 	allowed := map[string]string{}
-	switch path {
-	case "internal/agents/retainedprivacy/proof.go":
+	switch retainedSourcePath(path) {
+	case retainedPublicPath:
 		for _, name := range []string{"Proof", "Request", "Policy", "Facts", "Expectation"} {
 			allowedTypes[name] = true
 		}
 		allowed["FreezeRequest"] = "func(context.Context, Expectation, []byte, *agentapi.NativeReadBudget) (*Request, error)"
-	case "internal/agents/retainedprivacy/internal/sealed/request.go":
+	case retainedRequestPath:
 		for _, name := range []string{"Policy", "Expectation", "Request", "requestState", "Lease", "leaseCustody"} {
 			allowedTypes[name] = true
 		}
@@ -251,7 +281,7 @@ func retainedDeclarationProblems(path string, file *ast.File, imports map[string
 		allowed["*Lease.Context"] = "func() context.Context"
 		allowed["*Lease.Budget"] = "func() *agentapi.NativeReadBudget"
 		allowed["*Lease.Close"] = "func()"
-	case "internal/agents/retainedprivacy/internal/sealed/proof.go":
+	case retainedProofPath:
 		for _, name := range []string{"Facts", "Proof", "transform", "loanContext"} {
 			allowedTypes[name] = true
 		}
@@ -262,7 +292,8 @@ func retainedDeclarationProblems(path string, file *ast.File, imports map[string
 		allowed["joinLoanContext"] = "func(context.Context, context.Context) (context.Context, func())"
 		allowed["loanContext.Err"] = "func() error"
 		allowed["loanContext.Deadline"] = "func() (time.Time, bool)"
-	case "internal/agents/retainedprivacy/producer/transform.go":
+	case retainedProducerPath:
+		allowedTypes["skillPolicy"] = true
 		allowed["Transform"] = "func(*sealed.Request) (*sealed.Proof, error)"
 		allowed["fixedFilter"] = "func(string) (agentapi.TranscriptFilter, error)"
 		allowed["supportedSkill"] = "func(string) bool"
@@ -297,6 +328,9 @@ func retainedDeclarationProblems(path string, file *ast.File, imports map[string
 					if !allowedTypes[item.Name.Name] {
 						fail("new sealed-domain type or alias")
 					}
+					if item.Name.Name == "skillPolicy" && retainedTypeText(item.Type) != "string" {
+						fail("skill policy must remain a closed string enum")
+					}
 					if path != "internal/agents/retainedprivacy/proof.go" && item.Assign.IsValid() {
 						fail("private construction types cannot be aliased")
 					}
@@ -317,6 +351,12 @@ func retainedDeclarationProblems(path string, file *ast.File, imports map[string
 					}
 
 				case *ast.ValueSpec:
+					if path == string(retainedProducerPath) && declaration.Tok == token.CONST && len(item.Names) == 1 && len(item.Values) == 1 && retainedTypeText(item.Type) == "skillPolicy" {
+						choices := map[string]string{"skillNone": `"none"`, "skillMetadata": `"metadata"`, "skillBody": `"body"`}
+						if want, ok := choices[item.Names[0].Name]; ok && retainedTypeText(item.Values[0]) == want {
+							continue
+						}
+					}
 					fail("sealed domain cannot expose or retain a mutable package-level issuer")
 				}
 			}
@@ -333,19 +373,19 @@ func retainedDeclarationProblems(path string, file *ast.File, imports map[string
 				switch expression := node.(type) {
 				case *ast.CompositeLit:
 					typ, ok := expression.Type.(*ast.Ident)
-					if ok && (typ.Name == "Proof" || typ.Name == "transform") && (path != "internal/agents/retainedprivacy/internal/sealed/proof.go" || key != "New") {
+					if ok && (retainedPrivateType(typ.Name) == retainedProofType || retainedPrivateType(typ.Name) == retainedTransformType) && (path != "internal/agents/retainedprivacy/internal/sealed/proof.go" || key != "New") {
 						fail("private proof construction outside its sole constructor")
 					}
 				case *ast.CallExpr:
 					name, ok := expression.Fun.(*ast.Ident)
 					if ok && name.Name == "new" && len(expression.Args) == 1 {
 						typ, ok := expression.Args[0].(*ast.Ident)
-						if ok && (typ.Name == "Proof" || typ.Name == "transform") {
+						if ok && (retainedPrivateType(typ.Name) == retainedProofType || retainedPrivateType(typ.Name) == retainedTransformType) {
 							fail("private proof allocation must use its sole constructor")
 						}
 					}
 				case *ast.SelectorExpr:
-					if expression.Sel.Name == "transform" && (path != "internal/agents/retainedprivacy/internal/sealed/proof.go" || (key != "*Proof.WithVerifiedTransform" && key != "*Proof.Close")) {
+					if expression.Sel.Name == "transform" && (path != "internal/agents/retainedprivacy/internal/sealed/proof.go" || (retainedOperation(key) != retainedLoanOperation && retainedOperation(key) != retainedCloseOperation)) {
 						fail("private proof custody accessed outside its checked loan/close")
 					}
 				}
@@ -371,7 +411,7 @@ var retainedStructShapes = map[string]string{
 	"Policy":       "struct {\n\tFilterVersion  string `json:\"filter_version\"`\n\tAdapterVersion string `json:\"adapter_version\"`\n\tSkillEvidence  string `json:\"skill_evidence\"`\n}",
 	"Expectation":  "struct {\n\tCoveredToken string                      `json:\"covered_token\"`\n\tHadRequest   bool                        `json:\"had_request\"`\n\tRegistration archive.SessionRegistration `json:\"registration\"`\n\tStageSHA256  string                      `json:\"stage_sha256\"`\n\tMetadata     archive.Metadata            `json:\"metadata\"`\n\tOldPolicy    Policy                      `json:\"old_policy\"`\n\tTarget       Policy                      `json:\"target\"`\n}",
 	"Request":      "struct{ state *requestState }",
-	"requestState": "struct {\n\tmu               sync.Mutex\n\tctx              context.Context\n\tcancel           context.CancelCauseFunc\n\tbudget           *agentapi.NativeReadBudget\n\tcaptured         *agentapi.NativeReadBudget\n\towner            *agentapi.NativeReadReservation\n\traw, source      []byte\n\tcharged          int64\n\tclosed, borrowed bool\n}",
+	"requestState": "struct {\n\tmu               sync.Mutex\n\tctx              context.Context\n\tcancel           context.CancelCauseFunc\n\tbudget           *agentapi.NativeReadBudget\n\tcaptured         *agentapi.NativeReadBudget\n\towner            *agentapi.NativeReadReservation\n\traw              []byte\n source []byte\n\tcharged          int64\n\tclosed bool\n borrowed bool\n}",
 	"Lease":        "struct {\n\trequest *Request\n\tWire    Expectation\n\tSource  []byte\n\tcustody *leaseCustody\n}",
 	"Facts":        "struct {\n\tOwnerSHA256    string                  `json:\"owner_sha256\"`\n\tCoveredToken   string                  `json:\"covered_token\"`\n\tHadRequest     bool                    `json:\"had_request\"`\n\tStageSHA256    string                  `json:\"stage_sha256\"`\n\tInput          archive.SourceReference `json:\"input\"`\n\tOutput         archive.SourceReference `json:\"output\"`\n\tOriginalPolicy Policy                  `json:\"original_policy\"`\n\tTargetPolicy   Policy                  `json:\"target_policy\"`\n}",
 	"Proof":        "struct{ transform *transform }",
@@ -406,6 +446,7 @@ func retainedTypeText(node ast.Node) string {
 	_ = format.Node(&out, token.NewFileSet(), node)
 	return out.String()
 }
+
 func retainedFunctionType(original *ast.FuncType) string {
 	copyType := *original
 	withoutNames := func(original *ast.FieldList) *ast.FieldList {
@@ -531,7 +572,11 @@ func TestRetainedPrivacyBoundaryRejectsHiddenMintAndProducerSubstitution(t *test
 		}
 	}
 
-	for _, fixture := range []struct{ name, path, source string }{
+	for _, fixture := range []struct {
+		name   string
+		path   string
+		source string
+	}{
 		{"hidden mint", "internal/agents/retainedprivacy/producer/hidden.go", "//go:build unavailable\n\npackage producer\nimport s \"" + retainedDomain + "/internal/sealed\"\nvar Issuer=s.New\n"},
 		{"mint callback", "internal/agents/retainedprivacy/producer/transform.go", "package producer\nimport s \"" + retainedDomain + "/internal/sealed\"\nfunc Transform(){f:=s.New;_ = f}\n"},
 		{"external sealed alias", "internal/agents/retainedprivacy/extra.go", "package retainedprivacy\nimport s \"" + retainedDomain + "/internal/sealed\"\ntype Issuer=s.Proof\n"},

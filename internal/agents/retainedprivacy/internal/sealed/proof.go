@@ -29,6 +29,7 @@ type Facts struct {
 
 // Proof owns fixed retained work. Copies share one terminal Close.
 type Proof struct{ transform *transform }
+
 type transform struct {
 	mu        sync.Mutex
 	lease     *Lease
@@ -170,6 +171,7 @@ func (c loanContext) Err() error {
 	}
 	return c.Context.Err()
 }
+
 func (c loanContext) Deadline() (time.Time, bool) {
 	a, ok := c.Context.Deadline()
 	b, bok := c.original.Deadline()

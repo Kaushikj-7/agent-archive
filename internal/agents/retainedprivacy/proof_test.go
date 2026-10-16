@@ -41,13 +41,13 @@ func TestFixedRetainedTransformPreservesOriginalFactsAndOwnsDetachedOutput(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer request.Close()
+	defer closeRetained(t, request)
 	source[0] ^= 1
 	proof, err := builtin.NewBuiltins().TransformRetainedPrivacy(request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer proof.Close()
+	defer closeRetained(t, proof)
 	called := false
 	err = proof.WithVerifiedTransform(t.Context(), request, budget, func(_ context.Context, bundle archive.SourceBundle, packed archive.CompressedSource, facts retainedprivacy.Facts) error {
 		called = true
@@ -93,7 +93,7 @@ func TestFixedRetainedTransformRejectsCustomRegistryAndForeignRequest(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer request.Close()
+	defer closeRetained(t, request)
 	var bindings []builtin.Integration
 	for _, descriptor := range agentmeta.Builtins().All() {
 		integration, ok := builtin.NewBuiltins().Lookup(string(descriptor.ID))
@@ -114,12 +114,12 @@ func TestFixedRetainedTransformRejectsCustomRegistryAndForeignRequest(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer proof.Close()
+	defer closeRetained(t, proof)
 	other, err := retainedprivacy.FreezeRequest(t.Context(), expected, source, budget)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer other.Close()
+	defer closeRetained(t, other)
 	if err := proof.WithVerifiedTransform(t.Context(), other, budget, func(context.Context, archive.SourceBundle, archive.CompressedSource, retainedprivacy.Facts) error {
 		t.Fatal("foreign request used")
 		return nil
@@ -144,7 +144,7 @@ func TestFixedRetainedTransformOriginalCloseReachesActualLoanContext(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer proof.Close()
+	defer closeRetained(t, proof)
 	err = proof.WithVerifiedTransform(context.Background(), request, budget, func(ctx context.Context, _ archive.SourceBundle, _ archive.CompressedSource, _ retainedprivacy.Facts) error {
 		if err := request.Close(); err != nil {
 			t.Fatal(err)
@@ -165,7 +165,7 @@ func TestFixedRetainedTransformKeepsCapturedScopeAcrossPortDispatch(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer request.Close()
+	defer closeRetained(t, request)
 	endOther := budget.BeginScope(1)
 	defer endOther()
 	other := budget.Reservation()
@@ -248,7 +248,7 @@ func TestRetainedRequestLeaseCopiesShareTerminalClose(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer request.Close()
+	defer closeRetained(t, request)
 	lease, err := request.Borrow()
 	if err != nil {
 		t.Fatal(err)
@@ -269,5 +269,12 @@ func TestRetainedRequestLeaseCopiesShareTerminalClose(t *testing.T) {
 	}
 	if used, _ := budget.Charged(); used != 0 {
 		t.Fatal("copied close retained charges", used)
+	}
+}
+
+func closeRetained(t *testing.T, resource interface{ Close() error }) {
+	t.Helper()
+	if err := resource.Close(); err != nil {
+		t.Error(err)
 	}
 }

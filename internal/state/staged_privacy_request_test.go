@@ -47,12 +47,20 @@ func TestStagedPrivacyRequestUsesActualImmutableStageWithoutChangingOriginalAuth
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer request.Close()
+	defer func() {
+		if err := request.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	proof, err := builtin.NewBuiltins().TransformRetainedPrivacy(request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer proof.Close()
+	defer func() {
+		if err := proof.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	err = proof.WithVerifiedTransform(t.Context(), request, budget, func(_ context.Context, output archive.SourceBundle, _ archive.CompressedSource, facts retainedprivacy.Facts) error {
 		if facts.StageSHA256 != stage.SHA256 || facts.OwnerSHA256 == "" || facts.CoveredToken != pending.RequestToken || !facts.HadRequest || facts.OriginalPolicy.SkillEvidence != string(stage.SkillEvidence) || facts.TargetPolicy.SkillEvidence != "none" || output.Capture.FilterVersion != archive.FilterVersion || !output.Capture.CapturedAt.Equal(stage.Bundle.Capture.CapturedAt) {
 			t.Fatal("stage/request/policy/capture facts changed", facts)
@@ -82,6 +90,7 @@ func TestStagedPrivacyRequestRefusesMissingOrAlteredStageAndOriginalContextCance
 			id := pending.Bundle.ArchiveSessionID
 			path := filepath.Join(s.Home(), importStageRelative(id))
 			switch mode {
+			case stagedPrivacyCancelled, stagedPrivacyUnscoped: // Lifetime and ownership faults are applied below.
 			case stagedPrivacyNewer:
 				if err := s.SaveRequest(id, "newer", time.Now()); err != nil {
 					t.Fatal(err)

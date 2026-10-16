@@ -32,16 +32,19 @@ type Expectation struct {
 
 // Request snapshots only expectations. Possessing one cannot mint a Proof.
 type Request struct{ state *requestState }
+
 type requestState struct {
-	mu               sync.Mutex
-	ctx              context.Context
-	cancel           context.CancelCauseFunc
-	budget           *agentapi.NativeReadBudget
-	captured         *agentapi.NativeReadBudget
-	owner            *agentapi.NativeReadReservation
-	raw, source      []byte
-	charged          int64
-	closed, borrowed bool
+	mu       sync.Mutex
+	ctx      context.Context
+	cancel   context.CancelCauseFunc
+	budget   *agentapi.NativeReadBudget
+	captured *agentapi.NativeReadBudget
+	owner    *agentapi.NativeReadReservation
+	raw      []byte
+	source   []byte
+	charged  int64
+	closed   bool
+	borrowed bool
 }
 
 // FreezeRequest detaches the host's retained input under the original scope.
@@ -191,6 +194,7 @@ func (r *Request) Close() error {
 	s.source = nil
 	return nil
 }
+
 func (r *Request) matches(expected *Request, budget *agentapi.NativeReadBudget) error {
 	if r == nil || r != expected || r.state == nil || budget == nil || r.state.budget != budget {
 		return errors.New("retained transform request or resource owner changed")

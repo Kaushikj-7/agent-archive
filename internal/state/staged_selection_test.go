@@ -59,11 +59,13 @@ func stagedPreparedFixture(t *testing.T, request bool, records ...[]map[string]a
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := PendingPublication{MetadataKey: metadataKey, MetadataBytes: metadataBytes, Bundle: archive.SourceBundle{SchemaVersion: archive.SourceSchemaVersion, ArchiveSessionID: id, NativeSessionID: reg.NativeSessionID, ProjectID: reg.ProjectID, Capture: archive.SourceCapture{Harness: reg.Harness, AdapterName: "synthetic", FilterVersion: archive.FilterVersion, CapturedAt: at}, NativeRecords: []map[string]any{{"content": strings.Repeat("x", 96<<10)}}}, ReadyAt: at, Attempted: true, SkillEvidence: string(cfg.EffectiveSkillEvidence())}
+	nativeRecords := []map[string]any{{"content": strings.Repeat("x", 96<<10)}}
+	format := ""
 	if len(records) != 0 {
-		p.Bundle.NativeRecords = records[0]
-		p.Bundle.Capture.SourceFormat = "jsonl"
+		nativeRecords = records[0]
+		format = "jsonl"
 	}
+	p := PendingPublication{MetadataKey: metadataKey, MetadataBytes: metadataBytes, Bundle: archive.SourceBundle{SchemaVersion: archive.SourceSchemaVersion, ArchiveSessionID: id, NativeSessionID: reg.NativeSessionID, ProjectID: reg.ProjectID, Capture: archive.SourceCapture{Harness: reg.Harness, AdapterName: "synthetic", FilterVersion: archive.FilterVersion, CapturedAt: at, SourceFormat: format}, NativeRecords: nativeRecords}, ReadyAt: at, Attempted: true, SkillEvidence: string(cfg.EffectiveSkillEvidence())}
 	source, err := archive.BuildCompressedSource(p.Bundle)
 	if err != nil {
 		t.Fatal(err)

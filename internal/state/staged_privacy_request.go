@@ -75,5 +75,10 @@ func (s *Store) FreezeStagedPrivacyRequest(ctx context.Context, id, adapterVersi
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	return retainedprivacy.FreezeRequest(s.resourceContext, expected, packed.Bytes, s.resourceBudget)
+	return s.freezeStagedPrivacySnapshot(expected, packed.Bytes)
+}
+
+// The Store read lease owns this context; caller contexts cannot replace it.
+func (s *Store) freezeStagedPrivacySnapshot(expected retainedprivacy.Expectation, source []byte) (*retainedprivacy.Request, error) {
+	return retainedprivacy.FreezeRequest(s.resourceContext, expected, source, s.resourceBudget)
 }

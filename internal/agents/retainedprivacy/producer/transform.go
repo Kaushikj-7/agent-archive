@@ -115,7 +115,20 @@ func fixedFilter(harness string) (agentapi.TranscriptFilter, error) {
 		return nil, errors.New("retained privacy requires a supported production filter")
 	}
 }
-func supportedSkill(mode string) bool { return mode == "none" || mode == "metadata" || mode == "body" }
+
+type skillPolicy string
+
+const (
+	skillNone     skillPolicy = "none"
+	skillMetadata skillPolicy = "metadata"
+	skillBody     skillPolicy = "body"
+)
+
+func supportedSkill(mode string) bool {
+	policy := skillPolicy(mode)
+	return policy == skillNone || policy == skillMetadata || policy == skillBody
+}
+
 func limitSkills(in []archive.SupplementalEvidence, mode string) []archive.SupplementalEvidence {
 	out := make([]archive.SupplementalEvidence, 0, len(in))
 	for _, item := range in {
