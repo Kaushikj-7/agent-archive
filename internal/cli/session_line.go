@@ -15,8 +15,7 @@ import (
 // label, the short and long times, and the day group. Nothing here does
 // I/O, so every list, picker and summary formats a session the same way.
 
-// agentDot is the mark before an agent's name. It is the same glyph as
-// liveMark; the agent's color tells the two apart.
+// agentDot is the mark before an agent's name, colored by the agent.
 const agentDot = "●"
 
 // agentLabel is the dot and short name that stand for a harness in a
@@ -34,6 +33,8 @@ func agentLabel(harness string) (dot, name string) {
 		return agentDot, "Codex"
 	case agentmeta.Cursor:
 		return agentDot, "Cursor"
+	case agentmeta.Muse:
+		// Runtime-only identities retain the ordinary safe display fallback.
 	}
 	name = archive.DisplayLine(harness)
 	if name == "" {
@@ -63,6 +64,8 @@ func (s textStyle) agent(harness, text string) string {
 		return s.paint("38;5;39", text) // blue
 	case agentmeta.Cursor:
 		return s.paint("38;5;141", text) // violet
+	case agentmeta.Muse:
+		return s.dim(text)
 	}
 	return s.dim(text)
 }

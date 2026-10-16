@@ -349,7 +349,7 @@ func (p ImportStage) Validate(ctx context.Context, reg archive.SessionRegistrati
 }
 
 func (p ImportStage) validateOwner(reg archive.SessionRegistration) error {
-	if reg.StagedImportSHA256 != "" && reg.StagedImportSHA256 != p.SHA256 || p.Registration.ArchiveSessionID != reg.ArchiveSessionID || p.Registration.NativeSessionID != reg.NativeSessionID || p.Registration.Harness.Name != reg.Harness.Name || p.Registration.ProjectID != reg.ProjectID || p.Registration.ProjectRoot != reg.ProjectRoot || !sameHistoricalProjectProof(p.Registration, reg) || !sameImportParentProof(p.Registration, reg) || p.Registration.DestinationID != reg.DestinationID || !p.Registration.InBatch(reg.ImportBatch.Recorded()) || p.Bundle.ArchiveSessionID != reg.ArchiveSessionID || p.Bundle.NativeSessionID != reg.NativeSessionID || p.Bundle.ProjectID != reg.ProjectID || p.Bundle.Capture.Harness.Name != reg.Harness.Name {
+	if reg.StagedImportSHA256 != "" && reg.StagedImportSHA256 != p.SHA256 || p.Registration.ArchiveSessionID != reg.ArchiveSessionID || p.Registration.NativeSessionID != reg.NativeSessionID || p.Registration.Harness.Name != reg.Harness.Name || p.Registration.ProjectID != reg.ProjectID || p.Registration.ProjectRoot != reg.ProjectRoot || !sameHistoricalProjectProof(p.Registration, reg) || !sameImportParentProof(p.Registration, reg) || !sameNativeImportBinding(p.Registration.NativeBinding, reg.NativeBinding) || p.Registration.DestinationID != reg.DestinationID || !p.Registration.InBatch(reg.ImportBatch.Recorded()) || p.Bundle.ArchiveSessionID != reg.ArchiveSessionID || p.Bundle.NativeSessionID != reg.NativeSessionID || p.Bundle.ProjectID != reg.ProjectID || p.Bundle.Capture.Harness.Name != reg.Harness.Name {
 		return ErrDurableStorageRecovery
 	}
 	if len(p.Preserved) > archive.MaxHistorySpans {
@@ -409,6 +409,11 @@ func (s *Store) SaveImportSourceSet(ctx context.Context, reg archive.SessionRegi
 }
 
 func (s *Store) savePreparedImportStage(ctx context.Context, reg archive.SessionRegistration, stage ImportStage) (string, error) {
+	if reg.NativeBinding != nil {
+		if err := s.checkNativeRegistrationWrite(s.registrationPath(reg.ArchiveSessionID), reg); err != nil {
+			return "", err
+		}
+	}
 	closeWire, err := s.ownStageValidationWire(ctx, stage)
 	if err != nil {
 		return "", err
@@ -453,9 +458,42 @@ func (s *Store) savePreparedImportStage(ctx context.Context, reg archive.Session
 				return s.commitFreshSettledStage(ctx, g, reg, stage.SkillEvidence, rename)
 			})
 		}
-		return s.writeDurableGuard(ctx, g, importStageRelative(reg.ArchiveSessionID), stage)
+		return s.writeDurableGuardHeadroom(ctx, g, importStageRelative(reg.ArchiveSessionID), stage, nil, stage.publicationHeadroom())
 	})
 	return digest, err
+}
+
+// publicationHeadroom classifies only the complete, already validated selected
+// stage. It changes admission policy, never grants source or release authority.
+// Unknown, related, child, grouped and historical selections keep the full quota.
+func (p ImportStage) publicationHeadroom() int64 {
+	reg, bundle := p.Registration, p.Bundle
+	if (p.Version != 1 && p.Version != 2) || p.CursorFacts != nil || reg.Harness.Name != archive.HarnessCodex ||
+		reg.SourceKind != archive.SourceKindFile || reg.Origin != archive.SessionOriginImport || reg.IsChild() || reg.ParentNativeSessionID != "" || reg.SubagentID != "" ||
+		(reg.NativeRootSessionID != "" && reg.NativeRootSessionID != reg.NativeSessionID) ||
+		reg.HistoricalProject != nil || reg.CaptureFrozen || reg.PreviousGenerationID != "" ||
+		bundle.IsChild() || bundle.PreviousGenerationID != "" || bundle.History != nil || len(bundle.LinkedSessions) != 0 ||
+		len(p.Preserved) != 0 || len(p.Children) != 0 {
+		return 0
+	}
+	binding := reg.CodexBinding
+	if binding == nil {
+		return p.legacyPublicationHeadroom()
+	}
+	if binding.Child || binding.ParentID != "" || binding.OwnStart != nil || binding.ProducerSource != "cli" ||
+		binding.NativeThreadID != reg.NativeSessionID || binding.PhysicalRolloutID != reg.NativeSessionID || binding.RootID != reg.NativeSessionID {
+		return 0
+	}
+	return importPublicationHeadroom
+}
+
+// legacyPublicationHeadroom applies only after the common ordinary exclusions.
+// It reserves storage without adding modern binding or release authority.
+func (p ImportStage) legacyPublicationHeadroom() int64 {
+	if p.Version == 1 && !p.TypedSelection && p.Bundle.SchemaVersion == archive.SourceSchemaVersion {
+		return importPublicationHeadroom
+	}
+	return 0
 }
 
 // Admission must not select a journal that the scheduled reader cannot load
@@ -1217,4 +1255,8 @@ func (s *Store) commitFreshSettledStage(ctx context.Context, g config.DurableSto
 
 func unsupportedSettledStageOwner(p ImportStage, reg archive.SessionRegistration) bool {
 	return p.CursorFacts == nil || !settledCursorFactShape(*p.CursorFacts) || (p.Bundle.ArchiveSessionID != "" && (!readySelectionOwnerMatches(reg, p.Bundle) || p.Bundle.Capture.Harness != reg.Harness || p.Bundle.PreviousGenerationID != "" || len(p.Bundle.LinkedSessions) != 0 || len(p.Bundle.SupplementalEvidence) != 0 || p.Bundle.Capture.SourceFormat != "cursor-composer")) || reg.Harness.Name != archive.HarnessCursor || reg.SourceKind != archive.SourceKindCursorSQLite || reg.SourceKey != reg.NativeSessionID || reg.ParentSessionID != "" || reg.NativeChild || reg.ParentNativeSessionID != "" || reg.NativeRootSessionID != "" || reg.NativeSourceHome != "" || reg.PreviousGenerationID != "" || reg.CaptureFrozen || reg.CodexBinding != nil || reg.CodexAdmission != nil || len(p.Children) != 0 || reg.HistoricalProject != nil
+}
+
+func sameNativeImportBinding(a, b *archive.NativeSourceBinding) bool {
+	return a.PreservesFacts(b) && b.PreservesFacts(a) && a.SameCheckpoint(b)
 }

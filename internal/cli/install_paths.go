@@ -16,6 +16,7 @@ import (
 // installation locates one data directory's integrations: the hook command
 // its hooks run and its background collector's LaunchAgent.
 type installation struct {
+	role     scheduler.Role
 	ports    agentapi.HooksLookup
 	home     string // the data directory
 	userHome string // $HOME, where LaunchAgents and app configs live
@@ -29,6 +30,11 @@ type installation struct {
 
 func (e Env) installation(home, userHome string) installation {
 	return installation{ports: e.agentRegistry(), home: home, userHome: userHome, accountHome: e.accountHome(), sched: e.scheduler}
+}
+
+func (in installation) searchRole() installation {
+	in.role = scheduler.Search
+	return in
 }
 
 // defaultDataHome is the data directory of the account's own default
@@ -130,7 +136,7 @@ func shellQuote(s string) string {
 // schedulerInstallation is the identity the scheduler derives this
 // installation's job from.
 func (in installation) schedulerInstallation() scheduler.Installation {
-	return scheduler.Installation{DataHome: local.CanonicalPath(in.home), Default: in.isDefault()}
+	return scheduler.Installation{DataHome: local.CanonicalPath(in.home), Default: in.isDefault(), Role: in.role}
 }
 
 // ref is the background collector's job: the scheduler names it from the

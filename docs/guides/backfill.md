@@ -12,11 +12,10 @@ run `backfill` for older sessions and anything else. With
 no options it imports every session it finds, but first it shows each project
 with its session count per app, what it will skip and why, and an estimated
 finite-retention expiry date or **no automatic expiry** for Keep forever.
-Nothing changes until you answer
-`y`.
+Archive and configuration changes require answering `y`.
 
 ```sh
-agent-archive backfill --dry-run     # see the plan; changes nothing
+agent-archive backfill --dry-run     # see the plan; no archive/configuration changes
 agent-archive backfill --dry-run --json
 agent-archive backfill               # import, after confirming
 agent-archive backfill history       # past imports
@@ -30,13 +29,24 @@ starts, it shows completed/total sessions and a percentage.
 These counts include sessions examined before date and project filters are applied;
 the finished plan shows how many will actually be imported.
 
+Planning, including `--dry-run`, can update the disposable private
+`backfill-inspection-cache` directory inside the local archive data directory.
+It holds successful intrinsic inspection facts for ordinary Codex rollouts,
+qualified by verified content digests and inspection versions. Current source
+opening, content checks, project permissions and archive decisions still run.
+The cache stores at most 10,000 entries and 16 MiB of serialized records
+(filesystem overhead is additional); a bounded command writer
+can drop observations under load. A missing, invalid, busy or evicted cache
+simply causes full inspection. Delete this directory to discard it. Neither
+planning nor this cache registers sessions, changes configuration or uploads data.
+
 In `backfill history`, an import's UPLOAD column counts as **waiting** only
 the sessions not in the archive yet. Sessions already uploaded are counted
 after it: **rechecking** when only a re-scan is still owed (a Codex session
 whose rollout changed while it was read, say), **updating** when newer work is still
 to upload, as in `uploaded · 2 rechecking` or `3 waiting · 1 updating`.
 
-Ctrl-C while the plan is being made stops it and changes nothing. Ctrl-C
+Ctrl-C while the plan is being made stops it without archive or configuration changes. Ctrl-C
 during registration or upload stops after the session in flight; run
 `backfill` again with the same options to finish the import, or let the
 background collector upload what is registered. Each says at once that it is

@@ -125,7 +125,7 @@ var lazyStoreDirs = []string{generationHeadsDir, generationNodesDir, generationR
 // its list against this one, so a new directory cannot be left behind.
 func OwnedEntries() []string {
 	entries := append(append([]string{}, storeDirs...), lazyStoreDirs...)
-	return append(entries, "status.json", storageClockFile, sessionIndexMarkerFile, sessionMembershipFile, sessionMembershipLock, sessionRecoveryCursorFile, "temporary-quota")
+	return append(entries, "status.json", storageClockFile, sessionIndexMarkerFile, sessionMembershipFile, sessionMembershipLock, sessionRecoveryCursorFile, sessionIndexAbsenceFile, "temporary-quota")
 }
 
 func safeFileComponent(value string) bool {
@@ -417,6 +417,9 @@ func (s *Store) mergeAdmissionRegistration(key agentmeta.SessionKey, reg archive
 		}
 		if existing.NativeSessionID != key.NativeID || agentmeta.Canonical(agentmeta.Builtins(), existing.Harness.Name) != string(key.Agent) || existing.ProjectRoot != reg.ProjectRoot || existing.ProjectID != reg.ProjectID || (existing.HistoricalProject == nil) != (reg.HistoricalProject == nil) || existing.DestinationID != "" && existing.DestinationID != reg.DestinationID {
 			return reg, ErrSessionIdentityConflict
+		}
+		if reg.NativeBinding != nil && existing.NativeBinding != nil && !reg.NativeBinding.PreservesFacts(existing.NativeBinding) {
+			return reg, errors.New("admission cannot contradict native source binding")
 		}
 		if existing.TranscriptPath == "" && existing.ReadsTranscriptFile() && reg.ReadsTranscriptFile() {
 			existing.TranscriptPath = reg.TranscriptPath
@@ -1108,12 +1111,38 @@ type Status struct {
 	// DeferredSince gives, for each session whose scan the last pass
 	// deferred (one of the DeferredSessions, or of the SessionIssues once
 	// deferred for collector.MaxDeferral) or did not reach, when the run of
-	// passes that each deferred its scan began. A session deferred for
-	// collector.MaxDeferral fails instead, on every pass that defers it.
-	DeferredSince   map[string]time.Time `json:"deferred_since,omitempty"`
-	LastScanAt      time.Time            `json:"last_scan_at,omitzero"`
-	LastPublishedAt time.Time            `json:"last_published_at,omitzero"`
-	PendingCount    int                  `json:"pending_count"`
+	// passes that each deferred its scan, or left it unopened once the pass's
+	// Codex lookup allowance ran out, began. A session deferred for
+	// collector.MaxDeferral fails instead. One deferred for another reason
+	// fails on every pass that defers it or leaves it unopened. A Codex
+	// session waiting on the lookup allowance fails on the pass its clock
+	// reaches collector.MaxDeferral, and is then retried on a backoff
+	// schedule computed from this clock (see NextRetryAt): the clock keeps
+	// running through every pass that holds it, and stops only when a pass
+	// reads it or fails it for another reason.
+	DeferredSince map[string]time.Time `json:"deferred_since,omitempty"`
+	// NextRetryAt gives, for each Codex session that failed waiting on the
+	// Codex lookup allowance past collector.MaxDeferral, when its next
+	// attempt is due: 1 hour after its DeferredSince reached
+	// collector.MaxDeferral, then 2, 4, and so on, the gap doubling after
+	// each attempt up to collector.LookupRetryMaxGap (7 days), for as long
+	// as it is pending. A pass with no attempt due leaves it unopened and
+	// records no new failure for it, but keeps its issue in SessionIssues. A
+	// time no later than LastScanAt means an attempt is due, for the next
+	// pass to make.
+	NextRetryAt map[string]time.Time `json:"next_retry_at,omitempty"`
+	// UnreachedSessions gives, per archive session ID, each session with a
+	// pending request that the last pass ran out of time before reaching,
+	// and how many such sessions the pass had ordered ahead of it
+	// (collector.Result.Unreached). Such a session is pending and queued for
+	// the next pass; not being reached is neither a failure nor a deferral,
+	// though the pass may also have recorded a failure for it in
+	// SessionIssues (one found before or after its run of sessions, or one
+	// whose DeferredSince is collector.MaxDeferral old).
+	UnreachedSessions map[string]int `json:"unreached_sessions,omitempty"`
+	LastScanAt        time.Time      `json:"last_scan_at,omitzero"`
+	LastPublishedAt   time.Time      `json:"last_published_at,omitzero"`
+	PendingCount      int            `json:"pending_count"`
 	// LastError is every problem the last pass recorded, joined with "; ".
 	// It is kept, with the same contents, for older readers; LastErrors
 	// holds the same problems one per entry. Set both with SetLastErrors

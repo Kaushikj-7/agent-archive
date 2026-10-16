@@ -33,7 +33,7 @@ func TestUndoNeverExcludesAProjectSetupIncludedAgain(t *testing.T) {
 		c := f.batch("2026-09-23-1", fixedNow.Add(-time.Hour))
 		f.register("c-session", root, c.ID, fixedNow.Add(-time.Hour+30*time.Second))
 		f.register("hook-session", root, "", fixedNow.Add(-10*time.Minute))
-		plan, err := PlanUndo(Environment{Sources: testSources, Discovery: builtin.NewBuiltins(), DatabaseCatalogs: builtin.NewBuiltins(), NativePaths: builtin.NewBuiltins(), Worktrees: builtin.NewBuiltins(), Workspaces: builtin.NewBuiltins(), Children: builtin.NewBuiltins(), Imports: builtin.NewBuiltins(), Home: f.home, Now: func() time.Time { return fixedNow }}, f.store, f.cfg, []Batch{a, b, c}, c, "")
+		plan, err := PlanUndo(Environment{Sources: testSources, Discovery: testImportDiscovery(), DatabaseCatalogs: builtin.NewBuiltins(), NativePaths: builtin.NewBuiltins(), Worktrees: builtin.NewBuiltins(), Workspaces: builtin.NewBuiltins(), Children: builtin.NewBuiltins(), Imports: builtin.NewBuiltins(), Home: f.home, Now: func() time.Time { return fixedNow }}, f.store, f.cfg, []Batch{a, b, c}, c, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -56,7 +56,7 @@ func TestUndoOfTheAddingImportLeavesAProjectAnotherUndoExcluded(t *testing.T) {
 	f.register("a-session", root, a.ID, t0.Add(30*time.Second))
 	x := f.batch("2026-09-20-2", t0.Add(time.Hour))
 	x.UndoneAt, x.ProjectsExcluded = &undone, []string{pid}
-	plan, err := PlanUndo(Environment{Sources: testSources, Discovery: builtin.NewBuiltins(), DatabaseCatalogs: builtin.NewBuiltins(), NativePaths: builtin.NewBuiltins(), Worktrees: builtin.NewBuiltins(), Workspaces: builtin.NewBuiltins(), Children: builtin.NewBuiltins(), Imports: builtin.NewBuiltins(), Home: f.home, Now: func() time.Time { return fixedNow }}, f.store, f.cfg, []Batch{a, x}, a, "")
+	plan, err := PlanUndo(Environment{Sources: testSources, Discovery: testImportDiscovery(), DatabaseCatalogs: builtin.NewBuiltins(), NativePaths: builtin.NewBuiltins(), Worktrees: builtin.NewBuiltins(), Workspaces: builtin.NewBuiltins(), Children: builtin.NewBuiltins(), Imports: builtin.NewBuiltins(), Home: f.home, Now: func() time.Time { return fixedNow }}, f.store, f.cfg, []Batch{a, x}, a, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func TestUndoTakesOverOnlyForTheImportsAProjectWasKeptFor(t *testing.T) {
 	f := newUndoFixture(t)
 	root := "/work/p"
 	pid := f.include(root)
-	env := Environment{Sources: testSources, Discovery: builtin.NewBuiltins(), DatabaseCatalogs: builtin.NewBuiltins(), NativePaths: builtin.NewBuiltins(), Worktrees: builtin.NewBuiltins(), Workspaces: builtin.NewBuiltins(), Children: builtin.NewBuiltins(), Imports: builtin.NewBuiltins(), Home: f.home, Now: func() time.Time { return fixedNow }}
+	env := Environment{Sources: testSources, Discovery: testImportDiscovery(), DatabaseCatalogs: builtin.NewBuiltins(), NativePaths: builtin.NewBuiltins(), Worktrees: builtin.NewBuiltins(), Workspaces: builtin.NewBuiltins(), Children: builtin.NewBuiltins(), Imports: builtin.NewBuiltins(), Home: f.home, Now: func() time.Time { return fixedNow }}
 	t0 := fixedNow.Add(-72 * time.Hour)
 	a := f.batch("2026-09-20-1", t0, pid)
 	b := f.batch("2026-09-20-2", t0.Add(time.Hour))

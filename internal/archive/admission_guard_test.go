@@ -115,6 +115,9 @@ func TestNoDestinationTimeComparisonOutsideInCurrentDestination(t *testing.T) {
 // registration) with the destination's start.
 var destinationComparisonAllowed = map[string]bool{
 	"config.InCurrentDestination": true,
+	// Native validation opens a fresh raw-validation window using genuine native
+	// birth, not ownership of already retained/frozen publication bytes.
+	"config.NativeValidationInCurrentDestination": true,
 	// Discovery opens fresh-start permissions, not publication permission.
 	"config.ReconcileDiscovery":    true,
 	"config.ReconcileCodexCapture": true,
@@ -233,5 +236,29 @@ func CheckClock() {
 	// CheckClock is allowed only in package backfill.
 	if want := []int{3, 4, 6, 7, 15}; !slices.Equal(lines, want) {
 		t.Fatalf("flagged lines %v, want %v", lines, want)
+	}
+}
+
+func TestDestinationGuardAllowsOnlyNamedNativeValidationPolicy(t *testing.T) {
+	t.Parallel()
+	source := `package config
+func (c Config) NativeValidationInCurrentDestination() bool {
+ return !binding.NativeCreatedAt.Before(c.DestinationSince)
+}
+func unrelated() bool {
+ return !binding.NativeCreatedAt.Before(c.DestinationSince)
+}`
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "native.go", source, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	positions := destinationComparisons(fset, file)
+	if len(positions) != 1 || positions[0].Line != 6 {
+		t.Fatalf("guard positions %v, want only unrelated line 6", positions)
+	}
+	file.Name.Name = "state"
+	if positions = destinationComparisons(fset, file); len(positions) != 2 {
+		t.Fatalf("policy name exempted outside config: %v", positions)
 	}
 }

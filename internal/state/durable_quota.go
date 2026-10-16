@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
@@ -20,6 +21,14 @@ import (
 const durableStorageQuota int64 = 1 << 30
 
 const durableControlBytes int64 = 64 << 10
+
+// Ordinary singleton Codex stages leave room for the standard collector's
+// entire 160 MiB pending wire, including source/metadata base64 and selection
+// proof, plus two 16 KiB staged release controls and their encoder newlines.
+// All terms keep the existing double charge for durable atomic writes.
+// Grouped and history selections retain their existing full-quota behavior.
+// See dev/contributing/durable-admission-capacity.md for scope and limitations.
+const importPublicationHeadroom int64 = 2*(agentapi.PassReadBudget-agentapi.PassCacheReserve) + 2*2*((16<<10)+1)
 
 const durableEntryLimit = 65536
 
@@ -285,7 +294,11 @@ func (q *durableQuota) write(path string, n int64, write func(io.Writer) error) 
 	return q.writeChecked(path, n, write, nil)
 }
 
-func (q *durableQuota) writeChecked(path string, n int64, write func(io.Writer) error, commit func(func() error) error) (err error) {
+func (q *durableQuota) writeChecked(path string, n int64, write func(io.Writer) error, commit func(func() error) error) error {
+	return q.writeWithHeadroom(path, n, write, commit, 0)
+}
+
+func (q *durableQuota) writeWithHeadroom(path string, n int64, write func(io.Writer) error, commit func(func() error) error, headroom int64) (err error) {
 	if n < 0 || n > durableStorageQuota/2 {
 		return ErrDurableStorageCapacity
 	}
@@ -320,6 +333,12 @@ func (q *durableQuota) writeChecked(path string, n int64, write func(io.Writer) 
 		}
 	}
 	if additional > durableStorageQuota-u.charged {
+		return ErrDurableStorageCapacity
+	}
+	// The validated producer chooses this admission policy before entering
+	// the same quota lock used by the census and atomic commit. Generic
+	// writers and cancellation/release controls carry no extra headroom.
+	if n > old && additional > durableStorageQuota-headroom-u.charged {
 		return ErrDurableStorageCapacity
 	}
 	if err = q.guard.CheckHome(q.path); err != nil {
@@ -379,22 +398,30 @@ func (s *Store) writeDurableGuard(ctx context.Context, g config.DurableStorageGu
 	return s.writeDurableGuardChecked(ctx, g, path, p, nil)
 }
 
-func (s *Store) writeDurableGuardChecked(ctx context.Context, g config.DurableStorageGuard, path string, p any, commit func(func() error) error) (err error) {
+func (s *Store) writeDurableGuardChecked(ctx context.Context, g config.DurableStorageGuard, path string, p any, commit func(func() error) error) error {
+	return s.writeDurableGuardHeadroom(ctx, g, path, p, commit, 0)
+}
+
+func (s *Store) writeDurableGuardHeadroom(ctx context.Context, g config.DurableStorageGuard, path string, p any, commit func(func() error) error, headroom int64) (err error) {
 	reservation := s.readReservation()
 	if err = g.CheckHome(s.home); err != nil {
 		return err
 	}
+	// A pending publication carries a session's whole source and records:
+	// it is streamed, holding one record's encoding at a time, never the
+	// whole file's (streamJSON).
+	_, streamed := p.(PendingPublication)
 	// Keep the existing independent encoder lease; disk quota never substitutes for memory.
 	const scratch = 32 << 10
 	limit := durableStorageQuota/2 - 1
-	if s.resourceBudget != nil {
+	if s.resourceBudget != nil && !streamed {
 		if !reservation.Reserve(scratch) {
 			return errStateBudget
 		}
 		limit = min(limit, reservation.Available()-1)
 	}
 	n, err := agentmeta.JSONWireBound(ctx, p, limit)
-	if s.resourceBudget != nil {
+	if s.resourceBudget != nil && !streamed {
 		if errors.Is(err, agentmeta.ErrJSONWireLimit) && limit < durableStorageQuota/2-1 {
 			// Memory, not the disk quota, refused the encoding.
 			reservation.Refuse(limit + 2)
@@ -405,7 +432,7 @@ func (s *Store) writeDurableGuardChecked(ctx context.Context, g config.DurableSt
 		return errors.Join(errStateBudget, err)
 	}
 	n++
-	if s.resourceBudget != nil {
+	if s.resourceBudget != nil && !streamed {
 		if !reservation.Reserve(n) {
 			return errStateBudget
 		}
@@ -416,7 +443,11 @@ func (s *Store) writeDurableGuardChecked(ctx context.Context, g config.DurableSt
 		return err
 	}
 	defer func() { err = errors.Join(err, q.Close()) }()
-	return q.writeChecked(path, n, func(w io.Writer) error { return json.NewEncoder(w).Encode(p) }, commit)
+	encode := func(w io.Writer) error { return json.NewEncoder(w).Encode(p) }
+	if streamed {
+		encode = func(w io.Writer) error { return streamJSON(ctx, w, p, reservation) }
+	}
+	return q.writeWithHeadroom(path, n, encode, commit, headroom)
 }
 
 func (s *Store) stagePendingSourceGuard(g config.DurableStorageGuard, id string, ref archive.SourceReference, data []byte) (err error) {

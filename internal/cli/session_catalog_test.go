@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
@@ -218,6 +219,14 @@ func TestCatalogWarmShowQueryReadsOnlySelectedBodyAndMatchesFallback(t *testing.
 	a.add(t, "bill0001", "Shared marker outside", "billing")
 	a.add(t, "child001", "Child needle", a.label, subagentOf("mine0001"))
 	a.add(t, "replay01", "Replay hidden title", a.label, func(m *archive.Metadata) { m.Replay = &archive.Replay{RunID: "private-replay-run"} })
+	fullIDKey, err := archive.MetadataObjectKey("codex", a.id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fullIDMetadata, err := a.mem.Get(context.Background(), fullIDKey)
+	if err != nil {
+		t.Fatal(err)
+	}
 	measured := storagetest.NewMeasuredStore(a.mem, 0)
 	a.env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return measured, nil }
 	decoded := 0
@@ -244,7 +253,7 @@ func TestCatalogWarmShowQueryReadsOnlySelectedBodyAndMatchesFallback(t *testing.
 		{"replay01", 0, 1, "private-replay-run"},
 		{"replay hidden", 1, 0, "no archived session"},
 		// Full-ID lookup keeps the existing direct harness/key probes.
-		{a.id, 0, 3, a.id},
+		{a.id, 0, int64(len(productionAgents.Catalog().All())), a.id},
 	} {
 		t.Run(tc.query, func(t *testing.T) {
 			decoded = 0
@@ -255,6 +264,9 @@ func TestCatalogWarmShowQueryReadsOnlySelectedBodyAndMatchesFallback(t *testing.
 			}
 			if decoded != 0 || measured.Metrics().Gets != tc.gets {
 				t.Fatalf("warm decoded=%d metrics=%+v", decoded, measured.Metrics())
+			}
+			if tc.query == a.id && (measured.Metrics().Lists != 0 || measured.Metrics().Bytes != int64(len(fullIDMetadata))) {
+				t.Fatalf("full-ID probes fetched more than selected metadata: %+v", measured.Metrics())
 			}
 			// Preserve the warmed body cache while exercising verified exhaustive fallback.
 			if err = os.Rename(catalogPath, catalogPath+".fixture"); err != nil {

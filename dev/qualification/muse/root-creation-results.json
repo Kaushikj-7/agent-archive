@@ -1,0 +1,591 @@
+{
+  "schema": 1,
+  "date_utc": "2026-10-15",
+  "scope": "Qualified semantic contract for strict complete initial ordinary roots in observed Muse 1.4.9 macOS x86_64 exec/MSP lanes; no production validator, consent admission or capture implementation",
+  "producer": "1.4.9-R6297.1",
+  "binary_sha256": "4c6ed04ccd5a453bd7b38799aeb9eb290b8635b32c95b5a35e6950a2f20446cb",
+  "binary_bytes": 389577808,
+  "qualification_harness_sha256": "9276a72330c97a7a9f199f3f1649efa83ea0a48ebf0744ced7563b10f232cb31",
+  "evidence_files": {
+    "creation_probe.py": {
+      "bytes": 2208,
+      "sha256": "ff4056855752a9a626c8ccac104d69390ec3a0e7314a5100baced44c0ea81b2e"
+    },
+    "copied_read.py": {
+      "bytes": 1444,
+      "sha256": "49fd5a8b7fd785a80971ac8360959e6c080768d10dbb88077d890cd4d1df5d46"
+    },
+    "fork_probe.py": {
+      "bytes": 770,
+      "sha256": "f6d304635fed3a12510fe44d95560dbdb09a45342b4c2299ab5720c86da5aae9"
+    },
+    "mutations.py": {
+      "bytes": 2385,
+      "sha256": "f38f88e39344955242714a0ae06ba39347885c91ceda93969f988b0e2433276e"
+    },
+    "verify_prefix.py": {
+      "bytes": 771,
+      "sha256": "9fea8d3e8348a2f69359d6c8e64acbf59e02b3d310417c1961d45fbcb2f5844a"
+    },
+    "nonzero_id_probe.py": {
+      "bytes": 1307,
+      "sha256": "bbbf7e81880252e08d2eab99b6c3d20ee42da0a144c4f14048bc100a4e2a1a79"
+    },
+    "nonzero_id_cold_probe.py": {
+      "bytes": 1514,
+      "sha256": "40dcb26a8b77e0a0c9393204a63a9bbe881f8b06be8f8eb22d5ce0b4a291826a"
+    },
+    "msp-result.json": {
+      "bytes": 17040,
+      "sha256": "a287b99f38c27c79140e44ca2153557f72ef03a31e3cde1e473ffa22dd0ce3df"
+    },
+    "copied-read-result.json": {
+      "bytes": 11066,
+      "sha256": "a0b54942563133971e87163a7613006d197cf74ae2f59c786e3f1740f985b8ee"
+    },
+    "fork-result.json": {
+      "bytes": 7498,
+      "sha256": "9bb74013bb26d12076a65d71927a123cd6ddeef2291d8c0c28e1b2db4c23d456"
+    },
+    "offline-results.json": {
+      "bytes": 25565,
+      "sha256": "ce7e178d1aec57ce9f5e075975206c839317596c442abc36ccc766ea13d6457e"
+    },
+    "nonzero-id-result.json": {
+      "bytes": 13544,
+      "sha256": "dabda79916bafebb899ad5f16392d9951bf4e93d5cfd049ea51941a383c66992"
+    },
+    "nonzero-id-cold-result.json": {
+      "bytes": 14763,
+      "sha256": "4dbd994514c97edc45108338689257e8340944f597cfcfdb83459f02e8dabc88"
+    },
+    "prefix-checksums.json": {
+      "bytes": 615,
+      "sha256": "eb70ef58b05325b076e1dd442c98da5c7327bd291e55c8d3d0285ef3287f6271"
+    },
+    "sha256-manifest.json": {
+      "bytes": 40595,
+      "sha256": "a1917045756b40b7be10db58c498204e64fa3876afd6fdae1b84b51d6a35b001"
+    },
+    "before-00000000-0000-7000-8000-000000000001.jsonl": {
+      "bytes": 7957,
+      "sha256": "e118ed87a86b21f9257bd88ef9fef99fd00bb1f0cebf3ed1303fa025e27a66f4"
+    },
+    "before-01a1415c-7ac2-7320-84ca-0f47d1ac185e.jsonl": {
+      "bytes": 7960,
+      "sha256": "d1a46cbc26db77728c2f80722b61fda6f9fc069d80d812744fef3837bc4b8db4"
+    }
+  },
+  "audit_report_pins": {
+    "creation-local-experiments.md": {
+      "bytes": 15583,
+      "sha256": "a87e7794ea12c35db92cc78ab3e5499c2cad235a3b1744bbbdf59a7cb97fbdc7"
+    },
+    "creation-binary-evidence.md": {
+      "bytes": 8176,
+      "sha256": "8a9f314011e6c663886c4226e22fab77984b6f8177a2c3615a3d5d59c0b4a28e"
+    },
+    "creation-contract-audit.md": {
+      "bytes": 12378,
+      "sha256": "a66c8a849e17f44226fba20bbdc5bce885896356d8f0f6af76e445b7d6ade00f"
+    }
+  },
+  "native_observations": [
+    {
+      "label": "custom-root-before",
+      "native_file_sha256": "e118ed87a86b21f9257bd88ef9fef99fd00bb1f0cebf3ed1303fa025e27a66f4",
+      "frames": [
+        {
+          "line": 1,
+          "ordinal": 1,
+          "verified": true
+        }
+      ],
+      "selected_facts": [
+        {
+          "line": 1,
+          "child": 0,
+          "type": "runtime.session.permission_format_declared",
+          "seq": 1,
+          "ts": 1792097943135085,
+          "cause": null
+        },
+        {
+          "line": 1,
+          "child": 1,
+          "type": "runtime.session.permission_profile_committed",
+          "seq": 2,
+          "ts": 1792097943135085,
+          "cause": "new_session_default"
+        },
+        {
+          "line": 4,
+          "type": "runtime.session_start.intake_v3",
+          "seq": 5,
+          "ts": 1792097943240937,
+          "activation_source": "startup"
+        },
+        {
+          "line": 6,
+          "type": "runtime.session.metadata",
+          "seq": 7,
+          "ts": 1792097943284188
+        },
+        {
+          "line": 7,
+          "type": "session.opened.observed",
+          "seq": 8,
+          "ts": 1792097943284189,
+          "resume": false
+        }
+      ]
+    },
+    {
+      "label": "server-root-before",
+      "native_file_sha256": "d1a46cbc26db77728c2f80722b61fda6f9fc069d80d812744fef3837bc4b8db4",
+      "frames": [
+        {
+          "line": 1,
+          "ordinal": 1,
+          "verified": true
+        }
+      ],
+      "selected_facts": [
+        {
+          "line": 1,
+          "child": 0,
+          "type": "runtime.session.permission_format_declared",
+          "seq": 1,
+          "ts": 1792097942210350,
+          "cause": null
+        },
+        {
+          "line": 1,
+          "child": 1,
+          "type": "runtime.session.permission_profile_committed",
+          "seq": 2,
+          "ts": 1792097942210350,
+          "cause": "new_session_default"
+        },
+        {
+          "line": 4,
+          "type": "runtime.session_start.intake_v3",
+          "seq": 5,
+          "ts": 1792097942309569,
+          "activation_source": "startup"
+        },
+        {
+          "line": 6,
+          "type": "runtime.session.metadata",
+          "seq": 7,
+          "ts": 1792097942353866
+        },
+        {
+          "line": 7,
+          "type": "session.opened.observed",
+          "seq": 8,
+          "ts": 1792097942353867,
+          "resume": false
+        }
+      ]
+    },
+    {
+      "label": "custom-root-resumed",
+      "native_file_sha256": "9ef5a1c8ce459942cf277a83e342f740f93591726559f52eb05ce938149af3f3",
+      "frames": [
+        {
+          "line": 1,
+          "ordinal": 1,
+          "verified": true
+        }
+      ],
+      "selected_facts": [
+        {
+          "line": 1,
+          "child": 0,
+          "type": "runtime.session.permission_format_declared",
+          "seq": 1,
+          "ts": 1792097943135085,
+          "cause": null
+        },
+        {
+          "line": 1,
+          "child": 1,
+          "type": "runtime.session.permission_profile_committed",
+          "seq": 2,
+          "ts": 1792097943135085,
+          "cause": "new_session_default"
+        },
+        {
+          "line": 4,
+          "type": "runtime.session_start.intake_v3",
+          "seq": 5,
+          "ts": 1792097943240937,
+          "activation_source": "startup"
+        },
+        {
+          "line": 6,
+          "type": "runtime.session.metadata",
+          "seq": 7,
+          "ts": 1792097943284188
+        },
+        {
+          "line": 7,
+          "type": "session.opened.observed",
+          "seq": 8,
+          "ts": 1792097943284189,
+          "resume": false
+        },
+        {
+          "line": 11,
+          "type": "runtime.session_start.intake_v3",
+          "seq": 12,
+          "ts": 1792097945766888,
+          "activation_source": "resume"
+        },
+        {
+          "line": 13,
+          "type": "runtime.session.metadata",
+          "seq": 14,
+          "ts": 1792097945767682
+        },
+        {
+          "line": 14,
+          "type": "session.resumed",
+          "seq": 15,
+          "ts": 1792097945768753
+        }
+      ]
+    },
+    {
+      "label": "fork-source",
+      "native_file_sha256": "e5f51f779dd696a4985bdd2dfe8019341c44a51e8ca62271d2e712b84505e6c8",
+      "frames": [
+        {
+          "line": 1,
+          "ordinal": 1,
+          "verified": true
+        }
+      ],
+      "selected_facts": [
+        {
+          "line": 1,
+          "child": 0,
+          "type": "runtime.session.permission_format_declared",
+          "seq": 1,
+          "ts": 1792098037854274,
+          "cause": null
+        },
+        {
+          "line": 1,
+          "child": 1,
+          "type": "runtime.session.permission_profile_committed",
+          "seq": 2,
+          "ts": 1792098037854274,
+          "cause": "new_session_default"
+        },
+        {
+          "line": 4,
+          "type": "runtime.session_start.intake_v3",
+          "seq": 5,
+          "ts": 1792098037947522,
+          "activation_source": "startup"
+        },
+        {
+          "line": 6,
+          "type": "runtime.session.metadata",
+          "seq": 7,
+          "ts": 1792098037990550
+        },
+        {
+          "line": 7,
+          "type": "session.opened.observed",
+          "seq": 8,
+          "ts": 1792098037990551,
+          "resume": false
+        }
+      ]
+    },
+    {
+      "label": "fork",
+      "native_file_sha256": "915042a3e7465fb74e0fe97ee6841094199a4dbec6bdc9a3da0f1a5c3e69a6c3",
+      "frames": [
+        {
+          "line": 2,
+          "ordinal": 2,
+          "verified": true
+        }
+      ],
+      "selected_facts": [
+        {
+          "line": 1,
+          "type": "session.fork.created",
+          "seq": 1,
+          "ts": null
+        },
+        {
+          "line": 2,
+          "child": 0,
+          "type": "runtime.session.permission_format_declared",
+          "seq": 2,
+          "ts": 1792098037854274,
+          "cause": null
+        },
+        {
+          "line": 2,
+          "child": 1,
+          "type": "runtime.session.permission_profile_committed",
+          "seq": 3,
+          "ts": 1792098037854274,
+          "cause": "fork"
+        },
+        {
+          "line": 4,
+          "type": "runtime.session_start.intake_v3",
+          "seq": 5,
+          "ts": 1792098039049314,
+          "activation_source": "fork"
+        },
+        {
+          "line": 6,
+          "type": "runtime.session.metadata",
+          "seq": 7,
+          "ts": 1792098039049588
+        },
+        {
+          "line": 7,
+          "type": "runtime.session.metadata",
+          "seq": 8,
+          "ts": 1792098039049627
+        },
+        {
+          "line": 8,
+          "type": "session.opened.observed",
+          "seq": 9,
+          "ts": 1792098039049997,
+          "resume": false
+        }
+      ]
+    },
+    {
+      "label": "exec-resumed",
+      "native_file_sha256": "b532ccc2f5e09890c3239dba051502aa3f8c50c2333f44593d7401cc31275658",
+      "frames": [
+        {
+          "line": 1,
+          "ordinal": 1,
+          "verified": true
+        }
+      ],
+      "selected_facts": [
+        {
+          "line": 1,
+          "child": 0,
+          "type": "runtime.session.permission_format_declared",
+          "seq": 1,
+          "ts": 1792083855882704,
+          "cause": null
+        },
+        {
+          "line": 1,
+          "child": 1,
+          "type": "runtime.session.permission_profile_committed",
+          "seq": 2,
+          "ts": 1792083855882704,
+          "cause": "new_session_default"
+        },
+        {
+          "line": 2,
+          "type": "runtime.session.metadata",
+          "seq": 3,
+          "ts": 1792083858472863
+        },
+        {
+          "line": 3,
+          "type": "session.opened.observed",
+          "seq": 4,
+          "ts": 1792083858677136,
+          "resume": false
+        },
+        {
+          "line": 58,
+          "type": "session.opened.observed",
+          "seq": 59,
+          "ts": 1792083866813509,
+          "resume": true
+        },
+        {
+          "line": 59,
+          "type": "session.resumed",
+          "seq": 60,
+          "ts": 1792083866813665
+        }
+      ]
+    }
+  ],
+  "static_dataflow": {
+    "reserved_clock_vm": "0x10cbda420",
+    "prepare_session_start_vm": "0x110186470",
+    "initialization_vm": "0x11018ecf0",
+    "initialization_timestamp_offset": "0x260",
+    "record_stride": "0xe0",
+    "record_timestamp_offset": "0xb8",
+    "record_serializer_vm": "0x1101c59d0",
+    "recorded_at_field_helper_vm": "0x1101c93c0",
+    "decimal_field_serializer_vm": "0x110260c40",
+    "selected_field": "recorded_at in both initial permission children",
+    "interpretation": "Reserved logical session-start microseconds, conditional on the strict initial-root discriminator; not inode birth or arbitrary permission time"
+  },
+  "activation_counterexample": {
+    "reserved_start_us": 1792083855882704,
+    "original_opened_us": 1792083858677136,
+    "gap_us": 2794432,
+    "activation_example_us": 1792083857000000,
+    "expected": "Logical start precedes activation; using opened time would incorrectly move this existing root into the newer consent window"
+  },
+  "new_msp_campaign": {
+    "model_turns": 0,
+    "provider_requests": 0,
+    "server_root_fresh": true,
+    "custom_root_fresh": true,
+    "custom_root_resume_preserves_prefix": true,
+    "custom_root_resume_appends_opened_true": false,
+    "sibling_root_resume": "sessionNotFound in second lifecycle; not counted as successful resume",
+    "no_turn_fork_succeeded": true,
+    "copy_and_1999_folder_relocation": "Logical identity and original prefix preserved; physical source uniqueness not established",
+    "old_nonzero_v7_and_future_v7": "Both accepted; tested root read.createdAt used current permission time including cold reads",
+    "uuid4_control": "Rejected expected UUIDv7",
+    "cold_session_list": "Empty pages despite successful direct reads; no successful cold-list coverage",
+    "initial_attempt": "Sandbox loopback bind denied before session creation; retry used same normal isolated native permissions"
+  },
+  "offline_export_controls": {
+    "exact-copy": {
+      "input_sha256": "b532ccc2f5e09890c3239dba051502aa3f8c50c2333f44593d7401cc31275658",
+      "exit": 0,
+      "timeout": false,
+      "diagnostics": {
+        "unparseable_lines": 0,
+        "unknown_payload_kinds": 0,
+        "gaps": 0,
+        "omitted_live_only": 0,
+        "duplicate_records": 0
+      }
+    },
+    "fresh-resume-true": {
+      "input_sha256": "207c1a0c95c804ce38941a7a933936e082317e99018c930e7aa8ae67d5239a6b",
+      "exit": 0,
+      "timeout": false,
+      "diagnostics": {
+        "unparseable_lines": 0,
+        "unknown_payload_kinds": 0,
+        "gaps": 0,
+        "omitted_live_only": 0,
+        "duplicate_records": 0
+      }
+    },
+    "resumed-resume-false": {
+      "input_sha256": "9de912f8d7d1cb02b20a30d129ffb73728478e7c1ba3bae1fc039a4368dd72d8",
+      "exit": 0,
+      "timeout": false,
+      "diagnostics": {
+        "unparseable_lines": 0,
+        "unknown_payload_kinds": 0,
+        "gaps": 0,
+        "omitted_live_only": 0,
+        "duplicate_records": 0
+      }
+    },
+    "both-false": {
+      "input_sha256": "9de912f8d7d1cb02b20a30d129ffb73728478e7c1ba3bae1fc039a4368dd72d8",
+      "exit": 0,
+      "timeout": false,
+      "diagnostics": {
+        "unparseable_lines": 0,
+        "unknown_payload_kinds": 0,
+        "gaps": 0,
+        "omitted_live_only": 0,
+        "duplicate_records": 0
+      }
+    },
+    "opened-time-one": {
+      "input_sha256": "613236ecf255c0ece523e77816ac1fbd365138f997c37ec8339a1f0b4342caa2",
+      "exit": 0,
+      "timeout": false,
+      "diagnostics": {
+        "unparseable_lines": 0,
+        "unknown_payload_kinds": 0,
+        "gaps": 0,
+        "omitted_live_only": 0,
+        "duplicate_records": 0
+      }
+    },
+    "opened-session-mismatch": {
+      "input_sha256": "e064d122da5dbd9e75e488254a00b42e4c2687da71ecdb7a9602e762410dd6bf",
+      "exit": 0,
+      "timeout": false,
+      "diagnostics": {
+        "unparseable_lines": 0,
+        "unknown_payload_kinds": 0,
+        "gaps": 0,
+        "omitted_live_only": 0,
+        "duplicate_records": 0
+      }
+    },
+    "opened-envelope-id-mismatch": {
+      "input_sha256": "6d14e78d7fb3701dd04c82fc9a3c5134fc1e3f344af32913cc4fdc76861829d3",
+      "exit": 0,
+      "timeout": false,
+      "diagnostics": {
+        "unparseable_lines": 0,
+        "unknown_payload_kinds": 0,
+        "gaps": 0,
+        "omitted_live_only": 0,
+        "duplicate_records": 0
+      }
+    },
+    "opened-absent": {
+      "input_sha256": "5dd7da22aefeb537d64489b7d3b4d6d6acbf700df56fe11ee35946ddfe84d090",
+      "exit": 0,
+      "timeout": false,
+      "diagnostics": {
+        "unparseable_lines": 0,
+        "unknown_payload_kinds": 0,
+        "gaps": 0,
+        "omitted_live_only": 0,
+        "duplicate_records": 0
+      }
+    }
+  },
+  "remaining_implementation_gates": [
+    "Strict complete prefix grammar and negative validator tests",
+    "Same confined opened descriptor and identity/workspace checks",
+    "Bounded duplicate-source uniqueness and relocation resolution",
+    "Consent activation/destination/removal policy transaction and protected binding",
+    "Unsupported child/fork/checkpoint/rewrite lanes refuse",
+    "No all-mode or Linux/arm64 qualification"
+  ],
+  "cleanup": "Research worker reports all owned native processes/groups/readers reaped and joined; all new MSP cases made zero provider requests. No native permission bodies or full disassembly committed.",
+  "source_base": "bdf83629e515e3d5c5385d7c74612aa962a59fc2",
+  "raw_adjudication_sha256": "17cf42cf80e78c442f1dce432d25c804f6583a0d9276d53000ae7017e7dff557",
+  "caller_uuid_controls": [
+    {
+      "session_id": "00000000-0000-7000-8000-000000000001",
+      "uuid_milliseconds": 0,
+      "result": "accepted current-time root"
+    },
+    {
+      "session_id": "00000526-5c00-7000-8000-000000000001",
+      "uuid_milliseconds": 86400000,
+      "result": "accepted; root cold-read projection uses current permission time"
+    },
+    {
+      "session_id": "01eab7c5-0000-7000-8000-000000000001",
+      "uuid_milliseconds": 2107617116160,
+      "result": "accepted; root cold-read projection uses current permission time"
+    },
+    {
+      "session_id": "3dfedce5-0d55-4fd2-8d96-4077c8e45985",
+      "result": "rejected expected UUIDv7"
+    }
+  ]
+}

@@ -18,8 +18,9 @@ import (
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
-// harnessOrder is the order apps appear in, in columns and lists.
-var harnessOrder = agentmeta.Names(agentmeta.Builtins())
+// harnessOrder preserves established capture columns; represented extensions
+// are added separately rather than inferred from identity recognition.
+var harnessOrder = []string{archive.HarnessClaude, archive.HarnessCodex, archive.HarnessCursor}
 
 var harnessNames = func() map[string]string {
 	names := make(map[string]string)

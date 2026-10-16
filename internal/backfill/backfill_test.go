@@ -87,7 +87,7 @@ func (tr *tree) worktree(repoRel, rel, name string) string {
 }
 
 func (tr *tree) env() Environment {
-	return Environment{Sources: testSources, Discovery: builtin.NewBuiltins(), DatabaseCatalogs: builtin.NewBuiltins(), NativePaths: builtin.NewBuiltins(), Worktrees: builtin.NewBuiltins(), Workspaces: builtin.NewBuiltins(), Children: builtin.NewBuiltins(), Imports: builtin.NewBuiltins(),
+	return Environment{Sources: testSources, Discovery: testImportDiscovery(), DatabaseCatalogs: builtin.NewBuiltins(), NativePaths: builtin.NewBuiltins(), Worktrees: builtin.NewBuiltins(), Workspaces: builtin.NewBuiltins(), Children: builtin.NewBuiltins(), Imports: builtin.NewBuiltins(),
 		Home: tr.home,
 		// These tests model a Mac (Library folders, Documents/Codex, TCC);
 		// linux_test.go covers the other branch.

@@ -17,11 +17,13 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
+	"github.com/wangjohn/agent-archive/internal/testutil/fixturecost"
 )
 
 var pickerReaderSeed struct {
 	once     sync.Once
-	objects  map[string][]byte
+	objects  storagetest.MemorySnapshot
 	metadata []byte
 }
 
@@ -32,17 +34,10 @@ func pickerReaderFixture(t *testing.T) (*Snapshot, *Writer, *qualifiedStore, []a
 	// bodies, metadata, node cache, and a newly started snapshot lifetime.
 	pickerReaderSeed.once.Do(func() {
 		_, _, store, metadata := buildPickerReaderFixture(t)
-		objects, err := store.List(t.Context(), "")
+		freeze := fixturecost.Start(t, "picker_reader", "freeze", nil)
+		seed, err := storagetest.SnapshotMemoryStore(t.Context(), store.MemoryStore)
 		if err != nil {
 			t.Fatal(err)
-		}
-		seed := make(map[string][]byte, len(objects))
-		for _, object := range objects {
-			raw, err := store.Get(t.Context(), object.Key)
-			if err != nil {
-				t.Fatal(err)
-			}
-			seed[object.Key] = raw
 		}
 		raw, err := json.Marshal(metadata)
 		if err != nil {
@@ -52,15 +47,21 @@ func pickerReaderFixture(t *testing.T) (*Snapshot, *Writer, *qualifiedStore, []a
 		// Fatal exits its initializer, so later callers must refuse that failure.
 		pickerReaderSeed.objects = seed
 		pickerReaderSeed.metadata = raw
+		freeze.Finish()
 	})
-	if pickerReaderSeed.objects == nil || len(pickerReaderSeed.metadata) == 0 {
+	if len(pickerReaderSeed.metadata) == 0 {
 		t.Fatal("picker reader fixture initialization did not complete")
 	}
-	w, store := fixture(t)
-	for key, raw := range pickerReaderSeed.objects {
-		if err := store.Put(t.Context(), key, raw); err != nil {
-			t.Fatal(err)
-		}
+	clone := fixturecost.Start(t, "picker_reader", "clone", map[string]int64{"store_clones": 1})
+	clone.Add("store_clones", 1)
+	memory, err := pickerReaderSeed.objects.Clone(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &qualifiedStore{memory}
+	w, err := New(store)
+	if err != nil {
+		t.Fatal(err)
 	}
 	var metadata []archive.Metadata
 	if err := json.Unmarshal(pickerReaderSeed.metadata, &metadata); err != nil {
@@ -70,6 +71,8 @@ func pickerReaderFixture(t *testing.T) (*Snapshot, *Writer, *qualifiedStore, []a
 	if err != nil {
 		t.Fatal(err)
 	}
+	clone.Add("rows", int64(len(metadata)))
+	clone.Finish()
 	return s, w, store, metadata
 }
 
@@ -80,6 +83,9 @@ func buildPickerReaderFixture(t *testing.T) (*Snapshot, *Writer, *qualifiedStore
 
 func buildPickerReaderFixtureSize(t *testing.T, size int) (*Snapshot, *Writer, *qualifiedStore, []archive.Metadata) {
 	t.Helper()
+	phase := fixturecost.Start(t, "picker_reader", "publication", map[string]int64{"commits": int64(size), "constructors": 1})
+	phase.Add("commits", 0)
+	phase.Add("constructors", 1)
 	w, store := fixture(t)
 	var metadata []archive.Metadata
 	for i := range size {
@@ -118,10 +124,13 @@ func buildPickerReaderFixtureSize(t *testing.T, size int) (*Snapshot, *Writer, *
 		})
 		m.SessionKey, _ = archive.MetadataObjectKey(m.Next.Summary.Harness.Name, m.Next.Summary.SessionID)
 		metadata = append(metadata, m.Next.Summary)
+		phase.Add("commits", 1)
 		if _, err := w.Commit(t.Context(), m); err != nil {
 			t.Fatal(err)
 		}
 	}
+	phase.Add("rows", int64(size))
+	phase.Finish()
 	completePickerUpgrade(t, store)
 	s, err := OpenSnapshot(t.Context(), store, nil)
 	if err != nil {
@@ -160,10 +169,15 @@ func TestPickerReaderFixturesOwnAuthorityBodiesAndMetadata(t *testing.T) {
 	first.started = time.Now().Add(-SnapshotLifetime)
 	first.cache.bytes = map[ObjectRef][]byte{first.head.Project: []byte("modified cache")}
 	third, _, fresh, freshMetadata := pickerReaderFixture(t)
+	seed, err := pickerReaderSeed.objects.Clone(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, store := range []*qualifiedStore{independent, fresh} {
 		for _, key := range keys {
 			raw, err := store.Get(t.Context(), key)
-			if err != nil || !bytes.Equal(raw, pickerReaderSeed.objects[key]) {
+			expected, seedErr := seed.Get(t.Context(), key)
+			if err != nil || seedErr != nil || !bytes.Equal(raw, expected) {
 				t.Fatalf("fixture mutation crossed store boundary for %s: %v", key, err)
 			}
 		}

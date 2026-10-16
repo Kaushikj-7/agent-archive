@@ -86,15 +86,18 @@ func TestLinuxUninstallSkippingTheSchedulerRemovesWhatItCanAndSaysSo(t *testing.
 		t.Fatalf("uninstall --skip-scheduler: exit %d\n%s", code, output)
 	}
 	lines := strings.Split(strings.TrimSpace(output), "\n")
+	searchRef := string(l.env.installation(l.home, l.userHome).searchRole().ref())
 	for _, want := range []string{
 		"Not verified stopped: systemd's " + l.ref() + " job may still be running, because the systemd user manager cannot be reached (this session has no user bus).",
 		"To stop it, run this from a session that can reach systemd: " + l.manualStop(),
+		"Not verified stopped: systemd's " + searchRef + " job may still be running, because the systemd user manager cannot be reached (this session has no user bus).",
+		"To stop search indexing, run this from a session that can reach systemd: systemctl --user stop " + searchRef + ".timer " + searchRef + ".service",
 	} {
 		if !strings.Contains(output, want) {
 			t.Errorf("the summary lacks %q:\n%s", want, output)
 		}
 	}
-	if last := lines[len(lines)-1]; !strings.HasPrefix(last, "Uninstall complete, except that the background collector was not verified stopped") {
+	if last := lines[len(lines)-1]; !strings.HasPrefix(last, "Uninstall complete, except that one or more background jobs were not verified stopped") {
 		t.Errorf("the last line is %q", last)
 	}
 	timer, service := l.units()

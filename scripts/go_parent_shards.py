@@ -6,9 +6,11 @@ import json
 from pathlib import Path
 import re
 
-SCHEMA = 2
+SCHEMA = 4
+LEGACY_SCHEMAS = (3,)
+ALLOCATION = 'independent-lanes-lpt-v1'
 MODULE = 'github.com/wangjohn/agent-archive/'
-HEAVY = tuple(MODULE + 'internal/' + name for name in ('catalog', 'statshtml', 'state'))
+HEAVY = tuple(MODULE + 'internal/' + name for name in ('catalog', 'statshtml', 'state', 'collector'))
 CONFIG_FIELDS = ('GOVERSION GOOS GOARCH GOHOSTOS GOHOSTARCH CGO_ENABLED GOFLAGS '
                  'GOTOOLCHAIN GOWORK GOEXPERIMENT GOAMD64').split()
 
@@ -43,6 +45,50 @@ def listing(text, expected):
     return result
 
 
+def split_listing(text, heavy):
+    """Partition one compiled-list command without dropping any Go event.
+
+    The primary receipt retains the actual invocation. Derivative logs keep
+    the established CLI/heavy parsing contracts, not fictitious invocations.
+    """
+    import run_go_shard as r
+    groups = {r.CLI: [], **{package: [] for package in heavy}}
+    for event in r.json_stream(text):
+        if event.get('Package') not in groups:
+            raise r.Failure('unexpected combined listing package')
+        groups[event['Package']].append(event)
+    for events in groups.values():
+        actions = [event.get('Action') for event in events]
+        if (not actions or actions[0] != 'start' or actions.count('start') != 1
+                or actions[-1] not in ('pass', 'skip')
+                or any(action not in ('start', 'output', 'pass', 'skip') for action in actions)):
+            raise r.Failure('combined listing lacks one complete package lifetime')
+    def encode(events):
+        return ''.join(json.dumps(event, sort_keys=True) + '\n' for event in events)
+    cli = encode(groups.pop(r.CLI))
+    parents = encode([event for events in groups.values() for event in events])
+    r.listed_names(cli)
+    listing(parents, heavy)
+    return cli, parents
+
+
+def hint_diagnostics(catalog, hints):
+    """Describe advisory gaps against compiled units, never filter coverage."""
+    import run_go_shard as r
+    split = {package for package, names in catalog['parents'].items() if names}
+    eligible_packages = set(catalog['packages']) - {r.CLI} - split
+    eligible_cli = set(catalog['cli'])
+    eligible_parents = {unit(package, name) for package, names in catalog['parents'].items() for name in names}
+    groups = [('packages', eligible_packages), ('cli', eligible_cli), ('parents', eligible_parents)]
+    return {'schema': 1, 'default_ms': 1000,
+            'unknown_units': sorted([unit(r.CLI, name) if key == 'cli' else name
+                for key, eligible in groups for name in eligible - set(hints.get(key, {}))]),
+            'stale_hints': {key: sorted(set(hints.get(key, {})) - (set(catalog['packages']) if key == 'packages' else eligible))
+                            for key, eligible in groups},
+            'inactive_package_hints': sorted(set(hints.get('packages', {})) & (split | {r.CLI})),
+            'usage': 'advisory only; all compiled units remain assigned; refresh with verified comparable successful samples'}
+
+
 def unit(package, parent=None):
     return package if parent is None else package + '::' + parent
 
@@ -55,7 +101,35 @@ def build(source, source_proof, config, packages, cli, parents, hints, workers, 
     weights = dict(hints['packages'])
     weights.update({unit(r.CLI, n): v for n, v in hints['cli'].items()})
     weights.update(hints.get('parents', {}))
-    bins = r.partition(units, weights, workers, initial_loads)
+    # CLI parents overlap a sequential ordinary lane. A single mixed sum can
+    # hide an overloaded ordinary lane behind many overlapping CLI wall weights.
+    # Rank each lane independently; pair high ordinary advice with low CLI
+    # advice. These weights remain non-additive advice, never coverage authority.
+    cli_units = [unit(r.CLI, name) for name in cli]
+    ordinary_units = sorted(set(units) - set(cli_units))
+    ordinary = r.partition(ordinary_units, {n: weights[n] for n in ordinary_units if n in weights},
+                           workers, initial_loads, allow_empty=True)
+    cli_bins = r.partition(cli_units, {n: weights[n] for n in cli_units if n in weights},
+                           workers, allow_empty=True)
+    def load(names):
+        return sum(max(1, weights.get(name, 1000)) for name in names)
+    fixed = [0] * workers if initial_loads is None else list(initial_loads)
+    ordinary_order = sorted(range(workers), key=lambda i: (bool(ordinary[i]), fixed[i] + load(ordinary[i]), i))
+    cli_order = sorted(range(workers), key=lambda i: (-load(cli_bins[i]), i))
+    bins = [list(names) for names in ordinary]
+    for ordinary_index, cli_index in zip(ordinary_order, cli_order):
+        bins[ordinary_index].extend(cli_bins[cli_index])
+    # Extreme advisory fixed costs or sparse lanes can leave a worker empty.
+    # Hints cannot make executable units disappear or prevent a valid catalog.
+    for index in [i for i, names in enumerate(bins) if not names]:
+        donors = [i for i, names in enumerate(bins) if len(names) > 1]
+        if not donors:
+            raise r.Failure('not enough execution units for nonempty workers')
+        donor = max(donors, key=lambda i: (fixed[i] + load(bins[i]), -i))
+        moved = min(bins[donor], key=lambda name: (max(1, weights.get(name, 1000)), name))
+        bins[donor].remove(moved)
+        bins[index].append(moved)
+    bins = [sorted(names) for names in bins]
     assignments = []
     for names in bins:
         assignment = {'packages': [], 'cli': [], 'parents': {}}
@@ -69,17 +143,17 @@ def build(source, source_proof, config, packages, cli, parents, hints, workers, 
                 else:
                     assignment['parents'].setdefault(package, []).append(parent)
         assignments.append(assignment)
-    return {'schema': SCHEMA, 'source': source, 'source_proof': source_proof,
+    return {'schema': SCHEMA, 'allocation': ALLOCATION, 'source': source, 'source_proof': source_proof,
             'configuration': config, 'workers': workers, 'packages': packages,
             'cli': cli, 'parents': parents, 'units': sorted(units), 'assignments': assignments}
 
 
-def validate(catalog, workers):
+def validate(catalog, workers, *, allow_legacy=False):
     import run_go_shard as r
-    if (type(catalog.get('schema')) is not int or catalog['schema'] != SCHEMA
-            or catalog.get('workers') != workers
+    if (type(catalog.get('schema')) is not int or catalog['schema'] not in ((SCHEMA, *LEGACY_SCHEMAS) if allow_legacy else (SCHEMA,))
+            or catalog.get('workers') != workers or catalog.get('allocation') != ALLOCATION
             or set(catalog) != {'schema','source','source_proof','configuration','workers',
-                                'packages','cli','parents','units','assignments'}):
+                                'packages','cli','parents','units','assignments','allocation'}):
         raise r.Failure('unsupported parent catalog schema or worker count')
     config = catalog['configuration']
     if (not isinstance(config, dict) or set(config) != set(CONFIG_FIELDS)
@@ -154,10 +228,19 @@ def verify_lifecycle_containment(events):
             active.remove(key)
 
 
-def verify_logs(directory, catalog, assignment):
+def verify_logs(directory, catalog, assignment, *, allow_legacy=False):
     import run_go_shard as r
     import run_ci_tier
     directory = Path(directory)
+    validate(catalog, catalog['workers'], allow_legacy=allow_legacy)
+    if catalog['schema'] == SCHEMA:
+        try:
+            cli, parents = split_listing((directory/'listing-combined.json').read_text(), catalog['parents'])
+        except OSError as error:
+            raise r.Failure('missing combined compiled listing receipt') from error
+        if (r.json_stream(cli) != r.json_stream((directory/'listing.json').read_text())
+                or r.json_stream(parents) != r.json_stream((directory/'listing-parents.json').read_text())):
+            raise r.Failure('compiled listing derivatives differ from actual invocation')
     discovered = r.metadata((directory/'packages.json').read_text())
     cli = r.listed_names((directory/'listing.json').read_text())
     parents = listing((directory/'listing-parents.json').read_text(), catalog['parents'])

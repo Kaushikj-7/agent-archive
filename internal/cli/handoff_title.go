@@ -325,7 +325,9 @@ func (r *handoffQueryResolver) exactID(local []handoffPickerRow) []handoffPicker
 		rows = slices.DeleteFunc(slices.Clone(rows), func(row handoffPickerRow) bool {
 			return r.skip[handoffSessionKey(row.metadata.Harness.Name, row.metadata.NativeSessionID)]
 		})
-		return exactIDWins(rows, r.q, func(row handoffPickerRow) sessionFields { return sessionFields{SessionID: row.metadata.SessionID} })
+		return exactIDWins(rows, r.q, func(row handoffPickerRow) sessionFields {
+			return sessionFields{SessionID: row.metadata.SessionID, NativeSessionID: row.metadata.NativeSessionID}
+		})
 	}
 	if found := exact(local); len(found) > 0 {
 		return found
@@ -504,7 +506,7 @@ func (r *handoffQueryResolver) choose(matches []handoffPickerRow) (code int, don
 			r.printCandidates(matches, format)
 			return 1, true
 		}
-		format.Style, format.GroupByProject, format.Numbered = styleFor(r.stdout), true, true
+		format.Style, format.GroupByDay, format.Numbered = styleFor(r.stdout), true, true
 		rows := formatHandoffRows(matches, format)
 		picked, selected, code := runBrowser(r.ctx, r.env, r.in.prompter(r.stdout), r.stdout, r.stderr, browserSpec{Mode: pickSession, Verb: "Hand off", Choices: rowChoices(rows, format), Query: r.query, Command: "handoff"})
 		if code != 0 {

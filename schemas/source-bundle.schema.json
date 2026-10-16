@@ -404,7 +404,9 @@
             "unsupported_value_omitted",
             "discovered_without_hook_evidence",
             "recovered_generation",
-            "history_cumulative_tokens_unavailable"
+            "history_cumulative_tokens_unavailable",
+            "own_usage_observations_partial",
+            "cache_reasoning_cost_unqualified"
           ]
         },
         {

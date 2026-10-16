@@ -1,10 +1,8 @@
 package codex
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
-	"database/sql"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -15,7 +13,6 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/codexmeta"
 	_ "github.com/wangjohn/agent-archive/internal/testutil/golden"
 )
 
@@ -47,58 +44,141 @@ func labelIndex(t *testing.T, root string, names ...string) {
 	}
 }
 
-func labelDB(t *testing.T, root string, request agentapi.LabelRequest, mode codexmeta.HistoryMode, name, title string) *sql.DB {
-	t.Helper()
-	db, err := sql.Open("sqlite", filepath.Join(root, "state_5.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.ExecContext(context.Background(), "CREATE TABLE threads(id TEXT PRIMARY KEY,history_mode TEXT,name TEXT,title TEXT,first_user_message TEXT,preview TEXT,source TEXT,cli_version TEXT,rollout_path TEXT)"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.ExecContext(context.Background(), "INSERT INTO threads VALUES(?,?,?,?,?,?,?,?,?)", labelTestID, mode, name, title, "Invented prompt", "Invented prompt", "\"cli\"", "0.159.2", request.Registration.TranscriptPath); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	return db
-}
-
 func lookupLabel(root string, request agentapi.LabelRequest) (archive.SessionLabel, bool) {
-	m := (LabelProvider{}).LookupLabels(context.Background(), agentapi.LabelEnvironment{Homes: []string{root}, VerifiedLegacyStorageHomes: []string{root}}, []agentapi.LabelRequest{request})
+	m := (LabelProvider{}).LookupLabels(context.Background(), agentapi.LabelEnvironment{Homes: []string{root}}, []agentapi.LabelRequest{request})
 	l, ok := m[request.Registration.ArchiveSessionID]
 	return l, ok
 }
 
-func TestLabelsIndexUsesLastUsablePhysicalRecord(t *testing.T) {
+func TestLabelsIndexUsesLastNonemptyPhysicalRecord(t *testing.T) {
 	t.Parallel()
 	root, request := labelFixture(t)
 	labelIndex(t, root, "Old name", "Latest physical name", "")
 	got, ok := lookupLabel(root, request)
-	if !ok || got.Name != "Latest physical name" {
-		t.Fatalf("%+v %v", got, ok)
-	}
-	labelIndex(t, root, "Invented prompt")
-	got, ok = lookupLabel(root, request)
-	if !ok || got.State != archive.SessionLabelAbsent {
+	if !ok || got.State != archive.SessionLabelPresent || got.Name != "Latest physical name" || got.Source != archive.SessionLabelIndex || got.Contract != LabelContract {
 		t.Fatalf("%+v %v", got, ok)
 	}
 }
 
-func TestLabelsIndexRequiresVerifiedLegacyContext(t *testing.T) {
+// A complete index without the thread is confirmed absence, so the title falls
+// back to the first prompt; a missing index is an empty one.
+func TestLabelsCompleteIndexWithoutTheThreadIsAbsence(t *testing.T) {
 	t.Parallel()
 	root, request := labelFixture(t)
-	labelIndex(t, root, "Index name")
-	request.Bundle.Capture.FilterVersion = "16"
-	if _, ok := lookupLabel(root, request); ok {
-		t.Fatal("older filtered source supplied no native history-mode proof")
+	got, ok := lookupLabel(root, request)
+	if !ok || got.State != archive.SessionLabelAbsent || got.Name != "" {
+		t.Fatalf("missing index: %+v %v", got, ok)
 	}
-	request.Bundle.Capture.FilterVersion = archive.FilterVersion
-	request.Bundle.NativeRecords[0]["payload"].(map[string]any)["history_mode"] = "paginated"
-	if _, ok := lookupLabel(root, request); ok {
-		t.Fatal("missing paginated DB was interpreted as legacy index")
+	other, err := json.Marshal(map[string]any{"id": "01900000-0000-7000-8000-000000000002", "thread_name": "Another thread", "updated_at": "2026-01-01T00:00:00Z"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "session_index.jsonl"), append(other, '\n'), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := lookupLabel(root, request); !ok || got.State != archive.SessionLabelAbsent {
+		t.Fatalf("other thread only: %+v %v", got, ok)
 	}
 }
 
+// Codex keeps state_5.sqlite in WAL mode while it runs, and threads written
+// by Codex after 0.159.2 carry their own producer version. Neither stops the
+// index from naming a thread: the earlier resolver required a settled
+// database and producer 0.159.2, so it named no current thread at all.
+func TestLabelsNameCurrentProducerWhileCodexRuns(t *testing.T) {
+	t.Parallel()
+	root, request := labelFixture(t)
+	request.Registration.Harness.Version = "0.160.1"
+	labelIndex(t, root, "Review book generation quality")
+	for _, side := range []string{"state_5.sqlite", "state_5.sqlite-wal", "state_5.sqlite-shm"} {
+		if err := os.WriteFile(filepath.Join(root, side), []byte("live"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, ok := lookupLabel(root, request)
+	if !ok || got.Name != "Review book generation quality" {
+		t.Fatalf("%+v %v", got, ok)
+	}
+}
+
+func TestLabelsUnfinishedOrOversizedIndexIsUnavailable(t *testing.T) {
+	t.Parallel()
+	root, request := labelFixture(t)
+	if err := os.WriteFile(filepath.Join(root, "session_index.jsonl"), []byte(`{"id":"`+labelTestID+`","thread_name":"Half`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := lookupLabel(root, request); ok {
+		t.Fatalf("unfinished record proved a name or absence: %+v", got)
+	}
+	if err := os.WriteFile(filepath.Join(root, "session_index.jsonl"), make([]byte, labelIndexBytes+1), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := lookupLabel(root, request); ok {
+		t.Fatalf("oversized index proved a name or absence: %+v", got)
+	}
+}
+
+// Only an admitted top-level thread whose rollout lies in exactly one
+// approved home is looked up.
+func TestLabelsRefuseChildFrozenAndUnownedThreads(t *testing.T) {
+	t.Parallel()
+	for name, change := range map[string]func(*agentapi.LabelRequest, string){
+		"child":           func(r *agentapi.LabelRequest, _ string) { r.Registration.NativeChild = true },
+		"frozen":          func(r *agentapi.LabelRequest, _ string) { r.Registration.CaptureFrozen = true },
+		"outside home":    func(r *agentapi.LabelRequest, _ string) { r.Registration.TranscriptPath = "/outside/rollout.jsonl" },
+		"other discovery": func(r *agentapi.LabelRequest, _ string) { r.Registration.DiscoveryRoot = "/other/.codex" },
+		"other harness":   func(r *agentapi.LabelRequest, _ string) { r.Registration.Harness.Name = "claude" },
+		"context of another thread": func(r *agentapi.LabelRequest, _ string) {
+			r.Context = agentapi.LabelContext{NativeID: "01900000-0000-7000-8000-000000000009", Contract: LabelContract}
+		},
+	} {
+		root, request := labelFixture(t)
+		labelIndex(t, root, "A name")
+		change(&request, root)
+		if got, ok := lookupLabel(root, request); ok {
+			t.Fatalf("%s: looked up %+v", name, got)
+		}
+	}
+	root, request := labelFixture(t)
+	labelIndex(t, root, "A name")
+	if got := (LabelProvider{}).LookupLabels(context.Background(), agentapi.LabelEnvironment{Homes: []string{root, root}}, []agentapi.LabelRequest{request}); len(got) != 0 {
+		t.Fatalf("a rollout in two approved homes was looked up: %+v", got)
+	}
+}
+
+func TestLabelsRegistrationContextNeedsOnlyTheNativeThread(t *testing.T) {
+	t.Parallel()
+	_, request := labelFixture(t)
+	proof, ok := (LabelProvider{}).RegistrationLabelContext(request.Registration)
+	if !ok || proof.NativeID != labelTestID || proof.Contract != LabelContract {
+		t.Fatalf("%+v %v", proof, ok)
+	}
+	request.Registration.NativeSessionID = "not-a-thread"
+	if _, ok := (LabelProvider{}).RegistrationLabelContext(request.Registration); ok {
+		t.Fatal("a non-UUID native ID got a lookup context")
+	}
+}
+
+// Names retained under the earlier settled-file contracts still name the
+// session; an unknown contract never does.
+func TestLabelsEarlierContractsStillName(t *testing.T) {
+	t.Parallel()
+	for _, contract := range []string{string(legacyLabelInterpretation), string(settledLabelInterpretation), LabelContract} {
+		_, request := labelFixture(t)
+		label := archive.SessionLabel{NativeID: labelTestID, State: archive.SessionLabelPresent, Name: "Retained name", Source: archive.SessionLabelDatabase, Contract: contract}
+		request.Bundle.SupplementalEvidence = []archive.SupplementalEvidence{label.Evidence(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), "codex")}
+		analysis, err := (Parser{}).Parse(context.Background(), request.Bundle)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if analysis.Facts.Name != "Retained name" {
+			t.Fatalf("%s: name %q", contract, analysis.Facts.Name)
+		}
+	}
+}
+
+// The index keeps Codex's own reading: a record without updated_at is
+// skipped, and thread IDs compare without case.
 func TestLabelsIndexMatchesNativeRequiredStringAndUUIDSemantics(t *testing.T) {
 	t.Parallel()
 	root, request := labelFixture(t)
@@ -124,14 +204,10 @@ func TestLabelsIndexMatchesNativeRequiredStringAndUUIDSemantics(t *testing.T) {
 	}
 }
 
-func TestLabelsSettledReadDoesNotMutateNativeHome(t *testing.T) {
+func TestLabelsReadDoesNotMutateNativeHome(t *testing.T) {
 	t.Parallel()
 	root, request := labelFixture(t)
 	labelIndex(t, root, "Index name")
-	db := labelDB(t, root, request, codexmeta.CodexHistoryPaginated, "Database name", "Preview title")
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
 	type fileState struct {
 		Size     int64
 		Modified time.Time
@@ -162,150 +238,11 @@ func TestLabelsSettledReadDoesNotMutateNativeHome(t *testing.T) {
 		return out
 	}
 	before := snapshot()
-	if label, ok := lookupLabel(root, request); !ok || label.Name != "Database name" {
+	if label, ok := lookupLabel(root, request); !ok || label.Name != "Index name" {
 		t.Fatalf("%+v %v", label, ok)
 	}
 	if !reflect.DeepEqual(before, snapshot()) {
 		t.Fatal("read-only resolver changed native contents, metadata or directory entries")
-	}
-}
-
-func TestLabelsSettledCanonicalStoragePrecedence(t *testing.T) {
-	// Run precedence checks before the parallel full-history fixtures: native
-	// database observations intentionally become unavailable after 100 ms.
-	for _, tc := range []struct {
-		mode  codexmeta.HistoryMode
-		name  string
-		title string
-		want  string
-	}{{codexmeta.CodexHistoryLegacy, "Unused name", "Database title", "Database title"}, {codexmeta.CodexHistoryLegacy, "Unused name", "Invented prompt", "Index name"}, {codexmeta.CodexHistoryPaginated, "Canonical name", "Stale title", "Canonical name"}, {codexmeta.CodexHistoryPaginated, "Invented prompt", "Stale title", "Invented prompt"}, {codexmeta.CodexHistoryPaginated, "", "Stale title", ""}} {
-		t.Run(string(tc.mode)+tc.want, func(t *testing.T) {
-			root, request := labelFixture(t)
-			labelIndex(t, root, "Index name")
-			db := labelDB(t, root, request, tc.mode, tc.name, tc.title)
-			if err := db.Close(); err != nil {
-				t.Fatal(err)
-			}
-			got, ok := lookupLabel(root, request)
-			if !ok || got.Name != tc.want {
-				t.Fatalf("%+v %v want %q", got, ok, tc.want)
-			}
-		})
-	}
-}
-
-func TestLabelsSettledDatabaseUnavailableAfterDeadline(t *testing.T) {
-	root, request := labelFixture(t)
-	labelIndex(t, root, "Index name")
-	db := labelDB(t, root, request, codexmeta.CodexHistoryLegacy, "Unused name", "Invented prompt")
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
-	for _, tc := range []struct {
-		name string
-		ctx  func() (context.Context, context.CancelFunc)
-	}{
-		{"expired", func() (context.Context, context.CancelFunc) {
-			return context.WithDeadline(context.Background(), time.Unix(0, 0))
-		}},
-		{"canceled", func() (context.Context, context.CancelFunc) {
-			ctx, cancel := context.WithCancel(context.Background())
-			cancel()
-			return ctx, cancel
-		}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			ctx, cancel := tc.ctx()
-			defer cancel()
-			rows, settled, absent := readLabelDatabase(ctx, root, []agentapi.LabelRequest{request})
-			if len(rows) != 0 || settled || absent {
-				t.Fatalf("interrupted database supplied authority: rows=%v settled=%v absent=%v", rows, settled, absent)
-			}
-			if labels := lookupLabelHome(ctx, root, []agentapi.LabelRequest{request}, true); len(labels) != 0 {
-				t.Fatalf("interrupted database allowed index fallback: %+v", labels)
-			}
-		})
-	}
-}
-
-func TestLabelsUnfinishedIndexAndLiveWALAreUnavailable(t *testing.T) {
-	t.Parallel()
-	root, request := labelFixture(t)
-	labelIndex(t, root, "Name")
-	f, err := os.OpenFile(filepath.Join(root, "session_index.jsonl"), os.O_APPEND|os.O_WRONLY, 0600)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = f.WriteString("{\"id\":")
-	_ = f.Close()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := lookupLabel(root, request); ok {
-		t.Fatal("unfinished append was authoritative")
-	}
-	labelIndex(t, root, "Name")
-	db := labelDB(t, root, request, codexmeta.CodexHistoryPaginated, "Live name", "")
-	if _, err := db.ExecContext(context.Background(), "PRAGMA journal_mode=WAL"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.ExecContext(context.Background(), "UPDATE threads SET name='Changed live name'"); err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := lookupLabel(root, request); ok {
-		t.Fatal("live WAL was authoritative")
-	}
-}
-
-func TestLabelsRejectUnknownProducerRelocationAndHome(t *testing.T) {
-	t.Parallel()
-	root, request := labelFixture(t)
-	labelIndex(t, root, "Name")
-	request.Bundle.Capture.Harness.Version = "0.160.0"
-	if _, ok := lookupLabel(root, request); ok {
-		t.Fatal("unknown producer accepted")
-	}
-	request.Bundle.Capture.Harness.Version = "0.159.2"
-	if err := os.WriteFile(filepath.Join(root, "config.toml"), []byte("sqlite_home = '/elsewhere'\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := lookupLabel(root, request); ok {
-		t.Fatal("relocation accepted")
-	}
-	if err := os.Remove(filepath.Join(root, "config.toml")); err != nil {
-		t.Fatal(err)
-	}
-	request.Registration.TranscriptPath = "/outside/session.jsonl"
-	if _, ok := lookupLabel(root, request); ok {
-		t.Fatal("foreign home accepted")
-	}
-}
-
-func TestLabelsCanonicalDatabaseRequiresRetainedSupportedProducer(t *testing.T) {
-	t.Parallel()
-	root, request := labelFixture(t)
-	db := labelDB(t, root, request, codexmeta.CodexHistoryPaginated, "Canonical name", "")
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
-	request.Bundle.Capture.Harness.Version = "0.160.0"
-	if label, ok := lookupLabel(root, request); ok {
-		t.Fatalf("unknown retained producer accepted: %+v", label)
-	}
-}
-
-func TestLabelsCanonicalDatabaseRejectsUnknownValueShape(t *testing.T) {
-	t.Parallel()
-	root, request := labelFixture(t)
-	db := labelDB(t, root, request, codexmeta.CodexHistoryPaginated, "Canonical name", "")
-	if _, err := db.ExecContext(context.Background(), "UPDATE threads SET name=CAST(name AS BLOB)"); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if label, ok := lookupLabel(root, request); ok {
-		t.Fatalf("unknown database name shape accepted: %+v", label)
 	}
 }
 
@@ -332,76 +269,6 @@ func TestLabelsHomeBudgetFollowsPersistentTargetOrder(t *testing.T) {
 		if len(homes) != 1 || homes[0] != want {
 			t.Fatalf("budget selected %v, expected first target home %s", homes, want)
 		}
-	}
-}
-
-func TestLabelsAbsentDatabaseRequiresPositiveProducingStorageProof(t *testing.T) {
-	t.Parallel()
-	root, request := labelFixture(t)
-	labelIndex(t, root, "Stale index name")
-	env := agentapi.LabelEnvironment{Homes: []string{root}}
-	if labels := (LabelProvider{}).LookupLabels(context.Background(), env, []agentapi.LabelRequest{request}); len(labels) != 0 {
-		t.Fatalf("local absence inferred producing placement: %+v", labels)
-	}
-	env.VerifiedLegacyStorageHomes = []string{t.TempDir()}
-	if labels := (LabelProvider{}).LookupLabels(context.Background(), env, []agentapi.LabelRequest{request}); len(labels) != 0 {
-		t.Fatal("another home's proof authorized this home")
-	}
-	env.VerifiedLegacyStorageHomes = []string{root}
-	if labels := (LabelProvider{}).LookupLabels(context.Background(), env, []agentapi.LabelRequest{request}); labels[request.Registration.ArchiveSessionID].Name != "Stale index name" {
-		t.Fatalf("positive producing proof unavailable: %+v", labels)
-	}
-}
-
-func TestLabelsUnknownFilteredHistoryModeCannotProveLegacyAbsence(t *testing.T) {
-	t.Parallel()
-	for _, mode := range []any{"unsupported", nil, true} {
-		root, request := labelFixture(t)
-		labelIndex(t, root, "Index name")
-		request.Bundle.NativeRecords[0]["payload"].(map[string]any)["history_mode"] = mode
-		var native bytes.Buffer
-		for _, record := range request.Bundle.NativeRecords {
-			if err := json.NewEncoder(&native).Encode(record); err != nil {
-				t.Fatal(err)
-			}
-		}
-		filtered, err := (Filter{}).FilterJSONL(&native)
-		if err != nil {
-			t.Fatal(err)
-		}
-		request.Bundle.Capture.Gaps = filtered.Gaps
-		request.Bundle.NativeRecords = nil
-		for _, raw := range filtered.Records {
-			var record map[string]any
-			if err := json.Unmarshal(raw, &record); err != nil {
-				t.Fatal(err)
-			}
-			request.Bundle.NativeRecords = append(request.Bundle.NativeRecords, record)
-		}
-		if _, ok := lookupLabel(root, request); ok {
-			t.Fatalf("omitted mode %v authorized index-only label", mode)
-		}
-	}
-}
-
-func TestLabelsCanonicalDatabaseRequiresPinnedColumnAffinity(t *testing.T) {
-	t.Parallel()
-	root, request := labelFixture(t)
-	db := labelDB(t, root, request, codexmeta.CodexHistoryPaginated, "Canonical name", "")
-	if _, err := db.ExecContext(context.Background(), "ALTER TABLE threads RENAME TO old_threads"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.ExecContext(context.Background(), "CREATE TABLE threads(id TEXT PRIMARY KEY,history_mode TEXT,name BLOB,title TEXT,first_user_message TEXT,preview TEXT,source TEXT,cli_version TEXT,rollout_path TEXT)"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.ExecContext(context.Background(), "INSERT INTO threads SELECT * FROM old_threads"); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if label, ok := lookupLabel(root, request); ok {
-		t.Fatalf("unknown declared name schema accepted: %+v", label)
 	}
 }
 
@@ -447,5 +314,26 @@ func TestLabelsGroupPriorityUsesVerifiedHomeWithoutNativeIO(t *testing.T) {
 	first.Registration.TranscriptPath = "/outside/transcript.jsonl"
 	if provider.LabelRequestGroup(env, first) != "" {
 		t.Fatal("unverified home supplied native priority")
+	}
+}
+
+// A record too long to hold a name (here another thread's oversized line) is
+// skipped; it does not leave every thread unnamed.
+func TestLabelsSkipAnOverlongRecord(t *testing.T) {
+	t.Parallel()
+	root, request := labelFixture(t)
+	long, err := json.Marshal(map[string]string{"id": "01900000-0000-7000-8000-000000000002", "thread_name": strings.Repeat("x", 64<<10), "updated_at": "2026-01-01T00:00:00Z"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	named, err := json.Marshal(map[string]string{"id": labelTestID, "thread_name": "After the long record", "updated_at": "2026-01-01T00:00:00Z"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "session_index.jsonl"), append(append(append(long, '\n'), named...), '\n'), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := lookupLabel(root, request); !ok || got.Name != "After the long record" {
+		t.Fatalf("%+v %v", got, ok)
 	}
 }

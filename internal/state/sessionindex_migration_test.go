@@ -416,54 +416,75 @@ func TestQualifiedRegistrationUpdateAndRemovalCannotChangeOwner(t *testing.T) {
 }
 
 // A newer hook request cannot be certified by an earlier recovery census.
+// A damaged key restarts the census; an unowned key (a refused new session)
+// lets it complete and stays held until the next slice certifies it.
 // Regression: phase 3a P3A-R1.
 func TestQualifiedRecoveryKeepsRequestDuringCompletion(t *testing.T) {
-	for _, duringSync := range []bool{false, true} {
-		t.Run(map[bool]string{false: "before stage", true: "staged before commit"}[duringSync], func(t *testing.T) {
-			s := newTestStore(t)
-			key := agentmeta.SessionKey{Agent: agentmeta.Claude, NativeID: "arriving-at-completion"}
-			requested := false
-			request := func() error {
-				if requested {
-					return nil
-				}
-				requested = true
-				unlock, err := local.NamedLock(s.home, "hooks.lock")
-				if err != nil {
-					return err
-				}
-				defer unlock()
-				return s.RequestSessionIndexRecovery(key)
-			}
-			s.onIndexStep = func(step string) error {
-				if step == "recovery-completing" {
-					if duringSync {
-						s.onWriteSync = func() {
-							if err := request(); err != nil {
-								t.Fatal(err)
-							}
-						}
-						return nil
+	for _, damaged := range []bool{false, true} {
+		for _, duringSync := range []bool{false, true} {
+			name := map[bool]string{false: "unowned", true: "damaged"}[damaged] + " " + map[bool]string{false: "before stage", true: "staged before commit"}[duringSync]
+			t.Run(name, func(t *testing.T) {
+				testRecoveryKeepsRequestDuringCompletion(t, damaged, duringSync)
+			})
+		}
+	}
+}
+
+func testRecoveryKeepsRequestDuringCompletion(t *testing.T, damaged, duringSync bool) {
+	t.Helper()
+	s := newTestStore(t)
+	key := agentmeta.SessionKey{Agent: agentmeta.Claude, NativeID: "arriving-at-completion"}
+	requested := false
+	request := func() error {
+		if requested {
+			return nil
+		}
+		requested = true
+		unlock, err := local.NamedLock(s.home, "hooks.lock")
+		if err != nil {
+			return err
+		}
+		defer unlock()
+		if damaged {
+			return requestDamagedKey(s, key)
+		}
+		return s.RequestSessionIndexRecovery(key)
+	}
+	s.onIndexStep = func(step string) error {
+		if step == "recovery-completing" {
+			if duringSync {
+				s.onWriteSync = func() {
+					if err := request(); err != nil {
+						t.Fatal(err)
 					}
-					return request()
 				}
 				return nil
 			}
-			err := recoverytest.Exhaust(context.Background(), s, SessionIndexRecoverySlice, true)
-			if !requested {
-				t.Fatal("request boundary not reached")
-			}
-			if !errors.Is(err, ErrSessionIndexRecoveryRequired) {
-				t.Fatalf("newer generation accepted: %v", err)
-			}
-			s.onIndexStep, s.onWriteSync = nil, nil
-			if err := recoverytest.Exhaust(context.Background(), s, SessionIndexRecoverySlice, false); err != nil {
-				t.Fatal(err)
-			}
-			if _, created, err := s.EnsureArchiveSessionID(key); err != nil || !created {
-				t.Fatalf("newer request stranded by completed census: created=%t err=%v", created, err)
-			}
-		})
+			return request()
+		}
+		return nil
+	}
+	err := recoverytest.Exhaust(context.Background(), s, SessionIndexRecoverySlice, true)
+	if !requested {
+		t.Fatal("request boundary not reached")
+	}
+	if damaged && !errors.Is(err, ErrSessionIndexRecoveryRequired) {
+		t.Fatalf("newer generation accepted: %v", err)
+	}
+	s.onIndexStep, s.onWriteSync = nil, nil
+	if !damaged {
+		if err != nil {
+			t.Fatalf("unowned request failed the census: %v", err)
+		}
+		if _, _, err := s.EnsureArchiveSessionID(key); !errors.Is(err, ErrSessionIndexRecoveryRequired) {
+			t.Fatalf("earlier census certified a newer request: %v", err)
+		}
+	}
+	if err := recoverytest.Exhaust(context.Background(), s, SessionIndexRecoverySlice, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, created, err := s.EnsureArchiveSessionID(key); err != nil || !created {
+		t.Fatalf("newer request stranded by completed census: created=%t err=%v", created, err)
 	}
 }
 

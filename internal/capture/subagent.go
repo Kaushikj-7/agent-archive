@@ -13,6 +13,14 @@ import (
 	"github.com/wangjohn/agent-archive/internal/state"
 )
 
+// childIndexRecoveryRequestedError marks a SubagentStop refused only because its
+// child identity needs recovery, after the child's own request succeeded. The
+// parent was found owned to reach the child, and under a complete census an
+// owned key's request starts a full census, so the parent is not requested.
+type childIndexRecoveryRequestedError struct{ error }
+
+func (e childIndexRecoveryRequestedError) Unwrap() error { return e.error }
+
 func handleSubagentStop(store *state.Store, cfg config.Config, event agentapi.LifecycleEvent, now time.Time, after func(effectName) error) error {
 	harness, parentNativeID := string(event.Session.Agent), event.Session.NativeID
 
@@ -50,7 +58,11 @@ func handleSubagentStop(store *state.Store, cfg config.Config, event agentapi.Li
 	childID, _, err := store.EnsureArchiveSessionID(childKey)
 	if err != nil {
 		if errors.Is(err, state.ErrSessionIndexRecoveryRequired) {
-			err = errors.Join(err, store.RequestSessionIndexRecovery(childKey))
+			if requestErr := store.RequestSessionIndexRecovery(childKey); requestErr != nil {
+				err = errors.Join(err, requestErr)
+			} else {
+				err = childIndexRecoveryRequestedError{err}
+			}
 		}
 		return fmt.Errorf("assign subagent archive session ID: %w", err)
 	}

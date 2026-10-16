@@ -116,7 +116,7 @@ func TestHandoffTitleAmbiguousWithoutATerminalListsCandidates(t *testing.T) {
 	if code != 1 || out != "" {
 		t.Fatalf("code=%d stdout=%q stderr=%s", code, out, errOut)
 	}
-	for _, want := range []string{`"yet" matches 2 sessions`, f.notUploaded[:minShortSessionID], other[:minShortSessionID], "codex", "claude", "Not uploaded yet", "Not started yet", "just now"} {
+	for _, want := range []string{`"yet" matches 2 sessions`, f.notUploaded[:minShortSessionID], other[:minShortSessionID], "codex", "claude", "Not uploaded yet", "Not started yet", "\n  WHEN  AGENT   ID        TITLE\n  now   claude  "} {
 		if !strings.Contains(errOut, want) {
 			t.Errorf("stderr missing %q:\n%s", want, errOut)
 		}
@@ -413,7 +413,7 @@ func TestHandoffTitleLimitsTheCandidatesListed(t *testing.T) {
 	}
 	_, errOut, code := runHandoff(t, f.env, "bulk job")
 	lines := strings.Split(strings.TrimSpace(errOut), "\n")
-	if code != 1 || len(lines) != 1+handoffCandidateLimit+1+2 || !strings.Contains(errOut, fmt.Sprintf("matches %d sessions", extra)) ||
+	if code != 1 || len(lines) != 1+1+handoffCandidateLimit+1+2 || !strings.Contains(errOut, fmt.Sprintf("matches %d sessions", extra)) ||
 		!strings.Contains(errOut, "and 5 more") {
 		t.Fatalf("code=%d, %d lines:\n%s", code, len(lines), errOut)
 	}
@@ -422,7 +422,7 @@ func TestHandoffTitleLimitsTheCandidatesListed(t *testing.T) {
 		t.Fatalf("not the newest first:\n%s", errOut)
 	}
 	out, errOut, code := runPicker(t, f.env, "q\n", "bulk job")
-	if code != 0 || !strings.Contains(out, fmt.Sprintf(`"bulk job" matches %d`, extra)) || !strings.Contains(out, "Bulk job 0 ") || strings.Contains(out, "Showing") {
+	if code != 0 || !strings.Contains(out, fmt.Sprintf(`"bulk job" matches %d`, extra)) || !strings.Contains(out, "Bulk job 0\n") || strings.Contains(out, "Showing") {
 		t.Fatalf("picker: code=%d stderr=%s\n%s", code, errOut, out)
 	}
 }

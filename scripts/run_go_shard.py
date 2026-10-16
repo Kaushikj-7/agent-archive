@@ -35,17 +35,28 @@ class CleanupFailure(Failure):
 
 
 def json_stream(text):
-    """Decode concatenated objects without repeatedly copying the remaining log."""
-    decoder, items, offset = json.JSONDecoder(), [], 0
-    whitespace = re.compile(r'\s*')
-    while True:
-        offset = whitespace.match(text, offset).end()
-        if offset == len(text):
-            return items
-        item, offset = decoder.raw_decode(text, offset)
+    decoder = json.JSONDecoder()
+    items = []
+    index = 0
+    while index < len(text):
+        # Keep the complete input: copying each remaining suffix makes full
+        # race-log verification quadratic. isspace preserves strip's accepted
+        # separators, including concatenated pretty-printed go-list objects.
+        while index < len(text) and text[index].isspace():
+            index += 1
+        if index == len(text):
+            break
+        try:
+            item, end = decoder.raw_decode(text, index)
+        except json.JSONDecodeError as error:
+            # Preserve the previous record-relative error document/position.
+            # Only malformed input makes one suffix copy before termination.
+            raise json.JSONDecodeError(error.msg, text[index:], error.pos - index) from None
+        index = end
         if not isinstance(item, dict):
             raise Failure('JSON record is not an object')
         items.append(item)
+    return items
 
 
 def child_pids():
@@ -299,9 +310,11 @@ def worker_count(workers):
     return workers
 
 
-def partition(units, hints, workers=2, initial_loads=None):
+def partition(units, hints, workers=2, initial_loads=None, *, allow_empty=False):
     # Generic bounded LPT scheduling is shared with native full coverage.
     # Representative PR topology is independently restricted by worker_count.
+    if type(allow_empty) is not bool:
+        raise Failure('invalid empty-lane policy')
     if type(workers) is not int or not 1 <= workers <= 16:
         raise Failure('partition count must be an integer from 1 through 16')
     if len(set(units)) != len(units):
@@ -324,7 +337,7 @@ def partition(units, hints, workers=2, initial_loads=None):
         index = min(range(workers), key=lambda i: (loads[i], i))
         bins[index].append(name)
         loads[index] += weights[name]
-    if (not all(bins) or sum(len(b) for b in bins) != len(set(n for b in bins for n in b))
+    if ((not allow_empty and not all(bins)) or sum(len(b) for b in bins) != len(set(n for b in bins for n in b))
             or set(n for b in bins for n in b) != set(units)):
         raise Failure('partition is not nonempty, disjoint and exhaustive')
     print("predicted logical loads (ms; not worker elapsed):", loads, flush=True)
@@ -425,7 +438,7 @@ def execute_worker_vet(out, deadline, settings):
         (out/'plain-vet-receipt.json').write_text(json.dumps(receipt, indent=2, sort_keys=True)+'\n')
 
 
-def verify_worker_vet(directory, manifest, expected):
+def verify_worker_vet(directory, manifest, expected, *, historical_vet_contract=None):
     import run_ci_tier
     settings = manifest.get('settings', {})
     if type(settings.get('plain_vet_receipt_schema')) is not int or settings['plain_vet_receipt_schema'] != 1:
@@ -437,13 +450,15 @@ def verify_worker_vet(directory, manifest, expected):
     if not isinstance(receipt, dict):
         raise Failure('worker vet receipt malformed')
     context = settings.get('plain_vet_context')
-    if (not isinstance(context, dict) or set(context) != {'go', 'version', 'runner_os',
-            'runner_arch', 'image', 'os_release', 'cc', 'cxx', 'toolchain', 'race', 'tags', 'schema'}
-            or not isinstance(context.get('image'), dict)
-            or set(context['image']) != {'ImageOS', 'ImageVersion'}
-            or any(type(v) is not str or not re.fullmatch(r'[A-Za-z0-9_.-]+', v)
-                   for v in context['image'].values())):
-        raise Failure('worker vet full image/context identity malformed')
+    import go_cache_context
+    try:
+        if historical_vet_contract is None:
+            go_cache_context.validate_context(context)
+        else:
+            import historical_vet_contract as old_vet
+            old_vet.validate_context(context, expected, historical_vet_contract, ROOT)
+    except go_cache_context.InvalidContext as error:
+        raise Failure('worker vet full image/context identity malformed') from error
     if (receipt.get('identity_schema') != 'full-v1'
             or type(receipt.get('schema')) is not int or receipt['schema'] != 1
             or not isinstance(context, dict) or digest(context) != settings.get('plain_vet_context_sha256')
@@ -458,13 +473,23 @@ def verify_worker_vet(directory, manifest, expected):
     # context above, never the aggregate runner's unrelated native context.
     # The live worker also invokes this canonical verifier with historical=False.
     run_ci_tier.verify_plain_vet(directory, {'plain_vet': receipt}, expected,
-                                digest(context), historical=True, strict_full_context=True)
+                                digest(context), historical=True, strict_full_context=True,
+                                historical_vet_contract=historical_vet_contract)
     if receipt.get('stderr_sha256') != hashlib.sha256((directory/'plain-vet.stderr').read_bytes()).hexdigest():
         raise Failure('worker vet raw stderr mismatch')
 
 
-def reconcile(directory, workers=2, audit_evidence=None, *, expected_source_proof=None, require_plain_vet=False, historical_legacy=False):
+def reconcile(directory, workers=2, audit_evidence=None, *, expected_source_proof=None, require_plain_vet=False, historical_legacy=False, historical_vet_contract=None):
     worker_count(workers)
+    if historical_vet_contract is not None:
+        import historical_vet_contract as old_vet
+        import go_cache_context
+        try:
+            if (not historical_legacy or expected_source_proof is None
+                    or old_vet.resolve(ROOT, expected_source_proof) != historical_vet_contract):
+                raise Failure('historical vet requires explicit measured timing-import authority')
+        except go_cache_context.InvalidContext as error:
+            raise Failure('historical vet measured timing-import authority unavailable') from error
     paths = sorted(Path(directory).glob('**/manifest.json'))
     if len(paths) != workers:
         raise Failure('expected complete worker manifest count')
@@ -475,7 +500,7 @@ def reconcile(directory, workers=2, audit_evidence=None, *, expected_source_proo
     import go_parent_shards as parent_shards
     versioned = 'schema' in first
     if versioned:
-        parent_shards.validate(first, workers)
+        parent_shards.validate(first, workers, allow_legacy=historical_legacy)
         import run_ci_tier
         proof = expected_source_proof if expected_source_proof is not None else run_ci_tier.full_race.source_proof(ROOT)
         if first['source_proof'] != proof:
@@ -521,7 +546,8 @@ def reconcile(directory, workers=2, audit_evidence=None, *, expected_source_proo
                     raise Failure('owned plain vet requires complete independent evidence')
                 audit = run_ci_tier.verify_source_audit(audit_evidence, first['source'],
                     expected_source_proof=expected_source_proof, require_plain_vet=True,
-                    expected_vet_context_sha256=next(iter(contexts)), strict_full_context=True)
+                    expected_vet_context_sha256=next(iter(contexts)), strict_full_context=True,
+                    historical_vet_contract=historical_vet_contract)
             else:
                 audit = run_ci_tier.verify_source_audit(audit_evidence, first['source'],
                     expected_source_proof=expected_source_proof)
@@ -530,7 +556,8 @@ def reconcile(directory, workers=2, audit_evidence=None, *, expected_source_proo
                 if settings.get('plain_vet_source_proof') != audit.get('source_proof'):
                     raise Failure('owned plain vet worker tracked source proof mismatch')
                 if not legacy:
-                    verify_worker_vet(path.parent, manifest, audit['source_proof'])
+                    verify_worker_vet(path.parent, manifest, audit['source_proof'],
+                                      historical_vet_contract=historical_vet_contract)
         except run_ci_tier.Failure as error:
             raise Failure(str(error)) from error
     for manifest in manifests:
@@ -547,7 +574,7 @@ def reconcile(directory, workers=2, audit_evidence=None, *, expected_source_proo
         import run_ci_tier
         directory = paths[manifests.index(manifest)].parent
         if versioned:
-            raw = parent_shards.verify_logs(directory, first, expected)
+            raw = parent_shards.verify_logs(directory, first, expected, allow_legacy=historical_legacy)
             if manifest.get('settings', {}).get('source_proof') != first['source_proof']:
                 raise Failure('parent catalog/worker source proof differs')
             actual_config = manifest.get('settings', {}).get('plain_vet_context', {}).get('go', {})
@@ -582,8 +609,9 @@ def reconcile(directory, workers=2, audit_evidence=None, *, expected_source_proo
 
 
 def verdict(event, ref, needs):
-    expected = {'linux-short': 'success', 'linux-full': 'success', 'script-tests': 'success',
-                'macos-smoke': 'success', 'tier-plan': 'success', 'source-audit': 'success'}
+    expected = {'linux-short': 'success', 'linux-full': 'success',
+                'script-static': 'success', 'script-install': 'success', 'script-purge': 'success',
+                'macos-smoke': 'success', 'source-audit': 'success'}
     if event == 'push' and ref.startswith('refs/heads/release-candidate/') and ref != 'refs/heads/release-candidate/':
         expected['linux-short'], expected['linux-full'], expected['source-audit'] = 'skipped', 'success', 'skipped'
     elif event != 'pull_request':
@@ -625,17 +653,20 @@ def run(index, out, seconds, workers=2, plain_audit_owned=False, plain_vet_owned
     phases = {}
     phases['package_discovery_seconds'] = supervise([(['go', 'list', '-race', '-json', './...'], out / 'packages.json', env)], deadline)[0]
     packages = metadata((out / 'packages.json').read_text())
-    phases['cli_listing_race_build_testmain_seconds'] = supervise([(['go', 'test', '-race', '-short', '-count=1', '-json', '-list', '^(Test|Fuzz|Example)', CLI], out / 'listing.json', env)], deadline)[0]
-    names = listed_names((out / 'listing.json').read_text())
     import go_parent_shards as parent_shards
-    import run_ci_tier
     heavy = sorted(set(parent_shards.HEAVY) & set(packages))
-    if heavy:
-        phases['parent_listing_race_build_testmain_seconds'] = supervise([
-            (['go','test','-race','-short','-count=1','-json','-p','1','-list','^(Test|Fuzz|Example)'] + heavy,
-             out/'listing-parents.json', env)], deadline)[0]
-    else:
-        (out/'listing-parents.json').write_text('')
+    # One Go invocation loads the shared dependency graph for CLI and heavy
+    # packages once. Each package still compiles, runs default vet and executes
+    # its own TestMain with the same race/short/count/list flags. -p 1 preserves
+    # the heavy discovery concurrency bound, without adding workers/barriers.
+    phases['compiled_listing_race_build_testmain_seconds'] = supervise([
+        (['go', 'test', '-race', '-short', '-count=1', '-json', '-p', '1',
+          '-list', '^(Test|Fuzz|Example)', CLI] + heavy,
+         out/'listing-combined.json', env)], deadline)[0]
+    cli_listing, parent_listing = parent_shards.split_listing((out/'listing-combined.json').read_text(), heavy)
+    (out/'listing.json').write_text(cli_listing)
+    (out/'listing-parents.json').write_text(parent_listing)
+    names = listed_names(cli_listing)
     parents = parent_shards.listing((out/'listing-parents.json').read_text(), heavy)
     config = json.loads(subprocess.check_output(['go','env','-json', *parent_shards.CONFIG_FIELDS], env=env, text=True))
     (out/'discovery-config.json').write_text(json.dumps(config, sort_keys=True)+'\n')
@@ -664,9 +695,10 @@ def run(index, out, seconds, workers=2, plain_audit_owned=False, plain_vet_owned
                     'runner_image': os.environ.get('ImageOS', ''), 'runner_image_version': os.environ.get('ImageVersion', ''),
                     'run_id': os.environ.get('GITHUB_RUN_ID', ''), 'run_attempt': os.environ.get('GITHUB_RUN_ATTEMPT', ''),
                     'commands_overlap': cpus > 1, 'note': 'invocation durations include compilation; parallel durations are not additive'},
+                'hint_diagnostics': parent_shards.hint_diagnostics(catalog, hints),
                 'scheduling': {'fixed_vet_ms': fixed, 'cli_fixed_auxiliary_ms': cli_fixed,
                                'usage': 'logical ranking plus observed fixed invocation advice; not elapsed forecast'},
-                'settings': {'source_proof': source_proof, 'plain_audit_owned': plain_audit_owned, 'workers': workers, 'cpus': cpus, 'cli_cpus': cli_cpus, 'ordinary_cpus': ordinary_cpus, 'package_p': 1,
+                'settings': {'source_proof': source_proof, 'compiled_discovery_schema': 1, 'plain_audit_owned': plain_audit_owned, 'workers': workers, 'cpus': cpus, 'cli_cpus': cli_cpus, 'ordinary_cpus': ordinary_cpus, 'package_p': 1,
                              'ordinary_parallel': ordinary_cpus, 'cli_parallel': cli_cpus, 'deadline_seconds': seconds}}
     if plain_vet_owned:
         import run_ci_tier
@@ -679,6 +711,7 @@ def run(index, out, seconds, workers=2, plain_audit_owned=False, plain_vet_owned
     path = out / 'manifest.json'
     path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + '\n')
     print('effective catalog:', json.dumps(catalog, sort_keys=True), flush=True)
+    print('scheduling hint diagnostics:', json.dumps(manifest['hint_diagnostics'], sort_keys=True), flush=True)
     common = ['go', 'test', '-race', '-short', '-count=1', '-json', '-timeout', '20m', '-p', '1']
     # Native Git observers have fixed 500ms process deadlines. The overlapping
     # workload exposed timeout failures; run this assigned package first with
