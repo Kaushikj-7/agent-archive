@@ -128,26 +128,28 @@ func SeedReadPathArchive(tb testing.TB, store *MemoryStore, count, generation in
 			harness = "future-agent"
 		}
 		native := fmt.Sprintf("native-%08x", i+1)
-		source := archive.SourceReference{Key: fmt.Sprintf("sessions/%s/%s/source.%064x.jsonl.gz", harness, id, 1), SHA256: fmt.Sprintf("%064x", 1), CompressedBytes: 1}
+		sourceKey := fmt.Sprintf("sessions/%s/%s/source.%064x.jsonl.gz", harness, id, 1)
+		sourceHash := fmt.Sprintf("%064x", 1)
+		sourceBytes := 1
 		if i == 0 {
 			bundle := archive.SourceBundle{SchemaVersion: archive.SourceSchemaVersion, ArchiveSessionID: id, NativeSessionID: native, ProjectID: "project-0", Capture: archive.SourceCapture{Harness: archive.Harness{Name: harness}, AdapterName: harness, AdapterVersion: "1", SourceFormat: "jsonl", FilterVersion: archive.FilterVersion, CapturedAt: BenchmarkTime}, NativeRecords: []map[string]any{{"type": "event_msg", "payload": map[string]any{"type": "user_message", "message": "Synthetic read path benchmark request"}}}}
 			compressed, err := archive.BuildCompressedSource(bundle)
 			if err != nil {
 				tb.Fatal(err)
 			}
-			source.Key, err = archive.SourceObjectKey(bundle, compressed.SHA256)
+			sourceKey, err = archive.SourceObjectKey(bundle, compressed.SHA256)
 			if err != nil {
 				tb.Fatal(err)
 			}
-			source.SHA256 = compressed.SHA256
-			source.CompressedBytes = len(compressed.Bytes)
+			sourceHash = compressed.SHA256
+			sourceBytes = len(compressed.Bytes)
 			if generation == 0 {
-				if err = store.Put(ctx, source.Key, compressed.Bytes); err != nil {
+				if err = store.Put(ctx, sourceKey, compressed.Bytes); err != nil {
 					tb.Fatal(err)
 				}
 			}
 		} else if generation == 0 {
-			if err := store.Put(ctx, source.Key, []byte{0}); err != nil {
+			if err := store.Put(ctx, sourceKey, []byte{0}); err != nil {
 				tb.Fatal(err)
 			}
 		}
@@ -164,10 +166,12 @@ func SeedReadPathArchive(tb testing.TB, store *MemoryStore, count, generation in
 		if generation > 0 && i < max(1, count/100) {
 			version = 1
 		}
-		m := archive.Metadata{SchemaVersion: archive.MetadataSchemaVersion, FilterVersion: archive.FilterVersion, SessionID: id, NativeSessionID: native, MachineID: "bench", ProjectID: fmt.Sprintf("project-%d", i%100), Harness: archive.Harness{Name: harness}, CapturedAt: BenchmarkTime.Add(time.Duration(i) * time.Second), Title: fmt.Sprintf("synthetic-%d", version), SourceBundle: source}
+		projectName := ""
 		if i%10 == 0 {
-			m.ProjectName = "synthetic project"
+			projectName = "synthetic project"
 		}
+		source := archive.SourceReference{Key: sourceKey, SHA256: sourceHash, CompressedBytes: sourceBytes}
+		m := archive.Metadata{ProjectName: projectName, SchemaVersion: archive.MetadataSchemaVersion, FilterVersion: archive.FilterVersion, SessionID: id, NativeSessionID: native, MachineID: "bench", ProjectID: fmt.Sprintf("project-%d", i%100), Harness: archive.Harness{Name: harness}, CapturedAt: BenchmarkTime.Add(time.Duration(i) * time.Second), Title: fmt.Sprintf("synthetic-%d", version), SourceBundle: source}
 		raw, err := json.Marshal(m)
 		if err != nil {
 			tb.Fatal(err)

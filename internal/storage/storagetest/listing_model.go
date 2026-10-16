@@ -46,7 +46,8 @@ func ModelListingRange(headers []storage.Object, after, through string, model Li
 		end = start + sort.Search(len(headers)-start, func(i int) bool { return headers[start+i].Key > through })
 	}
 	scanned := end - start
-	if end < len(headers) && !(model.StopAtBoundary && end > start && headers[end-1].Key == through) {
+	atBoundary := model.StopAtBoundary && end > start && headers[end-1].Key == through
+	if end < len(headers) && !atBoundary {
 		scanned++
 	}
 	pages := max(1, (scanned+size-1)/size)

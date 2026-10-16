@@ -397,14 +397,38 @@ func TestBenchmarkListRejectsIncorrectSuccessfulDocuments(t *testing.T) {
 	}
 }
 
+type readPathCommand string
+
+const (
+	readPathListPicker    readPathCommand = "list-picker"
+	readPathShowPicker    readPathCommand = "show-picker"
+	readPathHandoffPicker readPathCommand = "handoff-picker"
+	readPathShowShort     readPathCommand = "show-short"
+	readPathHandoffQuery  readPathCommand = "handoff-query"
+	readPathListPiped     readPathCommand = "list-piped"
+)
+
+type readPathCacheState string
+
+const (
+	readPathCold    readPathCacheState = "cold"
+	readPathWarm    readPathCacheState = "warm"
+	readPathChanged readPathCacheState = "changed"
+	readPathNoCache readPathCacheState = "no-cache"
+)
+
+func (command readPathCommand) isPicker() bool {
+	return command == readPathListPicker || command == readPathShowPicker || command == readPathHandoffPicker
+}
+
 // BenchmarkCommandReadPaths extends the command harness with the observed-size
 // read paths. Timing includes local startup, inventory, refresh and rendering;
 // remote provider-page metrics remain separate from those local costs.
 func BenchmarkCommandReadPaths(b *testing.B) {
 	for _, size := range storagetest.ReadPathSizes() {
-		for _, state := range []string{"cold", "warm", "changed", "no-cache"} {
-			for _, command := range []string{"list-picker", "show-picker", "handoff-picker", "show-short", "handoff-query", "list-piped"} {
-				if state == "no-cache" && command != "list-piped" && command != "list-picker" {
+		for _, state := range []readPathCacheState{readPathCold, readPathWarm, readPathChanged, readPathNoCache} {
+			for _, command := range []readPathCommand{readPathListPicker, readPathShowPicker, readPathHandoffPicker, readPathShowShort, readPathHandoffQuery, readPathListPiped} {
+				if state == readPathNoCache && command != readPathListPiped && command != readPathListPicker {
 					continue
 				}
 				b.Run(fmt.Sprintf("sessions=%d/%s/%s", size, state, command), func(b *testing.B) {
@@ -429,7 +453,7 @@ func BenchmarkCommandReadPaths(b *testing.B) {
 					env := benchmarkEnv(b, home, store)
 					opens := 0
 					env.OpenStore = func(config.Config) (storage.ObjectStore, error) { opens++; return store, nil }
-					args := readPathBenchmarkArgs(command, state == "no-cache")
+					args := readPathBenchmarkArgs(command, state == readPathNoCache)
 					b.ReportAllocs()
 					for range b.N {
 						mem, err = baseline.Clone(context.Background())
@@ -440,7 +464,7 @@ func BenchmarkCommandReadPaths(b *testing.B) {
 						if err := os.RemoveAll(filepath.Join(home, "cache")); err != nil {
 							b.Fatal(err)
 						}
-						if state == "warm" || state == "changed" {
+						if state == readPathWarm || state == readPathChanged {
 							// Restore baseline before warming, so every measured changed invocation
 							// hydrates the same one percent rather than only the first iteration.
 							warm := env
@@ -448,7 +472,7 @@ func BenchmarkCommandReadPaths(b *testing.B) {
 							if code, _, diagnostic := runReadPathBenchmark(args, command, warm); code != 0 {
 								b.Fatalf("warmup exit=%d: %s", code, diagnostic)
 							}
-							if state == "changed" {
+							if state == readPathChanged {
 								storagetest.SeedReadPathArchive(b, mem, size, 1)
 							}
 						}
@@ -472,11 +496,11 @@ func BenchmarkCommandReadPaths(b *testing.B) {
 						b.Fatal(err)
 					}
 					observedEnv := benchmarkEnv(b, b.TempDir(), observed)
-					if state == "warm" || state == "changed" {
+					if state == readPathWarm || state == readPathChanged {
 						if code, _, diagnostic := runReadPathBenchmark(args, command, observedEnv); code != 0 {
 							b.Fatalf("observation warmup: %d %s", code, diagnostic)
 						}
-						if state == "changed" {
+						if state == readPathChanged {
 							storagetest.SeedReadPathArchive(b, observed, size, 1)
 						}
 					}
@@ -502,20 +526,20 @@ func BenchmarkCommandReadPaths(b *testing.B) {
 	}
 }
 
-func readPathBenchmarkArgs(command string, noCache bool) []string {
+func readPathBenchmarkArgs(command readPathCommand, noCache bool) []string {
 	var args []string
 	switch command {
-	case "list-picker":
+	case readPathListPicker:
 		args = []string{"list", "--all-projects"}
-	case "show-picker":
+	case readPathShowPicker:
 		args = []string{"show"}
-	case "handoff-picker":
+	case readPathHandoffPicker:
 		args = []string{"handoff", "--all-projects", "--source", "archive"}
-	case "show-short":
+	case readPathShowShort:
 		args = []string{"show", "00000001", "--json"}
-	case "handoff-query":
+	case readPathHandoffQuery:
 		args = []string{"handoff", "00000001", "--source", "archive", "--format", "json"}
-	case "list-piped":
+	case readPathListPiped:
 		args = []string{"list", "--all-projects", "--limit", "50", "--json"}
 	default:
 		panic("unknown read path benchmark command")
@@ -526,10 +550,10 @@ func readPathBenchmarkArgs(command string, noCache bool) []string {
 	return args
 }
 
-func runReadPathBenchmark(args []string, command string, env Env) (int, []byte, string) {
+func runReadPathBenchmark(args []string, command readPathCommand, env Env) (int, []byte, string) {
 	var out, diagnostic bytes.Buffer
 	var in io.Reader
-	if strings.HasSuffix(command, "picker") {
+	if command.isPicker() {
 		input := strings.NewReader("q\n")
 		in = input
 		env.IsTerminal = func(stream any) bool { return stream == any(input) || stream == any(&out) }
@@ -545,7 +569,7 @@ var readPathTraceCounter = regexp.MustCompile(`(rows-scanned|summary-B-hashed|su
 func readPathLocalCounts(diagnostic string) map[string]int64 {
 	counts := map[string]int64{}
 	for line := range strings.SplitSeq(diagnostic, "\n") {
-		prefix := ""
+		var prefix string
 		switch {
 		case strings.Contains(line, "read sidecars"):
 			prefix = "body-"
@@ -577,8 +601,8 @@ func readPathLocalCounts(diagnostic string) map[string]int64 {
 func TestCommandReadPathOperationBudgets(t *testing.T) {
 	t.Parallel()
 	const size = 1800
-	for _, command := range []string{"list-picker", "show-picker", "handoff-picker", "show-short", "handoff-query", "list-piped"} {
-		t.Run(command, func(t *testing.T) {
+	for _, command := range []readPathCommand{readPathListPicker, readPathShowPicker, readPathHandoffPicker, readPathShowShort, readPathHandoffQuery, readPathListPiped} {
+		t.Run(string(command), func(t *testing.T) {
 			t.Parallel()
 			mem := storagetest.NewMemoryStore()
 			storagetest.SeedReadPathArchive(t, mem, size, 0)
@@ -620,12 +644,12 @@ func TestCommandReadPathOperationBudgets(t *testing.T) {
 	}
 }
 
-func validateReadPathOutput(command string, size, code int, out []byte) error {
+func validateReadPathOutput(command readPathCommand, size, code int, out []byte) error {
 	if code != 0 {
 		return fmt.Errorf("command exit %d", code)
 	}
 	switch command {
-	case "list-piped":
+	case readPathListPiped:
 		var doc listDocument
 		if err := json.Unmarshal(out, &doc); err != nil {
 			return err
@@ -639,7 +663,7 @@ func validateReadPathOutput(command string, size, code int, out []byte) error {
 				return errors.New("incorrect list order or identity")
 			}
 		}
-	case "show-short", "handoff-query":
+	case readPathShowShort, readPathHandoffQuery:
 		if !bytes.Contains(out, []byte("00000001000000000000000000000001")) || !bytes.Contains(out, []byte("native-00000001")) {
 			return errors.New("incorrect selected identity")
 		}
@@ -653,7 +677,7 @@ func validateReadPathOutput(command string, size, code int, out []byte) error {
 
 func TestReadPathOutputRejectsIncorrectSuccessfulCommands(t *testing.T) {
 	t.Parallel()
-	for _, command := range []string{"list-picker", "show-picker", "handoff-picker", "show-short", "handoff-query", "list-piped"} {
+	for _, command := range []readPathCommand{readPathListPicker, readPathShowPicker, readPathHandoffPicker, readPathShowShort, readPathHandoffQuery, readPathListPiped} {
 		if err := validateReadPathOutput(command, 1800, 0, []byte(`{"sessions":[]}`)); err == nil {
 			t.Fatal("accepted incorrect successful output", command)
 		}
