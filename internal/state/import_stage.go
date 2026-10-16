@@ -1260,3 +1260,35 @@ func unsupportedSettledStageOwner(p ImportStage, reg archive.SessionRegistration
 func sameNativeImportBinding(a, b *archive.NativeSourceBinding) bool {
 	return a.PreservesFacts(b) && b.PreservesFacts(a) && a.SameCheckpoint(b)
 }
+
+// SaveLiveCursorImportStage stages separately typed actual live capture under
+// the existing staged3/Cursor4 contracts after native scratch cleanup succeeds.
+func (s *Store) SaveLiveCursorImportStage(ctx context.Context, reg archive.SessionRegistration, expected *nativefacts.CaptureRequest, evidence *nativecapture.LiveProof) (digest string, err error) {
+	if s.resourceBudget == nil || !safeFileComponent(reg.ArchiveSessionID) {
+		return "", ErrReadySelectionFrozen
+	}
+	err = evidence.WithVerifiedLiveCapture(ctx, reg, expected, s.resourceBudget, func(loanCtx context.Context, bundle archive.SourceBundle, facts nativefacts.SettledImportFacts) error {
+		lease, e := expected.Borrow()
+		if e != nil {
+			return e
+		}
+		defer lease.Close()
+		scoped, closeScoped := s.WithReadBudget(loanCtx, s.resourceBudget)
+		scoped.resourceReservation = func() stateReservation { return lease.Reservation() }
+		defer closeScoped()
+		cfg, present, e := scoped.loadConfig()
+		if e != nil || !present || !cfg.SupportsSettledCursorSelection() || cfg.Paused || !cfg.Archive.Enabled || !cfg.AcceptSession(reg) || reg.DestinationID != cfg.DestinationID() {
+			return errors.Join(ErrReadySelectionFrozen, e)
+		}
+		if e := scoped.validateSettledIndex(reg); e != nil {
+			return e
+		}
+		if !expected.MatchesPolicy(nativefacts.CapturePolicy{FilterVersion: archive.FilterVersion, SkillEvidence: nativefacts.CaptureSkillMode(cfg.EffectiveSkillEvidence())}) {
+			return ErrReadySelectionFrozen
+		}
+		stage := ImportStage{Version: 3, TypedSelection: true, Registration: reg, Bundle: bundle, CursorFacts: &facts, SkillEvidence: cfg.EffectiveSkillEvidence()}
+		digest, e = scoped.savePreparedImportStage(loanCtx, reg, stage)
+		return e
+	})
+	return digest, err
+}
