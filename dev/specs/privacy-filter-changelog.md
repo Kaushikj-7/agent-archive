@@ -5,6 +5,26 @@ rules, as a whole, are in the [filter specification](privacy-filter.md);
 version numbers and bump rules are in [versions](../maintainers/versions.md). Each archived session
 records the filter version that produced it (`filter_version`).
 
+## Source filter version 23
+
+Global adapter 0.23.0 and Muse parser 0.3.0 accompany this change. Versions20,21,22
+are reserved by independent open PR611, PR613 and PR614 respectively; this entry
+does not include those policies.
+
+- Muse strictly validates newly qualified reasoning/schema3 approval/review,
+  wait/tool effect and task-output bodies, then discards them. Only the reviewed
+  minimal identity fields survive; typed prior-reference joins remain checkable.
+- Ordinary v1 serialization remains unchanged. A closed v2 native omission row
+  preserves the single qualified ephemeral task marker without any timestamp,
+  causation, run/task, visible text or tool/accounting fact. Its original identity,
+  stream sequence and physical position participate in validation and comparison.
+- Exact two-metadata model-resolution startup and an assistant's typed private
+  provider-item leaf are qualified; the leaf is dropped and own assistant graph
+  authority stays unchanged. Permission-frame time remains birth authority.
+- Deterministic private-body/ephemeral-task omission gaps cannot be hidden by
+  deleting bundle gaps: parser refuses; retained-only refilter reconstructs them.
+  Unknown shapes refuse whole-file with no partial artifact. Capture stays fenced.
+
 ## Source filter version 19
 
 Adapter 0.19.0 accompanies the new Muse parser 0.1.0.

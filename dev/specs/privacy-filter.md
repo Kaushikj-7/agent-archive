@@ -1,6 +1,6 @@
 # Privacy filter rules
 
-> **Status: implemented** (filter 19). The user-facing summary is
+> **Status: implemented** (filter 23). The user-facing summary is
 > [privacy](../../docs/security/privacy.md); what changed in each filter
 > version is in the [filter changelog](privacy-filter-changelog.md).
 
@@ -432,9 +432,9 @@ Native JSON responses and process output are discarded before persistence.
 
 ## Muse explicit local evidence
 
-Filter 19 supports `handoff --file PATH --harness muse` for complete ordinary
-exec/MSP roots in the qualified grammar. The [inner record schema](../../schemas/muse-retained-v1.schema.json)
-is `muse-jsonl` v1: original envelope identity, physical line and nullable child
+Filter 23 supports `handoff --file PATH --harness muse` for complete ordinary
+exec/MSP roots in the qualified grammar. The [inner record union](../../schemas/muse-retained-record.schema.json)
+uses unchanged v1 ordinary rows plus closed timestamp-free v2 omissions. Ordinary rows retain: original envelope identity, physical line and nullable child
 index, exact safe integers, discriminator/schema, causal identity and only the
 fixed per-type safe fields. Initial permission profiles are validated locally
 and reduced to format/schema/epoch/cause; raw child strings and native checksums
@@ -451,7 +451,7 @@ at 32, strings at 1 MiB and nodes per physical record at 200,000, in addition to
 existing raw, record, retained and shared-memory limits. It reserves expansion
 before decoding; no limits or cache reserves increase. Retained-only refilter
 and analysis preserve position, owner, start and workspace after native loss.
-Registered capture, automatic browse, backfill and Muse launch stay unavailable.
+Registered capture, backfill and Muse launch stay unavailable. Explicit files and bounded automatic local handoff share this strict whole-file reader.
 
 The [production local v1 field policy](../qualification/muse/retained-allowlist-local-v1.json) is the exact current retained projection. The original `retained-allowlist.json` and derived corpus remain byte-frozen historical Q0 evidence; their broader metrics ceiling is not a production promise.
 
@@ -467,3 +467,39 @@ fixed text, never native content. Retained refilter preserves only recognized
 privacy codes at valid positions, canonicalizes details and recomputes current
 availability gaps. Direct retained parsing refuses text that still needs a
 privacy transformation; refilter it first so that loss is represented.
+
+Filter 23 recognizes only the qualified reasoning-committed, schema3 approval,
+approval-wait/tool-batch effect and task-output shapes. Every nested object is
+closed; structural discriminators are finite and private leaf strings are typed,
+bounded and discarded. Enriched assistant events may add one typed string
+`provider_item_id`, also discarded. Own visible text still requires the existing
+accepted→started→materialized and committed-assistant graph. The exact initial
+model-resolution lane permits metadata without a model followed immediately by
+matching metadata with a model and the owning original-open event; its private
+build/search copies must agree before omission. Genuine ordered timestamps do
+not replace permission-frame birth authority.
+
+The v2 `native_omission` branch contains exactly v/kind/pos/stream/position/schema/
+marker/omitted_record. Its sole classification is schema1 omitted_live_only,
+ephemeral status/runtime.session/schema1/task/task_tool_delta_v1. Native position
+identity/sequence and physical provenance remain distinct. It consumes one stream
+position and participates in shared stream/identity uniqueness, contiguous logical
+sequence, physical position and exact prefix comparison, but contributes no time,
+run/task, activity, turn, pending response, tool or accounting fact. It cannot
+interrupt required startup blocks. Existing v1 row bytes are unchanged.
+
+Only minimal new-family identities survive: run/source record for reasoning;
+run/pending/task/call for requests and wait starts; run/pending/review for review
+rows; run/pending for wait terminals; run/effect/task/call/index for tool effects;
+run/task for output. Typed prior references and immutable identities are checked
+after native loss; these are subset joins, not full task lifecycle or full native
+source-run coverage. Internally consistent optional-family prefixes are allowed
+after a complete valid own root graph. Completion requires the matching prior
+start; no completeness or tool success is inferred.
+
+Validated new rows deterministically require `muse_private_native_bodies_omitted`
+and markers require `muse_ephemeral_task_delta_omitted`. Refilter reconstructs and
+deduplicates these fixed gaps. Direct parsing refuses missing, duplicated or
+altered required omission coverage; refilter can repair it without native files.
+Old retained readers refuse the new variants and markers; unchanged ordinary v1
+rows remain readable. Frozen historical Q0 policy/corpus/projector are unchanged.

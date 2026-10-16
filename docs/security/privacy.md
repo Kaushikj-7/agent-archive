@@ -696,3 +696,13 @@ children remain unavailable; this local operation grants no capture consent.
 Shared redaction, hidden-context omission and text truncation are disclosed with
 fixed capture-gap codes. These codes survive retained-only privacy refresh;
 arbitrary native or archived diagnostic details are not copied into them.
+
+The qualified Muse grammar also recognizes reasoning, approval/review, wait/tool
+effect and task-output records while dropping their private bodies completely.
+Minimal identities let the retained reader recheck ownership and prior references;
+they do not expose tool results, review assessments or accounting. A narrowly
+classified ephemeral task marker retains only its original position and omission
+classification, with no invented timestamp or task identity. Fixed
+`muse_private_native_bodies_omitted` and `muse_ephemeral_task_delta_omitted` gaps
+survive privacy refresh. Direct parsing refuses evidence whose required omission
+gaps were removed or altered; retained-only refilter reconstructs them.

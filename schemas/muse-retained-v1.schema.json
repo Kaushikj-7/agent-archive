@@ -1799,6 +1799,439 @@
           }
         }
       }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.session"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "event_kind",
+            "run_id",
+            "source_run_record_id",
+            "source_run_record_sequence"
+          ],
+          "properties": {
+            "kind": {
+              "const": "run"
+            },
+            "event_kind": {
+              "const": "reasoning_committed"
+            },
+            "run_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "source_run_record_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "source_run_record_sequence": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.session"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "event_kind",
+            "run_id",
+            "task_id"
+          ],
+          "properties": {
+            "kind": {
+              "const": "task"
+            },
+            "event_kind": {
+              "const": "output"
+            },
+            "run_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "task_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.session"
+        },
+        "payload_schema": {
+          "const": 3
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "event_kind",
+            "run_id",
+            "pending_action_id",
+            "task_id",
+            "tool_call_id"
+          ],
+          "properties": {
+            "kind": {
+              "const": "approval"
+            },
+            "event_kind": {
+              "const": "requested"
+            },
+            "run_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "pending_action_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "task_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "tool_call_id": {
+              "type": "string",
+              "maxLength": 1048576
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.session"
+        },
+        "payload_schema": {
+          "const": 3
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "event_kind",
+            "run_id",
+            "pending_action_id",
+            "review_id"
+          ],
+          "properties": {
+            "kind": {
+              "const": "approval"
+            },
+            "event_kind": {
+              "const": "automated_review_started"
+            },
+            "run_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "pending_action_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "review_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.session"
+        },
+        "payload_schema": {
+          "const": 3
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "event_kind",
+            "run_id",
+            "pending_action_id",
+            "review_id"
+          ],
+          "properties": {
+            "kind": {
+              "const": "approval"
+            },
+            "event_kind": {
+              "const": "automated_review_completed"
+            },
+            "run_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "pending_action_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "review_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.session"
+        },
+        "payload_schema": {
+          "const": 3
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "event_kind",
+            "run_id",
+            "pending_action_id",
+            "review_id"
+          ],
+          "properties": {
+            "kind": {
+              "const": "approval"
+            },
+            "event_kind": {
+              "const": "decision_applied"
+            },
+            "run_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "pending_action_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "review_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "approval_wait.effect.started"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "event_kind",
+            "run_id",
+            "pending_action_id",
+            "task_id",
+            "tool_call_id"
+          ],
+          "properties": {
+            "kind": {
+              "const": "approval_wait_effect"
+            },
+            "event_kind": {
+              "const": "started"
+            },
+            "run_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "pending_action_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "task_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "tool_call_id": {
+              "type": "string",
+              "maxLength": 1048576
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "approval_wait.effect.terminal"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "event_kind",
+            "run_id",
+            "pending_action_id"
+          ],
+          "properties": {
+            "kind": {
+              "const": "approval_wait_effect"
+            },
+            "event_kind": {
+              "const": "terminal"
+            },
+            "run_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "pending_action_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "tool_batch.effect.started"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "event_kind",
+            "run_id",
+            "effect_id",
+            "task_id",
+            "tool_call_id",
+            "model_call_index"
+          ],
+          "properties": {
+            "kind": {
+              "const": "tool_batch_effect"
+            },
+            "event_kind": {
+              "const": "started"
+            },
+            "run_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "effect_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "task_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "tool_call_id": {
+              "type": "string",
+              "maxLength": 1048576
+            },
+            "model_call_index": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "tool_batch.effect.terminal"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "event_kind",
+            "run_id",
+            "effect_id",
+            "task_id",
+            "tool_call_id",
+            "model_call_index"
+          ],
+          "properties": {
+            "kind": {
+              "const": "tool_batch_effect"
+            },
+            "event_kind": {
+              "const": "terminal"
+            },
+            "run_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "effect_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "task_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "tool_call_id": {
+              "type": "string",
+              "maxLength": 1048576
+            },
+            "model_call_index": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            }
+          }
+        }
+      }
     }
   ]
 }

@@ -6,6 +6,11 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Muse local handoff recognizes the qualified reasoning, approval and tool-effect
+  records while omitting their private bodies. A timestamp-free ephemeral task
+  marker preserves position without inventing activity or tool results. Fixed
+  omission gaps survive retained-only privacy refresh; unknown shapes still refuse.
+
 - `agent-archive list` shows its progress while it loads: how many sessions
   it has scanned, then how many it has loaded of those it will show.
   `agent-archive handoff` shows "Preparing handoff…" after you pick a session,

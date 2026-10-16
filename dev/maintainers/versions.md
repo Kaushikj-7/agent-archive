@@ -8,8 +8,8 @@ affects.
 | Version | Where | Recorded in | Current | Changes when |
 | --- | --- | --- | --- | --- |
 | Release | `cli.Version` (set at build time) | `--version` | Build-dependent (`dev-<commit>` from source) | A tag is cut. |
-| Filter | `archive.FilterVersion` | source header `capture.filter_version`, metadata `filter_version` | 19 | What the privacy filter keeps, drops, or redacts changes: any change to filtered output. |
-| Adapter | `adapterVersion` in `internal/archive/adapters.go` | `capture.adapter_version` | 0.19.0 | An adapter's output changes (bumped with the filter in practice). |
+| Filter | `archive.FilterVersion` | source header `capture.filter_version`, metadata `filter_version` | 23 | What the privacy filter keeps, drops, or redacts changes: any change to filtered output. |
+| Adapter | `adapterVersion` in `internal/agents/nativecodec/adapters.go` | `capture.adapter_version` | 0.23.0 | An adapter's output changes (bumped with the filter in practice). |
 | Parser | per-agent `Parser.Version()` / `archive.DefaultParserVersion` | metadata `parser.version` | 0.21.0 | How metadata is derived from a source changes: counts, turns, models, skills, gaps, titles, session names, branch, linked pull requests, tools used, end time, tokens (per model too), tool errors, MCP calls, git activity, the repository key (derived from the project's git origin, not the source). |
 | Source schema | `archive.SourceSchemaVersion` / `HistorySourceSchemaVersion` | source header `schema_version` | 2 | The source bundle's line format changes. Readers refuse other versions. |
 | Metadata schema | `archive.MetadataSchemaVersion` / `HistoryMetadataSchemaVersion` | metadata `schema_version` | 1 | The metadata sidecar changes incompatibly. Optional fields don't bump it. |
@@ -21,8 +21,8 @@ affects.
 | List JSON | `cli.listSchemaVersion` | `list --json` `schema_version` | 4 | The script-facing list document changes incompatibly. Version 3 removed `unavailable`; version 4 makes exact-count knowledge explicit. |
 | Status JSON | `statusView.Version` in `internal/cli/status.go` | `status --json` `schema_version` | 4 | Status output changes incompatibly; schema 4 separates discovery from actual hook evidence. |
 
-Muse uses its independent parser 0.2.0 and archive-native `muse-jsonl` v1
-([inner record schema](../../schemas/muse-retained-v1.schema.json)). Explicit-file
+Muse uses its independent parser 0.3.0 and archive-native `muse-jsonl` mixed ordinary-v1/native-omission-v2
+([inner union schema](../../schemas/muse-retained-record.schema.json)). Explicit-file
 and bounded automatic local handoff are supported; this does not alter outer
 bundle schemas or
 registration authority. Handoff builders now prefer existing `NativeStartedAt`
@@ -268,3 +268,13 @@ tool-result availability remains explicit. Parser-only refresh rederives metadat
 from retained sources; full export refreshes older sidecar counts when parser
 versions differ. Filter 19, adapter 0.19.0, retained Muse v1 and published schema
 versions are unchanged; existing schemas allow omitted counts and edited files.
+
+Muse native omission recognition allocates filter23/global adapter0.23.0 and Muse
+parser0.3.0. Filter20/adapter0.20, filter21/adapter0.21 and filter22/adapter0.22 are reserved
+by separate open PR611, PR613 and PR614 respectively; their policies are not
+included by this allocation. Existing ordinary-v1 bytes remain unchanged;
+new finite ordinary variants and timestamp-free v2 omissions are closed and older
+readers refuse them. Exact observed two-metadata startup preserves permission
+birth authority. Required omission coverage is derived from validated rows;
+retained parsing refuses concealed coverage and refilter reconstructs it. Other
+agent parser versions and outer source/metadata/configuration schemas do not change.

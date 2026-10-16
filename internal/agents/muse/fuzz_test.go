@@ -28,7 +28,7 @@ func (memoryInput) Records(context.Context, bool, int64, int64, func([]byte) boo
 }
 
 func FuzzMuseNative(f *testing.F) {
-	for _, name := range []string{"synthetic-exec-empty.jsonl", "synthetic-exec-conversation.jsonl", "synthetic-msp-empty.jsonl", "synthetic-msp-conversation.jsonl"} {
+	for _, name := range []string{"synthetic-exec-empty.jsonl", "synthetic-exec-conversation.jsonl", "synthetic-msp-empty.jsonl", "synthetic-msp-conversation.jsonl", "synthetic-native-omissions.jsonl", "synthetic-model-resolution-omissions.jsonl"} {
 		raw, e := os.ReadFile(filepath.Join("testdata", name))
 		if e != nil {
 			f.Fatal(e)
@@ -66,7 +66,7 @@ func FuzzMuseNative(f *testing.F) {
 }
 
 func FuzzMuseRetained(f *testing.F) {
-	for _, name := range []string{"synthetic-exec-empty.golden.jsonl", "synthetic-msp-conversation.golden.jsonl"} {
+	for _, name := range []string{"synthetic-exec-empty.golden.jsonl", "synthetic-msp-conversation.golden.jsonl", "synthetic-native-omissions.golden.jsonl", "synthetic-model-resolution-omissions.golden.jsonl"} {
 		raw, e := os.ReadFile(filepath.Join("testdata", name))
 		if e != nil {
 			f.Fatal(e)
@@ -100,12 +100,17 @@ func FuzzMuseRetained(f *testing.F) {
 }
 
 func FuzzMuseHeaderPreview(f *testing.F) {
-	for _, name := range []string{"synthetic-exec-conversation.jsonl", "synthetic-msp-conversation.jsonl"} {
+	for _, name := range []string{"synthetic-exec-conversation.jsonl", "synthetic-msp-conversation.jsonl", "synthetic-model-resolution-omissions.jsonl"} {
 		raw, err := os.ReadFile(filepath.Join("testdata", name))
 		if err != nil {
 			f.Fatal(err)
 		}
 		f.Add(raw)
+		if name == "synthetic-model-resolution-omissions.jsonl" {
+			f.Add(bytes.Replace(raw, []byte(`"provider_id":"synthetic"`), []byte(`"provider_id":"foreign"`), 1))
+			lines := bytes.Split(raw, []byte("\n"))
+			f.Add(append(bytes.Join(lines[:3], []byte("\n")), '\n'))
+		}
 	}
 	f.Fuzz(func(t *testing.T, raw []byte) {
 		if len(raw) > 256<<10 {
