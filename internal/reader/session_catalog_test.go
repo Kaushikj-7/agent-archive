@@ -15,9 +15,70 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
+
+func TestSnapshotFallbackScopesHydrationWithoutChangingDiscovery(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	store := newCountingStore()
+	wanted := putSession(t, store, "codex", "selected", baseTime)
+	other := putSession(t, store, "claude", "unrelated", baseTime)
+	cache, err := OpenMetadataCache(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Preserve a sibling harness body through the narrowed hydration's eviction.
+	if _, err = ListMetadataWithOptions(ctx, store, "sessions/", Filter{Harness: "claude"}, ListOptions{Cache: cache}); err != nil {
+		t.Fatal(err)
+	}
+	headers, err := DiscoverCatalogHeaders(ctx, store, ListOptions{Cache: cache})
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalObjects := append([]storage.Object(nil), headers.Canonical...)
+	originalKnown := append([]string(nil), headers.knownCanonical...)
+	store.reset()
+	var cacheReads atomic.Int32
+	cache.readFile = func(path string) ([]byte, error) {
+		cacheReads.Add(1)
+		return os.ReadFile(path)
+	}
+	sessions, err := ListMetadataFromSnapshot(ctx, store, headers, Filter{Harness: "codex"}, ListOptions{Cache: cache})
+	if err != nil || len(sessions) != 1 || sessions[0].SessionID != "selected" {
+		t.Fatalf("sessions=%+v err=%v", sessions, err)
+	}
+	if !reflect.DeepEqual(store.gets, []string{wanted}) {
+		t.Fatalf("cold body reads=%v, want only %s", store.gets, wanted)
+	}
+	if reads := cacheReads.Load(); reads != 0 {
+		t.Fatalf("unrelated cached body reads=%d, want none", reads)
+	}
+	for _, object := range originalObjects {
+		if object.Key == other {
+			if _, ok := cache.get(other, object.ETag); !ok {
+				t.Fatal("narrowed hydration evicted another harness's cached body")
+			}
+		}
+	}
+	if !reflect.DeepEqual(headers.Canonical, originalObjects) || !reflect.DeepEqual(headers.knownCanonical, originalKnown) {
+		t.Fatal("narrowed hydration mutated shared discovery")
+	}
+	c, err := OpenSessionCatalog(ctx, cache, store, ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = c.Close() }()
+	if err = c.Refresh(ctx, headers); err != nil {
+		t.Fatal(err)
+	}
+	page, err := c.Query(ctx, CatalogQuery{})
+	if err != nil || !page.Complete || page.Total != 2 {
+		t.Fatalf("global catalog page=%+v err=%v", page, err)
+	}
+}
 
 func TestSessionCatalogRefreshPagesAndWarmBodies(t *testing.T) {
 	ctx := context.Background()

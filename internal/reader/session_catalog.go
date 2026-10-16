@@ -413,7 +413,23 @@ func ListMetadataFromSnapshot(ctx context.Context, store storage.ObjectStore, sn
 	if !snapshot.CanonicalComplete {
 		return nil, errors.New("metadata fallback requires complete canonical discovery")
 	}
-	return listMetadataFromHeaders(ctx, store, filter, opts, snapshot.Canonical, snapshot.knownCanonical)
+	objects, known := snapshot.Canonical, snapshot.knownCanonical
+	if prefix := listPrefixFor("sessions/", filter.Harness); prefix != "sessions/" {
+		// Discovery remains complete for catalog refreshes. Narrow only this
+		// hydration view, including the keys whose absence permits eviction.
+		objects, known = nil, nil
+		for _, object := range snapshot.Canonical {
+			if strings.HasPrefix(object.Key, prefix) {
+				objects = append(objects, object)
+			}
+		}
+		for _, key := range snapshot.knownCanonical {
+			if strings.HasPrefix(key, prefix) {
+				known = append(known, key)
+			}
+		}
+	}
+	return listMetadataFromHeaders(ctx, store, filter, opts, objects, known)
 }
 
 // Refresh reconciles current canonical revisions. Proven absence is retired
