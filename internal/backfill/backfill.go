@@ -305,14 +305,15 @@ type Environment struct {
 	HistoricalSourceAllowed   func(string) bool
 	RepositoryIdentity        sourcefacts.RepositoryLookup
 	RepositoryIdentityCurrent func(sourcefacts.RepositoryIdentity) bool
-	Discovery                 agentapi.DiscoveryLookup
-	DatabaseCatalogs          agentapi.DatabaseCatalogLookup
-	NativePaths               agentapi.NativePathsLookup
-	Worktrees                 agentapi.WorktreeLookup
-	Workspaces                agentapi.WorkspaceLookup
-	Children                  agentapi.ChildrenLookup
-	Imports                   agentapi.ImportsLookup
-	Sources                   agentapi.SourcesLookup
+	// Discovery supplies providers eligible for this environment's import/project purposes.
+	Discovery        agentapi.DiscoveryLookup
+	DatabaseCatalogs agentapi.DatabaseCatalogLookup
+	NativePaths      agentapi.NativePathsLookup
+	Worktrees        agentapi.WorktreeLookup
+	Workspaces       agentapi.WorkspaceLookup
+	Children         agentapi.ChildrenLookup
+	Imports          agentapi.ImportsLookup
+	Sources          agentapi.SourcesLookup
 	// CodexRollouts shares native selection and its resource ledger with planning.
 	CodexRollouts agentapi.CodexRolloutLookup
 	// PrepareCodexProof advances qualified inventory without authorizing capture.

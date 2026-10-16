@@ -434,7 +434,7 @@ func (b *builder) headsUp() []string {
 		case stats.NoteCostliestSession:
 			text = b.costliestNote(n)
 		case stats.NoteUnmeteredSessions:
-			text = unmeteredNote(n)
+			text = b.observationAccountingContext(unmeteredNote(n))
 		case stats.NoteLowCacheHit:
 			text = lowCacheNote(n)
 		}
@@ -614,7 +614,7 @@ func (b *builder) footer(p *page) {
 	if len(unknown) > 0 {
 		scope += " Sessions with no token data are left out of token and cost totals (" + strings.Join(unknown, ", ") + ")."
 	}
-	lines = append(lines, scope)
+	lines = append(lines, b.observationAccountingContext(scope))
 	if s.Coverage.Sessions > 0 {
 		lines = append(lines, joinSentences(
 			fmt.Sprintf("Token data: %s of %s.", statsfmt.CommaInt(int64(s.Coverage.SessionsWithTokens)), plural(s.Coverage.Sessions, "session")),
@@ -642,7 +642,14 @@ func (b *builder) footer(p *page) {
 			plural(s.Coverage.SessionsPricedAtMainModel, "session")))
 	}
 	if b.cost.partial {
-		lines = append(lines, "+ leaves out tokens of models the price table does not list"+b.unpricedModels()+".")
+		text := "+ marks partial priced coverage."
+		if s.Coverage.ObservationOnlySessions == 0 || s.Overview.Cost.UnpricedTokens > 0 {
+			text = "+ leaves out tokens of models the price table does not list" + b.unpricedModels() + "."
+		}
+		if s.Coverage.ObservationOnlySessions > 0 {
+			text += fmt.Sprintf(" Priced subset also excludes %d observation-only sessions.", s.Coverage.ObservationOnlySessions)
+		}
+		lines = append(lines, text)
 	}
 	p.Footer.Lines = lines
 	p.Footer.Privacy = "This page holds counts and names only: no prompts, transcript text, file paths or session IDs."
@@ -692,9 +699,19 @@ func (b *builder) serverLabel(srv stats.MCPServer) string {
 
 func (b *builder) coverageNotes() []string {
 	var out []string
+	if s := b.s.TokenObservations; s != nil {
+		if s.Observed.Available() && s.Input != nil && s.Output != nil {
+			out = append(out, fmt.Sprintf("Observed input %d, output %d across %d sessions; full usage, composition and cost unavailable.", *s.Input, *s.Output, b.s.ObservationSessions))
+		} else {
+			out = append(out, "Token observations unavailable: exact aggregate limit.")
+		}
+	}
+	if n := b.s.Coverage.ObservationOnlySessions; n > 0 {
+		out = append(out, fmt.Sprintf("Priced subset excludes %d observation-only sessions.", n))
+	}
 	for _, n := range b.s.HeadsUp {
 		if n.Kind == stats.NoteUnmeteredSessions {
-			if text := unmeteredNote(n); text != "" {
+			if text := b.observationAccountingContext(unmeteredNote(n)); text != "" {
 				out = append(out, text)
 			}
 		}
@@ -703,4 +720,11 @@ func (b *builder) coverageNotes() []string {
 		out = append(out, plain(text))
 	}
 	return out
+}
+
+func (b *builder) observationAccountingContext(text string) string {
+	if b.s.TokenObservations != nil {
+		return strings.ReplaceAll(text, "no token data", "no qualified token accounting")
+	}
+	return text
 }

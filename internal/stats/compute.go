@@ -111,23 +111,25 @@ func (p *Prepared) Compute(opts Options) Stats {
 			Version: table.Version, AsOf: table.AsOf, Currency: table.Currency, Sources: slices.Clone(table.Sources),
 			Notes: table.Notes, Overridden: table.Overridden,
 		},
-		Coverage:      cov,
-		Daily:         dailySeries,
-		Peak:          peak,
-		PeakSpend:     peakSpend,
-		Overview:      overview(total, prev, active, len(prevDays), days),
-		Agents:        agents(current, total),
-		Models:        modelRows,
-		Projects:      topProjects,
-		TotalProjects: projectCount,
-		Composition:   composition(total),
-		Subagents:     subagents,
-		Skills:        skillLists.recorded,
-		DisplaySkills: skillLists.display,
-		MCP:           mcpServers(current, topN, opts.MCPServerNames),
-		Highlights:    highlighted,
-		HeadsUp:       headsUp(cov, total, subagents, highlighted.CostliestSession),
-		Groups:        grouped,
+		TokenObservations:   total.observations.Summary(),
+		ObservationSessions: total.observationSessions,
+		Coverage:            cov,
+		Daily:               dailySeries,
+		Peak:                peak,
+		PeakSpend:           peakSpend,
+		Overview:            overview(total, prev, active, len(prevDays), days),
+		Agents:              agents(current, total),
+		Models:              modelRows,
+		Projects:            topProjects,
+		TotalProjects:       projectCount,
+		Composition:         composition(total),
+		Subagents:           subagents,
+		Skills:              skillLists.recorded,
+		DisplaySkills:       skillLists.display,
+		MCP:                 mcpServers(current, topN, opts.MCPServerNames),
+		Highlights:          highlighted,
+		HeadsUp:             headsUp(cov, total, subagents, highlighted.CostliestSession),
+		Groups:              grouped,
 
 		TotalSkills:        skillLists.recordedTotal,
 		TotalDisplaySkills: skillLists.displayTotal,
@@ -140,6 +142,7 @@ func coverage(current []*unit) Coverage {
 	agentsSeen := map[string]bool{}
 	for _, u := range current {
 		agentsSeen[u.harness] = true
+		cov.ObservationOnlySessions += u.cost.excluded
 		if u.hasData {
 			cov.SessionsWithTokens++
 		} else {
@@ -236,8 +239,9 @@ func overview(cur, prev *bucket, active []bool, prevActive, days int) Overview {
 		ActiveDays: measure(countF(activeCount), countF(prevActive)),
 		CacheShare: cacheShare(cur),
 		Cost: CostMeasure{
-			Measure: measure(costCur.USD, costPrev.USD),
-			Partial: costCur.Partial, Approximate: costCur.Approximate, UnpricedTokens: costCur.UnpricedTokens,
+			Measure:                 measure(costCur.USD, costPrev.USD),
+			ObservationOnlySessions: costCur.ObservationOnlySessions,
+			Partial:                 costCur.Partial, Approximate: costCur.Approximate, UnpricedTokens: costCur.UnpricedTokens,
 		},
 		DaysInWindow: days, CurrentStreak: current, BestStreak: best,
 	}

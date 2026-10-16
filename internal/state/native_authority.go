@@ -32,7 +32,7 @@ func (s *Store) guardNativeRegistrationWrite(w lockedWrite) lockedWrite {
 			return nil, false, errors.New("registration write requires typed authority")
 		}
 		next = &reg
-		if err := s.checkNativeRegistrationWrite(w.path, reg); err != nil {
+		if err := s.checkNativeRegistrationTransition(w.path, reg, w.nativeValidation); err != nil {
 			return nil, false, err
 		}
 		return value, true, nil
@@ -44,7 +44,7 @@ func (s *Store) guardNativeRegistrationWrite(w lockedWrite) lockedWrite {
 			}
 		}
 		if next != nil {
-			return s.checkNativeRegistrationWrite(w.path, *next)
+			return s.checkNativeRegistrationTransition(w.path, *next, w.nativeValidation)
 		}
 		return nil
 	}
@@ -52,6 +52,10 @@ func (s *Store) guardNativeRegistrationWrite(w lockedWrite) lockedWrite {
 }
 
 func (s *Store) checkNativeRegistrationWrite(path string, next archive.SessionRegistration) error {
+	return s.checkNativeRegistrationTransition(path, next, nil)
+}
+
+func (s *Store) checkNativeRegistrationTransition(path string, next archive.SessionRegistration, prepared *nativeValidationCommit) error {
 	before, err := readSnapshot(path)
 	if err != nil {
 		return err
@@ -62,10 +66,8 @@ func (s *Store) checkNativeRegistrationWrite(path string, next archive.SessionRe
 			return err
 		}
 	}
-	if previous.NativeBinding != nil || before.found && next.NativeBinding != nil {
-		if !next.NativeBinding.PreservesFacts(previous.NativeBinding) || !nativeRegistrationOwnerMatches(next, previous) {
-			return errors.New("registration write cannot change native binding authority")
-		}
+	if err := preserveNativeRegistrationAuthority(previous, next, before.found, prepared); err != nil {
+		return err
 	}
 	// Ordinary existing integrations keep their established compatibility paths.
 	if next.NativeBinding == nil && (agentmeta.ID(next.Harness.Name) == agentmeta.Codex || agentmeta.ID(next.Harness.Name) == agentmeta.Claude || agentmeta.ID(next.Harness.Name) == agentmeta.Cursor) {
@@ -92,6 +94,30 @@ func (s *Store) checkNativeRegistrationWrite(path string, next archive.SessionRe
 	for _, root := range cfg.NativeRoots {
 		if root.Agent == next.Harness.Name && next.TranscriptPath != "" {
 			return errors.New("native locator requires its original source binding")
+		}
+	}
+	return nil
+}
+
+func preserveNativeRegistrationAuthority(previous, next archive.SessionRegistration, found bool, prepared *nativeValidationCommit) error {
+	if prepared != nil {
+		if err := prepared.check(previous, next, found); err != nil {
+			return err
+		}
+	} else if !next.NativeBinding.SameCheckpoint(previous.NativeBinding) {
+		return errors.New("native checkpoint requires prepared validation commit")
+	}
+	if next.NativeBinding != nil && next.NativeBinding.Agent == "muse" && next.NativeBinding.Version == 1 && previous.NativeBinding == nil {
+		return errors.New("new Muse binding requires successful native checkpoint")
+	}
+	if previous.NativeBinding != nil {
+		if err := previous.NativeBinding.Validate(); err != nil {
+			return err
+		}
+	}
+	if previous.NativeBinding != nil || found && next.NativeBinding != nil {
+		if !next.NativeBinding.PreservesFacts(previous.NativeBinding) || !nativeRegistrationOwnerMatches(next, previous) {
+			return errors.New("registration write cannot change native binding authority")
 		}
 	}
 	return nil

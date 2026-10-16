@@ -282,13 +282,14 @@ class CandidateTest(unittest.TestCase):
             bindings[name] = ports
         self.assertEqual(set(bindings), set(identities))
         capture_ports = ('Sources:', 'Filter:', 'Parser:', 'Decoder:', 'Hooks:')
-        muse_local = ('Runtime: muse.RuntimeDetector{}, Sources: muse.SourceProvider{}, '
-                      'Filter: muse.Filter{}, Parser: muse.Parser{}')
+        muse_local = ('NativeHeaders: muse.NativeHeaders{}, Discovery: muse.NativeHeaders{}, '
+                      'Preview: muse.Previewer{}, Runtime: muse.RuntimeDetector{}, '
+                      'Sources: muse.SourceProvider{}, Filter: muse.Filter{}, Parser: muse.Parser{}')
         for name, ports in bindings.items():
             implemented = [port in ports for port in capture_ports]
             if name == 'Muse':
-                # The guarded local source is not capture admission. Keep this
-                # exception exact: Decoder/Hooks or any replacement need review.
+                # Local handoff discovery, headers, and previews are not capture
+                # admission. Keep these ports exact; Decoder/Hooks need review.
                 self.assertEqual(ports, muse_local)
                 self.assertNotIn('Decoder:', ports)
                 self.assertNotIn('Hooks:', ports)

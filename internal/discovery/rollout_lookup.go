@@ -516,8 +516,9 @@ func (l *CodexRolloutLookup) candidateDigests(paths []string) []rolloutObservati
 	return out
 }
 
-// Check revalidates selection within the pass. One private refresh per home is
-// allowed; later same-generation appends replay into that existing private view.
+// Check revalidates selection within the pass. Same-generation appends replay
+// into the private view; a settled checkpoint requires a new coherent snapshot.
+// Both paths share the operation's remaining time and native memory ledger.
 func (l *CodexRolloutLookup) Check(ctx context.Context, id, revision string) (err error) {
 	var done func(*error)
 	ctx, done, err = l.beginOperation(ctx)
@@ -623,6 +624,17 @@ func (l *CodexRolloutLookup) indexDeadline(ctx context.Context, root string, ref
 			}
 			view.db = nil
 			if err := appendCurrentIndex(ctx, root, view.snapshot, l.readBudget); err != nil {
+				if errors.Is(err, errIndexChanged) && ctx.Err() == nil {
+					// A checkpoint invalidates the incremental projection, not
+					// necessarily the selected thread. Discard it completely and
+					// requery a verified snapshot without renewing the allowance.
+					if cleanupErr := view.snapshot.close(); cleanupErr != nil {
+						view.unavailable = true
+						return nil, agentapi.Wrap(agentapi.Cleanup, cleanupErr)
+					}
+					delete(l.indexes, root)
+					return l.indexDeadline(ctx, root, false, deadline)
+				}
 				view.unavailable = true
 				return nil, err
 			}

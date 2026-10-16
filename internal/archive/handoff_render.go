@@ -81,6 +81,9 @@ func renderHandoffSession(b *strings.Builder, h Handoff) {
 	}
 	agent = oneLine(agent)
 	fmt.Fprintf(b, "- Agent: %s\n", agent)
+	if s := h.Session.TokenObservations; s != nil && s.Observed.Available() && s.Input != nil && s.Output != nil {
+		fmt.Fprintf(b, "- Observed input %d, output %d; full usage, composition and cost unavailable\n", *s.Input, *s.Output)
+	}
 	var when []string
 	if h.Session.StartedAt != nil {
 		when = append(when, "started "+h.Session.StartedAt.Format("2006-01-02 15:04 UTC"))
