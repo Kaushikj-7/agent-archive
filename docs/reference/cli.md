@@ -23,33 +23,55 @@ is stale. After changing a command's help or flags, regenerate it with
 
 ## Commands
 
+The standard tier (`agent-archive --help`):
+
 ```text
 Agent Archive — archive coding-agent sessions to your private storage.
 
 Get started
   agent-archive setup       Configure apps, projects, and storage
-  agent-archive machines    List, rename, or pair machines
   agent-archive status      Check capture and see what to do next
 
 Manage capture
   agent-archive sync        Collect and upload pending changes now
   agent-archive pause       Pause collection, uploads, and cleanup
   agent-archive resume      Resume automatic capture
-  agent-archive recover     Start a linked generation for a blocked transcript
 
 Inspect history
   agent-archive list        Find archived sessions
   agent-archive search      Search indexed conversation text
   agent-archive show        Read a session's summary or transcript
   agent-archive stats       See your usage: tokens, cost, agents, projects
-  agent-archive feedback    Add explicit feedback from a local file
 
 Import history
   agent-archive backfill    Import sessions already on this machine
-  agent-archive migrate     Migrate to an isolated catalog destination
 
 Switch agents
   agent-archive handoff     Continue a session in another coding agent
+
+Run agent-archive COMMAND --help for options and examples.
+More commands (machines, uninstall, purge, ...): agent-archive help advanced
+Use --version to show the installed version.
+You supply a private Cloudflare R2 or Amazon S3 bucket. No archive account needed.
+Docs: https://github.com/wangjohn/agent-archive/tree/main/docs
+```
+
+The advanced tier (`agent-archive help advanced`):
+
+```text
+Agent Archive — advanced commands.
+
+Get started
+  agent-archive machines    List, rename, or pair machines
+
+Manage capture
+  agent-archive recover     Start a linked generation for a blocked transcript
+
+Inspect history
+  agent-archive feedback    Add explicit feedback from a local file
+
+Import history
+  agent-archive migrate     Migrate to an isolated catalog destination
 
 Evaluate agents
   agent-archive eval        Export sessions for an evaluation tool (JSON Lines)
@@ -59,9 +81,7 @@ Maintenance
   agent-archive purge       Review and remove unreferenced source objects
 
 Run agent-archive COMMAND --help for options and examples.
-Use --version to show the installed version.
-You supply a private Cloudflare R2 or Amazon S3 bucket. No archive account needed.
-Docs: https://github.com/wangjohn/agent-archive/tree/main/docs
+Core commands: agent-archive --help
 ```
 
 ## Exit codes

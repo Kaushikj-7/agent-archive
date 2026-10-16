@@ -6,6 +6,13 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- `agent-archive --help` is shorter: it shows the commands for everyday use
+  (setup, status, sync, pause, resume, list, search, show, stats, backfill,
+  handoff).
+  The rest (machines, recover, feedback, migrate, eval, uninstall, purge) are
+  listed by `agent-archive help advanced`; they work as before, and
+  `agent-archive help COMMAND` still shows any command's help.
+
 - The session browser (`list`, bare `show`, `handoff`, and content `search` on
   a terminal) loads older sessions as you scroll: moving down past the last row
   (↓ or the wheel on it, PgDn with it on screen, or End on it) loads the next
