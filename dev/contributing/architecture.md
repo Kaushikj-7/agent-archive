@@ -116,6 +116,14 @@ flowchart TD
   storage --> credentials & destination
 ```
 
+The fixed `agents/retainedprivacy/producer` is the narrow additional consumer
+of concrete filter wrappers. It chooses the reviewed zero-value filters itself
+and performs retained-only decode, refilter and canonical compression before
+minting opaque evidence. Its constructor is confined by Go internal visibility
+and an audit of every source/build profile. Custom registries and orchestration
+cannot substitute an adapter or issue that evidence. This operation neither
+opens native sources nor creates a new native capture proof.
+
 ## Invariants worth knowing before you change anything
 
 - Nothing leaves the machine except what an adapter's filter kept. Unknown keys

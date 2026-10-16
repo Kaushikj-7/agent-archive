@@ -45,6 +45,7 @@ type Integration struct {
 
 // Registry holds validated immutable lookups and operation projections.
 type Registry struct {
+	fixedPrivacy   *fixedRetainedPrivacy
 	fixedCapture   *fixedCursorCapture
 	catalog        agentmeta.Catalog
 	sourceBindings map[string]Integration
@@ -143,6 +144,7 @@ func NewBuiltins() *Registry {
 		panic(err)
 	}
 	r.fixedCapture = &fixedCursorCapture{}
+	r.fixedPrivacy = &fixedRetainedPrivacy{}
 	return r
 }
 
