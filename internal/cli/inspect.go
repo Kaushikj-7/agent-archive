@@ -131,19 +131,22 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	// Explicit project names, searches and interactive scope switching still
 	// need exhaustive metadata. Text activity and child counts use summaries.
 	full := listRequiresFullScan(opts, *project, scope, q, browsing)
+	progress := newListProgress()
 	var stopList func()
 	if !opts.jsonOut {
-		stopList = startActivity(stdout, "Listing sessions…")
+		stopList = startListActivity(stdout, "Listing sessions…", progress)
 	} else {
 		stopList = func() {}
 	}
 	listOpts := listingReadOptions(env, scope, opts, full, stderr)
+	listOpts.Progress = progress.read
 	listLimit := opts.limit
 	if full {
 		listLimit = 0
 	}
 	ctx, stopReads := readCommandContext(env)
 	defer stopReads()
+	ctx = withListProgress(ctx, progress)
 	if browsing && q.empty() {
 		if used, code := runBoundedListBrowser(catalog.WithReadView(ctx), env, store, cfg, opts, scope, stdin, stdout, stderr, stopList); used {
 			return code

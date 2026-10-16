@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"text/tabwriter"
 	"time"
 
@@ -150,8 +151,15 @@ func runHandoffWithInput(args []string, stdin io.Reader, stdout, stderr io.Write
 				return code
 			}
 		}
-		target, err = resolveHandoffTarget(opts, home, stderr, env, newRepoMatchGate(opts, interactive, answers, stderr, stdin))
+		// Reading the chosen session can take a while (its transcript is
+		// downloaded and parsed), so a spinner shows until the first
+		// question or message; finishHandoff stops it.
+		opts.preparing = sync.OnceFunc(startActivity(stdout, "Preparing handoff…"))
+		defer opts.preparing()
+		quiet := &pausingWriter{w: stderr, stop: opts.preparing}
+		target, err = resolveHandoffTarget(opts, home, quiet, env, newRepoMatchGate(opts, interactive, answers, quiet, stdin))
 		if err != nil {
+			opts.preparing()
 			if errors.Is(err, errRepoMatchNotUsed) {
 				// The gate said why, and how to use the session.
 				return 1
@@ -172,6 +180,14 @@ func runHandoffWithInput(args []string, stdin io.Reader, stdout, stderr io.Write
 func finishHandoff(opts handoffOptions, target handoffTarget, home string, interactive bool, input *typedInput, stdin io.Reader, stdout, stderr io.Writer, env handoffCommandDependencies) int {
 	answers := input.answers
 	var err error
+	if opts.preparing == nil {
+		opts.preparing = sync.OnceFunc(startActivity(stdout, "Preparing handoff…"))
+	}
+	// Everything up to the first question, or the handoff itself, is still
+	// preparing: what is written before then stops the spinner first. A
+	// launched agent gets the real stderr below.
+	defer opts.preparing()
+	preparingErr := &pausingWriter{w: stderr, stop: opts.preparing}
 	// Reading is complete. Release signal ownership before destination
 	// prompts and launched agents take over terminal interaction.
 	if opts.readCtx != nil {
@@ -180,23 +196,23 @@ func finishHandoff(opts handoffOptions, target handoffTarget, home string, inter
 		}
 	}
 	if opts.readCtx != nil && opts.readCtx.Err() != nil {
-		terminal.Printf(stderr, "agent-archive: handoff: %v\n", opts.readCtx.Err())
+		terminal.Printf(preparingErr, "agent-archive: handoff: %v\n", opts.readCtx.Err())
 		return 1
 	}
 	if target.describe != "" {
-		terminal.Printf(stderr, "handoff: using %s\n", target.describe)
+		terminal.Printf(preparingErr, "handoff: using %s\n", target.describe)
 	}
 	if !target.analyzed {
 		target, err = analyzeTarget(context.Background(), parsersFor(env), target)
 		if err != nil {
-			terminal.Printf(stderr, "agent-archive: handoff: %v\n", err)
+			terminal.Printf(preparingErr, "agent-archive: handoff: %v\n", err)
 			return 1
 		}
 	}
 	h, err := archive.BuildHandoffWithAnalysis(target.bundle, target.analysis, target.metadata, archive.HandoffOptions{Source: target.source, StartedAt: target.startedAt, LastActivityAt: target.lastActivityAt,
 		Checkout: handoffCheckout(opts, env)})
 	if err != nil {
-		terminal.Printf(stderr, "agent-archive: handoff: %v\n", err)
+		terminal.Printf(preparingErr, "agent-archive: handoff: %v\n", err)
 		return 1
 	}
 	if opts.revision != "" {
@@ -207,8 +223,9 @@ func finishHandoff(opts handoffOptions, target handoffTarget, home string, inter
 	if target.native != nil {
 		h.Session.ArchiveSessionID = ""
 	}
-	noteBranchDifference(h, stderr)
-	rendered := prepareHandoff(h, target.bundle, opts, home, stderr, env)
+	noteBranchDifference(h, preparingErr)
+	rendered := prepareHandoff(h, target.bundle, opts, home, preparingErr, env)
+	opts.preparing()
 	dest := handoffDestination(opts.to)
 	if offersDestinations(opts, interactive) {
 		p := newPrompter(answers, stdout)
