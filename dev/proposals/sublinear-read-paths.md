@@ -264,6 +264,16 @@ Pass:
 
 ## PR 3: Handoff on the SQLite catalog; show and handoff candidate wiring
 
+The source change is implemented. The private layout rebuilds older projections
+and includes nullable prompt counts and eligible native IDs in checksummed
+selection data. Word predicates also retain linked-child summaries needed for
+the existing parent hints; they do not promise a page-sized candidate bound.
+Complete ambiguity counts, ordering and picker choices remain unchanged.
+Model filters bypass the summary path because token observations can carry
+model evidence that the private projection omits. Existing complete catalog
+callers still apply scope, origin and child rules afterward, so their display
+limits are not pushed into SQL. Reference latency goals remain unmeasured.
+
 Goal: handoff uses summary projections on an unchanged warm run, and query
 predicates reduce candidate decoding without dropping valid matches. Changed
 rows may still require body hydration; unique final matches do not by themselves
