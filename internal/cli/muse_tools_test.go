@@ -3,13 +3,13 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
-	"github.com/wangjohn/agent-archive/internal/stats"
 	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/stats"
 )
 
 func TestMuseCommittedToolsUseExistingArchiveConsumersAfterNativeLoss(t *testing.T) {
