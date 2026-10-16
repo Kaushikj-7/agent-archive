@@ -346,6 +346,7 @@ func nativeCatalogOutputSize(members map[string]json.RawMessage) (int, error) {
 // compareNativeCatalogBytes checks expected ownership without allocating a
 // second whole-catalog copy while the staged output and original are retained.
 func compareNativeCatalogBytes(path string, expected []byte) error {
+	// #nosec G703 -- the same caller-owned local catalog staged above; no native locator supplies this path.
 	f, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) && len(expected) == 0 {
 		return nil
