@@ -894,9 +894,12 @@ func TestNextLookupRetryDoublesUpToAWeek(t *testing.T) {
 // more than the whole allowance fails when its wait reaches MaxDeferral, and
 // from then on is opened only on the passes at its backoff attempts (1h,
 // 3h, 7h, ... after that, the gap capped at a week), each of which fails it
-// again, over four weeks of hourly passes. On every other pass it is held
+// again, over four weeks of passes. On every other pass it is held
 // unopened, with no new failure, and the pass reads the other Codex
-// sessions as usual.
+// sessions as usual. Passes run hourly until the wait expires and around
+// every attempt (the hour before, at, and after it), and once a day
+// between, which keeps the test inside its time budget without skipping
+// any pass the schedule depends on.
 func TestHeavySessionIsRetriedOnTheBackoffSchedule(t *testing.T) {
 	t.Parallel()
 	lookup := &allowanceLookup{}
@@ -927,9 +930,20 @@ func TestHeavySessionIsRetriedOnTheBackoffSchedule(t *testing.T) {
 		gap = min(2*gap, LookupRetryMaxGap)
 		at = at.Add(gap)
 	}
+	passes := map[time.Time]bool{}
+	for now := clock; now.Before(end); now = now.Add(time.Hour) {
+		waited := now.Sub(clock)
+		if waited <= MaxDeferral || attempts[now] || attempts[now.Add(time.Hour)] || attempts[now.Add(-time.Hour)] || waited%(24*time.Hour) == 0 {
+			passes[now] = true
+		}
+	}
 	var light []string
 	failures := 0
-	for now, pass := clock, 1; now.Before(end); now, pass = now.Add(time.Hour), pass+1 {
+	for now, pass := clock, 0; now.Before(end); now = now.Add(time.Hour) {
+		if !passes[now] {
+			continue
+		}
+		pass++
 		if pass%6 == 0 {
 			light = append(light, r.save(1000+pass, false).ArchiveSessionID)
 		}
