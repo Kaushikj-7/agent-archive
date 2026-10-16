@@ -187,7 +187,7 @@ func TestNativeCatalogMemberKeysStayBoundedAcrossEncoding(t *testing.T) {
 	if _, ok := nativeCatalogMembers([]byte{'{', '"', 0xff, '"', ':', '1', '}'}); ok {
 		t.Fatal("invalid UTF-8 key accepted")
 	}
-	key := strings.Repeat("<&>", 1024)
+	key := strings.Repeat("<&>", 128)
 	input := []byte(`{"` + key + `":"retained","escaped\"key":"value"}`)
 	members, ok := nativeCatalogMembers(input)
 	if !ok {
@@ -212,7 +212,7 @@ func TestNativeCatalogChargesExpandedQuotedKeysBeforeAllocation(t *testing.T) {
 	var before bytes.Buffer
 	before.WriteString(`{"version":6`)
 	for i := range 1000 {
-		fmt.Fprintf(&before, `,"%s%04d":1`, strings.Repeat("<&>", 1024), i)
+		fmt.Fprintf(&before, `,"%s%04d":1`, strings.Repeat("<&>", 128), i)
 	}
 	before.WriteByte('}')
 	path := filepath.Join(t.TempDir(), "discovery-catalog.json")
@@ -251,5 +251,70 @@ func TestNativeCatalogChargesExpandedQuotedKeysBeforeAllocation(t *testing.T) {
 	}
 	if used, peak := budget.Charged(); used != 0 || peak != base+extra {
 		t.Fatal("output ownership", used, peak)
+	}
+}
+
+func TestNativeCatalogRefusesUnsupportedOutputMemberCount(t *testing.T) {
+	t.Parallel()
+	beforeMembers := map[string]json.RawMessage{"version": json.RawMessage("6")}
+	for i := range 1023 {
+		beforeMembers[fmt.Sprintf("future_%04d", i)] = json.RawMessage("true")
+	}
+	before, err := json.Marshal(beforeMembers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := nativeCatalogMembers(before); !ok {
+		t.Fatal("supported maximum input refused")
+	}
+	for _, nativeOnly := range []bool{true, false} {
+		t.Run(fmt.Sprintf("nativeOnly=%v", nativeOnly), func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "discovery-catalog.json")
+			if err := os.WriteFile(path, before, 0600); err != nil {
+				t.Fatal(err)
+			}
+			replacement := []byte(`{"version":1}`)
+			if !nativeOnly {
+				replacement, err = json.Marshal(catalog{Version: 6})
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			budget := agentapi.NewNativeReadBudget(agentapi.PassReadBudget)
+			if err := mergeNativeCatalog(t.Context(), path, nil, replacement, nativeOnly, budget); !errors.Is(err, errCatalogTooLarge) {
+				t.Fatal("unsupported output committed", err)
+			}
+			raw, err := os.ReadFile(path)
+			if err != nil || !bytes.Equal(raw, before) {
+				t.Fatal("refusal changed prior members", err)
+			}
+			if used, _ := budget.Charged(); used != 0 {
+				t.Fatal("refusal leaked scratch", used)
+			}
+		})
+	}
+}
+
+func TestNativeCatalogRefusesUnsupportedEncodedKey(t *testing.T) {
+	t.Parallel()
+	key := strings.Repeat("<&>", 1024)
+	before := []byte(`{"version":6,"` + key + `":true}`)
+	if _, ok := nativeCatalogMembers(before); !ok {
+		t.Fatal("bounded input key refused")
+	}
+	path := filepath.Join(t.TempDir(), "discovery-catalog.json")
+	if err := os.WriteFile(path, before, 0600); err != nil {
+		t.Fatal(err)
+	}
+	budget := agentapi.NewNativeReadBudget(agentapi.PassReadBudget)
+	if err := mergeNativeCatalog(t.Context(), path, nil, []byte(`{"version":1}`), true, budget); !errors.Is(err, errCatalogTooLarge) {
+		t.Fatal("unsupported encoded key committed", err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(raw, before) {
+		t.Fatal("refusal changed previous bytes", err)
+	}
+	if used, _ := budget.Charged(); used != 0 {
+		t.Fatal("scratch leak", used)
 	}
 }

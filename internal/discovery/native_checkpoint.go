@@ -21,6 +21,11 @@ import (
 
 var errNativeCatalogChanged = errors.New("native inventory checkpoint changed; retry next pass")
 
+const (
+	maxNativeCatalogMembers  = 1024
+	maxNativeCatalogKeyBytes = 4096
+)
+
 // Catalog writers cooperate under collector ownership. This additional short
 // lock protects expected bytes, including callers testing concurrent ownership.
 // It authenticates neither the writer nor the historical observations.
@@ -211,7 +216,7 @@ func nativeCatalogMembers(raw []byte) (map[string]json.RawMessage, bool) {
 		start := i
 		i = nativeJSONStringEnd(raw, i)
 		var key string
-		if i < 0 || i-start > 4096 || json.Unmarshal(raw[start:i], &key) != nil || len(members) >= 1024 {
+		if i < 0 || i-start > maxNativeCatalogKeyBytes || json.Unmarshal(raw[start:i], &key) != nil || len(members) >= maxNativeCatalogMembers {
 			return nil, false
 		}
 		if _, duplicate := members[key]; duplicate {
@@ -315,6 +320,9 @@ func encodeNativeCatalogMembers(members map[string]json.RawMessage) ([]byte, err
 }
 
 func nativeCatalogOutputSize(members map[string]json.RawMessage) (int, error) {
+	if len(members) > maxNativeCatalogMembers {
+		return 0, errCatalogTooLarge
+	}
 	n := 2
 	if len(members) > 0 {
 		n += len(members) - 1
@@ -323,6 +331,9 @@ func nativeCatalogOutputSize(members map[string]json.RawMessage) (int, error) {
 		encoded, err := json.Marshal(key)
 		if err != nil {
 			return 0, err
+		}
+		if len(encoded) > maxNativeCatalogKeyBytes {
+			return 0, errCatalogTooLarge
 		}
 		n += len(encoded) + 1 + len(value)
 		if n > maxCatalogBytes {
