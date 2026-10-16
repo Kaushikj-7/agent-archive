@@ -1,309 +1,398 @@
-# Sublinear read paths: implementation plan
+# Read paths at realistic scale: implementation plan
 
-Status: proposed 2026-10-15; nothing implemented. This plan takes the
-remaining read-path work from [CLI performance](cli-performance.md) PRs 7 and 9
-and [archive listing at scale](listing-at-scale.md) phase 4 down to concrete
-structs and per-PR acceptance gates. It does not change any output, search
-rule, retention rule or source verification. Where this plan and code differ,
-code and the [catalog migration and query contract](../catalog/migration-and-query.md)
+Status: proposed 2026-10-15, revised 2026-10-16 after real-command
+measurements; nothing implemented. This plan takes the remaining read-path work
+from [CLI performance](cli-performance.md) PRs 7 and 9 and
+[archive listing at scale](listing-at-scale.md) phase 4 down to per-PR scope
+and acceptance gates. It does not change any output, search rule, retention
+rule or source verification. Where this plan and code differ, code and the
+[catalog migration and query contract](../catalog/migration-and-query.md)
 remain current behavior.
 
 ## Problem
 
-No default read path is sublinear in the number of sessions N:
+`list`, `show <short-id>` and `handoff` are bounded by remote round trips, not
+local CPU, and on the default legacy v3 format every run lists every key under
+`sessions/`. That listing grows with the archive, and archives grow quickly
+because subagents are sessions too.
 
-- Bounded `list` reads only L metadata bodies, but every run discovers and
-  parses Theta(N) listing headers (~654 B of keys, ~4.7 KB allocation churn
-  and ~20 allocations per session at any `--limit`), then sorts all matches
-  before truncating (`selectListingRevisions`, internal/reader/list_index.go).
-- The warm local SQLite catalog avoids body downloads, but its CLI caller
-  pages through every candidate and limits last
-  (internal/cli/session_catalog.go `catalogSessionsInContext`), and the reader
-  unmarshals each scanned row's summary before filtering
-  (`fillCatalogPage`, internal/reader/session_catalog.go).
-- `show`/`handoff` with an exact ID are O(1) probes, but a short ID or topic
-  words are Theta(N) cold (every body) and Theta(N) warm (every summary).
-- Cold exhaustive reads are dominated by per-sidecar cache-file writes
-  (80.5% cumulative CPU in `MetadataCache.put` at N=50k in the 2026-10-15
-  synthetic profile), not by JSON decoding.
+### Measured on a real archive (2026-10-16)
 
-Synthetic baseline (M5 Pro, go1.27.2, `storagetest` in-memory store, minimal
-~0.5 KB sidecars; lower bounds that exclude provider latency): bounded warm
-`list --limit 50` 136 ms at N=50,000 in-process; exhaustive `--limit 0` cold
-8.3 s; `show` short-ID 147.5 ms at N=800 versus 0.099 ms exact. Real S3/R2
-listing latency at these sizes is unmeasured and is additive.
+Installed binary `dev-6c1d2437da58`, `AGENT_ARCHIVE_TRACE=1`, one R2
+destination in legacy v3 format, warm local caches, M-series laptop on home
+broadband. The archive holds 1,819 sessions (sidecars) and 5,152 keys under
+`sessions/`, which is 2.8 keys per session. Interactive runs used a PTY with a
+clean environment. Each figure is the range over two or three runs.
+
+| Command | Wall time | Remote | Local |
+|---|---|---|---|
+| `list --limit 50`, piped (`ListRecent`) | 1.06–1.64 s | `sessions/` LIST, 10 ranges: 0.9–1.07 s. `listing/v3/` LIST, unranged, second page ends at about 1.3 s | 0.15 s user CPU |
+| `show <full-id>` | 0.37 s | 4 parallel harness GETs (0.21 s), then 1 sequential GET (0.15 s) | <10 ms |
+| `show <8-hex short id>`, warm | 1.23 s | `sessions/` LIST 0.9 s, then 2 sequential GETs 0.24 s | catalog refresh 10 ms, query 27 ms (1,818 summaries) |
+| `show <short id>`, 52 sidecars changed since last run | 2.34 s | LIST 0.94 s, then 52 GETs at 8-way 1.16 s, then 1 GET 0.11 s | query 25 ms |
+| `handoff` picker, time to first draw | 1.33–2.18 s | `sessions/` LIST 0.77–1.26 s | registrations 42–703 ms (1,721 files, serial, before the LIST). Cached sidecar bodies 82 ms. Headers 94 ms |
+
+Observations the original draft did not have:
+
+1. **Local CPU is about 10% of wall time.** The SQLite query over every
+   summary is 25 ms here. The bounded-decode work in the original draft saves
+   at most that on the measured archive.
+2. **The listing is unbalanced.** Ranges are planned at one boundary per 200
+   cached sidecars (`rangeSidecars`, internal/reader/list_ranges.go). That
+   makes 10 ranges here, not the 16 the concurrency allows, and because key
+   density per session varies, the longest single range request (0.9–1.25 s)
+   is the whole LIST cost.
+3. **`listing/v2/` and `listing/v3/` are listed unranged.** That is
+   `store.List` in `listHeaderGroups`, internal/reader/header_snapshot.go. The
+   v3 prefix holds roughly one key per live sidecar revision, so the piped and
+   agent-facing `list` pays sequential 1,000-key pages that grow with N.
+4. **Local work runs before or after the network instead of beside it.** The
+   handoff picker reads every registration file before it starts the LIST.
+   `show` waits for the LIST before its selected-body GET, and does child GETs
+   only after that.
+5. **Handoff never uses the SQLite catalog.** `loadSessionsForBrowseContext`
+   excludes it (internal/cli/list_browse.go), so the picker decodes every
+   cached sidecar body. `archiveByID` reopens the store after a pick
+   (internal/cli/handoff.go), which repeats the Keychain read and TLS setup.
+6. **Changed sidecars are a normal warm-run cost.** Active sessions rewrite
+   their sidecars, so tens of GETs per run are common, at 8-way concurrency
+   (`listConcurrency`, internal/reader/reader.go).
+
+### Realistic scale
+
+The measured archive gained 1,161 sessions in October 1–16, about 70 a day,
+most of them subagents. One heavy user therefore reaches about 10k sessions in
+five months and 25k in a year. 50k is two years, or one year with a second
+active machine. 100k is the stress ceiling. At 2.8 keys per session these are
+28k, 70k, 140k and 280k keys under `sessions/`.
+
+Projected warm cost with today's code. The constants come from the table
+above: R2 serves about one 1,000-key LIST page per 0.4–1.0 s per connection,
+ranges are 16-way, and local costs scale linearly from the measured values.
+
+| Sessions | `sessions/` LIST (balanced 16-way) | Today's planner | Unranged `listing/v3/` | Handoff local (bodies + registrations) |
+|---|---|---|---|---|
+| 1.8k | 0.15–0.35 s | 0.8–1.3 s (measured) | about 1.0 s (measured) | 0.12–0.8 s |
+| 10k | 0.8–2 s | 2–3 s | 4–10 s | 0.7–4 s |
+| 25k | 2–5 s | 5–7 s | 10–25 s | 1.7–10 s |
+| 50k | 4–9 s | 10–14 s | 20–50 s | 3.5–20 s |
+
+The conclusion shapes the PR order:
+
+- Constant-factor work on the legacy format (balanced and ranged listing,
+  overlap, the SQLite catalog for handoff, fewer sequential GETs) brings the
+  measured archive to about 0.4 s and keeps 10k usable.
+- No legacy-format change keeps `list` or the picker interactive at 25k–50k.
+  Each run must prove freshness by listing every key.
+- Warm reads that do not grow with N need a change token: catalog-v4's verified
+  head and delta, already in source behind the
+  [provider qualification gate](../catalog/provider-qualification.md).
+  Qualifying R2 is the critical path for scale. It is operator work, and this
+  plan does not change the gate.
+- Once the LIST is gone, local decode is the next linear term: about 0.7 s of
+  summaries at 50k, plus Θ(N) registration and body reads. The SQL pushdown
+  from the original draft then matters, so it is kept, smaller, after the
+  network work.
+
+## Targets
+
+Warm runs, single R2 destination. These are wall-time goals from
+real-command traces on the reference machine. CI gates use operation counts
+(see PR 6).
+
+| Command | Sessions | Legacy v3 after Track A | Catalog-v4 after Track B |
+|---|---|---|---|
+| `handoff` picker first draw, interactive `list`, bare `show` | 1.8k / 10k / 50k | ≤ 0.5 s / ≤ 1.5 s / not met | ≤ 0.5 s at all three |
+| `show <short id>` | same | ≤ 0.6 s / ≤ 1.5 s / not met | ≤ 0.5 s |
+| piped `list --limit 50` | same | ≤ 0.6 s / ≤ 1.5 s / not met | ≤ 0.5 s |
+| any command after K changed sidecars | any | adds about ⌈K/16⌉ GET waves | same |
+
+"Not met" is deliberate. It is the case for migrating, not a gap this plan
+hides.
 
 ## What already exists (do not rebuild)
 
-- `catalog.Snapshot.Query` over the identity/capture/activity/project trees
-  already answers eligible catalog-v4 queries in O(log N + returned rows)
-  with no canonical LIST; see the query table in
-  [migration-and-query](../catalog/migration-and-query.md).
-- `catalog.Snapshot.Delta` (internal/catalog/delta.go) plus
-  `SQLiteSessionCatalog.RefreshRemote` (internal/reader/remote_catalog.go)
-  already reconcile a verified prior-root delta into the local SQLite
-  catalog. The "persisted delta catalog" therefore exists for catalog-v4
-  destinations; the remaining work is bounding the queries that still fall
-  back to complete summaries, not a second manifest format.
-- Production catalog-v4 activation stays behind the
-  [provider qualification gate](../catalog/provider-qualification.md). This
-  plan does not change that gate, any protocol number, or the default
-  legacy v3 format.
-
-Consequence: for legacy v3 destinations, header discovery stays Theta(N)
-under this plan (with a much smaller constant); only migration to catalog-v4
-removes it. Building a parallel delta manifest for legacy destinations is
-explicitly rejected below.
-
-## Complexity targets
-
-| Operation | Today | Target after this plan |
-|---|---|---|
-| `list --limit L` eligible filters, warm catalog | Theta(N) summary decodes + sort | O(log N + L) rows decoded |
-| `list` model/skill/coverage filters | Theta(N) | Theta(N) retained (summary predicates), no body reads |
-| `show` short-ID / prefix | Theta(N) bodies cold | Indexed candidate pages; unique results avoid unrelated summaries, ambiguous results retain complete counts and choices |
-| `show`/`handoff` topic words | Theta(N) | Candidate pages; ambiguous queries continue or fall back for complete counts and choices |
-| Cold exhaustive list/show | Theta(N) bodies + Theta(N) cache prunes | Theta(N) bodies; zero per-put directory scans |
-| Catalog-v4 text/prefix fallback | All rows loaded via `lazyCatalogRows` | Delta-synced local SQLite query; no full row materialization |
-
-Eligibility is conservative: any predicate the bounded path cannot represent
-exactly keeps today's complete path and result. Fallback is never an error.
+- **Range listing.** `listObjects`/`planRanges`/`listRanges` and the
+  `storage.RangeLister` `StartAfter` ranges (internal/reader/list_ranges.go,
+  internal/storage/s3.go). PR 1 changes planning, not the mechanism.
+- **ID-prefix lookup.** `FindMetadataPrefix` (internal/reader/metadata_prefix.go)
+  already reads bodies only for ID candidates. The catalog's `Words` predicate
+  already includes `instr(lowerid,?) = 1`
+  (`catalogQueryPredicates`, internal/reader/session_catalog.go).
+  `readShowCandidates` passes `nil` words today
+  (internal/cli/session_catalog.go). Wiring, not new resolution logic.
+- **SQL limits.** `SQLiteSessionCatalog.Query` already pushes `LIMIT/OFFSET`
+  into SQL when no summary-only predicate is present. The CLI caller never sets
+  `Metadata.Limit`.
+- **Stale cache versions.** The maintenance sweep already keeps only the
+  newest validator per key directory (`maintainDirectory`,
+  internal/reader/cache_maintenance.go).
+- **Change tokens.** `catalog.Snapshot.Query`/`Delta` and
+  `SQLiteSessionCatalog.RefreshRemote` (internal/catalog/delta.go,
+  internal/reader/remote_catalog.go) are the persisted delta catalog for
+  catalog-v4 destinations. No second manifest format is needed.
+- **Traces.** `AGENT_ARCHIVE_TRACE` spans per request (internal/storage/http_trace.go).
+  Every measurement above came from it, and each PR's evidence should too.
 
 ## PR order
 
-Each row is one PR, branched from its listed dependencies and measured alone.
+Each row is one PR, measured alone against its base with the trace recipe
+below and PR 6's model.
 
-| PR | Scope | Depends on |
-|---|---|---|
-| 1 | Bounded local catalog queries (SQL pushdown) | Main |
-| 2 | Batched metadata-cache writes | Main |
-| 3 | Bounded show/handoff candidate resolution | 1 |
-| 4 | Generalized bounded catalog-v4 selection | 1 |
-| 5 | Scale benchmarks and operation-count gates | 1–4 (benchmarks may land per PR) |
+| PR | Track | Scope | Depends on |
+|---|---|---|---|
+| 1 | A | Balanced listing across all three header prefixes | Main |
+| 2 | A | Overlap local work with discovery; drop repeated opens | Main |
+| 3 | A | Handoff on the SQLite catalog; show and handoff candidate wiring | Main |
+| 4 | A | Small cache and selected-read fixes | Main |
+| 5 | B | Catalog-v4 R2 qualification evidence, then the bounded catalog reader | Provider gate |
+| 6 | A/B | Latency-modeled command benchmarks and operation-count gates | Main (lands first or with PR 1) |
+| 7 | B | SQL pushdown for local summary queries | 5 |
 
-PRs 1 and 2 change no persisted archive format and need no entry in
-[versions](../maintainers/versions.md): the SQLite catalog and metadata cache
-are private, disposable local state. PR 4 must not allocate a new catalog
-protocol or schema number; if the existing index key encodings cannot express
-a range below, that range is dropped from PR 4 and needs its own proposal.
+PRs 1–4, 6 and 7 change no persisted archive format and need no entry in
+[versions](../maintainers/versions.md). The SQLite catalog, metadata cache and
+any range-plan file are private, disposable local state. PR 5 changes no
+protocol or schema number. If the existing catalog-v4 encodings cannot express
+something below, that part is dropped and needs its own proposal.
 
-## PR 1: Bounded local catalog queries (SQL pushdown)
+## PR 1: Balanced listing across all three header prefixes
 
-Goal: a warm eligible `list --limit L` decodes O(L) summaries, not N.
+Goal: the LIST costs one page wave per 16 × 1,000 keys, not one long range.
 
-**Schema (private SQLite, internal/reader/session_catalog.go).** The
-`sessions` table gains typed selection columns beside the existing
-`summary` BLOB, populated from `SearchSummary` at insert time in
-`Refresh` (currently `INSERT OR REPLACE INTO sessions VALUES(?,?,?,?,?,?,?,?,?,?)`):
+- Plan ranges by expected key count, not sidecar count. Let `planRanges` take
+  boundaries from a range plan saved after the previous complete listing of
+  that prefix: every ⌈keys/16⌉-th key, or every 1,000th key when there are
+  more than 16k. Store it in the metadata cache directory (0600, atomic
+  replace, bounded size: at most one boundary per 1,000 keys).
+  - Boundaries only split work. Ranges still cover the whole key space, so a
+    stale or missing plan can make a listing slower but never incomplete. The
+    plan is a hint, never authority.
+  - With no plan (first run, `--no-cache`), use today's sidecar-based
+    boundaries. Below 400 cached sidecars, split `sessions/<harness>/` by the
+    first hex digit of the session ID.
+- Run `listing/v2/` and `listing/v3/` discovery through the same `listObjects`
+  ranging with their own plans. All three prefixes share one 16-slot limit, so
+  total concurrency does not grow.
+- Keep `rangeConcurrency = 16`. Raising it is a separate, measured change
+  against R2 throttling and Class A operation cost; it is out of scope here.
 
-```sql
-harness TEXT NOT NULL, project_id TEXT NOT NULL, repo_key TEXT NOT NULL,
-parent_id TEXT NOT NULL, native_child INTEGER NOT NULL, replay INTEGER NOT NULL
-```
+Pass:
+- Listings are byte-identical, including order, to the unranged `List` for
+  random plans, stale plans, empty plans, keys inserted at range edges, and
+  ranges that become empty.
+- PR 6's model shows the critical path at ⌈keys / (16 × 1,000)⌉ page waves.
+- On the reference archive, a trace shows the longest range request under
+  0.4 s and piped `list` under 0.6 s.
 
-New indexes: `sessions_lowerid(lowerid)`,
-`sessions_repo_activity(repo_key, activity DESC, capture DESC, key)`,
-`sessions_project_activity(project_id, activity DESC, capture DESC, key)`,
-`sessions_harness_activity(harness, activity DESC, capture DESC, key)`.
-`catalogRecord` gains the same six fields, and `catalogRecordChecksum` must
-cover them (the struct contract already requires every selection field in the
-checksum). Layout migration uses `PRAGMA user_version`: on open, if the value
-is not the expected layout version, drop `sessions`, `catalog_state` and
-`remote_root` and recreate them incomplete. Dropping is safe because the
-catalog is rebuilt from verified discovery and is never an authority.
+## PR 2: Overlap local work with discovery; drop repeated opens
 
-**Query path.** `catalogWhere` stops using `json_extract` for harness,
-top-level and replay predicates and uses the typed columns; capture bounds
-already use columns. `CatalogQuery` gains one field:
+Goal: wall time is max(network, local), not their sum.
 
-```go
-type CatalogQuery struct {
-	Metadata MetadataQuery // Limit now honored for bounded queries
-	Words    []string      // unchanged: safe superset via the search column
-	IDPrefix string        // new: lower-cased session-ID prefix, "" = none
-	Cursor   string
-}
-```
+- **Start header discovery first.** It should begin as soon as the store is
+  open, concurrently with:
+  - `LoadRegistrations`
+  - `collector.LastActivities`
+  - local label reads
+  - `scopeFor`'s git call
+  - SQLite open and maintenance
+  - the second `config.Load`
 
-`IDPrefix` compiles to an indexed range on `lowerid`
-(`lowerid >= ? AND lowerid < ?` with the prefix upper bound), never `LIKE`.
-`Query` becomes two-phase for bounded queries: phase 1 selects
-`key, etag, hash, summary_hash` plus typed columns (not the `summary` or
-`search` blobs) in query order with the SQL predicates; phase 2 loads and
-checksum-validates summaries only for candidate keys, then applies the
-existing exact `matches` and the caller's final matcher. Model/skill/coverage
-predicates (`catalogRequiresSummaryFilter`) and `IncludeRootChildren` keep
-the current full-scan `fillCatalogPage` behavior in this PR.
+  Join before selection. Errors keep today's precedence and messages.
+- **Load registrations concurrently.** Use a bounded worker pool (8) instead of
+  one serial loop (internal/state/store.go). The picker needs only identity,
+  harness and transcript fields. A registration index is out of scope until
+  this measures as still significant.
+- **Reuse the open store.** `handoffResolver.archiveByID` takes the store the
+  picker or query path already opened, so a pick costs no second Keychain read
+  or TLS handshake.
+- **Overlap `show`'s fetches.** `show` issues the selected sidecar GET and its
+  linked-child GETs together once the selection is known, and reuses the body
+  `Refresh` verified in this run when there is one.
 
-**Caller (internal/cli/session_catalog.go).** `catalogSessionsInContext`
-gains a bound and stops paging: it sets `query.Metadata.Limit`, accumulates
-only final matches, and requests overscan pages of
-`max(4*remaining, 64)` capped at 1024 until the limit is filled or the
-candidate set is exhausted. A new `listBoundedEligible(opts, full) bool`
-next to `readListCandidates` returns true only when every post-filter the CLI
-would apply (scope, origin, top-level) is represented in the query; browsing,
-explicit `--limit 0`, and any unrepresented predicate keep the complete path.
-`sortByActivity` is not re-run on pages already returned in activity order.
+Pass:
+- The handoff, interactive list and short-ID show traces show local spans
+  overlapping the LIST span.
+- `archiveByID` after a pick performs zero store opens (counting `Env`).
+- The selected-body and child GETs start in one wave.
+- Output and errors are unchanged on the existing command tests.
 
-Pass: warm eligible list output byte-identical to the complete path on the
-existing oracle fixtures, including tie breaks; a recording-store test shows
-summary decodes bounded by page size, not N; stale cursors still fail with
-`ErrStaleCatalogCursor`.
+## PR 3: Handoff on the SQLite catalog; show and handoff candidate wiring
 
-## PR 2: Batched metadata-cache writes
+Goal: no command decodes N bodies on a warm run, and resolution reads at most
+a page of summaries.
 
-Goal: cold exhaustive reads stop paying a directory scan per cached sidecar.
+- **Handoff on the catalog.**
+  - Add the fields handoff's source and replay policy reads to `SearchSummary`
+    (private local state; populated in `summarize`; covered by
+    `catalogRecordChecksum`).
+  - Bump the catalog's private layout with `PRAGMA user_version`. On mismatch,
+    drop and rebuild incomplete. The catalog is rebuilt from verified
+    discovery and is never authority.
+  - Remove the `catalogBrowseCommand` exclusion. The picked session's body is
+    still loaded and verified exactly as today before any handoff output.
+- **Pass the query through.** `readShowCandidates` and the handoff query path
+  pass the user's words to `CatalogQuery.Words`. That uses the existing
+  `lowerid` prefix and search-column superset in SQL. Go's `sessionQuery` keeps
+  the final match, tiers and ambiguity rules.
+  - A second final match proves ambiguity but is not the output. `show` and
+    `handoff` print the complete match count and ordered candidate rows, and
+    interactive pickers offer every match. After a second match, continue the
+    candidate query to exhaustion or use the complete path. Never report a
+    two-row prefix as the full result. A bounded or count-only ambiguity view
+    needs its own output contract.
+  - Add one index, `sessions_lowerid(lowerid)`.
+  - Harness filtering uses a `key` range on the existing primary key, not
+    `json_extract`.
+- **Bound bounded lists.** `catalogSessionsInContext` sets
+  `Metadata.Limit` for non-browsing bounded lists whose predicates are all
+  exact in SQL. It does not loop pages it will discard.
 
-`MetadataCache.putVerified` (internal/reader/cache.go) currently calls
-`pruneVersions(dir, current)` after every successful `writeCacheFile`, and
-`pruneVersions` re-reads the key directory. Remove the call from the put
-path. Move pruning into the existing bounded maintenance sweep
-(`cacheMaintenanceDirectoryBudget = 64`, internal/reader/cache_maintenance.go):
-when the sweep visits a key directory holding more than one validator file,
-keep the most recently modified and remove the rest. Keeping an arbitrary
-subset is correctness-safe because `get` opens exactly one ETag-named file
-and any miss costs one refetch; modes (0600 file, 0700 directory) and symlink
-checks are unchanged. No cache layout change, so old and new binaries can
-share a cache directory in either order.
+Pass:
+- Results are identical to the exhaustive oracle, including ties, replays,
+  native children, unlabeled names and PR-number words.
+- A recording test shows handoff's picker decoding zero bodies on a warm run,
+  and a unique short-ID show decoding at most one SQL page of summaries.
+- Ambiguity with three or more matches preserves the exact count, the ordered
+  candidate rows and every interactive choice.
+- Stale cursors still return `ErrStaleCatalogCursor`.
 
-Pass: profile of cold exhaustive N=50k shows `pruneVersions` gone from the
-put path; cache hit/miss behavior and deleted-session eviction tests pass
-unchanged; interrupted sweeps leave only `.pending-` debris the existing
-stale-temp cleanup already removes. Re-profile before considering a packed
-single-file cache; that is out of scope here.
+## PR 4: Small cache and selected-read fixes
 
-## PR 3: Bounded show/handoff candidate resolution
+- `MetadataCache.putVerified` skips `pruneVersions` when its `os.Mkdir` just
+  created the key directory. A fresh directory has nothing to prune. Rewritten
+  keys keep today's prune, and the sweep remains the backstop. No layout change.
+- Raise selected sidecar GET concurrency (`listConcurrency`) from 8 to 16, to
+  match listing. Gate it on the PR 6 model and one real trace with ≥ 50 changed
+  sidecars. Revert it if the provider throttles.
 
-Goal: resolving a unique session avoids unrelated summaries; ambiguous queries preserve complete candidate counts, ordering and picker choices.
+Pass:
+- A cold N=50k synthetic profile shows `pruneVersions` gone from fresh puts.
+- Cache hit, miss and eviction tests are unchanged.
+- The changed-sidecar wave count halves in the model.
 
-`resolveShowQuery` (internal/cli) classifies the query before reading
-candidates: exact ID keeps today's per-harness probes; a short ID or ID
-prefix uses PR 1's `IDPrefix` query; topic words use the existing `Words`
-superset. Both forms page with the overscan rule from PR 1. Two final
-matches establish ambiguity but do not preserve today's output by themselves:
-`show` and `handoff` print the complete match count and ordered candidate
-rows, and interactive pickers offer all matches. After finding a second match,
-continue the candidate query to exhaustion or use the existing complete path;
-never report a two-row prefix as the full result. A future bounded picker or
-count-only query needs a separate output and ordering contract. Cases the query cannot represent
-(configured project labels that only exist at query time, scope tiers,
-unlabeled-name gaps in `catalogSearch`) detect that from the query shape and
-use today's complete candidate path. The selected session's metadata is
-still loaded and verified exactly as today (`selectedShowMetadata`,
-`ReadCachedMetadata` rules in the catalog contract); summaries never become
-body authority.
+## PR 5: Catalog-v4 on R2 — qualification first, then the bounded reader
 
-`handoff` reuses the same candidate API for its title-word and picker-search
-paths; its bare picker already takes a bounded page and is unchanged. The
-local-transcript label reads (at most 50 files) stay bounded and unchanged.
+Goal: a warm run on a qualified destination performs one head read plus work
+proportional to what changed. It performs no `sessions/` LIST.
 
-Pass: cold and warm operation-count tests (`BenchmarkCommandReads` cases and
-new PR 5 cases) show short-ID resolution performing O(matches) GETs after
-catalog warm, ambiguity with three or more matches preserves the exact count, ordered
-candidate rows and all interactive choices; not-found output is unchanged; an ID prefix
-never outranking a text match it does not also satisfy.
+- **Step 1 is operator work, not code.** Record repeated
+  `_catalog probe --isolated` evidence for the user's R2 endpoint, and the
+  clock and LastModified evidence, as the
+  [provider qualification gate](../catalog/provider-qualification.md)
+  requires. Writer cutover follows its own rules. This plan does not change the
+  gate, protocol numbers or the default format.
+- **Step 2 is the reader.**
+  - **ID prefixes.** `boundedCatalogSelection` accepts ID-prefix queries as one
+    `IdentityIndex` range per harness.
+  - **Text and complex filters through the local catalog.**
+    `CatalogSummaries` and the complete-summary fallback stop materializing
+    every row through `lazyCatalogRows`/`catalogRows`. They call
+    `RefreshRemote`, which runs a verified delta against the persisted
+    `remote_root` and a complete rebuild only when the prior root is unknown,
+    and then the local `Query`.
+  - **`--no-cache`** keeps today's in-memory complete fallback.
+  - **Cursors** stay bound to the snapshot root and refresh nonce. A changed
+    head mid-query returns the existing refresh error.
 
-## PR 4: Generalized bounded catalog-v4 selection
+Pass:
+- On a synthetic qualified store, warm prefix and text queries perform zero
+  canonical LISTs, and tree-node reads track changed subtrees.
+- Results equal the exhaustive oracle.
+- The [migration-and-query](../catalog/migration-and-query.md) query table is
+  updated in the same PR.
+- Step 2 may merge before step 1 because it is reachable only on qualified
+  destinations. Track B targets count as met only with step 1's evidence.
 
-Goal: on catalog-v4 destinations, remove the remaining complete-summary
-fallbacks from `list`/`show` hot paths without any protocol change.
+## PR 6: Latency-modeled command benchmarks and operation-count gates
 
-Today `selectCatalogMetadata` (internal/reader/remote_catalog.go) takes the
-bounded tree path only for a single indexed predicate
-(`boundedCatalogSelection`); everything else loads all rows through
-`lazyCatalogRows` (pages of 1000 over `IdentityIndex`, fully materialized)
-and re-derives listing revisions in memory. `CatalogSummaries` does the same
-for complex CLI matchers.
+Extend `storagetest.MeasuredStore` and the existing command benchmarks rather
+than adding a harness.
 
-Changes, all reader-side over existing wire types
-(`catalog.CatalogHead`, `catalog.Query{Index, Lower, Upper, Reverse}`,
-`catalog.Row`, `catalog.Delta`):
+- **Model what was measured.**
+  - Each LIST *page* costs `ListPageDelay + keys × ListKeyDelay`. Today one
+    delay is charged per `List` call, whatever its key count.
+  - Each GET costs `GetDelay`.
+  - Concurrent requests overlap.
+  - Defaults come from the 2026-10-16 traces: 1,000-key pages at 0.4–1.0 s,
+    GETs at 0.11–0.21 s.
+  - Seed 2.8 keys per session with uneven per-session key counts, so range
+    imbalance is reproducible.
+- **Cover the commands people run.** Interactive `list`, bare `show`, the
+  `handoff` picker, `show <short id>`, `handoff <query>` and piped
+  `list --limit 50`, at 1.8k, 10k, 25k and 50k sessions. Run warm, and warm
+  with 1% changed.
+- **Gate counts, report time.** CI gates operation counts, critical-path page
+  waves, bytes and allocations, which reproduce exactly. Modeled and real wall
+  time are reported but not gated. CI keeps 1.8k. The full matrix stays behind
+  `AGENT_ARCHIVE_PERF=1`.
+- **Real-command recipe.** Use the installed, trusted binary so fresh builds
+  trigger no Keychain prompts. Run `AGENT_ARCHIVE_TRACE=1` and keep only span
+  lines. Run interactive commands under `script -q /dev/null env -i HOME=…
+  PATH=… TERM=…` and cancel with Esc. Record session and key counts,
+  never IDs or titles.
 
-1. **ID-prefix ranges.** Expand `boundedCatalogSelection` to accept an
-   ID-prefix query. Identity tree keys are canonical session keys, so a
-   prefix on the session ID is one contiguous `IdentityIndex` range per
-   harness: `Lower = sessions/<harness>/<prefix>`,
-   `Upper =` the same with the prefix's exclusive upper bound.
-   `selectBoundedCatalog` queries each harness range with the caller's limit
-   and merges at most that many rows per harness; bodies load through the
-   existing `readCatalogRow` verification.
-2. **Fallback through the delta-synced local catalog.** Where a local
-   `SQLiteSessionCatalog` is available, `CatalogSummaries` and the
-   complete-summary fallback stop calling `catalogRows`/`lazyCatalogRows`:
-   they call `RefreshRemote` (verified delta against the persisted
-   `remote_root`, complete rebuild only when the prior root is unknown) and
-   then PR 1's pushed-down `Query`. Text search stays a complete-summary
-   operation semantically, but its cost becomes O(changed) remote work plus
-   a local indexed scan, with no canonical LIST and no all-rows slice.
-   `--no-cache` keeps today's in-memory complete fallback.
-3. **No new authority.** Cursors stay bound to the snapshot root and refresh
-   nonce exactly as the catalog contract requires; a changed head mid-query
-   still returns the existing refresh error. Counter-only leaf changes keep
-   invalidating local summary generations.
+## PR 7: SQL pushdown for local summary queries
 
-Pass: on a synthetic catalog-v4 destination (in-memory qualified store),
-prefix and text queries perform zero canonical LISTs and fetch tree nodes
-proportional to changed subtrees on the second run; results equal the
-exhaustive oracle; the query table in
-[migration-and-query](../catalog/migration-and-query.md) is updated in the
-same PR. Provider qualification and activation remain HOLD and untouched.
+Only after PR 5 has removed the LIST from the hot path, and only if PR 6 shows
+local query time above 100 ms at 50k.
 
-## PR 5: Scale benchmarks and operation-count gates
+- Add typed columns only for predicates that PR 6 shows on the critical path,
+  such as `repo_key` and `project_id` for scoped pickers, with the matching
+  `(column, activity DESC, capture DESC, key)` index.
+- Read candidate keys first. Decode and checksum summaries only for the page.
+- Any predicate SQL cannot represent exactly keeps the current Go filter.
 
-Extend the existing harnesses rather than adding new ones
-(`storagetest.SeedArchive`/`ScaleCases`, `BenchmarkReaderScale`,
-`BenchmarkCommandScale`, `BenchmarkCommandReads`):
-
-- `BenchmarkCatalogListScale`: text-full, model, skill and word queries at
-  N=800/10k/50k, warm and 1%-changed, through the real CLI. Asserts via the
-  measured store that eligible bounded queries perform 0 body GETs warm and
-  decode at most the overscan page.
-- `BenchmarkShowResolveScale`: exact, short-ID and topic resolution at the
-  same scales, cold and warm catalog.
-- Gate on operation counts, bytes and allocations (reproducible), report
-  ms/op ungated; the 2026-10-15 runs showed wall time varies up to ~1.9x
-  under contention while counts reproduce exactly. Default CI keeps N=800;
-  the full matrix stays behind `AGENT_ARCHIVE_PERF=1` per the testing guide.
+Pass: identical oracle results, and decodes bounded by the page size in a
+recording test.
 
 ## Correctness and privacy constraints
 
-- The exhaustive reader remains the selection oracle for every PR; each new
+- The exhaustive reader remains the selection oracle for every PR. Each new
   bounded path ships with differential tests against it, including ordering
-  ties, replay and native-child handling, and missing/corrupt rows.
-- No predicate may move into SQL or a tree range unless it is exact there.
-  Unicode case folding stays in Go (`catalogSearch` exists because SQLite
-  `lower()` is ASCII-only); SQL and tree ranges only ever produce supersets.
-- Summaries, catalogs and caches keep today's contents ceiling: no titles in
-  object keys, no transcripts or source references in `SearchSummary`, local
-  files stay 0600/0700. Nothing in this plan uploads or drops new content,
-  so no filter/adapter/parser version bump or privacy changelog entry is
-  required; if an implementation discovers it must derive a new persisted
-  field, it stops and follows [versions](../maintainers/versions.md) first.
-- Validation is not a performance knob: SHA-256, ETag and
-  `ValidateMetadata` checks on selected bodies are unchanged in every PR.
+  ties, replay and native-child handling, and missing or corrupt rows.
+- No predicate moves into SQL or a tree range unless it is exact there.
+  Unicode case folding stays in Go. SQL and tree ranges only produce supersets.
+- Range plans contain object keys the reader already lists and caches. They
+  add no titles or content to disk. Summaries, catalogs and caches keep
+  today's contents ceiling, and local files stay 0600/0700.
+- Nothing in this plan uploads or drops new content. No filter, adapter or
+  parser version bump or privacy changelog entry is required. If an
+  implementation finds it must derive a new persisted field, it stops and
+  follows [versions](../maintainers/versions.md) first.
+- Validation is not a performance knob. SHA-256, ETag and `ValidateMetadata`
+  checks on selected bodies are unchanged in every PR.
 
 ## Rejected alternatives
 
-- **A new delta manifest for legacy v3 destinations.** It would duplicate
-  catalog-v4's head/tree/delta machinery under a second format with its own
-  writer fencing. Legacy destinations get PRs 1–3; sublinear discovery is
-  the reason to migrate them.
-- **TTL-cached bucket listings.** Violates the cache-never-authority rule
-  and can hide just-captured or just-deleted sessions.
-- **Skipping body validation on warm paths.** Small warm-path share, and it
+- **A change marker or delta manifest for legacy v3.** Readers could trust it
+  only if every writer, including older binaries on other machines, maintained
+  it. That is the writer-barrier problem catalog-v4 already solves, under a
+  second format. Scale comes from qualifying catalog-v4.
+- **TTL-cached bucket listings.** They violate the cache-never-authority rule
+  and can hide just-captured or just-deleted sessions. A picker that draws
+  local rows first and reconciles after the LIST is not rejected, but it is
+  user-visible behavior and needs its own UX proposal.
+- **Skipping body validation on warm paths.** The time saved is small, and it
   is the integrity boundary for selected metadata.
-- **More listing/read concurrency.** Ranges already run 16-way and body
-  reads 8-way; more only risks provider throttling.
-- **Streaming transcript decode and render-fit changes** (the Theta(S)
-  findings for `show --transcript` and `handoff`, ~13xS peak RSS, hard cap
-  at 128 MiB uncompressed) are real but orthogonal to N; they need their own
-  proposal against the privacy filter contract.
+- **Raising LIST concurrency beyond 16 in this plan.** Balance comes first
+  (PR 1). More slots are a separate measured change against R2 throttling and
+  per-operation cost.
+- **Bounded-decode work before the network work.** The measured local query is
+  25 ms against a roughly 1 s LIST. PR 7 waits until it is on the critical
+  path.
+- **Streaming transcript decode and render-fit changes.** These are the
+  Theta(S) findings for `show --transcript` and `handoff`: about 13×S peak RSS
+  and a hard cap at 128 MiB uncompressed. They are real but orthogonal to N,
+  and need their own proposal against the privacy filter contract.
 
 ## Documentation on landing
 
-Each PR updates, in the same change: this proposal's status,
-[the catalog query contract](../catalog/migration-and-query.md) (PR 4),
-[the listing contract](../maintainers/list-performance.md), user docs only
-if visible behavior changes (none planned), and CHANGELOG.md. When PRs 1–4
-have landed, move this file to `implemented/` per the proposals index rules
-and record the matched benchmark evidence with exact source SHAs.
+Each PR updates, in the same change:
+- this proposal's status
+- [the listing contract](../maintainers/list-performance.md) (PRs 1, 6)
+- [the catalog query contract](../catalog/migration-and-query.md) (PR 5)
+- user docs, only if visible behavior changes (none planned)
+- CHANGELOG.md
+
+When Track A and PR 5 have landed, move this file to `implemented/` per the
+proposals index rules, with matched trace evidence and exact source SHAs.
