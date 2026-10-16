@@ -165,6 +165,15 @@ func TestNativeInventoryFewAndManyDayFreshProcessMeasurements(t *testing.T) {
 					total.Sweeps += c.Sweeps
 					total.Selections += c.Selections
 					total.Checks += c.Checks
+					total.AcquireStats += c.AcquireStats
+					total.AcquireOpens += c.AcquireOpens
+					total.SweepStats += c.SweepStats
+					total.SweepOpens += c.SweepOpens
+					total.CandidateStats += c.CandidateStats
+					total.CandidateOpens += c.CandidateOpens
+					if c.Stats != c.AcquireStats+c.SweepStats+c.CandidateStats || c.Opens != c.AcquireOpens+c.SweepOpens+c.CandidateOpens {
+						t.Fatal("operation stage accounting mismatch", c)
+					}
 					peak = max(peak, result.Peak)
 					if c.Names > 2048 || c.Probes > HeaderProbes || c.Stats+c.Opens > int64(maxDirectories*16) {
 						t.Fatal("pass exceeded limits", c)

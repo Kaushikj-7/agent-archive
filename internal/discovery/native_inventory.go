@@ -33,10 +33,11 @@ type NativeLocatorValidator func(context.Context, agentapi.SourceEnvironment, ag
 // NativeInventoryCounts accounts application operations, not physical disk I/O.
 // Currentness deliberately costs O(selected owners * completed directories).
 type NativeInventoryCounts struct {
-	Names, DirentBytes, Stats, Opens, HeaderBytes, HeaderReads, Probes int64
-	UncommittedNames                                                   int64
-	PageReads, GenerationChecks, Sweeps, Selections, Checks            int64
-	Active                                                             time.Duration
+	Names, DirentBytes, Stats, Opens, HeaderBytes, HeaderReads, Probes                 int64
+	UncommittedNames                                                                   int64
+	PageReads, GenerationChecks, Sweeps, Selections, Checks                            int64
+	AcquireStats, AcquireOpens, SweepStats, SweepOpens, CandidateStats, CandidateOpens int64
+	Active                                                                             time.Duration
 }
 
 type nativeGeneration struct {
@@ -527,6 +528,11 @@ func (l *NativeInventory) directory(path string) (f *os.File, g nativeGeneration
 }
 
 func (l *NativeInventory) acquire(ctx context.Context) error {
+	beforeStats, beforeOpens := l.counts.Stats, l.counts.Opens
+	defer func() {
+		l.counts.AcquireStats += l.counts.Stats - beforeStats
+		l.counts.AcquireOpens += l.counts.Opens - beforeOpens
+	}()
 	for index := 0; index < len(l.progress.Directories); index++ {
 		if err := l.allowed(ctx); err != nil {
 			return err
@@ -571,7 +577,7 @@ func (l *NativeInventory) acquire(ctx context.Context) error {
 		}
 		closeErr := f.Close()
 		check, finalGeneration, checkErr := l.directory(d.Path)
-		observedMismatch := e2 == nil && g != afterGeneration || checkErr == nil && g != finalGeneration || n > 0 && next == offset
+		observedMismatch := nativeGenerationChanged(g, afterGeneration, e2) || nativeGenerationChanged(g, finalGeneration, checkErr) || n > 0 && next == offset
 		if check != nil {
 			checkErr = errors.Join(checkErr, check.Close())
 		}
@@ -636,6 +642,10 @@ func (l *NativeInventory) acquire(ctx context.Context) error {
 	return nil
 }
 
+func nativeGenerationChanged(before, after nativeGeneration, err error) bool {
+	return err == nil && before != after
+}
+
 // At most one <=256-name complete page can be tentative. Refuse that whole
 // page before another allocation batch, keeping a supported prior checkpoint.
 func (l *NativeInventory) withinRetainedLimits() bool {
@@ -653,6 +663,11 @@ func (l *NativeInventory) withinRetainedLimits() bool {
 }
 
 func (l *NativeInventory) coverage(ctx context.Context) error {
+	beforeStats, beforeOpens := l.counts.Stats, l.counts.Opens
+	defer func() {
+		l.counts.SweepStats += l.counts.Stats - beforeStats
+		l.counts.SweepOpens += l.counts.Opens - beforeOpens
+	}()
 	l.counts.Sweeps++
 	for _, d := range l.progress.Directories {
 		if !completeNative(d) {
@@ -678,6 +693,11 @@ func (l *NativeInventory) coverage(ctx context.Context) error {
 }
 
 func (l *NativeInventory) candidate(ctx context.Context, id string) (agentapi.SourceRef, nativeGeneration, int, error) {
+	beforeStats, beforeOpens := l.counts.Stats, l.counts.Opens
+	defer func() {
+		l.counts.CandidateStats += l.counts.Stats - beforeStats
+		l.counts.CandidateOpens += l.counts.Opens - beforeOpens
+	}()
 	var ref agentapi.SourceRef
 	var stamp nativeGeneration
 	found := 0
