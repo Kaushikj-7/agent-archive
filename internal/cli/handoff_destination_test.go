@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/platform"
 	"github.com/wangjohn/agent-archive/internal/termlaunch"
@@ -102,10 +103,19 @@ func TestChooseDestinationAnswers(t *testing.T) {
 		{"an uninstalled agent's name asks again", []handoffDestination{handoffDestinationCodex}, "claude\n1\n", handoffChoice{action: handoffLaunch, dest: handoffDestinationCodex}},
 		{"nothing installed: enter prints", nil, "\n", handoffChoice{action: handoffPrint}},
 		{"nothing installed: no numbers", nil, "1\nc\n", handoffChoice{action: handoffCopy}},
+		{"one agent: enter launches it", []handoffDestination{handoffDestinationClaude}, "\n", handoffChoice{action: handoffLaunch, dest: handoffDestinationClaude}},
+		{"one agent: y launches it", []handoffDestination{handoffDestinationClaude}, "Y\n", handoffChoice{action: handoffLaunch, dest: handoffDestinationClaude}},
+		{"one agent: yes launches it", []handoffDestination{handoffDestinationClaude}, "yes\n", handoffChoice{action: handoffLaunch, dest: handoffDestinationClaude}},
+		{"one agent: its name launches it", []handoffDestination{handoffDestinationClaude}, "claude\n", handoffChoice{action: handoffLaunch, dest: handoffDestinationClaude}},
+		{"one agent: n quits", []handoffDestination{handoffDestinationClaude}, "n\n", handoffChoice{action: handoffQuit}},
+		{"one agent: no quits", []handoffDestination{handoffDestinationClaude}, "no\n", handoffChoice{action: handoffQuit}},
+		{"one agent: q still quits", []handoffDestination{handoffDestinationClaude}, "q\n", handoffChoice{action: handoffQuit}},
+		{"one agent: print", []handoffDestination{handoffDestinationClaude}, "p\n", handoffChoice{action: handoffPrint}},
+		{"one agent: write", []handoffDestination{handoffDestinationClaude}, "w\n", handoffChoice{action: handoffWrite}},
 	} {
 		var out bytes.Buffer
 		def := defaultDestination(tc.installed, "claude", config.HandoffConfig{})
-		got, err := chooseDestination(newPrompter(strings.NewReader(tc.answer), &out), tc.installed, def, true, productionAgents.Catalog())
+		got, err := chooseDestination(newPrompter(strings.NewReader(tc.answer), &out), tc.installed, def, true, productionAgents.Catalog(), nil)
 		if err != nil || got != tc.want {
 			t.Errorf("%s: got %+v, %v; want %+v\n%s", tc.name, got, err, tc.want, out.String())
 		}
@@ -116,27 +126,66 @@ func TestChooseDestinationListsTheDefaultFirst(t *testing.T) {
 	t.Parallel()
 	var out bytes.Buffer
 	installed := []handoffDestination{handoffDestinationClaude, handoffDestinationCodex, handoffDestinationCursor}
-	if _, err := chooseDestination(newPrompter(strings.NewReader("q\n"), &out), installed, handoffDestinationCodex, true, productionAgents.Catalog()); err != nil {
+	if _, err := chooseDestination(newPrompter(strings.NewReader("q\n"), &out), installed, handoffDestinationCodex, true, productionAgents.Catalog(), nil); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"? Continue in", "1) Codex (default)", "2) Claude Code", "3) Cursor", "[p] print", "[c] copy to the clipboard", "[w] write to a file", "[q] quit", "Choose [1]", "Handoff quit"} {
+	for _, want := range []string{"? Continue in", "1) Codex (default)", "2) Claude Code", "3) Cursor", "[p] print  [c] copy  [w] write  [q] quit", "Choose [1]", "Handoff quit"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("missing %q in prompt:\n%s", want, out.String())
 		}
 	}
 	out.Reset()
-	if _, err := chooseDestination(newPrompter(strings.NewReader("q\n"), &out), nil, "", true, productionAgents.Catalog()); err != nil {
+	if _, err := chooseDestination(newPrompter(strings.NewReader("q\n"), &out), nil, "", true, productionAgents.Catalog(), nil); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(out.String(), "[q] quit") || !strings.Contains(out.String(), "[Enter] print") || strings.Contains(out.String(), "1)") {
 		t.Fatalf("prompt with no agent installed:\n%s", out.String())
 	}
 	out.Reset()
-	if _, err := chooseDestination(newPrompter(strings.NewReader("q\n"), &out), []handoffDestination{handoffDestinationClaude}, handoffDestinationClaude, true, productionAgents.Catalog()); err != nil {
+	if _, err := chooseDestination(newPrompter(strings.NewReader("q\n"), &out), []handoffDestination{handoffDestinationClaude}, handoffDestinationClaude, true, productionAgents.Catalog(), nil); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), "Choose [1]") {
-		t.Fatalf("prompt with one agent installed:\n%s", out.String())
+	for _, want := range []string{"? Continue in Claude Code? [Y/n]", "or [p] print  [c] copy  [w] write", "Handoff quit"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("missing %q in prompt with one agent installed:\n%s", want, out.String())
+		}
+	}
+	for _, unwanted := range []string{"1)", "[q]", "Choose"} {
+		if strings.Contains(out.String(), unwanted) {
+			t.Fatalf("unexpected %q in prompt with one agent installed:\n%s", unwanted, out.String())
+		}
+	}
+}
+
+func TestChooseDestinationNamesTheSessionAboveTheQuestion(t *testing.T) {
+	t.Parallel()
+	var out bytes.Buffer
+	header := []string{"Fix the scroll bug", "Codex · 2 hours ago · 14 KB"}
+	if _, err := chooseDestination(newPrompter(strings.NewReader("q\n"), &out), []handoffDestination{handoffDestinationClaude}, handoffDestinationClaude, true, productionAgents.Catalog(), header); err != nil {
+		t.Fatal(err)
+	}
+	text := out.String()
+	title, facts, question := strings.Index(text, header[0]), strings.Index(text, header[1]), strings.Index(text, "? Continue in")
+	if title < 0 || facts < title || question < facts {
+		t.Fatalf("header is not above the question:\n%s", text)
+	}
+}
+
+func TestHandoffPromptHeaderNamesTitleAgentAgeAndSize(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	active := now.Add(-2 * time.Hour)
+	h := archive.Handoff{Session: archive.HandoffSession{Harness: "codex", LastActivityAt: &active}}
+	target := handoffTarget{metadata: &archive.Metadata{Title: "fix the scroll bug"}}
+	got := handoffPromptHeader(target, h, 14*1024, now, productionAgents.Catalog())
+	want := []string{"Fix the scroll bug", "Codex · 2 hours ago · 14 KB"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("header = %q, want %q", got, want)
+	}
+	// Without a title or activity time, the agent and size remain.
+	got = handoffPromptHeader(handoffTarget{}, archive.Handoff{Session: archive.HandoffSession{Harness: "claude"}}, 10, now, productionAgents.Catalog())
+	if want := []string{"Claude Code · 1 KB"}; !slices.Equal(got, want) {
+		t.Fatalf("header = %q, want %q", got, want)
 	}
 }
 

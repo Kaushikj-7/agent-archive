@@ -82,7 +82,7 @@ func TestGuidedCommandScreens(t *testing.T) {
 		}},
 		{"handoff", "w\nq\n", func(t *testing.T, p *prompter, out *guidedCommandOutput) {
 			t.Helper()
-			choice, err := chooseDestination(p, []handoffDestination{handoffDestinationClaude, handoffDestinationCodex}, handoffDestinationCodex, true, productionAgents.Catalog())
+			choice, err := chooseDestination(p, []handoffDestination{handoffDestinationClaude, handoffDestinationCodex}, handoffDestinationCodex, true, productionAgents.Catalog(), nil)
 			must(t, err)
 			if choice.action != handoffWrite {
 				t.Fatal("wrong handoff action")
@@ -249,7 +249,7 @@ func TestHandoffGuidedTypedAheadKeepsFileAnswer(t *testing.T) {
 	var out bytes.Buffer
 	p := newPrompter(in, &out)
 	defer p.close()
-	choice, err := chooseDestination(p, nil, "", false, productionAgents.Catalog())
+	choice, err := chooseDestination(p, nil, "", false, productionAgents.Catalog(), nil)
 	must(t, err)
 	if choice.action != handoffWrite {
 		t.Fatal("write not selected")

@@ -537,6 +537,216 @@ class ToolScenarioTests(unittest.TestCase):
         return [json.loads(line[6:]) for line in response.split(b"\r\n\r\n", 1)[1].splitlines()
                 if line.startswith(b"data: ")]
 
+    def test_exact_model_catalog_routes_share_budget_and_preserve_provider_turns(self):
+        with self.endpoint() as server:
+            catalogs = [self.exchange(server, raw=b"GET " + path + b" HTTP/1.1\r\nContent-Length: 0\r\n\r\n")
+                        for path in (b"/models", b"/muse-code/models")]
+            self.assertIn(b"200 OK", catalogs[0])
+            self.assertEqual(catalogs[0], catalogs[1])
+            self.assertEqual(server.model_requests, 2)
+            first = self.frames(self.exchange(server, self.initial()))
+            self.assertEqual(sum(frame["type"] == "response.function_call_arguments.done" for frame in first), 2)
+            final = self.frames(self.exchange(server, self.results()))
+            self.assertEqual(final[-1]["type"], "response.completed")
+            receipt = server.receipt()
+            self.assertEqual(receipt["requests"], 4)
+            self.assertEqual(receipt["connections"], 4)
+            self.assertEqual(receipt["first_refusal"], "none")
+            self.assertTrue(receipt["models_get_seen"])
+            self.assertTrue(receipt["muse_code_models_get_seen"])
+            self.assertTrue(receipt["responses_post_seen"])
+            self.assertTrue(receipt["provider_complete"])
+        self.assertTrue(server.receipt()["handlers_joined"])
+
+    def controlled_echo(self, frames, name):
+        calls = [frame for frame in frames if frame["type"] == "response.function_call_arguments.done"]
+        echoed = [{"type": "function_call", "call_id": call["call_id"], "name": name,
+                   "arguments": call["arguments"]} for call in calls]
+        body = self.results(len(calls))
+        body["input"] = echoed + body["input"]
+        return body
+
+    def echo_turn(self, server, name):
+        self.assertIn(b"200 OK", self.exchange(server, raw=b"GET /muse-code/models HTTP/1.1\r\n\r\n"))
+        frames = self.frames(self.exchange(server, self.initial()))
+        return self.controlled_echo(frames, name)
+
+    def test_qualified_controlled_echo_without_namespace_completes_provider_turn(self):
+        with self.endpoint("exec-read-success") as server:
+            body = self.echo_turn(server, "muse.read_file")
+            self.assertEqual(len(body["input"]), 2)
+            response = self.exchange(server, body)
+            self.assertIn(b"200 OK", response, server.receipt()["first_refusal"])
+            self.assertEqual(self.frames(response)[-1]["type"], "response.completed")
+            receipt = server.receipt()
+            self.assertTrue(receipt["provider_complete"])
+            self.assertEqual(receipt["first_refusal"], "none")
+            self.assertEqual(receipt["requests"], 3)
+            self.assertTrue(receipt["muse_code_models_get_seen"])
+            self.assertNotIn("muse.read_file", json.dumps(receipt))
+        self.assertTrue(server.receipt()["handlers_joined"])
+
+    def test_legacy_controlled_echo_behavior_remains_supported(self):
+        for namespace in ("absent", "muse", None):
+            with self.subTest(namespace=namespace), self.endpoint("exec-read-success") as server:
+                body = self.echo_turn(server, "read_file")
+                if namespace != "absent":
+                    body["input"][0]["namespace"] = namespace
+                response = self.exchange(server, body)
+                self.assertIn(b"200 OK", response, server.receipt()["first_refusal"])
+                self.assertTrue(server.receipt()["provider_complete"])
+                self.assertEqual(server.receipt()["first_refusal"], "none")
+
+    def test_two_qualified_echoes_preserve_distinct_controlled_associations(self):
+        with self.endpoint() as server:
+            body = self.echo_turn(server, "muse.read_file")
+            self.assertEqual(len(body["input"]), 4)
+            response = self.exchange(server, body)
+            self.assertIn(b"200 OK", response, server.receipt()["first_refusal"])
+            self.assertTrue(server.receipt()["provider_complete"])
+            self.assertFalse(server.receipt()["provider_refused"])
+
+    def test_qualified_echo_names_namespaces_and_associations_remain_closed(self):
+        variants = ("namespace-null", "namespace-muse", "namespace-conflict", "namespace-empty",
+                    "prefix", "suffix", "other-tool", "case", "arguments", "path", "id", "count", "duplicate",
+                    "early", "output-id", "output-extra", "output-type")
+        for mutation in variants:
+            with self.subTest(mutation=mutation), self.endpoint() as server:
+                if mutation == "early":
+                    frames = [{"type": "response.function_call_arguments.done", "call_id": call_id,
+                               "arguments": json.dumps(server.scenario.arguments(index))}
+                              for index, call_id in enumerate(server.scenario.call_ids())]
+                    body = self.controlled_echo(frames, "muse.read_file")
+                else:
+                    body = self.echo_turn(server, "muse.read_file")
+                echo = body["input"][0]
+                if mutation.startswith("namespace-"):
+                    echo["namespace"] = {"namespace-null": None, "namespace-muse": "muse",
+                        "namespace-conflict": "PRIVATE_NAMESPACE", "namespace-empty": ""}[mutation]
+                elif mutation in ("prefix", "suffix", "other-tool", "case"):
+                    echo["name"] = {"prefix": "PRIVATE.muse.read_file", "suffix": "muse.read_file.PRIVATE",
+                        "other-tool": "muse.PRIVATE", "case": "Muse.read_file"}[mutation]
+                elif mutation == "arguments":
+                    echo["arguments"] = json.dumps(dict(server.scenario.arguments(0), offset=2))
+                elif mutation == "path":
+                    echo["arguments"] = json.dumps(dict(server.scenario.arguments(0), path="/PRIVATE_FOREIGN"))
+                elif mutation == "id":
+                    echo["call_id"] = "PRIVATE_FOREIGN"
+                elif mutation == "count":
+                    del body["input"][1]
+                elif mutation == "duplicate":
+                    body["input"][1]["call_id"] = echo["call_id"]
+                elif mutation == "output-id":
+                    body["input"][2]["call_id"] = "PRIVATE_OUTPUT_ID"
+                elif mutation == "output-extra":
+                    body["input"][2]["PRIVATE_KEY"] = "PRIVATE_VALUE"
+                elif mutation == "output-type":
+                    body["input"][2]["output"] = 7
+                self.assertEqual(self.exchange(server, body), b"")
+                receipt = server.receipt()
+                self.assertEqual(receipt["first_refusal"], "association")
+                self.assertFalse(receipt["provider_complete"])
+                self.assertNotIn("PRIVATE", json.dumps(receipt))
+            self.assertTrue(server.receipt()["handlers_joined"])
+
+    def test_model_catalog_aliases_share_the_existing_two_request_limit(self):
+        with self.endpoint() as server:
+            for path in (b"/models", b"/muse-code/models"):
+                self.assertIn(b"200 OK", self.exchange(server, raw=b"GET " + path + b" HTTP/1.1\r\n\r\n"))
+            self.assertEqual(self.exchange(server, raw=b"GET /muse-code/models HTTP/1.1\r\n\r\n"), b"")
+            self.assertEqual(server.model_requests, 2)
+            self.assertEqual(server.receipt()["first_refusal"], "limit")
+
+    def test_unqualified_catalog_targets_methods_and_bodies_refuse_without_content(self):
+        variants = [(b"GET", target, b"", "route") for target in (
+            b"/PRIVATE_TARGET", b"/models?PRIVATE_QUERY", b"/muse-code/models?PRIVATE_QUERY",
+            b"/muse-code/models#PRIVATE_FRAGMENT", b"/muse-code/models/", b"/v1/models",
+            b"http://PRIVATE_AUTHORITY/muse-code/models", b"/muse-code/responses")]
+        variants += [(b"GET", path, b"PRIVATE_BODY", "route") for path in (b"/models", b"/muse-code/models")]
+        variants += [(b"POST", b"/muse-code/models", b"{}", "route"),
+                     (b"POST", b"/muse-code/responses", b"{}", "route"),
+                     (b"DELETE", b"/muse-code/models", b"", "request-shape")]
+        for method, path, body, reason in variants:
+            with self.subTest(method=method, path=path), self.endpoint() as server:
+                raw = method + b" " + path + b" HTTP/1.1\r\nX-PRIVATE_HEADER: PRIVATE_VALUE\r\nContent-Length: " + str(len(body)).encode() + b"\r\n\r\n" + body
+                self.assertEqual(self.exchange(server, raw=raw), b"")
+                receipt = server.receipt()
+                self.assertEqual(receipt["first_refusal"], reason)
+                self.assertFalse(receipt["models_get_seen"])
+                self.assertFalse(receipt["muse_code_models_get_seen"])
+                self.assertFalse(receipt["responses_post_seen"])
+                self.assertNotIn("PRIVATE", json.dumps(receipt))
+            self.assertTrue(server.receipt()["handlers_joined"])
+
+    def test_partial_request_io_and_malformed_json_keep_only_fixed_codes(self):
+        with self.endpoint() as server:
+            with socket.create_connection(server.server_address, timeout=2) as connection:
+                connection.sendall(b"POST /responses HTTP/1.1\r\nPRIVATE_PARTIAL")
+                connection.shutdown(socket.SHUT_WR)
+                self.assertEqual(connection.recv(1024), b"")
+            self.assertEqual(server.receipt()["first_refusal"], "io")
+            self.assertNotIn("PRIVATE", json.dumps(server.receipt()))
+        with self.endpoint() as server:
+            body = b'{"PRIVATE_UNKNOWN_KEY": PRIVATE_MALFORMED_BODY}'
+            raw = b"POST /responses HTTP/1.1\r\nContent-Length: " + str(len(body)).encode() + b"\r\n\r\n" + body
+            self.assertEqual(self.exchange(server, raw=raw), b"")
+            self.assertEqual(server.receipt()["first_refusal"], "input-shape")
+            self.assertNotIn("PRIVATE", json.dumps(server.receipt()))
+
+    def test_first_refusal_is_closed_and_survives_later_failures(self):
+        with self.endpoint() as server:
+            self.assertEqual(self.exchange(server, raw=b"GET /PRIVATE_TARGET HTTP/1.1\r\n\r\n"), b"")
+            server.fail("limit")
+            server.fail("PRIVATE_EXCEPTION_TEXT")
+            self.assertEqual(server.receipt()["first_refusal"], "route")
+            self.assertNotIn("PRIVATE", json.dumps(server.receipt()))
+        for code in ("PRIVATE_UNKNOWN_CODE", ["PRIVATE_UNKNOWN_CODE"]):
+            with self.subTest(code=code), self.endpoint() as server:
+                server.fail(code)
+                self.assertEqual(server.receipt()["first_refusal"], "unclassified")
+                self.assertNotIn("PRIVATE", json.dumps(server.receipt()))
+
+    def test_internal_control_points_report_fixed_codes_and_unknown_errors_are_unclassified(self):
+        for mutation, expected in (("request", "request-shape"), ("input", "input-shape"),
+                                   ("tool", "tool-declaration"), ("transition", "transition"),
+                                   ("association", "association"), ("exception", "unclassified")):
+            with self.subTest(mutation=mutation), self.endpoint() as server:
+                body = self.initial()
+                if mutation == "request":
+                    body["model"] = "PRIVATE_MODEL"
+                elif mutation == "input":
+                    body["input"] = "PRIVATE_INPUT"
+                elif mutation == "tool":
+                    body["tools"] = [{"name": "PRIVATE_TOOL"}]
+                elif mutation == "transition":
+                    body = self.results()
+                elif mutation == "association":
+                    self.exchange(server, body)
+                    body = self.results()
+                    body["input"][0]["call_id"] = "PRIVATE_ID"
+                else:
+                    server.scenario.respond = mock.Mock(side_effect=type("PRIVATE_EXCEPTION_NAME", (ValueError,), {})("PRIVATE_EXCEPTION_TEXT"))
+                self.assertEqual(self.exchange(server, body), b"")
+                self.assertEqual(server.receipt()["first_refusal"], expected)
+                self.assertNotIn("PRIVATE", json.dumps(server.receipt()))
+
+    def test_cleanup_failure_remains_separate_from_first_refusal(self):
+        with self.assertRaisesRegex(RuntimeError, "PRIVATE_CLEANUP"):
+            with self.endpoint() as server:
+                self.exchange(server, raw=b"GET /PRIVATE_TARGET HTTP/1.1\r\n\r\n")
+                original = server.server_close
+                def close_then_fail():
+                    original()
+                    raise RuntimeError("PRIVATE_CLEANUP")
+                server.server_close = close_then_fail
+        receipt = server.receipt()
+        self.assertEqual(receipt["first_refusal"], "route")
+        self.assertTrue(receipt["cleanup_failed"])
+        self.assertFalse(receipt["handlers_joined"])
+        self.assertTrue(all(not handler.is_alive() for handler in server.handlers))
+        self.assertFalse(server.sockets)
+        self.assertNotIn("PRIVATE", json.dumps(receipt))
+
     def test_real_endpoint_emits_independent_items_and_closes_each_scenario(self):
         for name in probe.TOOL_SCENARIOS:
             with self.subTest(scenario=name), self.endpoint(name) as server:
@@ -623,6 +833,7 @@ class ToolScenarioTests(unittest.TestCase):
                 self.assertEqual(self.exchange(server, raw=b"POST /responses HTTP/1.1\r\nContent-Length: 100\r\n\r\n{"), b"")
                 self.assertLess(time.monotonic() - start, 2)
                 self.assertTrue(server.error)
+                self.assertEqual(server.receipt()["first_refusal"], "deadline")
 
     def test_stalled_response_write_has_a_total_deadline(self):
         with mock.patch.object(probe, "SCENARIO_HANDLER_SECONDS", .1), self.endpoint() as server:
@@ -644,6 +855,7 @@ class ToolScenarioTests(unittest.TestCase):
                 while not server.error and time.monotonic() < deadline:
                     time.sleep(.01)
                 self.assertTrue(server.error)
+                self.assertEqual(server.receipt()["first_refusal"], "deadline")
 
     def test_unknown_owned_group_monitor_never_certifies_cleanup(self):
         process = mock.Mock(pid=12345)
@@ -829,11 +1041,13 @@ class ToolScenarioTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
             pidfile = root / "child.pid"
-            source = ("import os,pathlib,time\nchild=os.fork()\nif child:\n pathlib.Path(" +
+            # A fixed synthetic startup delay exceeds the old 300ms allowance.
+            source = ("import os,pathlib,time\ntime.sleep(.4)\nchild=os.fork()\nif child:\n pathlib.Path(" +
                 repr(str(pidfile)) + ").write_text(str(child))\n os._exit(0)\ntime.sleep(30)\n")
             result = probe.run_process([sys.executable, "-B", "-c", source], env=probe.isolated_env(root),
-                                       cwd=root, timeout=.3, group_limit=True)
+                                       cwd=root, timeout=3, group_limit=True)
             self.assertTrue(result["timeout"])
+            self.assertEqual(result["exit"], 0)
             self.assertTrue(pidfile.exists())
             child = int(pidfile.read_text())
             with self.assertRaises(ProcessLookupError):
@@ -878,7 +1092,7 @@ class ToolScenarioTests(unittest.TestCase):
                 os.kill(process["pid"], 0)
 
     def test_failed_interrupted_and_no_match_scenarios_keep_unsuccessful_receipts(self):
-        for exception in (RuntimeError("PRIVATE"), KeyboardInterrupt()):
+        for exception in (RuntimeError("PRIVATE"), type("PRIVATE_EXCEPTION_NAME", (RuntimeError,), {})("PRIVATE"), KeyboardInterrupt()):
             with self.subTest(error=type(exception).__name__), tempfile.TemporaryDirectory() as directory:
                 root = pathlib.Path(directory)
                 case = mock.Mock(root=root)
