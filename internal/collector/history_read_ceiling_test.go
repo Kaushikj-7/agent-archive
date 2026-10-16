@@ -189,25 +189,23 @@ func TestReconciliationDoesNotReadTheCurrentRolloutAgain(t *testing.T) {
 }
 
 // A long Codex thread whose history spans two rollouts, far under the
-// filtered ceiling, is captured, and its growth too, within a session read
-// ceiling that holds about nine times its filtered size. Reconciling it once
+// filtered ceiling, keeps being captured as it grows within a session read
+// ceiling of seven times its filtered size. Capturing its growth once
 // re-read and re-filtered the current rollout (the whole chain again), held
-// the read's encoded rows beside the decoded candidate, and the pending
-// publication fence reserved twice the pending file to read one field of
-// it, so the first capture peaked near 11.6 times the chain's filtered size
-// and each later one near 12.1 times; this ceiling refused both, and
-// recorded the thread as too large to read.
+// the read's encoded rows beside the decoded candidate, reserved twice the
+// pending file to read one field of it, decoded the frozen candidate again
+// to prepare it and held the whole pending encoding to save it: it peaked
+// near 12 times the chain's filtered size, and this ceiling recorded the
+// thread as too large to read. The first capture runs under the default
+// ceiling; it also holds a fixed reservation (the remote absence check)
+// that a chain this small would not separate from its own size.
 //
 // Not parallel: it lowers sessionReadCeiling.
 func TestLongCodexChainUnderTheFilteredCeilingIsCaptured(t *testing.T) {
 	previous := sessionReadCeiling
 	t.Cleanup(func() { sessionReadCeiling = previous })
-	sessionReadCeiling = 80 << 20
-	chain := newLongChain(t, 256, 256)
+	chain := newLongChain(t, 32, 32)
 	f := chain.filteredBytes(t)
-	if f > chain.opts.maxTranscriptBytes()/4 || f*8 > sessionReadCeiling {
-		t.Fatalf("fixture: filtered %d bytes no longer far under the filtered ceiling %d and a ninth of the read ceiling %d", f, chain.opts.maxTranscriptBytes(), sessionReadCeiling)
-	}
 	captured := func(what string, want func(Result) bool) {
 		t.Helper()
 		result, peak := chain.run(t)
@@ -220,6 +218,10 @@ func TestLongCodexChainUnderTheFilteredCeilingIsCaptured(t *testing.T) {
 		}
 	}
 	captured("first capture", func(r Result) bool { return len(r.Published) == 1 })
+	sessionReadCeiling = 7 * f
+	if f > chain.opts.maxTranscriptBytes()/16 {
+		t.Fatalf("fixture: filtered %d bytes no longer far under the filtered ceiling %d", f, chain.opts.maxTranscriptBytes())
+	}
 	// The thread grows; its next publication waits out the upload interval,
 	// then uploads.
 	chain.grow(t)
