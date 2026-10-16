@@ -208,7 +208,9 @@ func collectFacts(f *archive.NativeFacts, b archive.SourceBundle, r map[string]a
 		name = firstString(r, "description")
 	case kind == "session" && b.Capture.SourceFormat == "cursor-composer":
 		name = firstString(r, "name")
-	case agent == profileCodex && f.Name == "" && b.IsChild():
+	case agent == profileCodex && b.IsChild():
+		// The last own header wins: a forked child can carry its parent's
+		// own NEW_TASK in an inherited prefix ahead of the one it received.
 		name = codexSpawnedTaskName(r)
 	}
 	if name = archive.CollapseSessionTitle(name); name != "" {
@@ -267,12 +269,15 @@ func codexSpawnedTaskName(r map[string]any) string {
 	}
 	content, _ := payload["content"].([]any)
 	for _, item := range content {
-		block, _ := item.(map[string]any)
-		header, ok := strings.CutPrefix(firstString(block, "text"), codexNewTaskHeader+"\n")
+		header, ok := strings.CutPrefix(contentText(item), codexNewTaskHeader+"\n")
 		if !ok {
 			continue
 		}
 		for line := range strings.SplitSeq(header, "\n") {
+			if strings.HasPrefix(line, "Payload:") {
+				// The header ends here; what follows is the task, never a name.
+				break
+			}
 			agentPath, found := strings.CutPrefix(line, "Task name: ")
 			if !found {
 				continue

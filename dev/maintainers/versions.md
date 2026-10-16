@@ -181,9 +181,12 @@ source without a new source upload. Filter, adapter and other parsers are unchan
 Codex parser 0.28.0 names a multi-agent child thread from the task name in the
 NEW_TASK header its parent sent it (`Task name: /root/fix_upload_retry` becomes
 "fix upload retry"). The task itself is encrypted, so such a thread has no
-prompt and was listed only by its ID. Earlier filters already retain
-the header (it is ordinary message text); the bump re-derives existing child metadata from the retained
-source without a new source upload. Filter, adapter and other parsers are unchanged.
+prompt and was listed only by its ID. Retained filter 18 and filter 28 sources
+were checked to hold the header (it is ordinary message text); the bump
+re-derives existing child metadata from the retained source without a new
+source upload. The last own header wins, so a forked child's inherited copy
+of its parent's header does not name it. Filter, adapter and other parsers
+are unchanged.
 
 Confirmed import staging uses the incompatible configuration fence
 `{version: 9, writer: import-staging-v9}` and sticky
