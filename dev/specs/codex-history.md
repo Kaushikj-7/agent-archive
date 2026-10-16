@@ -100,7 +100,18 @@ chain (an abandoned branch after a rollback, say) never block capture or choose
 the tip; ones whose files still exist are offered after the chain as
 best-effort historical revisions, up to the 64-candidate limit with the
 chain's own segments first; off-chain ones past it are left out rather than
-refusing the capture. The source marks them best effort: a failure reading one
+refusing the capture. The source also names the chain's tip, the rollout its
+read took as the current revision. Reconciliation reads each segment before the
+tip as a historical revision but not the tip itself: the scan's own read already
+holds it (with the whole chain it inherits), so reading it again would only
+double what a long thread needs in read memory. The read's encoded records are
+released once the current candidate is built from them, and the pending
+publication's fences read only the proofs and catalog commit it carries, not
+the whole file. A pending publication is written one record at a time,
+and preparing a publication a scan froze from its own candidate takes its
+current source from that candidate rather than decoding the staged copy. The
+source marks the off-chain candidates best effort: a
+failure reading one
 (its own base gone, an unreadable header, the reconciliation's byte budget
 spent, or the session's own read ceiling, which the session meets again on
 every pass) or staging one (the revision planner's stage count or bytes, an

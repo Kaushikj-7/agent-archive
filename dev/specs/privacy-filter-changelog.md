@@ -5,9 +5,9 @@ rules, as a whole, are in the [filter specification](privacy-filter.md);
 version numbers and bump rules are in [versions](../maintainers/versions.md). Each archived session
 records the filter version that produced it (`filter_version`).
 
-## Source filter version 25
+## Source filter version 28
 
-Global adapter 0.25.0, Muse filter 0.25.0 and Muse parser 0.5.0 retain minimal
+Global adapter 0.28.0, Muse filter 0.28.0 and Muse parser 0.5.0 retain minimal
 own committed call identity and strict prior batch/index/call result joins.
 Native response/item IDs, tool names, arguments and result text are validated
 then dropped. Bounded opaque identities pass shared privacy rules; changes refuse.
@@ -26,6 +26,63 @@ typed normalized and handoff readers from invented false/zero values. Narrative
 transcript/handoff retain omitted-detail gaps. Tool names, MCP, files, Git,
 lifecycle status and complete accounting remain unavailable. Source2/metadata1,
 configuration/binding versions and the capture guard are unchanged.
+
+## Source filter version 27
+
+Adapter 0.27.0 and Cursor parser 0.23.0 accompany this change.
+
+- **Cursor's chat name on every Cursor session.** A session captured from
+  Cursor's agent transcripts (`cursor-jsonl`), which record no name, now
+  retains a `session_labels` item with the chat's `name` from its
+  `composerData:<id>` row in Cursor's global `state.vscdb` (provenance
+  `native:cursor:session_labels`, source `database`, contract
+  `cursor-composer-name-v1`), read in place and read-only. Only that row's
+  `name` is read; message rows are not. A string name, trimmed, is present;
+  a missing, null or blank one is confirmed absence; anything else, a missing
+  row or an unreadable database is unavailable and keeps an earlier name.
+- What is newly uploaded: the filtered chat name on Cursor sessions that came
+  from agent transcripts (a database-only chat already carried it).
+
+This lands after filter 26; main reserved it as filter 22.
+
+## Source filter version 26
+
+Adapter 0.26.0 accompanies this change.
+
+- **Codex names on every Codex thread.** A Codex name is the last nonempty
+  `thread_name` in Codex's `session_index.jsonl` for the thread (contract
+  `codex-session-index-v3`), read for any Codex release and while Codex runs.
+  Filter 18's resolver read only Codex 0.159.2 threads from a settled
+  `state_5.sqlite`, which Codex keeps in WAL mode while it runs, so it named
+  no current thread. The retained `session_labels` shape is unchanged.
+- **History source sets carry the name.** A thread that continues into a later
+  rollout (a history source, schema 3) now retains the same `session_labels`
+  item an ordinary source does; earlier filters refused it there, so a thread lost
+  its name once it continued. A reader older than this filter refuses such a
+  history source.
+- What is newly uploaded: the filtered thread name (already uploaded for
+  ordinary sources) on history sources, and names of threads from Codex
+  releases after 0.159.2. Subagent threads are not looked up.
+
+This lands after filter 25; main reserved it as filter 21.
+
+## Source filter version 25
+
+Adapter 0.25.0 accompanies this change.
+
+- **Codex project instructions.** Codex 0.160 sends a project's AGENTS.md as
+  the first user message of a thread, and again after compaction, as a
+  `# AGENTS.md instructions for DIR` heading followed by an
+  `<INSTRUCTIONS>…</INSTRUCTIONS>` block, instead of the `<user_instructions>`
+  block earlier releases used. Earlier filters kept it as text the person wrote, so
+  it became the session's title and the first prompt in a handoff. The heading
+  and block are now dropped with a `hidden_instruction_omitted` gap, like
+  `<user_instructions>`. Only a heading at the start of a string, on its own
+  line and followed by the tag, counts: a message that quotes it later, or
+  indents it as a code example, keeps it. An unclosed block drops the rest of
+  the string. Less leaves the machine: nothing new is kept.
+
+This lands after filter 24; main reserved it as filter 20.
 
 ## Source filter version 24
 

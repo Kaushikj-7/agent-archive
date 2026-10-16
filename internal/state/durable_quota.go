@@ -407,17 +407,21 @@ func (s *Store) writeDurableGuardHeadroom(ctx context.Context, g config.DurableS
 	if err = g.CheckHome(s.home); err != nil {
 		return err
 	}
+	// A pending publication carries a session's whole source and records:
+	// it is streamed, holding one record's encoding at a time, never the
+	// whole file's (streamJSON).
+	_, streamed := p.(PendingPublication)
 	// Keep the existing independent encoder lease; disk quota never substitutes for memory.
 	const scratch = 32 << 10
 	limit := durableStorageQuota/2 - 1
-	if s.resourceBudget != nil {
+	if s.resourceBudget != nil && !streamed {
 		if !reservation.Reserve(scratch) {
 			return errStateBudget
 		}
 		limit = min(limit, reservation.Available()-1)
 	}
 	n, err := agentmeta.JSONWireBound(ctx, p, limit)
-	if s.resourceBudget != nil {
+	if s.resourceBudget != nil && !streamed {
 		if errors.Is(err, agentmeta.ErrJSONWireLimit) && limit < durableStorageQuota/2-1 {
 			// Memory, not the disk quota, refused the encoding.
 			reservation.Refuse(limit + 2)
@@ -428,7 +432,7 @@ func (s *Store) writeDurableGuardHeadroom(ctx context.Context, g config.DurableS
 		return errors.Join(errStateBudget, err)
 	}
 	n++
-	if s.resourceBudget != nil {
+	if s.resourceBudget != nil && !streamed {
 		if !reservation.Reserve(n) {
 			return errStateBudget
 		}
@@ -439,7 +443,11 @@ func (s *Store) writeDurableGuardHeadroom(ctx context.Context, g config.DurableS
 		return err
 	}
 	defer func() { err = errors.Join(err, q.Close()) }()
-	return q.writeWithHeadroom(path, n, func(w io.Writer) error { return json.NewEncoder(w).Encode(p) }, commit, headroom)
+	encode := func(w io.Writer) error { return json.NewEncoder(w).Encode(p) }
+	if streamed {
+		encode = func(w io.Writer) error { return streamJSON(ctx, w, p, reservation) }
+	}
+	return q.writeWithHeadroom(path, n, encode, commit, headroom)
 }
 
 func (s *Store) stagePendingSourceGuard(g config.DurableStorageGuard, id string, ref archive.SourceReference, data []byte) (err error) {

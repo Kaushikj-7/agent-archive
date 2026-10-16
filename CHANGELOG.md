@@ -6,6 +6,46 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- A long Codex thread whose history spans more than one rollout needs far less
+  read memory to capture, so it is captured at sizes that were recorded as too
+  large to read (`transcript_too_large`, per-session read memory, from about
+  60 MB of rollouts). Reconciling its history no longer reads and filters the
+  current rollout a second time, the read's encoded records are released once
+  the candidate is built, and saving a pending publication no longer reserves
+  twice the existing pending file to check its catalog commit. A pending
+  publication is also written without holding its whole encoding, and its
+  current source is prepared from the candidate it was frozen from rather than
+  decoded again. Capturing such a thread's growth needs about 5 times its
+  filtered size in read memory instead of about 12.
+
+- Archived Cursor sessions now carry the chat's name. Sessions captured from
+  Cursor's agent transcripts, which record no name, read it from the chat's
+  `composerData` row in Cursor's database (read-only, in place), imported
+  sessions included, so `list`, `show` and the handoff picker show the name
+  Cursor gave the chat rather than a prompt preview. Cursor parser 0.23.0
+  re-derives existing sessions' metadata (filter 27).
+
+- Codex sessions are titled with their Codex thread name, so `list`, search
+  and `handoff "words"` find them by it. Names come from Codex's own name index
+  (`~/.codex/session_index.jsonl`) for every Codex release, while Codex is
+  running, for imported sessions too, and stay with a thread that continues
+  into a later rollout. Before, only threads from Codex 0.159.2 with Codex
+  closed could be named, so in practice none were. Existing sessions are named
+  on the next collection (filter 26). A build older than this one cannot read
+  a named Codex thread that continued into a later rollout; update every
+  machine that reads the archive.
+
+- Codex sessions are no longer titled with their injected AGENTS.md
+  instructions. Codex 0.160 sends a project's AGENTS.md as the first user
+  message (`# AGENTS.md instructions for …`); it is now dropped like other
+  injected instructions (filter 25), so the title and the handoff's first
+  prompt are what you typed. Existing sessions are refiltered on the next
+  collection.
+
+- `list`, `show` and `handoff` find a session by the agent's own session ID
+  as well as the archive's: `handoff 01a10e11 --harness codex` finds the
+  Codex thread whose ID starts `01a10e11`.
+
 ### Local native validation foundation
 
 - Muse retains own committed tool-call identities and validates exact prior
@@ -74,6 +114,7 @@ follow [Semantic Versioning](https://semver.org/).
   time uses the validated reserved start. Accounting, tools, model switches,
   children, backfill, capture and Muse destination launch
   remain unavailable. Handoff also now respects Codex's recorded native start.
+
 
 - Keep unavailable Muse tool, file and Git measurements absent in derived
   metadata and full evaluation exports while preserving prompt/message counts.

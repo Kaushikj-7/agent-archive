@@ -196,7 +196,13 @@ say what to call the session:
 - `name`: the title the agent gave the session, collapsed to one line and cut
   to 128 characters from parser `0.17.1` (72 in older metadata), like `title`.
   For Claude Code it is the session name in its sidebar (set from your prompt,
-  or by `/rename`; the last one wins), and for Cursor the chat's name. Codex
+  or by `/rename`; the last one wins), and for Cursor the chat's name. Cursor's
+  agent transcripts record no name, so from Cursor parser `0.23.0` a session
+  captured from one takes the chat's name from Cursor's database (the `name`
+  of its `composerData` row in `state.vscdb`), read when the collector runs on
+  the machine that has the chat; a chat Cursor has not named, or whose row is
+  not in the database, has none. A name in a chat captured from the database
+  itself wins. Codex
   titles are not captured yet. From parser `0.18.0` a Claude Code subagent's
   name is the description its parent gave the task, which Claude Code keeps
   beside the subagent's transcript and the privacy filter keeps since

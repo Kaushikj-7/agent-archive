@@ -120,8 +120,13 @@ func TestNativeLabelWireAndNullableName(t *testing.T) {
 		provider := NativeLabelProvider{Host: func(context.Context, string) (agentapi.LabelTransport, error) { return h, nil }}
 		got := provider.LookupLabels(context.Background(), agentapi.LabelEnvironment{Homes: []string{home}}, []agentapi.LabelRequest{nativeRequest(home, id)})
 		label, ok := got[id]
-		if ok != tc.valid || label.State != tc.state {
+		if tc.valid && (!ok || label.State != tc.state || label.Source != archive.SessionLabelAPI) {
 			t.Errorf("%+v: got %+v", tc, label)
+		}
+		// A refused API answer falls back to the home's name index, which
+		// holds no entry here.
+		if !tc.valid && (!ok || label.State != archive.SessionLabelAbsent || label.Source != archive.SessionLabelIndex) {
+			t.Errorf("%+v: fallback got %+v", tc, label)
 		}
 		if h.closed == 0 {
 			t.Fatal("host not closed")

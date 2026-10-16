@@ -25,6 +25,11 @@ type LabelEnvironment struct {
 	// legacy session used default SQLite placement. Local config absence is not proof.
 	VerifiedLegacyStorageHomes []string `json:"verified_legacy_storage_homes"`
 	ExternalSQLite             bool     `json:"external_sqlite"`
+	// CursorDatabase is Cursor's state.vscdb, which the collector supplies
+	// from its own Cursor database setting for each lookup. It is not part of
+	// a label's cached scope, so supplying it leaves other harnesses' cached
+	// observations in place; "" means no Cursor database is known.
+	CursorDatabase string `json:"-"`
 }
 
 // LabelRequest identifies an already admitted retained source.
@@ -51,6 +56,14 @@ type LabelContextProvider interface {
 	LabelContext(archive.SourceBundle) LabelContext
 	// LabelContextVersion identifies the provider interpretation without performing I/O.
 	LabelContextVersion() string
+}
+
+// RegistrationLabelContextProvider derives lookup context from the admitted
+// registration alone, for a provider whose lookup needs nothing of the
+// retained source: the collector then asks without loading the publication,
+// so a session too large to load for a context is still named.
+type RegistrationLabelContextProvider interface {
+	RegistrationLabelContext(archive.SessionRegistration) (LabelContext, bool)
 }
 
 // LabelProvider resolves bounded metadata for existing sources without enumeration.
