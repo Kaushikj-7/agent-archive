@@ -176,7 +176,8 @@ and actual old-entrypoint tests, not an optimistic return-to-pending claim.
 
 ## Validation scope
 
-Offline tests run in ordinary CI without native Muse or a listener and verify
+Offline tests run in ordinary CI without native Muse. They use bounded synthetic
+loopback listeners for the opt-in tool controls and verify
 isolation, timeout/group cleanup, export diagnostic handling, complete corpus
 hashes/assertions, rejection of missing/mismatched own turns, SIGTERM cleanup,
 empty-corpus/manifest preservation, stream/queue flood and oversized-file refusal,
@@ -203,3 +204,65 @@ mode-specific startup and agent-tree authority facts. The original
 [Q0 allowlist](retained-allowlist.json), projector, five derived manifests and
 corpus retain their original bytes/hashes. Their broader ceiling does not claim
 production accounting or native integrity validity of redacted corpus bytes.
+
+## Offline tool-status campaign controls
+
+Three additional cases are opt-in only: `exec-read-success`,
+`exec-read-missing` and `exec-read-two`. They prepare one bounded regular
+synthetic file, a guaranteed absent path inside the owned workspace, or two
+separate regular files respectively. The third emits two independent call IDs
+and item IDs in one provider response. It is a multiple-call control;
+actual parallel execution and native cancellation remain **unavailable**.
+No new native campaign ran to add these controls. Historical cases, binary pins,
+corpus and result files retain their original provenance.
+
+Each case admits at most four connections and four requests, including up to
+two `/models` requests and exactly two `/responses` transitions. Headers are
+limited to 8 KiB, each body to 256 KiB and cumulative input to 1 MiB. Advertised
+lengths are checked before body allocation; transfer encoding, duplicate
+headers, malformed requests, unexpected routes/transitions and wrong result
+IDs/counts refuse. Each handler has a two-second absolute read/write deadline;
+the case has 45 seconds. Context is discarded. The fixed tool arguments use
+only owned paths with offset 1 and limit 10; fixtures are regular and at most
+1 KiB each. Writes, shell, reminders and foreign personal context stay disabled.
+Captured streams and acquired native files retain the existing byte caps.
+Native acquisition refuses symlinks, nonregular files and paths outside the
+case root before decoding. A second session log prevents a passing receipt.
+
+The owned subprocess group is checked at least between bounded stream polls;
+a detected membership above 16 or an unavailable monitor aborts the case.
+This is a detection threshold and cleanup deadline, **not hard fork prevention**.
+macOS uses the scoped process-group libproc listing with a fixed buffer. Linux
+streams at most 4096 catalog entries and 2048 stat identity headers (4 KiB each)
+within 250 ms per check; unreadable or incomplete monitoring refuses. No argv,
+environment, user-wide limits or unrelated process signals are used. Cleanup
+sends TERM and, if still needed, KILL only to the present recorded owned group,
+retains signal failures, reaps its leader and checks group absence within three
+seconds, within one eight-second cleanup budget. When catalog monitoring is
+unavailable, an exact owned-group signal-zero query can prove positive presence
+for cleanup signals; it never supplies the final complete absence proof, and
+monitor failure keeps the case unsuccessful. A failed TERM does not skip KILL.
+Signal failures stay in the private receipt and require an independent complete
+absence proof. Endpoint refusal stops the command;
+cleanup closes every tracked socket and joins the server and all handler
+threads, including interrupted and stalled reads. Rejected excess connections
+acquire no handler or body. These bounds do not prevent a producer writing
+scratch files before termination.
+
+New case receipts expose fixed structural counts, recognized shape/state enums
+and internal identity/index/batch/order/uniqueness booleans. Reordered results
+with valid index associations are accepted and separately reported. Receipts do
+not contain actual tool names, IDs, arguments, paths, model labels, counters or
+result bodies. Success output is compared privately with the fixed synthetic
+file; missing-file prose is never interpreted as typed failure. Typed status,
+parallelism and cancellation remain unavailable pending a separately reviewed
+local native campaign. Process exit and exporter acceptance cannot qualify them.
+The existing retained-turn success fixture helper keeps its historical purpose.
+
+Disposable case roots retain private bounded stdout/stderr, process acquisition
+receipts and hashes, command output and native logs for later attribution. These
+files may contain native context and must never be committed or uploaded. Failed,
+interrupted, empty and refused attempts retain unsuccessful report entries.
+The later campaign must pin its actual runner/source/binary and private evidence
+hashes; offline passing tests are not native status evidence or production parser,
+privacy, wire-format, capture or accounting qualification.

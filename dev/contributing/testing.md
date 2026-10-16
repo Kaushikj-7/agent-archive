@@ -26,7 +26,7 @@ python3 -B scripts/test_generate_go_shard_hints.py         # matched artifact me
 python3 -B scripts/test_go_cache_context.py               # cache identity and tracked source proof
 python3 -B scripts/test_go_cache_steps.py                 # cache failure paths and PR-only wiring
 python3 scripts/test_measure_hook.py                     # synthetic hook benchmark effect/cleanup checks
-python3 -B scripts/test_muse_qualification.py             # offline Muse qualification isolation/corpus controls
+python3 -B scripts/test_muse_qualification.py             # offline Muse isolation/corpus and bounded synthetic loopback controls
 ./scripts/test_macos_smoke.sh                             # native macOS with cgo; the PR gate
 VERSION=dev ./scripts/build-release.sh                   # the release build (CI runs it on a release tag)
 ```
