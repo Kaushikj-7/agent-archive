@@ -283,6 +283,63 @@ func (k *keyInput) buffered() bool {
 	return len(k.pending) > 0
 }
 
+// canReadAhead reports whether readAhead can read: not when the read after
+// the keys waiting ended in an error, which they come before.
+func (k *keyInput) canReadAhead() bool {
+	return k.failed == nil
+}
+
+// readAhead reads the keys that arrive within wait after the keys already
+// read, leaving those in place: a load started with keys typed ahead (a
+// wheel burst held past the end, say) sees an Esc pressed while it runs.
+// The caller queues the keys it does not act on after the ones waiting
+// (queue). It reads only while canReadAhead. A read that fails (input
+// ending, say) is kept for after the keys waiting, as a burst's is, so
+// what was typed ahead of it is still handled; canReadAhead is then false.
+func (k *keyInput) readAhead(wait time.Duration) ([]key, error) {
+	data, err := k.readBurstWait(wait)
+	if err != nil {
+		k.stale = nil
+		return nil, k.aheadFailed(err)
+	}
+	keys := k.decode(data)
+	if failed := k.failed; errors.Is(failed, errSuspended) || errors.Is(failed, errWindowResized) {
+		// Ctrl-Z ended the burst: it is answered now, as one read first
+		// is, so that the load still reads an Esc pressed after it.
+		k.failed, k.stale = nil, nil
+		return keys, k.aheadFailed(failed)
+	}
+	return keys, nil
+}
+
+// aheadFailed answers readAhead's failed read: Ctrl-Z is answered, a resize
+// needs nothing (the list is drawn again after the load), and any other
+// failure is kept in k.failed for after the keys waiting.
+func (k *keyInput) aheadFailed(failure error) error {
+	switch {
+	case errors.Is(failure, errSuspended):
+		return k.pause()
+	case errors.Is(failure, errWindowResized):
+	default:
+		k.failed = failure
+	}
+	return nil
+}
+
+// queue adds keys after the keys waiting to be handled.
+func (k *keyInput) queue(keys []key) {
+	k.pending = append(k.pending, keys...)
+}
+
+// dropMoves drops the keys waiting that only move the highlight or scroll
+// (the rest of a wheel's momentum, say), keeping typed ones.
+func (k *keyInput) dropMoves() {
+	k.pending = slices.DeleteFunc(k.pending, func(key key) bool {
+		_, move := scrollKeys[key.kind]
+		return move
+	})
+}
+
 // next returns the next key press, waiting for one.
 func (k *keyInput) next() (key, error) { return k.nextWait(-1) }
 

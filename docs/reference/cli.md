@@ -23,33 +23,55 @@ is stale. After changing a command's help or flags, regenerate it with
 
 ## Commands
 
+The standard tier (`agent-archive --help`):
+
 ```text
 Agent Archive — archive coding-agent sessions to your private storage.
 
 Get started
   agent-archive setup       Configure apps, projects, and storage
-  agent-archive machines    List, rename, or pair machines
   agent-archive status      Check capture and see what to do next
 
 Manage capture
   agent-archive sync        Collect and upload pending changes now
   agent-archive pause       Pause collection, uploads, and cleanup
   agent-archive resume      Resume automatic capture
-  agent-archive recover     Start a linked generation for a blocked transcript
 
 Inspect history
   agent-archive list        Find archived sessions
   agent-archive search      Search indexed conversation text
   agent-archive show        Read a session's summary or transcript
   agent-archive stats       See your usage: tokens, cost, agents, projects
-  agent-archive feedback    Add explicit feedback from a local file
 
 Import history
   agent-archive backfill    Import sessions already on this machine
-  agent-archive migrate     Migrate to an isolated catalog destination
 
 Switch agents
   agent-archive handoff     Continue a session in another coding agent
+
+Run agent-archive COMMAND --help for options and examples.
+More commands (machines, uninstall, purge, ...): agent-archive help advanced
+Use --version to show the installed version.
+You supply a private Cloudflare R2 or Amazon S3 bucket. No archive account needed.
+Docs: https://github.com/wangjohn/agent-archive/tree/main/docs
+```
+
+The advanced tier (`agent-archive help advanced`):
+
+```text
+Agent Archive — advanced commands.
+
+Get started
+  agent-archive machines    List, rename, or pair machines
+
+Manage capture
+  agent-archive recover     Start a linked generation for a blocked transcript
+
+Inspect history
+  agent-archive feedback    Add explicit feedback from a local file
+
+Import history
+  agent-archive migrate     Migrate to an isolated catalog destination
 
 Evaluate agents
   agent-archive eval        Export sessions for an evaluation tool (JSON Lines)
@@ -59,9 +81,7 @@ Maintenance
   agent-archive purge       Review and remove unreferenced source objects
 
 Run agent-archive COMMAND --help for options and examples.
-Use --version to show the installed version.
-You supply a private Cloudflare R2 or Amazon S3 bucket. No archive account needed.
-Docs: https://github.com/wangjohn/agent-archive/tree/main/docs
+Core commands: agent-archive --help
 ```
 
 ## Exit codes
@@ -512,7 +532,8 @@ project every row shares is left out of the table and named in the heading.
 On a terminal with an interactive stdin, list a numbered table and pick a
 session to show its summary, then t for its transcript, Enter or b to go
 back, or q to quit. Keys act as pressed; the wheel, arrows, and PgUp/PgDn
-move the highlight, which Enter opens. Press / to filter the rows as you
+move the highlight, which Enter opens, and moving past the last row loads
+older sessions when there are more. Press / to filter the rows as you
 type, with the words WORDS takes: the first match is highlighted, the arrows
 move the highlight, Enter shows it, and Esc clears the filter, keeping the
 highlighted row. A subagent that matches is shown under its parent, which is
@@ -614,8 +635,9 @@ Words are ANDed, quotes match phrases, and a trailing * enables prefix matching.
 Punctuation splits words; this is keyword search, not substring/semantic search.
 References bind exact source revisions. Reads print escaped, quoted text.
 On an interactive terminal, browse ranked snippets and exact bounded context.
-Use n/p for matching body passages, r to rerun the fixed query, and h to
-hand off the current session through existing gates. Metadata / filtering is
+Scrolling past the last result loads the next results. Use n/p for matching
+body passages, r to rerun the fixed query, and h to hand off the current
+session through existing gates. Metadata / filtering is
 disabled. JSON and piped output remain bounded documents.
   --json              Print one versioned bounded JSON document
   --refresh           Run a bounded verified archive refresh
@@ -1014,8 +1036,9 @@ Usage: agent-archive handoff [SESSION_ID|WORDS|--latest|--file PATH] [options]
 
 Before setup, browse Claude Code, Codex and Muse Code native sessions in this
 checkout and its descendants. Local IDs (qualified with --harness) or unique
-prefixes select beyond the first 50 filtered previews. o loads another 50;
-/ filters loaded rows only. Word queries report their bounded preview window.
+prefixes select beyond the first 50 filtered previews. Scrolling past the last
+row (o when reading lines) loads another 50; / filters loaded rows only. Word
+queries report their bounded preview window.
 --project requires a directory; --all-projects explicitly broadens the scope.
 Local --latest ranks file modification time and requires complete identity
 coverage. Direct --to uses an exact current identity or asks for selection;
@@ -1025,8 +1048,9 @@ temporary launch files survive launch; later local handoffs clean owned files
 older than seven days, best effort. Cursor discovery is not automatic.
 
 
-After setup, the picker lists the newest 50 rows initially. Press o to add
-up to 50 older rows in the current scope; a switches to all projects or back.
+After setup, the picker lists the newest 50 rows initially. Scroll past the
+last row (o when reading lines) to add up to 50 older rows in the current
+scope; a switches to all projects or back.
 Archived search remains complete before older rows are loaded.
 
 After setup, continue a session in another coding agent. On a terminal, pick

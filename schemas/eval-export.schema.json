@@ -199,7 +199,7 @@
           }
         },
         "files_edited": {
-          "description": "Detail 'full' only, and then always present: the distinct files the session's editing calls named, in the order first edited, relative to the session's working directory when inside it. counts.files_touched counts the same files.",
+          "description": "Detail 'full' only, present when edited-file evidence is observable (possibly empty): the distinct files the session's editing calls named, in the order first edited, relative to the session's working directory when inside it. counts.files_touched counts the same files.",
           "type": "array",
           "items": {
             "type": "string",

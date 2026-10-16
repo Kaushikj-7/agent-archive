@@ -542,6 +542,41 @@ func TestMuseBrowserFilterScrollAndRedrawDoNotReadTranscripts(t *testing.T) {
 	}
 }
 
+func TestMuseBrowserPastEndLoadsOneBoundedPreviewBatch(t *testing.T) {
+	t.Parallel()
+	env, data, workspace, counter := museNativeEnv(t)
+	for i := range 75 {
+		id := fmt.Sprintf("00000000-0000-7000-8000-%012d", i+1)
+		writeMuseNative(t, data, id, museNativeBytes(t, "exec", id, workspace))
+	}
+	meter := &nativeReadMeter{}
+	env.nativeFS = meter
+	fake := newFakeKeys("\x1b[F", string(fakeResize), strings.Repeat("\x1b[B", 100), "\x1b[F", strings.Repeat("\x1b[B", 100), "/0000", "\x1b", "q")
+	var initialBytes int64
+	var initialOpens int
+	fake.onResize = func() {
+		read, opens, active, _ := meter.counts()
+		if read != initialBytes || opens != initialOpens || active != 0 {
+			t.Errorf("movement and redraw before past-end read source: bytes=%d/%d opens=%d/%d active=%d", read, initialBytes, opens, initialOpens, active)
+		}
+	}
+	env.openKeys = func(io.Reader) (keyTerminal, bool) {
+		initialBytes, initialOpens, _, _ = meter.counts()
+		return fake, true
+	}
+	env.IsTerminal = func(any) bool { return true }
+	env.TerminalSize = fixedTerminal{100, 12}.terminalSize
+	var out, errOut strings.Builder
+	code := Run([]string{"handoff", "--harness", "muse", "--source", "local", "--no-preamble"}, strings.NewReader(""), &out, &errOut, env)
+	read, opens, active, _ := meter.counts()
+	if code != 0 || initialOpens != 75+50 || opens != 75+75 || read <= initialBytes || read > nativeReadBudget || active != 0 || counter.calls.Load() != 0 {
+		t.Fatalf("past-end bounds code=%d initial opens=%d total opens=%d bytes=%d active=%d filters=%d stderr=%s", code, initialOpens, opens, read, active, counter.calls.Load(), errOut.String())
+	}
+	if strings.Count(errOut.String(), "labels inspected for") != 2 || !strings.Contains(errOut.String(), "labels inspected for 50 of 75") || !strings.Contains(errOut.String(), "labels inspected for 75 of 75") {
+		t.Fatalf("expected initial50 plus exactly one older25 batch: %s", errOut.String())
+	}
+}
+
 type museRecheckFailureFS struct {
 	*nativeReadMeter
 	counter *museFilterCounter

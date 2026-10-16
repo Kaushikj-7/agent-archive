@@ -105,7 +105,8 @@ func TestEachChooserOpensTheKeyBrowserAndTheLineFallback(t *testing.T) {
 				}
 			}
 			// Keys are read only where the terminal can; lines are the fallback.
-			hasKeys := strings.Contains(out, "↑↓ move   Enter ")
+			// Opened on words, the filter line's footer leaves out paging.
+			hasKeys := strings.Contains(out, "↑↓ move   PgUp/PgDn page   Enter ") || strings.Contains(out, "↑↓ move   Enter ")
 			asksForWords := strings.Contains(out, "words to filter, or q to quit: ")
 			if hasKeys != keyed || asksForWords == keyed || keyed && len(fake.history()) == 0 {
 				t.Errorf("%s, %s: key mode %v, line prompt %v\n%s", c.name, mode, hasKeys, asksForWords, out)

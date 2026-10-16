@@ -6,6 +6,23 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- `agent-archive --help` is shorter: it shows the commands for everyday use
+  (setup, status, sync, pause, resume, list, search, show, stats, backfill,
+  handoff).
+  The rest (machines, recover, feedback, migrate, eval, uninstall, purge) are
+  listed by `agent-archive help advanced`; they work as before, and
+  `agent-archive help COMMAND` still shows any command's help.
+
+- The session browser (`list`, bare `show`, `handoff`, and content `search` on
+  a terminal) loads older sessions as you scroll: moving down past the last row
+  (↓ or the wheel on it, PgDn with it on screen, or End on it) loads the next
+  batch and moves on into it, with no `o` to press first (`o` still works).
+  The footer's count ends in `+` while more can load (`1–14 of 50+`), says
+  `No older sessions.` when a load finds none (moving past that end then loads
+  nothing more until the list changes), shows `Loading …` in place of the
+  footer line instead of under the prompt, and names `PgUp/PgDn page`.
+  Reading lines is unchanged.
+
 - Browse supported ordinary Muse roots before setup with local `handoff`,
   including exact IDs/prefixes, project scope, older preview batches and existing
   destinations. Discovery uses one effective XDG data home. Previews show safe
@@ -20,6 +37,10 @@ follow [Semantic Versioning](https://semver.org/).
   children, backfill, capture and Muse destination launch
   remain unavailable. Handoff also now respects Codex's recorded native start.
 
+- Keep unavailable Muse tool, file and Git measurements absent in derived
+  metadata and full evaluation exports while preserving prompt/message counts.
+  Cursor tool calls without recorded results no longer claim zero results;
+  unstructured exports omit unavailable edited-file lists.
 
 - Commands run inside Muse detect its session environment to avoid interactive
   prompts and pagers. Handoff into supported agents removes inherited Muse
