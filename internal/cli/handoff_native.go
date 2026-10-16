@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
@@ -431,11 +432,12 @@ func nativeRowIndex(row listRow, candidates []nativesessions.Candidate) int {
 }
 
 func handoffFromNative(ctx context.Context, c nativesessions.Candidate, files nativesessions.FileSystem, clock handoffFileDependencies) (_ handoffTarget, resultErr error) {
-	pass, snapshot, s, err := openNativeSource(ctx, files, c, registryFor(clock))
+	pass, snapshot, input, err := openNativeSource(ctx, files, c, registryFor(clock))
 	if err != nil {
 		return handoffTarget{}, err
 	}
 	defer func() { resultErr = errors.Join(resultErr, snapshot.Close(), pass.Close()) }()
+	s := input.File
 	if !c.Stamp.SameFile(s.Stamp()) {
 		return handoffTarget{}, transcriptio.ErrChanged
 	}
@@ -467,15 +469,29 @@ func handoffFromNative(ctx context.Context, c nativesessions.Candidate, files na
 	if target.analysis.Facts.IdentityConflict {
 		return handoffTarget{}, errors.New("selected local transcript has conflicting native identity; use --file PATH --harness NAME to inspect it explicitly")
 	}
-	if err := recheckNativeSource(ctx, pass, c.Ref, s); err != nil {
+	if err := recheckNativeSource(ctx, pass, c.Ref, snapshot, input); err != nil {
 		return handoffTarget{}, err
 	}
 	return target, nil
 }
 
 // recheckNativeSource verifies the pathname still identifies the fully filtered
-// descriptor. This point-in-time observation reads no additional transcript bytes.
-func recheckNativeSource(ctx context.Context, pass agentapi.SourcePass, ref nativesessions.Ref, original agentapi.FileInput) (resultErr error) {
+// descriptor. An attested content proof rehashes its captured boundary on the
+// original live handle; ordinary file providers retain the second-handle check.
+func recheckNativeSource(ctx context.Context, pass agentapi.SourcePass, ref nativesessions.Ref, actual agentapi.SourceSnapshot, input agentapi.NativeInput) (resultErr error) {
+	original := input.File
+	if original == nil {
+		return agentapi.ErrInvalidSourceBinding
+	}
+	if agentmeta.ID(ref.Harness) == agentmeta.Muse {
+		content, ok := actual.(agentapi.VerifiedContentSnapshot)
+		if !ok || !content.ContentProofFor(actual, input) {
+			return agentapi.ErrInvalidSourceBinding
+		}
+		// Selected handoff still refuses appends as well as named-path replacement
+		// and same-stamp rewrites after the complete Filter.
+		return errors.Join(original.Check(), content.VerifyContent(ctx), ctx.Err())
+	}
 	snapshot, err := pass.Read(ctx, agentapi.SourceRef{Path: ref.Path}, agentapi.ReadLimits{})
 	if err != nil {
 		return err
@@ -599,11 +615,12 @@ func chooseNativePreviews(ctx context.Context, opts handoffOptions, result nativ
 }
 
 func previewNativeCandidate(ctx context.Context, files nativesessions.FileSystem, c nativesessions.Candidate, sources agentapi.SourcesLookup, previews agentapi.PreviewsLookup) (_ collector.TranscriptPreview, resultErr error) {
-	pass, snapshot, s, err := openNativeSource(ctx, files, c, sources)
+	pass, snapshot, input, err := openNativeSource(ctx, files, c, sources)
 	if err != nil {
 		return collector.TranscriptPreview{}, err
 	}
 	defer func() { resultErr = errors.Join(resultErr, snapshot.Close(), pass.Close()) }()
+	s := input.File
 	if !c.Stamp.SameFile(s.Stamp()) || s.Stamp().Size != c.Stamp.Size {
 		return collector.TranscriptPreview{}, transcriptio.ErrChanged
 	}
@@ -618,18 +635,22 @@ func previewNativeCandidate(ctx context.Context, files nativesessions.FileSystem
 }
 
 // Each browser worker owns its own serial pass; no shared mutable provider resource enters the pool.
-func openNativeSource(ctx context.Context, files nativesessions.FileSystem, c nativesessions.Candidate, sources agentapi.SourcesLookup) (agentapi.SourcePass, agentapi.SourceSnapshot, agentapi.FileInput, error) {
+func openNativeSource(ctx context.Context, files nativesessions.FileSystem, c nativesessions.Candidate, sources agentapi.SourcesLookup) (agentapi.SourcePass, agentapi.SourceSnapshot, agentapi.NativeInput, error) {
 	p, _, ok := sources.LookupSources(c.Ref.Harness)
 	if !ok {
-		return nil, nil, nil, errors.New("native source integration unavailable")
+		return nil, nil, agentapi.NativeInput{}, errors.New("native source integration unavailable")
 	}
 	pass, err := p.OpenPass(ctx, agentapi.SourceEnvironment{Files: files, Policy: transcriptio.OpenPolicy{RejectSymlinks: true, Root: c.Ref.Store}})
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, agentapi.NativeInput{}, err
 	}
 	snapshot, err := pass.Read(ctx, agentapi.SourceRef{Path: c.Ref.Path}, agentapi.ReadLimits{})
 	if err != nil {
-		return nil, nil, nil, errors.Join(err, pass.Close())
+		return nil, nil, agentapi.NativeInput{}, errors.Join(err, pass.Close())
 	}
-	return pass, snapshot, snapshot.Input().File, nil
+	input := snapshot.Input()
+	if input.File == nil {
+		return nil, nil, agentapi.NativeInput{}, errors.Join(agentapi.ErrInvalidSourceBinding, snapshot.Close(), pass.Close())
+	}
+	return pass, snapshot, input, nil
 }

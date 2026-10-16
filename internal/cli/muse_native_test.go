@@ -27,7 +27,6 @@ import (
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/termlaunch"
 	"github.com/wangjohn/agent-archive/internal/testutil/orbifold"
-	"github.com/wangjohn/agent-archive/internal/transcriptio"
 )
 
 const museSyntheticID = "00000000-0000-7000-8000-000000000001"
@@ -192,20 +191,22 @@ func TestMuseAutomaticNativeHandoffUsesWholeFilterOnceWithoutSetup(t *testing.T)
 		t.Run(lane, func(t *testing.T) {
 			t.Parallel()
 			env, data, workspace, counter := museNativeEnv(t)
-			writeMuseNative(t, data, museSyntheticID, museNativeBytes(t, lane, museSyntheticID, workspace))
+			raw := museNativeBytes(t, lane, museSyntheticID, workspace)
+			writeMuseNative(t, data, museSyntheticID, raw)
 			meter := &nativeReadMeter{}
 			env.nativeFS = meter
 			for _, query := range []string{museSyntheticID, museSyntheticID[:32], "--latest"} {
 				before := counter.calls.Load()
-				_, beforeOpens, _, _ := meter.counts()
+				beforeBytes, beforeOpens, _, _ := meter.counts()
 				out, errOut, code := runHandoff(t, env, query, "--source", "local", "--harness", "muse", "--format", "json")
 				if code != 0 || !strings.Contains(out, "Explain the synthetic parser.") || !strings.Contains(out, "2026-10-15T17:04:15.882704Z") || counter.calls.Load() != before+1 {
 					t.Fatalf("%s: %d calls=%d %s %s", query, code, counter.calls.Load(), out, errOut)
 				}
-				_, afterOpens, active, _ := meter.counts()
-				if afterOpens-beforeOpens != 3 || active != 0 {
-					t.Fatalf("selected opens=%d active=%d, want census+source+verification", afterOpens-beforeOpens, active)
+				afterBytes, afterOpens, active, _ := meter.counts()
+				if afterOpens-beforeOpens != 2 || active != 0 || afterBytes-beforeBytes < 3*int64(len(raw)) {
+					t.Fatalf("selected opens=%d active=%d bytes=%d raw=%d, want census+selected source and counted baseline/filter/proof reads", afterOpens-beforeOpens, active, afterBytes-beforeBytes, len(raw))
 				}
+				t.Logf("selected raw=%d descriptor_bytes=%d opens=%d full_filters=%d", len(raw), afterBytes-beforeBytes, afterOpens-beforeOpens, counter.calls.Load()-before)
 			}
 			if _, err := os.Stat(museNativeArchiveHome(t, env)); !os.IsNotExist(err) {
 				t.Fatalf("local read wrote state: %v", err)
@@ -594,7 +595,7 @@ type museRecheckFailureFS struct {
 	cancel  context.CancelFunc
 }
 
-func (f museRecheckFailureFS) OpenRegular(path string) (transcriptio.File, error) {
+func (f museRecheckFailureFS) Lstat(path string) (os.FileInfo, error) {
 	if f.counter.calls.Load() > 0 {
 		if f.cancel != nil {
 			f.cancel()
@@ -602,7 +603,7 @@ func (f museRecheckFailureFS) OpenRegular(path string) (transcriptio.File, error
 			return nil, os.ErrPermission
 		}
 	}
-	return f.nativeReadMeter.OpenRegular(path)
+	return f.nativeReadMeter.Lstat(path)
 }
 
 func TestMuseSelectedPathRecheckFailureAndCancellationCloseHandles(t *testing.T) {
@@ -703,5 +704,85 @@ func TestMuseNativeOmissionsReachSelectedArtifactAndMetadata(t *testing.T) {
 	}
 	if counter.calls.Load() != 1 {
 		t.Fatal("metadata rebuilt native source")
+	}
+}
+
+func TestMuseSelectedLiveProofRefusesAfterFilterRewriteAndReplacement(t *testing.T) {
+	t.Parallel()
+	for _, replace := range []bool{false, true} {
+		t.Run(strconv.FormatBool(replace), func(t *testing.T) {
+			t.Parallel()
+			env, data, workspace, counter := museNativeEnv(t)
+			raw := museNativeBytes(t, "exec", museSyntheticID, workspace)
+			path := writeMuseNative(t, data, museSyntheticID, raw)
+			stamp, err := os.Stat(path)
+			must(t, err)
+			meter := &nativeReadMeter{}
+			env.nativeFS = meter
+			counter.after = func(archive.FilteredTranscript) {
+				if replace {
+					must(t, os.Rename(path, path+".old"))
+					must(t, os.WriteFile(path, raw, 0600))
+				} else {
+					changed := bytes.Replace(raw, []byte("Explain"), []byte("Rewrite"), 1)
+					if len(changed) != len(raw) || bytes.Equal(changed, raw) {
+						t.Fatal("same-size mutation missing")
+					}
+					must(t, os.WriteFile(path, changed, 0600))
+				}
+				must(t, os.Chtimes(path, stamp.ModTime(), stamp.ModTime()))
+			}
+			artifact := filepath.Join(t.TempDir(), "handoff.md")
+			out, stderr, code := runHandoff(t, env, museSyntheticID, "--source", "local", "--harness", "muse", "--output", artifact)
+			_, _, active, _ := meter.counts()
+			if code == 0 || out != "" || active != 0 || counter.calls.Load() != 1 {
+				t.Fatalf("changed selection accepted: code=%d active=%d filters=%d %s %s", code, active, counter.calls.Load(), out, stderr)
+			}
+			if _, err := os.Stat(artifact); !os.IsNotExist(err) {
+				t.Fatal("created artifact", err)
+			}
+		})
+	}
+}
+
+func TestMuseSelectedRecheckRefusesForeignDecoratedAndClosedInputs(t *testing.T) {
+	t.Parallel()
+	env, data, workspace, _ := museNativeEnv(t)
+	writeMuseNative(t, data, museSyntheticID, museNativeBytes(t, "exec", museSyntheticID, workspace))
+	roots, err := env.nativeRoots("muse")
+	must(t, err)
+	meter := &nativeReadMeter{}
+	result, err := nativesessions.Discover(t.Context(), env.agentRegistry(), meter, roots, nativesessions.Scope{Directories: []string{workspace}}, nativesessions.Limits{Files: 10000, HeaderBytes: nativeWindowBytes, RecordBytes: nativeWindowBytes, TotalBytes: nativeReadBudget, Workers: 2})
+	must(t, err)
+	if len(result.Candidates) != 1 {
+		t.Fatal("candidate")
+	}
+	c := result.Candidates[0]
+	pass, snapshot, input, err := openNativeSource(t.Context(), meter, c, env.agentRegistry())
+	must(t, err)
+	defer func() { must(t, snapshot.Close()); must(t, pass.Close()) }()
+	if err := recheckNativeSource(t.Context(), pass, c.Ref, snapshot, input); err != nil {
+		t.Fatal("valid live input refused", err)
+	}
+	decorated := struct {
+		agentapi.SourceSnapshot
+		agentapi.VerifiedContentSnapshot
+	}{snapshot, snapshot.(agentapi.VerifiedContentSnapshot)}
+	foreign := agentapi.NativeInput{File: struct{ agentapi.FileInput }{input.File}}
+	for _, bad := range []agentapi.NativeInput{foreign, {File: input.File, SubagentMeta: []byte{}}} {
+		if err := recheckNativeSource(t.Context(), pass, c.Ref, snapshot, bad); err == nil {
+			t.Fatal("foreign input accepted")
+		}
+	}
+	if err := recheckNativeSource(t.Context(), pass, c.Ref, decorated, input); err == nil {
+		t.Fatal("decorated snapshot accepted")
+	}
+	must(t, snapshot.Close())
+	if err := recheckNativeSource(t.Context(), pass, c.Ref, snapshot, input); err == nil {
+		t.Fatal("released snapshot accepted")
+	}
+	_, _, active, _ := meter.counts()
+	if active != 0 {
+		t.Fatal("lease retained", active)
 	}
 }

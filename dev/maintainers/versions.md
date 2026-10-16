@@ -278,3 +278,20 @@ readers refuse them. Exact observed two-metadata startup preserves permission
 birth authority. Required omission coverage is derived from validated rows;
 retained parsing refuses concealed coverage and refilter reconstructs it. Other
 agent parser versions and outer source/metadata/configuration schemas do not change.
+
+Private native binding **version 2** is reserved for Muse's successful raw
+validation checkpoint. Its mandatory `checkpoint` uses version 1, domain
+`muse-ordinary`, algorithm `sha256`, a positive raw byte boundary and lowercase
+hex SHA-256. Version 1 has no checkpoint; existing Muse v1 cannot upgrade by
+hashing current bytes. Current ordinary writers preserve exact checkpoints and
+cannot introduce, drop or advance them. The dedicated prepared commit retains
+immutable owner/root facts and compares the expected prior proof. The existing
+native-authority-v16 configuration fence remains; earlier binding-v1 writers
+refuse version 2 during registration validation. Uploaded schemas, filter,
+adapter and parser versions do not change.
+
+Muse local file observations use provider `file`, signature version 1, and a
+55-character raw-base64url token: recognized algorithm byte 1, uint64 big-endian
+raw boundary, then SHA-256. Old stat tokens and unknown encodings cannot equal a
+fresh strong observation. This disposable equality cache is separate from the
+protected successful checkpoint and cannot supply continuity authority.
