@@ -2,9 +2,11 @@ package state
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -88,10 +90,8 @@ func (s *Store) pendingFenceView(id string) (PendingPublication, bool, error) {
 // readProjected decodes into value only the fields of the JSON object at path
 // that projection names, scanning past the others.
 func (s *Store) readProjected(path string, projection jsonProjection, value any) error {
-	if s.resourceBudget != nil {
-		if err := s.resourceContext.Err(); err != nil {
-			return err
-		}
+	if err := s.durableContext().Err(); err != nil {
+		return err
 	}
 	owner, err := os.OpenRoot(s.home)
 	if err != nil {
@@ -118,14 +118,30 @@ func (s *Store) readProjected(path string, projection jsonProjection, value any)
 	if !info.Mode().IsRegular() || n < 0 {
 		return errStateFileUnstable
 	}
+	return s.readProjectedObserved(f, n, projection, value)
+}
+
+func (s *Store) readProjectedObserved(reader io.Reader, n int64, projection jsonProjection, value any) error {
+	ctx := s.durableContext()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if n < 0 {
+		return errStateFileUnstable
+	}
 	reservation := s.readReservation()
 	buffer := min(max(n, 16), pendingFenceBuffer)
 	if !reservation.Reserve(buffer) {
 		return errStateBudget
 	}
 	defer reservation.Release(buffer)
-	counted := &countingReader{r: f}
-	p := projector{in: bufio.NewReaderSize(counted, int(buffer)), reserve: reservation.Reserve, limit: pendingFenceViewLimit, ctx: s.resourceContextErr}
+	// One extra byte detects growth without following an unbounded appended tail.
+	limit := n
+	if limit < math.MaxInt64 {
+		limit++
+	}
+	counted := &countingReader{r: &projectedContextReader{ctx: ctx, reader: io.LimitReader(reader, limit)}}
+	p := projector{in: bufio.NewReaderSize(counted, int(buffer)), reserve: reservation.Reserve, limit: pendingFenceViewLimit, ctx: ctx.Err}
 	defer func() { reservation.Release(p.charged) }()
 	if err := p.object(projection, true); err != nil {
 		return err
@@ -136,20 +152,31 @@ func (s *Store) readProjected(path string, projection jsonProjection, value any)
 	if counted.n != n {
 		return errStateFileUnstable
 	}
-	if err := s.resourceContextErr(); err != nil {
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if err := json.Unmarshal(p.out, value); err != nil {
 		return errors.Join(errPendingFenceView, err)
 	}
-	return nil
+	return ctx.Err()
 }
 
-func (s *Store) resourceContextErr() error {
-	if s.resourceBudget == nil || s.resourceContext == nil {
-		return nil
+// Every buffer refill observes the original read scope, including while the
+// parser is consuming trailing whitespace rather than an object value.
+type projectedContextReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (r *projectedContextReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
 	}
-	return s.resourceContext.Err()
+	n, err := r.reader.Read(p)
+	if canceled := r.ctx.Err(); canceled != nil {
+		return n, canceled
+	}
+	return n, err
 }
 
 type countingReader struct {
