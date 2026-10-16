@@ -463,8 +463,10 @@ func (r *handoffQueryResolver) archiveRows() []handoffPickerRow {
 		r.archiveErr = err
 		return nil
 	}
+	ctx, stopDiscovery := startReadDiscovery(r.ctx, r.env, store, false)
+	defer stopDiscovery()
 	stop := startActivity(r.stdout, "Finding sessions…")
-	sessions, err := loadSessionsForBrowseContext(r.ctx, r.env, store, listOptions{filter: reader.Filter{Harness: r.opts.harness}}, r.stderr, "handoff")
+	sessions, err := loadSessionsForBrowseContext(ctx, r.env, store, listOptions{filter: reader.Filter{Harness: r.opts.harness}}, r.stderr, "handoff")
 	stop()
 	if err != nil {
 		r.archiveErr = err
