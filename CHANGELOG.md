@@ -30,6 +30,11 @@ follow [Semantic Versioning](https://semver.org/).
   children, automatic browse, backfill, capture and Muse destination launch
   remain unavailable. Handoff also now respects Codex's recorded native start.
 
+- Keep unavailable Muse tool, file and Git measurements absent in derived
+  metadata and full evaluation exports while preserving prompt/message counts.
+  Cursor tool calls without recorded results no longer claim zero results;
+  unstructured exports omit unavailable edited-file lists.
+
 - Commands run inside Muse detect its session environment to avoid interactive
   prompts and pagers. Handoff into supported agents removes inherited Muse
   session variables. This adds presence detection only; Muse capture, current

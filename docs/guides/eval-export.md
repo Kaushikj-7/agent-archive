@@ -81,6 +81,13 @@ means and how it may change. In short:
   whole), `final_response`, `files_edited` (in the order first edited), and
   `feedback` (what you attached with `agent-archive feedback`).
 
+Unavailable tool, file and Git counts are omitted rather than reported as
+measured zeros. Full detail omits `files_edited` when edited-file evidence is
+unavailable; an observable session with no edits carries an empty list.
+Muse retains its qualified prompt/message counts while tools, files and Git
+remain unavailable. Cursor calls without recorded results keep their invocation
+count, with the result count omitted.
+
 ## Size and errors
 
 `--max-bytes N` (default 120000; `0` for none) bounds each record: the

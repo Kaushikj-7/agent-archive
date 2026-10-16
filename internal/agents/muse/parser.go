@@ -14,7 +14,7 @@ import (
 type Parser struct{}
 
 // Version identifies the Muse retained analysis policy.
-func (Parser) Version() string { return "0.1.0" }
+func (Parser) Version() string { return "0.2.0" }
 
 // Parse interprets the complete validated muse-jsonl v1 evidence.
 func (Parser) Parse(ctx context.Context, b archive.SourceBundle) (archive.Analysis, error) {
@@ -45,7 +45,7 @@ func (Parser) Parse(ctx context.Context, b archive.SourceBundle) (archive.Analys
 		return archive.Analysis{}, e
 	}
 	unavailable := archive.Availability{State: archive.AvailabilityUnavailable, Reason: archive.AvailabilityReasonNotRecorded}
-	a := archive.Analysis{View: view, Facts: archive.NativeFacts{NativeStartedAt: time.UnixMicro(rows[0].Timestamp).UTC(), EarliestRecordAt: time.UnixMicro(rows[0].Timestamp).UTC(), TokenScopeUnknown: true}, Observability: archive.Observability{StructuredCounts: archive.Availability{State: archive.AvailabilityAvailable}, Compactions: unavailable, ToolErrors: unavailable, ToolResults: unavailable}}
+	a := archive.Analysis{View: view, Facts: archive.NativeFacts{NativeStartedAt: time.UnixMicro(rows[0].Timestamp).UTC(), EarliestRecordAt: time.UnixMicro(rows[0].Timestamp).UTC(), TokenScopeUnknown: true}, Observability: archive.Observability{StructuredCounts: archive.Availability{State: archive.AvailabilityAvailable}, ToolCalls: unavailable, FilesTouched: unavailable, GitActivity: unavailable, Compactions: unavailable, ToolErrors: unavailable, ToolResults: unavailable}}
 	for _, r := range rows {
 		if r.Type == payloadRuntimeSessionMetadata && a.Facts.WorkspaceRoot == "" {
 			a.Facts.WorkspaceRoot = str(r.Fields["workspace_root"])

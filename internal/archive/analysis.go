@@ -43,9 +43,24 @@ func (a Availability) Available() bool { return a.State == AvailabilityAvailable
 // Observability describes the actual retained source format and filter version.
 type Observability struct {
 	StructuredCounts Availability
-	Compactions      Availability
-	ToolErrors       Availability
-	ToolResults      Availability
+	// ToolCalls, FilesTouched and GitActivity refine StructuredCounts. Their
+	// zero value inherits StructuredCounts only for legacy producer compatibility;
+	// explicit unknown or unavailable evidence never supports a measured value.
+	ToolCalls    Availability
+	FilesTouched Availability
+	GitActivity  Availability
+	Compactions  Availability
+	ToolErrors   Availability
+	ToolResults  Availability
+}
+
+// structuredEvidenceAvailable preserves legacy producers that predate a finer
+// evidence category. Explicit unknown and unavailable values remain unmeasured.
+func (o Observability) structuredEvidenceAvailable(evidence Availability) bool {
+	if evidence == (Availability{}) {
+		return o.StructuredCounts.Available()
+	}
+	return evidence.Available()
 }
 
 // NativeFacts are semantic facts read only from safely retained evidence.

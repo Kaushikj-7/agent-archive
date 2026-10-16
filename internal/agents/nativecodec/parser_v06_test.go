@@ -181,7 +181,9 @@ func TestParserV06DerivesCursorTurnsAndOutcome(t *testing.T) {
 	countIs(t, "turns", metadata.Counts.Turns, 1)
 	countIs(t, "messages", metadata.Counts.Messages, 2)
 	countIs(t, "tool calls", metadata.Counts.ToolCalls, 1)
-	countIs(t, "tool results", metadata.Counts.ToolResults, 0)
+	if metadata.Counts.ToolResults != nil {
+		t.Fatalf("unavailable Cursor results = %v", metadata.Counts.ToolResults)
+	}
 	if metadata.State != MetadataStateIdle || metadata.TurnOutcome != TurnOutcomeCompleted {
 		t.Fatalf("lifecycle = %q/%q", metadata.State, metadata.TurnOutcome)
 	}
