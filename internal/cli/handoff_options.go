@@ -57,6 +57,9 @@ type handoffOptions struct {
 	newWindow bool
 	// agentArgs are the arguments after `--`, given to the launched agent.
 	agentArgs []string
+	// preparing stops the "Preparing handoff…" spinner a run started before
+	// reading the chosen session; it may be called more than once.
+	preparing func()
 }
 
 type handoffDestination string

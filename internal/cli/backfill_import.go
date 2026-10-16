@@ -373,6 +373,9 @@ func underlyingWriter(w io.Writer) io.Writer {
 	if l, ok := w.(*lockedWriter); ok {
 		return underlyingWriter(l.w)
 	}
+	if p, ok := w.(*pausingWriter); ok {
+		return underlyingWriter(p.w)
+	}
 	return w
 }
 

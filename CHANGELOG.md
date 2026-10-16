@@ -6,6 +6,11 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- `agent-archive list` shows its progress while it loads: how many sessions
+  it has scanned, then how many it has loaded of those it will show.
+  `agent-archive handoff` shows "Preparing handoff…" after you pick a session,
+  until its first question.
+
 - `agent-archive --help` is shorter: it shows the commands for everyday use
   (setup, status, sync, pause, resume, list, search, show, stats, backfill,
   handoff).
