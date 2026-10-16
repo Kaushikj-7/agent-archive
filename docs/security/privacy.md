@@ -701,7 +701,7 @@ and startup locally, retains only minimal safe authority and linked own visible
 conversation, and applies shared credential/instruction redaction. Permission
 profiles, provider/model context, hidden reasoning and native checksum/child
 strings are never retained. Unsupported authority or incomplete files refuse
-without producing a successful artifact. Complete usage/cost, tools, model switches and
+without producing a successful artifact. Complete usage/cost, tool detail, model switches and
 children remain unavailable; this local operation grants no capture consent.
 
 Shared redaction, hidden-context omission and text truncation are disclosed with
@@ -734,3 +734,25 @@ remain unavailable. Models beyond the deterministic first 31 fold into
 cross-session overflow publishes no observation numbers with the fixed
 `observation_limit` reason. Required `own_usage_observations_partial` and
 `cache_reasoning_cost_unqualified` gaps survive retained-only refresh.
+
+
+Muse's closed own committed tool branches retain only run/source provenance,
+message/call IDs and batch/index/call result joins. New opaque IDs use 1–128 ASCII
+letters/digits/underscore/hyphen, starting with a letter or digit; shared privacy
+rules apply and any identity change refuses. Native response/item IDs, names,
+arguments and result text are validated then dropped completely, without hashes
+or lengths. Exact nonempty bounded arrays permit synthetic multi-item and
+reordered partial results; native qualification covers one single-item case only.
+Every result must reference an earlier exact message batch in its own materialized
+run, with matching index and call ID. Duplicate batches, calls, source IDs,
+nonincreasing relevant source sequences and repeated result batches refuse.
+Open calls are valid; missing results establish no success or zero.
+
+Only a nonempty enriched call set with no legacy erased call/result rows supplies
+an exact observed invocation count. Empty, legacy and mixed coverage stays
+unavailable. Normalized JSON preserves call identity and a nullable proven result
+record position, with error status and output size absent. These nameless calls
+remain unlisted in narrative transcript/handoff, preserving omitted-detail gaps.
+No normalized result objects, result/error counts, tool names, MCP, file or Git
+facts are inferred. Complete lifecycle, result status/body and billing remain
+unqualified; this does not enable capture or establish full tool parity.

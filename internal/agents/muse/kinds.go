@@ -66,6 +66,8 @@ const (
 type fieldName string
 
 const (
+	fieldToolCalls               fieldName = "tool_calls"
+	fieldToolResults             fieldName = "results"
 	fieldObservedModel           fieldName = "model"
 	fieldObservedInput           fieldName = "input_tokens"
 	fieldObservedOutput          fieldName = "output_tokens"
