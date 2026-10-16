@@ -275,22 +275,6 @@ func (p *Published) nextBudgeted(bundle archive.SourceBundle, at time.Time, stat
 	return p.state.next(bundle, at, status, reason, metadata, held, source), nil
 }
 
-// decodeStateJSON avoids encoding/json's complete-value method-dispatch scan
-// before the published decoder's own validity, authority, and full wire checks.
-// Invalid JSON still goes through encoding/json so corruption keeps its existing
-// syntax error and quarantine behavior. Other state decoders retain their route.
-func decodeStateJSON(data []byte, value any) error {
-	published, ok := value.(*publishedState)
-	if !ok {
-		return json.Unmarshal(data, value)
-	}
-	err := published.UnmarshalJSON(data)
-	if err != nil && !json.Valid(data) {
-		return json.Unmarshal(data, value)
-	}
-	return err
-}
-
 type stateReservation interface {
 	Reserve(int64) bool
 	Release(int64)
