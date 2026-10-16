@@ -8,8 +8,8 @@ affects.
 | Version | Where | Recorded in | Current | Changes when |
 | --- | --- | --- | --- | --- |
 | Release | `cli.Version` (set at build time) | `--version` | Build-dependent (`dev-<commit>` from source) | A tag is cut. |
-| Filter | `archive.FilterVersion` | source header `capture.filter_version`, metadata `filter_version` | 18 | What the privacy filter keeps, drops, or redacts changes: any change to filtered output. |
-| Adapter | `adapterVersion` in `internal/archive/adapters.go` | `capture.adapter_version` | 0.18.0 | An adapter's output changes (bumped with the filter in practice). |
+| Filter | `archive.FilterVersion` | source header `capture.filter_version`, metadata `filter_version` | 19 | What the privacy filter keeps, drops, or redacts changes: any change to filtered output. |
+| Adapter | `adapterVersion` in `internal/archive/adapters.go` | `capture.adapter_version` | 0.19.0 | An adapter's output changes (bumped with the filter in practice). |
 | Parser | per-agent `Parser.Version()` / `archive.DefaultParserVersion` | metadata `parser.version` | 0.21.0 | How metadata is derived from a source changes: counts, turns, models, skills, gaps, titles, session names, branch, linked pull requests, tools used, end time, tokens (per model too), tool errors, MCP calls, git activity, the repository key (derived from the project's git origin, not the source). |
 | Source schema | `archive.SourceSchemaVersion` / `HistorySourceSchemaVersion` | source header `schema_version` | 2 | The source bundle's line format changes. Readers refuse other versions. |
 | Metadata schema | `archive.MetadataSchemaVersion` / `HistoryMetadataSchemaVersion` | metadata `schema_version` | 1 | The metadata sidecar changes incompatibly. Optional fields don't bump it. |
@@ -21,7 +21,15 @@ affects.
 | List JSON | `cli.listSchemaVersion` | `list --json` `schema_version` | 4 | The script-facing list document changes incompatibly. Version 3 removed `unavailable`; version 4 makes exact-count knowledge explicit. |
 | Status JSON | `statusView.Version` in `internal/cli/status.go` | `status --json` `schema_version` | 4 | Status output changes incompatibly; schema 4 separates discovery from actual hook evidence. |
 
-Claude uses the common parser version; Cursor remains at parser 0.20.0.
+Muse uses its independent parser 0.2.0 and archive-native `muse-jsonl` v1
+([inner record schema](../../schemas/muse-retained-v1.schema.json)). Explicit-file
+and bounded automatic local handoff are supported; this does not alter outer
+bundle schemas or
+registration authority. Handoff builders now prefer existing `NativeStartedAt`
+facts over first prompts/file observations, also correcting Codex handoff start.
+The original native-start correction did not change metadata derivation.
+
+Claude uses the common parser version; Cursor uses parser 0.22.0.
 Codex has its own parser version as recorded above.
 
 The per-version filter changes are in the
@@ -247,3 +255,16 @@ with journal fence version 1 / writer `native-authority-v16` / original boolean
 `value`, requiring their true native protection marker. This blocks older raw
 rollback recovery before config loading; adding an ignored journal field alone
 would not protect authority.
+
+Muse parser 0.2.0 corrects unavailable tool/file/Git counts and full export file
+presence without losing qualified prompt/message counts. Cursor parser 0.22.0
+corrects unavailable tool-result counts and omits full export files for
+unstructured text evidence. It also refreshes sidecars written when Cursor
+inherited common parser 0.21.0. Existing Claude, Codex and common parser versions
+are unchanged. The shared new tool-call/file/Git availability categories inherit
+structured-count availability only when a legacy producer leaves them unset;
+explicit unknown/unavailable values never establish measured zeros. Existing
+tool-result availability remains explicit. Parser-only refresh rederives metadata
+from retained sources; full export refreshes older sidecar counts when parser
+versions differ. Filter 19, adapter 0.19.0, retained Muse v1 and published schema
+versions are unchanged; existing schemas allow omitted counts and edited files.

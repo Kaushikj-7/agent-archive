@@ -46,7 +46,7 @@ func (s *setupProjectSearch) projects(cfg config.Config) []backfill.KnownProject
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	environment := s.env.backfillEnvironment(s.home, cfg)
-	environment.Discovery = setupDiscoveryApps{DiscoveryLookup: environment.Discovery, apps: cfg.Harnesses}
+	environment.Discovery = selectedDiscoveryApps{DiscoveryLookup: environment.Discovery, apps: cfg.Harnesses}
 	s.result = backfill.KnownProjectsBounded(ctx, environment, cfg, 128)
 	s.key = string(key)
 	s.scanned = true
@@ -357,13 +357,13 @@ func nearestSetupProjectRule(rules map[string]bool, root string) (included bool)
 	return included
 }
 
-// setupDiscoveryApps restricts discovery to the applications being configured.
-type setupDiscoveryApps struct {
+// selectedDiscoveryApps restricts discovery to an operation-specific application set.
+type selectedDiscoveryApps struct {
 	agentapi.DiscoveryLookup
 	apps []string
 }
 
-func (s setupDiscoveryApps) DiscoveryAgents() []string {
+func (s selectedDiscoveryApps) DiscoveryAgents() []string {
 	var names []string
 	for _, name := range s.DiscoveryLookup.DiscoveryAgents() {
 		if slices.Contains(s.apps, name) {

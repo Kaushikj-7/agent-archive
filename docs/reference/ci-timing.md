@@ -278,9 +278,45 @@ verified. The final reference must use the same source SHA/tree as the worker
 artifacts, not merely a related branch head. This qualification is correctness
 evidence, not a runner-time or150-second benchmark.
 
-## Verified schema 3 hint refresh
+## Current schema 4 hint refresh
 
-`go_shard_hint_sources.json` pins Test run `38670278594`, attempt 1, actual
+The current `go_shard_hint_sources.json` uses one complete successful normal
+PR observation: Test `38816393618` and Levenshtein `38816394218`, attempt 1.
+The actual tested merge is `39c550ebd40bf68e62e8a2cf4e58fd69b3c954dc`, tree
+`50441a17a1429358a4ba591ef7f8b2b215ab68a9`, with head
+`3c6ec79309d21dfa90721d809a97dba7f230472e` and tested/event base
+`ed8da985be05e1178647681b64dd972a120e3a0e`. This source includes the recent
+fixture and UI changes. It is not a timing measurement of the refresh commit
+or subsequent main. Earlier incompatible source observations are not pooled.
+
+The existing strict importer verifies all eight schema 4 workers, combined
+compiled listings and derivatives, actual body streams, independent plain audit
+and source/compiler-bound vet receipts. The matched workload contains 88 packages
+and 3356 disjoint units: 2343 CLI parents, 930 selected heavy parents and
+83 whole packages. The request pins actual source/catalog/configuration, full
+compiler and image contexts, API archive IDs/digests, exact helper bytes and
+Test run identity; generated provenance retains raw receipt hashes. All eight
+workers reported compilation-cache `prefix`, not exact hits or empty cold caches.
+
+Using these same refreshed weights to evaluate both assignments, the maximum
+CLI advisory sum falls from 1358.920 to 978.695 seconds and the ordinary advisory
+sum from 293.160 to 162.187 seconds. The existing independent-lane LPT scheduler
+already balances these sums; only its data changes. These non-additive lifecycle
+sums include descendant waits and are neither CPU time nor worker elapsed.
+Measured worker phases on the original assignment were 157.114, 297.236,
+209.368, 195.657, 200.080, 201.726, 225.047 and 180.554 seconds, excluding
+additional job setup/upload costs. No hosted speedup or latency quantile is
+established by this single sample or by the balanced advisory sums.
+
+Reproduce with the generator command below after fetching the exact measured
+merge and extracting each digest-verified archive under `workers/` or `audit/`.
+The schema 4 importer needs no compatibility relaxation. Dynamic discovery,
+1000 ms unknown-unit fallback, exhaustive coverage, eight workers and original
+CPU/deadline budgets remain authoritative and unchanged.
+
+## Historical schema 3 hint refresh
+
+The preceding request pinned Test run `38670278594`, attempt 1, actual
 source `bb84d9fd58b0665fde9b201050b80a19e68920b0`, tree
 `af4e8d922b9628cf40a94f967012667e01937613` (head 98fe), and nine
 API-digest-verified worker/audit archives. Complete compiled discovery and raw
@@ -757,7 +793,7 @@ This command provisions no runners. The adapter reuses `report_ci_timing.py`,
 retains every earlier attempt as auxiliary usage, paginates completely and preserves
 strict physical-allocation deduplication. Pairing checks repository, workflow path,
 event, PR number, head repository/branch/SHA and base SHA: sharing a head SHA is not
-sufficient. Missing PR association or ambiguous live peers remain unavailable;
+sufficient. Missing PR association without authenticated retained identity, or ambiguous live peers, remains unavailable;
 explicit offline run IDs still must satisfy the exact context. Missing expected
 jobs cannot disappear by deriving inventory from the measured run.
 
@@ -867,3 +903,462 @@ and sequential verdict boundary; initially eligible Linux jobs remain 20/16
 including Levenshtein, so no reduced initial burst or measured queue benefit is
 claimed. Actual source-bound runtime, cache cohorts and full-pipeline comparison
 remain necessary; prior 28-job source evidence cannot certify this new tree.
+
+## Durable per-run identity and performance history
+
+The existing final linux-race aggregate and shared verify jobs now retain a small
+`ci-run-identity-{Test|Levenshtein}-{attempt}` artifact. Its sole `identity.json`
+member binds the real event, repository, PR, head/base refs, captured base, tested
+merge source/tree/ordered parents, workflow source/path, run ID and attempt.
+The shared workflow validates its own workflow path, not Test's path. Production
+worker count, schedules, test selection and token permissions are unchanged.
+Artifacts keep the existing seven-day retention. To preserve observations longer,
+collect their small receipts during that window; this change adds no scheduler.
+
+GitHub can remove `pull_requests` associations from completed runs after merge.
+Explicit run IDs alone still cannot authorize pairing an empty-association run.
+Supply its original downloaded identity ZIP using:
+
+```sh
+python3 -B scripts/collect_ci_timing.py \
+  --topology worker-topology.json --test-run 123 --levenshtein-run 124 \
+  --identity-archive 456:/path/to/test-identity.zip \
+  --identity-archive 457:/path/to/shared-identity.zip \
+  --output observation.json
+```
+
+Use the same environment token described above. The collector fetches metadata
+for each artifact ID from the fixed repository API, checks its owning run,
+expected name/attempt, expiry and SHA-256 digest against the exact ZIP bytes,
+then compares the complete retained identity. It independently resolves the
+actual merge commit/tree/parents through the Git API, and proves ancestry when
+the tested base advanced beyond the captured base. Missing, expired, mismatched,
+wrong-attempt or modified receipts fail closed. Existing nonempty contradictory
+PR associations cannot be overridden by a receipt. Preserve earlier-attempt ZIPs
+as well when those API associations are absent. There is no fallback for older
+runs that did not retain authenticated identity. Identical trees do not imply
+identical tested source SHAs.
+
+Normalize existing producer evidence without running tests:
+
+```sh
+python3 -B scripts/normalize_ci_timing.py --worker go-shard-0 \
+  --topology worker-topology.json --output worker-timing.json
+python3 -B scripts/normalize_ci_timing.py --native native-full-tier \
+  --output native-timing.json
+python3 -B scripts/ci_timing_history.py --observation worker-timing.json \
+  --pipeline-observation observation.json --output baseline-candidate.json
+```
+
+`worker-timing` schema 1 has exact `source`, `run_id`, `run_attempt`, `shard`,
+`compiled_inventory_sha256`, `configuration_sha256`, `cohort`, `success`,
+`observation_kind`, `phases`, `tests` and `fixture_metrics`. Test rows identify
+`package::TopLevelTest`, family/package, lifecycle `parent_wall_seconds`, Go
+`own_elapsed_seconds`, terminal status and timing issues. Setup remains
+`unattributed`: the normalizer never subtracts overlapping fixture measurements
+or calls Go Elapsed CPU time. Fixture output uses `CI_FIXTURE_METRIC_V1` JSON:
+version 1, fixture, phase, elapsed_ns and a dictionary of nonnegative operation
+counts. Each emitted sample retains its exact child test and top-level owner.
+These metrics may overlap across tests and are not additive.
+
+Shared verification retains `shared-verification-timing` schema 1 from its same
+fresh invocation, including total elapsed and per-check measured duration,
+execution duration when reported, status and cache state. Checks overlap; their
+sum is not wall time. Raw checker stderr, scanner output, staged source and
+caches are not copied into the artifact. The command's failure remains a
+failure; malformed/missing timing output fails rather than claiming zero.
+
+The bounded history helper groups comparable compiled-inventory/configuration/cache/image cohorts,
+deduplicates physical workers, rejects conflicting duplicate observations and
+requires matching terminal full-pipeline collector evidence and excludes failed, experimental, unknown-classification or unknown-cohort samples
+from baseline candidates. It preserves measured medians and sample counts, not
+inferred percentiles. Its output is explicitly a **review candidate**, never
+an automatically promoted allowance. A single worker receipt cannot certify
+whole-pipeline success; the candidate builder recomputes the paired snapshot report
+and requires the complete fixed production inventory and successful workflows.
+Candidate eligibility revalidates the paired workflow association and canonical
+run/job identities. Every required job needs a positive API job/runner ID, a
+nonblank runner name and successful executed-step evidence within its allocation.
+Legacy or unknown allocations remain diagnostic. Each shard must match a
+successful physical job's actual attempt, including
+successful jobs carried forward into a later workflow attempt. Blank or missing
+cache/image cohorts cannot supply a candidate.
+The required aggregate must also reconcile coverage before any policy uses it. The future required performance
+gate owns approval and trusted-main promotion. Queue eligibility remains unknown
+without independent telemetry, and runner allocation remains accounted by the
+existing full-pipeline reporter rather than by summing test durations.
+
+## Repeated compiled listing: measured no-go for production sharing
+
+The existing combined CLI/catalog/collector/state/statshtml command already shares
+one Go invocation within each worker. It still runs independently on all eight
+workers. Do not count that earlier consolidation as a new optimization.
+
+For one existing ordinary run, append `--listing-repetition` to the timing reporter
+and supply exactly eight `--evidence /path/to/go-shard-N` arguments. It rejects
+missing/duplicate/failed workers and mixed source, compiler, package, run/attempt,
+cache or runner-image cohorts. This diagnostic reads existing manifests and is
+not an artifact authenticator or a replacement for source/coverage reconciliation.
+Obtain artifacts through the existing collector/provenance procedure first.
+It leaves all existing report qualification rules unchanged.
+
+Test [38816393618](https://github.com/wangjohn/agent-archive/actions/runs/38816393618),
+paired with Levenshtein
+[38816394218](https://github.com/wangjohn/agent-archive/actions/runs/38816394218),
+attempt 1, source `39c550ebd40bf68e62e8a2cf4e58fd69b3c954dc`, supplies
+one successful eight-worker observation. Linux/amd64 Go 1.27.2, cgo 1,
+`GOFLAGS=-mod=readonly`, race/short/count=1/JSON/package-p1 listing,
+Ubuntu 24 image 20261012.334.1 and prefix cache restores match across workers.
+Prefix restores establish neither exact-cache warm nor empty-cache cold controls.
+
+| Worker | Combined listing wall seconds |
+| --- | ---: |
+| 0 | 32.325 |
+| 1 | 32.779 |
+| 2 | 37.890 |
+| 3 | 27.705 |
+| 4 | 38.917 |
+| 5 | 37.599 |
+| 6 | 38.116 |
+| 7 | 35.040 |
+
+The sum is 280.372 invocation wall seconds; median 36.320s. This phase includes
+Go graph loading, default vet, compilation/linking, race runtime startup and each
+package's TestMain. It is not measured pure compiler CPU, total runner allocation,
+or removable elapsed time. CLI TestMain isolates HOME/process state and allocates
+a temporary snapshot directory; it does not build the CLI's large test fixtures.
+Ordinary package bodies and separate selected-parent invocations can compile/link
+again outside this phase. The table does not attribute that unmeasured work.
+
+### Reproduce a bounded local binary-size diagnostic
+
+From a clean checkout with exact Go 1.27.2 and dependencies already present
+in the module cache (set `GOMODCACHE` or `GOPATH` explicitly when needed):
+
+```sh
+python3 -B scripts/measure_go_listing.py --go /path/to/go1.27.2/bin/go \
+  --output /tmp/listing-diagnostic-unique
+```
+
+This opt-in tool is absent from workflow commands. It runs two serial versions
+of the current five-package combined listing (empty private build cache, then the
+same cache), then independently compiles those five race test binaries and lists
+their parents. It retains commands/times, raw listing logs, binary sizes/hashes,
+compressed bundle size and local compression time. Gzip here is a payload diagnostic; hosted artifact
+transport and compression can differ. A single shared ten-minute
+supervisor deadline bounds all Go/binary invocations, including the initial
+configuration probe, and owns their process groups. The probe and later commands
+use the same private HOME, disabled user Go environment/workspace/cache helper,
+local toolchain selection and offline module policy. Cross-target configurations
+are rejected before compilation. Output inside the checkout is rejected before
+creation. Local Python compression and binary hashing are outside that subprocess
+budget; compression is separately measured. Temporary
+HOME, app state, cache and binary files are removed. Existing module content is
+read with network access disabled. It never executes test bodies or produces an
+admissible coverage/verdict/cache artifact. The clean tracked source proof must
+match before and after; place output outside the checkout. Its local OS/arch/cgo
+and empty-cache state must not be mixed with hosted Linux prefix-cache timings.
+
+The retained [2026-10-15 investigation receipt](../../dev/qualification/ci-compiled-listing-20261015.json)
+pins hosted artifact IDs/archive digests and manifest hashes, plus the local
+source/configuration, commands, raw-log hashes and binary hashes. The local run
+used commit `c40701be` (Go sources unchanged from this PR's base), Darwin/amd64,
+cgo 1, empty GOFLAGS and an existing module cache. These are one serial local
+observation, separate from the Linux prefix-cache cohort:
+
+| Local phase | Wall seconds |
+| --- | ---: |
+| Combined listing, empty private cache | 306.500 |
+| Combined listing, same private cache | 45.280 |
+| Five independent compile commands, same cache, summed serial wall | 74.820 |
+| Five binary listings, summed serial wall | 13.272 |
+| Local gzip compression | 79.366 |
+
+The five binaries contain 203,762,752 bytes total (CLI 99,015,680; catalog
+18,417,536; collector 41,717,856; state 31,772,496; statshtml 12,839,184).
+The gzip bundle contains 93,873,715 bytes. Both combined listings and each
+independent binary listing produced the identical 3,259 parent inventory;
+this establishes local listing parity, not execution/body coverage or portable
+binary compatibility. This historical receipt predates the hardened initial probe:
+its probe was not supervised and read the original user Go environment before
+the private HOME transition. It records the observed command/configuration and
+sizes, but does not establish the current tool's configuration-isolation or probe
+timeout guarantees. Its bytes and source context are retained unchanged. Local
+gzip cost and payload size are measured; actual hosted transfer and producer dependency costs remain unknown. The retained raw logs were independently reconciled for listing parity.
+
+### What would justify sharing
+
+Current decision: **do not enable production binary sharing**. Hosted binary
+upload/download time, producer allocation, dependency wait, cache effects and
+whole-pipeline latency are unmeasured. Local compression or filesystem copying
+cannot fill those fields. No new runner, recurring job, schedule or benchmark
+campaign is introduced to fill them.
+
+A future proposal must use ordinary-run evidence and the existing full-pipeline
+reporter, with the same actual source/tree, package inventory, exact compiler,
+flags, native environment, runner image and cache cohort. Record producer build,
+vet, compression/upload, per-consumer download/verification/unpack, dependency
+wait (including source-audit wait), body execution, all job allocations and actual
+artifact bytes. Count producer allocation and every consumer's transfer against
+any removed repeated work. A candidate must reduce both measured complete
+required-check elapsed time and total runner allocation after these costs; a
+negative or unknown result is a no-go. Ten unique comparable successful runs may
+support a directional claim; the existing 20-run rule still governs provisional
+p95. Do not add phase sums to overlapping body times or extrapolate this local
+experiment to hosted hardware.
+
+Any candidate must preserve dynamic discovery of every current package/new
+parent/fuzz seed/example, complete assignments/subtest trees, default vet, race,
+count=1, all native/plain-audit obligations, fresh bodies and current cancellation
+budgets. A listing-only artifact cannot authorize skipping compilation for bodies
+without an exact-source/flags/toolchain proof and fresh coverage evidence.
+Untrusted PR artifacts must never populate trusted caches or cross PR/worker trust
+boundaries. Binary identity also includes cgo/native ABI and package-lifetime
+semantics; one producer introduces a dependency barrier and a failure bottleneck.
+These are implementation acceptance requirements, not a claim this diagnostic
+has implemented or qualified a production producer/consumer path.
+
+## Required test-cost gate
+
+The existing required `linux-race` aggregate runs the performance gate after
+source/coverage reconciliation. It adds no worker and executes no Go. For a PR,
+it extracts the enforcer, imports, and policy from the tested merge's **first
+parent**, rather than executing the PR's proposed policy. Removing or changing
+that policy in a PR therefore cannot authorize that PR's increased allowance.
+The sole installation bootstrap is a tested first parent without an enforcer.
+Once main contains the enforcer, absent/invalid policy or missing evidence fails.
+There is no disabled or permanent warning-only mode.
+
+`ci_performance_policy.json` contains a reviewed individual top-level-parent
+inventory, including tests in whole-package shard units. This inventory is
+separate from measured baseline timings: existing tests with fewer than three
+verified comparable observations are explicitly reported as insufficiently
+calibrated, not assigned invented historical durations. Comparison cohorts bind
+compiler/settings, runner image, and cache state. Different/unknown cohorts do
+not manufacture a regression comparison. Exact compiled inventories remain
+source-bound admission evidence, while comparison keys use configuration and
+cohort: adding a new parent does not erase the measured history of surviving
+parents. New identities receive only the new-test rules. A previously skipped
+parent with no actual admitted measurement also receives the new-cost time and
+family caps when it first passes. Continuing legitimate skips remain unmeasured;
+one or two real observations retain the insufficient-calibration rule.
+
+A new parent warns above 10 seconds and fails above 30 seconds. Measured cost is
+the greater of its own terminal Go Elapsed and its slowest descendant's terminal
+Elapsed. Active lifecycle wall is reported separately because parallel slot
+contention and descendant waiting can inflate it. A new parallel family with
+more than 100 parallel descendants or more than 30 seconds of summed parallel
+terminal Elapsed also requires an explicit family budget. That sum is a
+**nonadditive review indicator**, not CPU time or end-to-end elapsed time; nested
+parallel intervals can overlap. Small cheap parallel tests need no annotation.
+Existing tests fail when their comparable measured cost exceeds both 1.5 times
+the baseline median and the median plus 10 seconds. Baselines require at least
+three eligible observations before this relative rule activates. These rules do
+not promise statistical confidence from three observations; they are reviewed
+admission policy, with source-bound evidence and an explicit override.
+
+Deterministic `work_budgets` bind a test, fixture, phase, and operation counter.
+Missing configured parents, required phases or counters, and excess work fail
+independently of time. Repeated metrics for that exact phase are accumulated; parent and child phases are never
+summed or subtracted as disjoint durations. `parallel_budgets` can explicitly
+bound a family's observed descendant count and elapsed-work indicator; these
+explicit limits remain enforced after the family enters the baseline.
+
+The initial policy records Test run `38775545530`, attempt 1, tested source
+`412cec705ce4b6c539f18e006f3b5c1a41b69d7a` and its paired successful
+Levenshtein run `38775545598`. It contains 5,927 actual parent identities,
+including 57 legitimate skips without invented durations, and 5,870 measured
+parents split across two configuration cohorts. Each measurement has one
+physical observation. The pipeline hash and inventory hash are retained in the
+policy. Missing event-time telemetry prevents a queue-eligibility claim; it does
+not erase the independently proven successful physical worker observations.
+
+The activated fixture budgets use content-free P4 receipts and source call-site
+ceilings: `TestRealCLICatalogCommandsEqualPrivateExhaustiveOracle` permits one
+`private_catalog/construct` constructor and four `publication` commits;
+`TestQualificationLargeFixturesDoNotRetainProcessSeeds` permits two
+`qualification/build` constructors and 2,802 entry encodings (two uncached
+1,401-row fixtures); `TestPickerReaderFixturesOwnAuthorityBodiesAndMetadata`
+permits three `picker_reader/clone` store clones. These are aggregate counts for
+the named parent, including repeated exact phases, rather than elapsed-time
+allowances. Every listed parent, phase and operation must be present in the
+normal full pipeline; deleting its producer or losing its receipts fails.
+
+The regression input `scripts/testdata/fixture_work_receipts.json` retains exact
+content-free Go output events from successful ordinary P4 Test run
+`38778405365`, attempt 1. The API head is `cab068a3`, while the actual compiled
+PR-merge source is `9a6986fab50b5f1010e5e608a3e09e5025f2f0e0`. Provenance retains
+archive and raw-log SHA-256 digests, original line numbers, and unchanged producer
+file hashes. Three actual enclosing parents passed and all five observed counts
+meet their ceilings. This scoped fixture evidence is not full eight-worker gate
+validation of the current source. Shared process seed creation remains
+attributed to its actual first caller: it cannot reliably supply a required per-test aggregate
+budget. The existing helper still checks each constructor and clone locally.
+The policy therefore binds stable private construction, uncached large-fixture
+construction and reader-clone counts rather than inventing a shared-seed owner.
+Continue reducing repeated setup and checking critical-path and total runner
+allocation with comparable ordinary CI evidence. This initial baseline makes
+no end-to-end speedup claim and does not authorize extra benchmark campaigns.
+
+### Exceptions and hosting protection
+
+Proposed exceptions live in `scripts/ci_performance_exceptions.json`. Each entry
+has exactly one `test_id` or package `family`, `maximum_seconds`, nonempty
+`reason` and `owner`, and required ISO-date `expires`. Large parallel-family
+exceptions additionally need `maximum_parallel_descendants` and
+`maximum_parallel_elapsed_work_seconds`. Overlapping selectors are rejected.
+An exception cannot override missing evidence, source/coverage checks, correctness
+failures, or deterministic operation budgets.
+
+An exception used by a run requires explicit approval from a designated human
+maintainer in the trusted-base policy's `maintainers` list. A non-author can
+submit an APPROVED review with `review.commit_id` equal to the live/event PR
+head. The latest submitted review by that maintainer controls; submission time
+orders reviews, with review ID breaking equal-time ties. Unsubmitted PENDING
+reviews are ignored. Dismissed, stale, bot, author and unlisted-user reviews
+do not authorize an exception.
+
+An allowlisted human maintainer, including the PR author, can instead manually
+post a new PR conversation comment whose entire body is exactly
+`/approve-performance-exceptions FULL_HEAD_SHA`. Replace `FULL_HEAD_SHA` with the
+current full 40-character lowercase hexadecimal commit SHA. To revoke, post a
+new comment with exactly `/revoke-performance-exceptions FULL_HEAD_SHA`. These
+commands cover the structured performance exceptions at that revision, including
+their checked-in limits, owner, reason and expiry. GitHub
+[does not permit authors to approve their own PRs](https://docs.github.com/en/pull-requests/how-tos/review-pull-requests/approving-a-pull-request-with-required-reviews),
+so the explicit comment supplies that path. It does not submit a hosting-platform
+review or satisfy any separate required human review.
+
+Only actual PR conversation comments from accounts with GitHub type `User` can
+authorize this path. Commands in review bodies, quoted examples, code fences,
+extra prose or whitespace, bot comments, unlisted users, generic text, pushes,
+labels and reruns grant nothing. A stale-SHA command is ignored. Post the command,
+then rerun CI; comments do not start a new workflow. A push requires new approval
+of the resulting revision. There is no self-referential SHA in the exception file.
+
+The latest current-revision comment command from each maintainer controls,
+ordered by original comment creation time and then comment ID. Post a new
+unedited command to approve or revoke. Unequal `created_at` and `updated_at`
+timestamps identify a detectable edit, which cannot authorize an exception.
+Because GitHub does not expose prior comment bodies, any detectably edited
+comment by that maintainer, even ordinary text, conservatively invalidates their
+earlier approval. This barrier uses original creation time, so editing an older
+comment cannot overtake a newer command. A detectable edit of the latest command
+into generic text cannot revive an earlier approval. The REST snapshot does not
+prove historical bodies or detect edits within the same timestamp resolution;
+the explicit authorized current-head command body remains the approval contract.
+Deleting a comment removes it from the current API inventory; use a new
+revocation command instead of editing or deleting an approval.
+
+For a non-author using both channels, the later of their latest submitted review
+and latest comment decision controls. A newer CHANGES_REQUESTED, COMMENTED or
+DISMISSED review, revocation command or edit barrier cancels that maintainer's
+earlier approval; a later explicit approval can replace it. A nonapproval wins
+equal timestamps across channels, whose IDs belong to different sequences.
+As with ordinary reviews, one eligible maintainer's approval suffices; another
+maintainer's rejection does not invalidate it at this budget gate. Hosting
+review requirements still apply independently.
+
+The gate checks that the live PR is open and matches the event head before
+loading decisions and again before accepting an approval. Both review and comment
+inventories must complete within four pages of 100 rows each (at most 399 rows
+per inventory); an incomplete inventory or duplicate ID fails closed. The
+existing shared 12-request, 20-second API budget remains in force, including
+workflow/job evidence reads. The bounded decision artifact records the exact
+source, trusted policy digest, exception and approving review or comment ID.
+Expired exceptions fail even when unused, so remove them promptly.
+
+The enforcer protects the budget decision **when the required workflow runs**.
+CODEOWNERS text alone does not prevent a PR changing the workflow to omit the
+enforcer. For example, deleting the performance step in
+`.github/workflows/test.yml` can leave the same `linux-race` check name green
+without executing the trusted-base runner. A required status name alone cannot
+detect that change. Hosting rules must independently protect the workflow/enforcer/policy
+and required checks, enforce review by the appropriate maintainers, invalidate
+stale approvals, and ensure the validated merge candidate is the candidate
+merged. A sole maintainer can explicitly approve a performance exception on their
+own PR through the comment protocol; any independent review required by hosting
+rules remains separate. Do not claim tamper-proof enforcement until those hosting
+requirements are configured and verified. An exception remains blocked when no
+eligible explicit approval exists.
+
+### Reviewed baseline admission
+
+After the normal production pair completes successfully, retain its validated
+terminal collector JSON, exact topology, and complete worker artifacts. Prepare
+a review candidate without rerunning tests:
+
+```sh
+python3 -B scripts/admit_ci_performance_baseline.py \
+  --policy scripts/ci_performance_policy.json \
+  --topology /path/to/worker-topology.json \
+  --pipeline /path/to/terminal-pipeline.json \
+  --workers /path/to/shard-evidence \
+  --output /path/to/policy-candidate.json
+```
+
+Review the original authenticated artifact provenance, source/normal-production
+identity, complete compiled/executed inventory, and any allowances before
+committing that candidate. The command does not promote it or grant approval.
+It records real initial observations without fabricating additional sample size.
+Multiple comparable successful observations are required to establish relative
+budgets; updating existing baselines must preserve their reviewed sample
+provenance. The live gate and admission CLI independently recheck catalog version, exact
+source/tree, catalog digest, complete assignment, compiled discovery and selected
+raw parent bodies. Ordinary
+whole-package receipts do not contain separate individual compiled listings;
+review the original authenticated ZIP and digest proof as well. Experimental,
+failed, partial, truncated or source-mismatched inputs are not admitted. No
+scheduled benchmark campaign is required: use ordinary CI traffic.
+
+For an original retained schema-3 compiled catalog, the offline admission
+command additionally requires `--allow-legacy-compiled-catalog`. This enables
+only the old separate listing format; exact source, compiled partition, actual
+selected bodies, physical allocation and full-pipeline checks still apply.
+The live performance gate exposes no legacy option and requires schema 4.
+Do not rewrite original manifests or synthesize a combined-list receipt.
+
+For additional comparable normal runs, repeat
+`--history-sample TOPOLOGY PIPELINE WORKERS`. Each sample undergoes the same
+full-pipeline validation. Physical run/attempt/shard duplicates cannot increase
+its observation count, and removed historical parents are excluded from the
+current inventory. The candidate retains sample identities and pipeline hashes
+so a reviewer can inspect the original evidence. Policy validation rejects absent or
+duplicate sample provenance, unknown/empty measurement cohorts, and per-parent
+observation counts exceeding the retained physical sample inventory.
+
+### Fixture budget qualification limits
+
+The initial baseline pair supplies one physical observation per measured parent.
+It cannot establish p95 or activate the three-observation relative rule. These
+fixture counts do not qualify elapsed time, total runner minutes or scheduling
+weights for the current source. Continue collecting comparable ordinary CI
+traffic; no extra campaign, worker or schedule is required.
+
+## Linux compiled discovery and scheduling advice
+
+The schema-4 parent catalog uses one `go test -race -short -count=1 -json -p 1
+-list '^(Test|Fuzz|Example)'` invocation for CLI and discovered heavy packages.
+This removes one Go invocation and repeated dependency-graph loading per worker;
+it does not reuse a test process across packages, disable default vet, change
+TestMain, or cache a test verdict. Package metadata still comes from the separate
+race-aware `go list`. The combined command serializes package builds as well as
+package execution; cold-cache performance needs observation rather than assuming
+that fewer commands always means a faster worker.
+
+`listing-combined.json` is the primary compiled-list receipt. `listing.json` and
+`listing-parents.json` are projections of its Go events, not separate invocations.
+The coverage verifier requires the primary receipt and exact projected event
+streams. The measured phase is `compiled_listing_race_build_testmain_seconds`;
+do not synthesize independent CLI/heavy durations or add them to this phase.
+Current reconciliation rejects older catalog schemas. The offline timing-hint
+importer explicitly accepts schema 3 for existing historical observations.
+
+Each worker manifest includes `hint_diagnostics`: compiled units without a
+weight, stale hints, and the unchanged 1000ms unknown-unit fallback. These are
+advisory diagnostics, not a test allowlist. New tests and fuzz/example parents
+remain in the exhaustive compiled partition. Refresh weights using
+`generate_go_shard_hints.py` and verified comparable successful samples; review
+the generated provenance and changes rather than copying local macOS timings
+into Linux weights. Fixture metrics are non-additive: do not charge a shared
+seed's first-caller cost to every test or add it again to parent wall time.

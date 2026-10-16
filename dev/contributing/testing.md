@@ -162,25 +162,25 @@ Predicted bin loads are logged separately from measured worker phase durations.
 Git invocation and worker0 vet costs stay separate from weights; the assigned
 Git package stays isolated on whichever worker receives it.
 
-The current hints use the complete four-worker observation from successful
-run38536640565 at tested merge0cd8a00e32255b89dbe22d737c30848bf5c08a7d.
-Artifact IDs, archive digests, exact settings, raw-file hashes and immutable
-historical catalog bytes are pinned; prior requests remain in the attribution.
+The current hints use the complete eight-worker schema 4 observation from successful
+normal Test run38816393618 and paired Levenshtein38816394218, at tested merge
+39c550ebd40bf68e62e8a2cf4e58fd69b3c954dc. Artifact IDs, archive digests, exact
+settings, raw-file hashes and immutable measured catalog bytes are pinned.
 Fetch that exact commit before regeneration. The importer resolves its Git tree
 and regular catalog blob independently, checks the requested catalog bytes, and
 verifies the separate named plain audit body and package PASS against that tree.
 Each sample supplies an explicit `audit_directory`; audit report and raw stream
-hashes are included. This historical import path does not change the live
-verdict's current tracked-source/event guard.
+hashes are included. This import path does not change the live verdict's
+current tracked-source/event guard or permit old schemas in live CI.
 
-The observed owned builtin package already skips the relocated race audit, so
-its elapsed cost is used directly, without another subtraction. Local shards
-without ownership add the verified same-source plain audit body cost only as
-ranking advice; this is not a measurement of race cost. Vet2.214s and isolated
-Git3.012s are observed invocation advice. All four caches restored a previous
-source prefix (exact hit false); CLI listing/build/TestMain took24–26s. These
-samples are neither empty-cache cold nor exact-cache warm controls. The body
-weights rank logical work and do not predict worker elapsed or CPU time.
+The owned builtin package already skips the relocated race audit, so its elapsed
+cost is used directly, without another subtraction. Local shards without ownership
+add the verified same-source plain audit body cost only as ranking advice.
+All eight caches reported a previous source prefix, rather than exact hits or
+empty-cache cold controls. Parent lifecycle sums include parallel descendant
+waits and process fixture effects; they rank work, not elapsed or CPU forecasts.
+The same-workload balance comparison and exact source limitations are recorded
+in [CI timing](../../docs/reference/ci-timing.md#current-schema-4-hint-refresh).
 The PR source-audit job also executes complete native Linux/amd64 plain
 `go vet ./...` sequentially after the actual named audit body. Its separate vet
 receipt pins canonical command, successful exit, raw-log hash, source before

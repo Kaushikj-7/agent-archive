@@ -63,7 +63,14 @@ func PreviewTranscript(ctx context.Context, snapshot agentapi.FileInput, preview
 	out.Name, out.Title, out.Branch = accumulator.Labels.Name, accumulator.Labels.Title, accumulator.Labels.Branch
 	out.NameSource = accumulator.NameSource
 	out.RecordedActivity, out.Gaps = accumulator.Activity, accumulator.Gaps
-	if !out.NameComplete {
+	partialGap := false
+	for _, gap := range out.Gaps {
+		if gap.Code == "preview_partial" {
+			out.NameComplete = false
+			partialGap = true
+		}
+	}
+	if !out.NameComplete && !partialGap {
 		out.Gaps = append(out.Gaps, archive.CaptureGap{Code: "preview_partial"})
 	}
 	return out, nil

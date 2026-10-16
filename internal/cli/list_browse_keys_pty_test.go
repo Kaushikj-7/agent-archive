@@ -343,3 +343,65 @@ finally:
     signal.signal(signal.SIGHUP, signal.SIG_IGN)
     os.close(master); os.close(slave)
 `
+
+// This child is only launched under a pseudo-terminal by the test below:
+// the list browser, two sessions at a time, reading keys from a real
+// terminal.
+func TestBrowserOlderTerminalChild(t *testing.T) {
+	t.Parallel()
+	if os.Getenv("ARCHIVE_KEYS_TEST_CHILD") != "1" {
+		t.Skip("subprocess helper")
+	}
+	f, _ := flakyArchive(t)
+	env := f.env
+	env.openKeys = terminalKeys
+	// The real terminal, its size, and signals.
+	env.IsTerminal, env.TerminalSize, env.Interrupts = nil, nil, nil
+	env.LookupEnv = func(string) (string, bool) { return "", false }
+	if code := Run([]string{"list", "--limit", "2"}, os.Stdin, os.Stdout, os.Stderr, env); code != 0 {
+		t.Fatalf("code %d", code)
+	}
+}
+
+// On a real terminal, ↓ past the last row loaded loads older sessions and
+// highlights the first of them, with no other key; the position loses its
+// "+" once every session is loaded.
+func TestBrowserScrollsPastTheEndIntoOlderSessionsOnATerminal(t *testing.T) {
+	t.Parallel()
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("PTY harness requires Python 3")
+	}
+	binary, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out, err := runPTYScript(t, python, olderPTYScript, binary, "older", "TestBrowserOlderTerminalChild"); err != nil {
+		t.Errorf("PTY test: %v %s", err, out)
+	}
+}
+
+// olderPTYScript moves down to the second (last loaded) row, then once
+// more, and waits for the third row highlighted under the full count.
+const olderPTYScript = ptyKeysHarness + `try:
+    first = wait_for('1–2 of 2+'.encode())
+    wait_until(keys_on, 'key mode not on at the list')
+    os.write(master, b'\x1b[B')
+    second = wait_for('▸ 2'.encode(), first)
+    wait_for(b'Number or ID to show', second)
+    assert b'of 4' not in output[first:], 'older sessions loaded before the end'
+    os.write(master, b'\x1b[B')
+    wait_for('▸ 3'.encode(), second)
+    shown = wait_for('1–4 of 4'.encode(), second)
+    wait_for(b'Number or ID to show', shown)
+    assert output.find(b'of 4+', second) < 0, 'more sessions said to load after the last'
+    os.write(master, b'q')
+    finish(0)
+    assert b'\x1b[?1049l' in output, 'alternate screen not left'
+    assert restored(), ('terminal modes not restored', hex(before[3]), hex(termios.tcgetattr(slave)[3]))
+finally:
+    if p.poll() is None: p.kill(); p.wait()
+    # Closing the pty hangs up its session, this script.
+    signal.signal(signal.SIGHUP, signal.SIG_IGN)
+    os.close(master); os.close(slave)
+`

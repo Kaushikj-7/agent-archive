@@ -10,6 +10,52 @@ follow [Semantic Versioning](https://semver.org/).
   database checkpoints instead of repeatedly reporting that their source changed.
   Fresh private snapshots retain the existing time, memory, and source checks.
 
+- An authorized human maintainer can explicitly approve performance-budget
+  exceptions on their own PR with a current-commit comment command. Explicit
+  revocation and later review decisions control that approval; ordinary CI
+  correctness, coverage and hard operation budgets still apply.
+
+- `agent-archive list` shows its progress while it loads: how many sessions
+  it has scanned, then how many it has loaded of those it will show.
+  `agent-archive handoff` shows "Preparing handoff…" after you pick a session,
+  until its first question.
+
+- `agent-archive --help` is shorter: it shows the commands for everyday use
+  (setup, status, sync, pause, resume, list, search, show, stats, backfill,
+  handoff).
+  The rest (machines, recover, feedback, migrate, eval, uninstall, purge) are
+  listed by `agent-archive help advanced`; they work as before, and
+  `agent-archive help COMMAND` still shows any command's help.
+
+- The session browser (`list`, bare `show`, `handoff`, and content `search` on
+  a terminal) loads older sessions as you scroll: moving down past the last row
+  (↓ or the wheel on it, PgDn with it on screen, or End on it) loads the next
+  batch and moves on into it, with no `o` to press first (`o` still works).
+  The footer's count ends in `+` while more can load (`1–14 of 50+`), says
+  `No older sessions.` when a load finds none (moving past that end then loads
+  nothing more until the list changes), shows `Loading …` in place of the
+  footer line instead of under the prompt, and names `PgUp/PgDn page`.
+  Reading lines is unchanged.
+
+- Browse supported ordinary Muse roots before setup with local `handoff`,
+  including exact IDs/prefixes, project scope, older preview batches and existing
+  destinations. Discovery uses one effective XDG data home. Previews show safe
+  recorded automatic names/activity or IDs; the selected file receives complete
+  strict validation. Muse capture, native show/search and destination launch
+  remain unavailable.
+
+- Read complete supported Muse exec/MSP roots with `handoff --file PATH
+  --harness muse`, including safe own prompts and committed assistant text,
+  JSON/Markdown output and handoff into an existing supported agent. Creation
+  time uses the validated reserved start. Accounting, tools, model switches,
+  children, backfill, capture and Muse destination launch
+  remain unavailable. Handoff also now respects Codex's recorded native start.
+
+- Keep unavailable Muse tool, file and Git measurements absent in derived
+  metadata and full evaluation exports while preserving prompt/message counts.
+  Cursor tool calls without recorded results no longer claim zero results;
+  unstructured exports omit unavailable edited-file lists.
+
 - Commands run inside Muse detect its session environment to avoid interactive
   prompts and pagers. Handoff into supported agents removes inherited Muse
   session variables. This adds presence detection only; Muse capture, current
@@ -105,8 +151,11 @@ follow [Semantic Versioning](https://semver.org/).
   from their turn. A waiting session still not read after 24 hours is now
   reported as failed even when the pass leaves it unopened, rather than
   staying queued with no error. From then on it is retried with backoff
-  instead of on every pass: 1 hour after it failed, then 2, then 4, the
-  wait doubling up to a week, and never given up. A pass with a retry due
+  instead of on every pass. Retry times are anchored to when the session
+  first started waiting: after the 24-hour allowance expires, attempts
+  fall 1, 3, then 7 hours later, with gaps doubling up to a week. A late
+  failure uses the next scheduled time; it does not start a fresh one-hour
+  wait. Retries are never given up. A pass with a retry due
   reads it first and, if it still cannot be read, reports it failed again;
   a pass with none leaves it unopened, so it no longer uses the allowance
   on every pass, and does not report it again (`sync` counts it as "held

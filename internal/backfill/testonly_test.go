@@ -19,7 +19,7 @@ func CursorStateDatabase(home string) string {
 // CursorDatabaseReader is CursorDatabaseReaderFor for the state.vscdb under
 // home on this machine.
 func CursorDatabaseReader(home string) func(context.Context) (CursorDatabaseResult, error) {
-	return CursorDatabaseReaderFor(Environment{Sources: testSources, Discovery: builtin.NewBuiltins(), DatabaseCatalogs: builtin.NewBuiltins(), NativePaths: builtin.NewBuiltins(), Worktrees: builtin.NewBuiltins(), Workspaces: builtin.NewBuiltins(), Children: builtin.NewBuiltins(), Imports: builtin.NewBuiltins(), Home: home})
+	return CursorDatabaseReaderFor(Environment{Sources: testSources, Discovery: testImportDiscovery(), DatabaseCatalogs: builtin.NewBuiltins(), NativePaths: builtin.NewBuiltins(), Worktrees: builtin.NewBuiltins(), Workspaces: builtin.NewBuiltins(), Children: builtin.NewBuiltins(), Imports: builtin.NewBuiltins(), Home: home})
 }
 
 // cursorSlug is the folder name Cursor gives a workspace under

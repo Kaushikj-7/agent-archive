@@ -320,6 +320,7 @@ func (s *S3Store) List(ctx context.Context, relativePrefix string) ([]Object, er
 		if pageErr != nil {
 			return nil, pageErr
 		}
+		start := len(objects)
 		for _, item := range page.Contents {
 			if item.Key == nil {
 				continue
@@ -331,6 +332,7 @@ func (s *S3Store) List(ctx context.Context, relativePrefix string) ([]Object, er
 				LastModified: aws.ToTime(item.LastModified),
 			})
 		}
+		ObserveListPage(ctx, objects[start:])
 	}
 	return objects, nil
 }
@@ -403,6 +405,7 @@ func (s *S3Store) ListRange(ctx context.Context, relativePrefix, after, through 
 		if pageErr != nil {
 			return nil, pageErr
 		}
+		start := len(objects)
 		for _, item := range page.Contents {
 			if item.Key == nil {
 				continue
@@ -412,6 +415,7 @@ func (s *S3Store) ListRange(ctx context.Context, relativePrefix, after, through 
 				continue
 			}
 			if through != "" && key > through {
+				ObserveListPage(ctx, objects[start:])
 				return objects, nil
 			}
 			objects = append(objects, Object{
@@ -421,6 +425,7 @@ func (s *S3Store) ListRange(ctx context.Context, relativePrefix, after, through 
 				LastModified: aws.ToTime(item.LastModified),
 			})
 		}
+		ObserveListPage(ctx, objects[start:])
 		if !aws.ToBool(page.IsTruncated) {
 			return objects, nil
 		}

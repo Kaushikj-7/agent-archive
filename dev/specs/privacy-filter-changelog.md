@@ -5,6 +5,24 @@ rules, as a whole, are in the [filter specification](privacy-filter.md);
 version numbers and bump rules are in [versions](../maintainers/versions.md). Each archived session
 records the filter version that produced it (`filter_version`).
 
+## Source filter version 19
+
+Adapter 0.19.0 accompanies the new Muse parser 0.1.0.
+
+- Explicit local Muse files require a complete supported ordinary exec/MSP root,
+  exact initial permission checksum and coherent reserved start/workspace.
+  Permission profiles, native child JSON, checksums, provider/context bodies and
+  hook diagnostics are validation inputs only and are never retained.
+- `muse-jsonl` v1 preserves bounded envelope/position and typed conversation joins,
+  minimal permission/startup authority, safe own text and names. All retained
+  strings pass shared privacy policy; changed identity refuses the file.
+  Fixed privacy gaps disclose redaction, hidden-context removal and truncation,
+  and survive retained-only privacy refresh without native strings or details.
+- Known optional events retain content-free provenance. Unknown authority,
+  forks, children, checkpoints, rewrites and incomplete startup refuse the whole
+  file. Usage, tools, model switches and child coverage remain unavailable.
+  Registered collection refuses Muse before native reading/filtering/publication.
+
 ## Source filter version 18
 
 Adapter 0.18.0 and Codex parser 0.25.0 accompany this change.
