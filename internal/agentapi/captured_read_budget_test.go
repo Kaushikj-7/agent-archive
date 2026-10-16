@@ -92,7 +92,7 @@ func TestCapturedReadBudgetAttributesSharedPressureToOriginalScope(t *testing.T)
 }
 
 func TestCapturedReadBudgetRefusesUnownedFacade(t *testing.T) {
-	for _, reservation := range []*NativeReadReservation{nil, {}, (*NativeReadBudget)(nil).Reservation()} {
+	for _, reservation := range []*NativeReadReservation{nil, {}, (*NativeReadBudget)(nil).Reservation(), NewNativeReadBudget(100).Reservation()} {
 		if b, err := reservation.CapturedBudget(); err == nil || b != nil {
 			t.Fatal("unowned facade obtained unlimited budget")
 		}
