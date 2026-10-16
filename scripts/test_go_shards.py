@@ -461,7 +461,7 @@ else:
  for package in [arg for arg in args if arg in packages]:
   if not packages[package]:
    emit('output',package,Output='? '+package+' [no test files]\n');emit('skip',package)
-  else:emit('pass',package,Test='TestGit');emit('pass',package)
+  else:emit('run',package,Test='TestGit');emit('pass',package,Test='TestGit');emit('pass',package)
 ''')
             fake.chmod(0o755)
             with mock.patch.object(runner, 'ROOT', root), mock.patch.object(runner.os, 'sched_getaffinity', return_value={0,1,2,3}, create=True), mock.patch('run_ci_tier.full_race.source_proof',return_value={'source':'a'*40,'tree':'b'*40}), mock.patch.object(runner.subprocess, 'check_output', side_effect=lambda command,**kw: json.dumps({k:synthetic_vet_context()['go'][k] for k in __import__('go_parent_shards').CONFIG_FIELDS}) if command[:2]==['go','env'] else 'a'*40+'\n'), mock.patch.dict(os.environ, {'PATH': str(bindir)+os.pathsep+os.environ['PATH'], 'GITHUB_SHA': 'a'*40, 'TASK_COMMAND_LOG': str(command_log)}), contextlib.redirect_stdout(io.StringIO()):
