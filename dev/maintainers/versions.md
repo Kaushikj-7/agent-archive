@@ -121,6 +121,12 @@ floors and consent semantics. Every save and setup rollback keeps generation
 protection after it is enabled, including after content expires. Earlier
 writers refuse this fence rather than ignore frozen historical generations.
 
+New recovery journals and completed receipts use generation protocol version 2,
+with mandatory exact prior-metadata and complete-source-set SHA-256 digests.
+Version 1 retains its original replay semantics; it is never upgraded by
+inferring missing authority. Earlier binaries refuse version 2 in replay and
+completed-successor routing. This does not allocate another configuration floor.
+
 Recovery adds optional `previous_generation_id` provenance to source headers
 and metadata and a persistent `recovered_generation` coverage gap to successor
 bundles. This relation is copied from registration by

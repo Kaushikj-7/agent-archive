@@ -46,14 +46,16 @@ type generationNode struct {
 }
 
 type generationRecovery struct {
-	Version      int                          `json:"version"`
-	Key          agentmeta.SessionKey         `json:"key"`
-	Previous     string                       `json:"previous"`
-	Next         string                       `json:"next"`
-	Complete     bool                         `json:"complete,omitempty"`
-	Registration *archive.SessionRegistration `json:"registration,omitempty"`
-	Pending      *PendingPublication          `json:"pending,omitempty"`
-	Request      *Request                     `json:"request,omitempty"`
+	PriorMetadataSHA256  string                       `json:"prior_metadata_sha256,omitempty"`
+	PriorSourceSetSHA256 string                       `json:"prior_source_set_sha256,omitempty"`
+	Version              int                          `json:"version"`
+	Key                  agentmeta.SessionKey         `json:"key"`
+	Previous             string                       `json:"previous"`
+	Next                 string                       `json:"next"`
+	Complete             bool                         `json:"complete,omitempty"`
+	Registration         *archive.SessionRegistration `json:"registration,omitempty"`
+	Pending              *PendingPublication          `json:"pending,omitempty"`
+	Request              *Request                     `json:"request,omitempty"`
 }
 
 func (s *Store) generationHeadPath(key agentmeta.SessionKey) string {
@@ -102,7 +104,7 @@ func (s *Store) GenerationSuccessor(id string) (string, bool, error) {
 	if generationReadRefusal(err) {
 		return "", false, err
 	}
-	if err != nil || found && (r.Version != 1 || r.Previous != id || !safeFileComponent(r.Next) || r.Next == id || r.Key.Validate() != nil) {
+	if err != nil || found && (!validGenerationRecoveryVersion(r) || r.Previous != id || !safeFileComponent(r.Next) || r.Next == id || r.Key.Validate() != nil) {
 		return "", false, ErrSessionIndexRecoveryRequired
 	}
 	return r.Next, found, nil
@@ -164,7 +166,11 @@ func (s *Store) beginGenerationRecoveryGuard(g config.DurableStorageGuard, id st
 	request := Request{ArchiveSessionID: next, Token: token, Reasons: []string{"generation-recovery"}, RequestedAt: at}
 	pending.RequestToken = token
 	wirePending := publicationWire(pending)
-	r := generationRecovery{Version: 1, Key: key, Previous: id, Next: next, Registration: &reg, Pending: &wirePending, Request: &request}
+	priorMetadata, priorSources, err := s.generationCommittedAuthority(old)
+	if err != nil {
+		return "", err
+	}
+	r := generationRecovery{Version: 2, PriorMetadataSHA256: priorMetadata, PriorSourceSetSHA256: priorSources, Key: key, Previous: id, Next: next, Registration: &reg, Pending: &wirePending, Request: &request}
 	if err := s.writeDurableGuard(s.generationReadContext(), g, filepath.Join(generationRecoveryDir, id+".json"), r); err != nil {
 		return "", err
 	}
@@ -339,7 +345,7 @@ func (s *Store) resumeGenerationRecoveryFile(ctx context.Context, id string, bud
 	if generationReadRefusal(err) {
 		return err
 	}
-	if err != nil || !found || r.Version != 1 || r.Previous != id || !safeFileComponent(r.Next) || r.Key.Validate() != nil {
+	if err != nil || !found || !validGenerationRecoveryVersion(r) || r.Previous != id || !safeFileComponent(r.Next) || r.Key.Validate() != nil {
 		return ErrSessionIndexRecoveryRequired
 	}
 	if r.Complete {
@@ -370,7 +376,7 @@ func (s *Store) resumeGenerationRecovery(g config.DurableStorageGuard, ctx conte
 	if generationReadRefusal(err) {
 		return err
 	}
-	if err != nil || !found || r.Version != 1 || r.Previous != id || !safeFileComponent(r.Next) || r.Key.Validate() != nil {
+	if err != nil || !found || !validGenerationRecoveryVersion(r) || r.Previous != id || !safeFileComponent(r.Next) || r.Key.Validate() != nil {
 		return ErrSessionIndexRecoveryRequired
 	}
 	if r.Complete {
@@ -405,6 +411,15 @@ func (s *Store) resumeGenerationRecovery(g config.DurableStorageGuard, ctx conte
 	}
 	if validationErr != nil {
 		return ErrSessionIndexRecoveryRequired
+	}
+	if r.Version == 2 {
+		priorMetadata, priorSources, err := s.generationCommittedAuthority(old)
+		if generationReadRefusal(err) {
+			return err
+		}
+		if err != nil || priorMetadata != r.PriorMetadataSHA256 || priorSources != r.PriorSourceSetSHA256 {
+			return ErrSessionIndexRecoveryRequired
+		}
 	}
 	if err := s.freezeGenerationRecovery(r); err != nil {
 		return fmt.Errorf("freeze recovery predecessor: %w", err)
@@ -609,7 +624,7 @@ func (s *Store) generationRegistrationAllowed(key agentmeta.SessionKey, reg arch
 		data, readErr := io.ReadAll(io.LimitReader(file, 4097))
 		_ = file.Close()
 		var receipt generationRecovery
-		if readErr != nil || len(data) > 4096 || json.Unmarshal(data, &receipt) != nil || receipt.Version != 1 || !receipt.Complete || receipt.Key != key || receipt.Previous != previous || !safeFileComponent(receipt.Next) || receipt.Next == previous {
+		if readErr != nil || len(data) > 4096 || json.Unmarshal(data, &receipt) != nil || !validGenerationRecoveryVersion(receipt) || !receipt.Complete || receipt.Key != key || receipt.Previous != previous || !safeFileComponent(receipt.Next) || receipt.Next == previous {
 			return ErrSessionIndexRecoveryRequired
 		}
 		if previous == reg.PreviousGenerationID && receipt.Next != reg.ArchiveSessionID {
@@ -689,7 +704,7 @@ func (s *Store) generationAncestry(h generationHead) (map[string]generationNode,
 		ancestry[id] = n
 		if n.Previous != "" {
 			r, present, err := readJSON[generationRecovery](s.generationRecoveryPath(n.Previous))
-			if err != nil || !present || r.Version != 1 || !r.Complete || r.Key != h.Key || r.Previous != n.Previous || r.Next != id {
+			if err != nil || !present || !validGenerationRecoveryVersion(r) || !r.Complete || r.Key != h.Key || r.Previous != n.Previous || r.Next != id {
 				return nil, ErrSessionIdentityConflict
 			}
 			id = n.Previous
@@ -988,4 +1003,43 @@ func generationMetadataMatches(reg archive.SessionRegistration, pending PendingP
 
 func generationReadRefusal(err error) bool {
 	return errors.Is(err, agentapi.ErrReadBudget) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}
+
+// Version one retains its original replay semantics. Version two is never
+// inferred from an older journal: both prior-selection digests are mandatory.
+func validGenerationRecoveryVersion(r generationRecovery) bool {
+	switch r.Version {
+	case 1:
+		return r.PriorMetadataSHA256 == "" && r.PriorSourceSetSHA256 == ""
+	case 2:
+		return readyDigestValid(r.PriorMetadataSHA256) && readyDigestValid(r.PriorSourceSetSHA256)
+	default:
+		return false
+	}
+}
+
+func (s *Store) generationCommittedAuthority(reg archive.SessionRegistration) (string, string, error) {
+	published, err := s.LoadPublishedState(reg.ArchiveSessionID)
+	if err != nil {
+		return "", "", err
+	}
+	prior := published.PublicationPredecessor()
+	if prior.State != PredecessorPresent {
+		return "", "", errors.New("generation recovery requires exact prior publication authority")
+	}
+	reservation := s.readReservation()
+	scratch := 3*int64(len(prior.Body)) + 32<<10
+	if !reservation.Reserve(scratch) {
+		return "", "", errStateBudget
+	}
+	defer reservation.Release(scratch)
+	refs, err := published.CommittedSources()
+	if err != nil {
+		return "", "", err
+	}
+	digest, err := s.readyDigest(s.generationReadContext(), refs)
+	if err != nil {
+		return "", "", err
+	}
+	return publicationSHA256(prior.Body), digest, nil
 }

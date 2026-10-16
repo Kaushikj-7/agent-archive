@@ -321,6 +321,15 @@ the permanent source-set-publication-v17 marker, preserving prior history,
 storage, import, search and selection protections.
 
 Retained maintenance carries the complete source set and original captures.
+New generation-recovery journals and completed receipts use version 2. Before
+freezing routing, they bind the exact prior cached metadata bytes and every
+committed source reference with separate SHA-256 digests. Replay refuses a
+changed predecessor selection, missing digests or an unsupported journal version.
+Version 1 journals keep their original replay semantics and are not promoted or
+given inferred digests. Older binaries refuse version 2 both during recovery and
+when resolving a completed successor. A predecessor without exact cached
+publication authority must be reconciled before a new recovery can begin.
+
 Frozen generations use retained bytes and recorded Git facts. Retention uses the
 latest meaningful archive capture across the set, with the existing clock clamp;
 parser, link, privacy and representation work do not manufacture activity. Cleanup
