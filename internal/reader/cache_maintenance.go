@@ -105,6 +105,8 @@ func (c *MetadataCache) maintenanceState() CacheMaintenance {
 }
 
 func (c *MetadataCache) maintainDirectory(dir string) {
+	span := trace.Start("cache eviction")
+	defer span.End()
 	info, err := os.Lstat(dir)
 	if err != nil || !info.IsDir() || info.Mode().Perm() != 0o700 {
 		return
@@ -130,9 +132,7 @@ func (c *MetadataCache) maintainDirectory(dir string) {
 	for _, entry := range entries {
 		if cacheValidatorFile(entry) && entry.Name() != latest {
 			if os.Remove(filepath.Join(dir, entry.Name())) == nil {
-				span := trace.Start("cache eviction")
 				span.Count("evictions", 1)
-				span.End()
 			}
 		}
 	}
@@ -146,18 +146,20 @@ func removeStaleCacheTemp(dir string, entry os.DirEntry) {
 	if !entry.Type().IsRegular() || !strings.HasPrefix(entry.Name(), ".pending-") {
 		return
 	}
+	span := trace.Start("cache eviction")
+	defer span.End()
 	info, err := entry.Info()
 	if err == nil && info.ModTime().Before(time.Now().Add(-staleCacheTempAge)) {
 		if os.Remove(filepath.Join(dir, entry.Name())) == nil {
-			span := trace.Start("cache eviction")
 			span.Count("evictions", 1)
-			span.End()
 		}
 	}
 }
 
 // pruneVersions only visits a key when new validated bytes have been written.
 func (c *MetadataCache) pruneVersions(dir, current string) {
+	span := trace.Start("cache eviction")
+	defer span.End()
 	entries, err := c.directoryEntries(dir)
 	if err != nil {
 		return
@@ -165,9 +167,7 @@ func (c *MetadataCache) pruneVersions(dir, current string) {
 	for _, entry := range entries {
 		if entry.Name() != current && cacheValidatorFile(entry) {
 			if os.Remove(filepath.Join(dir, entry.Name())) == nil {
-				span := trace.Start("cache eviction")
 				span.Count("evictions", 1)
-				span.End()
 			}
 		}
 	}
