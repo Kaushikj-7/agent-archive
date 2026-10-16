@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,13 +14,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/agents/builtin"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/sourcefacts"
+	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
+	"github.com/wangjohn/agent-archive/internal/testutil/recoverytest"
 )
 
 func compatibilityRollout(t *testing.T, root, project, fixtureName, version string, n int, alter func(map[string]any, map[string]any)) (string, string) {
@@ -70,9 +74,14 @@ func TestCompatibleFormatsPublishAndReadBackAmongRejectedRecords(t *testing.T) {
 	store, cfg, at, root := fixture(t)
 	versions := []string{"0.150.0", "0.155.0", "0.155.0-alpha.9.2", "0.159.3", "0.160.0", "0.999.0-alpha.1"}
 	fixtures := []string{"codex-150-absent-history.jsonl", "codex-155-legacy.jsonl", "codex-155-alpha-paginated.jsonl"}
+	wanted := map[agentmeta.SessionKey]string{}
 	for i, version := range versions {
-		compatibilityRollout(t, root, cfg.Archive.Projects[0].Root, fixtures[i%len(fixtures)], version, i+1, nil)
+		id, _ := compatibilityRollout(t, root, cfg.Archive.Projects[0].Root, fixtures[i%len(fixtures)], version, i+1, nil)
+		wanted[sessionKey("codex", id)] = version
 	}
+	rejected := map[string]string{}
+	rejectedKeys := []agentmeta.SessionKey{}
+	rejectionCodes := []string{"unsupported_history", "unsupported_history", "unsupported_producer", "invalid_relationship", "unsupported_execution", "inherited_history", "inherited_history"}
 	for i, alter := range []func(map[string]any, map[string]any){
 		func(m, _ map[string]any) { m["history_mode"] = "compressed" },
 		func(m, _ map[string]any) { m["history_mode"] = "referenced" },
@@ -82,14 +91,82 @@ func TestCompatibleFormatsPublishAndReadBackAmongRejectedRecords(t *testing.T) {
 		func(_, task map[string]any) { task["turn_id"] = "external-import-turn-1" },
 		func(_, task map[string]any) { delete(task, "started_at") },
 	} {
-		compatibilityRollout(t, root, cfg.Archive.Projects[0].Root, fixtures[2], "0.999.0", 100+i, alter)
+		id, path := compatibilityRollout(t, root, cfg.Archive.Projects[0].Root, fixtures[2], "0.999.0", 100+i, alter)
+		rejected[path] = rejectionCodes[i]
+		rejectedKeys = append(rejectedKeys, sessionKey("codex", id))
+		if _, found, err := store.ArchiveSessionID(sessionKey("codex", id)); err != nil || found {
+			t.Fatal("rejected fixture already owns an identity", err)
+		}
 	}
-	h, err := runWithCensus(context.Background(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(2 * time.Minute) }}, registeredAdapters())
-	if err != nil || h.Registered != len(versions) || !h.Supported || h.Outcomes["unsupported_history"] != 2 || h.Outcomes["unsupported_producer"] != 1 || h.Outcomes["inherited_history"] != 2 || h.Outcomes["unsupported_execution"] != 1 || h.Outcomes["invalid_relationship"] != 1 {
-		t.Fatalf("mixed scan: %+v %v", h, err)
+	// Health counts observations per pass, including revisits. Check durable
+	// identities and classifications instead of summing those repeated counts.
+	var h Health
+	var checkpoint catalog
+	formats := map[string]bool{}
+	observedOutcomes := map[string]bool{}
+	supported := false
+	for pass := range 12 {
+		var err error
+		h, err = runWithAdapters(t.Context(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(2 * time.Minute) }}, registeredAdapters())
+		if err != nil {
+			t.Fatalf("mixed scan pass %d: %+v %v", pass, h, err)
+		}
+		if h.Outcomes["admission_retry"] != 0 {
+			if err := recoverytest.Exhaust(t.Context(), store, state.SessionIndexRecoverySlice, false); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for outcome, count := range h.Outcomes {
+			if count > 0 {
+				observedOutcomes[outcome] = true
+			}
+		}
+		supported = supported || h.Supported
+		for _, format := range h.Formats {
+			formats[format.Version] = true
+		}
+		if err := local.Read(filepath.Join(store.Home(), "discovery-catalog.json"), &checkpoint); err != nil {
+			t.Fatal(err)
+		}
+		regs, err := store.LoadRegistrations()
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("mixed scan pass %d: pending=%t registrations=%d cached=%d", pass+1, h.Pending, len(regs), len(checkpoint.Cache))
+		if !h.Pending && len(regs) == len(wanted) && len(checkpoint.Cache) == len(wanted)+len(rejected) {
+			break
+		}
+		if pass == 11 {
+			t.Fatalf("mixed scan did not converge: %+v registrations=%d cached=%d", h, len(regs), len(checkpoint.Cache))
+		}
 	}
-	if len(h.Formats) != len(versions) {
-		t.Fatalf("lost session version diagnostics: %+v", h.Formats)
+	if !supported || len(formats) != len(versions) {
+		t.Fatalf("lost session version diagnostics: %+v %+v", h, formats)
+	}
+	for _, version := range versions {
+		if !formats[version] {
+			t.Fatalf("missing version diagnostic %q", version)
+		}
+	}
+	for _, expected := range rejectionCodes {
+		if !observedOutcomes[expected] {
+			t.Fatalf("missing rejection diagnostic %q: %+v", expected, observedOutcomes)
+		}
+	}
+	for path, expected := range rejected {
+		entry, found := checkpoint.Cache[path]
+		actual := string(entry.Observation.Outcome)
+		if entry.Observation.Outcome == outcomeUsable && !registeredAdapters()[0].Supported(entry.Observation.Candidate) {
+			actual = "unsupported_producer"
+		}
+		if !found || actual != expected {
+			t.Fatalf("rejection %s: got %q, want %q", filepath.Base(path), actual, expected)
+		}
+	}
+	for _, key := range rejectedKeys {
+		if _, found, err := store.ArchiveSessionID(key); err != nil || found {
+			t.Fatalf("rejected session reserved identity %+v: %v", key, err)
+		}
 	}
 	objectStore := storagetest.NewMemoryStore()
 	result, err := collector.Run(context.Background(), store, objectStore, collector.Options{Sources: builtin.NewBuiltins(), MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: func() time.Time { return at.Add(3 * time.Minute) }})
@@ -100,7 +177,13 @@ func TestCompatibleFormatsPublishAndReadBackAmongRejectedRecords(t *testing.T) {
 	if err != nil || len(regs) != len(versions) {
 		t.Fatalf("registrations: %d %v", len(regs), err)
 	}
+	seen := map[agentmeta.SessionKey]bool{}
 	for _, reg := range regs {
+		key := sessionKey(reg.Harness.Name, reg.NativeSessionID)
+		if version, found := wanted[key]; !found || seen[key] || version != reg.Harness.Version {
+			t.Fatalf("unexpected or duplicate admission: %+v", reg)
+		}
+		seen[key] = true
 		if reg.Origin != archive.SessionOriginDiscovery || reg.Harness.Version == "" || reg.DestinationID != cfg.DestinationID() {
 			t.Fatal("admission provenance lost")
 		}
@@ -116,9 +199,15 @@ func TestCompatibleFormatsPublishAndReadBackAmongRejectedRecords(t *testing.T) {
 		if err := json.Unmarshal(metadata, &meta); err != nil {
 			t.Fatal(err)
 		}
+		if meta.SessionID != reg.ArchiveSessionID || meta.NativeSessionID != reg.NativeSessionID || meta.Harness.Name != reg.Harness.Name || meta.Harness.Version != reg.Harness.Version {
+			t.Fatalf("publication identity mismatch: %+v", meta)
+		}
 		source, err := objectStore.Get(context.Background(), meta.SourceBundle.Key)
 		if err != nil {
 			t.Fatal(err)
+		}
+		if len(source) != meta.SourceBundle.CompressedBytes || fmt.Sprintf("%x", sha256.Sum256(source)) != meta.SourceBundle.SHA256 {
+			t.Fatal("published source does not match its verified reference")
 		}
 		validatePublishedDiscovery(t, metadata, source)
 		reader, err := gzip.NewReader(bytes.NewReader(source))
@@ -135,6 +224,10 @@ func TestCompatibleFormatsPublishAndReadBackAmongRejectedRecords(t *testing.T) {
 	h, err = runWithCensus(context.Background(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(4 * time.Minute) }}, registeredAdapters())
 	if err != nil || h.Registered != 0 {
 		t.Fatalf("duplicate admission: %+v %v", h, err)
+	}
+	regs, err = store.LoadRegistrations()
+	if err != nil || len(regs) != len(wanted) {
+		t.Fatalf("repeated scan changed registrations: %d %v", len(regs), err)
 	}
 	for _, name := range []string{"discovery-catalog.json", "discovery-health.json"} {
 		raw, err := os.ReadFile(filepath.Join(store.Home(), name))

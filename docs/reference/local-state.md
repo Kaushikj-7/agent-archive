@@ -97,7 +97,9 @@ and left in place.
 | `imports/<id>.json` | backfill | One per import. See [backfill](../guides/backfill.md#import-files). |
 | `storage-health.json` | cli | The last storage access check. |
 | `capture-diagnostics.json`, `diagnostics.lock` | cli | Content-free records of sessions a hook declined, for `status`. |
-| `admission-intents/`, `admission-intents.lock` | cli | Private, bounded retry records for proven first starts and Cursor response/stop transcript paths. The collector revalidates and replays them. They include a native session ID, destination ID, and transcript path, but no conversation text or raw hook payload. A Cursor follow-up alone cannot admit a session. |
+| `admission-intents/`, `admission-intents.lock` | cli | Private, bounded retry records for proven first starts, Cursor response/stop transcript paths, and non-Codex subagent completions (child ID, transcript path, sanitized type). The collector revalidates and replays them. They include a native session ID, destination ID, and transcript path, but no conversation text or raw hook payload. A Cursor follow-up alone cannot admit a session. |
+| `search/<namespace-digest>/content.sqlite` (and WAL/SHM) | search | Private disposable local conversation index and bounded reconciliation/recheck state. Created only by explicit refresh or an opted-in worker. Hints open only current existing databases; purge removes the `search/` directory under the home lifecycle lock. |
+| `search-worker.lock`, `search.log`, `search-error.log` | cli | Independent search lifecycle fence and scheduler output. Setup, pause, destination/credential mutation and teardown acquire this lock after collector/hooks; worker and hints acquire only this lock. |
 | `collector.log`, `collector-error.log` | cli | The background collector's output. The error log is trimmed in place to its most recent part once it grows past a limit. |
 | `collector-lock.json` | cli | Which command holds `collector.lock`, its process ID, and since when; `status` uses it to report stuck collection. |
 | `cache/` | reader | A disposable cache of metadata sidecars for `list`, `show`, `stats`, and `handoff`, which also sets how a large listing is split into parallel ranges. Safe to delete. Cache opening skips session directories; each command maintains at most 64, resuming from a private checkpoint. Fresh listings still evict deleted keys. |
@@ -185,7 +187,7 @@ encoding scratch, and local pending/published input. It charges bytes held in
 memory, never the length of a transcript read through its descriptor: a
 rollout is streamed a record at a time, so its charge follows its longest
 record and what the filter keeps. Each session's scan may hold at most
-160 MiB of it; the other 96 MiB holds what the pass keeps between sessions (cached rollout headers and prefixes, Codex coverage and catalog), so a session within its share always fits and one large session cannot leave the others without room. A
+160 MiB of it; the other 96 MiB holds what the pass keeps between sessions (cached rollout headers and prefixes, Codex rollout observations, listings and catalog), so a session within its share always fits and one large session cannot leave the others without room. A
 session that needs more than that is recorded once as a `transcript_too_large`
 gap naming the per-session read limit; one refused only because other owners
 held the ledger is deferred (`read_budget`) to a later pass. Reservations precede the
@@ -225,11 +227,11 @@ expiry retires generation routing before removing content, then prunes packed
 identities after request locks release. Retired generations use an explicit
 absence override rather than redirecting native hooks to a retained ancestor.
 
-The scheduled collector primes qualified history requests from accepted existing registrations before opening native snapshots. The CLI advances one shared inventory observation and validation slice with the same lookup deadline and read budget. That slice cannot admit owners; scheduled IDs never replace provider identity, confinement, project or consent checks. Preview planning remains read-only.
+The scheduled collector finds each Codex thread's lineage when it reads the thread: the rollout Codex's thread index names, then each rollout its history base names, found by ID in the day directories its UUIDv7 time selects and in archived_sessions/. No inventory of the whole native home is needed first. Lookup IDs never replace provider identity, confinement, project or consent checks. Preview planning remains read-only.
 
 Explicit generation recovery previews use the same trusted Codex homes and
-lookup as capture. Preview cleanup discards newly requested coverage and leaves
-the capture catalog unchanged. Filtered preview and returned publication data
+lookup as capture. Preview cleanup discards new observations and leaves the
+capture catalog unchanged. Filtered preview and returned publication data
 retain their shared lease through confirmation; cleanup returns it on refusal,
 cancellation, error or completion. Confirmation charges full recovery-journal
 reads and encoding, and validates canonical source bytes by streaming their
@@ -241,5 +243,56 @@ initial view ends before its locked reread, and completed receipts release their
 input before the next journal. Resource refusal preserves that journal and
 reports pending recovery while smaller journals and unrelated captures continue.
 Malformed schemas and caller cancellation still stop recovery. Lookup revision
-digests reserve both encoded owners; a refused digest leaves the requested
-coverage attempt undelivered for retry.
+digests reserve both encoded owners; a refused digest is retried later.
+
+Search content lives in private destination/installation/privacy partitions
+under `search/`, independently of the metadata catalog. Cached queries open only
+existing current-schema databases and never migrate them. Explicit refresh
+performs bounded migrations/catch-up; `search --refresh --rebuild` atomically
+clears derived text/work state and invalidates cursors without deleting archives.
+The stable home `search-worker.lock` serializes explicit indexing and lifecycle
+changes before an index can be created. The index and WAL can retain conversation
+text; rebuilding is not secure erasure. See [search](../guides/search.md).
+
+Native source authority has an inert foundation for future integrations:
+`config.json` can retain at most one `native_roots` entry per non-Codex agent
+(up to 16 total). Each entry records `agent`, the approved absolute `configured`
+spelling, the absolute `canonical` confinement root, and a bounded `revision`.
+Changing either path requires a new reconciliation revision. These roots carry
+no admission consent and do not replace Codex discovery homes.
+
+A registration's optional `native_binding` v1 records original native identity,
+creation, cwd, stream, parent/root identity, locator and root revision. It stays
+local. Existing Codex registrations retain their exact `codex_binding` shape.
+Native authority cannot disappear or contradict previously recorded facts;
+relocation is refused until a separately reviewed continuity contract exists.
+A surviving native locator without its original binding cannot establish fresh
+authority. Ordinary hook observations and freezing preserve the binding.
+
+Before roots or native bindings become durable, configuration uses the sticky
+`native_authority_protection: true` and an outer writer fence:
+`{"version":16,"writer":"native-authority-v16","base":1}`. `base` is either
+numeric 1 or the exact existing protected writer object, including
+`search-lifecycle-v16` when indexing lifecycle is protected. Each lower writer's
+permission floors and storage constraints still apply. Older writers refuse the
+unknown outer fence before mutation. Removing roots, saving a replacement config
+or serializing rollback snapshots retains the protection. The private contract
+is [native source authority](../../schemas/native-source-authority.schema.json).
+This foundation registers no Muse operations or capture capabilities.
+
+Setup journals carrying native authority also fence the existing `files_only`
+boolean as `{"version":1,"writer":"native-authority-v16","value":true}`
+(the value remains the journal's actual files-only choice). Their
+`native_authority_protection` is true. Earlier setup binaries decode this known
+field as a boolean and refuse before recovery can apply raw rollback bytes,
+which happens before ordinary configuration loading. Current recovery validates
+this exact typed wrapper and retains both files-only and scheduler semantics.
+When the same transaction manages search, its version2 `changes.files` and
+collector/search role records remain inside that native recovery fence.
+
+Introducing or reconciling native roots refuses while a setup journal is pending;
+new or enriched bindings also refuse pending setup. Native binding publishers
+must hold the existing `hooks.lock` across their fresh root, owner, project,
+destination, admission, pause and removal checks and the short state commit.
+The state writer adds request-lock checks without creating another admission
+store. No production native binding publisher is enabled by this foundation.

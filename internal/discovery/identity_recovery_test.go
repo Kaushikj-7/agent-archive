@@ -87,6 +87,41 @@ func TestUnknownDiscoveryIdentityRequiresCensusBeforeAllocation(t *testing.T) {
 	}
 }
 
+// Discovery's wait for one key's census proof must not refuse live hooks'
+// unrelated misses, such as a Claude Code subagent's first SubagentStop,
+// until the collector's next pass.
+func TestDiscoveryAbsenceRequestKeepsHookAdmissionOpen(t *testing.T) {
+	t.Parallel()
+	store, cfg, at, root := fixture(t)
+	if err := recoverytest.Exhaust(context.Background(), store, state.SessionIndexRecoverySlice, false); err != nil {
+		t.Fatal(err)
+	}
+	native := writeRollout(t, root, cfg.Archive.Projects[0].Root, at.Add(time.Minute), 1, "sessions")
+	options := Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(2 * time.Minute) }}
+	adapters := []SourceAdapter{codexAdapter{supported: syntheticSupport}}
+	h, err := runWithAdapters(context.Background(), store, cfg, options, adapters)
+	if err != nil || h.Registered != 0 || h.Outcomes["admission_retry"] == 0 {
+		t.Fatalf("unknown identity allocated before census: %#v %v", h, err)
+	}
+	if status, err := store.SessionIndexRecoveryStatus(); err != nil || !status.Complete {
+		t.Fatalf("discovery withdrew the complete census: %#v %v", status, err)
+	}
+	child := sessionKey("claude", "claude-parent:subagent:agent-1")
+	if _, _, err := store.EnsureArchiveSessionID(child); err != nil {
+		t.Fatalf("hook miss refused while discovery waits: %v", err)
+	}
+	if complete, err := store.RecoverSessionIndexScheduled(context.Background(), state.SessionIndexRecoverySlice); err != nil || !complete {
+		t.Fatalf("one recovery slice: complete=%v err=%v", complete, err)
+	}
+	h, err = runWithAdapters(context.Background(), store, cfg, options, adapters)
+	if err != nil || h.Registered != 1 {
+		t.Fatalf("certified absence did not admit: %#v %v", h, err)
+	}
+	if _, found, err := store.ArchiveSessionID(sessionKey("codex", native)); err != nil || !found {
+		t.Fatalf("missing owner: %v %v", found, err)
+	}
+}
+
 func TestDiscoveryBothIndexLossRecoversExistingIdentity(t *testing.T) {
 	t.Parallel()
 	store, cfg, at, root := fixture(t)

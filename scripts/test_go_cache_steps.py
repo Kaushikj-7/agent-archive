@@ -10,7 +10,7 @@ from test_ci_workflow import jobs
 from test_release_assets import steps
 
 from go_cache_context import CachePlan, InvalidContext
-from go_cache_steps import restore_result, verify_restored, worker_success, emit, main, execute_modules
+from go_cache_steps import restore_result, verify_restored, worker_success, emit, main, execute_modules, pr_publisher
 PIN = "55cc8345863c7cc4c66a329aec7e433d2d1c52a9"
 
 
@@ -18,7 +18,7 @@ class PhaseTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        root = Path(self.temp.name)
+        self.root = root = Path(self.temp.name).resolve()
         prefix = 'aa-pr-go-v1-pr42-w0-'+'c'*64+'-'+'d'*64+'-'
         self.plan = CachePlan(prefix+'a'*40, prefix,
                               (str(root/'pr-go-build'), str(root/'pr-go-modules')),
@@ -37,7 +37,7 @@ class PhaseTests(unittest.TestCase):
         build.mkdir()
         (build/'old').write_text('partial')
         env = {'GITHUB_EVENT_NAME': 'pull_request', 'PR_NUMBER': '42', 'SHARD': '0',
-               'GITHUB_WORKSPACE': self.temp.name, 'RUNNER_TEMP': self.temp.name,
+               'GITHUB_WORKSPACE': str(self.root), 'RUNNER_TEMP': str(self.root),
                'GOCACHE': str(build), 'GOMODCACHE': str(modules)}
         with mock.patch.dict(os.environ, env, clear=True), \
                 mock.patch('sys.argv', ['go_cache_steps.py', 'paths']), \
@@ -49,14 +49,28 @@ class PhaseTests(unittest.TestCase):
         source.assert_not_called()
         context.assert_not_called()
 
+    def test_eighth_worker_owned_paths_guard_accepts_only_matching_topology(self):
+        build,modules=map(Path,self.plan.paths)
+        env={'GITHUB_EVENT_NAME':'pull_request','PR_NUMBER':'42','WORKERS':'8','SHARD':'7',
+             'GITHUB_WORKSPACE':str(self.root),'RUNNER_TEMP':str(self.root),
+             'GOCACHE':str(build),'GOMODCACHE':str(modules)}
+        with mock.patch.dict(os.environ,env,clear=True),mock.patch('sys.argv',['go_cache_steps.py','paths']):
+            self.assertEqual(main(),0)
+        env['WORKERS']='4'
+        with contextlib.redirect_stderr(io.StringIO()),mock.patch.dict(os.environ,env,clear=True),mock.patch('sys.argv',['go_cache_steps.py','paths']):
+            self.assertEqual(main(),1)
+        manifest={'success':True,'tier':'pr','shard':7,'settings':{'workers':8},'catalog':{'source':'b'*40,'workers':8}}
+        self.assertTrue(worker_success(self.plan,manifest,lambda source:None,7,8))
+        with self.assertRaises(InvalidContext):worker_success(self.plan,manifest,lambda source:None,7,4)
+
     def test_paths_phase_rejects_symlink_owned_directory_before_tool_use(self):
         build, modules = map(Path, self.plan.paths)
-        outside = Path(self.temp.name)/'outside'
+        outside = self.root/'outside'
         outside.mkdir()
         (outside/'keep').write_text('unrelated')
         build.symlink_to(outside, target_is_directory=True)
         env = {'GITHUB_EVENT_NAME': 'pull_request', 'PR_NUMBER': '42', 'SHARD': '0',
-               'GITHUB_WORKSPACE': self.temp.name, 'RUNNER_TEMP': self.temp.name,
+               'GITHUB_WORKSPACE': str(self.root), 'RUNNER_TEMP': str(self.root),
                'GOCACHE': str(build), 'GOMODCACHE': str(modules)}
         with contextlib.redirect_stderr(io.StringIO()), mock.patch.dict(os.environ, env, clear=True), \
                 mock.patch('sys.argv', ['go_cache_steps.py', 'paths']), \
@@ -83,7 +97,7 @@ class PhaseTests(unittest.TestCase):
         nested.mkdir(parents=True)
         (nested/'go.mod').write_text('module fixture')
         nested.chmod(0o555)
-        outside = Path(self.temp.name)/'outside'
+        outside = self.root/'outside'
         outside.mkdir()
         (outside/'keep').write_text('unrelated')
         (modules/'linked').symlink_to(outside, target_is_directory=True)
@@ -112,7 +126,7 @@ class PhaseTests(unittest.TestCase):
                 worker_success(self.plan, dict(good, **changed), lambda source: None, 0)
 
     def test_action_output_injection_cannot_write_partial_file(self):
-        output = Path(self.temp.name)/'outputs'
+        output = self.root/'outputs'
         with self.assertRaises(InvalidContext):
             emit({'primary': 'safe', 'gocache': 'bad\ninjected=true'}, output)
         self.assertFalse(output.exists())
@@ -135,6 +149,18 @@ class PhaseTests(unittest.TestCase):
                                      lambda source: events.append('guard'), lambda argv: events.append(argv))
             self.assertEqual(result, expected)
             self.assertEqual(events, ['guard', ['go', 'mod', 'download'], ['go', 'mod', 'verify'], 'guard'])
+
+    def test_only_same_repository_worker_zero_can_publish_and_malformed_is_readonly(self):
+        env = {'GITHUB_EVENT_NAME':'pull_request','GITHUB_REPOSITORY':'wangjohn/agent-archive'}
+        event = {'pull_request':{'head':{'repo':{'full_name':'wangjohn/agent-archive'}}}}
+        self.assertTrue(pr_publisher(env,event,0))
+        self.assertFalse(pr_publisher(env,event,1))
+        self.assertFalse(pr_publisher(env,event,False))
+        self.assertFalse(pr_publisher({}, {}, 0))
+        self.assertFalse(pr_publisher(env,{},0))
+        self.assertFalse(pr_publisher(env,{'pull_request':{'head':{'repo':None}}},0))
+        event['pull_request']['head']['repo']['full_name']='fork/agent-archive'
+        self.assertFalse(pr_publisher(env,event,0))
 
     def test_cli_fails_closed_before_source_or_go_on_non_pr(self):
         with contextlib.redirect_stderr(io.StringIO()), \
@@ -164,7 +190,8 @@ class WorkflowTests(unittest.TestCase):
                         self.assertIn('cache: false', step)
         short = self.workflows['test']['linux-short']
         self.assertIn("if: github.event_name == 'pull_request'", short)
-        self.assertIn('shard: [0, 1]', short)
+        self.assertIn("'{\"workers\":[8],\"shard\":[0,1,2,3,4,5,6,7]}'", short)
+        self.assertIn('WORKERS: ${{ matrix.workers }}', short)
         self.assertIn('fetch-depth: 0', short)
         self.assertLess(short.index('scripts/go_cache_steps.py paths'), short.index('actions/setup-go@'))
 
@@ -176,15 +203,18 @@ class WorkflowTests(unittest.TestCase):
         save = next(s for s in found if 'id: go-cache-save' in s)
         for step in (restore, save):
             self.assertIn('${{ runner.temp }}/pr-go-build', step)
-            self.assertIn('${{ runner.temp }}/pr-go-modules', step)
+            self.assertNotIn('${{ runner.temp }}/pr-go-modules', step)
             self.assertNotIn('shard-results', step)
         self.assertIn('success() &&', save)
         self.assertIn("steps.go-cache-complete.outputs.save_ready == 'true'", save)
         self.assertIn("steps.go-cache-verify.outputs.restore_state != 'exact'", save)
         self.assertIn('github.event.pull_request.head.repo.full_name == github.repository', save)
+        seed = next(s for s in found if 'id: go-cache-seed' in s)
+        self.assertIn('${{ runner.temp }}/pr-go-modules/cache', seed)
+        self.assertIn('steps.go-cache-key.outputs.seed', seed)
         self.assertNotIn('always()', save)
-        self.assertTrue(any('scripts/test_go_cache_context.py' in s for s in steps(self.workflows['test']['script-tests'])))
-        self.assertTrue(any('scripts/test_go_cache_steps.py' in s for s in steps(self.workflows['test']['script-tests'])))
+        self.assertTrue(any('scripts/test_go_cache_context.py' in s for s in steps(self.workflows['test']['script-static'])))
+        self.assertTrue(any('scripts/test_go_cache_steps.py' in s for s in steps(self.workflows['test']['script-static'])))
 
 
 if __name__ == '__main__':

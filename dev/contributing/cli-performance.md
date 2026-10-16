@@ -106,6 +106,12 @@ matched measurements of this repaired harness remain pending.
 
 ## Bounded matched command harness
 
+This complements the scoped picker harness below: it retains full-output
+validation for default list, exact/short-ID and linked show, multi-window JSON
+stats and interactive stats. Historical measurements of earlier production
+commits are not measurements of current main; rerun a frozen harness on both
+source pins before claiming a current performance difference.
+
 `BenchmarkMatchedCLI` measures the same captured `CLI.Run` invocation that its
 validators inspect after timing. Its default fixture has 800 synthetic sessions;
 `AGENT_ARCHIVE_MATCHED_LARGE=1` adds 10,000. It covers actual default list-50 and
@@ -164,3 +170,20 @@ components, and validates the result through each source's `PutRevision`.
 Any protocol incompatibility fails fixture setup. This fixture-only replacement
 makes the full stored key/body fingerprint reproducible, without normalizing
 away output differences.
+
+## Scoped interactive picker measurements
+
+The [picker qualification harness](../maintainers/picker-qualification/README.md)
+adds real first-screen and Older `CLI.Run` controls for supported handoff/list/show
+browsers at 10k/100k. It uses a complete synthetic bulk catalog plus a separate
+actual-construction equivalence check; construction/warmup remain outside measured
+work. GET/LIST/Stat and returned bytes, phase latency/allocations, sampled heap and
+native R costs are distinct. Run the identical repaired terminal harness on the
+pinned protocol 10 production baseline and integrated protocol 11 candidate. The
+historical JSON/discard-writer matrix is not a matched picker comparison.
+The [2026-10-13 paired result ledger](../maintainers/picker-qualification/results-20261013.md)
+records16 successful processes / 104 cases, including both sizes and every native
+case; source/binary/harness/adapter and logical fixture hashes are retained.
+Sampled heap includes live fixtures and whole-process RSS includes setup; neither
+is command-exclusive peak memory. Independent review/hosted checks and provider
+qualification remain separate gates.

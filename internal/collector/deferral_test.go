@@ -14,6 +14,12 @@ import (
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
+// lookupAllowanceSpent is the refusal of a Codex lookup call made after the
+// pass's lookup allowance ran out.
+func lookupAllowanceSpent() error {
+	return agentapi.WithCause(agentapi.Wrap(agentapi.Limit, errors.New("native lookup pass deadline")), agentapi.CauseLookupAllowanceSpent)
+}
+
 // failingReadSources serves the built-in sources, except that every read
 // fails with err, after calling cancel when it is set.
 type failingReadSources struct {
@@ -56,61 +62,60 @@ func (p failingReadPass) Read(context.Context, agentapi.SourceRef, agentapi.Read
 	return nil, p.err
 }
 
-// coverageLookup answers every thread with the coverage it was given, and
-// counts the questions.
-type coverageLookup struct {
-	complete bool
-	threads  int
+// threadCountingLookup answers every thread with an empty set, and counts the
+// questions.
+type threadCountingLookup struct {
+	threads int
 }
 
-func (l *coverageLookup) Rollout(context.Context, string) ([]agentapi.SourceRef, error) {
+func (l *threadCountingLookup) Rollout(context.Context, string) ([]agentapi.SourceRef, error) {
 	return nil, nil
 }
 
-func (l *coverageLookup) Thread(context.Context, string) (agentapi.CodexRolloutSet, error) {
+func (l *threadCountingLookup) Thread(context.Context, string) (agentapi.CodexRolloutSet, error) {
 	l.threads++
-	return agentapi.CodexRolloutSet{Complete: l.complete}, nil
+	return agentapi.CodexRolloutSet{}, nil
 }
 
-func (l *coverageLookup) Check(context.Context, string, string) error { return nil }
+func (l *threadCountingLookup) Check(context.Context, string, string) error { return nil }
 
-// coverageRefusal is the refusal the Codex source gives while a thread's
-// rollout lineage is not fully known: it names its cause where it refuses.
-func coverageRefusal() error {
-	return agentapi.WithCause(lineageRefusal(), agentapi.CauseHistoryCoverage)
+// baseRefusal is the refusal the Codex source gives when a rollout a
+// thread's lineage continues from cannot be found: it names its cause.
+func baseRefusal() error {
+	return agentapi.WithCause(lineageRefusal(), agentapi.CauseHistoryBaseUnavailable)
 }
 
-// lineageRefusal is the same refusal without its cause, as the source gave
-// it before naming coverage itself.
+// lineageRefusal is the same refusal without its cause.
 func lineageRefusal() error {
-	return agentapi.Wrap(agentapi.Unavailable, errors.New("rollout lineage incomplete"))
+	return agentapi.Wrap(agentapi.Unavailable, errors.New("history dependency missing or ambiguous"))
 }
 
-// Regression: 2026-10 the owner's sync listed 38 Codex sessions as failed
-// with "source unavailable" while their history coverage was only not
-// complete yet that pass. Such a scan is deferred, not failed: out of
-// Errors and status's session issues, still pending with its scan journal,
-// and a real failure is still a failure. The source's own cause decides:
-// the pass never asks the coverage lookup about a failed scan.
+// A scan the next pass is expected to finish (its source changed while
+// being read) is deferred, not failed: out of Errors and status's session
+// issues, still pending with its scan journal. A lineage the source could
+// not resolve is a named failure, reported as one and retried, never a
+// silent wait. The source's own error decides: the pass never asks the
+// lookup about a failed scan.
 func TestRunDefersScansTheNextPassCanFinish(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name   string
 		err    error
-		lookup *coverageLookup
+		lookup *threadCountingLookup
 		reason string // "" when the scan fails
 	}{
-		{"coverage incomplete", coverageRefusal(), &coverageLookup{}, DeferredHistoryCoverage},
-		{"coverage incomplete through a join", errors.Join(coverageRefusal(), nil), &coverageLookup{}, DeferredHistoryCoverage},
-		{"coverage incomplete wrapped with context", fmt.Errorf("revision candidates: %w", coverageRefusal()), &coverageLookup{}, DeferredHistoryCoverage},
-		{"coverage refusal while the lookup reports it complete", coverageRefusal(), &coverageLookup{complete: true}, DeferredHistoryCoverage},
-		{"coverage refusal without a lookup", coverageRefusal(), nil, DeferredHistoryCoverage},
-		{"untagged refusal while coverage is incomplete", lineageRefusal(), &coverageLookup{}, ""},
-		{"input/output failure while coverage is incomplete", agentapi.Wrap(agentapi.Unavailable, &fs.PathError{Op: "read", Path: "/synthetic", Err: errors.New("i/o")}), &coverageLookup{}, ""},
-		{"current header unavailable while coverage is incomplete", agentapi.Wrap(agentapi.Unavailable, errors.New("current header unavailable")), &coverageLookup{}, ""},
+		{"history base unavailable", baseRefusal(), &threadCountingLookup{}, ""},
+		{"history base unavailable through a join", errors.Join(baseRefusal(), nil), &threadCountingLookup{}, ""},
+		{"history base unavailable wrapped with context", fmt.Errorf("revision candidates: %w", baseRefusal()), &threadCountingLookup{}, ""},
+		{"untagged refusal", lineageRefusal(), &threadCountingLookup{}, ""},
+		{"input/output failure", agentapi.Wrap(agentapi.Unavailable, &fs.PathError{Op: "read", Path: "/synthetic", Err: errors.New("i/o")}), &threadCountingLookup{}, ""},
+		{"current header unavailable", agentapi.Wrap(agentapi.Unavailable, errors.New("current header unavailable")), &threadCountingLookup{}, ""},
 		{"source changed", agentapi.Wrap(agentapi.Changed, errors.New("native index changed during snapshot")), nil, DeferredSourceChanged},
 		{"source changed beside a refusal", errors.Join(agentapi.Wrap(agentapi.Changed, errors.New("changed")), agentapi.Wrap(agentapi.Unsafe, errors.New("refused"))), nil, ""},
-		{"unsafe source", agentapi.Wrap(agentapi.Unsafe, errors.New("refused")), &coverageLookup{}, ""},
+		{"unsafe source", agentapi.Wrap(agentapi.Unsafe, errors.New("refused")), &threadCountingLookup{}, ""},
+		{"lookup allowance spent", lookupAllowanceSpent(), nil, DeferredLookupAllowance},
+		{"lookup allowance spent wrapped with context", fmt.Errorf("filter transcript: %w", errors.Join(lookupAllowanceSpent())), nil, DeferredLookupAllowance},
+		{"other source limit", agentapi.Wrap(agentapi.Limit, errors.New("thread candidate limit")), &threadCountingLookup{}, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -120,7 +125,7 @@ func TestRunDefersScansTheNextPassCanFinish(t *testing.T) {
 				t.Fatal(err)
 			}
 			now := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
-			// A nil *coverageLookup must stay a nil interface.
+			// A nil *threadCountingLookup must stay a nil interface.
 			var lookup agentapi.CodexRolloutLookup
 			if tc.lookup != nil {
 				lookup = tc.lookup
@@ -135,7 +140,7 @@ func TestRunDefersScansTheNextPassCanFinish(t *testing.T) {
 				t.Fatal(err)
 			}
 			if tc.lookup != nil && tc.lookup.threads != 0 {
-				t.Fatalf("the pass asked the coverage lookup %d times about a failed scan", tc.lookup.threads)
+				t.Fatalf("the pass asked the lookup %d times about a failed scan", tc.lookup.threads)
 			}
 			journaled, err := local.ScanPending(reg.ArchiveSessionID)
 			if err != nil {
@@ -167,7 +172,7 @@ func TestRunDefersScansTheNextPassCanFinish(t *testing.T) {
 
 func TestDeferralReasonNeedsEveryFailureToBeDeferrable(t *testing.T) {
 	t.Parallel()
-	coverage := agentapi.WithCause(lineageRefusal(), agentapi.CauseHistoryCoverage)
+	base := baseRefusal()
 	changed := agentapi.Wrap(agentapi.Changed, errors.New("changed"))
 	unsafe := agentapi.Wrap(agentapi.Unsafe, errors.New("refused"))
 	for _, tc := range []struct {
@@ -177,15 +182,19 @@ func TestDeferralReasonNeedsEveryFailureToBeDeferrable(t *testing.T) {
 	}{
 		{"nil", nil, ""},
 		{"plain error", errors.New("boom"), ""},
-		{"coverage", coverage, DeferredHistoryCoverage},
+		{"history base unavailable", base, ""},
 		{"unnamed refusal", lineageRefusal(), ""},
 		{"changed", changed, DeferredSourceChanged},
 		{"changed wrapped with context", fmt.Errorf("read: %w", changed), DeferredSourceChanged},
-		{"coverage names a mixed deferral", errors.Join(changed, coverage), DeferredHistoryCoverage},
-		{"coverage beside a refusal", errors.Join(coverage, unsafe), ""},
+		{"changed beside an unavailable base", errors.Join(changed, base), ""},
 		{"wrapped join with a refusal", fmt.Errorf("read: %w", errors.Join(changed, unsafe)), ""},
 		{"changed beside a plain error", errors.Join(changed, errors.New("close failed")), ""},
 		{"unsafe wrapping changed", agentapi.Wrap(agentapi.Unsafe, changed), ""},
+		{"lookup allowance spent", lookupAllowanceSpent(), DeferredLookupAllowance},
+		{"lookup allowance spent beside changed", errors.Join(lookupAllowanceSpent(), changed), DeferredLookupAllowance},
+		{"lookup allowance spent beside a refusal", errors.Join(lookupAllowanceSpent(), unsafe), ""},
+		{"source limit without the allowance cause", agentapi.Wrap(agentapi.Limit, errors.New("native lookup pass deadline")), ""},
+		{"unsafe wrapping a spent allowance", agentapi.Wrap(agentapi.Unsafe, lookupAllowanceSpent()), ""},
 	} {
 		reason, ok := deferralReason(tc.err)
 		if reason != tc.reason || ok != (tc.reason != "") {
@@ -194,8 +203,7 @@ func TestDeferralReasonNeedsEveryFailureToBeDeferrable(t *testing.T) {
 	}
 }
 
-// A refusal no later pass clears (coverage that never completes, a source
-// changed on every read) must not stay "rechecking" for good: once a
+// A refusal no later pass clears (a source changed on every read) must not stay "rechecking" for good: once a
 // session's scans have been deferred on every pass for MaxDeferral, every
 // further deferral is a failure; a pass that ends before scanning it leaves
 // the clock running, and a pass that reads it starts the clock again.

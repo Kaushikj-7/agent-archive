@@ -3,8 +3,15 @@
 Prepared 2026-09-30 against `main` at `dc443c7`. Status: phases 1
 and 2 implemented; phase 3's historical synthetic matrix recorded in #451;
 phase 4 has default-v3 bounded bodies and a gated opt-in catalog implementation.
-Matched measurements with the repaired command
-output-validation harness remain pending.
+Matched scoped-interactive measurements with the repaired command harness
+completed 2026-10-13:16 processes / 104 cases, baseline
+`a187e1b883924fd36c9d6700606a5c2756fc2b6f` and candidate
+`cc26f45aba6c76307aecf3c9d32b2650aef79eed`.
+[Results, hashes and limits](../maintainers/picker-qualification/results-20261013.md)
+cover10k/100k cold/warm/changed and native 20/120 cases. Final source review and
+required hosted checks are tracked in [PR499](https://github.com/wangjohn/agent-archive/pull/499);
+production release gates remain separate.
+This scoped query subset does not qualify every historical listing/full-load path.
 Reconciled 2026-10-11 at `db2ccd3e`. The current
 [listing contract](../maintainers/list-performance.md) specifies indexed bounded
 metadata reads (#320), with 10k/20k correctness and operation-count coverage.
@@ -22,12 +29,18 @@ Production S3/R2 construction and migration still refuse unqualified providers;
 provider atomicity/clock, global writer/cutover authority, full-load and matched
 performance acceptance remain gates. See [catalog migration and query](../catalog/migration-and-query.md)
 and the [provider release gate](../catalog/provider-qualification.md).
-The next source slice is the
+The scoped source slice follows the
 [bounded repository picker implementation plan](bounded-repository-picker.md).
 It builds on the shared catalog rather than restoring the historical readiness
 marker design: repository/activity ranges, remote pages and selected-body loading
-replace eager picker archive traversal. Merged Older actions currently expand
-already loaded choices; bounded remote startup is not implemented yet.
+replace eager picker archive traversal. The scoped picker implementation supplies typed repository windows and remote
+Older actions for supported interactive paths. Its
+[CLI qualification controls](../maintainers/picker-qualification/README.md)
+separate complete synthetic construction, actual command work and nativeR costs.
+Final integrated-source synthetic paired measurements are recorded above;
+final source review and required hosted checks are tracked in
+[PR499](https://github.com/wangjohn/agent-archive/pull/499), with provider release
+acceptance remaining separate. Legacy destinations retain proportional header discovery.
 
 The phase designs below preserve the original plan.
 Each phase lands before the next one starts. Each phase's PR updates its
@@ -37,7 +50,7 @@ status line below.
 | --- | --- | --- |
 | 1 | Parallel range listing | Implemented in [#219](https://github.com/wangjohn/agent-archive/pull/219) |
 | 2 | `AGENT_ARCHIVE_TRACE` timings | Implemented in [#225](https://github.com/wangjohn/agent-archive/pull/225) |
-| 3 | Listing benchmark at 1k, 10k and 100k sessions | Historical synthetic matrix recorded in #451; matched repaired-harness measurements pending. |
+| 3 | Listing benchmark at 1k, 10k and 100k sessions | Historical synthetic matrix recorded in #451; scoped-interactive matched 10k/100k matrix recorded 2026-10-13 (linked above). Other paths/provider gates remain separate. |
 | 4 | Index read whose cost doesn't grow with the archive (spec first) | Default v3 bounds metadata bodies but retains proportional LIST headers. Opt-in catalog tree reads implemented in #460; production qualification and activation remain gated. |
 
 ## Problem
@@ -90,7 +103,7 @@ In scope: how the archive is listed and read for `handoff`, `list`, `show` and
 
 Out of scope: which sessions the picker shows and how they are labelled.
 That includes hiding subagents, native titles, repo scoping, filtering, and
-the search matcher. That work is the [session-finding plan](../specs/session-finding.md).
+the search matcher. That work is the [session-finding plan](implemented/session-finding.md).
 Phase 4 below lists what it needs from the listing.
 
 ## Phase 1: parallel range listing
@@ -234,7 +247,7 @@ new format or complete the proportional-header-cost acceptance. The spec must de
    deletion. Handoff re-reads the chosen session before using it. The spec
    must say what each command verifies before it shows a row.
 
-What the [session-finding plan](../specs/session-finding.md) needs from phase 4:
+What the [session-finding plan](implemented/session-finding.md) needs from phase 4:
 
 - **(a) Subagent count per parent,** from the parent's `LinkedSessions`, with
   no scan of subagent hints.

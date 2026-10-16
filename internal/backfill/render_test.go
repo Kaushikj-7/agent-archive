@@ -2,6 +2,7 @@ package backfill
 
 import (
 	"bytes"
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -9,6 +10,39 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/testutil/golden"
 )
+
+func TestRenderJSONKeepsCaptureColumnsAndRepresentedExtensions(t *testing.T) {
+	t.Parallel()
+	for _, harness := range []string{"codex", "injected-agent"} {
+		t.Run(harness, func(t *testing.T) {
+			t.Parallel()
+			plan := Plan{Candidates: []Candidate{{Harness: harness, ProjectRoot: "/synthetic/project", ProjectExists: true}}}
+			var out bytes.Buffer
+			if err := RenderJSON(&out, plan); err != nil {
+				t.Fatal(err)
+			}
+			var rendered planJSON
+			if err := json.Unmarshal(out.Bytes(), &rendered); err != nil {
+				t.Fatal(err)
+			}
+			if len(rendered.Projects) != 1 {
+				t.Fatalf("projects: %+v", rendered.Projects)
+			}
+			sessions := rendered.Projects[0].Sessions
+			if _, found := sessions["muse"]; found {
+				t.Fatalf("runtime-only identity became a capture count: %v", sessions)
+			}
+			for _, capture := range []string{"claude", "codex", "cursor"} {
+				if _, found := sessions[capture]; !found {
+					t.Fatalf("established capture column missing: %v", sessions)
+				}
+			}
+			if sessions[harness] != 1 {
+				t.Fatalf("represented integration lost: %v", sessions)
+			}
+		})
+	}
+}
 
 // Every skip reason renders with its wording and override, in the spec's
 // order. Regenerate with `go test ./internal/backfill -run

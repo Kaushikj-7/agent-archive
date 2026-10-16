@@ -534,3 +534,21 @@ func TestStatusVerbosePrintsAnOlderLastErrorAsRecorded(t *testing.T) {
 		t.Fatalf("status --verbose:\n%s", text)
 	}
 }
+
+// A diagnostic for part of a session left out says so, rather than that the
+// session was skipped.
+func TestStatusSaysAnOffChainRevisionWasLeftOutNotTheSession(t *testing.T) {
+	t.Parallel()
+	view := busyStatusView()
+	view.CaptureDiagnostics = []capture.Diagnostic{{Code: capture.DiagnosticRevisionLeftOut, ProjectRoot: "/Users/alex/src/api", Harness: "codex", ObservedAt: renderNow.Add(-40 * time.Minute)}}
+	text, verbose := renderStatus(view, false), renderVerboseStatus(view)
+	if want := "Codex left out part of a session in ~/src/api 40 minutes ago: an abandoned branch of the thread"; !strings.Contains(text, want) {
+		t.Errorf("status is missing %q:\n%s", want, text)
+	}
+	if want := "  Capture left out part of a session in /Users/alex/src/api (Codex): an abandoned branch"; !strings.Contains(verbose, want) {
+		t.Errorf("status --verbose is missing %q:\n%s", want, verbose)
+	}
+	if strings.Contains(text, "skipped a session") || strings.Contains(verbose, "Capture skipped") {
+		t.Errorf("status says the session was skipped:\n%s\n%s", text, verbose)
+	}
+}

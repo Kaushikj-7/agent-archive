@@ -3,11 +3,14 @@ package collector
 import (
 	"context"
 	"errors"
+	"fmt"
+	"slices"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/state"
 )
 
@@ -42,7 +45,7 @@ func (s *sessionScan) reconcileRevisions(read sourceRead, active archive.SourceB
 	}
 	current := revisionID(active)
 	if current == "" {
-		current = read.observed.binding.PhysicalRolloutID
+		current = read.observed.binding.CodexBinding().PhysicalRolloutID
 	}
 	plan := &revisionPlan{Current: current, ObservedAt: s.now}
 	// A transition must have complete supported authority. Force the ordinary
@@ -91,13 +94,75 @@ func (s *sessionScan) reconcileRevisions(read sourceRead, active archive.SourceB
 	if read.observed.observation.Signature.Provider == "import-stage" {
 		return s.reconcileStagedRevisions(read, planner, plan)
 	}
-	err = provider.revisions(s.ctx, read.adapter, read.observed, s.opts.maxTranscriptBytes(), active.History != nil, func(filtered archive.FilteredTranscript, binding *archive.CodexSourceBinding) error {
+	offChain, err := provider.revisions(s.ctx, read.adapter, read.observed, s.opts.maxTranscriptBytes(), active.History != nil, !s.withoutOffChain, func(filtered archive.FilteredTranscript, binding *archive.CodexSourceBinding) error {
 		return s.addNativeRevision(&planner, filtered, binding, metadata, cached, previous)
 	})
 	if err != nil {
 		return nil, err
 	}
+	s.offChainKept = offChain.offChainKept
+	if !s.withoutOffChain {
+		s.offChainLeftOut = offChain.offChainLeftOut > 0
+		s.offChainUnread, s.offChainPlanned = s.offChainLeftOut, plan.stagedReferences()
+		return plan, nil
+	}
+	// Run again without its off-chain revisions (see run), the scan leaves
+	// out what the scan that read them left unread and what that scan
+	// staged and this plan does not publish as it was staged. A branch an
+	// earlier publication preserves by reference, and that the scan that
+	// read it found unchanged, is not staged, so it is not left out. One
+	// that changed since is staged; this plan preserves or stages only an
+	// earlier version of it (an earlier publication's reference, or the last
+	// published or pending capture), which lacks what it added, so it is
+	// left out.
+	s.offChainLeftOut = s.offChainUnread || !plan.publishesAll(s.offChainPlanned)
 	return plan, nil
+}
+
+// publishesAll reports whether the plan publishes each of staged with the
+// source staged, either staging it again or preserving it by reference.
+func (p *revisionPlan) publishesAll(staged []archive.RevisionReference) bool {
+	for _, want := range staged {
+		if !slices.ContainsFunc(p.Preserved, func(ref archive.RevisionReference) bool {
+			return ref.RevisionID == want.RevisionID && ref.Source == want.Source
+		}) {
+			return false
+		}
+	}
+	return true
+}
+
+// stagedReferences lists the revisions the plan stages to publish beside
+// the current one, as opposed to preserving them by an earlier
+// publication's reference, each with the source it stages.
+func (p *revisionPlan) stagedReferences() []archive.RevisionReference {
+	refs := make([]archive.RevisionReference, 0, len(p.Sources))
+	for _, stage := range p.Sources {
+		refs = append(refs, archive.RevisionReference{RevisionID: revisionID(stage.Bundle), Source: stage.Reference})
+	}
+	return refs
+}
+
+// noteRevisionLeftOut records, content-free, that the scan left out an
+// off-chain revision of the thread: the app and the configured project
+// only, as the hooks' capture diagnostics do. It runs once the scan has
+// ended (err is how), and records nothing when the scan ends with the
+// session recorded as a capture gap, such as too large to read
+// (overCeiling): the diagnostic says the rest of the session was captured.
+// A diagnostic is advisory, so failing to write one does not fail the scan.
+func (s *sessionScan) noteRevisionLeftOut(err error) {
+	if !s.offChainLeftOut || s.gap != "" {
+		return
+	}
+	if s.overSessionCeiling(err) {
+		// overCeiling records the gap unless an upload is owed.
+		if owed, owedErr := s.local.Outstanding(s.reg, false); owedErr != nil || !owed.Upload {
+			return
+		}
+	}
+	if err := capture.RecordSessionDiagnostic(s.local.Home(), capture.DiagnosticRevisionLeftOut, s.reg.Harness.Name, s.reg.ProjectRoot, s.now); err != nil {
+		s.warn(fmt.Errorf("record capture diagnostic: %w", err))
+	}
 }
 
 func revisionID(b archive.SourceBundle) string {
@@ -118,7 +183,18 @@ type revisionPlanner struct {
 	bytesLeft int
 }
 
+// add stages bundle as a historical revision. A failure leaves the plan as it
+// was, so a caller can leave out a best-effort revision that does not fit.
 func (p *revisionPlanner) add(ctx context.Context, bundle archive.SourceBundle) error {
+	sources, preserved, meaningfulAt, bytesLeft := slices.Clone(p.plan.Sources), slices.Clone(p.plan.Preserved), p.plan.MeaningfulAt, p.bytesLeft
+	err := p.stage(ctx, bundle)
+	if err != nil {
+		p.plan.Sources, p.plan.Preserved, p.plan.MeaningfulAt, p.bytesLeft = sources, preserved, meaningfulAt, bytesLeft
+	}
+	return err
+}
+
+func (p *revisionPlanner) stage(ctx context.Context, bundle archive.SourceBundle) error {
 	if err := bundle.ValidateHistory(); err != nil {
 		return err
 	}
@@ -255,7 +331,16 @@ func (p *revisionPlan) historyInputs() []state.HistoryInput {
 	return inputs
 }
 
-func (s *sessionScan) addNativeRevision(planner *revisionPlanner, filtered archive.FilteredTranscript, binding *archive.CodexSourceBinding, metadata archive.Metadata, cached, previous archive.SourceBundle) error {
+// addNativeRevision stages one native historical revision. On failure it
+// leaves the plan unchanged and releases what it retained, so revisions can
+// leave out a best-effort revision the plan cannot hold.
+func (s *sessionScan) addNativeRevision(planner *revisionPlanner, filtered archive.FilteredTranscript, binding *archive.CodexSourceBinding, metadata archive.Metadata, cached, previous archive.SourceBundle) (err error) {
+	mark := len(s.retainedReleases)
+	defer func() {
+		if err != nil {
+			s.releaseRetainedAfter(mark)
+		}
+	}()
 	bundle, err := s.newSourceBundle(s.reg, planner.adapter, filtered, s.now, nil)
 	if err != nil {
 		return err

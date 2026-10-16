@@ -64,6 +64,9 @@ var injectedTerminalChecks = classifiedCalls{
 // its terminal (golang.org/x/term and its kin), by whatever name they are
 // imported under.
 var terminalPackageUses = classifiedCalls{
+	// Shared browser cooked-input readiness: reached only after interaction
+	// is enabled; polls descriptors without changing terminal modes.
+	"browser_line_unix.go": {"unix.PollFd": 1, "unix.POLLIN": 1, "unix.Poll": 1},
 	// Env.isTerminal itself, the default for Env.IsTerminal.
 	"cli.go": {"term.IsTerminal": 1},
 	// styleFor: colour, redrawing, and width. Presentation, governed by
@@ -109,6 +112,7 @@ var terminalPackageUses = classifiedCalls{
 // hand): every place agent-archive can ask a question. The comment says what
 // stops the question when interaction is off.
 var promptSites = classifiedCalls{
+	"picker_browse.go":    {"newPrompter": 1},                  // bounded list browser is reached only after browseInteractive, through runListCommand.
 	"purge.go":            {"newPrompter": 1},                  // Exact digest consent is refused when noninteractive unless --yes.
 	"machines_revoke.go":  {"newPrompter": 1},                  // confirmation and token prompt require Env.interactive; --yes/--json never prompt
 	"machines_own_key.go": {"newPrompter": 1},                  // own-key confirmation/token require Env.interactive; --yes uses environment only

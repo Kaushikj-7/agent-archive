@@ -45,16 +45,8 @@ func (p *pass) observeLabels(ctx context.Context) {
 	eligible := map[string]archive.SessionRegistration{}
 	ids := []string{}
 	for _, reg := range p.registrations {
-		if !p.labelEligible(reg) {
+		if !p.labelEligible(reg) || !p.labelProvider(reg, providers) {
 			continue
-		}
-		_, ok := providers[reg.Harness.Name]
-		if !ok {
-			provider, ok := p.opts.Labels.LookupLabels(reg.Harness.Name)
-			if !ok {
-				continue
-			}
-			providers[reg.Harness.Name] = provider
 		}
 		eligible[reg.ArchiveSessionID] = reg
 		ids = append(ids, reg.ArchiveSessionID)
@@ -68,12 +60,8 @@ func (p *pass) observeLabels(ctx context.Context) {
 			delete(cache.Entries, id)
 			continue
 		}
-		checksum, stamp, err := p.local.LabelRevision(id)
-		if err != nil {
-			if errors.Is(err, state.ErrDurableStorageRecovery) {
-				addError(p.result.Errors, id, err)
-				p.unreadable[id] = true
-			}
+		checksum, stamp, ok := p.labelRevision(id, providers[reg.Harness.Name])
+		if !ok {
 			delete(cache.Entries, id)
 			continue
 		}
@@ -84,8 +72,22 @@ func (p *pass) observeLabels(ctx context.Context) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	requests := p.prepareLabelRequests(ctx, providers, &cache, ids, eligible)
-	requests = prioritizeLabelRequests(requests, providers, p.opts.LabelEnvironment, &cache)
-	results := lookupLabelRequests(ctx, providers, p.opts.LabelEnvironment, requests)
+	// Cursor's database location comes from the collector's own setting, the
+	// one its cursor-sqlite source reads; it is outside the cached scope.
+	env := p.opts.LabelEnvironment
+	env.CursorDatabase = p.opts.cursorDatabase()
+	requests = prioritizeLabelRequests(requests, providers, env, &cache)
+	results := lookupLabelRequests(ctx, providers, env, requests)
+	p.recordLabelResults(requests, results, &cache)
+	trimLabelCache(&cache)
+	if err := p.local.SaveLabels(cache); err != nil {
+		addError(p.result.Errors, "session-labels", err)
+	}
+}
+
+// recordLabelResults keeps each lookup's observation, with backoff for an
+// unavailable one, and the labels this pass applies.
+func (p *pass) recordLabelResults(requests []agentapi.LabelRequest, results map[string]archive.SessionLabel, cache *state.LabelCache) {
 	for _, request := range requests {
 		id := request.Registration.ArchiveSessionID
 		entry := cache.Entries[id]
@@ -110,7 +112,11 @@ func (p *pass) observeLabels(ctx context.Context) {
 			p.opts.labels[id] = entry
 		}
 	}
-	// The cache is a bounded set of observations, never a native inventory.
+}
+
+// trimLabelCache bounds the cache: it is a set of observations, never a
+// native inventory.
+func trimLabelCache(cache *state.LabelCache) {
 	if len(cache.Entries) > state.MaxLabelCacheEntries {
 		keys := make([]string, 0, len(cache.Entries))
 		for id := range cache.Entries {
@@ -121,14 +127,45 @@ func (p *pass) observeLabels(ctx context.Context) {
 			delete(cache.Entries, id)
 		}
 	}
-	pruneLabelTargetCursors(&cache)
-	if err := p.local.SaveLabels(cache); err != nil {
-		addError(p.result.Errors, "session-labels", err)
+	pruneLabelTargetCursors(cache)
+}
+
+// labelRevision is the session's label revision, or none yet before its
+// first publication for a provider that takes its context from the
+// registration. ok is false when the session cannot be named this pass.
+func (p *pass) labelRevision(id string, provider agentapi.LabelProvider) (checksum, stamp string, ok bool) {
+	checksum, stamp, err := p.local.LabelRevision(id)
+	if err == nil {
+		return checksum, stamp, true
 	}
+	if _, fromRegistration := provider.(agentapi.RegistrationLabelContextProvider); fromRegistration && errors.Is(err, state.ErrNoLabelPublication) {
+		return "", "", true
+	}
+	if errors.Is(err, state.ErrDurableStorageRecovery) {
+		addError(p.result.Errors, id, err)
+		p.unreadable[id] = true
+	}
+	return "", "", false
+}
+
+// labelProvider resolves reg's provider into providers, reporting whether it
+// may name reg. An imported session is named only by a provider that
+// interprets the registration itself; a retained-source context of an import
+// (Codex's) is not one the label cache accepts.
+func (p *pass) labelProvider(reg archive.SessionRegistration, providers map[string]agentapi.LabelProvider) bool {
+	provider, ok := providers[reg.Harness.Name]
+	if !ok {
+		if provider, ok = p.opts.Labels.LookupLabels(reg.Harness.Name); !ok {
+			return false
+		}
+		providers[reg.Harness.Name] = provider
+	}
+	_, fromRegistration := provider.(agentapi.RegistrationLabelContextProvider)
+	return !reg.Imported() || fromRegistration
 }
 
 func (p *pass) labelEligible(reg archive.SessionRegistration) bool {
-	if reg.HistoricalProject != nil || reg.CaptureFrozen || reg.Imported() || p.unreadable[reg.ArchiveSessionID] || (p.opts.AcceptSession != nil && !p.opts.AcceptSession(reg)) {
+	if reg.HistoricalProject != nil || reg.CaptureFrozen || p.unreadable[reg.ArchiveSessionID] || (p.opts.AcceptSession != nil && !p.opts.AcceptSession(reg)) {
 		return false
 	}
 	if p.local.GenerationCaptureAllowed(reg) != nil {
@@ -167,15 +204,14 @@ func (p *pass) prepareLabelRequests(ctx context.Context, providers map[string]ag
 		if entry.NextAt.After(p.now) {
 			continue
 		}
-		checksum, stamp, err := p.local.LabelRevision(id)
-		if err != nil {
-			if errors.Is(err, state.ErrDurableStorageRecovery) {
-				addError(p.result.Errors, id, err)
-				p.unreadable[id] = true
-			}
+		provider := providers[reg.Harness.Name]
+		fromRegistration, registrationContext := provider.(agentapi.RegistrationLabelContextProvider)
+		// A provider that needs nothing of the retained source is asked
+		// before the first publication, so that one carries the name.
+		checksum, stamp, ok := p.labelRevision(id, provider)
+		if !ok {
 			continue
 		}
-		provider := providers[reg.Harness.Name]
 		interpretation := "generic-label-context-v1"
 		if builder, ok := provider.(agentapi.LabelContextProvider); ok {
 			interpretation = builder.LabelContextVersion()
@@ -183,7 +219,18 @@ func (p *pass) prepareLabelRequests(ctx context.Context, providers map[string]ag
 		revision := sha256.Sum256([]byte(interpretation + "/" + archive.FilterVersion + "/" + p.opts.parserVersionFor(reg.Harness.Name)))
 		contract := hex.EncodeToString(revision[:])
 		validContext := entry.Context.Contract == contract && entry.Context.NativeID == reg.NativeSessionID && stamp == entry.SourceStamp && (checksum == "" || checksum == entry.SourceChecksum)
-		if !validContext {
+		if registrationContext && !validContext {
+			proof, ok := fromRegistration.RegistrationLabelContext(reg)
+			if !ok {
+				delete(cache.Entries, id)
+				delete(p.opts.labels, id)
+				continue
+			}
+			entry.Context = proof
+			entry.Context.Contract = contract
+			entry.SourceChecksum = checksum
+			entry.SourceStamp = stamp
+		} else if !validContext {
 			published, n, err := p.labelLocal.LoadLabelPublication(id, (16<<20)-p.labelBytes)
 			p.labelBytes += n
 			if p.opts.labelReadObserver != nil {
@@ -257,16 +304,6 @@ func (s *sessionScan) applyLabels(evidence []archive.SupplementalEvidence) []arc
 	return archive.MergeSupplementalEvidence(evidence, []archive.SupplementalEvidence{entry.Label.Evidence(entry.ObservedAt.UTC(), s.reg.Harness.Name)})
 }
 
-func withoutSessionLabels(evidence []archive.SupplementalEvidence) []archive.SupplementalEvidence {
-	out := make([]archive.SupplementalEvidence, 0, len(evidence))
-	for _, item := range evidence {
-		if item.Kind != archive.EvidenceKindSessionLabels {
-			out = append(out, item)
-		}
-	}
-	return out
-}
-
 func labelFingerprint(bundle archive.SourceBundle) string {
 	label, _, ok := archive.CurrentSessionLabel(bundle)
 	if !ok {
@@ -293,8 +330,15 @@ func (s *sessionScan) refreshLabels() (sessionOutcome, bool, error) {
 	if !found || !labelPublicationOwned(s.published, last.bundle, s.reg, s.opts.MachineID) || !sourceEvidenceWithinPolicy(last.bundle.SupplementalEvidence, s.opts.skillEvidence()) || labelFingerprint(last.bundle) == entry.Label.Fingerprint() {
 		return outcomeSkipped, false, nil
 	}
+	// A session stopped at a size limit keeps its last snapshot, which no
+	// read will replace; its name is refreshed from that snapshot, as for a
+	// missing transcript, and the gap is recorded again afterwards.
+	gap, stoppedAtLimit, err := s.sizeLimitSignature()
+	if err != nil {
+		return outcomeSkipped, false, err
+	}
 	reader, hasReader := newSourceReader(s.reg, s.opts)
-	if hasReader {
+	if hasReader && !stoppedAtLimit {
 		_, err := reader.Signature(s.ctx)
 		if err == nil && last.bundle.Capture.FilterVersion != archive.FilterVersion {
 			// Refilter available native input normally before refreshing its
@@ -330,7 +374,25 @@ func (s *sessionScan) refreshLabels() (sessionOutcome, bool, error) {
 		}
 	}
 	outcome, err := s.publish(s.ctx, sourceRead{observed: *observed}, candidate)
+	if err == nil && stoppedAtLimit {
+		// The renamed snapshot is still the one the limit stopped at; once
+		// it is published, the gap records its name.
+		if outcome == outcomePublished {
+			gap.PublishedLabel = entry.Label.Fingerprint()
+		}
+		err = s.local.SaveScanSignature(s.id(), gap)
+	}
 	return outcome, true, err
+}
+
+// sizeLimitSignature is the session's last scan signature when that scan
+// recorded a size-limit gap.
+func (s *sessionScan) sizeLimitSignature() (state.ScanSignature, bool, error) {
+	signature, found, err := s.local.LoadScanSignature(s.id())
+	if err != nil || !found || !sizeLimitGap(signature.Blocked) {
+		return state.ScanSignature{}, false, err
+	}
+	return signature, true, nil
 }
 
 // Verification output ends before rendering the renamed source. Both compression

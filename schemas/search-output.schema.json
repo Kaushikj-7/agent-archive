@@ -1,0 +1,621 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/wangjohn/agent-archive/main/schemas/search-output.schema.json",
+  "title": "Bounded conversation search output",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "kind": {
+      "enum": [
+        "search",
+        "search_context",
+        "search_refresh"
+      ]
+    },
+    "ok": {
+      "type": "boolean"
+    },
+    "error": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/error"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "query": {
+      "type": "string"
+    },
+    "scope": {
+      "$ref": "#/$defs/scope"
+    },
+    "limit": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "returned": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "results": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/hit"
+      }
+    },
+    "generation": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "next_cursor": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "truncated": {
+      "type": "boolean"
+    },
+    "total_matched_known": {
+      "const": false
+    },
+    "total_matched": {
+      "type": "null"
+    },
+    "coverage": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/coverage"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "refresh": {
+      "$ref": "#/$defs/refresh"
+    },
+    "context": {
+      "$ref": "#/$defs/context"
+    },
+    "filters": {
+      "$ref": "#/$defs/filters"
+    }
+  },
+  "required": [
+    "schema_version",
+    "kind",
+    "ok",
+    "error",
+    "returned",
+    "results",
+    "generation",
+    "next_cursor",
+    "truncated",
+    "total_matched_known",
+    "total_matched",
+    "coverage"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "error": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "restart_required": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "restart_required"
+      ],
+      "additionalProperties": false
+    },
+    "gap": {
+      "type": "object",
+      "properties": {
+        "revision_id": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "revision_id",
+        "reason"
+      ],
+      "additionalProperties": false
+    },
+    "scope": {
+      "type": "object",
+      "properties": {
+        "label": {
+          "type": "string"
+        },
+        "all_projects": {
+          "type": "boolean"
+        },
+        "project_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "repo_key": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "label",
+        "all_projects",
+        "project_ids",
+        "repo_key"
+      ],
+      "additionalProperties": false
+    },
+    "coverage": {
+      "type": "object",
+      "properties": {
+        "scope": {
+          "const": "namespace"
+        },
+        "index_present": {
+          "type": "boolean"
+        },
+        "last_reconciled": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "last_observed": {
+          "description": "Maximum retained settled identity observation or discovery time; may decrease while pending rechecks invalidate identity timestamps. Not a historical high-water mark.",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "discovery_complete": {
+          "type": "boolean"
+        },
+        "identity_checks_complete": {
+          "type": "boolean"
+        },
+        "complete_at_observation": {
+          "type": "boolean"
+        },
+        "known_sessions": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "indexed_sessions": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "pending_sessions": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "failed_sessions": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unsupported_sessions": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "limitations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "pending_rechecks": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "scope",
+        "index_present",
+        "last_reconciled",
+        "last_observed",
+        "discovery_complete",
+        "identity_checks_complete",
+        "complete_at_observation",
+        "known_sessions",
+        "indexed_sessions",
+        "pending_sessions",
+        "failed_sessions",
+        "unsupported_sessions",
+        "limitations",
+        "pending_rechecks"
+      ],
+      "additionalProperties": false
+    },
+    "hit": {
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "type": "string"
+        },
+        "harness": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "snippet": {
+          "type": "string"
+        },
+        "role": {
+          "type": "string"
+        },
+        "captured_at": {
+          "type": "string"
+        },
+        "match_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reference": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "gaps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/gap"
+          }
+        }
+      },
+      "required": [
+        "session_id",
+        "harness",
+        "title",
+        "snippet",
+        "role",
+        "captured_at",
+        "match_count",
+        "reference",
+        "gaps"
+      ],
+      "additionalProperties": false
+    },
+    "slice": {
+      "type": "object",
+      "properties": {
+        "reference": {
+          "type": "string"
+        },
+        "role": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "start": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "end": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "next_offset": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "complete": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "reference",
+        "role",
+        "text",
+        "start",
+        "end",
+        "next_offset",
+        "complete"
+      ],
+      "additionalProperties": false
+    },
+    "context": {
+      "type": "object",
+      "properties": {
+        "selected": {
+          "$ref": "#/$defs/slice"
+        },
+        "before": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/slice"
+          }
+        },
+        "after": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/slice"
+          }
+        }
+      },
+      "required": [
+        "selected",
+        "before",
+        "after"
+      ],
+      "additionalProperties": false
+    },
+    "refresh": {
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "type": "string"
+        },
+        "harness": {
+          "type": "string"
+        },
+        "scope": {
+          "enum": [
+            "namespace",
+            "session"
+          ]
+        },
+        "rebuild": {
+          "type": "boolean"
+        },
+        "passes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "elapsed_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "completed": {
+          "type": "boolean"
+        },
+        "stopped_reason": {
+          "type": "string"
+        },
+        "loaded_sources": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reused_sources": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "compressed_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "committed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "discovery_metadata_reads": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "discovery_nodes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "verification_metadata_checks": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "verification_catalog_nodes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "verification_metadata_bytes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "scope",
+        "rebuild",
+        "passes",
+        "elapsed_ms",
+        "completed",
+        "stopped_reason",
+        "loaded_sources",
+        "reused_sources",
+        "compressed_bytes",
+        "committed",
+        "discovery_metadata_reads",
+        "discovery_nodes",
+        "verification_metadata_checks",
+        "verification_catalog_nodes",
+        "verification_metadata_bytes"
+      ],
+      "additionalProperties": false
+    },
+    "filters": {
+      "type": "object",
+      "properties": {
+        "harness": {
+          "type": "string"
+        },
+        "since": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "until": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "replays": {
+          "enum": [
+            "hide",
+            "include",
+            "only"
+          ]
+        },
+        "children": {
+          "enum": [
+            "hide",
+            "include",
+            "only"
+          ]
+        }
+      },
+      "required": [
+        "harness",
+        "since",
+        "until",
+        "replays",
+        "children"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "search_context"
+          },
+          "ok": {
+            "const": true
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "context"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "search_refresh"
+          },
+          "ok": {
+            "const": true
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "refresh",
+          "coverage"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "search"
+          },
+          "ok": {
+            "const": true
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "query",
+          "scope",
+          "filters",
+          "limit",
+          "coverage"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "ok": {
+            "const": true
+          },
+          "kind": {
+            "enum": [
+              "search",
+              "search_refresh"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "coverage": {
+            "$ref": "#/$defs/coverage"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "ok": {
+            "const": true
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "error": {
+            "type": "null"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "error": {
+            "$ref": "#/$defs/error"
+          }
+        }
+      }
+    }
+  ]
+}

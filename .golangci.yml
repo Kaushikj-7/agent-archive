@@ -45,6 +45,8 @@ linters:
               desc: only builtin composes concrete integrations
             - pkg: github.com/wangjohn/agent-archive/internal/agents/cursor
               desc: only builtin composes concrete integrations
+            - pkg: github.com/wangjohn/agent-archive/internal/agents/muse
+              desc: only builtin composes concrete integrations
         concrete-integrations-only-at-builtin:
           files:
             - "$all"
@@ -56,6 +58,8 @@ linters:
             - pkg: github.com/wangjohn/agent-archive/internal/agents/codex
               desc: builtin is the sole native composition root
             - pkg: github.com/wangjohn/agent-archive/internal/agents/cursor
+              desc: builtin is the sole native composition root
+            - pkg: github.com/wangjohn/agent-archive/internal/agents/muse
               desc: builtin is the sole native composition root
         integrations-never-import-orchestration:
           files:
@@ -531,9 +535,3 @@ linters:
       - path: internal/(storage/storagetest/memory|reader/cache)\.go
         text: G501
         linters: [gosec]
-
-      # TODO(W3-B, collector state refactor): existing functions over the
-      # funlen/gocyclo ceilings. Remove each entry as the function is split.
-      - path: internal/cli/handoff\.go
-        text: runHandoffCommand
-        linters: [funlen, gocyclo]

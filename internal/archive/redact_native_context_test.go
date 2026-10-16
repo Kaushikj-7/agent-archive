@@ -47,3 +47,32 @@ func TestOpenPageContextPreservesIndentedTextAfterWhitespaceBlankLines(t *testin
 		}
 	}
 }
+
+func TestCodexProjectInstructionsAreStrippedOnlyAsALeadingWrapper(t *testing.T) {
+	t.Parallel()
+	wrapper := "# AGENTS.md instructions for /work/widget\n\n<INSTRUCTIONS>\n# Widget\n\nKeep functions small.\n</INSTRUCTIONS>"
+	for _, tc := range []struct {
+		input string
+		want  string
+	}{
+		{wrapper, ""},
+		{"\n" + wrapper + "\n\nReview the parser.", "Review the parser."},
+		{"# AGENTS.md instructions for /work/widget\r\n\r\n<INSTRUCTIONS>\r\nrules\r\n</INSTRUCTIONS>", ""},
+		{"# AGENTS.md instructions for /w\n\n<INSTRUCTIONS>\nouter <INSTRUCTIONS>inner</INSTRUCTIONS> tail\n</INSTRUCTIONS>after", "after"},
+		{"# AGENTS.md instructions for /w\n\n<INSTRUCTIONS>\nunfinished", ""},
+		{wrapper + "<environment_context>\n<cwd>/w</cwd>\n</environment_context>", ""},
+		{"Why does Codex send " + wrapper + "?", "Why does Codex send " + wrapper + "?"},
+		{"# AGENTS.md instructions for /w\nKeep this heading as prose.", "# AGENTS.md instructions for /w\nKeep this heading as prose."},
+		{"    " + wrapper, "    " + wrapper},
+		{"<INSTRUCTIONS>Typed by a person.</INSTRUCTIONS>", "<INSTRUCTIONS>Typed by a person.</INSTRUCTIONS>"},
+	} {
+		_, got := stripInjectedInstructions(tc.input)
+		if got != tc.want {
+			t.Fatalf("strip %q: got %q want %q", tc.input, got, tc.want)
+		}
+		state := PrivacyState{AddGap: func(string, int, string) {}}
+		if again, _ := SanitizeValue(got, &state); got != "" && again != got {
+			t.Fatalf("refilter %q: got %q", got, again)
+		}
+	}
+}

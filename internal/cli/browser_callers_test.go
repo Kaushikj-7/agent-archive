@@ -11,20 +11,22 @@ import (
 )
 
 // chooserCallers are the places a person chooses a session (the table of
-// design section 5 of dev/specs/session-finding.md). Each names the chain of
+// design section 5 of dev/proposals/implemented/session-finding.md). Each names the chain of
 // functions from the command down to the one that calls runBrowser: every
 // function in a chain must call the next, and the last must call runBrowser.
 var chooserCallers = []struct {
 	name  string
 	chain []string
 }{
+	{"search", []string{"runSearchCommand", "executeContentSearch", "runContentSearchBrowser"}},
 	{"list", []string{"runListCommand"}},
+	{"list (bounded catalog)", []string{"runListCommand", "runBoundedListBrowser"}},
 	{"show (no ID)", []string{"runShowCommand", "runBareShow"}},
 	{"show --json (no ID)", []string{"runShowCommand", "runBareShow", "selectArchivedSession"}},
 	{`show "<words>", several matches`, []string{"runShowCommand", "resolveShowQuery"}},
-	{"handoff before setup", []string{"runHandoffCommand", "resolveNativeHandoff", "chooseNativePreviews"}},
-	{"handoff (no selector)", []string{"runHandoffCommand", "chooseHandoffSession", "selectHandoffSession"}},
-	{`handoff "<words>", several matches`, []string{"runHandoffCommand", "resolveHandoffQuery", "handoffQueryResolver.resolve", "handoffQueryResolver.choose"}},
+	{"handoff before setup", []string{"runHandoffCommand", "runHandoffWithInput", "resolveNativeHandoff", "chooseNativePreviews"}},
+	{"handoff (no selector)", []string{"runHandoffCommand", "runHandoffWithInput", "chooseHandoffSession", "selectHandoffSession"}},
+	{`handoff "<words>", several matches`, []string{"runHandoffCommand", "runHandoffWithInput", "resolveHandoffQuery", "handoffQueryResolver.resolve", "handoffQueryResolver.choose"}},
 }
 
 // browserRunners are the files that may run the picker's loop: the browser

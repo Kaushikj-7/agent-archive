@@ -67,9 +67,11 @@ func TestHelpDescribesEveryFlag(t *testing.T) {
 			}
 		}
 	}
-	for line := range strings.SplitSeq(usage, "\n") {
-		if len([]rune(line)) > 82 {
-			t.Errorf("usage line of %d columns: %q", len([]rune(line)), line)
+	for name, text := range map[string]string{"usage": usage, "advancedUsage": advancedUsage} {
+		for line := range strings.SplitSeq(text, "\n") {
+			if len([]rune(line)) > 82 {
+				t.Errorf("%s line of %d columns: %q", name, len([]rune(line)), line)
+			}
 		}
 	}
 }

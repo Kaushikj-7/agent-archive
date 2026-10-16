@@ -500,11 +500,11 @@ class ReleaseWorkflowTest(unittest.TestCase):
         self.assertIsNotNone(match, f'no step {name!r} in publish')
         return match.group(1)
 
-    def test_attestation_subjects_are_exactly_the_binaries_and_candidate_manifest(self):
+    def test_attestation_subjects_are_exactly_the_binaries_checksums_and_candidate_manifest(self):
         attest = self.publish[self.publish.index('actions/attest-build-provenance@'):]
         subjects = block_lines(attest, 'subject-path: |')
         self.assertEqual(len(subjects), len(set(subjects)), subjects)
-        self.assertEqual(set(subjects), self.dist | {'dist/release-candidate.json'})
+        self.assertEqual(set(subjects), self.dist | {'dist/SHA256SUMS', 'dist/release-candidate.json'})
 
     def test_uploaded_and_released_assets_are_the_binaries_checksums_and_manifest(self):
         upload = self.publish[self.publish.index('name: agent-archive-${{ github.ref_name }}'):]
@@ -521,6 +521,83 @@ class ReleaseWorkflowTest(unittest.TestCase):
         for job in ('build', 'build-linux'):
             produced += block_lines(job_text(self.workflow, job), 'path: |')
         self.assertEqual(sorted(produced), sorted(self.dist))
+
+    def test_builds_require_verified_full_tag_coverage_before_build_and_retain_raw_evidence(self):
+        for job, suite in [('build', 'macos'), ('build-linux', 'linux')]:
+            with self.subTest(job=job):
+                text = job_text(self.workflow, job)
+                bodies = steps(text)
+                test = next(body for body in bodies if 'name: Test\n' in body)
+                plan = 'python3 -B scripts/run_ci_tier.py --plan --tier full --output release-tier-results/plan.json'
+                run = f'python3 -B scripts/run_ci_tier.py --tier full --suite {suite} --seconds 2400 --output release-tier-results'
+                verify = f'python3 -B scripts/run_ci_tier.py --verify --tier full --suite {suite} --extra-plan release-tier-results/plan.json --output release-tier-results'
+                self.assertLess(test.index(plan), test.index(run))
+                self.assertLess(test.index(run), test.index(verify))
+                self.assertIn('go vet ./...', test)
+                self.assertNotIn('go test ', test)
+                for script in ('release_signing', 'release_assets', 'release_candidate', 'install', 'purge_recipe'):
+                    self.assertIn(f'python3 scripts/test_{script}.py', test)
+                evidence = next(body for body in bodies if 'name: Preserve source-bound release validation evidence' in body)
+                self.assertIn('if: always()', evidence)
+                self.assertIn(f'name: release-validation-{suite}', evidence)
+                self.assertIn('path: release-tier-results', evidence)
+                self.assertIn('if-no-files-found: error', evidence)
+                build = next(body for body in bodies if 'name: Build\n' in body)
+                self.assertLess(bodies.index(test), bodies.index(evidence))
+                self.assertLess(bodies.index(evidence), bodies.index(build))
+                # Retain the existing default job bound rather than increasing it.
+                self.assertNotIn('timeout-minutes:', text)
+
+    def linux_prerequisites(self):
+        bodies = steps(job_text(self.workflow, 'build-linux'))
+        matching = [body for body in bodies if 'name: Install purge prerequisites\n' in body]
+        self.assertEqual(len(matching), 1)
+        return bodies, matching[0]
+
+    def test_linux_provisions_purge_tools_after_tag_guard_before_go_validation(self):
+        bodies, prerequisites = self.linux_prerequisites()
+        guard = next(body for body in bodies if 'name: Require a vX.Y.Z tag' in body)
+        setup = next(body for body in bodies if 'actions/setup-go@' in body)
+        test = next(body for body in bodies if 'name: Test\n' in body)
+        self.assertLess(bodies.index(guard), bodies.index(prerequisites))
+        self.assertLess(bodies.index(prerequisites), bodies.index(setup))
+        self.assertLess(bodies.index(setup), bodies.index(test))
+        self.assertNotRegex(prerequisites, r'(?m)^\s+(if|continue-on-error):')
+
+    def test_linux_prerequisite_bootstrap_installs_tools_and_fails_if_any_is_missing(self):
+        _, prerequisites = self.linux_prerequisites()
+        script = '\n'.join(block_lines(prerequisites, 'run: |'))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            log = root / 'sudo.log'
+            sudo = root / 'sudo'
+            sudo.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$BOOTSTRAP_LOG"\n')
+            sudo.chmod(0o755)
+            for tool in ('jq', 'bash', 'zsh'):
+                (root / tool).symlink_to('/bin/sh')
+
+            def run():
+                log.unlink(missing_ok=True)
+                return subprocess.run(
+                    [BASH, '-e', '-o', 'pipefail', '-c', script],
+                    env={'PATH': str(root), 'BOOTSTRAP_LOG': str(log)},
+                    capture_output=True, text=True,
+                )
+
+            result = run()
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(log.read_text().splitlines(), [
+                'apt-get update', 'apt-get install --yes jq zsh',
+            ])
+            # A successful package-manager exit is insufficient: the tools
+            # must actually be available to the subsequent required matrix.
+            for tool in ('jq', 'bash', 'zsh'):
+                with self.subTest(missing=tool):
+                    (root / tool).unlink()
+                    result = run()
+                    self.assertNotEqual(result.returncode, 0, result.stdout)
+                    self.assertIn(f'required purge prerequisite {tool} is missing', result.stderr)
+                    (root / tool).symlink_to('/bin/sh')
 
     def test_only_the_macos_binaries_are_signed_and_notarized(self):
         for name in ('Codesign', 'Notarize'):
@@ -611,8 +688,8 @@ class ReleaseWorkflowTest(unittest.TestCase):
         def uploads(job):
             return re.findall(r'upload-artifact@\S+[^\n]*\n\s+with:\n\s+name: (\S+)', job_text(self.workflow, job))
 
-        self.assertEqual(uploads('build'), ['unsigned'])
-        self.assertEqual(uploads('build-linux'), ['linux'])
+        self.assertEqual(uploads('build'), ['release-validation-macos', 'unsigned'])
+        self.assertEqual(uploads('build-linux'), ['release-validation-linux', 'linux'])
         downloads = re.findall(
             r'download-artifact@\S+[^\n]*\n\s+with:\n\s+name: (\S+)\n\s+path: (\S+)\n', self.publish
         )
@@ -672,12 +749,17 @@ class ReleaseWorkflowTest(unittest.TestCase):
 
     def test_release_critical_steps_are_not_skippable_or_allowed_to_fail(self):
         self.assertNotIn('continue-on-error', self.workflow)
-        # The only conditional step is the keychain cleanup.
+        # Conditional steps only clean up or retain diagnostic evidence.
         for job in ('build', 'build-linux', 'publish'):
             for text in steps(job_text(self.workflow, job)):
                 if re.search(r'(?m)^        if:', text):
                     with self.subTest(job=job):
-                        self.assertIn('name: Clean up signing keychain', text)
+                        if job == 'publish':
+                            self.assertIn('name: Clean up signing keychain', text)
+                        else:
+                            self.assertIn('name: Preserve source-bound release validation evidence', text)
+                            self.assertIn('if: always()', text)
+                            self.assertNotIn('run:', text)
         for job, names in {
             'publish': ('Codesign', 'Notarize', 'Recompute checksums after signing'),
             'build-linux': ('Verify build reports the release version', 'Build', 'Test'),

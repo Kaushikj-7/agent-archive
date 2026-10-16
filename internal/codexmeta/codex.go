@@ -102,6 +102,15 @@ func RolloutID(path string) string {
 	return m[1]
 }
 
+// NewestRolloutFirst orders rollout paths newest first by file name,
+// rollout-<local creation time>-<rollout ID>.jsonl, then by path.
+func NewestRolloutFirst(a, b string) int {
+	if c := strings.Compare(filepath.Base(b), filepath.Base(a)); c != 0 {
+		return c
+	}
+	return strings.Compare(a, b)
+}
+
 // ParseCodexMeta decodes a session_meta record. Other records are ignored.
 func ParseCodexMeta(line []byte) (CodexMeta, time.Time, bool, error) {
 	var r struct {

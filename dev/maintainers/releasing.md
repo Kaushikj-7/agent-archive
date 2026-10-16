@@ -12,8 +12,8 @@ draft or mismatched release fails closed before signing.
 
 1. **build** (macOS runner, read-only token, no secrets). Refuses a tag that
    isn't exactly `vX.Y.Z` or whose commit is not on `main`
-   (`git merge-base --is-ancestor`), runs `go vet`, `go test -race ./...`,
-   and the script tests, cross-builds `darwin/amd64` and `darwin/arm64`
+   (`git merge-base --is-ancestor`), runs `go vet`, the existing source-bound
+   full macOS tier, and the script tests, cross-builds `darwin/amd64` and `darwin/arm64`
    with `scripts/build-release.sh darwin` (the same script contributors
    run), and checks the embedded version.
 2. **build-linux** (`ubuntu-24.04`, read-only token, no secrets). The same
@@ -30,9 +30,20 @@ draft or mismatched release fails closed before signing.
    computes `SHA256SUMS` over all four binaries
    (`scripts/write-checksums.sh`), records a
    [build provenance attestation](https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations)
-   for all four and the candidate manifest, then stages a **prerelease with
+   for all four, `SHA256SUMS`, and the candidate manifest, then stages a **prerelease with
    latest=false**. It retains the signed workflow artifact for 30 days before
    creating the release. The current public latest release stays unchanged.
+
+Both build jobs explicitly select the full tier for the release tag, retaining
+all discovered Test/Fuzz/Example parents and their children, race, `-count=1`,
+and each invocation's 20-minute package timeout. The existing standalone
+`[[0], [1, 2]]` schedule gives the qualification parent its own package lifetime;
+discovery, race invocations and full-size plain performance checks share the
+unchanged 2400-second tier deadline. macOS also retains its protected-configuration
+writer check. The jobs verify exact-source/raw-body evidence before Build and
+upload separate `release-validation-macos` and `release-validation-linux`
+artifacts even on failure. These validation artifacts are separate from the
+release assets; they do not authorize signing or promotion.
 
 The candidate and promoted release have six assets: `agent-archive-darwin-amd64`,
 `agent-archive-darwin-arm64`, `agent-archive-linux-amd64`,
@@ -49,8 +60,9 @@ checksum in `SHA256SUMS` (integrity only, since both files come from the same
 release) and on the GitHub build attestation, which ties the exact bytes to
 this workflow run and commit.
 
-The attestation subjects include the four binaries and manifest; the retained
-workflow artifact and prerelease upload include those plus `SHA256SUMS`;
+The attestation subjects are the four binaries, `SHA256SUMS`, and the
+manifest; the retained workflow artifact and prerelease upload carry the same
+files;
 `scripts/test_release_assets.py` fails when they disagree, or when a Linux
 binary reaches the codesign or notarize steps. When you add or rename a
 release binary, change `scripts/write-checksums.sh`, those inventories, and
@@ -88,7 +100,7 @@ the corresponding settings or labels are active.
 | Private vulnerability reporting | Settings → Security → Code security and analysis shows private vulnerability reporting enabled; test the private reporting route described in [SECURITY.md](../../SECURITY.md) without submitting a real report. |
 | Issue labels | Confirm `bug`, `capture-gap`, and `enhancement` exist in live repository labels and match the [issue templates](../../.github/ISSUE_TEMPLATE/). |
 | Signed candidate tag | Confirm the release tag points to the tested `main` commit, the publish job completed signing and accepted notarization for both macOS architectures, and the release has `agent-archive-darwin-arm64`, `agent-archive-darwin-amd64`, `agent-archive-linux-arm64`, `agent-archive-linux-amd64`, `SHA256SUMS`, and `release-candidate.json`. Download all six; verify the macOS signatures and every checksum (`shasum -a 256 -c SHA256SUMS` on macOS, `sha256sum -c SHA256SUMS` on Linux). The Linux binaries have no signature to verify. |
-| Provenance | Verify all four downloaded binaries and the manifest, constrained to the staging workflow, exact tag ref and full commit; record the verified subject digests and workflow run. Promotion runs this automatically using the [gh verification flags](https://cli.github.com/manual/gh_attestation_verify). |
+| Provenance | Verify all four downloaded binaries, `SHA256SUMS`, and the manifest, constrained to the staging workflow, exact tag ref and full commit; record the verified subject digests and workflow run. Promotion runs this automatically using the [gh verification flags](https://cli.github.com/manual/gh_attestation_verify). |
 | `release-promotion` environment | Owner verifies required reviewers, prevent self-review, main-only deployment restriction, no signing secrets and `PROMOTION_ENABLED=true` only after protection is verified. Keep the variable false/unset until then. A workflow environment name alone creates no approval protection. |
 | Release freeze | Confirm no other owner/process will edit tags, release state, assets or latest during acceptance/promotion. Prefer immutable releases where supported and verified; do not assume the setting is enabled. REST release updates have no compare-and-swap, so the workflow's repeated checks and shared concurrency cannot serialize external owner edits. |
 
@@ -151,7 +163,7 @@ evidence.
    attestations/actions, with no signing secrets or OIDC signing permission.
 
 Promotion downloads all six assets again. It verifies the remote tag,
-checksums, manifest/API digests, all five provenance subjects constrained to
+checksums, manifest/API digests, all six provenance subjects constrained to
 `.github/workflows/release.yml`, source SHA and tag ref, strict pinned-team
 Darwin signatures and a separate online `codesign --verify --strict
 -R=notarized --check-notarization` ticket check. Apple recommends this for

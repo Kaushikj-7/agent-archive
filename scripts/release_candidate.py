@@ -112,7 +112,9 @@ def make_manifest(directory, tag, commit, repo, run_id, notary_dir):
 
 
 def verify_security(directory, tag, commit, repo):
-    for name in BINARIES + [MANIFEST]:
+    # Every release asset is an attestation subject: the binaries,
+    # SHA256SUMS, and the manifest (release.yml attests exactly these).
+    for name in ASSETS:
         run(['gh', 'attestation', 'verify', str(directory / name), '--repo', repo,
              '--signer-workflow', f'{repo}/.github/workflows/release.yml',
              '--source-digest', commit, '--source-ref', f'refs/tags/{tag}', '--deny-self-hosted-runners'])

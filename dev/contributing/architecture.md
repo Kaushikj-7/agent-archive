@@ -51,6 +51,7 @@ flowchart LR
 | `agentmeta` wire sizing | Standard-library-only JSON wire sizing at the existing pure metadata boundary, without encoding a document or accessing native, local or remote state. Archive and operational callers share one counter; stats consumers reach it only through archive. |
 | `agentapi` | Pure narrow operation contracts for launch/runtime, lifecycle, hooks, source/filter/parser/preview, purpose-specific discovery, native projects/catalogs and read-only transcript-path recognition, skills and capability/version evidence. Shared consumers request only their operation. |
 | `agents/claude`, `agents/codex`, `agents/cursor` | Native vocabulary, formats, argv/environment, locations, ownership and bounded interpretation. Pure codecs and planners never perform shared capture/publication or apply setup transactions. Source implementations own serial native reads. |
+| `agents/muse` | Injected runtime presence, session cleanup, strict local file source/filter, live local snapshot content proofs and provisional startup facts, retained-only own-conversation parser and bounded automatic handoff discovery/headers/name/activity previews; capture contexts refuse before reads. No version probe or launch implementation. |
 | `agents/builtin` | Immutable production operation bindings and precomputed runtime/cleanup projections; composition does no filesystem, version or executable probing. CLI composition injects narrow lookups into real consumers. |
 | `testutil/agenttest` | Launch and runtime conformance suites called by each native integration's tests. |
 | `archive` | Pure shared privacy policy, source envelope, normalized Analysis values and metadata/transcript/handoff builders. Native filtering and semantic parsing live in integration codecs; builders consume one caller-owned Analysis. |
@@ -75,7 +76,7 @@ flowchart LR
 | `scheduler/host` | Chooses the adapter for the system (launchd on macOS, systemd on Linux; on another system, a scheduler called `none` that says every job is unknown and refuses changes) or by the name `config.json` records (`background_backend`; `Lookup`), and owns the real `Runner`: the program in a process group of its own, output combined, with the variables that reach the user's systemd manager for `systemctl` and `loginctl`. Only `host` imports an adapter (depguard and `TestOnlyHostImportsAdapters`); running a program is limited to a listed set of packages (`TestOnlyListedPackagesRunPrograms`). |
 | `agentskills` | Shared rendered skill templates, path/content deduplication, ownership, refresh/removal and setup-journal plans. Injected native skill providers declare installation and evidence roots separately and inspect/plan observed bytes. |
 | `capture` | The hook runtime: classifying a hook event, admitting a new session or continuing a registered one, lifecycle and final-response evidence, subagent links, and the content-free capture diagnostics status shows. It imports nothing from the command line, even transitively, and does not itself import anything that runs a program, opens the Keychain, or uses the network (config uses pure destination values); depguard and `TestCaptureImportBoundary` enforce this. The one program a hook does run is `git`, for the repository key and the checked-out commit: `cli` passes in the lookups, which run before `hooks.lock` is taken, at the same time as each other, only for a new session in an archived project (and, for HEAD alone, at a stop of a registered one), and are abandoned after 600 ms. |
-| `gitremote` | The only place the program runs `git`: reads a project's `origin` with a 500 ms timeout and returns `archive.RepoKey` of it, and reads the commit a working directory has checked out and whether its tree is dirty (`Head`, `Dirty`, `HeadState`; see [the commit a session started on](../specs/git-head.md)), each "" or nil on any failure. It runs git itself (one of the packages `TestOnlyListedPackagesRunPrograms` allows), behind its own injectable `Runner`, not a `scheduler.Runner`. `capture` may not run programs, so `cli` hands the hook these lookups (`capture.WithRepoKey`, `capture.WithGitHead`). |
+| `gitremote` | The only place the program runs `git`: reads a project's `origin` with a 500 ms timeout and returns `archive.RepoKey` of it, and reads the commit a working directory has checked out and whether its tree is dirty (`Head`, `Dirty`, `HeadState`; see [the commit a session started on](../proposals/implemented/git-head.md)), each "" or nil on any failure. It runs git itself (one of the packages `TestOnlyListedPackagesRunPrograms` allows), behind its own injectable `Runner`, not a `scheduler.Runner`. `capture` may not run programs, so `cli` hands the hook these lookups (`capture.WithRepoKey`, `capture.WithGitHead`). |
 | `setupjournal` | Setup's transaction (`setup-transaction.json`): writing the journal before any hook file or the LaunchAgent changes, rolling a failed setup back, recovering an interrupted one without overwriting later edits, and recording the prototype's job and the collectors installed under earlier labels that setup retires (which jobs those are is the scheduler's to say). A scheduler is reached only through the `Backends` its caller passes (cli's `Env`), which resolve the backend name each journal records, so every job is driven through the backend that made it. Every command and the hook check whether a journal is pending. |
 | `evidence` | Skill inventories and snapshots, as privacy-filtered evidence. |
 | `cursorstore` | Reading Cursor's `state.vscdb` without writing to it or beside it. |
@@ -138,13 +139,15 @@ synthetic success establishes extension coverage only; it creates no production
 agent or installed-version verification. The contributor recipe identifies the
 ports and capability-specific checks required for a new implementation.
 
-Changed Codex scans reconcile same-thread physical revisions only after the
-lookup certifies complete candidate coverage. Historical reads use the existing
+Changed Codex scans reconcile the thread's own physical segments on its current
+chain (the rollout Codex's index names, then each rollout its history base
+names), then any observed same-thread rollouts off that chain, best effort.
+Off-chain rollouts never block selection. Historical reads use the existing
 native admission and source-home checks, close each snapshot before the next
 read, and retain independent aggregate bounds for raw bytes, filtered records,
-filtered bytes and compressed stages. Current selection may remain available
-while historical coverage is pending, but that scan cannot acknowledge a request
-or settle its signature. Meaningful preservation compares owned logical ordinals
+filtered bytes and compressed stages. A chain the lookup cannot resolve (a
+missing base) fails that scan, which cannot acknowledge a request or settle its
+signature. Meaningful preservation compares owned logical ordinals
 through the native record comparator; file sizes and copied headers supply no
 coverage evidence. One physical revision receives one latest verified retained
 entry, including an outgoing append first seen during reconciliation. Newly
@@ -211,3 +214,11 @@ references and rechecks the current set before deletion; whole-prefix deletion
 removes metadata first. Privacy/parser/link-only work preserves meaningful age.
 The native/index charged ledger does not bound process RSS: retained decode/filter/
 compression/comparison scratch and staged disk are separate performance evidence.
+
+
+Local [native validation checkpoints](../specs/native-validation.md) are nested
+inside protected bindings. A collector-private lease owns native input until the
+prepared state commit finishes. Its independent verifier runs after staging and
+before the short hooks/request policy fence; staging and directory fsync remain
+outside that fence. The durable checkpoint is independent of disposable scan
+signatures and frozen publication acknowledgement. Muse capture remains fenced.

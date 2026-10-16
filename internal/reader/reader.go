@@ -6,11 +6,13 @@ package reader
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
+	"io"
 	"sort"
 	"strconv"
 	"strings"
@@ -32,6 +34,20 @@ var ErrRefreshRequired = errors.New("source changed or was deleted; refresh meta
 // ErrInvalidMetadata means a metadata sidecar was read but does not decode
 // or validate: it is damaged, or a newer version of agent-archive wrote it.
 var ErrInvalidMetadata = errors.New("invalid metadata")
+
+// IsUnsupportedSource reports a format rejected after the referenced compressed
+// bytes passed size and checksum verification. It does not claim the unsupported
+// content could be interpreted or its native ownership checked.
+func IsUnsupportedSource(err error) bool {
+	var unsupported *unsupportedSourceError
+	return errors.As(err, &unsupported)
+}
+
+type unsupportedSourceError struct{ cause error }
+
+func (e *unsupportedSourceError) Error() string { return e.cause.Error() }
+
+func (e *unsupportedSourceError) Unwrap() error { return e.cause }
 
 // SkippedSidecar is a listed sidecar a listing left out because it is
 // invalid (Err wraps ErrInvalidMetadata).
@@ -609,6 +625,13 @@ func matchesModel(m archive.Metadata, model string) bool {
 			return true
 		}
 	}
+	if m.TokenObservations.HasObservations() {
+		for _, observation := range m.TokenObservations.Models {
+			if observation.Model != archive.OtherModels && observation.Model == model {
+				return true
+			}
+		}
+	}
 	return false
 }
 
@@ -694,7 +717,14 @@ func LoadSource(ctx context.Context, store storage.ObjectStore, metadata archive
 	if err := metadata.ValidateSourceReference(); err != nil {
 		return archive.SourceBundle{}, err
 	}
-	data, err := store.Get(ctx, metadata.SourceBundle.Key)
+	if metadata.SourceBundle.CompressedBytes <= 0 || metadata.SourceBundle.CompressedBytes > limits.compressed() {
+		return archive.SourceBundle{}, fmt.Errorf("%w: source declared compressed size must be between 1 and %d bytes", storage.ErrObjectTooLarge, limits.compressed())
+	}
+	bounded, ok := store.(storage.LimitedGetter)
+	if !ok {
+		return archive.SourceBundle{}, errors.New("source reads require allocation-bounded object reads")
+	}
+	data, err := bounded.GetLimited(ctx, metadata.SourceBundle.Key, int64(metadata.SourceBundle.CompressedBytes))
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
 			return archive.SourceBundle{}, ErrRefreshRequired
@@ -768,6 +798,15 @@ func decodeReferencedSource(ctx context.Context, metadata archive.Metadata, data
 	// assembled records the caller asked for.
 	bundle, err := archive.ReadSourceBundle(bytes.NewReader(data), archive.DecodeOptions{MaxUncompressedBytes: int64(limits.uncompressed())})
 	if err != nil {
+		var unsupported *archive.UnsupportedSourceSchemaError
+		if errors.As(err, &unsupported) {
+			// The decoder can reject a header before consuming the gzip trailer.
+			// Corrupt/truncated streams must remain failures, not cached gaps.
+			if verifyErr := verifyUnsupportedEncoding(data, limits.uncompressed()); verifyErr != nil {
+				return archive.SourceBundle{}, fmt.Errorf("decode source: %w", verifyErr)
+			}
+			err = &unsupportedSourceError{cause: err}
+		}
 		return archive.SourceBundle{}, fmt.Errorf("decode source: %w", err)
 	}
 	if bundle.History != nil && (metadata.History == nil || metadata.History.CurrentRevision != bundle.History.ActiveRolloutID) {
@@ -781,6 +820,22 @@ func decodeReferencedSource(ctx context.Context, metadata archive.Metadata, data
 		return archive.SourceBundle{}, errors.New("source key does not match metadata identity")
 	}
 	return bundle, nil
+}
+
+func verifyUnsupportedEncoding(data []byte, limit int) error {
+	compressed, err := gzip.NewReader(bytes.NewReader(data))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = compressed.Close() }()
+	n, err := io.CopyN(io.Discard, compressed, int64(limit)+1)
+	if n > int64(limit) {
+		return archive.ErrSourceTooLarge
+	}
+	if !errors.Is(err, io.EOF) {
+		return err
+	}
+	return nil
 }
 
 // A preserved physical revision has its own producer version and mode, bound

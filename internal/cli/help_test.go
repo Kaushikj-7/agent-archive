@@ -30,9 +30,11 @@ func TestHelpTextIsConsistent(t *testing.T) {
 			}
 		}
 	}
-	for _, placeholder := range []string{"agent-archive show ID", "agent-archive feedback ID"} {
-		if strings.Contains(usage, placeholder) {
-			t.Errorf("usage still says %q", placeholder)
+	for name, text := range map[string]string{"usage": usage, "advancedUsage": advancedUsage} {
+		for _, placeholder := range []string{"agent-archive show ID", "agent-archive feedback ID"} {
+			if strings.Contains(text, placeholder) {
+				t.Errorf("%s still says %q", name, placeholder)
+			}
 		}
 	}
 }

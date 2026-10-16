@@ -15,7 +15,7 @@ func TestAgentArchitectureBoundaries(t *testing.T) {
 			importgraph.Forbid(t, name+" transitively", all, "os/exec", "net", "net/http", prefix+"credentials", prefix+"storage", prefix+"cli", prefix+"capture", prefix+"collector", prefix+"backfill")
 		})
 	}
-	for _, name := range []string{"agents/claude", "agents/codex", "agents/cursor"} {
+	for _, name := range []string{"agents/claude", "agents/codex", "agents/cursor", "agents/muse"} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			_, all := importgraph.Imports(t, prefix+name)

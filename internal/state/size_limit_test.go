@@ -1,18 +1,18 @@
 package state
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"testing"
-	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 )
 
-// Saving a publication larger than the session's share of the pass ledger
-// is refused at the session's own ceiling, so the collector records it as
-// the session's gap rather than shared pressure retried every pass.
+// Saving a publication with a record larger than the session's share of the
+// pass ledger is refused at the session's own ceiling, so the collector
+// records it as the session's gap rather than shared pressure retried every
+// pass. (A publication is written a record at a time, so only a record that
+// does not fit is refused, not a publication larger than the share.)
 func TestSaveOverSessionCeilingMarksTheScope(t *testing.T) {
 	t.Parallel()
 	base, err := openTestStore(t.TempDir())
@@ -22,10 +22,11 @@ func TestSaveOverSessionCeilingMarksTheScope(t *testing.T) {
 	budget := agentapi.NewNativeReadBudget(agentapi.PassReadBudget)
 	store, closeStore := base.WithReadBudget(t.Context(), budget)
 	defer closeStore()
-	end := budget.BeginScope(1 << 20)
+	end := budget.BeginScope(256 << 10)
 	defer end()
-	source := bytes.Repeat([]byte("s"), 2<<20)
-	err = store.SavePending("session-1", PendingPublication{ReadyAt: time.Unix(1, 0), SourceKey: "source", MetadataKey: "metadata", SourceSHA256: "sha", SourceBytes: source, MetadataBytes: []byte(`{}`)})
+	pending := largePending(1, 512<<10, 1<<10)
+	pending.Bundle.SchemaVersion, pending.Bundle.Ordinals = 2, nil
+	err = store.SavePending("session-1", pending)
 	if !errors.Is(err, agentapi.ErrReadBudget) || !budget.ScopeExceeded() || budget.ScopePressured() {
 		t.Fatalf("save over the ceiling: err=%v exceeded=%v", err, budget.ScopeExceeded())
 	}

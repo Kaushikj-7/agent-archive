@@ -198,6 +198,28 @@ class ScopeTest(unittest.TestCase):
         changed['pull_request']['base']['sha'] = self.head
         self.assertEqual(self.selected(event=changed), 'pre-merge')
 
+    def test_merge_on_newer_base_than_event_can_scope(self):
+        # GitHub can rebuild the merge after main moves; the event keeps the old base.
+        self.write('internal/main.go', 'feature\n')
+        self.commit()
+        self.git('checkout', '-q', 'main')
+        self.write('docs/later.md', 'later\n')
+        self.commit()
+        self.git('checkout', '-q', 'feature')
+        self.merge()
+        self.assertNotEqual(self.git('rev-parse', self.tested + '^1'), self.base)
+        self.assertEqual(self.selected(), scope.SCOPED_RUN)
+
+    def test_merge_on_newer_base_with_relevant_change_forces_full_run(self):
+        self.write('internal/main.go', 'feature\n')
+        self.commit()
+        self.git('checkout', '-q', 'main')
+        self.write('.github/workflows/a.yml', 'later\n')
+        self.commit()
+        self.git('checkout', '-q', 'feature')
+        self.merge()
+        self.assertEqual(self.selected(), 'pre-merge')
+
     def test_disconnected_ancestry_falls_back(self):
         self.merge()
         self.git('checkout', '-q', '--orphan', 'unrelated')

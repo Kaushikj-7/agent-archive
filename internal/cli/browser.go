@@ -17,6 +17,7 @@ const (
 	browseSessions browserMode = iota
 	// pickSession returns the row to the caller.
 	pickSession
+	browseSearch
 )
 
 // browserSpec is what differs between the places a person chooses a session:
@@ -25,16 +26,21 @@ const (
 // and `a`, the `/` filter, paging and scrolling) is the same code for every
 // caller.
 type browserLoadAction struct {
-	Label string
-	Load  func() (bool, error)
+	Label       string
+	Load        func() (bool, error)
+	LoadContext func(context.Context) (bool, error)
 	// Available, when set, follows the currently shown scope.
 	Available func() bool
 }
 
 type browserSpec struct {
+	Search    *contentSearchBrowser
 	LoadOlder *browserLoadAction
 	Notice    string
-	Mode      browserMode
+	// KeysNotice, when set, replaces Notice for a browser reading keys,
+	// whose keys differ from the answers a line-mode prompt takes.
+	KeysNotice string
+	Mode       browserMode
 	// Verb is what Enter does, which leads the heading ("Hand off", "Show").
 	// Empty for none. Lower-cased, it is what the line-mode prompt says
 	// Enter does when the browser picks.
@@ -99,17 +105,28 @@ func runBrowser(ctx context.Context, env sessionBrowserDependencies, p *prompter
 	if spec.LoadOlder == nil {
 		spec.LoadOlder = spec.Choices.loadOlder
 	}
-	list := &sessionPicker{older: spec.LoadOlder, boundedNotice: spec.Notice, env: env, clear: redraw, keys: keys, verb: spec.Verb, filter: spec.Query, filtering: spec.Query != "" && keys != nil}
+	notice := spec.Notice
+	if keys != nil && spec.KeysNotice != "" {
+		notice = spec.KeysNotice
+	}
+	list := &sessionPicker{ctx: ctx, older: spec.LoadOlder, boundedNotice: notice, env: env, clear: redraw, keys: keys, verb: spec.Verb, filter: spec.Query, filtering: spec.Query != "" && keys != nil, contentSearch: spec.Search}
+	defer list.stopOperations()
 	var err error
-	if spec.Mode == browseSessions {
-		b := &sessionBrowser{env: env, prompt: p, stdout: stdout, stderr: stderr, store: spec.Store, format: spec.Choices.format, noPager: spec.NoPager, screen: screen, keys: keys, list: list}
+	if spec.Mode == browseSessions || spec.Mode == browseSearch {
+		b := &sessionBrowser{env: env, prompt: p, stdout: stdout, stderr: stderr, store: spec.Store, format: spec.Choices.format, noPager: spec.NoPager, screen: screen, keys: keys, list: list, search: spec.Search}
 		err = b.run(ctx, spec.Choices)
+		if spec.Search != nil && spec.Search.handoff != nil {
+			row, picked = *spec.Search.handoff, true
+			if keys != nil && p.handBack != nil {
+				keys.handBack(p.handBack)
+			}
+		}
 		b.screen.leave()
 		if err == nil && b.last != nil {
 			renderSessionSummary(stdout, *b.last, b.summaryOptions(true))
 		}
 	} else {
-		row, picked, err = list.pickScoped(p, stdout, spec.Choices, strings.ToLower(spec.Verb))
+		row, picked, err = list.pickScopedContext(ctx, p, stdout, spec.Choices, strings.ToLower(spec.Verb))
 		if keys != nil && picked && p.handBack != nil {
 			keys.handBack(p.handBack)
 		}

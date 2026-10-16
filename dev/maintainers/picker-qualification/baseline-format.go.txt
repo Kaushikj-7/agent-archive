@@ -1,0 +1,64 @@
+package cli
+
+import (
+	"context"
+	"testing"
+
+	"github.com/wangjohn/agent-archive/internal/catalog"
+)
+
+const qualificationFormat = 10
+
+func qualificationSeed(tb testing.TB, raw *qualifiedCLIStore) catalog.CatalogHead {
+	tb.Helper()
+	w, err := catalog.New(raw)
+	if err != nil {
+		tb.Fatal(err)
+	}
+	// Protocol10 has no empty upgrade constructor. One real tombstone commit
+	// supplies its nonzero generation/epochs and legitimate receipt without
+	// adding metadata/source bodies. The complete fixture replaces visible roots.
+	id, err := catalog.NewMutationID()
+	if err != nil {
+		tb.Fatal(err)
+	}
+	if _, err = w.Commit(context.Background(), catalog.CatalogMutation{ID: id, SessionKey: "sessions/codex/qualification-seed/metadata.json"}); err != nil {
+		tb.Fatal(err)
+	}
+	h, _, err := w.Head(context.Background())
+	if err != nil {
+		tb.Fatal(err)
+	}
+	if h.Generation == 0 || h.Epoch == "" || h.PublicationEpoch == "" || h.Receipts.Key == "" {
+		tb.Fatal("public baseline seed lacks committed head/receipt authority")
+	}
+	if h.Capture.Key != "" || h.Activity.Key != "" || h.Project.Key != "" {
+		tb.Fatal("receipt-only seed unexpectedly added visible order rows")
+	}
+	entry, revision, err := w.Find(context.Background(), "sessions/codex/qualification-seed/metadata.json")
+	if err != nil || entry != nil || revision == "" {
+		tb.Fatal("baseline seed is not an accepted tombstone", err)
+	}
+	for _, prefix := range []string{"catalog-v4/metadata/", "sessions/"} {
+		objects, err := raw.List(context.Background(), prefix)
+		if err != nil || len(objects) != 0 {
+			tb.Fatal("receipt-only seed added metadata/source bodies", prefix, err)
+		}
+	}
+	c := w.Coordinator()
+	owner, err := c.Seal(context.Background())
+	if err != nil {
+		tb.Fatal(err)
+	}
+	if err = c.Activate(context.Background(), owner, "private fixture credential proof"); err != nil {
+		tb.Fatal(err)
+	}
+	if err = c.Release(context.Background(), owner); err != nil {
+		tb.Fatal(err)
+	}
+	return h
+}
+func qualificationEntry(_ testing.TB, e catalog.CatalogEntry) catalog.CatalogEntry { return e }
+func qualificationPickerLeaves(_ testing.TB, _ string, _ catalog.CatalogEntry) []qualificationLeaf {
+	return nil
+}
