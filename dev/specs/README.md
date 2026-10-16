@@ -28,6 +28,7 @@ Historical-only ownership status reconciled 2026-10-12 after #433 merged as
 | [Backfill](backfill.md) | Implemented original file/database import and historical-only ownership/bounded bulk mappings (#433). Cursor subagent import remains a follow-up; broader [historical recovery](../proposals/historical-backfill-recovery.md) remains partial. |
 | [Codex history](codex-history.md) | Implemented retained-history reader, lookup, lifecycle, native child admission and historical-only ownership (#433). Fragment artifacts (6b) and combined acceptance remain gated. |
 | [Codex fragments](codex-fragments.md) | Proposed step 6B1 format and schema checks only. Decoder, privacy-context-proven filtering, explicit incomplete consumer, lifecycle, opt-in import and exact repair undo are not shipped. |
+| [Local native validation](native-validation.md) | Protected Muse raw checkpoints and live prepared proofs; production capture and locator resolution remain fenced. |
 | [Eval export](eval-export.md) | Implemented archived/local/bulk export; schema and golden fixtures define the contract. |
 
 For the implementation queue and outstanding acceptance records, use the

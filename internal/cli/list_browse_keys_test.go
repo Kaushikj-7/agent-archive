@@ -648,16 +648,33 @@ func TestKeyPickerSweepKeepsEveryScreenSound(t *testing.T) {
 			for fi, format := range formats {
 				for run := range 6 {
 					name := fmt.Sprintf("layout %d, %d rows, format %d, run %d", li, n, fi, run)
-					sweepKeyPicker(t, name, rng, layout(n), format)
+					sweepKeyPicker(t, name, rng, layout(n), format, 0)
 				}
 			}
 		}
 	}
+	// With older rows that load past the end, a few at a time.
+	loaded := 0
+	for li, layout := range layouts {
+		for _, n := range []int{13, 40} {
+			for fi, format := range formats {
+				for run := range 3 {
+					name := fmt.Sprintf("older rows: layout %d, %d rows, format %d, run %d", li, n, fi, run)
+					loaded = max(loaded, sweepKeyPicker(t, name, rng, layout(n), format, 4))
+				}
+			}
+		}
+	}
+	if loaded <= 8 {
+		t.Errorf("the sweep loaded at most %d rows", loaded)
+	}
 }
 
 // sweepKeyPicker runs the picker on sessions with 60 random keys and
-// checks every screen it draws.
-func sweepKeyPicker(t *testing.T, name string, rng *rand.Rand, sessions []archive.Metadata, format listFormatOptions) {
+// checks every screen it draws. With batch set, the list shows batch rows
+// at first and loads batch more at a time. It returns the most rows a
+// screen's position counted.
+func sweepKeyPicker(t *testing.T, name string, rng *rand.Rand, sessions []archive.Metadata, format listFormatOptions, batch int) (rows int) {
 	t.Helper()
 	randomSize := func() fixedTerminal { return fixedTerminal{40 + rng.Intn(161), 6 + rng.Intn(55)} }
 	first := randomSize()
@@ -681,9 +698,20 @@ func sweepKeyPicker(t *testing.T, name string, rng *rand.Rand, sessions []archiv
 	var out bytes.Buffer
 	// Each screen is drawn at the size the window has as it is cleared.
 	sizes := []fixedTerminal{first}
+	format.Now = pickerNow
+	var choices *scopeChoices
+	if batch > 0 {
+		format.Numbered = true
+		choices = pagedArchiveChoices(sessionScope{Label: "All projects"}, format, sessions, batch, nil, "")
+	}
+	var older *browserLoadAction
+	if choices != nil {
+		older = choices.loadOlder
+	}
 	picker := &sessionPicker{
 		env:     adjustable,
 		keys:    startKeys(fake),
+		older:   older,
 		heading: "All projects · sessions",
 		clear: func() {
 			out.WriteString(screenBreak)
@@ -692,8 +720,12 @@ func sweepKeyPicker(t *testing.T, name string, rng *rand.Rand, sessions []archiv
 			sizes = append(sizes, adjustable.size)
 		},
 	}
-	format.Now = pickerNow
-	_, _, err := picker.pick(newPrompter(strings.NewReader(""), &out), &out, sessions, format, "show")
+	var err error
+	if choices != nil {
+		_, _, err = picker.pickScoped(newPrompter(strings.NewReader(""), &out), &out, choices, "show")
+	} else {
+		_, _, err = picker.pick(newPrompter(strings.NewReader(""), &out), &out, sessions, format, "show")
+	}
 	picker.keys.close()
 	if err != nil {
 		t.Fatal(err)
@@ -703,7 +735,12 @@ func sweepKeyPicker(t *testing.T, name string, rng *rand.Rand, sessions []archiv
 		if problem := sweepScreenProblem(screen, size); problem != "" {
 			t.Fatalf("%s, screen %d at %dx%d: %s\nkeys %q\n%s", name, i, size.width, size.height, problem, chunks, screen)
 		}
+		var from, to, total int
+		if _, err := fmt.Sscanf(positionOf(screen), "%d–%d of %d", &from, &to, &total); err == nil {
+			rows = max(rows, total)
+		}
 	}
+	return rows
 }
 
 // sweepScreenProblem says what is wrong with a screen of the list read by
@@ -851,18 +888,21 @@ func TestKeyPickerFooterLine(t *testing.T) {
 	t.Parallel()
 	screen := listScreen{n: 86, start: 0, end: 14, width: 80}
 	l := &sessionPicker{}
-	if got := l.footerLine(screen, "show"); got != "↑↓ move   Enter show   / search   number + Enter jump   q quit        1–14 of 86" {
+	if got := l.footerLine(screen, "show"); got != "↑↓ move   PgUp/PgDn page   Enter show   / search   q quit             1–14 of 86" {
 		t.Errorf("80 columns: %q", got)
 	}
-	// Older rows to load are named as long as Enter is: the position
-	// counts only the rows loaded.
+	screen.width = 100
+	if got := l.footerLine(screen, "show"); got != "↑↓ move   PgUp/PgDn page   Enter show   / search   number + Enter jump   q quit           1–14 of 86" {
+		t.Errorf("100 columns: %q", got)
+	}
+	// Older rows to load end the position in "+": the keys are the same.
 	l.older = &browserLoadAction{Label: "Older sessions"}
 	screen.width = 60
-	if got := l.footerLine(screen, "hand off"); got != "↑↓ move   Enter hand off   o older   q quit       1–14 of 86" {
+	if got := l.footerLine(screen, "hand off"); got != "↑↓ move   Enter hand off   / search   q quit     1–14 of 86+" {
 		t.Errorf("60 columns: %q", got)
 	}
 	screen.width = 40
-	if got := l.footerLine(screen, "show"); got != "Enter show   o older          1–14 of 86" {
+	if got := l.footerLine(screen, "show"); got != "↑↓ move   Enter show         1–14 of 86+" {
 		t.Errorf("40 columns: %q", got)
 	}
 	screen.width = 8
@@ -870,7 +910,7 @@ func TestKeyPickerFooterLine(t *testing.T) {
 		t.Errorf("8 columns: %q", got)
 	}
 	screen.width = 0
-	if got := l.footerLine(screen, "show"); got != "↑↓ move   Enter show   / search   number + Enter jump   o older   q quit   1–14 of 86" {
+	if got := l.footerLine(screen, "show"); got != "↑↓ move   PgUp/PgDn page   Enter show   / search   number + Enter jump   q quit   1–14 of 86+" {
 		t.Errorf("unknown width: %q", got)
 	}
 	l.filtering, screen.width = true, 80

@@ -27,7 +27,7 @@ There are two ways to do it:
 ## Before setup: native local sessions
 
 After installing, run `agent-archive handoff` inside a checkout to browse
-existing Claude Code and Codex conversations. No bucket, capture hooks,
+existing Claude Code, Codex and Muse Code conversations. No bucket, capture hooks,
 credentials, registrations, or background job are created. Cursor automatic
 discovery is deferred; `--file PATH --harness cursor` remains available.
 
@@ -48,9 +48,10 @@ unique prefixes (at least four characters) work beyond the preview window.
 Conflicting identities require the explicit-file path.
 
 The picker initially inspects filtered labels for the newest 50 candidates.
-Use **o · Load older sessions** to inspect another 50; clear a key-mode `/`
-filter with Esc first. Redrawing, scrolling and filtering inspect no additional
-transcripts. Word queries search only loaded previews and report their bounded
+Scroll past the last row to inspect another 50 (reading lines, answer
+**o · Load older sessions**); clear a key-mode `/` filter with Esc first.
+Redrawing, filtering, and scrolling within the loaded rows inspect no
+additional transcripts. Word queries search only loaded previews and report their bounded
 coverage. A partial label falls back to the first filtered prompt or native ID.
 Discovery inspects at most 10,000 files, with a cumulative 64 MiB discovery and
 preview read budget per invocation. After header inspection finishes, unused
@@ -324,7 +325,7 @@ name. `handoff` matches them the way `list "<words>"` and `show "<words>"` do.
 
 This section describes `handoff` after setup. [Before
 setup](#before-setup-native-local-sessions) there is no archive: words search
-only the loaded previews of Claude Code and Codex sessions in this directory
+only the loaded previews of Claude Code, Codex and Muse Code sessions in this directory
 and below (the newest 50 at first), match a name, title, branch, project, app,
 or the start of a native ID but not a pull request number, can match a session
 with no prompt yet, and never widen to other projects unless you pass
@@ -495,7 +496,8 @@ the picker after setup; [before setup](#before-setup-native-local-sessions) its
 heading starts with `Hand off local ·`, it lists only this machine's Claude
 Code and Codex sessions in this directory and below, including ones with no
 prompt yet (an unnamed one is titled by its native ID; no PR column, `live`,
-`· not uploaded`, or `a`), and `o` loads 50 older ones.
+`· not uploaded`, or `a`), and scrolling past the last row loads 50 older
+ones.
 
 ```text
 Hand off · agent-archive · 5 sessions · claude · a all projects
@@ -511,7 +513,7 @@ LAST WEEK
 Fix the retry budget in the upload queue
 Claude · agent-archive · PR #213 · last active just now · id d7a77938
 ────────────────────────────────────────────────────────────────────────────────
-↑↓ move   Enter hand off   / search   number + Enter jump   q quit      1–5 of 5
+↑↓ move   PgUp/PgDn page   Enter hand off   / search   q quit           1–5 of 5
 Number or ID to hand off:
 ```
 
@@ -521,9 +523,11 @@ both appears once. Subagent sessions and sessions with no prompt yet, on this
 machine or in the archive, are left out (one uploaded before its first prompt
 is listed once its transcript here has one), and `--harness` narrows the list
 (`--source local` or `--source archive` limits where it looks). The newest 50 rows
-are listed initially. Press **o** (`o older` in the footer) to add up to 50 more
-rows in the current scope. The action disappears when that scope is complete
-and returns if `a` switches to a scope with more rows. The filter below
+are listed initially. Scrolling past the last row (↓ or the wheel on it, PgDn
+with it on screen, or End on it) adds up to 50 more rows in the current scope
+and moves on into them; `o` does the same. While more can be added, the
+footer's count ends in `+` (`1–14 of 50+`). It loses the `+` when that scope is
+complete and gets it back if `a` switches to a scope with more rows. The filter below
 searches the complete archived scope before older rows are loaded. When the
 archive cannot be read (offline, say), the picker lists this machine's sessions
 and says why archived ones are missing.
@@ -789,12 +793,41 @@ preserve the previous output.
 from; see [JSON output](../reference/json-output.md). The format is specified
 in the [handoff design](../../dev/proposals/implemented/handoff.md).
 
-### Muse explicit files
+### Muse local sessions
 
 Use `agent-archive handoff --file /path/to/session.jsonl --harness muse` to read
 a complete supported ordinary exec/MSP root without setup. Add `--format json`,
 `--output FILE`, or `--to codex` (also Claude/Cursor) as usual. The handoff keeps
 safe own visible conversation and the validated reserved start. Tool results,
-usage/cost, model switches and children are unavailable. Automatic Muse browse,
-capture, backfill and launching into Muse remain unavailable. Forks, children,
+usage/cost, model switches and children are unavailable. Capture, backfill, native show/search and launching into Muse remain unavailable. Forks, children,
 checkpoints, unknown authority and incomplete files are refused as a whole.
+
+Muse automatic handoff reads ordinary roots under the single effective
+`XDG_DATA_HOME/muse/sessions/YYYY/MM/DD/SESSION_ID/session.jsonl`. A nonempty
+XDG value is trimmed; a relative value resolves against this command's working
+directory. An unset or whitespace-only value uses the qualified HOME's
+`.local/share/muse`. It does not combine stores or infer locations from hooks.
+For example, `agent-archive handoff --latest --harness muse --source local`
+selects only after complete bounded identity discovery. Folder dates and UUID
+ages are locator hints; validated permission records supply the creation time.
+
+Muse previews show safe recorded automatic names and activity, falling back to
+native IDs. They do not infer a human prompt title from an isolated run record.
+Unknown or bounded records produce partial previews. Headers corroborate only
+the bounded supported startup; the selected source is completely validated
+before output or destination launch. Unsupported forks, checkpoints, malformed
+suffixes and changes during reads refuse selection without falling back to a
+different root. Automatic current-session selection for Muse remains unavailable.
+
+Own input/output observations use an optional `token_observations` object with
+`input`, `output`, bounded `models`, and explicit `observed`, `coverage`,
+`composition`, `pricing` availability (`state`, optional fixed `reason`). They are
+recorded observations, not complete usage or billed tokens. A known model or
+`--prices` file cannot turn them into cost. Legacy normalized token fields remain
+absent for observation-only sessions. Stats JSON also reports
+`observation_sessions` and `coverage.observation_only_sessions`; each cost has an
+optional `observation_only_sessions` count. Mixed spend is the qualified priced
+subset and is partial even when an excluded session recorded zero input/output.
+No unpriced token total is inferred from observations. Terminal and HTML show a
+compact observation and coverage note; handoff JSON includes the same summary in
+its session and Markdown keeps values with their unavailable-accounting context.

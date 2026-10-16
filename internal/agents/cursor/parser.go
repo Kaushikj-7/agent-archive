@@ -10,7 +10,7 @@ import (
 type Parser struct{}
 
 // Version identifies the native derivation policy.
-func (Parser) Version() string { return "0.21.0" }
+func (Parser) Version() string { return "0.23.0" }
 
 // Parse derives facts once from retained safe evidence. A chat name retained
 // as session label evidence names a session whose own source carries none

@@ -12,18 +12,21 @@ import (
 
 func TestRetainedSchemaMatchesSyntheticGoldens(t *testing.T) {
 	t.Parallel()
-	raw, e := os.ReadFile(filepath.Join("..", "..", "..", "schemas", "muse-retained-v1.schema.json"))
-	if e != nil {
-		t.Fatal(e)
-	}
-	doc, e := jsonschema.UnmarshalJSON(bytes.NewReader(raw))
-	if e != nil {
-		t.Fatal(e)
-	}
-	id := doc.(map[string]any)["$id"].(string)
 	compiler := jsonschema.NewCompiler()
-	if e = compiler.AddResource(id, doc); e != nil {
-		t.Fatal(e)
+	var id string
+	for _, name := range []string{"muse-retained-v1.schema.json", "muse-retained-marker-v2.schema.json", "muse-retained-record.schema.json"} {
+		raw, e := os.ReadFile(filepath.Join("..", "..", "..", "schemas", name))
+		if e != nil {
+			t.Fatal(e)
+		}
+		doc, e := jsonschema.UnmarshalJSON(bytes.NewReader(raw))
+		if e != nil {
+			t.Fatal(e)
+		}
+		id = doc.(map[string]any)["$id"].(string)
+		if e = compiler.AddResource(id, doc); e != nil {
+			t.Fatal(e)
+		}
 	}
 	schema, e := compiler.Compile(id)
 	if e != nil {
@@ -115,7 +118,11 @@ func TestProductionAllowlistAndSchemaMatchClosedRetainedDispatch(t *testing.T) {
 				case "boolean":
 					fields[key] = false
 				default:
-					fields[key] = "synthetic"
+					if _, hasPattern := prop["pattern"]; hasPattern {
+						fields[key] = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+					} else {
+						fields[key] = "synthetic"
+					}
 				}
 			}
 		}

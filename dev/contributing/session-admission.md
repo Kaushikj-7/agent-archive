@@ -192,12 +192,15 @@ SQL metadata never supply admission permission. Original creation, project,
 current consent, exclusions and destination are checked independently.
 
 Native SQLite main and WAL files are confined read-only regular-file handles.
-SQLite opens only the private projected main. After one bounded whole refresh,
-same-generation committed WAL appends can be checksum/prefix revalidated and
-replayed into that existing private view, followed by a real targeted row query.
-Changed main stamps/content, reset generations or checkpoint uncertainty stay
-retryable. This uses filesystem stamp observations and does not acquire a native
-SQLite reader lock or claim an atomic filesystem snapshot.
+SQLite opens only the private projected main. Same-generation committed WAL
+appends can be checksum/prefix revalidated and replayed into that existing
+private view, followed by a real targeted row query. A checkpoint or generation
+change discards the old projection and attempts a fully verified new snapshot
+within the same remaining lookup time and native memory ledger. The selected
+locator and revision are still compared; an uncertain snapshot or an actual
+selection change stays retryable. This uses filesystem stamp observations and
+does not acquire a native SQLite reader lock or claim an atomic filesystem
+snapshot.
 
 The lookup keeps at most 8 MiB of observed rollout facts (hints) and 4 MiB of
 rollout directory listings per pass, with conservative bounds before

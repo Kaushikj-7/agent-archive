@@ -6,6 +6,8 @@ import (
 	"errors"
 	"io"
 	"strings"
+
+	"github.com/wangjohn/agent-archive/internal/archive"
 )
 
 // nativeAuthorityWriter wraps an exact base fence instead of replacing its
@@ -239,4 +241,14 @@ func validateNativeRootTransition(next, previous Config) error {
 		}
 	}
 	return nil
+}
+
+// NativeValidationInCurrentDestination checks the fresh native validation window,
+// independently of the ID-first ownership rule used for retained publication.
+// The candidate supplies actual native birth; hook admission cannot replace it.
+func (c Config) NativeValidationInCurrentDestination(owner archive.SessionRegistration, candidate *archive.NativeSourceBinding) bool {
+	if candidate == nil || candidate.Agent != "muse" || candidate.Version != 2 || candidate.Validate() != nil || candidate.Agent != owner.Harness.Name || candidate.NativeID != owner.NativeSessionID || owner.Imported() || owner.NativeChild || candidate.ParentID != "" || candidate.RootID != "" && candidate.RootID != candidate.NativeID {
+		return false
+	}
+	return owner.DestinationID != "" && owner.DestinationID == c.DestinationID() && c.InCurrentDestination(owner) && (c.DestinationSince.IsZero() || !candidate.NativeCreatedAt.Before(c.DestinationSince))
 }

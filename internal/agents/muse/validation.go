@@ -27,14 +27,6 @@ func validateRootRows(rows []retained) error {
 	return nil
 }
 
-func validateRows(rows []retained) error {
-	if e := validateRootRows(rows); e != nil {
-		return e
-	}
-	_, e := conversation(rows)
-	return e
-}
-
 type rootState struct {
 	owner     string
 	start     int64
@@ -71,6 +63,8 @@ func (s *rootState) authority(rows []retained, i int) error {
 	r := rows[i]
 	f := r.Fields
 	switch r.Type {
+	case payloadApprovalWaitStarted, payloadApprovalWaitTerminal, payloadToolBatchStarted, payloadToolBatchTerminal:
+		return nil
 	case payloadRuntimeSessionPermissionFormatDeclared, payloadRuntimeSessionPermissionProfileCommitted:
 		if i > 1 {
 			return errFormat
@@ -122,6 +116,8 @@ func (s *rootState) authority(rows []retained, i int) error {
 func startupRecord(rows []retained, i int) error {
 	r := rows[i]
 	switch r.Type {
+	case payloadApprovalWaitStarted, payloadApprovalWaitTerminal, payloadToolBatchStarted, payloadToolBatchTerminal:
+		return nil
 	case payloadRuntimeCommandIntakeReceived:
 		if str(r.Fields["command_kind"]) == "session_start" {
 			return startupCommand(rows, i)
@@ -171,13 +167,21 @@ func startupCommand(rows []retained, i int) error {
 
 func startupPrefix(rows []retained) bool {
 	if rows[2].Type == payloadRuntimeSessionMetadata {
+		if rows[3].Type == payloadRuntimeSessionMetadata {
+			return twoMetadataPrefix(rows)
+		}
 		return rows[3].Type == payloadSessionOpenedObserved && rows[3].Fields["resume"] == false && rows[2].Causation == nil && rows[3].Causation == nil
 	}
 	return len(rows) >= 8 && rows[2].Type == payloadRuntimeSessionCaptureSelection && rows[3].Type == payloadRuntimeCommandIntakeReceived && str(rows[3].Fields["command_kind"]) == "session_start" && rows[6].Type == payloadRuntimeSessionMetadata && rows[7].Type == payloadSessionOpenedObserved && rows[7].Fields["resume"] == false && rows[6].Causation == nil && rows[7].Causation == nil
 }
 
 func fieldShape(r retained) (int64, []string, bool) {
+	if newFamily(r) {
+		return newFieldShape(r)
+	}
 	switch r.Type {
+	case payloadApprovalWaitStarted, payloadApprovalWaitTerminal, payloadToolBatchStarted, payloadToolBatchTerminal:
+		return 0, nil, false
 	case payloadRuntimeSessionPermissionFormatDeclared:
 		return fieldsRuntimeSessionPermissionFormatDeclared(r)
 	case payloadRuntimeSessionPermissionProfileCommitted:
@@ -234,13 +238,17 @@ func validFields(r retained) bool {
 	}
 	for k, v := range f {
 		switch fieldName(k) {
-		case fieldSchemaVersion, fieldPermissionEpoch, fieldEnvelopeSequence, fieldSourceRunRecordSequence:
+		case fieldSchemaVersion, fieldPermissionEpoch, fieldEnvelopeSequence, fieldSourceRunRecordSequence, fieldModelCallIndex:
 			if _, ok := v.(json.Number); !ok {
+				return false
+			}
+		case fieldObservedInput, fieldObservedOutput:
+			if !integer(v, 0) {
 				return false
 			}
 		case fieldResume:
 		case fieldPreviousName:
-		case fieldPrompt, fieldText, fieldNewName:
+		case fieldPrompt, fieldText, fieldNewName, fieldKind, fieldEventKind, fieldSourceRunRecordID, fieldObservedModel:
 			fallthrough
 		default:
 			if _, ok := v.(string); !ok {
@@ -457,6 +465,9 @@ func fieldsRuntimeSession(r retained) (int64, []string, bool) {
 	}
 	ek := runtimeEvent(str(f["event_kind"]))
 	names = []string{"kind", "event_kind"}
+	if kind == roleRun && ek == eventModelCompleted && completionEnriched(f) {
+		return schema, []string{"kind", "event_kind", "run_id", "source_run_record_id", "source_run_record_sequence", "model", "input_tokens", "output_tokens"}, completionFields(r)
+	}
 	if kind == roleRun && (ek == eventStarted || ek == eventAssistantMessageCommitted) {
 		names = append(names, "run_id", "source_run_record_id", "source_run_record_sequence")
 		if num(f["source_run_record_sequence"]) < 1 {
@@ -519,4 +530,26 @@ func fieldsRuntimeCommandIntakeSettled(r retained) (int64, []string, bool) {
 		return 0, nil, false
 	}
 	return schema, names, true
+}
+
+// twoMetadataPrefix is the one observed model-resolution startup lane. The
+// permission frame still supplies birth; neither metadata row invents a time.
+func twoMetadataPrefix(rows []retained) bool {
+	if len(rows) < 5 {
+		return false
+	}
+	a, b, o := rows[2], rows[3], rows[4]
+	if a.Type != payloadRuntimeSessionMetadata || b.Type != payloadRuntimeSessionMetadata || o.Type != payloadSessionOpenedObserved || a.Causation != nil || b.Causation != nil || o.Causation != nil || o.Fields["resume"] != false || a.Timestamp <= rows[0].Timestamp || b.Timestamp < a.Timestamp || o.Timestamp < b.Timestamp {
+		return false
+	}
+	if !keys(a.Fields, "kind", "workspace_root", "provider_id", "tool_surface_version") || !keys(b.Fields, "kind", "workspace_root", "provider_id", "model_id", "tool_surface_version") {
+		return false
+	}
+	for _, k := range []string{"kind", "workspace_root", "provider_id", "tool_surface_version"} {
+		if a.Fields[k] != b.Fields[k] {
+			return false
+		}
+	}
+	_, ok := b.Fields["model_id"].(string)
+	return ok
 }
