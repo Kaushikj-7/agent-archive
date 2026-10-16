@@ -16,9 +16,13 @@ func TestMeasuredStoreProviderPagesAndBoundaries(t *testing.T) {
 		headers[i] = storage.Object{Key: fmt.Sprintf("sessions/%04d", i), ETag: "etag"}
 	}
 	for _, tc := range []struct {
-		name, after, through  string
-		corrected             bool
-		returned, pages, keys int64
+		name      string
+		after     string
+		through   string
+		corrected bool
+		returned  int64
+		pages     int64
+		keys      int64
 	}{
 		{"historical exact page", "", headers[999].Key, false, 1000, 2, 2000},
 		{"corrected exact page", "", headers[999].Key, true, 1000, 1, 1000},

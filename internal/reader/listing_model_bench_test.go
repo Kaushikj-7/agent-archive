@@ -378,8 +378,10 @@ func TestReadPathListingPolicySharedBudget(t *testing.T) {
 		}
 	}
 	for _, tc := range []struct {
-		ranges             int
-		pages, keys, waves int64
+		ranges int
+		pages  int64
+		keys   int64
+		waves  int64
 	}{{0, 9, 6840, 1}, {16, 33, 26942, 3}} {
 		costs := readPathPolicyCosts(groups, tc.ranges, storagetest.ListingLatencyModel{StopAtBoundary: true})
 		var pages, keys int64
