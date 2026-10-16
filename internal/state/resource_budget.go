@@ -138,10 +138,6 @@ func (s *Store) readBudgetedContext(ctx context.Context, path string, value any,
 	return nil
 }
 
-func (s *Store) writeCompact(path string, value any) error {
-	return s.writeCompactUsing(path, value, func() error { return local.WriteCompact(path, value) })
-}
-
 func (s *Store) writeCompactAt(root *os.Root, path string, value any) error {
 	return s.writeCompactUsing(filepath.Join(s.home, path), value, func() error { return local.RootedWrite(root, path, value) })
 }
