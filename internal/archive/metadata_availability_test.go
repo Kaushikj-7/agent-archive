@@ -53,10 +53,11 @@ func TestMetadataMeasuredZeroAndLegacyObservability(t *testing.T) {
 	t.Parallel()
 	available := Availability{State: AvailabilityAvailable}
 	for _, explicit := range []bool{false, true} {
-		o := Observability{StructuredCounts: available, ToolResults: available}
+		var detail Availability
 		if explicit {
-			o.ToolCalls, o.FilesTouched, o.GitActivity = available, available, available
+			detail = available
 		}
+		o := Observability{StructuredCounts: available, ToolResults: available, ToolCalls: detail, FilesTouched: detail, GitActivity: detail}
 		m := assembleAnalyzedMetadata(SourceBundle{}, Analysis{Observability: o}, Metadata{})
 		for name, count := range map[string]*int{"calls": m.Counts.ToolCalls, "results": m.Counts.ToolResults, "files": m.Counts.FilesTouched, "commits": m.Counts.Commits, "pushes": m.Counts.Pushes, "created PRs": m.Counts.PRsCreated, "merged PRs": m.Counts.PRsMerged} {
 			if count == nil || *count != 0 {

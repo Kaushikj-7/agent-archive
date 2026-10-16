@@ -41,15 +41,19 @@ func TestMetadataToolAvailabilityPreservesNativeEvidence(t *testing.T) {
 			}
 			validateAgainst(t, schema, harness, raw)
 			if harness == "cursor" {
-				old := m
-				old.Parser.Version = "0.20.0"
-				old.Counts.ToolResults = new(0)
-				refreshed, err := archive.BuildEvalExportWithAnalysis(b, a, old, EvalExportSourceArchive, EvalExportDetailFull, ParserInfo{Name: "cursor", Version: "0.21.0"})
-				if err != nil {
-					t.Fatal(err)
-				}
-				if refreshed.Counts.ToolResults != nil || refreshed.Counts.ToolCalls == nil || *refreshed.Counts.ToolCalls != len(a.View.ToolCalls) || refreshed.Parser.Version != "0.21.0" {
-					t.Fatal("Cursor stale sidecar did not refresh result availability")
+				// Cursor briefly inherited common parser 0.21.0 before its own
+				// 0.20.0 policy was pinned. Both saved versions must refresh.
+				for _, version := range []string{"0.20.0", "0.21.0"} {
+					old := m
+					old.Parser.Version = version
+					old.Counts.ToolResults = new(0)
+					refreshed, err := archive.BuildEvalExportWithAnalysis(b, a, old, EvalExportSourceArchive, EvalExportDetailFull, ParserInfo{Name: "cursor", Version: "0.22.0"})
+					if err != nil {
+						t.Fatal(err)
+					}
+					if refreshed.Counts.ToolResults != nil || refreshed.Counts.ToolCalls == nil || *refreshed.Counts.ToolCalls != len(a.View.ToolCalls) || refreshed.Parser.Version != "0.22.0" {
+						t.Fatalf("Cursor %s sidecar did not refresh result availability", version)
+					}
 				}
 			}
 			// Empty structured sources still establish measured zeros, including Cursor.
