@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 )
 
 type nativeProfile string
@@ -207,6 +208,8 @@ func collectFacts(f *archive.NativeFacts, b archive.SourceBundle, r map[string]a
 		name = firstString(r, "description")
 	case kind == "session" && b.Capture.SourceFormat == "cursor-composer":
 		name = firstString(r, "name")
+	case agent == profileCodex && f.Name == "" && b.IsChild():
+		name = codexSpawnedTaskName(r)
 	}
 	if name = archive.CollapseSessionTitle(name); name != "" {
 		f.Name = name
@@ -245,6 +248,41 @@ func collectFacts(f *archive.NativeFacts, b archive.SourceBundle, r map[string]a
 			}
 		}
 	}
+}
+
+// codexNewTaskHeader opens the plain header of the message a Codex
+// multi-agent parent sends a thread it spawns. The task itself follows as
+// encrypted content, which the filter never keeps, so a spawned thread has no
+// prompt of its own: the task name in the header is all that names it.
+const codexNewTaskHeader = "Message Type: NEW_TASK"
+
+// codexSpawnedTaskName is the readable task name in a Codex agent_message
+// record's NEW_TASK header: the last segment of its "Task name: /root/…"
+// agent path, with underscores, hyphens and runs of space as single spaces.
+// "" for any other record.
+func codexSpawnedTaskName(r map[string]any) string {
+	payload, _ := r["payload"].(map[string]any)
+	if firstString(r, "type") != "response_item" || firstString(payload, "type") != "agent_message" {
+		return ""
+	}
+	content, _ := payload["content"].([]any)
+	for _, item := range content {
+		block, _ := item.(map[string]any)
+		header, ok := strings.CutPrefix(firstString(block, "text"), codexNewTaskHeader+"\n")
+		if !ok {
+			continue
+		}
+		for line := range strings.SplitSeq(header, "\n") {
+			agentPath, found := strings.CutPrefix(line, "Task name: ")
+			if !found {
+				continue
+			}
+			agentPath = strings.TrimSpace(agentPath)
+			task := agentPath[strings.LastIndex(agentPath, "/")+1:]
+			return strings.Join(strings.FieldsFunc(task, func(c rune) bool { return c == '_' || c == '-' || unicode.IsSpace(c) }), " ")
+		}
+	}
+	return ""
 }
 
 // ParseClaude interprets retained safe Claude evidence without source I/O.

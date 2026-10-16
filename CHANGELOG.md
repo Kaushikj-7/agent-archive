@@ -6,6 +6,12 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Codex multi-agent subagents are named after the task their parent gave them
+  (`/root/fix_upload_retry` reads "fix upload retry") instead of showing only
+  their session ID. Their task text is encrypted, so they have no prompt to
+  preview. Existing ones are renamed when sync refreshes their metadata (Codex
+  parser 0.28.0); nothing is uploaded again.
+
 - Muse local handoff previews now read only their reserved head/tail windows,
   avoiding whole-file hashes while browsing large histories. Selected sessions
   retain complete filtering and independent content verification.

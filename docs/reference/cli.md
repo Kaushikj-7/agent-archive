@@ -525,7 +525,7 @@ repository and all projects.
 On a terminal each session is one line, cut to the window: its number, agent,
 title (the Claude Code or Cursor session name when available, else a preview
 of its first filtered prompt, in a readable form; Codex uses the prompt
-preview), project, PR (the last pull request the session linked or created,
+preview, and a Codex subagent its task name), project, PR (the last pull request the session linked or created,
 when any row has one), and when it was last active (2m, Mon, Oct 9). Piped,
 the plain table is WHEN, AGENT, PROJECT, PR, short SESSION_ID, and TITLE, one
 line a session with the whole title last; scripts read --json. An agent or
