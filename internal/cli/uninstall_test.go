@@ -293,12 +293,21 @@ func TestUninstallReportsBusyCollectorAndKeepsLocalState(t *testing.T) {
 
 func TestUsageListsUninstall(t *testing.T) {
 	t.Parallel()
+	// uninstall is an advanced command: the standard help points at the
+	// advanced tier, and the advanced tier lists it.
 	var out bytes.Buffer
 	if code := Run([]string{"--help"}, nil, &out, nil, Env{}); code != 0 {
 		t.Fatalf("code=%d", code)
 	}
+	if !strings.Contains(out.String(), "agent-archive help advanced") {
+		t.Fatalf("standard help does not point at the advanced tier: %s", out.String())
+	}
+	out.Reset()
+	if code := Run([]string{"help", "advanced"}, nil, &out, nil, Env{}); code != 0 {
+		t.Fatalf("code=%d", code)
+	}
 	if !strings.Contains(out.String(), "agent-archive uninstall") {
-		t.Fatalf("help output missing uninstall: %s", out.String())
+		t.Fatalf("advanced help output missing uninstall: %s", out.String())
 	}
 }
 

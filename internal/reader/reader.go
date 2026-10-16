@@ -625,6 +625,13 @@ func matchesModel(m archive.Metadata, model string) bool {
 			return true
 		}
 	}
+	if m.TokenObservations.HasObservations() {
+		for _, observation := range m.TokenObservations.Models {
+			if observation.Model != archive.OtherModels && observation.Model == model {
+				return true
+			}
+		}
+	}
 	return false
 }
 

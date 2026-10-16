@@ -19,6 +19,8 @@ func only(m map[string]any, names ...string) bool {
 // context/diagnostic fields are bounded by the JSON decoder and never retained.
 func authorityShape(r retained, p map[string]any) bool {
 	switch r.Type {
+	case payloadApprovalWaitStarted, payloadApprovalWaitTerminal, payloadToolBatchStarted, payloadToolBatchTerminal:
+		return false
 	case payloadRuntimeSessionMetadata:
 		return shapeRuntimeSessionMetadata(p)
 	case payloadSessionOpenedObserved:
@@ -153,10 +155,12 @@ func shapeRuntimeSession(p map[string]any) bool {
 		}
 		event := object(p["event"])
 		switch runtimeEvent(str(event["kind"])) {
+		case eventReasoningCommitted:
+			return false
 		case eventStarted:
 			return keys(event, "kind", "prompt")
 		case eventAssistantMessageCommitted:
-			return keys(event, "kind", "message_id", "response_id", "text")
+			return keys(event, "kind", "message_id", "response_id", "text") || keys(event, "kind", "message_id", "response_id", "text", "provider_item_id") && stringFields(event, "provider_item_id")
 
 		case eventAccepted, eventAssistantToolCallsCommitted, eventCancelled, eventCompleted, eventContextBlockDiagnostic, eventContextBlockUpdated, eventFailed, eventGoalUsageAttribution, eventHookRunStarted, eventHookRunTerminal, eventModelCompleted, eventModelInputTraceRecorded, eventModelRequestConfigured, eventModelResponseCreated, eventProposed, eventProviderRequestOptionsConfigured, eventResourceUsageSampled, eventScheduled, eventSideEffectIntent, eventStatus, eventTaskStreamLinked, eventTerminal, eventToolResultBatchCommitted:
 			// These known variants keep the existing non-special-case behavior.

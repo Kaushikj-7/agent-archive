@@ -21,7 +21,8 @@ minimum P4 own-conversation interpretation needed by the real existing
 `handoff --file PATH --harness muse` path. It supports complete ordinary exec/MSP
 roots, `muse-jsonl` v1, safe own main/chat prompts and committed assistant text,
 reserved logical creation time, retained refilter and existing destinations.
-Only Source/Filter, Parser and prior Runtime are bound. Collection remains
+Source/Filter, Parser, Runtime and local handoff Discovery/NativeHeaders/Preview
+are bound. Collection remains
 refused before native reads/filtering/PUT, including injected registrations.
 No durable binding or consent is created. The synthetic 1.4.9 exec held-out has
 two own turns; 1.4.9 MSP root evidence has zero turns. Conversational MSP
@@ -30,12 +31,14 @@ native conversational acceptance.
 
 Original P1/P4 residual requirements remain: qualified usage authority, cache,
 reasoning/cost, task/call and MCP/Git/tool pairing, model switches, complete
-export/view agreement, names/version/skills, native automatic browse and
-headers/preview, launch into Muse and replay. Those metrics are unavailable in
+export/view agreement, complete names/version/skills, native show/search, launch
+into Muse and replay. Those metrics are unavailable in
 the current local output. P2 capture/admission/storage/read-back and P3 child,
 checkpoint/rewrite, platform, privacy/retention and resource/release gates retain
-their original owners and acceptance below. The next local slice owns automatic
-handoff discovery/headers/preview; capture is a later separate slice. This
+their original owners and acceptance below. [Automatic handoff](../qualification/muse/local-handoff.md)
+now uses one qualified effective XDG data home, bounded
+startup corroboration and safe name/activity/ID previews; selected sources still
+require complete strict validation. Capture is a later separate slice. This
 partial delivery does not redefine full integration success or qualify capture.
 
 ## 1. Scope and success criteria

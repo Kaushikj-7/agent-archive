@@ -1210,15 +1210,62 @@ exceptions additionally need `maximum_parallel_descendants` and
 An exception cannot override missing evidence, source/coverage checks, correctness
 failures, or deterministic operation budgets.
 
-An exception used by a run requires the latest submitted review by a designated
-maintainer to be APPROVED, from a human other than the PR author, with
-`review.commit_id` equal to the live/event PR head. Dismissed, stale, bot, author,
-and unlisted-user reviews do not authorize it. Pushes invalidate that approval.
-Approve the revision, then rerun CI; a rerun or label alone grants nothing. There
-is no self-referential head SHA in the exception file. The bounded decision
-artifact records the exact source, trusted policy digest, exception and review.
-Unsubmitted pending reviews do not replace a submitted decision. Review submission
-time determines the latest review, with review ID breaking equal-time ties.
+An exception used by a run requires explicit approval from a designated human
+maintainer in the trusted-base policy's `maintainers` list. A non-author can
+submit an APPROVED review with `review.commit_id` equal to the live/event PR
+head. The latest submitted review by that maintainer controls; submission time
+orders reviews, with review ID breaking equal-time ties. Unsubmitted PENDING
+reviews are ignored. Dismissed, stale, bot, author and unlisted-user reviews
+do not authorize an exception.
+
+An allowlisted human maintainer, including the PR author, can instead manually
+post a new PR conversation comment whose entire body is exactly
+`/approve-performance-exceptions FULL_HEAD_SHA`. Replace `FULL_HEAD_SHA` with the
+current full 40-character lowercase hexadecimal commit SHA. To revoke, post a
+new comment with exactly `/revoke-performance-exceptions FULL_HEAD_SHA`. These
+commands cover the structured performance exceptions at that revision, including
+their checked-in limits, owner, reason and expiry. GitHub
+[does not permit authors to approve their own PRs](https://docs.github.com/en/pull-requests/how-tos/review-pull-requests/approving-a-pull-request-with-required-reviews),
+so the explicit comment supplies that path. It does not submit a hosting-platform
+review or satisfy any separate required human review.
+
+Only actual PR conversation comments from accounts with GitHub type `User` can
+authorize this path. Commands in review bodies, quoted examples, code fences,
+extra prose or whitespace, bot comments, unlisted users, generic text, pushes,
+labels and reruns grant nothing. A stale-SHA command is ignored. Post the command,
+then rerun CI; comments do not start a new workflow. A push requires new approval
+of the resulting revision. There is no self-referential SHA in the exception file.
+
+The latest current-revision comment command from each maintainer controls,
+ordered by original comment creation time and then comment ID. Post a new
+unedited command to approve or revoke. Unequal `created_at` and `updated_at`
+timestamps identify a detectable edit, which cannot authorize an exception.
+Because GitHub does not expose prior comment bodies, any detectably edited
+comment by that maintainer, even ordinary text, conservatively invalidates their
+earlier approval. This barrier uses original creation time, so editing an older
+comment cannot overtake a newer command. A detectable edit of the latest command
+into generic text cannot revive an earlier approval. The REST snapshot does not
+prove historical bodies or detect edits within the same timestamp resolution;
+the explicit authorized current-head command body remains the approval contract.
+Deleting a comment removes it from the current API inventory; use a new
+revocation command instead of editing or deleting an approval.
+
+For a non-author using both channels, the later of their latest submitted review
+and latest comment decision controls. A newer CHANGES_REQUESTED, COMMENTED or
+DISMISSED review, revocation command or edit barrier cancels that maintainer's
+earlier approval; a later explicit approval can replace it. A nonapproval wins
+equal timestamps across channels, whose IDs belong to different sequences.
+As with ordinary reviews, one eligible maintainer's approval suffices; another
+maintainer's rejection does not invalidate it at this budget gate. Hosting
+review requirements still apply independently.
+
+The gate checks that the live PR is open and matches the event head before
+loading decisions and again before accepting an approval. Both review and comment
+inventories must complete within four pages of 100 rows each (at most 399 rows
+per inventory); an incomplete inventory or duplicate ID fails closed. The
+existing shared 12-request, 20-second API budget remains in force, including
+workflow/job evidence reads. The bounded decision artifact records the exact
+source, trusted policy digest, exception and approving review or comment ID.
 Expired exceptions fail even when unused, so remove them promptly.
 
 The enforcer protects the budget decision **when the required workflow runs**.
@@ -1229,10 +1276,11 @@ without executing the trusted-base runner. A required status name alone cannot
 detect that change. Hosting rules must independently protect the workflow/enforcer/policy
 and required checks, enforce review by the appropriate maintainers, invalidate
 stale approvals, and ensure the validated merge candidate is the candidate
-merged. A repository with only one maintainer cannot obtain that maintainer's
-non-author approval on their own PR. Do not claim tamper-proof enforcement until
-those hosting requirements are configured and verified. An exception remains
-blocked when no eligible independent approver exists.
+merged. A sole maintainer can explicitly approve a performance exception on their
+own PR through the comment protocol; any independent review required by hosting
+rules remains separate. Do not claim tamper-proof enforcement until those hosting
+requirements are configured and verified. An exception remains blocked when no
+eligible explicit approval exists.
 
 ### Reviewed baseline admission
 

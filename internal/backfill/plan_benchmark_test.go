@@ -163,7 +163,7 @@ func BenchmarkBuildPlan(b *testing.B) {
 			}
 			counts := &planReadCounts{}
 			registry := builtin.NewBuiltins()
-			env := Environment{Home: home, Now: func() time.Time { return fixedNow }, Discovery: registry, Imports: registry, NativePaths: registry, Worktrees: registry, Workspaces: registry, Children: registry, DatabaseCatalogs: registry, Sources: planCountedSources{registry, planCountedFiles{counts: counts}}, Workers: 1,
+			env := Environment{Home: home, Now: func() time.Time { return fixedNow }, Discovery: importFixtureDiscovery{registry}, Imports: registry, NativePaths: registry, Worktrees: registry, Workspaces: registry, Children: registry, DatabaseCatalogs: registry, Sources: planCountedSources{registry, planCountedFiles{counts: counts}}, Workers: 1,
 				Open: func(path string) (io.ReadCloser, error) {
 					file, err := os.Open(path)
 					if err != nil {

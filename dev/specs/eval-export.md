@@ -173,7 +173,8 @@ exactly what it means there. A session record:
 - `files_edited` lists the files the editing calls named (Edit, Write,
   apply_patch, …), in the order first edited, relative to the session's first
   working directory when inside it; `counts.files_touched` counts the same
-  set. It is empty for a Cursor text transcript, which records no calls.
+  set. It is absent when edited-file evidence is unavailable, including a
+  Cursor text transcript, and empty when observable evidence records no edits.
 - `branch` is the first branch the transcript records (Claude Code's
   `gitBranch`), the branch the session started on; Codex and Cursor record
   none. It is absent when that first branch is `HEAD` (a detached checkout)

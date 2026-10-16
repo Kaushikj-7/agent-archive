@@ -60,7 +60,10 @@
           "maxLength": 128
         },
         "version": {
-          "const": 1
+          "enum": [
+            1,
+            2
+          ]
         },
         "native_id": {
           "$ref": "#/$defs/token"
@@ -86,8 +89,39 @@
         },
         "root_revision": {
           "$ref": "#/$defs/token"
+        },
+        "checkpoint": {
+          "$ref": "#/$defs/checkpoint"
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "version": {
+                "const": 2
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "checkpoint"
+            ],
+            "properties": {
+              "agent": {
+                "const": "muse"
+              }
+            }
+          },
+          "else": {
+            "not": {
+              "required": [
+                "checkpoint"
+              ]
+            }
+          }
+        }
+      ]
     },
     "fence": {
       "type": "object",
@@ -192,6 +226,37 @@
         },
         "value": {
           "type": "boolean"
+        }
+      }
+    },
+    "checkpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "domain",
+        "algorithm",
+        "boundary",
+        "sha256"
+      ],
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "domain": {
+          "const": "muse-ordinary"
+        },
+        "algorithm": {
+          "const": "sha256"
+        },
+        "boundary": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9223372036854775807
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
         }
       }
     }

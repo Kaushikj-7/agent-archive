@@ -125,6 +125,12 @@ func runBackfillCommand(args []string, stdin io.Reader, stdout, stderr io.Writer
 	if !ok {
 		return 2
 	}
+	for _, name := range opts.filters.Harnesses {
+		if _, supported := env.agentRegistry().LookupImport(name); !supported {
+			terminal.Printf(stderr, "agent-archive: backfill: historical import is unavailable for %s\n", name)
+			return 2
+		}
+	}
 	home, err := env.readHome()
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: backfill: resolve home: %v\n", err)
@@ -251,7 +257,7 @@ func parseBackfillOptions(args []string, stderr io.Writer, env Env) (backfillCom
 		}
 		filters.MappingFile = *mappingFile
 	}
-	filters, err = filters.Canonicalize(env.agentRegistry())
+	filters, err = filters.Canonicalize(selectedDiscoveryApps{DiscoveryLookup: env.agentRegistry(), apps: env.backfillDiscoveryAgents()})
 	if err != nil {
 		return usageError(err.Error())
 	}
@@ -271,7 +277,7 @@ func planBackfill(env Env, stdout, stderr io.Writer, home, userHome string, cfg 
 	var stopLooking func()
 	var progress func(backfill.PlanningProgress)
 	if !opts.jsonOut {
-		label := backfill.SearchLine(opts.filters, env.agentRegistry().DiscoveryAgents())
+		label := backfill.SearchLine(opts.filters, env.backfillDiscoveryAgents())
 		if style.live {
 			display := newPlanningDisplay(label)
 			progress = display.observe
@@ -294,7 +300,7 @@ func planBackfill(env Env, stdout, stderr io.Writer, home, userHome string, cfg 
 	stopLooking()
 	if err != nil {
 		if !opts.jsonOut {
-			label := backfill.SearchLine(opts.filters, env.agentRegistry().DiscoveryAgents())
+			label := backfill.SearchLine(opts.filters, env.backfillDiscoveryAgents())
 			switch {
 			case interrupted && style.live:
 				terminal.Println(stdout, label+" stopped.")
@@ -331,7 +337,7 @@ func reportBackfillPlan(env Env, stdout, stderr io.Writer, home string, cfg conf
 		return true, 0
 	}
 	if style.live {
-		terminal.Printf(stdout, "%s %d found.\n", backfill.SearchLine(opts.filters, env.agentRegistry().DiscoveryAgents()), plan.Found())
+		terminal.Printf(stdout, "%s %d found.\n", backfill.SearchLine(opts.filters, env.backfillDiscoveryAgents()), plan.Found())
 	} else {
 		terminal.Printf(stdout, "%d found.\n", plan.Found())
 	}
@@ -769,6 +775,16 @@ func (e Env) backfillTempDirs() []string {
 	return temps
 }
 
+func (e Env) backfillDiscoveryAgents() []string {
+	var names []string
+	for _, name := range e.agentRegistry().DiscoveryAgents() {
+		if _, supported := e.agentRegistry().LookupImport(name); supported {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
 // backfillEnvironment is what planning reads: the user's home, the
 // temporary directories, and the clock. Files are read from the real file
 // system, and Cursor's database is opened read-only to count the chats only
@@ -776,10 +792,11 @@ func (e Env) backfillTempDirs() []string {
 func (e Env) backfillEnvironment(userHome string, cfg config.Config) backfill.Environment {
 	dirs := e.nativeSessionDirectories(userHome, cfg)
 	observer := &gitremote.IdentityObserver{}
+	importApps := e.backfillDiscoveryAgents()
 	env := backfill.Environment{
 		RepositoryIdentity:        observer.Lookup,
 		RepositoryIdentityCurrent: gitremote.ProjectIdentityCurrent,
-		Home:                      userHome, NativeDirectories: dirs, Sources: e.agentRegistry(), Discovery: e.agentRegistry(), DatabaseCatalogs: e.agentRegistry(), NativePaths: e.agentRegistry(), Worktrees: e.agentRegistry(), Workspaces: e.agentRegistry(), Children: e.agentRegistry(), Imports: e.agentRegistry(),
+		Home:                      userHome, NativeDirectories: dirs, Sources: e.agentRegistry(), Discovery: selectedDiscoveryApps{DiscoveryLookup: e.agentRegistry(), apps: importApps}, DatabaseCatalogs: e.agentRegistry(), NativePaths: e.agentRegistry(), Worktrees: e.agentRegistry(), Workspaces: e.agentRegistry(), Children: e.agentRegistry(), Imports: e.agentRegistry(),
 		TempDirs: e.backfillTempDirs(), Now: e.now, OS: e.OS,
 		// XDG_CONFIG_HOME places Cursor's data folder off macOS.
 		Getenv: e.getenv,

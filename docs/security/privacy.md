@@ -693,9 +693,36 @@ and startup locally, retains only minimal safe authority and linked own visible
 conversation, and applies shared credential/instruction redaction. Permission
 profiles, provider/model context, hidden reasoning and native checksum/child
 strings are never retained. Unsupported authority or incomplete files refuse
-without producing a successful artifact. Usage/cost, tools, model switches and
+without producing a successful artifact. Complete usage/cost, tools, model switches and
 children remain unavailable; this local operation grants no capture consent.
 
 Shared redaction, hidden-context omission and text truncation are disclosed with
 fixed capture-gap codes. These codes survive retained-only privacy refresh;
 arbitrary native or archived diagnostic details are not copied into them.
+
+The qualified Muse grammar also recognizes reasoning, approval/review, wait/tool
+effect and task-output records while dropping their private bodies completely.
+Minimal identities let the retained reader recheck ownership and prior references;
+they do not expose tool results, review assessments or accounting. A narrowly
+classified ephemeral task marker retains only its original position and omission
+classification, with no invented timestamp or task identity. Fixed
+`muse_private_native_bodies_omitted` and `muse_ephemeral_task_delta_omitted` gaps
+survive privacy refresh. Direct parsing refuses evidence whose required omission
+gaps were removed or altered; retained-only refilter reconstructs them.
+
+Muse's closed own `model_completed` branch validates a nonempty model string,
+nonnegative exact `duration_ms`, and all six input/output/cache/reasoning counters
+between zero and 2^53−1. Only the model, input/output and typed run/source identity
+survive. Duration, cache and reasoning counters are dropped. Every completion
+requires an earlier own materialized run; source IDs and relevant source sequences
+are unique within that run. Multiple completions in one run count separately.
+Legacy event-only retained rows stay readable and contribute no invented zeros.
+
+The optional `token_observations` summary carries nullable input/output sums, at
+most 32 bounded recorded model labels, and explicit observed/coverage/composition/
+pricing availability. Complete usage, cache/reasoning relationships and billing
+remain unavailable. Models beyond the deterministic first 31 fold into
+`other`; no label establishes a billed product. Session overflow refuses;
+cross-session overflow publishes no observation numbers with the fixed
+`observation_limit` reason. Required `own_usage_observations_partial` and
+`cache_reasoning_cost_unqualified` gaps survive retained-only refresh.

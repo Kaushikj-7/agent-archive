@@ -414,6 +414,19 @@ func startActivity(out io.Writer, label string) (stop func()) {
 	}
 }
 
+// pausingWriter calls stop before every write it passes on to w, so a
+// spinner on the same terminal is gone before a message or a prompt is
+// written there. stop must be safe to call more than once.
+type pausingWriter struct {
+	w    io.Writer
+	stop func()
+}
+
+func (p *pausingWriter) Write(b []byte) (int, error) {
+	p.stop()
+	return p.w.Write(b)
+}
+
 // spinnerSpan names the trace span of an activity spinner: how long a
 // command was loading before it drew anything, such as the handoff picker's
 // list, which is otherwise hard to read off a trace whose root span also

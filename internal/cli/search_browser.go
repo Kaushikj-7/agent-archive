@@ -43,7 +43,8 @@ func runContentSearchBrowser(ctx context.Context, env searchCommandDependencies,
 	s.installRows()
 	input := newTypedInput(opts.stdin)
 	p := input.prompter(stdout)
-	row, picked, code := runBrowser(ctx, env, p, stdout, stderr, browserSpec{Mode: browseSearch, Search: s, Choices: s.choices, Command: "search", Verb: "Read matching passage", Notice: "Content query: " + archive.DisplayLine(opts.query.Text) + "; / filtering disabled. r rerun · o next results. Scope never widens."})
+	query := archive.DisplayLine(opts.query.Text)
+	row, picked, code := runBrowser(ctx, env, p, stdout, stderr, browserSpec{Mode: browseSearch, Search: s, Choices: s.choices, Command: "search", Verb: "Read matching passage", Notice: "Content query: " + query + "; / filtering disabled. r rerun · o next results. Scope never widens.", KeysNotice: "Content query: " + query + "; / filtering disabled. r rerun · ↓ past the end for more results. Scope never widens."})
 	return row, picked, input, code
 }
 
@@ -127,11 +128,17 @@ func (s *contentSearchBrowser) installRows() {
 	s.choices.built = [2]*scopeChoice{}
 }
 
+// hasNextPage reports whether load would add the next indexed page rather
+// than only say there is none.
+func (s *contentSearchBrowser) hasNextPage() bool {
+	return !s.stale && s.pages < 3 && s.page.Next != ""
+}
+
 func (s *contentSearchBrowser) load(ctx context.Context) (bool, error) {
 	q := s.opts.query
 	reset := s.rerun
 	s.rerun = false
-	if !reset && (s.stale || s.pages >= 3 || s.page.Next == "") {
+	if !reset && !s.hasNextPage() {
 		s.notice = "No next page in this retained ranking; r explicitly reruns the query."
 		s.installRows()
 		return true, nil
