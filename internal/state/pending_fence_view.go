@@ -58,6 +58,13 @@ var pendingFenceFields = jsonProjection{
 // the import's own stage. The view validates JSON syntax in fields it scans
 // past, but only a whole read (LoadPending) checks their typed values.
 func (s *Store) pendingFenceView(id string) (PendingPublication, bool, error) {
+	return s.pendingFenceViewContext(s.durableContext(), id)
+}
+
+func (s *Store) pendingFenceViewContext(ctx context.Context, id string) (PendingPublication, bool, error) {
+	read, ctx, closeContext := s.withDurableContext(ctx)
+	defer closeContext()
+	s = read
 	var pending PendingPublication
 	// Source-set publication is a closed protocol: its full preparation and
 	// source graph must be validated, including fields legacy fences refuse.
@@ -65,7 +72,7 @@ func (s *Store) pendingFenceView(id string) (PendingPublication, bool, error) {
 	var marker struct {
 		Version int `json:"journal_version"`
 	}
-	if err := s.readProjected(s.pendingPath(id), jsonProjection{"journal_version": nil}, &marker); err != nil {
+	if err := s.readProjectedContext(ctx, s.pendingPath(id), jsonProjection{"journal_version": nil}, &marker); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return pending, false, nil
 		}
@@ -74,7 +81,7 @@ func (s *Store) pendingFenceView(id string) (PendingPublication, bool, error) {
 	if marker.Version == 5 {
 		return s.catalogPendingForFence(id)
 	}
-	err := s.readProjected(s.pendingPath(id), pendingFenceFields, &pending)
+	err := s.readProjectedContext(ctx, s.pendingPath(id), pendingFenceFields, &pending)
 	if errors.Is(err, os.ErrNotExist) {
 		return pending, false, nil
 	}
@@ -90,6 +97,13 @@ func (s *Store) pendingFenceView(id string) (PendingPublication, bool, error) {
 // readProjected decodes into value only the fields of the JSON object at path
 // that projection names, scanning past the others.
 func (s *Store) readProjected(path string, projection jsonProjection, value any) error {
+	return s.readProjectedContext(s.durableContext(), path, projection, value)
+}
+
+func (s *Store) readProjectedContext(ctx context.Context, path string, projection jsonProjection, value any) error {
+	read, ctx, closeContext := s.withDurableContext(ctx)
+	defer closeContext()
+	s = read
 	if err := s.durableContext().Err(); err != nil {
 		return err
 	}
@@ -118,11 +132,13 @@ func (s *Store) readProjected(path string, projection jsonProjection, value any)
 	if !info.Mode().IsRegular() || n < 0 {
 		return errStateFileUnstable
 	}
-	return s.readProjectedObserved(f, n, projection, value)
+	return s.readProjectedObserved(ctx, f, n, projection, value)
 }
 
-func (s *Store) readProjectedObserved(reader io.Reader, n int64, projection jsonProjection, value any) error {
-	ctx := s.durableContext()
+func (s *Store) readProjectedObserved(ctx context.Context, reader io.Reader, n int64, projection jsonProjection, value any) error {
+	read, ctx, closeContext := s.withDurableContext(ctx)
+	defer closeContext()
+	s = read
 	if err := ctx.Err(); err != nil {
 		return err
 	}

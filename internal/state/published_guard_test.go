@@ -29,13 +29,13 @@ func legacyGenerationMetadata(t *testing.T, p *Published, at time.Time) (archive
 	return bundle, metadata, raw
 }
 
-func legacyGenerationMutation(p *Published, method string, bundle archive.SourceBundle, metadata archive.Metadata, raw []byte, at time.Time) error {
+func legacyGenerationMutation(p *Published, method legacyGenerationMethod, bundle archive.SourceBundle, metadata archive.Metadata, raw []byte, at time.Time) error {
 	switch method {
-	case "cache":
+	case legacyGenerationCache:
 		return p.CacheMetadata(raw)
-	case "save":
+	case legacyGenerationSave:
 		return p.Save(bundle, at, CacheStatusPublished, raw)
-	case "publication":
+	case legacyGenerationPublication:
 		return p.SavePublication(bundle, at, metadata.SourceBundle, raw)
 	default:
 		return p.SaveRepublishedMetadata(PendingPublication{MetadataOnly: true, Bundle: bundle, MetadataBytes: raw, SourceKey: metadata.SourceBundle.Key, SourceSHA256: metadata.SourceBundle.SHA256, SourceSize: metadata.SourceBundle.CompressedBytes}, at)
@@ -44,9 +44,9 @@ func legacyGenerationMutation(p *Published, method string, bundle archive.Source
 
 func TestLegacyPublishedWritersSerializeWithGenerationRecovery(t *testing.T) {
 	t.Parallel()
-	for _, method := range []string{"cache", "save", "publication", "republished"} {
+	for _, method := range []legacyGenerationMethod{legacyGenerationCache, legacyGenerationSave, legacyGenerationPublication, legacyGenerationRepublished} {
 		for _, phase := range []string{"generation-fenced", "generation-pending", "generation-active"} {
-			t.Run(method+"/"+phase, func(t *testing.T) {
+			t.Run(string(method)+"/"+phase, func(t *testing.T) {
 				t.Parallel()
 				s, reg, at := generationFixture(t)
 				published, err := s.LoadPublishedState(reg.ArchiveSessionID)
@@ -91,8 +91,8 @@ func TestLegacyPublishedWritersSerializeWithGenerationRecovery(t *testing.T) {
 
 func TestLegacyPublishedWriterRefusesStaleView(t *testing.T) {
 	t.Parallel()
-	for _, method := range []string{"cache", "save", "publication", "republished"} {
-		t.Run(method, func(t *testing.T) {
+	for _, method := range []legacyGenerationMethod{legacyGenerationCache, legacyGenerationSave, legacyGenerationPublication, legacyGenerationRepublished} {
+		t.Run(string(method), func(t *testing.T) {
 			t.Parallel()
 			s, reg, at := generationFixture(t)
 			first, err := s.LoadPublishedState(reg.ArchiveSessionID)
@@ -363,3 +363,12 @@ func TestLegacyPublishedWeakRootRefusesAmbiguousGenerationMarker(t *testing.T) {
 		})
 	}
 }
+
+type legacyGenerationMethod string
+
+const (
+	legacyGenerationCache       legacyGenerationMethod = "cache"
+	legacyGenerationSave        legacyGenerationMethod = "save"
+	legacyGenerationPublication legacyGenerationMethod = "publication"
+	legacyGenerationRepublished legacyGenerationMethod = "republished"
+)

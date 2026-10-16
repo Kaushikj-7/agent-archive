@@ -166,7 +166,7 @@ func (s *Store) beginGenerationRecoveryGuard(g config.DurableStorageGuard, id st
 	request := Request{ArchiveSessionID: next, Token: token, Reasons: []string{"generation-recovery"}, RequestedAt: at}
 	pending.RequestToken = token
 	wirePending := publicationWire(pending)
-	priorMetadata, priorSources, err := s.generationCommittedAuthority(old)
+	priorMetadata, priorSources, err := s.generationCommittedAuthority(s.generationReadContext(), old)
 	if err != nil {
 		return "", err
 	}
@@ -990,8 +990,11 @@ func validGenerationRecoveryVersion(r generationRecovery) bool {
 	}
 }
 
-func (s *Store) generationCommittedAuthority(reg archive.SessionRegistration) (string, string, error) {
-	published, err := s.LoadPublishedState(reg.ArchiveSessionID)
+func (s *Store) generationCommittedAuthority(ctx context.Context, reg archive.SessionRegistration) (string, string, error) {
+	read, ctx, closeContext := s.withDurableContext(ctx)
+	defer closeContext()
+	s = read
+	published, err := s.LoadPublishedStateContext(ctx, reg.ArchiveSessionID)
 	if err != nil {
 		return "", "", err
 	}
@@ -1009,7 +1012,7 @@ func (s *Store) generationCommittedAuthority(reg archive.SessionRegistration) (s
 	if err != nil {
 		return "", "", err
 	}
-	digest, err := s.readyDigest(s.generationReadContext(), refs)
+	digest, err := s.readyDigest(ctx, refs)
 	if err != nil {
 		return "", "", err
 	}
@@ -1040,7 +1043,7 @@ func (s *Store) validateGenerationRecoveryReplay(ctx context.Context, id string,
 		return ErrSessionIndexRecoveryRequired
 	}
 	if r.Version == 2 {
-		priorMetadata, priorSources, err := s.generationCommittedAuthority(old)
+		priorMetadata, priorSources, err := s.generationCommittedAuthority(ctx, old)
 		if generationReadRefusal(err) {
 			return err
 		}

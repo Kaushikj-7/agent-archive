@@ -19,6 +19,7 @@ func TestGenerationRecoveryRefusesChangedPriorCommittedSelection(t *testing.T) {
 	t.Parallel()
 	for _, change := range []string{"unchanged", "metadata", "source-reference"} {
 		t.Run(change, func(t *testing.T) {
+			t.Parallel()
 			s, reg, at := generationFixture(t)
 			p, err := s.LoadPublishedState(reg.ArchiveSessionID)
 			if err != nil {
@@ -169,8 +170,8 @@ func TestGenerationRecoveryPriorWriterCompatibility(t *testing.T) {
 
 func TestGenerationRecoveryRefusesIncompleteVersionTwoAuthority(t *testing.T) {
 	t.Parallel()
-	for _, field := range []string{"prior_metadata_sha256", "prior_source_set_sha256", "future-version", "downgraded-version"} {
-		t.Run(field, func(t *testing.T) {
+	for _, field := range []generationAuthorityMutation{generationRemoveMetadata, generationRemoveSources, generationFutureVersion, generationDowngradeVersion} {
+		t.Run(string(field), func(t *testing.T) {
 			t.Parallel()
 			s, reg, at := generationFixture(t)
 			s.onIndexStep = func(step string) error {
@@ -188,12 +189,12 @@ func TestGenerationRecoveryRefusesIncompleteVersionTwoAuthority(t *testing.T) {
 				t.Fatal(err)
 			}
 			switch field {
-			case "future-version":
+			case generationFutureVersion:
 				wire["version"] = 3
-			case "downgraded-version":
+			case generationDowngradeVersion:
 				wire["version"] = 1
 			default:
-				delete(wire, field)
+				delete(wire, string(field))
 			}
 			if err := local.Write(path, wire); err != nil {
 				t.Fatal(err)
@@ -212,3 +213,12 @@ func TestGenerationRecoveryRefusesIncompleteVersionTwoAuthority(t *testing.T) {
 		})
 	}
 }
+
+type generationAuthorityMutation string
+
+const (
+	generationRemoveMetadata   generationAuthorityMutation = "prior_metadata_sha256"
+	generationRemoveSources    generationAuthorityMutation = "prior_source_set_sha256"
+	generationFutureVersion    generationAuthorityMutation = "future-version"
+	generationDowngradeVersion generationAuthorityMutation = "downgraded-version"
+)

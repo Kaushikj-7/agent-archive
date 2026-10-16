@@ -41,7 +41,7 @@ func TestGenerationWriterProjectionNilBudgetCancelsDuringScan(t *testing.T) {
 			read, end := s.WithReadBudget(ctx, nil)
 			defer end()
 			var marker generationWriterMarker
-			err := read.readProjectedObserved(reader, int64(len(raw)), jsonProjection{"version": nil, "prior_metadata_sha256": nil, "prior_source_set_sha256": nil}, &marker)
+			err := read.readProjectedObserved(ctx, reader, int64(len(raw)), jsonProjection{"version": nil, "prior_metadata_sha256": nil, "prior_source_set_sha256": nil}, &marker)
 			if !errors.Is(ctx.Err(), context.Canceled) {
 				t.Fatal("actual midscan cancellation did not occur")
 			}
@@ -64,7 +64,7 @@ func TestGenerationWriterProjectionBoundsObservedGrowth(t *testing.T) {
 	var marker generationWriterMarker
 	// The source reports a larger stream than the already observed regular file.
 	reader := &projectedCancellationReader{reader: bytes.NewReader(raw), cancel: func() {}, threshold: int64(len(raw))}
-	err := s.readProjectedObserved(reader, int64(len(header)), jsonProjection{"version": nil}, &marker)
+	err := s.readProjectedObserved(t.Context(), reader, int64(len(header)), jsonProjection{"version": nil}, &marker)
 	if !errors.Is(err, errStateFileUnstable) {
 		t.Fatalf("growth was not refused: %v", err)
 	}
@@ -99,7 +99,7 @@ func TestGenerationWriterProjectionPreservesCancellationAtEOF(t *testing.T) {
 			defer end()
 			reader := &projectedEOFCancellationReader{reader: bytes.NewBufferString(raw), cancel: cancel}
 			var marker generationWriterMarker
-			err := scoped.readProjectedObserved(reader, int64(len(raw)), jsonProjection{"version": nil}, &marker)
+			err := scoped.readProjectedObserved(ctx, reader, int64(len(raw)), jsonProjection{"version": nil}, &marker)
 			if !errors.Is(ctx.Err(), context.Canceled) || !errors.Is(err, context.Canceled) {
 				t.Fatalf("EOF discarded original cancellation: context=%v result=%v", ctx.Err(), err)
 			}

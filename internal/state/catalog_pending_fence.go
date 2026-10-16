@@ -35,11 +35,14 @@ func recoveredCatalogJournal(p PendingPublication) bool {
 }
 
 func (s *Store) checkCatalogPendingSave(ctx context.Context, id string, next PendingPublication) error {
+	read, ctx, closeContext := s.withDurableContext(ctx)
+	defer closeContext()
+	s = read
 	// Fence-owned decoded views must end after their exact comparisons.
 	scratch, closeScratch := s.WithReadBudget(ctx, s.resourceBudget)
 	defer closeScratch()
 	// Only recovered catalog work is compared, so only it is read whole.
-	old, found, err := scratch.pendingFenceView(id)
+	old, found, err := scratch.pendingFenceViewContext(ctx, id)
 	if err == nil && found && recoveredCatalogJournal(old) {
 		old, found, err = scratch.catalogPendingForFence(id)
 	}
