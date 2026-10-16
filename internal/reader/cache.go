@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/trace"
 )
 
 // MetadataCache is a disposable local copy of metadata sidecars, keyed by
@@ -250,7 +251,11 @@ func (c *MetadataCache) evictUnlisted(known []string, listed []storage.Object) {
 		}
 		info, err := os.Lstat(dir)
 		if err == nil && info.IsDir() && info.Mode().Perm() == 0o700 {
-			_ = os.RemoveAll(dir)
+			if os.RemoveAll(dir) == nil {
+				span := trace.Start("cache key eviction")
+				span.Count("key-dirs-evicted", 1)
+				span.End()
+			}
 		}
 	}
 }
@@ -261,7 +266,10 @@ func (c *MetadataCache) keys(listPrefix string) []string {
 	if c == nil {
 		return nil
 	}
+	span := trace.Start("cache key inventory")
+	defer span.End()
 	entries, err := os.ReadDir(c.dir)
+	span.Count("entries-visited", len(entries))
 	if err != nil {
 		return nil
 	}

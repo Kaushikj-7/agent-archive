@@ -283,3 +283,115 @@ func TestHistoricalListingModelPagesAndFixture(t *testing.T) {
 		t.Fatalf("cancel=%v", err)
 	}
 }
+
+// BenchmarkReadPathListingPolicies retains the historical benchmark above and
+// compares current page policies over all three prefixes in one shared budget.
+// Page/key assumptions are reported as sensitivity cases, not calibrated facts.
+func BenchmarkReadPathListingPolicies(b *testing.B) {
+	for _, n := range storagetest.ReadPathSizes() {
+		mem := storagetest.NewMemoryStore()
+		storagetest.SeedReadPathArchive(b, mem, n, 0)
+		for _, ranges := range []int{1, 8, 16, 0} {
+			name := fmt.Sprintf("sessions=%d/ranges=%d", n, ranges)
+			if ranges == 0 {
+				name = fmt.Sprintf("sessions=%d/page-sized", n)
+			}
+			b.Run(name, func(b *testing.B) {
+				groups := make([][]storage.Object, 3)
+				for i, prefix := range []string{"sessions/", listingindex.V2Prefix, listingindex.V3Prefix} {
+					var err error
+					groups[i], err = mem.List(context.Background(), prefix)
+					if err != nil {
+						b.Fatal(err)
+					}
+				}
+				model := storagetest.ListingLatencyModel{StopAtBoundary: true}
+				b.ReportAllocs()
+				b.ResetTimer()
+				var costs []storagetest.ListingPageCost
+				for range b.N {
+					costs = readPathPolicyCosts(groups, ranges, model)
+				}
+				b.StopTimer()
+				var pages, keys, bytes, discarded int64
+				waves := make([]int64, 0, len(costs))
+				for _, cost := range costs {
+					pages += cost.Pages
+					keys += cost.Keys
+					bytes += cost.Bytes
+					discarded += cost.DiscardedBytes
+					waves = append(waves, cost.Pages)
+				}
+				b.ReportMetric(float64(pages), "provider-pages/op")
+				b.ReportMetric(float64(keys), "transferred-keys/op")
+				b.ReportMetric(float64(bytes), "transferred-header-B/op")
+				b.ReportMetric(float64(discarded), "discarded-header-B/op")
+				b.ReportMetric(float64(storagetest.ListingSchedule(waves, 16)), "critical-page-waves/op")
+				// Both decompositions give a600ms full page, yet differ on short pages.
+				for _, overhead := range []time.Duration{100 * time.Millisecond, 400 * time.Millisecond} {
+					services := make([]int64, 0, len(costs))
+					perKey := (600*time.Millisecond - overhead) / 1000
+					for _, cost := range costs {
+						services = append(services, int64(time.Duration(cost.Pages)*overhead+time.Duration(cost.Keys)*perKey))
+					}
+					b.ReportMetric(float64(storagetest.ListingSchedule(services, 16))/float64(time.Millisecond), fmt.Sprintf("modeled-%dms-overhead-ms/op", overhead.Milliseconds()))
+				}
+			})
+		}
+	}
+}
+
+func readPathPolicyCosts(groups [][]storage.Object, ranges int, model storagetest.ListingLatencyModel) []storagetest.ListingPageCost {
+	var costs []storagetest.ListingPageCost
+	for _, headers := range groups {
+		count := ranges
+		if count == 0 {
+			count = max(1, (len(headers)+999)/1000)
+		}
+		if len(headers) <= 1000 {
+			count = 1
+		}
+		after := ""
+		for i := range count {
+			through := ""
+			if i+1 < count {
+				if ranges == 0 {
+					through = headers[(i+1)*1000-1].Key
+				} else {
+					through = headers[(i+1)*len(headers)/count-1].Key
+				}
+			}
+			_, cost := storagetest.ModelListingRange(headers, after, through, model)
+			costs = append(costs, cost)
+			after = through
+		}
+	}
+	return costs
+}
+
+func TestReadPathListingPolicySharedBudget(t *testing.T) {
+	t.Parallel()
+	groups := make([][]storage.Object, 3)
+	for group, n := range []int{5040, 0, 1800} {
+		for i := range n {
+			groups[group] = append(groups[group], storage.Object{Key: fmt.Sprintf("prefix-%d/%05d", group, i)})
+		}
+	}
+	for _, tc := range []struct {
+		ranges             int
+		pages, keys, waves int64
+	}{{0, 9, 6840, 1}, {16, 33, 26942, 3}} {
+		costs := readPathPolicyCosts(groups, tc.ranges, storagetest.ListingLatencyModel{StopAtBoundary: true})
+		var pages, keys int64
+		var counts []int64
+		for _, cost := range costs {
+			pages += cost.Pages
+			keys += cost.Keys
+			counts = append(counts, cost.Pages)
+		}
+		waves := storagetest.ListingSchedule(counts, 16)
+		if pages != tc.pages || keys != tc.keys || waves != tc.waves {
+			t.Fatalf("ranges=%d pages=%d keys=%d waves=%d", tc.ranges, pages, keys, waves)
+		}
+	}
+}
