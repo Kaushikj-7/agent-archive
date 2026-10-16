@@ -231,3 +231,12 @@ prepared state commit finishes. Its independent verifier runs after staging and
 before the short hooks/request policy fence; staging and directory fsync remain
 outside that fence. The durable checkpoint is independent of disposable scan
 signatures and frozen publication acknowledgement. Muse capture remains fenced.
+
+Shared native inventory lives at the existing discovery boundary and composes a
+strict startup eligibility callback through builtin. It does not use Codex
+admission or create owners. The collector owns one context-bound lookup factory,
+independently frozen current eligibility, exact historical cohort scope and
+source-before-inventory closure. Pure pending readers
+retain the original nil prior binding through real filtering and guarded commit.
+Generic rooted filesystem opening lives in transcriptio; sourcefacts keeps its
+compatible alias/forwarder so native integrations need no Codex fact dependency.

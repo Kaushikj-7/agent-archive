@@ -369,6 +369,39 @@ func TestMuseAutomaticScopePickerAndDuplicates(t *testing.T) {
 	}
 }
 
+func TestMuseNativePreviewReadsStayWithinWindowBudget(t *testing.T) {
+	t.Parallel()
+	env, data, workspace, counter := museNativeEnv(t)
+	for i := range 3 {
+		id := fmt.Sprintf("00000000-0000-7000-8000-%012d", i+1)
+		raw := museNativeBytes(t, "exec", id, workspace)
+		// Preview-only padding makes the uninspected middle much larger than
+		// either window. A preview does not qualify a complete source.
+		raw = append(raw, bytes.Repeat([]byte("\n"), 4<<20)...)
+		writeMuseNative(t, data, id, raw)
+	}
+	meter := &nativeReadMeter{}
+	roots, err := env.nativeRoots("muse")
+	must(t, err)
+	result, err := nativesessions.Discover(t.Context(), env.agentRegistry(), meter, roots, nativesessions.Scope{Directories: []string{workspace}}, nativesessions.Limits{Files: 10000, HeaderBytes: nativeWindowBytes, RecordBytes: nativeWindowBytes, TotalBytes: nativeReadBudget, Workers: 2})
+	must(t, err)
+	if !result.Coverage.IdentityComplete || len(result.Candidates) != 3 {
+		t.Fatalf("census: %+v", result.Coverage)
+	}
+	beforeBytes, _, _, _ := meter.counts()
+	catalog := &nativePreviewCatalog{sources: env.agentRegistry(), previews: env.agentRegistry(), ctx: t.Context(), files: meter, candidates: result.Candidates, reserved: result.Coverage.ReservedBytes, stderr: io.Discard, now: time.Now()}
+	more, err := catalog.load()
+	must(t, err)
+	afterBytes, _, active, _ := meter.counts()
+	charged := catalog.reserved - result.Coverage.ReservedBytes
+	if more || len(catalog.rows) != 3 || active != 0 || counter.calls.Load() != 0 {
+		t.Fatalf("preview result: more=%v rows=%d active=%d filters=%d", more, len(catalog.rows), active, counter.calls.Load())
+	}
+	if read := afterBytes - beforeBytes; read > charged {
+		t.Fatalf("preview read %d bytes with only %d reserved", read, charged)
+	}
+}
+
 func TestMuseNativeLabelsReadOnlyBatchesAndZeroBudget(t *testing.T) {
 	t.Parallel()
 	env, data, workspace, counter := museNativeEnv(t)

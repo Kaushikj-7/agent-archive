@@ -400,6 +400,20 @@ def run_process(argv, *, env, cwd, timeout=40, group_limit=False, abort=None, ev
             "stderr": captured[process.stderr].decode(errors="replace"), "timeout": timed_out}
 
 
+SCENARIO_REFUSAL_CODES = frozenset({
+    "route", "request-shape", "input-shape", "tool-declaration", "transition",
+    "association", "limit", "deadline", "io", "unclassified",
+})
+
+
+class ScenarioRefusal(RuntimeError):
+    """Carry only a closed control-point code, never request or exception text."""
+
+    def __init__(self, code):
+        self.code = code if isinstance(code, str) and code in SCENARIO_REFUSAL_CODES else "unclassified"
+        super().__init__("scenario refused")
+
+
 class ToolScenario:
     """Closed synthetic provider transitions, independent of native status grammar."""
 
@@ -418,14 +432,14 @@ class ToolScenario:
     def validate_files(self):
         for path in self.paths:
             if path.parent != self.workspace or path.is_symlink():
-                raise RuntimeError("scenario fixture path refused")
+                raise ScenarioRefusal("input-shape")
             if self.name == "exec-read-missing":
                 if path.exists():
-                    raise RuntimeError("scenario missing fixture exists")
+                    raise ScenarioRefusal("input-shape")
             else:
                 info = path.stat()
                 if not stat.S_ISREG(info.st_mode) or info.st_size > SCENARIO_FILE_LIMIT:
-                    raise RuntimeError("scenario fixture regular-file byte limit")
+                    raise ScenarioRefusal("limit")
 
     def call_ids(self):
         return ["call_control_" + str(index) for index in range(self.calls)]
@@ -435,32 +449,34 @@ class ToolScenario:
 
     def respond(self, body):
         if not isinstance(body, dict) or body.get("model") != MODEL or body.get("stream") is not True:
-            raise RuntimeError("scenario provider request refused")
+            raise ScenarioRefusal("request-shape")
         inputs = body.get("input")
         if not isinstance(inputs, list):
-            raise RuntimeError("scenario provider input refused")
+            raise ScenarioRefusal("input-shape")
         outputs = [item for item in inputs if isinstance(item, dict) and item.get("type") == "function_call_output"]
         # Context is deliberately ignored. Only controlled call associations matter.
         echoed = [item for item in inputs if isinstance(item, dict) and item.get("type") == "function_call"]
         if echoed:
             ids = [item.get("call_id") for item in echoed]
             if self.phase != "results" or len(ids) != self.calls or set(ids) != set(self.call_ids()):
-                raise RuntimeError("scenario echoed call association refused")
+                raise ScenarioRefusal("association")
             for item in echoed:
                 index = self.call_ids().index(item["call_id"])
-                if (item.get("name") != "read_file" or not isinstance(item.get("arguments"), str) or
+                known_name = (item.get("name") == "read_file" or
+                              (item.get("name") == "muse.read_file" and "namespace" not in item))
+                if (not known_name or not isinstance(item.get("arguments"), str) or
                         json.loads(item["arguments"]) != self.arguments(index)):
-                    raise RuntimeError("scenario echoed tool or path refused")
+                    raise ScenarioRefusal("association")
         if self.phase == "initial":
             if outputs:
-                raise RuntimeError("scenario unexpected result transition")
+                raise ScenarioRefusal("transition")
             tools = body.get("tools")
             if not isinstance(tools, list):
-                raise RuntimeError("scenario tool declaration refused")
+                raise ScenarioRefusal("tool-declaration")
             declared = [item for tool in tools if isinstance(tool, dict)
                         for item in tool.get("tools", [tool]) if isinstance(item, dict)]
             if not any(item.get("name") == "read_file" for item in declared):
-                raise RuntimeError("scenario read tool unavailable")
+                raise ScenarioRefusal("tool-declaration")
             self.validate_files()
             events = [{"type": "response.function_call_arguments.done", "output_index": index,
                        "item_id": "fc_control_" + str(index), "namespace": "muse", "name": "read_file",
@@ -473,13 +489,13 @@ class ToolScenario:
                     len(set(ids)) != self.calls or set(ids) != set(self.call_ids()) or
                     any(set(item) != {"type", "call_id", "output"} or
                         not isinstance(item["output"], (str, list)) for item in outputs)):
-                raise RuntimeError("scenario result association refused")
+                raise ScenarioRefusal("association")
             self.result_order = ids == self.call_ids()
             events = [{"type": "response.output_text.delta", "output_index": 0,
                        "item_id": "msg_control", "content_index": 0, "delta": REPLY}]
             self.phase = "complete"
         else:
-            raise RuntimeError("scenario unexpected provider transition")
+            raise ScenarioRefusal("transition")
         index = 1 if self.phase == "results" else 2
         frame = {"id": "resp_control_" + str(index), "object": "response", "model": MODEL,
                  "status": "in_progress", "output": []}
@@ -497,71 +513,94 @@ class ScenarioEndpoint(socketserver.BaseRequestHandler):
         def receive(size):
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise RuntimeError("scenario handler deadline")
+                raise ScenarioRefusal("deadline")
             self.request.settimeout(remaining)
             chunk = self.request.recv(size)
             if not chunk:
-                raise RuntimeError("scenario incomplete request")
+                raise ScenarioRefusal("io")
             return chunk
         try:
             data = bytearray()
             while not data.endswith(b"\r\n\r\n"):
                 if len(data) >= SCENARIO_HEADER_LIMIT:
-                    raise RuntimeError("scenario header byte limit")
+                    raise ScenarioRefusal("limit")
                 # Avoid overreading a body before its advertised size is checked.
                 data.extend(receive(1))
-            lines = bytes(data).decode("ascii").split("\r\n")
-            method, path, protocol = lines[0].split(" ")
+            try:
+                lines = bytes(data).decode("ascii").split("\r\n")
+                method, path, protocol = lines[0].split(" ")
+            except (UnicodeDecodeError, ValueError):
+                raise ScenarioRefusal("request-shape") from None
             if protocol != "HTTP/1.1" or method not in ("GET", "POST"):
-                raise RuntimeError("scenario HTTP request refused")
+                raise ScenarioRefusal("request-shape")
             headers = {}
             for line in lines[1:-2]:
-                key, value = line.split(":", 1)
+                try:
+                    key, value = line.split(":", 1)
+                except ValueError:
+                    raise ScenarioRefusal("request-shape") from None
                 key = key.lower()
                 if key in headers:
-                    raise RuntimeError("scenario duplicate header")
+                    raise ScenarioRefusal("request-shape")
                 headers[key] = value.strip()
             if "transfer-encoding" in headers:
-                raise RuntimeError("scenario transfer encoding refused")
+                raise ScenarioRefusal("request-shape")
             length_text = headers.get("content-length", "0")
             if not length_text.isdecimal() or len(length_text) > 9:
-                raise RuntimeError("scenario body length refused")
+                raise ScenarioRefusal("request-shape")
             length = int(length_text)
             if length > SCENARIO_BODY_LIMIT:
-                raise RuntimeError("scenario body byte limit")
+                raise ScenarioRefusal("limit")
             with self.server.lock:
-                if self.server.error or time.monotonic() >= self.server.deadline:
-                    raise RuntimeError("scenario aborted or expired")
+                if time.monotonic() >= self.server.deadline:
+                    raise ScenarioRefusal("deadline")
+                if self.server.error:
+                    raise ScenarioRefusal("transition")
                 if self.server.requests >= SCENARIO_REQUESTS:
-                    raise RuntimeError("scenario request limit")
+                    raise ScenarioRefusal("limit")
                 self.server.requests += 1
                 if self.server.input_bytes + len(data) + length > SCENARIO_INPUT_LIMIT:
-                    raise RuntimeError("scenario aggregate input byte limit")
+                    raise ScenarioRefusal("limit")
                 self.server.input_bytes += len(data) + length
             body = bytearray()
             while len(body) < length:
                 body.extend(receive(min(16384, length - len(body))))
             with self.server.lock:
-                if method == "GET" and path == "/models" and length == 0 and self.server.model_requests < 2:
+                if method == "GET" and path in ("/models", "/muse-code/models") and length == 0:
+                    if self.server.model_requests >= 2:
+                        raise ScenarioRefusal("limit")
                     self.server.model_requests += 1
+                    if path == "/models":
+                        self.server.models_get_seen = True
+                    else:
+                        self.server.muse_code_models_get_seen = True
                     payload = json.dumps({"object": "list", "data": [{"id": MODEL, "object": "model",
                         "metadata": {"muse-code": {"release_date": "2026-01-01", "is_hidden": False,
                         "limit": {"context": 1000000, "output": 1024}}}}]}).encode()
                     content_type = b"application/json"
                 elif method == "POST" and path == "/responses" and length > 0:
+                    self.server.responses_post_seen = True
                     payload = self.server.scenario.respond(json.loads(body))
                     content_type = b"text/event-stream"
                 else:
-                    raise RuntimeError("scenario request route refused")
+                    raise ScenarioRefusal("route")
             del body, data  # Do not retain provider context in a receipt or exception.
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise RuntimeError("scenario handler deadline")
+                raise ScenarioRefusal("deadline")
             self.request.settimeout(remaining)
             self.request.sendall(b"HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Type: " + content_type +
                                  b"\r\nContent-Length: " + str(len(payload)).encode() + b"\r\n\r\n" + payload)
+        except ScenarioRefusal as error:
+            self.server.fail(error.code)
+        except socket.timeout:
+            self.server.fail("deadline")
+        except OSError:
+            self.server.fail("io")
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            self.server.fail("input-shape")
         except Exception:
-            self.server.fail()  # Fixed failure code only; never incoming content.
+            self.server.fail("unclassified")
 
 
 class ScenarioServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
@@ -575,6 +614,9 @@ class ScenarioServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
         self.scenario, self.lock = scenario, threading.Lock()
         self.connections = self.requests = self.input_bytes = self.model_requests = 0
         self.error, self.closed, self.joined = False, False, False
+        self.first_refusal = "none"
+        self.cleanup_failed = False
+        self.models_get_seen = self.muse_code_models_get_seen = self.responses_post_seen = False
         self.stop = threading.Event()
         self.timeout = .05
         self.sockets, self.handlers = set(), []
@@ -584,23 +626,28 @@ class ScenarioServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
     def serve_forever(self, poll_interval=.05):
         while not self.stop.is_set():
             if time.monotonic() >= self.deadline:
-                self.fail()
+                self.fail("deadline")
                 break
             self.handle_request()
 
     def shutdown(self):
         self.stop.set()
 
-    def fail(self):
+    def _fail_locked(self, code):
+        if self.first_refusal == "none":
+            self.first_refusal = code if isinstance(code, str) and code in SCENARIO_REFUSAL_CODES else "unclassified"
+        self.error = True
+        self.stop.set()
+
+    def fail(self, code="unclassified"):
         with self.lock:
-            self.error = True
-            self.stop.set()
+            self._fail_locked(code)
 
     def process_request(self, request, client_address):
         with self.lock:
             if self.closed or self.error or self.connections >= SCENARIO_CONNECTIONS or time.monotonic() >= self.deadline:
-                self.error = True
-                self.stop.set()
+                self._fail_locked("deadline" if time.monotonic() >= self.deadline else
+                                  "limit" if self.connections >= SCENARIO_CONNECTIONS else "transition")
                 self.shutdown_request(request)
                 return
             self.connections += 1
@@ -617,24 +664,33 @@ class ScenarioServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
                 self.sockets.discard(request)
 
     def close(self, thread):
-        self.shutdown()
-        with self.lock:
-            self.closed = True
-            sockets = list(self.sockets)
-        for connection in sockets:
-            with contextlib.suppress(OSError):
-                connection.shutdown(socket.SHUT_RDWR)
-            connection.close()
-        thread.join(timeout=3)
-        self.server_close()
-        for handler in self.handlers:
-            handler.join(timeout=3)
-        if thread.is_alive() or any(handler.is_alive() for handler in self.handlers) or self.sockets:
-            raise RuntimeError("scenario endpoint cleanup incomplete")
-        self.joined = True
+        try:
+            self.shutdown()
+            with self.lock:
+                self.closed = True
+                sockets = list(self.sockets)
+            for connection in sockets:
+                with contextlib.suppress(OSError):
+                    connection.shutdown(socket.SHUT_RDWR)
+                connection.close()
+            thread.join(timeout=3)
+            try:
+                self.server_close()
+            finally:
+                for handler in self.handlers:
+                    handler.join(timeout=3)
+            if thread.is_alive() or any(handler.is_alive() for handler in self.handlers) or self.sockets:
+                raise RuntimeError("scenario endpoint cleanup incomplete")
+            self.joined = True
+        except BaseException:
+            self.cleanup_failed = True
+            raise
 
     def receipt(self):
         return {"requests": self.requests, "connections": self.connections,
+                "first_refusal": self.first_refusal, "cleanup_failed": self.cleanup_failed,
+                "models_get_seen": self.models_get_seen, "muse_code_models_get_seen": self.muse_code_models_get_seen,
+                "responses_post_seen": self.responses_post_seen,
                 "provider_complete": self.scenario.phase == "complete", "provider_refused": self.error,
                 "provider_result_order": self.scenario.result_order,
                 "handlers_joined": self.joined and not self.sockets and all(not t.is_alive() for t in self.handlers)}
@@ -1254,10 +1310,10 @@ def native_run(binary, output, selected=None):
                             **({"scenario": name} if scenario else {}))
                 report["cases"][name] = probe(case)
             except (KeyboardInterrupt, SystemExit) as error:
-                report["cases"][name] = {"failed": type(error).__name__, "detail": "scenario interrupted" if scenario else str(error)}
+                report["cases"][name] = {"failed": ("Interrupted" if scenario else type(error).__name__), "detail": "scenario interrupted" if scenario else str(error)}
                 raise
             except Exception as error:
-                report["cases"][name] = {"failed": type(error).__name__, "detail": "scenario refused" if scenario else str(error)}
+                report["cases"][name] = {"failed": ("ScenarioRefused" if scenario else type(error).__name__), "detail": "scenario refused" if scenario else str(error)}
                 command = case.root / "fresh-command.json" if case else None
                 if command is not None and command.exists() and not scenario:
                     report["cases"][name]["fresh"] = json.loads(read_limited(command).decode())
@@ -1266,7 +1322,7 @@ def native_run(binary, output, selected=None):
                     if case is not None:
                         case.close()
                 except Exception as error:
-                    report["cases"][name].update(failed=type(error).__name__, detail="endpoint cleanup failed")
+                    report["cases"][name].update(failed="CleanupError" if scenario else type(error).__name__, detail="endpoint cleanup failed")
                 if case is None:
                     write_json(output / "report.json", report)
                 elif scenario:

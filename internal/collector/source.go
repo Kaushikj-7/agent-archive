@@ -100,6 +100,9 @@ type sourceReader interface {
 }
 
 func newSourceReader(reg archive.SessionRegistration, opts Options) (sourceReader, bool) {
+	if pendingNativeEligible(reg, opts) {
+		return pendingNativeReader{reg: reg, opts: opts}, true
+	}
 	if reg.ReadsTranscriptFile() && reg.TranscriptPath == "" {
 		return nil, false
 	}

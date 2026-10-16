@@ -4,6 +4,7 @@ package discovery
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -1294,5 +1295,9 @@ func persistNativeCatalog(ctx context.Context, lookup *CodexRolloutLookup, path 
 	if lookup != nil {
 		return lookup.writeCatalog(ctx, path, c)
 	}
-	return local.WriteCompact(path, c)
+	raw, err := json.Marshal(c)
+	if err != nil {
+		return err
+	}
+	return mergeNativeCatalog(ctx, path, nil, raw, false, nil)
 }

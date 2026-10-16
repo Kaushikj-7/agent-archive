@@ -41,7 +41,7 @@ func TestPublishedSummaryCacheWarmColdAndPassOwnership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	before, hashed := PublishedStateLoads(), SummaryValidationBytes()
+	before, hashed := PublishedStateLoads(), summaryValidationBytes.Load()
 	for range 2 {
 		budget := agentapi.NewNativeReadBudget(2 << 20)
 		read, closeRead := s.WithReadBudget(t.Context(), budget)
@@ -62,7 +62,7 @@ func TestPublishedSummaryCacheWarmColdAndPassOwnership(t *testing.T) {
 	if PublishedStateLoads() != before {
 		t.Fatal("warm summary decoded full state")
 	}
-	if SummaryValidationBytes()-hashed < 2*info.Size() {
+	if summaryValidationBytes.Load()-hashed < 2*info.Size() {
 		t.Fatal("cache hit did not hash complete actual file")
 	}
 	cold := OpenReadOnly(s.Home())

@@ -816,8 +816,9 @@ ages are locator hints; validated permission records supply the creation time.
 
 Muse previews show safe recorded automatic names and activity, falling back to
 native IDs. They do not infer a human prompt title from an isolated run record.
-Unknown or bounded records produce partial previews. Headers corroborate only
-the bounded supported startup; the selected source is completely validated
+Preview reads stay within the reserved head/tail windows without hashing the
+whole source. Unknown or bounded records produce partial previews. Headers
+corroborate only the bounded supported startup; the selected source is completely validated
 before output or destination launch. Unsupported forks, checkpoints, malformed
 suffixes and changes during reads refuse selection without falling back to a
 different root. Automatic current-session selection for Muse remains unavailable.
