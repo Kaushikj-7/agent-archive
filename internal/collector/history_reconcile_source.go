@@ -85,19 +85,16 @@ func (r providerReader) revisions(ctx context.Context, adapter agentapi.Transcri
 			return read, err
 		}
 	}
-	// A best-effort candidate that cannot be read, or no longer fits the
-	// budget the chain left or the consumer's own limits, is left out: an
-	// off-chain rollout never blocks the chain's own capture. A failure that
-	// clears on its own (the pass's shared read budget, a source changed while
-	// reading, cancellation) still fails, so the session defers and a later
-	// pass reads the candidate: leaving it out would record a signature that
-	// an abandoned branch never changes again. The consumer's other failures
-	// still fail. A refusal at the session's own read ceiling is lasting, not
-	// the shared budget's pressure: the session meets it again every pass, and
-	// failing would record the whole session as too large although its chain
-	// fits, so the candidate is left out. A left-out candidate releases what
-	// it retained and its ceiling refusal is forgotten, so neither counts
-	// against what the scan does next.
+	// Lasting read refusals and fixed limits may leave a best-effort revision
+	// out without blocking the chain's capture. Classified Unavailable errors
+	// instead fail reconciliation so a later pass retries the missing input.
+	// Shared read-budget pressure, source changes, and cancellation also fail;
+	// only source changes use the caller's deferral path. Omitting retryable
+	// evidence would record a signature an abandoned branch never changes.
+	// A refusal at the session's own read ceiling is lasting: the session
+	// meets it every pass even when its chain fits. A left-out candidate
+	// releases what it retained and its ceiling refusal is forgotten, so
+	// neither counts against what the scan does next.
 	readBudget := r.retainedBudget()
 	for _, ref := range set.BestEffort {
 		if err := ctx.Err(); err != nil {
@@ -140,17 +137,17 @@ func (r providerReader) revisions(ctx context.Context, adapter agentapi.Transcri
 var errRevisionDoesNotFit = errors.New("historical revision does not fit")
 
 // leaveOutBestEffort reports whether a best-effort revision's failure only
-// leaves it out: a failure that will not clear on its own (a missing,
-// unreadable or unsafe rollout, a limit, or a read budget refusal at the
-// session's own ceiling, overCeiling). One that can clear (the pass's shared
-// read budget held by others, a source changed while reading, cancellation)
-// fails the reconciliation so it is retried. A consumer's failures are left
+// leaves it out: a lasting refusal such as unsafe format, a limit, or a
+// read budget refusal at the session's own ceiling, overCeiling. A classified
+// Unavailable read, the pass's shared read budget held by others, a source
+// changed while reading, or cancellation can clear on a later pass, so
+// they fail the reconciliation so it is retried. A consumer's failures are left
 // out only for its limits, which leave its state unchanged.
 func leaveOutBestEffort(err error, consumer, overCeiling bool) bool {
 	if errors.Is(err, errRevisionDoesNotFit) {
 		return true
 	}
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || agentapi.HasFailure(err, agentapi.Changed) {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || agentapi.HasFailure(err, agentapi.Changed) || agentapi.HasFailure(err, agentapi.Unavailable) {
 		return false
 	}
 	if errors.Is(err, agentapi.ErrReadBudget) {
