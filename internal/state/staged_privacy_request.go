@@ -17,9 +17,20 @@ func (s *Store) FreezeStagedPrivacyRequest(ctx context.Context, id, adapterVersi
 	if s.resourceBudget == nil {
 		return nil, agentapi.ErrReadBudget
 	}
-	if _, err := s.resourceBudget.Reservation().CapturedBudget(); err != nil {
+	original := s
+	originalOwner, ok := s.readReservation().(*agentapi.NativeReadReservation)
+	if !ok {
+		return nil, agentapi.ErrReadBudget
+	}
+	captured, err := s.resourceBudget.CaptureFromReservation(originalOwner)
+	if err != nil {
 		return nil, err
 	}
+	s, ctx, closeContext := s.withDurableContext(ctx)
+	defer closeContext()
+	s, closeWork := s.WithReadBudget(ctx, captured)
+	defer closeWork()
+	s.resourceReservation = func() stateReservation { return captured.Reservation() }
 	if err := s.resourceContext.Err(); err != nil {
 		return nil, err
 	}
@@ -46,11 +57,17 @@ func (s *Store) FreezeStagedPrivacyRequest(ctx context.Context, id, adapterVersi
 			return nil, ErrReadySelectionFrozen
 		}
 	}
+	if s.stagedPrivacyCompressionBoundary != nil {
+		s.stagedPrivacyCompressionBoundary(false)
+	}
 	packed, closePacked, err := agentapi.CompressRetainedSource(ctx, stage.Bundle, s.resourceBudget)
 	if err != nil {
 		return nil, err
 	}
 	defer closePacked()
+	if s.stagedPrivacyCompressionBoundary != nil {
+		s.stagedPrivacyCompressionBoundary(true)
+	}
 	key, err := archive.SourceObjectKey(stage.Bundle, packed.SHA256)
 	if err != nil {
 		return nil, err
@@ -75,10 +92,10 @@ func (s *Store) FreezeStagedPrivacyRequest(ctx context.Context, id, adapterVersi
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	return s.freezeStagedPrivacySnapshot(expected, packed.Bytes)
+	return original.freezeStagedPrivacySnapshot(expected, packed.Bytes, originalOwner)
 }
 
 // The Store read lease owns this context; caller contexts cannot replace it.
-func (s *Store) freezeStagedPrivacySnapshot(expected retainedprivacy.Expectation, source []byte) (*retainedprivacy.Request, error) {
-	return retainedprivacy.FreezeRequest(s.resourceContext, expected, source, s.resourceBudget)
+func (s *Store) freezeStagedPrivacySnapshot(expected retainedprivacy.Expectation, source []byte, owner *agentapi.NativeReadReservation) (*retainedprivacy.Request, error) {
+	return retainedprivacy.FreezeRequestCaptured(s.resourceContext, expected, source, s.resourceBudget, owner)
 }

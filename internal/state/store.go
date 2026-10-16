@@ -52,9 +52,11 @@ import (
 // never stores credentials or a second copy of conversation content beyond
 // what the published source bundle itself already contains.
 type Store struct {
-	summaryCache        *publishedSummaryCache
-	summaryBorrow       *publishedSummaryBorrow
-	publishedReadDigest *[32]byte
+	// stagedPrivacyCompressionBoundary is a nil-default fixture observation around canonical retained compression.
+	stagedPrivacyCompressionBoundary func(after bool)
+	summaryCache                     *publishedSummaryCache
+	summaryBorrow                    *publishedSummaryBorrow
+	publishedReadDigest              *[32]byte
 	// summaryDecodeBoundary injects same-stamp replacements around a cold
 	// selecting decode; production stores leave this test seam nil.
 	summaryDecodeBoundary func(after bool)
