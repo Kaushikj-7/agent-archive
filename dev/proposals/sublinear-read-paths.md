@@ -424,8 +424,11 @@ Pass:
 Initial measurement code revision: `b441ed88`. Review follow-ups repair the
 legacy-versus-post-PR1 scheduling labels, eviction timing, picker result oracle,
 synthetic registration inventory/counters and output-visible changed handoffs.
-The observed-size 20-case command matrix and ordinary 1,800-session operation/output controls pass with exact
-Go 1.27.2, alongside synthetic S3 provider-page conformance. Independent source
+The original observed-size 20-case command matrix passed with exact Go 1.27.2,
+alongside synthetic S3 provider-page conformance. The current matrix adds four
+scoped late-match cases (24 total), with ordinary 1,800-session operation/output
+gates for every applicable cold, warm, changed and no-cache state. Historical
+20-case logs describe the original matrix rather than this expansion. Independent source
 and documentation review found no unresolved blockers. Historical controls
 remain unchanged. Local row counts describe application-level validated and
 decoded candidates, not SQLite engine scan or exact-count work. Qualified
