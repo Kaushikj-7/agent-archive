@@ -181,6 +181,11 @@ func (s *Store) loadSessionDeletion(id string) (SessionDeletion, bool, error) {
 	if err != nil || inactive {
 		return j, !inactive, err
 	}
+	return s.loadProtectedSessionDeletion(id)
+}
+
+func (s *Store) loadProtectedSessionDeletion(id string) (SessionDeletion, bool, error) {
+	var j SessionDeletion
 	home, err := local.OpenRootedHome(s.home)
 	if err != nil {
 		return j, true, err

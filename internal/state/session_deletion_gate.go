@@ -3,6 +3,7 @@ package state
 import (
 	"bufio"
 	"errors"
+	"io"
 	"os"
 	"syscall"
 
@@ -13,6 +14,16 @@ import (
 // opts in. This refusal-only projection reads no session content. Any deletion
 // namespace or sticky capability continues through the private rooted guard.
 func (s *Store) deletionInactive() (inactive bool, err error) {
+	ctx := s.durableContext()
+	defer func() {
+		err = errors.Join(err, ctx.Err())
+		if err != nil {
+			inactive = false
+		}
+	}()
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
 	before, err := os.Stat(s.home)
 	if errors.Is(err, os.ErrNotExist) {
 		return true, nil
@@ -65,6 +76,10 @@ func deletionGateUnchanged(root *os.Root, home string, before, configInfo os.Fil
 }
 
 func (s *Store) readDeletionCapability(root *os.Root, before os.FileInfo) (required bool, err error) {
+	ctx := s.durableContext()
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
 	f, err := root.OpenFile("config.json", os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return false, err
@@ -83,8 +98,8 @@ func (s *Store) readDeletionCapability(root *os.Root, before os.FileInfo) (requi
 		return false, errStateBudget
 	}
 	defer reservation.Release(scratch)
-	counted := &countingReader{r: f}
-	p := projector{in: bufio.NewReaderSize(counted, int(buffer)), reserve: reservation.Reserve, limit: int(durableControlBytes / 2), ctx: s.resourceContextErr}
+	counted := &countingReader{r: exactPendingContextReader{ctx: ctx, reader: io.LimitReader(f, before.Size()+1)}}
+	p := projector{in: bufio.NewReaderSize(counted, int(buffer)), reserve: reservation.Reserve, limit: int(durableControlBytes / 2), ctx: ctx.Err}
 	defer func() { reservation.Release(p.charged) }()
 	if err := p.object(jsonProjection{"schema_version": nil, "deletion_protection": nil}, true); err != nil {
 		return false, err
@@ -96,10 +111,14 @@ func (s *Store) readDeletionCapability(root *os.Root, before os.FileInfo) (requi
 	if err != nil || !sameDurableStamp(before, after) || counted.n != before.Size() {
 		return false, errors.Join(ErrDurableStorageRecovery, err)
 	}
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
 	n := 6 * int64(len(p.out))
 	if !reservation.Reserve(n) {
 		return false, errStateBudget
 	}
 	defer reservation.Release(n)
-	return config.DeletionGuardRequired(p.out)
+	required, err = config.DeletionGuardRequired(p.out)
+	return required, errors.Join(err, ctx.Err())
 }
