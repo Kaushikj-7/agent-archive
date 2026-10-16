@@ -168,6 +168,9 @@ func (s *sessionScan) loadHistoryInput(identity archive.Metadata, input state.Hi
 	if err == nil && input.SourceSchemaVersion != 0 && bundle.SchemaVersion != input.SourceSchemaVersion {
 		return archive.SourceBundle{}, errors.New("frozen input source schema differs from retained bytes")
 	}
+	if err == nil && input.AdapterVersion != "" && input.AdapterVersion != bundle.Capture.AdapterVersion {
+		return archive.SourceBundle{}, errors.New("frozen input adapter differs from retained bytes")
+	}
 	return bundle, err
 }
 
@@ -345,12 +348,9 @@ func (s *sessionScan) prepareFrozenPrivacyInput(p *state.PendingPublication, met
 
 }
 
-// The typed retained transformation lane also covers owned header maintenance.
-// It is selected from actual original headers before the immutable first seal.
+// Freeze producer provenance from exact retained headers before the first seal.
+// This also selects the typed lane for adapter drift and owned child maintenance.
 func (s *sessionScan) freezeNativeHeaderInputs(p *state.PendingPublication) (bool, error) {
-	if !s.reg.NativeChild {
-		return false, nil
-	}
 	var metadata archive.Metadata
 	if err := s.unmarshalRetained(p.MetadataBytes, &metadata); err != nil {
 		return false, err
@@ -359,13 +359,24 @@ func (s *sessionScan) freezeNativeHeaderInputs(p *state.PendingPublication) (boo
 	reg.ParentSessionID = p.Bundle.ParentSessionID
 	needed := false
 	for i, input := range p.History.Inputs {
+		needed = needed || input.AdapterVersion != "" && input.AdapterVersion != p.History.AdapterVersion
+		if !s.reg.NativeChild && input.AdapterVersion != "" {
+			continue
+		}
 		mark := len(s.retainedReleases)
 		bundle, err := s.loadHistoryInput(metadata, input)
 		if err != nil {
 			return false, err
 		}
-		needed = needed || nativeParentResolved(reg, bundle) || nativeChildMarkerPending(reg, bundle)
 		keep := len(s.retainedReleases)
+		needed = needed || bundle.Capture.AdapterVersion != p.History.AdapterVersion
+		needed = needed || s.reg.NativeChild && (nativeParentResolved(reg, bundle) || nativeChildMarkerPending(reg, bundle))
+		if input.AdapterVersion == "" {
+			if err := s.retainCharge(int64(len(bundle.Capture.AdapterVersion))); err != nil {
+				return false, err
+			}
+			p.History.Inputs[i].AdapterVersion = strings.Clone(bundle.Capture.AdapterVersion)
+		}
 		if len(bundle.ParentSessionID) > 4096 {
 			return false, state.ErrDurableStorageRecovery
 		}

@@ -213,16 +213,17 @@ func (s *sessionScan) stricterHistorySuccessor(p state.PendingPublication, commi
 // mixed original/prepared manifest, without reading current native data.
 func (s *sessionScan) pendingManifestInputs(metadata archive.Metadata, p state.PendingPublication, acknowledged, inputs []state.HistoryInput) ([]state.HistoryInput, error) {
 	for i := range inputs {
-		if inputs[i].ParentSessionID != nil && inputs[i].NativeChild != nil {
+		if inputs[i].ParentSessionID != nil && inputs[i].NativeChild != nil && inputs[i].AdapterVersion != "" {
 			continue
 		}
 		for _, original := range acknowledged {
 			if inputs[i].RevisionID == original.RevisionID && inputs[i].Reference == original.Reference {
 				inputs[i].ParentSessionID = original.ParentSessionID
 				inputs[i].NativeChild = original.NativeChild
+				inputs[i].AdapterVersion = original.AdapterVersion
 			}
 		}
-		if inputs[i].ParentSessionID != nil && inputs[i].NativeChild != nil {
+		if inputs[i].ParentSessionID != nil && inputs[i].NativeChild != nil && inputs[i].AdapterVersion != "" {
 			continue
 		}
 		mark := len(s.retainedReleases)
@@ -231,13 +232,14 @@ func (s *sessionScan) pendingManifestInputs(metadata archive.Metadata, p state.P
 			return nil, err
 		}
 		keep := len(s.retainedReleases)
-		if err := s.retainCharge(int64(len(bundle.ParentSessionID))); err != nil {
+		if err := s.retainCharge(int64(len(bundle.ParentSessionID) + len(bundle.Capture.AdapterVersion))); err != nil {
 			return nil, err
 		}
 		parent := strings.Clone(bundle.ParentSessionID)
 		inputs[i].ParentSessionID = &parent
 		marker := bundle.NativeChild
 		inputs[i].NativeChild = &marker
+		inputs[i].AdapterVersion = strings.Clone(bundle.Capture.AdapterVersion)
 		s.keepRetainedFrom(mark, keep)
 	}
 	frozen := p
@@ -258,7 +260,12 @@ func hasRevisionInput(inputs []state.HistoryInput, id string) bool {
 
 func (s *sessionScan) retainedManifestInputs(metadata archive.Metadata, pending *state.PendingPublication) ([]state.HistoryInput, error) {
 	mark := len(s.retainedReleases)
-	defer s.releaseRetainedAfter(mark)
+	success := false
+	defer func() {
+		if !success {
+			s.releaseRetainedAfter(mark)
+		}
+	}()
 	if err := s.validateAuthorityIdentity(metadata); err != nil {
 		return nil, err
 	}
@@ -308,11 +315,16 @@ func (s *sessionScan) retainedManifestInputs(metadata archive.Metadata, pending 
 		if err != nil {
 			return nil, fmt.Errorf("validate retained successor input: %w", err)
 		}
-		parent := selected.ParentSessionID
+		keep := len(s.retainedReleases)
+		if err := s.retainCharge(int64(len(selected.ParentSessionID)+len(bundle.Capture.FilterVersion)+len(bundle.Capture.AdapterVersion)) + 128); err != nil {
+			return nil, err
+		}
+		parent := strings.Clone(selected.ParentSessionID)
 		marker := bundle.NativeChild
-		inputs = append(inputs, state.HistoryInput{NativeChild: &marker, ParentSessionID: &parent, Reference: ref, RevisionID: id, CapturedAt: bundle.Capture.CapturedAt, FilterVersion: bundle.Capture.FilterVersion, SourceSchemaVersion: bundle.SchemaVersion})
-		s.releaseRetainedAfter(mark)
+		inputs = append(inputs, state.HistoryInput{NativeChild: &marker, ParentSessionID: &parent, Reference: ref, RevisionID: id, CapturedAt: bundle.Capture.CapturedAt, FilterVersion: strings.Clone(bundle.Capture.FilterVersion), AdapterVersion: strings.Clone(bundle.Capture.AdapterVersion), SourceSchemaVersion: bundle.SchemaVersion})
+		s.keepRetainedFrom(mark, keep)
 	}
+	success = true
 	return inputs, nil
 }
 
@@ -410,7 +422,7 @@ func (s *sessionScan) prepareStricterHistoryInput(next *state.PendingPublication
 			if other.RevisionID != input.RevisionID || other.Reference == input.Reference {
 				continue
 			}
-			alt := state.PreparationInput{ParentSessionID: other.ParentSessionID, NativeChild: other.NativeChild, Reference: other.Reference, Selection: state.PublicationSelection{Role: frozen.Selection.Role, RevisionID: other.RevisionID, CapturedAt: other.CapturedAt.UTC(), SourceSchemaVersion: other.SourceSchemaVersion}, FilterVersion: other.FilterVersion, AdapterVersion: owner.Adapter.Version, SkillPolicy: string(ceiling)}
+			alt := state.PreparationInput{ParentSessionID: other.ParentSessionID, NativeChild: other.NativeChild, Reference: other.Reference, Selection: state.PublicationSelection{Role: frozen.Selection.Role, RevisionID: other.RevisionID, CapturedAt: other.CapturedAt.UTC(), SourceSchemaVersion: other.SourceSchemaVersion}, FilterVersion: other.FilterVersion, AdapterVersion: other.AdapterVersion, SkillPolicy: string(ceiling)}
 			policy := state.PublicationPolicy{FilterVersion: alt.FilterVersion, AdapterVersion: alt.AdapterVersion, SkillEvidence: ceiling}
 			alternatives = append(alternatives, state.PublicationPrivacyAlternative{Metadata: owner, MetadataBody: body, Input: alt, Policy: policy})
 		}
@@ -532,7 +544,7 @@ func (s *sessionScan) normalizeRetainedMaintenanceCurrent(p *state.PendingPublic
 		}
 		parent := p.Bundle.ParentSessionID
 		marker := p.Bundle.NativeChild
-		p.History.Inputs[i] = state.HistoryInput{ParentSessionID: &parent, NativeChild: &marker, Reference: authority.SourceBundle, RevisionID: input.RevisionID, CapturedAt: input.CapturedAt, FilterVersion: p.Bundle.Capture.FilterVersion, SourceSchemaVersion: p.Bundle.SchemaVersion}
+		p.History.Inputs[i] = state.HistoryInput{ParentSessionID: &parent, NativeChild: &marker, Reference: authority.SourceBundle, RevisionID: input.RevisionID, CapturedAt: input.CapturedAt, FilterVersion: p.Bundle.Capture.FilterVersion, AdapterVersion: p.Bundle.Capture.AdapterVersion, SourceSchemaVersion: p.Bundle.SchemaVersion}
 		refs, err := authority.SourceReferences()
 		if err != nil {
 			return err

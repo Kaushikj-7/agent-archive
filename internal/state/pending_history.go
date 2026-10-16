@@ -60,6 +60,7 @@ type HistoryInput struct {
 	RevisionID          string                  `json:"revision_id"`
 	CapturedAt          time.Time               `json:"captured_at"`
 	FilterVersion       string                  `json:"filter_version"`
+	AdapterVersion      string                  `json:"adapter_version,omitempty"`
 }
 
 // PendingSource identifies an immutable owned stage by checksum-derived name.
@@ -286,7 +287,7 @@ func (owned *PendingPublication) validateHistoryInputs(m archive.Metadata) error
 	}
 	seen := map[string]bool{}
 	for _, input := range p.History.Inputs {
-		if seen[input.RevisionID] || input.SourceSchemaVersion != 0 && input.SourceSchemaVersion != archive.SourceSchemaVersion && input.SourceSchemaVersion != archive.HistorySourceSchemaVersion {
+		if len(input.AdapterVersion) > 4096 || seen[input.RevisionID] || input.SourceSchemaVersion != 0 && input.SourceSchemaVersion != archive.SourceSchemaVersion && input.SourceSchemaVersion != archive.HistorySourceSchemaVersion {
 			return errors.New("invalid frozen input provenance")
 		}
 		seen[input.RevisionID] = true
