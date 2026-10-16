@@ -320,3 +320,44 @@ func TestRegistrationCommitSeesDeletionSelectedAfterStaging(t *testing.T) {
 		t.Fatal("actual owner cannot resume deletion", found, err)
 	}
 }
+
+func TestDeletionOwnerGuardsNeverReadRetainedMetadata(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	reg := registration(t)
+	if err := s.SaveRegistration(reg); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.PrepareSessionDeletion(reg, RemovalReasonRetention, nil, time.Now(), ""); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(s.home, deletionDirectory, reg.ArchiveSessionID, "sources")
+	if err := os.Mkdir(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Create(filepath.Join(dir, "metadata.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Truncate(32 << 20); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	scoped, closeScope := s.WithReadBudget(t.Context(), agentapi.NewNativeReadBudget(128<<10))
+	defer closeScope()
+	s = scoped
+	s.deletionFileOpen = func(root *os.Root, name string) (*os.File, error) {
+		if name != "intent.json" {
+			t.Fatal("owner-only guard opened retained data", name)
+		}
+		return root.Open(name)
+	}
+	if found, err := s.SessionDeletionPresent(reg.ArchiveSessionID); err != nil || !found {
+		t.Fatal(found, err)
+	}
+	if _, err := s.UpdateRegistration(reg.ArchiveSessionID, func(r *archive.SessionRegistration) error { r.TranscriptPath += "-moved"; return nil }); !errors.Is(err, ErrRemovalPending) {
+		t.Fatal("owner-only projection did not refuse", err)
+	}
+}

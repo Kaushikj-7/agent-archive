@@ -92,7 +92,7 @@ func deletionIntentSHA(j SessionDeletion) string {
 }
 func deletionPath(id string) string { return filepath.Join(deletionDirectory, id, "intent.json") }
 
-func (j SessionDeletion) validate(id string) error {
+func (j SessionDeletion) validateControl(id string) error {
 	if err := j.validateOwner(id); err != nil {
 		return err
 	}
@@ -117,6 +117,13 @@ func (j SessionDeletion) validate(id string) error {
 	}
 	if (j.MetadataSHA256 == "") != (len(j.References) == 0) || j.MetadataSHA256 != "" && !validPublicationDigest(j.MetadataSHA256) {
 		return ErrDurableStorageRecovery
+	}
+	return nil
+}
+
+func (j SessionDeletion) validate(id string) error {
+	if err := j.validateControl(id); err != nil {
+		return err
 	}
 	if len(j.MetadataBytes) == 0 {
 		if !j.allowsMissingMetadata() {
@@ -678,7 +685,7 @@ func (s *Store) retainDeletionCharge(n int64) error {
 // including blind replacements and prepared source binding updates. A durable
 // intent may appear after a proposed registration was staged.
 func (s *Store) checkDeletionRegistrationTransition(next archive.SessionRegistration) error {
-	j, found, err := s.loadSessionDeletion(next.ArchiveSessionID)
+	j, found, err := s.loadDeletionControl(next.ArchiveSessionID)
 	if err != nil {
 		return err
 	}
