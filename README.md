@@ -24,40 +24,27 @@ Continue a Claude Code session in Codex: browse, select, and hand off.
 
 ## Quickstart
 
-1. **Install** on macOS or Linux (details and what is verified: [platforms](docs/getting-started/install.md#platforms)):
+1. **Install on macOS:**
 
    ```sh
    curl -fsSL https://raw.githubusercontent.com/wangjohn/agent-archive/v0.1.1/install.sh | AGENT_ARCHIVE_VERSION=v0.1.1 sh
    ```
 
-   The latest published release, v0.1.1, has macOS binaries only. On Linux, [build from source](docs/getting-started/install.md#build-from-source). These docs describe the current checkout; local handoff before setup and other newer features require a current source build until the next release is published.
+   The published v0.1.1 binaries are macOS only. For Linux and the newer features shown here, [build from source](docs/getting-started/install.md#build-from-source).
 
-2. **See it work — no bucket needed.** Inside a project, hand a session you already have to another agent:
-
-   ```sh
-   agent-archive handoff
-   ```
-
-   Browse existing Claude Code, Codex or Muse Code conversations without configuring storage.
-   [Local handoff scope, preview limits and cleanup](docs/guides/handoff.md#before-setup-native-local-sessions).
-
-3. **Create a private bucket** and an access key for it ([R2 and S3 steps](docs/getting-started/bucket.md)). On Cloudflare R2, start with [let setup create it](docs/getting-started/bucket.md#let-setup-create-it): you make one temporary token and setup creates the bucket and its key.
-
-4. **Review [what is uploaded](docs/security/privacy.md#what-is-uploaded)** before enabling capture. Capture can include visible user-level skill instructions as well as your conversation. Redaction is best effort and there is no client-side encryption. **Run setup** inside a project you want to include, or choose projects when prompted ([setup guide](docs/getting-started/setup.md)); by default, sessions with no new activity for 90 days are deleted from your bucket, which the setup review shows and lets you change or keep forever:
+2. **Run setup** inside your project to configure capture and private S3 or R2 storage:
 
    ```sh
    agent-archive setup
    ```
 
-5. **Start a new task.** Interactive Codex setup reviews automatic discovery and capture scope; fresh scripts explicitly choose both. All-projects scope is Codex only; hook approval is optional for discovery. Existing installations opt in explicitly. Start a **new** Codex task within the reviewed scope, or a new Claude Code session or Cursor Agent chat in an included project, and send a prompt ([discovery consent and supported versions](docs/getting-started/setup.md#automatic-codex-discovery)). Indistinguishable recent native copies may qualify.
+3. **Hand off a session** to another agent:
 
-6. **Verify capture.** Allow the background collector to run, or run `agent-archive sync`, then `agent-archive status`. Look for your app's **archived, verified** Capture row: this establishes publication and read-back. Find the new session with `agent-archive list` and inspect it with `agent-archive show SESSION_ID` ([first successful capture and troubleshooting](docs/README.md#first-successful-capture)).
+   ```sh
+   agent-archive handoff
+   ```
 
-7. Setup imports the last 7 days of sessions in the included projects. If you want to pull in older sessions, you can import them with `agent-archive backfill` ([backfill guide](docs/guides/backfill.md)). Add `--dry-run` to preview without importing.
-
-To add a second machine, install and run setup there with the same bucket (see [multiple machines](docs/guides/multiple-machines.md)).
-
-**Platforms.** macOS (Apple Silicon and Intel) and Linux (x86-64 and arm64) capture in the background. On Linux the collector is a systemd user timer, which needs systemd 240 or newer and a user manager (`loginctl enable-linger` on a headless machine); R2 credentials are kept in a private file rather than the Keychain; and Cursor capture is best effort, because the real Cursor app and `cursor-agent` hooks have not been verified there. Windows is not supported. [What was tested, and what was not](docs/getting-started/install.md#platforms).
+[Setup guide](docs/getting-started/setup.md) · [Bucket options](docs/getting-started/bucket.md) · [Platforms](docs/getting-started/install.md#platforms) · [Privacy](docs/security/privacy.md) · [Multiple machines](docs/guides/multiple-machines.md)
 
 ## Understand your usage
 
