@@ -21,7 +21,7 @@ affects.
 | List JSON | `cli.listSchemaVersion` | `list --json` `schema_version` | 4 | The script-facing list document changes incompatibly. Version 3 removed `unavailable`; version 4 makes exact-count knowledge explicit. |
 | Status JSON | `statusView.Version` in `internal/cli/status.go` | `status --json` `schema_version` | 4 | Status output changes incompatibly; schema 4 separates discovery from actual hook evidence. |
 
-Muse uses its independent parser 0.4.0 and archive-native `muse-jsonl` mixed ordinary-v1/native-omission-v2
+Muse uses its independent parser 0.5.0 and archive-native `muse-jsonl` mixed ordinary-v1/native-omission-v2
 ([inner union schema](../../schemas/muse-retained-record.schema.json)). Explicit-file
 and bounded automatic local handoff are supported; this does not alter outer
 bundle schemas or
@@ -46,8 +46,8 @@ The per-version filter changes are in the
 Muse startup model availability uses the complete validated startup prefix,
 including the second metadata row in the qualified model-resolution lane.
 Filter 29 and global/Muse adapter 0.29.0 refresh the fixed availability gap
-without changing retained fields, parser interpretation or schemas. Version 28
-is allocated by the independent committed-tool-evidence work.
+without changing retained fields, parser interpretation or schemas. The version
+28 committed-tool evidence and Muse parser 0.5.0 remain in effect.
 
 ## What a bump does
 
@@ -319,3 +319,12 @@ while frozen filter23 schemas refuse enriched rows. This observation expansion
 leaves Source2/metadata1 and private configuration/state formats unchanged. Other agent parser versions do not
 change. Parser refresh and full export rederive the summary from retained evidence
 after native loss. Real billing/cache/completeness gates remain unqualified.
+
+Muse committed call identity and retained result joins allocate filter28/global
+adapter0.28.0/Muse filter0.28.0 and Muse parser0.5.0. Legacy filter24 event-only
+tool rows remain readable with unavailable counts; exact older retained schemas
+refuse enriched rows. Existing normalized calls preserve nullable individual
+result facts, while normalized results and narrative tool objects stay omitted.
+ToolResults/ToolErrors remain unavailable. Ordinary unaffected rows, other-agent
+parsers, Source2/metadata1 and private writer formats do not change. This finite
+observation lane does not enable capture or qualify rich tool/status parity.

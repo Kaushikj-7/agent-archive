@@ -19,6 +19,7 @@ func TestModelAvailabilityUsesCompleteStartup(t *testing.T) {
 	t.Parallel()
 	for _, name := range []string{"synthetic-exec-conversation.jsonl", "synthetic-model-resolution-omissions.jsonl"} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			out, err := filterBytes(t, readSynthetic(t, name), agentapi.ReadLimits{})
 			if err != nil {
 				t.Fatal(err)

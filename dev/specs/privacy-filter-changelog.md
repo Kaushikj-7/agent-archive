@@ -14,7 +14,29 @@ Global and Muse adapter 0.29.0 accompany this change.
   lane resolves the model in its second row. Retained refiltering repairs the
   previous false gap without native files.
 - No transcript fields, redaction rules or accounting claims change. Version 28
-  is allocated by the separate committed-tool-evidence work.
+  committed-tool evidence and Muse parser 0.5.0 remain in effect.
+
+## Source filter version 28
+
+Global adapter 0.28.0, Muse filter 0.28.0 and Muse parser 0.5.0 retain minimal
+own committed call identity and strict prior batch/index/call result joins.
+Native response/item IDs, tool names, arguments and result text are validated
+then dropped. Bounded opaque identities pass shared privacy rules; changes refuse.
+Relevant source IDs and sequences are checked across conversation, completion
+and tool events within each materialized run. Nonempty synthetic multi-item and
+partial/reordered result arrays are supported; native qualification remains one
+single-item case. Legacy event-only branches stay readable and unavailable;
+partial enrichment and duplicate/replayed joins refuse. Frozen filter24 schemas
+refuse enriched rows. Other agent payloads and parser versions stay unchanged.
+
+Only nonempty enriched call sets without legacy erased tool rows expose the
+exact observed invocation count. Blank unlisted normalized calls may record a
+proven result position, while error/body facts stay absent. Normalized result
+arrays remain empty and result/error counts unavailable, protecting existing
+typed normalized and handoff readers from invented false/zero values. Narrative
+transcript/handoff retain omitted-detail gaps. Tool names, MCP, files, Git,
+lifecycle status and complete accounting remain unavailable. Source2/metadata1,
+configuration/binding versions and the capture guard are unchanged.
 
 ## Source filter version 27
 

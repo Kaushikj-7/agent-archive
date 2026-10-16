@@ -442,7 +442,7 @@ Native JSON responses and process output are discarded before persistence.
 
 ## Muse explicit local evidence
 
-Filter 24 supports `handoff --file PATH --harness muse` for complete ordinary
+Filter 28 supports `handoff --file PATH --harness muse` for complete ordinary
 exec/MSP roots in the qualified grammar. The [inner record union](../../schemas/muse-retained-record.schema.json)
 uses unchanged v1 ordinary rows plus closed timestamp-free v2 omissions. Ordinary rows retain: original envelope identity, physical line and nullable child
 index, exact safe integers, discriminator/schema, causal identity and only the
@@ -454,7 +454,7 @@ workspace. Integrity is unkeyed and grants no producer or capture consent.
 Own conversation requires accepted main/chat intent, matching materialization,
 actual run-start record and committed assistant linkage. Model context, deltas,
 terminal copies, task starts and notifications are not prompts. Explicit gaps
-mark complete accounting, tools, model switches and children unavailable. Qualified
+mark complete accounting, tool detail, model switches and children unavailable. Qualified
 own completions additionally retain recorded model and exact input/output
 observations, without filling normalized or billable token fields. Unknown
 authority, unsupported versions, forks, children, checkpoints, malformed or
@@ -535,3 +535,33 @@ remain unavailable. Models beyond the deterministic first 31 fold into
 cross-session overflow publishes no observation numbers with the fixed
 `observation_limit` reason. Required `own_usage_observations_partial` and
 `cache_reasoning_cost_unqualified` gaps survive retained-only refresh.
+
+
+Muse's closed own committed tool branches retain only run/source provenance,
+message/call IDs and batch/index/call result joins. New opaque IDs use 1–128 ASCII
+letters/digits/underscore/hyphen, starting with a letter or digit; shared privacy
+rules apply and any identity change refuses. Native response/item IDs, names,
+arguments and result text are validated then dropped completely, without hashes
+or lengths. Exact nonempty bounded arrays permit synthetic multi-item and
+reordered partial results; native qualification covers one single-item case only.
+Every result must reference an earlier exact message batch in its own materialized
+run, with matching index and call ID. Duplicate batches, calls, source IDs,
+nonincreasing relevant source sequences and repeated result batches refuse.
+Open calls are valid; missing results establish no success or zero.
+
+Only a nonempty enriched call set with no legacy erased call/result rows supplies
+an exact observed invocation count. Empty, legacy and mixed coverage stays
+unavailable. Normalized JSON preserves call identity and a nullable proven result
+record position, with error status and output size absent. These nameless calls
+remain unlisted in narrative transcript/handoff, preserving omitted-detail gaps.
+No normalized result objects, result/error counts, tool names, MCP, file or Git
+facts are inferred. Complete lifecycle, result status/body and billing remain
+unqualified; this does not enable capture or establish full tool parity.
+
+Enriched tool rows retain the existing 128× decoded-value expansion allowance
+until their lease ends; other rows retain their existing 8× allowance. This is
+charged before persistent row ownership and final typed normalization, while the
+physical raw allowance is still held. It covers safe retained maps/output plus
+call, batch and source joins and normalized call slices without increasing any
+budget or format limit. Pressure refuses the whole artifact and releases every
+charge; bounded success and idempotent release are tested with many short IDs.
