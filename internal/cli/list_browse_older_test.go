@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"reflect"
@@ -415,6 +416,58 @@ func TestKeyPickerKeysTypedAheadOfALoadAreHandledAfterIt(t *testing.T) {
 	checkOlderScreens(t, positions, rows,
 		[]string{"1–12 of 20+", "9–20 of 20+", "", "10–21 of 40+", "12–23 of 40+"},
 		[]int{1, 20, 20, 21, 23}, screens)
+}
+
+// pickOlder runs the list over table reading keys from chunks, as
+// olderScreens does, and returns the row picked.
+func pickOlder(t *testing.T, choices *scopeChoices, chunks ...string) (listRow, bool, error) {
+	t.Helper()
+	var out bytes.Buffer
+	picker := &sessionPicker{
+		env:   fixedTerminal{120, 19},
+		older: choices.loadOlder,
+		keys:  startKeys(newFakeKeys(chunks...)),
+		clear: func() { out.WriteString(screenBreak) },
+	}
+	defer picker.keys.close()
+	return picker.pickScoped(newPrompter(strings.NewReader(""), &out), &out, choices, "show")
+}
+
+// A key pressed together with the Esc that stops a load started with keys
+// typed ahead is kept, as keys pressed on their own while it runs are.
+func TestKeyPickerKeysPressedWithTheEscThatStopsALoadAreKept(t *testing.T) {
+	t.Parallel()
+	table := newOlderTable(30)
+	table.choices.loadOlder.Load = nil
+	table.choices.loadOlder.LoadContext = func(ctx context.Context) (bool, error) {
+		select {
+		case <-ctx.Done():
+			return false, ctx.Err()
+		case <-time.After(10 * time.Second):
+			return false, errors.New("esc did not stop the load")
+		}
+	}
+	row, ok, err := pickOlder(t, table.choices, "\x1b[F", "\x1b[B\x1b[B", later(50*time.Millisecond, "5\x1b"), later(time.Second, "\r"))
+	if err != nil || !ok || row.Index != 5 {
+		t.Fatalf("picked %d (%t, %v), want 5", row.Index, ok, err)
+	}
+}
+
+// Input that ends while a load started with keys typed ahead runs ends it
+// after those keys: an answer typed ahead is still chosen.
+func TestKeyPickerInputEndingDuringALoadComesAfterKeysTypedAhead(t *testing.T) {
+	t.Parallel()
+	table := newOlderTable(100)
+	load := table.choices.loadOlder.Load
+	table.choices.loadOlder.Load = nil
+	table.choices.loadOlder.LoadContext = func(context.Context) (bool, error) {
+		time.Sleep(200 * time.Millisecond)
+		return load()
+	}
+	row, ok, err := pickOlder(t, table.choices, "\x1b[F", "\x1b[B3\r", later(50*time.Millisecond, string(fakeFailure)))
+	if err != nil || !ok || row.Index != 3 {
+		t.Fatalf("picked %d (%t, %v), want 3", row.Index, ok, err)
+	}
 }
 
 // a, pressed while older rows load, stops that load and changes the scope,

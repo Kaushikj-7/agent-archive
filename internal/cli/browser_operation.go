@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -368,7 +369,8 @@ func (l *sessionPicker) loadInputAhead() (cancelled, readable bool, err error) {
 		default:
 			continue
 		}
-		l.keys.queue(keys[i+1:])
+		// Keys pressed with it, before or after, are kept like the rest.
+		l.keys.queue(slices.Delete(keys, i, i+1))
 		return true, true, nil
 	}
 	l.keys.queue(keys)

@@ -293,21 +293,30 @@ func (k *keyInput) canReadAhead() bool {
 // read, leaving those in place: a load started with keys typed ahead (a
 // wheel burst held past the end, say) sees an Esc pressed while it runs.
 // The caller queues the keys it does not act on after the ones waiting
-// (queue). It reads only while canReadAhead.
+// (queue). It reads only while canReadAhead. A read that fails (input
+// ending, say) is kept for after the keys waiting, as a burst's is, so
+// what was typed ahead of it is still handled; canReadAhead is then false.
 func (k *keyInput) readAhead(wait time.Duration) ([]key, error) {
 	data, err := k.readBurstWait(wait)
 	if err != nil {
 		k.stale = nil
-	}
-	switch {
-	case errors.Is(err, errSuspended):
-		return nil, k.pause()
-	case errors.Is(err, errWindowResized):
-		return nil, nil
-	case err != nil:
-		return nil, err
+		return nil, k.aheadFailed(err)
 	}
 	return k.decode(data), nil
+}
+
+// aheadFailed answers readAhead's failed read: Ctrl-Z is answered, a resize
+// needs nothing (the list is drawn again after the load), and any other
+// failure is kept in k.failed for after the keys waiting.
+func (k *keyInput) aheadFailed(failure error) error {
+	switch {
+	case errors.Is(failure, errSuspended):
+		return k.pause()
+	case errors.Is(failure, errWindowResized):
+	default:
+		k.failed = failure
+	}
+	return nil
 }
 
 // queue adds keys after the keys waiting to be handled.
