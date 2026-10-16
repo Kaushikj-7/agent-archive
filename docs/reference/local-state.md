@@ -141,8 +141,9 @@ list in step with `state.OwnedEntries()`.
 ## Discovery state
 
 Discovery keeps a bounded source catalog and enumeration cursor, plus a
-content-free health snapshot. These are scheduling hints, not identity or consent
-authority. Namespaced native identities and their registration journal prevent
+content-free health snapshot. Codex cursor/cache fields are scheduling hints,
+not identity or consent authority. The optional Muse `native_inventory` member
+has a separate versioned contract described below. Namespaced native identities and their registration journal prevent
 duplicate logical archives across hooks, discovery and deliberate imports.
 Deleting a scan cache may cause another bounded scan; it does not grant permission
 to capture old history. `discovery-refused-starts.json` lists the top-level
@@ -152,6 +153,55 @@ conversation text) so `status` can point at `backfill` for them; the scan
 drops a session once it is archived, removed, excluded or its rollout is gone,
 and the file once it is empty. Preserve protected configuration and identity state when
 disabling discovery; an older binary refuses protected configuration.
+
+### Resumable native inventory observations
+
+`discovery-catalog.json` remains outer version 6. Its optional private
+[`native_inventory` format 1](../../schemas/native-inventory.schema.json) stores
+content-free progress for already admitted ordinary Muse owners: committed
+root/revision, exact historical owner cohort, directory generations, complete acquired pages,
+actual zero-byte EOF observations, matching-folder hints and fair scheduling.
+No transcript/header bodies, workspace facts or raw content hashes are stored.
+These local paths and IDs never enter portable archive output.
+
+The current pass separately freezes its eligible owners. Query arrivals do not
+restart the historical cohort: newcomers stay pending until its scheduling cycle
+finishes, then the changed cohort starts with empty coverage. Removed, bound or
+ineligible owners cannot be selected. The inclusive end cursor means only that
+the scheduling cycle finished; it proves no enumeration or source fact. An
+unchanged cohort may reuse historical pages, subject to all fresh checks below.
+
+Position and matching-folder hints schedule work only. Complete pages/EOF are
+**historical enumeration evidence produced by this installation**, under the
+same trusted-local-state provenance assumption as local operation outcomes.
+They are not present uniqueness, identity, consent or publication authority.
+Plain JSON, versions and expected-byte writes do not authenticate a writer or
+resist coherent manual rewriting by an actor able to replace trusted local
+state. Native files and directory mutations remain independently checked.
+
+Each new selection and its later live check freshly verify every completed
+upper directory generation and the matching parents/startup under one shared
+remaining allowance. This costs O(selected owners × visited directories), in
+addition to one shared name traversal; directory ctime is neither a recursive
+counter nor a global atomic filesystem snapshot. Incomplete, incompatible,
+corrupt, dropped or evicted observations reset dependent coverage and tokens.
+An older catalog writer may safely drop the optional member: the next pass
+re-enumerates, stays pending when bounded coverage cannot finish, and cannot
+reconstruct authority from hints. Cooperating current writers preserve unrelated
+catalog members and compare expected bytes before atomic replacement.
+
+The pass reserves persistence time within its existing five-second active-work
+allowance and retains the original cancellation/deadline. It never renews a
+per-owner budget. The native member is at most 1 MiB, with 8 MiB charged for its
+bounded typed state and transient serialization in the existing 96 MiB cache
+reserve. Existing Codex caches account for 84 MiB; the collector's maximum
+8192-query snapshot and pending ordering storage use less than 2 MiB. Catalog
+read/decode/merge scratch is separately reserved on the same shared ledger before
+allocation and can refuse under pressure; no extra capacity is introduced.
+Bound valid owners use their immutable direct path without
+inventory. Real Muse capture remains refused; positive first-binding composition
+is tested through an injected producer using actual private Muse source/filter
+and guarded local commit implementations.
 
 ## Archive generations
 

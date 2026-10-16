@@ -1,0 +1,257 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/wangjohn/agent-archive/main/schemas/native-inventory.schema.json",
+  "title": "Private native inventory historical observations (not uploaded)",
+  "$comment": "Optional member in discovery-catalog.json outer6. Runtime additionally requires all fields, exact scope/query, globally bounded collections, complete page/cookie/edge chains and actual EOF. No coherent-local-state-forgery resistance is claimed.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "layout",
+    "classifier",
+    "root",
+    "query",
+    "owners",
+    "next",
+    "directories"
+  ],
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "layout": {
+      "const": "muse-root-v1"
+    },
+    "classifier": {
+      "const": 1
+    },
+    "root": {
+      "$ref": "native-source-authority.schema.json#/$defs/root"
+    },
+    "query": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "owners": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8192,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+      }
+    },
+    "next": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 8192
+    },
+    "directories": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 4096,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path",
+          "generation",
+          "pages",
+          "children",
+          "matches"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "maxLength": 12,
+            "pattern": "^(\\.|[0-9]{4}(/[0-9]{2}){0,2})$"
+          },
+          "generation": {
+            "oneOf": [
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "device",
+                  "inode",
+                  "mode",
+                  "size",
+                  "mtime",
+                  "ctime_sec",
+                  "ctime_nano"
+                ],
+                "properties": {
+                  "device": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "inode": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "mode": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 4294967295
+                  },
+                  "size": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "mtime": {
+                    "type": "integer"
+                  },
+                  "ctime_sec": {
+                    "type": "integer",
+                    "not": {
+                      "const": 0
+                    }
+                  },
+                  "ctime_nano": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 999999999
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "device",
+                  "inode",
+                  "mode",
+                  "size",
+                  "mtime",
+                  "ctime_sec",
+                  "ctime_nano"
+                ],
+                "properties": {
+                  "device": {
+                    "const": 0
+                  },
+                  "inode": {
+                    "const": 0
+                  },
+                  "mode": {
+                    "const": 0
+                  },
+                  "size": {
+                    "const": 0
+                  },
+                  "mtime": {
+                    "const": 0
+                  },
+                  "ctime_sec": {
+                    "const": 0
+                  },
+                  "ctime_nano": {
+                    "const": 0
+                  }
+                }
+              }
+            ]
+          },
+          "pages": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "kind",
+                "start",
+                "end",
+                "names",
+                "bytes"
+              ],
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "COMPLETEPAGE",
+                    "EOF"
+                  ]
+                },
+                "start": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "end": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "names": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 256
+                },
+                "bytes": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 4096
+                }
+              },
+              "allOf": [
+                {
+                  "if": {
+                    "properties": {
+                      "kind": {
+                        "const": "EOF"
+                      }
+                    }
+                  },
+                  "then": {
+                    "properties": {
+                      "names": {
+                        "const": 0
+                      },
+                      "bytes": {
+                        "const": 0
+                      }
+                    }
+                  },
+                  "else": {
+                    "properties": {
+                      "bytes": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 4096
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "maxItems": 8192
+          },
+          "children": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string",
+              "maxLength": 12,
+              "pattern": "^(\\.|[0-9]{4}(/[0-9]{2}){0,2})$"
+            },
+            "maxItems": 4096
+          },
+          "matches": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "maxItems": 8192
+          }
+        }
+      }
+    }
+  }
+}

@@ -10,8 +10,10 @@ follow [Semantic Versioning](https://semver.org/).
 
 - Muse local snapshots now supply exact raw content proofs and bounded provisional
   startup facts. Protected native binding v2 can retain a successful raw validation
-  checkpoint through the collector's prepared commit. Real Muse capture and empty
-  locator resolution remain unavailable.
+  checkpoint through the collector's prepared commit. A shared bounded inventory
+  now resumes empty-locator work across collector processes and rechecks current
+  uniqueness before guarded first binding. Real Muse capture remains unavailable;
+  the positive collector composition uses an injected test producer.
 
 - Codex capture and backfill revalidate unchanged sessions after unrelated
   database checkpoints instead of repeatedly reporting that their source changed.

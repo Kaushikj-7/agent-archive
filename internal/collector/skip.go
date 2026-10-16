@@ -126,6 +126,9 @@ func (p *pass) skipUnchanged(reg archive.SessionRegistration, req state.Request)
 // versions match, although that failed scan is still journaled; Run reports
 // its failure again without reading it.
 func (p *pass) unchangedSinceLastScan(reg archive.SessionRegistration) (unchanged bool, signature state.ScanSignature, err error) {
+	if pendingNativeEligible(reg, p.opts) {
+		return false, signature, nil
+	}
 	id := reg.ArchiveSessionID
 	if err := checkDurableSessionRead(p.ctx, p.local, id, p.opts); err != nil {
 		return false, signature, err
