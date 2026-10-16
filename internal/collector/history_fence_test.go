@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
@@ -46,6 +47,14 @@ func TestHistoryPublicationRemainsFencedAndMalformedRefilterRefuses(t *testing.T
 	pending := state.PendingPublication{Bundle: bundle, SourceKey: ordinary.SourceBundle.Key, SourceSHA256: ordinary.SourceBundle.SHA256, SourceSize: ordinary.SourceBundle.CompressedBytes, SourceBytes: sourceBytes, MetadataKey: metadataKey, MetadataBytes: published.Metadata(), ReadyAt: at, Attempted: true}
 	if e := s.checkHistoryPublicationBody(pending, meta); !errors.Is(e, archive.ErrHistoryMutationPending) {
 		t.Fatalf("remote history body gate: %v", e)
+	}
+	// A refused metadata decode has established no remote conflict. Preserve
+	// its budget classification so a later pass can retry the same evidence.
+	endScope := s.readBudget().BeginScope(1)
+	positionErr := (publicationTransactionStore{scan: s, pending: &pending}).ValidatePublicationPosition(ctx, metadataKey, meta)
+	endScope()
+	if !errors.Is(positionErr, agentapi.ErrReadBudget) || errors.Is(positionErr, storage.ErrPublicationConflict) {
+		t.Fatalf("unread remote history position: %v", positionErr)
 	}
 	if _, e := s.publishPending(s.ctx, pending); !errors.Is(e, storage.ErrPublicationConflict) {
 		t.Fatalf("foreign remote protected history: %v", e)

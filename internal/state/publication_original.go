@@ -255,6 +255,9 @@ func evidencePath(id string) string {
 // savePublicationPendingGuard preserves a supported legacy journal before its
 // first protocol2 replacement, and validates every later crash-link advancement.
 func (s *Store) savePublicationPendingGuard(g config.DurableStorageGuard, id string, p PendingPublication) error {
+	if handled, err := s.rewriteObservedPending(g, id, p); handled {
+		return err
+	}
 	path := filepath.Join("pending", id+".json")
 	old, release, err := s.rootedPublicationBytes(g, path)
 	if errors.Is(err, os.ErrNotExist) {

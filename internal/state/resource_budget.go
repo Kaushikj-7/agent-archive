@@ -24,6 +24,7 @@ import (
 // no Published or Pending value read through the handle may outlive it.
 func (s *Store) WithReadBudget(ctx context.Context, budget *agentapi.NativeReadBudget) (*Store, func()) {
 	scoped := *s
+	scoped.pendingWrite = nil
 	if scoped.publicationAccounting != nil && scoped.publicationAccounting.budget != budget {
 		scoped.publicationAccounting = nil
 	}

@@ -5,6 +5,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/state"
+	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
 func (s *sessionScan) checkRetainedHistory() error {
@@ -80,7 +81,9 @@ func (s *sessionScan) checkHistoryPublicationBody(p state.PendingPublication, ra
 		return err
 	}
 	if err := archive.CheckHistoryMutation(archive.SourceBundle{}, previous); err != nil {
-		return err
+		// A decoded remote history body is a conflicting position for an
+		// ordinary publication, as well as unsupported lifecycle mutation.
+		return errors.Join(storage.ErrPublicationConflict, err)
 	}
 	_, err := previous.SourceReferences()
 	return err
