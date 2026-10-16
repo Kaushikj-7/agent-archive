@@ -47,14 +47,6 @@ type admissionCopyOptions struct {
 	afterImage            func(*os.File, string) error
 }
 
-// prepareReservedLiveImage is the preparatory bounded SQLite copy backend.
-// It produces no native admission proof and has no production callers. A future
-// sealed producer must bind the image, source identity and reservation lifetime
-// before using its bytes for admission. A returned path alone confers no authority.
-func prepareReservedLiveImage(ctx context.Context, path string, workspace admissionWorkspaceBudget) (string, AdmissionCopyStats, error) {
-	return prepareAdmissionDatabase(ctx, path, workspace, admissionCopyOptions{})
-}
-
 func prepareAdmissionDatabase(ctx context.Context, path string, workspace admissionWorkspaceBudget, opts admissionCopyOptions) (out string, stats AdmissionCopyStats, err error) {
 	if err = ctx.Err(); err != nil {
 		return
