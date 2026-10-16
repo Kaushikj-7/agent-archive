@@ -34,12 +34,12 @@ def verify(path, required):
                     if key in tests:
                         raise ValueError('duplicate test execution')
                     tests[key] = 'running'
-                elif action in ('pause', 'cont', 'pass'):
+                elif action in ('pause', 'cont', 'pass', 'output'):
                     if tests.get(key) != 'running':
                         raise ValueError('test event without active execution')
                     if action == 'pass':
                         tests[key] = 'pass'
-                elif action != 'output':
+                else:
                     raise ValueError('invalid test event')
             elif action == 'start':
                 if package in packages:

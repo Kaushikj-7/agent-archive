@@ -83,6 +83,14 @@ class EvidenceTest(unittest.TestCase):
             with self.subTest(row=row), self.assertRaises(ValueError):
                 self.verify(self.complete() + [row])
 
+    def test_named_output_requires_active_execution(self):
+        for name in ('TestRequired/child', 'TestRequired'):
+            for index in (1, 3):
+                rows = self.complete()
+                rows.insert(index, event('output', test=name))
+                with self.subTest(name=name, index=index), self.assertRaises(ValueError):
+                    self.verify(rows)
+
 
 if __name__ == '__main__':
     unittest.main()
