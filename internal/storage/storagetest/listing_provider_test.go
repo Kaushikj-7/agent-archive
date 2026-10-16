@@ -25,7 +25,11 @@ func TestListingModelMatchesS3ProviderPages(t *testing.T) {
 	for i := range headers {
 		headers[i] = storage.Object{Key: fmt.Sprintf("sessions/%04d", i), ETag: "etag", Size: 1}
 	}
-	for _, tc := range []struct{ name, after, through string }{
+	for _, tc := range []struct {
+		name    string
+		after   string
+		through string
+	}{
 		{"exact-page", "", headers[999].Key},
 		{"absent-boundary", "", headers[999].Key + "x"},
 		{"short-range", "", headers[9].Key},
@@ -46,7 +50,7 @@ func TestListingModelMatchesS3ProviderPages(t *testing.T) {
 					start, err = strconv.Atoi(token)
 					if err != nil {
 						t.Error(err)
-						http.Error(w, "invalid token", 400)
+						http.Error(w, "invalid token", http.StatusBadRequest)
 						return
 					}
 				}
