@@ -357,14 +357,14 @@ func (s *sessionScan) upload(pending state.PendingPublication) error {
 // ensureHistorySource reuses exact immutable remote bytes on an interrupted
 // source-first attempt. Typed all-reference verification still precedes metadata.
 func (s *sessionScan) ensureHistorySource(key, sha string, data []byte) error {
-	return storage.PutVerifiedSource(s.ctx, s.remote, key, sha, data, s.opts.Retry, s.verifyHistorySource)
+	return storage.PutVerifiedSource(s.ctx, s.sourceSetRemote(), key, sha, data, s.opts.Retry, s.verifyHistorySource)
 }
 
 // verifyHistorySource keeps HEAD checksum verification cheap. Older/multipart
 // objects without a digest need an exact-size charged read. Its bytes end before
 // retrying or moving to a sibling reference.
 func (s *sessionScan) verifyHistorySource(ctx context.Context, key, sha string, size int) error {
-	if statter, ok := s.remote.(storage.ObjectStatter); ok {
+	if statter, ok := s.sourceSetRemote().(storage.ObjectStatter); ok {
 		info, err := statter.Stat(ctx, key)
 		if err != nil {
 			return err

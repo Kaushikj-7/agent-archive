@@ -2,11 +2,12 @@ package collector
 
 import (
 	"context"
+	"strings"
+
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
-	"strings"
 )
 
 // publicationTransactionStore borrows every metadata response under the same
@@ -20,13 +21,18 @@ type publicationTransactionStore struct {
 // publicationAttempt owns the actual provider for one serial attempt. Ambient
 // scan fields cannot retarget its reads, writes or closing proof.
 type publicationAttempt struct {
-	store          storage.ObjectStore
-	resolvedCommit *state.PublicationCommit
-	resolvedKey    string
-	resolved       [65]bool
-	verifiedCommit *state.PublicationCommit
-	verifiedKey    string
-	baselineCommit *state.PublicationCommit
+	provider        storage.ObjectStore
+	catalogID       string
+	catalogKey      string
+	catalogRevision string
+	catalogProtocol uint64
+	store           storage.ObjectStore
+	resolvedCommit  *state.PublicationCommit
+	resolvedKey     string
+	resolved        [65]bool
+	verifiedCommit  *state.PublicationCommit
+	verifiedKey     string
+	baselineCommit  *state.PublicationCommit
 }
 
 func (s *sessionScan) beginPublicationAttempt() (func(), error) {
@@ -40,7 +46,7 @@ func (s *sessionScan) beginPublicationAttempt() (func(), error) {
 	if !budget.Reserve(4096) {
 		return nil, errRetainedBudget
 	}
-	frame := &publicationAttempt{store: s.remote}
+	frame := &publicationAttempt{provider: s.remote, store: s.remote}
 	s.publicationAttempt = frame
 	return func() {
 		if s.publicationAttempt == frame {
@@ -48,6 +54,46 @@ func (s *sessionScan) beginPublicationAttempt() (func(), error) {
 			budget.Release(4096)
 		}
 	}, nil
+}
+
+// sourceSetProvider is the immutable provider captured before any scoped view.
+func (s *sessionScan) sourceSetProvider() storage.ObjectStore {
+	if frame := s.publicationAttempt; frame != nil {
+		if frame.provider != nil {
+			return frame.provider
+		}
+		return frame.store
+	}
+	return s.remote
+}
+
+// bindPublicationAttempt derives an admitted catalog view only from the captured
+// provider. Nested entries cannot retarget the attempt through ambient fields.
+func (s *sessionScan) bindPublicationAttempt(p state.PendingPublication) error {
+	frame := s.publicationAttempt
+	if frame == nil {
+		return state.ErrDurableStorageRecovery
+	}
+	if p.Catalog == nil {
+		if frame.catalogID != "" {
+			return state.ErrCatalogJournalFrozen
+		}
+		return nil
+	}
+	if frame.catalogID != "" {
+		if frame.catalogID != p.Catalog.ID || frame.catalogKey != p.MetadataKey || frame.catalogRevision != p.Catalog.ExpectedRevision || frame.catalogProtocol != p.Catalog.Protocol {
+			return state.ErrCatalogJournalFrozen
+		}
+		return nil
+	}
+	remote, ok := s.sourceSetProvider().(storage.CatalogPublisher)
+	if !ok || !remote.CatalogMetadataAuthority() {
+		return state.ErrCatalogJournalFrozen
+	}
+	frame.store = remote.Publication(p.Catalog.ID, p.MetadataKey, p.Catalog.ExpectedRevision)
+	frame.catalogID, frame.catalogKey = p.Catalog.ID, p.MetadataKey
+	frame.catalogRevision, frame.catalogProtocol = p.Catalog.ExpectedRevision, p.Catalog.Protocol
+	return nil
 }
 
 func (s *sessionScan) sourceSetRemote() storage.ObjectStore {
