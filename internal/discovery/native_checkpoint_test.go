@@ -111,7 +111,7 @@ func TestNativeCatalogReadRefusesGrowthBeyondReservedInput(t *testing.T) {
 }
 
 func FuzzNativeCatalogMembers(f *testing.F) {
-	for _, seed := range []string{`{}`, `{"version":6,"native_inventory":{"x":["a,b",null,{}]}}`, `{"a":"\\\"","b":-1.25e+3}`, `{"v":1,"\u0076":2}`} {
+	for _, seed := range []string{`{}`, `{"version":6,"native_inventory":{"x":["a,b",null,{}]}}`, `{"a":"\\\"","b":-1.25e+3}`, `{"v":1,"\u0076":2}`, `{"future_number":1e999}`} {
 		f.Add([]byte(seed))
 	}
 	f.Fuzz(func(t *testing.T, raw []byte) {
@@ -127,8 +127,7 @@ func FuzzNativeCatalogMembers(f *testing.F) {
 			t.Fatal("accepted invalid object")
 		}
 		for key, value := range members {
-			var a, b any
-			if json.Unmarshal(value, &a) != nil || json.Unmarshal(decoded[key], &b) != nil || !reflect.DeepEqual(a, b) {
+			if !reflect.DeepEqual(nativeCatalogTestValue(t, value), nativeCatalogTestValue(t, decoded[key])) {
 				t.Fatal("changed member", key)
 			}
 		}
@@ -141,12 +140,24 @@ func FuzzNativeCatalogMembers(f *testing.F) {
 			t.Fatal("writer emitted an unreadable catalog")
 		}
 		for key, value := range roundtrip {
-			var a, b any
-			if json.Unmarshal(value, &a) != nil || json.Unmarshal(members[key], &b) != nil || !reflect.DeepEqual(a, b) {
+			if !reflect.DeepEqual(nativeCatalogTestValue(t, value), nativeCatalogTestValue(t, members[key])) {
 				t.Fatal("writer changed a member", key)
 			}
 		}
 	})
+}
+
+func nativeCatalogTestValue(t *testing.T, raw json.RawMessage) any {
+	t.Helper()
+	// Future members may contain valid JSON numbers outside float64's range.
+	// Compare their exact numeric spelling instead of imposing float64 limits.
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		t.Fatal("invalid member value", err)
+	}
+	return value
 }
 
 func TestNativeCatalogLargeUnrelatedMemberFitsChargedScratch(t *testing.T) {
