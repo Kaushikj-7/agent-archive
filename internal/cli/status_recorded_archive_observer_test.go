@@ -20,9 +20,9 @@ import (
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
-// This observer defines the new recorded-time wording policy, not a reproduction
-// of the missing historical439 finding. Publication and health use real local
-// producers and isolated MemoryStore readback; no native/provider claim follows.
+// Recorded publication verification survives unavailable discovery. Publication
+// and health use real local producers and isolated MemoryStore readback; the
+// result does not establish current native capture health or provider acceptance.
 func TestStatusRecordedArchiveWithProducedUnavailableDiscovery(t *testing.T) {
 	for _, verified := range []bool{false, true} {
 		name := "published-without-readback"
@@ -202,7 +202,7 @@ func TestStatusRecordedArchiveWithProducedUnavailableDiscovery(t *testing.T) {
 			}
 			row := (statusScreen{now: now}).appRow(later, 0)
 			if row.cells[1] != want || strings.Contains(basic, "automatic capture") || !strings.Contains(basic, "Discovery health is unknown") {
-				t.Fatalf("accepted scoped NEW status policy: %s", basic)
+				t.Fatalf("recorded verification status: %s", basic)
 			}
 			if !strings.Contains(appCounts(later), "1 archived") || (verified && !strings.Contains(appCounts(later), "1 verified")) {
 				t.Fatalf("known archive counts: %s", appCounts(later))
