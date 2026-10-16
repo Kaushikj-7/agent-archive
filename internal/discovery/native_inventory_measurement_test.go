@@ -63,9 +63,10 @@ func inventoryMeasurementRaw(t *testing.T, raw []byte, id string) []byte {
 }
 
 type inventoryMeasurementResult struct {
-	Selected []string              `json:"Selected"`
-	Counts   NativeInventoryCounts `json:"Counts"`
-	Peak     int64                 `json:"Peak"`
+	Selected    []string              `json:"Selected"`
+	Counts      NativeInventoryCounts `json:"Counts"`
+	Peak        int64                 `json:"Peak"`
+	Directories int                   `json:"Directories"`
 }
 
 func TestNativeInventoryMeasurementProcessStep(t *testing.T) {
@@ -100,6 +101,7 @@ func TestNativeInventoryMeasurementProcessStep(t *testing.T) {
 			}
 		}
 	}
+	directories := len(l.progress.Directories)
 	if err = l.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +109,7 @@ func TestNativeInventoryMeasurementProcessStep(t *testing.T) {
 	if used != 0 {
 		t.Fatal("charge after close", used)
 	}
-	result, _ := json.Marshal(inventoryMeasurementResult{Selected: selected, Counts: l.Counts(), Peak: peak})
+	result, _ := json.Marshal(inventoryMeasurementResult{Selected: selected, Counts: l.Counts(), Peak: peak, Directories: directories})
 	if err = os.WriteFile(filepath.Join(home, "measurement-result.json"), result, 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -119,6 +121,16 @@ func TestNativeInventoryFewAndManyDayFreshProcessMeasurements(t *testing.T) {
 		for _, days := range []int{2, 32} {
 			t.Run(fmt.Sprintf("owners%d-days%d", count, days), func(t *testing.T) {
 				home, root, raw := inventoryFixture(t)
+				for day := range days {
+					date := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC).AddDate(0, 0, day).Format("2006/01/02")
+					if err := os.MkdirAll(filepath.Join(root.Canonical, date), 0700); err != nil {
+						t.Fatal(err)
+					}
+				}
+				expectedDirectories := 5
+				if days == 32 {
+					expectedDirectories = 36
+				}
 				for i := range count {
 					id := inventoryMeasurementID(i)
 					day := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC).AddDate(0, 0, i%days).Format("2006/01/02")
@@ -147,6 +159,9 @@ func TestNativeInventoryFewAndManyDayFreshProcessMeasurements(t *testing.T) {
 					var result inventoryMeasurementResult
 					if err = json.Unmarshal(raw, &result); err != nil {
 						t.Fatal(err)
+					}
+					if result.Directories != expectedDirectories {
+						t.Fatalf("actual directories=%d want=%d", result.Directories, expectedDirectories)
 					}
 					for _, id := range result.Selected {
 						seen[id] = true
@@ -184,7 +199,7 @@ func TestNativeInventoryFewAndManyDayFreshProcessMeasurements(t *testing.T) {
 				if len(seen) != count {
 					t.Fatalf("fairness incomplete %d/%d", len(seen), count)
 				}
-				t.Logf("TOTAL owners=%d days=%d counts=%+v peak=%d", count, days, total, peak)
+				t.Logf("TOTAL owners=%d days=%d directories=%d counts=%+v peak=%d", count, days, expectedDirectories, total, peak)
 			})
 		}
 	}
