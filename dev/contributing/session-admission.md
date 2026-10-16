@@ -113,6 +113,37 @@ retained application offsets cannot turn an owned key into certified absence
 or strand a request for a damaged index. The candidate snapshot is loaded once
 per slice reaching the final phase, rather than reread for each requested key.
 
+Discovery's request for a census-certified absence is not damage. Under a
+complete version-1 marker, `RequestSessionIndexAbsence` writes a fresh opaque
+token to `session-index-absence.json` and then the key's retained request
+entry, under hooks.lock, without changing the marker: other keys' misses stay
+allowed. The next slice reads the token under hooks.lock, so every entry
+carrying it already exists, then enumerates the complete registration
+and candidate inventory, and applies requested misses with the ordinary
+owner/candidate repair. Each absence write is fenced under hooks.lock on the
+same complete marker generation and an unchanged token, so every applied
+request preceded the census and its key's earlier owners are in it; the
+retained entry refuses later registrations of that key. The slice then records
+the token certified. A changed token or marker leaves work for the next slice.
+A repeated request for a retained key keeps it scheduled; when its token was
+lost or already certified (the entry was stranded), the repeated request,
+from a hook or discovery's failed lookup, writes a fresh token instead of
+withdrawing the census. Damaged, owned or
+uncertified evidence, packed markers, and unusable tokens take the full
+recovery request.
+
+A hook refused only because a census is pending must not change its
+generation either: a new generation fails that census's completion, so a busy
+machine's stream of refused starts and subagents could keep recovery pending
+indefinitely. While the marker is incomplete no miss is allowed, so no
+registration of an unowned key is admitted after the census enumerates. A
+request for a key whose entry names a valid owner (a SubagentStop's parent)
+writes nothing. A request for a key with no entry, or a certified absence,
+under a version-1 marker is retained with a fresh absence token instead of a
+new generation: the census certifies the entry when its listing includes it,
+and otherwise the slice after completion does. Other requests keep the full
+path.
+
 Registration membership changes stage a small durable revision outside locks.
 The request lock precedes the short membership lock, which commits the revision
 before the registration rename. Completion takes hooks then membership and
@@ -161,21 +192,27 @@ SQL metadata never supply admission permission. Original creation, project,
 current consent, exclusions and destination are checked independently.
 
 Native SQLite main and WAL files are confined read-only regular-file handles.
-SQLite opens only the private projected main. After one bounded whole refresh,
-same-generation committed WAL appends can be checksum/prefix revalidated and
-replayed into that existing private view, followed by a real targeted row query.
-Changed main stamps/content, reset generations or checkpoint uncertainty stay
-retryable. This uses filesystem stamp observations and does not acquire a native
-SQLite reader lock or claim an atomic filesystem snapshot.
+SQLite opens only the private projected main. Same-generation committed WAL
+appends can be checksum/prefix revalidated and replayed into that existing
+private view, followed by a real targeted row query. A checkpoint or generation
+change discards the old projection and attempts a fully verified new snapshot
+within the same remaining lookup time and native memory ledger. The selected
+locator and revision are still compared; an uncertain snapshot or an actual
+selection change stays retryable. This uses filesystem stamp observations and
+does not acquire a native SQLite reader lock or claim an atomic filesystem
+snapshot.
 
-Requested coverage keeps at most 256 requests and 64 candidates per request,
-with conservative bounds before accumulation and serialization: 1 MiB per
-request and 16 MiB combined requested proofs and lookup hints. Hints use at most
-half that allowance so they cannot monopolize request progress. They are also
-charged to the shared native read ledger. Observation leaves one second of the
-same pass allowance for its durable checkpoint. The checkpoint inherits the
-original caller's cancellation, so expiry of the observation slice preserves
-queued requests and proofs without extending the pass deadline. The prunable observation cache remains
+The lookup keeps at most 8 MiB of observed rollout facts (hints) and 4 MiB of
+rollout directory listings per pass, with conservative bounds before
+accumulation, charged to the shared native read ledger. A base rollout is found
+by its ID in at most the three day directories its UUIDv7 time names and
+archived_sessions/, each listed once per pass and at most 65,536 entries; a
+directory whose listing no longer fits the 4 MiB is searched for that one ID
+without keeping its listing.
+Observation leaves one second of the same pass allowance for its durable
+checkpoint. The checkpoint inherits the original caller's cancellation, so
+expiry of the observation slice preserves the queue without extending the pass
+deadline. The prunable observation cache remains
 at most 2048 entries. Completed attempts rotate only after their consumer receives
 the result; unfinished and undelivered work stays enrolled. Physical dependencies
 use the same worker and requested facts, including those outside the hint cache.

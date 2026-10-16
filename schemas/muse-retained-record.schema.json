@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/wangjohn/agent-archive/main/schemas/muse-retained-record.schema.json",
+  "title": "Muse retained record union",
+  "description": "A stream contains byte-compatible v1 ordinary rows and timestamp-free v2 native omissions.",
+  "oneOf": [
+    {
+      "$ref": "https://raw.githubusercontent.com/wangjohn/agent-archive/main/schemas/muse-retained-v1.schema.json"
+    },
+    {
+      "$ref": "https://raw.githubusercontent.com/wangjohn/agent-archive/main/schemas/muse-retained-marker-v2.schema.json"
+    }
+  ]
+}

@@ -10,6 +10,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/inspectioncache"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/trace"
 )
@@ -207,11 +208,38 @@ func FilterSource(ctx context.Context, harness string, ref agentapi.SourceRef, s
 	}
 	reg := archive.SessionRegistration{Harness: archive.Harness{Name: adapter.Name()}, TranscriptPath: ref.Path, SourceKind: ref.Kind, SourceKey: ref.Key, SessionStartedAt: startedAt}
 	source, _ := newSourceReader(reg, Options{Sources: sources})
-	out, _, err := source.Filter(ctx, adapter, DefaultMaxTranscriptBytes)
+	reader := source.(providerReader)
+	reader.localRead = true
+	out, _, err := reader.Filter(ctx, adapter, DefaultMaxTranscriptBytes)
 	if errors.Is(err, errRecordTooLarge) || errors.Is(err, errTranscriptTooLarge) {
 		return archive.FilteredTranscript{}, nil, errors.Join(archive.ErrRecordTooLarge, err)
 	}
 	return out, adapter, err
+}
+
+// InspectSourceCached optionally reuses provider-verified intrinsic facts. The
+// returned observation is safe for caller persistence only after caller source
+// checks succeed. Snapshot and pass cleanup have completed before this returns.
+func InspectSourceCached(ctx context.Context, harness string, ref agentapi.SourceRef, startedAt time.Time, sources agentapi.SourcesLookup, cache *inspectioncache.Cache) (archive.FilteredTranscript, *agentapi.ImportSummary, *inspectioncache.Observation, error) {
+	adapter, err := sourceAdapter(sources, harness)
+	if err != nil {
+		return archive.FilteredTranscript{}, nil, nil, err
+	}
+	reg := archive.SessionRegistration{Harness: archive.Harness{Name: adapter.Name()}, TranscriptPath: ref.Path, SourceKind: ref.Kind, SourceKey: ref.Key, SessionStartedAt: startedAt}
+	source, _ := newSourceReader(reg, Options{Sources: sources})
+	reader := source.(providerReader)
+	reader.countInspection = true
+	var summary *agentapi.ImportSummary
+	var observation *inspectioncache.Observation
+	reader.inspectionCache, reader.inspectionObservation = cache, &observation
+	out, _, err := reader.filter(ctx, adapter, DefaultMaxTranscriptBytes, &summary)
+	if errors.Is(err, errRecordTooLarge) || errors.Is(err, errTranscriptTooLarge) {
+		return archive.FilteredTranscript{}, nil, nil, errors.Join(archive.ErrRecordTooLarge, err)
+	}
+	if err != nil || ctx.Err() != nil {
+		return out, nil, nil, errors.Join(err, ctx.Err())
+	}
+	return out, summary, observation, nil
 }
 
 // FilterTranscriptSnapshot filters the verified handle without reopening its path.
@@ -268,7 +296,7 @@ func readImportSourceSet(ctx context.Context, reg archive.SessionRegistration, a
 		return archive.SourceBundle{}, nil, err
 	}
 	if selected != nil {
-		*selected = observed.binding
+		*selected = observed.binding.CodexBinding()
 	}
 	bundle, err := archive.NewSourceBundle(reg, adapter, filtered, at, nil)
 	if err != nil {
@@ -284,7 +312,7 @@ func readImportSourceSet(ctx context.Context, reg archive.SessionRegistration, a
 	preserved := []archive.SourceBundle{}
 	remaining := state.MaxImportStageBytes - int64(bundle.Capture.Boundary.RetainedBytes)
 	seen := map[string]bool{revisionID(bundle): true}
-	err = provider.revisions(ctx, adapter, observed, state.MaxImportStageBytes, bundle.History != nil, func(part archive.FilteredTranscript, binding *archive.CodexSourceBinding) error {
+	_, err = provider.revisions(ctx, adapter, observed, state.MaxImportStageBytes, bundle.History != nil, true, func(part archive.FilteredTranscript, binding *archive.CodexSourceBinding) error {
 		owner := reg
 		owner.CodexBinding = binding
 		prior, err := archive.NewSourceBundle(owner, adapter, part, at, nil)
@@ -295,11 +323,13 @@ func readImportSourceSet(ctx context.Context, reg archive.SessionRegistration, a
 		if seen[id] {
 			return nil
 		}
-		seen[id] = true
+		// A refusal leaves this consumer's state unchanged, so revisions can
+		// leave out a best-effort revision that does not fit.
 		n := int64(prior.Capture.Boundary.RetainedBytes)
 		if n > remaining {
-			return agentapi.ErrReadBudget
+			return errors.Join(agentapi.ErrReadBudget, errRevisionDoesNotFit)
 		}
+		seen[id] = true
 		remaining -= n
 		preserved = append(preserved, prior)
 		return nil

@@ -28,6 +28,7 @@ import (
 
 	"golang.org/x/term"
 
+	"github.com/wangjohn/agent-archive/internal/backfill"
 	"github.com/wangjohn/agent-archive/internal/cloudflare"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
@@ -96,6 +97,8 @@ func describeVersion(version string, info *debug.BuildInfo) string {
 // substitute a temporary home directory, a fixed clock, and an in-memory
 // object store. A nil field defaults to the real thing.
 type Env struct {
+	// sessionChangeConsumers replaces only the finite post-pass consumer list in tests.
+	sessionChangeConsumers []sessionChangeConsumer
 	// CodexLabelHost overrides opt-in native hosting; never consulted in files mode.
 	CodexLabelHost agentapi.LabelHostFactory
 	// Agents overrides immutable production composition, including its catalog.
@@ -145,6 +148,9 @@ type Env struct {
 	// removed no session ("undo recorded"). A test returns an error from it
 	// to stop the import or undo there, as a crash would.
 	backfillCheckpoint func(step string) error
+	// observeBackfillPlan, set only by tests, sees the actual completed plan.
+	// The observer must not mutate it or grant admission authority.
+	observeBackfillPlan func(backfill.Plan)
 	// backfillHoldSteps, when positive (only in tests), caps the steps
 	// registration takes per hold of hooks.lock, to force several holds.
 	backfillHoldSteps int
@@ -534,44 +540,73 @@ var openCredentialStore = func() (credentials.CredentialStore, error) {
 	})
 }
 
-// notSetUp reports whether this machine is not archiving: it has no saved
-// configuration, or uninstall left one with archiving disabled. It reads
+// notSetUpLead reports whether this machine is not archiving: it has no
+// saved configuration, or uninstall left one with archiving disabled. When
+// it is not, lead is the line a bare invocation starts with: with no
+// configuration, preSetupGuidance (handoff works, unless setup is under
+// way); after uninstall, plain setup guidance, since handoff then uses the
+// configured archive rather than this machine's own sessions. It reads
 // only, and says nothing when the data directory cannot be read.
-func notSetUp(env Env) bool {
+func notSetUpLead(env Env) (lead string, notSetUp bool) {
 	home, err := env.readHome()
 	if err != nil {
-		return false
+		return "", false
 	}
 	cfg, found, err := config.Load(home)
-	return err == nil && (!found || !cfg.Archive.Enabled)
+	switch {
+	case err != nil:
+		return "", false
+	case !found:
+		return preSetupGuidance(home), true
+	case !cfg.Archive.Enabled:
+		return "Not set up yet — run agent-archive setup.", true
+	}
+	return "", false
 }
 
 const usage = `Agent Archive — archive coding-agent sessions to your private storage.
 
 Get started
   agent-archive setup       Configure apps, projects, and storage
-  agent-archive machines    List, rename, or pair machines
   agent-archive status      Check capture and see what to do next
 
 Manage capture
   agent-archive sync        Collect and upload pending changes now
   agent-archive pause       Pause collection, uploads, and cleanup
   agent-archive resume      Resume automatic capture
-  agent-archive recover     Start a linked generation for a blocked transcript
 
 Inspect history
   agent-archive list        Find archived sessions
+  agent-archive search      Search indexed conversation text
   agent-archive show        Read a session's summary or transcript
   agent-archive stats       See your usage: tokens, cost, agents, projects
-  agent-archive feedback    Add explicit feedback from a local file
 
 Import history
   agent-archive backfill    Import sessions already on this machine
-  agent-archive historical-project  Manage historical project permissions
-  agent-archive migrate     Migrate to an isolated catalog destination
 
 Switch agents
   agent-archive handoff     Continue a session in another coding agent
+
+Run agent-archive COMMAND --help for options and examples.
+More commands (machines, uninstall, purge, ...): agent-archive help advanced
+Use --version to show the installed version.
+You supply a private Cloudflare R2 or Amazon S3 bucket. No archive account needed.
+Docs: https://github.com/wangjohn/agent-archive/tree/main/docs
+`
+
+const advancedUsage = `Agent Archive — advanced commands.
+
+Get started
+  agent-archive machines    List, rename, or pair machines
+
+Manage capture
+  agent-archive recover     Start a linked generation for a blocked transcript
+
+Inspect history
+  agent-archive feedback    Add explicit feedback from a local file
+
+Import history
+  agent-archive migrate     Migrate to an isolated catalog destination
 
 Evaluate agents
   agent-archive eval        Export sessions for an evaluation tool (JSON Lines)
@@ -581,9 +616,7 @@ Maintenance
   agent-archive purge       Review and remove unreferenced source objects
 
 Run agent-archive COMMAND --help for options and examples.
-Use --version to show the installed version.
-You supply a private Cloudflare R2 or Amazon S3 bucket. No archive account needed.
-Docs: https://github.com/wangjohn/agent-archive/tree/main/docs
+Core commands: agent-archive --help
 `
 
 // Run dispatches one CLI invocation and returns a process exit code. It
@@ -620,6 +653,8 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 		return runHookCommand(args[1:], stdin, stderr, env)
 	case "_collect":
 		return runCollectCommand(args[1:], stdout, stderr, env)
+	case "_search-index":
+		return runSearchIndexCommand(args[1:], stdout, stderr, env)
 	case "_catalog":
 		return runCatalogOperator(args[1:], stdout, stderr, env)
 	case "machines":
@@ -641,6 +676,8 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 		return runUninstallCommand(args[1:], stdin, stdout, stderr, env)
 	case "list":
 		return runListCommand(args[1:], stdin, stdout, stderr, env)
+	case "search":
+		return runSearchCommand(args[1:], stdin, stdout, stderr, env)
 	case "show":
 		return runShowCommand(args[1:], stdin, stdout, stderr, env)
 	case "stats":
@@ -649,8 +686,6 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 		return runFeedbackCommand(args[1:], stdout, stderr, env)
 	case "handoff":
 		return runHandoffCommand(args[1:], stdin, stdout, stderr, env)
-	case "historical-project":
-		return runHistoricalProjects(args[1:], stdout, stderr, env)
 	case "migrate":
 		return runMigrateCommand(args[1:], stdout, stderr, env)
 	case "backfill":
@@ -687,13 +722,14 @@ func runEmptyInvocation(args []string, stdin io.Reader, stdout, stderr io.Writer
 	if !nonInteractiveSettingUsable(args, stderr, env) {
 		return 2
 	}
-	if browseInteractive(env, stdin, stdout) && !notSetUp(env) {
+	lead, notSetUp := notSetUpLead(env)
+	if browseInteractive(env, stdin, stdout) && !notSetUp {
 		startTrace("list", stderr, env)
 		defer finishTraceNow()
 		return runListCommand(nil, stdin, stdout, stderr, env)
 	}
-	if notSetUp(env) {
-		terminal.Println(stdout, "Not set up yet — run agent-archive setup.")
+	if notSetUp {
+		terminal.Println(stdout, lead)
 		terminal.Println(stdout)
 	}
 	terminal.Print(stdout, usage)

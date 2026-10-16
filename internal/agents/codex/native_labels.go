@@ -81,7 +81,7 @@ func (p NativeLabelProvider) LookupLabels(ctx context.Context, env agentapi.Labe
 			continue
 		}
 		home, ok := labelHome(env.Homes, request)
-		if !ok || request.Context.Producer != "0.159.2" || !request.Context.APICompatible || !labelDefaultStorage(home) || p.Host == nil {
+		if !ok || !request.Context.Ordinary || request.Context.Producer != "0.159.2" || !request.Context.APICompatible || !labelDefaultStorage(home) || p.Host == nil {
 			continue
 		}
 		rpc, attempted := hosts[home]
@@ -111,7 +111,7 @@ func (p NativeLabelProvider) LookupLabels(ctx context.Context, env agentapi.Labe
 			hosts[home] = nil
 		}
 	}
-	// Only unavailable IDs are eligible for the guarded settled-file fallback.
+	// Only unavailable IDs fall back to the name index.
 	pending := []agentapi.LabelRequest{}
 	for _, request := range requests {
 		if _, ok := out[request.Registration.ArchiveSessionID]; !ok {

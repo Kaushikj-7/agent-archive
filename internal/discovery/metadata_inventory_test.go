@@ -136,7 +136,7 @@ func testMetadataInventoryScale(t *testing.T, indexed bool, logical, pairs int) 
 		if err != nil {
 			metadataScaleFailure(t, "thread", err, started, lookup, view)
 		}
-		if !set.Complete || len(set.Candidates) != 2 {
+		if len(set.Candidates) != 2 {
 			t.Fatalf("incomplete physical set: %+v", set)
 		}
 		if err := slice.Check(t.Context(), id, set.Revision); err != nil {
@@ -390,8 +390,8 @@ func TestMetadataInventoryRetainsMorePhysicalCopiesThanGraphLimit(t *testing.T) 
 	}
 	defer func() { _ = slice.Close() }()
 	set, err := slice.Thread(t.Context(), ids[0])
-	if err != nil || !set.Complete || len(set.Candidates) != 71 {
-		t.Fatal(len(set.Candidates), set.Complete, err)
+	if err != nil || len(set.Candidates) != 71 {
+		t.Fatal(len(set.Candidates), err)
 	}
 	if archive.MaxHistorySpans != 64 {
 		t.Fatal("graph cap silently changed")
@@ -481,7 +481,7 @@ func testMetadataInventoryCopiesAndJointCapacity(t *testing.T, copies int) {
 			t.Fatalf("maximum fixture gap: %v physical=%d retained=%d header=%d remaining=%s", err, len(view.facts), view.charge, view.headerBytes, view.remaining)
 		}
 		set, refusal := slice.Thread(t.Context(), id)
-		if agentapi.Failure(refusal) != agentapi.Limit || set.Complete || len(set.Candidates) != 0 || view.complete || view.cursor != nil || view.counts.physical > copies || view.counts.requested > int64(len(line)*view.counts.physical) {
+		if agentapi.Failure(refusal) != agentapi.Limit || len(set.Candidates) != 0 || view.complete || view.cursor != nil || view.counts.physical > copies || view.counts.requested > int64(len(line)*view.counts.physical) {
 			t.Fatalf("race refusal retained partial authority: set=%+v refusal=%v complete=%t cursor=%t counts=%+v headerLen=%d remaining=%s", set, refusal, view.complete, view.cursor != nil, view.counts, len(line), view.remaining)
 		}
 		t.Logf("instrumented maximum owned refusal elapsed=%s remaining=%s retained=%d headerwork=%d counts=%+v", time.Since(started), view.remaining, view.charge, view.headerBytes, view.counts)
@@ -507,7 +507,7 @@ func testMetadataInventoryCopiesAndJointCapacity(t *testing.T, copies int) {
 		t.Fatal("boundary charge failed")
 	}
 	set, err := slice.Thread(t.Context(), id)
-	if agentapi.Failure(err) != agentapi.Limit || set.Complete || len(set.Candidates) != 0 {
+	if agentapi.Failure(err) != agentapi.Limit || len(set.Candidates) != 0 {
 		t.Fatalf("joint cap retained partial result authority: set=%+v err=%v", set, err)
 	}
 	if len(view.facts) != copies || view.counts.requested != int64(len(line)*copies) {
@@ -524,15 +524,13 @@ func testMetadataInventoryCopiesAndJointCapacity(t *testing.T, copies int) {
 	}
 }
 
-func TestMetadataInventoryLateRequestDoesNotPromoteRequestedCache(t *testing.T) {
+func TestMetadataInventoryDoesNotPromoteObservationCache(t *testing.T) {
 	lookup, ids, root := metadataFixture(t, 3)
-	// Request coverage after a round already started. A disposable hint map is
-	// deliberately incomplete and must not supply full epoch completeness.
-	lookup.coverage.Directories["midround"] = coverageDirectory{}
-	lookup.coverage.request(ids[0])
+	// A disposable hint map is deliberately incomplete and must not supply
+	// full epoch completeness.
 	view := lookup.MetadataInventory().(*metadataInventory)
 	if view.started {
-		t.Fatal("late request performed inventory I/O")
+		t.Fatal("requesting the view performed inventory I/O")
 	}
 	slice, err := view.BeginValidationSlice(t.Context(), agentapi.CodexValidationLimits{})
 	if err != nil {
@@ -541,12 +539,12 @@ func TestMetadataInventoryLateRequestDoesNotPromoteRequestedCache(t *testing.T) 
 	defer func() { _ = slice.Close() }()
 	for _, id := range ids {
 		set, err := slice.Thread(t.Context(), id)
-		if err != nil || !set.Complete || len(set.Candidates) != 1 {
+		if err != nil || len(set.Candidates) != 1 {
 			t.Fatal(set, err)
 		}
 	}
-	if len(view.facts) != 3 || lookup.coverage.Phase == coverageComplete {
-		t.Fatal("full view used requested proof or cache")
+	if len(view.facts) != 3 {
+		t.Fatal("full view used the observation cache")
 	}
 	if err := os.WriteFile(filepath.Join(root, "archived_sessions"), []byte("not a directory"), 0600); err != nil {
 		t.Fatal(err)
@@ -698,7 +696,7 @@ func TestMetadataConflictingBodiesRemainPhysicalFacts(t *testing.T) {
 	}
 	defer func() { _ = slice.Close() }()
 	set, err := slice.Thread(t.Context(), ids[0])
-	if err != nil || !set.Complete || len(set.Candidates) != 2 {
+	if err != nil || len(set.Candidates) != 2 {
 		t.Fatal(set, err)
 	}
 	if view.counts.returned != 2*int64(len(header)) {
@@ -780,10 +778,10 @@ func TestMetadataStableFactsConflictAndMultipleHomes(t *testing.T) {
 			defer func() { _ = slice.Close() }()
 			set, err := slice.Thread(t.Context(), ids[0])
 			if conflict {
-				if err == nil || set.Complete {
+				if err == nil {
 					t.Fatal("conflicting stable metadata accepted", set, err)
 				}
-			} else if err != nil || !set.Complete || len(set.Candidates) != 2 {
+			} else if err != nil || len(set.Candidates) != 2 {
 				t.Fatal(set, err)
 			}
 		})
@@ -876,7 +874,7 @@ func TestMetadataValidationOwnedDeadlineInvalidatesCompleteInventory(t *testing.
 		t.Fatal("owned validation deadline lost", err)
 	}
 	set, err := refused.Thread(t.Context(), ids[0])
-	if agentapi.Failure(err) != agentapi.Limit || set.Current != nil || set.Complete || len(set.Candidates) != 0 {
+	if agentapi.Failure(err) != agentapi.Limit || set.Current != nil || len(set.Candidates) != 0 {
 		t.Fatal("owned validation refusal retained authority", set, err)
 	}
 	if view.counts.sweeps != sweeps+1 || view.remaining > 0 || view.complete || view.cursor != nil || agentapi.Failure(view.failure) != agentapi.Limit {
@@ -898,7 +896,7 @@ func TestMetadataOwnedDeadlineRefusesAndPreservesCaller(t *testing.T) {
 	}
 	view.remaining = time.Nanosecond
 	set, err := slice.Thread(t.Context(), ids[0])
-	if agentapi.Failure(err) != agentapi.Limit || set.Complete {
+	if agentapi.Failure(err) != agentapi.Limit {
 		t.Fatal("expired work did not report typed limit", set, err)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
@@ -916,7 +914,7 @@ func TestMetadataOwnedDeadlineRefusesAndPreservesCaller(t *testing.T) {
 	if errors.As(err, &failure) {
 		cause = failure.Err
 	}
-	t.Logf("owned expiration kind=%s cause=%v remaining=%s queries=%d complete=%v", agentapi.Failure(err), cause, view.remaining, lookup.queries, set.Complete)
+	t.Logf("owned expiration kind=%s cause=%v remaining=%s queries=%d", agentapi.Failure(err), cause, view.remaining, lookup.queries)
 	if err := slice.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -941,7 +939,7 @@ func TestMetadataAliasedHomesSharePhysicalFactsButFenceEverySpelling(t *testing.
 		t.Fatal(err)
 	}
 	set, err := slice.Thread(t.Context(), ids[0])
-	if err != nil || !set.Complete || len(set.Candidates) != 1 || view.counts.physical != 1 || view.counts.headers != 1 {
+	if err != nil || len(set.Candidates) != 1 || view.counts.physical != 1 || view.counts.headers != 1 {
 		t.Fatal("alias duplicated physical authority", set, err, view.counts)
 	}
 	if err := slice.Close(); err != nil {
@@ -1006,7 +1004,7 @@ func TestMetadataInventoryAccountsAdversarialParserRepresentations(t *testing.T)
 				t.Fatal(err)
 			}
 			set, err := slice.Thread(t.Context(), ids[0])
-			if err != nil || !set.Complete || len(view.facts) != 1 {
+			if err != nil || len(view.facts) != 1 {
 				t.Fatalf("accepted parser shape failed: %v %+v", err, set)
 			}
 			if view.counts.requested != metadataHeaderBytes || view.cursor != nil {
@@ -1232,7 +1230,7 @@ func TestMetadataThreadExpiryReturnsNoCompleteSelection(t *testing.T) {
 	before, _ := lookup.readBudget.Charged()
 	view.remaining = time.Nanosecond
 	set, err := slice.Thread(t.Context(), "11111111-1111-4111-8111-111111111111")
-	if agentapi.Failure(err) != agentapi.Limit || set.Complete || set.Current != nil || set.Revision != "" || len(set.Candidates) != 0 {
+	if agentapi.Failure(err) != agentapi.Limit || set.Current != nil || set.Revision != "" || len(set.Candidates) != 0 {
 		t.Fatalf("expired query returned selection authority: %+v %v", set, err)
 	}
 	if after, _ := lookup.readBudget.Charged(); after != before {
@@ -1252,7 +1250,7 @@ func TestMetadataThreadExpiryReturnsNoCompleteSelection(t *testing.T) {
 		}
 		set, err = slice.Thread(ctx, "11111111-1111-4111-8111-111111111111")
 		cancel()
-		if !errors.Is(err, want) || set.Complete || set.Current != nil || set.Revision != "" || len(set.Candidates) != 0 {
+		if !errors.Is(err, want) || set.Current != nil || set.Revision != "" || len(set.Candidates) != 0 {
 			t.Fatalf("caller refusal returned selection authority: %+v %v", set, err)
 		}
 	}
@@ -1286,7 +1284,7 @@ func TestMetadataInventoryCloseClearsAcquiredRepresentations(t *testing.T) {
 				t.Fatal(err)
 			}
 			set, err := slice.Thread(t.Context(), ids[0])
-			if err != nil || !set.Complete || len(set.Candidates) != 1 {
+			if err != nil || len(set.Candidates) != 1 {
 				t.Fatal(set, err)
 			}
 			if len(view.directoryIndex) == 0 || len(view.roots) == 0 || view.next.Root == "" {
@@ -1423,7 +1421,7 @@ func TestMetadataPhysicalIdentityConflictsLeaveIncompleteInventory(t *testing.T)
 			}
 			set, err := slice.Thread(t.Context(), id)
 			if tc.complete {
-				if err != nil || !set.Complete || len(set.Candidates) != 2 {
+				if err != nil || len(set.Candidates) != 2 {
 					t.Fatalf("valid physical copies/revisions rejected: %+v %v", set, err)
 				}
 				if refs, err := slice.Rollout(t.Context(), strings.Repeat("A", 4096)); err != nil || len(refs) != 0 {
@@ -1437,7 +1435,7 @@ func TestMetadataPhysicalIdentityConflictsLeaveIncompleteInventory(t *testing.T)
 					}
 				}
 			} else {
-				if agentapi.Failure(err) != agentapi.Unavailable || set.Complete || set.Current != nil || set.Revision != "" || len(set.Candidates) != 0 || view.complete || view.cursor != nil {
+				if agentapi.Failure(err) != agentapi.Unavailable || set.Current != nil || set.Revision != "" || len(set.Candidates) != 0 || view.complete || view.cursor != nil {
 					t.Fatalf("conflicting physical identity returned authority: %+v %v", set, err)
 				}
 				before := view.counts
@@ -1536,7 +1534,7 @@ func TestMetadataConstructorRootsRemainCoherentBeforeLazyAcquisition(t *testing.
 			defer func() { _ = slice.Close() }()
 			set, err := slice.Thread(t.Context(), ids[0])
 			if changed {
-				if agentapi.Failure(err) != agentapi.Changed || set.Complete || set.Current != nil || set.Revision != "" || len(set.Candidates) != 0 || view.complete || view.cursor != nil {
+				if agentapi.Failure(err) != agentapi.Changed || set.Current != nil || set.Revision != "" || len(set.Candidates) != 0 || view.complete || view.cursor != nil {
 					t.Fatalf("constructor/acquisition root split returned authority: %+v %v", set, err)
 				}
 				if view.counts.physical != 0 || view.counts.requested != 0 || lookup.queries != 0 {
@@ -1552,7 +1550,7 @@ func TestMetadataConstructorRootsRemainCoherentBeforeLazyAcquisition(t *testing.
 					t.Fatal("changed root hid cancellation", err)
 				}
 			} else {
-				if err != nil || !set.Complete || set.Current == nil || set.Current.Path != path || len(set.Candidates) != 1 || view.counts.physical != 1 {
+				if err != nil || set.Current == nil || set.Current.Path != path || len(set.Candidates) != 1 || view.counts.physical != 1 {
 					t.Fatal("coherent alias lost current selection", set, err, view.counts)
 				}
 				if err := slice.Check(t.Context(), ids[0], set.Revision); err != nil {
@@ -1591,7 +1589,7 @@ func TestMetadataValidationExpiryClearsCompleteInventory(t *testing.T) {
 	}
 	defer func() { _ = slice.Close() }()
 	set, refusal := slice.Thread(t.Context(), "11111111-1111-4111-8111-111111111111")
-	if agentapi.Failure(slice.Valid(t.Context())) != agentapi.Limit || agentapi.Failure(refusal) != agentapi.Limit || set.Complete || set.Current != nil || len(set.Candidates) != 0 || view.complete || view.cursor != nil || agentapi.Failure(view.failure) != agentapi.Limit {
+	if agentapi.Failure(slice.Valid(t.Context())) != agentapi.Limit || agentapi.Failure(refusal) != agentapi.Limit || set.Current != nil || len(set.Candidates) != 0 || view.complete || view.cursor != nil || agentapi.Failure(view.failure) != agentapi.Limit {
 		t.Fatalf("expired validation retained authority: set=%+v refusal=%v complete=%t cursor=%t failure=%v remaining=%s", set, refusal, view.complete, view.cursor != nil, view.failure, view.remaining)
 	}
 }
@@ -1651,7 +1649,7 @@ func TestMetadataOwnedExpiryInvalidatesCompletedEpoch(t *testing.T) {
 				case metadataExpiryThread:
 					set, err := held.Thread(ctx, "00000000-0000-0000-0000-000000000001")
 					failure = err
-					if set.Complete || set.Current != nil || set.Revision != "" || len(set.Candidates) != 0 {
+					if set.Current != nil || set.Revision != "" || len(set.Candidates) != 0 {
 						t.Fatal("expired query retained selection", set)
 					}
 				case metadataExpiryRollout:

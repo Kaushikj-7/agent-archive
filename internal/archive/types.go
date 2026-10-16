@@ -46,9 +46,10 @@ const (
 	// from the sibling .meta.json. Filter 15 redacts aa-pair1 pairing bundles,
 	// including truncated payloads. See dev/specs/privacy-filter.md.
 	// Filter 18 additionally accepts pinned opt-in API label evidence.
+	// Filter 19 adds the strictly validated local Muse conversation projection.
 	// Filter 17 retains typed, owning Codex session_labels metadata with
 	// prompt redaction and a bounded display name; it never establishes activity.
-	FilterVersion = "18"
+	FilterVersion = "27"
 	// OpenTelemetryGenAIRevision pins the upstream definitions used by the
 	// three gen_ai.* attributes emitted by BuildMetadata. The archive is not
 	// an OTLP payload; all agent_archive.* attributes are local extensions.
@@ -341,6 +342,7 @@ type ProjectResolution struct {
 // SessionStartedAt is when the conversation began. It is not the capture
 // boundary: project activation and the storage destination compare Admitted().
 type SessionRegistration struct {
+	NativeBinding      *NativeSourceBinding    `json:"native_binding,omitempty"`
 	HistoricalProject  *HistoricalProjectProof `json:"historical_project,omitempty"`
 	ProjectResolution  *ProjectResolution      `json:"project_resolution,omitempty"`
 	CodexBinding       *CodexSourceBinding     `json:"codex_binding,omitempty"`
@@ -453,6 +455,9 @@ func (r SessionRegistration) Validate() error {
 		return err
 	}
 
+	if err := r.validateNativeBinding(); err != nil {
+		return err
+	}
 	if r.CodexBinding != nil {
 		if r.Harness.Name != "codex" || r.CodexBinding.NativeThreadID != r.NativeSessionID {
 			return errors.New("codex binding requires matching codex registration")
@@ -807,7 +812,8 @@ type Metadata struct {
 	ToolsUsed []ToolUsage `json:"tools_used,omitempty"`
 	// ModelTokens splits the session's token counts by model, sorted by
 	// model id. Omitted when the harness exposed no token accounting.
-	ModelTokens []ModelTokens `json:"model_tokens,omitempty"`
+	ModelTokens       []ModelTokens            `json:"model_tokens,omitempty"`
+	TokenObservations *TokenObservationSummary `json:"token_observations,omitempty"`
 	// MCPCalls counts the session's MCP tool calls by server (the server in
 	// an mcp__<server>__<tool> name), by count descending and then name
 	// ascending, at most MaxMCPCalls of them. Omitted when no MCP call was

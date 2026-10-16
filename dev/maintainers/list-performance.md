@@ -232,3 +232,28 @@ The recorded raw samples used the historical discard-writer harness. This
 candidate captures and validates command JSON; freeze that repaired harness on
 both comparison sources before accepting a performance improvement. These
 historical samples do not qualify the repaired harness on current main.
+
+## Scoped interactive catalog windows
+
+Supported ordinary repository windows use complete scoped catalog ranges rather
+than legacy header enumeration. Browse and handoff eligibility are separate;
+known-zero prompt archives remain excluded from handoff without candidate scans.
+Selection hydrates an immutable verified body; row projections do not authorize
+sources. Named-project/advanced predicates and legacy destinations retain complete
+compatibility costs. Interactive Older fetches another remote page and search
+initializes the complete archive universe on demand.
+
+The [real CLI qualification protocol](picker-qualification/README.md) measures
+10k/100k first-frame and Older work, with a fixed relevant repository population,
+complete bulk trees and actual production construction equivalence. It separates
+returned payload/header estimates from actual provider wire bytes, archive work
+from native R, latency/allocations from sampled runtime heap, and source completion
+from production qualification. The
+[2026-10-13 paired results](picker-qualification/results-20261013.md) completed all 16
+processes / 104 cases using identical repaired harness/logical fixture hashes on
+pinned protocol10 baseline and protocol11 candidate. Every supported measured
+phase read zero metadata/source bodies and LISTs; actual caller head/coordinator
+work is included. Sampled heap includes fixture residency and process RSS includes
+construction/setup, which has a larger footprint for the complete candidate fixture.
+Review, hosted gates and production qualification remain separate; historical
+baseline samples above remain historical.

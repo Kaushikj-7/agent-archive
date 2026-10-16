@@ -24,7 +24,7 @@ import (
 // and other apps' containers as locations of their own inside Library.
 func TestProtectedOutside(t *testing.T) {
 	t.Parallel()
-	protected := privacyProtectedFolders(Environment{Sources: testSources, Discovery: builtin.NewBuiltins(), DatabaseCatalogs: builtin.NewBuiltins(), NativePaths: builtin.NewBuiltins(), Worktrees: builtin.NewBuiltins(), Workspaces: builtin.NewBuiltins(), Children: builtin.NewBuiltins(), Imports: builtin.NewBuiltins(), Home: "/Users/me", OS: platform.Darwin, EvalSymlinks: func(p string) (string, error) { return p, nil }})
+	protected := privacyProtectedFolders(Environment{Sources: testSources, Discovery: testImportDiscovery(), DatabaseCatalogs: builtin.NewBuiltins(), NativePaths: builtin.NewBuiltins(), Worktrees: builtin.NewBuiltins(), Workspaces: builtin.NewBuiltins(), Children: builtin.NewBuiltins(), Imports: builtin.NewBuiltins(), Home: "/Users/me", OS: platform.Darwin, EvalSymlinks: func(p string) (string, error) { return p, nil }})
 	for _, tc := range []struct {
 		path string
 		root string
@@ -60,7 +60,7 @@ func TestProtectedOutside(t *testing.T) {
 // target is still kept out of Documents.
 func TestProtectedFoldersCoverTheResolvedHome(t *testing.T) {
 	t.Parallel()
-	protected := privacyProtectedFolders(Environment{Sources: testSources, Discovery: builtin.NewBuiltins(), DatabaseCatalogs: builtin.NewBuiltins(), NativePaths: builtin.NewBuiltins(), Worktrees: builtin.NewBuiltins(), Workspaces: builtin.NewBuiltins(), Children: builtin.NewBuiltins(), Imports: builtin.NewBuiltins(), Home: "/Users/me", OS: platform.Darwin, EvalSymlinks: func(p string) (string, error) {
+	protected := privacyProtectedFolders(Environment{Sources: testSources, Discovery: testImportDiscovery(), DatabaseCatalogs: builtin.NewBuiltins(), NativePaths: builtin.NewBuiltins(), Worktrees: builtin.NewBuiltins(), Workspaces: builtin.NewBuiltins(), Children: builtin.NewBuiltins(), Imports: builtin.NewBuiltins(), Home: "/Users/me", OS: platform.Darwin, EvalSymlinks: func(p string) (string, error) {
 		if p == "/Users/me" {
 			return "/Volumes/Data/Users/me", nil
 		}

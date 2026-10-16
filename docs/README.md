@@ -6,8 +6,8 @@ are for people using it; specs and contributor guides are in
 
 ## First local handoff
 
-After installing v0.2.0, run `agent-archive handoff` inside a project to choose an
-existing Claude Code or Codex conversation before configuring storage. See
+With a current source build or a staged v0.2.0 candidate, run
+`agent-archive handoff` inside a project to choose an existing Claude Code or Codex conversation before configuring storage. See
 [scope, bounded previews and cleanup](guides/handoff.md#before-setup-native-local-sessions).
 
 ## First successful capture

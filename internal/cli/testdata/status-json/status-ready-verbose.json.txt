@@ -50,7 +50,7 @@ $ agent-archive status --verbose --json
         "project_metadata_operations": 0,
         "git_metadata_bytes": 0,
         "header_probes": 0,
-        "directory_entries": 2,
+        "directory_entries": 0,
         "bytes_read": 0,
         "registered": 0
       },
@@ -65,7 +65,7 @@ $ agent-archive status --verbose --json
       "verification_state": "verified_at_recorded_time",
       "trust": "unknown",
       "observed_adapter_versions": [
-        "0.18.0"
+        "0.27.0"
       ],
       "installed": false,
       "installed_version_state": "unknown",

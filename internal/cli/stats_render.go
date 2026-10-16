@@ -394,8 +394,23 @@ func (p *statsPrinter) filterText() string {
 // the hints follow.
 func (p *statsPrinter) footer(hints ...string) []string {
 	note := "Estimated at list price, not a bill."
+	if p.s.TokenObservations != nil {
+		s := p.s.TokenObservations
+		if s.Observed.Available() && s.Input != nil && s.Output != nil {
+			note = fmt.Sprintf("Observed input %d, output %d across %d sessions; full usage, composition and cost unavailable. ", *s.Input, *s.Output, p.s.ObservationSessions) + note
+		} else {
+			note = "Token observations unavailable: exact aggregate limit. " + note
+		}
+	}
+	if n := p.s.Coverage.ObservationOnlySessions; n > 0 {
+		note += fmt.Sprintf(" Priced subset excludes %d observation-only sessions.", n)
+	}
 	if p.partialSpend() {
-		note += " + leaves out models with no price."
+		if p.s.Coverage.ObservationOnlySessions == 0 || p.s.Overview.Cost.UnpricedTokens > 0 {
+			note += " + leaves out models with no price."
+		} else {
+			note += " + marks partial priced coverage."
+		}
 	}
 	if p.v.interactive {
 		hints = nil
@@ -760,6 +775,13 @@ func padRight(text string, width int) string {
 func padLeft(text string, width int) string {
 	if gap := width - visibleWidth(text); gap > 0 {
 		return strings.Repeat(" ", gap) + text
+	}
+	return text
+}
+
+func (p *statsPrinter) observationAccountingContext(text string) string {
+	if p.s.TokenObservations != nil {
+		return strings.ReplaceAll(text, "no token data", "no qualified token accounting")
 	}
 	return text
 }

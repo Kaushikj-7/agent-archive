@@ -11,7 +11,7 @@
 
 ## Session
 - Agent: Cursor
-- Cursor does not record tool results, so none appear below.
+- Tool results are unavailable in this retained evidence.
 
 ## Where it left off
 > Tightened the first sentence; the rest reads well.

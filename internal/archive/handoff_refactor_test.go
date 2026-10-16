@@ -52,3 +52,18 @@ func TestHandoffRenderDecisions(t *testing.T) {
 		t.Fatalf("footer with elisions = %v", got)
 	}
 }
+
+func TestHandoffUsesNativeLogicalStartWithoutInventingATurn(t *testing.T) {
+	t.Parallel()
+	reserved := time.Date(2026, 10, 15, 17, 4, 15, 882704000, time.UTC)
+	for _, turns := range [][]NormalizedTurn{nil, {{Role: "user", Kind: TurnKindHumanPrompt, Text: "Visible prompt", Timestamp: reserved.Add(3 * time.Second).Format(time.RFC3339Nano)}}} {
+		analysis := Analysis{Facts: NativeFacts{NativeStartedAt: reserved}, View: NormalizedView{Turns: turns}}
+		h, err := BuildHandoffWithAnalysis(SourceBundle{}, analysis, &Metadata{StartedAt: reserved.Add(time.Hour)}, HandoffOptions{StartedAt: reserved.Add(24 * time.Hour)})
+		if err != nil || h.Session.StartedAt == nil || !h.Session.StartedAt.Equal(reserved) {
+			t.Fatalf("native start: %+v %v", h.Session, err)
+		}
+		if len(analysis.View.Turns) != len(turns) {
+			t.Fatal("builder invented a clock turn")
+		}
+	}
+}

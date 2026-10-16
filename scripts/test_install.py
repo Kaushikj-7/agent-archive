@@ -3,6 +3,7 @@ import hashlib
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import signal
 import stat
@@ -192,6 +193,15 @@ class InstallScriptTest(InstallScriptBase):
         self.assertIn('export PATH="' + str(target.parent) + ':$PATH"', result.stdout)
         self.assertIn(f'✓ installed agent-archive v9.9.9-arm64 to {target}\n', result.stdout)
         self.assertIn('\nTo get started, run:\n\nagent-archive setup\n', result.stdout)
+        # The handoff that works before setup is named first, for a
+        # project that already has sessions, by the installed path like
+        # the backfill next step, since the install directory is not on
+        # PATH yet.
+        handoff = ("\nproject that already has Claude Code or Codex sessions:\n\n"
+                   f"  '{target}' handoff\n")
+        self.assertIn(handoff, result.stdout)
+        self.assertLess(result.stdout.index(handoff),
+                        result.stdout.index('agent-archive setup'))
         self.assertEqual([p.name for p in target.parent.iterdir()], ['agent-archive'])
 
     def test_zsh_path_instructions(self):
@@ -344,23 +354,32 @@ class InstallScriptTest(InstallScriptBase):
                 self.assert_nothing_installed()
 
     def test_linux_install_needs_no_codesign_and_says_how_to_verify(self):
+        # The harness downloads from AGENT_ARCHIVE_DOWNLOAD_URL, a custom
+        # source with no GitHub attestation: the skip is said out loud,
+        # before the install, and no post-install advice follows execution.
         result = self.run_install(system='Linux', machine='x86_64', codesign=False)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn('Signature verified', result.stdout)
         self.assertIn('Checksum verified', result.stdout)
         self.assertIn('Skipping the Developer ID signature check, which is macOS only.', result.stdout)
-        # The attestation advice follows the install and names the final path.
-        advice = f"gh attestation verify '{self.default_target}' --repo wangjohn/agent-archive"
-        self.assertIn(advice, result.stdout)
-        self.assertGreater(result.stdout.index(advice), result.stdout.index('✓ installed'))
-        self.assertIn('only guards against a damaged download', result.stdout)
+        skip = 'Skipping attestation verification: AGENT_ARCHIVE_DOWNLOAD_URL is set'
+        self.assertIn(skip, result.stdout)
+        self.assertLess(result.stdout.index(skip), result.stdout.index('✓ installed'))
+        self.assertNotIn('gh attestation verify', result.stdout)
+        self.assertNotIn('only guards against a damaged download', result.stdout)
         self.assertNotIn('trust rests', result.stdout)
 
     def test_the_attestation_advice_quotes_awkward_paths(self):
+        # No gh on the hermetic PATH and a real (faked-curl) release base:
+        # the not-signed advice names the final path before installing.
         awkward = self.root / "it's here"
+        curl, _ = self.fake_release_curl()
         result = self.run_install(system='Linux', machine='x86_64', hermetic=True,
-                                  extra_env={'AGENT_ARCHIVE_INSTALL_DIR': str(awkward)})
+                                  overrides={'curl': curl},
+                                  extra_env={'AGENT_ARCHIVE_DOWNLOAD_URL': '',
+                                             'AGENT_ARCHIVE_INSTALL_DIR': str(awkward)})
         self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertLess(result.stdout.index('gh attestation verify'), result.stdout.index('✓ installed'))
         # Pasted into a shell, the printed word is exactly the installed path.
         word = re.search(r'gh attestation verify (.*) --repo', result.stdout).group(1)
         pasted = subprocess.run(['sh', '-c', f'printf %s {word}'], capture_output=True, text=True).stdout
@@ -375,6 +394,297 @@ class InstallScriptTest(InstallScriptBase):
         result = self.run_install(system='Linux', machine='aarch64', hermetic=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse(self.codesign_log.exists())
+
+    # --- Linux attestation, before anything is installed or run --------
+    # These runs clear AGENT_ARCHIVE_DOWNLOAD_URL (which skips attestation)
+    # and serve the fake release through a curl stand-in instead, so the
+    # script takes its real GitHub download base.
+
+    def fake_release_curl(self):
+        """(curl shim body, log path): copies the file named by the URL's
+        last segment out of the fake release and logs each URL."""
+        log = self.root / 'curl.log'
+        body = (
+            'out=\nprev=\nlast=\n'
+            'for a in "$@"; do\n'
+            '  if [ "$prev" = --output ]; then out="$a"; fi\n'
+            '  prev="$a"\n  last="$a"\n'
+            'done\n'
+            f'echo "$last" >> {log}\n'
+            f'cp "{self.release}/${{last##*/}}" "$out"'
+        )
+        return body, log
+
+    def fake_gh(self, order_log, exit_code=0, output=''):
+        """A gh stand-in: logs its arguments, accepts only the exact
+        attestation-verify form against an existing file, then behaves as
+        told."""
+        say = f'echo {shlex.quote(output)} >&2\n' if output else ''
+        return (
+            f'echo "gh $@" >> {order_log}\n'
+            '[ "$1" = attestation ] && [ "$2" = verify ] || exit 9\n'
+            '[ -f "$3" ] || exit 8\n'
+            '[ "$4" = --repo ] && [ "$5" = wangjohn/agent-archive ] || exit 9\n'
+            f'{say}exit {exit_code}'
+        )
+
+    def order_logging_linux_binary(self, order_log, arch='amd64'):
+        """Replace a fake Linux release binary with one that records each
+        run in order_log, so a test can prove what happened before it."""
+        write_executable(self.release / f'agent-archive-linux-{arch}',
+                         f'#!/bin/sh\necho ran >> {order_log}\necho v9.9.9-linux-{arch}\n')
+        self.write_sums()
+
+    def run_linux_from_github_base(self, overrides, extra_env=None):
+        env = {'AGENT_ARCHIVE_DOWNLOAD_URL': '', **(extra_env or {})}
+        return self.run_install(system='Linux', machine='x86_64', hermetic=True,
+                                overrides=overrides, extra_env=env)
+
+    def test_linux_gh_attestation_is_verified_before_the_binary_is_installed_or_run(self):
+        order = self.root / 'order.log'
+        self.order_logging_linux_binary(order)
+        curl, curl_log = self.fake_release_curl()
+        result = self.run_linux_from_github_base({'curl': curl, 'gh': self.fake_gh(order)})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('releases/latest/download/agent-archive-linux-amd64', curl_log.read_text())
+        lines = order.read_text().splitlines()
+        gh_lines = [line for line in lines if line.startswith('gh ')]
+        self.assertEqual(len(gh_lines), 1, lines)
+        # gh verified the downloaded temp file, not the install target, and
+        # did so before the binary ever ran.
+        verified_file = gh_lines[0].split()[3]
+        self.assertTrue(verified_file.endswith('/agent-archive-linux-amd64'), gh_lines)
+        self.assertNotEqual(verified_file, str(self.default_target))
+        self.assertLess(lines.index(gh_lines[0]), lines.index('ran'))
+        verified = 'Attestation verified (GitHub build provenance, wangjohn/agent-archive)'
+        self.assertIn(verified, result.stdout)
+        self.assertLess(result.stdout.index(verified), result.stdout.index('✓ installed'))
+        self.assertEqual(self.installed_output(), self.linux_output('amd64'))
+
+    # gh's real messages for a check it could not perform.
+    GH_UNAUTHENTICATED = 'To get started with GitHub CLI, please run:  gh auth login'
+    GH_TOO_OLD = 'unknown command "attestation" for "gh"'
+    GH_NETWORK = 'dial tcp: network unreachable'
+
+    def test_linux_gh_attestation_mismatch_installs_and_runs_nothing_in_either_mode(self):
+        order = self.root / 'order.log'
+        self.order_logging_linux_binary(order)
+        curl, _ = self.fake_release_curl()
+        for strict in ('', '1'):
+            for output in ('verification failed: no attestation found',
+                           'Error: failed to verify the attestation'):
+                with self.subTest(strict=strict, output=output):
+                    order.unlink(missing_ok=True)
+                    result = self.run_linux_from_github_base(
+                        {'curl': curl, 'gh': self.fake_gh(order, exit_code=1, output=output)},
+                        {'AGENT_ARCHIVE_REQUIRE_ATTESTATION': strict})
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn('attestation verification failed', result.stderr)
+                    self.assertIn(output, result.stderr)
+                    self.assertIn('Checksum verified', result.stdout)
+                    self.assertNotIn('Continuing without attestation verification', result.stdout)
+                    self.assertNotIn('✓ installed', result.stdout)
+                    self.assertNotIn('ran', order.read_text().splitlines())
+                    self.assert_nothing_installed()
+
+    def test_linux_gh_that_cannot_check_warns_and_installs_when_not_strict(self):
+        order = self.root / 'order.log'
+        curl, _ = self.fake_release_curl()
+        for strict in ('', '0'):
+            for output in (self.GH_UNAUTHENTICATED, self.GH_TOO_OLD, self.GH_NETWORK, ''):
+                with self.subTest(strict=strict, output=output):
+                    order.unlink(missing_ok=True)
+                    shutil.rmtree(self.home / '.local', ignore_errors=True)
+                    result = self.run_linux_from_github_base(
+                        {'curl': curl, 'gh': self.fake_gh(order, exit_code=4, output=output)},
+                        {'AGENT_ARCHIVE_REQUIRE_ATTESTATION': strict})
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    warning = 'Warning: could not verify the attestation for agent-archive-linux-amd64 with gh: '
+                    self.assertIn(warning + (output or 'gh attestation verify failed with no output'),
+                                  result.stdout)
+                    advice = 'Continuing without attestation verification because gh could not check it'
+                    self.assertIn(advice, result.stdout)
+                    self.assertIn('gh attestation verify', result.stdout)
+                    self.assertLess(result.stdout.index(warning), result.stdout.index('✓ installed'))
+                    self.assertLess(result.stdout.index(advice), result.stdout.index('✓ installed'))
+                    self.assertEqual(self.installed_output(), self.linux_output('amd64'))
+
+    def test_linux_gh_that_cannot_check_fails_closed_in_strict_mode(self):
+        order = self.root / 'order.log'
+        self.order_logging_linux_binary(order)
+        curl, _ = self.fake_release_curl()
+        for output in (self.GH_UNAUTHENTICATED, self.GH_TOO_OLD, self.GH_NETWORK, ''):
+            with self.subTest(output=output):
+                order.unlink(missing_ok=True)
+                result = self.run_linux_from_github_base(
+                    {'curl': curl, 'gh': self.fake_gh(order, exit_code=4, output=output)},
+                    {'AGENT_ARCHIVE_REQUIRE_ATTESTATION': '1'})
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('could not verify the attestation', result.stderr)
+                if output:
+                    self.assertIn(output, result.stderr)
+                else:
+                    self.assertIn('gh attestation verify failed with no output', result.stderr)
+                self.assertNotIn('Continuing without attestation verification', result.stdout)
+                self.assertNotIn('✓ installed', result.stdout)
+                self.assertNotIn('ran', order.read_text().splitlines())
+                self.assert_nothing_installed()
+
+    def gh_argv(self, order):
+        lines = [line for line in order.read_text().splitlines() if line.startswith('gh ')]
+        self.assertEqual(len(lines), 1, lines)
+        return lines[0].split()[1:]
+
+    def test_linux_gh_attestation_pins_the_release_workflow_and_host(self):
+        order = self.root / 'order.log'
+        curl, _ = self.fake_release_curl()
+        for version, ref in ((None, None), ('0.2.0', 'refs/tags/v0.2.0'), ('v0.2.0', 'refs/tags/v0.2.0')):
+            with self.subTest(version=version):
+                order.unlink(missing_ok=True)
+                shutil.rmtree(self.home / '.local', ignore_errors=True)
+                env = {'AGENT_ARCHIVE_VERSION': version} if version else {}
+                result = self.run_linux_from_github_base({'curl': curl, 'gh': self.fake_gh(order)}, env)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                argv = self.gh_argv(order)
+                self.assertEqual(argv[:2], ['attestation', 'verify'])
+                self.assertEqual(argv[argv.index('--repo') + 1], 'wangjohn/agent-archive')
+                self.assertEqual(argv[argv.index('--signer-workflow') + 1],
+                                 'wangjohn/agent-archive/.github/workflows/release.yml')
+                self.assertEqual(argv[argv.index('--hostname') + 1], 'github.com')
+                self.assertIn('--deny-self-hosted-runners', argv)
+                if ref:
+                    self.assertEqual(argv[argv.index('--source-ref') + 1], ref)
+                else:
+                    self.assertNotIn('--source-ref', argv)
+
+    def test_linux_gh_attestation_pins_public_host_despite_enterprise_gh_host(self):
+        order = self.root / 'order.log'
+        curl, _ = self.fake_release_curl()
+        for strict in (False, True):
+            with self.subTest(strict=strict):
+                order.unlink(missing_ok=True)
+                shutil.rmtree(self.home / '.local', ignore_errors=True)
+                self.order_logging_linux_binary(order)
+                # The enterprise host stays in gh's environment: the explicit
+                # --hostname, not clearing the user's setting, must select
+                # the public host.
+                gh = ('[ "${GH_HOST:-}" = github.corporate.example ] || exit 10\n'
+                      + self.fake_gh(order))
+                env = {'GH_HOST': 'github.corporate.example'}
+                if strict:
+                    env['AGENT_ARCHIVE_REQUIRE_ATTESTATION'] = '1'
+                result = self.run_linux_from_github_base({'curl': curl, 'gh': gh}, env)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                argv = self.gh_argv(order)
+                self.assertEqual(argv[argv.index('--hostname') + 1], 'github.com')
+                self.assertEqual(argv[argv.index('--signer-workflow') + 1],
+                                 'wangjohn/agent-archive/.github/workflows/release.yml')
+                lines = order.read_text().splitlines()
+                self.assertLess(next(i for i, l in enumerate(lines) if l.startswith('gh ')),
+                                lines.index('ran'))
+                self.assertIn('Attestation verified', result.stdout)
+                self.assertEqual(self.installed_output(), self.linux_output('amd64'))
+
+    def test_linux_printed_advice_carries_the_same_pins(self):
+        curl, _ = self.fake_release_curl()
+        result = self.run_linux_from_github_base({'curl': curl}, {'AGENT_ARCHIVE_VERSION': 'v0.2.0'})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        line = next(l for l in result.stdout.splitlines() if 'gh attestation verify' in l)
+        self.assertTrue(line.endswith(
+            ' --repo wangjohn/agent-archive'
+            ' --signer-workflow wangjohn/agent-archive/.github/workflows/release.yml'
+            ' --deny-self-hosted-runners --hostname github.com --source-ref refs/tags/v0.2.0'), line)
+
+    def test_linux_gh_attestation_is_time_bounded_when_timeout_exists(self):
+        order = self.root / 'order.log'
+        curl, _ = self.fake_release_curl()
+        timeout_log = self.root / 'timeout.log'
+        passthrough = f'echo "$1" >> {timeout_log}\nshift\nexec "$@"'
+        result = self.run_linux_from_github_base(
+            {'curl': curl, 'gh': self.fake_gh(order), 'timeout': passthrough})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(timeout_log.read_text().split(), ['120'])
+        self.assertEqual(self.gh_argv(order)[:2], ['attestation', 'verify'])
+        for strict, code in (('', 0), ('1', 1)):
+            with self.subTest(strict=strict):
+                shutil.rmtree(self.home / '.local', ignore_errors=True)
+                result = self.run_linux_from_github_base(
+                    {'curl': curl, 'gh': self.fake_gh(order), 'timeout': 'exit 124'},
+                    {'AGENT_ARCHIVE_REQUIRE_ATTESTATION': strict})
+                self.assertEqual(result.returncode, code, result.stderr)
+                self.assertIn('did not finish within 120 seconds', result.stdout + result.stderr)
+
+    def test_linux_require_attestation_accepts_only_1_or_0(self):
+        curl, curl_log = self.fake_release_curl()
+        for value in ('yes', 'true', '2', ' 1'):
+            with self.subTest(value=value):
+                result = self.run_linux_from_github_base(
+                    {'curl': curl}, {'AGENT_ARCHIVE_REQUIRE_ATTESTATION': value})
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('AGENT_ARCHIVE_REQUIRE_ATTESTATION must be 1', result.stderr)
+                self.assertIn(value, result.stderr)
+                self.assertNotIn('Downloading', result.stdout)
+                self.assertFalse(curl_log.exists())
+                self.assert_nothing_installed()
+
+    def test_linux_without_gh_warns_before_installing_and_proceeds(self):
+        curl, _ = self.fake_release_curl()
+        result = self.run_linux_from_github_base({'curl': curl})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        warning = 'only guards against a damaged download'
+        self.assertIn(warning, result.stdout)
+        self.assertLess(result.stdout.index(warning), result.stdout.index('✓ installed'))
+        self.assertIn('gh attestation verify', result.stdout)
+        # The warning is printed once, before execution, not again after it.
+        self.assertEqual(result.stdout.count(warning), 1)
+        self.assertEqual(result.stdout.count('gh attestation verify'), 1)
+        self.assertIn('docs/getting-started/install.md', result.stdout)
+        self.assertIn('Continuing without attestation verification because gh is not on PATH', result.stdout)
+        self.assertEqual(self.installed_output(), self.linux_output('amd64'))
+
+    def test_linux_require_attestation_without_gh_fails_closed_before_downloading(self):
+        curl, curl_log = self.fake_release_curl()
+        result = self.run_linux_from_github_base(
+            {'curl': curl}, {'AGENT_ARCHIVE_REQUIRE_ATTESTATION': '1'})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('AGENT_ARCHIVE_REQUIRE_ATTESTATION=1 requires the gh CLI', result.stderr)
+        self.assertNotIn('Downloading', result.stdout)
+        self.assertFalse(curl_log.exists())
+        self.assert_nothing_installed()
+
+    def test_linux_require_attestation_with_a_verifying_gh_proceeds(self):
+        order = self.root / 'order.log'
+        curl, _ = self.fake_release_curl()
+        result = self.run_linux_from_github_base(
+            {'curl': curl, 'gh': self.fake_gh(order)},
+            {'AGENT_ARCHIVE_REQUIRE_ATTESTATION': '1'})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('Attestation verified', result.stdout)
+        self.assertEqual(self.installed_output(), self.linux_output('amd64'))
+
+    def test_linux_require_attestation_refuses_a_custom_download_url_before_downloading(self):
+        curl, curl_log = self.fake_release_curl()
+        # The harness default AGENT_ARCHIVE_DOWNLOAD_URL stays set here.
+        result = self.run_install(system='Linux', machine='x86_64', hermetic=True,
+                                  overrides={'curl': curl},
+                                  extra_env={'AGENT_ARCHIVE_REQUIRE_ATTESTATION': '1'})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('cannot be combined with AGENT_ARCHIVE_DOWNLOAD_URL', result.stderr)
+        self.assertNotIn('Downloading', result.stdout)
+        self.assertFalse(curl_log.exists(), 'a download was attempted')
+        self.assert_nothing_installed()
+
+    def test_linux_custom_download_url_skips_attestation_with_a_say_line(self):
+        # Even a gh that would fail is never consulted for a custom source.
+        order = self.root / 'order.log'
+        result = self.run_install(system='Linux', machine='x86_64', hermetic=True,
+                                  overrides={'gh': self.fake_gh(order, exit_code=1, output='no')})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        skip = 'Skipping attestation verification: AGENT_ARCHIVE_DOWNLOAD_URL is set'
+        self.assertIn(skip, result.stdout)
+        self.assertLess(result.stdout.index(skip), result.stdout.index('✓ installed'))
+        self.assertFalse(order.exists(), 'gh was consulted for a custom download source')
+        self.assertEqual(self.installed_output(), self.linux_output('amd64'))
 
     def test_linux_install_does_not_depend_on_the_signing_team(self):
         # The signing team is a macOS matter: neither a real nor an empty
@@ -896,7 +1206,10 @@ class InstallScriptTest(InstallScriptBase):
                 self.assertTrue(target.exists())
                 self.assertIn(f'installed agent-archive v9.9.9-linux-amd64 to {work.resolve()}/rel/bin', result.stdout)
                 # Every printed path can be pasted from another directory.
-                self.assertIn(f"gh attestation verify '{work.resolve()}/rel/bin", result.stdout)
+                # (The attestation line here is the custom-download-URL
+                # skip, which names no path.)
+                self.assertIn('Skipping attestation verification: AGENT_ARCHIVE_DOWNLOAD_URL is set',
+                              result.stdout)
                 self.assertIn(f'export PATH="{work.resolve()}/rel/bin', result.stdout)
                 self.assertNotIn('/./', result.stdout)
 
@@ -995,6 +1308,8 @@ class InstallRefreshTest(InstallScriptBase):
         self.assertIn('  refreshed Claude Code hooks and 2 skill files\n', result.stdout)
         self.assertIn('agent-archive setup --refresh', result.stdout)
         self.assertNotIn('To get started', result.stdout)
+        # The fresh-install handoff next step is not for a set-up machine.
+        self.assertNotIn('handoff', result.stdout)
         self.assertEqual(result.stderr, '')
 
     def test_honors_agent_archive_home(self):
@@ -1103,4 +1418,4 @@ class ManualInstallGuideTest(unittest.TestCase):
 
 
 if __name__ == '__main__':
-    unittest.main()
+    unittest.main(verbosity=2)

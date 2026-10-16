@@ -36,6 +36,14 @@ func (s *scopeBudgetStore) GetVersioned(ctx context.Context, key string) ([]byte
 	return s.MemoryStore.GetVersioned(ctx, key)
 }
 
+func (s *scopeBudgetStore) GetLimited(ctx context.Context, key string, limit int64) ([]byte, error) {
+	s.gets.Add(1)
+	if !strings.HasSuffix(key, "/metadata.json") {
+		s.sourceGets.Add(1)
+	}
+	return s.MemoryStore.GetLimited(ctx, key, limit)
+}
+
 func (s *scopeBudgetStore) Get(ctx context.Context, key string) ([]byte, error) {
 	s.gets.Add(1)
 	if !strings.HasSuffix(key, "/metadata.json") {
@@ -166,10 +174,10 @@ func TestDefaultRepositoryScopeBodyBudgetAndEmptyFallback(t *testing.T) {
 						expected := append([]archive.Metadata(nil), oracle...)
 						sortByActivity(expected)
 						view := listViews{sessions: expected, listed: reader.RecentResult{TotalMatched: len(expected), Complete: true}, full: true, limit: 50}.view
-						format := listFormatOptions{Now: a.env.now(), Projects: projectLabelsMust(t, a.env), GroupByProject: true, Children: childCounts(expected)}
+						format := listFormatOptions{Now: a.env.now(), Projects: projectLabelsMust(t, a.env), GroupByDay: true, Children: childCounts(expected)}
 						var expectedOut bytes.Buffer
 						choices := listChoices(scope, format, false, expected, 50, view, "")
-						if err := printListTable(&expectedOut, choices.shown()); err != nil {
+						if err := printListTable(&expectedOut, choices.shown(), 0); err != nil {
 							t.Fatal(err)
 						}
 						if out != expectedOut.String() {

@@ -116,6 +116,7 @@ func (s *MemoryStore) List(ctx context.Context, prefix string) ([]storage.Object
 		obj := s.objects[key]
 		objects = append(objects, storage.Object{Key: key, Size: int64(len(obj.data)), ETag: obj.etag, LastModified: obj.when})
 	}
+	storage.ObserveListPage(ctx, objects)
 	return objects, nil
 }
 
@@ -186,6 +187,7 @@ func (s *MemoryStore) ListRange(ctx context.Context, prefix, after, through stri
 		obj := s.objects[key]
 		objects = append(objects, storage.Object{Key: key, Size: int64(len(obj.data)), ETag: obj.etag, LastModified: obj.when})
 	}
+	storage.ObserveListPage(ctx, objects)
 	return objects, nil
 }
 

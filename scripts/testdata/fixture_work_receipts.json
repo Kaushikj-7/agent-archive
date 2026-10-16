@@ -1,0 +1,208 @@
+{
+  "description": "Exact content-free Go output events from authenticated successful ordinary P4 CI; a parser regression input, not integrated P8 qualification.",
+  "provenance": {
+    "run_id": 38778405365,
+    "run_attempt": 1,
+    "run_url": "https://github.com/wangjohn/agent-archive/actions/runs/38778405365",
+    "head": "cab068a3c0ceff003b073ec1d444df18e009ce36",
+    "compiled_source": "9a6986fab50b5f1010e5e608a3e09e5025f2f0e0",
+    "compiled_tree": "0bb1a3f2a93238915b265c24c94c4520e1757c44",
+    "compiled_parents": [
+      "6aa3339e22b19b2b768aed19dab657d10d18b60d",
+      "cab068a3c0ceff003b073ec1d444df18e009ce36"
+    ],
+    "downloads": [
+      {
+        "id": 11995480602,
+        "name": "go-shard-0",
+        "sha256": "1bc858d4fb3f53733f96ef3796dc327dc4ddc4bc918141898ea3dd80884e4eb6",
+        "bytes": 453327
+      },
+      {
+        "id": 11995296517,
+        "name": "go-shard-3",
+        "sha256": "487f7383668d62fc8f27065a1ffcd9d15e2139258cbccc8f75faafbb7c4046fe",
+        "bytes": 435035
+      },
+      {
+        "id": 11995655191,
+        "name": "go-shard-4",
+        "sha256": "c69b795055e6e6d288b46b4eb6b859567f92020e8d0fd8db488aa9d225f020ee",
+        "bytes": 430117
+      },
+      {
+        "id": 11994399596,
+        "name": "go-shard-5",
+        "sha256": "f871b7c71634fa81cdd666b98a4db5be2d42c2fcd5cecd59614d189c90c95247",
+        "bytes": 387299
+      }
+    ],
+    "producer_sha256": {
+      "internal/catalog/picker_read_test.go": "62d1ee7a0691e974d8b649c4be51578303c742a7343bb3bc520b87f154437422",
+      "internal/cli/migrate_catalog_test.go": "3c956aedb64df25dc3c2cefe9d4216de1a335d0246358466a8af6055840a4322",
+      "internal/cli/picker_fixture_reuse_test.go": "a07d416a83e6288ad5f78a59c46a210186e8f3004fbff64dbba63c26a3b80ccd",
+      "internal/cli/picker_qualification_fixture_test.go": "5d2e1f3b1051e19eadfa0f2d72a6dcb9ba6cd4a3a7c42d355568754511bdc928",
+      "internal/testutil/fixturecost/cost.go": "d0459c0a1059a81f1c5c6e72cf7f6f3c96ae7c5a3c3664e6bbd350cb9ce3127b"
+    }
+  },
+  "receipts": [
+    {
+      "shard": 3,
+      "log": "cli.json",
+      "line": 542,
+      "log_sha256": "474f45b4f7d314b329c0bc2c49c20f0c43f5005c70b95a466dcbd534304ece38"
+    },
+    {
+      "shard": 3,
+      "log": "cli.json",
+      "line": 543,
+      "log_sha256": "474f45b4f7d314b329c0bc2c49c20f0c43f5005c70b95a466dcbd534304ece38"
+    },
+    {
+      "shard": 3,
+      "log": "cli.json",
+      "line": 544,
+      "log_sha256": "474f45b4f7d314b329c0bc2c49c20f0c43f5005c70b95a466dcbd534304ece38"
+    },
+    {
+      "shard": 3,
+      "log": "cli.json",
+      "line": 545,
+      "log_sha256": "474f45b4f7d314b329c0bc2c49c20f0c43f5005c70b95a466dcbd534304ece38"
+    },
+    {
+      "shard": 4,
+      "log": "cli.json",
+      "line": 611,
+      "log_sha256": "e9ef426def001f633273dad23c359d96b776b0f444e1244053619324148921a8"
+    },
+    {
+      "shard": 4,
+      "log": "cli.json",
+      "line": 612,
+      "log_sha256": "e9ef426def001f633273dad23c359d96b776b0f444e1244053619324148921a8"
+    },
+    {
+      "shard": 5,
+      "log": "parents-79ae2cd4e1d62734.json",
+      "line": 81,
+      "log_sha256": "eb5a2dc7f8620c9d4d1653f7b76bd2bea8b90c38afd514f25a12d55dc5d2dff3"
+    },
+    {
+      "shard": 5,
+      "log": "parents-79ae2cd4e1d62734.json",
+      "line": 82,
+      "log_sha256": "eb5a2dc7f8620c9d4d1653f7b76bd2bea8b90c38afd514f25a12d55dc5d2dff3"
+    },
+    {
+      "shard": 5,
+      "log": "parents-79ae2cd4e1d62734.json",
+      "line": 83,
+      "log_sha256": "eb5a2dc7f8620c9d4d1653f7b76bd2bea8b90c38afd514f25a12d55dc5d2dff3"
+    },
+    {
+      "shard": 5,
+      "log": "parents-79ae2cd4e1d62734.json",
+      "line": 84,
+      "log_sha256": "eb5a2dc7f8620c9d4d1653f7b76bd2bea8b90c38afd514f25a12d55dc5d2dff3"
+    },
+    {
+      "shard": 5,
+      "log": "parents-79ae2cd4e1d62734.json",
+      "line": 85,
+      "log_sha256": "eb5a2dc7f8620c9d4d1653f7b76bd2bea8b90c38afd514f25a12d55dc5d2dff3"
+    },
+    {
+      "shard": 5,
+      "log": "parents-79ae2cd4e1d62734.json",
+      "line": 86,
+      "log_sha256": "eb5a2dc7f8620c9d4d1653f7b76bd2bea8b90c38afd514f25a12d55dc5d2dff3"
+    }
+  ],
+  "events": [
+    {
+      "Time": "2026-10-15T17:42:46.183708842Z",
+      "Action": "output",
+      "Package": "github.com/wangjohn/agent-archive/internal/cli",
+      "Test": "TestRealCLICatalogCommandsEqualPrivateExhaustiveOracle",
+      "Output": "    migrate_catalog_test.go:158: CI_FIXTURE_METRIC_V1 {\"version\":1,\"fixture\":\"private_catalog\",\"phase\":\"normalize\",\"elapsed_ns\":5874799,\"operations\":{}}\n"
+    },
+    {
+      "Time": "2026-10-15T17:42:46.183888852Z",
+      "Action": "output",
+      "Package": "github.com/wangjohn/agent-archive/internal/cli",
+      "Test": "TestRealCLICatalogCommandsEqualPrivateExhaustiveOracle",
+      "Output": "    migrate_catalog_test.go:158: CI_FIXTURE_METRIC_V1 {\"version\":1,\"fixture\":\"private_catalog\",\"phase\":\"construct\",\"elapsed_ns\":97053,\"operations\":{\"constructors\":1}}\n"
+    },
+    {
+      "Time": "2026-10-15T17:42:46.296123155Z",
+      "Action": "output",
+      "Package": "github.com/wangjohn/agent-archive/internal/cli",
+      "Test": "TestRealCLICatalogCommandsEqualPrivateExhaustiveOracle",
+      "Output": "    migrate_catalog_test.go:158: CI_FIXTURE_METRIC_V1 {\"version\":1,\"fixture\":\"private_catalog\",\"phase\":\"publication\",\"elapsed_ns\":112143879,\"operations\":{\"commits\":4,\"rows\":4}}\n"
+    },
+    {
+      "Time": "2026-10-15T17:42:46.296525475Z",
+      "Action": "output",
+      "Package": "github.com/wangjohn/agent-archive/internal/cli",
+      "Test": "TestRealCLICatalogCommandsEqualPrivateExhaustiveOracle",
+      "Output": "    migrate_catalog_test.go:158: CI_FIXTURE_METRIC_V1 {\"version\":1,\"fixture\":\"private_catalog\",\"phase\":\"activation\",\"elapsed_ns\":361442,\"operations\":{}}\n"
+    },
+    {
+      "Time": "2026-10-15T17:38:02.56304737Z",
+      "Action": "output",
+      "Package": "github.com/wangjohn/agent-archive/internal/cli",
+      "Test": "TestQualificationLargeFixturesDoNotRetainProcessSeeds",
+      "Output": "    picker_fixture_reuse_test.go:150: CI_FIXTURE_METRIC_V1 {\"version\":1,\"fixture\":\"qualification\",\"phase\":\"build\",\"elapsed_ns\":4269635143,\"operations\":{\"constructors\":1,\"entry_encodes\":1401,\"rows\":1401}}\n"
+    },
+    {
+      "Time": "2026-10-15T17:38:06.816359624Z",
+      "Action": "output",
+      "Package": "github.com/wangjohn/agent-archive/internal/cli",
+      "Test": "TestQualificationLargeFixturesDoNotRetainProcessSeeds",
+      "Output": "    picker_fixture_reuse_test.go:151: CI_FIXTURE_METRIC_V1 {\"version\":1,\"fixture\":\"qualification\",\"phase\":\"build\",\"elapsed_ns\":4252631631,\"operations\":{\"constructors\":1,\"entry_encodes\":1401,\"rows\":1401}}\n"
+    },
+    {
+      "Time": "2026-10-15T17:40:32.646605185Z",
+      "Action": "output",
+      "Package": "github.com/wangjohn/agent-archive/internal/catalog",
+      "Test": "TestPickerReaderFixturesOwnAuthorityBodiesAndMetadata",
+      "Output": "    picker_read_test.go:36: CI_FIXTURE_METRIC_V1 {\"version\":1,\"fixture\":\"picker_reader\",\"phase\":\"publication\",\"elapsed_ns\":6148003746,\"operations\":{\"commits\":96,\"constructors\":1,\"rows\":96}}\n"
+    },
+    {
+      "Time": "2026-10-15T17:41:16.294855515Z",
+      "Action": "output",
+      "Package": "github.com/wangjohn/agent-archive/internal/catalog",
+      "Test": "TestPickerReaderFixturesOwnAuthorityBodiesAndMetadata",
+      "Output": "    picker_read_test.go:36: CI_FIXTURE_METRIC_V1 {\"version\":1,\"fixture\":\"picker_reader\",\"phase\":\"upgrade\",\"elapsed_ns\":43648122104,\"operations\":{\"upgrade_steps\":49}}\n"
+    },
+    {
+      "Time": "2026-10-15T17:41:16.311394259Z",
+      "Action": "output",
+      "Package": "github.com/wangjohn/agent-archive/internal/catalog",
+      "Test": "TestPickerReaderFixturesOwnAuthorityBodiesAndMetadata",
+      "Output": "    picker_read_test.go:50: CI_FIXTURE_METRIC_V1 {\"version\":1,\"fixture\":\"picker_reader\",\"phase\":\"freeze\",\"elapsed_ns\":13564855,\"operations\":{}}\n"
+    },
+    {
+      "Time": "2026-10-15T17:41:16.326752729Z",
+      "Action": "output",
+      "Package": "github.com/wangjohn/agent-archive/internal/catalog",
+      "Test": "TestPickerReaderFixturesOwnAuthorityBodiesAndMetadata",
+      "Output": "    picker_read_test.go:147: CI_FIXTURE_METRIC_V1 {\"version\":1,\"fixture\":\"picker_reader\",\"phase\":\"clone\",\"elapsed_ns\":15281977,\"operations\":{\"rows\":96,\"store_clones\":1}}\n"
+    },
+    {
+      "Time": "2026-10-15T17:41:16.342214713Z",
+      "Action": "output",
+      "Package": "github.com/wangjohn/agent-archive/internal/catalog",
+      "Test": "TestPickerReaderFixturesOwnAuthorityBodiesAndMetadata",
+      "Output": "    picker_read_test.go:148: CI_FIXTURE_METRIC_V1 {\"version\":1,\"fixture\":\"picker_reader\",\"phase\":\"clone\",\"elapsed_ns\":15386463,\"operations\":{\"rows\":96,\"store_clones\":1}}\n"
+    },
+    {
+      "Time": "2026-10-15T17:41:16.37765301Z",
+      "Action": "output",
+      "Package": "github.com/wangjohn/agent-archive/internal/catalog",
+      "Test": "TestPickerReaderFixturesOwnAuthorityBodiesAndMetadata",
+      "Output": "    picker_read_test.go:171: CI_FIXTURE_METRIC_V1 {\"version\":1,\"fixture\":\"picker_reader\",\"phase\":\"clone\",\"elapsed_ns\":14847441,\"operations\":{\"rows\":96,\"store_clones\":1}}\n"
+    }
+  ]
+}

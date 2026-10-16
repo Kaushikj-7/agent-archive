@@ -165,8 +165,8 @@ func (p *statsPrinter) agentNotes() []string {
 	for _, a := range p.s.Agents {
 		who := nameOf(a.Label)
 		if a.UnknownTokenSessions > 0 {
-			notes = append(notes, fmt.Sprintf("%s: %s of %s have no token data; left out of tokens and spend.",
-				who, statsfmt.CommaInt(int64(a.UnknownTokenSessions)), plural(a.Sessions, "session")))
+			notes = append(notes, p.observationAccountingContext(fmt.Sprintf("%s: %s of %s have no token data; left out of tokens and spend.",
+				who, statsfmt.CommaInt(int64(a.UnknownTokenSessions)), plural(a.Sessions, "session"))))
 		}
 		if a.Harness == "codex" {
 			notes = append(notes, who+": MCP calls and tool errors are not recorded.")

@@ -3,7 +3,6 @@ package cli
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -67,23 +66,28 @@ func TestSettledCodexNamePublicationAndArchiveOnlyRead(t *testing.T) {
 		must(t, os.WriteFile(paths[i], []byte(raw), 0600))
 		must(t, handleTestHookEvent(home, "codex", map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": id, "cwd": project, "transcript_path": paths[i]}, now.Add(time.Duration(i)*time.Minute)))
 	}
-	// Always close the fixture writer before production's settled read. This
-	// never checkpoints, deletes sidecars, or modifies a real native database.
-	writeNames := func(first string) {
+	// Codex's name index: one record per thread, the last nonempty name wins.
+	// unfinished appends a record Codex is still writing, which proves nothing.
+	writeIndex := func(first, unfinished string) {
 		t.Helper()
-		db, openErr := sql.Open("sqlite", filepath.Join(nativeHome, "state_5.sqlite"))
-		must(t, openErr)
-		defer func() { must(t, db.Close()) }()
-		_, execErr := db.ExecContext(t.Context(), "CREATE TABLE IF NOT EXISTS threads(id TEXT PRIMARY KEY,history_mode TEXT,name TEXT,title TEXT,first_user_message TEXT,preview TEXT,source TEXT,cli_version TEXT,rollout_path TEXT)")
-		must(t, execErr)
+		var data []byte
 		for i, id := range ids {
 			name := "Shared synthetic name"
 			if i == 0 {
 				name = first
 			}
-			_, execErr = db.ExecContext(t.Context(), "INSERT OR REPLACE INTO threads VALUES(?,?,?,?,?,?,?,?,?)", id, "paginated", name, prompts[i], prompts[i], prompts[i], `"cli"`, "0.159.2", paths[i])
-			must(t, execErr)
+			line, marshalErr := json.Marshal(map[string]string{"id": id, "thread_name": name, "updated_at": "2026-10-07T00:00:00Z"})
+			must(t, marshalErr)
+			data = append(append(data, line...), '\n')
 		}
+		if unfinished != "" {
+			data = append(data, fmt.Sprintf(`{"id":%q,"thread_name":%q`, ids[0], unfinished)...)
+		}
+		must(t, os.WriteFile(filepath.Join(nativeHome, "session_index.jsonl"), data, 0600))
+	}
+	writeNames := func(first string) {
+		t.Helper()
+		writeIndex(first, "")
 	}
 	writeNames("Shared synthetic name")
 	opts := collector.Options{Sources: productionAgents, Parsers: productionAgents, Labels: env.labelProviders(cfg), LabelEnvironment: agentapi.LabelEnvironment{Homes: []string{nativeHome}}, MachineID: cfg.MachineID, Now: func() time.Time { return now }, AcceptSession: cfg.AcceptSession}
@@ -217,10 +221,9 @@ func TestSettledCodexNamePublicationAndArchiveOnlyRead(t *testing.T) {
 	if !reflect.DeepEqual(persisted, after) {
 		t.Fatal("unchanged pass changed metadata")
 	}
-	// A synthetic live sidecar represents unavailable files. Refusal must keep
-	// the already published name; it cannot turn the newer DB label into proof.
-	writeNames("Unavailable newer name")
-	must(t, os.WriteFile(filepath.Join(nativeHome, "state_5.sqlite-wal"), []byte("synthetic live marker"), 0600))
+	// An unfinished index record leaves the index unavailable. Refusal must
+	// keep the already published name; it cannot turn the newer name into proof.
+	writeIndex("Renamed without a prompt", "Unavailable newer name")
 	now = now.Add(time.Hour)
 	if result := collect(); len(result.Published) != 0 || remote.puts != puts {
 		t.Fatalf("live sidecar republished: %+v", result)

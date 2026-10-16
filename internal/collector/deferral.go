@@ -1,6 +1,7 @@
 package collector
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
@@ -10,9 +11,6 @@ import (
 // Reasons a scan was deferred (Result.Deferred, state.Status.DeferredSessions).
 // They carry no path or content, and once written keep their spelling.
 const (
-	// DeferredHistoryCoverage: Codex has not yet established which rollout
-	// files make up the thread's history.
-	DeferredHistoryCoverage = "codex_history_coverage"
 	// DeferredSourceChanged: the source (a transcript, or the native index
 	// naming it) changed while it was being read.
 	DeferredSourceChanged = "source_changed"
@@ -20,6 +18,10 @@ const (
 	// when the session needed it. A session that needs more than its own
 	// share (SessionReadCeiling) is a size-limit gap instead.
 	DeferredReadBudget = "read_budget"
+	// DeferredLookupAllowance: the pass's allowance for finding Codex
+	// rollouts ran out while the session was being read
+	// (agentapi.CauseLookupAllowanceSpent). The next pass has a fresh one.
+	DeferredLookupAllowance = "lookup_allowance"
 )
 
 // readBudgetDeferralError marks a source read the pass's shared read ledger
@@ -40,11 +42,14 @@ func (*readBudgetDeferralError) deferralReason() string { return DeferredReadBud
 // MaxDeferral bounds how long a session's scans may be deferred: once every
 // pass for this long has deferred them, the next deferral is a failure,
 // reported as one (DeferralExpiredProblem), and so is every deferral after
-// it, so a refusal no later pass clears (coverage that never completes for
-// the thread, a source changed on every read) cannot hide as "rechecking"
+// it, so a refusal no later pass clears (a source changed on every read)
+// cannot hide as "rechecking"
 // for good. A pass that scans the session without deferring it (it fails
 // otherwise, or succeeds) starts the clock again; a pass that ends before
-// scanning it leaves the clock running.
+// scanning it, or leaves it unopened, leaves the clock running, and fails it
+// once the clock has run for MaxDeferral (leaveForNextPass). A Codex session
+// that failed this way while waiting on the lookup allowance is then
+// retried on a backoff schedule, not on every pass (nextLookupRetry).
 const MaxDeferral = 24 * time.Hour
 
 // DeferralExpiredProblem prefixes the error of a session whose deferral
@@ -52,12 +57,20 @@ const MaxDeferral = 24 * time.Hour
 var DeferralExpiredProblem = fmt.Sprintf("still not read after %d hours of retries", int(MaxDeferral/time.Hour))
 
 // loadDeferredSince reads when each session's run of deferred scans began
-// (state.Status.DeferredSince) from the previous pass's status. A status
+// (state.Status.DeferredSince), why the previous pass deferred each
+// (state.Status.DeferredSessions), where it left each it did not reach
+// (state.Status.UnreachedSessions), when it ran (state.Status.LastScanAt),
+// and which sessions are on the lookup allowance's backoff schedule
+// (state.Status.NextRetryAt), from the previous pass's status. A status
 // that cannot be read starts every clock again, delaying a failure by at
 // most MaxDeferral.
 func (p *pass) loadDeferredSince() {
 	if previous, err := p.local.LoadStatus(); err == nil {
 		p.priorDeferredSince = previous.DeferredSince
+		p.priorDeferred = previous.DeferredSessions
+		p.priorUnreached = previous.UnreachedSessions
+		p.priorScanAt = previous.LastScanAt
+		p.priorRetryAt = previous.NextRetryAt
 	}
 }
 
@@ -90,21 +103,24 @@ func (p *pass) carryDeferredSince(id string) {
 	}
 }
 
+// errLeftUnopened is the cause leaveForNextPass gives a session it fails for
+// having been left unopened past MaxDeferral.
+var errLeftUnopened = errors.New("left for the next pass without being opened")
+
 // deferralReason reports whether a scan's error only defers the session, and
 // why: every failure it joins is a source refusal the next pass is expected
-// to clear, a history coverage refusal (agentapi.CauseHistoryCoverage, which
-// the Codex source names where it refuses) or a source that changed while
-// being read (agentapi.Changed). One failure of any other kind makes the
+// to clear, a source that changed while being read (agentapi.Changed) or a
+// Codex lookup past the pass's allowance (agentapi.CauseLookupAllowanceSpent).
+// One failure of any other kind makes the
 // whole error a failure. The outermost SourceError of each failure decides,
 // as agentapi.Failure does.
 func deferralReason(err error) (string, bool) {
 	if classified, ok := err.(agentapi.Classified); ok {
-		kind, cause := classified.Classification()
-		switch {
-		case cause == agentapi.CauseHistoryCoverage:
-			return DeferredHistoryCoverage, true
+		switch kind, cause := classified.Classification(); {
 		case kind == agentapi.Changed:
 			return DeferredSourceChanged, true
+		case kind == agentapi.Limit && cause == agentapi.CauseLookupAllowanceSpent:
+			return DeferredLookupAllowance, true
 		}
 		return "", false
 	}
@@ -121,8 +137,7 @@ func deferralReason(err error) (string, bool) {
 			if !ok {
 				return "", false
 			}
-			// Coverage is the more specific reason, so it names the deferral.
-			if reason == "" || partReason == DeferredHistoryCoverage {
+			if reason == "" {
 				reason = partReason
 			}
 		}

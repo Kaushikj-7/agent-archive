@@ -14,6 +14,10 @@ import (
 // evidence cannot be replayed merely to settle that owner.
 var ErrCatalogJournalFrozen = errors.Join(ErrDurableStorageRecovery, errors.New("catalog journal is frozen; exact owner recovery or completion is required"))
 
+// catalogPendingForFence reads a session's whole pending publication, for a
+// fence that compares or digests it: one over recovered catalog work. A
+// fence that only asks what the publication carries reads its fence view
+// (pendingFenceView) instead, which does not decode the source or records.
 func (s *Store) catalogPendingForFence(id string) (PendingPublication, bool, error) {
 	var pending PendingPublication
 	err := s.readBudgeted(s.pendingPath(id), &pending, true)
@@ -34,7 +38,11 @@ func (s *Store) checkCatalogPendingSave(ctx context.Context, id string, next Pen
 	// Fence-owned decoded views must end after their exact comparisons.
 	scratch, closeScratch := s.WithReadBudget(ctx, s.resourceBudget)
 	defer closeScratch()
-	old, found, err := scratch.catalogPendingForFence(id)
+	// Only recovered catalog work is compared, so only it is read whole.
+	old, found, err := scratch.pendingFenceView(id)
+	if err == nil && found && recoveredCatalogJournal(old) {
+		old, found, err = scratch.catalogPendingForFence(id)
+	}
 	if err != nil {
 		return errors.Join(ErrCatalogJournalFrozen, err)
 	}
@@ -102,7 +110,7 @@ func (s *Store) verifyCatalogJournalRemoval(id string, pending PendingPublicatio
 func (s *Store) checkCatalogPendingRemoval(id string) error {
 	scratch, closeScratch := s.WithReadBudget(s.durableContext(), s.resourceBudget)
 	defer closeScratch()
-	pending, found, err := scratch.catalogPendingForFence(id)
+	pending, found, err := scratch.pendingFenceView(id)
 	if err != nil {
 		return errors.Join(ErrDurableStorageRecovery, err)
 	}

@@ -83,6 +83,11 @@ type sessionScan struct {
 	// either the read this scan went on from or the read that was refused.
 	// The gap is recorded at its state (see overCeiling).
 	lastRead *sourceRead
+	// frozenSource is the current source of the history publication this
+	// scan froze from its own candidate, whose bundle (the publication's
+	// Bundle) is exactly what that source's bytes encode until preparation
+	// changes the publication (see historyInputBundle).
+	frozenSource archive.SourceReference
 	// subagentRunning reports that the scan ended waiting for a resumed
 	// subagent to stop again (see errSubagentRunning).
 	subagentRunning bool
@@ -96,8 +101,27 @@ type sessionScan struct {
 	// gap it is, with this candidate cached as the state it was reached at.
 	retainedBudget   *agentapi.NativeReadBudget
 	retainedReleases []func()
+	nativeLeases     []*preparedNativeValidation
 	revisions        *revisionPlan
 	rewritten        *archive.SourceBundle
+	// offChainKept counts the off-chain (best-effort) revisions the last
+	// reconciliation kept: what they retained counts against the session's
+	// read ceiling until the scan ends. withoutOffChain is set when the scan
+	// runs again without them (see run). offChainLeftOut reports that it
+	// left at least one out of what is published (see noteRevisionLeftOut).
+	// offChainPlanned and offChainUnread are what the last reconciliation
+	// that read them staged to publish beside the current revision (each
+	// revision with the source staged) and whether it left any unread; they
+	// outlive the run again, which reports only what it no longer publishes
+	// as staged (see reconcileRevisions).
+	offChainKept    int
+	offChainLeftOut bool
+	withoutOffChain bool
+	offChainPlanned []archive.RevisionReference
+	offChainUnread  bool
+	// replacingOwed is set when resume went past a publication owed
+	// before this scan, to be replaced by the scan's own (see run).
+	replacingOwed bool
 }
 
 // filteredSource is a source read and filtered once in a scan.
@@ -127,7 +151,53 @@ const (
 
 func (s *sessionScan) id() string { return s.reg.ArchiveSessionID }
 
-func (s *sessionScan) run(ctx context.Context) (sessionOutcome, error) {
+// run scans the session once (scanOnce). A scan that kept off-chain
+// revisions and then met the session's own read ceiling (guarding,
+// settling or publishing with their retained bytes still held) is run again
+// from the start without them: they are best effort, and the whole session
+// recorded as too large to read, although its own chain fits, would stop
+// its capture on every pass. Everything the first scan retained is released
+// and its ceiling refusal forgotten first, so the second scan meets the
+// ceiling only on its own. A scan that saved a publication before the
+// refusal is not run again: the publication is owed as it is
+// (overCeiling defers it), and its later passes resume it without the
+// reconciliation's retained work. A publication already owed when the scan
+// began does not keep it from running again: the scan went on past it, so
+// it may be replaced (one never attempted, which a stop request replaces
+// with a richer one), and a replacement the first scan saved is resumed as
+// it is by the second. Whether an off-chain revision was left out is
+// recorded once, as the scan ends (noteRevisionLeftOut).
+func (s *sessionScan) run(ctx context.Context) (outcome sessionOutcome, err error) {
+	defer func() { err = errors.Join(err, s.closeNativeLeases()); s.noteRevisionLeftOut(err) }()
+	outcome, err = s.scanOnce(ctx)
+	if err == nil || s.offChainKept == 0 || s.withoutOffChain || !s.overSessionCeiling(err) {
+		return outcome, err
+	}
+	if owed, owedErr := s.local.Outstanding(s.reg, false); owedErr != nil {
+		return outcome, errors.Join(err, owedErr)
+	} else if owed.Upload && !s.replacingOwed {
+		return outcome, err
+	}
+	s.forgetForRunWithoutOffChain()
+	return s.scanOnce(ctx)
+}
+
+// forgetForRunWithoutOffChain releases and forgets what a scan did, keeping
+// only what its reconciliation planned for off-chain revisions, so the scan
+// can run again without them (see run).
+func (s *sessionScan) forgetForRunWithoutOffChain() {
+	s.releaseRetained()
+	s.readBudget().ForgetScopeExceeded()
+	s.filtered, s.lastRead, s.revisions, s.rewritten = nil, nil, nil, nil
+	s.gap, s.sizeLimit, s.readyAt, s.subagentRunning = "", nil, time.Time{}, false
+	s.frozenSource = archive.SourceReference{}
+	// offChainLeftOut stands until the second scan reconciles: one that
+	// resumes the first scan's replacement leaves out what the first did.
+	s.offChainKept, s.withoutOffChain = 0, true
+}
+
+// scanOnce is one scan of the session, the steps above.
+func (s *sessionScan) scanOnce(ctx context.Context) (sessionOutcome, error) {
 	if err := s.prepareRetainedOwnership(); err != nil {
 		return outcomeSkipped, err
 	}
@@ -157,7 +227,7 @@ func (s *sessionScan) run(ctx context.Context) (sessionOutcome, error) {
 	if emptied, err := s.emptied(read); emptied || err != nil {
 		return outcomeSkipped, err
 	}
-	candidate, supplemental, err := s.build(read)
+	candidate, supplemental, err := s.buildCandidate(&read)
 	if err != nil {
 		return outcomeSkipped, err
 	}
@@ -253,6 +323,7 @@ func (s *sessionScan) resume(ctx context.Context) (outcome sessionOutcome, handl
 		// never-attempted candidate can be safely replaced by a richer one;
 		// deferred lifecycle evidence enriches it without changing when it
 		// becomes ready.
+		s.replacingOwed = true
 		return outcomeSkipped, false, nil
 	}
 	// No publication ever waits longer than one interval from now. A later
@@ -373,7 +444,10 @@ func (s *sessionScan) read() (read sourceRead, ok bool, err error) {
 	} else if err != nil {
 		return read, false, err
 	}
-	if err := s.persistCodexBinding(read.observed.binding); err != nil {
+	if err := s.persistNativeValidation(read.observed.prepared); err != nil {
+		return read, false, err
+	}
+	if err := s.persistCodexBinding(read.observed.binding.CodexBinding()); err != nil {
 		return read, false, err
 	}
 	if err := s.followRelocatedRollout(read.observed.relocated); err != nil {
@@ -457,6 +531,18 @@ func (s *sessionScan) emptied(read sourceRead) (bool, error) {
 	return true, err
 }
 
+// buildCandidate builds the scan's candidate (build). A history candidate is
+// reconciled and published without the read's encoded rows, so they are
+// released (finishHistoryFilter) before reconciliation reads more.
+func (s *sessionScan) buildCandidate(read *sourceRead) (archive.SourceBundle, []archive.SupplementalEvidence, error) {
+	candidate, supplemental, err := s.build(*read)
+	if err != nil || candidate.History == nil || !s.canReconcileRevisions(*read, candidate) {
+		return candidate, supplemental, err
+	}
+	candidate, err = s.finishHistoryFilter(read, candidate)
+	return candidate, supplemental, err
+}
+
 // build assembles the candidate bundle, and returns the supplemental
 // evidence it was built with. A recoverable block the readable
 // source has ended is cleared first, since a source that comes back carrying
@@ -472,13 +558,9 @@ func (s *sessionScan) build(read sourceRead) (archive.SourceBundle, []archive.Su
 		baseEvidence = cached.SupplementalEvidence
 	}
 	baseEvidence = limitSkillEvidence(baseEvidence, s.opts.skillEvidence())
-	if read.filtered.History == nil {
-		baseEvidence = s.applyLabels(baseEvidence)
-	} else {
-		// An ordinary lookup may precede a native history transition in the
-		// same pass. Preserve history capture without widening name authority.
-		baseEvidence = withoutSessionLabels(baseEvidence)
-	}
+	// An ordinary source and a history source set carry the session's name
+	// alike: a thread that continues into a later rollout keeps it.
+	baseEvidence = s.applyLabels(baseEvidence)
 	supplemental := limitSkillEvidence(mergeSupplementalEvidence(baseEvidence, s.req.HookEvidence), s.opts.skillEvidence())
 
 	// now is a placeholder here; bundleEvidenceEqual ignores CapturedAt, so
@@ -741,6 +823,8 @@ func (s *sessionScan) publish(ctx context.Context, read sourceRead, candidate ar
 		return outcomeSkipped, fmt.Errorf("persist pending publication: %w", err)
 	}
 	if pending.History != nil {
+		// Its current source is exactly this candidate (historyInputBundle).
+		s.frozenSource = pending.SourceReference()
 		outcome, err := s.resumeHistory(ctx, pending)
 		if err != nil || outcome != outcomePublished {
 			return outcome, err

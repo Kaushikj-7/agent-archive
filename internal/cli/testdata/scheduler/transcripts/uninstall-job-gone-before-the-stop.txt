@@ -1,5 +1,6 @@
 # uninstall whose loaded job is gone when it stops it
 # each launchctl call, then the state of the files as it was asked
 print gui/UID/com.agent-archive.collector  |  journal=absent own=present
+print gui/UID/com.agent-archive.search  |  journal=absent own=present
 print gui/UID/com.agent-archive.collector  |  journal=absent own=present
 # exit 0, end: journal=absent own=absent

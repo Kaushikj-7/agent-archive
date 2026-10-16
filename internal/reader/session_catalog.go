@@ -792,6 +792,15 @@ func fillCatalogPage(rows *sql.Rows, q CatalogQuery, offset int, filterSummaries
 			page.Total++
 		}
 		if !filterSummaries || page.Total > offset && (limit <= 0 || len(page.Rows) < limit) {
+			if page.Rows == nil && !filterSummaries {
+				// SQL counted this candidate set in the same read transaction.
+				// Reserve only the requested page, after its first valid row.
+				count := page.Total - offset
+				if limit > 0 {
+					count = min(count, limit)
+				}
+				page.Rows = make([]CatalogRow, 0, count)
+			}
 			page.Rows = append(page.Rows, row)
 		}
 	}

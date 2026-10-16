@@ -12,11 +12,10 @@ run `backfill` for older sessions and anything else. With
 no options it imports every session it finds, but first it shows each project
 with its session count per app, what it will skip and why, and an estimated
 finite-retention expiry date or **no automatic expiry** for Keep forever.
-Nothing changes until you answer
-`y`.
+Archive and configuration changes require answering `y`.
 
 ```sh
-agent-archive backfill --dry-run     # see the plan; changes nothing
+agent-archive backfill --dry-run     # see the plan; no archive/configuration changes
 agent-archive backfill --dry-run --json
 agent-archive backfill               # import, after confirming
 agent-archive backfill history       # past imports
@@ -30,13 +29,24 @@ starts, it shows completed/total sessions and a percentage.
 These counts include sessions examined before date and project filters are applied;
 the finished plan shows how many will actually be imported.
 
+Planning, including `--dry-run`, can update the disposable private
+`backfill-inspection-cache` directory inside the local archive data directory.
+It holds successful intrinsic inspection facts for ordinary Codex rollouts,
+qualified by verified content digests and inspection versions. Current source
+opening, content checks, project permissions and archive decisions still run.
+The cache stores at most 10,000 entries and 16 MiB of serialized records
+(filesystem overhead is additional); a bounded command writer
+can drop observations under load. A missing, invalid, busy or evicted cache
+simply causes full inspection. Delete this directory to discard it. Neither
+planning nor this cache registers sessions, changes configuration or uploads data.
+
 In `backfill history`, an import's UPLOAD column counts as **waiting** only
 the sessions not in the archive yet. Sessions already uploaded are counted
 after it: **rechecking** when only a re-scan is still owed (a Codex session
-waiting for its history coverage, say), **updating** when newer work is still
+whose rollout changed while it was read, say), **updating** when newer work is still
 to upload, as in `uploaded · 2 rechecking` or `3 waiting · 1 updating`.
 
-Ctrl-C while the plan is being made stops it and changes nothing. Ctrl-C
+Ctrl-C while the plan is being made stops it without archive or configuration changes. Ctrl-C
 during registration or upload stops after the session in flight; run
 `backfill` again with the same options to finish the import, or let the
 background collector upload what is registered. Each says at once that it is
@@ -250,8 +260,8 @@ and selected physical revisions use the validated shared history reader and
 durable staging; missing or ambiguous dependencies remain unresolved.
 Summaries contain no transcript paths, native IDs, remote URLs, or content.
 For Codex history refusals, `diagnostics` preserves fixed source reason codes
-when available: incomplete history coverage, missing dependencies or ownership
-boundaries, missing or invalid first-own-task evidence, and specific resource
+when available: a missing or duplicated rollout a thread continues from, no
+single current rollout, missing dependencies or ownership boundaries, missing or invalid first-own-task evidence, and specific resource
 limits. Text plans show the same counted breakdown. Unknown source reasons
 use a generic unavailable or resource-limit diagnostic; raw errors are never
 printed. These details explain the existing skip and do not change eligibility.
@@ -296,10 +306,10 @@ not create permissions.
 ```sh
 agent-archive backfill --mapping-file mappings.json --dry-run --json
 agent-archive backfill --mapping-file mappings.json
-agent-archive historical-project list
-agent-archive historical-project rename 11111111111111111111111111111111 "Retired API"
-agent-archive historical-project disable 11111111111111111111111111111111
-agent-archive historical-project enable 11111111111111111111111111111111
+agent-archive backfill projects list
+agent-archive backfill projects rename 11111111111111111111111111111111 "Retired API"
+agent-archive backfill projects disable 11111111111111111111111111111111
+agent-archive backfill projects enable 11111111111111111111111111111111
 ```
 
 Review the assignments, historical IDs, labels and counts before confirming.
@@ -347,7 +357,7 @@ whole-session expiry; disabled permissions still expire under finite retention.
 Exact batch undo and purge remove the owned sessions and staged/remote evidence.
 **Undo retains historical project identities and destination permissions as
 explicit configuration**, including identities shared by another import. Use
-`historical-project disable ID` to stop their retained maintenance. Undo does not
+`backfill projects disable ID` to stop their retained maintenance. Undo does not
 claim sessions owned by another batch or change live capture configuration.
 
 The first committed historical permission installs the permanent
