@@ -110,7 +110,11 @@ This complements the scoped picker harness below: it retains full-output
 validation for default list, exact/short-ID and linked show, multi-window JSON
 stats and interactive stats. Historical measurements of earlier production
 commits are not measurements of current main; rerun a frozen harness on both
-source pins before claiming a current performance difference.
+source pins before claiming a current performance difference. The current-source
+adaptation uses the day-grouping option and explicit plain-table width introduced
+by the newer list renderer; the old project-grouping harness cannot compile on
+current main unchanged. Treat that adaptation as part of the harness identity,
+and use one identical compatible harness for any new paired comparison.
 
 `BenchmarkMatchedCLI` measures the same captured `CLI.Run` invocation that its
 validators inspect after timing. Its default fixture has 800 synthetic sessions;

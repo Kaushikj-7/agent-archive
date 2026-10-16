@@ -243,10 +243,10 @@ func matchedExpected(tb testing.TB, fixture []archive.Metadata, kind matchedKind
 		sessions := append([]archive.Metadata(nil), fixture...)
 		sortByActivity(sessions)
 		view := listViews{sessions: sessions, full: true, limit: 50}.view
-		format := listFormatOptions{Now: storagetest.BenchmarkTime.Add(24 * time.Hour), GroupByProject: true}
+		format := listFormatOptions{Now: storagetest.BenchmarkTime.Add(24 * time.Hour), GroupByDay: true}
 		choices := listChoices(sessionScope{}, format, false, sessions, 50, view, "")
 		var out bytes.Buffer
-		if err := printListTable(&out, choices.shown()); err != nil {
+		if err := printListTable(&out, choices.shown(), 0); err != nil {
 			tb.Fatal(err)
 		}
 		return out.Bytes()
