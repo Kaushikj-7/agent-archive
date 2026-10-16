@@ -622,10 +622,10 @@ Example: agent-archive stats --html --output stats.html
 `,
 	"handoff": `Usage: agent-archive handoff [SESSION_ID|WORDS|--latest|--file PATH] [options]
 
-Before setup, browse Claude Code and Codex native sessions in this checkout
-and its descendants. Local IDs (qualified with --harness) or unique prefixes
-select beyond the first 50 filtered previews. Scrolling past the last row
-(o when reading lines) loads another 50; / filters loaded rows only. Word
+Before setup, browse Claude Code, Codex and Muse Code native sessions in this
+checkout and its descendants. Local IDs (qualified with --harness) or unique
+prefixes select beyond the first 50 filtered previews. Scrolling past the last
+row (o when reading lines) loads another 50; / filters loaded rows only. Word
 queries report their bounded preview window.
 --project requires a directory; --all-projects explicitly broadens the scope.
 Local --latest ranks file modification time and requires complete identity
@@ -693,7 +693,7 @@ given.
                         With --latest, the directory it searches, and where
                         the agent starts
   --all-projects        Pick from and search every project
-  --harness NAME        claude, codex, cursor; muse with --file
+  --harness NAME        claude, codex, cursor, muse
   --file PATH           Render a native transcript directly (needs --harness);
                         works for sessions the archive never captured
   --revision REVISION_ID

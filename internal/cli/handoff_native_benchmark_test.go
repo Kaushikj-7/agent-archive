@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/nativesessions"
 	"io"
 	"os"
@@ -16,6 +17,7 @@ import (
 // BenchmarkNativeFirstPreview isolates enumeration, headers and 50 labels from
 // terminal rendering and process launch. Files are synthetic; no app is started.
 func BenchmarkNativeFirstPreview(b *testing.B) {
+	b.Run("muse", benchmarkMuseNativeFirstPreview)
 	for _, count := range []int{100, 1000, 10000} {
 		b.Run(strconv.Itoa(count), func(b *testing.B) {
 			root := b.TempDir()
@@ -54,6 +56,44 @@ func BenchmarkNativeFirstPreview(b *testing.B) {
 				b.ReportMetric(float64(read), "read-bytes/op")
 				b.ReportMetric(float64(files.peak), "open-files")
 				b.ReportMetric(float64(full), "full-filters/op")
+			}
+		})
+	}
+}
+
+func benchmarkMuseNativeFirstPreview(b *testing.B) {
+	for _, count := range []int{100, 1000, 10000} {
+		b.Run(strconv.Itoa(count), func(b *testing.B) {
+			data := b.TempDir()
+			cwd := b.TempDir()
+			for i := range count {
+				id := fmt.Sprintf("00000000-0000-7000-8000-%012d", i+1)
+				writeMuseNative(b, data, id, museNativeBytes(b, "exec", id, cwd))
+			}
+			registry, counter := museCountingRegistry(b)
+			headers, _ := registry.LookupNativeHeaders("muse")
+			roots := headers.Roots(agentapi.NativeLocations{DataHome: data}, agentapi.DiscoveryHandoff)
+			b.ReportAllocs()
+			b.ResetTimer()
+			for b.Loop() {
+				files := &nativeReadMeter{}
+				result, err := nativesessions.Discover(context.Background(), registry, files, roots, nativesessions.Scope{Directories: []string{cwd}}, nativesessions.Limits{Files: 10000, HeaderBytes: nativeWindowBytes, RecordBytes: nativeWindowBytes, TotalBytes: nativeReadBudget, Workers: 2})
+				if err != nil {
+					b.Fatal(err)
+				}
+				catalog := &nativePreviewCatalog{sources: registry, previews: registry, ctx: context.Background(), files: files, candidates: result.Candidates, reserved: result.Coverage.ReservedBytes, stderr: io.Discard, now: time.Unix(0, 0)}
+				if _, err := catalog.load(); err != nil {
+					b.Fatal(err)
+				}
+				read, opens, active, _ := files.counts()
+				if active != 0 || counter.calls.Load() != 0 || read > nativeReadBudget || catalog.next > 50 {
+					b.Fatal("pipeline exceeded deterministic bounds")
+				}
+				b.ReportMetric(float64(read), "read-bytes/op")
+				b.ReportMetric(float64(opens), "opens/op")
+				b.ReportMetric(float64(files.peak), "open-files")
+				b.ReportMetric(float64(counter.calls.Load()), "full-filters/op")
+				b.ReportMetric(float64(len(result.Candidates)), "verified-ids/op")
 			}
 		})
 	}

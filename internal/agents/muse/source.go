@@ -8,7 +8,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/sourceio"
 )
 
-// SourceProvider supports verified explicit local files only. Capture requires
+// SourceProvider supports verified local files only. Capture requires
 // qualified admission and a durable binding, which this operation does not grant.
 type SourceProvider struct{}
 

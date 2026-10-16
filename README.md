@@ -32,7 +32,7 @@ OpenAI and Anthropic are constantly one-upping each other or the best model, but
    agent-archive handoff
    ```
 
-   Browse existing Claude Code or Codex conversations without configuring storage.
+   Browse existing Claude Code, Codex or Muse Code conversations without configuring storage.
    [Local handoff scope, preview limits and cleanup](docs/guides/handoff.md#before-setup-native-local-sessions).
 
 3. **Create a private bucket** and an access key for it ([R2 and S3 steps](docs/getting-started/bucket.md)). On Cloudflare R2, start with [let setup create it](docs/getting-started/bucket.md#let-setup-create-it): you make one temporary token and setup creates the bucket and its key.

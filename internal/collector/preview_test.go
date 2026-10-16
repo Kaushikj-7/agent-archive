@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/transcriptio"
 	"os"
 	"path/filepath"
@@ -75,5 +76,28 @@ func TestPartialPreviewCannotProveGeneratedNameIsFinal(t *testing.T) {
 	}
 	if preview.NameComplete || preview.Name != "Latest generated" || preview.Title != "Fix widget" {
 		t.Fatalf("partial preview %+v", preview)
+	}
+}
+
+type partialRecordPreview struct{}
+
+func (partialRecordPreview) PreviewRecord(context.Context, []byte) (archive.RecordPreview, error) {
+	return archive.RecordPreview{Gaps: []archive.CaptureGap{{Code: "preview_partial"}}}, nil
+}
+
+func TestDecoderPartialGapCannotClaimCompleteLabels(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "preview.jsonl")
+	if err := os.WriteFile(path, []byte("{}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := transcriptio.Open(transcriptio.OS{}, path, transcriptio.OpenPolicy{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = snapshot.Close() }()
+	preview, err := PreviewTranscript(t.Context(), snapshot, partialRecordPreview{}, PreviewLimits{HeadBytes: 1024, TailBytes: 1024, RecordBytes: 1024}, "own")
+	if err != nil || preview.NameComplete || len(preview.Gaps) != 1 || preview.Gaps[0].Code != "preview_partial" {
+		t.Fatalf("partial %+v %v", preview, err)
 	}
 }

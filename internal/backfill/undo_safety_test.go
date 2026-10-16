@@ -144,7 +144,7 @@ func TestPlanUndoRefusesABatchIDSharedWithAnEarlierImport(t *testing.T) {
 	f.register("earlier", "/p", "2026-09-23-1", fixedNow.UTC())
 	later := f.batch("2026-09-23-1", fixedNow.Add(time.Hour).UTC())
 	f.register("later", "/p", later.ID, later.StartedAt)
-	_, err := PlanUndo(Environment{Sources: testSources, Discovery: builtin.NewBuiltins(), DatabaseCatalogs: builtin.NewBuiltins(), NativePaths: builtin.NewBuiltins(), Worktrees: builtin.NewBuiltins(), Workspaces: builtin.NewBuiltins(), Children: builtin.NewBuiltins(), Imports: builtin.NewBuiltins(), Home: f.home}, f.store, f.cfg, []Batch{later}, later, "")
+	_, err := PlanUndo(Environment{Sources: testSources, Discovery: testImportDiscovery(), DatabaseCatalogs: builtin.NewBuiltins(), NativePaths: builtin.NewBuiltins(), Worktrees: builtin.NewBuiltins(), Workspaces: builtin.NewBuiltins(), Children: builtin.NewBuiltins(), Imports: builtin.NewBuiltins(), Home: f.home}, f.store, f.cfg, []Batch{later}, later, "")
 	var shared *SharedBatchIDError
 	if !errors.As(err, &shared) || shared.Sessions != 1 || !strings.Contains(err.Error(), "Nothing was changed") {
 		t.Fatalf("err %v", err)
@@ -156,7 +156,7 @@ func TestPlanUndoRefusesABatchIDSharedWithAnEarlierImport(t *testing.T) {
 	own := f2.batch("2026-09-23-1", fixedNow.UTC())
 	f2.register("a", "/p", own.ID, own.StartedAt)
 	f2.register("b", "/p", own.ID, own.StartedAt.Add(30*time.Second))
-	if p, err := PlanUndo(Environment{Sources: testSources, Discovery: builtin.NewBuiltins(), DatabaseCatalogs: builtin.NewBuiltins(), NativePaths: builtin.NewBuiltins(), Worktrees: builtin.NewBuiltins(), Workspaces: builtin.NewBuiltins(), Children: builtin.NewBuiltins(), Imports: builtin.NewBuiltins(), Home: f2.home}, f2.store, f2.cfg, []Batch{own}, own, ""); err != nil || len(p.Sessions) != 2 {
+	if p, err := PlanUndo(Environment{Sources: testSources, Discovery: testImportDiscovery(), DatabaseCatalogs: builtin.NewBuiltins(), NativePaths: builtin.NewBuiltins(), Worktrees: builtin.NewBuiltins(), Workspaces: builtin.NewBuiltins(), Children: builtin.NewBuiltins(), Imports: builtin.NewBuiltins(), Home: f2.home}, f2.store, f2.cfg, []Batch{own}, own, ""); err != nil || len(p.Sessions) != 2 {
 		t.Fatalf("own sessions: %d, %v", len(p.Sessions), err)
 	}
 }
@@ -175,7 +175,7 @@ func TestUndoKeepsAProjectAnotherImportStillNeeds(t *testing.T) {
 	f.register("b1", "/work/p", b.ID, b.StartedAt)
 	f.register("b2", "/work/p", b.ID, b.StartedAt)
 
-	env := Environment{Sources: testSources, Discovery: builtin.NewBuiltins(), DatabaseCatalogs: builtin.NewBuiltins(), NativePaths: builtin.NewBuiltins(), Worktrees: builtin.NewBuiltins(), Workspaces: builtin.NewBuiltins(), Children: builtin.NewBuiltins(), Imports: builtin.NewBuiltins(), Home: f.home, Now: func() time.Time { return fixedNow }}
+	env := Environment{Sources: testSources, Discovery: testImportDiscovery(), DatabaseCatalogs: builtin.NewBuiltins(), NativePaths: builtin.NewBuiltins(), Worktrees: builtin.NewBuiltins(), Workspaces: builtin.NewBuiltins(), Children: builtin.NewBuiltins(), Imports: builtin.NewBuiltins(), Home: f.home, Now: func() time.Time { return fixedNow }}
 	plan, err := PlanUndo(env, f.store, f.cfg, []Batch{a, b}, a, "")
 	if err != nil {
 		t.Fatal(err)
@@ -228,7 +228,7 @@ func TestUndoDoesNotTakeOverAKeptProjectItHasNoSessionsIn(t *testing.T) {
 	f.register("b1", "/work/p", b.ID, b.StartedAt)
 	c := f.batch("2026-09-23-3", fixedNow.Add(2*time.Hour).UTC())
 	f.register("c1", "/elsewhere", c.ID, c.StartedAt)
-	plan, err := PlanUndo(Environment{Sources: testSources, Discovery: builtin.NewBuiltins(), DatabaseCatalogs: builtin.NewBuiltins(), NativePaths: builtin.NewBuiltins(), Worktrees: builtin.NewBuiltins(), Workspaces: builtin.NewBuiltins(), Children: builtin.NewBuiltins(), Imports: builtin.NewBuiltins(), Home: f.home}, f.store, f.cfg, []Batch{a, b, c}, c, "")
+	plan, err := PlanUndo(Environment{Sources: testSources, Discovery: testImportDiscovery(), DatabaseCatalogs: builtin.NewBuiltins(), NativePaths: builtin.NewBuiltins(), Worktrees: builtin.NewBuiltins(), Workspaces: builtin.NewBuiltins(), Children: builtin.NewBuiltins(), Imports: builtin.NewBuiltins(), Home: f.home}, f.store, f.cfg, []Batch{a, b, c}, c, "")
 	if err != nil || len(plan.ExcludeProjects) != 0 || len(plan.KeepProjects) != 0 {
 		t.Fatalf("C's undo touched p: %+v %+v %v", plan.ExcludeProjects, plan.KeepProjects, err)
 	}
@@ -257,7 +257,7 @@ func TestResumedByEvidenceDoesNotDecodeRecords(t *testing.T) {
 	runtime.GC()
 	var before, after runtime.MemStats
 	runtime.ReadMemStats(&before)
-	resumed, err := resumedByEvidence(Environment{Discovery: builtin.NewBuiltins()}, f.store, reg, state.Request{})
+	resumed, err := resumedByEvidence(Environment{Discovery: testImportDiscovery()}, f.store, reg, state.Request{})
 	runtime.ReadMemStats(&after)
 	if err != nil || !resumed {
 		t.Fatalf("resumed %v, %v", resumed, err)

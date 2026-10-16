@@ -19,6 +19,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 const nativeReadBudget int64 = 64 * 1024 * 1024
@@ -49,6 +50,7 @@ func (e Env) nativeRoots(harness string) ([]nativesessions.StoreRoot, error) {
 		return nil, err
 	}
 	locations := e.nativeSessionDirectories(home, config.Config{})
+	dataHome := e.nativeDataHome(home)
 	var roots []nativesessions.StoreRoot
 	for _, name := range e.agentRegistry().NativeHeaderAgents() {
 		if harness != "" && harness != name {
@@ -56,10 +58,38 @@ func (e Env) nativeRoots(harness string) ([]nativesessions.StoreRoot, error) {
 		}
 		provider, _ := e.agentRegistry().LookupNativeHeaders(name)
 		dirs := locations[name]
-		roots = append(roots, provider.Roots(agentapi.NativeLocations{UserHome: home, Directories: dirs}, agentapi.DiscoveryHandoff)...)
+		declared := provider.Roots(agentapi.NativeLocations{UserHome: home, DataHome: dataHome, Directories: dirs}, agentapi.DiscoveryHandoff)
+		if harness != "" && len(declared) == 0 {
+			return nil, errors.New("native session location unavailable; use --file PATH --harness NAME")
+		}
+		roots = append(roots, declared...)
 	}
 
 	return roots, nil
+}
+
+// nativeDataHome qualifies one effective data base using this command's injected
+// environment and working directory. Invalid values never trigger another root.
+func (e Env) nativeDataHome(home string) string {
+	data := strings.TrimSpace(e.getenv("XDG_DATA_HOME"))
+	if data == "" {
+		home = strings.TrimSpace(home)
+		if !filepath.IsAbs(home) || !utf8.ValidString(home) || strings.ContainsRune(home, 0) {
+			return ""
+		}
+		return filepath.Join(home, ".local", "share")
+	}
+	if !utf8.ValidString(data) || strings.ContainsRune(data, 0) {
+		return ""
+	}
+	if !filepath.IsAbs(data) {
+		cwd, err := e.workingDir()
+		if err != nil || !filepath.IsAbs(cwd) || !utf8.ValidString(cwd) || strings.ContainsRune(cwd, 0) {
+			return ""
+		}
+		data = filepath.Join(cwd, data)
+	}
+	return filepath.Clean(data)
 }
 
 // nativeBrowserSignals shares one signal owner with discovery and preview jobs.
@@ -270,6 +300,21 @@ func nativeCurrent(candidates []nativesessions.Candidate, harness string, env cu
 	return found, nil
 }
 
+func nativeStoreNames(roots []nativesessions.StoreRoot, env nativeHandoffDependencies) string {
+	var names []string
+	seen := map[string]bool{}
+	for _, root := range roots {
+		if seen[root.Harness] {
+			continue
+		}
+		if descriptor, ok := catalogFor(env).Lookup(root.Harness); ok {
+			names = append(names, descriptor.DisplayName)
+			seen[root.Harness] = true
+		}
+	}
+	return strings.Join(names, ", ")
+}
+
 func resolveNativeHandoff(opts handoffOptions, interactive bool, input *typedInput, stdout, stderr io.Writer, env nativeHandoffDependencies) (handoffTarget, bool, int) {
 	fail := func(err error) (handoffTarget, bool, int) {
 		terminal.Printf(stderr, "agent-archive: handoff: %v\n", err)
@@ -279,7 +324,7 @@ func resolveNativeHandoff(opts handoffOptions, interactive bool, input *typedInp
 		return fail(errors.New("archive access requires setup; native local sessions are available with --source local"))
 	}
 	if opts.harness == archive.HarnessCursor {
-		return fail(errors.New("automatic local discovery searches Claude Code and Codex; use --file PATH --harness cursor for a Cursor transcript"))
+		return fail(errors.New("automatic local discovery is unavailable for this harness; use --file PATH --harness cursor for a Cursor transcript"))
 	}
 	pruneNativeHandoffs(env.tempDir(), env.now())
 	ctx, signals, stop := nativeCommandContext(env)
@@ -315,7 +360,7 @@ func resolveNativeHandoff(opts handoffOptions, interactive bool, input *typedInp
 		apps = d.DisplayName
 	}
 	if apps == "" {
-		apps = "Claude Code and Codex"
+		apps = nativeStoreNames(roots, env)
 	}
 
 	terminal.Printf(stderr, "handoff: local source; automatic archiving is not configured. Searching %s native stores.\n", apps)
@@ -422,7 +467,29 @@ func handoffFromNative(ctx context.Context, c nativesessions.Candidate, files na
 	if target.analysis.Facts.IdentityConflict {
 		return handoffTarget{}, errors.New("selected local transcript has conflicting native identity; use --file PATH --harness NAME to inspect it explicitly")
 	}
+	if err := recheckNativeSource(ctx, pass, c.Ref, s); err != nil {
+		return handoffTarget{}, err
+	}
 	return target, nil
+}
+
+// recheckNativeSource verifies the pathname still identifies the fully filtered
+// descriptor. This point-in-time observation reads no additional transcript bytes.
+func recheckNativeSource(ctx context.Context, pass agentapi.SourcePass, ref nativesessions.Ref, original agentapi.FileInput) (resultErr error) {
+	snapshot, err := pass.Read(ctx, agentapi.SourceRef{Path: ref.Path}, agentapi.ReadLimits{})
+	if err != nil {
+		return err
+	}
+	defer func() { resultErr = errors.Join(resultErr, snapshot.Close()) }()
+	current := snapshot.Input().File
+	if current == nil {
+		return transcriptio.ErrChanged
+	}
+	before, after := original.Stamp(), current.Stamp()
+	if !before.SameFile(after) || before.Size != after.Size || !before.ModifiedAt.Equal(after.ModifiedAt) {
+		return transcriptio.ErrChanged
+	}
+	return errors.Join(original.Check(), current.Check(), ctx.Err())
 }
 
 // Native headers are bounded; the complete selected record must not introduce

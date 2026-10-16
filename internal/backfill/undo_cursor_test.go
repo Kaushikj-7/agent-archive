@@ -32,7 +32,7 @@ func TestUndoResumedCursorDatabaseChat(t *testing.T) {
 		chatRows("old", map[string]any{"lastUpdatedAt": admitted.Add(-time.Hour).UnixMilli()}, "a"),
 		chatRows("new", map[string]any{"lastUpdatedAt": admitted.Add(time.Hour).UnixMilli()}, "a"),
 	))
-	env := Environment{Sources: testSources, Discovery: builtin.NewBuiltins(), DatabaseCatalogs: builtin.NewBuiltins(), NativePaths: builtin.NewBuiltins(), Worktrees: builtin.NewBuiltins(), Workspaces: builtin.NewBuiltins(), Children: builtin.NewBuiltins(), Imports: builtin.NewBuiltins(), Home: home}
+	env := Environment{Sources: testSources, Discovery: testImportDiscovery(), DatabaseCatalogs: builtin.NewBuiltins(), NativePaths: builtin.NewBuiltins(), Worktrees: builtin.NewBuiltins(), Workspaces: builtin.NewBuiltins(), Children: builtin.NewBuiltins(), Imports: builtin.NewBuiltins(), Home: home}
 	for id, want := range map[string][2]bool{"old": {false, false}, "new": {true, false}, "gone": {false, false}} {
 		resumed, unknown, err := resumedSinceImport(env, store, reg(id), state.Request{})
 		if err != nil || resumed != want[0] || unknown != want[1] {
