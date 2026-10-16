@@ -10,7 +10,7 @@ import (
 // keeping both the explicit caller and an existing captured read scope alive.
 func (s *Store) withDurableContext(ctx context.Context) (*Store, context.Context, func()) {
 	original := s.resourceContext
-	if original != nil && reflect.TypeOf(original).Comparable() && original == ctx {
+	if original != nil && reflect.ValueOf(original).Comparable() && original == ctx {
 		return s, ctx, func() {}
 	}
 	scoped := *s

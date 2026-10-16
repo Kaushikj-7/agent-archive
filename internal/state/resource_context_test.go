@@ -68,3 +68,28 @@ func TestDurableContextHonorsEitherCancellationOwner(t *testing.T) {
 		})
 	}
 }
+
+type nonComparableDurableContext struct {
+	context.Context
+	marker []byte
+}
+
+func TestDurableContextRejoinsNonComparableOriginal(t *testing.T) {
+	t.Parallel()
+	owner, cancelOwner := context.WithCancel(t.Context())
+	t.Cleanup(cancelOwner)
+	original := nonComparableDurableContext{Context: owner, marker: []byte("owner")}
+	scoped, closeScope := OpenReadOnly(t.TempDir()).WithReadBudget(original, nil)
+	t.Cleanup(closeScope)
+	joined, work, closeWork := scoped.withDurableContext(t.Context())
+	t.Cleanup(closeWork)
+	rejoined, current, closeCurrent := joined.withDurableContext(work)
+	t.Cleanup(closeCurrent)
+	if rejoined.resourceReleases != joined.resourceReleases {
+		t.Fatal("rejoining changed the captured release owner")
+	}
+	cancelOwner()
+	if !errors.Is(current.Err(), context.Canceled) {
+		t.Fatal("rejoining revived the original owner", current.Err())
+	}
+}
