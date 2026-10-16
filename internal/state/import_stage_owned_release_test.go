@@ -126,10 +126,18 @@ func TestOwnedImportStageReleasePreservesTypedStage(t *testing.T) {
 	}
 }
 
+type ownedImportReleaseFault string
+
+const (
+	ownedImportCanceled     ownedImportReleaseFault = "cancel"
+	ownedImportOverBudget   ownedImportReleaseFault = "budget"
+	ownedImportRootReplaced ownedImportReleaseFault = "replaced-root"
+)
+
 func TestOwnedImportStageReleasePreservesEvidenceOnRefusal(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"cancel", "budget", "replaced-root"} {
-		t.Run(mode, func(t *testing.T) {
+	for _, mode := range []ownedImportReleaseFault{ownedImportCanceled, ownedImportOverBudget, ownedImportRootReplaced} {
+		t.Run(string(mode), func(t *testing.T) {
 			t.Parallel()
 			s, reg, _ := ownedImportReleaseFixture(t, strings.Repeat("synthetic", 8192))
 			path := filepath.Join(s.Home(), importStageRelative(reg.ArchiveSessionID))
@@ -138,7 +146,7 @@ func TestOwnedImportStageReleasePreservesEvidenceOnRefusal(t *testing.T) {
 				t.Fatal(err)
 			}
 			switch mode {
-			case "cancel":
+			case ownedImportCanceled:
 				ctx, cancel := context.WithCancel(t.Context())
 				cancel()
 				scoped, closeScope := s.WithReadBudget(ctx, nil)
@@ -146,13 +154,13 @@ func TestOwnedImportStageReleasePreservesEvidenceOnRefusal(t *testing.T) {
 				if err := scoped.RemoveOwnedImportStage(reg); !errors.Is(err, context.Canceled) {
 					t.Fatal("lost captured cancellation", err)
 				}
-			case "budget":
+			case ownedImportOverBudget:
 				scoped, closeScope := s.WithReadBudget(t.Context(), agentapi.NewNativeReadBudget(128<<10))
 				defer closeScope()
 				if err := scoped.RemoveOwnedImportStage(reg); !errors.Is(err, agentapi.ErrReadBudget) {
 					t.Fatal("cleanup escaped shared read budget", err)
 				}
-			case "replaced-root":
+			case ownedImportRootReplaced:
 				home, err := local.OpenRootedHome(s.Home())
 				if err != nil {
 					t.Fatal(err)
@@ -182,11 +190,19 @@ func TestOwnedImportStageReleasePreservesEvidenceOnRefusal(t *testing.T) {
 	}
 }
 
+type ownedImportOwnerField string
+
+const (
+	ownedImportProject     ownedImportOwnerField = "project"
+	ownedImportNative      ownedImportOwnerField = "native"
+	ownedImportDestination ownedImportOwnerField = "destination"
+)
+
 func TestOwnedImportStageAbsentSameDigestCannotChangeOwner(t *testing.T) {
 
 	t.Parallel()
-	for _, field := range []string{"project", "native", "destination"} {
-		t.Run(field, func(t *testing.T) {
+	for _, field := range []ownedImportOwnerField{ownedImportProject, ownedImportNative, ownedImportDestination} {
+		t.Run(string(field), func(t *testing.T) {
 			t.Parallel()
 			s, reg, _ := ownedImportReleaseFixture(t, "original selection")
 			if err := s.RemoveOwnedImportStage(reg); err != nil {
@@ -194,11 +210,11 @@ func TestOwnedImportStageAbsentSameDigestCannotChangeOwner(t *testing.T) {
 			}
 			current := reg
 			switch field {
-			case "project":
+			case ownedImportProject:
 				current.ProjectID = "other-project"
-			case "native":
+			case ownedImportNative:
 				current.NativeSessionID = "other-native"
-			case "destination":
+			case ownedImportDestination:
 				current.DestinationID = "other-destination"
 			}
 			if err := local.Write(s.registrationPath(reg.ArchiveSessionID), current); err != nil {

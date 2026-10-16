@@ -117,10 +117,18 @@ func TestOwnedImportReleaseRetryRequiresDirectoryDurabilityBeforeJournalRemoval(
 	}
 }
 
+type ownedImportBarrierFault string
+
+const (
+	ownedImportParentReplaced  ownedImportBarrierFault = "session-parent"
+	ownedImportHomeReplaced    ownedImportBarrierFault = "archive-home"
+	ownedImportBarrierCanceled ownedImportBarrierFault = "cancel"
+)
+
 func TestOwnedImportReleaseBarrierRefusesChangedRootAndCancellation(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"session-parent", "archive-home", "cancel"} {
-		t.Run(mode, func(t *testing.T) {
+	for _, mode := range []ownedImportBarrierFault{ownedImportParentReplaced, ownedImportHomeReplaced, ownedImportBarrierCanceled} {
+		t.Run(string(mode), func(t *testing.T) {
 			t.Parallel()
 			s, reg, _, before := ownedImportReleaseCommittedFixture(t)
 			ctx, cancel := context.WithCancel(t.Context())
@@ -139,9 +147,9 @@ func TestOwnedImportReleaseBarrierRefusesChangedRootAndCancellation(t *testing.T
 				}
 				changed = true
 				switch mode {
-				case "cancel":
+				case ownedImportBarrierCanceled:
 					cancel()
-				case "session-parent":
+				case ownedImportParentReplaced:
 					parent := filepath.Dir(stageDirectory)
 					if err := os.Rename(parent, filepath.Join(t.TempDir(), "held-session")); err != nil {
 						t.Fatal(err)
@@ -149,7 +157,7 @@ func TestOwnedImportReleaseBarrierRefusesChangedRootAndCancellation(t *testing.T
 					if err := os.MkdirAll(stageDirectory, 0700); err != nil {
 						t.Fatal(err)
 					}
-				case "archive-home":
+				case ownedImportHomeReplaced:
 					moved := filepath.Join(t.TempDir(), "held-home")
 					if err := os.Rename(s.Home(), moved); err != nil {
 						t.Fatal(err)
@@ -161,14 +169,14 @@ func TestOwnedImportReleaseBarrierRefusesChangedRootAndCancellation(t *testing.T
 				}
 				return nil
 			})
-			if !changed || err == nil || mode == "cancel" && !errors.Is(err, context.Canceled) {
+			if !changed || err == nil || mode == ownedImportBarrierCanceled && !errors.Is(err, context.Canceled) {
 				t.Fatal("release accepted a changed scope after its barrier", changed, err)
 			}
 			after, err := os.ReadFile(pendingPath)
 			if err != nil || !bytes.Equal(after, before) {
 				t.Fatal("refused release lost original pending bytes", err)
 			}
-			if mode == "session-parent" {
+			if mode == ownedImportParentReplaced {
 				if info, err := os.Stat(stageDirectory); err != nil || !info.IsDir() {
 					t.Fatal("old handle removed the replacement empty import directory", err)
 				}
