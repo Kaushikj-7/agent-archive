@@ -108,6 +108,9 @@ func (s *sessionScan) maintainFrozen() (sessionOutcome, error) {
 		if pending.History != nil {
 			return s.resumeHistory(s.ctx, pending)
 		}
+		if outcome, handled, err := s.resumeSourceSetPrivacy(pending); handled || err != nil {
+			return outcome, err
+		}
 		if pending.Bundle.Capture.FilterVersion != archive.FilterVersion || pending.Bundle.Capture.AdapterVersion != adapter.Version() || !sourceEvidenceWithinPolicy(pending.Bundle.SupplementalEvidence, s.opts.skillEvidence()) {
 			if pending.Commit != nil {
 				return outcomeSkipped, errors.New("frozen pending privacy policy changed; retain evidence for refilter and reconcile")
