@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -17,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -61,7 +63,7 @@ func TestHistoricalRevisedHistoryKeepsAllSourcesWithoutNativeCheckout(t *testing
 	must(t, err)
 
 	cloud := storagetest.NewMemoryStore()
-	remote := &fourthPublicationStore{MemoryStore: cloud}
+	remote := &historicalHistoryPublicationStore{fourthPublicationStore: &fourthPublicationStore{MemoryStore: cloud}}
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), at.Add(2*time.Minute))
 	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return remote, nil }
 	mapping := writeHistoricalMapping(t, project)
@@ -134,14 +136,47 @@ func TestHistoricalRevisedHistoryKeepsAllSourcesWithoutNativeCheckout(t *testing
 	}
 	foreignRaw, err := os.ReadFile(filepath.Join(foreignHome, "sessions", foreignReg.ArchiveSessionID, "import-stage", "stage.json"))
 	must(t, err)
-	must(t, os.WriteFile(stagePath, foreignRaw, 0600))
 	pendingPath := filepath.Join(home, "pending", regs[0].ArchiveSessionID+".json")
 	pendingBefore, err := os.ReadFile(pendingPath)
 	must(t, err)
+	frozen, pendingFound, err := local.LoadPublicationPending(regs[0].ArchiveSessionID)
+	must(t, err)
+	if !pendingFound || frozen.JournalVersion != 5 || frozen.Commit == nil || frozen.History == nil {
+		t.Fatalf("foreign-stage control requires actual ready source-set history: found=%t version=%d commit=%t history=%t", pendingFound, frozen.JournalVersion, frozen.Commit != nil, frozen.History != nil)
+	}
+	currentOwner, ownerFound, err := local.LoadRegistration(regs[0].ArchiveSessionID)
+	must(t, err)
+	if !ownerFound || currentOwner.StagedImportSHA256 != regs[0].StagedImportSHA256 {
+		t.Fatal("control lost its admitted original stage owner", ownerFound, currentOwner.StagedImportSHA256)
+	}
+	// Admission recovery intentionally drops superseded unadmitted stages.
+	// Replace after the actual selecting PUT so this control reaches owned
+	// completion, with the original admission and frozen journal still intact.
+	replaced := false
+	remote.metadataWritten = func(key string, body []byte) {
+		if key != frozen.MetadataKey || !bytes.Equal(body, frozen.MetadataBytes) {
+			t.Fatal("replacement did not follow the exact frozen selecting PUT", key)
+		}
+		actualPending, err := os.ReadFile(pendingPath)
+		must(t, err)
+		if !bytes.Equal(actualPending, pendingBefore) {
+			t.Fatal("selecting PUT changed the frozen ready history journal")
+		}
+		actualStage, err := os.ReadFile(stagePath)
+		must(t, err)
+		if !bytes.Equal(actualStage, originalStage) {
+			t.Fatal("original stage changed before the selecting PUT")
+		}
+		must(t, os.WriteFile(stagePath, foreignRaw, 0600))
+		if _, _, err := local.LoadImportStage(t.Context(), currentOwner); !errors.Is(err, state.ErrDurableStorageRecovery) {
+			t.Fatal("foreign stage must be refused by the actual current owner", err)
+		}
+		replaced = true
+	}
 	remote.failures = 0
 	refused, err := runOnePass(env, true)
 	must(t, err)
-	if len(refused.Published) != 0 || !errors.Is(refused.Errors[regs[0].ArchiveSessionID], state.ErrDurableStorageRecovery) {
+	if !replaced || len(refused.Published) != 0 || !errors.Is(refused.Errors[regs[0].ArchiveSessionID], state.ErrDurableStorageRecovery) {
 		t.Fatal("foreign stage was released by a different selecting owner", refused)
 	}
 	afterForeign, err := os.ReadFile(stagePath)
@@ -257,4 +292,23 @@ func TestHistoricalRevisedHistoryKeepsAllSourcesWithoutNativeCheckout(t *testing
 		t.Fatal("excluded retained dependencies were republished")
 	}
 
+}
+
+// Preserve the actual outage store and its provider interfaces while placing a
+// replacement precisely between the selecting write and closing readback.
+type historicalHistoryPublicationStore struct {
+	*fourthPublicationStore
+	metadataWritten func(string, []byte)
+}
+
+func (s *historicalHistoryPublicationStore) Put(ctx context.Context, key string, body []byte) error {
+	if err := s.fourthPublicationStore.Put(ctx, key, body); err != nil {
+		return err
+	}
+	if strings.HasSuffix(key, "/metadata.json") && s.metadataWritten != nil {
+		after := s.metadataWritten
+		s.metadataWritten = nil
+		after(key, body)
+	}
+	return nil
 }
