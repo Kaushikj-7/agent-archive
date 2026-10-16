@@ -21,14 +21,14 @@ affects.
 | List JSON | `cli.listSchemaVersion` | `list --json` `schema_version` | 4 | The script-facing list document changes incompatibly. Version 3 removed `unavailable`; version 4 makes exact-count knowledge explicit. |
 | Status JSON | `statusView.Version` in `internal/cli/status.go` | `status --json` `schema_version` | 4 | Status output changes incompatibly; schema 4 separates discovery from actual hook evidence. |
 
-Muse uses its independent parser 0.1.0 and archive-native `muse-jsonl` v1
+Muse uses its independent parser 0.2.0 and archive-native `muse-jsonl` v1
 ([inner record schema](../../schemas/muse-retained-v1.schema.json)). Explicit
 local handoff alone is supported; this does not alter outer bundle schemas or
 registration authority. Handoff builders now prefer existing `NativeStartedAt`
 facts over first prompts/file observations, also correcting Codex handoff start.
-Metadata derivation and the existing three parser versions are unchanged.
+The original native-start correction did not change metadata derivation.
 
-Claude uses the common parser version; Cursor remains at parser 0.20.0.
+Claude uses the common parser version; Cursor uses parser 0.21.0.
 Codex has its own parser version as recorded above.
 
 The per-version filter changes are in the
@@ -254,3 +254,15 @@ with journal fence version 1 / writer `native-authority-v16` / original boolean
 `value`, requiring their true native protection marker. This blocks older raw
 rollback recovery before config loading; adding an ignored journal field alone
 would not protect authority.
+
+Muse parser 0.2.0 corrects unavailable tool/file/Git counts and full export file
+presence without losing qualified prompt/message counts. Cursor parser 0.21.0
+corrects unavailable tool-result counts and omits full export files for
+unstructured text evidence. Existing Claude, Codex and common parser versions
+are unchanged. The shared new tool-call/file/Git availability categories inherit
+structured-count availability only when a legacy producer leaves them unset;
+explicit unknown/unavailable values never establish measured zeros. Existing
+tool-result availability remains explicit. Parser-only refresh rederives metadata
+from retained sources; full export refreshes older sidecar counts when parser
+versions differ. Filter 19, adapter 0.19.0, retained Muse v1 and published schema
+versions are unchanged; existing schemas allow omitted counts and edited files.

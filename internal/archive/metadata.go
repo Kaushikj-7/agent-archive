@@ -714,10 +714,12 @@ func assembleAnalyzedMetadata(bundle SourceBundle, analysis Analysis, metadata M
 		metadata.ToolsUsed = deriveToolsUsed(view.ToolCalls, analysis.Facts.WorkspaceRoot)
 		metadata.MCPCalls = deriveMCPCalls(view.ToolCalls, analysis.Facts.WorkspaceRoot)
 		metadata.ModelTokens = view.ModelTokens
-		var git gitCounts
-		metadata.GitActivity, git = deriveAnalyzedGitActivity(view.ToolCalls)
-		metadata.Counts.Commits, metadata.Counts.Pushes = &git.commits, &git.pushes
-		metadata.Counts.PRsCreated, metadata.Counts.PRsMerged = &git.prsCreated, &git.prsMerged
+		if analysis.Observability.structuredEvidenceAvailable(analysis.Observability.GitActivity) {
+			var git gitCounts
+			metadata.GitActivity, git = deriveAnalyzedGitActivity(view.ToolCalls)
+			metadata.Counts.Commits, metadata.Counts.Pushes = &git.commits, &git.pushes
+			metadata.Counts.PRsCreated, metadata.Counts.PRsMerged = &git.prsCreated, &git.prsMerged
+		}
 	}
 	metadata.EndedAt = deriveEndedAt(view, metadata.StartedAt)
 	if !analysis.Facts.TextOnly {
@@ -739,8 +741,16 @@ func assembleAnalyzedMetadata(bundle SourceBundle, analysis Analysis, metadata M
 
 func analyzedCounts(analysis Analysis, prompts, messages, shellCommands int) Counts {
 	view := analysis.View
-	toolCalls, toolResults := len(view.ToolCalls), len(view.ToolResults)
-	filesTouched := len(sessionFilesTouched(view.ToolCalls, analysis.Facts.WorkspaceRoot))
+	var toolCalls, toolResults, filesTouched *int
+	if analysis.Observability.structuredEvidenceAvailable(analysis.Observability.ToolCalls) {
+		toolCalls = new(len(view.ToolCalls))
+	}
+	if analysis.Observability.ToolResults.Available() {
+		toolResults = new(len(view.ToolResults))
+	}
+	if analysis.Observability.structuredEvidenceAvailable(analysis.Observability.FilesTouched) {
+		filesTouched = new(len(sessionFilesTouched(view.ToolCalls, analysis.Facts.WorkspaceRoot)))
+	}
 	var compactions *int
 	if analysis.Observability.Compactions.Available() {
 		// Count boundaries; use summaries only when no boundary was retained.
@@ -761,8 +771,8 @@ func analyzedCounts(analysis Analysis, prompts, messages, shellCommands int) Cou
 		toolErrors = &count
 	}
 	return Counts{
-		Turns: &prompts, Messages: &messages, ToolCalls: &toolCalls, ToolResults: &toolResults,
-		UserShellCommands: &shellCommands, Compactions: compactions, FilesTouched: &filesTouched,
+		Turns: &prompts, Messages: &messages, ToolCalls: toolCalls, ToolResults: toolResults,
+		UserShellCommands: &shellCommands, Compactions: compactions, FilesTouched: filesTouched,
 		InputTokens: view.Tokens.Input, OutputTokens: view.Tokens.Output,
 		CacheReadTokens: view.Tokens.CacheRead, CacheWriteTokens: view.Tokens.CacheWrite,
 		ReasoningTokens: view.Tokens.Reasoning, ToolErrors: toolErrors,

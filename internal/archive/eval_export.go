@@ -84,13 +84,14 @@ type EvalExport struct {
 	GitActivity     []GitEvent      `json:"git_activity,omitempty"`
 	CaptureGaps     []CaptureGap    `json:"capture_gaps,omitempty"`
 
-	// Full detail only. Prompts and FilesEdited are present (possibly
+	// Full detail only. Prompts are present (possibly
 	// empty) at full detail and absent at metadata detail.
 	Prompts       *[]EvalPrompt      `json:"prompts,omitempty"`
 	FinalResponse *EvalFinalResponse `json:"final_response,omitempty"`
-	FilesEdited   *[]string          `json:"files_edited,omitempty"`
-	Feedback      []EvalFeedback     `json:"feedback,omitempty"`
-	Trimmed       *EvalTrimmed       `json:"trimmed,omitempty"`
+	// FilesEdited is absent when edited-file evidence is unavailable.
+	FilesEdited *[]string      `json:"files_edited,omitempty"`
+	Feedback    []EvalFeedback `json:"feedback,omitempty"`
+	Trimmed     *EvalTrimmed   `json:"trimmed,omitempty"`
 }
 
 // EvalProject names the project without its path: the project root's base
@@ -260,7 +261,10 @@ func BuildEvalExportWithAnalysis(bundle SourceBundle, analysis Analysis, m Metad
 	if len(bundle.NativeRecords) > 0 {
 		files = append(files, sessionFilesTouched(view.ToolCalls, analysis.Facts.WorkspaceRoot)...)
 	}
-	e.Prompts, e.FinalResponse, e.FilesEdited = &prompts, last, &files
+	e.Prompts, e.FinalResponse = &prompts, last
+	if analysis.Observability.structuredEvidenceAvailable(analysis.Observability.FilesTouched) {
+		e.FilesEdited = &files
+	}
 	e.Feedback = explicitFeedback(bundle.SupplementalEvidence)
 	return e, nil
 }
