@@ -111,7 +111,47 @@ func TestHistoricalRevisedHistoryKeepsAllSourcesWithoutNativeCheckout(t *testing
 	if pending, err := local.HasPending(regs[0].ArchiveSessionID); err != nil || !pending {
 		t.Fatal("failed selecting upload lost its retry journal", pending, err)
 	}
+	// A different, independently valid stage for the same session cannot be
+	// released by the frozen transaction, even once its remote bytes are exact.
+	stagePath := filepath.Join(home, "sessions", regs[0].ArchiveSessionID, "import-stage", "stage.json")
+	originalStage, err := os.ReadFile(stagePath)
+	must(t, err)
+	foreignHome := canonical()
+	must(t, config.Save(foreignHome, mustLoadConfig(t, home)))
+	foreignStore, err := state.Open(foreignHome)
+	must(t, err)
+	foreignReg := regs[0]
+	foreignReg.StagedImportSHA256 = ""
+	foreignBundle := stage.Bundle
+	foreignBundle.Capture.CapturedAt = foreignBundle.Capture.CapturedAt.Add(time.Second)
+	foreignReg.StagedImportSHA256, err = foreignStore.SaveImportSourceSet(t.Context(), foreignReg, foreignBundle, stage.Preserved, stage.SkillEvidence)
+	must(t, err)
+	if foreignReg.StagedImportSHA256 == regs[0].StagedImportSHA256 {
+		t.Fatal("replacement must have a distinct actual stage digest")
+	}
+	if _, found, err := foreignStore.LoadImportStage(t.Context(), foreignReg); err != nil || !found {
+		t.Fatal("replacement stage must validate independently", found, err)
+	}
+	foreignRaw, err := os.ReadFile(filepath.Join(foreignHome, "sessions", foreignReg.ArchiveSessionID, "import-stage", "stage.json"))
+	must(t, err)
+	must(t, os.WriteFile(stagePath, foreignRaw, 0600))
+	pendingPath := filepath.Join(home, "pending", regs[0].ArchiveSessionID+".json")
+	pendingBefore, err := os.ReadFile(pendingPath)
+	must(t, err)
 	remote.failures = 0
+	refused, err := runOnePass(env, true)
+	must(t, err)
+	if len(refused.Published) != 0 || !errors.Is(refused.Errors[regs[0].ArchiveSessionID], state.ErrDurableStorageRecovery) {
+		t.Fatal("foreign stage was released by a different selecting owner", refused)
+	}
+	afterForeign, err := os.ReadFile(stagePath)
+	must(t, err)
+	afterPending, err := os.ReadFile(pendingPath)
+	must(t, err)
+	if !bytes.Equal(afterForeign, foreignRaw) || !bytes.Equal(afterPending, pendingBefore) {
+		t.Fatal("foreign-stage refusal changed stage or frozen retry journal")
+	}
+	must(t, os.WriteFile(stagePath, originalStage, 0600))
 	for range 4 {
 		result, err := runOnePass(env, true)
 		must(t, err)

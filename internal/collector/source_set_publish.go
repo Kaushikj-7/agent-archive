@@ -264,7 +264,7 @@ func (s *sessionScan) finishSourceSetAcknowledgment(pending state.PendingPublica
 	// readback and the local commit, keeping the journal if cleanup must retry.
 	// Typed stage release remains owned by its separate readback protocol.
 	if s.reg.StagedImportSHA256 != "" {
-		if err := s.local.RemoveImportStage(s.id()); err != nil {
+		if err := s.local.RemoveOwnedImportStage(s.reg); err != nil {
 			return fmt.Errorf("release completed source-set import stage: %w", err)
 		}
 	}
