@@ -615,7 +615,7 @@ func chooseNativePreviews(ctx context.Context, opts handoffOptions, result nativ
 }
 
 func previewNativeCandidate(ctx context.Context, files nativesessions.FileSystem, c nativesessions.Candidate, sources agentapi.SourcesLookup, previews agentapi.PreviewsLookup) (_ collector.TranscriptPreview, resultErr error) {
-	pass, snapshot, input, err := openNativeSource(ctx, files, c, sources)
+	pass, snapshot, input, err := openNativeSourcePass(ctx, files, c, sources, true)
 	if err != nil {
 		return collector.TranscriptPreview{}, err
 	}
@@ -636,11 +636,19 @@ func previewNativeCandidate(ctx context.Context, files nativesessions.FileSystem
 
 // Each browser worker owns its own serial pass; no shared mutable provider resource enters the pool.
 func openNativeSource(ctx context.Context, files nativesessions.FileSystem, c nativesessions.Candidate, sources agentapi.SourcesLookup) (agentapi.SourcePass, agentapi.SourceSnapshot, agentapi.NativeInput, error) {
+	return openNativeSourcePass(ctx, files, c, sources, false)
+}
+
+func openNativeSourcePass(ctx context.Context, files nativesessions.FileSystem, c nativesessions.Candidate, sources agentapi.SourcesLookup, preview bool) (agentapi.SourcePass, agentapi.SourceSnapshot, agentapi.NativeInput, error) {
 	p, _, ok := sources.LookupSources(c.Ref.Harness)
 	if !ok {
 		return nil, nil, agentapi.NativeInput{}, errors.New("native source integration unavailable")
 	}
-	pass, err := p.OpenPass(ctx, agentapi.SourceEnvironment{Files: files, Policy: transcriptio.OpenPolicy{RejectSymlinks: true, Root: c.Ref.Store}})
+	open := p.OpenPass
+	if bounded, ok := p.(agentapi.PreviewSourceProvider); preview && ok {
+		open = bounded.OpenPreviewPass
+	}
+	pass, err := open(ctx, agentapi.SourceEnvironment{Files: files, Policy: transcriptio.OpenPolicy{RejectSymlinks: true, Root: c.Ref.Store}})
 	if err != nil {
 		return nil, nil, agentapi.NativeInput{}, err
 	}

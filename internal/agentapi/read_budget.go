@@ -42,7 +42,9 @@ const PassReadBudget int64 = 256 << 20
 // lookup's restored catalog (32 MiB), rollout observations (8 MiB), rollout
 // directory listings (4 MiB) and metadata inventory (16 MiB); the source's
 // cached ancestor prefixes (16 MiB) and rollout headers (64 x 128 KiB):
-// 84 MiB in all (discovery.PassCacheBytes plus codex.PassCacheBytes).
+// 84 MiB in all (discovery.PassCacheBytes plus codex.PassCacheBytes). The
+// shared native inventory uses another 8 MiB, and collector query/rank vectors
+// use the remaining headroom; these charges still share the existing ledger.
 const PassCacheReserve int64 = 96 << 20
 
 // NewNativeReadBudget creates a pass-owned shared charge ledger.

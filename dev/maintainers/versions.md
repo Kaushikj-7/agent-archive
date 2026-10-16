@@ -325,6 +325,15 @@ raw boundary, then SHA-256. Old stat tokens and unknown encodings cannot equal a
 fresh strong observation. This disposable equality cache is separate from the
 protected successful checkpoint and cannot supply continuity authority.
 
+The existing private discovery catalog stays at outer version 6. Its optional
+Muse `native_inventory` member uses independent format 1, layout `muse-root-v1`
+and classifier 1. Strict bounded complete-page/actual-EOF observations are trusted
+historical local evidence; currentness and selected source proof remain live.
+Current cooperating writers preserve the member and unrelated Codex fields.
+Exact older version-6 writers may drop it, causing safe pending/reset and fresh
+enumeration. This disposable progress changes no configuration writer fence,
+native binding version, privacy filter, adapter, parser or uploaded schema.
+
 Muse own observations allocate filter24/global adapter0.24.0/Muse filter0.24.0
 and Muse parser0.4.0. The additive metadata/eval/handoff/stats token_observations
 envelope leaves legacy normalized tokens/counts/model_tokens absent. Old typed
