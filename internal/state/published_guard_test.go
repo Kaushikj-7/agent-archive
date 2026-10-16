@@ -316,3 +316,50 @@ func TestLegacyPublishedPrivateOpenCannotAdoptReplacementRoot(t *testing.T) {
 		t.Fatal("refused foreign root handle remained open")
 	}
 }
+
+func TestLegacyPublishedWeakRootRefusesAmbiguousGenerationMarker(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []string{"duplicate", "case-duplicate", "case-only", "downgraded-controls", "null", "future"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
+			s, reg, at := generationFixture(t)
+			if _, err := s.BeginGenerationRecovery(reg.ArchiveSessionID, at, generationBuilder(at)); err != nil {
+				t.Fatal(err)
+			}
+			path := s.generationRecoveryPath(reg.ArchiveSessionID)
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			selector := []byte(`"version":2`)
+			if !bytes.Contains(raw, selector) {
+				t.Fatal("actual version2 receipt missing selector")
+			}
+			replacements := map[string]string{"duplicate": `"version":2,"version":1`, "case-duplicate": `"version":2,"Version":1`, "case-only": `"Version":1`, "downgraded-controls": `"version":1`, "null": `"version":null`, "future": `"version":99`}
+			raw = bytes.Replace(raw, selector, []byte(replacements[mode]), 1)
+			if err := os.WriteFile(path, raw, 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(s.Home(), 0755); err != nil {
+				t.Fatal(err)
+			}
+			read := OpenReadOnly(s.Home())
+			published, err := read.LoadPublishedState(reg.ArchiveSessionID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, _, changed := legacyGenerationMetadata(t, published, at)
+			before, err := os.ReadFile(s.publishedPath(reg.ArchiveSessionID))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := published.CacheMetadata(changed); !errors.Is(err, ErrDurableStorageRecovery) {
+				t.Fatalf("ambiguous generation marker enabled weak-root cache write: %v", err)
+			}
+			after, err := os.ReadFile(s.publishedPath(reg.ArchiveSessionID))
+			if err != nil || !bytes.Equal(before, after) {
+				t.Fatal("ambiguous marker changed published bytes", err)
+			}
+		})
+	}
+}

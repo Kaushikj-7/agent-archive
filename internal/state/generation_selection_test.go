@@ -120,6 +120,25 @@ func TestGenerationRecoveryPriorWriterCompatibility(t *testing.T) {
 					t.Fatalf("old journal promoted: %#v %v %v", receipt, found, err)
 				}
 				probe("accept-lookup")
+				if err := os.Chmod(s.Home(), 0755); err != nil {
+					t.Fatal(err)
+				}
+				legacy, err := OpenReadOnly(s.Home()).LoadPublishedState(reg.ArchiveSessionID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var metadata archive.Metadata
+				if err := json.Unmarshal(legacy.Metadata(), &metadata); err != nil {
+					t.Fatal(err)
+				}
+				metadata.MetadataDerivedAt = at.Add(time.Hour)
+				raw, err := json.Marshal(metadata)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := legacy.CacheMetadata(raw); err != nil {
+					t.Fatal("genuine version1 receipt blocked legacy weak-root maintenance", err)
+				}
 				return
 			}
 			if phase == "journal" {

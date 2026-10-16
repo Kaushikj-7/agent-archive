@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -131,10 +132,8 @@ func (p *Published) checkLegacyGenerationWriter(private bool) error {
 		if !safeFileComponent(id) {
 			return ErrDurableStorageRecovery
 		}
-		var marker struct {
-			Version int `json:"version"`
-		}
-		err := p.store.readProjected(p.store.generationRecoveryPath(id), jsonProjection{"version": nil}, &marker)
+		var marker generationWriterMarker
+		err := p.store.readProjected(p.store.generationRecoveryPath(id), jsonProjection{"version": nil, "prior_metadata_sha256": nil, "prior_source_set_sha256": nil}, &marker)
 		if errors.Is(err, os.ErrNotExist) {
 			continue
 		}
@@ -170,4 +169,32 @@ func lockLegacyPublished(ctx context.Context, lock func() (func(), error)) (func
 		case <-timer.C:
 		}
 	}
+}
+
+// Projected selectors remain strict even though unrelated payloads are skipped.
+// In particular, duplicate or case-aliased versions cannot downgrade a fence.
+type generationWriterMarker struct {
+	Version              int    `json:"version"`
+	PriorMetadataSHA256  string `json:"prior_metadata_sha256,omitempty"`
+	PriorSourceSetSHA256 string `json:"prior_source_set_sha256,omitempty"`
+}
+
+func (m *generationWriterMarker) UnmarshalJSON(raw []byte) error {
+	type plain generationWriterMarker
+	var marker plain
+	if err := json.Unmarshal(raw, &marker); err != nil {
+		return errors.Join(ErrDurableStorageRecovery, err)
+	}
+	keys := []string{"version"}
+	if marker.Version == 2 {
+		keys = append(keys, "prior_metadata_sha256", "prior_source_set_sha256")
+	}
+	if err := strictStagedKeys(raw, keys); err != nil {
+		return err
+	}
+	if !validGenerationRecoveryVersion(generationRecovery{Version: marker.Version, PriorMetadataSHA256: marker.PriorMetadataSHA256, PriorSourceSetSHA256: marker.PriorSourceSetSHA256}) {
+		return ErrDurableStorageRecovery
+	}
+	*m = generationWriterMarker(marker)
+	return nil
 }

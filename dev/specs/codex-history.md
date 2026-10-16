@@ -327,7 +327,9 @@ committed source reference with separate SHA-256 digests. Replay refuses a
 changed predecessor selection, missing digests or an unsupported journal version.
 Every legacy published-cache writer shares the transition's hooks lock, checks
 the exact file digest captured by its own decoded view, and refuses stale views
-before replacing cached metadata or source references. The lock spans the whole
+before replacing cached metadata or source references. Replacing an existing
+legacy cache hashes its complete wire before and after the write with bounded
+scratch; this adds full-file I/O and does not claim constant prefix I/O. The lock spans the whole
 routing transition; an attempted concurrent cache update cannot change its prior
 authority between validation and activation. Completed frozen generations still
 allow subsequent retained metadata maintenance through a current view. Existing
