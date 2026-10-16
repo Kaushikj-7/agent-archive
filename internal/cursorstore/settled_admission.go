@@ -16,16 +16,8 @@ func ReadSettledAdmission(ctx context.Context, path, id string, rawLimit, record
 		return c, NotChecked(UnknownFormat)
 	}
 	err = ReadRecovery(ctx, path, budget, func(ctx context.Context, db *sql.DB) (err error) {
-		tx, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
-		if err != nil {
-			return err
-		}
-		defer func() { err = errors.Join(err, tx.Rollback()) }()
-		c, err = readRecoveryComposerTx(ctx, tx, id, rawLimit, recordLimit, budget, true)
-		if err != nil {
-			return err
-		}
-		return visitSettledComposerMetadata(ctx, tx, budget, visit)
+		c, err = readAdmissionComposer(ctx, db, id, rawLimit, recordLimit, budget, visit)
+		return err
 	})
 	if err != nil {
 		return Composer{}, err
@@ -95,4 +87,18 @@ func countSettledComposerMetadata(ctx context.Context, tx *sql.Tx, budget agenta
 		count++
 	}
 	return count, lengths.Err()
+}
+
+func readAdmissionComposer(ctx context.Context, db *sql.DB, id string, rawLimit, recordLimit int64, budget agentapi.RecoveryReadBudget, visit func(agentapi.DatabaseRecord) error) (c Composer, err error) {
+	tx, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return c, err
+	}
+	defer func() { err = errors.Join(err, tx.Rollback()) }()
+	c, err = readRecoveryComposerTx(ctx, tx, id, rawLimit, recordLimit, budget, true)
+	if err != nil {
+		return Composer{}, err
+	}
+	err = visitSettledComposerMetadata(ctx, tx, budget, visit)
+	return c, err
 }
