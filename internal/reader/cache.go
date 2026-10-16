@@ -239,6 +239,8 @@ func (c *MetadataCache) evictUnlisted(known []string, listed []storage.Object) {
 	if c == nil {
 		return
 	}
+	span := trace.Start("cache key eviction")
+	defer span.End()
 	present := make(map[string]struct{}, len(listed))
 	for _, object := range listed {
 		present[object.Key] = struct{}{}
@@ -254,9 +256,7 @@ func (c *MetadataCache) evictUnlisted(known []string, listed []storage.Object) {
 		info, err := os.Lstat(dir)
 		if err == nil && info.IsDir() && info.Mode().Perm() == 0o700 {
 			if os.RemoveAll(dir) == nil {
-				span := trace.Start("cache key eviction")
 				span.Count("key-dirs-evicted", 1)
-				span.End()
 			}
 		}
 	}
