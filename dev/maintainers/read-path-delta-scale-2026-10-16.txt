@@ -60,3 +60,39 @@ needs explicit corruption detection, completeness and repair semantics, while
 retaining selected-row checksums and authoritative body validation. Matching a
 root alone does not justify skipping validation. This evidence does not enable
 catalog-v4 or claim its flat command target.
+
+Summary identity-ordering follow-up
+----------------------------------
+Measured source: 5745559dccbcdaef7374b9222d9ce4fb01a89df5
+Go: go1.27.2 linux/amd64, nonrace, GOMAXPROCS=2, -p=1.
+Test: AGENT_ARCHIVE_PERF=1 go test -p=1 -count=1 -timeout=20m
+      -run '^TestRemoteSummaryDeltaScale/sessions=50000$' -v ./internal/cli
+Outcome: PASS, 114.789s including bulk construction and oracle checks.
+
+Both cached and uncached complete summaries now share the existing comparator:
+activity descending, capture descending, then harness and session ID ascending.
+This fixes prefix/punctuation identity ties such as a versus a-, where sorting
+full object keys reverses the session-ID order. Activity-first ordering is
+unchanged. A regression with divergent activity/capture dates, imported activity
+and identity ties failed before the fix and passes with the shared comparator.
+
+The 50k-only rerun includes the complete-result Go ordering step explicitly:
+
+Phase       GETs   Tree nodes   Elapsed       Refresh    Query     Ordering
+cold        1621    1619       15339 ms      13860 ms    1378 ms     12 ms
+unchanged      6       4        5364 ms       2443 ms    2673 ms     86 ms
+deletion      14      12        2773 ms        890 ms    1773 ms     24 ms
+
+Query is the SQLite selection/decoding span; Ordering is the subsequent Go
+comparator span. Elapsed includes both. Every phase again performs zero LISTs
+and metadata/source body GETs, one head GET and one coordinator GET. Unchanged
+refresh/query still visit 50k rows each and hash 56,879,894 summary bytes across
+those passes; deletion queries 49,999 rows after scanning the prior 50k rows.
+Cache key inventory again visits one marker entry without a populated body cache.
+
+These are single shared-host observations, not matched before/after trials.
+The historical 03e20cef table and retained source remain unchanged; differences
+between its timings and this rerun cannot establish a regression or improvement.
+The complete-result ordering step preserves the API contract, not a bounded
+query guarantee. Refresh and complete decoding remain substantial local work;
+no live-provider, whole-command or flat-latency target is established here.
