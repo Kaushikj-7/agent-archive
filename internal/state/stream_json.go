@@ -9,6 +9,7 @@ import (
 	"errors"
 	"io"
 	"reflect"
+	"slices"
 	"strings"
 
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
@@ -58,19 +59,16 @@ func streamable(t reflect.Type) bool {
 	if t.Implements(jsonMarshalerType) || t.Implements(textMarshalerType) || reflect.PointerTo(t).Implements(jsonMarshalerType) || reflect.PointerTo(t).Implements(textMarshalerType) {
 		return false
 	}
-	switch t.Kind() {
-	case reflect.Struct:
+	if t.Kind() == reflect.Struct {
 		return true
-	case reflect.Slice:
-		if t.Elem().Kind() == reflect.Uint8 {
-			return true // base64; no reachable byte slice has an element marshaler
-		}
-		switch t.Elem().Kind() {
-		case reflect.Map, reflect.Struct, reflect.Slice, reflect.Interface, reflect.Pointer, reflect.String:
-			return true
-		}
 	}
-	return false
+	if t.Kind() != reflect.Slice {
+		return false
+	}
+	// A byte slice is base64; no reachable one has an element marshaler.
+	// A slice of composite values or strings is written element by element;
+	// one of numbers or booleans, a few bytes each, is a leaf.
+	return slices.Contains([]reflect.Kind{reflect.Uint8, reflect.Map, reflect.Struct, reflect.Slice, reflect.Interface, reflect.Pointer, reflect.String}, t.Elem().Kind())
 }
 
 func (s *jsonStreamer) value(v reflect.Value) error {
@@ -80,12 +78,10 @@ func (s *jsonStreamer) value(v reflect.Value) error {
 	if !v.IsValid() || !streamable(v.Type()) {
 		return s.leaf(v)
 	}
-	switch v.Kind() {
-	case reflect.Struct:
+	if v.Kind() == reflect.Struct {
 		return s.structValue(v)
-	default:
-		return s.slice(v)
 	}
+	return s.slice(v)
 }
 
 // leaf writes json.Marshal's encoding of v, charged while it is held.
@@ -258,6 +254,9 @@ func emptyJSONValue(v reflect.Value) bool {
 		return v.Float() == 0
 	case reflect.Interface, reflect.Pointer:
 		return v.IsNil()
+	case reflect.Invalid, reflect.Complex64, reflect.Complex128, reflect.Chan, reflect.Func, reflect.Struct, reflect.UnsafePointer:
+		return false
+	default:
+		return false
 	}
-	return false
 }

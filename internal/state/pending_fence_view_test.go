@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
@@ -104,8 +105,7 @@ func TestPendingFenceViewMatchesTheWholeDecode(t *testing.T) {
 	if err != nil || !found {
 		t.Fatal(found, err)
 	}
-	want := PendingPublication{JournalVersion: whole.JournalVersion, Selection: whole.Selection, StagedSelection: whole.StagedSelection, CursorSelection: whole.CursorSelection, Catalog: whole.Catalog}
-	want.Bundle.ArchiveSessionID = whole.Bundle.ArchiveSessionID
+	want := PendingPublication{JournalVersion: whole.JournalVersion, Selection: whole.Selection, StagedSelection: whole.StagedSelection, CursorSelection: whole.CursorSelection, Catalog: whole.Catalog, Bundle: archive.SourceBundle{ArchiveSessionID: whole.Bundle.ArchiveSessionID}}
 	if !reflect.DeepEqual(view, want) || view.Bundle.ArchiveSessionID != "owned" || view.Catalog == nil || view.Catalog.ID != `m"id` {
 		t.Fatalf("view %+v, want %+v", view, want)
 	}
