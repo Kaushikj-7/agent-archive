@@ -21,6 +21,15 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 )
 
+// Preserve explicitly configured race options, including an exit sleep. Fresh
+// synchronous helpers need no default delay after their work and cleanup finish.
+func inventoryProcessRaceOptions(options string) string {
+	if strings.Contains(options, "atexit_sleep_ms=") {
+		return options
+	}
+	return options + " atexit_sleep_ms=0"
+}
+
 func inventoryMeasurementID(i int) string { return fmt.Sprintf("00000000-0000-7000-8000-%012x", i+1) }
 
 // Construct synthetic permission bytes for distinct owners using the documented
@@ -146,7 +155,9 @@ func TestNativeInventoryFewAndManyDayFreshProcessMeasurements(t *testing.T) {
 				for tick := 0; tick < 128 && len(seen) < count; tick++ {
 					ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 					cmd := exec.CommandContext(ctx, exe, "-test.run=^TestNativeInventoryMeasurementProcessStep$", "-test.count=1")
-					cmd.Env = append(os.Environ(), "AA_NATIVE_INVENTORY_MEASURE_HOME="+home, "AA_NATIVE_INVENTORY_MEASURE_ROOT="+root.Canonical, fmt.Sprintf("AA_NATIVE_INVENTORY_MEASURE_OWNERS=%d", count))
+					// The child completes its synchronous work before exiting. Keep race
+					// instrumentation, but omit its default one-second exit-only sleep.
+					cmd.Env = append(os.Environ(), "GORACE="+inventoryProcessRaceOptions(os.Getenv("GORACE")), "AA_NATIVE_INVENTORY_MEASURE_HOME="+home, "AA_NATIVE_INVENTORY_MEASURE_ROOT="+root.Canonical, fmt.Sprintf("AA_NATIVE_INVENTORY_MEASURE_OWNERS=%d", count))
 					out, err := cmd.CombinedOutput()
 					cancel()
 					if err != nil {

@@ -208,7 +208,9 @@ func TestNativeInventoryCollectorQueryArrivalsAndShrinkProgress(t *testing.T) {
 		}
 		ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 		cmd := exec.CommandContext(ctx, exe, "-test.run=^TestNativeInventoryCollectorQueryArrivalProcessStep$", "-test.count=1")
-		cmd.Env = append(os.Environ(), "AA_NATIVE_INVENTORY_CHURN_HOME="+home, "AA_NATIVE_INVENTORY_CHURN_ROOT="+root.Canonical)
+		// The child completes its synchronous work before exiting. Keep race
+		// instrumentation, but omit its default one-second exit-only sleep.
+		cmd.Env = append(os.Environ(), "GORACE="+inventoryProcessRaceOptions(os.Getenv("GORACE")), "AA_NATIVE_INVENTORY_CHURN_HOME="+home, "AA_NATIVE_INVENTORY_CHURN_ROOT="+root.Canonical)
 		out, err := cmd.CombinedOutput()
 		cancel()
 		if err != nil {
