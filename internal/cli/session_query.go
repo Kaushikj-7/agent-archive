@@ -182,7 +182,9 @@ func exactIDWins[T any](items []T, q sessionQuery, fields func(T) sessionFields)
 		return nil
 	}
 	word := q.words[0]
-	is := func(id string) bool { return id == word || len(word) == minShortSessionID && strings.HasPrefix(id, word) }
+	is := func(id string) bool {
+		return id == word || len(word) == minShortSessionID && strings.HasPrefix(id, word)
+	}
 	// The archive's own ID wins over another session's native ID that
 	// happens to share the word.
 	var archived, native []T
