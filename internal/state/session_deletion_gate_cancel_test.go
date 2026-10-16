@@ -145,3 +145,19 @@ func TestRetentionPreparationKeepsOriginalReadOwnerCancellation(t *testing.T) {
 		})
 	}
 }
+
+func TestDeletionPresenceGuardHonorsExplicitPassCancellation(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	t.Cleanup(cancel)
+	accounted, closeAccounting := s.WithPublicationAccounting(ctx, agentapi.NewNativeReadBudget(128<<10))
+	t.Cleanup(closeAccounting)
+	if accounted.resourceContext != nil {
+		t.Fatal("fixture unexpectedly has a read scope")
+	}
+	cancel()
+	if _, err := accounted.SessionDeletionPresent(ctx, registration(t).ArchiveSessionID); !errors.Is(err, context.Canceled) {
+		t.Fatal("pre-scan guard ignored original pass cancellation", err)
+	}
+}

@@ -355,7 +355,7 @@ func TestDeletionOwnerGuardsNeverReadRetainedMetadata(t *testing.T) {
 		}
 		return root.Open(name)
 	}
-	if found, err := s.SessionDeletionPresent(reg.ArchiveSessionID); err != nil || !found {
+	if found, err := s.SessionDeletionPresent(t.Context(), reg.ArchiveSessionID); err != nil || !found {
 		t.Fatal(found, err)
 	}
 	if _, err := s.UpdateRegistration(reg.ArchiveSessionID, func(r *archive.SessionRegistration) error { r.TranscriptPath += "-moved"; return nil }); !errors.Is(err, ErrRemovalPending) {

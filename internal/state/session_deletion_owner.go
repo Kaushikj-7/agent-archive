@@ -2,6 +2,7 @@ package state
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"github.com/wangjohn/agent-archive/internal/local"
@@ -12,7 +13,9 @@ import (
 // SessionDeletionPresent is a refusal-only guard. Any named work, including
 // corrupt or interrupted work, defers relationship mutation without decoding
 // selecting metadata or granting deletion/restoration authority.
-func (s *Store) SessionDeletionPresent(id string) (present bool, err error) {
+func (s *Store) SessionDeletionPresent(ctx context.Context, id string) (present bool, err error) {
+	s, _, closeContext := s.withDurableContext(ctx)
+	defer closeContext()
 	if unsafeDurableSessionID(id) {
 		return true, ErrDurableStorageRecovery
 	}
