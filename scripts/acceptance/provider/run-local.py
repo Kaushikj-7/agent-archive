@@ -29,7 +29,12 @@ def policy(prefix):
          'Resource': [bucket + '/' + prefix + '/*']}]}
 
 
+def interrupted(_signum, _frame):
+    raise KeyboardInterrupt
+
+
 def main():
+    signal.signal(signal.SIGTERM, interrupted)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--run-disposable-provider', action='store_true', required=True)
     parser.add_argument('--tools', type=Path, required=True)
@@ -132,6 +137,13 @@ def main():
                 if returncode:
                     raise RuntimeError('provider fixtures failed; inspect test events')
             finally:
+                # A timeout or signal must also sanitize partial evidence.
+                partial = output / 'tests.jsonl'
+                if partial.exists():
+                    contents = partial.read_bytes()
+                    for credential in (admin, admin_secret, access, secret, peer, peer_secret):
+                        contents = contents.replace(credential.encode(), b'[REDACTED]')
+                    partial.write_bytes(contents)
                 process.terminate()
                 try:
                     process.wait(timeout=15)
@@ -144,7 +156,7 @@ def main():
 if __name__ == '__main__':
     try:
         main()
-    except Exception:
+    except (Exception, KeyboardInterrupt):
         # Subprocess exceptions may embed ephemeral credentials in their argv.
         print('disposable provider acceptance failed; inspect retained evidence', file=sys.stderr)
         raise SystemExit(1) from None
