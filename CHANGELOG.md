@@ -35,6 +35,12 @@ follow [Semantic Versioning](https://semver.org/).
   decoded again. Capturing such a thread's growth needs about 5 times its
   filtered size in read memory instead of about 12.
 
+- Protected Cursor backfill can stage selected root chats from a live WAL using
+  a bounded private SQLite image. Scratch capacity is reserved before copying,
+  and cleanup must succeed before admission. Existing staged evidence can then
+  publish after the native source disappears. Live Cursor/platform qualification
+  remains unverified; unknown capabilities and exhausted budgets stay pending.
+
 - Archived Cursor sessions now carry the chat's name. Sessions captured from
   Cursor's agent transcripts, which record no name, read it from the chat's
   `composerData` row in Cursor's database (read-only, in place), imported
