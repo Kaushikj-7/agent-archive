@@ -305,6 +305,13 @@ func reviewPairingDestination(p *prompter, payload pairing.Payload, existing con
 
 func pairingCaptureSettings(p *prompter, payload pairing.Payload, cfg, existing config.Config, userHome string, opts setupOptions, env Env) (config.Config, error) {
 	var err error
+	// Pairing carries storage/capture settings, never another machine's search consent.
+	cfg.SearchIndexing = existing.SearchIndexing
+	if opts.searchIndexing != "" {
+		if err := config.SetSearchIndexing(&cfg, opts.searchIndexing == searchIndexingOn); err != nil {
+			return cfg, err
+		}
+	}
 	cfg.RetentionDays = payload.RetentionDays
 	if payload.RetentionDays == 0 {
 		cfg.RetentionProtection = true
@@ -408,7 +415,7 @@ func reviewPairingSettings(p *prompter, payload pairing.Payload, cfg, existing c
 			}
 			if choice == "save" {
 				if setupNeedsProject(cfg) {
-					p.warn("Include a project with Edit settings → Projects before saving these capture settings.")
+					p.warn("Include a project with Edit a setting → Projects before saving these capture settings.")
 					continue
 				}
 				break
@@ -439,7 +446,7 @@ func reviewPairingSettings(p *prompter, payload pairing.Payload, cfg, existing c
 
 func pairingReviewAction(p *prompter) (string, error) {
 	return p.guidedChoice(promptModel{Question: "Review pairing settings", Default: "cancel",
-		Primary:   []option{{"save", "Save the displayed destination and capture settings"}, {"edit", "Edit settings"}},
+		Primary:   []option{{"save", "Save the displayed destination and capture settings"}, {"edit", "Edit a setting"}},
 		Secondary: []actionOption{{"details", "d", "Full settings and privacy"}, {"cancel", "q", "Cancel"}}})
 }
 

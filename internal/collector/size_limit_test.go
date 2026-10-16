@@ -20,8 +20,14 @@ func keptTranscript(n int) string {
 	var b strings.Builder
 	b.WriteString(`{"type":"turn_context","model":"gpt-test"}` + "\n")
 	text := strings.Repeat("kept words ", 6000)
+	record := `{"type":"response_item","timestamp":"2026-01-01T00:01:00Z","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"` + text + `"}]}}` + "\n"
+	// Every retained row is identical. Reserve the requested output plus one
+	// row for the final overshoot instead of reallocating the growing fixture.
+	if n > b.Len() {
+		b.Grow(n - b.Len() + len(record))
+	}
 	for b.Len() < n {
-		b.WriteString(`{"type":"response_item","timestamp":"2026-01-01T00:01:00Z","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"` + text + `"}]}}` + "\n")
+		b.WriteString(record)
 	}
 	return b.String()
 }

@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/wangjohn/agent-archive/internal/destination"
+	"github.com/wangjohn/agent-archive/internal/testutil/fixturecost"
 )
 
 type pickerCutover struct{}
@@ -28,11 +29,13 @@ func pickerDestination() destination.Config {
 
 func completePickerUpgrade(t *testing.T, s *qualifiedStore) *PickerUpgrade {
 	t.Helper()
+	phase := fixturecost.Start(t, "picker_reader", "upgrade", nil)
 	u, err := OpenPickerUpgrade(t.Context(), s, pickerDestination(), pickerCutover{}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	for {
+		phase.Add("upgrade_steps", 1)
 		done, e := u.Step(t.Context(), 2)
 		if e != nil {
 			t.Fatal(e)
@@ -47,6 +50,7 @@ func completePickerUpgrade(t *testing.T, s *qualifiedStore) *PickerUpgrade {
 	if err = u.FinishActivation(t.Context()); err != nil {
 		t.Fatal(err)
 	}
+	phase.Finish()
 	return u
 }
 

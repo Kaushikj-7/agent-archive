@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
@@ -19,6 +20,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 const nativeReadBudget int64 = 64 * 1024 * 1024
@@ -49,6 +51,7 @@ func (e Env) nativeRoots(harness string) ([]nativesessions.StoreRoot, error) {
 		return nil, err
 	}
 	locations := e.nativeSessionDirectories(home, config.Config{})
+	dataHome := e.nativeDataHome(home)
 	var roots []nativesessions.StoreRoot
 	for _, name := range e.agentRegistry().NativeHeaderAgents() {
 		if harness != "" && harness != name {
@@ -56,10 +59,38 @@ func (e Env) nativeRoots(harness string) ([]nativesessions.StoreRoot, error) {
 		}
 		provider, _ := e.agentRegistry().LookupNativeHeaders(name)
 		dirs := locations[name]
-		roots = append(roots, provider.Roots(agentapi.NativeLocations{UserHome: home, Directories: dirs}, agentapi.DiscoveryHandoff)...)
+		declared := provider.Roots(agentapi.NativeLocations{UserHome: home, DataHome: dataHome, Directories: dirs}, agentapi.DiscoveryHandoff)
+		if harness != "" && len(declared) == 0 {
+			return nil, errors.New("native session location unavailable; use --file PATH --harness NAME")
+		}
+		roots = append(roots, declared...)
 	}
 
 	return roots, nil
+}
+
+// nativeDataHome qualifies one effective data base using this command's injected
+// environment and working directory. Invalid values never trigger another root.
+func (e Env) nativeDataHome(home string) string {
+	data := strings.TrimSpace(e.getenv("XDG_DATA_HOME"))
+	if data == "" {
+		home = strings.TrimSpace(home)
+		if !filepath.IsAbs(home) || !utf8.ValidString(home) || strings.ContainsRune(home, 0) {
+			return ""
+		}
+		return filepath.Join(home, ".local", "share")
+	}
+	if !utf8.ValidString(data) || strings.ContainsRune(data, 0) {
+		return ""
+	}
+	if !filepath.IsAbs(data) {
+		cwd, err := e.workingDir()
+		if err != nil || !filepath.IsAbs(cwd) || !utf8.ValidString(cwd) || strings.ContainsRune(cwd, 0) {
+			return ""
+		}
+		data = filepath.Join(cwd, data)
+	}
+	return filepath.Clean(data)
 }
 
 // nativeBrowserSignals shares one signal owner with discovery and preview jobs.
@@ -177,17 +208,19 @@ func (n *nativePreviewCatalog) load() (bool, error) {
 		if title == "" {
 			title = a.p.Title
 		}
-		if title == "" {
-			title = c.NativeID
-		}
 		row := n.identityRow(j.index)
-		row.Title = archive.DisplayLine(title)
+		row.Title = archive.DisplayLine(c.NativeID)
+		if title = archive.DisplayLine(title); strings.TrimSpace(title) != "" {
+			// A real title reads as the other lists' titles do; the native
+			// ID that stands in for a missing one is shown as it is.
+			row.Title, row.ListTitle = title, listTitle(title)
+		}
 		row.fields = sessionFields{Name: a.p.Name, Title: a.p.Title, Branch: a.p.Branch, Project: row.Project, Harness: c.Ref.Harness, SessionID: c.NativeID}
 		if a.err != nil {
-			row.SkillHint = " · preview unavailable"
+			row.Hint = "preview unavailable"
 			unavailable++
 		} else if !a.p.NameComplete {
-			row.SkillHint = " · preview partial"
+			row.Hint = "preview partial"
 			partial++
 		}
 		n.rows = append(n.rows, row)
@@ -198,7 +231,7 @@ func (n *nativePreviewCatalog) load() (bool, error) {
 	if n.exhausted {
 		for i := n.next; i < len(n.candidates); i++ {
 			row := n.identityRow(i)
-			row.SkillHint = " · label not inspected"
+			row.Hint = "label not inspected"
 			n.rows = append(n.rows, row)
 		}
 	}
@@ -209,7 +242,8 @@ func (n *nativePreviewCatalog) load() (bool, error) {
 // identityRow uses only verified discovery facts; it never reads a transcript.
 func (n *nativePreviewCatalog) identityRow(index int) listRow {
 	c := n.candidates[index]
-	row := listRow{Index: len(n.rows) + 1, selectionKey: fmt.Sprintf("native-%d", index), SessionID: c.NativeID, ShortID: shortSessionID(c.NativeID), HarnessKey: c.Ref.Harness, Harness: c.Ref.Harness, Title: c.NativeID, Project: archive.DisplayLine(filepath.Base(c.Directory)), When: relativeAge(n.now, c.ModifiedAt), ProjectID: c.Directory}
+	row := listRow{Index: len(n.rows) + 1, selectionKey: fmt.Sprintf("native-%d", index), SessionID: c.NativeID, ShortID: shortSessionID(c.NativeID), HarnessKey: c.Ref.Harness, Harness: c.Ref.Harness, Title: c.NativeID, Project: archive.DisplayLine(filepath.Base(c.Directory)), ProjectID: c.Directory}
+	row.setActive(n.now, c.ModifiedAt)
 	row.fields = sessionFields{Project: row.Project, Harness: c.Ref.Harness, SessionID: c.NativeID}
 	return row
 }
@@ -267,6 +301,21 @@ func nativeCurrent(candidates []nativesessions.Candidate, harness string, env cu
 	return found, nil
 }
 
+func nativeStoreNames(roots []nativesessions.StoreRoot, env nativeHandoffDependencies) string {
+	var names []string
+	seen := map[string]bool{}
+	for _, root := range roots {
+		if seen[root.Harness] {
+			continue
+		}
+		if descriptor, ok := catalogFor(env).Lookup(root.Harness); ok {
+			names = append(names, descriptor.DisplayName)
+			seen[root.Harness] = true
+		}
+	}
+	return strings.Join(names, ", ")
+}
+
 func resolveNativeHandoff(opts handoffOptions, interactive bool, input *typedInput, stdout, stderr io.Writer, env nativeHandoffDependencies) (handoffTarget, bool, int) {
 	fail := func(err error) (handoffTarget, bool, int) {
 		terminal.Printf(stderr, "agent-archive: handoff: %v\n", err)
@@ -276,7 +325,7 @@ func resolveNativeHandoff(opts handoffOptions, interactive bool, input *typedInp
 		return fail(errors.New("archive access requires setup; native local sessions are available with --source local"))
 	}
 	if opts.harness == archive.HarnessCursor {
-		return fail(errors.New("automatic local discovery searches Claude Code and Codex; use --file PATH --harness cursor for a Cursor transcript"))
+		return fail(errors.New("automatic local discovery is unavailable for this harness; use --file PATH --harness cursor for a Cursor transcript"))
 	}
 	pruneNativeHandoffs(env.tempDir(), env.now())
 	ctx, signals, stop := nativeCommandContext(env)
@@ -312,7 +361,7 @@ func resolveNativeHandoff(opts handoffOptions, interactive bool, input *typedInp
 		apps = d.DisplayName
 	}
 	if apps == "" {
-		apps = "Claude Code and Codex"
+		apps = nativeStoreNames(roots, env)
 	}
 
 	terminal.Printf(stderr, "handoff: local source; automatic archiving is not configured. Searching %s native stores.\n", apps)
@@ -383,11 +432,12 @@ func nativeRowIndex(row listRow, candidates []nativesessions.Candidate) int {
 }
 
 func handoffFromNative(ctx context.Context, c nativesessions.Candidate, files nativesessions.FileSystem, clock handoffFileDependencies) (_ handoffTarget, resultErr error) {
-	pass, snapshot, s, err := openNativeSource(ctx, files, c, registryFor(clock))
+	pass, snapshot, input, err := openNativeSource(ctx, files, c, registryFor(clock))
 	if err != nil {
 		return handoffTarget{}, err
 	}
 	defer func() { resultErr = errors.Join(resultErr, snapshot.Close(), pass.Close()) }()
+	s := input.File
 	if !c.Stamp.SameFile(s.Stamp()) {
 		return handoffTarget{}, transcriptio.ErrChanged
 	}
@@ -419,7 +469,43 @@ func handoffFromNative(ctx context.Context, c nativesessions.Candidate, files na
 	if target.analysis.Facts.IdentityConflict {
 		return handoffTarget{}, errors.New("selected local transcript has conflicting native identity; use --file PATH --harness NAME to inspect it explicitly")
 	}
+	if err := recheckNativeSource(ctx, pass, c.Ref, snapshot, input); err != nil {
+		return handoffTarget{}, err
+	}
 	return target, nil
+}
+
+// recheckNativeSource verifies the pathname still identifies the fully filtered
+// descriptor. An attested content proof rehashes its captured boundary on the
+// original live handle; ordinary file providers retain the second-handle check.
+func recheckNativeSource(ctx context.Context, pass agentapi.SourcePass, ref nativesessions.Ref, actual agentapi.SourceSnapshot, input agentapi.NativeInput) (resultErr error) {
+	original := input.File
+	if original == nil {
+		return agentapi.ErrInvalidSourceBinding
+	}
+	if agentmeta.ID(ref.Harness) == agentmeta.Muse {
+		content, ok := actual.(agentapi.VerifiedContentSnapshot)
+		if !ok || !content.ContentProofFor(actual, input) {
+			return agentapi.ErrInvalidSourceBinding
+		}
+		// Selected handoff still refuses appends as well as named-path replacement
+		// and same-stamp rewrites after the complete Filter.
+		return errors.Join(original.Check(), content.VerifyContent(ctx), ctx.Err())
+	}
+	snapshot, err := pass.Read(ctx, agentapi.SourceRef{Path: ref.Path}, agentapi.ReadLimits{})
+	if err != nil {
+		return err
+	}
+	defer func() { resultErr = errors.Join(resultErr, snapshot.Close()) }()
+	current := snapshot.Input().File
+	if current == nil {
+		return transcriptio.ErrChanged
+	}
+	before, after := original.Stamp(), current.Stamp()
+	if !before.SameFile(after) || before.Size != after.Size || !before.ModifiedAt.Equal(after.ModifiedAt) {
+		return transcriptio.ErrChanged
+	}
+	return errors.Join(original.Check(), current.Check(), ctx.Err())
 }
 
 // Native headers are bounded; the complete selected record must not introduce
@@ -485,12 +571,14 @@ func chooseNativePreviews(ctx context.Context, opts handoffOptions, result nativ
 			index := nativeRowIndex(matches[0], candidates)
 			selected = &candidates[index]
 		} else if !interactive {
-			for i, row := range matches {
-				if i >= handoffCandidateLimit {
-					break
-				}
-				terminal.Printf(stderr, "  local %s (%s): %s\n", row.SessionID, row.HarnessKey, row.Title)
+			shown := matches[:min(len(matches), handoffCandidateLimit)]
+			for i := range shown {
+				// A native ID is named whole: it is what --source local reads.
+				shown[i].ShortID = shown[i].SessionID
 			}
+			var b strings.Builder
+			printCandidateRows(&b, shown)
+			terminal.Print(stderr, b.String())
 			return nil, false, 1, fmt.Errorf("%d matches in %d loaded local previews; search is bounded, not exhaustive; name a native ID or use the terminal picker to load older sessions", len(matches), n.next)
 		}
 	}
@@ -498,7 +586,7 @@ func chooseNativePreviews(ctx context.Context, opts handoffOptions, result nativ
 		if !interactive {
 			return nil, false, 1, errors.New(noSelectorMessage)
 		}
-		format := listFormatOptions{Now: env.now(), Numbered: true, Style: styleFor(stdout), NarrowHint: "Native local IDs: agent-archive handoff NATIVE_ID --harness NAME --source local."}
+		format := listFormatOptions{Now: env.now(), Numbered: true, GroupByDay: true, Style: styleFor(stdout), NarrowHint: "Native local IDs: agent-archive handoff NATIVE_ID --harness NAME --source local."}
 		choices := rowChoices(n.rows, format)
 		var older *browserLoadAction
 		if more {
@@ -527,11 +615,12 @@ func chooseNativePreviews(ctx context.Context, opts handoffOptions, result nativ
 }
 
 func previewNativeCandidate(ctx context.Context, files nativesessions.FileSystem, c nativesessions.Candidate, sources agentapi.SourcesLookup, previews agentapi.PreviewsLookup) (_ collector.TranscriptPreview, resultErr error) {
-	pass, snapshot, s, err := openNativeSource(ctx, files, c, sources)
+	pass, snapshot, input, err := openNativeSource(ctx, files, c, sources)
 	if err != nil {
 		return collector.TranscriptPreview{}, err
 	}
 	defer func() { resultErr = errors.Join(resultErr, snapshot.Close(), pass.Close()) }()
+	s := input.File
 	if !c.Stamp.SameFile(s.Stamp()) || s.Stamp().Size != c.Stamp.Size {
 		return collector.TranscriptPreview{}, transcriptio.ErrChanged
 	}
@@ -546,18 +635,22 @@ func previewNativeCandidate(ctx context.Context, files nativesessions.FileSystem
 }
 
 // Each browser worker owns its own serial pass; no shared mutable provider resource enters the pool.
-func openNativeSource(ctx context.Context, files nativesessions.FileSystem, c nativesessions.Candidate, sources agentapi.SourcesLookup) (agentapi.SourcePass, agentapi.SourceSnapshot, agentapi.FileInput, error) {
+func openNativeSource(ctx context.Context, files nativesessions.FileSystem, c nativesessions.Candidate, sources agentapi.SourcesLookup) (agentapi.SourcePass, agentapi.SourceSnapshot, agentapi.NativeInput, error) {
 	p, _, ok := sources.LookupSources(c.Ref.Harness)
 	if !ok {
-		return nil, nil, nil, errors.New("native source integration unavailable")
+		return nil, nil, agentapi.NativeInput{}, errors.New("native source integration unavailable")
 	}
 	pass, err := p.OpenPass(ctx, agentapi.SourceEnvironment{Files: files, Policy: transcriptio.OpenPolicy{RejectSymlinks: true, Root: c.Ref.Store}})
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, agentapi.NativeInput{}, err
 	}
 	snapshot, err := pass.Read(ctx, agentapi.SourceRef{Path: c.Ref.Path}, agentapi.ReadLimits{})
 	if err != nil {
-		return nil, nil, nil, errors.Join(err, pass.Close())
+		return nil, nil, agentapi.NativeInput{}, errors.Join(err, pass.Close())
 	}
-	return pass, snapshot, snapshot.Input().File, nil
+	input := snapshot.Input()
+	if input.File == nil {
+		return nil, nil, agentapi.NativeInput{}, errors.Join(agentapi.ErrInvalidSourceBinding, snapshot.Close(), pass.Close())
+	}
+	return pass, snapshot, input, nil
 }

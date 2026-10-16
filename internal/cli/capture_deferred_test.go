@@ -134,7 +134,7 @@ func TestStatusListsDeferredSessionsApartFromFailures(t *testing.T) {
 		PendingCount:     3,
 		SessionIssues:    map[string]string{"failed": issueCaptureFailed},
 		IssueCounts:      map[string]int{issueCaptureFailed: 1},
-		DeferredSessions: map[string]string{"deferred": collector.DeferredHistoryCoverage, "stale": collector.DeferredSourceChanged},
+		DeferredSessions: map[string]string{"deferred": collector.DeferredReadBudget, "stale": collector.DeferredSourceChanged},
 	}
 	status.SetLastErrors(summary)
 	if err := f.store.SaveStatus(status); err != nil {
@@ -149,7 +149,7 @@ func TestStatusListsDeferredSessionsApartFromFailures(t *testing.T) {
 	for _, session := range view.Apps[0].Uploading {
 		states[session.ArchiveSessionID] = session
 	}
-	if got := states["deferred"]; got.State != uploadingRechecking || got.Deferred != collector.DeferredHistoryCoverage || got.Issue != "" {
+	if got := states["deferred"]; got.State != uploadingRechecking || got.Deferred != collector.DeferredReadBudget || got.Issue != "" {
 		t.Errorf("deferred session = %+v", got)
 	}
 	if got := states["failed"]; got.State != uploadingFailing || got.Issue != issueCaptureFailed {
@@ -164,11 +164,11 @@ func TestStatusListsDeferredSessionsApartFromFailures(t *testing.T) {
 		t.Fatalf("status exit %d:\n%s", code, out.String())
 	}
 	text := out.String()
-	if strings.Count(text, "failed to capture or upload") != 1 || strings.Count(text, "waiting for Codex history coverage") != 1 {
+	if strings.Count(text, "failed to capture or upload") != 1 || strings.Count(text, "waiting for read memory other sessions held") != 1 {
 		t.Fatalf("status codex:\n%s", text)
 	}
 	for line := range strings.SplitSeq(text, "\n") {
-		if strings.Contains(line, "waiting for Codex history coverage") && strings.HasPrefix(strings.TrimSpace(line), "!") {
+		if strings.Contains(line, "waiting for read memory other sessions held") && strings.HasPrefix(strings.TrimSpace(line), "!") {
 			t.Fatalf("a deferred session is marked as a problem: %q", line)
 		}
 	}
@@ -184,7 +184,7 @@ func TestStatusListsDeferredSessionsApartFromFailures(t *testing.T) {
 	if err := json.Unmarshal([]byte(out.String()), &fields); err != nil {
 		t.Fatal(err)
 	}
-	if fields.Collector.DeferredSessions["deferred"] != collector.DeferredHistoryCoverage {
+	if fields.Collector.DeferredSessions["deferred"] != collector.DeferredReadBudget {
 		t.Fatalf("status --json deferred_sessions = %v", fields.Collector.DeferredSessions)
 	}
 }
@@ -196,9 +196,9 @@ func TestSyncCountsDeferredSessionsByReason(t *testing.T) {
 		Skipped: []string{"unchanged"},
 		Errors:  map[string]error{"failed": errors.New("boom")},
 		// "failed" was deferred, then failed retention: counted as failed only.
-		Deferred: map[string]string{"a": collector.DeferredHistoryCoverage, "b": collector.DeferredHistoryCoverage, "failed": collector.DeferredHistoryCoverage},
+		Deferred: map[string]string{"a": collector.DeferredReadBudget, "b": collector.DeferredReadBudget, "failed": collector.DeferredReadBudget},
 	}
-	if got, want := syncSummary(result), "Scanned 4 session(s): 0 published, 1 unchanged, 1 failed; 2 waiting for Codex history coverage."; got != want {
+	if got, want := syncSummary(result), "Scanned 4 session(s): 0 published, 1 unchanged, 1 failed; 2 waiting for read memory other sessions held."; got != want {
 		t.Errorf("sync summary = %q, want %q", got, want)
 	}
 	for _, tc := range []struct {
@@ -206,9 +206,13 @@ func TestSyncCountsDeferredSessionsByReason(t *testing.T) {
 		want     string
 	}{
 		{nil, ""},
-		{map[string]string{"a": collector.DeferredHistoryCoverage}, "; 1 waiting for Codex history coverage"},
-		{map[string]string{"a": collector.DeferredHistoryCoverage, "b": collector.DeferredHistoryCoverage, "c": collector.DeferredSourceChanged, "d": "from_a_later_version"},
-			"; 1 rechecking after the source changed while being read; 1 rechecking on the next pass; 2 waiting for Codex history coverage"},
+		{map[string]string{"a": collector.DeferredReadBudget}, "; 1 waiting for read memory other sessions held"},
+		{map[string]string{"a": collector.DeferredLookupAllowance}, "; 1 left for the next pass after this pass's time for finding Codex rollouts ran out"},
+		{map[string]string{"a": collector.DeferredReadBudget, "b": collector.DeferredReadBudget, "c": collector.DeferredSourceChanged, "d": "from_a_later_version"},
+			"; 1 rechecking after the source changed while being read; 1 rechecking on the next pass; 2 waiting for read memory other sessions held"},
+		// A status an earlier version wrote can still name the retired
+		// history coverage wait; it reads as an ordinary recheck.
+		{map[string]string{"a": "codex_history_coverage"}, "; 1 rechecking on the next pass"},
 	} {
 		if got := deferredSummary(tc.deferred, nil); got != tc.want {
 			t.Errorf("deferredSummary(%v) = %q, want %q", tc.deferred, got, tc.want)

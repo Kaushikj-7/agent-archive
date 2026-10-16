@@ -221,15 +221,23 @@ func TestArchiveSkillNamesDangerousCommandsOnlyToForbidThem(t *testing.T) {
 		regexp.MustCompile(`\bsetup\b`), regexp.MustCompile(`\buninstall\b`), regexp.MustCompile(`\bpurge\b`),
 		regexp.MustCompile(`\bbackfill\b`), regexp.MustCompile(`\bsync\b`), regexp.MustCompile(`\bfeedback\b`),
 		regexp.MustCompile(`--to\b`), regexp.MustCompile(`--max-bytes\b`),
+		regexp.MustCompile(`--refresh\b`), regexp.MustCompile(`--rebuild\b`), regexp.MustCompile(`--wait\b`),
 		regexp.MustCompile(`--output\b`), regexp.MustCompile(`--file\b`), regexp.MustCompile(`--rebuild-index\b`),
 		regexp.MustCompile(`\bpause\b`), regexp.MustCompile(`\bresume\b`), regexp.MustCompile(`--worktree\b`),
 	}
 	// What the never section must forbid by name.
-	required := []string{`setup`, `uninstall`, `purge`, `backfill`, `sync`, `feedback`, `--to`, `--max-bytes 0`}
+	required := []string{`setup`, `uninstall`, `purge`, `backfill`, `sync`, `feedback`, `--to`, `--max-bytes 0`, `--refresh`, `--rebuild`, `--wait`}
 	for _, dest := range []Destination{Claude, Shared} {
 		_, body := frontmatterOf(t, archiveSkill.Render(dest, exe, ""))
 		never := section(t, body, "Never run these")
 		outside := strings.Replace(strings.Replace(body, never, "", 1), marker, "", 1)
+		// This one bounded selected-reference read is permitted. Every other
+		// max-bytes mention outside the prohibitions must still fail closed.
+		boundedRead := commandLine(exe, "") + ` search --read "<reference from a selected result>" --max-bytes 4096 --before 1 --after 1 --json`
+		if strings.Count(outside, boundedRead) != 1 {
+			t.Fatalf("(%d) expected exactly one bounded selected-reference example", dest)
+		}
+		outside = strings.Replace(outside, boundedRead, "", 1)
 		for _, re := range forbidden {
 			if loc := re.FindStringIndex(outside); loc != nil {
 				t.Errorf("(%d) %s appears outside the never section: ...%s...", dest, re, outside[max(0, loc[0]-40):min(len(outside), loc[1]+40)])
@@ -245,7 +253,7 @@ func TestArchiveSkillNamesDangerousCommandsOnlyToForbidThem(t *testing.T) {
 }
 
 // The commands and flags the skill tells the agent to run outside the never
-// section are the read-only set: handoff without --to, list, show, status.
+// section are the read-only set: handoff without --to, list, show, search, status.
 func TestArchiveSkillRunsOnlyTheReadOnlyCommands(t *testing.T) {
 	t.Parallel()
 	command := commandLine(exe, "")
@@ -259,16 +267,20 @@ func TestArchiveSkillRunsOnlyTheReadOnlyCommands(t *testing.T) {
 	seen := map[string]bool{}
 	for _, m := range runs {
 		seen[m[1]] = true
-		if !slices.Contains([]string{"handoff", "list", "show", "status"}, m[1]) {
+		if !slices.Contains([]string{"handoff", "list", "show", "search", "status"}, m[1]) {
 			t.Errorf("the skill runs %q: %s", m[1], m[0])
 		}
+		flags := allowedFlags
+		if m[1] == "search" {
+			flags = []string{"--json", "--project", "--read", "--max-bytes", "--before", "--after"}
+		}
 		for word := range strings.FieldsSeq(m[2]) {
-			if flag := strings.Trim(word, "[]<>|"); strings.HasPrefix(flag, "-") && !slices.Contains(allowedFlags, flag) {
+			if flag := strings.Trim(word, "[]<>|"); strings.HasPrefix(flag, "-") && !slices.Contains(flags, flag) {
 				t.Errorf("the skill uses the flag %s: %s", flag, m[0])
 			}
 		}
 	}
-	for _, want := range []string{"handoff", "list", "show", "status"} {
+	for _, want := range []string{"handoff", "list", "show", "search", "status"} {
 		if !seen[want] {
 			t.Errorf("the skill never runs %s", want)
 		}

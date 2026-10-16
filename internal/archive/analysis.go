@@ -5,9 +5,10 @@ import "time"
 // Analysis is one pure derivation of retained evidence for all shared builders.
 // It is never a second persisted transcript and owns no source handles.
 type Analysis struct {
-	View          NormalizedView
-	Facts         NativeFacts
-	Observability Observability
+	View              NormalizedView
+	Facts             NativeFacts
+	Observability     Observability
+	TokenObservations *TokenObservationSummary
 }
 
 // AvailabilityState distinguishes a measured zero from unavailable evidence.
@@ -29,12 +30,13 @@ const (
 	AvailabilityReasonNotRecorded      AvailabilityReason = "not_recorded"
 	AvailabilityReasonHistoricalFilter AvailabilityReason = "historical_filter"
 	AvailabilityReasonParseFailed      AvailabilityReason = "parse_failed"
+	AvailabilityReasonObservationLimit AvailabilityReason = "observation_limit"
 )
 
 // Availability describes evidence in this bundle, not a current capability.
 type Availability struct {
-	State  AvailabilityState
-	Reason AvailabilityReason
+	State  AvailabilityState  `json:"state"`
+	Reason AvailabilityReason `json:"reason,omitempty"`
 }
 
 // Available reports whether this evidence can support a measured value.
@@ -43,9 +45,24 @@ func (a Availability) Available() bool { return a.State == AvailabilityAvailable
 // Observability describes the actual retained source format and filter version.
 type Observability struct {
 	StructuredCounts Availability
-	Compactions      Availability
-	ToolErrors       Availability
-	ToolResults      Availability
+	// ToolCalls, FilesTouched and GitActivity refine StructuredCounts. Their
+	// zero value inherits StructuredCounts only for legacy producer compatibility;
+	// explicit unknown or unavailable evidence never supports a measured value.
+	ToolCalls    Availability
+	FilesTouched Availability
+	GitActivity  Availability
+	Compactions  Availability
+	ToolErrors   Availability
+	ToolResults  Availability
+}
+
+// structuredEvidenceAvailable preserves legacy producers that predate a finer
+// evidence category. Explicit unknown and unavailable values remain unmeasured.
+func (o Observability) structuredEvidenceAvailable(evidence Availability) bool {
+	if evidence == (Availability{}) {
+		return o.StructuredCounts.Available()
+	}
+	return evidence.Available()
 }
 
 // NativeFacts are semantic facts read only from safely retained evidence.

@@ -14,7 +14,6 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/catalog"
 	"github.com/wangjohn/agent-archive/internal/config"
-	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
@@ -52,7 +51,9 @@ func (s *catalogListReads) GetCatalogVersion(ctx context.Context, key string, li
 	return s.MeasuredStore.GetCatalogVersion(ctx, key, limit)
 }
 
+//lint:ignore tparallel sequential corpora bound catalog fixture memory across the three parallel roots
 func TestRealCLICatalogDefaultList50Bounded(t *testing.T) {
+	t.Parallel()
 	sizes := []int{128}
 	if !testing.Short() {
 		sizes = append(sizes, 512)
@@ -80,9 +81,7 @@ func TestRealCLICatalogDefaultList50Bounded(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if _, err := reader.RebuildIndex(t.Context(), a.mem, archiveSessionsPrefix); err != nil {
-				t.Fatal(err)
-			}
+			// Catalog normalization rebuilds the complete legacy listing index.
 			remote := privateCatalogFromLegacy(t, a.mem)
 			counts := &catalogListReads{MeasuredStore: storagetest.NewMeasuredStore(remote.ObjectStore, 0), paths: map[string]int{}}
 			measured, err := catalog.Wrap(counts)
@@ -135,7 +134,9 @@ func TestRealCLICatalogDefaultList50Bounded(t *testing.T) {
 	}
 }
 
+//lint:ignore tparallel sequential corpora bound catalog fixture memory across the three parallel roots
 func TestRealCLICatalogListNonMultiplePageLimit(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("full 1100-record/1050-selection integration; daily and exact candidates")
 	}
@@ -160,9 +161,7 @@ func TestRealCLICatalogListNonMultiplePageLimit(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if _, err := reader.RebuildIndex(t.Context(), a.mem, archiveSessionsPrefix); err != nil {
-				t.Fatal(err)
-			}
+			// Catalog normalization rebuilds the complete legacy listing index.
 			remote := privateCatalogFromLegacy(t, a.mem)
 			counts := &catalogListReads{MeasuredStore: storagetest.NewMeasuredStore(remote.ObjectStore, 0), paths: map[string]int{}}
 			measured, err := catalog.Wrap(counts)

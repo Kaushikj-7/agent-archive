@@ -22,11 +22,13 @@ import (
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
+	"github.com/wangjohn/agent-archive/internal/testutil/fixturecost"
 )
 
 func scopedPickerCatalog(t *testing.T, mem *storagetest.MemoryStore) *catalog.Store {
 	t.Helper()
 	legacy := privateCatalogFromLegacy(t, mem)
+	phase := fixturecost.Start(t, "scoped_picker", "upgrade", nil)
 	raw := &scopedMigrationCLIStore{legacy.ObjectStore.(*qualifiedCLIStore)}
 	dest := destination.Config{Provider: "s3", Bucket: "private-picker-test", ArchiveFormat: destination.FormatCatalogV4}
 	upgrade, err := catalog.OpenPickerUpgrade(t.Context(), raw, dest, raw, "")
@@ -34,6 +36,7 @@ func scopedPickerCatalog(t *testing.T, mem *storagetest.MemoryStore) *catalog.St
 		t.Fatal(err)
 	}
 	for {
+		phase.Add("upgrade_steps", 1)
 		done, e := upgrade.Step(t.Context(), 64)
 		if e != nil {
 			t.Fatal(e)
@@ -52,14 +55,17 @@ func scopedPickerCatalog(t *testing.T, mem *storagetest.MemoryStore) *catalog.St
 	if err != nil {
 		t.Fatal(err)
 	}
+	phase.Finish()
 	return remote
 }
 
 func TestRealCLIBoundedHandoffStartupAndOlderReadNoBodies(t *testing.T) {
+	t.Parallel()
 	a := newScopedArchive(t)
 	for i := range 105 {
-		a.add(t, fmt.Sprintf("picker-%03d", i), fmt.Sprintf("Title %03d", i), a.label, func(m *archive.Metadata) { m.Counts.Turns = nil })
+		a.addMetadata(t, fmt.Sprintf("picker-%03d", i), fmt.Sprintf("Title %03d", i), a.label, func(m *archive.Metadata) { m.Counts.Turns = nil })
 	}
+	// Catalog normalization rebuilds the complete legacy listing index once.
 	remote := scopedPickerCatalog(t, a.mem)
 	counts := &catalogListReads{MeasuredStore: storagetest.NewMeasuredStore(remote.ObjectStore, 0), paths: map[string]int{}}
 	wrapped, err := catalog.Wrap(counts)

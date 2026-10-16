@@ -71,6 +71,17 @@ func TestSessionCatalogRefreshPagesAndWarmBodies(t *testing.T) {
 		all = append(all, p.Rows...)
 		q.Cursor = p.Next
 	}
+	whole, err := c.Query(ctx, CatalogQuery{Metadata: MetadataQuery{Order: ActivityOrder}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if whole.Total != 31 || !whole.Complete || whole.Next != "" || !reflect.DeepEqual(whole.Rows, all) {
+		t.Fatal("unlimited candidates differ from complete paged rows")
+	}
+	empty, err := c.Query(ctx, CatalogQuery{Metadata: MetadataQuery{Filter: Filter{Harness: "missing"}}})
+	if err != nil || empty.Total != 0 || empty.Rows != nil || empty.Next != "" || !empty.Complete {
+		t.Fatalf("empty candidates=%+v err=%v", empty, err)
+	}
 	oracle, err := ListMetadataWithOptions(ctx, store, "sessions/", Filter{}, ListOptions{})
 	if err != nil {
 		t.Fatal(err)

@@ -233,7 +233,8 @@ func TestNativeRefusalDetailsPreserveJoinsPrivacyAndPrecedence(t *testing.T) {
 		err  error
 		want DiagnosticDetail
 	}{
-		{"coverage", agentapi.WithCause(agentapi.Wrap(agentapi.Unavailable, secret), agentapi.CauseHistoryCoverage), DetailHistoryCoverage},
+		{"history base", agentapi.WithCause(agentapi.Wrap(agentapi.Unavailable, secret), agentapi.CauseHistoryBaseUnavailable), DetailHistoryBaseUnavailable},
+		{"rollout tip", agentapi.WithCause(agentapi.Wrap(agentapi.Unavailable, secret), agentapi.CauseRolloutTipAmbiguous), DetailRolloutTipAmbiguous},
 		{"dependency", errors.Join(agentapi.WithCause(agentapi.Wrap(agentapi.Unavailable, secret), agentapi.CauseHistoryDependencyUnavailable), archive.ErrRelatedHistory), DetailHistoryDependencyUnavailable},
 		{"wrapped limit", fmt.Errorf("private path: %w", agentapi.WithCause(agentapi.Wrap(agentapi.Limit, secret), agentapi.CauseAggregateHistoryByteLimit)), DetailAggregateHistoryByteLimit},
 		{"unknown cause", agentapi.WithCause(agentapi.Wrap(agentapi.Unavailable, secret), unknownSourceCause), DetailNativeSourceUnavailable},

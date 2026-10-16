@@ -9,6 +9,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/trace"
 )
 
 // nativeScannerCharge counts bounded framing in the already admitted snapshot.
@@ -34,12 +35,17 @@ func nativeScannerCharge(ctx context.Context, file agentapi.FileInput, limits ag
 	}
 	var buffer [countScratch]byte
 	var line, longest int64
+	var bytesRead int64
+	if trace.Enabled() {
+		defer func() { trace.Add(trace.FilterBytes, bytesRead) }()
+	}
 	for offset := int64(0); offset < length; {
 		if err := ctx.Err(); err != nil {
 			return 0, err
 		}
 		want := min(int64(len(buffer)), length-offset)
 		n, err := file.ReadAt(buffer[:want], offset)
+		bytesRead += int64(n)
 		if err != nil && !errors.Is(err, io.EOF) {
 			return 0, err
 		}

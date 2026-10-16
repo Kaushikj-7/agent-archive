@@ -99,9 +99,12 @@ def decision(source, config, event, tested):
             raise ValueError('history is shallow or uncertain')
         if git(source, 'rev-parse', 'HEAD').decode().strip() != tested:
             raise ValueError('checkout differs from event commit')
+        # GitHub may build the merge on a newer base than the event recorded.
+        # Pin the PR side exactly; the base side must only contain the event base.
         parents = git(source, 'show', '-s', '--format=%P', tested).decode().strip().split()
-        if parents != [base, head]:
+        if len(parents) != 2 or parents[1] != head:
             raise ValueError('checkout is not the expected event merge')
+        git(source, 'merge-base', '--is-ancestor', base, parents[0])
         # A merge-base proves connected histories; it is not the diff endpoint.
         if not re.fullmatch(b'[0-9a-f]{40}\n', git(source, 'merge-base', base, head)):
             raise ValueError('event ancestry is uncertain')

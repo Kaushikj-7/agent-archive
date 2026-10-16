@@ -490,3 +490,37 @@ func (s *sessionScan) finishNativeFilter(read *sourceRead, candidate archive.Sou
 	read.filterLease = nil
 	return detached, nil
 }
+
+// finishHistoryFilter ends a history read's encoded-row ownership once build
+// has decoded the candidate from it, before the candidate is reconciled and
+// published: nothing on that path reads the encoded rows again, and holding
+// them beside the candidate's decoded records would charge a long thread
+// twice its size. The candidate gets its own envelope (history included);
+// its ordinals and text still alias the read's, so they stay charged on
+// their own. A read whose rows a rewrite guard still holds is left as it is.
+func (s *sessionScan) finishHistoryFilter(read *sourceRead, candidate archive.SourceBundle) (archive.SourceBundle, error) {
+	if read.filterLease == nil || candidate.History == nil || read.filtered.History == nil || s.rewritten != nil {
+		return candidate, nil
+	}
+	aliased := 8 * int64(len(read.filtered.Ordinals))
+	for _, text := range read.filtered.Text {
+		aliased += int64(len(text))
+	}
+	if err := s.retainCharge(aliased); err != nil {
+		return archive.SourceBundle{}, err
+	}
+	detached, err := s.detachRetainedEnvelope(candidate)
+	if err != nil {
+		return archive.SourceBundle{}, err
+	}
+	lease := *read.filterLease
+	read.filtered.Records, read.filterLease = nil, nil
+	if s.lastRead != nil && s.lastRead.filterLease != nil && *s.lastRead.filterLease == lease {
+		s.lastRead.filtered.Records, s.lastRead.filterLease = nil, nil
+	}
+	if s.filtered != nil && s.filtered.filterLease != nil && *s.filtered.filterLease == lease {
+		s.filtered = nil
+	}
+	s.releaseRetainedIndex(lease)
+	return detached, nil
+}

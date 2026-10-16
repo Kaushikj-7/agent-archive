@@ -183,7 +183,7 @@ func TestSetupReviewShowsSessionsOnlyWhenNotTheDefault(t *testing.T) {
 	} {
 		var out strings.Builder
 		showSetupReview(newPrompter(strings.NewReader(""), &out), tc.next, setupReview{existing: tc.current, reconfiguring: tc.reconfiguring})
-		if got := out.String(); tc.want == "" && setupContainsText(got, "Sessions") || tc.want != "" && !setupContainsText(got, tc.want) {
+		if got := out.String(); tc.want == "" && setupContainsText(got, "All new sessions") || tc.want != "" && !setupContainsText(got, tc.want) {
 			t.Errorf("%s: review:\n%s", tc.name, got)
 		}
 	}

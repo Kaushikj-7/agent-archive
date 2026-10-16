@@ -36,6 +36,26 @@ type pickerView struct {
 	format  listFormatOptions
 	heading string
 	footer  string
+	// layout is the rows' layout for the width it was made for, kept until
+	// the width changes.
+	layout *sessionLayout
+}
+
+// formatFor is the view's format for a terminal width columns wide (0 when
+// its size is unknown), with every row's layout for that width, so the rows
+// of each page or screen line up with the rest.
+func (v *pickerView) formatFor(width int) listFormatOptions {
+	f := v.format
+	f.Width = width
+	if width <= 0 || f.Verbose || f.Search {
+		return f
+	}
+	if v.layout == nil || v.layout.width != width {
+		laid := newSessionLayout(v.rows, f)
+		v.layout = &laid
+	}
+	f.layout = v.layout
+	return f
 }
 
 // words is the filter's words, single-spaced; empty when the table is not
@@ -45,6 +65,10 @@ func (l *sessionPicker) words() string { return strings.Join(strings.Fields(l.fi
 // setFilter narrows the table to the words in text. The table starts again at
 // its top, with the first row that matches highlighted.
 func (l *sessionPicker) setFilter(text string) {
+	if strings.Join(strings.Fields(text), " ") != l.words() {
+		l.stopOperations()
+		l.searchFailure = nil
+	}
 	l.filter = text
 	l.cursor, l.moved, l.start, l.bottom, l.cache, l.memo = 0, false, 0, nil, nil, nil
 }
@@ -53,6 +77,27 @@ func (l *sessionPicker) setFilter(text string) {
 func (l *sessionPicker) closeFilter() {
 	l.filtering = false
 	l.setFilter("")
+}
+
+// closeFilterKeeping closes the filter line with the highlight on the row
+// it was on, when the table without the filter has it (filterScreen), and
+// on the first row otherwise.
+func (l *sessionPicker) closeFilterKeeping() {
+	keep := ""
+	if v := l.memo; v != nil && l.cursor >= 0 && l.cursor < len(v.order) {
+		keep = rowIdentity(v.order[l.cursor])
+	}
+	l.closeFilter()
+	l.keep = keep
+}
+
+// rowIdentity names the session a row is, the same in every table it is
+// in.
+func rowIdentity(r listRow) string {
+	if r.selectionKey != "" {
+		return r.selectionKey
+	}
+	return childKey(r.HarnessKey, r.SessionID)
 }
 
 // view is the table to draw: the rows given (a table of the scope, cut to
@@ -66,23 +111,43 @@ func (l *sessionPicker) view(rows []listRow, totalMatched int, truncated bool, f
 	}
 	shown, matched, laid := rows, len(rows), format
 	q := parseSessionQuery(words)
+	// Reading keys, the footer line under the table says where the screen
+	// is and which keys act (footerLine), and the heading says how many
+	// subagents are hidden: the count and the flags' advice are for a table
+	// read by lines.
+	keyed := l.keys != nil
 	var footer bytes.Buffer
-	if words == "" {
+	switch {
+	case words == "" && keyed:
+		if format.Note != "" {
+			footer.WriteString(format.Note + "\n")
+		}
+	case words == "":
 		printListFooter(&footer, len(rows), totalMatched, truncated, format)
-	} else {
+	default:
 		shown, matched = filterRows(l.universe(rows), q)
+		if l.searchFailure != nil {
+			fmt.Fprintf(&footer, "Search failed: %v; clear the filter and retry.\n", l.searchFailure)
+		} else if !l.searchRead && (l.search != nil || l.searchContext != nil) {
+			footer.WriteString("Loading complete search; Esc clears.\n")
+		}
 		laid = filteredFormat(format, shown)
-		footer.WriteString(l.filterFooter(matched, words))
+		if l.searchRead || (l.search == nil && l.searchContext == nil) {
+			footer.WriteString(l.filterFooter(matched, words))
+		}
+		if l.searchNotice != "" {
+			footer.WriteString(l.searchNotice + "\n")
+		}
 	}
 	if l.boundedNotice != "" {
 		footer.WriteString(l.boundedNotice + "\n")
 	}
-	if l.older != nil {
+	if l.older != nil && !keyed {
 		footer.WriteString("o · " + l.older.Label + " (Esc first while filtering)\n")
 	}
-	// The mark is for the key browser's filter line; a table read by lines
-	// is chosen from by number.
-	laid.Cursor = l.filtering && l.keys != nil
+	// The mark is the key browser's highlight; a table read by lines is
+	// chosen from by number.
+	laid.Cursor = keyed
 	groups := sessionTableGroups(shown, laid)
 	var order []listRow
 	for _, group := range groups {
@@ -92,24 +157,46 @@ func (l *sessionPicker) view(rows []listRow, totalMatched int, truncated bool, f
 	if words != "" {
 		first = max(slices.IndexFunc(order, func(r listRow) bool { return q.matches(r.fields) }), 0)
 	}
-	heading := l.heading
-	if l.headingFor != nil {
-		heading = l.headingFor(words, matched)
-	}
+	heading := l.viewHeading(words, matched, len(rows), format.HiddenSubagents)
 	v := &pickerView{words: words, filtering: l.filtering, rows: shown, order: order, first: first, matched: matched, groups: groups, format: laid, heading: heading, footer: footer.String()}
 	l.memo = v
 	return v
+}
+
+// viewHeading is the line above the table for the filter's words, the
+// sessions they match, and the rows given. Reading keys, an unfiltered
+// table's heading names the subagents it hides.
+func (l *sessionPicker) viewHeading(words string, matched, rows, hidden int) string {
+	heading := l.heading
+	if l.keys != nil && words == "" && hidden > 0 && l.headingFor == nil {
+		heading = strings.TrimPrefix(heading+" · "+hiddenSubagents(hidden), " · ")
+	}
+	if l.headingFor != nil {
+		heading = l.headingFor(words, matched)
+		if words != "" && !l.searchRead && (l.search != nil || l.searchContext != nil) {
+			heading = l.headingFor("", rows)
+			if l.searchFailure != nil {
+				heading += " · Search unavailable"
+			} else {
+				heading += " · Searching…"
+			}
+		}
+	}
+	if words != "" && l.searchRead && l.searchPartial {
+		heading += " · local eligibility may be unknown"
+	}
+	return heading
 }
 
 // universe is every session the filter searches: those of the table's scope
 // when it knows them (subagents too), else the table's own rows. The table's
 // rows keep the numbers the table gave them (withTableNumbers).
 func (l *sessionPicker) universe(rows []listRow) []listRow {
-	if l.search == nil {
+	if l.search == nil && l.searchContext == nil {
 		return rows
 	}
 	if !l.searchRead {
-		l.searched, l.searchRead = withTableNumbers(rows, l.search()), true
+		return nil
 	}
 	return l.searched
 }
@@ -126,6 +213,15 @@ func withTableNumbers(table, searched []listRow) []listRow {
 		inTable[childKey(r.HarnessKey, r.SessionID)] = true
 	}
 	out := slices.Clone(table)
+	full := make(map[string]listRow, len(searched))
+	for _, r := range searched {
+		full[childKey(r.HarnessKey, r.SessionID)] = r
+	}
+	for i, r := range out {
+		if searchedRow, ok := full[childKey(r.HarnessKey, r.SessionID)]; ok {
+			out[i].fields = searchedRow.fields
+		}
+	}
 	next := len(table)
 	for _, r := range searched {
 		if inTable[childKey(r.HarnessKey, r.SessionID)] {
@@ -145,6 +241,10 @@ func withTableNumbers(table, searched []listRow) []listRow {
 func (l *sessionPicker) filterFooter(matched int, words string) string {
 	quoted := `"` + archive.DisplayLine(words) + `"`
 	var line string
+	if l.searchPartial {
+		line = fmt.Sprintf("%d observed sessions match %s; local eligibility may be unknown.\n", matched, quoted)
+		return line
+	}
 	switch {
 	case l.keys != nil && matched == 0:
 		line = "No sessions match " + quoted + ".\n"
@@ -218,7 +318,6 @@ func filteredFormat(format listFormatOptions, rows []listRow) listFormatOptions 
 		f.HideHarness = format.HideHarness && same(func(r listRow) string { return r.Harness })
 		f.HideProject = format.HideProject && same(func(r listRow) string { return r.Project })
 	}
-	f.LiveMarks = slices.ContainsFunc(rows, func(r listRow) bool { return r.Live })
 	if !format.Verbose {
 		f.ShowPR = slices.ContainsFunc(rows, func(r listRow) bool { return r.PR != "" })
 	}
@@ -245,18 +344,21 @@ func highlightGroups(groups []sessionTableGroup, cursor int) []sessionTableGroup
 // filterKey applies one key to the filter line: typed characters add to the
 // filter, Backspace takes one off (and closes the line when none is left),
 // Esc clears the filter, and the arrows, PgUp, PgDn, Home, and End move the
-// highlight. Enter asks for the highlighted row.
-func (l *sessionPicker) filterKey(k key, screen listScreen, v *pickerView) listKeyResult {
-	last := max(len(v.order)-1, 0)
-	page := max(screen.end-screen.start, 1)
+// highlight as they do unfiltered (move). Enter asks for the highlighted
+// row.
+func (l *sessionPicker) filterKey(k key, screen listScreen) listKeyResult {
+	if move, ok := scrollKeys[k.kind]; ok {
+		l.move(move, screen)
+		return listStay
+	}
 	switch k.kind {
 	case keyEnter:
 		return listPick
 	case keyEscape:
-		l.closeFilter()
+		l.closeFilterKeeping()
 	case keyBackspace:
 		if l.filter == "" {
-			l.closeFilter()
+			l.closeFilterKeeping()
 			break
 		}
 		_, size := utf8.DecodeLastRuneInString(l.filter)
@@ -265,30 +367,19 @@ func (l *sessionPicker) filterKey(k key, screen listScreen, v *pickerView) listK
 		if l.filter == "" {
 			return listQuit
 		}
-	case keyUp:
-		l.cursor, l.moved = max(l.cursor-1, 0), true
-	case keyDown:
-		l.cursor, l.moved = min(l.cursor+1, last), true
-	case keyPageUp:
-		l.cursor, l.moved = max(l.cursor-page, 0), true
-	case keyPageDown:
-		l.cursor, l.moved = min(l.cursor+page, last), true
-	case keyHome:
-		l.cursor, l.moved = 0, true
-	case keyEnd:
-		l.cursor, l.moved = last, true
 	case keyRune:
 		if unicode.IsPrint(k.r) && len(l.filter) < maxFilterText {
 			l.setFilter(l.filter + string(k.r))
 		}
-	case keyLeft, keyRight, keyResize:
-		// Nothing to do but draw the screen again.
+	case keyUp, keyDown, keyPageUp, keyPageDown, keyHome, keyEnd, keyLeft, keyRight, keyResize:
+		// Moved above, or nothing to do but draw the screen again.
 	}
 	return listStay
 }
 
 // filterScreen is the list's screen for the table v, with the highlighted row
-// scrolled into view.
+// scrolled into view, unfiltered or not. Until a key moves it, the filter's
+// highlight is on the first row its words match.
 func (l *sessionPicker) filterScreen(stdout io.Writer, v *pickerView, prompt string) listScreen {
 	l.shown = v.heading
 	measure := func() listScreen {
@@ -297,19 +388,31 @@ func (l *sessionPicker) filterScreen(stdout io.Writer, v *pickerView, prompt str
 		return s
 	}
 	s := measure()
-	if !l.filtering || len(v.order) == 0 {
+	if len(v.order) == 0 {
 		return s
 	}
-	if !l.moved {
+	if l.filtering && !l.moved {
 		l.cursor = v.first
+	}
+	if l.keep != "" {
+		if at := slices.IndexFunc(v.order, func(r listRow) bool { return rowIdentity(r) == l.keep }); at >= 0 {
+			l.cursor = at
+		}
+		l.keep = ""
 	}
 	l.cursor = min(max(l.cursor, 0), len(v.order)-1)
 	s.cursor = l.cursor
-	if s.budget == 0 || l.cursor >= s.start && l.cursor < s.end {
-		return s
+	// A screen scrolled to without the detail strip can have room for it,
+	// and then for fewer rows: it is scrolled again, measured with the
+	// strip, which a later start keeps or leaves out to show more rows.
+	for range 3 {
+		if s.budget == 0 || l.cursor >= s.start && l.cursor < s.end {
+			break
+		}
+		l.start = l.revealStart(s, l.cursor)
+		s = measure()
 	}
-	l.start = l.revealStart(s, l.cursor)
-	return measure()
+	return s
 }
 
 // revealStart is the first row of the screen that shows row at, scrolling
@@ -329,9 +432,4 @@ func (l *sessionPicker) revealStart(s listScreen, at int) int {
 		}
 	}
 	return lo
-}
-
-// filterStatus is the status line while the filter line is open.
-func filterStatus(s listScreen, action string) string {
-	return s.position() + " · ↑↓ move · Enter " + action + " · Esc clear"
 }

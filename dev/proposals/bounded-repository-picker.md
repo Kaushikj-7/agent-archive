@@ -1,14 +1,23 @@
 # Bounded repository windows and picker startup
 
-Status: PR 1 reserves the format and integrates refusal controls. Bounded indexed
-picker construction, reads and production activation remain unimplemented.
+Status: scoped construction/upgrade, typed reader, local merge and interactive
+browser source are implemented in the dependent picker stack. Matched synthetic
+CLI qualification completed at `cc26f45aba6c76307aecf3c9d32b2650aef79eed`:16
+processes / 104 cases, including both 10k/100k cold/warm/changed and native matrices.
+[Exact results and limits](../maintainers/picker-qualification/results-20261013.md)
+retain source/harness/body evidence. List/show browsers and asynchronous search
+landed in [PR493](https://github.com/wangjohn/agent-archive/pull/493); qualification
+landed in [PR499](https://github.com/wangjohn/agent-archive/pull/499). These source
+and synthetic results do not establish final candidate or live provider acceptance;
+production release gates remain separate.
+Production activation remains refused pending provider and credential authority.
 Prepared 2026-10-13 against main
 `4b9b612ff9fbac454c93a292435bb151f7cde75f`.
 
-This is the next source implementation slice of
+This implemented source slice extends
 [listing at scale](listing-at-scale.md) and
 [CLI performance](cli-performance.md). It preserves the product behavior in
-[session finding](../specs/session-finding.md). Production activation remains
+[session finding](implemented/session-finding.md). Production activation remains
 subject to [provider qualification](../catalog/provider-qualification.md) and
 [migration authority](../catalog/migration-and-query.md).
 
@@ -32,9 +41,13 @@ This work adds scoped ordering and paged consumers. It does not replace these
 foundations, enable production providers, implement fragments or reconcile the
 entire older historical-publication PR stack.
 
-## Current source to understand first
+## Preparation source map
 
-| Concern | Existing source | Present limitation |
+This map records the limitations that motivated the approved seven-slice design.
+The implementation boundaries below describe the dependent source changes; the
+remaining qualification evidence is tracked separately.
+
+| Concern | Preparation source | Limitation at preparation |
 | --- | --- | --- |
 | Scope identity and fallback | `internal/cli/scope.go`, `scope_browse.go` | Correct matcher operates on an already loaded universe. |
 | Handoff setup and local merge | `internal/cli/handoff_select.go` | Loads all archive metadata; Older increases an in-memory limit. |
@@ -616,5 +629,31 @@ protocol-10 journal fields and digest bytes are unchanged; their frozen owners
 drain before activation, and completed old journals permit only local cleanup.
 Scoped rollback preserves the original fully indexed data under the stronger
 head/coordinator/configuration fences and refuses any later head change.
-Production provider qualification is unchanged. Paged consumers and end-to-end
-bounded picker behavior remain the subsequent implementation slices.
+Production provider qualification is unchanged. Typed readers, local merging and
+shared browser consumers extend this construction boundary in the dependent
+picker stack. Their integrated CLI acceptance evidence is recorded separately
+below; construction protocol tests do not establish command startup performance.
+
+## CLI acceptance protocol
+
+PR7 adds [real first-frame and Older qualification](../maintainers/picker-qualification/README.md)
+over complete 10k/100k synthetic catalogs. A separate 140-entry production
+construction comparison checks every tree leaf/value/body reference and retained
+receipt root; full-size bulk fixture creation is excluded from command cost.
+The same repaired terminal/oracle harness is copied to production baseline
+`a187e1b883924fd36c9d6700606a5c2756fc2b6f` with the protocol 10 format adapter;
+the candidate uses protocol 11 over the same logical data. Retain exact production,
+harness and fixture pins with cold/warm/changed phase measurements. GET/LIST/Stat,
+returned bytes/header estimates, latency/allocations, sampled runtime heap and
+native R observations are distinct. Actual provider wire/latency/RSS and distributed
+lifecycle claims require their own evidence. This protocol does not turn missing,
+timed-out or unexecuted measurement cases into PASS. The
+[2026-10-13 matched matrix](../maintainers/picker-qualification/results-20261013.md)
+completed all 16 processes / 104 cases with 52 identical logical-fixture pairs at
+candidate `cc26f45aba6c76307aecf3c9d32b2650aef79eed`, baseline
+`a187e1b883924fd36c9d6700606a5c2756fc2b6f`. Every supported measured first/Older
+phase had zero metadata/source body GETs, LISTs and non-Project root reads.
+Sampled heap includes fixture residency; process RSS includes construction/setup
+and was higher for the complete protocol11 fixture. This synthetic scope evidence
+does not establish provider transport, general full-load or rollout readiness;
+independent PR7 review and hosted gates remain required.

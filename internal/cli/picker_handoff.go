@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -15,7 +16,6 @@ import (
 	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
-	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
 type handoffPickerSelection struct {
@@ -86,7 +86,7 @@ func boundedHandoffChoices(ctx context.Context, env handoffSelectDependencies, s
 	if !reader.CatalogAuthority(store) {
 		return nil, nil, nil, false, nil
 	}
-	if !supportsBoundedHandoffScope(scope, opts.harness) {
+	if !pickerScopeSupported(scope, opts.harness, defaultListLimit) {
 		return nil, nil, nil, false, nil
 	}
 	snapshot, err := catalog.OpenSnapshot(ctx, store, nil)
@@ -95,24 +95,24 @@ func boundedHandoffChoices(ctx context.Context, env handoffSelectDependencies, s
 	}
 	// Probe supported format before local inventory reads. Unsupported is a
 	// compatibility decision, whereas an I/O/budget failure remains an error.
-	q, _ := pickerScopeQuery(scope, opts.harness, defaultListLimit+1)
+	// The model retains one extra remote lookahead. Cursor limits are sealed,
+	// so the supported-format probe must use the same query as model.state.
+	q, _ := pickerScopeQuery(scope, opts.harness, min(100, defaultListLimit+1))
 	first, err := snapshot.PickerPage(ctx, q, "")
 	if errors.Is(err, catalog.ErrPickerUnsupported) {
 		return nil, nil, nil, false, nil
 	}
 	if err != nil {
-		return nil, nil, nil, true, err
+		return nil, nil, nil, true, fmt.Errorf("read first handoff page: %w", err)
 	}
 	p := handoffPicker{ctx: ctx, env: env, home: home, harness: opts.harness, source: opts.source, archiveRead: true}
 	model := &pickerModel{archive: snapshot, regs: slices.Clone(regs), observeActivity: func(ctx context.Context, regs []archive.SessionRegistration) (map[pickerIdentity]time.Time, error) {
 		return pickerActivitiesResult(ctx, env, regs)
 	}, source: opts.source, harness: opts.harness, pageSize: defaultListLimit, labelBudget: defaultListLimit, label: func(ctx context.Context, r archive.SessionRegistration, t time.Time) (archive.Metadata, bool, error) {
-		labelPicker := p
-		labelPicker.ctx = ctx
-		return labelPicker.buildLocalMetadataResult(r, t)
+		return p.withContext(ctx).buildLocalMetadataResult(r, t)
 	}}
 	if err = model.prepare(ctx); err != nil {
-		return nil, nil, nil, true, err
+		return nil, nil, nil, true, fmt.Errorf("classify handoff registrations: %w", err)
 	}
 	state, err := model.state(scope)
 	if err != nil {
@@ -120,12 +120,13 @@ func boundedHandoffChoices(ctx context.Context, env handoffSelectDependencies, s
 	}
 	state.buffer, state.next, state.remoteDone = first.Rows, first.Next, !first.More
 	state.view.RemotePages = 1
+	var operationErr error
 	searchState := &pickerSearchState{}
-	rowsFor := func(s sessionScope) scopeView {
-		v, e := model.First(ctx, s)
+	rowsForContext := func(readCtx context.Context, s sessionScope) scopeView {
+		v, e := pickerVisibleView(readCtx, model, s)
 		if e != nil {
-			searchState.err = e
-			return scopeView{incomplete: true, total: -1, truncated: true, note: fmt.Sprintf("Could not load sessions: %v", e)}
+			operationErr = fmt.Errorf("build handoff picker rows: %w", e)
+			return scopeView{incomplete: true, loadError: e, total: -1, truncated: true, note: fmt.Sprintf("Could not load sessions: %v", e)}
 		}
 		rows := make([]handoffPickerRow, len(v.Rows))
 		for i, c := range v.Rows {
@@ -140,14 +141,17 @@ func boundedHandoffChoices(ctx context.Context, env handoffSelectDependencies, s
 		}
 		note := ""
 		if v.Incomplete {
-			note = "Local eligibility is incomplete; Older sessions continues the scan."
+			note = "Local eligibility is incomplete."
+			if v.More {
+				note += " Older sessions continues the scan."
+			}
 		}
-		return scopeView{rows: out, total: v.Total, truncated: v.More, note: note, incomplete: v.Incomplete, search: boundedHandoffSearch(ctx, env, store, snapshot, model, opts, s, regs, format, p, searchState, stderr)}
+		return scopeView{rows: out, total: v.Total, truncated: v.More, note: note, incomplete: v.Incomplete, searchNotice: "Complete archive search; local labels use at most 50 new native read attempts per search.", searchPartial: opts.source != "archive", searchContext: boundedHandoffSearch(env, store, snapshot, model, opts, s, regs, format, p, searchState, stderr)}
 	}
-	choices := &scopeChoices{scope: scope.only(), format: format, current: initialHandoffScope(scope), rowsFor: rowsFor}
+	choices := &scopeChoices{ctx: ctx, scope: scope.only(), format: format, validate: snapshot.ValidateContinuation, current: pickerScopeIndex(scope), rowsForContext: rowsForContext}
 	initial := choices.shown()
-	if searchState.err != nil {
-		return nil, nil, nil, true, searchState.err
+	if operationErr != nil {
+		return nil, nil, nil, true, operationErr
 	}
 	// Only a proven complete empty union permits widening to all projects.
 	if choices.current == viewScope && len(initial.rows) == 0 && !initial.incomplete {
@@ -155,22 +159,26 @@ func boundedHandoffChoices(ctx context.Context, env handoffSelectDependencies, s
 		choices.fellBack = true
 		_ = choices.shown()
 	}
-	choices.loadOlder = &browserLoadAction{Label: "Older sessions", Available: func() bool { return choices.shown().truncated }, Load: func() (bool, error) {
+	choices.loadOlder = &browserLoadAction{Label: "Older sessions", Available: func() bool { return choices.shown().truncated }, LoadContext: func(operationCtx context.Context) (bool, error) {
 		s := choices.scope
 		if choices.current == viewAll {
 			s = s.everything()
 		}
-		_, e := model.Older(ctx, s)
+		if e := snapshot.ValidateContinuation(operationCtx); e != nil {
+			return false, e
+		}
+		view, e := model.Older(operationCtx, s)
 		if e != nil {
 			return false, e
 		}
 		choices.built[choices.current] = nil
-		return choices.shown().truncated, nil
+		return view.More, nil
 	}}
-	// PR6 consumes this model directly and replaces synchronous search with an
-	// error-bearing operation. Until then cancellation/failure forbids selection.
-	model.searchError = func() error { return searchState.err }
-	return choices, model, snapshot, true, searchState.err
+	choices.loadOlder.Load = func() (bool, error) { return choices.loadOlder.LoadContext(ctx) }
+	// Search failure belongs to the browser operation, rather than poisoning
+	// valid browse selections after the filter is cancelled.
+	model.searchError = func() error { return nil }
+	return choices, model, snapshot, true, operationErr
 }
 
 func (r handoffResolver) selectedPicker(sel *handoffPickerSelection) (handoffTarget, error) {
@@ -235,24 +243,22 @@ func (r handoffResolver) selectedPicker(sel *handoffPickerSelection) (handoffTar
 
 // boundedLocalHandoffChoices preserves offline auto/local selection while
 // withholding uploaded/absent claims when archive association is unknown.
-func boundedLocalHandoffChoices(ctx context.Context, env handoffSelectDependencies, home string, opts handoffOptions, scope sessionScope, regs []archive.SessionRegistration, format listFormatOptions, stderr io.Writer) (*scopeChoices, *pickerModel, error) {
+func boundedLocalHandoffChoices(ctx context.Context, env handoffSelectDependencies, home string, opts handoffOptions, scope sessionScope, regs []archive.SessionRegistration, format listFormatOptions, _ io.Writer) (*scopeChoices, *pickerModel, error) {
 	p := handoffPicker{ctx: ctx, env: env, home: home, harness: opts.harness, source: opts.source, localLabels: map[localLabelKey]localLabelResult{}}
 	m := &pickerModel{absenceUnknown: true, regs: slices.Clone(regs), observeActivity: func(ctx context.Context, regs []archive.SessionRegistration) (map[pickerIdentity]time.Time, error) {
 		return pickerActivitiesResult(ctx, env, regs)
 	}, source: opts.source, harness: opts.harness, pageSize: defaultListLimit, labelBudget: defaultListLimit, label: func(ctx context.Context, r archive.SessionRegistration, at time.Time) (archive.Metadata, bool, error) {
-		labelPicker := p
-		labelPicker.ctx = ctx
-		return labelPicker.buildLocalMetadataResult(r, at)
+		return p.withContext(ctx).buildLocalMetadataResult(r, at)
 	}}
 	if err := m.prepare(ctx); err != nil {
 		return nil, nil, err
 	}
 	var loadErr error
-	rowsFor := func(s sessionScope) scopeView {
-		v, err := m.First(ctx, s)
+	rowsForContext := func(readCtx context.Context, s sessionScope) scopeView {
+		v, err := pickerVisibleView(readCtx, m, s)
 		if err != nil {
 			loadErr = err
-			return scopeView{incomplete: true, total: -1, truncated: true}
+			return scopeView{incomplete: true, loadError: err, total: -1, truncated: true}
 		}
 		rows := make([]handoffPickerRow, len(v.Rows))
 		for i, r := range v.Rows {
@@ -262,32 +268,33 @@ func boundedLocalHandoffChoices(ctx context.Context, env handoffSelectDependenci
 		for i, r := range v.Rows {
 			out[i].pickerSelection = &handoffPickerSelection{model: m, reg: r.row.reg}
 		}
-		note := "Archive association is unknown while offline."
+		note := ""
+		if opts.source != "local" {
+			note = "Archive association is unknown while offline."
+		}
 		if v.Incomplete && v.More {
 			note += " Local eligibility is incomplete; Older sessions continues the scan."
 		}
-		return scopeView{rows: out, total: v.Total, truncated: v.More, incomplete: v.Incomplete, note: note, search: func() []listRow {
+		return scopeView{rows: out, total: v.Total, truncated: v.More, incomplete: v.Incomplete, note: note, searchNotice: "Local labels use at most 50 new native read attempts per search; other local eligibility may be unknown.", searchPartial: true, searchContext: func(searchCtx context.Context) ([]listRow, error) {
+			p := p.withContext(searchCtx)
 			p.scope = s
 			p.readLimit = handoffTitleScanLimit
+			p.searchLabelBudget = handoffTitleScanLimit
 			p.localLabels = m.labels
 			var readErr error
 			p.readError = &readErr
-			rows, _, partial := p.rows(regs, nil, math.MaxInt)
+			rows, _, _ := p.rows(regs, nil, math.MaxInt)
 			if readErr != nil {
-				loadErr = readErr
-				return nil
-			}
-			if partial {
-				terminal.Println(stderr, "agent-archive: handoff: search: local eligibility is incomplete; only observed local matches are shown.")
+				return nil, readErr
 			}
 			result := formatHandoffRows(rows, format)
 			for i, row := range rows {
 				result[i].pickerSelection = &handoffPickerSelection{model: m, reg: row.reg}
 			}
-			return result
+			return result, searchCtx.Err()
 		}}
 	}
-	c := &scopeChoices{scope: scope.only(), format: format, current: initialHandoffScope(scope), rowsFor: rowsFor}
+	c := &scopeChoices{ctx: ctx, scope: scope.only(), format: format, current: pickerScopeIndex(scope), rowsForContext: rowsForContext}
 	initial := c.shown()
 	if loadErr != nil {
 		return nil, nil, loadErr
@@ -297,36 +304,45 @@ func boundedLocalHandoffChoices(ctx context.Context, env handoffSelectDependenci
 		c.fellBack = true
 		_ = c.shown()
 	}
-	c.loadOlder = &browserLoadAction{Label: "Older sessions", Available: func() bool { return c.shown().truncated }, Load: func() (bool, error) {
+	c.loadOlder = &browserLoadAction{Label: "Older sessions", Available: func() bool { return c.shown().truncated }, LoadContext: func(operationCtx context.Context) (bool, error) {
 		s := c.scope
 		if c.current == viewAll {
 			s = s.everything()
 		}
-		_, err := m.Older(ctx, s)
+		view, err := m.Older(operationCtx, s)
 		if err != nil {
 			return false, err
 		}
 		c.built[c.current] = nil
-		return c.shown().truncated, nil
+		return view.More, nil
 	}}
-	m.searchError = func() error { return loadErr }
+	c.loadOlder.Load = func() (bool, error) { return c.loadOlder.LoadContext(ctx) }
+	m.searchError = func() error { return nil }
 	return c, m, loadErr
+}
+
+// A rendered scope reuses the model's published immutable view. Validation
+// belongs to the asynchronous scope/Older action, not table reconstruction.
+func pickerVisibleView(ctx context.Context, m *pickerModel, scope sessionScope) (modelPickerView, error) {
+	raw, _ := json.Marshal(scope)
+	if st := m.states[string(raw)]; st != nil && st.started {
+		return clonePickerView(st.view), ctx.Err()
+	}
+	return m.First(ctx, scope)
 }
 
 type pickerSearchState struct {
 	archived []archive.Metadata
 	loaded   bool
-	err      error
 }
 
-func boundedHandoffSearch(ctx context.Context, env handoffSelectDependencies, store storage.ObjectStore, snapshot *catalog.Snapshot, model *pickerModel, opts handoffOptions, scope sessionScope, regs []archive.SessionRegistration, format listFormatOptions, p handoffPicker, state *pickerSearchState, stderr io.Writer) func() []listRow {
-	return func() []listRow {
+func boundedHandoffSearch(env handoffSelectDependencies, store storage.ObjectStore, snapshot *catalog.Snapshot, model *pickerModel, opts handoffOptions, scope sessionScope, regs []archive.SessionRegistration, format listFormatOptions, p handoffPicker, state *pickerSearchState, stderr io.Writer) func(context.Context) ([]listRow, error) {
+	return func(ctx context.Context) ([]listRow, error) {
+		p := p.withContext(ctx)
 		if !state.loaded {
 			archived, err := reader.ListMetadataWithOptions(ctx, store, archiveSessionsPrefix, reader.Filter{Harness: opts.harness, Replays: reader.ReplaysHidden}, reader.ListOptions{Cache: listCache(env, false), Skipped: warnSkippedSidecar(stderr, "handoff")})
 			if err != nil {
-				state.err = err
-				terminal.Printf(stderr, "agent-archive: handoff: search failed: %v\n", err)
-				return nil
+				return nil, err
 			}
 			sortByActivity(archived)
 			state.archived = archived
@@ -335,16 +351,12 @@ func boundedHandoffSearch(ctx context.Context, env handoffSelectDependencies, st
 		p.scope = scope
 		p.localLabels = model.labels
 		p.readLimit = handoffTitleScanLimit
+		p.searchLabelBudget = handoffTitleScanLimit
 		var readErr error
 		p.readError = &readErr
-		roots, _, partial := p.rows(regs, state.archived, math.MaxInt)
+		roots, _, _ := p.rows(regs, state.archived, math.MaxInt)
 		if readErr != nil {
-			state.err = readErr
-			terminal.Printf(stderr, "agent-archive: handoff: search failed: %v\n", readErr)
-			return nil
-		}
-		if partial {
-			terminal.Println(stderr, "agent-archive: handoff: search: local eligibility is incomplete; archive search is complete.")
+			return nil, readErr
 		}
 		result := formatHandoffRows(roots, format)
 		if opts.source != "local" {
@@ -355,11 +367,9 @@ func boundedHandoffSearch(ctx context.Context, env handoffSelectDependencies, st
 			result = append(result, children...)
 		}
 		if err := pinHandoffSearchRows(ctx, snapshot, model, store, result, roots); err != nil {
-			state.err = err
-			terminal.Printf(stderr, "agent-archive: handoff: search failed: %v\n", err)
-			return nil
+			return nil, err
 		}
-		return result
+		return result, ctx.Err()
 	}
 }
 
@@ -374,6 +384,9 @@ func pinHandoffSearchRows(ctx context.Context, snapshot *catalog.Snapshot, model
 		if err != nil {
 			return err
 		}
+		if len(batch.Results) != len(ids) {
+			return errors.New("search identity lookup is incomplete; retry")
+		}
 		for offset, result := range batch.Results {
 			i := start + offset
 			var reg *archive.SessionRegistration
@@ -387,20 +400,26 @@ func pinHandoffSearchRows(ctx context.Context, snapshot *catalog.Snapshot, model
 			} else if reg == nil {
 				return errors.New("search selection no longer exists; refresh")
 			}
-			rows[i].pickerSelection = &handoffPickerSelection{model: model, snapshot: snapshot, store: store, reg: reg, item: item}
+			selection := &handoffPickerSelection{model: model, snapshot: snapshot, store: store, reg: reg, item: item}
+			rows[i].pickerSelection = selection
 		}
 	}
-	return nil
+	return ctx.Err()
+}
+
+func pickerScopeSupported(scope sessionScope, harness string, limit int) bool {
+	_, err := pickerScopeQuery(scope, harness, limit)
+	return err == nil
+}
+
+func pickerScopeIndex(scope sessionScope) int {
+	if scope.Label == "" || scope.All {
+		return viewAll
+	}
+	return viewScope
 }
 
 func supportsBoundedHandoffScope(scope sessionScope, harness string) bool {
 	_, err := pickerScopeQuery(scope, harness, defaultListLimit+1)
 	return err == nil
-}
-
-func initialHandoffScope(scope sessionScope) int {
-	if scope.All || scope.Label == "" {
-		return viewAll
-	}
-	return viewScope
 }

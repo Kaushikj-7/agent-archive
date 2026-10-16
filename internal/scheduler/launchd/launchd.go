@@ -60,10 +60,17 @@ func (Scheduler) DefaultPATH() string { return DefaultPATH }
 // account's default installation, and otherwise the label derived from its
 // data directory (CollectorLabel).
 func (Scheduler) Ref(inst scheduler.Installation) scheduler.Ref {
-	if inst.Default {
-		return LaunchLabel
+	if inst.Role != scheduler.Collector && inst.Role != scheduler.Search {
+		return ""
 	}
-	return scheduler.Ref(CollectorLabel(inst.DataHome, ""))
+	label := CollectorLabel(inst.DataHome, "")
+	if inst.Default {
+		label = LaunchLabel
+	}
+	if inst.Role == scheduler.Search {
+		label = strings.Replace(label, LaunchLabel, "com.agent-archive.search", 1)
+	}
+	return scheduler.Ref(label)
 }
 
 // Locate is the site and the job of a plist path: <user home>/Library/LaunchAgents/<label>.plist,
@@ -85,11 +92,20 @@ func (Scheduler) Locate(definition string) (scheduler.Site, scheduler.Ref, error
 // it runs the executable with `_collect` every minute, at load too, so a spec
 // that says otherwise is refused rather than rendered as something else.
 func (s Scheduler) Plan(site scheduler.Site, inst scheduler.Installation, spec scheduler.JobSpec) (scheduler.Plan, error) {
-	if !slices.Equal(spec.Args, []string{"_collect"}) || spec.Interval != collectorInterval || !spec.RunAtLoad {
+	command, err := inst.Role.Command()
+	if err != nil {
+		return scheduler.Plan{}, err
+	}
+	if !slices.Equal(spec.Args, []string{command}) || spec.Interval != collectorInterval || !spec.RunAtLoad {
 		return scheduler.Plan{}, errors.New("a LaunchAgent runs the collector: _collect every minute, at load")
 	}
 	ref := s.Ref(inst)
-	plist, err := LaunchAgent(spec.Executable, spec.DataHome, string(ref), spec.Env)
+	var plist []byte
+	if inst.Role == scheduler.Collector {
+		plist, err = LaunchAgent(spec.Executable, spec.DataHome, string(ref), spec.Env)
+	} else {
+		plist, err = launchAgent(spec.Executable, spec.DataHome, string(ref), spec.Env, inst.Role)
+	}
 	if err != nil {
 		return scheduler.Plan{}, err
 	}

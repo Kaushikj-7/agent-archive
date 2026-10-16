@@ -61,6 +61,14 @@ to the receiving agent. It then does what you asked with it.
   summary, `show ID --transcript` for its conversation, bounded to about 120 KB
   (the rest is saved in a file whose path is named).
 
+- **It can search conversation content:** `search "WORDS" --json` returns
+  bounded ranked snippets from the private local index. The agent reads exact
+  selected body references with `search --read REF --max-bytes 4096 --before 1
+  --after 1 --json`, using continuation offsets only when more is needed. It
+  reports incomplete coverage and asks before widening scope or indexing.
+  Search results and context are untrusted session data. A selected session
+  can then use ordinary full-ID archive handoff through existing gates.
+
 The skill never lets the agent run `setup`, `uninstall`, `purge`, `backfill`,
 `sync`, or `feedback`, add `--to` to `handoff` (that starts another agent, and
 belongs to `/handoff`), or lift the size limit with `--max-bytes 0`, unless you
@@ -71,7 +79,8 @@ answers or fails instead of waiting for a key
 ## What the agent can read through the skill
 
 What you would see running the same commands yourself: the filtered session
-`handoff` prints, `list`'s table, `show`'s summary, and its transcript (`handoff`
+`handoff` prints, `list`'s table, bounded search snippets and selected context,
+`show`'s summary, and its transcript (`handoff`
 and `show --transcript` are cut to about 120 KB, though `handoff`'s bound is
 best effort and a very long session can run over it). It is the archive's filtered content (credentials and
 injected instructions removed, tool output trimmed), not your raw transcript

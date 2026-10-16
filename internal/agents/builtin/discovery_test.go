@@ -19,6 +19,13 @@ func TestDiscoveryConformance(t *testing.T) {
 	for _, name := range r.DiscoveryAgents() {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
+			if name == "muse" {
+				p, _ := r.LookupDiscovery(name)
+				if _, err := p.Discover(t.Context(), agentapi.DiscoveryRequest{Purpose: agentapi.DiscoveryImport}, func(agentapi.DiscoveryCandidate) error { t.Fatal("emitted unsupported import"); return nil }); err == nil {
+					t.Fatal("handoff-only discovery accepted import")
+				}
+				return
+			}
 			home := t.TempDir()
 			for _, rel := range fixtures[name] {
 				path := filepath.Join(home, rel)

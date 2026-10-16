@@ -18,7 +18,7 @@ func catalogCandidateSessions(ctx context.Context, env metadataCacheDependencies
 	if reader.CatalogAuthority(store) {
 		cache := listCache(env, opts.noCache)
 		if cache != nil {
-			c, err := reader.OpenSessionCatalog(ctx, cache, store, reader.ListOptions{Cache: cache, BodyRead: showBodyObserver(reuse, catalogBodyObserver(env))})
+			c, err := reader.OpenSessionCatalog(ctx, cache, store, reader.ListOptions{Cache: cache, BodyRead: showBodyObserver(reuse, catalogBodyObserver(env)), Progress: listReadProgress(ctx)})
 			if err == nil {
 				defer func() {
 					if reuse == nil || reuse.close == nil {
@@ -52,7 +52,7 @@ func catalogCandidateSessions(ctx context.Context, env metadataCacheDependencies
 	}
 	span := trace.Start("list metadata")
 	defer span.End()
-	readOpts := reader.ListOptions{Cache: cache, Skipped: warnSkippedSidecar(stderr, command), BodyRead: showBodyObserver(reuse, catalogBodyObserver(env))}
+	readOpts := reader.ListOptions{Cache: cache, Skipped: warnSkippedSidecar(stderr, command), BodyRead: showBodyObserver(reuse, catalogBodyObserver(env)), Progress: listReadProgress(ctx)}
 	catalog, err := reader.OpenSessionCatalog(ctx, cache, store, readOpts)
 	if err != nil {
 		return nil, false, false, nil
@@ -81,6 +81,11 @@ func catalogCandidateSessions(ctx context.Context, env metadataCacheDependencies
 			sessions, fallbackErr := reader.ListMetadataFromSnapshot(ctx, store, headers, opts.filter, readOpts)
 			sortByActivity(sessions)
 			return filterListOrigin(sessions, opts.imported, opts.hookCaptured), true, true, fallbackErr
+		}
+		if sessions == nil && len(page.Rows) > 0 {
+			// The catalog reports the complete candidate count before paging.
+			// Keep every candidate without repeatedly copying large metadata.
+			sessions = make([]archive.Metadata, 0, page.Total)
 		}
 		for _, row := range page.Rows {
 			sessions = append(sessions, row.Summary.Metadata())

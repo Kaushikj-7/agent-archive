@@ -16,6 +16,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"github.com/wangjohn/agent-archive/internal/scheduler"
 )
 
 // LaunchLabel is the background collector's launchd label for the default
@@ -41,6 +43,18 @@ func CollectorLabel(dataHome, defaultDataHome string) string {
 // AGENT_ARCHIVE_HOME, which is always dataHome; launchd gives a job nothing
 // of the shell's environment, so what setup relied on must be written here.
 func LaunchAgent(executable, dataHome, label string, environment map[string]string) ([]byte, error) {
+	return launchAgent(executable, dataHome, label, environment, scheduler.Collector)
+}
+
+func launchAgent(executable, dataHome, label string, environment map[string]string, role scheduler.Role) ([]byte, error) {
+	command, err := role.Command()
+	if err != nil {
+		return nil, err
+	}
+	logName := "collector"
+	if role == scheduler.Search {
+		logName = "search"
+	}
 	if !filepath.IsAbs(executable) || !filepath.IsAbs(dataHome) {
 		return nil, errors.New("LaunchAgent paths must be absolute")
 	}
@@ -61,14 +75,14 @@ func LaunchAgent(executable, dataHome, label string, environment map[string]stri
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
 <key>Label</key><string>%s</string>
-<key>ProgramArguments</key><array><string>%s</string><string>_collect</string></array>
+<key>ProgramArguments</key><array><string>%s</string><string>%s</string></array>
 <key>EnvironmentVariables</key><dict>%s</dict>
 <key>RunAtLoad</key><true/><key>StartInterval</key><integer>60</integer>
 <key>ProcessType</key><string>Background</string>
 <key>StandardOutPath</key><string>%s</string>
 <key>StandardErrorPath</key><string>%s</string>
 </dict></plist>
-`, escape(label), escape(executable), variables.String(), escape(filepath.Join(dataHome, "collector.log")), escape(filepath.Join(dataHome, "collector-error.log")))), nil
+`, escape(label), escape(executable), command, variables.String(), escape(filepath.Join(dataHome, logName+".log")), escape(filepath.Join(dataHome, logName+"-error.log")))), nil
 }
 
 // LaunchAgentDataHome returns the AGENT_ARCHIVE_HOME a LaunchAgent plist

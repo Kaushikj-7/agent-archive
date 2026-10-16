@@ -28,6 +28,166 @@
         "counts"
       ],
       "properties": {
+        "token_observations": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "input",
+            "output",
+            "observed",
+            "coverage",
+            "composition",
+            "pricing"
+          ],
+          "properties": {
+            "input": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "output": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "models": {
+              "type": "array",
+              "maxItems": 32,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "model",
+                  "input",
+                  "output"
+                ],
+                "properties": {
+                  "model": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "input": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "output": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                }
+              }
+            },
+            "observed": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "state"
+              ],
+              "properties": {
+                "state": {
+                  "enum": [
+                    "available",
+                    "unavailable",
+                    "unknown"
+                  ]
+                },
+                "reason": {
+                  "enum": [
+                    "text_structure_unproven",
+                    "not_recorded",
+                    "historical_filter",
+                    "parse_failed",
+                    "observation_limit"
+                  ]
+                }
+              }
+            },
+            "coverage": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "state"
+              ],
+              "properties": {
+                "state": {
+                  "enum": [
+                    "available",
+                    "unavailable",
+                    "unknown"
+                  ]
+                },
+                "reason": {
+                  "enum": [
+                    "text_structure_unproven",
+                    "not_recorded",
+                    "historical_filter",
+                    "parse_failed",
+                    "observation_limit"
+                  ]
+                }
+              }
+            },
+            "composition": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "state"
+              ],
+              "properties": {
+                "state": {
+                  "enum": [
+                    "available",
+                    "unavailable",
+                    "unknown"
+                  ]
+                },
+                "reason": {
+                  "enum": [
+                    "text_structure_unproven",
+                    "not_recorded",
+                    "historical_filter",
+                    "parse_failed",
+                    "observation_limit"
+                  ]
+                }
+              }
+            },
+            "pricing": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "state"
+              ],
+              "properties": {
+                "state": {
+                  "enum": [
+                    "available",
+                    "unavailable",
+                    "unknown"
+                  ]
+                },
+                "reason": {
+                  "enum": [
+                    "text_structure_unproven",
+                    "not_recorded",
+                    "historical_filter",
+                    "parse_failed",
+                    "observation_limit"
+                  ]
+                }
+              }
+            }
+          }
+        },
         "schema_version": {
           "const": 1
         },
@@ -199,7 +359,7 @@
           }
         },
         "files_edited": {
-          "description": "Detail 'full' only, and then always present: the distinct files the session's editing calls named, in the order first edited, relative to the session's working directory when inside it. counts.files_touched counts the same files.",
+          "description": "Detail 'full' only, present when edited-file evidence is observable (possibly empty): the distinct files the session's editing calls named, in the order first edited, relative to the session's working directory when inside it. counts.files_touched counts the same files.",
           "type": "array",
           "items": {
             "type": "string",

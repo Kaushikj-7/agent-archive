@@ -53,12 +53,12 @@ func renderSessionSummary(w io.Writer, view sessionView, opts summaryOptions) {
 	if view.SelectedRevisionID != "" {
 		terminal.Println(w, s.dim("Parent revision: "+archive.DisplayLine(view.SelectedRevisionID)))
 	}
-	context := ellipsize(strings.Join(summaryContext(m, opts), " · "), width-16)
+	context := summaryContext(m, opts, width-16)
 	if status := summaryStatus(m, s); status != "" {
 		gap := max(width-visibleWidth(context)-visibleWidth(status), 2)
-		terminal.Println(w, s.dim(context)+strings.Repeat(" ", gap)+status)
+		terminal.Println(w, context+strings.Repeat(" ", gap)+status)
 	} else {
-		terminal.Println(w, s.dim(context))
+		terminal.Println(w, context)
 	}
 	terminal.Println(w)
 
@@ -182,12 +182,18 @@ func summaryRows(view sessionView, opts summaryOptions, width int) []summaryRow 
 	return rows
 }
 
-// summaryContext is the line under the title: harness, project, and how
-// long ago the session was last active, as list's WHEN says.
-func summaryContext(m archive.Metadata, opts summaryOptions) []string {
+// summaryContext is the line under the title, in the session list's words:
+// the agent's name (agentLabel), the project, and when the session was last
+// active in longWhen's phrase ("last active 2 minutes ago"), as the list's
+// detail strip says it. The agent's name is in its color when the style has
+// color, and the rest is dim; the line fits in width columns.
+func summaryContext(m archive.Metadata, opts summaryOptions, width int) string {
+	s := opts.Style
 	var parts []string
-	if name := archive.DisplayLine(m.Harness.Name); name != "" {
-		parts = append(parts, name)
+	agent := ""
+	if strings.TrimSpace(m.Harness.Name) != "" {
+		_, agent = agentLabel(m.Harness.Name)
+		parts = append(parts, agent)
 	}
 	project := m.ProjectName
 	if project == "" {
@@ -197,24 +203,14 @@ func summaryContext(m archive.Metadata, opts summaryOptions) []string {
 		parts = append(parts, project)
 	}
 	if active := lastActivity(m); !active.IsZero() {
-		parts = append(parts, compactAge(opts.Now, active))
+		parts = append(parts, "last active "+longWhen(opts.Now, active))
 	}
-	return parts
-}
-
-// compactAge is relativeAge in the header's short form ("2h ago").
-func compactAge(now, t time.Time) string {
-	d := now.Sub(t)
-	switch {
-	case d < time.Minute:
-		return "just now"
-	case d < time.Hour:
-		return fmt.Sprintf("%dm ago", int(d/time.Minute))
-	case d < 48*time.Hour:
-		return fmt.Sprintf("%dh ago", int(d/time.Hour))
-	default:
-		return fmt.Sprintf("%dd ago", int(d/(24*time.Hour)))
+	line := ellipsize(strings.Join(parts, " · "), width)
+	rest, whole := strings.CutPrefix(line, agent)
+	if agent == "" || !whole {
+		return s.dim(line)
 	}
+	return s.agent(m.Harness.Name, agent) + s.dim(rest)
 }
 
 // summaryStatus is the header's right-hand status: how the last turn ended,

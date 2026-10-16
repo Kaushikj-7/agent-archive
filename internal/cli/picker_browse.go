@@ -1,0 +1,222 @@
+package cli
+
+import (
+	"context"
+	"errors"
+	"io"
+	"math"
+
+	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/catalog"
+	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/reader"
+	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/terminal"
+)
+
+// boundedArchiveChoices keeps a separate remote frontier for each displayed
+// scope. It never initializes the complete summary cache before search.
+func boundedArchiveChoices(ctx context.Context, env metadataCacheDependencies, store storage.ObjectStore, opts listOptions, scope sessionScope, format listFormatOptions, stderr io.Writer, command string) (*scopeChoices, bool, error) {
+	if !reader.CatalogAuthority(store) || !boundedArchiveOptions(opts) {
+		return nil, false, nil
+	}
+	pageSize := defaultListLimit
+	if command == "list" {
+		if opts.limit < 1 || opts.limit > 100 {
+			return nil, false, nil
+		}
+		pageSize = opts.limit
+	}
+	if !pickerScopeSupported(scope, opts.filter.Harness, pageSize) {
+		return nil, false, nil
+	}
+	q, _ := pickerScopeQuery(scope, opts.filter.Harness, pageSize)
+	q.Membership = catalog.PickerBrowse
+	snapshot, err := catalog.OpenSnapshot(ctx, store, nil)
+	if err != nil {
+		return nil, true, err
+	}
+	page, err := snapshot.PickerPage(ctx, q, "")
+	if errors.Is(err, catalog.ErrPickerUnsupported) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, true, err
+	}
+	type state struct {
+		rows  []catalog.PickerItem
+		next  string
+		more  bool
+		total int
+	}
+	states := map[int]*state{}
+	index := viewScope
+	if scope.All || scope.Label == "" {
+		index = viewAll
+	}
+	count := func(p catalog.PickerPage) int {
+		if p.Total > uint64(math.MaxInt) {
+			return -1
+		}
+		return int(p.Total)
+	}
+	states[index] = &state{rows: page.Rows, next: page.Next, more: page.More, total: count(page)}
+	var loadErr error
+	load := func(readCtx context.Context, s sessionScope, i int, older bool) error {
+		st := states[i]
+		if st != nil && !older {
+			return readCtx.Err()
+		}
+		query, e := pickerScopeQuery(s, opts.filter.Harness, pageSize)
+		if e != nil {
+			return e
+		}
+		query.Membership = catalog.PickerBrowse
+		next := ""
+		if st != nil {
+			next = st.next
+		}
+		p, e := snapshot.PickerPage(readCtx, query, next)
+		if e != nil {
+			return e
+		}
+		if st == nil {
+			st = &state{}
+		}
+		st.rows = append(st.rows, p.Rows...)
+		st.next, st.more, st.total = p.Next, p.More, count(p)
+		states[i] = st
+		return nil
+	}
+	rowsForContext := func(readCtx context.Context, s sessionScope) scopeView {
+		i := viewScope
+		if s.All {
+			i = viewAll
+		}
+		if e := load(readCtx, s, i, false); e != nil {
+			loadErr = e
+			return scopeView{incomplete: true, loadError: e, total: -1, note: e.Error()}
+		}
+		st := states[i]
+		// Format the complete loaded table together so short IDs remain
+		// unambiguous. Projection facts are presentation data only.
+		sessions := make([]archive.Metadata, len(st.rows))
+		for i, item := range st.rows {
+			sessions[i] = pickerPresentation(item.Row)
+		}
+		rows := formatSessionRows(sessions, format)
+		for i, item := range st.rows {
+			item := item
+			rows[i].setActive(format.Now, item.Row.Activity)
+			rows[i].Children = int(item.Row.OrdinaryChildren)
+			rows[i].pickerSelection = &handoffPickerSelection{item: &item, snapshot: snapshot, store: store}
+		}
+		return scopeView{rows: rows, total: st.total, truncated: st.more, hidden: -1, note: "Subagent count is not loaded; search includes archived subagents.", searchContext: func(searchCtx context.Context) ([]listRow, error) {
+			sessions, e := loadSessionsForBrowseContext(searchCtx, env, store, opts, stderr, command)
+			if e != nil {
+				return nil, e
+			}
+			result := archiveSearch(sessions, s, format)()
+			if e := bindArchiveSearchRows(searchCtx, snapshot, store, result); e != nil {
+				return nil, e
+			}
+			return result, nil
+		}}
+	}
+	choices := &scopeChoices{ctx: ctx, scope: scope.only(), format: format, current: index, validate: snapshot.ValidateContinuation, rowsForContext: rowsForContext}
+	_ = choices.shown()
+	if loadErr != nil {
+		return nil, true, loadErr
+	}
+	if index == viewScope && page.Empty {
+		choices.current, choices.fellBack = viewAll, true
+		_ = choices.shown()
+	}
+	choices.loadOlder = &browserLoadAction{Label: "Older sessions", Available: func() bool { return choices.shown().truncated }, LoadContext: func(readCtx context.Context) (bool, error) {
+		i := choices.current
+		s := choices.scope
+		if i == viewAll {
+			s = s.everything()
+		}
+		if e := load(readCtx, s, i, true); e != nil {
+			return false, e
+		}
+		choices.built[i] = nil
+		return states[i].more, nil
+	}}
+	choices.loadOlder.Load = func() (bool, error) { return choices.loadOlder.LoadContext(ctx) }
+	return choices, true, loadErr
+}
+
+func readPickerSessionView(ctx context.Context, store storage.ObjectStore, row listRow) (sessionView, error) {
+	if sel := row.pickerSelection; sel != nil && sel.item != nil {
+		hydrated, err := sel.snapshot.HydratePicker(ctx, sel.item.Reference)
+		if err != nil {
+			return sessionView{}, err
+		}
+		metadata, ok, err := sel.snapshot.ResolvedMetadata(ctx, hydrated.Row)
+		if err != nil {
+			return sessionView{}, err
+		}
+		if !ok {
+			return sessionView{}, errors.New("picker selection lacks verified body provenance")
+		}
+		return metadataWithLinks(ctx, store, metadata), nil
+	}
+	return readSessionView(ctx, store, row.HarnessKey, row.SessionID)
+}
+
+func bindArchiveSearchRows(ctx context.Context, snapshot *catalog.Snapshot, store storage.ObjectStore, rows []listRow) error {
+	for start := 0; start < len(rows); start += 100 {
+		end := min(start+100, len(rows))
+		identities := make([]catalog.PickerIdentity, end-start)
+		for i := start; i < end; i++ {
+			identities[i-start] = catalog.PickerIdentity{Harness: rows[i].HarnessKey, SessionID: rows[i].SessionID}
+		}
+		batch, err := snapshot.PickerLookup(ctx, identities)
+		if err != nil {
+			return err
+		}
+		found := map[pickerIdentity]catalog.PickerItem{}
+		for _, r := range batch.Results {
+			if r.Found {
+				found[pickerID(r.Identity.Harness, r.Identity.SessionID)] = r.Item
+			}
+		}
+		for i := start; i < end; i++ {
+			item, ok := found[pickerID(rows[i].HarnessKey, rows[i].SessionID)]
+			if !ok {
+				return errors.New("search selection no longer exists; refresh")
+			}
+			rows[i].pickerSelection = &handoffPickerSelection{item: &item, snapshot: snapshot, store: store}
+		}
+	}
+	return ctx.Err()
+}
+
+func boundedArchiveOptions(opts listOptions) bool {
+	f := opts.filter
+	return !opts.imported && !opts.hookCaptured && !opts.verbose && f.Model == "" && f.Skill == "" && f.SkillSHA256 == "" && f.From.IsZero() && f.To.IsZero() && !f.RequireCompleteCoverage && f.Replays == reader.ReplaysHidden
+}
+
+func runBoundedListBrowser(ctx context.Context, env listCommandDependencies, store storage.ObjectStore, cfg config.Config, opts listOptions, scope sessionScope, stdin io.Reader, stdout, stderr io.Writer, stopList func()) (bool, int) {
+	format := listFormatOptions{Now: env.now(), Projects: projectLabels(cfg), Style: styleFor(stdout), GroupByDay: true, Numbered: true, Verbose: opts.verbose}
+	choices, used, err := boundedArchiveChoices(ctx, env, store, opts, scope, format, stderr, "list")
+	if !used {
+		return false, 0
+	}
+	stopList()
+	if err != nil {
+		terminal.Printf(stderr, "agent-archive: list: %v\n", err)
+		return true, 1
+	}
+	_, _, code := runBrowser(ctx, env, newPrompter(stdin, stdout), stdout, stderr, browserSpec{Mode: browseSessions, Choices: choices, Command: "list", Store: store, NoPager: opts.noPager})
+	return true, code
+}
+
+func pickerSelectionContext(ctx context.Context, row listRow) context.Context {
+	if row.pickerSelection != nil && row.pickerSelection.item != nil {
+		return catalog.WithReadView(ctx)
+	}
+	return catalog.NewReadView(ctx)
+}
