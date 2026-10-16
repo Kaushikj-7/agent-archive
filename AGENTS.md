@@ -37,7 +37,8 @@ Follow [CONTRIBUTING.md](CONTRIBUTING.md) for the contribution workflow.
 
 - Keep output short: one line per fact, no explanatory filler; put detail
   behind `--verbose`, `--json`, or a key in interactive views.
-- Ask choices as numbered options with a default, e.g. `Enter 1-3 [1]`.
+- Ask choices as numbered options with a default, e.g. `Enter 1-3 [1]`,
+  except a single action can use a yes/no confirmation.
 - When the user must act, print the exact command to run, on its own line.
 - Use a named string type, not plain `string`, for enum-like values such as
   stages, sources, and kinds.
@@ -82,8 +83,9 @@ Follow [CONTRIBUTING.md](CONTRIBUTING.md) for the contribution workflow.
   git diff --check
   ```
 
-- Under local load, `internal/cli` and `internal/collector` can exceed 20
-  minutes; pass `-timeout 40m` for them and run long suites in the background.
+- For a local diagnostic under load, `internal/cli` and `internal/collector`
+  may need `-timeout 40m`; run long suites in the background. This does not
+  replace the canonical 20-minute CI qualification commands in the testing guide.
 - Run Levenshtein at the commit pinned in `.github/workflows/levenshtein.yml`
   (a detached `git -C ~/levenshtein worktree add`). It enforces rules that
   local golangci-lint does not, such as `thelper` and `usetesting`.
