@@ -208,7 +208,8 @@ The first of these that has a match answers:
 3. subagent sessions, in the scope and then everywhere.
 
 For `list` and `handoff`, a session ID, full or the 8-character short one,
-names that session first. `show` gives a full ID that precedence; a short ID
+names that session first; the agent's own session ID (a Codex thread ID, a
+Claude Code or Cursor session ID) does too. `show` gives a full ID that precedence; a short ID
 combines prefix matches with title and pull request matches, then applies the
 scope tiers above. When the scope answers, the footer says how many more match
 elsewhere (`1 match in agent-archive (3 more in other projects: --all-projects or a project name finds
