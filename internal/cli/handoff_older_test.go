@@ -71,15 +71,17 @@ func TestHandoffOlderActionReturnsAfterScopeToggle(t *testing.T) {
 	screens := keyScreens(t, picker, choices, "hand off", "o", "a", "o", "a", "q")
 	var loaded, scopedDone, allMore, allDone bool
 	for _, screen := range screens {
-		hasOlder := strings.Contains(screen, "   o older   ")
+		// Older rows to load are said by the position's "+".
+		position := positionOf(screen)
+		hasOlder := strings.HasSuffix(position, "+")
 		switch {
-		case strings.Contains(screen, "here · 60 sessions") && strings.Contains(screen, " of 50\n"):
+		case strings.Contains(screen, "here · 60 sessions") && strings.HasSuffix(strings.TrimSuffix(position, "+"), " of 50"):
 			loaded = loaded || hasOlder
-		case strings.Contains(screen, "here · 60 sessions") && !strings.Contains(screen, " of 50\n"):
+		case strings.Contains(screen, "here · 60 sessions") && strings.HasSuffix(position, " of 60"):
 			scopedDone = scopedDone || !hasOlder
-		case strings.Contains(screen, "All projects · 121 sessions") && strings.Contains(screen, " of 100\n"):
+		case strings.Contains(screen, "All projects · 121 sessions") && strings.HasSuffix(strings.TrimSuffix(position, "+"), " of 100"):
 			allMore = allMore || hasOlder
-		case strings.Contains(screen, "All projects · 121 sessions") && !strings.Contains(screen, " of 100\n"):
+		case strings.Contains(screen, "All projects · 121 sessions") && strings.HasSuffix(position, " of 121"):
 			allDone = allDone || !hasOlder
 		}
 	}
@@ -126,10 +128,10 @@ func TestKeyHighlightAcrossOlderRowsAndScopeToggle(t *testing.T) {
 		}
 	}
 	want := []string{
-		"here · 60 sessions · codex · 1 subagent hidden · a all projects|1|1–23 of 50",
-		"here · 60 sessions · codex · 1 subagent hidden · a all projects|50|28–50 of 50",
+		"here · 60 sessions · codex · 1 subagent hidden · a all projects|1|1–23 of 50+",
+		"here · 60 sessions · codex · 1 subagent hidden · a all projects|50|28–50 of 50+",
 		"here · 60 sessions · codex · 1 subagent hidden · a all projects|50|28–50 of 60",
-		"All projects · 121 sessions · codex · 1 subagent hidden · a here|1|1–23 of 100",
+		"All projects · 121 sessions · codex · 1 subagent hidden · a here|1|1–23 of 100+",
 	}
 	if strings.Join(lines, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("screens\n%s\nwant\n%s", strings.Join(lines, "\n"), strings.Join(want, "\n"))

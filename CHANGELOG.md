@@ -11,13 +11,22 @@ follow [Semantic Versioning](https://semver.org/).
   Cursor tool calls without recorded results no longer claim zero results;
   unstructured exports omit unavailable edited-file lists.
 
+- The session browser (`list`, bare `show`, `handoff`, and content `search` on
+  a terminal) loads older sessions as you scroll: moving down past the last row
+  (↓ or the wheel on it, PgDn with it on screen, or End on it) loads the next
+  batch and moves on into it, with no `o` to press first (`o` still works).
+  The footer's count ends in `+` while more can load (`1–14 of 50+`), says
+  `No older sessions.` when a load finds none (moving past that end then loads
+  nothing more until the list changes), shows `Loading …` in place of the
+  footer line instead of under the prompt, and names `PgUp/PgDn page`.
+  Reading lines is unchanged.
+
 - Read complete supported Muse exec/MSP roots with `handoff --file PATH
   --harness muse`, including safe own prompts and committed assistant text,
   JSON/Markdown output and handoff into an existing supported agent. Creation
   time uses the validated reserved start. Accounting, tools, model switches,
   children, automatic browse, backfill, capture and Muse destination launch
   remain unavailable. Handoff also now respects Codex's recorded native start.
-
 
 - Commands run inside Muse detect its session environment to avoid interactive
   prompts and pagers. Handoff into supported agents removes inherited Muse

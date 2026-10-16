@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -84,6 +85,8 @@ type listScreen struct {
 // the highlighted row. A group scrolled into keeps its heading, marked
 // continued. Typed characters collect at the prompt until Enter chooses
 // the row they name; Enter with nothing typed opens the highlighted row.
+// When older rows can load, a move down past the last row loads them and
+// goes on into them (olderMoveFor); o loads them too.
 func (l *sessionPicker) pickKeysContext(ctx context.Context, p *prompter, stdout io.Writer, rows []listRow, totalMatched int, truncated bool, format listFormatOptions, action string) (listRow, bool, error) {
 	question := p.promptText("Number or ID to "+action, true, nil, -1, ": ")
 	if l.emptyWithoutAction(rows) {
@@ -96,6 +99,7 @@ func (l *sessionPicker) pickKeysContext(ctx context.Context, p *prompter, stdout
 		}
 		return question + typed
 	}
+	l.loadingFrame = nil
 	for first := true; ; first = false {
 		if !first && l.clear != nil {
 			l.clear()
@@ -106,27 +110,16 @@ func (l *sessionPicker) pickKeysContext(ctx context.Context, p *prompter, stdout
 		}
 		v := l.view(rows, totalMatched, truncated, format)
 		screen := l.filterScreen(stdout, v, prompt())
-		var frame bytes.Buffer
-		if v.heading != "" {
-			frame.WriteString(oneRow(v.heading, screen.width) + "\n")
-		}
-		groups := highlightGroups(v.groups, l.cursor)
-		if err := printSessionGroups(&frame, pageSessionGroups(groups, pickerPage{screen.start, screen.end}), v.formatFor(screen.width)); err != nil {
-			return listRow{}, false, err
-		}
-		if screen.strip {
-			for _, line := range detailStrip(v.order[screen.cursor], screen.width, format.Style) {
-				frame.WriteString(line + "\n")
-			}
-		}
-		frame.WriteString(l.displayFooter(v.footer, screen.width))
+		screen, notice = l.continueOlder(stdout, v, screen, prompt(), notice)
 		bottom := l.footerLine(screen, action)
 		if notice != "" {
 			bottom = oneRow(notice, screen.width)
 		}
-		frame.WriteString(bottom + "\n")
-		frame.WriteString(prompt())
-		terminal.Print(stdout, frame.String())
+		frame, err := l.keysFrame(v, screen, format, bottom, prompt())
+		if err != nil {
+			return listRow{}, false, err
+		}
+		terminal.Print(stdout, frame)
 		notice = ""
 		for {
 			k, err := l.nextBrowserKey()
@@ -140,8 +133,9 @@ func (l *sessionPicker) pickKeysContext(ctx context.Context, p *prompter, stdout
 				}
 				return listRow{}, false, err
 			}
-			if l.activatesOlder(k, typed) {
+			if l.loadsOlder(k, typed, v, screen) {
 				l.loadedOlder = true
+				l.loadingFrame = l.redrawWith(stdout, v, screen, format, prompt())
 				return listRow{}, false, nil
 			}
 			var result listKeyResult
@@ -164,6 +158,7 @@ func (l *sessionPicker) pickKeysContext(ctx context.Context, p *prompter, stdout
 				return listRow{}, false, nil
 			case listToggle:
 				l.toggled = true
+				l.loadingFrame = l.redrawWith(stdout, v, screen, format, prompt())
 				return listRow{}, false, nil
 			case listSubmit:
 				if row, ok := matchBrowseRow(typed, rows); ok {
@@ -184,6 +179,46 @@ func (l *sessionPicker) pickKeysContext(ctx context.Context, p *prompter, stdout
 				break
 			}
 		}
+	}
+}
+
+// keysFrame is the list's screen, drawn for the table v as measured by
+// screen: the heading, the rows on screen, the detail strip, the footer,
+// bottom (the footer line, or a message in its place), and the prompt.
+func (l *sessionPicker) keysFrame(v *pickerView, screen listScreen, format listFormatOptions, bottom, prompt string) (string, error) {
+	var frame bytes.Buffer
+	if v.heading != "" {
+		frame.WriteString(oneRow(v.heading, screen.width) + "\n")
+	}
+	groups := highlightGroups(v.groups, l.cursor)
+	if err := printSessionGroups(&frame, pageSessionGroups(groups, pickerPage{screen.start, screen.end}), v.formatFor(screen.width)); err != nil {
+		return "", err
+	}
+	if screen.strip {
+		for _, line := range detailStrip(v.order[screen.cursor], screen.width, format.Style) {
+			frame.WriteString(line + "\n")
+		}
+	}
+	frame.WriteString(l.displayFooter(v.footer, screen.width))
+	frame.WriteString(bottom + "\n")
+	frame.WriteString(prompt)
+	return frame.String(), nil
+}
+
+// redrawWith returns what draws the list as it is now, the table v as
+// measured by screen, again with a message in place of its footer line
+// (loadingFrame). The screen is cleared first, so the message never
+// pushes the list up a line.
+func (l *sessionPicker) redrawWith(stdout io.Writer, v *pickerView, screen listScreen, format listFormatOptions, prompt string) func(string) {
+	return func(message string) {
+		frame, err := l.keysFrame(v, screen, format, oneRow(message, screen.width), prompt)
+		if err != nil {
+			return
+		}
+		if l.clear != nil {
+			l.clear()
+		}
+		terminal.Print(stdout, frame)
 	}
 }
 
@@ -268,8 +303,9 @@ func (l *sessionPicker) listRune(r rune, screen listScreen, typed string) (strin
 		return "", listStay
 	case typed == "" && r == '/':
 		// The highlight stays where it is until words are typed, so Esc
-		// with none typed comes back to the same row.
-		l.filtering, l.moved = true, true
+		// with none typed comes back to the same row. Moving past the end
+		// loads older rows again afterwards, even where it found none.
+		l.filtering, l.moved, l.olderSpent = true, true, ""
 	case typed == "" && (r == 'n' || r == 'N'):
 		l.move(scrollPageDown, screen)
 	case typed == "" && (r == 'p' || r == 'P'):
@@ -717,6 +753,108 @@ func (l *sessionPicker) activatesOlder(k key, typed string) bool {
 	return l.older != nil && !l.filtering && typed == "" && k.kind == keyRune && unicode.ToLower(k.r) == 'o'
 }
 
+// olderMove is a move down that the rows loaded could not take, kept
+// while older rows load so that it goes on into them.
+type olderMove struct {
+	move scrollMove
+	// rows is how many rows the table had, and keep the identity
+	// (rowIdentity) of the row highlighted.
+	rows int
+	keep string
+}
+
+// canLoadOlder reports whether older rows (or a content search's next
+// results) can load: the footer's position then ends in "+", and a move down
+// past the last row loads them. A move past an end where a load found none
+// loads nothing (olderSpent).
+func (l *sessionPicker) canLoadOlder() bool {
+	if l.older == nil || l.contentSearch != nil && !l.contentSearch.hasNextPage() {
+		return false
+	}
+	return l.olderSpent == "" || l.memo == nil || olderEnd(l.memo) != l.olderSpent
+}
+
+// olderEnd names the end of the table v: how many rows it has, and its last.
+func olderEnd(v *pickerView) string {
+	if len(v.order) == 0 {
+		return "0"
+	}
+	return strconv.Itoa(len(v.order)) + " " + rowIdentity(v.order[len(v.order)-1])
+}
+
+// olderMoveFor is the move k asks for when it cannot go past the rows
+// loaded and older rows can load, with the filter line closed and nothing
+// typed: ↓ (or the wheel) and End on the last row, and PgDn, space, or n
+// with the last row on screen.
+func (l *sessionPicker) olderMoveFor(k key, typed string, screen listScreen) (scrollMove, bool) {
+	if l.filtering || typed != "" || !l.canLoadOlder() {
+		return 0, false
+	}
+	move, ok := scrollKeys[k.kind]
+	if k.kind == keyRune && (k.r == ' ' || unicode.ToLower(k.r) == 'n') {
+		move, ok = scrollPageDown, true
+	}
+	switch {
+	case !ok:
+		return 0, false
+	case move == scrollLineDown || move == scrollBottom:
+		return move, l.cursor >= screen.n-1
+	case move == scrollPageDown:
+		return move, screen.end >= screen.n
+	}
+	return 0, false
+}
+
+// continueOlder goes on with the move that loaded older rows, now that the
+// table v has them: ↓ to the first row loaded, a screen down as if the rows
+// had been there, and End to the new last row. When the load added no rows,
+// the highlight stays and the message to show says so. screen is the list
+// as it is drawn; the screen returned is measured again after the move.
+// With no move to go on with, it returns screen and notice, the message
+// already to show.
+func (l *sessionPicker) continueOlder(stdout io.Writer, v *pickerView, screen listScreen, prompt, notice string) (listScreen, string) {
+	m := l.pendingOlder
+	l.pendingOlder = nil
+	if m == nil {
+		return screen, notice
+	}
+	if len(v.order) <= m.rows {
+		// Moving past this end again loads nothing more.
+		l.olderSpent = olderEnd(v)
+		if l.contentSearch != nil {
+			return screen, "No more results."
+		}
+		return screen, "No older sessions."
+	}
+	if m.rows == 0 && m.move != scrollBottom {
+		// Nothing was listed: the first row loaded is the first row.
+		l.cursor, l.start = 0, 0
+		return l.filterScreen(stdout, v, prompt), ""
+	}
+	if at := slices.IndexFunc(v.order, func(r listRow) bool { return rowIdentity(r) == m.keep }); m.keep != "" && at >= 0 && at != l.cursor {
+		l.cursor = at
+		screen = l.filterScreen(stdout, v, prompt)
+	}
+	l.move(m.move, screen)
+	return l.filterScreen(stdout, v, prompt), ""
+}
+
+// loadsOlder reports whether k loads older rows: o, or a move down past
+// the rows loaded (olderMoveFor), which is kept to go on into them
+// (continueOlder).
+func (l *sessionPicker) loadsOlder(k key, typed string, v *pickerView, screen listScreen) bool {
+	move, ok := l.olderMoveFor(k, typed, screen)
+	if !ok {
+		return l.activatesOlder(k, typed)
+	}
+	keep := ""
+	if l.cursor >= 0 && l.cursor < len(v.order) {
+		keep = rowIdentity(v.order[l.cursor])
+	}
+	l.pendingOlder = &olderMove{move: move, rows: len(v.order), keep: keep}
+	return true
+}
+
 func (l *sessionPicker) viewChanged(next, prior *pickerView, screen listScreen) bool {
 	return next != prior || l.start != screen.start || l.cursor != screen.cursor
 }
@@ -785,33 +923,30 @@ type footerKey struct {
 }
 
 // footerLine is the line under the key browser's table: the keys, and on
-// the right which rows are on screen ("1–14 of 86"). Keys that do not fit
+// the right which rows are on screen ("1–14 of 86", "1–14 of 50+" when
+// older rows load past the last one). Keys that do not fit
 // the width go, least needed first; the position stays.
 func (l *sessionPicker) footerLine(s listScreen, action string) string {
 	var keys []footerKey
 	if l.filtering {
 		keys = []footerKey{{"↑↓ move", 2}, {"Enter " + action, 0}, {"Esc clear", 3}}
 	} else {
-		keys = []footerKey{{"↑↓ move", 2}, {"Enter " + action, 0}}
+		keys = []footerKey{{"↑↓ move", 2}, {"PgUp/PgDn page", 5}, {"Enter " + action, 0}}
 		if l.contentSearch == nil {
-			keys = append(keys, footerKey{"/ search", 4}, footerKey{"number + Enter jump", 5})
+			keys = append(keys, footerKey{"/ search", 4})
 		} else {
-			keys = append(keys, footerKey{"r rerun", 4}, footerKey{"number + Enter jump", 5})
+			keys = append(keys, footerKey{"r rerun", 4})
 		}
-		// Older rows to load are said only here (the position counts the
-		// rows loaded), so the key stays as long as Enter does.
-		if l.older != nil {
-			label := "o older"
-			if l.contentSearch != nil {
-				label = "o next results"
-			}
-			keys = append(keys, footerKey{label, 1})
-		}
-		keys = append(keys, footerKey{"q quit", 3})
+		keys = append(keys, footerKey{"number + Enter jump", 6}, footerKey{"q quit", 3})
 	}
 	position := ""
 	if s.n > 0 {
 		position = fmt.Sprintf("%d–%d of %d", s.start+1, s.end, s.n)
+		// More rows load past the last one (olderMoveFor), which the
+		// filter line does not do.
+		if l.canLoadOlder() && !l.filtering {
+			position += "+"
+		}
 	}
 	const gap = "   "
 	for {
