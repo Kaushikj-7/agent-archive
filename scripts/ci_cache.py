@@ -24,6 +24,44 @@ from go_cache_steps import emit, execute_modules
 SCHEMA = 'aa-compilation-v2'
 MAX_BYTES = 2 * 1024 * 1024 * 1024
 MANIFEST = '.aa-compilation-manifest.json'
+PRODUCT_PRIORITY = 'compilation-product-priority.json'
+
+
+def go_object_key(key):
+    return isinstance(key, str) and re.fullmatch(r'0/[0-9a-f]{2}/[0-9a-f]{64}-[ad]', key) is not None
+
+
+def product_priority_path(runner_temp):
+    path = Path(runner_temp)/PRODUCT_PRIORITY
+    if path.is_symlink() or (path.exists() and not path.is_file()):
+        raise InvalidContext('product priority is not a regular file')
+    return path
+
+
+def capture_product_priority(plan, context, runner_temp):
+    # Capture identities, never copy object bytes. This is uncached producer
+    # metadata, taken before checker compilation adds recoverable build objects.
+    keys = sorted(key for _, key, _, _ in cache_files((plan.paths[0],)) if go_object_key(key))
+    payload = json.dumps({'schema': 1, 'source': plan.source,
+                          'context': digest(context), 'objects': keys}, sort_keys=True)
+    if len(payload.encode()) > 8 * 1024 * 1024:
+        raise InvalidContext('product priority exceeds metadata budget')
+    product_priority_path(runner_temp).write_text(payload)
+
+
+def read_product_priority(plan, context, runner_temp):
+    path = product_priority_path(runner_temp)
+    if path.stat().st_size > 8 * 1024 * 1024:
+        raise InvalidContext('product priority exceeds metadata budget')
+    value = json.loads(path.read_text())
+    if (not isinstance(value, dict) or set(value) != {'schema', 'source', 'context', 'objects'}
+            or type(value['schema']) is not int or value['schema'] != 1
+            or value['source'] != plan.source or value['context'] != digest(context)
+            or not isinstance(value['objects'], list)
+            or any(not go_object_key(key) for key in value['objects'])
+            or value['objects'] != sorted(set(value['objects']))):
+        raise InvalidContext('product priority source/context differs')
+    return frozenset(value['objects'])
 
 
 def cache_files(paths):
@@ -70,8 +108,8 @@ def file_inventory(paths, files=None):
     return result, size
 
 
-def bound_compilation(plan, files=None):
-    """Drop only Go's recoverable action/object entries, oldest first.
+def bound_compilation(plan, files=None, preferred=()):
+    """Drop recoverable Go objects, oldest first within each priority tier.
 
     Module contents, pinned binaries, manifests and receipts are never edited.
     Preserve 98% of the cap for manifest room. Missing Go objects trigger normal
@@ -81,15 +119,19 @@ def bound_compilation(plan, files=None):
     size = sum(item[2] for item in files)
     target = int(MAX_BYTES * .98)
     removed = 0
+    preferred = frozenset(preferred)
+    if any(not go_object_key(key) for key in preferred):
+        raise InvalidContext('product priority contains invalid Go object identity')
     candidates = []
     for item in files:
         path, key, length, modified = item
-        parts = key.split('/')
-        if (len(parts) == 3 and parts[0] == '0' and re.fullmatch(r'[0-9a-f]{2}', parts[1])
-                and re.fullmatch(r'[0-9a-f]{64}-[ad]', parts[2])):
+        if go_object_key(key):
             candidates.append(item)
     discarded = set()
-    for path, key, length, modified in sorted(candidates, key=lambda item: item[3]):
+    # A checker executable is already retained separately. Its newer build
+    # intermediates must not displace product objects solely by mtime. Priority
+    # is soft: even product objects remain recoverable when they exceed the cap.
+    for path, key, length, modified in sorted(candidates, key=lambda item: (item[1] in preferred, item[3], item[1])):
         if size <= target:
             break
         path.unlink()
@@ -115,13 +157,13 @@ def manifest_path(plan):
     return path
 
 
-def publish_manifest(plan, context, kind='seed'):
+def publish_manifest(plan, context, kind='seed', *, preferred=()):
     target = manifest_path(plan)
     paths = snapshot_paths(plan, kind)
     for path in paths:
         Path(path).mkdir(parents=True, exist_ok=True)
     candidates = cache_files(paths)
-    bound_compilation(plan, candidates)
+    bound_compilation(plan, candidates, preferred)
     files, size = file_inventory(paths, candidates)
     payload = json.dumps({
         'schema': SCHEMA, 'kind': kind, 'context': digest(context),
@@ -142,6 +184,9 @@ def validate_manifest(plan, context, kind='seed'):
         raise InvalidContext('compilation manifest kind differs')
     paths = snapshot_paths(plan, manifest.get('kind'))
     files, size = file_inventory(paths)
+    if (kind == 'seed' and context.get('go', {}).get('GOOS') == 'darwin'
+            and size + path.stat().st_size > MAX_BYTES):
+        raise InvalidContext('retained macOS seed exceeds publication budget')
     if (not isinstance(manifest, dict) or set(manifest) != {
             'schema', 'kind', 'context', 'dependency', 'source', 'files', 'bytes'}
             or manifest['schema'] != SCHEMA or manifest['context'] != digest(context)
@@ -219,7 +264,7 @@ def current_source(source, tested):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('phase', choices=('prepare', 'verify', 'complete'))
+    parser.add_argument('phase', choices=('prepare', 'verify', 'prioritize-product', 'complete'))
     parser.add_argument('--source', default='.')
     parser.add_argument('--profile', choices=('product', 'shared'), default='product')
     parser.add_argument('--shared-source', default='')
@@ -280,11 +325,27 @@ def main():
                 # calls complete, after its build commands succeeded.
                 if not trusted_main(env, event):
                     raise InvalidContext('trusted cache writes require exact push-main event')
+                if args.phase == 'prioritize-product':
+                    if args.profile != 'product' or runtime['go']['GOOS'] != 'darwin':
+                        raise InvalidContext('product priority requires the native macOS product producer')
+                    capture_product_priority(plan, context, Path(env['RUNNER_TEMP']))
+                    guard(current)
+                    return 0
                 execute_modules(['go', 'mod', 'verify'])
                 if shared is not None:
                     verify_modules(shared)
                 try:
-                    size = publish_manifest(plan, context)
+                    preferred = (read_product_priority(plan, context, Path(env['RUNNER_TEMP']))
+                                 if args.profile == 'product' and runtime['go']['GOOS'] == 'darwin' else ())
+                    size = publish_manifest(plan, context, preferred=preferred)
+                    if args.profile == 'product' and runtime['go']['GOOS'] == 'darwin':
+                        # Recount the actual saved paths after eviction and manifest
+                        # creation. Non-evictable bytes can consume the reserved
+                        # metadata room; never publish beyond the existing cap.
+                        retained = sum(item[2] for item in cache_files(snapshot_paths(plan, 'seed')))
+                        retained += manifest_path(plan).stat().st_size
+                        if retained > MAX_BYTES:
+                            raise InvalidContext('retained macOS seed exceeds publication budget')
                 except InvalidContext:
                     emit({'save_ready': 'false'}, env['GITHUB_OUTPUT'])
                     observe_cache('capture', args.profile, 'not-captured', None)

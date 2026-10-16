@@ -121,8 +121,8 @@ No retained framing or opening shape difference was observed against the matched
 the same export diagnostics under 1.4.9. Exact permission frames decode; tested
 framing/checksum mutations are rejected. Ordinary schema 999 is still accepted
 by export, so the collector must enforce its own supported-version policy.
-These are bounded exporter observations, not independent checksum proof or
-original root-creation authority. Copied bytes preserve the same identity and
+Those historical exporter observations did not establish independent checksum
+proof or original root-creation authority. Copied bytes preserve the same identity and
 opening observation. No new MSP, PTY, tool-turn, child/fork/checkpoint, date-zone,
 platform, real-accounting, storage or capture qualification is implied.
 
@@ -132,15 +132,19 @@ that would define retained transaction integrity. Its
 [Session declaration](https://github.com/meta-models/muse-code-sdk/blob/bb863c9071d42d9f67fcc3561690425646f727c8/schema/msp/msp.d.ts#L1688)
 also distinguishes a top-level containing home from the immediate spawning
 session; no child-graph authority follows from this root-only campaign.
-Integrity and original creation gates remain OPEN and capture unavailable.
+The later [permission checksum qualification](permission-integrity.md) independently
+recovers the pinned v1 byte recipe. The [initial-root contract](root-creation.md)
+qualifies reserved logical-start semantics for strict observed 1.4.9 roots. The complete production validator
+and admission gates remain unimplemented and capture unavailable.
 
 ## Support and refusal matrix
 
 | Lane | Qualified observation | Gate / safe production behavior |
 | --- | --- | --- |
-| Permission transaction v1 | Exact bytes accepted; selected mutations rejected by native export. | **OPEN integrity encoding**. No independent preimage/encoding contract; refuse before retention. |
-| Ordinary schema-1 envelopes | Fresh/resume activity and usage observed; no enforced native checksum on tested ordinary envelope. | Own structural/version/sequence/identity validation required. Export even accepts schema 999, so it is not a version authority. Initial transaction still blocks whole native capture. |
-| Fresh root, resume and exact copy | Fresh `session.opened.observed` false, resume true, append prefix preserved; exact copied log exports identically. | **OPEN original-creation authority**. Copied permission/opened times cannot create another owner or reset birth. No uniqueness/relocation authority inferred. |
+| Permission transaction v1 | [Pinned checksum recipe](permission-integrity.md) independently matches nine native held-out frames and a fresh final-source run; exporter diagnostics remain separate. | Complete native grammar, permission profiles and unsupported transaction shapes remain **OPEN**. No production decoder or capture capability is enabled. |
+| Ordinary schema-1 envelopes | Fresh/resume activity and usage observed; no enforced native checksum on tested ordinary envelope. | Own structural/version/sequence/identity validation required. Export even accepts schema 999, so it is not a version authority. Complete initial-transaction validation still blocks whole native capture. |
+| Initial ordinary root | [Reserved logical-start semantics](root-creation.md) qualified for strict observed 1.4.9 exec/MSP prefixes, coherent identity and initial workspace. Opening corroborates startup and is later than logical birth. | Complete prefix/negative validator, same-descriptor checks, physical-source uniqueness and consent admission remain **unimplemented**. Unknown child/fork/checkpoint lanes refuse; no capture enablement. |
+| Resume and exact copy | Original prefix and logical start continue; MSP resume can omit a new opened(true). Copies/relocation preserve logical identity and time. | No new owner, consent window or original physical-copy uniqueness follows from copied bytes or late observations. |
 | Folder dating | Process-local dated folder differs from UUIDv7 UTC date in tested UTC−12 boundary. | Dates are locator hints only; UTC/local/adjacent-day plus bounded fallback remains required. Skew/all zones not established. |
 | MSP fork | Own turn completes; timestamp-less fork prefix contains inherited prompt/answer and an omitted-live-only marker. | **OPEN branch creation**. Copied content is excluded from own activity; fork does not imply delegated child. |
 | PTY | Startup and one synthetic multiline turn retained an own prompt and committed assistant response. | No manual/default compaction, failure/signals matrix or graceful-exit qualification inferred. |
@@ -152,14 +156,18 @@ invalid integrity, contradictory identity and unsupported authoritative formats
 must refuse. An unknown optional body can be dropped with bounded explicit
 coverage. None of these future production behaviors is implemented here.
 
-Blind hashing of JSON metadata subsets/child concatenations did not reproduce
-the permission digest. Available SDK source is a selected mirror without the
-retained Rust implementation. Native diagnostic strings mention closed grammar,
-physical ordinals, 1–4096 children, 32 MiB/child, 48 MiB aggregate and 64 MiB/frame,
-but do not define canonical encoding. These are investigation leads, not tested
-archive limits. The productive next input is a producer checksum preimage/
-encoding contract with reference vectors; skipping transactions or shelling out
-to `muse export` in the collector is not an acceptable substitute.
+Local static inspection recovered the exact permission v1 checksum encoding,
+then independent Python recomputation matched native known answers. The
+[checksum supplement](permission-integrity.md) records the formula, bounded
+checks and final-source campaign. The [initial-root contract](root-creation.md)
+records the separate reserved-start dataflow and observed lane discriminator.
+Complete grammar, same-handle validation, uniqueness and consent admission remain
+implementation gates. Historical
+[1.4.8 results](results.json), [1.4.9 results](results-1.4.9.json), corpus manifests
+and their original runner hashes remain unchanged. A matching unkeyed checksum
+is not authentication or permission to retain a source. Skipping transactions
+or shelling out to `muse export` in the collector is not a substitute for a
+qualified native decoder.
 
 Q0 also corrected the spec's downgrade assumption. An old JSON rewrite can drop
 `native_binding` while leaving `TranscriptPath`; current non-Codex admission is
@@ -171,7 +179,27 @@ and actual old-entrypoint tests, not an optimistic return-to-pending claim.
 Offline tests run in ordinary CI without native Muse or a listener and verify
 isolation, timeout/group cleanup, export diagnostic handling, complete corpus
 hashes/assertions, rejection of missing/mismatched own turns, SIGTERM cleanup,
-empty-corpus/manifest preservation, stream/queue flood and oversized-file refusal and removal of context sentinels. The spec's §7 extension-point
+empty-corpus/manifest preservation, stream/queue flood and oversized-file refusal,
+removal of context sentinels, independent checksum known answers and byte binding.
+The artificial checksum objects in the tests qualify only the byte recipe, not
+native transaction grammar. The spec's §7 extension-point
 commands were rerun on the current base; see results for actual commands/outcomes.
 They do not validate any unimplemented Muse adapter. Native campaigns are opt-in
 local qualification, not automatically run against developer machines in CI.
+
+## Runtime presence (independent of capture)
+
+[Runtime presence evidence](runtime-presence.md) qualifies a fresh root shell on
+1.4.9 for noninteractive behavior and environment cleanup only. It does not
+qualify that producer for retained decoding or capture, current-session identity,
+resume, children or monitors. The authority gates above remain open.
+
+## Production local v1 policy
+
+The [versioned local v1 allowlist](retained-allowlist-local-v1.json) and
+[inner schema](../../../schemas/muse-retained-v1.schema.json) define the exact
+implemented `muse-jsonl` projection. They explicitly add minimal permission,
+mode-specific startup and agent-tree authority facts. The original
+[Q0 allowlist](retained-allowlist.json), projector, five derived manifests and
+corpus retain their original bytes/hashes. Their broader ceiling does not claim
+production accounting or native integrity validity of redacted corpus bytes.

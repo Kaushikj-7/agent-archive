@@ -1,6 +1,6 @@
 # Privacy filter rules
 
-> **Status: implemented** (filter 18). The user-facing summary is
+> **Status: implemented** (filter 19). The user-facing summary is
 > [privacy](../../docs/security/privacy.md); what changed in each filter
 > version is in the [filter changelog](privacy-filter-changelog.md).
 
@@ -429,3 +429,41 @@ Filter 18 accepts the fixed `api`/`codex-api-159.2-v1` session-label pair in
 addition to the file contract. It retains only the same owning ID, filtered
 bounded name or explicit absent state, contract and stable observation time.
 Native JSON responses and process output are discarded before persistence.
+
+## Muse explicit local evidence
+
+Filter 19 supports `handoff --file PATH --harness muse` for complete ordinary
+exec/MSP roots in the qualified grammar. The [inner record schema](../../schemas/muse-retained-v1.schema.json)
+is `muse-jsonl` v1: original envelope identity, physical line and nullable child
+index, exact safe integers, discriminator/schema, causal identity and only the
+fixed per-type safe fields. Initial permission profiles are validated locally
+and reduced to format/schema/epoch/cause; raw child strings and native checksums
+are never retained. Complete startup binds the logical reserved start and own
+workspace. Integrity is unkeyed and grants no producer or capture consent.
+
+Own conversation requires accepted main/chat intent, matching materialization,
+actual run-start record and committed assistant linkage. Model context, deltas,
+terminal copies, task starts and notifications are not prompts. Explicit gaps
+mark accounting, tools, model switches and children unavailable. Unknown
+authority, unsupported versions, forks, children, checkpoints, malformed or
+partial records refuse the whole file. The native JSON decoder bounds depth
+at 32, strings at 1 MiB and nodes per physical record at 200,000, in addition to
+existing raw, record, retained and shared-memory limits. It reserves expansion
+before decoding; no limits or cache reserves increase. Retained-only refilter
+and analysis preserve position, owner, start and workspace after native loss.
+Registered capture, automatic browse, backfill and Muse launch stay unavailable.
+
+The [production local v1 field policy](../qualification/muse/retained-allowlist-local-v1.json) is the exact current retained projection. The original `retained-allowlist.json` and derived corpus remain byte-frozen historical Q0 evidence; their broader metrics ceiling is not a production promise.
+
+Muse startup metadata may omit the optional model label. The local projection
+retains it only when present as a string, never infers a provider default, and
+reports `model_identity_unavailable` when the initial metadata has no model.
+Original owner, reserved start and workspace validation remain required.
+
+Muse retains the shared privacy gap codes for redaction, hidden-context omission
+and per-string truncation in the existing outer capture provenance. Each fixed
+code records its earliest affected 1-based retained logical record; details are
+fixed text, never native content. Retained refilter preserves only recognized
+privacy codes at valid positions, canonicalizes details and recomputes current
+availability gaps. Direct retained parsing refuses text that still needs a
+privacy transformation; refilter it first so that loss is represented.

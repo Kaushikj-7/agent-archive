@@ -33,6 +33,8 @@ func agentLabel(harness string) (dot, name string) {
 		return agentDot, "Codex"
 	case agentmeta.Cursor:
 		return agentDot, "Cursor"
+	case agentmeta.Muse:
+		// Runtime-only identities retain the ordinary safe display fallback.
 	}
 	name = archive.DisplayLine(harness)
 	if name == "" {
@@ -62,6 +64,8 @@ func (s textStyle) agent(harness, text string) string {
 		return s.paint("38;5;39", text) // blue
 	case agentmeta.Cursor:
 		return s.paint("38;5;141", text) // violet
+	case agentmeta.Muse:
+		return s.dim(text)
 	}
 	return s.dim(text)
 }

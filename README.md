@@ -37,7 +37,7 @@ OpenAI and Anthropic are constantly one-upping each other or the best model, but
 
 3. **Create a private bucket** and an access key for it ([R2 and S3 steps](docs/getting-started/bucket.md)).
 
-4. **Review [what is uploaded](docs/security/privacy.md#what-is-uploaded)** before enabling capture. Capture can include visible user-level skill instructions as well as your conversation. Redaction is best effort and there is no client-side encryption. **Run setup** inside a project you want to include, or choose projects when prompted ([setup guide](docs/getting-started/setup.md)):
+4. **Review [what is uploaded](docs/security/privacy.md#what-is-uploaded)** before enabling capture. Capture can include visible user-level skill instructions as well as your conversation. Redaction is best effort and there is no client-side encryption. **Run setup** inside a project you want to include, or choose projects when prompted ([setup guide](docs/getting-started/setup.md)); by default, sessions with no new activity for 90 days are deleted from your bucket, which the setup review shows and lets you change or keep forever:
 
    ```sh
    agent-archive setup

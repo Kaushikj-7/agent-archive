@@ -48,9 +48,10 @@ unique prefixes (at least four characters) work beyond the preview window.
 Conflicting identities require the explicit-file path.
 
 The picker initially inspects filtered labels for the newest 50 candidates.
-Use **o · Load older sessions** to inspect another 50; clear a key-mode `/`
-filter with Esc first. Redrawing, scrolling and filtering inspect no additional
-transcripts. Word queries search only loaded previews and report their bounded
+Scroll past the last row to inspect another 50 (reading lines, answer
+**o · Load older sessions**); clear a key-mode `/` filter with Esc first.
+Redrawing, filtering, and scrolling within the loaded rows inspect no
+additional transcripts. Word queries search only loaded previews and report their bounded
 coverage. A partial label falls back to the first filtered prompt or native ID.
 Discovery inspects at most 10,000 files, with a cumulative 64 MiB discovery and
 preview read budget per invocation. After header inspection finishes, unused
@@ -185,7 +186,7 @@ agent-archive handoff "fix the auth bug" --to claude   # words, as for show
 `handoff` asks where to continue only on a terminal, and not with `--to`,
 `--output`, `--format json`, or `--no-preamble`. Inside Claude Code, Codex,
 or Cursor (`CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID`, or `CURSOR_AGENT` is
-set), or with `AGENT_ARCHIVE_NONINTERACTIVE=1`, it never asks anything, even
+set), inside Muse (`MUSE_THREAD_ID` or `MUSE_SESSION_ID` is nonblank), or with `AGENT_ARCHIVE_NONINTERACTIVE=1`, it never asks anything, even
 on a terminal; `AGENT_ARCHIVE_NONINTERACTIVE=0` turns asking back on. See
 [scripting and other outputs](#scripting-and-other-outputs) and
 [configuration](../reference/configuration.md#environment-variables).
@@ -453,7 +454,7 @@ With no session selector, `handoff` opens the session picker when stdin and
 stdout are terminals. In a script or pipeline, pass a session ID or words,
 `--latest`, or `--file`. The picker never opens when a coding agent runs the
 command, even in a pseudo-terminal: `CLAUDE_CODE_SESSION_ID`,
-`CODEX_THREAD_ID`, or `CURSOR_AGENT` in the environment (or
+`CODEX_THREAD_ID`, `CURSOR_AGENT`, `MUSE_THREAD_ID`, or `MUSE_SESSION_ID` in the environment (or
 `AGENT_ARCHIVE_NONINTERACTIVE=1`) turns prompts off, and `handoff` without a
 selector is a usage error (exit 2) instead. `AGENT_ARCHIVE_NONINTERACTIVE=0`
 turns them back on; see
@@ -464,7 +465,9 @@ the session it is running in without asking: the one Claude Code names in
 `CLAUDE_CODE_SESSION_ID` or Codex in `CODEX_THREAD_ID`. Cursor names no
 session, so inside Cursor (`CURSOR_AGENT` is set) it takes the newest Cursor
 session for the current directory, as `--latest --harness cursor` would.
-That is not a prompt, so it works while prompts are off. Otherwise a terminal
+That is not a prompt, so it works while prompts are off. Muse environment keys
+indicate presence only and cannot select a current or newest session; provide
+an existing supported archive session explicitly. Otherwise a terminal
 gets the picker, and anything else is told to name a session.
 
 A session registered on this machine is read from its transcript as it is now, so
@@ -493,7 +496,8 @@ the picker after setup; [before setup](#before-setup-native-local-sessions) its
 heading starts with `Hand off local ·`, it lists only this machine's Claude
 Code and Codex sessions in this directory and below, including ones with no
 prompt yet (an unnamed one is titled by its native ID; no PR column, `live`,
-`· not uploaded`, or `a`), and `o` loads 50 older ones.
+`· not uploaded`, or `a`), and scrolling past the last row loads 50 older
+ones.
 
 ```text
 Hand off · agent-archive · 5 sessions · claude · a all projects
@@ -509,7 +513,7 @@ LAST WEEK
 Fix the retry budget in the upload queue
 Claude · agent-archive · PR #213 · last active just now · id d7a77938
 ────────────────────────────────────────────────────────────────────────────────
-↑↓ move   Enter hand off   / search   number + Enter jump   q quit      1–5 of 5
+↑↓ move   PgUp/PgDn page   Enter hand off   / search   q quit           1–5 of 5
 Number or ID to hand off:
 ```
 
@@ -519,9 +523,11 @@ both appears once. Subagent sessions and sessions with no prompt yet, on this
 machine or in the archive, are left out (one uploaded before its first prompt
 is listed once its transcript here has one), and `--harness` narrows the list
 (`--source local` or `--source archive` limits where it looks). The newest 50 rows
-are listed initially. Press **o** (`o older` in the footer) to add up to 50 more
-rows in the current scope. The action disappears when that scope is complete
-and returns if `a` switches to a scope with more rows. The filter below
+are listed initially. Scrolling past the last row (↓ or the wheel on it, PgDn
+with it on screen, or End on it) adds up to 50 more rows in the current scope
+and moves on into them; `o` does the same. While more can be added, the
+footer's count ends in `+` (`1–14 of 50+`). It loses the `+` when that scope is
+complete and gets it back if `a` switches to a scope with more rows. The filter below
 searches the complete archived scope before older rows are loaded. When the
 archive cannot be read (offline, say), the picker lists this machine's sessions
 and says why archived ones are missing.
@@ -785,3 +791,13 @@ preserve the previous output.
 `--format json` prints the structured handoff document the prompt is rendered
 from; see [JSON output](../reference/json-output.md). The format is specified
 in the [handoff design](../../dev/proposals/implemented/handoff.md).
+
+### Muse explicit files
+
+Use `agent-archive handoff --file /path/to/session.jsonl --harness muse` to read
+a complete supported ordinary exec/MSP root without setup. Add `--format json`,
+`--output FILE`, or `--to codex` (also Claude/Cursor) as usual. The handoff keeps
+safe own visible conversation and the validated reserved start. Tool results,
+usage/cost, model switches and children are unavailable. Automatic Muse browse,
+capture, backfill and launching into Muse remain unavailable. Forks, children,
+checkpoints, unknown authority and incomplete files are refused as a whole.

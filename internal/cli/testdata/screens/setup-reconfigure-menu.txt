@@ -44,7 +44,8 @@ Review your changes
   Codex     Included projects only
   Skills    Metadata, including user folders
   Storage   s3://team-archive/agent-archive/
-* Keep for  30 days
+* Keep for  30 days · Sessions with no new activity for 30 days are deleted from
+            your bucket; change with Edit a setting, or keep forever
     was 90 days
   ✓ Storage connected
   ! Bucket privacy unknown · public-access settings could not be read

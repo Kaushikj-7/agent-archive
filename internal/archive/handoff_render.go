@@ -111,7 +111,7 @@ func renderHandoffSession(b *strings.Builder, h Handoff) {
 		fmt.Fprintf(b, "- Your current checkout is on branch %s, not the recorded one.\n", codeSpan(h.Workspace.CurrentBranch))
 	}
 	if h.ToolResultsUnavailable {
-		fmt.Fprintf(b, "- %s does not record tool results, so none appear below.\n", agent)
+		b.WriteString("- Tool results are unavailable in this retained evidence.\n")
 	}
 	b.WriteString("\n")
 }

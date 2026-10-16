@@ -30,6 +30,8 @@ func TestHistoricalImportConformance(t *testing.T) {
 				// Native file creation supplies Cursor start evidence before filtering.
 			case agentmeta.Codex:
 				expected.StartedAt = headerStart
+			case agentmeta.Muse:
+				t.Fatal("runtime-only Muse cannot inspect historical imports")
 			}
 			cases := []agenttest.ImportCase{{Name: "copied identity remains valid", Request: request, Want: expected}}
 			missing := request

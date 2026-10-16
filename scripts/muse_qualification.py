@@ -72,6 +72,78 @@ def read_limited(path, limit=None):
     return data
 
 
+
+def permission_content_sha256(frame):
+    """Recompute the pinned v1 byte recipe, not full frame grammar or authority.
+
+    FILE_LIMIT is this harness's aggregate child-byte budget, not a native format
+    limit. Schema, physical ordinal, child semantics and canonical outer JSON
+    need separate validation even when this digest matches.
+    """
+    def integer(value, bits, label):
+        if type(value) is not int or not 0 <= value < 1 << bits:
+            raise ValueError("permission checksum requires unsigned " + str(bits) + "-bit " + label)
+        return value.to_bytes(bits // 8, "big")
+
+    if not isinstance(frame, dict):
+        raise ValueError("permission checksum requires a frame object")
+    expected = frame.get("content_sha256")
+    if not isinstance(expected, str) or re.fullmatch(r"sha256:[0-9a-f]{64}", expected) is None:
+        raise ValueError("permission checksum requires lowercase sha256 content_sha256")
+    transaction = frame.get("transaction_id")
+    if not isinstance(transaction, str) or re.fullmatch(
+            r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", transaction) is None:
+        raise ValueError("permission checksum requires a hyphenated transaction UUID")
+    children = frame.get("children")
+    if not isinstance(children, list) or len(children) > 4096:
+        raise ValueError("permission checksum requires a children array of at most 4096 entries")
+    value = hashlib.sha256()
+    value.update(b"muse.session_permission_transaction.v1\0")
+    value.update(integer(frame.get("outer_log_ordinal"), 64, "outer_log_ordinal"))
+    value.update(uuid.UUID(transaction).bytes)
+    value.update(integer(len(children), 32, "child count"))
+    total = 0
+    for child in children:
+        if not isinstance(child, dict):
+            raise ValueError("permission checksum requires child objects")
+        index = integer(child.get("child_index"), 32, "child_index")
+        record = child.get("record_json")
+        if not isinstance(record, str):
+            raise ValueError("permission checksum requires record_json strings")
+        if len(record) > FILE_LIMIT - total:
+            raise ValueError("permission checksum exceeded harness child-byte limit")
+        # Two bounded UTF-8 passes avoid allocating a complete encoded child or
+        # transaction preimage. Lone surrogates are rejected by strict encoding.
+        size = 0
+        for offset in range(0, len(record), 65536):
+            size += len(record[offset:offset + 65536].encode("utf-8"))
+            if total + size > FILE_LIMIT:
+                raise ValueError("permission checksum exceeded harness child-byte limit")
+        total += size
+        value.update(index)
+        value.update(integer(size, 64, "record byte length"))
+        for offset in range(0, len(record), 65536):
+            value.update(record[offset:offset + 65536].encode("utf-8"))
+    return "sha256:" + value.hexdigest()
+
+
+def permission_checksums(data):
+    """Report independent hashes of observed permission frames, without bodies."""
+    if len(data) > FILE_LIMIT:
+        raise ValueError("permission checksum exceeded harness file byte limit")
+    checks = []
+    for line, raw in enumerate(data.splitlines(), 1):
+        frame = json.loads(raw)
+        if frame.get("retained_frame") == "session_permission_transaction":
+            computed = permission_content_sha256(frame)
+            checks.append({"line": line, "outer_log_ordinal": frame["outer_log_ordinal"],
+                           "children": len(frame["children"]),
+                           "content_sha256": frame["content_sha256"],
+                           "computed_sha256": computed,
+                           "matches": computed == frame["content_sha256"]})
+    return checks
+
+
 def command_id():
     # The pinned MSP explicitly requires UUIDv7 command IDs, not UUIDv4.
     value = (int(time.time() * 1000) << 80) | (7 << 76) | (uuid.uuid4().int & ((1 << 76) - 1))
@@ -303,6 +375,7 @@ def inspect_session(path):
     native_date = datetime.datetime.fromtimestamp(id_millis / 1000, datetime.timezone.utc).date()
     return {"sha256": digest(data), "bytes": len(data), "lines": len(data.splitlines()),
             "logical_records": len(rows), "session_id": session_id,
+            "permission_checksums": permission_checksums(data),
             "folder_date": "-".join(path.parts[-5:-2]), "id_utc_date": str(native_date),
             "opened": opened, "payload_types": dict(sorted(kinds.items())),
             "event_kinds": dict(sorted(events.items()))}
@@ -424,6 +497,10 @@ def probe_exec(case):
         "resume_has_true_open": len(after["opened"]) == 2 and after["opened"][-1]["record"].get("resume") is True,
         "fresh_has_one_false_resume_open": len(before["opened"]) == 1 and
             before["opened"][0]["record"].get("resume") is False,
+        "fresh_permission_checksums_match": bool(before["permission_checksums"]) and
+            all(check["matches"] for check in before["permission_checksums"]),
+        "resumed_permission_checksums_match": bool(after["permission_checksums"]) and
+            all(check["matches"] for check in after["permission_checksums"]),
         "resume_success": resumed["exit"] == 0 and not resumed["timeout"],
         "resume_preserves_prefix": read_limited(path).startswith(first),
         "native_valid_export_clean": export["exit"] == 0 and not export["timeout"] and
@@ -656,7 +733,8 @@ def native_run(binary, output, selected=None):
     output.mkdir(mode=0o700)
     report = {"schema": 1, "binary_sha256": binary_sha256, "producer": producer,
               "runner_sha256": file_digest(pathlib.Path(__file__)),
-              "integrity_encoding": "unresolved; native exporter is not an independent verifier",
+              "integrity_encoding": "pinned permission v1 SHA-256 recipe independently recomputed; "
+                  "full frame grammar and original creation remain unqualified",
               "cases": {}}
     try:
         report["version_command"] = verify_version(binary, producer, output / "version")
