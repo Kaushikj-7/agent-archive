@@ -21,6 +21,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/destination"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
@@ -142,6 +143,14 @@ func nativeCollectorFixture(t *testing.T) (*sessionScan, providerReader, []byte)
 	project, e := filepath.EvalSymlinks(t.TempDir())
 	if e != nil {
 		t.Fatal(e)
+	}
+	// Establish the admitted physical root independently of the test runner's
+	// parent repositories (managed environments may put .git in /tmp itself).
+	if e = os.Mkdir(filepath.Join(project, ".git"), 0700); e != nil {
+		t.Fatal(e)
+	}
+	if facts, known := sourcefacts.PhysicalProject(project); !known || facts.Root != project {
+		t.Fatalf("synthetic physical project not established: %#v %v", facts, known)
 	}
 	raw, e := os.ReadFile(filepath.Join("..", "agents", "muse", "testdata", "synthetic-exec-empty.jsonl"))
 	if e != nil {

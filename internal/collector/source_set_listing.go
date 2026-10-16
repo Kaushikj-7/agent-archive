@@ -6,16 +6,31 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/listingindex"
+	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
 var errListingMetadataAbsent = errors.New("listing repair metadata is absent")
+
+var errListingPredecessorUnknown = errors.New("listing repair awaits retained predecessor authority")
 
 // repairListingRevision borrows every metadata/source response from the same
 // pass ledger. A source proof never authorizes a different metadata winner.
 func (s *sessionScan) repairListingRevision(key string) error {
 	mark := len(s.retainedReleases)
 	defer s.releaseRetainedAfter(mark)
+	// Auxiliary repair cannot introduce remote side effects while this owner's
+	// publication is deliberately held for missing durable predecessor evidence.
+	read, closeRead := s.local.WithReadBudget(s.ctx, s.readBudget())
+	pending, found, pendingErr := read.LoadPublicationPending(s.id())
+	unknown := found && pending.Commit != nil && pending.Commit.Predecessor == state.PredecessorUnknown
+	closeRead()
+	if pendingErr != nil {
+		return pendingErr
+	}
+	if unknown {
+		return errListingPredecessorUnknown
+	}
 	body, _, err := s.historyGetRevision(s.ctx, key, historyMetadataLimit)
 	if errors.Is(err, storage.ErrNotFound) {
 		return errListingMetadataAbsent

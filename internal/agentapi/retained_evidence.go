@@ -5,8 +5,16 @@ import "github.com/wangjohn/agent-archive/internal/archive"
 // OwnedEvidenceCovered preserves the native meaningful-record and owned ordinal
 // comparison used by retained reconciliation and privacy transformation.
 func OwnedEvidenceCovered(adapter TranscriptFilter, previous, candidate archive.SourceBundle) bool {
+	if previous.Capture.FilterVersion != candidate.Capture.FilterVersion || previous.Capture.AdapterVersion != candidate.Capture.AdapterVersion || previous.Capture.SourceFormat != candidate.Capture.SourceFormat {
+		return false
+	}
 	evidence, ok := adapter.(RevisionEvidence)
-	if !ok || previous.Capture.FilterVersion != candidate.Capture.FilterVersion || previous.Capture.AdapterVersion != candidate.Capture.AdapterVersion || previous.Capture.SourceFormat != candidate.Capture.SourceFormat {
+	if previous.History == nil && candidate.History == nil && !ok {
+		// Ordinary adapters compare their complete retained records and text.
+		// Owned ordinals are required only for graph-history reconciliation.
+		return previous.NativeSessionID == candidate.NativeSessionID && adapter.EvidenceExtends(previous, candidate)
+	}
+	if !ok {
 		return false
 	}
 	if previous.History == nil || candidate.History == nil {

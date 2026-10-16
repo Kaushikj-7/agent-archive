@@ -14,12 +14,21 @@ The integrated replay fixes have focused positive and refusal coverage for legac
 original-parent provenance, native-child preparation, exact ordinary and history
 privacy successors, request ownership, source verification and bounded listing
 repair. These results do not establish final runtime qualification. A measured
-idle-pass regression remains: settled SourceSet5 peers currently require complete
-published-state validation on each pass. Raw leading summaries cannot replace that
+idle-pass regression motivated explicit validation-cache work: settled SourceSet5
+peers initially required full source-state decoding on each pass. Raw leading summaries cannot replace that
 validation because retention, deletion and link maintenance consume their facts as
 authority. Any optimization must preserve closed-wire validation and exact bytes,
 owner and configuration binding, charge retained memory to the existing budgets,
 and report cold-process work and file bytes read as well as decode allocations.
+The composed cache now keeps a finite Store-owned validated summary projection,
+bound to exact closed-decoder or successful typed-writer bytes, root identity and
+configuration. Every lookup hashes the actual complete stable file, and each
+active read scope borrows all retained cache bytes from the existing budget;
+caller copies have separate ownership. Cold processes still decode in full.
+The focused eleven-session warm collector control reports zero full source-state
+decodes and zero writes, but hashes 108,848 wire bytes per idle pass. This removes
+repeated materialization; it does not restore constant-prefix I/O for large
+settled files. Full-size I/O and runtime performance qualification remain open.
 Final immutable-source review, complete required checks and the unfinished
 live-WAL/provider/deletion integrations remain separate gates.
 

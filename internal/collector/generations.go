@@ -105,24 +105,8 @@ func (s *sessionScan) maintainFrozen() (sessionOutcome, error) {
 	if pending, found, err := s.local.LoadPublicationPending(s.id()); err != nil {
 		return outcomeSkipped, err
 	} else if found {
-		if pending.History != nil {
-			return s.resumeHistory(s.ctx, pending)
-		}
-		if pending.Bundle.Capture.FilterVersion != archive.FilterVersion || pending.Bundle.Capture.AdapterVersion != adapter.Version() || !sourceEvidenceWithinPolicy(pending.Bundle.SupplementalEvidence, s.opts.skillEvidence()) {
-			if pending.Commit != nil {
-				return outcomeSkipped, errors.New("frozen pending privacy policy changed; retain evidence for refilter and reconcile")
-			}
-			if pending.Catalog != nil {
-				return outcomeSkipped, state.ErrCatalogJournalFrozen
-			}
-			// Stronger privacy supersedes a retained-history maintenance retry.
-			// Rebuild below from the last acknowledged publication, without native
-			// input and without carrying the discarded retry's newer age forward.
-			if err := s.local.RemovePending(s.id()); err != nil {
-				return outcomeSkipped, err
-			}
-		} else if _, err := s.publishPending(s.ctx, pending); err != nil {
-			return outcomeSkipped, err
+		if outcome, handled, err := s.resumeFrozenPending(pending, adapter); handled || err != nil {
+			return outcome, err
 		}
 	}
 	bundle, _, found := s.published.LastPublished()
@@ -318,4 +302,33 @@ func (s *sessionScan) retainedOnlyAuthority() error {
 		return s.reg.ValidateHistoricalProject()
 	}
 	return s.local.FrozenGeneration(s.reg)
+}
+
+// resumeFrozenPending preserves retained-only retry authority before fresh
+// maintenance is considered. A completed retry may still owe further maintenance.
+func (s *sessionScan) resumeFrozenPending(pending state.PendingPublication, adapter agentapi.TranscriptFilter) (sessionOutcome, bool, error) {
+	if pending.History != nil {
+		outcome, err := s.resumeHistory(s.ctx, pending)
+		return outcome, true, err
+	}
+	if outcome, handled, err := s.resumeSourceSetPrivacy(pending); handled || err != nil {
+		return outcome, true, err
+	}
+	if pending.Bundle.Capture.FilterVersion != archive.FilterVersion || pending.Bundle.Capture.AdapterVersion != adapter.Version() || !sourceEvidenceWithinPolicy(pending.Bundle.SupplementalEvidence, s.opts.skillEvidence()) {
+		if pending.Commit != nil {
+			return outcomeSkipped, true, errors.New("frozen pending privacy policy changed; retain evidence for refilter and reconcile")
+		}
+		if pending.Catalog != nil {
+			return outcomeSkipped, true, state.ErrCatalogJournalFrozen
+		}
+		// Stronger privacy supersedes a retained-history maintenance retry.
+		// Rebuild below from the last acknowledged publication, without native
+		// input and without carrying the discarded retry's newer age forward.
+		if err := s.local.RemovePending(s.id()); err != nil {
+			return outcomeSkipped, true, err
+		}
+	} else if _, err := s.publishPending(s.ctx, pending); err != nil {
+		return outcomeSkipped, true, err
+	}
+	return outcomeSkipped, false, nil
 }

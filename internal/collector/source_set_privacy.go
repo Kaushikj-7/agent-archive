@@ -16,7 +16,7 @@ import (
 // resumeSourceSetPrivacy replaces only ordinary retained work. Ready selections,
 // staged imports, Cursor ownership and catalog journals keep their own protocols.
 func (s *sessionScan) resumeSourceSetPrivacy(p state.PendingPublication) (sessionOutcome, bool, error) {
-	if p.History != nil || p.Selection != nil || p.StagedProof() != nil || p.Catalog != nil || s.reg.StagedImportSHA256 != "" || p.Bundle.SchemaVersion != archive.SourceSchemaVersion {
+	if p.History != nil || s.usesExistingPublicationProtocol(&p) || p.Bundle.SchemaVersion != archive.SourceSchemaVersion {
 		return outcomeSkipped, false, nil
 	}
 	adapter, err := sourceAdapter(s.opts.Sources, s.reg.Harness.Name)
@@ -31,7 +31,9 @@ func (s *sessionScan) resumeSourceSetPrivacy(p state.PendingPublication) (sessio
 		return outcomeSkipped, true, err
 	}
 	defer end()
-	s.publicationAttempt.store = s.publicationRemote(p)
+	if err := s.bindPublicationAttempt(p); err != nil {
+		return outcomeSkipped, true, err
+	}
 	prior, remoteBefore, err := s.ordinaryPrivacyPredecessor(p)
 	if err != nil {
 		return outcomeSkipped, true, err

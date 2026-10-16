@@ -50,13 +50,12 @@ func TestListingRepairSharesReadBudgetAndUsesBoundedRevisionResponses(t *testing
 	budget := agentapi.NewNativeReadBudget(64 << 20)
 	owner := budget.Reservation()
 	var pressure int64
-	remote := &budgetedListingRepairStore{noChecksumHistoryStore: &noChecksumHistoryStore{MemoryStore: cloud}}
-	remote.beforeSourceStat = func() {
+	remote := &budgetedListingRepairStore{noChecksumHistoryStore: &noChecksumHistoryStore{MemoryStore: cloud}, beforeSourceStat: func() {
 		pressure = budget.Available()
 		if !owner.Reserve(pressure) {
 			t.Fatal("reserve competing source-read pressure")
 		}
-	}
+	}}
 	scan.remote, scan.retainedBudget = remote, budget
 	if err := scan.repairListingRevision(pending.MetadataKey); !errors.Is(err, agentapi.ErrReadBudget) {
 		t.Fatalf("repair bypassed shared source-read budget: %v", err)

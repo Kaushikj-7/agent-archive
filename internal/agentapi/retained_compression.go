@@ -70,7 +70,9 @@ func (w *retainedCompressedWriter) Write(raw []byte) (int, error) {
 		return 0, err
 	}
 	n := int64(len(raw))
-	if n > (128<<20)-int64(w.Len()) || !w.reservation.Reserve(n) {
+	// Preserve the collector's existing 32 MiB compressed-object ceiling so
+	// every emitted source can be read by the same retained-source pipeline.
+	if n > (32<<20)-int64(w.Len()) || !w.reservation.Reserve(n) {
 		return 0, ErrReadBudget
 	}
 	w.charged += n

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -207,7 +208,7 @@ func (s *privacyPositionStore) GetLimited(ctx context.Context, key string, limit
 func TestOrdinaryPrivacyRefusesUnknownOrUnreadablePosition(t *testing.T) {
 	t.Parallel()
 	for _, unreadable := range []bool{false, true} {
-		t.Run(fmt.Sprint(unreadable), func(t *testing.T) {
+		t.Run(strconv.FormatBool(unreadable), func(t *testing.T) {
 			t.Parallel()
 			local, remote, reg, opts, original, raw := ordinaryPrivacyFixture(t)
 			opts.SkillEvidence = config.SkillEvidenceNone
@@ -215,12 +216,13 @@ func TestOrdinaryPrivacyRefusesUnknownOrUnreadablePosition(t *testing.T) {
 			if err := remote.MemoryStore.Put(t.Context(), original.MetadataKey, winner); err != nil {
 				t.Fatal(err)
 			}
-			controlled := &privacyPositionStore{metadataFailStore: remote, metadataKey: original.MetadataKey}
 			want := storage.ErrPublicationConflict
+			var readError error
 			if unreadable {
 				want = errors.New("synthetic unreadable metadata")
-				controlled.readError = want
+				readError = want
 			}
+			controlled := &privacyPositionStore{metadataFailStore: remote, metadataKey: original.MetadataKey, readError: readError}
 			published, err := local.LoadPublishedState(reg.ArchiveSessionID)
 			if err != nil {
 				t.Fatal(err)
@@ -235,7 +237,7 @@ func TestOrdinaryPrivacyRefusesUnknownOrUnreadablePosition(t *testing.T) {
 			if err != nil || !bytes.Equal(after, raw) {
 				t.Fatal("uncertain position replaced the original pending bytes", err)
 			}
-			actual, err := remote.MemoryStore.Get(t.Context(), original.MetadataKey)
+			actual, err := remote.Get(t.Context(), original.MetadataKey)
 			if err != nil || !bytes.Equal(actual, winner) {
 				t.Fatal("uncertain winner changed", err)
 			}
@@ -285,8 +287,73 @@ func TestOrdinaryPrivacyRechecksPositionBeforeSelectingSuccessor(t *testing.T) {
 	if err != nil || !bytes.Equal(after, raw) {
 		t.Fatal("stale predecessor replaced original evidence", err)
 	}
-	actual, err := remote.MemoryStore.Get(t.Context(), original.MetadataKey)
+	actual, err := remote.Get(t.Context(), original.MetadataKey)
 	if err != nil || !bytes.Equal(actual, winner) {
 		t.Fatal("fresh winner was overwritten", err)
+	}
+}
+
+func TestFrozenOrdinaryPrivacyRetryUsesRetainedSuccessor(t *testing.T) {
+	t.Parallel()
+	local, cloud, reg, opts, at := settledGenerationFixture(t)
+	if !reg.CaptureFrozen {
+		t.Fatal("fixture is not an actual frozen generation")
+	}
+	opts.AcceptSession = func(r archive.SessionRegistration) bool { return r.ArchiveSessionID == reg.ArchiveSessionID }
+	if err := local.SaveRequest(reg.ArchiveSessionID, "feedback", at, archive.SupplementalEvidence{Kind: archive.EvidenceKindExplicitFeedback, Provenance: "synthetic-frozen-retry", ObservedAt: at, Payload: map[string]any{"text": "retained feedback"}}); err != nil {
+		t.Fatal(err)
+	}
+	remote := &metadataFailStore{MemoryStore: cloud, failMetadata: true}
+	result, err := Run(t.Context(), local, remote, opts)
+	if err != nil || result.Errors[reg.ArchiveSessionID] == nil {
+		t.Fatal("maintenance upload did not fail", result, err)
+	}
+	old, found, err := local.LoadPublicationPending(reg.ArchiveSessionID)
+	if err != nil || !found || old.Commit == nil || old.History != nil || old.Bundle.SchemaVersion != archive.SourceSchemaVersion {
+		t.Fatal("missing sealed ordinary maintenance", found, err)
+	}
+	raw, err := os.ReadFile(filepath.Join(local.Home(), "pending", reg.ArchiveSessionID+".json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(reg.TranscriptPath); err != nil {
+		t.Fatal(err)
+	}
+	opts.SkillEvidence = config.SkillEvidenceNone
+	opts.SupplementalEvidence = func(archive.SessionRegistration, time.Time) ([]archive.SupplementalEvidence, error) {
+		t.Fatal("frozen retry read live skill inventory")
+		return nil, nil
+	}
+	remote.failMetadata = false
+	result, err = Run(t.Context(), local, remote, opts)
+	if err != nil || result.Errors[reg.ArchiveSessionID] != nil {
+		t.Fatal("prepare frozen successor", result, err)
+	}
+	next, found, err := local.LoadPublicationPending(reg.ArchiveSessionID)
+	if err != nil || !found || next.Commit == nil || next.Commit.Purpose != state.PublicationPrivacyRewrite || next.History != nil || next.Bundle.SchemaVersion != archive.SourceSchemaVersion || next.SkillEvidence != string(config.SkillEvidenceNone) || !next.Bundle.Capture.CapturedAt.Equal(old.Bundle.Capture.CapturedAt) || next.RequestToken != old.RequestToken {
+		t.Fatal("invalid frozen successor", found, err)
+	}
+	var original state.PublicationOriginalEvidence
+	body, err := os.ReadFile(filepath.Join(local.Home(), "publication-evidence", reg.ArchiveSessionID, "original.json"))
+	if err != nil || json.Unmarshal(body, &original) != nil || original.PrivacyOrigin == nil || !bytes.Equal(original.PrivacyOrigin.Raw, raw) {
+		t.Fatal("frozen original was not retained exactly", err)
+	}
+	result, err = Run(t.Context(), local, remote, opts)
+	if err != nil || result.Errors[reg.ArchiveSessionID] != nil {
+		t.Fatal("complete frozen successor", result, err)
+	}
+	selected, err := cloud.Get(t.Context(), next.MetadataKey)
+	if err != nil || !bytes.Equal(selected, next.MetadataBytes) {
+		t.Fatal("frozen successor was not selected exactly", err)
+	}
+	if found, err := local.HasPending(reg.ArchiveSessionID); err != nil || found {
+		t.Fatal("completed frozen successor remains owed", found, err)
+	}
+	if _, found, err := local.LoadRequest(reg.ArchiveSessionID); err != nil || found {
+		t.Fatal("covered frozen request remains owed", found, err)
+	}
+	metadata := fetchMetadata(t, cloud, reg.Harness.Name, reg.ArchiveSessionID)
+	if !metadata.CapturedAt.Equal(old.Bundle.Capture.CapturedAt) {
+		t.Fatal("frozen successor manufactured activity")
 	}
 }

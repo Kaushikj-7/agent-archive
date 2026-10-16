@@ -288,7 +288,7 @@ func (s *Store) seedPublicationAccounting(a *publicationAccounting, id string) (
 	if !a.reservation.Reserve(2 * cfgInfo.Size()) {
 		return errStateBudget
 	}
-	cfg, found, observedSHA, e := config.LoadRootedObserved(home)
+	cfg, found, observedSHA, e := config.LoadRootedObservedBounded(home, cfgInfo.Size())
 	a.reservation.Release(2 * cfgInfo.Size())
 	if e != nil || !found || cfg.SchemaVersion != 17 || !cfg.SourceSetPublicationProtection || !cfg.DurableStorageProtection {
 		return errors.Join(ErrDurableStorageRecovery, e)

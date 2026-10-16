@@ -65,7 +65,7 @@ func refilterBundleBounded(ctx context.Context, reg archive.SessionRegistration,
 	if bundle.SchemaVersion != archive.SourceSchemaVersion && bundle.SchemaVersion != archive.HistorySourceSchemaVersion {
 		return archive.SourceBundle{}, errors.New("unsupported retained source schema")
 	}
-	if bundle.ArchiveSessionID != reg.ArchiveSessionID || bundle.NativeSessionID != reg.NativeSessionID || bundle.ProjectID != reg.ProjectID || bundle.Capture.Harness.Name != reg.Harness.Name || !(bundle.ParentSessionID == reg.ParentSessionID || agentapi.RetainedNativeChildOwned(reg, bundle) && bundle.ParentSessionID == "") {
+	if bundle.ArchiveSessionID != reg.ArchiveSessionID || bundle.NativeSessionID != reg.NativeSessionID || bundle.ProjectID != reg.ProjectID || bundle.Capture.Harness.Name != reg.Harness.Name || (bundle.ParentSessionID != reg.ParentSessionID && (!agentapi.RetainedNativeChildOwned(reg, bundle) || bundle.ParentSessionID != "")) {
 		return archive.SourceBundle{}, errors.New("retained refilter identity mismatch")
 	}
 	if err := bundle.ValidateHistory(); err != nil {

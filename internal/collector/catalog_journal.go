@@ -20,7 +20,7 @@ func (s *sessionScan) beginCatalogJournal(ctx context.Context, pending state.Pen
 		admitted, err := remote.BeginPublication(ctx, pending.Catalog.ID, pending.MetadataBytes)
 		return pending, admitted, false, err
 	}
-	journalRemote, ok := s.remote.(storage.CatalogJournalLifecycle)
+	journalRemote, ok := s.sourceSetProvider().(storage.CatalogJournalLifecycle)
 	if !ok {
 		return pending, ctx, false, state.ErrDurableStorageRecovery
 	}
@@ -79,7 +79,7 @@ func (s *sessionScan) removeCompletedCatalogJournal(pending state.PendingPublica
 	if err := s.local.RemoveCatalogPending(s.id(), j, s.opts.CollectorGuard); err != nil {
 		return err
 	}
-	return acknowledgeCatalogRemoval(s.ctx, s.remote, s.opts.CollectorGuard, j)
+	return acknowledgeCatalogRemoval(s.ctx, s.sourceSetProvider(), s.opts.CollectorGuard, j)
 }
 
 func acknowledgeCatalogRemoval(ctx context.Context, remote storage.ObjectStore, guard *local.CollectorGuard, journal local.CatalogJournal) error {

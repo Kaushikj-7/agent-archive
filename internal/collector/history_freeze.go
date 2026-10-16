@@ -68,7 +68,7 @@ func (s *sessionScan) freezeRevisionPublication(p *state.PendingPublication) err
 		}
 		history.Sources = append(history.Sources, stage)
 	}
-	history.Inputs = append(history.Inputs, state.HistoryInput{Reference: p.SourceReference(), RevisionID: s.revisions.Current, CapturedAt: p.Bundle.Capture.CapturedAt, FilterVersion: p.Bundle.Capture.FilterVersion, SourceSchemaVersion: p.Bundle.SchemaVersion})
+	history.Inputs = append(history.Inputs, state.HistoryInput{Reference: p.SourceReference(), RevisionID: s.revisions.Current, CapturedAt: p.Bundle.Capture.CapturedAt, FilterVersion: p.Bundle.Capture.FilterVersion, AdapterVersion: p.Bundle.Capture.AdapterVersion, SourceSchemaVersion: p.Bundle.SchemaVersion})
 	if err := s.freezePreservedHistoryInputs(&final, history); err != nil {
 		return err
 	}
@@ -256,11 +256,12 @@ func (s *sessionScan) freezePreservedHistoryInputs(final *archive.Metadata, hist
 		if len(bundle.ParentSessionID) > 4096 {
 			return state.ErrDurableStorageRecovery
 		}
-		if err := s.retainCharge(int64(len(bundle.ParentSessionID)+len(bundle.Capture.FilterVersion)) + 32); err != nil {
+		if err := s.retainCharge(int64(len(bundle.ParentSessionID)+len(bundle.Capture.FilterVersion)+len(bundle.Capture.AdapterVersion)) + 32); err != nil {
 			return err
 		}
 		parent, marker := strings.Clone(bundle.ParentSessionID), bundle.NativeChild
 		inputs[i].ParentSessionID, inputs[i].NativeChild = &parent, &marker
+		inputs[i].AdapterVersion = strings.Clone(bundle.Capture.AdapterVersion)
 		if revision.FilterVersion == "" || revision.SourceSchemaVersion == 0 {
 			revision.FilterVersion, revision.SourceSchemaVersion = strings.Clone(bundle.Capture.FilterVersion), bundle.SchemaVersion
 		}

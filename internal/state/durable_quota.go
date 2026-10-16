@@ -149,10 +149,6 @@ func privateDirectoryWithParentSync(root *os.Root, path string, create bool, syn
 	return current, nil
 }
 
-func (q *durableQuota) usage() (durableUsage, error) {
-	return q.usageContext(q.store.durableContext())
-}
-
 func (q *durableQuota) usageContext(ctx context.Context) (u durableUsage, err error) {
 	remaining := durableEntryLimit
 	if err := q.scanPublished(ctx, &remaining, &u); err != nil {

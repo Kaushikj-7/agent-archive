@@ -479,6 +479,7 @@ func (p *Published) write(next publishedState) error {
 	}
 	next.Summary = &summary
 	var writeErr error
+	var savedDigest [32]byte
 	var candidate *publicationAccountingFact
 	var binding publicationAccountingContext
 	var releaseCandidate func()
@@ -508,6 +509,7 @@ func (p *Published) write(next publishedState) error {
 			if e != nil {
 				return e
 			}
+			savedDigest = sum
 			candidate, binding, releaseCandidate, e = p.store.savedAccountingCandidate(storage, path, sum, n)
 			if e != nil {
 				return e
@@ -533,6 +535,9 @@ func (p *Published) write(next publishedState) error {
 		}
 	}
 	p.state, p.found = next, true
+	if next.PublicationVersion == 5 {
+		p.store.cacheSavedSummary(p.id, summary, savedDigest)
+	}
 	return nil
 }
 
@@ -568,10 +573,10 @@ func (p *Published) ClampAgeFrom(at time.Time) error {
 }
 
 // LoadPublishedSummary reads a session's PublishedSummary. found is false
-// when nothing has been saved for the session. It reads only the summary at
-// the head of the file, not the source bundles after it, so it costs about as
-// much as a stat; state written before the summary existed is decoded in
-// full.
+// when nothing has been saved for the session. Legacy summaries use the file
+// prefix. Protected selecting states require full validation; source-set states
+// can reuse a bounded Store-owned derived summary after hashing the complete
+// current file and validating current configuration and rooted identity.
 func (s *Store) LoadPublishedSummary(archiveSessionID string) (summary PublishedSummary, found bool, err error) {
 	if !safeFileComponent(archiveSessionID) {
 		return PublishedSummary{}, false, errors.New("archive session ID is not a safe file name component")

@@ -22,7 +22,9 @@ func (s *sessionScan) sourceSetPublishPending(pending state.PendingPublication) 
 		return outcomeSkipped, attemptErr
 	}
 	defer endAttempt()
-	s.publicationAttempt.store = s.publicationRemote(pending)
+	if err := s.bindPublicationAttempt(pending); err != nil {
+		return outcomeSkipped, err
+	}
 	if pending.History != nil && pending.History.Preparing {
 		return outcomeSkipped, archive.ErrHistoryMutationPending
 	}
@@ -97,7 +99,9 @@ func (s *sessionScan) sourceSetAcknowledgePublication(pending state.PendingPubli
 		return outcomeSkipped, attemptErr
 	}
 	defer endAttempt()
-	s.publicationAttempt.store = s.publicationRemote(pending)
+	if err := s.bindPublicationAttempt(pending); err != nil {
+		return outcomeSkipped, err
+	}
 	body, etag, err := storage.ReadPublicationMetadataRevision(s.ctx, publicationTransactionStore{ObjectStore: s.sourceSetRemote(), scan: s, pending: &pending}, pending.MetadataKey, int64(len(pending.MetadataBytes)))
 	if err != nil {
 		return outcomeSkipped, err
@@ -105,7 +109,41 @@ func (s *sessionScan) sourceSetAcknowledgePublication(pending state.PendingPubli
 	if pending.Commit == nil || storage.SHA256Hex(body) != pending.Commit.MetadataSHA256 {
 		return outcomeSkipped, storage.ErrPublicationConflict
 	}
+	if err := s.verifyAcknowledgedSourceSet(pending, body); err != nil {
+		return outcomeSkipped, err
+	}
 	return s.sourceSetAcknowledgeReadback(pending, keepPending, body, etag)
+}
+
+// verifyAcknowledgedSourceSet rebuilds reference proof on an already-selected
+// retry. A durable catalog completion receipt does not replace source readback.
+func (s *sessionScan) verifyAcknowledgedSourceSet(pending state.PendingPublication, body []byte) error {
+	frame := s.publicationAttempt
+	if frame == nil || pending.Commit == nil {
+		return state.ErrDurableStorageRecovery
+	}
+	frame.verifiedCommit = nil
+	if err := pending.ValidatePublicationBudgeted(s.ctx, s.readBudget()); err != nil {
+		return err
+	}
+	if pending.History != nil {
+		mark := len(s.retainedReleases)
+		defer s.releaseRetainedAfter(mark)
+		var metadata archive.Metadata
+		if err := s.unmarshalRetained(body, &metadata); err != nil {
+			return err
+		}
+		return s.verifyHistoryReferences(pending, metadata)
+	}
+	for _, source := range pending.Sources {
+		ref := source.Reference
+		if err := s.verifyHistorySource(s.ctx, ref.Key, ref.SHA256, ref.CompressedBytes); err != nil {
+			return err
+		}
+	}
+	commit := *pending.Commit
+	frame.verifiedCommit, frame.verifiedKey = &commit, pending.MetadataKey
+	return nil
 }
 
 func (s *sessionScan) sourceSetAcknowledgeReadback(pending state.PendingPublication, keepPending bool, body []byte, etag string) (sessionOutcome, error) {
@@ -121,7 +159,7 @@ func (s *sessionScan) sourceSetAcknowledgeReadback(pending state.PendingPublicat
 		return outcomeSkipped, storage.ErrPublicationConflict
 	}
 	var listingErr error
-	if remote, ok := s.remote.(storage.CatalogPublisher); ok && remote.CatalogMetadataAuthority() {
+	if remote, ok := s.sourceSetProvider().(storage.CatalogPublisher); ok && remote.CatalogMetadataAuthority() {
 		// Catalog metadata and its listing commit under the admitted head.
 		// No legacy auxiliary listing mutation is authorized here.
 	} else if etag == "" {
@@ -200,36 +238,45 @@ func (s *sessionScan) sourceSetAcknowledgeReadback(pending state.PendingPublicat
 		}
 	}
 	if !keepPending {
-		if pending.History == nil && pending.Commit.Purpose == state.PublicationPrivacyRewrite {
-			if err := s.local.SettleOrdinaryPublicationPrivacy(s.id(), pending); err != nil {
-				return outcomeSkipped, err
-			}
-		}
-		if pending.History != nil && pending.Commit.Purpose == state.PublicationPrivacyRewrite {
-			if err := s.local.SettleHistoryPublicationPrivacy(s.id(), pending); err != nil {
-				return outcomeSkipped, fmt.Errorf("settle history privacy original: %w", err)
-			}
-		}
-		if err := s.local.SettlePublicationMigration(s.id(), pending); err != nil {
+		if err := s.finishSourceSetAcknowledgment(pending); err != nil {
 			return outcomeSkipped, err
 		}
-		if pending.Catalog != nil && s.ctx.Value(catalogSettledKey{}) != true {
-			if remote, ok := s.remote.(storage.CatalogLifecycle); ok {
-				if err := remote.CompletePublication(s.ctx, pending.Catalog.ID, pending.MetadataBytes); err != nil {
-					return outcomeSkipped, err
-				}
-			}
+
+	}
+	return outcomePublished, nil
+}
+
+// finishSourceSetAcknowledgment runs only after closing proof, local commit and
+// covered request completion; retained deletion inputs are released only after
+// exact pending removal.
+func (s *sessionScan) finishSourceSetAcknowledgment(pending state.PendingPublication) error {
+	if pending.History == nil && pending.Commit.Purpose == state.PublicationPrivacyRewrite {
+		if err := s.local.SettleOrdinaryPublicationPrivacy(s.id(), pending); err != nil {
+			return err
 		}
-		if err := s.removeCompletedCatalogJournal(pending); err != nil {
-			return outcomeSkipped, fmt.Errorf("remove completed source-set journal: %w", err)
+	}
+	if pending.History != nil && pending.Commit.Purpose == state.PublicationPrivacyRewrite {
+		if err := s.local.SettleHistoryPublicationPrivacy(s.id(), pending); err != nil {
+			return fmt.Errorf("settle history privacy original: %w", err)
 		}
-		if pending.Preparation != nil && pending.Preparation.Retention != nil {
-			if err := s.local.RemoveRestoredDeletionStages(s.id()); err != nil {
-				return outcomeSkipped, err
+	}
+	if err := s.local.SettlePublicationMigration(s.id(), pending); err != nil {
+		return err
+	}
+	if pending.Catalog != nil && s.ctx.Value(catalogSettledKey{}) != true {
+		if remote, ok := s.sourceSetProvider().(storage.CatalogLifecycle); ok {
+			if err := remote.CompletePublication(s.ctx, pending.Catalog.ID, pending.MetadataBytes); err != nil {
+				return err
 			}
 		}
 	}
-	return outcomePublished, nil
+	if err := s.removeCompletedCatalogJournal(pending); err != nil {
+		return fmt.Errorf("remove completed source-set journal: %w", err)
+	}
+	if pending.Preparation != nil && pending.Preparation.Retention != nil {
+		return s.local.RemoveRestoredDeletionStages(s.id())
+	}
+	return nil
 }
 
 func (s *sessionScan) sourceSetUpload(pending state.PendingPublication) (*storage.ValidatedPublicationReadback, error) {
@@ -320,7 +367,7 @@ func (s *sessionScan) sourceSetUpload(pending state.PendingPublication) (*storag
 }
 
 func (s *sessionScan) sealPending(p *state.PendingPublication) error {
-	if p.Commit == nil && p.History == nil && (p.Selection != nil || p.StagedProof() != nil || p.Catalog != nil || s.reg.StagedImportSHA256 != "") {
+	if s.usesExistingPublicationProtocol(p) {
 		return nil
 	}
 	policy, err := s.publicationPolicy(p.Bundle)
@@ -377,7 +424,7 @@ func (s *sessionScan) sealPending(p *state.PendingPublication) error {
 }
 
 func (s *sessionScan) savePending(p *state.PendingPublication) error {
-	if p.Commit == nil && p.History == nil && (p.Selection != nil || p.StagedProof() != nil || p.Catalog != nil || s.reg.StagedImportSHA256 != "") {
+	if s.usesExistingPublicationProtocol(p) {
 		return s.local.SavePending(s.id(), *p)
 	}
 	ready := p.JournalVersion == 5 && p.Commit != nil
@@ -388,6 +435,20 @@ func (s *sessionScan) savePending(p *state.PendingPublication) error {
 		return s.local.SavePending(s.id(), *p)
 	}
 	return nil
+}
+
+func (s *sessionScan) usesExistingPublicationProtocol(p *state.PendingPublication) bool {
+	if p.Commit != nil || p.History != nil {
+		return false
+	}
+	if p.Selection != nil || p.StagedProof() != nil || p.Catalog != nil || s.reg.StagedImportSHA256 != "" {
+		return true
+	}
+	// Catalog mutation authority is frozen by publishPending before upload.
+	// Preserve that protocol even when this candidate has not reached its
+	// catalog freeze yet; an ordinary candidate must not be sealed as v5 first.
+	remote, ok := s.sourceSetProvider().(storage.CatalogPublisher)
+	return ok && remote.CatalogMetadataAuthority()
 }
 
 func (s *sessionScan) publicationPolicy(bundle archive.SourceBundle) (string, error) {

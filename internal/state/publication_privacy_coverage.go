@@ -258,6 +258,11 @@ func decodePrivacyOriginal(ctx context.Context, registration archive.SessionRegi
 	if input.ParentSessionID != nil {
 		selected.ParentSessionID = *input.ParentSessionID
 	}
+	if input.Selection.Role == PublicationPreserved {
+		// The manifest's adapter describes its active sibling. Exact selected
+		// bytes and the frozen old-policy comparison bind this producer instead.
+		selected.Adapter.Version = input.AdapterVersion
+	}
 	decode := func() (archive.SourceBundle, func(), error) {
 		if selected.History == nil {
 			return agentapi.DecodeReferencedSourceLeased(ctx, selected, original, agentapi.SourceReadLimits{}, budget)

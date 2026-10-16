@@ -149,7 +149,8 @@ func cleanupSHA(c CleanupProgress) string {
 }
 
 // PreparePublicationV2 freezes a preparing adjunct or seals a ready transaction.
-// It grants no storage capability; the guarded writer persists composition8 first.
+// It grants no storage capability; the guarded writer persists source-set17
+// protection before writing the distinct outer5 envelope and inner commit2.
 func PreparePublicationV2(p PendingPublication, prior PublicationPredecessor, destination, admission, policy string, purpose PublicationPurpose) (PendingPublication, error) {
 	return PreparePublicationV2Budgeted(context.Background(), nil, p, prior, destination, admission, policy, purpose)
 }
@@ -455,6 +456,10 @@ func (p *PendingPublication) initializePreparation(prior PublicationPredecessor,
 					input.ParentSessionID = h.ParentSessionID
 					input.NativeChild = h.NativeChild
 					input.FilterVersion = h.FilterVersion
+					input.AdapterVersion = h.AdapterVersion
+					if input.AdapterVersion == "" && input.Selection.Role == PublicationCurrent {
+						input.AdapterVersion = p.Bundle.Capture.AdapterVersion
+					}
 					input.Selection.CapturedAt = h.CapturedAt.UTC()
 					input.Selection.SourceSchemaVersion = h.SourceSchemaVersion
 				}
@@ -536,7 +541,7 @@ func (p *PendingPublication) initializeHistoryProgress(sources []PublicationSour
 	if !preparing && p.Progress == nil {
 		if len(p.History.Inputs) == 0 {
 			for _, input := range p.Preparation.Inputs {
-				p.History.Inputs = append(p.History.Inputs, HistoryInput{Reference: input.Reference, RevisionID: input.Selection.RevisionID, CapturedAt: input.Selection.CapturedAt, SourceSchemaVersion: input.Selection.SourceSchemaVersion, FilterVersion: input.FilterVersion})
+				p.History.Inputs = append(p.History.Inputs, HistoryInput{Reference: input.Reference, RevisionID: input.Selection.RevisionID, CapturedAt: input.Selection.CapturedAt, SourceSchemaVersion: input.Selection.SourceSchemaVersion, FilterVersion: input.FilterVersion, AdapterVersion: input.AdapterVersion})
 			}
 		}
 		p.History.PrivacyCursor = len(p.Preparation.Inputs)
