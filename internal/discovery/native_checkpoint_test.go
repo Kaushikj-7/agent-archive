@@ -132,6 +132,20 @@ func FuzzNativeCatalogMembers(f *testing.F) {
 				t.Fatal("changed member", key)
 			}
 		}
+		encoded, err := encodeNativeCatalogMembers(members)
+		if err != nil {
+			return
+		}
+		roundtrip, ok := nativeCatalogMembers(encoded)
+		if !ok || len(roundtrip) != len(members) {
+			t.Fatal("writer emitted an unreadable catalog")
+		}
+		for key, value := range roundtrip {
+			var a, b any
+			if json.Unmarshal(value, &a) != nil || json.Unmarshal(members[key], &b) != nil || !reflect.DeepEqual(a, b) {
+				t.Fatal("writer changed a member", key)
+			}
+		}
 	})
 }
 
