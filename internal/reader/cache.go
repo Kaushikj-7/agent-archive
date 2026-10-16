@@ -188,7 +188,8 @@ func (c *MetadataCache) putVerified(key, etag string, data []byte) {
 	if !ok || etag == "" || !json.Valid(data) {
 		return
 	}
-	if err := os.Mkdir(dir, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
+	mkdirErr := os.Mkdir(dir, 0o700)
+	if mkdirErr != nil && !errors.Is(mkdirErr, os.ErrExist) {
 		return
 	}
 	path, ok := c.path(key, etag)
@@ -199,7 +200,10 @@ func (c *MetadataCache) putVerified(key, etag string, data []byte) {
 	if err != nil {
 		return
 	}
-	if writeCacheFile(path, encoded) == nil {
+	// Only this writer's newly created directory is known to have no old
+	// validators. Existing directories still need pruning; maintenance remains
+	// the backstop for versions left behind by concurrent writers.
+	if writeCacheFile(path, encoded) == nil && mkdirErr != nil {
 		c.pruneVersions(dir, filepath.Base(path))
 	}
 }
