@@ -58,7 +58,7 @@ func (s *Store) RemoveOwnedImportStage(reg archive.SessionRegistration) (err err
 	if err != nil {
 		return err
 	}
-	if !found || current.StagedImportSHA256 != reg.StagedImportSHA256 {
+	if !found || current.StagedImportSHA256 != reg.StagedImportSHA256 || !sameImportStageOwner(reg, current) {
 		return ErrDurableStorageRecovery
 	}
 	check := func() error {
@@ -105,19 +105,8 @@ func (s *Store) removeOwnedImportStageAt(ctx context.Context, home *local.Rooted
 		return errStateBudget
 	}
 	defer reservation.Release(3 * info.Size())
-	counted := &countingReader{r: io.LimitReader(file, info.Size()+1)}
-	stage, err := s.decodePreparedImportStage(ctx, reg.ArchiveSessionID, counted, info.Size(), reservation)
-	if err != nil {
+	if err := s.validateOwnedImportStage(ctx, reg, current, file, info.Size(), reservation); err != nil {
 		return err
-	}
-	if stage.TypedSelection {
-		return ErrReadySelectionFrozen
-	}
-	if err := errors.Join(stage.validateOwner(reg), stage.validateOwner(current)); err != nil {
-		return err
-	}
-	if counted.n != info.Size() {
-		return ErrDurableStorageRecovery
 	}
 	if err := checkOwnedImportStage(ctx, home, root, relative, info, check); err != nil {
 		return err
@@ -133,6 +122,24 @@ func (s *Store) removeOwnedImportStageAt(ctx context.Context, home *local.Rooted
 		return err
 	}
 	return removeEmptyImportDirectory(home, relative)
+}
+
+func (s *Store) validateOwnedImportStage(ctx context.Context, reg, current archive.SessionRegistration, reader io.Reader, size int64, reservation stateReservation) error {
+	counted := &countingReader{r: exactPendingContextReader{ctx: ctx, reader: io.LimitReader(reader, size+1)}}
+	stage, err := s.decodePreparedImportStage(ctx, reg.ArchiveSessionID, counted, size, reservation)
+	if err != nil {
+		return err
+	}
+	if stage.TypedSelection {
+		return ErrReadySelectionFrozen
+	}
+	if err := errors.Join(stage.validateOwner(reg), stage.validateOwner(current)); err != nil {
+		return err
+	}
+	if counted.n != size {
+		return ErrDurableStorageRecovery
+	}
+	return ctx.Err()
 }
 
 func checkOwnedImportStage(ctx context.Context, home *local.RootedHome, root *os.Root, relative string, info os.FileInfo, check func() error) error {

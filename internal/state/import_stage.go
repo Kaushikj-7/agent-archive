@@ -349,7 +349,7 @@ func (p ImportStage) Validate(ctx context.Context, reg archive.SessionRegistrati
 }
 
 func (p ImportStage) validateOwner(reg archive.SessionRegistration) error {
-	if reg.StagedImportSHA256 != "" && reg.StagedImportSHA256 != p.SHA256 || p.Registration.ArchiveSessionID != reg.ArchiveSessionID || p.Registration.NativeSessionID != reg.NativeSessionID || p.Registration.Harness.Name != reg.Harness.Name || p.Registration.ProjectID != reg.ProjectID || p.Registration.ProjectRoot != reg.ProjectRoot || !sameHistoricalProjectProof(p.Registration, reg) || !sameImportParentProof(p.Registration, reg) || !sameNativeImportBinding(p.Registration.NativeBinding, reg.NativeBinding) || p.Registration.DestinationID != reg.DestinationID || !p.Registration.InBatch(reg.ImportBatch.Recorded()) || p.Bundle.ArchiveSessionID != reg.ArchiveSessionID || p.Bundle.NativeSessionID != reg.NativeSessionID || p.Bundle.ProjectID != reg.ProjectID || p.Bundle.Capture.Harness.Name != reg.Harness.Name {
+	if reg.StagedImportSHA256 != "" && reg.StagedImportSHA256 != p.SHA256 || !sameImportStageOwner(p.Registration, reg) || p.Bundle.ArchiveSessionID != reg.ArchiveSessionID || p.Bundle.NativeSessionID != reg.NativeSessionID || p.Bundle.ProjectID != reg.ProjectID || p.Bundle.Capture.Harness.Name != reg.Harness.Name {
 		return ErrDurableStorageRecovery
 	}
 	if len(p.Preserved) > archive.MaxHistorySpans {
@@ -895,6 +895,15 @@ func (s *Store) preparedImportChildren(ctx context.Context, stage ImportStage) (
 		children = append(children, child)
 	}
 	return children, nil
+}
+
+// sameImportStageOwner preserves the existing stage admission projection.
+// Hook paths and Git observations can advance without changing selected evidence.
+func sameImportStageOwner(staged, current archive.SessionRegistration) bool {
+	return staged.ArchiveSessionID == current.ArchiveSessionID && staged.NativeSessionID == current.NativeSessionID &&
+		staged.Harness.Name == current.Harness.Name && staged.ProjectID == current.ProjectID && staged.ProjectRoot == current.ProjectRoot &&
+		sameHistoricalProjectProof(staged, current) && sameImportParentProof(staged, current) &&
+		sameNativeImportBinding(staged.NativeBinding, current.NativeBinding) && staged.DestinationID == current.DestinationID && staged.InBatch(current.ImportBatch.Recorded())
 }
 
 func sameImportParentProof(staged, current archive.SessionRegistration) bool {

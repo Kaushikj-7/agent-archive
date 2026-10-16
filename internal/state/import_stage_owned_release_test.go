@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -177,5 +179,80 @@ func TestOwnedImportStageReleasePreservesEvidenceOnRefusal(t *testing.T) {
 				t.Fatal("refused cleanup lost original stage", err)
 			}
 		})
+	}
+}
+
+func TestOwnedImportStageAbsentSameDigestCannotChangeOwner(t *testing.T) {
+
+	t.Parallel()
+	for _, field := range []string{"project", "native", "destination"} {
+		t.Run(field, func(t *testing.T) {
+			t.Parallel()
+			s, reg, _ := ownedImportReleaseFixture(t, "original selection")
+			if err := s.RemoveOwnedImportStage(reg); err != nil {
+				t.Fatal(err)
+			}
+			current := reg
+			switch field {
+			case "project":
+				current.ProjectID = "other-project"
+			case "native":
+				current.NativeSessionID = "other-native"
+			case "destination":
+				current.DestinationID = "other-destination"
+			}
+			if err := local.Write(s.registrationPath(reg.ArchiveSessionID), current); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.RemoveOwnedImportStage(reg); !errors.Is(err, ErrDurableStorageRecovery) {
+				t.Fatal("absent stage skipped actual owner comparison with identical digest", err)
+			}
+		})
+	}
+}
+
+func TestOwnedImportStageReleaseAllowsMutableHookFacts(t *testing.T) {
+	t.Parallel()
+	s, reg, _ := ownedImportReleaseFixture(t, "original selection")
+	current := reg
+	current.TranscriptPath = filepath.Join(t.TempDir(), "relocated-transcript.jsonl")
+	seen := reg.RegisteredAt.Add(time.Hour)
+	current.LastHeadSeenAt = &seen
+	if err := s.SaveRegistration(current); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RemoveOwnedImportStage(reg); err != nil {
+		t.Fatal("mutable hook facts changed the selected admission owner", err)
+	}
+}
+
+type cancelImportStageReader struct {
+	reader io.Reader
+	cancel context.CancelFunc
+	bytes  int
+}
+
+func (r *cancelImportStageReader) Read(data []byte) (int, error) {
+	n, err := r.reader.Read(data[:min(len(data), 512)])
+	r.bytes += n
+	r.cancel()
+	return n, err
+}
+
+func TestOwnedImportStageDecodeStopsOnCapturedCancellation(t *testing.T) {
+	t.Parallel()
+	s, reg, _ := ownedImportReleaseFixture(t, strings.Repeat("synthetic", 8192))
+	raw, err := os.ReadFile(filepath.Join(s.Home(), importStageRelative(reg.ArchiveSessionID)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	reader := &cancelImportStageReader{reader: bytes.NewReader(raw), cancel: cancel}
+	if err := s.validateOwnedImportStage(ctx, reg, reg, reader, int64(len(raw)), s.readReservation()); !errors.Is(err, context.Canceled) {
+		t.Fatal("stage decoder lost captured cancellation", err)
+	}
+	if reader.bytes > 512 {
+		t.Fatalf("stage decoder read %d bytes after cancellation, want at most the first 512", reader.bytes)
 	}
 }
