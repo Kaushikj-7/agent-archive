@@ -44,10 +44,21 @@ func (s *blockedReadDiscoveryStore) List(ctx context.Context, prefix string) ([]
 	}
 }
 
+type readDiscoveryScenario string
+
+const (
+	discoveryList               readDiscoveryScenario = "list"
+	discoveryListNoCatalog      readDiscoveryScenario = "list-no-catalog"
+	discoveryShow               readDiscoveryScenario = "show"
+	discoveryShowQuery          readDiscoveryScenario = "show-query"
+	discoveryShowQueryNoCatalog readDiscoveryScenario = "show-query-no-catalog"
+	discoveryHandoff            readDiscoveryScenario = "handoff"
+)
+
 func TestReadCommandsOverlapScopeWithFreshHeaders(t *testing.T) {
 	t.Parallel()
-	for _, command := range []string{"list", "list-no-catalog", "show", "show-query", "show-query-no-catalog", "handoff"} {
-		t.Run(command, func(t *testing.T) {
+	for _, command := range []readDiscoveryScenario{discoveryList, discoveryListNoCatalog, discoveryShow, discoveryShowQuery, discoveryShowQueryNoCatalog, discoveryHandoff} {
+		t.Run(string(command), func(t *testing.T) {
 			t.Parallel()
 			env, mem, id := publishedFixture(t)
 			store := &blockedReadDiscoveryStore{ObjectStore: mem, started: make(chan struct{}), release: make(chan struct{}), finished: make(chan struct{})}
@@ -63,7 +74,7 @@ func TestReadCommandsOverlapScopeWithFreshHeaders(t *testing.T) {
 				close(store.release)
 				return ""
 			}
-			if command == "show-query-no-catalog" || command == "list-no-catalog" {
+			if command == discoveryShowQueryNoCatalog || command == discoveryListNoCatalog {
 				if listCache(env, false) == nil {
 					t.Fatal("cache unavailable")
 				}
@@ -71,11 +82,11 @@ func TestReadCommandsOverlapScopeWithFreshHeaders(t *testing.T) {
 				must(t, err)
 				must(t, os.WriteFile(filepath.Join(home, "cache", "catalog"), []byte("unavailable disposable catalog"), 0600))
 			}
-			args := []string{command}
-			if command == "list-no-catalog" {
+			args := []string{string(command)}
+			if command == discoveryListNoCatalog {
 				args = []string{"list"}
 			}
-			if command == "show-query" || command == "show-query-no-catalog" {
+			if command == discoveryShowQuery || command == discoveryShowQueryNoCatalog {
 				args = []string{"show", id[:8], "--json"}
 			}
 			stdin := strings.NewReader("q\n")
