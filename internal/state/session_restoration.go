@@ -186,7 +186,8 @@ func restorationBaselineMatches(published *Published, j SessionDeletion, reg arc
 	return published != nil && published.state.Commit != nil && published.state.Commit.PolicyContext == policy && published.state.Commit.DestinationID == reg.DestinationID && published.state.Commit.AdmissionContext == admission && bytes.Equal(published.Metadata(), j.MetadataBytes)
 }
 
-func (p PendingPublication) validateRetentionEnvelope() error {
+func (owned *PendingPublication) validateRetentionEnvelope() error {
+	p := *owned
 	a := p.Preparation
 	if a.Retention != nil && (p.RequestToken != "" || p.ScanSignature != nil || p.MetadataOnly || publicationSHA256(p.MetadataBytes) != a.OriginMetadataSHA256) {
 		return ErrDurableStorageRecovery
