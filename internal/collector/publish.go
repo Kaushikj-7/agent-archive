@@ -97,7 +97,7 @@ func (s *sessionScan) publishPending(ctx context.Context, pending state.PendingP
 		return outcomeSkipped, freezeErr
 	}
 
-	if remote, ok := s.remote.(storage.CatalogLifecycle); ok && pending.Catalog != nil {
+	if remote, ok := s.sourceSetProvider().(storage.CatalogLifecycle); ok && pending.Catalog != nil {
 		var settled bool
 		var err error
 		originalCtx := ctx
@@ -247,7 +247,7 @@ func (s *sessionScan) acknowledgePublication(pending state.PendingPublication, k
 		}
 	}
 	if !keepPending && pending.Catalog != nil && s.ctx.Value(catalogSettledKey{}) != true {
-		if remote, ok := s.remote.(storage.CatalogLifecycle); ok {
+		if remote, ok := s.sourceSetProvider().(storage.CatalogLifecycle); ok {
 			if err := remote.CompletePublication(s.ctx, pending.Catalog.ID, pending.MetadataBytes); err != nil {
 				return outcomeSkipped, err
 			}
@@ -429,17 +429,17 @@ func (s *sessionScan) uploadImportPending(pending state.PendingPublication) erro
 }
 
 func (s *sessionScan) publicationRemote(p state.PendingPublication) storage.ObjectStore {
-	if remote, ok := s.remote.(storage.CatalogPublisher); ok && remote.CatalogMetadataAuthority() && p.Catalog != nil {
+	if remote, ok := s.sourceSetProvider().(storage.CatalogPublisher); ok && remote.CatalogMetadataAuthority() && p.Catalog != nil {
 		return remote.Publication(p.Catalog.ID, p.MetadataKey, p.Catalog.ExpectedRevision)
 	}
-	return s.remote
+	return s.sourceSetProvider()
 }
 
 func (s *sessionScan) publishListingRevision(p state.PendingPublication) error {
-	if remote, ok := s.remote.(storage.CatalogPublisher); ok && remote.CatalogMetadataAuthority() {
+	if remote, ok := s.sourceSetProvider().(storage.CatalogPublisher); ok && remote.CatalogMetadataAuthority() {
 		return nil
 	}
-	return listingindex.PublishRevision(s.ctx, s.remote, p.MetadataKey, p.MetadataBytes)
+	return listingindex.PublishRevision(s.ctx, s.sourceSetProvider(), p.MetadataKey, p.MetadataBytes)
 }
 
 // recordPublicationRetirement preserves cleanup obligations before cache commit.
@@ -482,7 +482,7 @@ func (s *sessionScan) checkPendingUploadInputs(pending state.PendingPublication)
 }
 
 func (s *sessionScan) freezeCatalogPending(ctx context.Context, pending state.PendingPublication) (state.PendingPublication, error) {
-	if remote, ok := s.remote.(storage.CatalogPublisher); ok && remote.CatalogMetadataAuthority() {
+	if remote, ok := s.sourceSetProvider().(storage.CatalogPublisher); ok && remote.CatalogMetadataAuthority() {
 		if pending.Catalog == nil {
 			id, revision, err := remote.FreezeCatalogMutation(ctx, pending.MetadataKey)
 			if err != nil {

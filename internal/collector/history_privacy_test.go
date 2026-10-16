@@ -604,6 +604,14 @@ func (s *privacyPutStore) Put(ctx context.Context, key string, data []byte) erro
 	return s.ObjectStore.Put(ctx, key, data)
 }
 
+func (s *privacyPutStore) Stat(ctx context.Context, key string) (storage.ObjectInfo, error) {
+	statter, ok := s.ObjectStore.(storage.ObjectStatter)
+	if !ok {
+		return storage.ObjectInfo{}, errors.New("wrapped synthetic store has no object stat")
+	}
+	return statter.Stat(ctx, key)
+}
+
 func (s *privacyPutStore) GetLimited(ctx context.Context, key string, limit int64) ([]byte, error) {
 	return s.ObjectStore.(storage.LimitedGetter).GetLimited(ctx, key, limit)
 }

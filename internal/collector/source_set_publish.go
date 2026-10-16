@@ -103,7 +103,41 @@ func (s *sessionScan) sourceSetAcknowledgePublication(pending state.PendingPubli
 	if pending.Commit == nil || storage.SHA256Hex(body) != pending.Commit.MetadataSHA256 {
 		return outcomeSkipped, storage.ErrPublicationConflict
 	}
+	if err := s.verifyAcknowledgedSourceSet(pending, body); err != nil {
+		return outcomeSkipped, err
+	}
 	return s.sourceSetAcknowledgeReadback(pending, keepPending, body, etag)
+}
+
+// verifyAcknowledgedSourceSet rebuilds reference proof on an already-selected
+// retry. A durable catalog completion receipt does not replace source readback.
+func (s *sessionScan) verifyAcknowledgedSourceSet(pending state.PendingPublication, body []byte) error {
+	frame := s.publicationAttempt
+	if frame == nil || pending.Commit == nil {
+		return state.ErrDurableStorageRecovery
+	}
+	frame.verifiedCommit = nil
+	if err := pending.ValidatePublicationBudgeted(s.ctx, s.readBudget()); err != nil {
+		return err
+	}
+	if pending.History != nil {
+		mark := len(s.retainedReleases)
+		defer s.releaseRetainedAfter(mark)
+		var metadata archive.Metadata
+		if err := s.unmarshalRetained(body, &metadata); err != nil {
+			return err
+		}
+		return s.verifyHistoryReferences(pending, metadata)
+	}
+	for _, source := range pending.Sources {
+		ref := source.Reference
+		if err := s.verifyHistorySource(s.ctx, ref.Key, ref.SHA256, ref.CompressedBytes); err != nil {
+			return err
+		}
+	}
+	commit := *pending.Commit
+	frame.verifiedCommit, frame.verifiedKey = &commit, pending.MetadataKey
+	return nil
 }
 
 func (s *sessionScan) sourceSetAcknowledgeReadback(pending state.PendingPublication, keepPending bool, body []byte, etag string) (sessionOutcome, error) {

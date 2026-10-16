@@ -1116,6 +1116,9 @@ func (p *pass) repairListingIndex() {
 		}
 		scan := newSessionScan(p.ctx, p.local, p.remote, reg, state.Request{}, nil, p.now, p.opts)
 		err = scan.repairListingRevision(repair.MetadataKey)
+		if errors.Is(err, errListingPredecessorUnknown) {
+			continue // Repair stays owed until the publication's owner is known.
+		}
 		if errors.Is(err, errListingMetadataAbsent) {
 			_ = p.local.RemoveListingRepair(id)
 			continue
