@@ -22,10 +22,25 @@ Follow [CONTRIBUTING.md](CONTRIBUTING.md) for the contribution workflow.
 - Check for an existing implementation and overlapping PRs before adding one.
 - Follow nearby patterns and package boundaries. Reuse existing helpers;
   introduce abstractions or dependencies only for a concrete need.
+- Build the smallest change that solves the task. Do not add scripts, CI
+  gates, lint rules, evidence or qualification files, or new doc sections
+  unless the task needs them; propose them instead. Prefer a line here or in
+  the docs over a new script.
+- Edit plans, proposals, and specs in place so they read as if written once.
+  Keep them concise; do not append review notes or "updates" sections.
 - Format changed Go files with `gofmt`. Document exported identifiers and
   write errors that tell the user what to do next.
 - Keep hooks fast, silent on stdout, and free of network access.
 - Update user docs, help text, and CHANGELOG.md when user-visible behavior changes.
+
+## Write CLI output for people
+
+- Keep output short: one line per fact, no explanatory filler; put detail
+  behind `--verbose`, `--json`, or a key in interactive views.
+- Ask choices as numbered options with a default, e.g. `Enter 1-3 [1]`.
+- When the user must act, print the exact command to run, on its own line.
+- Use a named string type, not plain `string`, for enum-like values such as
+  stages, sources, and kinds.
 
 ## Protect the user's machine and data
 
@@ -63,9 +78,18 @@ Follow [CONTRIBUTING.md](CONTRIBUTING.md) for the contribution workflow.
   go vet ./...
   golangci-lint run --disable=revive
   golangci-lint run --enable-only=revive --new-from-merge-base=origin/main
+  ../levenshtein/verify pre-merge --source .  # CI's verify job; needs Docker
   git diff --check
   ```
 
+- Under local load, `internal/cli` and `internal/collector` can exceed 20
+  minutes; pass `-timeout 40m` for them and run long suites in the background.
+- Run Levenshtein at the commit pinned in `.github/workflows/levenshtein.yml`
+  (a detached `git -C ~/levenshtein worktree add`). It enforces rules that
+  local golangci-lint does not, such as `thelper` and `usetesting`.
+- Tests of timeouts or budgets must not assert measured wall-clock time. Use
+  `testing/synctest`, an injected clock, or clock readings taken inside a stub;
+  see the testing guide.
 - The testing guide defines the complete checks, platform prerequisites,
   Python/script gates, Levenshtein checks, and when Extended CI is required.
   The commands above are a starting point, not a replacement for those gates.
@@ -75,6 +99,9 @@ Follow [CONTRIBUTING.md](CONTRIBUTING.md) for the contribution workflow.
   State what actually ran, what passed, and what remains unverified.
 - PR descriptions explain the problem, resulting behavior, and validation.
   Do not claim checks passed when they were skipped, pending, or not run.
+- End each task by listing what is left: open PRs and their state, follow-ups,
+  and anything you started that is still running. Say whether the session can
+  be archived.
 
 ## Merge policy
 
@@ -85,6 +112,9 @@ date with `main` before merging. Do not require rebasing, merging the latest
 Before merging, required CI checks must pass for the PR's current head.
 Obtain appropriate review and resolve actual merge conflicts or identified
 integration defects.
+
+To resolve conflicts, fetch and merge `origin/main` into the branch; never
+rebase or force-push a PR branch. Merge PRs with merge commits.
 
 Do not enable GitHub's "Require branches to be up to date before merging",
 change bypass settings, or change any repository protection settings.
