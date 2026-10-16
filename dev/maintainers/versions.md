@@ -279,12 +279,29 @@ birth authority. Required omission coverage is derived from validated rows;
 retained parsing refuses concealed coverage and refilter reconstructs it. Other
 agent parser versions and outer source/metadata/configuration schemas do not change.
 
+Private native binding **version 2** is reserved for Muse's successful raw
+validation checkpoint. Its mandatory `checkpoint` uses version 1, domain
+`muse-ordinary`, algorithm `sha256`, a positive raw byte boundary and lowercase
+hex SHA-256. Version 1 has no checkpoint; existing Muse v1 cannot upgrade by
+hashing current bytes. Current ordinary writers preserve exact checkpoints and
+cannot introduce, drop or advance them. The dedicated prepared commit retains
+immutable owner/root facts and compares the expected prior proof. The existing
+native-authority-v16 configuration fence remains; earlier binding-v1 writers
+refuse version 2 during registration validation. Uploaded schemas, filter,
+adapter and parser versions do not change.
+
+Muse local file observations use provider `file`, signature version 1, and a
+55-character raw-base64url token: recognized algorithm byte 1, uint64 big-endian
+raw boundary, then SHA-256. Old stat tokens and unknown encodings cannot equal a
+fresh strong observation. This disposable equality cache is separate from the
+protected successful checkpoint and cannot supply continuity authority.
+
 Muse own observations allocate filter24/global adapter0.24.0/Muse filter0.24.0
 and Muse parser0.4.0. The additive metadata/eval/handoff/stats token_observations
 envelope leaves legacy normalized tokens/counts/model_tokens absent. Old typed
 metadata readers ignore observations and cannot auto-price them; old strict
 schemas refuse the new field. Old retained event-only completions remain readable,
-while frozen filter23 schemas refuse enriched rows. Source2/metadata1 and private
-configuration/state formats remain unchanged. Other agent parser versions do not
+while frozen filter23 schemas refuse enriched rows. This observation expansion
+leaves Source2/metadata1 and private configuration/state formats unchanged. Other agent parser versions do not
 change. Parser refresh and full export rederive the summary from retained evidence
 after native loss. Real billing/cache/completeness gates remain unqualified.
