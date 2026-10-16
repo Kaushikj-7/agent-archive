@@ -6,6 +6,11 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- `agent-archive list` shows its progress while it loads: how many sessions
+  it has scanned, then how many it has loaded of those it will show.
+  `agent-archive handoff` shows "Preparing handoff…" after you pick a session,
+  until its first question.
+
 - Commands run inside Muse detect its session environment to avoid interactive
   prompts and pagers. Handoff into supported agents removes inherited Muse
   session variables. This adds presence detection only; Muse capture, current
