@@ -150,7 +150,7 @@ func TestNativeCaptureWholeSourceBoundary(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		captureCheckExports(t, checked)
+		captureCheckExports(t, checked, fset)
 		calls := map[ast.Expr]bool{}
 		for _, f := range parsed {
 			ast.Inspect(f, func(n ast.Node) bool {
@@ -685,10 +685,10 @@ func captureAuthorityObjectAllowed(pkg, file string, obj types.Object, calls map
 	return captureObjectAllowed(pkg, obj, false) && (captureSymbolName(obj.Name()) == captureSymbolProof || captureSymbolName(obj.Name()) == captureSymbolLiveProof || captureSymbolName(obj.Name()) == captureSymbolClose || captureSymbolName(obj.Name()) == captureSymbolLoan || captureSymbolName(obj.Name()) == captureSymbolLiveLoan)
 }
 
-func captureCheckExports(t *testing.T, pkg *types.Package) {
+func captureCheckExports(t *testing.T, pkg *types.Package, fset *token.FileSet) {
 	t.Helper()
 	if pkg.Path() == captureFactsPath {
-		captureCheckLiveFactsShape(t, pkg)
+		captureCheckLiveFactsShape(t, pkg, fset)
 		return
 	}
 	var allowed map[string]bool
@@ -1228,6 +1228,21 @@ func captureLiveIssuerReferenceAllowed(pkg, file string, obj types.Object, f *as
 		if !ok || fn.Name.Name != "NewLiveCaptureRequest" || fn.Recv == nil || fn.Body == nil {
 			continue
 		}
+		if len(fn.Recv.List) != 1 {
+			return false
+		}
+		receiver, ok := fn.Recv.List[0].Type.(*ast.StarExpr)
+		if !ok {
+			return false
+		}
+		receiverName, ok := receiver.X.(*ast.Ident)
+		if !ok {
+			return false
+		}
+		receiverObject, ok := info.Uses[receiverName].(*types.TypeName)
+		if !ok || receiverObject.Pkg() == nil || receiverObject.Pkg().Path() != capturePackageStateString() || receiverObject.Name() != "Store" {
+			return false
+		}
 		allowed := false
 		ast.Inspect(fn.Body, func(node ast.Node) bool {
 			if _, nested := node.(*ast.FuncLit); nested {
@@ -1288,9 +1303,16 @@ func captureCheckLiveProducerSignature(t *testing.T, pkg *types.Package) {
 		t.Error("live producer accepts arbitrary structural scratch authority")
 	}
 }
-func captureCheckLiveFactsShape(t *testing.T, pkg *types.Package) {
+func captureCheckLiveFactsShape(t *testing.T, pkg *types.Package, fset *token.FileSet) {
 	t.Helper()
-	for name, methods := range map[string]map[string]bool{"LiveCaptureRequest": {"Borrow": true, "Close": true}, "LiveCaptureLease": {"Original": true, "Context": true, "Err": true, "Reserve": true, "OpenWorkspace": true, "Close": true}} {
+	for _, name := range pkg.Scope().Names() {
+		obj := pkg.Scope().Lookup(name)
+		if obj.Exported() && !captureLiveFactsExportAllowed(obj, fset) {
+			t.Errorf("unexpected nativefacts authority export %s", name)
+		}
+	}
+	captureCheckLiveIssuerSignature(t, pkg)
+	for name, methods := range map[string]map[string]bool{"CaptureRequest": {"Borrow": true, "Close": true, "MatchesBudget": true, "MatchesPolicy": true}, "RequestLease": {"Context": true, "Budget": true, "Reservation": true, "Registration": true, "Reviewed": true, "Locator": true, "At": true, "Policy": true, "Check": true, "Close": true}, "CapturedScope": {"Reserve": true, "Release": true, "Available": true, "Refuse": true}, "LiveCaptureRequest": {"Borrow": true, "Close": true}, "LiveCaptureLease": {"Original": true, "Context": true, "Err": true, "Reserve": true, "OpenWorkspace": true, "Close": true}} {
 		obj, ok := pkg.Scope().Lookup(name).(*types.TypeName)
 		if !ok || obj.IsAlias() {
 			t.Errorf("live binding %s must be concrete", name)
@@ -1330,6 +1352,7 @@ func TestLiveCaptureIssuerTypedReferenceControls(t *testing.T) {
 		{"function-value", `func(*Store)NewLiveCaptureRequest(){ctor:=facts.BindLiveCaptureRequest;_ = ctor}`, "cursor_scratch.go", false},
 		{"reexport", `var Constructor=facts.BindLiveCaptureRequest`, "cursor_scratch.go", false},
 		{"nested-callback", `func(*Store)NewLiveCaptureRequest(){f:=func(){scratch:=new(CursorScratch);facts.BindLiveCaptureRequest(nil,nil,scratch.Reserve,scratch.OpenWorkspace,scratch.Close,scratch.Err)};_ = f}`, "cursor_scratch.go", false},
+		{"wrong-receiver", `type Other struct{};func(*Other)NewLiveCaptureRequest(){scratch:=new(CursorScratch);facts.BindLiveCaptureRequest(nil,nil,scratch.Reserve,scratch.OpenWorkspace,scratch.Close,scratch.Err)}`, "cursor_scratch.go", false},
 		{"test-issuer", `func(*Store)NewLiveCaptureRequest(){scratch:=new(CursorScratch);facts.BindLiveCaptureRequest(nil,nil,scratch.Reserve,scratch.OpenWorkspace,scratch.Close,scratch.Err)}`, "cursor_scratch_test.go", false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -1356,5 +1379,57 @@ func TestLiveCaptureIssuerTypedReferenceControls(t *testing.T) {
 				t.Fatal("probe did not resolve actual issuer object")
 			}
 		})
+	}
+}
+
+func captureLiveFactsExportAllowed(obj types.Object, fset *token.FileSet) bool {
+	allowed := map[string]bool{"CapturePolicy": true, "CaptureRequest": true, "FreezeCaptureRequest": true, "RequestLease": true, "CapturedScope": true, "CaptureSkillMode": true, "CaptureSkillNone": true, "CaptureSkillMetadata": true, "CaptureSkillBody": true, "SettledImportFacts": true, "LiveCaptureRequest": true, "LiveCaptureLease": true, "BindLiveCaptureRequest": true}
+	if allowed[obj.Name()] {
+		return true
+	}
+	// Test entrypoints do not add a production factory or mutable export. Their
+	// actual signature and source file must be Go's ordinary private test body.
+	if fset == nil || !strings.HasSuffix(fset.Position(obj.Pos()).Filename, "_test.go") || !strings.HasPrefix(obj.Name(), "Test") {
+		return false
+	}
+	fn, ok := obj.(*types.Func)
+	if !ok {
+		return false
+	}
+	signature, ok := fn.Type().(*types.Signature)
+	return ok && signature.Recv() == nil && !signature.Variadic() && signature.Params().Len() == 1 && signature.Results().Len() == 0 && types.TypeString(signature.Params().At(0).Type(), func(p *types.Package) string { return p.Path() }) == "*testing.T"
+}
+
+func captureCheckLiveIssuerSignature(t *testing.T, pkg *types.Package) {
+	t.Helper()
+	fn, ok := pkg.Scope().Lookup("BindLiveCaptureRequest").(*types.Func)
+	if !ok {
+		t.Error("live issuer must be a fixed function")
+		return
+	}
+	signature, ok := fn.Type().(*types.Signature)
+	if !ok || signature.Recv() != nil || signature.Variadic() || signature.Params().Len() != 6 || signature.Results().Len() != 2 {
+		t.Error("live issuer signature changed")
+		return
+	}
+	fullName := func(p *types.Package) string { return p.Path() }
+	expected := []string{"*" + captureFactsPath + ".CaptureRequest", "*" + captureFactsPath + ".RequestLease", "func(int64) error", "func() (*os.Root, error)", "func() error", "func() error"}
+	for i, want := range expected {
+		if got := types.TypeString(signature.Params().At(i).Type(), fullName); got != want {
+			t.Errorf("live issuer argument%d=%s want%s", i, got, want)
+		}
+	}
+	if types.TypeString(signature.Results().At(0).Type(), fullName) != "*"+captureFactsPath+".LiveCaptureRequest" || !types.Identical(signature.Results().At(1).Type(), types.Universe.Lookup("error").Type()) {
+		t.Error("live issuer returns arbitrary authority")
+	}
+}
+
+func TestLiveCaptureFactsRejectsUnlistedFactoryExports(t *testing.T) {
+	facts := types.NewPackage(captureFactsPath, "nativefacts")
+	for _, name := range []string{"ForgeLive", "LiveFactory", "TestForgeLive", "LiveOwner"} {
+		fn := types.NewFunc(token.NoPos, facts, name, types.NewSignatureType(nil, nil, nil, types.NewTuple(), types.NewTuple(), false))
+		if captureLiveFactsExportAllowed(fn, nil) {
+			t.Fatalf("unlisted production factory accepted %s", name)
+		}
 	}
 }
