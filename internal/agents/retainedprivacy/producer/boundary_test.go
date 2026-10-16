@@ -1,7 +1,9 @@
 package producer
 
 import (
+	"bytes"
 	"go/ast"
+	"go/format"
 	"go/parser"
 	"go/token"
 	"io/fs"
@@ -129,52 +131,7 @@ func retainedBoundaryProblems(path string, raw []byte) []string {
 		return true
 	})
 	if domainSource {
-		allowedTypes := map[string]bool{}
-		allowedFunctions := map[string]bool{}
-		switch path {
-		case "internal/agents/retainedprivacy/proof.go":
-			for _, name := range []string{"Proof", "Request", "Policy", "Facts", "Expectation"} {
-				allowedTypes[name] = true
-			}
-			allowedFunctions["FreezeRequest"] = true
-		case "internal/agents/retainedprivacy/internal/sealed/request.go":
-			for _, name := range []string{"Policy", "Expectation", "Request", "Lease"} {
-				allowedTypes[name] = true
-			}
-			for _, name := range []string{"FreezeRequest", "Borrow", "Check", "Context", "Budget", "Close"} {
-				allowedFunctions[name] = true
-			}
-		case "internal/agents/retainedprivacy/internal/sealed/proof.go":
-			allowedTypes["Proof"], allowedTypes["Facts"] = true, true
-			for _, name := range []string{"New", "Digest", "WithVerifiedTransform", "Close", "Err", "Deadline"} {
-				allowedFunctions[name] = true
-			}
-		case "internal/agents/retainedprivacy/producer/transform.go":
-			allowedFunctions["Transform"] = true
-		}
-		for _, decl := range file.Decls {
-			switch declaration := decl.(type) {
-			case *ast.GenDecl:
-				for _, spec := range declaration.Specs {
-					switch item := spec.(type) {
-					case *ast.TypeSpec:
-						if ast.IsExported(item.Name.Name) && !allowedTypes[item.Name.Name] {
-							fail("new exported sealed-domain type")
-						}
-					case *ast.ValueSpec:
-						for _, name := range item.Names {
-							if ast.IsExported(name.Name) {
-								fail("sealed operation cannot expose a mutable issuer")
-							}
-						}
-					}
-				}
-			case *ast.FuncDecl:
-				if ast.IsExported(declaration.Name.Name) && !allowedFunctions[declaration.Name.Name] {
-					fail("new exported sealed-domain operation")
-				}
-			}
-		}
+		problems = append(problems, retainedDeclarationProblems(path, file)...)
 	}
 
 	for _, decl := range file.Decls {
@@ -261,6 +218,135 @@ func retainedBoundaryProblems(path string, raw []byte) []string {
 	return problems
 }
 
+func retainedDeclarationProblems(path string, file *ast.File) []string {
+	var problems []string
+	fail := func(message string) { problems = append(problems, message) }
+	allowedTypes := map[string]bool{}
+	allowed := map[string]string{}
+	switch path {
+	case "internal/agents/retainedprivacy/proof.go":
+		for _, name := range []string{"Proof", "Request", "Policy", "Facts", "Expectation"} {
+			allowedTypes[name] = true
+		}
+		allowed["FreezeRequest"] = "func(context.Context, Expectation, []byte, *agentapi.NativeReadBudget) (*Request, error)"
+	case "internal/agents/retainedprivacy/internal/sealed/request.go":
+		for _, name := range []string{"Policy", "Expectation", "Request", "requestState", "Lease"} {
+			allowedTypes[name] = true
+		}
+		allowed["FreezeRequest"] = "func(context.Context, Expectation, []byte, *agentapi.NativeReadBudget) (*Request, error)"
+		allowed["*Request.Borrow"] = "func() (*Lease, error)"
+		allowed["*Request.Close"] = "func() error"
+		allowed["*Request.matches"] = "func(*Request, *agentapi.NativeReadBudget) error"
+		allowed["*Lease.Check"] = "func() error"
+		allowed["*Lease.Context"] = "func() context.Context"
+		allowed["*Lease.Budget"] = "func() *agentapi.NativeReadBudget"
+		allowed["*Lease.Close"] = "func()"
+	case "internal/agents/retainedprivacy/internal/sealed/proof.go":
+		for _, name := range []string{"Facts", "Proof", "transform", "loanContext"} {
+			allowedTypes[name] = true
+		}
+		allowed["New"] = "func(*Lease, archive.SourceBundle, archive.CompressedSource, Facts, string, func()) *Proof"
+		allowed["Digest"] = "func(context.Context, *agentapi.NativeReadBudget, any) (string, error)"
+		allowed["*Proof.WithVerifiedTransform"] = "func(context.Context, *Request, *agentapi.NativeReadBudget, func(context.Context, archive.SourceBundle, archive.CompressedSource, Facts) error) error"
+		allowed["*Proof.Close"] = "func() error"
+		allowed["joinLoanContext"] = "func(context.Context, context.Context) (context.Context, func())"
+		allowed["loanContext.Err"] = "func() error"
+		allowed["loanContext.Deadline"] = "func() (time.Time, bool)"
+	case "internal/agents/retainedprivacy/producer/transform.go":
+		allowed["Transform"] = "func(*sealed.Request) (*sealed.Proof, error)"
+		allowed["fixedFilter"] = "func(string) (agentapi.TranscriptFilter, error)"
+		allowed["supportedSkill"] = "func(string) bool"
+		allowed["limitSkills"] = "func([]archive.SupplementalEvidence, string) []archive.SupplementalEvidence"
+	}
+	for _, decl := range file.Decls {
+		switch declaration := decl.(type) {
+		case *ast.GenDecl:
+			for _, spec := range declaration.Specs {
+				switch item := spec.(type) {
+				case *ast.TypeSpec:
+					if !allowedTypes[item.Name.Name] {
+						fail("new sealed-domain type or alias")
+					}
+					if path != "internal/agents/retainedprivacy/proof.go" && item.Assign.IsValid() {
+						fail("private construction types cannot be aliased")
+					}
+					if item.Name.Name == "Proof" || item.Name.Name == "Request" {
+						if path == "internal/agents/retainedprivacy/proof.go" {
+							continue
+						}
+						shape, ok := item.Type.(*ast.StructType)
+						want := "transform"
+						if item.Name.Name == "Request" {
+							want = "state"
+						}
+						if !ok || len(shape.Fields.List) != 1 || len(shape.Fields.List[0].Names) != 1 || shape.Fields.List[0].Names[0].Name != want {
+							fail("opaque evidence must have exactly its private shared-state field")
+						}
+					}
+				case *ast.ValueSpec:
+					fail("sealed domain cannot expose or retain a mutable package-level issuer")
+				}
+			}
+		case *ast.FuncDecl:
+			key := declaration.Name.Name
+			if declaration.Recv != nil && len(declaration.Recv.List) == 1 {
+				key = retainedTypeText(declaration.Recv.List[0].Type) + "." + key
+			}
+			signature := retainedFunctionType(declaration.Type)
+			if want, ok := allowed[key]; !ok || signature != want {
+				fail("unreviewed receiver, method or operation signature: " + key + " " + signature)
+			}
+			ast.Inspect(declaration, func(node ast.Node) bool {
+				switch expression := node.(type) {
+				case *ast.CompositeLit:
+					typ, ok := expression.Type.(*ast.Ident)
+					if ok && (typ.Name == "Proof" || typ.Name == "transform") && (path != "internal/agents/retainedprivacy/internal/sealed/proof.go" || key != "New") {
+						fail("private proof construction outside its sole constructor")
+					}
+				case *ast.CallExpr:
+					name, ok := expression.Fun.(*ast.Ident)
+					if ok && name.Name == "new" && len(expression.Args) == 1 {
+						typ, ok := expression.Args[0].(*ast.Ident)
+						if ok && (typ.Name == "Proof" || typ.Name == "transform") {
+							fail("private proof allocation must use its sole constructor")
+						}
+					}
+				case *ast.SelectorExpr:
+					if expression.Sel.Name == "transform" && (path != "internal/agents/retainedprivacy/internal/sealed/proof.go" || (key != "*Proof.WithVerifiedTransform" && key != "*Proof.Close")) {
+						fail("private proof custody accessed outside its checked loan/close")
+					}
+				}
+				return true
+			})
+		}
+	}
+	return problems
+}
+
+func retainedTypeText(node ast.Node) string {
+	var out bytes.Buffer
+	_ = format.Node(&out, token.NewFileSet(), node)
+	return out.String()
+}
+func retainedFunctionType(original *ast.FuncType) string {
+	copyType := *original
+	withoutNames := func(original *ast.FieldList) *ast.FieldList {
+		if original == nil {
+			return nil
+		}
+		result := &ast.FieldList{}
+		for _, field := range original.List {
+			for range max(1, len(field.Names)) {
+				result.List = append(result.List, &ast.Field{Type: field.Type})
+			}
+		}
+		return result
+	}
+	copyType.Params = withoutNames(original.Params)
+	copyType.Results = withoutNames(original.Results)
+	return retainedTypeText(&copyType)
+}
+
 func fixedFilterProblems(function *ast.FuncDecl, imports map[string]string) []string {
 	var problems []string
 	want := map[string]string{"Claude": "claude", "Codex": "codex", "Cursor": "cursor", "Muse": "muse"}
@@ -322,6 +408,14 @@ func fixedFilterProblems(function *ast.FuncDecl, imports map[string]string) []st
 }
 
 func TestRetainedPrivacyBoundaryRejectsHiddenMintAndProducerSubstitution(t *testing.T) {
+	requestSource, err := os.ReadFile("../internal/sealed/request.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	forged := append(append([]byte(nil), requestSource...), []byte("\nfunc(r *Request) Context(bundle archive.SourceBundle,source archive.CompressedSource,facts Facts)*Proof{return &Proof{transform:&transform{bundle:bundle,source:source,facts:facts}}}\n")...)
+	if len(retainedBoundaryProblems("internal/agents/retainedprivacy/internal/sealed/request.go", forged)) == 0 {
+		t.Fatal("same-name method on another receiver minted private proof")
+	}
 	actual, err := os.ReadFile("transform.go")
 	if err != nil {
 		t.Fatal(err)
