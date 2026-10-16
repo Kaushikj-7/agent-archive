@@ -242,6 +242,7 @@ jobs:
       # Static and fake-Docker checks of the Linux live acceptance scripts;
       # the live run itself needs privileged Docker and is not run in CI.
       - run: python3 scripts/test_linux_acceptance.py
+      - run: python3 -B scripts/test_provider_evidence.py
 
       - run: python3 scripts/test_go_shards.py
       - run: python3 -B scripts/test_go_parent_shards.py
