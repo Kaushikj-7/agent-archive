@@ -121,6 +121,23 @@ func readListCandidates(ctx context.Context, env metadataCacheDependencies, stor
 			return reader.RecentResult{Sessions: sessions, Complete: true, TotalMatched: len(sessions)}, true, err
 		}
 	}
+	// Interactive complete listings may already have fresh headers even if
+	// opening the disposable catalog failed. Keep that discovery and the same
+	// compatibility warning instead of issuing a second canonical listing.
+	if full && limit <= 0 && ctx.Value(readDiscoveryKey{}) != nil {
+		if readOpts.CompatibilityScan != nil {
+			readOpts.CompatibilityScan("query requires an exhaustive metadata scan")
+		}
+		headers, err := discoverReadHeaders(ctx, store, readOpts)
+		if err != nil {
+			return reader.RecentResult{}, true, err
+		}
+		sessions, err := reader.ListMetadataFromSnapshot(ctx, store, headers, opts.filter, readOpts)
+		if err != nil {
+			return reader.RecentResult{}, true, err
+		}
+		return reader.RecentResult{Sessions: sessions, Complete: true, TotalMatched: len(sessions), Children: childCounts(sessions)}, true, nil
+	}
 	listed, err := reader.ListRecent(ctx, store, archiveSessionsPrefix, opts.filter, limit, readOpts)
 	return listed, full, err
 }
