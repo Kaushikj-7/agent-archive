@@ -131,13 +131,7 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	// Explicit project names, searches and interactive scope switching still
 	// need exhaustive metadata. Text activity and child counts use summaries.
 	full := listRequiresFullScan(opts, *project, scope, q, browsing)
-	progress := newListProgress()
-	var stopList func()
-	if !opts.jsonOut {
-		stopList = startListActivity(stdout, "Listing sessions…", progress)
-	} else {
-		stopList = func() {}
-	}
+	progress, stopList := startListProgress(stdout, opts.jsonOut)
 	listOpts := listingReadOptions(env, scope, opts, full, stderr)
 	listOpts.Progress = progress.read
 	listLimit := opts.limit

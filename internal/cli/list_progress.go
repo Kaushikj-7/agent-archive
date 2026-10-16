@@ -101,3 +101,13 @@ func startListActivity(out io.Writer, base string, p *listProgress) (stop func()
 		span.End()
 	}
 }
+
+// startListProgress starts list's "Listing sessions…" spinner with the
+// counts of the progress it returns; a --json listing draws none.
+func startListProgress(stdout io.Writer, jsonOut bool) (*listProgress, func()) {
+	p := newListProgress()
+	if jsonOut {
+		return p, func() {}
+	}
+	return p, startListActivity(stdout, "Listing sessions…", p)
+}
